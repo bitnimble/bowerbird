@@ -23,7 +23,18 @@ function build(open = true): { store: ViewerStore; presenter: PhotosPresenter } 
   if (open) store.open = { id: 'p1', status: 'ready' };
   return {
     store,
-    presenter: new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, {} as never, absent),
+    presenter: new PhotosPresenter(
+      listing,
+      marks,
+      stacks,
+      store,
+      absent,
+      absent,
+      absent,
+      absent,
+      {} as never,
+      absent,
+    ),
   };
 }
 
@@ -37,7 +48,9 @@ test('viewer turns save in order and refresh the rendered source', async () => {
     state = { ...state, doc, rev: rev + 1 };
     return state;
   };
-  photoEditsApi.finish = async () => { finished++; };
+  photoEditsApi.finish = async () => {
+    finished++;
+  };
   photosApi.get = async () => ({ id: 'p1', shown_rendition: 'full' }) as PhotoDetail;
 
   const { store, presenter } = build();
@@ -56,9 +69,11 @@ test('late edits read cannot overwrite viewer turn', async () => {
   let state: EditState = { doc: EditDocSchema.parse({}), rev: 0, canUndo: false, canRedo: false };
   const old = state;
   let release: (value: EditState) => void = () => {};
-  const stale = new Promise<EditState>((resolve) => { release = resolve; });
+  const stale = new Promise<EditState>((resolve) => {
+    release = resolve;
+  });
   let reads = 0;
-  photoEditsApi.get = async () => ++reads === 1 ? stale : state;
+  photoEditsApi.get = async () => (++reads === 1 ? stale : state);
   photoEditsApi.save = async (_photoId, doc, rev) => {
     state = { ...state, doc, rev: rev + 1 };
     return state;

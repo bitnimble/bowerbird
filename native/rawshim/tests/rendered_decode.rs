@@ -6,9 +6,9 @@
 //! right. The formats a fixture is actually needed for - a camera's HEIC, with its grid of tiles
 //! and its gain map - are `hevc.rs`'s own tests and the suite behind `--features fixtures`.
 
+use rawler::decoders::Orientation;
 use rawshim::decode_rendered;
 use rawshim::transfer::Curve;
-use rawler::decoders::Orientation;
 
 /// A PNG of `width x height`, eight bits, with whatever the caller sets on the encoder.
 fn encode_png(
@@ -58,7 +58,13 @@ fn with_chunk(png: &[u8], kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
 
 fn ramp(width: usize, height: usize) -> Vec<u8> {
     (0..width * height)
-        .flat_map(|at| [(at * 7 % 256) as u8, (at * 13 % 256) as u8, (at * 29 % 256) as u8])
+        .flat_map(|at| {
+            [
+                (at * 7 % 256) as u8,
+                (at * 13 % 256) as u8,
+                (at * 29 % 256) as u8,
+            ]
+        })
         .collect()
 }
 
@@ -88,7 +94,9 @@ fn a_grey_png_and_an_alpha_png_both_come_back_as_three_channels() {
         encoder.set_color(png::ColorType::Grayscale);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().expect("the header writes");
-        writer.write_image_data(&[40, 200]).expect("the pixels write");
+        writer
+            .write_image_data(&[40, 200])
+            .expect("the pixels write");
     }
     let read = decode_rendered::read(&grey).expect("a readable PNG");
     assert_eq!(read.codes, vec![40, 40, 40, 200, 200, 200]);
@@ -99,7 +107,9 @@ fn a_grey_png_and_an_alpha_png_both_come_back_as_three_channels() {
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().expect("the header writes");
-        writer.write_image_data(&[10, 20, 30, 128]).expect("the pixels write");
+        writer
+            .write_image_data(&[10, 20, 30, 128])
+            .expect("the pixels write");
     }
     let read = decode_rendered::read(&alpha).expect("a readable PNG");
     assert_eq!(read.codes, vec![10, 20, 30]);
@@ -120,7 +130,9 @@ fn a_grey_png_with_alpha_is_grey_rather_than_a_panic() {
         encoder.set_color(png::ColorType::GrayscaleAlpha);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().expect("the header writes");
-        writer.write_image_data(&[10, 255, 20, 128]).expect("the pixels write");
+        writer
+            .write_image_data(&[10, 255, 20, 128])
+            .expect("the pixels write");
     }
     let read = decode_rendered::read(&with_alpha).expect("a readable PNG");
     assert_eq!(read.codes, vec![10, 10, 10, 20, 20, 20]);
@@ -134,7 +146,9 @@ fn a_grey_png_with_alpha_is_grey_rather_than_a_panic() {
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_trns(vec![0, 10]);
         let mut writer = encoder.write_header().expect("the header writes");
-        writer.write_image_data(&[10, 20]).expect("the pixels write");
+        writer
+            .write_image_data(&[10, 20])
+            .expect("the pixels write");
     }
     let read = decode_rendered::read(&transparent).expect("a readable PNG");
     assert_eq!(read.codes, vec![10, 10, 10, 20, 20, 20]);
@@ -169,7 +183,9 @@ fn a_sixteen_bit_png_is_read_at_sixteen_bits() {
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Sixteen);
         let mut writer = encoder.write_header().expect("the header writes");
-        writer.write_image_data(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]).expect("the pixels write");
+        writer
+            .write_image_data(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC])
+            .expect("the pixels write");
     }
     let read = decode_rendered::read(&deep).expect("a readable PNG");
     assert_eq!(read.coding.depth, 16);
@@ -208,7 +224,10 @@ fn a_pngs_gamma_chunk_is_the_encoding_exponent() {
     let Curve::Gamma(exponent) = read.coding.curve else {
         panic!("expected a power law, got {:?}", read.coding.curve);
     };
-    assert!((exponent - 1.8).abs() < 1e-3, "read back as gamma {exponent}");
+    assert!(
+        (exponent - 1.8).abs() < 1e-3,
+        "read back as gamma {exponent}"
+    );
 }
 
 #[test]
@@ -217,7 +236,12 @@ fn a_jpeg_comes_back_at_the_size_it_was_written() {
     let pixels = ramp(width, height);
     let mut file = Vec::new();
     jpeg_encoder::Encoder::new(&mut file, 95)
-        .encode(&pixels, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
+        .encode(
+            &pixels,
+            width as u16,
+            height as u16,
+            jpeg_encoder::ColorType::Rgb,
+        )
         .expect("the JPEG encodes");
 
     let read = decode_rendered::read(&file).expect("a readable JPEG");
@@ -234,7 +258,10 @@ fn a_jpeg_comes_back_at_the_size_it_was_written() {
         .map(|(got, want)| (f64::from(*got) - f64::from(*want)).abs())
         .sum::<f64>()
         / pixels.len() as f64;
-    assert!(error < 8.0, "the decode is {error} levels from what was encoded");
+    assert!(
+        error < 8.0,
+        "the decode is {error} levels from what was encoded"
+    );
 }
 
 /// The probe is what an import calls, and it must agree with the decode about every file - a

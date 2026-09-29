@@ -157,8 +157,18 @@ const stackOptions = ({
   canUnstack: boolean;
   stack: StackSelection;
 }): Option<StackAction>[] => [
-  ...(canStack ? [{ value: 'stack' as const, label: BulkBarStrings.stack(), icon: <Layers size={ICON} /> }] : []),
-  ...(canUnstack ? [{ value: 'unstack' as const, label: BulkBarStrings.unstack(), icon: <Layers2 size={ICON} /> }] : []),
+  ...(canStack
+    ? [{ value: 'stack' as const, label: BulkBarStrings.stack(), icon: <Layers size={ICON} /> }]
+    : []),
+  ...(canUnstack
+    ? [
+        {
+          value: 'unstack' as const,
+          label: BulkBarStrings.unstack(),
+          icon: <Layers2 size={ICON} />,
+        },
+      ]
+    : []),
   {
     value: 'triage',
     label: BulkBarStrings.triageThisStack(),
@@ -178,18 +188,20 @@ const filingOptions = ({
   /** Absent outside a shoot or an album, which are the only things with a thumbnail to set. */
   banner: string | null;
 }): Option<FilingAction>[] => [
-  ...(removeFrom == null ?
-    []
-  : [
-      {
-        value: 'remove' as const,
-        label: removeFrom,
-        icon: <X size={ICON} />,
-        disabled: removeRefusal != null,
-        tooltip: removeRefusal,
-      },
-    ]),
-  ...(banner == null ? [] : [{ value: 'banner' as const, label: banner, icon: <ImagePlus size={ICON} /> }]),
+  ...(removeFrom == null
+    ? []
+    : [
+        {
+          value: 'remove' as const,
+          label: removeFrom,
+          icon: <X size={ICON} />,
+          disabled: removeRefusal != null,
+          tooltip: removeRefusal,
+        },
+      ]),
+  ...(banner == null
+    ? []
+    : [{ value: 'banner' as const, label: banner, icon: <ImagePlus size={ICON} /> }]),
 ];
 
 // The Bin entry says how many photographs it is about, because it is the one here
@@ -208,18 +220,31 @@ const photoOptions = ({
   unhide: string | null;
 }): Option<PhotoAction>[] => [
   { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <Download size={ICON} /> },
-  ...(revealable ?
-    [{ value: 'reveal' as const, label: PhotoDetailStrings.openContainingFolder(), icon: <FolderOpen size={ICON} /> }]
-  : []),
-  { value: 'thumbnails', label: BulkBarStrings.rebuildThumbnails(), icon: <Sparkles size={ICON} /> },
+  ...(revealable
+    ? [
+        {
+          value: 'reveal' as const,
+          label: PhotoDetailStrings.openContainingFolder(),
+          icon: <FolderOpen size={ICON} />,
+        },
+      ]
+    : []),
+  {
+    value: 'thumbnails',
+    label: BulkBarStrings.rebuildThumbnails(),
+    icon: <Sparkles size={ICON} />,
+  },
   { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <RotateCw size={ICON} /> },
   ...(hide == null ? [] : [{ value: 'hide' as const, label: hide, icon: <EyeOff size={ICON} /> }]),
-  ...(unhide == null ? [] : [{ value: 'unhide' as const, label: unhide, icon: <Eye size={ICON} /> }]),
+  ...(unhide == null
+    ? []
+    : [{ value: 'unhide' as const, label: unhide, icon: <Eye size={ICON} /> }]),
   { value: 'bin', label: bin, icon: <Trash2 size={ICON} />, destructive: true },
 ];
 
 function bannerLabel(kind: 'shoot' | 'album', single: boolean): string {
-  if (kind === 'shoot') return single ? BulkBarStrings.setShootThumbnail() : BulkBarStrings.setFirstAsShootThumbnail();
+  if (kind === 'shoot')
+    return single ? BulkBarStrings.setShootThumbnail() : BulkBarStrings.setFirstAsShootThumbnail();
   return single ? BulkBarStrings.setAlbumThumbnail() : BulkBarStrings.setFirstAsAlbumThumbnail();
 }
 
@@ -252,7 +277,11 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
     const target = photos.selectionTarget();
     if (target == null) return;
     const frame = store.selectedLoadedPhotos[0] ?? null;
-    exportPhotos.openFor(target, store.selectionCount, frame && { width: frame.width, height: frame.height });
+    exportPhotos.openFor(
+      target,
+      store.selectionCount,
+      frame && { width: frame.width, height: frame.height },
+    );
   };
 
   if (!store.hasSelection) return null;
@@ -275,22 +304,31 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   // The banner is the selection's first photograph, so there is nothing to offer
   // when the selection reaches only rows this client is not holding.
   const thumbnail =
-    collection == null || store.firstSelectedPhotoId == null ? null : bannerLabel(collection.kind, count < 2);
+    collection == null || store.firstSelectedPhotoId == null
+      ? null
+      : bannerLabel(collection.kind, count < 2);
   // "all" rather than a number for the whole collection, for the reason the bar's
   // own count carries none there: the stacks in the rows this client never held
   // stand for a number only the server knows.
   const binLabel =
-    count < 2 ? BulkBarStrings.moveToBin()
-    : store.allSelected ? BulkBarStrings.moveAllToBin()
-    : BulkBarStrings.moveCountToBin(count);
+    count < 2
+      ? BulkBarStrings.moveToBin()
+      : store.allSelected
+        ? BulkBarStrings.moveAllToBin()
+        : BulkBarStrings.moveCountToBin(count);
   // Null past the loaded rows, which offers both uncounted: the server settles what each one changes.
   const hiding = store.selectedHiding;
-  const hidingLabel = (affected: number | undefined, plain: string, counted: (count: number) => string): string | null =>
-    affected === 0 ? null
-    : affected == null || count < 2 ? plain
-    : counted(affected);
+  const hidingLabel = (
+    affected: number | undefined,
+    plain: string,
+    counted: (count: number) => string,
+  ): string | null =>
+    affected === 0 ? null : affected == null || count < 2 ? plain : counted(affected);
   // An album answers `undefined`, and the server is what refuses.
-  const libraryId = libraryOfSource(listing.source, (shootId) => shoots.byId.get(shootId)?.library_id);
+  const libraryId = libraryOfSource(
+    listing.source,
+    (shootId) => shoots.byId.get(shootId)?.library_id,
+  );
   const library = libraryId == null ? undefined : libraries.byId.get(libraryId);
   const readOnly = library?.read_only === true;
   const readOnlyRefusal = readOnly ? BulkBarStrings.notOnReadOnlyLibrary() : undefined;
@@ -303,7 +341,9 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   // reaching further is left enabled for the server to refuse - blocking an
   // action that would have worked is worse than a clear 403.
   const restoreRefused =
-    readOnly && library?.bin_name != null && store.selectedLoadedPaths.some((p) => p.startsWith(`${library.bin_name}/`));
+    readOnly &&
+    library?.bin_name != null &&
+    store.selectedLoadedPaths.some((p) => p.startsWith(`${library.bin_name}/`));
   const removable = collection == null || store.selectionOutsideShoot ? null : collection;
   // Taking a photograph *out* of a shoot moves its file back to the library root,
   // so it is the same write filing one into a shoot is. Leaving an album is rows only.
@@ -311,9 +351,13 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   // The shoot the selection is already in is not somewhere it can be moved to, so it is not offered as one.
   // A hidden shoot is not somewhere to file a photograph: it would move the file and then take the
   // photograph out of the grid it was chosen in, which reads as a bulk action that lost them.
-  const filable = shoots.shoots.filter((shoot) => shoot.id !== store.selectionShootId && !shoot.is_hidden);
+  const filable = shoots.shoots.filter(
+    (shoot) => shoot.id !== store.selectionShootId && !shoot.is_hidden,
+  );
   const revealId =
-    canRevealFile() && count === 1 && !store.selectedLoadedPhotos.some(isComposite) ? store.firstSelectedPhotoId : null;
+    canRevealFile() && count === 1 && !store.selectedLoadedPhotos.some(isComposite)
+      ? store.firstSelectedPhotoId
+      : null;
 
   return (
     <div {...stylex.props(styles.bar)} role="group" aria-label={BulkBarStrings.selection()}>
@@ -333,7 +377,13 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
           they are on every tile: routing a burst's verdict through the tiles one
           at a time is what the bar is here to save (§18.3.1). Not in the Bin,
           where a verdict on something already thrown out decides nothing. */}
-      {!inBin && <Verdict triage={marks.triage} onSet={(triage) => void photos.markSelection({ triage })} large />}
+      {!inBin && (
+        <Verdict
+          triage={marks.triage}
+          onSet={(triage) => void photos.markSelection({ triage })}
+          large
+        />
+      )}
 
       {/* Only about the members: taking a photo out of the stack it is in is not
           something the positions in a selection can express. */}
@@ -380,7 +430,8 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                 onSelect: (action) => {
                   if (action === 'stack') void photos.stackSelection();
                   else if (action === 'unstack') void photos.unstackSelection();
-                  else if (selectedStack.kind === 'stack') navigate(triagePath(selectedStack.stackId, listing.source));
+                  else if (selectedStack.kind === 'stack')
+                    navigate(triagePath(selectedStack.stackId, listing.source));
                 },
               }),
               // A section of its own: `OverflowMenu` renders a section's `content` above its
@@ -408,7 +459,10 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                         value: 'bracket' as const,
                         label: MergePageStrings.bracket(selectedBracket),
                         disabled: selectedBracket == null,
-                        tooltip: selectedBracket == null ? MergePageStrings.selectABracketStack() : undefined,
+                        tooltip:
+                          selectedBracket == null
+                            ? MergePageStrings.selectABracketStack()
+                            : undefined,
                       },
                     ]}
                     onSelect={(action: MergeAction) => {
@@ -416,9 +470,11 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                       else if (action === 'bracket') void photos.mergeSelectedBracket();
                       else if (mergeCandidate.kind === 'ready') {
                         const source = listing.source;
-                        void photos.startAssembly(mergeCandidate.frames.map((frame) => frame.id)).then((jobId) => {
-                          if (jobId != null) navigate(mergeJobPath(jobId, source));
-                        });
+                        void photos
+                          .startAssembly(mergeCandidate.frames.map((frame) => frame.id))
+                          .then((jobId) => {
+                            if (jobId != null) navigate(mergeJobPath(jobId, source));
+                          });
                       }
                     }}
                   />
@@ -429,18 +485,29 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                   <>
                     {libraryId != null && (
                       <Submenu
-                        label={store.selectionInAShoot ? BulkBarStrings.moveToShoot() : BulkBarStrings.addToShoot()}
+                        label={
+                          store.selectionInAShoot
+                            ? BulkBarStrings.moveToShoot()
+                            : BulkBarStrings.addToShoot()
+                        }
                         icon={<FolderInput size={ICON} />}
                         options={[
-                          ...filable.map((shoot) => ({ value: shoot.id, label: shoot.folder_path })),
+                          ...filable.map((shoot) => ({
+                            value: shoot.id,
+                            label: shoot.folder_path,
+                          })),
                           {
                             value: NEW_COLLECTION,
-                            label: store.selectionInAShoot ? BulkBarStrings.moveToNewShoot() : BulkBarStrings.addToNewShoot(),
+                            label: store.selectionInAShoot
+                              ? BulkBarStrings.moveToNewShoot()
+                              : BulkBarStrings.addToNewShoot(),
                             icon: <Plus size={ICON} />,
                           },
                         ]}
                         onSelect={(shootId) =>
-                          shootId === NEW_COLLECTION ? setCreating('shoot') : void photos.addSelectedToShoot(shootId)
+                          shootId === NEW_COLLECTION
+                            ? setCreating('shoot')
+                            : void photos.addSelectedToShoot(shootId)
                         }
                         disabled={readOnly}
                         tooltip={readOnlyRefusal}
@@ -451,10 +518,16 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                       icon={<Images size={ICON} />}
                       options={[
                         ...albums.albums.map((album) => ({ value: album.id, label: album.name })),
-                        { value: NEW_COLLECTION, label: BulkBarStrings.addToNewAlbum(), icon: <Plus size={ICON} /> },
+                        {
+                          value: NEW_COLLECTION,
+                          label: BulkBarStrings.addToNewAlbum(),
+                          icon: <Plus size={ICON} />,
+                        },
                       ]}
                       onSelect={(albumId) =>
-                        albumId === NEW_COLLECTION ? setCreating('album') : void photos.addSelectedToAlbum(albumId)
+                        albumId === NEW_COLLECTION
+                          ? setCreating('album')
+                          : void photos.addSelectedToAlbum(albumId)
                       }
                     />
                     {libraryId != null && (
@@ -462,8 +535,14 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                         label={AddLabelMenuStrings.addLabel()}
                         icon={<Tag size={ICON} />}
                         options={[
-                          { value: EDIT_LABELS, label: EditLabelsStrings.open(), icon: <Pencil size={ICON} /> },
-                          ...labelsStore.labelsOf(libraryId).map((label) => ({ value: label.id, label: label.name })),
+                          {
+                            value: EDIT_LABELS,
+                            label: EditLabelsStrings.open(),
+                            icon: <Pencil size={ICON} />,
+                          },
+                          ...labelsStore
+                            .labelsOf(libraryId)
+                            .map((label) => ({ value: label.id, label: label.name })),
                         ]}
                         onSelect={(labelId) => {
                           if (labelId === EDIT_LABELS) {
@@ -495,48 +574,57 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
               // §7.6. Named per peer because that is what the action is: the copy here goes only
               // once the one over there answers for itself, so which peer is asked is the whole
               // decision.
-              ...(peers.length > 0 ?
-                [
-                  menuSection({
-                    content: (
-                      <Submenu
-                        label={BulkBarStrings.sync()}
-                        icon={<RefreshCw size={ICON} />}
-                        options={peers.map((p) => ({
-                          value: p.peer_id,
-                          label: BulkBarStrings.removeLocalCopyKeptOn(p.name),
-                          icon: <HardDrive size={ICON} />,
-                        }))}
-                        onSelect={async (peerId) => {
-                          const target = photos.selectionTarget();
-                          if (target == null || libraryId == null) return;
-                          const name = replicationStore.peerName(libraryId, peerId);
-                          const confirmed = await confirm.ask({
-                            title: BulkBarStrings.removeLocalCopyQuestion(count, store.allSelected),
-                            body: BulkBarStrings.removeLocalCopyWarning(name),
-                            action: BulkBarStrings.removeLocalCopy(),
-                            tone: 'danger',
-                          });
-                          if (confirmed) void replication.removeLocalCopies(target, libraryId, peerId);
-                        }}
-                        disabled={readOnly}
-                        tooltip={readOnlyRefusal}
-                      />
-                    ),
-                  }),
-                ]
-              : []),
+              ...(peers.length > 0
+                ? [
+                    menuSection({
+                      content: (
+                        <Submenu
+                          label={BulkBarStrings.sync()}
+                          icon={<RefreshCw size={ICON} />}
+                          options={peers.map((p) => ({
+                            value: p.peer_id,
+                            label: BulkBarStrings.removeLocalCopyKeptOn(p.name),
+                            icon: <HardDrive size={ICON} />,
+                          }))}
+                          onSelect={async (peerId) => {
+                            const target = photos.selectionTarget();
+                            if (target == null || libraryId == null) return;
+                            const name = replicationStore.peerName(libraryId, peerId);
+                            const confirmed = await confirm.ask({
+                              title: BulkBarStrings.removeLocalCopyQuestion(
+                                count,
+                                store.allSelected,
+                              ),
+                              body: BulkBarStrings.removeLocalCopyWarning(name),
+                              action: BulkBarStrings.removeLocalCopy(),
+                              tone: 'danger',
+                            });
+                            if (confirmed)
+                              void replication.removeLocalCopies(target, libraryId, peerId);
+                          }}
+                          disabled={readOnly}
+                          tooltip={readOnlyRefusal}
+                        />
+                      ),
+                    }),
+                  ]
+                : []),
               menuSection({
                 content: <SendToFrameTv onSend={(tvId) => void frameTv.sendSelection(tvId)} />,
                 options: photoOptions({
                   bin: binLabel,
                   revealable: revealId != null,
                   hide: hidingLabel(hiding?.shown, BulkBarStrings.hide(), BulkBarStrings.hideCount),
-                  unhide: hidingLabel(hiding?.hidden, BulkBarStrings.unhide(), BulkBarStrings.unhideCount),
+                  unhide: hidingLabel(
+                    hiding?.hidden,
+                    BulkBarStrings.unhide(),
+                    BulkBarStrings.unhideCount,
+                  ),
                 }),
                 onSelect: (action) => {
                   if (action === 'export') openExport();
-                  else if (action === 'reveal') void (revealId != null && photos.revealOriginal(revealId));
+                  else if (action === 'reveal')
+                    void (revealId != null && photos.revealOriginal(revealId));
                   else if (action === 'thumbnails') void photos.rebuildGridRenditions();
                   else if (action === 'metadata') void photos.refreshMetadataForSelection();
                   else if (action === 'hide') void photos.hideSelected(true);

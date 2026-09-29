@@ -14,7 +14,9 @@ const FETCH_BACK_POLL_MS = 500;
 const REFRESH_MS = 150;
 
 function message(err: unknown): string {
-  return err instanceof ApiError && err.code !== 'NETWORK_ERROR' ? err.message : BackupPresenterStrings.retryAdvice();
+  return err instanceof ApiError && err.code !== 'NETWORK_ERROR'
+    ? err.message
+    : BackupPresenterStrings.retryAdvice();
 }
 
 export class BackupPresenter {
@@ -117,17 +119,32 @@ export class BackupPresenter {
       if (resume && before?.configured === true) {
         const transfers = await blobsApi.listTransfers(libraryId);
         for (const transfer of transfers) {
-          if (transfer.library_id === libraryId && transfer.peer_id === before.peer_id && transfer.state === 'paused') {
+          if (
+            transfer.library_id === libraryId &&
+            transfer.peer_id === before.peer_id &&
+            transfer.state === 'paused'
+          ) {
             await blobsApi.resumeTransfer(transfer.id);
           }
         }
       }
       const { status, report } = await backupApi.run(libraryId);
       this.changed(status);
-      if (report.outcome !== 'complete' || !status.configured || (status.status !== 'current' && status.status !== 'empty')) {
-        this.toasts.showError(BackupPresenterStrings.unfinished(report.outcome), status.configured ? BackupStatusStrings.label(status) : BackupPresenterStrings.chooseFolder());
+      if (
+        report.outcome !== 'complete' ||
+        !status.configured ||
+        (status.status !== 'current' && status.status !== 'empty')
+      ) {
+        this.toasts.showError(
+          BackupPresenterStrings.unfinished(report.outcome),
+          status.configured
+            ? BackupStatusStrings.label(status)
+            : BackupPresenterStrings.chooseFolder(),
+        );
       } else {
-        this.toasts.show(BackupPresenterStrings.completed(report.copied, report.moved, report.offloaded));
+        this.toasts.show(
+          BackupPresenterStrings.completed(report.copied, report.moved, report.offloaded),
+        );
       }
       if (report.offloaded > 0) await this.photos.reload();
     } catch (err) {
@@ -198,7 +215,8 @@ export class BackupPresenter {
       const progress = await backupApi.fetchBackProgress(libraryId);
       if (this.watching) this.putProgress(progress);
     } catch {}
-    if (this.watching) this.nextRead = setTimeout(() => void this.readFetchBack(libraryId), FETCH_BACK_POLL_MS);
+    if (this.watching)
+      this.nextRead = setTimeout(() => void this.readFetchBack(libraryId), FETCH_BACK_POLL_MS);
   }
 
   private stopWatching(): void {

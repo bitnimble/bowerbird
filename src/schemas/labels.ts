@@ -41,7 +41,11 @@ export const SaveLabelsRequestSchema = z.object({
   labels: z
     .array(
       z
-        .object({ id: IdSchema.optional(), name: LabelNameSchema.optional(), colour: LabelColourSchema.optional() })
+        .object({
+          id: IdSchema.optional(),
+          name: LabelNameSchema.optional(),
+          colour: LabelColourSchema.optional(),
+        })
         .refine((label) => label.id != null || (label.name != null && label.colour != null), {
           message: 'a new label needs a name and a colour',
         }),

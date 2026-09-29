@@ -42,7 +42,9 @@ test('an empty repository turns checking off', () => {
 });
 
 test('a filename is encoded into the path', () => {
-  expect(updateSource({}).assetUrl('v1.0.0', 'Bowerbird 1.0.0.dmg')).toContain('Bowerbird%201.0.0.dmg');
+  expect(updateSource({}).assetUrl('v1.0.0', 'Bowerbird 1.0.0.dmg')).toContain(
+    'Bowerbird%201.0.0.dmg',
+  );
 });
 
 // The one that would bite an air-gapped deployment silently: an endpoint somewhere else
@@ -50,7 +52,9 @@ test('a filename is encoded into the path', () => {
 // fall back to a guessed URL on the *public* github.com repo - and fetch a checksum and a
 // payload from a host the operator had configured this precisely never to talk to.
 test('a custom endpoint has no github.com to fall back to', () => {
-  const source = updateSource({ BOWERBIRD_UPDATE_URL: 'https://releases.example.invalid/list.json' });
+  const source = updateSource({
+    BOWERBIRD_UPDATE_URL: 'https://releases.example.invalid/list.json',
+  });
   expect(source.assetUrl('v1.0.0', 'p.tar.gz')).toBeNull();
 });
 
@@ -80,8 +84,12 @@ test('a repository of whitespace alone turns checking off', () => {
 const FALLBACK = `https://github.com/${GITHUB_REPO}/releases/download/v1.0.0/p.tar.gz`;
 
 test('a release that reports where its own file is, is believed', () => {
-  expect(downloadUrl('https://mirror.example.invalid/p.tar.gz', FALLBACK)).toBe('https://mirror.example.invalid/p.tar.gz');
-  expect(downloadUrl('HTTP://mirror.example.invalid/p.tar.gz', FALLBACK)).toBe('HTTP://mirror.example.invalid/p.tar.gz');
+  expect(downloadUrl('https://mirror.example.invalid/p.tar.gz', FALLBACK)).toBe(
+    'https://mirror.example.invalid/p.tar.gz',
+  );
+  expect(downloadUrl('HTTP://mirror.example.invalid/p.tar.gz', FALLBACK)).toBe(
+    'HTTP://mirror.example.invalid/p.tar.gz',
+  );
 });
 
 test('a release that reports nothing gets the constructed URL', () => {

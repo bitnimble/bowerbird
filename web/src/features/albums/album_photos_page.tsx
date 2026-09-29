@@ -37,7 +37,9 @@ export const AlbumPhotosPage = observer(function AlbumPhotosPage(): JSX.Element 
       </PageHead>
 
       <GridControls />
-      <BulkBar collection={album == null ? undefined : { kind: 'album', id: album.id, name: album.name }} />
+      <BulkBar
+        collection={album == null ? undefined : { kind: 'album', id: album.id, name: album.name }}
+      />
       <PhotoGrid emptyHint={PhotoGridStrings.addFromLibraryHint()} />
     </Page>
   );

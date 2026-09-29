@@ -114,12 +114,16 @@ export class LibrariesRepository {
   }
 
   getConfiguration(id: string): LibraryConfiguration | null {
-    const row = this.db.query(`SELECT ${COLUMNS} FROM libraries l WHERE l.id = ?`).get(id) as LibraryConfigurationRow | null;
+    const row = this.db
+      .query(`SELECT ${COLUMNS} FROM libraries l WHERE l.id = ?`)
+      .get(id) as LibraryConfigurationRow | null;
     return row == null ? null : mapConfiguration(row);
   }
 
   listConfigurations(): LibraryConfiguration[] {
-    const rows = this.db.query(`SELECT ${COLUMNS} FROM libraries l ORDER BY l.root_path`).all() as LibraryConfigurationRow[];
+    const rows = this.db
+      .query(`SELECT ${COLUMNS} FROM libraries l ORDER BY l.root_path`)
+      .all() as LibraryConfigurationRow[];
     return rows.map(mapConfiguration);
   }
 
@@ -138,85 +142,122 @@ export class LibrariesRepository {
   }
 
   setName(id: string, name: string): boolean {
-    return this.db.query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?').run(name, stamp(this.db), id).changes > 0;
+    return (
+      this.db
+        .query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?')
+        .run(name, stamp(this.db), id).changes > 0
+    );
   }
 
   setOrdering(id: string, ordering: Ordering): boolean {
     return (
-      this.db.query('UPDATE libraries SET ordering = ?, stamp = ? WHERE id = ?').run(ordering, stamp(this.db), id).changes > 0
+      this.db
+        .query('UPDATE libraries SET ordering = ?, stamp = ? WHERE id = ?')
+        .run(ordering, stamp(this.db), id).changes > 0
     );
   }
 
   setRenditionSource(id: string, source: RenditionSource): boolean {
-    return this.db.query('UPDATE libraries SET rendition_source = ? WHERE id = ?').run(source, id).changes > 0;
+    return (
+      this.db.query('UPDATE libraries SET rendition_source = ? WHERE id = ?').run(source, id)
+        .changes > 0
+    );
   }
 
   setRenditionHdr(id: string, hdr: boolean): boolean {
-    return this.db.query('UPDATE libraries SET rendition_hdr = ? WHERE id = ?').run(hdr ? 1 : 0, id).changes > 0;
+    return (
+      this.db.query('UPDATE libraries SET rendition_hdr = ? WHERE id = ?').run(hdr ? 1 : 0, id)
+        .changes > 0
+    );
   }
 
-  setRenderSkip(id: string, rendition: RenderedRendition, stages: readonly OptionalStage[]): boolean {
+  setRenderSkip(
+    id: string,
+    rendition: RenderedRendition,
+    stages: readonly OptionalStage[],
+  ): boolean {
     // Chosen between the two spelled here rather than built out of anything a caller sent.
     const column = rendition === 'full' ? 'render_skip_full' : 'render_skip_max';
-    return this.db.query(`UPDATE libraries SET ${column} = ? WHERE id = ?`).run(writeStages(stages), id).changes > 0;
+    return (
+      this.db.query(`UPDATE libraries SET ${column} = ? WHERE id = ?`).run(writeStages(stages), id)
+        .changes > 0
+    );
   }
 
   setDenoiser(id: string, denoiser: Denoiser): boolean {
-    return this.db.query('UPDATE libraries SET denoiser = ? WHERE id = ?').run(denoiser, id).changes > 0;
+    return (
+      this.db.query('UPDATE libraries SET denoiser = ? WHERE id = ?').run(denoiser, id).changes > 0
+    );
   }
 
   setIncludeSubfolders(id: string, include: boolean): boolean {
     return (
-      this.db.query('UPDATE libraries SET include_subfolders = ?, stamp = ? WHERE id = ?').run(include ? 1 : 0, stamp(this.db), id)
-        .changes > 0
+      this.db
+        .query('UPDATE libraries SET include_subfolders = ?, stamp = ? WHERE id = ?')
+        .run(include ? 1 : 0, stamp(this.db), id).changes > 0
     );
   }
 
   setIncludeNonRaw(id: string, include: boolean): boolean {
     return (
-      this.db.query('UPDATE libraries SET include_non_raw = ?, stamp = ? WHERE id = ?').run(include ? 1 : 0, stamp(this.db), id)
-        .changes > 0
+      this.db
+        .query('UPDATE libraries SET include_non_raw = ?, stamp = ? WHERE id = ?')
+        .run(include ? 1 : 0, stamp(this.db), id).changes > 0
     );
   }
 
   setAutoStack(id: string, enabled: boolean): boolean {
     return (
-      this.db.query('UPDATE libraries SET auto_stack = ?, stamp = ? WHERE id = ?').run(enabled ? 1 : 0, stamp(this.db), id)
-        .changes > 0
+      this.db
+        .query('UPDATE libraries SET auto_stack = ?, stamp = ? WHERE id = ?')
+        .run(enabled ? 1 : 0, stamp(this.db), id).changes > 0
     );
   }
 
   setAutoStackSimilarity(id: string, similarity: number): boolean {
     return (
-      this.db.query('UPDATE libraries SET auto_stack_similarity = ?, stamp = ? WHERE id = ?').run(similarity, stamp(this.db), id)
-        .changes > 0
+      this.db
+        .query('UPDATE libraries SET auto_stack_similarity = ?, stamp = ? WHERE id = ?')
+        .run(similarity, stamp(this.db), id).changes > 0
     );
   }
 
   setAutoStackWindow(id: string, seconds: number): boolean {
     return (
-      this.db.query('UPDATE libraries SET auto_stack_window_seconds = ?, stamp = ? WHERE id = ?').run(seconds, stamp(this.db), id)
-        .changes > 0
+      this.db
+        .query('UPDATE libraries SET auto_stack_window_seconds = ?, stamp = ? WHERE id = ?')
+        .run(seconds, stamp(this.db), id).changes > 0
     );
   }
 
   setReadOnly(id: string, readOnly: boolean): boolean {
-    return this.db.query('UPDATE libraries SET read_only = ? WHERE id = ?').run(readOnly ? 1 : 0, id).changes > 0;
+    return (
+      this.db.query('UPDATE libraries SET read_only = ? WHERE id = ?').run(readOnly ? 1 : 0, id)
+        .changes > 0
+    );
   }
 
   setBinName(id: string, binName: string | null): boolean {
     return (
-      this.db.query('UPDATE libraries SET bin_name = ?, stamp = ? WHERE id = ?').run(binName, stamp(this.db), id).changes > 0
+      this.db
+        .query('UPDATE libraries SET bin_name = ?, stamp = ? WHERE id = ?')
+        .run(binName, stamp(this.db), id).changes > 0
     );
   }
 
   // Read and written apart from `Library`, mirroring the shoots' folder identity
   // (`shoots_repository.ts`): on the row it would leak into every API response.
   getBinIdentity(id: string): BinIdentity | null {
-    const row = this.db.query('SELECT bin_dev, bin_ino, bin_birthtime FROM libraries WHERE id = ?').get(id) as
-      | { bin_dev: number | null; bin_ino: number | null; bin_birthtime: number | null }
-      | null;
-    return row == null ? null : { dev: row.bin_dev, ino: row.bin_ino, birthtime: row.bin_birthtime };
+    const row = this.db
+      .query('SELECT bin_dev, bin_ino, bin_birthtime FROM libraries WHERE id = ?')
+      .get(id) as {
+      bin_dev: number | null;
+      bin_ino: number | null;
+      bin_birthtime: number | null;
+    } | null;
+    return row == null
+      ? null
+      : { dev: row.bin_dev, ino: row.bin_ino, birthtime: row.bin_birthtime };
   }
 
   setBinIdentity(id: string, identity: BinIdentity): void {

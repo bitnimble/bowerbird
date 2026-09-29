@@ -13,7 +13,16 @@ test('the configuration record carries the sequence header, which the AVIF does 
   // description, which is the whole difference between HDR and a flat picture. The
   // AVIF's own record is the four bytes below and nothing else, because AVIF leaves the
   // sequence header in the item data.
-  const record = find(avifToMp4(still), ['moov', 'trak', 'mdia', 'minf', 'stbl', 'stsd', 'av01', 'av1C']);
+  const record = find(avifToMp4(still), [
+    'moov',
+    'trak',
+    'mdia',
+    'minf',
+    'stbl',
+    'stsd',
+    'av01',
+    'av1C',
+  ]);
   expect(record.length).toBeGreaterThan(4);
   expect(record[0]).toBe(0x81); // marker and version 1
   // An OBU header: type in bits 3-6, and 1 is a sequence header.
@@ -45,7 +54,16 @@ test('the sample table points at the sample', () => {
 test('the colour signalling comes across', () => {
   // Without it the video is BT.709 by default and Firefox composites it SDR, which is
   // the state this whole package exists to get out of.
-  const colr = find(avifToMp4(still), ['moov', 'trak', 'mdia', 'minf', 'stbl', 'stsd', 'av01', 'colr']);
+  const colr = find(avifToMp4(still), [
+    'moov',
+    'trak',
+    'mdia',
+    'minf',
+    'stbl',
+    'stsd',
+    'av01',
+    'colr',
+  ]);
   const view = new DataView(colr.buffer, colr.byteOffset, colr.byteLength);
   expect(String.fromCharCode(...colr.subarray(0, 4))).toBe('nclx');
   expect(view.getUint16(4)).toBe(9); // BT.2020 primaries
@@ -71,7 +89,13 @@ test('irot carries into the video track display matrix', () => {
     expect(orientationOfAvif(avif)).toBe(clockwise);
     const track = find(avifToMp4(avif), ['moov', 'trak', 'tkhd']);
     const view = new DataView(track.buffer, track.byteOffset, track.byteLength);
-    expect(Array.from({ length: 9 }, (_, i) => view.getInt32(40 + i * 4) / (i === 2 || i === 5 || i === 8 ? 0x40000000 : 0x10000))).toEqual([...matrix]);
+    expect(
+      Array.from(
+        { length: 9 },
+        (_, i) =>
+          view.getInt32(40 + i * 4) / (i === 2 || i === 5 || i === 8 ? 0x40000000 : 0x10000),
+      ),
+    ).toEqual([...matrix]);
   }
   expect(orientationOfAvif(still)).toBe(0);
 });
@@ -110,7 +134,8 @@ function find(bytes: Uint8Array, path: string[]): Uint8Array {
       at += size;
     }
     if (found == null) throw new Error(`no ${path.slice(0, depth + 1).join('/')} in the file`);
-    [start, end] = depth === path.length - 1 ? found : [found[0] + (FIXED_FIELDS[type] ?? 0), found[1]];
+    [start, end] =
+      depth === path.length - 1 ? found : [found[0] + (FIXED_FIELDS[type] ?? 0), found[1]];
   }
   return bytes.subarray(start, end);
 }

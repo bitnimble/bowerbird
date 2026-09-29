@@ -18,7 +18,11 @@ import { gotoPhoto, shownFrame, useLibrary } from '../helpers';
 // the whole point of the file.
 test.use({
   launchOptions: {
-    args: ['--no-sandbox', '--ozone-platform=headless', '--disable-features=WebGPU,WebGPUExperimentalFeatures'],
+    args: [
+      '--no-sandbox',
+      '--ozone-platform=headless',
+      '--disable-features=WebGPU,WebGPUExperimentalFeatures',
+    ],
   },
 });
 

@@ -28,7 +28,18 @@ function presenter(): PhotosPresenter {
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
-  return new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, toasts, absent, absent);
+  return new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    toasts,
+    absent,
+    absent,
+  );
 }
 
 beforeEach(() => {
@@ -69,5 +80,8 @@ test('a file the shell could not show is reported', async () => {
   await presenter().revealOriginal('p0');
   await presenter().revealFile('/library/p0.ARW');
 
-  expect(shown).toEqual([PhotosPresenterStrings.revealFailed(), PhotosPresenterStrings.revealFailed()]);
+  expect(shown).toEqual([
+    PhotosPresenterStrings.revealFailed(),
+    PhotosPresenterStrings.revealFailed(),
+  ]);
 });

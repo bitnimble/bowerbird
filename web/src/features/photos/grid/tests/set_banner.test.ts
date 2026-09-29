@@ -19,7 +19,8 @@ const shown: string[] = [];
 const failed: string[] = [];
 let refuse: Error | null = null;
 
-const row = (id: string): PhotoSummary => ({ id, stack_id: null, stack_size: 1 }) as unknown as PhotoSummary;
+const row = (id: string): PhotoSummary =>
+  ({ id, stack_id: null, stack_size: 1 }) as unknown as PhotoSummary;
 
 function open(): { store: MarksStore; presenter: PhotosPresenter } {
   const shoots = {
@@ -43,7 +44,18 @@ function open(): { store: MarksStore; presenter: PhotosPresenter } {
   const listing = new ListingStore(stacks);
   const store = new MarksStore(listing, stacks);
   const viewer = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, store, stacks, viewer, absent, shoots, albums, toasts, absent, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    store,
+    stacks,
+    viewer,
+    absent,
+    shoots,
+    albums,
+    toasts,
+    absent,
+    absent,
+  );
   runInAction(() => {
     listing.total = 3;
     listing.rows = new Map([

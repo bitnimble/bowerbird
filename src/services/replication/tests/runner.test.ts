@@ -53,7 +53,9 @@ it('reports a sync held by library work and clears activity after success or ref
 
 function graves(peer: Peer): number {
   const row = peer.db
-    .query("SELECT COUNT(*) AS n FROM replication_log WHERE library_id = ? AND entity = 'photo' AND deleted = 1")
+    .query(
+      "SELECT COUNT(*) AS n FROM replication_log WHERE library_id = ? AND entity = 'photo' AND deleted = 1",
+    )
     .get(LIB) as { n: number };
   return row.n;
 }

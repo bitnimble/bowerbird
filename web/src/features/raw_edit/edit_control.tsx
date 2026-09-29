@@ -27,7 +27,13 @@ export function SelectControl<T extends string>({
       <Text as="span" style={styles.name}>
         {label}
       </Text>
-      <Select style={styles.selectEnd} label={label} options={options} value={value} onChange={onChange} />
+      <Select
+        style={styles.selectEnd}
+        label={label}
+        options={options}
+        value={value}
+        onChange={onChange}
+      />
     </div>
   );
 }
@@ -59,11 +65,13 @@ export function EditControl({
         <Text as="span" style={styles.name}>
           {label}
         </Text>
-        {typing == null ?
+        {typing == null ? (
           <Text variant="mono" as="span" style={styles.value}>
             {value}
           </Text>
-        : <TypedReadout label={label} value={value} typing={typing} />}
+        ) : (
+          <TypedReadout label={label} value={value} typing={typing} />
+        )}
         <ResetButton label={EditControlStrings.resetControl(label)} reset={reset} />
       </div>
       {children}
@@ -75,7 +83,13 @@ export function EditControl({
  * Held in its row rather than removed from it, so crossing the rest position does not shuffle
  * what sits beside it sideways under the pointer.
  */
-export function ResetButton({ label, reset }: { label: string; reset: (() => void) | null }): JSX.Element {
+export function ResetButton({
+  label,
+  reset,
+}: {
+  label: string;
+  reset: (() => void) | null;
+}): JSX.Element {
   return (
     <Tooltip label={label}>
       <button
@@ -95,12 +109,21 @@ export interface Typing extends TypedRange {
   set: (value: number) => void;
 }
 
-function TypedReadout({ label, value, typing }: { label: string; value: string; typing: Typing }): JSX.Element {
+function TypedReadout({
+  label,
+  value,
+  typing,
+}: {
+  label: string;
+  value: string;
+  typing: Typing;
+}): JSX.Element {
   const [draft, setDraft] = useState<string | null>(null);
   const cancelled = useRef(false);
   const commit = (): void => {
     // An untouched draft is the readout, rounded: committing it would round the stored value.
-    const typed = draft == null || draft === value || cancelled.current ? null : typedValue(draft, typing);
+    const typed =
+      draft == null || draft === value || cancelled.current ? null : typedValue(draft, typing);
     cancelled.current = false;
     setDraft(null);
     if (typed != null) typing.set(typed);

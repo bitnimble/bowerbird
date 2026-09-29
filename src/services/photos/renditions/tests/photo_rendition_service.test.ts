@@ -15,13 +15,20 @@ import type { SettingsRepository } from '../../../settings/settings_repository';
 import { DEFAULT_SETTINGS } from '../../../../schemas/settings';
 import type { ShootsRepository } from '../../../shoots/shoots_repository';
 import { getDataPath, getRenditionPath } from '../../../../utils/paths';
-import { resolveRenditionToBuild, resolveShownRendition, type RenditionContext } from '../photo_rendition_policy';
+import {
+  resolveRenditionToBuild,
+  resolveShownRendition,
+  type RenditionContext,
+} from '../photo_rendition_policy';
 import type { PhotoCompositesRepository } from '../../composites/photo_composites_repository';
 import type { PhotoMetadataRepository } from '../../metadata/photo_metadata_repository';
 import type { PhotoPathsRepository } from '../../paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../photo_processing_repository';
 import type { PhotoNavigationRepository } from '../../listing/photo_navigation_repository';
-import type { PhotoListResult, PhotoListingRepository } from '../../listing/photo_listing_repository';
+import type {
+  PhotoListResult,
+  PhotoListingRepository,
+} from '../../listing/photo_listing_repository';
 import { PhotoReadService } from '../../listing/photo_read_service';
 import { PhotoRenditionService } from '../photo_rendition_service';
 import type { RenditionFetchService } from '../../../blobs/rendition_fetch_service';
@@ -52,7 +59,10 @@ function build(over: {
     listByAlbum: jest.fn(() => emptyResult),
     ...over.photoListing,
   } as unknown as PhotoListingRepository;
-  const photoMetadata = { updateMetadata: jest.fn(), ...over.photoMetadata } as unknown as PhotoMetadataRepository;
+  const photoMetadata = {
+    updateMetadata: jest.fn(),
+    ...over.photoMetadata,
+  } as unknown as PhotoMetadataRepository;
   const photoProcessing = {
     // An unedited photograph, which is what every test here that is not about edits
     // means: nothing to have moved past, so every stored copy reads as current.
@@ -67,7 +77,11 @@ function build(over: {
     ...over.libraries,
   } as unknown as LibrariesRepository;
   const shoots = { getById: jest.fn(() => null), ...over.shoots } as unknown as ShootsRepository;
-  const albums = { getById: jest.fn(() => null), getAlbumIdsForPhoto: jest.fn(() => []), ...over.albums } as unknown as AlbumsRepository;
+  const albums = {
+    getById: jest.fn(() => null),
+    getAlbumIdsForPhoto: jest.fn(() => []),
+    ...over.albums,
+  } as unknown as AlbumsRepository;
   // These tests never render, so a stub keeps the native library and worker threads out.
   const processing = {
     renderLossless: jest.fn(async () => {}),
@@ -116,12 +130,29 @@ function build(over: {
   };
 }
 
-const library: Library = { id: 'lib', root_path: '/r', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
+const library: Library = {
+  id: 'lib',
+  root_path: '/r',
+  bin_name: 'Bin',
+  read_only: false,
+  name: 'lib',
+  ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
-  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
+  render_skip_full: [],
+  render_skip_max: [],
+  denoiser: 'galosh',
+  include_subfolders: true,
+  include_non_raw: false,
+  auto_stack: true,
+  auto_stack_similarity: 0.78,
+  auto_stack_window_seconds: 60,
+  last_synced_at: null,
+  photo_count: 0,
+  missing_photo_count: 0,
+  unavailable_photo_count: 0,
+  rendered_photo_count: 0,
+};
 const detail = { id: 'p1', file_path: 'a.arw', recipe: fileRecipe('a.arw') } as PhotoDetail;
 
 function panoramaRecipe(): Recipe {
@@ -147,8 +178,15 @@ function panoramaRecipe(): Recipe {
 }
 
 describe('PhotoRenditionService.rebuildIfStale', () => {
-  const stamps = (over: Partial<{ built_from: string | null; edited_from: string | null; failed: boolean }>) => ({
-    renditionStamps: jest.fn(() => ({ built_from: null, edited_from: null, failed: false, ...over })),
+  const stamps = (
+    over: Partial<{ built_from: string | null; edited_from: string | null; failed: boolean }>,
+  ) => ({
+    renditionStamps: jest.fn(() => ({
+      built_from: null,
+      edited_from: null,
+      failed: false,
+      ...over,
+    })),
   });
 
   it('queues nothing for a photograph nobody has edited', () => {
@@ -176,7 +214,9 @@ describe('PhotoRenditionService.rebuildIfStale', () => {
    * forever and erase the failure the view exists to report.
    */
   it('leaves a photograph whose render already failed alone', () => {
-    const { service, processing } = build({ photoProcessing: stamps({ edited_from: 'edits-2', failed: true }) });
+    const { service, processing } = build({
+      photoProcessing: stamps({ edited_from: 'edits-2', failed: true }),
+    });
 
     service.rebuildIfStale('p1');
 
@@ -197,12 +237,22 @@ describe('PhotoRenditionService.buildRendition', () => {
       const pending: (() => void)[] = [];
       const renderOne = jest.fn(() => new Promise<void>((resolve) => pending.push(resolve)));
       const { service, processing } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
       });
 
-      const both = Promise.all([service.buildRendition('p1', 'full'), service.buildRendition('p1', 'full')]);
+      const both = Promise.all([
+        service.buildRendition('p1', 'full'),
+        service.buildRendition('p1', 'full'),
+      ]);
       // The render is reached through an await - the original is asked for first, and it may not
       // be on this disk (§14.4) - so the call has not happened in the tick that started it.
       await settle();
@@ -213,7 +263,10 @@ describe('PhotoRenditionService.buildRendition', () => {
         'rendition already building',
         { photo: 'p1', rendition: 'full', forced: false, hdr: null, via: null },
       ]);
-      expect(logged.mock.calls).toContainEqual(['rendition cache', { photo: 'p1', rendition: 'full', hdr: false, cache: 'miss' }]);
+      expect(logged.mock.calls).toContainEqual([
+        'rendition cache',
+        { photo: 'p1', rendition: 'full', hdr: false, cache: 'miss' },
+      ]);
 
       // And the next one renders again: the guard is for the overlap, not a cache.
       // Nothing was written here, so there is no file to stop it.
@@ -235,16 +288,39 @@ describe('PhotoRenditionService.buildRendition', () => {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
       const renderOne = jest.fn(async () => {});
       const { service } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
       });
 
       await service.buildRendition('p1', 'full');
-      expect(renderOne).toHaveBeenLastCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'full', false, 'render', false);
+      expect(renderOne).toHaveBeenLastCalledWith(
+        path.join(root, 'a.arw'),
+        'p1',
+        lib,
+        'full',
+        false,
+        'render',
+        false,
+      );
 
       await service.buildRendition('p1', 'full', true);
-      expect(renderOne).toHaveBeenLastCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'full', false, 'render', true);
+      expect(renderOne).toHaveBeenLastCalledWith(
+        path.join(root, 'a.arw'),
+        'p1',
+        lib,
+        'full',
+        false,
+        'render',
+        true,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -311,14 +387,29 @@ describe('PhotoRenditionService.buildRendition', () => {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
       const renderOne = jest.fn(async () => {});
       const { service } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
       });
 
       await service.buildForPeer('p1', 'max', true, ['laptop0000000000']);
 
-      expect(renderOne).toHaveBeenLastCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'max', true, 'render', false);
+      expect(renderOne).toHaveBeenLastCalledWith(
+        path.join(root, 'a.arw'),
+        'p1',
+        lib,
+        'max',
+        true,
+        'render',
+        false,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -330,12 +421,21 @@ describe('PhotoRenditionService.buildRendition', () => {
     const ensureCurrent = jest.fn(async () => {});
     const relay = jest.fn(async () => {});
     const { service } = build({
-      photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: library.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+      photoPaths: {
+        getBasicById: jest.fn(() => ({
+          id: 'p1',
+          library_id: library.id,
+          shoot_id: null,
+          recipe: fileRecipe('a.arw'),
+        })),
+      },
       libraries: { getConfiguration: jest.fn(() => library) },
       fetchThrough: { takesFromPeer: () => false, ensureCurrent, relay },
     });
 
-    await expect(service.buildForPeer('p1', 'full', false, ['laptop0000000000'])).rejects.toThrow(/no peer could send/);
+    await expect(service.buildForPeer('p1', 'full', false, ['laptop0000000000'])).rejects.toThrow(
+      /no peer could send/,
+    );
     expect(relay).toHaveBeenCalledWith('p1', 'full', false, ['laptop0000000000'], false);
     expect(ensureCurrent).not.toHaveBeenCalled();
   });
@@ -350,7 +450,14 @@ describe('PhotoRenditionService.buildRendition', () => {
         writeFileSync(target, 'CAMERA-JPEG');
       });
       const { service } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         fetchThrough: { takesFromPeer: () => true, ensureCurrent },
       });
@@ -372,7 +479,14 @@ describe('PhotoRenditionService.buildRendition', () => {
       const renderOne = jest.fn(async () => {});
       const ensureCurrent = jest.fn(async () => {});
       const { service } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
         fetchThrough: { takesFromPeer: () => false, ensureCurrent },
@@ -380,7 +494,15 @@ describe('PhotoRenditionService.buildRendition', () => {
 
       await service.buildRendition('p1', 'full', true);
 
-      expect(renderOne).toHaveBeenLastCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'full', lib.rendition_hdr, 'render', true);
+      expect(renderOne).toHaveBeenLastCalledWith(
+        path.join(root, 'a.arw'),
+        'p1',
+        lib,
+        'full',
+        lib.rendition_hdr,
+        'render',
+        true,
+      );
       expect(ensureCurrent).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -399,7 +521,14 @@ describe('PhotoRenditionService.buildRendition', () => {
         writeFileSync(target, 'from a peer');
       });
       const { service } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
         fetchThrough: { takesFromPeer: () => true, ensureCurrent },
@@ -416,7 +545,7 @@ describe('PhotoRenditionService.buildRendition', () => {
 });
 
 describe('PhotoRenditionService.renditionJob', () => {
-  it("hands a client the job the server would have rendered, with the edit stamp it renders", () => {
+  it('hands a client the job the server would have rendered, with the edit stamp it renders', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-client-job-'));
     const lib = { ...library, id: 'photos-client-job', root_path: root };
     try {
@@ -424,7 +553,14 @@ describe('PhotoRenditionService.renditionJob', () => {
       const command = { rawFilePath: '' } as Job;
       const renditionCommand = jest.fn(() => ({ command, builtFrom: 'stamp-1' }));
       const { service } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renditionCommand },
       });
@@ -444,7 +580,12 @@ describe('PhotoRenditionService.renditionJob', () => {
       const recipes = { pano: panoramaRecipe(), gone: fileRecipe('gone.arw') };
       const { service } = build({
         photoPaths: {
-          getBasicById: jest.fn((id: 'pano' | 'gone') => ({ id, library_id: lib.id, shoot_id: null, recipe: recipes[id] })),
+          getBasicById: jest.fn((id: 'pano' | 'gone') => ({
+            id,
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: recipes[id],
+          })),
         },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renditionCommand },
@@ -464,7 +605,14 @@ describe('PhotoRenditionService.renditionJob', () => {
     try {
       const keepRendered = jest.fn(async () => {});
       const { service } = build({
-        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        photoPaths: {
+          getBasicById: jest.fn(() => ({
+            id: 'p1',
+            library_id: lib.id,
+            shoot_id: null,
+            recipe: fileRecipe('a.arw'),
+          })),
+        },
         libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { keepRendered },
       });
@@ -472,7 +620,14 @@ describe('PhotoRenditionService.renditionJob', () => {
 
       await service.keepRendition('p1', 'full', 'stamp-1', rendered);
 
-      expect(keepRendered).toHaveBeenCalledWith('p1', lib, 'full', lib.rendition_hdr, 'stamp-1', rendered);
+      expect(keepRendered).toHaveBeenCalledWith(
+        'p1',
+        lib,
+        'full',
+        lib.rendition_hdr,
+        'stamp-1',
+        rendered,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -554,9 +709,18 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
   it('never opens a photograph with no camera JPEG at one', () => {
     const none = { hasEmbedded: false, builtRenditions: new Set<ViewerRendition>() };
     expect(resolveShownRendition(ctx({ librarySource: 'embedded', ...none }))).toBe('full');
-    expect(resolveShownRendition(ctx({ librarySource: 'embedded', ...none, mode: 'best_available' }))).toBe('full');
     expect(
-      resolveShownRendition(ctx({ librarySource: 'embedded', ...none, mode: 'remember', lastViewerRendition: 'embedded' })),
+      resolveShownRendition(ctx({ librarySource: 'embedded', ...none, mode: 'best_available' })),
+    ).toBe('full');
+    expect(
+      resolveShownRendition(
+        ctx({
+          librarySource: 'embedded',
+          ...none,
+          mode: 'remember',
+          lastViewerRendition: 'embedded',
+        }),
+      ),
     ).toBe('full');
   });
 
@@ -579,7 +743,9 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
     }
     // And the guard is only about the camera JPEG: the same photograph asked for `max` still
     // says so, or it would stop building anything a reader chose.
-    expect(resolveRenditionToBuild(ctx({ librarySource: 'embedded', ...none, mode: 'max' }))).toBe('max');
+    expect(resolveRenditionToBuild(ctx({ librarySource: 'embedded', ...none, mode: 'max' }))).toBe(
+      'max',
+    );
   });
 
   /**
@@ -590,12 +756,19 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
    * copy nobody is building.
    */
   it('opens a composite at the cameras pictures where that is what the library serves', () => {
-    expect(resolveShownRendition(ctx({ composesCameraView: true, librarySource: 'embedded' }))).toBe('embedded');
+    expect(
+      resolveShownRendition(ctx({ composesCameraView: true, librarySource: 'embedded' })),
+    ).toBe('embedded');
     // Not built yet, and still what it is promised: the 404 on it is what composites it.
-    const missing = ctx({ composesCameraView: true, builtRenditions: new Set<ViewerRendition>(['full']) });
+    const missing = ctx({
+      composesCameraView: true,
+      builtRenditions: new Set<ViewerRendition>(['full']),
+    });
     expect(resolveShownRendition(missing)).toBe('embedded');
     // A library that renders is shown the render, which is the copy the merge did build.
-    expect(resolveShownRendition(ctx({ composesCameraView: true, librarySource: 'render' }))).toBe('full');
+    expect(resolveShownRendition(ctx({ composesCameraView: true, librarySource: 'render' }))).toBe(
+      'full',
+    );
   });
 
   /**
@@ -646,14 +819,24 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
   });
 
   it('remember: the last rendition used anywhere, capped at what the library guarantees', () => {
-    const wantsMax = ctx({ mode: 'remember', lastViewerRendition: 'max', librarySource: 'embedded' });
+    const wantsMax = ctx({
+      mode: 'remember',
+      lastViewerRendition: 'max',
+      librarySource: 'embedded',
+    });
     expect(resolveShownRendition(wantsMax)).toBe('embedded');
     expect(resolveRenditionToBuild(wantsMax)).toBe('max');
-    expect(resolveShownRendition(ctx({ mode: 'remember', lastViewerRendition: null }))).toBe('embedded');
+    expect(resolveShownRendition(ctx({ mode: 'remember', lastViewerRendition: null }))).toBe(
+      'embedded',
+    );
   });
 
   it("remember_per_photo: this row's own memory, independent of any other photo", () => {
-    const remembered = ctx({ mode: 'remember_per_photo', rowViewerRendition: 'full', librarySource: 'render' });
+    const remembered = ctx({
+      mode: 'remember_per_photo',
+      rowViewerRendition: 'full',
+      librarySource: 'render',
+    });
     expect(resolveShownRendition(remembered)).toBe('full');
     expect(resolveRenditionToBuild(remembered)).toBeNull();
   });
@@ -663,7 +846,9 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
   // there" fetched `full` first and swapped to the `max` it had already chosen.
   it('best_available: the highest rendition a stat found, and nothing left to build', () => {
     const exact = { mode: 'best_available', librarySource: 'render', builtIsExact: true } as const;
-    expect(resolveShownRendition(ctx({ ...exact, builtRenditions: new Set(['embedded']) }))).toBe('embedded');
+    expect(resolveShownRendition(ctx({ ...exact, builtRenditions: new Set(['embedded']) }))).toBe(
+      'embedded',
+    );
     const rendered = ctx({ ...exact, builtRenditions: new Set(['embedded', 'full']) });
     expect(resolveShownRendition(rendered)).toBe('full');
     expect(resolveRenditionToBuild(rendered)).toBeNull();
@@ -675,7 +860,11 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
   // A listing reads `renditions_built_at`, which a run that wrote no `full` also stamps, so
   // there the same set is a guess and the guarantee is what holds.
   it('best_available: a row is capped at what the library guarantees, its built set being a guess', () => {
-    const row = ctx({ mode: 'best_available', librarySource: 'embedded', builtRenditions: new Set(['embedded', 'full']) });
+    const row = ctx({
+      mode: 'best_available',
+      librarySource: 'embedded',
+      builtRenditions: new Set(['embedded', 'full']),
+    });
     expect(resolveShownRendition(row)).toBe('embedded');
   });
 
@@ -689,7 +878,11 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
     expect(resolveShownRendition(exact)).toBe('max');
     expect(resolveRenditionToBuild(exact)).toBeNull();
 
-    const store = ctx({ mode: 'best_available', librarySource: 'embedded', builtRenditions: new Set(['embedded', 'max']) });
+    const store = ctx({
+      mode: 'best_available',
+      librarySource: 'embedded',
+      builtRenditions: new Set(['embedded', 'max']),
+    });
     expect(resolveShownRendition(store)).toBe('embedded');
     expect(resolveRenditionToBuild(store)).toBe('max');
   });

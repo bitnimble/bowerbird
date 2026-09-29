@@ -29,11 +29,20 @@ const PICKS: Choice[] = [
   { verdict: 'b', label: StackTriageStrings.pickB(), hint: '' },
 ];
 
-const BOTH: Choice = { verdict: 'both', label: StackTriageStrings.both(), hint: StackTriageStrings.bothKey() };
+const BOTH: Choice = {
+  verdict: 'both',
+  label: StackTriageStrings.both(),
+  hint: StackTriageStrings.bothKey(),
+};
 
 // Click-only: every key that could carry it is an arrow, and all four of these
 // name a photograph rather than a fate.
-const NEITHER: Choice = { verdict: 'neither', label: StackTriageStrings.neither(), hint: '', danger: true };
+const NEITHER: Choice = {
+  verdict: 'neither',
+  label: StackTriageStrings.neither(),
+  hint: '',
+  danger: true,
+};
 
 export const VERDICTS: Choice[] = [BOTH, ...PICKS, NEITHER];
 
@@ -85,10 +94,16 @@ const Verdicts = observer(function Verdicts({ ready }: { ready: boolean }): JSX.
         disabled={!ready || store.busy}
         onClick={() => cast(verdict)}
       >
-        {verdict === 'both' ? <Equal size={ICON} /> : verdict === 'neither' ? <Ban size={ICON} /> : null}
+        {verdict === 'both' ? (
+          <Equal size={ICON} />
+        ) : verdict === 'neither' ? (
+          <Ban size={ICON} />
+        ) : null}
         {label}
         {key !== '' && (
-          <ButtonHint style={side ? (verdict === 'a' ? styles.hintA : styles.hintB) : undefined}>{key}</ButtonHint>
+          <ButtonHint style={side ? (verdict === 'a' ? styles.hintA : styles.hintB) : undefined}>
+            {key}
+          </ButtonHint>
         )}
       </Button>
     );
@@ -106,7 +121,13 @@ const Verdicts = observer(function Verdicts({ ready }: { ready: boolean }): JSX.
   );
 });
 
-export const Header = observer(function Header({ onLeave, ready }: { onLeave: () => void; ready: boolean }): JSX.Element {
+export const Header = observer(function Header({
+  onLeave,
+  ready,
+}: {
+  onLeave: () => void;
+  ready: boolean;
+}): JSX.Element {
   const store = useStackTriageStore();
   const { stackTriage } = usePresenters();
   const running = store.status === 'running';
@@ -121,7 +142,10 @@ export const Header = observer(function Header({ onLeave, ready }: { onLeave: ()
         </Button>
         {running && (
           <>
-            <Button disabled={store.history.length === 0 || store.busy} onClick={() => void stackTriage.undo()}>
+            <Button
+              disabled={store.history.length === 0 || store.busy}
+              onClick={() => void stackTriage.undo()}
+            >
               <RotateCcw size={ICON} />
               {PhotoDetailStrings.undo()}
               <ButtonHint>{StackTriageStrings.keysUndo()}</ButtonHint>
@@ -146,7 +170,12 @@ export const Header = observer(function Header({ onLeave, ready }: { onLeave: ()
             value={store.mode}
             onChange={stackTriage.setMode}
             options={[
-              { value: 'flip', label: StackTriageStrings.flip(), icon: <SquareStack size={ICON} />, hint: 'V' },
+              {
+                value: 'flip',
+                label: StackTriageStrings.flip(),
+                icon: <SquareStack size={ICON} />,
+                hint: 'V',
+              },
               { value: 'split', label: StackTriageStrings.split(), icon: <Columns2 size={ICON} /> },
             ]}
           />
@@ -156,4 +185,3 @@ export const Header = observer(function Header({ onLeave, ready }: { onLeave: ()
     </Row>
   );
 });
-

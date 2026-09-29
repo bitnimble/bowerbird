@@ -25,8 +25,7 @@ struct Sample {
 fn sample() -> Sample {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../test/fixtures/tables/module-json.json");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     serde_json::from_str(&text).expect("the page's tick is what this host reads")
 }
 
@@ -38,7 +37,8 @@ fn an_unknown_tone_curve_kind_is_refused() {
 
 #[test]
 fn invalid_curve_points_are_refused_at_the_json_boundary() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/tables/module-json.json");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test/fixtures/tables/module-json.json");
     let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     for points in [
         vec![[0.5, 0.1], [0.4, 0.9]],
@@ -67,9 +67,12 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.shadows, 33.0);
     assert_eq!(adjust.whites, -44.0);
     assert_eq!(adjust.blacks, 55.0);
-    assert_eq!(adjust.tone_curve, Some(rawshim::gpu::ToneCurve::PchipCbrt3 {
-        points: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
-    }));
+    assert_eq!(
+        adjust.tone_curve,
+        Some(rawshim::gpu::ToneCurve::PchipCbrt3 {
+            points: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
+        })
+    );
     assert_eq!(adjust.vibrance, -66.0);
     assert_eq!(adjust.saturation, Some(77.0));
     assert_eq!(adjust.texture, -88.0);
@@ -101,19 +104,29 @@ fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
     let scene = sample().print;
     scene.validate().expect("a valid print scene");
     assert!(matches!(scene.paper, rawshim::print::Paper::Satin));
-    assert_eq!(scene.rendering_intent, rawshim::gpu::Intent::RelativeColorimetric);
+    assert_eq!(
+        scene.rendering_intent,
+        rawshim::gpu::Intent::RelativeColorimetric
+    );
     assert!(!scene.black_point_compensation);
     assert!(matches!(scene.ink, rawshim::print::Ink::Pigment));
     assert_eq!(scene.print_resolution_ppi, 300.0);
     assert!((scene.ink_spread.raw() - 0.045).abs() < 1e-12);
-    assert!(matches!(scene.presentation, rawshim::print::Presentation::Scene));
+    assert!(matches!(
+        scene.presentation,
+        rawshim::print::Presentation::Scene
+    ));
     assert!(scene.framed);
     assert_eq!(scene.environment, rawshim::print::Environment::Hotel);
     assert_eq!(scene.yaw_degrees, -12.0);
     assert_eq!(scene.pitch_degrees, 8.0);
     assert_eq!(scene.key_lux.raw(), 30.0);
     assert_eq!(
-        (scene.light_across.raw(), scene.light_height.raw(), scene.light_forward.raw()),
+        (
+            scene.light_across.raw(),
+            scene.light_height.raw(),
+            scene.light_forward.raw()
+        ),
         (-0.6, 4.2, 2.65),
     );
     assert_eq!(scene.light_angular_degrees, 1.4);
@@ -130,12 +143,15 @@ fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
 
 #[test]
 fn a_print_scene_naming_no_frame_or_environment_is_unframed_in_the_studio() {
-    let mut sample: serde_json::Value = serde_json::from_str(include_str!("../../../test/fixtures/tables/module-json.json"))
-        .expect("the shared module sample");
+    let mut sample: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../test/fixtures/tables/module-json.json"
+    ))
+    .expect("the shared module sample");
     let print = sample["print"].as_object_mut().expect("the print scene");
     print.remove("framed");
     print.remove("environment");
-    let scene = rawshim::print::Scene::parse(&sample["print"].to_string()).expect("an unframed scene");
+    let scene =
+        rawshim::print::Scene::parse(&sample["print"].to_string()).expect("an unframed scene");
     assert!(!scene.framed);
     assert_eq!(scene.environment, rawshim::print::Environment::Studio);
 }

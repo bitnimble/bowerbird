@@ -16,7 +16,15 @@ import {
   visibleBlocks,
   zoomOfColumns,
 } from './grid_layout';
-import { activeFilters, dayDensities, distinctSorted, reachableModels, type ModelPair, type PhotoDay, type PhotoFilters } from './photo_filters';
+import {
+  activeFilters,
+  dayDensities,
+  distinctSorted,
+  reachableModels,
+  type ModelPair,
+  type PhotoDay,
+  type PhotoFilters,
+} from './photo_filters';
 import { ScrollRailStore } from './scroll_rail_store';
 import type { StacksStore } from './stacks_store';
 
@@ -104,7 +112,8 @@ export class ListingStore {
     const filters = this.filters;
     const triage = filters.triage ?? [];
     const opening = activeFilters().triage ?? [];
-    const isOpening = triage.length === opening.length && opening.every((value) => triage.includes(value));
+    const isOpening =
+      triage.length === opening.length && opening.every((value) => triage.includes(value));
     return (
       (triage.length > 0 && !isOpening ? 1 : 0) +
       (filters.rated != null ? 1 : 0) +
@@ -230,7 +239,10 @@ export class ListingStore {
 
   /** The zoom as the slider offers it (`columnsAtZoom`): 0 is as many tiles as the window holds. */
   @computed get zoom(): number {
-    return zoomOfColumns(Math.min(this.maxColumns, gridColumns(this.viewportWidth, this.tileSize)), this.maxColumns);
+    return zoomOfColumns(
+      Math.min(this.maxColumns, gridColumns(this.viewportWidth, this.tileSize)),
+      this.maxColumns,
+    );
   }
 
   /** Where the slider's thumb is while a drag has not yet been laid out. */
@@ -245,7 +257,9 @@ export class ListingStore {
   // Row pitch for the two modes whose rows are uniform. Masonry's are not, which
   // is why it is laid out block by block instead.
   @computed get rowHeight(): number {
-    return this.mode === 'list' ? LIST_ROW_H + GRID_GAP : gridRowHeight(this.viewportWidth, this.columns);
+    return this.mode === 'list'
+      ? LIST_ROW_H + GRID_GAP
+      : gridRowHeight(this.viewportWidth, this.columns);
   }
 
   // Rows of the collection itself, before any stack is opened.
@@ -259,7 +273,10 @@ export class ListingStore {
 
   /** The open stacks, as the row arithmetic wants them (§19.6). */
   @computed get bands(): Band[] {
-    return [...this.stacks.expansions.values()].map((open) => ({ position: open.position, members: open.photos.length }));
+    return [...this.stacks.expansions.values()].map((open) => ({
+      position: open.position,
+      members: open.photos.length,
+    }));
   }
 
   // Which display rows are on screen.
@@ -454,7 +471,11 @@ export class ListingStore {
    * they land.
    */
   @computed.struct get mountedBlocks(): Span {
-    const lead = visibleBlocks(this.blockTops, Math.max(0, this.rail.at - this.viewportHeight), this.viewportHeight);
+    const lead = visibleBlocks(
+      this.blockTops,
+      Math.max(0, this.rail.at - this.viewportHeight),
+      this.viewportHeight,
+    );
     return { from: lead.from, to: this.visibleBlocks.to };
   }
 

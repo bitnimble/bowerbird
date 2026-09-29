@@ -7,9 +7,9 @@
 //! its colour is stated by CICP or ICC, so the camera's values would describe a different picture.
 
 use rawler::exif::Exif;
+use rawler::formats::tiff::Value;
 use rawler::formats::tiff::reader::TiffReader;
 use rawler::formats::tiff::writer::{DirectoryWriter, TiffWriter};
-use rawler::formats::tiff::Value;
 use rawler::tags::ExifTag;
 use std::io::{Cursor, Seek, Write};
 
@@ -54,8 +54,14 @@ impl Recorded {
         source: &rawler::rawsource::RawSource,
         decoder: &dyn rawler::decoders::Decoder,
     ) -> Option<Recorded> {
-        let metadata = decoder.raw_metadata(source, &rawler::decoders::RawDecodeParams::default()).ok()?;
-        Some(Recorded { make: metadata.make, model: metadata.model, exif: metadata.exif })
+        let metadata = decoder
+            .raw_metadata(source, &rawler::decoders::RawDecodeParams::default())
+            .ok()?;
+        Some(Recorded {
+            make: metadata.make,
+            model: metadata.model,
+            exif: metadata.exif,
+        })
     }
 
     /// A TIFF block, as a JPEG's APP1 or a HEIF's `Exif` item holds one.
@@ -128,27 +134,59 @@ impl Recorded {
                 put(ifd, ExifTag::ISOSpeedRatings, exif.iso_speed_ratings);
                 put(ifd, ExifTag::ISOSpeed, exif.iso_speed);
                 put(ifd, ExifTag::SensitivityType, exif.sensitivity_type);
-                put(ifd, ExifTag::RecommendedExposureIndex, exif.recommended_exposure_index);
+                put(
+                    ifd,
+                    ExifTag::RecommendedExposureIndex,
+                    exif.recommended_exposure_index,
+                );
                 put(ifd, ExifTag::MeteringMode, exif.metering_mode);
                 put(ifd, ExifTag::Flash, exif.flash);
                 put(ifd, ExifTag::FlashEnergy, exif.flash_energy);
                 put(ifd, ExifTag::FocalLength, exif.focal_length);
-                put(ifd, ExifTag::FocalLengthIn35mmFormat, exif.focal_length_in_35mm);
+                put(
+                    ifd,
+                    ExifTag::FocalLengthIn35mmFormat,
+                    exif.focal_length_in_35mm,
+                );
                 put(ifd, ExifTag::SubjectDistance, exif.subject_distance);
-                put(ifd, ExifTag::SubjectDistanceRange, exif.subject_distance_range);
+                put(
+                    ifd,
+                    ExifTag::SubjectDistanceRange,
+                    exif.subject_distance_range,
+                );
                 put(ifd, ExifTag::LightSource, exif.light_source);
                 put(ifd, ExifTag::WhiteBalance, exif.white_balance);
                 put(ifd, ExifTag::SceneCaptureType, exif.scene_capture_type);
             }
             Group::Taken => {
-                text(ifd, ExifTag::DateTimeOriginal, exif.date_time_original.as_ref());
+                text(
+                    ifd,
+                    ExifTag::DateTimeOriginal,
+                    exif.date_time_original.as_ref(),
+                );
                 text(ifd, ExifTag::CreateDate, exif.create_date.as_ref());
                 text(ifd, ExifTag::OffsetTime, exif.offset_time.as_ref());
-                text(ifd, ExifTag::OffsetTimeOriginal, exif.offset_time_original.as_ref());
-                text(ifd, ExifTag::OffsetTimeDigitized, exif.offset_time_digitized.as_ref());
+                text(
+                    ifd,
+                    ExifTag::OffsetTimeOriginal,
+                    exif.offset_time_original.as_ref(),
+                );
+                text(
+                    ifd,
+                    ExifTag::OffsetTimeDigitized,
+                    exif.offset_time_digitized.as_ref(),
+                );
                 text(ifd, ExifTag::SubSecTime, exif.sub_sec_time.as_ref());
-                text(ifd, ExifTag::SubSecTimeOriginal, exif.sub_sec_time_original.as_ref());
-                text(ifd, ExifTag::SubSecTimeDigitized, exif.sub_sec_time_digitized.as_ref());
+                text(
+                    ifd,
+                    ExifTag::SubSecTimeOriginal,
+                    exif.sub_sec_time_original.as_ref(),
+                );
+                text(
+                    ifd,
+                    ExifTag::SubSecTimeDigitized,
+                    exif.sub_sec_time_digitized.as_ref(),
+                );
                 put(ifd, ExifTag::TimeZoneOffset, exif.timezone_offset.clone());
             }
         }
@@ -156,7 +194,9 @@ impl Recorded {
 }
 
 fn put<V: Into<Value>>(ifd: &mut DirectoryWriter, tag: ExifTag, value: Option<V>) {
-    let Some(value) = value.map(Into::into) else { return };
+    let Some(value) = value.map(Into::into) else {
+        return;
+    };
     // An empty value is a panic in the writer rather than an error.
     if value.count() > 0 {
         ifd.add_value(tag, value);
@@ -164,7 +204,9 @@ fn put<V: Into<Value>>(ifd: &mut DirectoryWriter, tag: ExifTag, value: Option<V>
 }
 
 fn text(ifd: &mut DirectoryWriter, tag: ExifTag, value: Option<&String>) {
-    let value = value.map(|value| value.trim()).filter(|value| !value.is_empty());
+    let value = value
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
     put(ifd, tag, value);
 }
 
@@ -190,7 +232,9 @@ pub fn copy_into<W: Write + Seek>(
         }
     }
     for tag in SUB_DIRECTORIES {
-        let Some(sub) = source.get_sub_ifd(tag) else { continue };
+        let Some(sub) = source.get_sub_ifd(tag) else {
+            continue;
+        };
         let mut directory = DirectoryWriter::new();
         for (tag, entry) in sub.entries() {
             directory.add_untyped_tag(*tag, entry.value.clone());
@@ -198,7 +242,9 @@ pub fn copy_into<W: Write + Seek>(
         if directory.is_empty() {
             continue;
         }
-        let at = directory.build(tiff).map_err(|e| format!("could not write an EXIF directory: {e}"))?;
+        let at = directory
+            .build(tiff)
+            .map_err(|e| format!("could not write an EXIF directory: {e}"))?;
         root.add_untyped_tag(tag, at);
     }
     Ok(())
@@ -222,7 +268,10 @@ mod fixtures {
             let back = Recorded::parse(&block).expect("the block parses");
 
             assert_eq!(back.model, name(&header.camera_model), "{path}");
-            let iso = back.exif.iso_speed.or(back.exif.iso_speed_ratings.map(u32::from));
+            let iso = back
+                .exif
+                .iso_speed
+                .or(back.exif.iso_speed_ratings.map(u32::from));
             assert_eq!(iso.map(|iso| iso as f32), Some(header.iso), "{path}");
             assert!(back.exif.date_time_original.is_some(), "{path}");
             assert_eq!(back.exif.serial_number, None, "{path}");
@@ -256,7 +305,11 @@ pub(crate) mod tests {
                 image_number: Some(4412),
                 gps: Some(rawler::exif::ExifGPS {
                     gps_latitude_ref: Some("S".into()),
-                    gps_latitude: Some([Rational::new(38, 1), Rational::new(37, 1), Rational::new(35, 10)]),
+                    gps_latitude: Some([
+                        Rational::new(38, 1),
+                        Rational::new(37, 1),
+                        Rational::new(35, 10),
+                    ]),
                     ..Default::default()
                 }),
                 lens_make: Some("Sony".into()),
@@ -283,14 +336,23 @@ pub(crate) mod tests {
         let block = recorded().block(NON_IDENTIFYING).expect("a block");
         let back = read_back(&block);
 
-        assert_eq!((back.make.as_str(), back.model.as_str()), ("Sony", "ILCE-7M4"));
-        assert_eq!(back.exif.lens_model.as_deref(), Some("FE 24-70mm F2.8 GM II"));
+        assert_eq!(
+            (back.make.as_str(), back.model.as_str()),
+            ("Sony", "ILCE-7M4")
+        );
+        assert_eq!(
+            back.exif.lens_model.as_deref(),
+            Some("FE 24-70mm F2.8 GM II")
+        );
         assert_eq!(back.exif.exposure_time, Some(Rational::new(1, 250)));
         assert_eq!(back.exif.fnumber, Some(Rational::new(28, 10)));
         assert_eq!(back.exif.exposure_bias, Some(SRational::new(-1, 3)));
         assert_eq!(back.exif.iso_speed_ratings, Some(400));
         assert_eq!(back.exif.focal_length_in_35mm, Some(35));
-        assert_eq!(back.exif.date_time_original.as_deref(), Some("2026:09:18 17:04:31"));
+        assert_eq!(
+            back.exif.date_time_original.as_deref(),
+            Some("2026:09:18 17:04:31")
+        );
         assert_eq!(back.exif.offset_time_original.as_deref(), Some("+12:00"));
 
         assert_eq!(back.exif.artist, None);
@@ -321,7 +383,11 @@ pub(crate) mod tests {
 
     #[test]
     fn a_camera_that_recorded_nothing_asked_for_gets_no_block() {
-        let empty = Recorded { make: String::new(), model: "  ".into(), exif: Exif::default() };
+        let empty = Recorded {
+            make: String::new(),
+            model: "  ".into(),
+            exif: Exif::default(),
+        };
         assert!(empty.block(NON_IDENTIFYING).is_none());
     }
 

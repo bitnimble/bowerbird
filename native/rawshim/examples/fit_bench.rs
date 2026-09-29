@@ -71,8 +71,14 @@ fn measure(path: &str) {
             return;
         };
         let began = std::time::Instant::now();
-        let fitted =
-            pollster::block_on(hdr::fit_all(gpu, path, &resident, quantile, geometry, rawshim::hdr_fit::CameraMatch::LensAndColour));
+        let fitted = pollster::block_on(hdr::fit_all(
+            gpu,
+            path,
+            &resident,
+            quantile,
+            geometry,
+            rawshim::hdr_fit::CameraMatch::LensAndColour,
+        ));
         taken.push(began.elapsed().as_secs_f64() * 1000.0);
         last = fitted;
     }
@@ -97,18 +103,23 @@ fn measure(path: &str) {
                 profile.crop,
                 profile.gain.is_some(),
                 profile.knots.as_deref().map_or_else(String::new, |knots| {
-                    knots.iter().map(|k| format!("{k:.4}")).collect::<Vec<_>>().join(" ")
+                    knots
+                        .iter()
+                        .map(|k| format!("{k:.4}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 }),
             );
             // The whole match as the sidecar would store it, hashed: the lattice is too large to
             // print, and this is the form every later render reads.
-            let encoded = rawshim::photo_analysis::encode(&rawshim::photo_analysis::PhotoAnalysis {
-                from_raw: rawshim::photo_analysis::FromRaw {
-                    matched: Some(matched.clone()),
+            let encoded =
+                rawshim::photo_analysis::encode(&rawshim::photo_analysis::PhotoAnalysis {
+                    from_raw: rawshim::photo_analysis::FromRaw {
+                        matched: Some(matched.clone()),
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
-            });
+                });
             let mut hasher = std::hash::DefaultHasher::new();
             std::hash::Hash::hash(&encoded, &mut hasher);
             println!("    encoded {:016x}", std::hash::Hasher::finish(&hasher));

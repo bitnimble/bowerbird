@@ -82,16 +82,16 @@ Useful trackers: [tauri#14963](https://github.com/tauri-apps/tauri/issues/14963)
 
 Checked open on GitHub as of 2026-08-03 unless noted.
 
-| Gap | Severity for us |
-|---|---|
-| IPC Origin missing on `WebviewUrl::External` ([#15190](https://github.com/tauri-apps/tauri/issues/15190), still open) | **N/A** — we bundle (`WebviewUrl::App`), not remote UI. Note: `ae1528a` / later Origin repair may mitigate; issue was opened after that commit and never closed — retest External only if we ever use it. |
-| Custom-protocol URL mapping ≠ wry ([#15748](https://github.com/tauri-apps/tauri/issues/15748)) | Low if assets stay on the Tauri protocol |
-| Linux DevTools breaking IPC ([#15764](https://github.com/tauri-apps/tauri/issues/15764)) | Dev-only annoyance |
-| Transparency → black screen / GPU crash on Linux ([#15718](https://github.com/tauri-apps/tauri/issues/15718)) | N/A — no transparent OS window |
-| Custom toolbar drag crash on Linux ([#14936](https://github.com/tauri-apps/tauri/issues/14936)) | Only if we add frameless chrome + drag regions |
-| Official CEF builds lack H.264/AAC ([chromium.org audio-video](https://www.chromium.org/audio-video/); [cef#3559](https://github.com/chromiumembedded/cef/issues/3559)) | Low — product media is AVIF / PQ stills / AV1-in-MP4, not H.264 |
-| Windowing model differs by pin | Watch HDR compositor empirically. Kabegame’s fork uses CEF Views owning the top-level window; current upstream `feat/cef` (post winit work) uses winit-owned window + Alloy child browser — don’t assume Views ownership on every pin. |
-| CLI/bundler gotchas: helper apps, `Chromium Embedded Framework.framework`, Windows CEF app-manifest (`windows-cef-app-manifest.xml` when runtime is cef), Chromium ProcessSingleton on shared profile dirs | Packaging cost (see §6), not product logic |
+| Gap                                                                                                                                                                                                        | Severity for us                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IPC Origin missing on `WebviewUrl::External` ([#15190](https://github.com/tauri-apps/tauri/issues/15190), still open)                                                                                      | **N/A** — we bundle (`WebviewUrl::App`), not remote UI. Note: `ae1528a` / later Origin repair may mitigate; issue was opened after that commit and never closed — retest External only if we ever use it.                              |
+| Custom-protocol URL mapping ≠ wry ([#15748](https://github.com/tauri-apps/tauri/issues/15748))                                                                                                             | Low if assets stay on the Tauri protocol                                                                                                                                                                                               |
+| Linux DevTools breaking IPC ([#15764](https://github.com/tauri-apps/tauri/issues/15764))                                                                                                                   | Dev-only annoyance                                                                                                                                                                                                                     |
+| Transparency → black screen / GPU crash on Linux ([#15718](https://github.com/tauri-apps/tauri/issues/15718))                                                                                              | N/A — no transparent OS window                                                                                                                                                                                                         |
+| Custom toolbar drag crash on Linux ([#14936](https://github.com/tauri-apps/tauri/issues/14936))                                                                                                            | Only if we add frameless chrome + drag regions                                                                                                                                                                                         |
+| Official CEF builds lack H.264/AAC ([chromium.org audio-video](https://www.chromium.org/audio-video/); [cef#3559](https://github.com/chromiumembedded/cef/issues/3559))                                    | Low — product media is AVIF / PQ stills / AV1-in-MP4, not H.264                                                                                                                                                                        |
+| Windowing model differs by pin                                                                                                                                                                             | Watch HDR compositor empirically. Kabegame’s fork uses CEF Views owning the top-level window; current upstream `feat/cef` (post winit work) uses winit-owned window + Alloy child browser — don’t assume Views ownership on every pin. |
+| CLI/bundler gotchas: helper apps, `Chromium Embedded Framework.framework`, Windows CEF app-manifest (`windows-cef-app-manifest.xml` when runtime is cef), Chromium ProcessSingleton on shared profile dirs | Packaging cost (see §6), not product logic                                                                                                                                                                                             |
 
 `WebviewUrl::External` means “load an http(s) URL **inside** the app webview”
 (Tauri config: “An URL to open on a Tauri webview window”), not “open in the
@@ -149,7 +149,7 @@ This removes both blob-per-tick costs:
 - **The decode cache.** `cc::ImageDecodeCache` is keyed by URL, which is why a
   six-second drag adds ~500MB that no page-side lever returns (§21.2,
   `raw_edit_presenter.ts:250`). One URL for the session, so nothing accumulates.
-- **The drag limiter.** §21.3 measured that "the encode is therefore *not* what
+- **The drag limiter.** §21.3 measured that "the encode is therefore _not_ what
   limits the drag on either route; swapping a fresh blob into an element each
   tick is". No swap, so that ceiling goes with it.
 
@@ -215,10 +215,10 @@ control for CORP), which is what `require-corp` wants.
 Checked 2026-08-03 against the fonts in `web/index.html` (IBM Plex Sans/Mono,
 Space Grotesk):
 
-| Resource | `Cross-Origin-Resource-Policy` | `Access-Control-Allow-Origin` |
-|---|---|---|
-| `fonts.googleapis.com/css2?…` | `cross-origin` | `*` |
-| `fonts.gstatic.com/…/*.woff2` | `cross-origin` | `*` |
+| Resource                      | `Cross-Origin-Resource-Policy` | `Access-Control-Allow-Origin` |
+| ----------------------------- | ------------------------------ | ----------------------------- |
+| `fonts.googleapis.com/css2?…` | `cross-origin`                 | `*`                           |
+| `fonts.gstatic.com/…/*.woff2` | `cross-origin`                 | `*`                           |
 
 Under `COEP: require-corp`, MDN allows cross-origin loads via no-cors **if** the
 response has a permissive CORP (or via CORS). Google’s CORP covers the

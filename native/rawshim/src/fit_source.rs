@@ -48,7 +48,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -104,7 +108,11 @@ pub async fn prepared(
     quantile: f64,
 ) -> Option<Prepared> {
     let taken = run(gpu, frame, Some(wide), quantile).await?;
-    Some(Prepared { plane: taken.plane?, rendered: taken.rendered?, levels: taken.levels })
+    Some(Prepared {
+        plane: taken.plane?,
+        rendered: taken.rendered?,
+        levels: taken.levels,
+    })
 }
 
 /// The quantile alone, for a caller that wants the anchor and no fit.
@@ -219,12 +227,30 @@ async fn run(
         label: Some("fit_source"),
         layout: &built.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: frame.buffer().as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: plane.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: histogram.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: levels.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: render.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame.buffer().as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: plane.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: histogram.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: levels.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: render.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
 
@@ -255,12 +281,19 @@ async fn run(
         pass.set_pipeline(&built.render);
         pass.dispatch_workgroups((wide as u32).div_ceil(16), (tall as u32).div_ceil(16), 1);
     }
-    recording.encoder().copy_buffer_to_buffer(&levels, 0, &levels_out, 0, LEVEL_BYTES);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&levels, 0, &levels_out, 0, LEVEL_BYTES);
     recording.submit();
 
     let measured = crate::gpu::read_back(gpu, &levels_out, |mapped| {
         let at = |i: usize| {
-            f64::from(f32::from_ne_bytes([mapped[i], mapped[i + 1], mapped[i + 2], mapped[i + 3]]))
+            f64::from(f32::from_ne_bytes([
+                mapped[i],
+                mapped[i + 1],
+                mapped[i + 2],
+                mapped[i + 3],
+            ]))
         };
         // The one place a level enters the host now that `fit_scan` takes the quantile: what the
         // shader wrote, read back and named.
@@ -278,13 +311,25 @@ async fn run(
 
     let plane = match wanted {
         false => None,
-        true => Some(crate::hdr_fit::Source { buffer: plane, width: wide, height: tall }),
+        true => Some(crate::hdr_fit::Source {
+            buffer: plane,
+            width: wide,
+            height: tall,
+        }),
     };
     let rendered = match wanted {
         false => None,
-        true => Some(Rendered { buffer: render, width: wide, height: tall }),
+        true => Some(Rendered {
+            buffer: render,
+            width: wide,
+            height: tall,
+        }),
     };
-    Some(Taken { plane, rendered, levels: measured? })
+    Some(Taken {
+        plane,
+        rendered,
+        levels: measured?,
+    })
 }
 
 /// A resident plane on the host, which only a test wants: everything else reads the buffer.
@@ -301,7 +346,9 @@ async fn read_plane(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&plane.buffer, 0, &out, 0, bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&plane.buffer, 0, &out, 0, bytes);
     recording.submit();
     let data = crate::gpu::read_back(gpu, &out, |mapped| {
         mapped
@@ -310,7 +357,11 @@ async fn read_plane(
             .collect::<Vec<f64>>()
     })
     .await?;
-    Some(crate::hdr_fit::Plane { width: plane.width, height: plane.height, data })
+    Some(crate::hdr_fit::Plane {
+        width: plane.width,
+        height: plane.height,
+        data,
+    })
 }
 
 /// A render assembled from codes, for the tests that measure one rather than produce one.
@@ -319,8 +370,11 @@ pub(crate) fn uploaded_render(
     gpu: &'static crate::gpu::Gpu,
     image: crate::rgb::RgbRef<'_>,
 ) -> Rendered {
-    let words: Vec<u8> =
-        image.data.iter().flat_map(|code| (f32::from(*code) / 255.0).to_ne_bytes()).collect();
+    let words: Vec<u8> = image
+        .data
+        .iter()
+        .flat_map(|code| (f32::from(*code) / 255.0).to_ne_bytes())
+        .collect();
     Rendered {
         buffer: gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("fit render"),
@@ -347,7 +401,9 @@ pub async fn read_render(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&render.buffer, 0, &out, 0, bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&render.buffer, 0, &out, 0, bytes);
     recording.submit();
     let data = crate::gpu::read_back(gpu, &out, |mapped| {
         mapped
@@ -359,7 +415,11 @@ pub async fn read_render(
             .collect::<Vec<u8>>()
     })
     .await?;
-    Some(crate::rgb::Rgb { width: render.width, height: render.height, data })
+    Some(crate::rgb::Rgb {
+        width: render.width,
+        height: render.height,
+        data,
+    })
 }
 
 #[cfg(test)]
@@ -412,6 +472,9 @@ mod tests {
         // A code, not exact: the shader divides and takes `pow` in f32 where the host has f64, so a
         // sample sitting on a rounding boundary may land either side of it. Anything larger is a
         // different picture rather than a different last bit.
-        assert!(worst <= 1, "the device render is {worst} codes from the host's at worst");
+        assert!(
+            worst <= 1,
+            "the device render is {worst} codes from the host's at worst"
+        );
     }
 }

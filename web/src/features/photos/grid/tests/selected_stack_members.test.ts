@@ -13,7 +13,12 @@ import { StacksStore } from '../stacks_store';
 import { ViewerStore } from '../../viewer/viewer_store';
 
 function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoSummary {
-  return { id, library_id: 'lib', stack_id: stackId, stack_size: stackSize } as unknown as PhotoSummary;
+  return {
+    id,
+    library_id: 'lib',
+    stack_id: stackId,
+    stack_size: stackSize,
+  } as unknown as PhotoSummary;
 }
 
 const MEMBERS = [photo('m0'), photo('m1'), photo('m2')];
@@ -24,7 +29,18 @@ function build(): { store: MarksStore; presenter: PhotosPresenter } {
   const listing = new ListingStore(stacks);
   const store = new MarksStore(listing, stacks);
   const viewer = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, store, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    store,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => {
     listing.source = { kind: 'library', libraryId: 'lib' };
     listing.ordering = 'taken_desc';

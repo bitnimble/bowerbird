@@ -44,7 +44,11 @@ fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -107,9 +111,18 @@ pub fn codes(
         label: Some("planes"),
         layout: &kernel.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: uploaded.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: out.buffer().as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: uploaded.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: out.buffer().as_entire_binding(),
+            },
         ],
     });
     {
@@ -130,13 +143,19 @@ fn check(bytes: usize, layout: &Layout) -> Result<(), String> {
         return Err("these planes hold no picture".to_string());
     }
     if layout.bits != 10 && layout.bits != 12 {
-        return Err(format!("these planes are {} bits, where a rendition is 10 or 12", layout.bits));
+        return Err(format!(
+            "these planes are {} bits, where a rendition is 10 or 12",
+            layout.bits
+        ));
     }
     let shift = usize::from(layout.subsampled);
     for (at, plane) in layout.planes.iter().enumerate() {
         let (width, height) = match at {
             0 => (layout.width, layout.height),
-            _ => (layout.width.div_ceil(1 << shift), layout.height.div_ceil(1 << shift)),
+            _ => (
+                layout.width.div_ceil(1 << shift),
+                layout.height.div_ceil(1 << shift),
+            ),
         };
         let end = (height - 1)
             .checked_mul(plane.stride)
@@ -158,7 +177,11 @@ fn block(layout: &Layout) -> Vec<u8> {
         _ => 1.0,
     };
     let mut bytes = Vec::with_capacity(BLOCK_BYTES);
-    for word in [layout.width as u32, layout.height as u32, u32::from(layout.subsampled)] {
+    for word in [
+        layout.width as u32,
+        layout.height as u32,
+        u32::from(layout.subsampled),
+    ] {
         bytes.extend_from_slice(&word.to_le_bytes());
     }
     bytes.extend_from_slice(&depth.to_le_bytes());

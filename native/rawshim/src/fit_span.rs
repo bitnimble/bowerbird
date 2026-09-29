@@ -36,7 +36,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -116,13 +120,34 @@ pub(crate) fn lifted(
         label: Some("fit_span gather"),
         layout: &kernels(gpu).layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: plane.buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: gains.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: samples.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: evaluated.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: histogram.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: marks.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: plane.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: gains.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: samples.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: evaluated.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: histogram.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: marks.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     {
@@ -187,12 +212,17 @@ pub(crate) async fn spans(
     let storage = wgpu::BufferUsages::STORAGE;
     // Zeroed by the driver, which the counting relies on.
     let histogram = held("fit span histogram", 2 * AXIS_BINS, storage);
-    let marks = held("fit span marks", 2 * MARKS_PER_AXIS, storage | wgpu::BufferUsages::COPY_SRC);
+    let marks = held(
+        "fit span marks",
+        2 * MARKS_PER_AXIS,
+        storage | wgpu::BufferUsages::COPY_SRC,
+    );
     let built = kernels(gpu);
     let idle = held("unused", 1, storage);
     let no_gains = held("unused gains", 1, storage);
-    let pushes: Vec<crate::gpu::Buffer> =
-        (0..2).map(|axis| describing(gpu, plane, false, axis, ranks)).collect();
+    let pushes: Vec<crate::gpu::Buffer> = (0..2)
+        .map(|axis| describing(gpu, plane, false, axis, ranks))
+        .collect();
 
     // The ranking reads what the model wrote, so the bind group points at that rather than at the
     // samples the gather filled - the two are the same shape and the second overwrites nothing.
@@ -203,16 +233,34 @@ pub(crate) async fn spans(
                 label: Some("fit_span rank"),
                 layout: &built.layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: plane.buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: no_gains.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: idle.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: plane.buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: no_gains.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: idle.as_entire_binding(),
+                    },
                     wgpu::BindGroupEntry {
                         binding: 3,
                         resource: evaluated.as_entire_binding(),
                     },
-                    wgpu::BindGroupEntry { binding: 4, resource: histogram.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 5, resource: marks.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: histogram.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: marks.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: push.as_entire_binding(),
+                    },
                 ],
             })
         })
@@ -241,7 +289,9 @@ pub(crate) async fn spans(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&marks, 0, &out, 0, (words * 4) as u64);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&marks, 0, &out, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {
@@ -271,7 +321,10 @@ mod tests {
             format!("static const uint HALF_BINS = {};", super::HALF_BINS),
             format!("static const uint PER_RANK = {};", super::PER_RANK),
         ] {
-            assert!(SOURCE.contains(&line), "fit_span.slang does not say `{line}`");
+            assert!(
+                SOURCE.contains(&line),
+                "fit_span.slang does not say `{line}`"
+            );
         }
     }
 }

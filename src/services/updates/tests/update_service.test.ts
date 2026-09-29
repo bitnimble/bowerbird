@@ -72,7 +72,12 @@ describe('a newer release', () => {
       const url = String(input);
       if (url === LIST) {
         return Response.json([
-          { tag_name: 'v99.0.0', published_at: null, html_url: 'https://releases.example.invalid/v99', assets: [{ name: 'release.yml', browser_download_url: MANIFEST }] },
+          {
+            tag_name: 'v99.0.0',
+            published_at: null,
+            html_url: 'https://releases.example.invalid/v99',
+            assets: [{ name: 'release.yml', browser_download_url: MANIFEST }],
+          },
         ]);
       }
       if (url === MANIFEST) {
@@ -82,7 +87,11 @@ describe('a newer release', () => {
             tag: 'v99.0.0',
             assets: {
               'docker-x86_64': { image: 'ghcr.io/example/app:99.0.0' },
-              'macos-arm64': { installer: 'Bowerbird.dmg', payload: 'payload.tar.gz', payload_sha256: 'a'.repeat(64) },
+              'macos-arm64': {
+                installer: 'Bowerbird.dmg',
+                payload: 'payload.tar.gz',
+                payload_sha256: 'a'.repeat(64),
+              },
             },
           }),
         );
@@ -102,7 +111,10 @@ describe('a newer release', () => {
   });
 
   test('is installable where the desktop app says where to stage it', async () => {
-    const status = await published({ BOWERBIRD_PLATFORM: 'macos-arm64', BOWERBIRD_UPDATES: '/tmp/bowerbird-update-service-test' }).check();
+    const status = await published({
+      BOWERBIRD_PLATFORM: 'macos-arm64',
+      BOWERBIRD_UPDATES: '/tmp/bowerbird-update-service-test',
+    }).check();
     expect(status.can_install).toBe(true);
   });
 });

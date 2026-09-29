@@ -104,21 +104,28 @@ export const GridScrollbar = observer(function GridScrollbar({
           const span = (down ? box?.height : box?.width) ?? 0;
           const start = (down ? box?.top : box?.left) ?? 0;
           const along = down ? e.clientY : e.clientX;
-          grab.current = { at: (along - start) / Math.max(1, span), progress: rail.progress, start, span: Math.max(1, span) };
+          grab.current = {
+            at: (along - start) / Math.max(1, span),
+            progress: rail.progress,
+            start,
+            span: Math.max(1, span),
+          };
           // Keeps the focus on the scroller: without it the press moves focus to
           // the body, and Page Up/Down and Home/End have nothing to act on after.
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
         onPointerMove={(e) => {
-          if (e.currentTarget.hasPointerCapture(e.pointerId)) onDragged(progressAt(down ? e.clientY : e.clientX));
+          if (e.currentTarget.hasPointerCapture(e.pointerId))
+            onDragged(progressAt(down ? e.clientY : e.clientX));
         }}
         // The bar is a sibling of the scroller, so a wheel notch over it has
         // nothing scrollable to bubble to and the grid would simply not move.
         // `deltaMode` because Firefox reports a wheel mouse in lines, not pixels.
-        onWheel={(e) => onWheeled(e.deltaY * (e.deltaMode === 1 ? wheelStep : e.deltaMode === 2 ? viewport : 1))}
+        onWheel={(e) =>
+          onWheeled(e.deltaY * (e.deltaMode === 1 ? wheelStep : e.deltaMode === 2 ? viewport : 1))
+        }
       />
     </div>
   );
 });
-

@@ -100,4 +100,3 @@ export const TriageKeys = observer(function TriageKeys({
 
   return null;
 });
-

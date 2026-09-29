@@ -17,7 +17,12 @@ export interface Span {
 // already mounted rather than on a gap.
 export const OVERSCAN_ROWS = 2;
 
-export function visibleRows(scrollTop: number, viewportHeight: number, rowHeight: number, rowCount: number): Span {
+export function visibleRows(
+  scrollTop: number,
+  viewportHeight: number,
+  rowHeight: number,
+  rowCount: number,
+): Span {
   if (rowCount <= 0 || rowHeight <= 0) return { from: 0, to: 0 };
   // Clamped at the top as well as the bottom: the scroll position is sampled a
   // frame behind the content height, so binning most of a library leaves a
@@ -26,6 +31,9 @@ export function visibleRows(scrollTop: number, viewportHeight: number, rowHeight
   // blocks - a grid that has silently given up.
   const last = rowCount - 1;
   const from = Math.min(last, Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS));
-  const to = Math.min(rowCount, Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN_ROWS);
+  const to = Math.min(
+    rowCount,
+    Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN_ROWS,
+  );
   return { from, to: Math.max(from + 1, to) };
 }

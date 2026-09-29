@@ -1,7 +1,12 @@
 import { action, runInAction } from 'mobx';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import { type RenderedRendition } from '../../../../src/schemas/render_stages';
-import { type Settings, type UpdateSettingsRequest, type ViewerRendition, type ViewerRenditionMode } from '../../../../src/schemas/settings';
+import {
+  type Settings,
+  type UpdateSettingsRequest,
+  type ViewerRendition,
+  type ViewerRenditionMode,
+} from '../../../../src/schemas/settings';
 import { settingsApi } from '../../api/settings';
 import { ApiError } from '../../api/request';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
@@ -53,7 +58,10 @@ export class AppSettingsPresenter {
 
   private async fetch(): Promise<void> {
     try {
-      const [settings, defaults] = await Promise.all([settingsApi.get(), settingsApi.getDefaults()]);
+      const [settings, defaults] = await Promise.all([
+        settingsApi.get(),
+        settingsApi.getDefaults(),
+      ]);
       runInAction(() => {
         this.store.settings = settings;
         this.store.defaults = defaults;
@@ -92,7 +100,10 @@ export class AppSettingsPresenter {
       const timing = await settingsApi.benchmarkRender(rendition, denoiser);
       runInAction(() => {
         const timings = this.store.renderTimings;
-        this.store.renderTimings = { ...timings, [rendition]: { ...timings[rendition], [denoiser]: timing } };
+        this.store.renderTimings = {
+          ...timings,
+          [rendition]: { ...timings[rendition], [denoiser]: timing },
+        };
       });
     } catch (err) {
       this.toasts.showError(
@@ -105,7 +116,11 @@ export class AppSettingsPresenter {
   }
 
   @action.bound
-  private markBenchmarking(rendition: RenderedRendition, denoiser: Denoiser, running: boolean): void {
+  private markBenchmarking(
+    rendition: RenderedRendition,
+    denoiser: Denoiser,
+    running: boolean,
+  ): void {
     if (running) this.store.benchmarking.add(`${rendition}:${denoiser}`);
     else this.store.benchmarking.delete(`${rendition}:${denoiser}`);
   }

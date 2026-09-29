@@ -1,7 +1,11 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
-import { BrowseQuerySchema, BrowseResponseSchema, CreateFolderRequestSchema } from '../../schemas/browse';
+import {
+  BrowseQuerySchema,
+  BrowseResponseSchema,
+  CreateFolderRequestSchema,
+} from '../../schemas/browse';
 import { route } from '../../schemas/route';
 import { browseAbsolute, createFolder } from '../../utils/browse';
 import { isWritable } from '../../services/libraries/libraries_service';

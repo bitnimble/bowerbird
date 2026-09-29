@@ -444,10 +444,22 @@ fn weigh_sharpness(
         label: Some("pano sharpness"),
         layout: &kernel.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: layer.rgb.buffer().as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: layer.weight.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: base.light_of_code().as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: layer.rgb.buffer().as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: layer.weight.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: base.light_of_code().as_entire_binding(),
+            },
         ],
     });
     {
@@ -723,7 +735,10 @@ pub struct LightNoise {
 }
 
 impl LightNoise {
-    pub const NONE: LightNoise = LightNoise { slope: 0.0, floor: 0.0 };
+    pub const NONE: LightNoise = LightNoise {
+        slope: 0.0,
+        floor: 0.0,
+    };
 }
 
 /// `composite_blend.slang`'s block, padded to std140's own multiple of sixteen.
@@ -1027,12 +1042,19 @@ pub async fn shifted(
         return Err("the pixel shift recipe and its frames disagree".into());
     }
     let first = &spec.sources[0];
-    let lens = request.sources[0].analysis
+    let lens = request.sources[0]
+        .analysis
         .and_then(|analysis| analysis.from_raw.matched.as_ref())
-        .map_or_else(|| first.lens.clone(), |matched| crate::composition::LensSpec::from(&matched.lens));
+        .map_or_else(
+            || first.lens.clone(),
+            |matched| crate::composition::LensSpec::from(&matched.lens),
+        );
     let mut direct = crate::composition::Composition::of_one(first.size, lens);
     direct.sources[0].photo_id = first.photo_id.clone();
-    let request = CompositeRequest { sources: &request.sources[..1], ..request.clone() };
+    let request = CompositeRequest {
+        sources: &request.sources[..1],
+        ..request.clone()
+    };
     prepared_with(&direct, &request, burst, Some(spec)).await
 }
 
@@ -1059,9 +1081,17 @@ async fn prepared_with(
     let mut lap = crate::clock::laps("    pano source ");
     let mut blending = Blending::over(gpu, base, request.window);
     // The largest gain is the shortest exposure, which is never rolled off: see `Merit::clip`.
-    let shortest = spec.sources.iter().map(|source| source.gain).fold(0.0, f64::max);
+    let shortest = spec
+        .sources
+        .iter()
+        .map(|source| source.gain)
+        .fold(0.0, f64::max);
     for i in order_of(spec, &request.weight) {
-        let Some(taken) = taken(gpu, base, spec, request, i, levels, burst, shifted, &mut lap).await? else {
+        let Some(taken) = taken(
+            gpu, base, spec, request, i, levels, burst, shifted, &mut lap,
+        )
+        .await?
+        else {
             continue;
         };
         levels = Some(taken.levels);
@@ -1136,14 +1166,20 @@ async fn prepared_with(
 /// reference clipped, the frame that anchors the pixel in its place is the one that reads it most
 /// like the reference would have (`composite_blend.slang`'s `anchor`).
 fn order_of(spec: &Composition, weight: &Weight<'_>) -> Vec<usize> {
-    let mut rest: Vec<usize> = (0..spec.sources.len()).filter(|i| *i != spec.reference).collect();
+    let mut rest: Vec<usize> = (0..spec.sources.len())
+        .filter(|i| *i != spec.reference)
+        .collect();
     if let Weight::Exposure = weight {
         let reference = spec.sources[spec.reference].gain;
         let away = |i: &usize| {
             let stops = (spec.sources[*i].gain / reference).log2();
             (stops.abs(), stops < 0.0)
         };
-        rest.sort_by(|a, b| away(a).partial_cmp(&away(b)).unwrap_or(std::cmp::Ordering::Equal));
+        rest.sort_by(|a, b| {
+            away(a)
+                .partial_cmp(&away(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
     std::iter::once(spec.reference).chain(rest).collect()
 }
@@ -1197,7 +1233,12 @@ async fn taken(
             }),
         },
     };
-    let Some(region) = footprint(spec, source, request, weighed.masked().map(|held| held.slot)) else {
+    let Some(region) = footprint(
+        spec,
+        source,
+        request,
+        weighed.masked().map(|held| held.slot),
+    ) else {
         return Ok(None);
     };
 
@@ -1388,7 +1429,9 @@ pub(crate) fn coded_as(anchored: crate::tone::Anchored, gain: f64) -> crate::ton
     crate::tone::Levels {
         white: crate::light::Light::measured(anchored.white.raw() / gain),
         peak: crate::light::Light::measured(anchored.peak.raw() / gain),
-        floor: anchored.floor.map(|f| crate::light::Light::measured(f.raw() / gain)),
+        floor: anchored
+            .floor
+            .map(|f| crate::light::Light::measured(f.raw() / gain)),
     }
     .anchored()
 }
@@ -1452,7 +1495,8 @@ pub async fn layers_of(
         request.levels.or_else(|| whole_anchor(spec, request));
     let mut lap = crate::clock::laps("    pano source ");
     for i in order_of(spec, &request.weight) {
-        let Some(taken) = taken(gpu, base, spec, request, i, levels, &[], None, &mut lap).await? else {
+        let Some(taken) = taken(gpu, base, spec, request, i, levels, &[], None, &mut lap).await?
+        else {
             continue;
         };
         levels = Some(taken.levels);
@@ -1644,13 +1688,13 @@ pub(crate) fn camera_white(path: &str) -> Result<crate::light::Light<crate::ligh
 /// to leave alone rather than a render to refuse. Cheap enough to ask twice: it is `footprint`'s
 /// grid walk per source and nothing is decoded.
 pub fn covered(spec: &Composition, request: &CompositeRequest<'_>) -> bool {
-    spec.sources
-        .iter()
-        .enumerate()
-        .any(|(i, source)| {
-            let slot = request.weight.mask().and_then(|held| held.slot_of.get(i).copied().flatten());
-            footprint(spec, source, request, slot).is_some()
-        })
+    spec.sources.iter().enumerate().any(|(i, source)| {
+        let slot = request
+            .weight
+            .mask()
+            .and_then(|held| held.slot_of.get(i).copied().flatten());
+        footprint(spec, source, request, slot).is_some()
+    })
 }
 
 /// What of one source the parts a caller asked for can reach, in that source's own pixels.
@@ -2177,7 +2221,15 @@ mod tests {
         let neutral_ceiling = 0.4;
         for gain in [0.25, 1.0, 4.0] {
             let coded = coded_as(anchored, gain);
-            let merit = merit_of(gain, 16.0, neutral_ceiling, coded, [2.0, 1.0, 1.5], None, reference);
+            let merit = merit_of(
+                gain,
+                16.0,
+                neutral_ceiling,
+                coded,
+                [2.0, 1.0, 1.5],
+                None,
+                reference,
+            );
             let table = crate::base::coding_curve(coded, reference);
             let sample = (f64::from(neutral_ceiling) * f64::from(u16::MAX)).round() as usize;
             let code = u16::from_le_bytes([table[sample * 2], table[sample * 2 + 1]]);
@@ -2199,10 +2251,17 @@ mod tests {
         let one = spec.sources[0].clone();
         spec.sources = [1.0, 4.0, 0.25, 2.0, 0.5]
             .into_iter()
-            .map(|gain| SourceSpec { gain, ..one.clone() })
+            .map(|gain| SourceSpec {
+                gain,
+                ..one.clone()
+            })
             .collect();
         assert_eq!(order_of(&spec, &Weight::Exposure), vec![0, 3, 4, 1, 2]);
-        assert_eq!(order_of(&spec, &Weight::Feather), vec![0, 1, 2, 3, 4], "a panorama's order moved");
+        assert_eq!(
+            order_of(&spec, &Weight::Feather),
+            vec![0, 1, 2, 3, 4],
+            "a panorama's order moved"
+        );
     }
 
     /// A focus bracket's layers, one textured and one the same scene blurred flat: the merge keeps
@@ -2213,7 +2272,10 @@ mod tests {
         let base = crate::base::device(gpu).expect("the base pipelines");
         let (w, h) = (16usize, 8usize);
         let code = |nits: f64| {
-            (crate::tone::pq(crate::light::Light::<crate::light::SceneNits>::measured(nits)).raw()
+            (crate::tone::pq(crate::light::Light::<crate::light::SceneNits>::measured(
+                nits,
+            ))
+            .raw()
                 * f64::from(u16::MAX))
             .round() as u16
         };
@@ -2247,7 +2309,10 @@ mod tests {
         let (blended, _) = blending.resolve();
         let row = pollster::block_on(read_row(gpu, &blended, w));
         let (even, odd) = (light(row[8]), light(row[9]));
-        assert!((even - 150.0).abs() < 8.0 && (odd - 300.0).abs() < 15.0, "the texture was averaged away: {even}, {odd}");
+        assert!(
+            (even - 150.0).abs() < 8.0 && (odd - 300.0).abs() < 15.0,
+            "the texture was averaged away: {even}, {odd}"
+        );
     }
 
     /// An exposure bracket's layers, one over the other: each weighed by its merit, and a layer past
@@ -2276,42 +2341,87 @@ mod tests {
                     region,
                     through: Through::Corrected,
                 };
-                blending.add_merited(gather_layer(gpu, &from, &p, window, 1.0, Weighed::Flat), *merit);
+                blending.add_merited(
+                    gather_layer(gpu, &from, &p, window, 1.0, Weighed::Flat),
+                    *merit,
+                );
             }
             let (blended, _) = blending.resolve();
             light(pollster::block_on(read_row(gpu, &blended, 16))[8])
         };
         let even = Merit::EVEN;
-        let heavy = Merit { scale: 3.0, ..Merit::EVEN };
+        let heavy = Merit {
+            scale: 3.0,
+            ..Merit::EVEN
+        };
 
         let alone = merged(&[(200.0, even)]);
-        assert!((merged(&[(200.0, even), (200.0, heavy)]) - alone).abs() < 1.0, "a frame merged with itself moved");
+        assert!(
+            (merged(&[(200.0, even), (200.0, heavy)]) - alone).abs() < 1.0,
+            "a frame merged with itself moved"
+        );
         let mixed = merged(&[(200.0, even), (400.0, heavy)]);
-        assert!((mixed - 350.0).abs() < 7.0, "merit 1 at 200 and 3 at 400 came to {mixed}");
-        let clipped = Merit { clip: 300.0 / 10000.0, ..heavy };
+        assert!(
+            (mixed - 350.0).abs() < 7.0,
+            "merit 1 at 200 and 3 at 400 came to {mixed}"
+        );
+        let clipped = Merit {
+            clip: 300.0 / 10000.0,
+            ..heavy
+        };
         let dropped = merged(&[(200.0, even), (400.0, clipped)]);
-        assert!((dropped - alone).abs() < 1.0, "a layer past its clip still counted: {dropped}");
+        assert!(
+            (dropped - alone).abs() < 1.0,
+            "a layer past its clip still counted: {dropped}"
+        );
 
         // Against the anchor, a quiet layer two stops off it is a scene that moved, and one a tenth
         // of a stop off is the same scene.
-        let anchor = Merit { deghosts: true, ..Merit::EVEN };
-        let wary = Merit { deghosts: true, ..heavy };
+        let anchor = Merit {
+            deghosts: true,
+            ..Merit::EVEN
+        };
+        let wary = Merit {
+            deghosts: true,
+            ..heavy
+        };
         let ghosted = merged(&[(200.0, anchor), (800.0, wary)]);
-        assert!((ghosted - alone).abs() < 1.0, "a layer two stops off the anchor still counted: {ghosted}");
+        assert!(
+            (ghosted - alone).abs() < 1.0,
+            "a layer two stops off the anchor still counted: {ghosted}"
+        );
         let near = merged(&[(200.0, anchor), (215.0, wary)]);
-        assert!((near - 211.25).abs() < 3.0, "a layer agreeing with the anchor was dropped: {near}");
+        assert!(
+            (near - 211.25).abs() < 3.0,
+            "a layer agreeing with the anchor was dropped: {near}"
+        );
 
         // A frame noisy enough that the same two stops are its noise rather than a ghost: a floor of
         // 2e-3 in light deviates by 447 nits at its own 800.
-        let noisy = Merit { noise: LightNoise { slope: 0.0, floor: 2e-3 }, ..wary };
+        let noisy = Merit {
+            noise: LightNoise {
+                slope: 0.0,
+                floor: 2e-3,
+            },
+            ..wary
+        };
         let kept = merged(&[(200.0, anchor), (800.0, noisy)]);
-        assert!((kept - 650.0).abs() < 25.0, "a layer within its own noise of the anchor was dropped: {kept}");
+        assert!(
+            (kept - 650.0).abs() < 25.0,
+            "a layer within its own noise of the anchor was dropped: {kept}"
+        );
 
         // Where the reference is blown it vouches for nothing, and the next frame anchors instead: a
         // third layer two stops off that one is still a ghost.
-        let blown = Merit { clip: 150.0 / 10000.0, ..anchor };
+        let blown = Merit {
+            clip: 150.0 / 10000.0,
+            ..anchor
+        };
         let stand_in = merged(&[(200.0, blown), (220.0, anchor), (900.0, wary)]);
-        assert!((stand_in - 220.0).abs() < 2.0, "nothing anchored where the reference was blown: {stand_in}");
+        assert!(
+            (stand_in - 220.0).abs() < 2.0,
+            "nothing anchored where the reference was blown: {stand_in}"
+        );
     }
 
     /// A frame every sample of which is the same code, which is what makes a blend's answer
@@ -2506,7 +2616,12 @@ mod tests {
         // two rather than the box bounding the window: a corner between them is never paid for.
         let far: Rect<crate::px::Composite> = Rect::exact(p.canvas[0] - 1024, 0, 1024, 1024);
         for source in &p.sources {
-            let pair = footprint(&p, source, &asking_parts(whole, SCALE, &[corner, far]), None);
+            let pair = footprint(
+                &p,
+                source,
+                &asking_parts(whole, SCALE, &[corner, far]),
+                None,
+            );
             let near = footprint(&p, source, &asking_parts(whole, SCALE, &[corner]), None);
             let there = footprint(&p, source, &asking_parts(whole, SCALE, &[far]), None);
             let bound = match (near, there) {

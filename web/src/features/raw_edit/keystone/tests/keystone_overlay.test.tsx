@@ -42,7 +42,9 @@ function open(guides: KeystoneGuide[]): KeystoneStore {
       edit.doc = { ...edit.doc!, keystoneGuides: [...next] };
     }),
   } as unknown as RawEditPresenter;
-  render(<KeystoneOverlay store={store} presenter={presenter} viewport={{ width: 400, height: 300 }} />);
+  render(
+    <KeystoneOverlay store={store} presenter={presenter} viewport={{ width: 400, height: 300 }} />,
+  );
   return store;
 }
 

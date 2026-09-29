@@ -4,10 +4,7 @@
 // button does is answerable without a GPU, a server or a browser. An end-to-end run opening a
 // real RAW answers the same questions slowly, and only ever says that *something* changed.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import {
-  RawEditPresenter,
-  REWINDOW_QUIET_MS,
-} from '../raw_edit_presenter';
+import { RawEditPresenter, REWINDOW_QUIET_MS } from '../raw_edit_presenter';
 import { prepareOf } from '../../local_decode/open_photo';
 import type { CropStore } from '../../crop/crop_store';
 import { EditStore } from '../../edit/edit_store';
@@ -132,7 +129,13 @@ describe('a slider reaching the picture', () => {
   // A panel hands these to its controls as bare references, which call them with no `this`.
   test('keeps its presenter in every method a control holds on its own', () => {
     const {
-      setDenoiser, setColourProfile, setCropAspect, previewStraighten, settleStraighten, setGuideKind, clearKeystone,
+      setDenoiser,
+      setColourProfile,
+      setCropAspect,
+      previewStraighten,
+      settleStraighten,
+      setGuideKind,
+      clearKeystone,
     } = presenter;
     setDenoiser('pmrid');
     setColourProfile('none');
@@ -407,7 +410,9 @@ describe('the window each frame is drawn at', () => {
     expect(decoder.frames.length).toBeGreaterThan(4);
     for (const { region, output } of decoder.frames) {
       expect(region.width, `${region.width} of ${output.width}`).toBeLessThanOrEqual(output.width);
-      expect(region.height, `${region.height} of ${output.height}`).toBeLessThanOrEqual(output.height);
+      expect(region.height, `${region.height} of ${output.height}`).toBeLessThanOrEqual(
+        output.height,
+      );
     }
   });
 
@@ -423,10 +428,10 @@ describe('the window each frame is drawn at', () => {
     // never moved.
     expect(new Set(shapes).size).toBeGreaterThan(4);
     for (const { region, stage } of decoder.frames) {
-      expect(stage.width / stage.height, `${stage.width}x${stage.height} for ${region.width}x${region.height}`).toBeCloseTo(
-        region.width / region.height,
-        2,
-      );
+      expect(
+        stage.width / stage.height,
+        `${stage.width}x${stage.height} for ${region.width}x${region.height}`,
+      ).toBeCloseTo(region.width / region.height, 2);
     }
   });
 
@@ -457,7 +462,9 @@ describe('the window each frame is drawn at', () => {
           words: decoder.stage.width * decoder.stage.height,
         });
       }
-      expect(new Set(shown.map(({ width, height }) => `${width}x${height}`)).size).toBeGreaterThan(1);
+      expect(new Set(shown.map(({ width, height }) => `${width}x${height}`)).size).toBeGreaterThan(
+        1,
+      );
     } finally {
       readbackCanvases.show = show;
     }
@@ -680,7 +687,9 @@ describe('a picture prepared on the server', () => {
   });
 
   test('the grade still ticks without asking the server for anything', async () => {
-    opened({ local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true } });
+    opened({
+      local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
+    });
     stage.preparedElsewhere = true;
 
     // The whole point of handing over a coded frame: every slider the reader drags is a uniform
@@ -738,10 +747,7 @@ describe('the level a zoom is served at', () => {
         stage: Number(url.searchParams.get('stage') ?? 0),
       });
       const scale = 1 / 2 ** (at?.level ?? 0);
-      const canvas = [
-        Math.floor(PAN_ROW.width * scale),
-        Math.floor(PAN_ROW.height * scale),
-      ];
+      const canvas = [Math.floor(PAN_ROW.width * scale), Math.floor(PAN_ROW.height * scale)];
       const [left = 0, top = 0, wide = canvas[0] ?? 1, deep = canvas[1] ?? 1] = at?.window ?? [];
       // Framed as the library frames it: a `u32` header length, the header, then no samples. The
       // decoder here never reads them, and what is under test is what was asked for and what the
@@ -806,9 +812,19 @@ describe('the level a zoom is served at', () => {
 
   test('a public window fetch carries the camera tone into the panel under either profile', async () => {
     const cameraCurve: NonNullable<PreparedHeader['cameraCurve']> = {
-      kind: TONE_CURVE_KIND, points: [[0, 0.1], [0.5, 0.55], [1, 1]],
+      kind: TONE_CURVE_KIND,
+      points: [
+        [0, 0.1],
+        [0.5, 0.55],
+        [1, 1],
+      ],
     };
-    headerOverrides = { detail: [24, 76], cameraExposure: 0.347, cameraSaturation: 18, cameraCurve };
+    headerOverrides = {
+      detail: [24, 76],
+      cameraExposure: 0.347,
+      cameraSaturation: 18,
+      cameraCurve,
+    };
     presenter.showRegion(QUARTER);
     await settled();
     expect(stage.cameraCurve).toEqual(cameraCurve);
@@ -861,7 +877,9 @@ describe('the level a zoom is served at', () => {
 
     expect(mapped).toEqual([{ x: 687.5, y: 487.5, width: 400, height: 300 }]);
     expect(asked).toHaveLength(1);
-    expect(asked[0]?.searchParams.get('region')?.split(',').map(Number)).toEqual([0.25, 0.2, 0.2, 0.2]);
+    expect(asked[0]?.searchParams.get('region')?.split(',').map(Number)).toEqual([
+      0.25, 0.2, 0.2, 0.2,
+    ]);
   });
 
   test('a zoom past what the held picture resolves asks for a window of it', async () => {
@@ -886,7 +904,8 @@ describe('the level a zoom is served at', () => {
     expect(decoder.bands).toEqual([]);
     expect(decoder.dropped).toBe(1);
     expect(asked.length).toBeGreaterThan(0);
-    const develop = (url: URL | undefined): unknown => JSON.parse(url?.searchParams.get('develop') ?? 'null');
+    const develop = (url: URL | undefined): unknown =>
+      JSON.parse(url?.searchParams.get('develop') ?? 'null');
     expect(develop(asked.at(-1))).toMatchObject({ sharpening: 80, dustRemoval: true });
 
     decoder.missing = [[[1024, 2048, 1024, 1024]]];
@@ -1135,14 +1154,18 @@ describe('leaving the editor', () => {
   });
 
   test('previews a curve in the next tick, settles once, and resets to the camera curve', async () => {
-    const saved: (EditState['doc']['toneCurve'])[] = [];
+    const saved: EditState['doc']['toneCurve'][] = [];
     photoEditsApi.save = (_photoId, doc): Promise<EditState> => {
       saved.push(doc.toneCurve);
       return Promise.resolve({ doc, rev: ++edit.rev, canUndo: true, canRedo: false });
     };
     const curve: NonNullable<EditState['doc']['toneCurve']> = {
       kind: TONE_CURVE_KIND,
-      points: [[0, 0.1], [0.5, 0.6], [1, 1]],
+      points: [
+        [0, 0.1],
+        [0.5, 0.6],
+        [1, 1],
+      ],
     };
     presenter.previewToneCurve(curve);
     await drawn();
@@ -1183,7 +1206,9 @@ describe('leaving the editor', () => {
 
     presenter.close();
     await Bun.sleep(0);
-    expect(finishedFrom).toEqual([expect.objectContaining({ doc: openedDoc, stamp: 'opened-stamp' })]);
+    expect(finishedFrom).toEqual([
+      expect.objectContaining({ doc: openedDoc, stamp: 'opened-stamp' }),
+    ]);
   });
 
   test('a close waits for the save released on the way out', async () => {
@@ -1230,12 +1255,16 @@ describe('leaving the editor', () => {
     await Bun.sleep(0);
 
     expect(await presenter.cancel()).toBe(true);
-    expect(restored).toEqual([{ rev: 2, checkpoint: expect.objectContaining({ doc: openedDoc, cursor: 1, history }) }]);
+    expect(restored).toEqual([
+      { rev: 2, checkpoint: expect.objectContaining({ doc: openedDoc, cursor: 1, history }) },
+    ]);
     expect(edit.doc?.exposure).toBe(openedDoc?.exposure);
 
     presenter.close();
     await Bun.sleep(0);
-    expect(finishedFrom).toEqual([expect.objectContaining({ doc: openedDoc, stamp: 'opened-stamp' })]);
+    expect(finishedFrom).toEqual([
+      expect.objectContaining({ doc: openedDoc, stamp: 'opened-stamp' }),
+    ]);
   });
 
   test('a cancel waits for the save in flight, and drops the one queued behind it', async () => {

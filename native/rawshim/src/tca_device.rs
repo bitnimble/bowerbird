@@ -50,7 +50,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -231,16 +235,46 @@ impl Frame {
             label: Some("tca"),
             layout: &kernels(self.gpu).layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.image.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.small.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: self.counts.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: self.at.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: self.splits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: self.halos.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: self.rows.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: self.curves.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: self.tally.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.image.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.small.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.counts.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.at.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.splits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.halos.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.rows.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.curves.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.tally.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         })
     }
@@ -271,7 +305,9 @@ impl Frame {
             words,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording.encoder().copy_buffer_to_buffer(&self.splits, 0, &out, 0, (words * 4) as u64);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.splits, 0, &out, 0, (words * 4) as u64);
         recording.submit();
         read_floats(self.gpu, &out).await
     }
@@ -293,7 +329,10 @@ impl Frame {
     ) -> Option<Vec<Option<f64>>> {
         let offsets = crate::tca::HALO_OFFSETS.len();
         let candidates = steps + 1;
-        assert!(candidates <= MAX_CANDIDATES, "{candidates} sweep candidates at once");
+        assert!(
+            candidates <= MAX_CANDIDATES,
+            "{candidates} sweep candidates at once"
+        );
         let ask = Ask {
             candidates,
             channel: match slot {
@@ -307,7 +346,12 @@ impl Frame {
             ..Ask::plain()
         };
         let read = self
-            .asked(&kernels(self.gpu).split, &ask, candidates * offsets, candidates * offsets * 2)
+            .asked(
+                &kernels(self.gpu).split,
+                &ask,
+                candidates * offsets,
+                candidates * offsets * 2,
+            )
             .await?;
         Some(
             (0..candidates)
@@ -346,11 +390,19 @@ impl Frame {
                     words.extend((at.copied().unwrap_or(0.0) as f32).to_ne_bytes());
                 }
             }
-            self.gpu.queue.write_buffer(&self.curves, (KNOTS_FROM * 4) as u64, &words);
+            self.gpu
+                .queue
+                .write_buffer(&self.curves, (KNOTS_FROM * 4) as u64, &words);
         }
         let offsets = crate::tca::HALO_OFFSETS.len();
-        let ask = Ask { knots, band, ..Ask::plain() };
-        let read = self.asked(&kernels(self.gpu).halo, &ask, offsets, offsets * 4).await?;
+        let ask = Ask {
+            knots,
+            band,
+            ..Ask::plain()
+        };
+        let read = self
+            .asked(&kernels(self.gpu).halo, &ask, offsets, offsets * 4)
+            .await?;
         Some(
             (0..offsets)
                 .map(|o| {
@@ -364,9 +416,15 @@ impl Frame {
 
     /// The projected-gradient sums of the reduce, a row at a time, folded in row order.
     pub(crate) async fn slopes(&self, gains: [f64; 3], stride: usize) -> Option<(f64, f64, u64)> {
-        let words: Vec<u8> = gains.iter().flat_map(|v| (*v as f32).to_ne_bytes()).collect();
+        let words: Vec<u8> = gains
+            .iter()
+            .flat_map(|v| (*v as f32).to_ne_bytes())
+            .collect();
         self.gpu.queue.write_buffer(&self.curves, 0, &words);
-        let ask = Ask { stride, ..Ask::plain() };
+        let ask = Ask {
+            stride,
+            ..Ask::plain()
+        };
         let walked = self.out_height.saturating_sub(2);
 
         let mut recording = self.gpu.record();
@@ -388,7 +446,9 @@ impl Frame {
             count,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording.encoder().copy_buffer_to_buffer(&self.rows, 0, &out, 0, (count * 4) as u64);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.rows, 0, &out, 0, (count * 4) as u64);
         recording.submit();
         let read = read_floats(self.gpu, &out).await?;
 
@@ -433,14 +493,24 @@ impl Frame {
             3,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording.encoder().copy_buffer_to_buffer(&self.tally, 0, &out, 0, 12);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.tally, 0, &out, 0, 12);
         recording.submit();
         let read = read_words(self.gpu, &out).await?;
         let sums = [f64::from(read[0]), f64::from(read[1]), f64::from(read[2])];
         Some([
-            if sums[0] > 0.0 { sums[1] / sums[0] } else { 1.0 },
+            if sums[0] > 0.0 {
+                sums[1] / sums[0]
+            } else {
+                1.0
+            },
             1.0,
-            if sums[2] > 0.0 { sums[1] / sums[2] } else { 1.0 },
+            if sums[2] > 0.0 {
+                sums[1] / sums[2]
+            } else {
+                1.0
+            },
         ])
     }
 
@@ -478,7 +548,12 @@ pub(crate) async fn frame(
     let mut frame = Frame {
         gpu,
         image: render.buffer.clone(),
-        small: held(gpu, "tca reduce", (out_width * out_height * 3).max(1), storage),
+        small: held(
+            gpu,
+            "tca reduce",
+            (out_width * out_height * 3).max(1),
+            storage,
+        ),
         counts: held(gpu, "tca counts", blocks + 1, readable),
         // Replaced once the count is known. Sized for every scanned position instead, a 24MP
         // render would ask for 94MB to hold a list that is thousands long.
@@ -538,8 +613,15 @@ pub(crate) async fn frame(
     }
     // The total alone, which is the only word of the counts the host wants: the offsets are read
     // by `tca_write` where they are, and the buffer is a word a block.
-    let out = held(gpu, "tca total", 1, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
-    recording.encoder().copy_buffer_to_buffer(&frame.counts, (blocks * 4) as u64, &out, 0, 4);
+    let out = held(
+        gpu,
+        "tca total",
+        1,
+        wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+    );
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&frame.counts, (blocks * 4) as u64, &out, 0, 4);
     recording.submit();
     frame.points = read_words(gpu, &out).await?[0] as usize;
 

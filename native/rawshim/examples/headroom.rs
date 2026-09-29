@@ -51,7 +51,11 @@ fn write_view(graded: &[u16], width: usize, height: usize, path: &str) {
         rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(signal).raw()
     };
     let reference = REFERENCE_NITS.raw();
-    let peak = graded.iter().map(|c| nits(*c)).fold(0.0f64, f64::max).max(reference);
+    let peak = graded
+        .iter()
+        .map(|c| nits(*c))
+        .fold(0.0f64, f64::max)
+        .max(reference);
     let to_srgb = rawshim::hdr_fit::rec2020_to_srgb();
     let transfer = |v: f64| match v <= 0.0031308 {
         true => v * 12.92,
@@ -149,12 +153,19 @@ fn main() {
         // to look at, where a written file here is meant to be the rendition.
         crf: 3,
         preset: 6,
-        strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
+        strengths: Strengths {
+            sharpen: 1.0,
+            defringe: 1.0,
+        },
         sharpen_sigma: None,
         max_edge: 100_000.0,
         content_light: None,
     };
-    let source = Source { samples: &samples, width: frame.width, height: frame.height };
+    let source = Source {
+        samples: &samples,
+        width: frame.width,
+        height: frame.height,
+    };
     let (graded, width, height) =
         rawshim::hdr::graded_as(&source, &options, matched.as_ref(), Output::Pq);
     println!("graded {width}x{height}");
@@ -165,7 +176,11 @@ fn main() {
 
     let mut order: Vec<usize> = (0..pixels).collect();
     order.sort_unstable_by(|a, b| {
-        let key = |p: &usize| samples[p * 3].max(samples[p * 3 + 1]).max(samples[p * 3 + 2]);
+        let key = |p: &usize| {
+            samples[p * 3]
+                .max(samples[p * 3 + 1])
+                .max(samples[p * 3 + 2])
+        };
         key(b).cmp(&key(a))
     });
 
@@ -178,7 +193,10 @@ fn main() {
     for p in order {
         let (x, y) = (p % width, p / width);
         // One report per light rather than a hundred from the same one.
-        if seen.iter().any(|(sx, sy)| x.abs_diff(*sx) < 64 && y.abs_diff(*sy) < 64) {
+        if seen
+            .iter()
+            .any(|(sx, sy)| x.abs_diff(*sx) < 64 && y.abs_diff(*sy) < 64)
+        {
             continue;
         }
         seen.push((x, y));
@@ -209,9 +227,14 @@ fn main() {
     if let Some(colour) = matched.as_ref().and_then(|matched| matched.colour.as_ref()) {
         println!("\nthe tone stage on a saturated highlight, by how far over white it sits:");
         let overs = [0.5, 0.9, 1.0, 2.0, 4.0, 8.0, 16.0];
-        let scenes: Vec<[f64; 3]> = overs.iter().map(|over| [*over, over * 0.35, over * 0.6]).collect();
-        let samples: Vec<[f32; 4]> =
-            scenes.iter().map(|s| [s[0] as f32, s[1] as f32, s[2] as f32, 0.0]).collect();
+        let scenes: Vec<[f64; 3]> = overs
+            .iter()
+            .map(|over| [*over, over * 0.35, over * 0.6])
+            .collect();
+        let samples: Vec<[f32; 4]> = scenes
+            .iter()
+            .map(|s| [s[0] as f32, s[1] as f32, s[2] as f32, 0.0])
+            .collect();
         let outs = pollster::block_on(rawshim::hdr_fit::evaluated(
             gpu,
             colour,

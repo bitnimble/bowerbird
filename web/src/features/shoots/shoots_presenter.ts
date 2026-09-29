@@ -24,7 +24,10 @@ function message(err: unknown): string {
 }
 
 export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
-  constructor(store: ShootsStore, private readonly sidebar: SidebarPresenter) {
+  constructor(
+    store: ShootsStore,
+    private readonly sidebar: SidebarPresenter,
+  ) {
     super(store);
   }
 
@@ -58,7 +61,10 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
       // Handed to the sidebar so it follows a rename without reading the same list again -
       // but only the shoots it would have asked for itself: it offers no way to put a hidden one
       // back (§12.4).
-      this.sidebar.adopt(libraryId, shoots.filter((s) => !s.is_hidden));
+      this.sidebar.adopt(
+        libraryId,
+        shoots.filter((s) => !s.is_hidden),
+      );
       runInAction(() => {
         this.store.shoots = shoots;
         this.store.folders = folders;
@@ -69,7 +75,8 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
         // everything.
         for (const shoot of shoots) {
           const segments = shoot.folder_path.split('/');
-          for (let i = 1; i < segments.length; i++) this.store.expanded.add(segments.slice(0, i).join('/'));
+          for (let i = 1; i < segments.length; i++)
+            this.store.expanded.add(segments.slice(0, i).join('/'));
         }
         this.store.loading = false;
       });
@@ -174,10 +181,20 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
 
   // `parentPath` is the library-relative folder the shoot's own folder goes in,
   // empty for the library root. The parent shoot follows from it server-side.
-  async create(libraryId: string, name: string, parentPath: string, ordering: Ordering): Promise<string | null> {
+  async create(
+    libraryId: string,
+    name: string,
+    parentPath: string,
+    ordering: Ordering,
+  ): Promise<string | null> {
     let shoot: Shoot;
     try {
-      shoot = await shootsApi.create({ library_id: libraryId, parent_path: parentPath, name, ordering });
+      shoot = await shootsApi.create({
+        library_id: libraryId,
+        parent_path: parentPath,
+        name,
+        ordering,
+      });
     } catch (err) {
       this.fail(message(err));
       return null;

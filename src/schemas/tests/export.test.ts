@@ -26,7 +26,9 @@ describe('honoured', () => {
   it('drops a gain map for a format that cannot carry one', () => {
     for (const format of FORMATS) {
       const asked = honoured(options({ format, exportHdr: true, gainMap: true }));
-      expect(asked.gainMap).toBe(EXPORT_FORMATS[format].gainMap && EXPORT_FORMATS[format].gainMapEncoder);
+      expect(asked.gainMap).toBe(
+        EXPORT_FORMATS[format].gainMap && EXPORT_FORMATS[format].gainMapEncoder,
+      );
     }
   });
 
@@ -34,18 +36,30 @@ describe('honoured', () => {
   // top of an HDR file - it is the only place the range can go, and asking for one is what makes
   // the HDR arm worth rendering at all.
   it('keeps HDR for a format that carries it only in a gain map', () => {
-    expect(honoured(options({ format: 'jpeg', exportHdr: true, gainMap: true })).exportHdr).toBe(true);
-    expect(honoured(options({ format: 'jpeg', exportHdr: true, gainMap: false })).exportHdr).toBe(false);
+    expect(honoured(options({ format: 'jpeg', exportHdr: true, gainMap: true })).exportHdr).toBe(
+      true,
+    );
+    expect(honoured(options({ format: 'jpeg', exportHdr: true, gainMap: false })).exportHdr).toBe(
+      false,
+    );
   });
 
   // A gain map reconstructs the HDR from the base. With no HDR asked for there is nothing to
   // reconstruct, so the map would be a second copy of the picture already in the file.
   it('drops a gain map when HDR was not asked for', () => {
-    expect(honoured(options({ format: 'avif', exportHdr: false, gainMap: true })).gainMap).toBe(false);
+    expect(honoured(options({ format: 'avif', exportHdr: false, gainMap: true })).gainMap).toBe(
+      false,
+    );
   });
 
   it('leaves an honourable request alone', () => {
-    const asked = options({ format: 'avif', exportHdr: true, gainMap: true, quality: 70, longEdge: 2048 });
+    const asked = options({
+      format: 'avif',
+      exportHdr: true,
+      gainMap: true,
+      quality: 70,
+      longEdge: 2048,
+    });
     expect(honoured(asked)).toEqual(asked);
   });
 });

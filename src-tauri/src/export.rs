@@ -25,7 +25,9 @@ pub enum Folder {
     #[cfg_attr(desktop, allow(dead_code))]
     Unsupported,
     Dismissed,
-    Picked { path: String },
+    Picked {
+        path: String,
+    },
 }
 
 /// The reader's own folder dialog.
@@ -39,9 +41,12 @@ pub async fn pick_export_folder() -> Folder {
 
 #[cfg(desktop)]
 async fn picked() -> Folder {
-    rfd::AsyncFileDialog::new().pick_folder().await.map_or(Folder::Dismissed, |folder| {
-        Folder::Picked { path: folder.path().to_string_lossy().into_owned() }
-    })
+    rfd::AsyncFileDialog::new()
+        .pick_folder()
+        .await
+        .map_or(Folder::Dismissed, |folder| Folder::Picked {
+            path: folder.path().to_string_lossy().into_owned(),
+        })
 }
 
 /// Android has no folder to pick: storage is scoped, a folder is a granted tree rather than

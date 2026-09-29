@@ -5,13 +5,13 @@ import type { LibraryConfiguration as Library } from '../../../schemas/libraries
 import type { CompositeKind } from '../../../schemas/photos';
 import { isComposite } from '../../../schemas/recipes';
 import { deleteGeneratedFile } from '../../../utils/deletions';
-import {
-  dataPathForLibraryId,
-  renditionPathFor,
-} from '../../../utils/paths';
+import { dataPathForLibraryId, renditionPathFor } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
-import type { PendingPhoto, PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
+import type {
+  PendingPhoto,
+  PhotoProcessingRepository,
+} from '../../photos/renditions/photo_processing_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import type {
   CompositeJobSource,
@@ -104,7 +104,8 @@ export class ProcessingService extends RenderService {
     libraryOf: (libraryId: string) => Library | null = () => null,
     compositeOf: (
       photoId: string,
-    ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null = () => null,
+    ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null = () =>
+      null,
     /**
      * `run`, with what each render allocates kept for the next: `rawshim_job.holdingRenderMemory`,
      * which a batch runs inside and a one-off render does not. Defaulted so a test, whose workers
@@ -113,7 +114,16 @@ export class ProcessingService extends RenderService {
     private readonly holdingRenderMemory: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
     activity: LibraryActivity = new LibraryActivity(),
   ) {
-    super(photoProcessing, photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf, activity);
+    super(
+      photoProcessing,
+      photoPaths,
+      photoListing,
+      settings,
+      editsFor,
+      libraryOf,
+      compositeOf,
+      activity,
+    );
   }
 
   // Rebuilds the grid tile of specific photos, from the camera's JPEG an import
@@ -148,8 +158,10 @@ export class ProcessingService extends RenderService {
     // Reported rather than thrown past: nothing is awaiting this, so an unhandled
     // rejection is all a failure would otherwise produce.
     if (queued > 0) {
-      void this.processUnprocessed({ photoIds: photoIds == null ? undefined : [...photoIds] }).catch(
-        (err: unknown) => log.warn('could not rebuild after an edit', { photos: queued, err }),
+      void this.processUnprocessed({
+        photoIds: photoIds == null ? undefined : [...photoIds],
+      }).catch((err: unknown) =>
+        log.warn('could not rebuild after an edit', { photos: queued, err }),
       );
     }
     return queued;
@@ -188,11 +200,19 @@ export class ProcessingService extends RenderService {
     }
     if (allQueued) {
       const pending = this.photoProcessing.countPendingProcessing(libraryId);
-      const overlap = activeIds.size === 0 ? 0 : this.photoProcessing.countPendingProcessing(libraryId, [...activeIds]);
+      const overlap =
+        activeIds.size === 0
+          ? 0
+          : this.photoProcessing.countPendingProcessing(libraryId, [...activeIds]);
       return activeIds.size + pending - overlap;
     }
     for (const photoId of activeIds) queuedIds.delete(photoId);
-    return activeIds.size + (queuedIds.size === 0 ? 0 : this.photoProcessing.countPendingProcessing(libraryId, [...queuedIds]));
+    return (
+      activeIds.size +
+      (queuedIds.size === 0
+        ? 0
+        : this.photoProcessing.countPendingProcessing(libraryId, [...queuedIds]))
+    );
   }
 
   // `drain` is async, so its return resolves a promise and the cleanup below runs
@@ -200,7 +220,11 @@ export class ProcessingService extends RenderService {
   // is handed a batch that has already settled, and leaves what it asked for in
   // `queued` with nothing running to take it. So the same check that ends a batch
   // is made again after it is out of the map, and starts the next one.
-  private start(libraryId: string | undefined, key: string, stopped?: () => boolean): Promise<void> {
+  private start(
+    libraryId: string | undefined,
+    key: string,
+    stopped?: () => boolean,
+  ): Promise<void> {
     const run = this.holdingRenderMemory(() => this.drain(libraryId, key, stopped)).finally(() => {
       this.inFlight.delete(key);
       this.active.delete(key);
@@ -229,13 +253,20 @@ export class ProcessingService extends RenderService {
     this.queued.set(key, set);
   }
 
-  private async drain(libraryId: string | undefined, key: string, stopped?: () => boolean): Promise<void> {
+  private async drain(
+    libraryId: string | undefined,
+    key: string,
+    stopped?: () => boolean,
+  ): Promise<void> {
     for (;;) {
       if (stopped?.() === true) return;
       const scope = this.queued.get(key);
       this.queued.delete(key);
       if (scope === undefined) return; // nothing asked for since the last pass
-      const pending = this.photoProcessing.listPendingProcessing(libraryId, scope == null ? undefined : [...scope]);
+      const pending = this.photoProcessing.listPendingProcessing(
+        libraryId,
+        scope == null ? undefined : [...scope],
+      );
       const active = new Map(pending.map((row) => [row.photo_id, row.library_id]));
       this.active.set(key, active);
       // Composites are composed rather than decoded, one at a time and on a worker of their own:
@@ -318,7 +349,10 @@ export class ProcessingService extends RenderService {
       // composited when a reader opens it. The row still has to stop asking, or every batch for
       // the life of the library picks it up to build a copy it does not owe.
       if (wants.full && !owed.some((want) => want.rendition === 'full')) {
-        this.photoProcessing.markRenditionsUnowed(row.photo_id, renditionVariant('full', row.rendition_hdr === 1));
+        this.photoProcessing.markRenditionsUnowed(
+          row.photo_id,
+          renditionVariant('full', row.rendition_hdr === 1),
+        );
       }
       if (owed.length === 0) {
         active.delete(row.photo_id);
@@ -341,7 +375,8 @@ export class ProcessingService extends RenderService {
           const at = new Date().toISOString();
           // A composite is never anybody's plane, so the geometry beside it is nothing's question.
           const made = { from: want.from, matched: false };
-          if (want.rendition === 'grid') this.photoProcessing.markTileBuilt(row.photo_id, at, builtFrom, made);
+          if (want.rendition === 'grid')
+            this.photoProcessing.markTileBuilt(row.photo_id, at, builtFrom, made);
           else {
             this.photoProcessing.markRenditionsBuilt(
               row.photo_id,
@@ -368,7 +403,11 @@ export class ProcessingService extends RenderService {
   // render, so a shoot's grid is browsable in seconds instead of after the
   // renders finish. Each pass clears its own flag as it lands, so a run interrupted
   // between them resumes at the second rather than repeating the first.
-  private async runStaged(staged: StagedPhoto[], active: Map<string, string>, stopped?: () => boolean): Promise<void> {
+  private async runStaged(
+    staged: StagedPhoto[],
+    active: Map<string, string>,
+    stopped?: () => boolean,
+  ): Promise<void> {
     const byId = new Map(staged.map((photo) => [photo.photoId, photo]));
     // A photo whose tile failed is not carried into the second pass: the failure is
     // the file, not the stage, so a render would fail the same way.
@@ -406,7 +445,9 @@ export class ProcessingService extends RenderService {
       stopped,
     );
 
-    const pending = staged.filter((photo) => photo.renditions != null && !failed.has(photo.photoId));
+    const pending = staged.filter(
+      (photo) => photo.renditions != null && !failed.has(photo.photoId),
+    );
     if (pending.length === 0 || stopped?.() === true) return;
 
     await runProcessingPool(
@@ -467,7 +508,8 @@ export class ProcessingService extends RenderService {
         // viewer, so the tile was the whole import. A tile rebuilt on its own owes
         // no renditions either, but there the viewer's side is already settled and
         // settling it again would sweep the copies it holds.
-        if (photo != null && photo.renditions == null && photo.owesRenditions) this.finishRenditions(photo, photoId, version);
+        if (photo != null && photo.renditions == null && photo.owesRenditions)
+          this.finishRenditions(photo, photoId, version);
       } else {
         this.finishRenditions(photo, photoId, version);
       }
@@ -493,7 +535,8 @@ export class ProcessingService extends RenderService {
     // JPEG whatever the library says, so recording that would tell the next import
     // there are no renditions to build - and `dropStaleRenditions` would then
     // delete the ones there are, with nothing to ever rebuild them.
-    const source: RenditionSource = photo == null || photo.renditions != null ? 'render' : 'embedded';
+    const source: RenditionSource =
+      photo == null || photo.renditions != null ? 'render' : 'embedded';
     // Which range this job's `full` was written in, and so which variant is vouched
     // for. A library serving the camera's JPEG builds no `full` at all and records the
     // SDR key against a null stamp, which reads exactly as the absent key it is.
@@ -510,7 +553,6 @@ export class ProcessingService extends RenderService {
     );
     if (photo != null) this.dropStaleRenditions(photo);
   }
-
 
   // A photo is only reprocessed because its pixels changed: the sync saw a new
   // stat, or the user asked for a rebuild. Every derived copy is then of the old
@@ -537,7 +579,12 @@ export class ProcessingService extends RenderService {
   /** Deletes every rendition of `photo` except the ones named in `keep`. */
   private sweepRenditions(photo: StagedPhoto, keep: Set<string>): void {
     for (const variant of renditionVariants()) {
-      const file = path.join(photo.dataPath, 'renditions', variant, `${photo.photoId}${RENDITION_EXTENSION}`);
+      const file = path.join(
+        photo.dataPath,
+        'renditions',
+        variant,
+        `${photo.photoId}${RENDITION_EXTENSION}`,
+      );
       if (keep.has(file)) continue;
       this.photoProcessing.forgetBuilt(photo.photoId, [variant]);
       void deleteGeneratedFile(photo.dataPath, file).catch(() => {});
@@ -605,7 +652,10 @@ export class ProcessingService extends RenderService {
     const owesRenditions = pending.needs_renditions === 1;
     const tile: RenditionJob | null =
       pending.needs_tile === 1
-        ? { ...common, targets: [this.targets.target(dataPath, photoId, 'grid', false, 'embedded')] }
+        ? {
+            ...common,
+            targets: [this.targets.target(dataPath, photoId, 'grid', false, 'embedded')],
+          }
         : null;
     // The renditions job writes the grid tile a second time, from the render.
     //
@@ -631,7 +681,15 @@ export class ProcessingService extends RenderService {
           }
         : null;
 
-    return { photoId, rawFilePath, dataPath, tile, renditions, owesRenditions, builtFrom: pending.edits_stamp };
+    return {
+      photoId,
+      rawFilePath,
+      dataPath,
+      tile,
+      renditions,
+      owesRenditions,
+      builtFrom: pending.edits_stamp,
+    };
   }
 
   private recordFailure(
@@ -643,12 +701,18 @@ export class ProcessingService extends RenderService {
     // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
     // batch forever. On a DB write failure, log and leave the flags set.
     try {
-      this.photoProcessing.forgetBuilt(result.photoId, job.targets.map((target) => renditionVariant(target.rendition, target.hdr)));
+      this.photoProcessing.forgetBuilt(
+        result.photoId,
+        job.targets.map((target) => renditionVariant(target.rendition, target.hdr)),
+      );
       // If the source file moved/was deleted since the job was queued (a move that
       // landed before the worker ran), don't burn it as a terminal failure: leave
       // its flags set so a later sync reprocesses it at its current path.
       if (!existsSync(job.rawFilePath)) {
-        log.debug('job source vanished, left pending', { photo: result.photoId, file: job.rawFilePath });
+        log.debug('job source vanished, left pending', {
+          photo: result.photoId,
+          file: job.rawFilePath,
+        });
         return;
       }
       log.warn('photo failed', { photo: result.photoId, file: job.rawFilePath, err: result.error });
@@ -664,5 +728,4 @@ export class ProcessingService extends RenderService {
       log.error('could not record a failure', { photo: result.photoId, err });
     }
   }
-
 }

@@ -1,10 +1,17 @@
 import { z } from 'zod';
-import { CanvasSchema, OpenAskSchema, OpenStageSchema, PairSchema } from '../features/raw_edit/local_decode/local_open';
+import {
+  CanvasSchema,
+  OpenAskSchema,
+  OpenStageSchema,
+  PairSchema,
+} from '../features/raw_edit/local_decode/local_open';
 import { RenderingIntentSchema } from '../../../src/schemas/rendering_intent';
 import type { PlanarPicture } from '../avif/avif_planes';
 
 // `typeof` first: bun's test runtime has neither.
-const FrameSchema = z.custom<VideoFrame>((value) => typeof VideoFrame === 'function' && value instanceof VideoFrame);
+const FrameSchema = z.custom<VideoFrame>(
+  (value) => typeof VideoFrame === 'function' && value instanceof VideoFrame,
+);
 const BitmapSchema = z.custom<ImageBitmap>(
   (value) => typeof ImageBitmap === 'function' && value instanceof ImageBitmap,
 );
@@ -27,7 +34,12 @@ export type StagePicture = z.infer<typeof StagePictureSchema>;
 const LayerPictureSchema = z.union([FrameSchema, PlanarSchema]);
 export type LayerPicture = z.infer<typeof LayerPictureSchema>;
 
-const RegionSchema = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() });
+const RegionSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
 
 /**
  * One of the page's canvases, by the number `stage_canvas.ts` gave it, and its backing store's
@@ -58,7 +70,14 @@ export const StageAskSchema = z.discriminatedUnion('kind', [
     kind: z.literal('paintMasked'),
     ...CanvasFields,
     base: LayerPictureSchema,
-    layers: z.array(z.object({ picture: LayerPictureSchema, mask: BitmapSchema, shift: PairSchema, gain: z.number() })),
+    layers: z.array(
+      z.object({
+        picture: LayerPictureSchema,
+        mask: BitmapSchema,
+        shift: PairSchema,
+        gain: z.number(),
+      }),
+    ),
     headroom: z.number(),
     sourcePeak: z.number(),
   }),
@@ -72,7 +91,11 @@ export type StageAsk = z.infer<typeof StageAskSchema>;
  */
 export const PaintedSchema = z.union([
   z.enum(['drawn', 'declined', 'lost']),
-  z.object({ words: z.custom<Uint32Array>((value) => value instanceof Uint32Array), width: z.number(), height: z.number() }),
+  z.object({
+    words: z.custom<Uint32Array>((value) => value instanceof Uint32Array),
+    width: z.number(),
+    height: z.number(),
+  }),
   z.object({ bitmap: BitmapSchema }),
 ]);
 export type Painted = z.infer<typeof PaintedSchema>;

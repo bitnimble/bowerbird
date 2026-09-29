@@ -10,13 +10,21 @@ import type { PhotoRenditionService } from '../../../services/photos/renditions/
 import type { ProcessingService } from '../../../services/processing/pipeline/processing_service';
 import { PhotosApi } from '../photos_api';
 
-const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100, ordering: 'taken_asc' };
+const emptyList: PhotoListResponse = {
+  photos: [],
+  total: 0,
+  offset: 0,
+  limit: 100,
+  ordering: 'taken_asc',
+};
 
-function buildApp(over: {
-  read?: Partial<PhotoReadService>;
-  mutations?: Partial<PhotoMutationService>;
-  renditions?: Partial<PhotoRenditionService>;
-} = {}) {
+function buildApp(
+  over: {
+    read?: Partial<PhotoReadService>;
+    mutations?: Partial<PhotoMutationService>;
+    renditions?: Partial<PhotoRenditionService>;
+  } = {},
+) {
   const read = {
     get: jest.fn(),
     listByLibrary: jest.fn(() => emptyList),
@@ -44,7 +52,10 @@ function buildApp(over: {
   } as unknown as PhotoRenditionService;
   const processing = { rebuildTiles: jest.fn(async () => 1) } as unknown as ProcessingService;
   const app = new Hono();
-  app.route(route(PathSegment.api()), new PhotosApi(read, mutations, renditions, processing).routes);
+  app.route(
+    route(PathSegment.api()),
+    new PhotosApi(read, mutations, renditions, processing).routes,
+  );
   applyErrorHandler(app);
   return { app, read, mutations, renditions, processing };
 }
@@ -52,19 +63,29 @@ function buildApp(over: {
 const PID = 'photo001';
 const BATCH = 'batch001';
 
-const selectionStatus = async (app: Hono, ranges: { start: number; end: number }[]): Promise<number> => {
-  const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ target: { selection: { scope: { kind: 'library', id: PID }, ranges } } }),
-  });
+const selectionStatus = async (
+  app: Hono,
+  ranges: { start: number; end: number }[],
+): Promise<number> => {
+  const res = await app.request(
+    route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        target: { selection: { scope: { kind: 'library', id: PID }, ranges } },
+      }),
+    },
+  );
   return res.status;
 };
 
 describe('PhotosApi', () => {
   it('lists library photos (200)', async () => {
     const { app } = buildApp();
-    const res = await app.request(route(PathSegment.api(), PathSegment.libraries(), 'lib', PathSegment.photos()));
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.libraries(), 'lib', PathSegment.photos()),
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(emptyList);
   });
@@ -72,39 +93,53 @@ describe('PhotosApi', () => {
   // The one bulk route that answers with the ids rather than a count, because the export
   // renders one file per photograph on the client and needs the list to loop over (§10.5.1).
   it('answers a selection with the photographs it stands for', async () => {
-    const { app, read } = buildApp({ read: { resolve: jest.fn(() => ['photo001', 'photo002', 'photo003']) } });
-    const selection = { scope: { kind: 'library', id: PID }, ranges: [{ start: 0, end: 2 }] };
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.ids()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ selection }),
+    const { app, read } = buildApp({
+      read: { resolve: jest.fn(() => ['photo001', 'photo002', 'photo003']) },
     });
+    const selection = { scope: { kind: 'library', id: PID }, ranges: [{ start: 0, end: 2 }] };
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.ids()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ selection }),
+      },
+    );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ photo_ids: ['photo001', 'photo002', 'photo003'] });
     // Resolved against the same shape every other bulk route resolves, not a second reading.
-    expect(read.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: {}, members: [] } });
+    expect(read.resolve).toHaveBeenCalledWith({
+      selection: { ...selection, filters: {}, members: [] },
+    });
   });
 
   it('refuses a target that names nothing', async () => {
     const { app } = buildApp();
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.ids()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ selection: { scope: { kind: 'library', id: PID }, ranges: [] } }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.ids()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ selection: { scope: { kind: 'library', id: PID }, ranges: [] } }),
+      },
+    );
     expect(res.status).toBe(400);
   });
 
   it('maps a service NOT_FOUND to the 404 envelope', async () => {
     const { app } = buildApp({
-      read: { get: jest.fn(() => {
-        throw new AppError('NOT_FOUND', 'photo not found: x');
-      }) },
+      read: {
+        get: jest.fn(() => {
+          throw new AppError('NOT_FOUND', 'photo not found: x');
+        }),
+      },
     });
     const res = await app.request(route(PathSegment.api(), PathSegment.photos(), 'x'));
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: { code: 'NOT_FOUND', message: 'photo not found: x' } });
+    expect(await res.json()).toEqual({
+      error: { code: 'NOT_FOUND', message: 'photo not found: x' },
+    });
   });
 
   it('rejects an out-of-range rating with a 400 validation envelope', async () => {
@@ -121,11 +156,14 @@ describe('PhotosApi', () => {
 
   it('rejects an empty photo_ids delete', async () => {
     const { app } = buildApp();
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { photo_ids: [] } }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: { photo_ids: [] } }),
+      },
+    );
     expect(res.status).toBe(400);
   });
 
@@ -135,11 +173,14 @@ describe('PhotosApi', () => {
   it('deletes photos, stamps the batch, and answers with a count', async () => {
     const del = jest.fn(async () => {});
     const { app } = buildApp({ mutations: { delete: del } });
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { photo_ids: [PID] }, batch: BATCH }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: { photo_ids: [PID] }, batch: BATCH }),
+      },
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ deleted: 1 });
     expect(del).toHaveBeenCalledWith([PID], BATCH);
@@ -148,11 +189,14 @@ describe('PhotosApi', () => {
   it('bins what a past bin took under a batch of its own', async () => {
     const del = jest.fn(async () => {});
     const { app, read } = buildApp({ mutations: { delete: del } });
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { batch: 'batch000' }, batch: BATCH }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: { batch: 'batch000' }, batch: BATCH }),
+      },
+    );
     expect(res.status).toBe(200);
     expect(read.resolve).toHaveBeenCalledWith({ batch: 'batch000' });
     expect(del).toHaveBeenCalledWith([PID], BATCH);
@@ -162,11 +206,14 @@ describe('PhotosApi', () => {
   it('restores everything one batch took', async () => {
     const restore = jest.fn(async () => {});
     const { app, read } = buildApp({ mutations: { restore } });
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.restore()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ batch: BATCH }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.restore()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ batch: BATCH }),
+      },
+    );
     expect(res.status).toBe(204);
     expect(read.resolve).toHaveBeenCalledWith({ batch: BATCH });
   });
@@ -181,13 +228,18 @@ describe('PhotosApi', () => {
       filters: { triage: ['picked'] },
       ranges: [{ start: 0, end: 99_999 }],
     };
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { selection } }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: { selection } }),
+      },
+    );
     expect(res.status).toBe(200);
-    expect(read.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: { triage: ['picked'] }, members: [] } });
+    expect(read.resolve).toHaveBeenCalledWith({
+      selection: { ...selection, filters: { triage: ['picked'] }, members: [] },
+    });
     expect(del).toHaveBeenCalledWith([PID], undefined);
   });
 
@@ -197,11 +249,14 @@ describe('PhotosApi', () => {
     const del = jest.fn(async () => {});
     const { app, read } = buildApp({ mutations: { delete: del } });
     const selection = { scope: { kind: 'library', id: PID }, ranges: [], members: [PID] };
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { selection } }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.delete()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: { selection } }),
+      },
+    );
     expect(res.status).toBe(200);
     expect(read.resolve).toHaveBeenCalledWith({ selection: { ...selection, filters: {} } });
   });
@@ -242,11 +297,14 @@ describe('PhotosApi', () => {
 
   it('queues a tile rebuild for the ids it was given', async () => {
     const { app, processing } = buildApp();
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.rebuildTiles()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ photo_ids: [PID] }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.rebuildTiles()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ photo_ids: [PID] }),
+      },
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ queued: 1 });
     expect(processing.rebuildTiles).toHaveBeenCalledWith([PID]);
@@ -255,11 +313,14 @@ describe('PhotosApi', () => {
   it('marks the resolved selection with the verdict it was given', async () => {
     const mark = jest.fn(() => 3);
     const { app, mutations } = buildApp({ mutations: { mark } });
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.mark()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { photo_ids: [PID] }, triage: 'picked' }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.mark()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: { photo_ids: [PID] }, triage: 'picked' }),
+      },
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ updated: 3 });
     expect(mutations.mark).toHaveBeenCalledWith([PID], { triage: 'picked' });
@@ -273,7 +334,12 @@ describe('PhotosApi', () => {
     await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.mark()), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { photo_ids: [PID] }, rating: 4, notes: 'nope', viewer_rendition: 'full' }),
+      body: JSON.stringify({
+        target: { photo_ids: [PID] },
+        rating: 4,
+        notes: 'nope',
+        viewer_rendition: 'full',
+      }),
     });
     expect(mutations.mark).toHaveBeenCalledWith([PID], { rating: 4 });
   });
@@ -281,11 +347,14 @@ describe('PhotosApi', () => {
   it('rejects an out-of-range rating on a mark', async () => {
     const mark = jest.fn(() => 0);
     const { app, mutations } = buildApp({ mutations: { mark } });
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.mark()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ target: { photo_ids: [PID] }, rating: 9 }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.mark()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ target: { photo_ids: [PID] }, rating: 9 }),
+      },
+    );
     expect(res.status).toBe(400);
     expect(mutations.mark).not.toHaveBeenCalled();
   });
@@ -300,11 +369,17 @@ describe('PhotosApi', () => {
   it('hands the models route its scope and the filters of the view asking', async () => {
     const modelsOf = jest.fn(() => ({ pairs: [] }));
     const { app } = buildApp({ read: { modelsOf } });
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.models()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scope: { kind: 'album', id: PID }, filters: { include_deleted: true, is_deleted: true } }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.models()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: { kind: 'album', id: PID },
+          filters: { include_deleted: true, is_deleted: true },
+        }),
+      },
+    );
 
     expect(res.status).toBe(200);
     expect(modelsOf).toHaveBeenCalledWith({
@@ -328,15 +403,21 @@ describe('PhotosApi', () => {
   it('hands the days route its scope and the filters of the view asking', async () => {
     const daysOf = jest.fn(() => ({ days: [{ day: '2024-03-09', count: 2 }] }));
     const { app } = buildApp({ read: { daysOf } });
-    const res = await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.days()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scope: { kind: 'shoot', id: PID }, filters: { is_missing: true } }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.days()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scope: { kind: 'shoot', id: PID }, filters: { is_missing: true } }),
+      },
+    );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ days: [{ day: '2024-03-09', count: 2 }] });
-    expect(daysOf).toHaveBeenCalledWith({ scope: { kind: 'shoot', id: PID }, filters: { is_missing: true } });
+    expect(daysOf).toHaveBeenCalledWith({
+      scope: { kind: 'shoot', id: PID },
+      filters: { is_missing: true },
+    });
   });
 
   it('parses a comma-separated body and lens list, and drops the empty entries of one', async () => {
@@ -347,7 +428,10 @@ describe('PhotosApi', () => {
     );
     expect(listByLibrary).toHaveBeenCalledWith(
       'lib',
-      expect.objectContaining({ camera_models: ['ILCE-7RM5', 'Canon EOS R5'], lens_models: ['FE 85mm F1.4 GM'] }),
+      expect.objectContaining({
+        camera_models: ['ILCE-7RM5', 'Canon EOS R5'],
+        lens_models: ['FE 85mm F1.4 GM'],
+      }),
     );
   });
 

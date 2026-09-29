@@ -31,7 +31,12 @@ self.onmessage = ({ data }) => {
     }
     self.postMessage({
       kind: 'grouped',
-      groups: stackGroups(data.descriptors.map((descriptor) => Buffer.from(descriptor)), data.timestamps, data.threshold, data.windowSeconds),
+      groups: stackGroups(
+        data.descriptors.map((descriptor) => Buffer.from(descriptor)),
+        data.timestamps,
+        data.threshold,
+        data.windowSeconds,
+      ),
     });
   } catch (err) {
     self.postMessage({ kind: 'failed', error: err instanceof Error ? err.message : String(err) });

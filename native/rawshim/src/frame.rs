@@ -156,7 +156,10 @@ impl Frame {
 
     /// The white to anchor the levels at, where a caller `asked` for the file's own over the
     /// measured one.
-    pub fn white_to_anchor(&self, asked: bool) -> Result<Option<crate::light::Light<crate::light::Level>>, String> {
+    pub fn white_to_anchor(
+        &self,
+        asked: bool,
+    ) -> Result<Option<crate::light::Light<crate::light::Level>>, String> {
         match (asked, self.stated_white) {
             (false, _) => Ok(None),
             (true, Some(white)) => Ok(Some(white)),

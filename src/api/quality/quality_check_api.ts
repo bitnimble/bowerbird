@@ -50,91 +50,110 @@ export class QualityCheckApi {
     // into the page's markup and script, so reflecting the parameter verbatim
     // would be reflected XSS. What gets rendered is the id the database holds,
     // and an unknown one is a 404 rather than a page that fails on every image.
-    app.get(route(PathSegment.param('photoId')), (c) => c.html(page(this.photoRenditions.locate(c.req.param('photoId') ?? '').photo.id, this.settings.get().avif_speed)));
+    app.get(route(PathSegment.param('photoId')), (c) =>
+      c.html(
+        page(
+          this.photoRenditions.locate(c.req.param('photoId') ?? '').photo.id,
+          this.settings.get().avif_speed,
+        ),
+      ),
+    );
 
-    app.get(route(PathSegment.img(), PathSegment.param('photoId'), PathSegment.param('quality')), async (c) => {
-      const quality = Number(c.req.param('quality'));
-      if (!QUALITIES.includes(quality as (typeof QUALITIES)[number])) {
-        throw new AppError('NOT_FOUND', `not one of the compared qualities: ${quality}`);
-      }
-      // Resolved before it reaches a path, for the same reason as above: the id
-      // names a cache file, and a `..` in the parameter would name someone
-      // else's.
-      const { photo, library } = this.photoRenditions.locate(c.req.param('photoId') ?? '');
+    app.get(
+      route(PathSegment.img(), PathSegment.param('photoId'), PathSegment.param('quality')),
+      async (c) => {
+        const quality = Number(c.req.param('quality'));
+        if (!QUALITIES.includes(quality as (typeof QUALITIES)[number])) {
+          throw new AppError('NOT_FOUND', `not one of the compared qualities: ${quality}`);
+        }
+        // Resolved before it reaches a path, for the same reason as above: the id
+        // names a cache file, and a `..` in the parameter would name someone
+        // else's.
+        const { photo, library } = this.photoRenditions.locate(c.req.param('photoId') ?? '');
 
-      // This page decodes a RAW to compare encoder settings, so a row composed out of several
-      // of them is not something it can be pointed at.
-      const rawFilePath = await this.originals.open(library, photo);
-      if (rawFilePath == null) throw new AppError('VALIDATION_ERROR', `${photo.id} has no file to decode`);
+        // This page decodes a RAW to compare encoder settings, so a row composed out of several
+        // of them is not something it can be pointed at.
+        const rawFilePath = await this.originals.open(library, photo);
+        if (rawFilePath == null)
+          throw new AppError('VALIDATION_ERROR', `${photo.id} has no file to decode`);
 
-      const settings = this.settings.get();
-      const file = path.join(CACHE, `${photo.id}-${quality}-${settings.avif_speed}-${library.denoiser}.avif`);
-      let encodeMs = 0;
-      const pending = this.encoding.get(file);
-      if (pending != null) await pending;
-      else if (!(await Bun.file(file).exists())) {
-        // Created here rather than once at startup: this lives in the temp
-        // directory, which something else is entitled to clean at any time.
-        mkdirSync(CACHE, { recursive: true });
-        // One rendition job with one target, which is what this page always was:
-        // decode the RAW and write a viewer-sized AVIF at the quality being
-        // compared. Going through the same call the import does is also what keeps
-        // the page honest - a setting that changed the renditions and not this
-        // would make it a picture of something nobody ships.
-        encodeMs = await this.encode(library.id, photo.id, file, {
-          rawFilePath,
-          cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
-          // The photograph's own, which is the document's default: this page compares
-          // quantizers against what the library actually ships, and a denoise named here
-          // would be a strength no rendition of this photograph is ever taken at.
-          denoiseLuminance: null,
-          denoiseColour: null,
-          denoiser: library.denoiser,
-          // Off, for the same reason: this page compares quantizers, and a correction that
-          // removed a few discs from whichever photograph was chosen is a second variable.
-          dust: dustSettings(undefined),
-          sharpen: AS_METERED.sharpen,
-          defringe: settings.raw_defringe,
-          exposure: AS_METERED.exposure,
-          adjust: AS_METERED.adjust,
-          geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
-          grade: {
-            referenceWhiteNits: settings.hdr_reference_white_nits,
-            whiteQuantile: settings.hdr_white_quantile,
-          },
-          targets: [
-            {
-              rendition: 'full',
-              output: 'srgb',
-              outputPath: file,
-              size: settings.full_rendition_size,
-              source: 'render',
-              sdrQuantizer: encoderQuality('avif-sdr', quality),
-              hdrQuantizer: encoderQuality('avif-hdr', quality),
-              preset: settings.avif_speed,
-              stillFullChroma: settings.hdr_still_full_chroma,
-              sdrFullChroma: settings.sdr_full_chroma,
+        const settings = this.settings.get();
+        const file = path.join(
+          CACHE,
+          `${photo.id}-${quality}-${settings.avif_speed}-${library.denoiser}.avif`,
+        );
+        let encodeMs = 0;
+        const pending = this.encoding.get(file);
+        if (pending != null) await pending;
+        else if (!(await Bun.file(file).exists())) {
+          // Created here rather than once at startup: this lives in the temp
+          // directory, which something else is entitled to clean at any time.
+          mkdirSync(CACHE, { recursive: true });
+          // One rendition job with one target, which is what this page always was:
+          // decode the RAW and write a viewer-sized AVIF at the quality being
+          // compared. Going through the same call the import does is also what keeps
+          // the page honest - a setting that changed the renditions and not this
+          // would make it a picture of something nobody ships.
+          encodeMs = await this.encode(library.id, photo.id, file, {
+            rawFilePath,
+            cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
+            // The photograph's own, which is the document's default: this page compares
+            // quantizers against what the library actually ships, and a denoise named here
+            // would be a strength no rendition of this photograph is ever taken at.
+            denoiseLuminance: null,
+            denoiseColour: null,
+            denoiser: library.denoiser,
+            // Off, for the same reason: this page compares quantizers, and a correction that
+            // removed a few discs from whichever photograph was chosen is a second variable.
+            dust: dustSettings(undefined),
+            sharpen: AS_METERED.sharpen,
+            defringe: settings.raw_defringe,
+            exposure: AS_METERED.exposure,
+            adjust: AS_METERED.adjust,
+            geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
+            grade: {
+              referenceWhiteNits: settings.hdr_reference_white_nits,
+              whiteQuantile: settings.hdr_white_quantile,
             },
-          ],
-        });
-      }
+            targets: [
+              {
+                rendition: 'full',
+                output: 'srgb',
+                outputPath: file,
+                size: settings.full_rendition_size,
+                source: 'render',
+                sdrQuantizer: encoderQuality('avif-sdr', quality),
+                hdrQuantizer: encoderQuality('avif-hdr', quality),
+                preset: settings.avif_speed,
+                stillFullChroma: settings.hdr_still_full_chroma,
+                sdrFullChroma: settings.sdr_full_chroma,
+              },
+            ],
+          });
+        }
 
-      const out = Bun.file(file);
-      return new Response(out, {
-        headers: {
-          'Content-Type': 'image/avif',
-          // Read by the page for the caption; 0 means it was already built, so
-          // the number shown is always a real encode rather than a cache hit.
-          'X-Encode-Ms': String(encodeMs),
-          'Cache-Control': 'no-store',
-        },
-      });
-    });
+        const out = Bun.file(file);
+        return new Response(out, {
+          headers: {
+            'Content-Type': 'image/avif',
+            // Read by the page for the caption; 0 means it was already built, so
+            // the number shown is always a real encode rather than a cache hit.
+            'X-Encode-Ms': String(encodeMs),
+            'Cache-Control': 'no-store',
+          },
+        });
+      },
+    );
 
     this.routes = app;
   }
 
-  private async encode(libraryId: string, photoId: string, file: string, job: Job): Promise<number> {
+  private async encode(
+    libraryId: string,
+    photoId: string,
+    file: string,
+    job: Job,
+  ): Promise<number> {
     const pending = this.encoding.get(file);
     if (pending != null) {
       await pending;
@@ -146,7 +165,9 @@ export class QualityCheckApi {
         await renderNativeJob(job);
         return Math.round((Bun.nanoseconds() - started) / 1e6);
       } catch (err) {
-        await Bun.file(file).delete().catch(() => {});
+        await Bun.file(file)
+          .delete()
+          .catch(() => {});
         throw err;
       }
     });
@@ -160,7 +181,11 @@ export class QualityCheckApi {
 
   private firstPhotoId(): string {
     for (const library of this.libraries.list()) {
-      const first = this.photoRead.listByLibrary(library.id, { offset: 0, limit: 1, include_deleted: false }).photos[0];
+      const first = this.photoRead.listByLibrary(library.id, {
+        offset: 0,
+        limit: 1,
+        include_deleted: false,
+      }).photos[0];
       if (first != null) return first.id;
     }
     throw new AppError('NOT_FOUND', 'no photos catalogued yet');

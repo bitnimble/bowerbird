@@ -55,22 +55,29 @@ pub fn prepared(
     let shape = crate::composite_job::level_shape(&[picture.0, picture.1], level);
     if let Some(window) = window {
         let (x, y, width, height) = window.raw();
-        if width == 0 || height == 0 || x >= shape.0 || y >= shape.1
-            || width > shape.0 - x || height > shape.1 - y
+        if width == 0
+            || height == 0
+            || x >= shape.0
+            || y >= shape.1
+            || width > shape.0 - x
+            || height > shape.1 - y
         {
-            return Err(format!("a {width}x{height} window at {x},{y} is outside a {}x{} picture", shape.0, shape.1));
+            return Err(format!(
+                "a {width}x{height} window at {x},{y} is outside a {}x{} picture",
+                shape.0, shape.1
+            ));
         }
     }
-    let decode_size = if job.composite.is_none()
-        && (shape.0 > picture.0 / 2 || shape.1 > picture.1 / 2)
-    {
-        long as u32
-    } else {
-        size
-    };
+    let decode_size =
+        if job.composite.is_none() && (shape.0 > picture.0 / 2 || shape.1 > picture.1 / 2) {
+            long as u32
+        } else {
+            size
+        };
     let scale = crate::view::Scale::for_long_edge(picture, decode_size);
     if let Some(window) = window.filter(|_| {
-        job.composite.is_none() && scale.of(picture.0) * scale.of(picture.1) > crate::job::BANDED_PIXELS
+        job.composite.is_none()
+            && scale.of(picture.0) * scale.of(picture.1) > crate::job::BANDED_PIXELS
     }) {
         return windowed(job, level, window);
     }
@@ -107,8 +114,15 @@ pub fn prepared(
     let mut cut = match frame {
         crate::job::Cutting::AlreadyCut(cut) => cut,
         crate::job::Cutting::OnDevice(frame) => {
-            let (width, height) = if placed.is_some() { (frame_width, frame_height) } else { shape };
-            let size = crate::hdr_args::Size { width: width as u32, height: height as u32 };
+            let (width, height) = if placed.is_some() {
+                (frame_width, frame_height)
+            } else {
+                shape
+            };
+            let size = crate::hdr_args::Size {
+                width: width as u32,
+                height: height as u32,
+            };
             // **The whole picture's long edge at this scale, not the cut's.** The sigma is in the
             // sensor's pixels and this composes it for the resolution the frame is at, which a
             // window shares with the canvas it came out of - so a 1000px window of a 4000px level
@@ -129,7 +143,9 @@ pub fn prepared(
     };
     if let Some(window) = window.filter(|_| placed.is_none()) {
         let (x, y, width, height) = window.raw();
-        let source = cut.resident().ok_or("the prepared picture is not on the GPU")?;
+        let source = cut
+            .resident()
+            .ok_or("the prepared picture is not on the GPU")?;
         let gpu = source.gpu();
         let cropped = crate::resident::Resident::empty(gpu, width, height);
         let mut recording = gpu.record();
@@ -185,7 +201,8 @@ pub fn prepared(
             matched: matched.is_some(),
             // A client moving a Detail or dust setting asks for a new prepare at it, so a RAW's
             // panels stay open though its mosaic stayed here. A composite's assembly takes no dust.
-            mosaic: job.composite.is_none() && !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            mosaic: job.composite.is_none()
+                && !crate::decode_rendered::is_rendered(&job.raw_file_path),
             as_shot,
             detail: job.detail().resolved(noise_fit),
             camera_curve,
@@ -274,7 +291,10 @@ fn windowed(
             noise_fit,
             defocus,
             photo_analysis: Some(crate::photo_analysis::encode(&known)),
-            window: Some(crate::edit::PreparedWindow { canvas: shape, origin: (x, y) }),
+            window: Some(crate::edit::PreparedWindow {
+                canvas: shape,
+                origin: (x, y),
+            }),
             picture: Some(picture),
             level,
             finest: level == 0,
@@ -329,7 +349,10 @@ mod tests {
             let rectangle = crate::px::Rect::exact(1024, 800, 400, 300);
             let cut = windowed(&job, level, rectangle).expect("the window prepares");
             assert_eq!((cut.header.width, cut.header.height), (400, 300));
-            assert_eq!(cut.header.window.as_ref().map(|window| window.origin), Some((1024, 800)));
+            assert_eq!(
+                cut.header.window.as_ref().map(|window| window.origin),
+                Some((1024, 800))
+            );
             assert_eq!(cut.header.white, whole.header.white);
 
             let mut worst = 0u16;
@@ -345,8 +368,14 @@ mod tests {
                     outliers += usize::from(difference > 8);
                 }
             }
-            assert!(worst <= 8, "level {level} window differs by {worst} PQ codes");
-            assert!(outliers <= 8, "level {level}: {outliers} samples differ by more than 8 codes");
+            assert!(
+                worst <= 8,
+                "level {level} window differs by {worst} PQ codes"
+            );
+            assert!(
+                outliers <= 8,
+                "level {level}: {outliers} samples differ by more than 8 codes"
+            );
         }
     }
 }

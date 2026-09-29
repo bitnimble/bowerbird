@@ -123,10 +123,10 @@ the new image (`docker compose pull`), which the manifest names and the dialog s
 Payloads contain release files, excluding installer-owned Start menu entries and registry
 keys, whose replacement would need an administrator.
 
-| Platform | Payload |
-|---|---|
-| windows | `bowerbird-app.exe`, `bowerbird-server.exe`, `bowerbird-updater.exe`, `resources/`, and the DLLs the shell resolves out of its own directory (§23.7.1) |
-| macOS | a whole `Bowerbird.app`, the server and the updater inside it |
+| Platform | Payload                                                                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| windows  | `bowerbird-app.exe`, `bowerbird-server.exe`, `bowerbird-updater.exe`, `resources/`, and the DLLs the shell resolves out of its own directory (§23.7.1) |
+| macOS    | a whole `Bowerbird.app`, the server and the updater inside it                                                                                          |
 
 ### 23.5 Where the check runs
 
@@ -179,13 +179,13 @@ earlier would show a blank screen while the server restarts.
 
 ### 23.7 What the platforms can and cannot do
 
-| Platform | Ships | Local server | In-place update |
-|---|---|---|---|
-| linux-x86_64 | nothing, paused | - | - |
-| macos-arm64 | dmg | yes | yes |
-| windows-x86_64 | NSIS installer | yes | yes |
-| android-arm64 | apk | no | **no** |
-| docker-x86_64 | ghcr image | yes | no, `docker compose pull` |
+| Platform       | Ships           | Local server | In-place update           |
+| -------------- | --------------- | ------------ | ------------------------- |
+| linux-x86_64   | nothing, paused | -            | -                         |
+| macos-arm64    | dmg             | yes          | yes                       |
+| windows-x86_64 | NSIS installer  | yes          | yes                       |
+| android-arm64  | apk             | no           | **no**                    |
+| docker-x86_64  | ghcr image      | yes          | no, `docker compose pull` |
 
 **The Linux desktop is paused, and the container is not.** A server reaches Linux through the
 image above, which is where every Linux reader is; the desktop arm was built for completeness and
@@ -206,7 +206,7 @@ libjxl builds under `cl.exe` and under `clang-cl`, and libavif always did.
 **The codecs are vcpkg's, built static on every platform.** `bun run get:codecs` installs libavif
 and libjxl and the six libraries under them - aom, dav1d and sharpyuv under libavif; highway,
 brotli and lcms2 under libjxl - on `arm64-osx`, `x64-windows-static-md` and `x64-linux`. On
-Windows `-static-md` is the load-bearing half of the name: static archives against the *dynamic*
+Windows `-static-md` is the load-bearing half of the name: static archives against the _dynamic_
 C runtime, which is the runtime Rust's MSVC target links.
 
 **Every version is written down once, in one vcpkg commit** (`scripts/get-codecs.ts`), which fixes
@@ -241,7 +241,7 @@ into `resources/native` beside it - never the C library itself, since two of tho
 is not a mismatch that degrades, it is two allocators and two `errno`. Every copy gets `$ORIGIN`,
 not just the library the server opens, a search path not reaching a dependency's own dependencies.
 It is a `DT_RPATH` rather than the `DT_RUNPATH` patchelf writes by default, because the loader
-consults a runpath *after* `LD_LIBRARY_PATH`: an app launched from a shell that names an older
+consults a runpath _after_ `LD_LIBRARY_PATH`: an app launched from a shell that names an older
 libstdc++ would otherwise get that one and fail in the way carrying a copy exists to prevent. After
 relocating, every object is walked again and anything still naming a path outside the tree fails
 the build.
@@ -252,7 +252,7 @@ want `GLIBC_2.38` and neither will start on Ubuntu 22.04 or Debian 12. That floo
 runner rather than being chosen, and raising it is what moving off a retired image costs.
 
 **Windows has nothing to carry** of `rawshim.dll`'s own, the MSVC C++ runtime being the C runtime
-the shell already asks for. What still goes beside the executables is whatever the *shell* imports, Tauri's
+the shell already asks for. What still goes beside the executables is whatever the _shell_ imports, Tauri's
 `WebView2Loader.dll` among them: `build-payload.ts` copies every DLL cargo left in the release
 directory into the tarball's root, which the updater swaps into the install directory beside
 the executables, so a fresh install and an in-place update resolve alike.

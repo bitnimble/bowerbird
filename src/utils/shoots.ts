@@ -15,14 +15,22 @@ export function shootContains(folderPath: string, filePath: string): boolean {
  * what matters: `Trip` must not take `Trip2` with it.
  */
 export function foldersOutside(folders: readonly string[], away: readonly string[]): string[] {
-  return folders.filter((folder) => !away.some((path) => folder === path || shootContains(path, folder)));
+  return folders.filter(
+    (folder) => !away.some((path) => folder === path || shootContains(path, folder)),
+  );
 }
 
 // The most-specific (longest folder_path) shoot whose folder contains filePath.
-export function mostSpecificShoot<T extends { folder_path: string }>(filePath: string, shoots: readonly T[]): T | null {
+export function mostSpecificShoot<T extends { folder_path: string }>(
+  filePath: string,
+  shoots: readonly T[],
+): T | null {
   let best: T | null = null;
   for (const shoot of shoots) {
-    if (shootContains(shoot.folder_path, filePath) && (best == null || shoot.folder_path.length > best.folder_path.length)) {
+    if (
+      shootContains(shoot.folder_path, filePath) &&
+      (best == null || shoot.folder_path.length > best.folder_path.length)
+    ) {
       best = shoot;
     }
   }

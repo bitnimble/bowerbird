@@ -6,7 +6,12 @@ import type { PhotoMetadataRepository } from '../../src/services/photos/metadata
 import type { PhotoPathsRepository } from '../../src/services/photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../../src/services/photos/renditions/photo_processing_repository';
 import type { PhotoScanRepository } from '../../src/services/photos/scan/photo_scan_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 
 const LIB = 'lib000ab';
 
@@ -32,7 +37,12 @@ function insertMissing(id: string): void {
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-repo-test', 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    '/tmp/bb-repo-test',
+    'lib',
+    'taken_desc',
+  );
   processing = photoProcessing(db);
   paths = photoPaths(db);
   metadata = photoMetadata(db, processing);
@@ -61,7 +71,9 @@ test('listForScanByPaths handles a path count over the variable limit', () => {
   expect(result.map((p) => p.file_path)).toContain('bulk.arw');
 });
 
-const missingOf = (id: string) => (db.query('SELECT is_missing FROM photos WHERE id = ?').get(id) as { is_missing: number }).is_missing;
+const missingOf = (id: string) =>
+  (db.query('SELECT is_missing FROM photos WHERE id = ?').get(id) as { is_missing: number })
+    .is_missing;
 
 // Regression: setMissing is path-guarded so a photo relocated by a concurrent
 // shoot rename/move during a sync scan isn't spuriously flagged missing.
@@ -79,7 +91,12 @@ test('setMissing marks missing only when file_path still matches the scanned pat
 // they were written is exactly the failure, and it is invisible on a small library.
 test('listPendingProcessing queues photos in the library grid order', () => {
   const ORD = 'lib000rd';
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(ORD, '/tmp/bb-ordering', 'lib', 'taken_asc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    ORD,
+    '/tmp/bb-ordering',
+    'lib',
+    'taken_asc',
+  );
   const taken: [string, string | null][] = [
     ['newest', '2024-03-01T00:00:00.000Z'],
     ['undated', null],

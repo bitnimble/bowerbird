@@ -10,12 +10,17 @@ import { forgetLibrary, gallery, gotoLibrary, openLibrary, tiles } from '../help
 test.describe.configure({ mode: 'serial' });
 
 function libraryRow(page: Page, rootPath: string): Locator {
-  return page.getByRole('list', { name: 'Libraries' }).getByRole('listitem').filter({ hasText: rootPath });
+  return page
+    .getByRole('list', { name: 'Libraries' })
+    .getByRole('listitem')
+    .filter({ hasText: rootPath });
 }
 
 // The one spec that adds a library and scans it the way a reader does; every other root is
 // added through the API.
-test('a library added and scanned in Settings shows a rendition for every RAW file', async ({ page }) => {
+test('a library added and scanned in Settings shows a rendition for every RAW file', async ({
+  page,
+}) => {
   await forgetLibrary(page, INDEX_PHOTOS_DIR);
   await page.goto(route(PathSegment.settings()));
   await page.getByRole('button', { name: 'Add library' }).click();
@@ -33,18 +38,24 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
   await expect(dialog.getByText(INDEX_PHOTOS_DIR, { exact: true })).toBeVisible();
   // The camera's JPEG rather than the default render, which is minutes of work per frame, and
   // no stacking, which would collapse the fixture's identical frames into one tile.
-  await dialog.getByRole('checkbox', { name: 'Automatically pre-render imported photos' }).uncheck();
+  await dialog
+    .getByRole('checkbox', { name: 'Automatically pre-render imported photos' })
+    .uncheck();
   await dialog.getByRole('checkbox', { name: 'Group similar photos automatically' }).uncheck();
   // The dialog's own button carries the same name as the one that opened it.
   await dialog.getByRole('button', { name: 'Add library' }).click();
   // Creating a library walks the folder before the row can be re-read.
   await expect(libraryRow(page, INDEX_PHOTOS_DIR)).toBeVisible({ timeout: 30_000 });
-  await expect(libraryRow(page, INDEX_PHOTOS_DIR).getByText(
-    `${INDEX_PHOTOS_DIR} · ${PHOTO_NAMES.length} photos (0 missing, 0 unavailable, 0 rendered)`,
-    { exact: true },
-  )).toBeVisible({ timeout: 45_000 });
+  await expect(
+    libraryRow(page, INDEX_PHOTOS_DIR).getByText(
+      `${INDEX_PHOTOS_DIR} · ${PHOTO_NAMES.length} photos (0 missing, 0 unavailable, 0 rendered)`,
+      { exact: true },
+    ),
+  ).toBeVisible({ timeout: 45_000 });
 
-  await libraryRow(page, INDEX_PHOTOS_DIR).getByRole('button', { name: 'Scan library' }).click({ timeout: 45_000 });
+  await libraryRow(page, INDEX_PHOTOS_DIR)
+    .getByRole('button', { name: 'Scan library' })
+    .click({ timeout: 45_000 });
   await openLibrary(page, INDEX_PHOTOS_DIR);
   // The import the add started, which opens every file.
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
@@ -58,7 +69,9 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
       async () =>
         tiles(page)
           .locator('img')
-          .evaluateAll((imgs) => imgs.filter((i) => (i as HTMLImageElement).naturalWidth > 0).length),
+          .evaluateAll(
+            (imgs) => imgs.filter((i) => (i as HTMLImageElement).naturalWidth > 0).length,
+          ),
       { timeout: 45_000 },
     )
     .toBe(PHOTO_NAMES.length);

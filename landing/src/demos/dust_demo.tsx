@@ -10,7 +10,9 @@ export function DustDemo(): JSX.Element {
   return (
     <Demo>
       <SplitFrame
-        before={<img {...stylex.props(splitImage.before)} src={DUST_PHOTO.before} alt={DEMO.dust.alt} />}
+        before={
+          <img {...stylex.props(splitImage.before)} src={DUST_PHOTO.before} alt={DEMO.dust.alt} />
+        }
         after={<img {...stylex.props(splitImage.after)} src={DUST_PHOTO.after} alt="" />}
         beforeLabel={DEMO.dust.before}
         afterLabel={DEMO.dust.after}

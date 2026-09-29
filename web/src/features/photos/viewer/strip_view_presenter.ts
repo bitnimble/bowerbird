@@ -2,7 +2,12 @@ import { action, comparer, reaction } from 'mobx';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import type { PhotosPresenter } from '../photos_presenter';
 import { ScrollRailPresenter } from '../grid/scroll_rail_presenter';
-import { STRIP_DEFAULT_THICKNESS, STRIP_MAX_THICKNESS, STRIP_MIN_THICKNESS, type StripViewStore } from './strip_view_store';
+import {
+  STRIP_DEFAULT_THICKNESS,
+  STRIP_MAX_THICKNESS,
+  STRIP_MIN_THICKNESS,
+  type StripViewStore,
+} from './strip_view_store';
 
 const THICKNESS_KEY = 'bowerbird.detail.filmstrip.size';
 
@@ -36,15 +41,23 @@ export class StripViewPresenter {
     // has its rows evicted as fast as they land.
     this.disposers = [
       this.rail.watch(),
-      reaction(() => this.store.visible, (span) => this.photos.setStripSpan(span), {
-        equals: comparer.structural,
-        fireImmediately: true,
-      }),
+      reaction(
+        () => this.store.visible,
+        (span) => this.photos.setStripSpan(span),
+        {
+          equals: comparer.structural,
+          fireImmediately: true,
+        },
+      ),
       // A stack the reader has stepped into opens, so the strip has a cell to mark
       // the photograph they are on, and closes again behind them.
-      reaction(() => this.store.openPhotoStack, (stackId) => void this.photos.followBand(stackId), {
-        fireImmediately: true,
-      }),
+      reaction(
+        () => this.store.openPhotoStack,
+        (stackId) => void this.photos.followBand(stackId),
+        {
+          fireImmediately: true,
+        },
+      ),
     ];
   }
 
@@ -79,7 +92,10 @@ export class StripViewPresenter {
 
   @action.bound
   setThickness(thickness: number): void {
-    this.store.thickness = Math.min(STRIP_MAX_THICKNESS, Math.max(STRIP_MIN_THICKNESS, Math.round(thickness)));
+    this.store.thickness = Math.min(
+      STRIP_MAX_THICKNESS,
+      Math.max(STRIP_MIN_THICKNESS, Math.round(thickness)),
+    );
     writeSetting(THICKNESS_KEY, String(this.store.thickness));
   }
 
@@ -99,7 +115,8 @@ export class StripViewPresenter {
   reveal(photoId: string): void {
     const cell = this.store.cellOf(photoId);
     if (cell == null) return;
-    const centred = this.store.offsetOfCell(cell) - (this.store.viewportLength - this.store.pitch) / 2;
+    const centred =
+      this.store.offsetOfCell(cell) - (this.store.viewportLength - this.store.pitch) / 2;
     this.rail.scrollTo(centred);
   }
 }

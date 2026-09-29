@@ -23,25 +23,47 @@ test('backup loads before Settings, refreshes on each stream open and reads back
   const sources: Source[] = [];
   class Source {
     private readonly handlers = new Map<string, (event: { data: string }) => void>();
-    constructor() { sources.push(this); }
+    constructor() {
+      sources.push(this);
+    }
     addEventListener(kind: string, handler: (event: { data: string }) => void): void {
       this.handlers.set(kind, handler);
     }
-    emit(kind: string, data = ''): void { this.handlers.get(kind)?.({ data }); }
+    emit(kind: string, data = ''): void {
+      this.handlers.get(kind)?.({ data });
+    }
     close(): void {}
   }
   Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: Source });
   Reflect.deleteProperty(globalThis, '__TAURI__');
   const store = new BackupStore();
-  const backup = new BackupPresenter(store, { reload: async () => {} }, { show: () => {}, showError: () => {} });
+  const backup = new BackupPresenter(
+    store,
+    { reload: async () => {} },
+    { show: () => {}, showError: () => {} },
+  );
   let server = backupStatus();
   let reads = 0;
-  backupApi.list = async () => { reads++; return { backups: [server] }; };
+  backupApi.list = async () => {
+    reads++;
+    return { backups: [server] };
+  };
   let reachable = 0;
-  const events = new EventsPresenter({
-    serverReachable: () => { reachable++; }, renditionsRebuilt: () => {}, renditionFetch: () => {}, compositeProgressed: () => {},
-  }, { libraryChanged: async () => {}, reload: async () => {} }, { renditionsRebuilt: () => {} },
-  { progressed: () => {} }, { load: async () => {} }, backup);
+  const events = new EventsPresenter(
+    {
+      serverReachable: () => {
+        reachable++;
+      },
+      renditionsRebuilt: () => {},
+      renditionFetch: () => {},
+      compositeProgressed: () => {},
+    },
+    { libraryChanged: async () => {}, reload: async () => {} },
+    { renditionsRebuilt: () => {} },
+    { progressed: () => {} },
+    { load: async () => {} },
+    backup,
+  );
   sessions.push(events);
   events.connect();
   await when(() => store.loaded, { timeout: 1000 });

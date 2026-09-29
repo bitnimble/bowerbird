@@ -64,10 +64,11 @@ beforeEach(() => {
   reportedGlobal = [];
   librariesApi.list = () => Promise.resolve([reportedLibrary]);
   librariesApi.scanStatus = () => Promise.resolve(reportedStatus);
-  librariesApi.activity = () => Promise.resolve({
-    libraries: [{ ...reportedLibrary, scan: reportedStatus, activities: reportedActivity }],
-    global: reportedGlobal,
-  });
+  librariesApi.activity = () =>
+    Promise.resolve({
+      libraries: [{ ...reportedLibrary, scan: reportedStatus, activities: reportedActivity }],
+      global: reportedGlobal,
+    });
 });
 
 function Seed(): null {
@@ -149,7 +150,9 @@ test('web library tiles show the path as plain text', async () => {
   Reflect.deleteProperty(globalThis, '__TAURI__');
   await openAt('/settings/libraries');
   expect(screen.queryByRole('link', { name: '/srv/reef' })).toBeNull();
-  expect(screen.getByText('/srv/reef · 12 photos (3 missing, 1 unavailable, 7 rendered)')).toBeTruthy();
+  expect(
+    screen.getByText('/srv/reef · 12 photos (3 missing, 1 unavailable, 7 rendered)'),
+  ).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Open library folder' })).toBeNull();
 });
 
@@ -167,26 +170,46 @@ test('library counts and the render queue keep updating after fetching ends', as
     rendered_photo_count: 15,
   };
   reportedStatus = IDLE;
-  await waitFor(() => {
-    expect(screen.getByText('/srv/reef · 15 photos (0 missing, 0 unavailable, 15 rendered)')).toBeTruthy();
-    expect(screen.queryByText(/rendering/)).toBeNull();
-  }, { timeout: 2500 });
+  await waitFor(
+    () => {
+      expect(
+        screen.getByText('/srv/reef · 15 photos (0 missing, 0 unavailable, 15 rendered)'),
+      ).toBeTruthy();
+      expect(screen.queryByText(/rendering/)).toBeNull();
+    },
+    { timeout: 2500 },
+  );
 });
 
 test('work started on the server is visible without client action flags', async () => {
   reportedActivity = [
-    { kind: 'syncing', count: 1 }, { kind: 'fetching', count: 2 },
-    { kind: 'sending', count: 3 }, { kind: 'backing_up', count: 1 },
-    { kind: 'preparing', count: 1 }, { kind: 'merging', count: 1 },
-    { kind: 'exporting', count: 1 }, { kind: 'refreshing_metadata', count: 1 },
+    { kind: 'syncing', count: 1 },
+    { kind: 'fetching', count: 2 },
+    { kind: 'sending', count: 3 },
+    { kind: 'backing_up', count: 1 },
+    { kind: 'preparing', count: 1 },
+    { kind: 'merging', count: 1 },
+    { kind: 'exporting', count: 1 },
+    { kind: 'refreshing_metadata', count: 1 },
   ];
-  reportedGlobal = [{ kind: 'catalogue_backup', count: 1 }, { kind: 'pruning', count: 1 }];
+  reportedGlobal = [
+    { kind: 'catalogue_backup', count: 1 },
+    { kind: 'pruning', count: 1 },
+  ];
   await openAt('/settings/libraries');
   for (const text of [
-    'syncing', 'fetching', 'sending 3 originals', 'backing up originals',
-    'preparing 1 photo', 'merging photos', 'exporting 1 photo', 'refreshing photo details',
-    'backing up catalogue', 'cleaning up generated files',
-  ]) expect(screen.getByText(text)).toBeTruthy();
+    'syncing',
+    'fetching',
+    'sending 3 originals',
+    'backing up originals',
+    'preparing 1 photo',
+    'merging photos',
+    'exporting 1 photo',
+    'refreshing photo details',
+    'backing up catalogue',
+    'cleaning up generated files',
+  ])
+    expect(screen.getByText(text)).toBeTruthy();
 });
 
 test('a scan started elsewhere offers Stop for its own library', async () => {

@@ -82,12 +82,16 @@ function usingMockWorker(): void {
   });
 }
 
-
 describe('ProcessingService.openComposite', () => {
   usingMockWorker();
 
   const service = (): ProcessingService =>
-    new ProcessingService({} as unknown as PhotoProcessingRepository, NO_PATHS, NO_LISTING, settings);
+    new ProcessingService(
+      {} as unknown as PhotoProcessingRepository,
+      NO_PATHS,
+      NO_LISTING,
+      settings,
+    );
 
   const job = (want: 'align' | 'render', photoId = 'panorama'): CompositeJob =>
     ({ kind: 'composite', want, photoId, sources: [], targets: [] }) as unknown as CompositeJob;
@@ -122,7 +126,12 @@ describe('ProcessingService.analyseAssembly', () => {
   usingMockWorker();
 
   const service = (): ProcessingService =>
-    new ProcessingService({} as unknown as PhotoProcessingRepository, NO_PATHS, NO_LISTING, settings);
+    new ProcessingService(
+      {} as unknown as PhotoProcessingRepository,
+      NO_PATHS,
+      NO_LISTING,
+      settings,
+    );
   const library = { id: LIB, root_path: '/nowhere' } as never;
   const sources = [
     { photoId: 'a', rawFilePath: '/nowhere/a.arw' },
@@ -131,12 +140,22 @@ describe('ProcessingService.analyseAssembly', () => {
 
   it('asks for a carve rather than an align, and answers what the worker sent back', async () => {
     const on = service().openComposite();
-    const answer = await service().analyseAssembly(LIB, sources, library, on, '/nowhere/volume.bin');
+    const answer = await service().analyseAssembly(
+      LIB,
+      sources,
+      library,
+      on,
+      '/nowhere/volume.bin',
+    );
     on.close();
 
     // `composite: '{}'` is what this file's worker answers every composite job with.
     expect(answer).toBe('{}');
-    expect(posted[0]).toMatchObject({ kind: 'composite', want: 'analyse', volumePath: '/nowhere/volume.bin' });
+    expect(posted[0]).toMatchObject({
+      kind: 'composite',
+      want: 'analyse',
+      volumePath: '/nowhere/volume.bin',
+    });
     // Keyed by the library, there being no row yet - and rendering nothing, so no targets.
     expect(posted[0]?.photoId).toBe(LIB);
     expect(posted[0]?.targets).toEqual([]);
@@ -150,9 +169,9 @@ describe('ProcessingService.analyseAssembly', () => {
     }
     (globalThis as { Worker?: unknown }).Worker = Silent;
     const on = service().openComposite();
-    await expect(service().analyseAssembly(LIB, sources, library, on, '/nowhere/volume.bin')).rejects.toThrow(
-      /carved/,
-    );
+    await expect(
+      service().analyseAssembly(LIB, sources, library, on, '/nowhere/volume.bin'),
+    ).rejects.toThrow(/carved/);
     on.close();
   });
 });
@@ -167,12 +186,10 @@ describe('ProcessingService.solveSeams', () => {
       NO_PATHS,
       NO_LISTING,
       settings,
-    ).solveSeams(
-      recipe,
-      [[1], [0]],
-      '/nowhere/seams.bin',
-      { id: LIB, root_path: '/nowhere' } as never,
-    );
+    ).solveSeams(recipe, [[1], [0]], '/nowhere/seams.bin', {
+      id: LIB,
+      root_path: '/nowhere',
+    } as never);
 
     expect(answer).toBe('{}');
     expect(posted[0]).toMatchObject({
@@ -185,7 +202,12 @@ describe('ProcessingService.solveSeams', () => {
   });
 
   it('solves on a fresh worker once the one it kept has crashed', async () => {
-    const service = new ProcessingService({} as unknown as PhotoProcessingRepository, NO_PATHS, NO_LISTING, settings);
+    const service = new ProcessingService(
+      {} as unknown as PhotoProcessingRepository,
+      NO_PATHS,
+      NO_LISTING,
+      settings,
+    );
     const library = { id: LIB, root_path: '/nowhere' } as never;
 
     await expect(service.solveSeams({} as never, [[0]], CRASH, library)).rejects.toThrow(/crashed/);
@@ -195,7 +217,18 @@ describe('ProcessingService.solveSeams', () => {
 
   it('names a cancelled job as the native side fails one', () => {
     const planes = readFileSync(
-      join(import.meta.dir, '..', '..', '..', '..', '..', 'native', 'rawshim', 'src', 'assembly_planes.rs'),
+      join(
+        import.meta.dir,
+        '..',
+        '..',
+        '..',
+        '..',
+        '..',
+        'native',
+        'rawshim',
+        'src',
+        'assembly_planes.rs',
+      ),
       'utf8',
     );
     expect(planes).toContain(`pub const CANCELLED: &str = "${JOB_CANCELLED}";`);
@@ -219,12 +252,21 @@ describe('ProcessingService.buildComposite', () => {
       settings,
       () => ({ doc: '{}', stamp: 'stamp-1' }),
       () => ({ id: LIB, root_path: '/nowhere' }) as never,
-      () => ({ kind: 'panorama', recipe: { version: 1 }, sources: [{ photoId: 'a', rawFilePath: '/nowhere/a.arw' }] }),
+      () => ({
+        kind: 'panorama',
+        recipe: { version: 1 },
+        sources: [{ photoId: 'a', rawFilePath: '/nowhere/a.arw' }],
+      }),
     );
 
-    expect(await service.buildComposite('panorama', { id: LIB, root_path: '/nowhere' } as never, 'embedded', false)).toBe(
-      true,
-    );
+    expect(
+      await service.buildComposite(
+        'panorama',
+        { id: LIB, root_path: '/nowhere' } as never,
+        'embedded',
+        false,
+      ),
+    ).toBe(true);
 
     // The cameras' own pictures, composited: the camera view of a canvas is that request and
     // nothing else, whatever the library builds its renditions from.
@@ -247,7 +289,22 @@ describe('the composites a batch finds owed', () => {
   usingMockWorker();
 
   const ASSEMBLY = RecipeSchema.parse({
-    ...JSON.parse(readFileSync(join(import.meta.dir, '..', '..', '..', '..', '..', 'test', 'fixtures', 'assembly-recipe.json'), 'utf8')),
+    ...JSON.parse(
+      readFileSync(
+        join(
+          import.meta.dir,
+          '..',
+          '..',
+          '..',
+          '..',
+          '..',
+          'test',
+          'fixtures',
+          'assembly-recipe.json',
+        ),
+        'utf8',
+      ),
+    ),
     kind: 'assembly',
   });
   if (ASSEMBLY.kind === 'file') throw new Error('the assembly fixture parsed as a file recipe');
@@ -261,9 +318,18 @@ describe('the composites a batch finds owed', () => {
       { enabled: true, skip: [] as OptionalStage[], wanted: 'lensAndColour' as CameraMatch },
     ];
     for (const { enabled, skip, wanted } of cases) {
-      const service = new ProcessingService({} as PhotoProcessingRepository, NO_PATHS, NO_LISTING,
-        settingsWith({ match_embedded_jpeg: enabled }));
-      const library = { id: LIB, root_path: '/nowhere', rendition_hdr: true, render_skip_full: skip } as never;
+      const service = new ProcessingService(
+        {} as PhotoProcessingRepository,
+        NO_PATHS,
+        NO_LISTING,
+        settingsWith({ match_embedded_jpeg: enabled }),
+      );
+      const library = {
+        id: LIB,
+        root_path: '/nowhere',
+        rendition_hdr: true,
+        render_skip_full: skip,
+      } as never;
       const on = service.openComposite();
       try {
         await service.buildAssemblyLayer([], ASSEMBLY, 0, library, '/nowhere/layer.avif', on);
@@ -310,7 +376,11 @@ describe('the composites a batch finds owed', () => {
       settingsWith({ grid_rendition_size: 800 }),
       () => null,
       () => ({ id: LIB, root_path: '/nowhere' }) as never,
-      () => ({ kind: 'assembly', recipe: ASSEMBLY, sources: [{ photoId: 'a', rawFilePath: '/nowhere/a.arw' }] }),
+      () => ({
+        kind: 'assembly',
+        recipe: ASSEMBLY,
+        sources: [{ photoId: 'a', rawFilePath: '/nowhere/a.arw' }],
+      }),
     );
 
     await service.processUnprocessed({ libraryId: LIB });
@@ -333,15 +403,30 @@ describe('the sizes a composite is framed to', () => {
   usingMockWorker();
 
   it('carries dependent camera stages through composite jobs and native commands', async () => {
-    const service = new ProcessingService({} as PhotoProcessingRepository, NO_PATHS, NO_LISTING, settingsWith({}));
-    const cases: [OptionalStage[], CameraMatch][] = [[[], 'lensAndColour'], [['colour'], 'lens'], [['lens'], 'none']];
+    const service = new ProcessingService(
+      {} as PhotoProcessingRepository,
+      NO_PATHS,
+      NO_LISTING,
+      settingsWith({}),
+    );
+    const cases: [OptionalStage[], CameraMatch][] = [
+      [[], 'lensAndColour'],
+      [['colour'], 'lens'],
+      [['lens'], 'none'],
+    ];
     for (const [skip, wanted] of cases) {
       const on = service.openComposite();
       try {
         await service.buildCompositeRendition(
-          'panorama', [], { version: 1 }, 'panorama',
+          'panorama',
+          [],
+          { version: 1 },
+          'panorama',
           { id: LIB, root_path: '/nowhere', render_skip_full: skip, render_skip_max: [] } as never,
-          'full', true, 'render', on,
+          'full',
+          true,
+          'render',
+          on,
         );
         const job = posted.at(-1);
         if (job?.kind !== 'composite') throw new Error('Expected a composite job');
@@ -390,18 +475,28 @@ describe('the sizes a composite is framed to', () => {
   it('frames an assembly as one frame rather than as a canvas several frames wide', async () => {
     expect(await sizeOf('grid', { grid_rendition_size: 800 }, 'assembly')).toBe(800);
     expect(
-      await sizeOf('full', { full_rendition_size: 3840, panorama_full_rendition_size: 16384 }, 'assembly'),
+      await sizeOf(
+        'full',
+        { full_rendition_size: 3840, panorama_full_rendition_size: 16384 },
+        'assembly',
+      ),
     ).toBe(3840);
     // And its camera view is the viewer's copy of it, exactly as a panorama's is: sized off the
     // canvas instead, an assembly on a library serving the cameras' pictures composites every
     // frame at native resolution the first time anybody opens one.
     expect(
-      await sizeOf('embedded', { full_rendition_size: 3840, panorama_full_rendition_size: 16384 }, 'assembly'),
+      await sizeOf(
+        'embedded',
+        { full_rendition_size: 3840, panorama_full_rendition_size: 16384 },
+        'assembly',
+      ),
     ).toBe(3840);
   });
 
   it('frames the viewer copy to the panorama setting rather than the photograph one', async () => {
-    expect(await sizeOf('full', { full_rendition_size: 3840, panorama_full_rendition_size: 16384 })).toBe(16384);
+    expect(
+      await sizeOf('full', { full_rendition_size: 3840, panorama_full_rendition_size: 16384 }),
+    ).toBe(16384);
   });
 
   it('frames the tile larger than a photograph tile, with no second setting to keep in step', async () => {

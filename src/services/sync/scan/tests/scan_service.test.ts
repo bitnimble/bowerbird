@@ -21,14 +21,26 @@ afterEach(() => {
 });
 
 const livePaths = (peer: Peer): string[] =>
-  (peer.db.query(`SELECT json_extract(recipe, '$.path') AS file_path FROM photos WHERE is_deleted = 0 ORDER BY file_path`).all() as {
-    file_path: string;
-  }[]).map((row) => row.file_path);
+  (
+    peer.db
+      .query(
+        `SELECT json_extract(recipe, '$.path') AS file_path FROM photos WHERE is_deleted = 0 ORDER BY file_path`,
+      )
+      .all() as {
+      file_path: string;
+    }[]
+  ).map((row) => row.file_path);
 
 const binnedPaths = (peer: Peer): string[] =>
-  (peer.db.query(`SELECT json_extract(recipe, '$.path') AS file_path FROM photos WHERE is_deleted = 1 ORDER BY file_path`).all() as {
-    file_path: string;
-  }[]).map((row) => row.file_path);
+  (
+    peer.db
+      .query(
+        `SELECT json_extract(recipe, '$.path') AS file_path FROM photos WHERE is_deleted = 1 ORDER BY file_path`,
+      )
+      .all() as {
+      file_path: string;
+    }[]
+  ).map((row) => row.file_path);
 
 describe('a missing library root', () => {
   it('lets concurrent bin repairs share the directory they create', async () => {
@@ -37,7 +49,10 @@ describe('a missing library root', () => {
     const library = libraries.getById(LIB);
     if (library == null) throw new Error('library was not created');
 
-    const repaired = await Promise.all([ensureBinFolder(library, libraries), ensureBinFolder(library, libraries)]);
+    const repaired = await Promise.all([
+      ensureBinFolder(library, libraries),
+      ensureBinFolder(library, libraries),
+    ]);
 
     expect(repaired).toEqual([path.join(peer.root, 'Bin'), path.join(peer.root, 'Bin')]);
     expect(statSync(path.join(peer.root, 'Bin')).isDirectory()).toBe(true);
@@ -57,7 +72,12 @@ describe('a missing library root', () => {
 
   it('keeps shoots when the root returns after the live walk', async () => {
     let restore = (): void => {};
-    const peer = makeLibrary({ pendingMoves: () => { restore(); return []; } });
+    const peer = makeLibrary({
+      pendingMoves: () => {
+        restore();
+        return [];
+      },
+    });
     put(peer, 'Trip/a.arw');
     await peer.scan.scanLibrary(LIB);
     const original = peer.photoScan.listForScan(LIB)[0];
@@ -90,15 +110,21 @@ describe('a missing library root', () => {
     put(peer, 'Binned/in-place.arw', 'in-place');
     put(peer, 'Bin/Trip/binned.arw', 'binned');
     await peer.scan.scanLibrary(LIB);
-    const inPlace = peer.photoScan.listForScan(LIB).find((photo) => photo.file_path === 'Binned/in-place.arw');
+    const inPlace = peer.photoScan
+      .listForScan(LIB)
+      .find((photo) => photo.file_path === 'Binned/in-place.arw');
     if (inPlace == null) throw new Error('scan did not import the in-place original');
     peer.photoPaths.markDeleted(inPlace.id, inPlace.file_path);
     mkdirSync(path.join(peer.root, 'Empty'));
     const emptyFolder = statSync(path.join(peer.root, 'Empty'));
-    peer.db.query(
-      "INSERT INTO shoots (id, library_id, name, folder_path, folder_dev, folder_ino, folder_birthtime) VALUES ('empty001', ?, 'Empty', 'Empty', ?, ?, ?)",
-    ).run(LIB, emptyFolder.dev, emptyFolder.ino, emptyFolder.birthtimeMs);
-    const before = peer.db.query('SELECT id, recipe, shoot_id, is_deleted, deleted_from_path FROM photos ORDER BY id').all();
+    peer.db
+      .query(
+        "INSERT INTO shoots (id, library_id, name, folder_path, folder_dev, folder_ino, folder_birthtime) VALUES ('empty001', ?, 'Empty', 'Empty', ?, ?, ?)",
+      )
+      .run(LIB, emptyFolder.dev, emptyFolder.ino, emptyFolder.birthtimeMs);
+    const before = peer.db
+      .query('SELECT id, recipe, shoot_id, is_deleted, deleted_from_path FROM photos ORDER BY id')
+      .all();
     const shootsBefore = peer.shoots.listIdentities(LIB);
     const renamed = `${peer.root}-renamed`;
     roots.push(renamed);
@@ -109,9 +135,16 @@ describe('a missing library root', () => {
     expect(missing.photos_removed).toBe(2);
     expect(missing.photos_modified).toBe(2);
     expect(peer.db.query('SELECT is_missing FROM photos ORDER BY id').all()).toEqual([
-      { is_missing: 1 }, { is_missing: 1 }, { is_missing: 1 }, { is_missing: 1 },
+      { is_missing: 1 },
+      { is_missing: 1 },
+      { is_missing: 1 },
+      { is_missing: 1 },
     ]);
-    expect(peer.db.query('SELECT id, recipe, shoot_id, is_deleted, deleted_from_path FROM photos ORDER BY id').all()).toEqual(before);
+    expect(
+      peer.db
+        .query('SELECT id, recipe, shoot_id, is_deleted, deleted_from_path FROM photos ORDER BY id')
+        .all(),
+    ).toEqual(before);
     expect(existsSync(peer.root)).toBe(false);
     expect(peer.shoots.listIdentities(LIB)).toEqual(shootsBefore);
 
@@ -124,9 +157,16 @@ describe('a missing library root', () => {
     const restored = await peer.scan.scanLibrary(LIB);
     expect(restored.photos_added).toBe(0);
     expect(peer.db.query('SELECT is_missing FROM photos ORDER BY id').all()).toEqual([
-      { is_missing: 0 }, { is_missing: 0 }, { is_missing: 0 }, { is_missing: 0 },
+      { is_missing: 0 },
+      { is_missing: 0 },
+      { is_missing: 0 },
+      { is_missing: 0 },
     ]);
-    expect(peer.db.query('SELECT id, recipe, shoot_id, is_deleted, deleted_from_path FROM photos ORDER BY id').all()).toEqual(before);
+    expect(
+      peer.db
+        .query('SELECT id, recipe, shoot_id, is_deleted, deleted_from_path FROM photos ORDER BY id')
+        .all(),
+    ).toEqual(before);
     expect(peer.shoots.listIdentities(LIB)).toEqual(shootsBefore);
   });
 });
@@ -180,13 +220,19 @@ describe('what the bin walk is allowed to import', () => {
     await peer.scan.scanLibrary(LIB);
 
     expect(binnedPaths(peer)).toEqual(['Bin/Trip/old.arw']);
-    const row = peer.db.query('SELECT deleted_from_path FROM photos').get() as { deleted_from_path: string };
+    const row = peer.db.query('SELECT deleted_from_path FROM photos').get() as {
+      deleted_from_path: string;
+    };
     expect(row.deleted_from_path).toBe('Trip/old.arw');
   });
 });
 
 describe('which shoots a full scan removes', () => {
-  const shootPaths = (peer: Peer): string[] => peer.shoots.listByLibrary(LIB).map((s) => s.folder_path).sort();
+  const shootPaths = (peer: Peer): string[] =>
+    peer.shoots
+      .listByLibrary(LIB)
+      .map((s) => s.folder_path)
+      .sort();
 
   /**
    * An `excluded` rule is settable on any folder from the settings page. The walk
@@ -209,7 +255,9 @@ describe('which shoots a full scan removes', () => {
   it('keeps one whose folder this device has never walked', async () => {
     const peer = makeLibrary();
     peer.db
-      .query("INSERT INTO shoots (id, library_id, name, folder_path) VALUES ('sh1', ?, 'Iceland', 'Iceland')")
+      .query(
+        "INSERT INTO shoots (id, library_id, name, folder_path) VALUES ('sh1', ?, 'Iceland', 'Iceland')",
+      )
       .run(LIB);
 
     await peer.scan.scanLibrary(LIB);
@@ -254,7 +302,9 @@ describe('a photograph whose row and file disagree on purpose', () => {
     await stalled.scanLibrary(LIB);
 
     expect(livePaths(peer)).toEqual(['Day2/a.arw']);
-    const row = peer.db.query('SELECT is_missing FROM photos WHERE id = ?').get(id) as { is_missing: number };
+    const row = peer.db.query('SELECT is_missing FROM photos WHERE id = ?').get(id) as {
+      is_missing: number;
+    };
     expect(row.is_missing).toBe(0);
   });
 });

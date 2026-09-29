@@ -38,13 +38,27 @@ const absent = new Proxy({}, { get: () => () => undefined }) as never;
 
 // `built` names the renditions on disk: this action remakes a file rather than making one,
 // so what it offers is what the detail statted.
-function open(built: ViewerRendition[] = ['full', 'max']): { store: ViewerStore; presenter: PhotosPresenter } {
+function open(built: ViewerRendition[] = ['full', 'max']): {
+  store: ViewerStore;
+  presenter: PhotosPresenter;
+} {
   const settings = { viewerRenditionMode: 'remember', lastViewerRendition: null } as never;
   const stacks = new StacksStore();
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, settings, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    absent,
+    settings,
+    absent,
+  );
   runInAction(() => {
     store.open = { id: PHOTO, status: 'ready' };
     store.details = new Map([
@@ -53,7 +67,10 @@ function open(built: ViewerRendition[] = ['full', 'max']): { store: ViewerStore;
         {
           id: PHOTO,
           renditions: Object.fromEntries(
-            (['embedded', 'full', 'max'] as ViewerRendition[]).map((each) => [each, { built: built.includes(each) }]),
+            (['embedded', 'full', 'max'] as ViewerRendition[]).map((each) => [
+              each,
+              { built: built.includes(each) },
+            ]),
           ),
         } as unknown as PhotoDetail,
       ],

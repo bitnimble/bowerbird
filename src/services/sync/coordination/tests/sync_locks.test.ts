@@ -9,7 +9,11 @@ let locks: SyncLocksRepository;
 
 beforeEach(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(LIB, '/tmp/lib', 'lib');
+  db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(
+    LIB,
+    '/tmp/lib',
+    'lib',
+  );
   locks = new SyncLocksRepository(db);
 });
 

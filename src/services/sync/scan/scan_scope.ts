@@ -69,5 +69,9 @@ export function wentAway(
   walked: ReadonlySet<string>,
   shoot: { folder_path: string; folder_dev: number | null },
 ): boolean {
-  return isDirInScope(scope, shoot.folder_path) && shoot.folder_dev != null && !walked.has(shoot.folder_path);
+  return (
+    isDirInScope(scope, shoot.folder_path) &&
+    shoot.folder_dev != null &&
+    !walked.has(shoot.folder_path)
+  );
 }

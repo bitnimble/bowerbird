@@ -28,8 +28,13 @@ export class ShareService {
         return jpeg;
       }
       const renditionPath = getRenditionPath(library, photo.id, rendition, library.rendition_hdr);
-      if (!(await Bun.file(renditionPath).exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
-      return this.exports.shareable(photo.id, renditionPath, storedAsHdr(rendition, library.rendition_hdr));
+      if (!(await Bun.file(renditionPath).exists()))
+        throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+      return this.exports.shareable(
+        photo.id,
+        renditionPath,
+        storedAsHdr(rendition, library.rendition_hdr),
+      );
     });
   }
 
@@ -37,7 +42,12 @@ export class ShareService {
   async built(photoId: string): Promise<ViewerRendition> {
     const { photo, library } = this.photoRenditions.locate(photoId);
     for (const rendition of ['full', 'max'] as const) {
-      if (await Bun.file(getRenditionPath(library, photo.id, rendition, library.rendition_hdr)).exists()) return rendition;
+      if (
+        await Bun.file(
+          getRenditionPath(library, photo.id, rendition, library.rendition_hdr),
+        ).exists()
+      )
+        return rendition;
     }
     return 'embedded';
   }

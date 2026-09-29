@@ -38,7 +38,11 @@ function build(bytes = 1): {
   const shown: string[] = [];
   photosApi.attachment = (photoId, form) => {
     asked.push(`${photoId}/${form}`);
-    return Promise.resolve({ bytes: new Uint8Array(bytes), mediaType: 'image/jpeg', filename: null });
+    return Promise.resolve({
+      bytes: new Uint8Array(bytes),
+      mediaType: 'image/jpeg',
+      filename: null,
+    });
   };
   exportsApi.create = () =>
     Promise.resolve({ bytes: new Uint8Array(bytes), mediaType: 'image/jpeg', filename: null });
@@ -104,5 +108,7 @@ test('a send that throws is a failure the form can name', async () => {
   store.photo = photo();
   bugReporter.send = () => Promise.reject(new Error('the network went'));
 
-  expect(await presenter.send({ ...WRITTEN, includePhoto: false, raw: false, strip: true })).toBe('failed');
+  expect(await presenter.send({ ...WRITTEN, includePhoto: false, raw: false, strip: true })).toBe(
+    'failed',
+  );
 });

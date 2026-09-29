@@ -60,6 +60,7 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
       --manifest-path native/rawshim/Cargo.toml` links a `.wasm` now. `gpu::device` is `None`
       there, because the page owns the `GPUDevice` and this crate's wasm half ends at the fit.
       Only `Gpu`'s own construction is gated, so nothing native moved.
+
 - [x] **A wasm decode runs, not merely compiles** (`a7bfbf1`). Reading
       `decode_rawler::decode_source` after compilation found both first-frame panic blockers.
 
@@ -88,6 +89,7 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
       **Threads do not block.** rayon 1.13 detects unavailable spawning and runs `par_chunks_mut`
       sequentially. Decode spawns nothing else: browsers reach `edit::open`, not `ffi.rs`'s
       C ABI, and `hdr.rs`'s scope is `renditions`-gated.
+
 - [x] **Threads: single, and no wasm threading is to be built.** The part in question is purely
       the entropy decode and bit-unpack into the sensor's `u16` grid - `raw_image`, rayon-parallel
       inside rawler (Sony's lossless is tiled in two dimensions). At 61MP it is 92ms on twelve
@@ -110,6 +112,7 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
       **The page never borrowed the module's device.** The presenter uses `navigator.gpu`, the
       module opens a decode device, and only samples cross. A `GPUDevice` cannot cross workers;
       `openGpuDevice` tells the worker whether it obtained an adapter, without handing one out.
+
 - [x] **The camera match is served** (`9e11861`), at `/image/:id/camera-match`, immutable under a
       per-photo URL because a match is a function of the file alone. Bytes, opaquely: a build that
       cannot read a blob ignores it and refits, so there is no version to negotiate at that
@@ -123,7 +126,7 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
 - [x] **rawler decodes a region into a region, and a frame a band at a time** (`ee72430`).
       `raw_image_region_tight` returns the tile-aligned rectangle it actually covered rather than a
       frame with a hole in it, and `raw_image_band_height` lets a caller loop it over full-width
-      bands - a band *is* a region, so one extra method beats a second decode API with a closure
+      bands - a band _is_ a region, so one extra method beats a second decode API with a closure
       through it. Whole frame 232MB/187ms becomes 118MB in strips; `raw_image` is untouched in
       result and slightly faster (187 -> 161ms).
 
@@ -154,14 +157,14 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
 ## Move the open onto the GPU
 
 73% of the open is CPU work with existing GPU equivalents. Move it regardless of client
-opening, *before* wasm runs it single-threaded.
+opening, _before_ wasm runs it single-threaded.
 
 **Avoid transfers.** RCD reads VRAM back; grade uploads again: 361MB each way at 61MP for
 pointwise CPU arithmetic. Even cheap stages merit moving; the last also removes transfers.
 
 > **These numbers describe an integrated GPU:** `open_bench` names
 > `AMD Ryzen 7 7800X3D (RADV RAPHAEL_MENDOCINO)
-> (IntegratedGpu)`. No discrete card or PCIe: "361MB upload" copies within shared DRAM.
+(IntegratedGpu)`. No discrete card or PCIe: "361MB upload" copies within shared DRAM.
 > Transfers cost less, but bandwidth-bound frame sweeps cannot beat a threaded CPU through
 > rearranged transfers alone. Arithmetic density wins: RCD, GALOSH's pass12, sorting network.
 > The levels quantile's million one-byte atomics is the counter-example that loses on this iGPU.
@@ -194,7 +197,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       Pinned bit-identical against the three called in sequence, which is the right bound here -
       the same shaders on the same data, so any difference would be plumbing rather than tolerance.
 - [x] **`measure_defocus` on the GPU** (`dc77d63`), which was the gate: `prepare` takes the pair as
-      an input and the CPU measured it from the *coded* frame, so a caller had to code, read back,
+      an input and the CPU measured it from the _coded_ frame, so a caller had to code, read back,
       measure and upload again. Within 0.5% relative.
 - [x] **The chain's 8x regression, root-caused and fixed.** Two causes, both ours, neither the
       driver, and `examples/chain_probe.rs` could reproduce neither - which is what said to look at
@@ -233,6 +236,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       Superseded: the noise measure this made fast existed to feed the editor's own denoise, and
       went with it. The shader, the network and its test are deleted - nothing measures the
       prepared frame's noise now, because the denoise runs on the mosaic before there is one.
+
 - [x] **~~The levels quantile is ported but deliberately not wired~~ - deleted, and the CPU threaded
       instead.** The blocker recorded here was wrong twice over, and both are worth keeping straight.
 
@@ -258,6 +262,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       Timings taken on a loaded box (four agents, load average ~24). Contention makes threading
       look worse, not better, so 12ms is pessimistic and the ratio is not what the argument rests
       on - the ceiling is.
+
 - [x] **The block reduction sorts its median instead of selecting it** (`4a4329a`), **8089ms to
       221ms**. At 61MP the frame is 1188 x 792 blocks, each taking the CPU's exact order statistic
       by partial selection - 48 passes over 96 laps, twice over, about 8.7 billion comparisons,
@@ -274,9 +279,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       is now 85-91ms/MP flat from 0.04MP to 60MP.
 - [x] **The whole decode tiles at 2048, renders included** (`decode_rawler::denoise_in_tiles`,
       `demosaic_in_tiles`). A render is now assembled from the same regions at the same halo as
-      the loupe that predicts it, rather than two routes that ought to agree. Output is unchanged
-      - the 266-test fixture suite passes with the pinned renders untouched, same decode checksum
-      - and it is *faster*: 1068ms against 1385ms at 61MP, 56.4 MP/s against 43.5, because 3.1GB
+      the loupe that predicts it, rather than two routes that ought to agree. Output is unchanged - the 266-test fixture suite passes with the pinned renders untouched, same decode checksum - and it is _faster_: 1068ms against 1385ms at 61MP, 56.4 MP/s against 43.5, because 3.1GB
       of RCD planes costs an integrated GPU more than a halo saves. It also bounds the GPU, which
       is what makes a 61MP open viable on a phone or in a tab.
 
@@ -285,6 +288,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       there is real mosaic outside it and the whole-frame demosaic read it. Clamping to the crop
       border-fills the frame's own edge - it moved the first six samples of a pinned render and
       nothing else in the row.
+
 - [x] **GALOSH reports its progress** (`galosh::denoise_in_tiles` takes a `done` callback,
       `PROGRESS_TILE = 2048`): 20 updates at ~236ms for +22%. Finer is worse and was measured -
       1024 costs 73% of the frame for an interval already below what a reader resolves.
@@ -299,6 +303,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       and halo 512. Rounding each origin down to `2 * PASS12_TILE` fixes it exactly for ~5% extra
       area. `decode_rawler` had the same geometry without the rounding and now delegates
       (`8ba748f`), so every rendition carried this until tonight.
+
 - [x] **The halo is two constants, 32 and 64** (`RENDITION_TILE_HALO`, `EDITOR_TILE_HALO`), chosen
       at the call site. 64 is where a tiled denoise is bit-identical to the frame denoised whole;
       32 is where the seam stops being measurable. A rendition is kept and looked at later, so it
@@ -322,6 +327,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
 
       The evidence behind the halo itself is in `examples/halo_seams.rs` and
       `examples/halo_pattern.rs`, and in `29f8200`, `4287c03`, `1697656`, `df9f86a`.
+
 - [x] **`pass12` sorts its median instead of bisecting for it** (`f978344`), **4354ms to 2979ms**.
       It was 82% of GALOSH and, unlike the table, genuine per-pixel work.
 
@@ -379,6 +385,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       announces a fall-through, and the glass reports that it is holding the export's own pixels.
       Both halves were confirmed red before being trusted - forcing the server arm fails on the
       request, refusing the local one fails on the glass.
+
 - [x] **The colour Detail slider is interactive** (`f453757`). Superseded with the denoiser it
       describes: a colour-only tick ran `yuv_loess` and `yuv_join` and none of the passes beneath
       them, because `luma` was the only amount entering the chain before the regression. The mosaic
@@ -407,6 +414,7 @@ uploading and reading 361MB. Correctness is established; speed needs one shared 
       Found on the way while the old chain still existed: `yuv_sigma_scale`'s `start` had been
       added *ahead* of `sigma_slot`, so both hosts were silently normalising against `params[0]` -
       not a sigma at all. The editor's denoise had stopped denoising.
+
 - [x] **Delete what only exists to cross a wire**: `bb_prepare_edit_*`, `rawshim_edit.ts`, the
       `/prepared` route, `edit::prepare` and its `raw_file_path`, and the refusal frame the FFI
       raised. All of it is gone now that the shell has no open of its own either.

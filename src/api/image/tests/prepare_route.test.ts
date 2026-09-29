@@ -28,7 +28,12 @@ function framed(header: object, samples: number): Uint8Array {
 
 function serving(
   pictures: {
-    preparePicture: (photoId: string, shown?: unknown, missing?: unknown, develop?: unknown) => Promise<Uint8Array>;
+    preparePicture: (
+      photoId: string,
+      shown?: unknown,
+      missing?: unknown,
+      develop?: unknown,
+    ) => Promise<Uint8Array>;
   } | null,
 ): Hono {
   const photos = {
@@ -105,7 +110,9 @@ describe('GET /image/:photoId/prepare', () => {
     };
     const url = route(PathSegment.image(), 'p1', PathSegment.prepare());
     await app.request(`${url}?develop=${encodeURIComponent(JSON.stringify(develop))}`);
-    await app.request(`${url}?develop=${encodeURIComponent(JSON.stringify({ ...develop, sharpening: 900 }))}`);
+    await app.request(
+      `${url}?develop=${encodeURIComponent(JSON.stringify({ ...develop, sharpening: 900 }))}`,
+    );
     await app.request(`${url}?develop=not-json`);
 
     expect(develops).toEqual([develop, undefined, undefined]);
@@ -132,7 +139,9 @@ describe('GET /image/:photoId/prepare', () => {
   });
 
   it('says so where the server prepares no pictures at all', async () => {
-    const got = await serving(null).request(route(PathSegment.image(), 'p1', PathSegment.prepare()));
+    const got = await serving(null).request(
+      route(PathSegment.image(), 'p1', PathSegment.prepare()),
+    );
     expect(got.status).toBe(404);
     expect(await got.text()).toContain('does not prepare pictures');
   });

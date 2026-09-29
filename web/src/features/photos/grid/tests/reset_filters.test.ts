@@ -17,7 +17,18 @@ function build(source: PhotoSource): { store: ListingStore; presenter: PhotosPre
   const store = new ListingStore(stacks);
   const marks = new MarksStore(store, stacks);
   const viewer = new ViewerStore(store, stacks);
-  const presenter = new PhotosPresenter(store, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    store,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => (store.source = source));
   presenter.setViewport(1000, 1000);
   return { store, presenter };
@@ -27,7 +38,13 @@ const stubbed = { listLibraryPhotos: photosApi.listLibrary };
 
 function serve(): void {
   photosApi.listLibrary = () =>
-    Promise.resolve({ photos: [], total: 0, offset: 0, limit: 1, ordering: 'taken_desc' } as PhotoListResponse);
+    Promise.resolve({
+      photos: [],
+      total: 0,
+      offset: 0,
+      limit: 1,
+      ordering: 'taken_desc',
+    } as PhotoListResponse);
 }
 
 describe('resetting every filter', () => {

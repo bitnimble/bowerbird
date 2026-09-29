@@ -40,7 +40,7 @@ function zoomOf(view: View, reset: () => void = () => undefined): ZoomPan {
   };
 }
 
-test('the track runs from fitted to twice the frame\'s own pixels', () => {
+test("the track runs from fitted to twice the frame's own pixels", () => {
   render(<ZoomSlider zoom={zoomOf(FITTED)} />);
 
   // By its name, which is on the input that carries the value: a name left on the
@@ -55,7 +55,7 @@ test('the track runs from fitted to twice the frame\'s own pixels', () => {
   expect(screen.getByRole('button', { name: 'Fit' }).tabIndex).toBe(-1);
 });
 
-test('the readout the track carries is the scale in the frame\'s own pixels', () => {
+test("the readout the track carries is the scale in the frame's own pixels", () => {
   render(<ZoomSlider zoom={zoomOf({ scale: NATIVE, x: 0, y: 0 })} />);
 
   expect((screen.getByRole('slider') as HTMLInputElement).value).toBe('100');
@@ -63,7 +63,9 @@ test('the readout the track carries is the scale in the frame\'s own pixels', ()
 
 test('Fit is the way back, and is spent once the view is already there', () => {
   let reset = 0;
-  const { rerender } = render(<ZoomSlider zoom={zoomOf({ scale: 4, x: 0, y: 0 }, () => (reset += 1))} />);
+  const { rerender } = render(
+    <ZoomSlider zoom={zoomOf({ scale: 4, x: 0, y: 0 }, () => (reset += 1))} />,
+  );
 
   fireEvent.click(screen.getByRole('button', { name: 'Fit' }));
   expect(reset).toBe(1);

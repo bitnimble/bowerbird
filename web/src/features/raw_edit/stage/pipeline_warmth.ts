@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 const BindGroupLayoutSchema = z.custom<GPUBindGroupLayoutDescriptor>(
-  (value) => typeof value === 'object' && value != null && 'entries' in value && Array.isArray(value.entries),
+  (value) =>
+    typeof value === 'object' &&
+    value != null &&
+    'entries' in value &&
+    Array.isArray(value.entries),
 );
 
 const PipelineRecipeSchema = z.object({
@@ -33,9 +37,17 @@ type BuildAsync = (this: GPUDevice, descriptor: PipelineDescriptor) => Promise<o
 type Builder = GPUDevice & Record<string, Build | BuildAsync>;
 type Setter = { setPipeline: (pipeline: object) => void };
 type Class<T> = { prototype: T };
-type Deferred = { recipe: PipelineRecipe | null; build: () => object; pipeline?: object; warmed?: object };
+type Deferred = {
+  recipe: PipelineRecipe | null;
+  build: () => object;
+  pipeline?: object;
+  warmed?: object;
+};
 
-type Created = Pick<GPUDevice, 'createShaderModule' | 'createBindGroupLayout' | 'createPipelineLayout'>;
+type Created = Pick<
+  GPUDevice,
+  'createShaderModule' | 'createBindGroupLayout' | 'createPipelineLayout'
+>;
 
 const BUILDS = /^create\w*Pipeline$/;
 const SAVE_QUIET_MS = 2000;
@@ -82,8 +94,10 @@ export class PipelineWarmth {
     const deferred = new WeakMap<object, Deferred>();
     const recipeOf = (build: string, descriptor: PipelineDescriptor): PipelineRecipe | null =>
       this.recipeOf(build, descriptor);
-    const arrived = (wait: Deferred, compile: (() => Promise<object>) | null): void => this.arrived(wait, compile);
-    const built = (recipe: PipelineRecipe | null, pipeline: object): void => this.built(recipe, pipeline);
+    const arrived = (wait: Deferred, compile: (() => Promise<object>) | null): void =>
+      this.arrived(wait, compile);
+    const built = (recipe: PipelineRecipe | null, pipeline: object): void =>
+      this.built(recipe, pipeline);
     const warm = (opened: GPUDevice): Promise<void> => this.warm(opened, created);
 
     device.createShaderModule = function (this: GPUDevice, descriptor) {
@@ -100,7 +114,9 @@ export class PipelineWarmth {
       const layout = createPipelineLayout.call(this, descriptor);
       layouts.set(
         layout,
-        [...descriptor.bindGroupLayouts].map((group) => (group == null ? null : (groups.get(group) ?? null))),
+        [...descriptor.bindGroupLayouts].map((group) =>
+          group == null ? null : (groups.get(group) ?? null),
+        ),
       );
       return layout;
     };
@@ -113,7 +129,10 @@ export class PipelineWarmth {
       device[name] = function (this: GPUDevice, descriptor: PipelineDescriptor) {
         if (descriptor.layout === 'auto') return build.call(this, descriptor);
         const standIn = {};
-        const wait: Deferred = { recipe: recipeOf(name, descriptor), build: () => build.call(this, descriptor) };
+        const wait: Deferred = {
+          recipe: recipeOf(name, descriptor),
+          build: () => build.call(this, descriptor),
+        };
         deferred.set(standIn, wait);
         arrived(wait, buildAsync == null ? null : () => buildAsync.call(this, descriptor));
         return standIn;
@@ -184,7 +203,14 @@ export class PipelineWarmth {
       stages[field] = code;
       kept[field] = JSON.parse(JSON.stringify({ ...stage, module: undefined }));
     }
-    return { identity: this.identityOf(build, descriptor), build, descriptor: kept, stages, groups, lastUsed: this.opened };
+    return {
+      identity: this.identityOf(build, descriptor),
+      build,
+      descriptor: kept,
+      stages,
+      groups,
+      lastUsed: this.opened,
+    };
   }
 
   /**
@@ -193,9 +219,19 @@ export class PipelineWarmth {
    */
   private identityOf(build: string, descriptor: PipelineDescriptor): string {
     return JSON.stringify([build, descriptor], (_, value: unknown) => {
-      if (!(value instanceof Object) || Array.isArray(value) || !('label' in value) || isPlain(value)) return value;
+      if (
+        !(value instanceof Object) ||
+        Array.isArray(value) ||
+        !('label' in value) ||
+        isPlain(value)
+      )
+        return value;
       const label = String(value.label);
-      const named = label === '' ? (this.modules.get(value as GPUShaderModule) ?? this.layouts.get(value as GPUPipelineLayout)) : label;
+      const named =
+        label === ''
+          ? (this.modules.get(value as GPUShaderModule) ??
+            this.layouts.get(value as GPUPipelineLayout))
+          : label;
       return [value.constructor.name, named];
     });
   }
@@ -267,7 +303,7 @@ function sameRecipe(a: PipelineRecipe, b: PipelineRecipe): boolean {
 
 function methodsOf(prototype: object): string[] {
   const names = new Set<string>();
-  for (let held: object | null = prototype; held != null && held !== Object.prototype; ) {
+  for (let held: object | null = prototype; held != null && held !== Object.prototype;) {
     for (const name of Object.getOwnPropertyNames(held)) names.add(name);
     held = Object.getPrototypeOf(held) as object | null;
   }

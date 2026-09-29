@@ -84,7 +84,9 @@ test('cmd-click builds a selection without opening anything', async ({ page }) =
   await expect(tiles(page).first()).not.toHaveAttribute('aria-current', 'true');
 });
 
-test('the cursor moves without choosing anything, and Enter opens what it is on', async ({ page }) => {
+test('the cursor moves without choosing anything, and Enter opens what it is on', async ({
+  page,
+}) => {
   await gotoLibrary(page, SELECT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(SELECT_PHOTO_NAMES.length);
 
@@ -161,6 +163,8 @@ test('shift-click extends the selection from the anchor', async ({ page }) => {
   // span rather than only ever picking the one photo under it.
   await page.getByRole('button', { name: 'Clear', exact: true }).click();
   await selectPhoto(page, 0);
-  await picks(page).nth(2).click({ modifiers: ['Shift'] });
+  await picks(page)
+    .nth(2)
+    .click({ modifiers: ['Shift'] });
   expect(await chosen()).toEqual([true, true, true, false]);
 });

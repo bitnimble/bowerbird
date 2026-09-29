@@ -18,7 +18,8 @@ registerDom();
 const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
 const { MemoryRouter } = await import('react-router-dom');
 const { Sidebar } = await import('../sidebar');
-const { StoresProvider, useLibrariesStore, useReplicationStore } = await import('../../../app/stores_context');
+const { StoresProvider, useLibrariesStore, useReplicationStore } =
+  await import('../../../app/stores_context');
 
 restoreApiAfterTests();
 afterEach(cleanup);
@@ -47,7 +48,9 @@ function shoot(id: string, name: string, parent_id: string | null): Shoot {
 }
 
 const SHOOTS = [shoot('dawn', 'Dawn', null), shoot('gulls', 'Gulls', 'dawn')];
-const ALBUMS: Album[] = [{ id: 'best', name: 'Best of', ordering: 'taken_asc', banner_photo_id: null, photo_count: 4 }];
+const ALBUMS: Album[] = [
+  { id: 'best', name: 'Best of', ordering: 'taken_asc', banner_photo_id: null, photo_count: 4 },
+];
 
 shootsApi.list = (): Promise<Shoot[]> => Promise.resolve(SHOOTS);
 albumsApi.list = (): Promise<Album[]> => Promise.resolve(ALBUMS);
@@ -64,7 +67,15 @@ const PEER: PairedPeer = {
 
 // The stores belong to the provider, so the one library these rows are of is
 // written from inside it rather than handed in.
-function Seed({ library, peers, keepsOriginals }: { library: Library; peers: PairedPeer[]; keepsOriginals: boolean }): null {
+function Seed({
+  library,
+  peers,
+  keepsOriginals,
+}: {
+  library: Library;
+  peers: PairedPeer[];
+  keepsOriginals: boolean;
+}): null {
   const libraries = useLibrariesStore();
   const replication = useReplicationStore();
   useEffect(() => {
@@ -79,7 +90,11 @@ function Seed({ library, peers, keepsOriginals }: { library: Library; peers: Pai
 
 // Every section reads when it opens, so both the first render and each click
 // settle before anything is asserted on.
-async function open(library = LIBRARY, peers: PairedPeer[] = [], keepsOriginals = true): Promise<void> {
+async function open(
+  library = LIBRARY,
+  peers: PairedPeer[] = [],
+  keepsOriginals = true,
+): Promise<void> {
   render(
     <MemoryRouter>
       <StoresProvider>
@@ -126,12 +141,16 @@ test('a read-only library wears a badge, and is read as read-only', async () => 
 
 test('a writable library wears no badge', async () => {
   await open();
-  expect(within(screen.getByRole('link', { name: 'Reef, 12 photos' })).queryByTitle('Read-only')).toBeNull();
+  expect(
+    within(screen.getByRole('link', { name: 'Reef, 12 photos' })).queryByTitle('Read-only'),
+  ).toBeNull();
 });
 
 test('a synced library without its originals wears a badge, and is read that way', async () => {
   await open(LIBRARY, [PEER], false);
-  const library = screen.getByRole('link', { name: 'Reef, originals on synced devices, 12 photos' });
+  const library = screen.getByRole('link', {
+    name: 'Reef, originals on synced devices, 12 photos',
+  });
   expect(within(library).getByTitle('Originals are on synced devices')).toBeTruthy();
 });
 

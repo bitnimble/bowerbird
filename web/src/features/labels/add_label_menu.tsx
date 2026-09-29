@@ -75,7 +75,9 @@ export const AddLabelMenu = observer(function AddLabelMenu({
   const [query, setQuery] = useState('');
   const all = store.labelsOf(libraryId);
   const wanted = query.trim().toLowerCase();
-  const offered = all.filter((label) => !applied.includes(label.id) && label.name.toLowerCase().includes(wanted));
+  const offered = all.filter(
+    (label) => !applied.includes(label.id) && label.name.toLowerCase().includes(wanted),
+  );
   const creatable = wanted !== '' && !all.some((label) => label.name.toLowerCase() === wanted);
 
   const close = (): void => {
@@ -99,8 +101,16 @@ export const AddLabelMenu = observer(function AddLabelMenu({
         {AddLabelMenuStrings.addLabel()}
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="start" sticky>
-          <Popover.Popup {...stylex.props(menuStyles.popup, styles.popup)} aria-label={AddLabelMenuStrings.addLabel()}>
+        <Popover.Positioner
+          {...stylex.props(menuStyles.positioner)}
+          sideOffset={4}
+          align="start"
+          sticky
+        >
+          <Popover.Popup
+            {...stylex.props(menuStyles.popup, styles.popup)}
+            aria-label={AddLabelMenuStrings.addLabel()}
+          >
             <div {...stylex.props(styles.search)}>
               <TextField
                 grow
@@ -135,21 +145,30 @@ export const AddLabelMenu = observer(function AddLabelMenu({
                 {...stylex.props(menuStyles.item, styles.row, focusRing.ring)}
                 onClick={() => pick(label.id)}
               >
-                <span {...stylex.props(menuStyles.dot, styles.swatch)} style={{ backgroundColor: label.colour }} />
+                <span
+                  {...stylex.props(menuStyles.dot, styles.swatch)}
+                  style={{ backgroundColor: label.colour }}
+                />
                 {label.name}
               </button>
             ))}
             {creatable && (
-              <button type="button" {...stylex.props(menuStyles.item, styles.row, focusRing.ring)} onClick={create}>
+              <button
+                type="button"
+                {...stylex.props(menuStyles.item, styles.row, focusRing.ring)}
+                onClick={create}
+              >
                 <Plus size={ICON} />
                 {AddLabelMenuStrings.create(query.trim())}
               </button>
             )}
             {offered.length === 0 && !creatable && (
               <Text variant="muted" style={styles.empty}>
-                {all.length === 0 ? AddLabelMenuStrings.typeToCreate()
-                : wanted === '' ? AddLabelMenuStrings.allApplied()
-                : AddLabelMenuStrings.noMatches()}
+                {all.length === 0
+                  ? AddLabelMenuStrings.typeToCreate()
+                  : wanted === ''
+                    ? AddLabelMenuStrings.allApplied()
+                    : AddLabelMenuStrings.noMatches()}
               </Text>
             )}
           </Popover.Popup>

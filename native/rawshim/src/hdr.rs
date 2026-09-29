@@ -166,7 +166,16 @@ pub async fn fit_all(
     }
     let lateral = crate::ffi::recorded_lateral(raw_path);
     lap("preview decode");
-    fit_all_from_preview(gpu, frame, quantile, geometry, &preview, lateral, camera_match).await
+    fit_all_from_preview(
+        gpu,
+        frame,
+        quantile,
+        geometry,
+        &preview,
+        lateral,
+        camera_match,
+    )
+    .await
 }
 
 /// `fit_all` off a preview the caller decoded, with the levels the match was fitted against.
@@ -207,12 +216,18 @@ pub async fn fit_all_from_preview(
     crate::fit::with_lateral(gpu, &mut profile, &rendered, lateral).await;
     lap("lateral");
     if camera_match == CameraMatch::Lens {
-        let matched = HdrMatch { lens: profile.lens(), colour: None };
+        let matched = HdrMatch {
+            lens: profile.lens(),
+            colour: None,
+        };
         return Some((profile, matched, levels));
     }
     let matched = hdr_fit::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens())
         .await
-        .unwrap_or_else(|| HdrMatch { lens: profile.lens(), colour: None });
+        .unwrap_or_else(|| HdrMatch {
+            lens: profile.lens(),
+            colour: None,
+        });
     lap("colour");
     Some((profile, matched, levels))
 }
@@ -357,7 +372,13 @@ pub fn graded_as(
     matched: Option<&HdrMatch>,
     output: crate::gpu::Output,
 ) -> (Vec<u16>, usize, usize) {
-    graded_under(source, options, matched, output, crate::gpu::Intent::default())
+    graded_under(
+        source,
+        options,
+        matched,
+        output,
+        crate::gpu::Intent::default(),
+    )
 }
 
 /// [`graded_as`] brought inside an sRGB file's range by `intent`.
@@ -396,7 +417,10 @@ pub fn graded_under(
     let graded = encode_cut(
         gpu,
         &cut,
-        &crate::gpu::Grade { intent, ..scene.gpu_grade(cut.width, cut.height, output) },
+        &crate::gpu::Grade {
+            intent,
+            ..scene.gpu_grade(cut.width, cut.height, output)
+        },
     );
     cut.release();
     (graded, cut.width, cut.height)
@@ -732,7 +756,15 @@ pub fn encode_frame(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still(frame, width, height, &still_options(options), &options.output_path, rotate, exif)
+    crate::avif::save_still(
+        frame,
+        width,
+        height,
+        &still_options(options),
+        &options.output_path,
+        rotate,
+        exif,
+    )
 }
 
 /// [`encode_frame`] for a frame graded a band of whole rows at a time, written as a grid of them.
@@ -744,7 +776,14 @@ pub fn encode_bands(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still_bands(bands, width, &still_options(options), &options.output_path, rotate, exif)
+    crate::avif::save_still_bands(
+        bands,
+        width,
+        &still_options(options),
+        &options.output_path,
+        rotate,
+        exif,
+    )
 }
 
 #[cfg(feature = "renditions")]
@@ -828,5 +867,12 @@ pub fn encode_pq_frame_rotated(
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
     // Handed over rather than lent, so libavif takes the frame rather than a copy of it.
-    encode_frame(std::borrow::Cow::Owned(frame), width, height, options, rotate, exif)
+    encode_frame(
+        std::borrow::Cow::Owned(frame),
+        width,
+        height,
+        options,
+        rotate,
+        exif,
+    )
 }

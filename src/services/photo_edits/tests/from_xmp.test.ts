@@ -30,8 +30,12 @@ function parse(attrs: string, children = ''): XmpSettings {
 
 describe('editsFromXmp', () => {
   it('reports a non-identity Lightroom point curve without importing it', () => {
-    const { doc, unsupported } = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="1"`,
-      '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>128, 150</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>'));
+    const { doc, unsupported } = editsFromXmp(
+      parse(
+        `${CURRENT} crs:Exposure2012="1"`,
+        '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>128, 150</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>',
+      ),
+    );
     expect(doc?.toneCurve).toBeNull();
     expect(unsupported).toContain('Lightroom point curves');
   });
@@ -71,7 +75,11 @@ describe('editsFromXmp', () => {
     const asShot = editsFromXmp(parse(`${CURRENT} crs:WhiteBalance="As Shot"`));
     // Null rather than a number this layer invents: the right value is the neutral
     // the body recorded, which nothing here can see.
-    expect(asShot.doc).toMatchObject({ whiteBalanceMode: 'As Shot', temperature: null, tint: null });
+    expect(asShot.doc).toMatchObject({
+      whiteBalanceMode: 'As Shot',
+      temperature: null,
+      tint: null,
+    });
   });
 
   it('refuses half a white balance rather than importing a colour cast', () => {
@@ -126,7 +134,9 @@ describe('editsFromXmp', () => {
 
   it('names what it read and could not carry', () => {
     const { doc, unsupported } = editsFromXmp(
-      parse(`${CURRENT} crs:Exposure2012="0.5" crs:ParametricShadows="15" crs:ToneCurveName="Strong Contrast"`),
+      parse(
+        `${CURRENT} crs:Exposure2012="0.5" crs:ParametricShadows="15" crs:ToneCurveName="Strong Contrast"`,
+      ),
     );
 
     expect(doc?.exposure).toBe(0.5);
@@ -139,9 +149,12 @@ describe('editsFromXmp', () => {
   });
 
   it('takes the crop only where the file says it has one', () => {
-    const edges = 'crs:CropTop="0.1" crs:CropLeft="0.2" crs:CropBottom="0.8" crs:CropRight="0.9" crs:CropAngle="3"';
+    const edges =
+      'crs:CropTop="0.1" crs:CropLeft="0.2" crs:CropBottom="0.8" crs:CropRight="0.9" crs:CropAngle="3"';
 
-    const cropped = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="0.5" crs:HasCrop="True" ${edges}`));
+    const cropped = editsFromXmp(
+      parse(`${CURRENT} crs:Exposure2012="0.5" crs:HasCrop="True" ${edges}`),
+    );
     expect(cropped.doc).toMatchObject({
       cropTop: 0.1,
       cropLeft: 0.2,
@@ -154,7 +167,13 @@ describe('editsFromXmp', () => {
     // undid routinely leaves non-default values behind, so importing them would re-crop a
     // photo they had uncropped. The straighten goes with them for the same reason.
     const undone = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="0.5" ${edges}`));
-    expect(undone.doc).toMatchObject({ cropTop: 0, cropLeft: 0, cropBottom: 1, cropRight: 1, cropAngle: 0 });
+    expect(undone.doc).toMatchObject({
+      cropTop: 0,
+      cropLeft: 0,
+      cropBottom: 1,
+      cropRight: 1,
+      cropAngle: 0,
+    });
   });
 
   it('takes the era-independent half of a pre-2012 file whose tone was never touched', () => {
@@ -163,7 +182,9 @@ describe('editsFromXmp', () => {
     // crop that means the same fractions in 2010 as now, and explained itself by naming
     // a process version the reader never chose.
     const { doc, reasons } = editsFromXmp(
-      parse('crs:HasCrop="True" crs:CropTop="0.1" crs:CropLeft="0.2" crs:CropBottom="0.9" crs:CropRight="0.8"'),
+      parse(
+        'crs:HasCrop="True" crs:CropTop="0.1" crs:CropLeft="0.2" crs:CropBottom="0.9" crs:CropRight="0.8"',
+      ),
     );
 
     expect(doc).toMatchObject({ cropTop: 0.1, cropLeft: 0.2, cropBottom: 0.9, cropRight: 0.8 });
@@ -190,7 +211,9 @@ describe('editsFromXmp', () => {
 
   it('declines a crop stated in absolute units rather than guessing at the frame', () => {
     const { doc, reasons } = editsFromXmp(
-      parse(`${CURRENT} crs:Exposure2012="0.5" crs:HasCrop="True" crs:CropRight="0.5" crs:CropUnits="1"`),
+      parse(
+        `${CURRENT} crs:Exposure2012="0.5" crs:HasCrop="True" crs:CropRight="0.5" crs:CropUnits="1"`,
+      ),
     );
 
     // Inches or centimetres mean the fractions are not the whole story, and converting

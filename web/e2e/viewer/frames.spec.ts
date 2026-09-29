@@ -43,7 +43,10 @@ function sampleShownFrame(key: string): void {
   const tick = (): void => {
     const frames = document.querySelectorAll('[role="region"][aria-label="Photo"] [role="img"]');
     const shown = [...frames].find((frame) => frame.closest('[aria-hidden="true"]') == null);
-    samples.push({ id: location.pathname.split('/').pop() ?? '', frame: shown?.getAttribute('aria-label') ?? '' });
+    samples.push({
+      id: location.pathname.split('/').pop() ?? '',
+      frame: shown?.getAttribute('aria-label') ?? '',
+    });
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -67,12 +70,16 @@ function cameFrom(picture: Locator): Promise<string | undefined> {
   });
 }
 
-test('frames have their fitted dimensions before they are handed to the GPU worker', async ({ page }) => {
+test('frames have their fitted dimensions before they are handed to the GPU worker', async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     const handovers = new WeakMap<HTMLCanvasElement, readonly [number, number]>();
     (window as unknown as { canvasHandovers: typeof handovers }).canvasHandovers = handovers;
     const transfer = HTMLCanvasElement.prototype.transferControlToOffscreen;
-    HTMLCanvasElement.prototype.transferControlToOffscreen = function (this: HTMLCanvasElement): OffscreenCanvas {
+    HTMLCanvasElement.prototype.transferControlToOffscreen = function (
+      this: HTMLCanvasElement,
+    ): OffscreenCanvas {
       handovers.set(this, [this.width, this.height]);
       return transfer.call(this);
     };
@@ -81,9 +88,13 @@ test('frames have their fitted dimensions before they are handed to the GPU work
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
   const openName = await shownFilename(page);
   const otherName = PHOTO_NAMES.find((name) => name !== openName);
-  const dimensions = (): Promise<{ handed: readonly [number, number] | undefined; drawn: number[] }> =>
+  const dimensions = (): Promise<{
+    handed: readonly [number, number] | undefined;
+    drawn: number[];
+  }> =>
     shownFrame(page).evaluate((frame) => {
-      if (!(frame instanceof HTMLCanvasElement)) throw new Error('The photo is not drawn on a canvas');
+      if (!(frame instanceof HTMLCanvasElement))
+        throw new Error('The photo is not drawn on a canvas');
       const { canvasHandovers } = window as unknown as {
         canvasHandovers: WeakMap<HTMLCanvasElement, readonly [number, number]>;
       };
@@ -93,7 +104,10 @@ test('frames have their fitted dimensions before they are handed to the GPU work
 
   for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowRight', 'ArrowLeft']) {
     await page.keyboard.press(key);
-    await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${key === 'ArrowRight' ? otherName : openName}, `), FIRST_FRAME);
+    await expect(shownFrame(page)).toHaveAccessibleName(
+      new RegExp(`^${key === 'ArrowRight' ? otherName : openName}, `),
+      FIRST_FRAME,
+    );
     await expect.poll(async () => (await dimensions()).drawn).not.toEqual([300, 150]);
     samples.push(await dimensions());
   }
@@ -130,7 +144,9 @@ test('a frame that lands as the held one is dropped is still shown', async ({ pa
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
-test('the previous photo is held for a beat and then dropped, however slow the next one is', async ({ page }) => {
+test('the previous photo is held for a beat and then dropped, however slow the next one is', async ({
+  page,
+}) => {
   // Installed before the photo is opened, so the neighbours it then holds are as slow as
   // everything else and the frame stepped to is genuinely still coming. The hold is for a
   // photograph the stage was *not* holding, and with these answering at once there is no
@@ -180,7 +196,9 @@ test('the neighbours held either side never take the pointer from the frame', as
   const hit = await photoStage(page).evaluate((vp) => {
     const box = vp.getBoundingClientRect();
     const el = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-    return el?.getAttribute('role') === 'img' && el.getAttribute('aria-hidden') === 'false' ? el.getAttribute('aria-label') : null;
+    return el?.getAttribute('role') === 'img' && el.getAttribute('aria-hidden') === 'false'
+      ? el.getAttribute('aria-label')
+      : null;
   });
   expect(hit).toBe(await shownFrame(page).getAttribute('aria-label'));
 });
@@ -191,7 +209,9 @@ test('the neighbours held either side never take the pointer from the frame', as
 // background showing through for exactly that long, on every swap. Sampling
 // which frame is on screen cannot see it: the DOM is already correct, so
 // what this pins is the overlap that covers the gap.
-test('the frame being replaced is held opaque under its replacement for a beat', async ({ page }) => {
+test('the frame being replaced is held opaque under its replacement for a beat', async ({
+  page,
+}) => {
   await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
@@ -201,7 +221,9 @@ test('the frame being replaced is held opaque under its replacement for a beat',
     const counts: number[] = [];
     (window as unknown as { opaque: number[] }).opaque = counts;
     const tick = (): void => {
-      const frames = document.querySelectorAll('[role="region"][aria-label="Photo"] canvas[role="img"]');
+      const frames = document.querySelectorAll(
+        '[role="region"][aria-label="Photo"] canvas[role="img"]',
+      );
       counts.push([...frames].filter((frame) => getComputedStyle(frame).opacity === '1').length);
       requestAnimationFrame(tick);
     };
@@ -229,7 +251,13 @@ test('stepping to a neighbour slides in from the side it came from', async ({ pa
   // Opening a photo is not a step, so the first picture just appears.
   expect(
     await pictures(page).evaluateAll((all) =>
-      all.filter((picture) => picture.getAnimations().some((move) => (move.effect as KeyframeEffect | null)?.getKeyframes()[0]?.translate != null)),
+      all.filter((picture) =>
+        picture
+          .getAnimations()
+          .some(
+            (move) => (move.effect as KeyframeEffect | null)?.getKeyframes()[0]?.translate != null,
+          ),
+      ),
     ),
   ).toHaveLength(0);
 
@@ -242,11 +270,15 @@ test('stepping to a neighbour slides in from the side it came from', async ({ pa
   const otherName = PHOTO_NAMES.find((name) => name !== openName);
 
   await page.keyboard.press('ArrowRight');
-  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${otherName}, `), { timeout: 60_000 });
+  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${otherName}, `), {
+    timeout: 60_000,
+  });
   await expect.poll(() => cameFrom(shown)).toBe('22px');
 
   await page.keyboard.press('ArrowLeft');
-  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${openName}, `), { timeout: 60_000 });
+  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${openName}, `), {
+    timeout: 60_000,
+  });
   // The other way round, or both steps would look identical.
   await expect.poll(() => cameFrom(shown)).toBe('-22px');
 
@@ -268,7 +300,9 @@ test('stepping to a neighbour slides in from the side it came from', async ({ pa
   // forth arrives at each of a pair over and over, which is where an entrance declared once
   // against the element quietly stopped replaying.
   await page.keyboard.press('ArrowRight');
-  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${otherName}, `), { timeout: 60_000 });
+  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${otherName}, `), {
+    timeout: 60_000,
+  });
   await expect.poll(() => cameFrom(shown)).toBe('22px');
   // The picture carries an inline transform for zoom and pan, so the slide is a `translate`
   // of its own, which composes with that rather than fighting it. Asserted on the keyframe
@@ -315,7 +349,9 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
 // Both were about *which* file the viewer asked for and *when*, so both show up
 // here as facts about the frames on screen: a step must never leave the stage
 // empty, and the render must never be the picture, not even for a frame.
-test('stepping through photos shows no empty stage and never the wrong rendition', async ({ page }) => {
+test('stepping through photos shows no empty stage and never the wrong rendition', async ({
+  page,
+}) => {
   test.setTimeout(240_000);
   await setRenditionSource(page, FRAME_PHOTOS_DIR, 'render');
   await setViewerRendition(page.request, 'embedded');
@@ -327,7 +363,8 @@ test('stepping through photos shows no empty stage and never the wrong rendition
 
   // Only the frames after the route has moved on: the ones before it are the
   // photo being left, which is nobody's idea of a flash.
-  const after = async (from: string): Promise<Sample[]> => (await samplesOf(page, 'flash')).filter((s) => s.id !== from);
+  const after = async (from: string): Promise<Sample[]> =>
+    (await samplesOf(page, 'flash')).filter((s) => s.id !== from);
 
   const step = async (button: string): Promise<Sample[]> => {
     const from = openPhotoId(page);
@@ -345,11 +382,17 @@ test('stepping through photos shows no empty stage and never the wrong rendition
     // reported seeing between photos. The previous frame is held until the next
     // one has decoded, so there should be nothing to see: a couple of frames of
     // slack for a cold machine, not the hundreds of milliseconds a fetch takes.
-    expect(frames.filter((f) => f.frame === '').length, `blank frames after ${button}`).toBeLessThanOrEqual(3);
+    expect(
+      frames.filter((f) => f.frame === '').length,
+      `blank frames after ${button}`,
+    ).toBeLessThanOrEqual(3);
     // And never the library's default. Painting the render first and swapping it
     // out is the second flash, and it is invisible to a request-level assertion
     // once the file is cached.
-    expect(frames.filter((f) => f.frame.endsWith('Rendered RAW')), `render frames after ${button}`).toEqual([]);
+    expect(
+      frames.filter((f) => f.frame.endsWith('Rendered RAW')),
+      `render frames after ${button}`,
+    ).toEqual([]);
   }
 });
 
@@ -394,7 +437,9 @@ test('stepping back and forth over a fresh stage shows no empty stage', async ({
 // A stored rendition, because only those carry the stamp. The camera's JPEG has none:
 // nothing builds it, so nothing rewrites it under a URL a live page is holding, and a
 // replaced RAW is caught by the ETag on the next mount instead (§13.5).
-test('a neighbour rebuilt while it was held is painted at the URL it was held at', async ({ page }) => {
+test('a neighbour rebuilt while it was held is painted at the URL it was held at', async ({
+  page,
+}) => {
   await setRenditionSource(page, FRAME_PHOTOS_DIR, 'render');
   await setViewerRendition(page.request, 'full');
   const [, secondPhoto] = await libraryPhotos(page, FRAME_PHOTOS_DIR);
@@ -416,7 +461,9 @@ test('a neighbour rebuilt while it was held is painted at the URL it was held at
 
   await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
-  await expect(photoStage(page).getByRole('img', { name: `${secondName}, `, includeHidden: true })).toHaveCount(1);
+  await expect(
+    photoStage(page).getByRole('img', { name: `${secondName}, `, includeHidden: true }),
+  ).toHaveCount(1);
   // What it is held at *before* the rebuild. The stamp is already on this URL, the build
   // above having written one, so waiting for `?v=` to appear would be a wait that was over
   // before it started - and the assertion at the end would then compare a stale URL with
@@ -435,6 +482,11 @@ test('a neighbour rebuilt while it was held is painted at the URL it was held at
 
   const fetchedBeforeStep = fetched.length;
   await page.getByRole('button', { name: 'Next photo' }).click();
-  await expect(shownFrame(page)).toHaveAccessibleName(`${secondName}, Rendered RAW`, { timeout: 60_000 });
-  expect(fetched.slice(fetchedBeforeStep).filter((url) => url !== heldAt), 'the step paints the frame already held').toEqual([]);
+  await expect(shownFrame(page)).toHaveAccessibleName(`${secondName}, Rendered RAW`, {
+    timeout: 60_000,
+  });
+  expect(
+    fetched.slice(fetchedBeforeStep).filter((url) => url !== heldAt),
+    'the step paints the frame already held',
+  ).toEqual([]);
 });

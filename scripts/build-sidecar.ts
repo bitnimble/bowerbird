@@ -77,7 +77,10 @@ function nativeLibrary(triple: string): string {
   // and a native one does not, so mtime across both would let a fresher *host* build win over
   // the cross one asked for - and it is a valid ELF, so the copy, the relocation and the check
   // all pass and the app fails at `dlopen` on the reader's machine.
-  const roots = [join(ROOT, 'native', 'rawshim', 'target', triple), join(ROOT, 'native', 'rawshim', 'target')];
+  const roots = [
+    join(ROOT, 'native', 'rawshim', 'target', triple),
+    join(ROOT, 'native', 'rawshim', 'target'),
+  ];
   for (const root of roots) {
     const built = ['release', 'quick']
       .map((profile) => join(root, profile, name))
@@ -94,7 +97,10 @@ function nativePackages(triple: string): readonly [string, string] {
     'x86_64-unknown-linux-musl': ['@libsql/linux-x64-musl', '@parcel/watcher-linux-x64-musl'],
     'aarch64-unknown-linux-gnu': ['@libsql/linux-arm64-gnu', '@parcel/watcher-linux-arm64-glibc'],
     'aarch64-unknown-linux-musl': ['@libsql/linux-arm64-musl', '@parcel/watcher-linux-arm64-musl'],
-    'armv7-unknown-linux-gnueabihf': ['@libsql/linux-arm-gnueabihf', '@parcel/watcher-linux-arm-glibc'],
+    'armv7-unknown-linux-gnueabihf': [
+      '@libsql/linux-arm-gnueabihf',
+      '@parcel/watcher-linux-arm-glibc',
+    ],
     'aarch64-apple-darwin': ['@libsql/darwin-arm64', '@parcel/watcher-darwin-arm64'],
     'x86_64-pc-windows-msvc': ['@libsql/win32-x64-msvc', '@parcel/watcher-win32-x64'],
   };
@@ -107,7 +113,9 @@ function shipTheAddons(triple: string): void {
   for (const name of nativePackages(triple)) {
     const from = join(ROOT, 'node_modules', name);
     if (!existsSync(from)) {
-      throw new Error(`${name} is not installed, so ${triple} cannot ship its server. Install the target's native addon packages first.`);
+      throw new Error(
+        `${name} is not installed, so ${triple} cannot ship its server. Install the target's native addon packages first.`,
+      );
     }
     cpSync(from, join(SERVER, 'node_modules', name), { recursive: true, dereference: true });
   }
@@ -122,17 +130,24 @@ function shipTheAddons(triple: string): void {
  */
 function shipTheClosure(triple: string): void {
   if (triple.includes('windows')) return;
-  const libraries = [shippedLibrary(), join(SERVER, 'node_modules', nativePackages(triple)[1], 'watcher.node')];
+  const libraries = [
+    shippedLibrary(),
+    join(SERVER, 'node_modules', nativePackages(triple)[1], 'watcher.node'),
+  ];
   // Each arm drives the target's own loader tools: `otool` reads a Mach-O on any machine that has
   // one (LLVM's `llvm-otool` under that name), where `ldd` only reads what this machine can load.
   if (triple.includes('apple')) {
     if (spawnSync('sh', ['-c', 'command -v otool']).status !== 0) {
-      throw new Error(`the libraries ${triple} needs are read with otool, which is not on the path`);
+      throw new Error(
+        `the libraries ${triple} needs are read with otool, which is not on the path`,
+      );
     }
     return askNothingOfMacos(libraries);
   }
   if (process.platform !== 'linux') {
-    throw new Error(`the libraries ${triple} needs can only be read on ${triple}: assemble that app there`);
+    throw new Error(
+      `the libraries ${triple} needs can only be read on ${triple}: assemble that app there`,
+    );
   }
   underOrigin(libraries);
 }
@@ -153,7 +168,12 @@ function underOrigin(libraries: string[]): void {
     // libstdc++ - conda, Steam, a `~/.local/lib` - would get that one instead of the copy beside
     // it, which is the failure this carrying exists to prevent.
     const directory = relative(dirname(at), NATIVE);
-    run('patchelf', ['--force-rpath', '--set-rpath', directory === '' ? '$ORIGIN' : `$ORIGIN/${directory}`, at]);
+    run('patchelf', [
+      '--force-rpath',
+      '--set-rpath',
+      directory === '' ? '$ORIGIN' : `$ORIGIN/${directory}`,
+      at,
+    ]);
   }
   for (const at of relocated) refuseStrangers(at, elfClosure(walk('ldd', at)));
   console.log(`closure: ${NATIVE} (${shipped.length} libraries, rpath $ORIGIN)`);
@@ -167,7 +187,9 @@ function askNothingOfMacos(libraries: string[]): void {
   for (const library of libraries) {
     const foreign = machNames(walk('otool', library, '-L'), basename(library));
     if (foreign.length > 0) {
-      throw new Error(`${library} needs ${foreign.join(', ')}, which no reader's Mac has: link it statically`);
+      throw new Error(
+        `${library} needs ${foreign.join(', ')}, which no reader's Mac has: link it statically`,
+      );
     }
     console.log(`closure: ${library} needs nothing but macOS`);
   }
@@ -177,7 +199,9 @@ function askNothingOfMacos(libraries: string[]): void {
 function refuseStrangers(library: string, named: string[]): void {
   const strangers = named.filter((path) => !resolve(path).startsWith(`${NATIVE}/`));
   if (strangers.length > 0) {
-    throw new Error(`${library} still reaches outside what this app carries: ${strangers.join(', ')}`);
+    throw new Error(
+      `${library} still reaches outside what this app carries: ${strangers.join(', ')}`,
+    );
   }
 }
 
@@ -185,7 +209,9 @@ function refuseStrangers(library: string, named: string[]): void {
 function walk(tool: string, library: string, ...before: string[]): string {
   const walked = spawnSync(tool, [...before, library], { encoding: 'utf8' });
   if (walked.status !== 0) {
-    throw new Error(`${tool} could not read what ${library} needs: ${walked.error?.message ?? walked.stderr ?? `exit ${String(walked.status)}`}`);
+    throw new Error(
+      `${tool} could not read what ${library} needs: ${walked.error?.message ?? walked.stderr ?? `exit ${String(walked.status)}`}`,
+    );
   }
   return walked.stdout;
 }
@@ -244,10 +270,14 @@ run('bun', [
 cpSync(join(ROOT, 'src', 'db', 'migrations'), join(SERVER, 'migrations'), { recursive: true });
 shipTheAddons(triple);
 // LGPL: shipped as its own module rather than bundled, so a recipient can replace it (THIRD_PARTY.md).
-cpSync(join(ROOT, 'node_modules', 'samsung-frame-art'), join(SERVER, 'node_modules', 'samsung-frame-art'), {
-  recursive: true,
-  dereference: true,
-});
+cpSync(
+  join(ROOT, 'node_modules', 'samsung-frame-art'),
+  join(SERVER, 'node_modules', 'samsung-frame-art'),
+  {
+    recursive: true,
+    dereference: true,
+  },
+);
 
 // The runtime, named as Tauri expects a sidecar to be. Copied rather than
 // referenced so the app depends on nothing the machine happens to have.
@@ -260,7 +290,9 @@ cpSync(join(ROOT, 'node_modules', 'samsung-frame-art'), join(SERVER, 'node_modul
 const host = hostTriple();
 const runtime = process.env.BOWERBIRD_SIDECAR_RUNTIME ?? process.execPath;
 if (process.env.BOWERBIRD_SIDECAR_RUNTIME == null && triple !== host) {
-  throw new Error(`building for ${triple} from ${host}: set BOWERBIRD_SIDECAR_RUNTIME to a bun built for ${triple}`);
+  throw new Error(
+    `building for ${triple} from ${host}: set BOWERBIRD_SIDECAR_RUNTIME to a bun built for ${triple}`,
+  );
 }
 const sidecar = join(BINARIES, `bowerbird-server-${triple}${suffix}`);
 // Unlinked rather than overwritten: a copy of this one still running - a desktop
@@ -281,4 +313,5 @@ console.log(`sidecar: ${sidecar} (the Bun runtime, from ${runtime})`);
 console.log(`server:  ${join(SERVER, 'index.js')}`);
 console.log(`native:  ${shippedLibrary()} (from ${library})`);
 console.log(`schema:  ${join(SERVER, 'migrations')}`);
-for (const name of nativePackages(triple)) console.log(`addon:   ${join(SERVER, 'node_modules', name)}`);
+for (const name of nativePackages(triple))
+  console.log(`addon:   ${join(SERVER, 'node_modules', name)}`);

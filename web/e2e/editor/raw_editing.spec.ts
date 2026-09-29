@@ -72,10 +72,13 @@ test.beforeAll(async ({ browser }) => {
  * being sent there instead, and the console is what says the frame that went live was not
  * half-written by a refused dispatch.
  */
-test('opens in the tab and grades on the GPU, into a stage sized for the viewport', async ({ page }) => {
+test('opens in the tab and grades on the GPU, into a stage sized for the viewport', async ({
+  page,
+}) => {
   const askedTheServer: string[] = [];
   page.on('request', (request) => {
-    if (new URL(request.url()).pathname.endsWith(route(PathSegment.prepare()))) askedTheServer.push(request.url());
+    if (new URL(request.url()).pathname.endsWith(route(PathSegment.prepare())))
+      askedTheServer.push(request.url());
   });
   const declined = watchForComplaints(page);
   // Stored rather than dragged: what a value *does* is answered without a browser, so the only
@@ -147,8 +150,11 @@ async function gradesOnTheGpu(page: Page): Promise<void> {
 
   // The camera neutral reaches the client too: what the sliders *do* with it is
   // `raw_edit_presenter.test.ts`, and a header without it leaves the pair absent entirely.
-  await expect(page.getByRole('group', { name: 'White balance' }).getByRole('textbox', { name: 'Temperature value' }))
-    .toHaveValue(/^[\d.]+ K$/);
+  await expect(
+    page
+      .getByRole('group', { name: 'White balance' })
+      .getByRole('textbox', { name: 'Temperature value' }),
+  ).toHaveValue(/^[\d.]+ K$/);
 }
 
 /**
@@ -181,7 +187,8 @@ test('every soft proof crosses to the module and keeps drawing', async ({ page }
       await page.getByRole('checkbox', { name: 'Black point compensation' }).uncheck();
     }
     await expect(page.getByRole('button', { name: /^Soft proof/ })).toHaveText(shown);
-    if (panel != null) await expect(page.getByRole('group', { name: panel, exact: true })).toBeVisible();
+    if (panel != null)
+      await expect(page.getByRole('group', { name: panel, exact: true })).toBeVisible();
     // A refused command comes back asynchronously and lands on the tick after it
     // (`gpu::refusal`), so the status is read for a while rather than once.
     await waitForEditorLive(page, 10_000);
@@ -233,12 +240,15 @@ const middleOf = (box: Box): Point => ({ x: box.x + box.width / 2, y: box.y + bo
 
 /** The crop rectangle as a reader finds it: what offers to move the picture's middle, if anything. */
 async function cropRect(page: Page): Promise<Box | null> {
-  return page.evaluate(({ x, y }) => {
-    const hit = document.elementFromPoint(x, y);
-    if (hit == null || getComputedStyle(hit).cursor !== 'move') return null;
-    const { left, top, width, height } = hit.getBoundingClientRect();
-    return { x: left, y: top, width, height };
-  }, middleOf(await stageBox(page)));
+  return page.evaluate(
+    ({ x, y }) => {
+      const hit = document.elementFromPoint(x, y);
+      if (hit == null || getComputedStyle(hit).cursor !== 'move') return null;
+      const { left, top, width, height } = hit.getBoundingClientRect();
+      return { x: left, y: top, width, height };
+    },
+    middleOf(await stageBox(page)),
+  );
 }
 
 /**
@@ -285,12 +295,29 @@ test('tone curve points drag and drag off the plot', async ({ page }) => {
   const state = async () => EditStateSchema.parse(await (await page.request.get(editsUrl)).json());
   const original = await state();
   const seeded = await page.request.put(editsUrl, {
-    data: { doc: { ...original.doc, exposure: null, toneCurve: { kind: TONE_CURVE_KIND, points: [[0, 0], [1, 1]] } }, rev: original.rev, session: 'rawEditingSpec' },
+    data: {
+      doc: {
+        ...original.doc,
+        exposure: null,
+        toneCurve: {
+          kind: TONE_CURVE_KIND,
+          points: [
+            [0, 0],
+            [1, 1],
+          ],
+        },
+      },
+      rev: original.rev,
+      session: 'rawEditingSpec',
+    },
   });
   expect(seeded.ok()).toBe(true);
   const seededState = EditStateSchema.parse(await seeded.json());
-  const savedByEditor = () => page.waitForResponse((response) =>
-    response.url().endsWith(editsUrl) && response.request().method() === 'PUT', { timeout: 30_000 });
+  const savedByEditor = () =>
+    page.waitForResponse(
+      (response) => response.url().endsWith(editsUrl) && response.request().method() === 'PUT',
+      { timeout: 30_000 },
+    );
 
   try {
     await open(page);
@@ -348,7 +375,9 @@ test('tone curve points drag and drag off the plot', async ({ page }) => {
     await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2);
     const removedSave = savedByEditor();
     await page.mouse.down();
-    await page.mouse.move(plotBox.x - plotBox.width * 0.2, plotBox.y + plotBox.height / 2, { steps: 8 });
+    await page.mouse.move(plotBox.x - plotBox.width * 0.2, plotBox.y + plotBox.height / 2, {
+      steps: 8,
+    });
     await page.mouse.up();
 
     await expect(plot.getByRole('slider', { name: /^Curve point/ })).toHaveCount(0);
@@ -448,7 +477,10 @@ test('a loop drawn around something is offered fills, and one is kept', async ({
   const fill = stage.getByRole('img', { name: 'Fill', exact: true });
   await expect(fill).toHaveCount(1);
   await expect(stage.getByRole('img', { name: 'Fill source' })).toHaveCount(1);
-  await expect(stage.getByRole('img', { name: 'From source to fill' })).toHaveAttribute('marker-end', /url\(#/);
+  await expect(stage.getByRole('img', { name: 'From source to fill' })).toHaveAttribute(
+    'marker-end',
+    /url\(#/,
+  );
   await page.mouse.move(centre.x, centre.y);
   // Zoomed, the stage offers `grab` for a pan as well, so the fill standing out is what says the
   // pointer is on it.
@@ -494,7 +526,11 @@ test('a loop drawn around something is offered fills, and one is kept', async ({
   await page.mouse.move(keptAt.x, keptAt.y);
   await expect.poll(async () => cursorAt(page, keptAt)).toBe('pointer');
   await expect
-    .poll(async () => removals.evaluateAll((all) => all.filter((each) => getComputedStyle(each).strokeWidth === '2px').length))
+    .poll(async () =>
+      removals.evaluateAll(
+        (all) => all.filter((each) => getComputedStyle(each).strokeWidth === '2px').length,
+      ),
+    )
     .toBe(1);
   await page.mouse.click(keptAt.x, keptAt.y);
   await expect(apply).toBeVisible({ timeout: 60_000 });
@@ -518,7 +554,9 @@ function rebuilding(page: Page): Locator {
  * page hands the worker crosses at all - the document is observable here, and a proxy that reached
  * `postMessage` is a failed editor and nothing else.
  */
-test('moving the sharpening prepares the photograph again, and the editor stays live', async ({ page }) => {
+test('moving the sharpening prepares the photograph again, and the editor stays live', async ({
+  page,
+}) => {
   await open(page);
   const wasAt = await savedRev(page, photoId);
 
@@ -617,7 +655,9 @@ test('an exposure survives a reload, and the undo that follows it', async ({ pag
   // just the document.
   await undo(page).click();
   await expect(exposure).toHaveValue(started);
-  await expect(page.getByRole('group', { name: 'Photo controls' }).getByRole('button', { name: 'Redo' })).toBeEnabled();
+  await expect(
+    page.getByRole('group', { name: 'Photo controls' }).getByRole('button', { name: 'Redo' }),
+  ).toBeEnabled();
 });
 
 /**
@@ -660,11 +700,18 @@ test('stepping away from the editor and back does not reopen it', async ({ page 
 test('opening straight into the editor asks for no viewer frames', async ({ page }) => {
   // The editor's own open, which is served from the same prefix as the frames this is about: the
   // RAW the tab decodes and the match it opens with.
-  const opening = [route(PathSegment.download(), PathSegment.original()), route(PathSegment.analysis())];
+  const opening = [
+    route(PathSegment.download(), PathSegment.original()),
+    route(PathSegment.analysis()),
+  ];
   const asked: string[] = [];
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname;
-    if (path.startsWith(`${route(PathSegment.image())}/`) && !opening.some((part) => path.endsWith(part))) asked.push(path);
+    if (
+      path.startsWith(`${route(PathSegment.image())}/`) &&
+      !opening.some((part) => path.endsWith(part))
+    )
+      asked.push(path);
   });
 
   await open(page);
@@ -722,10 +769,13 @@ async function open(page: Page): Promise<void> {
  * built at all, since a magnifier showing the tick's own render for ever would ask for nothing
  * either. A tile denoised by nothing still produces a picture, so the console is watched too.
  */
-test('the loupe follows a real pointer, takes a real wheel, and sharpens from a tile built in the tab', async ({ page }) => {
+test('the loupe follows a real pointer, takes a real wheel, and sharpens from a tile built in the tab', async ({
+  page,
+}) => {
   const askedTheServer: string[] = [];
   page.on('request', (request) => {
-    if (new URL(request.url()).pathname.endsWith(route(PathSegment.tile()))) askedTheServer.push(request.url());
+    if (new URL(request.url()).pathname.endsWith(route(PathSegment.tile())))
+      askedTheServer.push(request.url());
   });
   const declined = watchForComplaints(page);
   await open(page);
@@ -757,8 +807,12 @@ test('the loupe follows a real pointer, takes a real wheel, and sharpens from a 
   await expect(scale).toHaveText('2.0×');
   // The glass says the export's pixels are on their way while it shows the tick's own, and stops
   // once it holds them.
-  await expect(page.locator('html')).toHaveAttribute('data-saw-rendering', 'true', { timeout: 60_000 });
-  await expect(photoStage(page).getByRole('status', { name: 'Rendering' })).toHaveCount(0, { timeout: 60_000 });
+  await expect(page.locator('html')).toHaveAttribute('data-saw-rendering', 'true', {
+    timeout: 60_000,
+  });
+  await expect(photoStage(page).getByRole('status', { name: 'Rendering' })).toHaveCount(0, {
+    timeout: 60_000,
+  });
   expect(askedTheServer).toEqual([]);
   expect(declined).toEqual([]);
 
@@ -784,14 +838,20 @@ test('editor rotation lives in overflow and saves orientation edit', async ({ pa
   const view = page.getByRole('group', { name: 'View' });
   await expect(view.getByRole('menuitem', { name: 'Rotate left' })).toBeVisible();
   await view.getByRole('menuitem', { name: 'Rotate right' }).click();
-  await expect.poll(async () => {
-    const response = await page.request.get(route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()));
-    const state = (await response.json()) as { doc: { rotate: number } };
-    return state.doc.rotate;
-  }).toBe(90);
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()),
+      );
+      const state = (await response.json()) as { doc: { rotate: number } };
+      return state.doc.rotate;
+    })
+    .toBe(90);
 });
 
-test('print mode rotates with a real pointer and keyboard without saving a photo edit', async ({ page }) => {
+test('print mode rotates with a real pointer and keyboard without saving a photo edit', async ({
+  page,
+}) => {
   await page.route(/\/gpu_worker\.ts(?:\?|$)/, async (route) => {
     const response = await route.fetch();
     await route.fulfill({
@@ -897,21 +957,27 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   await open(page);
   const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
   if (worker == null) throw new Error('The GPU worker was not created');
-  const Configurations = z.array(z.object({ format: z.string(), colorSpace: z.string(), toneMapping: z.string().nullable() }));
-  const canvasConfigurations = async (): Promise<z.infer<typeof Configurations>> => Configurations.parse(
-    await worker.evaluate(() => Reflect.get(globalThis, 'editorCanvasConfigurations')),
+  const Configurations = z.array(
+    z.object({ format: z.string(), colorSpace: z.string(), toneMapping: z.string().nullable() }),
   );
+  const canvasConfigurations = async (): Promise<z.infer<typeof Configurations>> =>
+    Configurations.parse(
+      await worker.evaluate(() => Reflect.get(globalThis, 'editorCanvasConfigurations')),
+    );
   const hdrCanvas = { format: 'rgba16float', colorSpace: 'display-p3', toneMapping: 'extended' };
   expect(await canvasConfigurations()).toContainEqual(hdrCanvas);
   const revision = await savedRev(page, photoId);
   await softProof(page, 'Printed media (3D)');
   // After a shader changes, the driver's cache is cold and the sheet's pipeline compiles on this draw.
-  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', { timeout: 60_000 });
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', {
+    timeout: 60_000,
+  });
   const frame = page.getByRole('checkbox', { name: 'Add frame', exact: true });
   await expect(frame).not.toBeChecked();
   await frame.check();
   await expect(frame).toBeChecked();
-  for (const configuration of await canvasConfigurations()) expect(configuration).toEqual(hdrCanvas);
+  for (const configuration of await canvasConfigurations())
+    expect(configuration).toEqual(hdrCanvas);
   const print = page.getByRole('region', { name: 'Rotate print' });
   const yaw = page.getByRole('slider', { name: 'Horizontal rotation', exact: true });
   await expect(print).toBeVisible();
@@ -937,30 +1003,60 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   await print.press('Shift+ArrowUp');
   await print.press('ArrowRight');
   await print.press('ArrowRight');
-  await expect(page.getByRole('slider', { name: 'Vertical rotation' })).toHaveAttribute('aria-valuenow', '-37');
-  const readbackId = z.number().parse(await worker.evaluate((keyLux) => {
-    const request = Reflect.get(globalThis, 'requestEditorReadback');
-    return request({ paper: 'gloss', yawDegrees: -2, pitchDegrees: -37, keyLux });
-  }, MOST_LUX));
-  await page.getByRole('slider', { name: 'Light intensity' }).press('End');
-  const Readbacks = z.array(z.object({ id: z.number(), rgb: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]) }));
-  const readbacks = async (): Promise<z.infer<typeof Readbacks>> => Readbacks.parse(
-    await worker.evaluate(() => Reflect.get(globalThis, 'editorCanvasReadbacks')),
+  await expect(page.getByRole('slider', { name: 'Vertical rotation' })).toHaveAttribute(
+    'aria-valuenow',
+    '-37',
   );
-  await expect.poll(async () => (await readbacks()).some((frame) => frame.id === readbackId)).toBe(true);
+  const readbackId = z.number().parse(
+    await worker.evaluate((keyLux) => {
+      const request = Reflect.get(globalThis, 'requestEditorReadback');
+      return request({ paper: 'gloss', yawDegrees: -2, pitchDegrees: -37, keyLux });
+    }, MOST_LUX),
+  );
+  await page.getByRole('slider', { name: 'Light intensity' }).press('End');
+  const Readbacks = z.array(
+    z.object({
+      id: z.number(),
+      rgb: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]),
+    }),
+  );
+  const readbacks = async (): Promise<z.infer<typeof Readbacks>> =>
+    Readbacks.parse(await worker.evaluate(() => Reflect.get(globalThis, 'editorCanvasReadbacks')));
+  await expect
+    .poll(async () => (await readbacks()).some((frame) => frame.id === readbackId))
+    .toBe(true);
   const rendered = (await readbacks()).find((frame) => frame.id === readbackId);
   if (rendered == null) throw new Error('The print framebuffer was not read back');
   expect(Math.max(...rendered.rgb)).toBeGreaterThan(1.5);
-  await test.info().attach('print-canvas-hdr.json', { body: JSON.stringify(rendered), contentType: 'application/json' });
+  await test
+    .info()
+    .attach('print-canvas-hdr.json', {
+      body: JSON.stringify(rendered),
+      contentType: 'application/json',
+    });
   const compositing = await print.getByRole('img', { name: 'Edit preview' }).evaluate((canvas) => {
     const layers = [];
     for (let element: Element | null = canvas; element != null; element = element.parentElement) {
       const style = getComputedStyle(element);
-      layers.push({ tag: element.tagName, opacity: style.opacity, filter: style.filter, transform: style.transform, blend: style.mixBlendMode });
+      layers.push({
+        tag: element.tagName,
+        opacity: style.opacity,
+        filter: style.filter,
+        transform: style.transform,
+        blend: style.mixBlendMode,
+      });
     }
     return layers;
   });
-  expect(compositing.filter((layer) => layer.opacity !== '1' || layer.filter !== 'none' || layer.transform !== 'none' || layer.blend !== 'normal')).toEqual([]);
+  expect(
+    compositing.filter(
+      (layer) =>
+        layer.opacity !== '1' ||
+        layer.filter !== 'none' ||
+        layer.transform !== 'none' ||
+        layer.blend !== 'normal',
+    ),
+  ).toEqual([]);
   await expect(editorFailure(page)).toHaveCount(0);
   expect(await savedRev(page, photoId)).toBe(revision);
   await softProof(page, 'HDR (Rec.2020 PQ)');

@@ -183,7 +183,10 @@ async fn stream(
         request = request.header("last-event-id", id);
     }
 
-    let mut reply = request.send().await.map_err(|e| format!("could not reach {url}: {e}"))?;
+    let mut reply = request
+        .send()
+        .await
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
     if !reply.status().is_success() {
         return Err(format!("{url} answered {}", reply.status()));
     }
@@ -191,7 +194,13 @@ async fn stream(
     // `EventSource`'s `open`, which is to re-ask for anything a request lost while the
     // server was away.
     following(Some(origin.clone()));
-    let _ = app.emit(CHANNEL, Emitted { kind: "open".to_string(), data: String::new() });
+    let _ = app.emit(
+        CHANNEL,
+        Emitted {
+            kind: "open".to_string(),
+            data: String::new(),
+        },
+    );
 
     // `chunk` rather than `bytes_stream`, which would want reqwest's `stream` feature for a
     // loop this shape gets for nothing.
@@ -203,13 +212,21 @@ async fn stream(
             read = reply.chunk() => read.map_err(|e| format!("{url} stopped: {e}"))?,
             _ = moved.changed() => return Ok(Ended::Moved),
         };
-        let Some(chunk) = chunk else { return Ok(Ended::Closed) };
+        let Some(chunk) = chunk else {
+            return Ok(Ended::Closed);
+        };
 
         for frame in frames.push(&chunk) {
             if let Some(id) = frame.id {
                 resume.id = Some(id);
             }
-            let _ = app.emit(CHANNEL, Emitted { kind: frame.kind, data: frame.data });
+            let _ = app.emit(
+                CHANNEL,
+                Emitted {
+                    kind: frame.kind,
+                    data: frame.data,
+                },
+            );
         }
     }
 }
@@ -292,7 +309,11 @@ impl Frames {
         if data.is_empty() {
             return None;
         }
-        Some(Frame { kind: kind.unwrap_or_else(|| "message".to_string()), data, id })
+        Some(Frame {
+            kind: kind.unwrap_or_else(|| "message".to_string()),
+            data,
+            id,
+        })
     }
 }
 
@@ -302,7 +323,10 @@ mod tests {
 
     fn frames(chunks: &[&str]) -> Vec<Frame> {
         let mut parser = Frames::default();
-        chunks.iter().flat_map(|chunk| parser.push(chunk.as_bytes())).collect()
+        chunks
+            .iter()
+            .flat_map(|chunk| parser.push(chunk.as_bytes()))
+            .collect()
     }
 
     #[test]
@@ -318,7 +342,13 @@ mod tests {
     /// put it, including the middle of a field name.
     #[test]
     fn reassembles_an_event_split_across_chunks() {
-        let read = frames(&["id: 7\neve", "nt: rendi", "tion\ndata: {\"id\"", ":\"a\"}\n", "\n"]);
+        let read = frames(&[
+            "id: 7\neve",
+            "nt: rendi",
+            "tion\ndata: {\"id\"",
+            ":\"a\"}\n",
+            "\n",
+        ]);
         assert_eq!(read.len(), 1);
         assert_eq!(read[0].kind, "rendition");
         assert_eq!(read[0].data, "{\"id\":\"a\"}");

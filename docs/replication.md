@@ -20,7 +20,7 @@ Goals:
 - Replication is **pairwise and symmetric**, with no master. Devices usually contact the
   reachable server; that is topology, not protocol.
 - **Deterministic convergence**: after any sequence of replication sessions that connects the
-  peers, all peers replicating a library hold identical replicated state for it (values *and*
+  peers, all peers replicating a library hold identical replicated state for it (values _and_
   stamps), regardless of pair order, crashes, and interleavings.
 - Catalogue state replicates **automatically** whenever a peer is reachable. Originals (RAWs)
   move when asked for: pressed for, opened (§7.5), fetched once by a replica that keeps them as it
@@ -48,7 +48,7 @@ Non-goals (v1):
   future dedup tool is the answer, not the merge engine.
 - **Phone build and UI.** Rendition fetch-through (§7.9) and catalogue-only mode (§7.10)
   solve full-catalogue browsing without local RAWs. The phone client remains a separate project.
-- Evicting against another *device* on a policy. Between peers the only eviction is the manual
+- Evicting against another _device_ on a policy. Between peers the only eviction is the manual
   "remove local copy" action (§7.6), which requires live verification at the moment it deletes.
   A ceiling that gives copies back on its own exists only against a backup folder (§14.5), where
   this device can read both copies itself rather than take a peer's word for one.
@@ -123,14 +123,14 @@ assignments are design bugs; the first draft missed seven.
 
 ### 3.1 Photos
 
-| Unit | Columns | Notes |
-|---|---|---|
-| `imported` | `content_hash` (§7.1), `file_size`, `width`, `height`, `orientation`, `date_taken`, `date_taken_offset`, `date_added`, `latitude`, `longitude`, exif columns (`iso` … `lens_model`) | Import facts. `date_added` replicates: it drives the `added_*` orderings, which must agree everywhere |
-| `triage` | `rating`, `triage`, `notes` | The cull verdict |
-| `placement` | `recipe`, `shoot_id` | Tree position. The recipe is where a photograph's path lives (DESIGN §4.2.1), and for a file photograph it *is* the placement: a rename rewrites it. Split from bin state so a bulk path rewrite (folder rename) cannot clobber a concurrent binning |
-| `bin` | `is_deleted`, `deleted_from_path`, `deleted_batch` | Binned or not, and where it restores to |
-| `stack` | `stack_state` | The human verdict 'unstacked' must replicate or another peer's auto-detection re-stacks the photo. Membership itself is `stack_members` rows (§3.3) |
-| `hidden` | `is_hidden` | Put away (DESIGN §12.4). Apart from `triage` because the two are decided at separate moments: sharing that stamp, a rating arriving from a peer would bring back what somebody had hidden |
+| Unit        | Columns                                                                                                                                                                             | Notes                                                                                                                                                                                                                                                |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `imported`  | `content_hash` (§7.1), `file_size`, `width`, `height`, `orientation`, `date_taken`, `date_taken_offset`, `date_added`, `latitude`, `longitude`, exif columns (`iso` … `lens_model`) | Import facts. `date_added` replicates: it drives the `added_*` orderings, which must agree everywhere                                                                                                                                                |
+| `triage`    | `rating`, `triage`, `notes`                                                                                                                                                         | The cull verdict                                                                                                                                                                                                                                     |
+| `placement` | `recipe`, `shoot_id`                                                                                                                                                                | Tree position. The recipe is where a photograph's path lives (DESIGN §4.2.1), and for a file photograph it _is_ the placement: a rename rewrites it. Split from bin state so a bulk path rewrite (folder rename) cannot clobber a concurrent binning |
+| `bin`       | `is_deleted`, `deleted_from_path`, `deleted_batch`                                                                                                                                  | Binned or not, and where it restores to                                                                                                                                                                                                              |
+| `stack`     | `stack_state`                                                                                                                                                                       | The human verdict 'unstacked' must replicate or another peer's auto-detection re-stacks the photo. Membership itself is `stack_members` rows (§3.3)                                                                                                  |
+| `hidden`    | `is_hidden`                                                                                                                                                                         | Put away (DESIGN §12.4). Apart from `triage` because the two are decided at separate moments: sharing that stamp, a rating arriving from a peer would bring back what somebody had hidden                                                            |
 
 Per-peer, never replicated: `file_hash` (a stat-hash including mtime, meaningful only for this
 disk's scan, §7.1), `is_missing`, `date_updated`, `needs_tile`, `needs_renditions`,
@@ -144,10 +144,10 @@ never touches `bin` units. The repair pass (§5.5) keeps `shoot_id` coherent wit
 **Correct `deleted_from_path` locally without replicating that correction.** Otherwise restore
 recreates the renamed folder. Both attempted ways to replicate it are worse:
 
-- *Stamp the `bin` unit.* The correction then asserts that the binning was decided now, so a peer
+- _Stamp the `bin` unit._ The correction then asserts that the binning was decided now, so a peer
   that restored the photograph while apart loses that restore to a rename which knew nothing
   about it. What somebody did is silently undone, everywhere.
-- *Move the column to `placement`.* Worse. A peer that still believes the row is live holds NULL
+- _Move the column to `placement`._ Worse. A peer that still believes the row is live holds NULL
   for it, so its ordinary path writes null the origin of a binning it never heard of - and the
   restore then puts the RAW in the library root.
 
@@ -157,15 +157,15 @@ requires every seed to leave every binned photo a destination.
 
 ### 3.2 Shoots, rules, banners, libraries, settings
 
-| Table | Unit | Per-peer (not replicated) |
-|---|---|---|
-| `shoots` | `shoot`: `name`, `description`, `ordering`, `parent_id`. `shoot.folder`: `folder_path`. `shoot.hidden`: `is_hidden`. Each on its own stamp | `folder_dev`, `folder_ino`, `folder_birthtime` (disk identity is per-disk) |
-| `folder_rules` | one stamp per row | none |
-| `shoot_banners` | one stamp per row | none |
-| `libraries` | one stamp over `name`, `ordering`, `include_subfolders`, `bin_name`, `auto_stack`, `auto_stack_similarity`, `auto_stack_window_seconds` | `root_path`, `read_only`, `bin_dev/ino/birthtime`, `last_synced_at`, `rendition_source`, `rendition_hdr` (what to build is a per-device choice; a laptop may build SDR where the server builds HDR) |
-| `labels` | `label`: `name`, `colour`. `label.position`: `position`. Each on its own stamp, so a reorder, which rewrites every label's position at once, cannot clobber a rename made elsewhere | none |
-| `photo_labels` | one stamp per row, like `stack_members`: the row *is* the labelling, and a removal is a tombstone | none |
-| `settings` | not replicated: per-install (HDR viewing on a device that can't, backup schedule) | everything |
+| Table           | Unit                                                                                                                                                                                | Per-peer (not replicated)                                                                                                                                                                           |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shoots`        | `shoot`: `name`, `description`, `ordering`, `parent_id`. `shoot.folder`: `folder_path`. `shoot.hidden`: `is_hidden`. Each on its own stamp                                          | `folder_dev`, `folder_ino`, `folder_birthtime` (disk identity is per-disk)                                                                                                                          |
+| `folder_rules`  | one stamp per row                                                                                                                                                                   | none                                                                                                                                                                                                |
+| `shoot_banners` | one stamp per row                                                                                                                                                                   | none                                                                                                                                                                                                |
+| `libraries`     | one stamp over `name`, `ordering`, `include_subfolders`, `bin_name`, `auto_stack`, `auto_stack_similarity`, `auto_stack_window_seconds`                                             | `root_path`, `read_only`, `bin_dev/ino/birthtime`, `last_synced_at`, `rendition_source`, `rendition_hdr` (what to build is a per-device choice; a laptop may build SDR where the server builds HDR) |
+| `labels`        | `label`: `name`, `colour`. `label.position`: `position`. Each on its own stamp, so a reorder, which rewrites every label's position at once, cannot clobber a rename made elsewhere | none                                                                                                                                                                                                |
+| `photo_labels`  | one stamp per row, like `stack_members`: the row _is_ the labelling, and a removal is a tombstone                                                                                   | none                                                                                                                                                                                                |
+| `settings`      | not replicated: per-install (HDR viewing on a device that can't, backup schedule)                                                                                                   | everything                                                                                                                                                                                          |
 
 Albums (`albums`, `album_photos`, `album_banners`) are not replicated at all (§1).
 
@@ -314,7 +314,7 @@ origin. Concurrent membership creation and photo deletion can therefore leave th
 alive on its creator and buried elsewhere forever. Three peers and a resurrection expose it.
 
 Minting locally makes it an ordinary write and it travels like one. Peers do then disagree about
-*when* a child died, each having stamped its own, but those tombstones replicate like any other
+_when_ a child died, each having stamped its own, but those tombstones replicate like any other
 row and the log keeps the newest - so the threshold a later write must beat to bring the child
 back converges too. The cost, accepted deliberately and unchanged: a photograph brought back by
 a later write elsewhere comes back without its memberships, its banner or its edits.
@@ -341,7 +341,7 @@ goes. There is nowhere to keep it. `photo_edits` and `edit_conflicts` both hang 
 photograph by a foreign key, so any parking the cascade would reach anyway; the photo row cannot
 stay either, its folder being out of the library and its tombstone final; and if the folder is
 ever let back in, the scan imports its files as new photographs with new ids, which an old
-edit could not attach to. What the merge refuses to do is lose it *quietly*: an edit newer than
+edit could not attach to. What the merge refuses to do is lose it _quietly_: an edit newer than
 the deletion that removes it is logged, naming the photograph, so a backup can still be gone
 through.
 
@@ -440,7 +440,7 @@ to its origin, which already claims full self-coverage. Peers seeing both sides 
 peers seeing only the winner have no conflict. Rendered documents and resolutions converge.
 Candidate rows still replicate where deliverable, including to peers knowing neither side.
 
-Accepted asymmetry, by design: a two-hour session loses *provisional rendering* to a one-slider
+Accepted asymmetry, by design: a two-hour session loses _provisional rendering_ to a one-slider
 tweak made later on another device; nothing is lost, both candidates sit in the conflict entry.
 
 ### 5.4 Derived writes happen only when the value differs
@@ -452,13 +452,13 @@ The other half of the original design - that a derived write's stamp is a pure f
 inputs, "the maximum input stamp with counter+1, peer_id taken from that maximum input stamp",
 byte-identical on every peer - **cannot be built, and both ways of trying it fail.**
 
-Taking the *origin* from the input makes the write undeliverable. A peer's coverage of its own
+Taking the _origin_ from the input makes the write undeliverable. A peer's coverage of its own
 origin is total by construction, so a row carrying peer A's id is never selected to send to A -
 the trap behind several of this engine's worst divergences (§5.1). Derived writes therefore mint
 under the origin of whoever ran them, and two peers computing the same repair produce stamps
 differing in the tail. They still converge, because LWW settles it and both are deliverable.
 
-Taking only the *time* from the inputs, under a local origin, looks like the way out and is
+Taking only the _time_ from the inputs, under a local origin, looks like the way out and is
 worse, because it fails silently. A version vector's promise is "everything this origin wrote
 below this stamp is applied here", and that holds only because nothing a peer mints ever sorts
 below something it has already minted. A stamp placed in the past under this peer's own origin is
@@ -468,7 +468,7 @@ alive on one peer and buried on another, the grave sitting below the receiver's 
 
 So **a derived write is stamped where it ran**, and the consequence is faced rather than
 engineered away: it outranks a deliberate action made before it that has not arrived yet. Where
-that matters, the repair *asks* instead of relying on the ordering - `collapseOverlappingStacks`
+that matters, the repair _asks_ instead of relying on the ordering - `collapseOverlappingStacks`
 checks for a grave on the winning stack before moving a membership into it, because a photograph
 somebody took out of a stack must not be put back by machine work (§3.3).
 
@@ -479,7 +479,7 @@ the already-attempted regression toward the original design.
 
 After every apply batch, deterministic, same code and order on every peer, all writes per §5.4:
 
-- `shoot_id` pointing at a shoot this peer has *buried* → unassign (photo keeps its path). Absent
+- `shoot_id` pointing at a shoot this peer has _buried_ → unassign (photo keeps its path). Absent
   is not buried: a page is stamp-ordered and only the page is sorted parents-first, so a shoot
   written after its photographs were placed arrives after them, and reading "not here yet" as a
   deletion strips the membership of every photograph in it for good - the write succeeds, so the
@@ -496,7 +496,7 @@ After every apply batch, deterministic, same code and order on every peer, all w
 
 ### 5.6 Duplicate imports and path collisions
 
-Same RAW imported on two peers = two photos, kept (dedup tool later). Two *different* photos
+Same RAW imported on two peers = two photos, kept (dedup tool later). Two _different_ photos
 converging onto one path: the newer `placement` stamp keeps the path; the older is
 flagged for the user to resolve (rename/move). This flag is a **new user-facing surface**
 (nothing like it exists today; the current importer silently suffixes filenames), it is
@@ -504,7 +504,7 @@ per-peer derived state, not replicated, and materialisation's matching rule is i
 
 **Two shoots claiming one folder: the earlier rename keeps it.** `shoots` is unique on
 `(library_id, folder_path)`, and the reachable way to reach that constraint is two peers each
-renaming a *different* folder to the same name while apart - which needs only a folder rename on
+renaming a _different_ folder to the same name while apart - which needs only a folder rename on
 each disk, not a tree both scanned independently. The rename that came first is the one that
 already stood when the second was made, so it keeps the folder and the second goes back where it
 was.
@@ -525,7 +525,7 @@ first keeps what this peer holds, re-asserted under a fresh stamp, and everythin
 carried still lands - a name changed in the same breath as the folder was not what was contested.
 
 The second cannot go back where it came from, because the peer applying the winning rename is the one
-peer that *cannot* say where the loser was: that is the other peer's row. So it takes the contested
+peer that _cannot_ say where the loser was: that is the other peer's row. So it takes the contested
 name suffixed - `Contested_2`, counting past whatever suffixes are already spent - under a stamp of
 its own, which is what carries it to the peer that made the losing rename. The same fallback covers a
 re-assertion whose own folder has since been taken, and a shoot holding the folder with **no stamp at
@@ -545,6 +545,7 @@ a deferral: `ON CONFLICT DO NOTHING` plus a zero-row check. The update path read
 `isMissingReference` - a unique index is also how this catalogue states invariants it wants to hear
 about loudly (`idx_photos_one_representative`), and a blanket "unique failures are deferrals" would
 turn the next of those into a page quietly arriving again for ever. A collision it cannot name at all
+
 - some other constraint, or a folder that turns out to be free - is deferred rather than guessed at.
 
 What neither path may do is throw. The page would be refused, and because it is refused nothing in
@@ -560,7 +561,7 @@ their own.
 ### 6.1 Version vectors
 
 Each replica keeps **one coverage vector per library**, not per pair: each origin peer_id maps
-to the highest stamp through which *all* its writes have applied. Cached remote vectors serve
+to the highest stamp through which _all_ its writes have applied. Cached remote vectors serve
 UI only. Stamps encode origin without extra bookkeeping. Vectors, log, HLC state and pairing
 records live **inside the catalogue**, rewinding atomically with restored data (§8.2).
 
@@ -756,7 +757,7 @@ build.
 
 A peer holding the catalogue and none of the RAWs has nothing to draw from - every tile and
 every rendition is built out of an original - and fetching whole originals to fill a grid is the
-one thing the manual-assets rule (§7.3) exists to prevent. So a *rendition* is itself something a
+one thing the manual-assets rule (§7.3) exists to prevent. So a _rendition_ is itself something a
 peer can serve: the holder renders `full` or `max` on request if it has no current copy, at the
 dynamic range the asking device shows, and lifts the camera JPEG out of the original for
 `embedded`. The asking side verifies the bytes against a hash the sender computed over them, and
@@ -950,7 +951,7 @@ device it joined holds as soon as the catalogue has landed, including when autom
 **Pairing exchanges no credentials** (§11.1); trust comes from the network. Listing libraries
 registers nothing on either side. Pair only on final add, together with cloning.
 
-Validate local library absence, empty folder and writable root *before* remote pairing.
+Validate local library absence, empty folder and writable root _before_ remote pairing.
 If local work later fails, unpair (§8.4) so a nonexistent replica cannot block tombstone GC
 (§8.3). Retract broadly, including uncertain pairings: a lost reply may hide a successful add.
 
@@ -984,7 +985,7 @@ and this sentence is the one that belongs in the user docs in bold.
 - **Remote badge** names the holding peer ("Original on: Macbook"); opening fetches with
   progress, size, cancel (§7.5).
 - **Availability filter** ("original on this device") in the existing filter menu. No
-  availability *sort*: sorts are collection-owned and replicated; availability is per-peer.
+  availability _sort_: sorts are collection-owned and replicated; availability is per-peer.
 - **Peer list** (§6.5): forget, holdings, last seen, each under the name the peer gave itself
   (§2.1).
 - **Adding one** (§9.1): "Connect to another Bowerbird" takes an address, lists what that device
@@ -1010,13 +1011,13 @@ surface rather than the handshake.
 
 ### 11.2 Apply is a trust boundary anyway
 
-Replicated payloads are remote input to disk operations, and a *buggy* peer is in the threat
+Replicated payloads are remote input to disk operations, and a _buggy_ peer is in the threat
 model even where a malicious one is excluded. A photograph's recipe path, `folder_path` and
 `bin_name` arrive from a peer and are later joined onto the library root and executed as moves,
 renames, and blob reads/writes; a malformed `../../…` row would be an arbitrary file write. Apply
 therefore validates every payload with the same zod schemas the local API uses, including the
 folder-path refinement (no absolute paths, no `..`) applied to every path-like value - reaching
-*into* the recipe for the path it carries (`RecipeCellSchema`) - and the blob
+_into_ the recipe for the path it carries (`RecipeCellSchema`) - and the blob
 read/write handlers additionally check the resolved path is inside the root (`containsPath`).
 Every request's library id is checked against the pairing. Known fields are validated even
 while unknown fields round-trip (§8.5): check what you know, pass through what you don't.
@@ -1177,7 +1178,7 @@ and the order is load-bearing:
 3. **Copy what is owed**, which is every photograph this device holds that the folder has no
    current copy of: never copied, hash no longer the one the catalogue records, or size moved.
 4. **Cull to the ceiling** (§14.5), once the queue has drained - what may be given back is what the
-   folder holds *now*, and half of it is still in flight until then.
+   folder holds _now_, and half of it is still in flight until then.
 
 **Nothing here ever deletes from the backup.** A photograph removed from the library leaves its
 copy on the drive, which is what a backup is for; a file somebody takes off the drive by hand is

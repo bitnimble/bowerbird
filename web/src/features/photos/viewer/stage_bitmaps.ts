@@ -13,10 +13,17 @@
 
 import { planarLayout } from './planar_layout';
 import { WebCodecs } from './image_decoder';
-import { canDecodeAvifPlanes, decodeAvifPlanes, type DecodeOptions } from '../../../avif/avif_planes';
+import {
+  canDecodeAvifPlanes,
+  decodeAvifPlanes,
+  type DecodeOptions,
+} from '../../../avif/avif_planes';
 import type { StagePicture } from '../../../gpu/gpu_protocol';
 import { contentLightOfAvif, orientationOfAvif } from 'avif-hdr-video';
-import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../../../src/schemas/request_activity';
+import {
+  REQUEST_ACTIVITY_HEADER,
+  type RequestActivity,
+} from '../../../../../src/schemas/request_activity';
 
 /** The longest edge a frame is decoded to: a 4K stage at 2x, which is past any display we draw on. */
 const DECODE_CAP = 4096;
@@ -40,9 +47,16 @@ const MAX_CANVAS_EDGE = 8192;
  * refusal above. Fitted here, the draw resamples on the way in and the picture is simply the
  * size it was always meant to be.
  */
-export function canvasSizeFor(width: number, height: number, cap = MAX_CANVAS_EDGE): { width: number; height: number } {
+export function canvasSizeFor(
+  width: number,
+  height: number,
+  cap = MAX_CANVAS_EDGE,
+): { width: number; height: number } {
   const scale = Math.min(1, cap / Math.max(width, height, 1));
-  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 /** The same, for the frame the stage draws fitted: no more than the decode was asked for. */
@@ -67,7 +81,6 @@ function avifMaxCll(bytes: ArrayBuffer, type: string): number | null {
     return null;
   }
 }
-
 
 export interface Decoded {
   /**
@@ -150,7 +163,9 @@ async function decodePicture(
   cap = DECODE_CAP,
   cropped = false,
   priority: Pick<DecodeOptions, 'urgent' | 'promoted'> = {},
-): Promise<Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation' | 'flat' | 'maxCll'>> {
+): Promise<
+  Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation' | 'flat' | 'maxCll'>
+> {
   const longest = Math.max(natural.width, natural.height);
   const scale = longest === 0 || longest <= cap ? 1 : cap / longest;
   const width = Math.round(natural.width * scale);
@@ -175,7 +190,10 @@ async function decodePicture(
       //
       // So a caller that is going to crop gets a bitmap instead, whose pixels are the turned
       // ones and whose rects therefore mean what they say.
-      const turned = rotation !== 0 || image.codedWidth !== image.displayWidth || image.codedHeight !== image.displayHeight;
+      const turned =
+        rotation !== 0 ||
+        image.codedWidth !== image.displayWidth ||
+        image.codedHeight !== image.displayHeight;
       if (!cropped || !turned || planarLayout(image, rotation) != null) {
         return {
           picture: image,
@@ -193,7 +211,10 @@ async function decodePicture(
       // viewer ask for a rendition to be built that is already there. Fall through and let
       // the bitmap decode have it.
       if (signal.aborted) throw err;
-      console.warn(`stage: ImageDecoder refused a ${blob.type}, so it is decoded as a bitmap, which tone maps HDR to SDR`, err);
+      console.warn(
+        `stage: ImageDecoder refused a ${blob.type}, so it is decoded as a bitmap, which tone maps HDR to SDR`,
+        err,
+      );
     }
   }
 
@@ -209,11 +230,17 @@ async function decodePicture(
         ? `${natural.width}x${natural.height} is past the ${MAX_CANVAS_EDGE} texture edge`
         : null;
   if (WebCodecs == null && blob.type === 'image/avif' && planesRefusal != null) {
-    console.warn(`stage: no ImageDecoder and ${planesRefusal}, so the AVIF is decoded as a bitmap, which tone maps HDR to SDR`);
+    console.warn(
+      `stage: no ImageDecoder and ${planesRefusal}, so the AVIF is decoded as a bitmap, which tone maps HDR to SDR`,
+    );
   }
   if (WebCodecs == null && blob.type === 'image/avif' && planesRefusal == null) {
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    const planes = await decodeAvifPlanes(bytes, { signal, ...priority, pixels: natural.width * natural.height });
+    const planes = await decodeAvifPlanes(bytes, {
+      signal,
+      ...priority,
+      pixels: natural.width * natural.height,
+    });
     // Null for an abort as well, which the bitmap decode below would only repeat for nobody.
     signal.throwIfAborted();
     if (planes != null) {
@@ -236,7 +263,14 @@ async function decodePicture(
     imageOrientation: 'from-image',
     ...(scale === 1 ? {} : { resizeWidth: width, resizeQuality: 'high' }),
   });
-  return { picture: bitmap, close: () => bitmap.close(), width: bitmap.width, height: bitmap.height, rotation: 0, maxCll: null };
+  return {
+    picture: bitmap,
+    close: () => bitmap.close(),
+    width: bitmap.width,
+    height: bitmap.height,
+    rotation: 0,
+    maxCll: null,
+  };
 }
 
 /**
@@ -245,7 +279,11 @@ async function decodePicture(
  * `whole` for a stage that is zoomed in, where [`decodeDetail`] then answers from this same
  * decode rather than decoding the file a second time.
  */
-export async function decodeFrame(source: string, whole = false, activity: RequestActivity = 'interactive'): Promise<Decoded> {
+export async function decodeFrame(
+  source: string,
+  whole = false,
+  activity: RequestActivity = 'interactive',
+): Promise<Decoded> {
   return decodedAt(source, held, inFlight, whole ? Infinity : DECODE_CAP, whole, activity);
 }
 
@@ -255,7 +293,9 @@ function holdsEveryPixel(frame: Decoded): boolean {
   const turned =
     typeof VideoFrame === 'function' &&
     picture instanceof VideoFrame &&
-    (frame.rotation !== 0 || picture.codedWidth !== picture.displayWidth || picture.codedHeight !== picture.displayHeight) &&
+    (frame.rotation !== 0 ||
+      picture.codedWidth !== picture.displayWidth ||
+      picture.codedHeight !== picture.displayHeight) &&
     planarLayout(picture, frame.rotation) == null;
   return !turned && frame.width === frame.naturalWidth && frame.height === frame.naturalHeight;
 }
@@ -344,10 +384,13 @@ function decodedAt(
     // that arrives as a frame the server could not give us: the stage marks it failed and
     // stops mounting it, so a rendition the page abandoned for a beat - the flip away and
     // back that the picker is for - is one it will not show again for the life of the page.
-    const superseded = <T,>(err: unknown): T => {
+    const superseded = <T>(err: unknown): T => {
       throw abort.signal.aborted ? new Error('superseded') : err;
     };
-    const response = await fetch(source, { signal: abort.signal, headers: { [REQUEST_ACTIVITY_HEADER]: activity } }).catch(superseded<Response>);
+    const response = await fetch(source, {
+      signal: abort.signal,
+      headers: { [REQUEST_ACTIVITY_HEADER]: activity },
+    }).catch(superseded<Response>);
     if (!response.ok) throw new Error(`${response.status} for ${source}`);
     const blob = await response.blob().catch(superseded<Blob>);
     const natural = await shapeOf(blob).catch(superseded<{ width: number; height: number }>);
@@ -361,7 +404,12 @@ function decodedAt(
       drawn.close();
       throw new Error('superseded');
     }
-    const decoded: Decoded = { ...drawn, closed: false, naturalWidth: natural.width, naturalHeight: natural.height };
+    const decoded: Decoded = {
+      ...drawn,
+      closed: false,
+      naturalWidth: natural.width,
+      naturalHeight: natural.height,
+    };
     // Whatever was under this key goes with it. A second decode of one source is rare but
     // reachable (below), and overwriting silently would leave the first unreachable and open -
     // which is the whole file, held until the tab does.
@@ -410,7 +458,11 @@ const holders = new Map<string, { sources: ReadonlySet<string>; zoomable: Readon
  * photograph they have already passed is the decoder not being available for the one they
  * are waiting on.
  */
-export function keepOnly(holder: string, sources: readonly string[], zoomable: readonly string[] = []): void {
+export function keepOnly(
+  holder: string,
+  sources: readonly string[],
+  zoomable: readonly string[] = [],
+): void {
   holders.set(holder, { sources: new Set(sources), zoomable: new Set(zoomable) });
   const live = new Set<string>();
   const detailed = new Set<string>();

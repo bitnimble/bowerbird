@@ -7,8 +7,13 @@ import { expect, test } from 'bun:test';
 import type { StackCandidate } from '../stacks_repository';
 import { runs } from '../stacks_service';
 
-const at = (id: string, timestamp: number, shootId: string | null): StackCandidate => ({ id, timestamp, shootId });
-const ids = (split: StackCandidate[][]): string[][] => split.map((run) => run.map((candidate) => candidate.id));
+const at = (id: string, timestamp: number, shootId: string | null): StackCandidate => ({
+  id,
+  timestamp,
+  shootId,
+});
+const ids = (split: StackCandidate[][]): string[][] =>
+  split.map((run) => run.map((candidate) => candidate.id));
 
 test('a run ends at a gap wider than the window', () => {
   const split = runs([at('a', 0, null), at('b', 2, null), at('c', 60, null)], 10);
@@ -24,8 +29,5 @@ test('photographs seconds apart in different shoots are never compared', () => {
 // rather than being cut in three by whatever was interleaved with them.
 test('the library root is a group of its own', () => {
   const split = runs([at('a', 0, null), at('b', 1, 'sh-a'), at('c', 2, null)], 10);
-  expect(ids(split)).toEqual([
-    ['a', 'c'],
-    ['b'],
-  ]);
+  expect(ids(split)).toEqual([['a', 'c'], ['b']]);
 });

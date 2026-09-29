@@ -31,7 +31,9 @@ export const STAMP_LENGTH = MS_DIGITS + COUNTER_DIGITS + 16;
 
 export function encodeStamp(ms: number, counter: number, peerId: string): string {
   return (
-    ms.toString(16).padStart(MS_DIGITS, '0') + counter.toString(16).padStart(COUNTER_DIGITS, '0') + peerId
+    ms.toString(16).padStart(MS_DIGITS, '0') +
+    counter.toString(16).padStart(COUNTER_DIGITS, '0') +
+    peerId
   );
 }
 
@@ -78,7 +80,6 @@ export function stampPeer(stamp: string): string {
   return stamp.slice(MS_DIGITS + COUNTER_DIGITS);
 }
 
-
 export class Clock {
   private ms = 0;
   private counter = 0;
@@ -98,7 +99,9 @@ export class Clock {
    */
   static fromDatabase(db: Database, peerId: string, skewMs: number = DEFAULT_SKEW_MS): Clock {
     const clock = new Clock(peerId, skewMs);
-    const row = db.query('SELECT MAX(stamp) AS newest FROM replication_log').get() as { newest: string | null };
+    const row = db.query('SELECT MAX(stamp) AS newest FROM replication_log').get() as {
+      newest: string | null;
+    };
     if (row?.newest != null) clock.resume(row.newest);
     return clock;
   }

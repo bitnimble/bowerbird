@@ -23,7 +23,10 @@ pub(crate) struct Planes<'a> {
 impl Planes<'_> {
     /// The grid both are read on, which is the smaller of the two.
     fn grid(&self) -> (usize, usize) {
-        (self.ours.width.min(self.theirs.width), self.ours.height.min(self.theirs.height))
+        (
+            self.ours.width.min(self.theirs.width),
+            self.ours.height.min(self.theirs.height),
+        )
     }
 }
 
@@ -48,7 +51,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -133,7 +140,10 @@ struct Block {
 
 fn block(planes: &Planes<'_>, blocks: usize, count: usize) -> Block {
     let (width, height) = planes.grid();
-    let (cx, cy) = (planes.ours.width as f64 / 2.0, planes.ours.height as f64 / 2.0);
+    let (cx, cy) = (
+        planes.ours.width as f64 / 2.0,
+        planes.ours.height as f64 / 2.0,
+    );
     Block {
         width: width as i32,
         height: height as i32,
@@ -160,11 +170,19 @@ fn block(planes: &Planes<'_>, blocks: usize, count: usize) -> Block {
 
 /// Rows of stepped positions the gate walks, and columns in each.
 fn rows(planes: &Planes<'_>) -> usize {
-    planes.grid().1.saturating_sub(2).div_ceil(crate::hdr_fit::WIDE_STRIDE)
+    planes
+        .grid()
+        .1
+        .saturating_sub(2)
+        .div_ceil(crate::hdr_fit::WIDE_STRIDE)
 }
 
 fn columns(planes: &Planes<'_>) -> usize {
-    planes.grid().0.saturating_sub(2).div_ceil(crate::hdr_fit::WIDE_STRIDE)
+    planes
+        .grid()
+        .0
+        .saturating_sub(2)
+        .div_ceil(crate::hdr_fit::WIDE_STRIDE)
 }
 
 fn gains_of(gpu: &'static crate::gpu::Gpu, falloff: Option<(f64, f64)>) -> crate::gpu::Buffer {
@@ -195,23 +213,44 @@ fn bound(
         label: Some("fit_wide"),
         layout: &kernels(gpu).layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: planes.ours.buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: planes.theirs.buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: gains.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: found.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: counts.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: at.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: samples.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: planes.ours.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: planes.theirs.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: gains.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: found.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: counts.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: at.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: samples.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     })
 }
 
 /// Which positions the pass will teach the lattice from.
-pub(crate) async fn admit(
-    gpu: &'static crate::gpu::Gpu,
-    planes: &Planes<'_>,
-) -> Option<Admitted> {
+pub(crate) async fn admit(gpu: &'static crate::gpu::Gpu, planes: &Planes<'_>) -> Option<Admitted> {
     let stepped = rows(planes) * columns(planes);
     let blocks = stepped.div_ceil(BLOCK).max(1);
     let storage = wgpu::BufferUsages::STORAGE;
@@ -240,7 +279,16 @@ pub(crate) async fn admit(
         contents: bytemuck::bytes_of(&block(planes, blocks, 0)),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let group = bound(gpu, planes, &gains, &idle, &counts, &spare, &spare_samples, &push);
+    let group = bound(
+        gpu,
+        planes,
+        &gains,
+        &idle,
+        &counts,
+        &spare,
+        &spare_samples,
+        &push,
+    );
     let over_blocks = (blocks as u32).div_ceil(64);
     let built = kernels(gpu);
     // A pass each: the scan reads what the count wrote.
@@ -250,8 +298,14 @@ pub(crate) async fn admit(
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(dispatch, 1, 1);
     }
-    let out = held("fit wide counts out", blocks + 1, wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
-    recording.encoder().copy_buffer_to_buffer(&counts, 0, &out, 0, ((blocks + 1) * 4) as u64);
+    let out = held(
+        "fit wide counts out",
+        blocks + 1,
+        wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+    );
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&counts, 0, &out, 0, ((blocks + 1) * 4) as u64);
     recording.submit();
     let scanned = read_words(gpu, &out).await?;
     let count = scanned[blocks] as usize;
@@ -271,11 +325,15 @@ pub(crate) async fn admit(
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
     let bytes = (count * 2 * 4).max(4) as u64;
-    recording.encoder().copy_buffer_to_buffer(&at, 0, &positions, 0, bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&at, 0, &positions, 0, bytes);
     recording.submit();
     let read = read_words(gpu, &positions).await?;
     Some(Admitted {
-        at: (0..count).map(|k| [read[k * 2] as i32, read[k * 2 + 1] as i32]).collect(),
+        at: (0..count)
+            .map(|k| [read[k * 2] as i32, read[k * 2 + 1] as i32])
+            .collect(),
         on_device: at,
     })
 }
@@ -317,8 +375,16 @@ pub(crate) async fn gather(
     {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(&kernels(gpu).gather);
-        let group =
-            bound(gpu, planes, &gains, found, &idle, &admitted.on_device, &samples, &push);
+        let group = bound(
+            gpu,
+            planes,
+            &gains,
+            found,
+            &idle,
+            &admitted.on_device,
+            &samples,
+            &push,
+        );
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups((count as u32).div_ceil(64).max(1), 1, 1);
     }
@@ -328,7 +394,9 @@ pub(crate) async fn gather(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&samples, 0, &out, 0, (words * 4) as u64);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&samples, 0, &out, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {
@@ -373,6 +441,9 @@ mod tests {
     fn the_host_reads_a_sample_at_the_width_the_shader_wrote_it() {
         const SOURCE: &str = include_str!("../../../slang/fit_wide.slang");
         let line = format!("static const int SAMPLE_WORDS = {};", super::SAMPLE_WORDS);
-        assert!(SOURCE.contains(&line), "fit_wide.slang does not say `{line}`");
+        assert!(
+            SOURCE.contains(&line),
+            "fit_wide.slang does not say `{line}`"
+        );
     }
 }

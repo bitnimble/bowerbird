@@ -48,8 +48,13 @@ export const DetailFrame = observer(function DetailFrame({
   // `<video>` (§10.7). The camera's JPEG never needs it, being 8-bit SDR with no
   // headroom to carry, so its still is already right.
   // A proof is drawn by the stage's shader, which a `<video>` never passes through.
-  const proof = store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofIntent : null;
-  const hdrVideo = useHdrVideo(photoId, stillSrc, shownFile?.hdr === true && showing !== 'embedded' && proof == null);
+  const proof =
+    store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofIntent : null;
+  const hdrVideo = useHdrVideo(
+    photoId,
+    stillSrc,
+    shownFile?.hdr === true && showing !== 'embedded' && proof == null,
+  );
 
   // Every rendition this photo has already decoded stays mounted, with the one
   // being asked for on the end. Comparing the camera's JPEG against a render is
@@ -111,23 +116,28 @@ export const DetailFrame = observer(function DetailFrame({
   // reader's choice does not travel with them - it is per photo (`beginDetail`) - so there
   // is no second rendition to hold one at.
   const strip: StagePicture[] = (run.includes(photoId) ? run : [photoId]).map((id) =>
-    id === photoId ?
-      {
-        key: id,
-        sources,
-        frame: sources[held.indexOf(showing)],
-        alt: (source) => {
-          // A retiring frame (an older version's URL) is none of these, and naming it after the
-          // rendition asked for would announce a picture it is not.
-          const rendition = held[sources.indexOf(source)];
-          return rendition == null ? nameOf(store, id) : PhotoDetailStrings.frameName(nameOf(store, id), renditionLabel(rendition));
+    id === photoId
+      ? {
+          key: id,
+          sources,
+          frame: sources[held.indexOf(showing)],
+          alt: (source) => {
+            // A retiring frame (an older version's URL) is none of these, and naming it after the
+            // rendition asked for would announce a picture it is not.
+            const rendition = held[sources.indexOf(source)];
+            return rendition == null
+              ? nameOf(store, id)
+              : PhotoDetailStrings.frameName(nameOf(store, id), renditionLabel(rendition));
+          },
+        }
+      : {
+          key: id,
+          sources: [store.frameOf(id).source],
+          alt: PhotoDetailStrings.frameName(
+            nameOf(store, id),
+            renditionLabel(store.frameOf(id).rendition),
+          ),
         },
-      }
-    : {
-        key: id,
-        sources: [store.frameOf(id).source],
-        alt: PhotoDetailStrings.frameName(nameOf(store, id), renditionLabel(store.frameOf(id).rendition)),
-      },
   );
 
   // Which photo and which rendition each mounted frame is, for every picture on the stage
@@ -136,9 +146,14 @@ export const DetailFrame = observer(function DetailFrame({
   // mid-import is held at a render that has not finished, and the 404 is what finishes it.
   const owning = new Map<string, { photoId: string; rendition: ViewerRendition }>(
     strip.flatMap((picture) =>
-      picture.key === photoId ?
-        held.map((each, i) => [sources[i]!, { photoId, rendition: each }] as const)
-      : [[picture.sources[0]!, { photoId: picture.key, rendition: store.frameOf(picture.key).rendition }] as const],
+      picture.key === photoId
+        ? held.map((each, i) => [sources[i]!, { photoId, rendition: each }] as const)
+        : [
+            [
+              picture.sources[0]!,
+              { photoId: picture.key, rendition: store.frameOf(picture.key).rendition },
+            ] as const,
+          ],
     ),
   );
 
@@ -153,10 +168,13 @@ export const DetailFrame = observer(function DetailFrame({
   // Ahead of the build: on a device without the original, a build is this same wait on a peer.
   const fetchPhase = store.fetchPhaseOf(photoId, showing);
   const status =
-    fetchPhase === 'fetching' ? { label: PhotoStageStrings.fetching(), busy: true }
-    : fetchPhase === 'rendering' || store.buildingRendition ? { label: PhotoStageStrings.rendering(), busy: true }
-    : named ? { label: renditionLabel(showing), busy: false }
-    : null;
+    fetchPhase === 'fetching'
+      ? { label: PhotoStageStrings.fetching(), busy: true }
+      : fetchPhase === 'rendering' || store.buildingRendition
+        ? { label: PhotoStageStrings.rendering(), busy: true }
+        : named
+          ? { label: renditionLabel(showing), busy: false }
+          : null;
 
   return (
     /* Keyed off the route, not the loaded detail, so the photo on screen is
@@ -193,7 +211,8 @@ export const DetailFrame = observer(function DetailFrame({
       // to one of them free.
       onImageLoad={(source, width, height) => {
         const arrived = owning.get(source);
-        if (arrived?.photoId === photoId) photos.imageShown(photoId, arrived.rendition, width, height);
+        if (arrived?.photoId === photoId)
+          photos.imageShown(photoId, arrived.rendition, width, height);
       }}
       // Only a copy this row builds: one served whole comes out of a file it already has, so a
       // 404 there means that file is gone, which building cannot fix (`store.servedWhole`). Any

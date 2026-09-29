@@ -39,7 +39,10 @@ fn main() {
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("a bayer pattern");
     let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa));
     let amounts = Amounts::from_sliders(luma, colour);
-    eprintln!("sliders luma {luma} colour {colour} -> amounts {amounts:?}; fit {:?}", fit.model());
+    eprintln!(
+        "sliders luma {luma} colour {colour} -> amounts {amounts:?}; fit {:?}",
+        fit.model()
+    );
     pollster::block_on(rawshim::galosh::denoise_with(
         gpu, kernels, &mosaic, &cfa, amounts, fit,
     ));
@@ -50,7 +53,9 @@ fn main() {
     let mean = residual.iter().map(|v| f64::from(*v)).sum::<f64>() / n;
     let rms = (residual.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / n).sqrt();
     let peak = residual.iter().fold(0f32, |m, v| m.max(v.abs()));
-    eprintln!("residual over {side}x{side}: mean {mean:+.3e} rms {rms:.3e} peak {peak:.3e} (frame is 0..1, noise {noise})");
+    eprintln!(
+        "residual over {side}x{side}: mean {mean:+.3e} rms {rms:.3e} peak {peak:.3e} (frame is 0..1, noise {noise})"
+    );
 
     // A 2x2 pattern shows as four slot means that disagree.
     let mut slot_sum = [0f64; 4];
@@ -107,7 +112,13 @@ fn main() {
                 count += 1;
             }
         }
-        let norm = |s: f64| if var > 0.0 { s / count as f64 / var } else { 0.0 };
+        let norm = |s: f64| {
+            if var > 0.0 {
+                s / count as f64 / var
+            } else {
+                0.0
+            }
+        };
         eprintln!("  {lag:>3}: {:+.3} / {:+.3}", norm(sx), norm(sy));
     }
 
@@ -117,7 +128,11 @@ fn main() {
     let mut far = (0f64, 0usize);
     for (at, v) in residual.iter().enumerate() {
         let x = at % side;
-        let bucket = if x.abs_diff(side / 2) <= 8 { &mut near } else { &mut far };
+        let bucket = if x.abs_diff(side / 2) <= 8 {
+            &mut near
+        } else {
+            &mut far
+        };
         bucket.0 += f64::from(*v).powi(2);
         bucket.1 += 1;
     }

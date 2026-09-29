@@ -11,7 +11,12 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -27,14 +32,21 @@ let scan: ScanService;
 
 const abs = (rel: string) => path.join(root, rel);
 const row = (filePath: string) =>
-  db.query(`SELECT id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ? AND is_deleted = 0`).get(filePath) as
-    | { id: string; is_missing: number }
-    | null;
+  db
+    .query(
+      `SELECT id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ? AND is_deleted = 0`,
+    )
+    .get(filePath) as { id: string; is_missing: number } | null;
 
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-scoped-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   mkdirSync(abs('Trip'));
   const photoProcessingRepo = photoProcessing(db);
   scan = new ScanService(

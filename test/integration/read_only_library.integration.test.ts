@@ -3,7 +3,15 @@
 // bin, restore, undo, rate and album all have to work without one byte moving.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -21,7 +29,14 @@ import { StacksService } from '../../src/services/stacks/stacks_service';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 import { extractMetadata } from '../../src/services/processing/analysis/metadata';
-import { photoListing, photoMetadata, photoPaths, photoProcessing, photoScan, photoState } from './helpers/photo_repositories';
+import {
+  photoListing,
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+  photoState,
+} from './helpers/photo_repositories';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = 'lib000d4';
@@ -42,7 +57,9 @@ const abs = (rel: string) => path.join(root, rel);
 // is an assertion rather than a hope.
 function tree(dir: string, prefix = ''): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
     const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
     if (entry.isDirectory()) Object.assign(out, tree(path.join(dir, entry.name), rel));
     else {
@@ -60,12 +77,9 @@ beforeEach(async () => {
   copyFileSync(FIXTURE, abs('b.arw'));
 
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name, read_only) VALUES (?, ?, ?, ?, NULL, 1)').run(
-    LIB,
-    root,
-    'archive',
-    'taken_desc',
-  );
+  db.query(
+    'INSERT INTO libraries (id, root_path, name, ordering, bin_name, read_only) VALUES (?, ?, ?, ?, NULL, 1)',
+  ).run(LIB, root, 'archive', 'taken_desc');
   const processing = photoProcessing(db);
   const paths = photoPaths(db);
   metadata = photoMetadata(db, processing);
@@ -90,7 +104,12 @@ beforeEach(async () => {
   service = new PhotoMutationService(state, paths, libraries, {} as unknown as PhotoReadService);
   shootsService = new ShootsService(shoots, paths, state, libraries, new FolderRulesRepository(db));
   albumsService = new AlbumsService(albums, paths);
-  stacksService = new StacksService(new StacksRepository(db), listing, libraries, new SettingsRepository(db));
+  stacksService = new StacksService(
+    new StacksRepository(db),
+    listing,
+    libraries,
+    new SettingsRepository(db),
+  );
 
   await scan.scanLibrary(LIB);
   // Only after the import, so the scan could read the tree: from here the app
@@ -107,7 +126,11 @@ afterEach(() => {
 });
 
 const ids = (): string[] =>
-  (db.query(`SELECT id FROM photos ORDER BY json_extract(recipe, '$.path')`).all() as { id: string }[]).map((r) => r.id);
+  (
+    db.query(`SELECT id FROM photos ORDER BY json_extract(recipe, '$.path')`).all() as {
+      id: string;
+    }[]
+  ).map((r) => r.id);
 
 test('everything the catalogue owns still works, and the tree is byte-identical afterwards', async () => {
   const before = tree(root);
@@ -125,7 +148,11 @@ test('everything the catalogue owns still works, and the tree is byte-identical 
     deleted_from_path: string;
     is_deleted: number;
   };
-  expect(binned).toEqual({ file_path: 'Trip/a.arw', deleted_from_path: 'Trip/a.arw', is_deleted: 1 });
+  expect(binned).toEqual({
+    file_path: 'Trip/a.arw',
+    deleted_from_path: 'Trip/a.arw',
+    is_deleted: 1,
+  });
 
   // And the undo of it, which also moves nothing - and must not rename the file
   // to `a_1.arw` by claiming a name it already holds.
@@ -160,7 +187,12 @@ test('everything the catalogue owns still works, and the tree is byte-identical 
 
 test('a shoot has to be a folder that already exists, and photographs cannot be moved into one', async () => {
   await expect(
-    shootsService.create({ library_id: LIB, parent_path: '', name: 'New Shoot', ordering: 'taken_asc' }),
+    shootsService.create({
+      library_id: LIB,
+      parent_path: '',
+      name: 'New Shoot',
+      ordering: 'taken_asc',
+    }),
   ).rejects.toMatchObject({ code: 'READ_ONLY' });
 
   // The folder that is there is fine: mirroring already made it a shoot, without
@@ -168,13 +200,15 @@ test('a shoot has to be a folder that already exists, and photographs cannot be 
   const trip = shootsService.list(LIB).find((s) => s.folder_path === 'Trip');
   expect(trip).toBeDefined();
 
-  await expect(shootsService.addPhotos(trip!.id, [ids()[1]!])).rejects.toMatchObject({ code: 'READ_ONLY' });
+  await expect(shootsService.addPhotos(trip!.id, [ids()[1]!])).rejects.toMatchObject({
+    code: 'READ_ONLY',
+  });
 });
 
 // A library flipped to read-only keeps the RAWs the app already put in its bin,
 // and taking one back out is a move it may no longer make. Refused for the whole
 // batch before any row is restored: a half-landed undo is worse than none.
-test('a restore out of a flipped library\'s bin is refused before anything is restored', async () => {
+test("a restore out of a flipped library's bin is refused before anything is restored", async () => {
   chmodSync(root, 0o700);
   mkdirSync(abs('Bin'), { recursive: true });
   const [first, second] = ids();

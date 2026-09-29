@@ -121,9 +121,9 @@ pub unsafe extern "C" fn bb_write_rendered(
     out: *mut u8,
     out_cap: usize,
 ) -> isize {
-    let (Some(bytes), Some(framed)) =
-        (unsafe { borrowed(command, command_len) }, unsafe { borrowed(framed, framed_len) })
-    else {
+    let (Some(bytes), Some(framed)) = (unsafe { borrowed(command, command_len) }, unsafe {
+        borrowed(framed, framed_len)
+    }) else {
         return -1;
     };
     let result = match serde_json::from_slice::<job::Job>(bytes) {
@@ -478,7 +478,8 @@ pub unsafe extern "C" fn bb_export_still(
             "jxl" => {
                 let decoded = crate::image::decode(&bytes, 0).ok()?;
                 let frame = decoded.as_ref();
-                crate::jxl_write::encode_sdr(frame.data, frame.width, frame.height, quality, exif).ok()
+                crate::jxl_write::encode_sdr(frame.data, frame.width, frame.height, quality, exif)
+                    .ok()
             }
             "tiff" => {
                 let decoded = crate::image::decode(&bytes, 0).ok()?;
@@ -542,7 +543,9 @@ pub unsafe extern "C" fn bb_scrub_exif(bytes: *mut u8, len: usize) -> i32 {
         return 0;
     }
     let file = unsafe { std::slice::from_raw_parts_mut(bytes, len) };
-    i32::from(crate::guard("bb_scrub_exif", false, || crate::scrub::scrub_in_place(file)))
+    i32::from(crate::guard("bb_scrub_exif", false, || {
+        crate::scrub::scrub_in_place(file)
+    }))
 }
 
 /// Answers a question about pixels, for the tests and pins.
@@ -630,7 +633,9 @@ pub unsafe extern "C" fn bb_extract_embedded(
     let Some(path) = (unsafe { as_str(path) }) else {
         return -1;
     };
-    let Some(rotated) = crate::with_embedded_jpeg(path, |jpeg| crate::jpeg::with_added_rotation(jpeg, rotate)) else {
+    let Some(rotated) =
+        crate::with_embedded_jpeg(path, |jpeg| crate::jpeg::with_added_rotation(jpeg, rotate))
+    else {
         return 0;
     };
     let Some(bytes) = rotated else {
@@ -762,7 +767,10 @@ pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
 /// A radial offset as `lensdb` reports it - a fraction of the radius - into the unit a camera's
 /// own spline is carried in, which is what the fit compares the two tiers in.
 fn in_spline_units(knots: Vec<f64>) -> Vec<f64> {
-    knots.into_iter().map(|it| it * crate::image::SPLINE_UNIT).collect()
+    knots
+        .into_iter()
+        .map(|it| it * crate::image::SPLINE_UNIT)
+        .collect()
 }
 
 /// The database's profile for whatever lens this file names.
@@ -861,7 +869,13 @@ mod tests {
             let mut out = vec![0u8; 1 << 20];
             #[expect(unsafe_code)]
             let written = unsafe {
-                bb_export_still(c_path.as_ptr(), c_format.as_ptr(), 1.0, out.as_mut_ptr(), out.len())
+                bb_export_still(
+                    c_path.as_ptr(),
+                    c_format.as_ptr(),
+                    1.0,
+                    out.as_mut_ptr(),
+                    out.len(),
+                )
             };
             assert!(written > 0, "{format} exports");
             out.truncate(written as usize);
@@ -870,7 +884,10 @@ mod tests {
                 // The file's own directories rather than a block inside it, so read back as tags.
                 "tiff" => crate::exif::Recorded::parse(&out)
                     .and_then(|recorded| recorded.block(crate::exif::NON_IDENTIFYING)),
-                _ => out.windows(exif.len()).any(|window| window == exif).then(|| exif.clone()),
+                _ => out
+                    .windows(exif.len())
+                    .any(|window| window == exif)
+                    .then(|| exif.clone()),
             };
             assert_eq!(carried.as_ref(), Some(&exif), "{format} carries the EXIF");
         }

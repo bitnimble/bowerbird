@@ -32,7 +32,10 @@ export class ShootsService {
     const parentPath = request.parent_path.replace(/^\/+|\/+$/g, '');
     const absFolder = path.join(library.root_path, parentPath, request.name);
     if (!containsPath(library.root_path, absFolder)) {
-      throw new AppError('VALIDATION_ERROR', `shoot folder is outside the library: ${parentPath}/${request.name}`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `shoot folder is outside the library: ${parentPath}/${request.name}`,
+      );
     }
     // Derived from the resolved path rather than pasted together from the
     // request, so `./Trip` and `Trip//` cannot store a folder_path that never
@@ -61,7 +64,10 @@ export class ShootsService {
     // most exist before anyone asks.
     const existed = existsSync(absFolder);
     if (!existed && library.read_only) {
-      throw new AppError('READ_ONLY', `${library.name} is read-only; a shoot there has to be a folder that already exists`);
+      throw new AppError(
+        'READ_ONLY',
+        `${library.name} is read-only; a shoot there has to be a folder that already exists`,
+      );
     }
     await ensureDir(absFolder);
     // From the moment the shoot exists rather than from its first scan, so a
@@ -87,7 +93,8 @@ export class ShootsService {
     } catch (err) {
       // getByFolderPath above catches the common case; a concurrent create of the
       // same folder can still pass it before either commits and lose the race here.
-      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `a shoot already covers this folder: ${folderPath}`);
+      if (isUniqueViolation(err))
+        throw new AppError('CONFLICT', `a shoot already covers this folder: ${folderPath}`);
       throw err;
     }
 
@@ -129,7 +136,8 @@ export class ShootsService {
     // unknown/soft-deleted ids rather than silently dropping them (matches albums).
     const found = new Set(photos.map((p) => p.id));
     const missing = photoIds.filter((id) => !found.has(id));
-    if (missing.length > 0) throw new AppError('VALIDATION_ERROR', `photos not found: ${missing.join(', ')}`);
+    if (missing.length > 0)
+      throw new AppError('VALIDATION_ERROR', `photos not found: ${missing.join(', ')}`);
     for (const photo of photos) {
       if (photo.library_id !== shoot.library_id) {
         throw new AppError('VALIDATION_ERROR', `photo ${photo.id} is not in this shoot's library`);
@@ -139,40 +147,43 @@ export class ShootsService {
     // something a read-only library can do. Albums are the grouping that needs no
     // write. Before `ensureDir`, which runs outside the mutex.
     if (library.read_only) {
-      throw new AppError('READ_ONLY', `${library.name} is read-only; use an album to group photographs instead`);
+      throw new AppError(
+        'READ_ONLY',
+        `${library.name} is read-only; use an album to group photographs instead`,
+      );
     }
     await ensureDir(destDir);
 
     // Queue behind any in-flight sync of this library: these moves would otherwise
     // invalidate its mid-scan snapshot.
     await libraryMutex.run(shoot.library_id, async () => {
-    for (const photo of photos) {
-      const was = soleInputOf(photo.recipe);
-      // A shoot is a folder, and a row with no file of its own is in no folder: it joins by
-      // membership alone, which is the same branch a photograph already sitting here takes.
-      if (was == null) {
-        this.joinShoot(photo, shootId);
-        continue;
+      for (const photo of photos) {
+        const was = soleInputOf(photo.recipe);
+        // A shoot is a folder, and a row with no file of its own is in no folder: it joins by
+        // membership alone, which is the same branch a photograph already sitting here takes.
+        if (was == null) {
+          this.joinShoot(photo, shootId);
+          continue;
+        }
+        const from = path.join(library.root_path, was);
+        const naturalDest = path.join(destDir, path.basename(was));
+        // Already sitting in this folder: just set membership, never move (which
+        // would collide the file with itself and grow a "_1" suffix each call).
+        if (path.resolve(from) === path.resolve(naturalDest)) {
+          this.joinShoot(photo, shootId);
+          continue;
+        }
+        const dest = await moveIntoDir(from, destDir, path.basename(was));
+        const relDest = toLibraryRelative(library.root_path, dest);
+        // The shoot can be deleted during the (awaited) move; writing shoot_id then
+        // hits the FK (raw 500). Re-check with no await before the write. The file
+        // already moved, so record its new path to keep the DB consistent with disk.
+        if (!this.shoots.getById(shootId)) {
+          this.photoPaths.setFilePath(photo.id, relDest);
+          throw new AppError('CONFLICT', `shoot was deleted during the operation: ${shootId}`);
+        }
+        this.photoPaths.setFilePathAndShoot(photo.id, relDest, shootId);
       }
-      const from = path.join(library.root_path, was);
-      const naturalDest = path.join(destDir, path.basename(was));
-      // Already sitting in this folder: just set membership, never move (which
-      // would collide the file with itself and grow a "_1" suffix each call).
-      if (path.resolve(from) === path.resolve(naturalDest)) {
-        this.joinShoot(photo, shootId);
-        continue;
-      }
-      const dest = await moveIntoDir(from, destDir, path.basename(was));
-      const relDest = toLibraryRelative(library.root_path, dest);
-      // The shoot can be deleted during the (awaited) move; writing shoot_id then
-      // hits the FK (raw 500). Re-check with no await before the write. The file
-      // already moved, so record its new path to keep the DB consistent with disk.
-      if (!this.shoots.getById(shootId)) {
-        this.photoPaths.setFilePath(photo.id, relDest);
-        throw new AppError('CONFLICT', `shoot was deleted during the operation: ${shootId}`);
-      }
-      this.photoPaths.setFilePathAndShoot(photo.id, relDest, shootId);
-    }
     });
   }
 
@@ -184,29 +195,37 @@ export class ShootsService {
   }
 
   private requireShootExists(shootId: string): void {
-    if (!this.shoots.getById(shootId)) throw new AppError('CONFLICT', `shoot was deleted during the operation: ${shootId}`);
+    if (!this.shoots.getById(shootId))
+      throw new AppError('CONFLICT', `shoot was deleted during the operation: ${shootId}`);
   }
 
   async removePhotos(shootId: string, photoIds: string[]): Promise<void> {
     const shoot = this.get(shootId);
     const library = this.requireLibrary(shoot.library_id);
     if (library.read_only) {
-      throw new AppError('READ_ONLY', `${library.name} is read-only; use an album to group photographs instead`);
+      throw new AppError(
+        'READ_ONLY',
+        `${library.name} is read-only; use an album to group photographs instead`,
+      );
     }
 
     await libraryMutex.run(shoot.library_id, async () => {
-    for (const photo of this.photoPaths.getBasicByIds(photoIds)) {
-      if (photo.shoot_id !== shootId || photo.library_id !== shoot.library_id) continue;
-      const was = soleInputOf(photo.recipe);
-      // Nothing to move back to the root, so leaving the shoot is the membership alone.
-      if (was == null) {
-        this.photoPaths.setShoot(photo.id, null);
-        continue;
+      for (const photo of this.photoPaths.getBasicByIds(photoIds)) {
+        if (photo.shoot_id !== shootId || photo.library_id !== shoot.library_id) continue;
+        const was = soleInputOf(photo.recipe);
+        // Nothing to move back to the root, so leaving the shoot is the membership alone.
+        if (was == null) {
+          this.photoPaths.setShoot(photo.id, null);
+          continue;
+        }
+        const from = path.join(library.root_path, was);
+        const dest = await moveIntoDir(from, library.root_path, path.basename(was));
+        this.photoPaths.setFilePathAndShoot(
+          photo.id,
+          toLibraryRelative(library.root_path, dest),
+          null,
+        );
       }
-      const from = path.join(library.root_path, was);
-      const dest = await moveIntoDir(from, library.root_path, path.basename(was));
-      this.photoPaths.setFilePathAndShoot(photo.id, toLibraryRelative(library.root_path, dest), null);
-    }
     });
   }
 
@@ -235,7 +254,8 @@ export class ShootsService {
 
     await libraryMutex.run(library.id, async () => {
       // Re-read inside the fence: the shoot may have gone while this queued.
-      if (!this.shoots.getById(shootId)) throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
+      if (!this.shoots.getById(shootId))
+        throw new AppError('NOT_FOUND', `shoot not found: ${shootId}`);
 
       if (photos === 'keep') {
         this.shoots.transaction(() => {
@@ -265,7 +285,10 @@ export class ShootsService {
       });
       // After the rows, so a failure here leaves files the sweep still reaps
       // rather than renditions whose photos are alive.
-      await deleteGeneratedFilesFor(library, doomed.map((p) => p.id));
+      await deleteGeneratedFilesFor(
+        library,
+        doomed.map((p) => p.id),
+      );
     });
   }
 
@@ -288,7 +311,10 @@ export class ShootsService {
         const [photo] = this.photoPaths.getBasicByIds([bannerId]);
         if (!photo) throw new AppError('VALIDATION_ERROR', `banner photo not found: ${bannerId}`);
         if (photo.library_id !== shoot.library_id) {
-          throw new AppError('VALIDATION_ERROR', `banner photo is not in this shoot's library: ${bannerId}`);
+          throw new AppError(
+            'VALIDATION_ERROR',
+            `banner photo is not in this shoot's library: ${bannerId}`,
+          );
         }
       }
       this.shoots.setBanner(shootId, bannerId);

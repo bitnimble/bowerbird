@@ -26,7 +26,10 @@ fn main() {
     let over_the_frame = asked.starts_with("whole");
     let rect: Vec<usize> = match over_the_frame {
         true => vec![0, 0, 0, 0],
-        false => asked.split(',').map(|v| v.parse().expect("a number")).collect(),
+        false => asked
+            .split(',')
+            .map(|v| v.parse().expect("a number"))
+            .collect(),
     };
     let (x, y, w, h) = (rect[0], rect[1], rect[2], rect[3]);
     let lift: f32 = args.next().map_or(8.0, |v| v.parse().expect("a number"));
@@ -53,12 +56,23 @@ fn main() {
     let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
     let gains = rawshim::decode_rawler::channel_ceilings(&image);
     let model = fit.model();
-    eprintln!("fit alpha {:.3e} sigma_sq {:.3e}", model.alpha, model.sigma_sq);
+    eprintln!(
+        "fit alpha {:.3e} sigma_sq {:.3e}",
+        model.alpha, model.sigma_sq
+    );
 
     let network = rawshim::pmrid::device(gpu).expect("the network built");
     let filter = |window: &mut rawshim::condition::Mosaic| {
         let started = std::time::Instant::now();
-        rawshim::pmrid::denoise(gpu, network, window, &cfa, gains, Detail::at(luma, colour), fit);
+        rawshim::pmrid::denoise(
+            gpu,
+            network,
+            window,
+            &cfa,
+            gains,
+            Detail::at(luma, colour),
+            fit,
+        );
         gpu.block_until_done();
         started.elapsed()
     };
@@ -78,9 +92,14 @@ fn main() {
             spent.as_secs_f64() * 1e3 / megapixels,
         );
         let filtered = pollster::block_on(frame.read(gpu)).expect("reads back");
-        let bytes: Vec<u8> = filtered.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        let bytes: Vec<u8> = filtered
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
         std::fs::write(format!("{out}/whole.f32"), bytes).expect("wrote the frame");
-        let Ok(reference) = std::fs::read(format!("{out}/reference.f32")) else { return };
+        let Ok(reference) = std::fs::read(format!("{out}/reference.f32")) else {
+            return;
+        };
         assert_eq!(
             reference.len(),
             filtered.len() * 4,
@@ -131,12 +150,18 @@ fn main() {
     let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
     let rgb = |samples: &[f32]| {
         let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, w, h);
-        pollster::block_on(rawshim::demosaic::demosaic_plane(gpu, rcd, &uploaded, &cfa, |bytes| {
-            bytes
-                .chunks_exact(4)
-                .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
-                .collect::<Vec<f32>>()
-        }))
+        pollster::block_on(rawshim::demosaic::demosaic_plane(
+            gpu,
+            rcd,
+            &uploaded,
+            &cfa,
+            |bytes| {
+                bytes
+                    .chunks_exact(4)
+                    .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
+                    .collect::<Vec<f32>>()
+            },
+        ))
         .expect("demosaics")
     };
     let encode = |name: &str, linear: &[f32]| {

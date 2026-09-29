@@ -31,7 +31,9 @@ function saveIn(session: string, over: Partial<EditDoc>): void {
 }
 
 function stored(): { session_id: string | null; chain: string | null; stamp: string | null } {
-  return db.query('SELECT session_id, chain, stamp FROM photo_edits WHERE photo_id = ?').get(PHOTO) as {
+  return db
+    .query('SELECT session_id, chain, stamp FROM photo_edits WHERE photo_id = ?')
+    .get(PHOTO) as {
     session_id: string | null;
     chain: string | null;
     stamp: string | null;
@@ -50,7 +52,13 @@ function arriving(
     kind: 'photo_edits',
     rowId: PHOTO,
     deleted: false,
-    row: { photo_id: PHOTO, doc: JSON.stringify(doc), cursor: 0, chain: JSON.stringify(chain), session_id: session },
+    row: {
+      photo_id: PHOTO,
+      doc: JSON.stringify(doc),
+      cursor: 0,
+      chain: JSON.stringify(chain),
+      session_id: session,
+    },
     stamps: { photo_edits: stamp },
     sidecar,
   };
@@ -73,7 +81,9 @@ beforeEach(() => {
 // §11.2: what arrives from a peer is remote input, and a chain arrives inside it.
 describe('a chain that arrives', () => {
   const hops = (count: number): string =>
-    JSON.stringify(Array.from({ length: count }, (_, i) => [`session${i}`, encodeStamp(i, 0, REMOTE_PEER)]));
+    JSON.stringify(
+      Array.from({ length: count }, (_, i) => [`session${i}`, encodeStamp(i, 0, REMOTE_PEER)]),
+    );
 
   it('is capped however long the peer said it was', () => {
     const parsed = parseChain(hops(MAX_CHAIN_HOPS + 500));
@@ -98,7 +108,12 @@ describe('a chain that arrives', () => {
   });
 
   it('drops the hops it cannot read and keeps the ones it can', () => {
-    const mixed = JSON.stringify([['ok', encodeStamp(1, 0, REMOTE_PEER)], ['short'], 'nope', [1, 2]]);
+    const mixed = JSON.stringify([
+      ['ok', encodeStamp(1, 0, REMOTE_PEER)],
+      ['short'],
+      'nope',
+      [1, 2],
+    ]);
 
     expect(parseChain(mixed)).toEqual([['ok', encodeStamp(1, 0, REMOTE_PEER)]]);
   });
@@ -123,9 +138,24 @@ describe('a session on a save', () => {
 
   it('descends from a session it names at that stamp or later, and not from a later save of it', () => {
     const chain: [string, string][] = [['session1', 'bbbb']];
-    expect(descends({ session: 'session2', stamp: 'cccc', chain }, { session: 'session1', stamp: 'bbbb' })).toBe(true);
-    expect(descends({ session: 'session2', stamp: 'cccc', chain }, { session: 'session1', stamp: 'aaaa' })).toBe(true);
-    expect(descends({ session: 'session2', stamp: 'cccc', chain }, { session: 'session1', stamp: 'dddd' })).toBe(false);
+    expect(
+      descends(
+        { session: 'session2', stamp: 'cccc', chain },
+        { session: 'session1', stamp: 'bbbb' },
+      ),
+    ).toBe(true);
+    expect(
+      descends(
+        { session: 'session2', stamp: 'cccc', chain },
+        { session: 'session1', stamp: 'aaaa' },
+      ),
+    ).toBe(true);
+    expect(
+      descends(
+        { session: 'session2', stamp: 'cccc', chain },
+        { session: 'session1', stamp: 'dddd' },
+      ),
+    ).toBe(false);
   });
 });
 
@@ -177,7 +207,9 @@ describe('a divergence', () => {
     parkDivergentEdits(db, arriving('there/and-back', edited({ exposure: -0.5 })));
 
     expect(listConflicts(db, LIB)).toEqual([]);
-    expect(db.query('SELECT row_id FROM replication_log WHERE entity = ?').all('edit_conflict')).toEqual([]);
+    expect(
+      db.query('SELECT row_id FROM replication_log WHERE entity = ?').all('edit_conflict'),
+    ).toEqual([]);
   });
 
   /**
@@ -230,7 +262,9 @@ describe('a divergence', () => {
     parkDivergentEdits(db, arriving('there', edited({ exposure: -0.5 })));
 
     expect(listConflicts(db, LIB)).toEqual([]);
-    expect(db.query('SELECT row_id FROM replication_log WHERE entity = ?').all('edit_conflict')).toEqual([]);
+    expect(
+      db.query('SELECT row_id FROM replication_log WHERE entity = ?').all('edit_conflict'),
+    ).toEqual([]);
   });
 
   it('parks nothing when the arriving row was built on what is held here', () => {

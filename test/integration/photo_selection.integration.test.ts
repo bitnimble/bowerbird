@@ -16,7 +16,12 @@ const id = (n: number) => `photo${String(n).padStart(3, '0')}`;
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-selection', 'lib', 'taken_asc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    '/tmp/bb-selection',
+    'lib',
+    'taken_asc',
+  );
   photos = new PhotoListingRepository(db);
   const insert = db.query(
     `INSERT INTO photos (id, library_id, recipe, width, height, date_taken, date_added, rating, triage, is_missing, is_deleted)
@@ -25,20 +30,31 @@ beforeAll(() => {
   db.transaction(() => {
     for (let n = 0; n < COUNT; n++) {
       const taken = new Date(Date.UTC(2024, 0, 1, 0, n)).toISOString();
-      insert.run(id(n), LIB, `frame_${String(n).padStart(4, '0')}.arw`, taken, n % 3 === 0 ? 'picked' : null);
+      insert.run(
+        id(n),
+        LIB,
+        `frame_${String(n).padStart(4, '0')}.arw`,
+        taken,
+        n % 3 === 0 ? 'picked' : null,
+      );
     }
   })();
 });
 
 afterAll(() => db.close());
 
-const listed = (filters: Parameters<PhotoListingRepository['listByLibrary']>[4], offset = 0, limit = COUNT) =>
-  photos.listByLibrary(LIB, 'taken_asc', offset, limit, filters).photos.map((p) => p.id);
+const listed = (
+  filters: Parameters<PhotoListingRepository['listByLibrary']>[4],
+  offset = 0,
+  limit = COUNT,
+) => photos.listByLibrary(LIB, 'taken_asc', offset, limit, filters).photos.map((p) => p.id);
 
 const unfiltered = { includeDeleted: false };
 
 test('a run resolves to exactly the ids the grid shows at those positions', () => {
-  expect(photos.idsInLibrary(LIB, 'taken_asc', [{ start: 10, end: 19 }], unfiltered)).toEqual(listed(unfiltered, 10, 10));
+  expect(photos.idsInLibrary(LIB, 'taken_asc', [{ start: 10, end: 19 }], unfiltered)).toEqual(
+    listed(unfiltered, 10, 10),
+  );
 });
 
 test('the whole collection is one run, not two hundred and fifty entries', () => {
@@ -70,7 +86,12 @@ test('positions are into the filtered listing, not the whole collection', () => 
 });
 
 test('a run reaching past the end stops at the end rather than erroring', () => {
-  const resolved = photos.idsInLibrary(LIB, 'taken_asc', [{ start: COUNT - 2, end: COUNT + 1000 }], unfiltered);
+  const resolved = photos.idsInLibrary(
+    LIB,
+    'taken_asc',
+    [{ start: COUNT - 2, end: COUNT + 1000 }],
+    unfiltered,
+  );
   expect(resolved).toEqual([id(COUNT - 2), id(COUNT - 1)]);
 });
 

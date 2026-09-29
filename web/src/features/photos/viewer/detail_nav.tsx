@@ -77,7 +77,12 @@ import { PhotoTriage } from './detail_triage';
 // All three stay on offer whichever is showing, including the step back down to
 // the camera's JPEG: comparing a render against it is a reason to switch.
 const RENDITIONS: Option<ViewerRendition>[] = [
-  { value: 'embedded', label: renditionLabel('embedded'), icon: <Sparkles size={ICON} />, hint: 'I' },
+  {
+    value: 'embedded',
+    label: renditionLabel('embedded'),
+    icon: <Sparkles size={ICON} />,
+    hint: 'I',
+  },
   { value: 'full', label: renditionLabel('full'), icon: <Wand2 size={ICON} />, hint: 'O' },
   { value: 'max', label: renditionLabel('max'), icon: <Maximize2 size={ICON} />, hint: 'P' },
 ];
@@ -92,15 +97,27 @@ type Send = 'share' | 'original' | 'openWith' | 'reveal' | 'export';
 
 const DOWNLOADS: Option<Send>[] = [
   { value: 'share', label: PhotoDetailStrings.share(), icon: <Share2 size={ICON} /> },
-  { value: 'original', label: PhotoDetailStrings.downloadOriginal(), icon: <FileType size={ICON} /> },
+  {
+    value: 'original',
+    label: PhotoDetailStrings.downloadOriginal(),
+    icon: <FileType size={ICON} />,
+  },
   {
     value: 'openWith',
     label: PhotoDetailStrings.openWith(),
     icon: <AppWindow size={ICON} />,
     keepsMenuOpen: typeof navigator !== 'undefined' && opensWithAMenu(),
   },
-  { value: 'reveal', label: PhotoDetailStrings.openContainingFolder(), icon: <FolderOpen size={ICON} /> },
-  { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <HardDriveDownload size={ICON} /> },
+  {
+    value: 'reveal',
+    label: PhotoDetailStrings.openContainingFolder(),
+    icon: <FolderOpen size={ICON} />,
+  },
+  {
+    value: 'export',
+    label: BulkBarStrings.exportPhotos(),
+    icon: <HardDriveDownload size={ICON} />,
+  },
 ];
 
 // No share sheet on most desktop browsers, and a row that does nothing when pressed is worse
@@ -137,7 +154,12 @@ function offered<T extends 'original' | ViewerRendition>(
 type ViewAction = 'fullscreen' | 'rotateLeft' | 'rotateRight';
 
 const VIEW_ACTIONS: Option<ViewAction>[] = [
-  { value: 'fullscreen', label: PhotoStageStrings.fullscreen(), icon: <Maximize size={ICON} />, hint: 'F' },
+  {
+    value: 'fullscreen',
+    label: PhotoStageStrings.fullscreen(),
+    icon: <Maximize size={ICON} />,
+    hint: 'F',
+  },
 ];
 
 const ROTATE_ACTIONS: Option<ViewAction>[] = [
@@ -177,29 +199,45 @@ function actions({
     // editable without one - what it opens is the canvas its recipe composes, prepared where
     // the frames are. Anything else fetches its original first, because what opening without
     // one looks like from inside the editor is a 404 with no way out of it.
-    editable ?
-      { value: 'edit', label: PhotoDetailStrings.edit(), icon: <SlidersHorizontal size={ICON} />, link: <Link to={editHref} replace /> }
-    : {
-        value: 'edit',
-        label: fetchingOriginal ? PhotoDetailStrings.fetchingOriginal() : PhotoDetailStrings.fetchOriginalAndEdit(),
-        icon:
-          fetchingOriginal ?
+    editable
+      ? {
+          value: 'edit',
+          label: PhotoDetailStrings.edit(),
+          icon: <SlidersHorizontal size={ICON} />,
+          link: <Link to={editHref} replace />,
+        }
+      : {
+          value: 'edit',
+          label: fetchingOriginal
+            ? PhotoDetailStrings.fetchingOriginal()
+            : PhotoDetailStrings.fetchOriginalAndEdit(),
+          icon: fetchingOriginal ? (
             <RefreshCw size={ICON} {...stylex.props(menuStyles.spin)} />
-          : <HardDriveDownload size={ICON} />,
-        disabled: fetchingOriginal || readOnly,
-        keepsMenuOpen: true,
-        ...(readOnly ? { tooltip: BulkBarStrings.notOnReadOnlyLibrary() } : {}),
-      },
+          ) : (
+            <HardDriveDownload size={ICON} />
+          ),
+          disabled: fetchingOriginal || readOnly,
+          keepsMenuOpen: true,
+          ...(readOnly ? { tooltip: BulkBarStrings.notOnReadOnlyLibrary() } : {}),
+        },
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather
     // than by a field the viewer would have to carry.
-    ...(merged ?
-      [{ value: 'editMerge' as const, label: PhotoDetailStrings.editMerge(), icon: <Layers2 size={ICON} /> }]
-    : []),
+    ...(merged
+      ? [
+          {
+            value: 'editMerge' as const,
+            label: PhotoDetailStrings.editMerge(),
+            icon: <Layers2 size={ICON} />,
+          },
+        ]
+      : []),
     { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <RotateCw size={ICON} /> },
     {
       value: 'rerender',
-      label: rerendering ? PhotoDetailStrings.rebuildingRendition() : PhotoDetailStrings.rebuildRendition(),
+      label: rerendering
+        ? PhotoDetailStrings.rebuildingRendition()
+        : PhotoDetailStrings.rebuildRendition(),
       icon: <RefreshCw size={ICON} {...stylex.props(rerendering && menuStyles.spin)} />,
       disabled: !renders || rerendering,
     },
@@ -208,7 +246,12 @@ function actions({
       label: hidden ? BulkBarStrings.unhide() : BulkBarStrings.hide(),
       icon: hidden ? <Eye size={ICON} /> : <EyeOff size={ICON} />,
     },
-    { value: 'delete', label: BulkBarStrings.moveToBin(), icon: <Trash2 size={ICON} />, destructive: true },
+    {
+      value: 'delete',
+      label: BulkBarStrings.moveToBin(),
+      icon: <Trash2 size={ICON} />,
+      destructive: true,
+    },
   ];
 }
 
@@ -252,7 +295,12 @@ export const DetailNav = observer(function DetailNav({
   onFullscreen: () => void;
   mode: DetailMode;
   /** Null until the editor's own layout effect has built the pair, one render behind `mode`. */
-  edit: { edit: EditStore; stage: StageStore; loupe: LoupeStore; presenter: RawEditPresenter } | null;
+  edit: {
+    edit: EditStore;
+    stage: StageStore;
+    loupe: LoupeStore;
+    presenter: RawEditPresenter;
+  } | null;
 }): JSX.Element {
   const listing = useListingStore();
   const store = useViewerStore();
@@ -264,7 +312,11 @@ export const DetailNav = observer(function DetailNav({
   const mobile = useIsMobile();
   const touch = useIsTouch();
   const photo = store.detailFor(photoId);
-  const editable = isComposite(store.photoFor(photoId)) || (photo == null || photo.has_original || photo.is_offloaded);
+  const editable =
+    isComposite(store.photoFor(photoId)) ||
+    photo == null ||
+    photo.has_original ||
+    photo.is_offloaded;
   const editing = mode === 'edit';
   // The print mockup renders through the editor's session, so it takes the editor's chrome
   // rules - no filmstrip, no rendition choice - while leaving the grade's own controls out.
@@ -281,7 +333,8 @@ export const DetailNav = observer(function DetailNav({
   // construction (§19.6).
   // Under the same collection the viewer is, so the way back out of a triage
   // session lands in the grid the reader entered it from.
-  const stackPath = previewing || photo?.stack_id == null ? null : triagePath(photo.stack_id, listing.source);
+  const stackPath =
+    previewing || photo?.stack_id == null ? null : triagePath(photo.stack_id, listing.source);
   // A row composed rather than imported has no path to show, so the bar names it the way
   // every other view does rather than going blank.
   const path = photo == null ? '' : (photo.file_path ?? nameOf(store, photoId));
@@ -295,10 +348,12 @@ export const DetailNav = observer(function DetailNav({
     ...(document.fullscreenEnabled ? VIEW_ACTIONS : []),
     // A turn in the mockup would rotate the photograph rather than the sheet on screen,
     // so it is not offered there.
-    ...(mode === 'print' ? [] : ROTATE_ACTIONS.map((option) => ({
-      ...option,
-      disabled: editing ? !edit?.stage.editable : !editable,
-    }))),
+    ...(mode === 'print'
+      ? []
+      : ROTATE_ACTIONS.map((option) => ({
+          ...option,
+          disabled: editing ? !edit?.stage.editable : !editable,
+        }))),
   ];
 
   const undoRedo: Option<'undo' | 'redo'>[] = [
@@ -324,11 +379,16 @@ export const DetailNav = observer(function DetailNav({
               menuSection({
                 label: PhotoDetailStrings.sectionEdit(),
                 options: undoRedo,
-                onSelect: (action) => void (action === 'undo' ? edit?.presenter.undo() : edit?.presenter.redo()),
+                onSelect: (action) =>
+                  void (action === 'undo' ? edit?.presenter.undo() : edit?.presenter.redo()),
               }),
             ]
           : []),
-        menuSection({ label: SoftProofMenuStrings.softProof(), options: softProofOptions(proof, hdrOffered), onSelect: onProof }),
+        menuSection({
+          label: SoftProofMenuStrings.softProof(),
+          options: softProofOptions(proof, hdrOffered),
+          onSelect: onProof,
+        }),
       ]
     : [];
 
@@ -428,7 +488,9 @@ export const DetailNav = observer(function DetailNav({
             : [
                 menuSection({
                   label: PhotoDetailStrings.rating(),
-                  content: <DetailRating photoId={photoId} focusable={false} style={styles.menuRating} />,
+                  content: (
+                    <DetailRating photoId={photoId} focusable={false} style={styles.menuRating} />
+                  ),
                 }),
               ]),
         ]),
@@ -455,7 +517,10 @@ export const DetailNav = observer(function DetailNav({
         }
         // The frame the estimate is scaled against, where the detail has landed. Null is a
         // dialog that says nothing about size rather than one that guesses at it.
-        const frame = photo?.width != null && photo.height != null ? { width: photo.width, height: photo.height } : null;
+        const frame =
+          photo?.width != null && photo.height != null
+            ? { width: photo.width, height: photo.height }
+            : null;
         exportPhotos.openFor({ photo_ids: [photoId] }, 1, frame);
       },
     }),
@@ -514,21 +579,25 @@ export const DetailNav = observer(function DetailNav({
               finish what is open - and one that closed the whole grade from under a
               half-drawn crop would be the wrong one to hit by habit. */}
           <Button variant="primary" onClick={tool === 'cursor' ? onDone : leaveTool}>
-            {tool === 'crop' ?
-              PhotoDetailStrings.finishCrop()
-            : tool === 'perspective' ? PhotoDetailStrings.finishPerspective()
-            : PhotoDetailStrings.done()}
+            {tool === 'crop'
+              ? PhotoDetailStrings.finishCrop()
+              : tool === 'perspective'
+                ? PhotoDetailStrings.finishPerspective()
+                : PhotoDetailStrings.done()}
           </Button>
-          {!mobile && undoRedo.map((option) => (
-            <Button
-              key={option.value}
-              disabled={option.disabled}
-              onClick={() => void (option.value === 'undo' ? edit?.presenter.undo() : edit?.presenter.redo())}
-            >
-              {option.icon}
-              {option.label}
-            </Button>
-          ))}
+          {!mobile &&
+            undoRedo.map((option) => (
+              <Button
+                key={option.value}
+                disabled={option.disabled}
+                onClick={() =>
+                  void (option.value === 'undo' ? edit?.presenter.undo() : edit?.presenter.redo())
+                }
+              >
+                {option.icon}
+                {option.label}
+              </Button>
+            ))}
         </>
       ) : (
         <>
@@ -604,7 +673,9 @@ export const DetailNav = observer(function DetailNav({
       {stripOpen != null && (
         <Button
           iconOnly
-          aria-label={stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()}
+          aria-label={
+            stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()
+          }
           aria-expanded={stripOpen}
           onClick={onToggleStrip}
         >
@@ -617,7 +688,9 @@ export const DetailNav = observer(function DetailNav({
       {panelsOpen != null && !previewing && (
         <Button
           iconOnly
-          aria-label={panelsOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
+          aria-label={
+            panelsOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()
+          }
           aria-expanded={panelsOpen}
           onClick={onTogglePanels}
         >

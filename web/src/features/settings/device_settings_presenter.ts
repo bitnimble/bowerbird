@@ -14,7 +14,8 @@ export class DeviceSettingsPresenter {
   private restore(): void {
     this.store.renderOnThisDevice = readSetting(RENDER_ON_THIS_DEVICE_KEY) === '1';
     const peak = Number(readSetting(DISPLAY_PEAK_NITS_KEY) ?? DEFAULT_DISPLAY_PEAK_NITS);
-    this.store.displayPeakNits = Number.isFinite(peak) && peak >= 1 ? peak : DEFAULT_DISPLAY_PEAK_NITS;
+    this.store.displayPeakNits =
+      Number.isFinite(peak) && peak >= 1 ? peak : DEFAULT_DISPLAY_PEAK_NITS;
   }
 
   @action.bound

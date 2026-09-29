@@ -31,7 +31,8 @@ if (process.env.BUN_JSC_useFTLJIT == null) {
 // Vite's CLI is strict and only knows --port, so rewrite -p before handing over.
 process.argv = process.argv.map((arg) => (arg === '-p' ? '--port' : arg));
 // An asked-for port that silently moves is worse than a failure.
-if (process.argv.includes('--port') && !process.argv.includes('--strictPort')) process.argv.push('--strictPort');
+if (process.argv.includes('--port') && !process.argv.includes('--strictPort'))
+  process.argv.push('--strictPort');
 // Resolved from the working directory rather than this file: `web` and `landing` are separate
 // installs, and each has to run its own Vite against its own config.
 await import(join(dirname(Bun.resolveSync('vite/package.json', process.cwd())), 'bin/vite.js'));

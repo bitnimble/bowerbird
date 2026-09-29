@@ -20,7 +20,11 @@ function label(id: string, name: string, position: number, photoCount = 0): Labe
   return { id, library_id: LIB, name, colour: '#112233', position, photo_count: photoCount };
 }
 
-const HELD = [label('label001', 'Keeper', 0, 3), label('label002', 'Print', 1), label('label003', 'Sky', 2)];
+const HELD = [
+  label('label001', 'Keeper', 0, 3),
+  label('label002', 'Print', 1),
+  label('label003', 'Sky', 2),
+];
 
 interface Built {
   store: LabelsStore;
@@ -38,14 +42,18 @@ function build(): Built {
   const kept: Set<string>[] = [];
   const errors: string[] = [];
   const photos = {
-    photoLabelled: (photoId: string, labelId: string, on: boolean) => void labelled.push([photoId, labelId, on]),
+    photoLabelled: (photoId: string, labelId: string, on: boolean) =>
+      void labelled.push([photoId, labelId, on]),
     keepLabelFilters: (known: ReadonlySet<string>) => {
       kept.push(new Set(known));
       return Promise.resolve();
     },
     reload: () => Promise.resolve(),
   };
-  const toasts = { showError: (text: string) => void errors.push(text), show: () => undefined } as never;
+  const toasts = {
+    showError: (text: string) => void errors.push(text),
+    show: () => undefined,
+  } as never;
   const presenter = new LabelsPresenter(store, editor, photos, toasts);
   runInAction(() => (store.labels = HELD));
   return { store, editor, presenter, labelled, kept, errors };
@@ -66,7 +74,11 @@ describe('the edit labels dialog', () => {
     let sent: SaveLabelsRequest | null = null;
     labelsApi.save = (body) => {
       sent = body;
-      return Promise.resolve([label('label003', 'Sea', 0), label('label001', 'Keeper', 1), label('label009', 'Pano', 2)]);
+      return Promise.resolve([
+        label('label003', 'Sea', 0),
+        label('label001', 'Keeper', 1),
+        label('label009', 'Pano', 2),
+      ]);
     };
 
     await presenter.openEditor(LIB);
@@ -80,7 +92,11 @@ describe('the edit labels dialog', () => {
 
     expect(sent!).toEqual({
       library_id: LIB,
-      labels: [{ id: 'label003', name: 'Sea' }, { id: 'label001' }, { name: 'Pano', colour: '#ffc53d' }],
+      labels: [
+        { id: 'label003', name: 'Sea' },
+        { id: 'label001' },
+        { name: 'Pano', colour: '#ffc53d' },
+      ],
       removed: ['label002'],
     });
     expect(store.labels.map((l) => l.name)).toEqual(['Sea', 'Keeper', 'Pano']);
@@ -147,7 +163,11 @@ describe('labelling a photo', () => {
 });
 
 describe('the grid filtered by labels', () => {
-  function photos(): { presenter: PhotosPresenter; asked: PhotoListParams[]; listing: ListingStore } {
+  function photos(): {
+    presenter: PhotosPresenter;
+    asked: PhotoListParams[];
+    listing: ListingStore;
+  } {
     const absent = new Proxy({}, { get: () => () => undefined }) as never;
     const stacks = new StacksStore();
     const listing = new ListingStore(stacks);
@@ -168,7 +188,13 @@ describe('the grid filtered by labels', () => {
     const asked: PhotoListParams[] = [];
     photosApi.listLibrary = (_libraryId, params) => {
       asked.push(params);
-      return Promise.resolve({ photos: [], total: 0, offset: 0, limit: 1, ordering: 'taken_desc' } as PhotoListResponse);
+      return Promise.resolve({
+        photos: [],
+        total: 0,
+        offset: 0,
+        limit: 1,
+        ordering: 'taken_desc',
+      } as PhotoListResponse);
     };
     return { presenter, asked, listing };
   }

@@ -51,10 +51,18 @@ test('a library whose photographs are all at the root is not empty', () => {
 
 // A shown hidden shoot is drawn in its own place, greyed, and saying so - dimming alone is what an
 // untracked folder and an empty shoot already look like (§12.4).
-const HIDDEN: Shoot = { ...SHOOT, id: 'id:Wharf', folder_path: 'Wharf', name: 'Wharf', is_hidden: true };
+const HIDDEN: Shoot = {
+  ...SHOOT,
+  id: 'id:Wharf',
+  folder_path: 'Wharf',
+  name: 'Wharf',
+  is_hidden: true,
+};
 
 test('a hidden shoot is drawn in its own place and says it is hidden', () => {
-  const row = store({ shoots: [SHOOT, HIDDEN], showHidden: true }).rows.find((r) => r.key === 'Wharf');
+  const row = store({ shoots: [SHOOT, HIDDEN], showHidden: true }).rows.find(
+    (r) => r.key === 'Wharf',
+  );
   expect(row?.tone).toBe('hidden');
   expect(row?.meta).toBe('Hidden · 3 photos');
   expect(row?.href).toBe(route(PathSegment.shoots(), 'id:Wharf'));
@@ -65,6 +73,9 @@ test('a shoot resolved by id is found even though no listing holds it', () => {
   const held = store({ shoots: [SHOOT], resolved: new Map([[HIDDEN.id, HIDDEN]]) });
   expect(held.byId.get(HIDDEN.id)).toBe(HIDDEN);
   // And the listing wins where both have it, being the fresher of the two.
-  const both = store({ shoots: [SHOOT], resolved: new Map([[SHOOT.id, { ...SHOOT, name: 'stale' }]]) });
+  const both = store({
+    shoots: [SHOOT],
+    resolved: new Map([[SHOOT.id, { ...SHOOT, name: 'stale' }]]),
+  });
   expect(both.byId.get(SHOOT.id)?.name).toBe('Reef');
 });

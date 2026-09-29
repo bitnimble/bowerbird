@@ -9,7 +9,8 @@ import type { StagePicture } from '../../viewer/photo_stage';
 
 registerDom();
 const { act, cleanup, render, screen } = await import('@testing-library/react');
-const { arriveAt, forgetFrames, holdDecodeOf, wasDecoded } = await import('../../viewer/tests/stage_frames');
+const { arriveAt, forgetFrames, holdDecodeOf, wasDecoded } =
+  await import('../../viewer/tests/stage_frames');
 const { PhotoStage } = await import('../../viewer/photo_stage');
 
 // jsdom does not animate, so the movement is recorded rather than run: what this pins about it
@@ -23,7 +24,8 @@ Object.defineProperty(globalThis.HTMLElement.prototype, 'animate', {
   configurable: true,
   writable: true,
 });
-globalThis.requestAnimationFrame = ((run: FrameRequestCallback) => setTimeout(() => run(0), 0)) as never;
+globalThis.requestAnimationFrame = ((run: FrameRequestCallback) =>
+  setTimeout(() => run(0), 0)) as never;
 
 afterEach(() => {
   cleanup();
@@ -37,17 +39,33 @@ const STEP_MS = 130;
 const src = (id: string): string => `${id}.avif`;
 const of = (id: string): StagePicture => ({ key: id, sources: [src(id)], alt: id });
 
-function stage(photoKey: string, pictures: StagePicture[], showing: number, step: 'next' | 'prev' | 'fade' | null): JSX.Element {
+function stage(
+  photoKey: string,
+  pictures: StagePicture[],
+  showing: number,
+  step: 'next' | 'prev' | 'fade' | null,
+): JSX.Element {
   return (
-    <PhotoStage photoKey={photoKey} pictures={pictures} showing={showing} step={step} alt="" filename="" devicePeakNits={1000} onImageLoad={() => {}} />
+    <PhotoStage
+      photoKey={photoKey}
+      pictures={pictures}
+      showing={showing}
+      step={step}
+      alt=""
+      filename=""
+      devicePeakNits={1000}
+      onImageLoad={() => {}}
+    />
   );
 }
 
 /** The photograph's frame, on screen or not: a hidden element has no accessible name to query by. */
-const frameOf = (id: string): HTMLElement | null => document.querySelector(`[role="img"][aria-label="${id}"]`);
+const frameOf = (id: string): HTMLElement | null =>
+  document.querySelector(`[role="img"][aria-label="${id}"]`);
 /** On screen: its frame is the one shown, in a picture that is not hidden. */
 const shown = (id: string): boolean => screen.queryByRole('img', { name: id }) != null;
-const leaving = (id: string): boolean => frameOf(id)?.parentElement?.getAttribute('aria-hidden') === 'true';
+const leaving = (id: string): boolean =>
+  frameOf(id)?.parentElement?.getAttribute('aria-hidden') === 'true';
 /** Where the step started this photograph's picture from, if it moved at all. */
 const stepOf = (id: string): Keyframe | undefined =>
   moved.find((move) => move.element === frameOf(id)?.parentElement)?.from;

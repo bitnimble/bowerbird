@@ -7,7 +7,12 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import * as stylex from '@stylexjs/stylex';
 import { GripVertical, Plus, Trash2 } from 'lucide-react';
@@ -113,7 +118,10 @@ export const EditLabelsDialog = observer(function EditLabelsDialog(): JSX.Elemen
             </Text>
             <Select
               label={EditLabelsStrings.library()}
-              options={libraries.libraries.map((library) => ({ value: library.id, label: library.name }))}
+              options={libraries.libraries.map((library) => ({
+                value: library.id,
+                label: library.name,
+              }))}
               value={editor.libraryId}
               onChange={async (libraryId) => {
                 const confirmed =
@@ -129,18 +137,26 @@ export const EditLabelsDialog = observer(function EditLabelsDialog(): JSX.Elemen
           </Field>
         )}
 
-        {editor.drafts.length === 0 ?
+        {editor.drafts.length === 0 ? (
           <Text variant="muted">{EditLabelsStrings.noLabels()}</Text>
-        : <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={moved}>
-            <SortableContext items={editor.drafts.map((draft) => draft.key)} strategy={verticalListSortingStrategy}>
+        ) : (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={moved}>
+            <SortableContext
+              items={editor.drafts.map((draft) => draft.key)}
+              strategy={verticalListSortingStrategy}
+            >
               <ul {...stylex.props(styles.list)}>
                 {editor.drafts.map((draft) => (
-                  <DraftRow key={draft.key} draft={draft} duplicate={editor.duplicates.has(draft.key)} />
+                  <DraftRow
+                    key={draft.key}
+                    draft={draft}
+                    duplicate={editor.duplicates.has(draft.key)}
+                  />
                 ))}
               </ul>
             </SortableContext>
           </DndContext>
-        }
+        )}
 
         <Button style={styles.add} onClick={labels.addDraft}>
           <Plus size={ICON} />
@@ -151,7 +167,11 @@ export const EditLabelsDialog = observer(function EditLabelsDialog(): JSX.Elemen
 
         <DialogActions>
           <Button onClick={labels.closeEditor}>{ModalStrings.cancel()}</Button>
-          <Button variant="primary" disabled={!editor.canSave} onClick={() => void labels.saveEditor()}>
+          <Button
+            variant="primary"
+            disabled={!editor.canSave}
+            onClick={() => void labels.saveEditor()}
+          >
             {EditLabelsStrings.save()}
           </Button>
         </DialogActions>
@@ -160,10 +180,24 @@ export const EditLabelsDialog = observer(function EditLabelsDialog(): JSX.Elemen
   );
 });
 
-const DraftRow = observer(function DraftRow({ draft, duplicate }: { draft: DraftLabel; duplicate: boolean }): JSX.Element {
+const DraftRow = observer(function DraftRow({
+  draft,
+  duplicate,
+}: {
+  draft: DraftLabel;
+  duplicate: boolean;
+}): JSX.Element {
   const { labels, confirm } = usePresenters();
   const problemId = useId();
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: draft.key,
   });
   const name = draft.name.trim() === '' ? EditLabelsStrings.labelName() : draft.name.trim();

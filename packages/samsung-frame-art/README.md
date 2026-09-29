@@ -7,7 +7,10 @@ Bun only: WebSocket and `fetch` must accept the TV's self-signed certificate.
 import { FrameArt } from 'samsung-frame-art';
 
 const art = new FrameArt({ host: '192.168.1.40', token: saved, onToken: save });
-const contentId = await art.upload(await Bun.file('photo.jpg').bytes(), { fileType: 'jpg', matte: 'none' });
+const contentId = await art.upload(await Bun.file('photo.jpg').bytes(), {
+  fileType: 'jpg',
+  matte: 'none',
+});
 await art.selectImage(contentId);
 art.close();
 ```

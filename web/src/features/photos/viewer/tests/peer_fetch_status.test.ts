@@ -13,7 +13,18 @@ function open(): { store: ViewerStore; presenter: PhotosPresenter } {
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, settings, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    absent,
+    settings,
+    absent,
+  );
   return { store, presenter };
 }
 

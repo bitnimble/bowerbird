@@ -41,7 +41,10 @@ fn main() {
     let held = scoring(gpu, 150_000);
     for probes in [1, 2, 4, 8, 16, 32] {
         let taken = timed(&held, probes);
-        println!("    {probes:>3} probes   {taken:>7.3}   {:>7.3} each", taken / probes as f64);
+        println!(
+            "    {probes:>3} probes   {taken:>7.3}   {:>7.3} each",
+            taken / probes as f64
+        );
     }
 
     println!("\n  pairs, one probe (median of {REPEATS}, milliseconds)");
@@ -71,7 +74,13 @@ fn scoring(gpu: &'static rawshim::gpu::Gpu, pairs: usize) -> Scoring {
         })
         .collect();
     let target: Vec<[f64; 3]> = (0..pairs)
-        .map(|k| [0.2 + (k % 40) as f64 / 80.0, 0.1 + (k % 30) as f64 / 40.0, 0.3])
+        .map(|k| {
+            [
+                0.2 + (k % 40) as f64 / 80.0,
+                0.1 + (k % 30) as f64 / 40.0,
+                0.3,
+            ]
+        })
         .collect();
     let balance: Vec<f64> = (0..pairs).map(|k| 1.0 + (k % 5) as f64 * 0.25).collect();
     Scoring::new(
@@ -87,7 +96,10 @@ fn scoring(gpu: &'static rawshim::gpu::Gpu, pairs: usize) -> Scoring {
 
 fn timed(scoring: &Scoring, probes: usize) -> f64 {
     let asked: Vec<Probe> = (0..probes)
-        .map(|k| Probe { matrix: [[0.0; 3]; 3], saturation: 0.6 + k as f64 * 0.01 })
+        .map(|k| Probe {
+            matrix: [[0.0; 3]; 3],
+            saturation: 0.6 + k as f64 * 0.01,
+        })
         .collect();
     let mut taken: Vec<f64> = Vec::with_capacity(REPEATS);
     for round in 0..=REPEATS {

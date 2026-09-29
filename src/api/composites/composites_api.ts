@@ -30,18 +30,27 @@ export class CompositesApi {
     // row, and a merge that answered first would draw a hole.
     app.post(route(PathSegment.panorama()), async (c) => {
       const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));
-      return c.json(respond(CompositePhotoSchema, await this.composites.mergePanorama(photoIds)), 201);
+      return c.json(
+        respond(CompositePhotoSchema, await this.composites.mergePanorama(photoIds)),
+        201,
+      );
     });
 
     app.post(route(PathSegment.bracket()), async (c) => {
       const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));
-      return c.json(respond(CompositePhotoSchema, await this.composites.mergeBracket(photoIds)), 201);
+      return c.json(
+        respond(CompositePhotoSchema, await this.composites.mergeBracket(photoIds)),
+        201,
+      );
     });
 
     // Starts the analysis and answers its job at once; the page reads the job for the rest.
     app.post(route(PathSegment.assembly()), async (c) => {
       const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));
-      return c.json(respond(AssemblyJobStartedSchema, { jobId: this.composites.startAssembly(photoIds) }), 201);
+      return c.json(
+        respond(AssemblyJobStartedSchema, { jobId: this.composites.startAssembly(photoIds) }),
+        201,
+      );
     });
 
     app.get(route(PathSegment.assembly(), PathSegment.jobs(), PathSegment.param('jobId')), (c) => {
@@ -50,26 +59,47 @@ export class CompositesApi {
       return c.json(respond(AssemblyJobSchema, job));
     });
 
-    app.post(route(PathSegment.assembly(), PathSegment.jobs(), PathSegment.param('jobId'), PathSegment.cancel()), (c) => {
-      this.composites.cancelAssembly(c.req.param('jobId'));
-      return c.body(null, 204);
-    });
+    app.post(
+      route(
+        PathSegment.assembly(),
+        PathSegment.jobs(),
+        PathSegment.param('jobId'),
+        PathSegment.cancel(),
+      ),
+      (c) => {
+        this.composites.cancelAssembly(c.req.param('jobId'));
+        return c.body(null, 204);
+      },
+    );
 
     // §2.7's reopen. Under the composites rather than under the photograph because what it answers
     // is the merge - a recipe and its layers - rather than anything about the row.
     app.get(route(PathSegment.assembly(), PathSegment.param('photoId')), async (c) => {
-      return c.json(respond(ReopenedAssemblySchema, await this.composites.reopenAssembly(c.req.param('photoId'))));
+      return c.json(
+        respond(
+          ReopenedAssemblySchema,
+          await this.composites.reopenAssembly(c.req.param('photoId')),
+        ),
+      );
     });
 
     app.post(route(PathSegment.assembly(), PathSegment.commit()), async (c) => {
       const { recipe } = CommitAssemblyRequestSchema.parse(await c.req.json());
-      return c.json(respond(CompositePhotoSchema, await this.composites.commitAssembly(recipe)), 201);
+      return c.json(
+        respond(CompositePhotoSchema, await this.composites.commitAssembly(recipe)),
+        201,
+      );
     });
 
     // §2.7's reopen: the picks as they now stand, onto the photograph that already exists.
     app.put(route(PathSegment.assembly(), PathSegment.param('photoId')), async (c) => {
       const { recipe } = CommitAssemblyRequestSchema.parse(await c.req.json());
-      return c.json(respond(CompositePhotoSchema, await this.composites.updateAssembly(c.req.param('photoId'), recipe)));
+      return c.json(
+        respond(
+          CompositePhotoSchema,
+          await this.composites.updateAssembly(c.req.param('photoId'), recipe),
+        ),
+      );
     });
 
     this.routes = app;

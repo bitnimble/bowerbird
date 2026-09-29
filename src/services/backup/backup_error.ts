@@ -25,7 +25,10 @@ const ERROR_CODES: Record<BackupIssueCode, ErrorCode> = {
 };
 
 export class BackupError extends AppError {
-  constructor(readonly issueCode: BackupIssueCode, message: string) {
+  constructor(
+    readonly issueCode: BackupIssueCode,
+    message: string,
+  ) {
     super(ERROR_CODES[issueCode], message);
   }
 }

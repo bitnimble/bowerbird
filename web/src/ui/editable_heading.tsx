@@ -45,19 +45,24 @@ export function EditableHeading({
   if (draft == null || !editable) {
     return (
       <Heading>
-        {editable ?
+        {editable ? (
           // Named by its text rather than by what it does: a heading takes its own
           // name from its content, so an aria-label here would leave a reader
           // listing the headings hearing "Rename Beach" where the title should be.
           <Tooltip label={label}>
-            <button type="button" {...stylex.props(styles.edit, focusRing.ring)} onClick={() => setDraft(value)}>
+            <button
+              type="button"
+              {...stylex.props(styles.edit, focusRing.ring)}
+              onClick={() => setDraft(value)}
+            >
               {value}
             </button>
           </Tooltip>
-        : <Tooltip label={refusal}>
+        ) : (
+          <Tooltip label={refusal}>
             <span>{value}</span>
           </Tooltip>
-        }
+        )}
       </Heading>
     );
   }

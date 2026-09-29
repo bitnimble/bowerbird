@@ -56,7 +56,11 @@ export const KeystonePanel = observer(function KeystonePanel({
   const pairs = store.guidePairs;
   const kind = store.guideKind;
   return (
-    <Panel style={styles.group} titleStyle={styles.groupTitle} title={EditToolsStrings.perspective()}>
+    <Panel
+      style={styles.group}
+      titleStyle={styles.groupTitle}
+      title={EditToolsStrings.perspective()}
+    >
       <SegmentedControl
         label={RawEditPanelStrings.guidesToDraw()}
         options={GUIDE_KINDS}
@@ -66,9 +70,11 @@ export const KeystonePanel = observer(function KeystonePanel({
       />
 
       <Text variant="muted" as="p">
-        {pairs[kind].length === 0 ? RawEditPanelStrings.drawFirstGuide(kind)
-        : pairs[kind].length === 1 ? RawEditPanelStrings.drawSecondGuide()
-        : RawEditPanelStrings.pairCorrected()}
+        {pairs[kind].length === 0
+          ? RawEditPanelStrings.drawFirstGuide(kind)
+          : pairs[kind].length === 1
+            ? RawEditPanelStrings.drawSecondGuide()
+            : RawEditPanelStrings.pairCorrected()}
       </Text>
 
       {(['vertical', 'horizontal'] as const).map((each) =>

@@ -26,7 +26,12 @@ const INPUTS = [
 ];
 
 function git(cwd: string, args: string[], input?: string): string | null {
-  const done = spawnSync('git', args, { cwd, input, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const done = spawnSync('git', args, {
+    cwd,
+    input,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
   return done.status === 0 ? done.stdout : null;
 }
 
@@ -39,7 +44,9 @@ function blobs(repo: string, paths: string[]): string[] | null {
   const listed = git(at, ['ls-files', '-z', '-co', '--exclude-standard', '--', ...paths]);
   if (listed == null) return null;
   // A submodule is listed as its directory, and a deleted file is still in the index.
-  const files = listed.split('\0').filter((path) => statSync(join(at, path), { throwIfNoEntry: false })?.isFile());
+  const files = listed
+    .split('\0')
+    .filter((path) => statSync(join(at, path), { throwIfNoEntry: false })?.isFile());
   if (files.length === 0) return [];
   const hashed = git(at, ['hash-object', '--stdin-paths'], `${files.join('\n')}\n`);
   if (hashed == null) return null;
@@ -78,7 +85,19 @@ if (inputs != null && built === inputs) {
 
 rmSync(STAMP, { force: true });
 rmSync(join(PKG, 'package.json'), { force: true });
-run('bun', ['x', 'wasm-pack@0.13.1', 'build', 'native/rawshim', '--target', 'web', '--out-dir', 'pkg', '--no-opt', '--', '--no-default-features']);
+run('bun', [
+  'x',
+  'wasm-pack@0.13.1',
+  'build',
+  'native/rawshim',
+  '--target',
+  'web',
+  '--out-dir',
+  'pkg',
+  '--no-opt',
+  '--',
+  '--no-default-features',
+]);
 run('bun', ['run', 'scripts/hash-pkg.ts']);
 run('bun', ['run', 'scripts/build-avif-planes.ts']);
 if (inputs != null) writeFileSync(STAMP, `${inputs}\n`);

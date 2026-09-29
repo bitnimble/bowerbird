@@ -31,38 +31,39 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
   // half-written, so the console is the only evidence from here that they ran.
   const declined = watchForComplaints(page);
 
-  const opened = await page.evaluate(async (originalUrl) => {
-    const { LocalDecoder } = await import('/src/features/raw_edit/local_decode/local_decoder.ts');
-    const raw = new Uint8Array(
-      await (await fetch(originalUrl)).arrayBuffer(),
-    );
-    const bytes = raw.byteLength;
-    const decoder = new LocalDecoder();
-    const stages: string[] = [];
-    // The bytes are transferred to the decoder's thread, so `raw` is detached from here on.
-    await decoder.hold(raw);
-    // `longEdge: 0` is the sensor's own, which is what the halving decision is being held to.
-    const header = await decoder.prepare(
-      {
-        longEdge: 0,
-        grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-        defringe: 1,
-      },
-      // The dust switch off: what this asks is whether a decode reaches the sensor's own size and
-      // measures its own numbers, and a search of the cover glass is a second thing to wait for.
-      {
-        luminance: 20,
-        colour: 30,
-        denoiser: 'galosh',
-        sharpen: 0.3,
-        dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
-        repairs: [],
-      },
-      (stage) => stages.push(stage),
-    );
-    decoder.close();
-    return { bytes, header: JSON.parse(header), stages };
-  }, route(PathSegment.image(), photoId, PathSegment.download(), PathSegment.original()));
+  const opened = await page.evaluate(
+    async (originalUrl) => {
+      const { LocalDecoder } = await import('/src/features/raw_edit/local_decode/local_decoder.ts');
+      const raw = new Uint8Array(await (await fetch(originalUrl)).arrayBuffer());
+      const bytes = raw.byteLength;
+      const decoder = new LocalDecoder();
+      const stages: string[] = [];
+      // The bytes are transferred to the decoder's thread, so `raw` is detached from here on.
+      await decoder.hold(raw);
+      // `longEdge: 0` is the sensor's own, which is what the halving decision is being held to.
+      const header = await decoder.prepare(
+        {
+          longEdge: 0,
+          grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
+          defringe: 1,
+        },
+        // The dust switch off: what this asks is whether a decode reaches the sensor's own size and
+        // measures its own numbers, and a search of the cover glass is a second thing to wait for.
+        {
+          luminance: 20,
+          colour: 30,
+          denoiser: 'galosh',
+          sharpen: 0.3,
+          dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
+          repairs: [],
+        },
+        (stage) => stages.push(stage),
+      );
+      decoder.close();
+      return { bytes, header: JSON.parse(header), stages };
+    },
+    route(PathSegment.image(), photoId, PathSegment.download(), PathSegment.original()),
+  );
 
   expect(opened.bytes).toBeGreaterThan(1_000_000);
   expect(opened.header.width).toBeGreaterThan(2000);
@@ -77,7 +78,14 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
   expect(opened.header.noiseFit).toBeDefined();
   expect(declined).toEqual([]);
   // What the stage names while it waits, each as the module begins it: dust is off, so no search.
-  expect(opened.stages).toEqual(['decoding', 'measuring-noise', 'denoising', 'demosaicing', 'matching', 'correcting']);
+  expect(opened.stages).toEqual([
+    'decoding',
+    'measuring-noise',
+    'denoising',
+    'demosaicing',
+    'matching',
+    'correcting',
+  ]);
 });
 
 /**
@@ -103,29 +111,32 @@ test('denoises in the tab with PMRID, off weights fetched beside the module', as
     }
   });
 
-  const opened = await page.evaluate(async (originalUrl) => {
-    const { LocalDecoder } = await import('/src/features/raw_edit/local_decode/local_decoder.ts');
-    const raw = new Uint8Array(await (await fetch(originalUrl)).arrayBuffer());
-    const decoder = new LocalDecoder();
-    await decoder.hold(raw);
-    const header = await decoder.prepare(
-      {
-        longEdge: 0,
-        grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-        defringe: 1,
-      },
-      {
-        luminance: 100,
-        colour: 100,
-        denoiser: 'pmrid',
-        sharpen: 0.3,
-        dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
-        repairs: [],
-      },
-    );
-    decoder.close();
-    return JSON.parse(header);
-  }, route(PathSegment.image(), photoId, PathSegment.download(), PathSegment.original()));
+  const opened = await page.evaluate(
+    async (originalUrl) => {
+      const { LocalDecoder } = await import('/src/features/raw_edit/local_decode/local_decoder.ts');
+      const raw = new Uint8Array(await (await fetch(originalUrl)).arrayBuffer());
+      const decoder = new LocalDecoder();
+      await decoder.hold(raw);
+      const header = await decoder.prepare(
+        {
+          longEdge: 0,
+          grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
+          defringe: 1,
+        },
+        {
+          luminance: 100,
+          colour: 100,
+          denoiser: 'pmrid',
+          sharpen: 0.3,
+          dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
+          repairs: [],
+        },
+      );
+      decoder.close();
+      return JSON.parse(header);
+    },
+    route(PathSegment.image(), photoId, PathSegment.download(), PathSegment.original()),
+  );
 
   expect(opened.width).toBeGreaterThan(2000);
   expect(opened.white).toBeGreaterThan(0);

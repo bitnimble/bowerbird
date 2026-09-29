@@ -36,7 +36,10 @@ function rendered(directory: string): string {
 // A codestream begins `FF 0A` bare, or with the ISOBMFF signature box in a container.
 function isJxl(bytes: Uint8Array): boolean {
   const head = Buffer.from(bytes.subarray(0, 12));
-  return head.subarray(0, 2).equals(Buffer.from([0xff, 0x0a])) || head.subarray(0, 8).equals(Buffer.from('\0\0\0\x0cJXL ', 'binary'));
+  return (
+    head.subarray(0, 2).equals(Buffer.from([0xff, 0x0a])) ||
+    head.subarray(0, 8).equals(Buffer.from('\0\0\0\x0cJXL ', 'binary'))
+  );
 }
 
 for (const format of ['jxl', 'jxl-hdr'] as const) {

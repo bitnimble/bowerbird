@@ -17,7 +17,9 @@ beforeEach(() => {
   db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON;');
   runMigrations(db);
-  db.query(`INSERT INTO libraries (id, root_path, name) VALUES ('lib', '/photos', 'Library')`).run();
+  db.query(
+    `INSERT INTO libraries (id, root_path, name) VALUES ('lib', '/photos', 'Library')`,
+  ).run();
   addPhoto('early', '2026-02-01T00:00:00.000Z');
   addPhoto('late', '2026-03-01T00:00:00.000Z');
   repo = new AlbumsRepository(db);

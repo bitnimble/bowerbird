@@ -119,7 +119,12 @@ struct Store<V> {
 
 impl<V: Clone> Store<V> {
     fn holding(budget: usize) -> Store<V> {
-        Store { held: HashMap::new(), budget, bytes: 0, clock: 0 }
+        Store {
+            held: HashMap::new(),
+            budget,
+            bytes: 0,
+            clock: 0,
+        }
     }
 
     fn take(&mut self, key: &Key) -> Option<V> {
@@ -141,12 +146,17 @@ impl<V: Clone> Store<V> {
         }
         self.bytes += bytes;
         while self.bytes > self.budget {
-            let Some(oldest) =
-                self.held.iter().min_by_key(|(_, held)| held.used).map(|(key, _)| key.clone())
+            let Some(oldest) = self
+                .held
+                .iter()
+                .min_by_key(|(_, held)| held.used)
+                .map(|(key, _)| key.clone())
             else {
                 break;
             };
-            let Some(gone) = self.held.remove(&oldest) else { break };
+            let Some(gone) = self.held.remove(&oldest) else {
+                break;
+            };
             self.bytes -= gone.bytes;
         }
     }
@@ -177,9 +187,17 @@ mod tests {
         store.keep(key(2), "third", 100);
         store.keep(key(3), "fourth", 100);
 
-        assert!(store.bytes <= 300, "{} bytes held against a budget of 300", store.bytes);
+        assert!(
+            store.bytes <= 300,
+            "{} bytes held against a budget of 300",
+            store.bytes
+        );
         assert_eq!(store.take(&key(3)), Some("fourth"), "the newest went");
-        assert_eq!(store.take(&key(0)), Some("first"), "a region asked for again went early");
+        assert_eq!(
+            store.take(&key(0)),
+            Some("first"),
+            "a region asked for again went early"
+        );
         assert_eq!(store.take(&key(1)), None, "the oldest stayed");
     }
 
@@ -190,8 +208,16 @@ mod tests {
         let mut store = Store::holding(300);
         store.keep(key(0), "held", 100);
         store.keep(key(9), "enormous", 4000);
-        assert_eq!(store.take(&key(9)), None, "a region larger than the budget was kept");
-        assert_eq!(store.take(&key(0)), Some("held"), "refusing one cost what was already there");
+        assert_eq!(
+            store.take(&key(9)),
+            None,
+            "a region larger than the budget was kept"
+        );
+        assert_eq!(
+            store.take(&key(0)),
+            Some("held"),
+            "refusing one cost what was already there"
+        );
         assert_eq!(store.bytes, 100);
     }
 
@@ -201,7 +227,10 @@ mod tests {
     fn a_rewritten_file_is_a_different_key() {
         let mut store = Store::holding(300);
         store.keep(key(0), "before", 100);
-        let after = Key { len: 91028331, ..key(0) };
+        let after = Key {
+            len: 91028331,
+            ..key(0)
+        };
         assert_eq!(store.take(&after), None);
         store.keep(after.clone(), "after", 100);
         assert_eq!(store.take(&after), Some("after"));

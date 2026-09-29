@@ -56,12 +56,19 @@ fn write<T>(
         let mut encoder = Encoder::new(&mut out, width as u32, height as u32);
         encoder.set_color(ColorType::Rgb);
         encoder.set_depth(depth);
-        let mut writer = encoder.write_header().map_err(|e| format!("could not write a PNG header: {e}"))?;
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| format!("could not write a PNG header: {e}"))?;
         rows(&mut writer).map_err(|e| format!("could not write PNG pixels: {e}"))?;
-        writer.finish().map_err(|e| format!("could not finish the PNG: {e}"))?;
+        writer
+            .finish()
+            .map_err(|e| format!("could not finish the PNG: {e}"))?;
     }
     if out.len() < AFTER_IHDR {
-        return Err(format!("the PNG is {} bytes, too short to hold a header", out.len()));
+        return Err(format!(
+            "the PNG is {} bytes, too short to hold a header",
+            out.len()
+        ));
     }
     let mut ahead = cicp_chunk(cicp);
     if let Some(exif) = exif {
@@ -72,18 +79,34 @@ fn write<T>(
 }
 
 /// Eight-bit sRGB, for an export with no HDR asked for. `exif` is a TIFF block (`crate::exif`).
-pub fn encode_sdr(rgb8: &[u8], width: usize, height: usize, exif: Option<&[u8]>) -> Result<Vec<u8>, String> {
+pub fn encode_sdr(
+    rgb8: &[u8],
+    width: usize,
+    height: usize,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     if rgb8.len() < width * height * 3 {
-        return Err(format!("frame is {} bytes, expected {}", rgb8.len(), width * height * 3));
+        return Err(format!(
+            "frame is {} bytes, expected {}",
+            rgb8.len(),
+            width * height * 3
+        ));
     }
-    write(width, height, BitDepth::Eight, SDR, exif, |writer| writer.write_image_data(&rgb8[..width * height * 3]))
+    write(width, height, BitDepth::Eight, SDR, exif, |writer| {
+        writer.write_image_data(&rgb8[..width * height * 3])
+    })
 }
 
 /// Sixteen-bit PQ Rec.2020, with the `cICP` chunk that makes a viewer treat it as HDR.
 ///
 /// Big-endian, which PNG requires and no platform this runs on is: the swap is here rather than
 /// left to the caller because it is a property of the container.
-pub fn encode_hdr(pq: &[u16], width: usize, height: usize, exif: Option<&[u8]>) -> Result<Vec<u8>, String> {
+pub fn encode_hdr(
+    pq: &[u16],
+    width: usize,
+    height: usize,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let samples = width * height * 3;
     if pq.len() < samples {
         return Err(format!("frame is {} samples, expected {samples}", pq.len()));
@@ -92,7 +115,9 @@ pub fn encode_hdr(pq: &[u16], width: usize, height: usize, exif: Option<&[u8]>) 
     for sample in &pq[..samples] {
         bytes.extend_from_slice(&sample.to_be_bytes());
     }
-    write(width, height, BitDepth::Sixteen, HDR, exif, |writer| writer.write_image_data(&bytes))
+    write(width, height, BitDepth::Sixteen, HDR, exif, |writer| {
+        writer.write_image_data(&bytes)
+    })
 }
 
 #[cfg(test)]
@@ -121,7 +146,10 @@ mod tests {
         let encoded = encode_sdr(&vec![128u8; w * h * 3], w, h, None).expect("the encode");
         let decoder = png::Decoder::new(std::io::Cursor::new(&encoded));
         let reader = decoder.read_info().expect("the header");
-        let points = reader.info().coding_independent_code_points.expect("a cICP chunk");
+        let points = reader
+            .info()
+            .coding_independent_code_points
+            .expect("a cICP chunk");
         assert_eq!((points.color_primaries, points.transfer_function), SDR);
     }
 
@@ -129,9 +157,14 @@ mod tests {
     fn a_png_carries_its_exif_where_a_reader_finds_it() {
         let exif = crate::exif::tests::block();
         let encoded = encode_sdr(&[128u8; 16 * 8 * 3], 16, 8, Some(&exif)).expect("the encode");
-        let reader = png::Decoder::new(std::io::Cursor::new(&encoded)).read_info().expect("the header");
+        let reader = png::Decoder::new(std::io::Cursor::new(&encoded))
+            .read_info()
+            .expect("the header");
         assert_eq!(reader.info().exif_metadata.as_deref(), Some(&exif[..]));
-        assert!(reader.info().coding_independent_code_points.is_some(), "and still its cICP");
+        assert!(
+            reader.info().coding_independent_code_points.is_some(),
+            "and still its cICP"
+        );
     }
 
     #[test]

@@ -10,7 +10,10 @@ fn main() {
         return;
     }
     println!("rayon threads: {}", rayon::current_num_threads());
-    println!("{:>34}  {:>11}  {:>9}  {:>9}  {}", "file", "pixels", "first", "steady", "checksum");
+    println!(
+        "{:>34}  {:>11}  {:>9}  {:>9}  {}",
+        "file", "pixels", "first", "steady", "checksum"
+    );
 
     for path in &files {
         let started = std::time::Instant::now();
@@ -26,12 +29,16 @@ fn main() {
         // The decoded samples, so a reader rewritten underneath this is held to producing the
         // same picture rather than merely the same timings.
         let sum = match &image.data {
-            rawler::RawImageData::Integer(data) => data.iter().fold(1469598103934665603u64, |h, s| {
-                (h ^ u64::from(*s)).wrapping_mul(1099511628211)
-            }),
-            rawler::RawImageData::Float(data) => data.iter().fold(1469598103934665603u64, |h, s| {
-                (h ^ u64::from(s.to_bits())).wrapping_mul(1099511628211)
-            }),
+            rawler::RawImageData::Integer(data) => {
+                data.iter().fold(1469598103934665603u64, |h, s| {
+                    (h ^ u64::from(*s)).wrapping_mul(1099511628211)
+                })
+            }
+            rawler::RawImageData::Float(data) => {
+                data.iter().fold(1469598103934665603u64, |h, s| {
+                    (h ^ u64::from(s.to_bits())).wrapping_mul(1099511628211)
+                })
+            }
         };
 
         let mut best = std::time::Duration::from_secs(9999);

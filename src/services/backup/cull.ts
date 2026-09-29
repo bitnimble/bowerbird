@@ -62,7 +62,10 @@ export class Cull {
    * disagree - so a cull against a half-written backup removes nothing and says why, per
    * photograph.
    */
-  async toBudget(peer: PassivePeer, progress: (done: number, total: number) => void = () => {}): Promise<EvictResult> {
+  async toBudget(
+    peer: PassivePeer,
+    progress: (done: number, total: number) => void = () => {},
+  ): Promise<EvictResult> {
     const evicted: string[] = [];
     const refused: EvictResult['refused'] = [];
     const ceiling = this.budget(peer.libraryId);
@@ -92,7 +95,11 @@ export class Cull {
       progress(offloaded, candidates.length);
     }
     if (offloaded > 0) {
-      log.info('gave local copies back to the backup', { library: peer.libraryId, photos: offloaded, held });
+      log.info('gave local copies back to the backup', {
+        library: peer.libraryId,
+        photos: offloaded,
+        held,
+      });
     }
     return { evicted, refused };
   }

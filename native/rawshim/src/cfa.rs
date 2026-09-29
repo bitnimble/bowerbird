@@ -42,7 +42,11 @@ impl Cfa {
         }
         let mut held = [0u8; MAX_SLOTS];
         held[..colours.len()].copy_from_slice(colours);
-        Some(Self { width: width as u8, height: height as u8, colours: held })
+        Some(Self {
+            width: width as u8,
+            height: height as u8,
+            colours: held,
+        })
     }
 
     pub fn bayer(quad: [u32; 4]) -> Option<Self> {
@@ -125,7 +129,9 @@ impl Cfa {
     /// That covers RGGB, BGGR, GRBG and GBRG and excludes everything else, which is the question RCD
     /// asks: every stage of it pairs rows and columns into 2x2 sites.
     pub fn is_bayer(&self) -> bool {
-        let Some(quad) = self.as_2x2() else { return false };
+        let Some(quad) = self.as_2x2() else {
+            return false;
+        };
         let (a, b) = if quad[1] == GREEN as u32 && quad[2] == GREEN as u32 {
             (quad[0], quad[3])
         } else if quad[0] == GREEN as u32 && quad[3] == GREEN as u32 {
@@ -165,7 +171,9 @@ impl Cfa {
         (0..6).all(|line| {
             let row: Vec<u8> = (0..6).map(|col| self.colour_at(line, col)).collect();
             let column: Vec<u8> = (0..6).map(|r| self.colour_at(r, line)).collect();
-            [RED, GREEN, BLUE].iter().all(|c| row.contains(c) && column.contains(c))
+            [RED, GREEN, BLUE]
+                .iter()
+                .all(|c| row.contains(c) && column.contains(c))
         })
     }
 
@@ -345,7 +353,10 @@ pub(crate) mod tests {
                             seen[usize::from(cfa.colour_at(row + dr, col + dc))] = true;
                         }
                     }
-                    assert!(seen.iter().all(|&it| it), "the window at {row},{col} misses a colour");
+                    assert!(
+                        seen.iter().all(|&it| it),
+                        "the window at {row},{col} misses a colour"
+                    );
                 }
             }
         }

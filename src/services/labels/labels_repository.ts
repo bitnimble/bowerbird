@@ -59,7 +59,9 @@ export class LabelsRepository {
       const insert = this.db.query(
         `INSERT INTO labels (id, library_id, name, colour, position, stamp, stamp_position) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       );
-      const rename = this.db.query('UPDATE labels SET name = ?, colour = ?, stamp = ? WHERE id = ?');
+      const rename = this.db.query(
+        'UPDATE labels SET name = ?, colour = ?, stamp = ? WHERE id = ?',
+      );
       const move = this.db.query('UPDATE labels SET position = ?, stamp_position = ? WHERE id = ?');
       [...ordered, ...unlisted].forEach((label, position) => {
         const before = held.get(label.id);
@@ -67,7 +69,8 @@ export class LabelsRepository {
           insert.run(label.id, libraryId, label.name, label.colour, position, at, at);
           return;
         }
-        if (before.name !== label.name || before.colour !== label.colour) rename.run(label.name, label.colour, at, label.id);
+        if (before.name !== label.name || before.colour !== label.colour)
+          rename.run(label.name, label.colour, at, label.id);
         if (before.position !== position) move.run(position, at, label.id);
       });
     })();
@@ -92,7 +95,9 @@ export class LabelsRepository {
 
   removePhotos(labelId: string, libraryId: string, photoIds: readonly string[]): number {
     const at = stamp(this.db);
-    const remove = this.db.query('DELETE FROM photo_labels WHERE library_id = ? AND label_id = ? AND photo_id = ?');
+    const remove = this.db.query(
+      'DELETE FROM photo_labels WHERE library_id = ? AND label_id = ? AND photo_id = ?',
+    );
     let removed = 0;
     this.db.transaction(() => {
       for (const photoId of photoIds) {
@@ -106,7 +111,9 @@ export class LabelsRepository {
 
   private delete(libraryId: string, labelIds: readonly string[]): void {
     const doomed = labelIds.filter(
-      (id) => this.db.query('SELECT 1 FROM labels WHERE id = ? AND library_id = ?').get(id, libraryId) != null,
+      (id) =>
+        this.db.query('SELECT 1 FROM labels WHERE id = ? AND library_id = ?').get(id, libraryId) !=
+        null,
     );
     if (doomed.length === 0) return;
     forgetCascade(this.db, libraryId, 'label', doomed);

@@ -44,7 +44,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -118,7 +122,12 @@ pub(crate) async fn binned(
     };
     let storage = wgpu::BufferUsages::STORAGE;
     // Zeroed by the driver, which both binnings rely on: every slot is added into.
-    let levels = held(&mut recording, "fit curve levels", BLOCKS * level_bins, storage);
+    let levels = held(
+        &mut recording,
+        "fit curve levels",
+        BLOCKS * level_bins,
+        storage,
+    );
     let weights = held(&mut recording, "fit curve weights", level_bins, storage);
     let partial_words = BLOCKS * bins * PER_BIN;
     let partials = held(
@@ -129,7 +138,10 @@ pub(crate) async fn binned(
     );
     let hues = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit curve hues"),
-        contents: &hue_weights.iter().flat_map(|v| (*v as f32).to_ne_bytes()).collect::<Vec<u8>>(),
+        contents: &hue_weights
+            .iter()
+            .flat_map(|v| (*v as f32).to_ne_bytes())
+            .collect::<Vec<u8>>(),
         usage: storage,
     });
 
@@ -163,22 +175,48 @@ pub(crate) async fn binned(
         label: Some("fit_curve"),
         layout: &built.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: evidence.render.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: evidence.jpeg.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: evidence.bits.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: hues.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: levels.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: weights.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: partials.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: evidence.render.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: evidence.jpeg.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: evidence.bits.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: hues.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: levels.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: weights.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: partials.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     // A pass each: the weighting reads what the level count wrote, and the binning reads what the
     // weighting wrote.
     let over_blocks = (BLOCKS as u32).div_ceil(64);
-    for (pipeline, groups) in
-        [(&built.levels, over_blocks), (&built.weights, 1), (&built.bins, over_blocks)]
-    {
+    for (pipeline, groups) in [
+        (&built.levels, over_blocks),
+        (&built.weights, 1),
+        (&built.bins, over_blocks),
+    ] {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
@@ -190,7 +228,9 @@ pub(crate) async fn binned(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&partials, 0, &out, 0, (partial_words * 4) as u64);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&partials, 0, &out, 0, (partial_words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {
@@ -202,8 +242,11 @@ pub(crate) async fn binned(
     .await?;
 
     // Folded in thread order, which is what makes two fits of one photograph draw one curve.
-    let mut binned =
-        Binned { sum: vec![0.0; bins], weight: vec![0.0; bins], count: vec![0usize; bins] };
+    let mut binned = Binned {
+        sum: vec![0.0; bins],
+        weight: vec![0.0; bins],
+        count: vec![0usize; bins],
+    };
     for block in read.chunks_exact(bins * PER_BIN) {
         for bin in 0..bins {
             binned.sum[bin] += block[bin * PER_BIN];
@@ -221,7 +264,13 @@ mod tests {
     #[test]
     fn the_binning_reads_the_hue_where_the_selection_wrote_it() {
         const SOURCE: &str = include_str!("../../../slang/fit_pairs.slang");
-        let line = format!("static const uint HUE_SHIFT = {};", crate::hdr_fit::HUE_SHIFT);
-        assert!(SOURCE.contains(&line), "fit_pairs.slang does not say `{line}`");
+        let line = format!(
+            "static const uint HUE_SHIFT = {};",
+            crate::hdr_fit::HUE_SHIFT
+        );
+        assert!(
+            SOURCE.contains(&line),
+            "fit_pairs.slang does not say `{line}`"
+        );
     }
 }

@@ -8,11 +8,15 @@ const library = { root_path: path.resolve('photos') } as Library;
 
 describe('originalPathOf', () => {
   it('joins a photograph onto its library root', () => {
-    expect(originalPathOf(library, { recipe: fileRecipe('Trip/a.arw') })).toBe(path.join(library.root_path, 'Trip', 'a.arw'));
+    expect(originalPathOf(library, { recipe: fileRecipe('Trip/a.arw') })).toBe(
+      path.join(library.root_path, 'Trip', 'a.arw'),
+    );
   });
 
   it('answers null for a row that is composed rather than imported', () => {
-    const recipe = recipeOf(JSON.stringify({ kind: 'panorama', version: 1, sources: [], projection: 'cylindrical' }));
+    const recipe = recipeOf(
+      JSON.stringify({ kind: 'panorama', version: 1, sources: [], projection: 'cylindrical' }),
+    );
     expect(originalPathOf(library, { recipe })).toBeNull();
   });
 

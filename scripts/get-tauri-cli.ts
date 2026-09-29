@@ -49,7 +49,17 @@ function main(): void {
 function build(): void {
   // `--locked` so the CLI is built against the lockfile its own revision was tested with, rather
   // than whatever resolves today - the same reason every other tree here is pinned.
-  const args = ['install', '--git', REPOSITORY, '--rev', REV, '--locked', '--root', HOME, 'tauri-cli'];
+  const args = [
+    'install',
+    '--git',
+    REPOSITORY,
+    '--rev',
+    REV,
+    '--locked',
+    '--root',
+    HOME,
+    'tauri-cli',
+  ];
   const done = spawnSync('cargo', args, { cwd: ROOT, stdio: 'inherit' });
   if (done.status !== 0) {
     throw new Error(`cargo ${args.join(' ')} exited ${done.status}`);

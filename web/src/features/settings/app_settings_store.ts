@@ -1,7 +1,15 @@
 import { observable } from 'mobx';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
-import { type RenderTiming, type RenderTimings, type RenderedRendition } from '../../../../src/schemas/render_stages';
-import { type Settings, type ViewerRendition, type ViewerRenditionMode } from '../../../../src/schemas/settings';
+import {
+  type RenderTiming,
+  type RenderTimings,
+  type RenderedRendition,
+} from '../../../../src/schemas/render_stages';
+import {
+  type Settings,
+  type ViewerRendition,
+  type ViewerRenditionMode,
+} from '../../../../src/schemas/settings';
 
 // Everything the user can change that belongs to neither a library nor this
 // browser: the viewer's preferences and the server's own tuning. Server-side
@@ -19,9 +27,9 @@ export class AppSettingsStore {
   /** True until the first load lands or fails. */
   @observable accessor loading = true;
   @observable.ref accessor storageUsage:
-    | { kind: 'loading' }
-    | { kind: 'failed' }
-    | { kind: 'ready'; bytes: number } = { kind: 'loading' };
+    { kind: 'loading' } | { kind: 'failed' } | { kind: 'ready'; bytes: number } = {
+    kind: 'loading',
+  };
   // What a render was measured to cost on the machine the server is on (§10.1). Empty is nothing
   // measured, which is the panel quoting estimates instead.
   @observable.ref accessor renderTimings: RenderTimings = {};

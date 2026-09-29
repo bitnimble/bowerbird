@@ -5,7 +5,12 @@ import { withNewId } from '../../../db/constraints';
 import { Logger } from '../../../logger';
 import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { Library } from '../../../schemas/libraries';
-import { importsFormat, scanLibraryTree, type ScannedDir, type ScannedFile } from '../../../utils/scan';
+import {
+  importsFormat,
+  scanLibraryTree,
+  type ScannedDir,
+  type ScannedFile,
+} from '../../../utils/scan';
 import { isDirInScope, isFileInScope, type LibraryScope } from '../../../utils/scope';
 import { shootContains } from '../../../utils/shoots';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
@@ -32,7 +37,10 @@ const log = new Logger('scan');
 // Only shoots at or under a newly created folder are in question at all; the rest
 // of the library was already right, which is what keeps a library with nothing to
 // mirror from rewriting a single row.
-function claimsToRestate(created: readonly string[], byFolder: ReadonlyMap<string, string>): string[] {
+function claimsToRestate(
+  created: readonly string[],
+  byFolder: ReadonlyMap<string, string>,
+): string[] {
   if (created.length === 0) return [];
   const isNew = new Set(created);
 
@@ -50,14 +58,17 @@ function claimsToRestate(created: readonly string[], byFolder: ReadonlyMap<strin
     return false;
   };
 
-  return [...byFolder.keys()].filter(isTouched).sort((a, b) => a.split('/').length - b.split('/').length);
+  return [...byFolder.keys()]
+    .filter(isTouched)
+    .sort((a, b) => a.split('/').length - b.split('/').length);
 }
 
 function rootIsDirectory(rootPath: string): boolean {
   try {
     return statSync(rootPath).isDirectory();
   } catch (err) {
-    if (err instanceof Error && 'code' in err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return false;
+    if (err instanceof Error && 'code' in err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))
+      return false;
     throw err;
   }
 }
@@ -72,12 +83,15 @@ export class ScanReconciler {
     private readonly folderRules: FolderRulesRepository,
   ) {}
 
-
   // A file that entered or left the bin by hand (§9.1.1). The `channel` tags gave
   // the direction, so there is no position to test - which matters because an
   // in-place binned row is `is_deleted = 1` with its file outside the bin,
   // indistinguishable by position from a hand-restore.
-  applyCrossing(crossing: Crossing, shootFor: (relPath: string) => string | null, binFolder: string | null): void {
+  applyCrossing(
+    crossing: Crossing,
+    shootFor: (relPath: string) => string | null,
+    binFolder: string | null,
+  ): void {
     const wasBinned = this.photoMetadata.isBinned(crossing.photoId);
     if (crossing.direction === 'in') {
       this.photoPaths.setFilePath(crossing.photoId, crossing.newFilePath);
@@ -107,7 +121,6 @@ export class ScanReconciler {
     }
     this.photoPaths.setFilePath(crossing.photoId, crossing.newFilePath); // moved within the bin
   }
-
 
   // One new photo, at the shoot its path falls under. Returns its id, which the
   // run collects so a scoped one can hand the rendition batch its own photos.
@@ -148,7 +161,6 @@ export class ScanReconciler {
     );
   }
 
-
   // Brings the shoots into step with the folders the scan just saw (§9.4.1), and
   // records where each shoot's folder actually is: that is how the next rename
   // gets recognised, and a shoot created before the folder was ever scanned has
@@ -168,7 +180,9 @@ export class ScanReconciler {
       const dir = seen.get(identity.folder_path);
       return (
         dir != null &&
-        (identity.folder_dev !== dir.dev || identity.folder_ino !== dir.ino || identity.folder_birthtime !== dir.birthtimeMs)
+        (identity.folder_dev !== dir.dev ||
+          identity.folder_ino !== dir.ino ||
+          identity.folder_birthtime !== dir.birthtimeMs)
       );
     });
 
@@ -203,20 +217,26 @@ export class ScanReconciler {
     // banner go everywhere and cannot come back.
     const walkedFrom = new Map(identities.map((identity) => [identity.id, identity.folder_dev]));
 
-    const doomed =
-      fullRun
-        ? shoots.filter((shoot) => {
-            if (shoot.photo_count > 0) return false;
-            if (!wentAway(scope, seenPaths, { folder_path: shoot.folder_path, folder_dev: walkedFrom.get(shoot.id) ?? null })) {
-              return false;
-            }
-            // A shoot still holding a shoot is not empty, whatever its own count
-            // says: `parent_id` cascades, so deleting it would take a descendant's
-            // label, banner and its photos' membership with it, and those photos
-            // are only "missing" in the sense that the whole subtree moved.
-            return !shoots.some((other) => other.id !== shoot.id && shootContains(shoot.folder_path, other.folder_path));
-          })
-        : [];
+    const doomed = fullRun
+      ? shoots.filter((shoot) => {
+          if (shoot.photo_count > 0) return false;
+          if (
+            !wentAway(scope, seenPaths, {
+              folder_path: shoot.folder_path,
+              folder_dev: walkedFrom.get(shoot.id) ?? null,
+            })
+          ) {
+            return false;
+          }
+          // A shoot still holding a shoot is not empty, whatever its own count
+          // says: `parent_id` cascades, so deleting it would take a descendant's
+          // label, banner and its photos' membership with it, and those photos
+          // are only "missing" in the sense that the whole subtree moved.
+          return !shoots.some(
+            (other) => other.id !== shoot.id && shootContains(shoot.folder_path, other.folder_path),
+          );
+        })
+      : [];
 
     // Nothing to say: the overwhelmingly common scan. Skipped before opening a
     // transaction rather than inside one, so a quiet library costs a few map
@@ -281,7 +301,6 @@ export class ScanReconciler {
     });
   }
 
-
   // The bin's own walk, over the bin alone (§9.1.1). `scanLibraryTree` with a start
   // directory rather than 45 forked lines of walk, which is also what keeps every
   // relPath library-root relative, as every path in the bin channel requires.
@@ -291,11 +310,18 @@ export class ScanReconciler {
   // say, and a scan that dies there would make §4.1's safety argument circular.
   // Scoped to the bin, so an unreadable root still fails the run loudly rather
   // than reading as "the whole bin was deleted".
-  async scanBinTree(library: Library, binRoot: string, keepLease: () => void): Promise<ScannedFile[] | null> {
+  async scanBinTree(
+    library: Library,
+    binRoot: string,
+    keepLease: () => void,
+  ): Promise<ScannedFile[] | null> {
     if (!rootIsDirectory(library.root_path)) return [];
     const abs = path.join(library.root_path, binRoot);
     if (statSync(abs, { throwIfNoEntry: false })?.isDirectory() !== true) {
-      log.warn('the bin folder is not there; skipping the bin channel for this run', { library: library.id, bin: binRoot });
+      log.warn('the bin folder is not there; skipping the bin channel for this run', {
+        library: library.id,
+        bin: binRoot,
+      });
       // The walk is the only place with enough evidence to tell "deleted" from
       // "renamed", and it has just said deleted: remake it, and record the new
       // folder's identity, so the next rename is still followable.
@@ -330,7 +356,6 @@ export class ScanReconciler {
     return files;
   }
 
-
   // A photographer renaming `<root>/Bin` to `<root>/Rubbish` has done to the bin
   // what §9.4.1 already handles for a shoot, and it is answered the same way: by
   // the folder's inode identity (§9.1.1).
@@ -344,7 +369,11 @@ export class ScanReconciler {
     library: Library,
     dirs: readonly ScannedDir[],
     binned: readonly ScanDbPhoto[],
-  ): { root: string | null; rename: { from: string; to: string } | null; exclude: readonly string[] } {
+  ): {
+    root: string | null;
+    rename: { from: string; to: string } | null;
+    exclude: readonly string[];
+  } {
     const none = { root: library.bin_name, rename: null, exclude: [] };
     const identity = this.libraries.getBinIdentity(library.id);
     if (library.bin_name == null) return none;
@@ -368,7 +397,9 @@ export class ScanReconciler {
     // `detectRelocationsByIdentity` uses admits three false positives - a bind
     // mount of the bin elsewhere under the root, a hardlinked directory, and a
     // recycled inode - and following any of them would silently bin a real shoot.
-    const recorded = statSync(path.join(library.root_path, library.bin_name), { throwIfNoEntry: false });
+    const recorded = statSync(path.join(library.root_path, library.bin_name), {
+      throwIfNoEntry: false,
+    });
     // Not an existence test: on a case-insensitive filesystem the recorded path
     // still resolves, to the *same* inode, so a case-only rename is handled by
     // exclusion alone. Bind mounts and hardlinks die here too.
@@ -402,12 +433,16 @@ export class ScanReconciler {
     // The in-memory rewrite is not deferred to the apply: the diff has to see
     // matched paths.
     for (const row of binned) {
-      if (shootContains(from, row.file_path)) row.file_path = target.relPath + row.file_path.slice(from.length);
+      if (shootContains(from, row.file_path))
+        row.file_path = target.relPath + row.file_path.slice(from.length);
     }
     log.info('following a renamed bin folder', { library: library.id, from, to: target.relPath });
-    return { root: target.relPath, rename: { from, to: target.relPath }, exclude: [target.relPath] };
+    return {
+      root: target.relPath,
+      rename: { from, to: target.relPath },
+      exclude: [target.relPath],
+    };
   }
-
 
   // §9.1.1's path test, run before anything is imported: if `<bin>/A/c.arw` is
   // unclaimed and `A/c.arw` is an unpaired live removal, that **is** the crossing,
@@ -420,7 +455,9 @@ export class ScanReconciler {
     const binAdditions = result.added.filter((a) => a.channel === 'bin');
     if (binRoot == null || binAdditions.length === 0) return binAdditions;
 
-    const removedByPath = new Map(result.removed.filter((r) => r.channel === 'live').map((r) => [r.filePath, r]));
+    const removedByPath = new Map(
+      result.removed.filter((r) => r.channel === 'live').map((r) => [r.filePath, r]),
+    );
     const claimed: AddedEntry[] = [];
     for (const addition of binAdditions) {
       const cameFrom = addition.filePath.slice(binRoot.length + 1);
@@ -440,18 +477,20 @@ export class ScanReconciler {
     return binAdditions.filter((a) => !claimed.includes(a));
   }
 
-
   // The rows a scoped scan reconciles: those at the changed + discovered paths
   // (candidates for remove/modify/reappear/add) plus every already-missing row (so
   // a new file can still hash-pair into a move across scans). Deduped by id.
-  scopedDbPhotos(libraryId: string, knownPaths: readonly string[], listedDirs: readonly string[]): ScanDbPhoto[] {
+  scopedDbPhotos(
+    libraryId: string,
+    knownPaths: readonly string[],
+    listedDirs: readonly string[],
+  ): ScanDbPhoto[] {
     const byId = new Map<string, ScanDbPhoto>();
     for (const p of this.photoScan.listForScanByPaths(libraryId, knownPaths)) byId.set(p.id, p);
     for (const p of this.photoScan.listForScanInDirs(libraryId, listedDirs)) byId.set(p.id, p);
     for (const p of this.photoScan.listMissingForScan(libraryId)) byId.set(p.id, p);
     return [...byId.values()];
   }
-
 
   // The photographs sitting directly in each folder, and which of those folders
   // this actually got to read. Direct children only, because those are the rows
@@ -466,15 +505,20 @@ export class ScanReconciler {
     for (const relDir of relDirs) {
       if (relDir !== '' && !isDirInScope(scope, relDir)) continue;
       const absDir = path.join(scope.rootPath, relDir);
-      const entries = await readdir(absDir, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
-        // Gone is an answer: an empty listing against the rows recorded in it is
-        // how a deleted folder becomes a folder of removals. Anything else means
-        // the folder is still there and this run cannot see into it, so it says
-        // nothing about it at all.
-        if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return [];
-        log.warn('could not read a changed folder, leaving its photos as they are', { dir: absDir, err });
-        return null;
-      });
+      const entries = await readdir(absDir, { withFileTypes: true }).catch(
+        (err: NodeJS.ErrnoException) => {
+          // Gone is an answer: an empty listing against the rows recorded in it is
+          // how a deleted folder becomes a folder of removals. Anything else means
+          // the folder is still there and this run cannot see into it, so it says
+          // nothing about it at all.
+          if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return [];
+          log.warn('could not read a changed folder, leaving its photos as they are', {
+            dir: absDir,
+            err,
+          });
+          return null;
+        },
+      );
       if (entries == null) continue;
       dirs.push(relDir);
       for (const entry of entries) {
@@ -487,7 +531,6 @@ export class ScanReconciler {
     return { files, dirs };
   }
 
-
   // Unique parent directories of the changed paths ('' = library root).
   scopeDirs(scopePaths: readonly string[]): string[] {
     const dirs = new Set<string>();
@@ -497,7 +540,6 @@ export class ScanReconciler {
     }
     return [...dirs];
   }
-
 
   // The identities of the folders a scoped run was told about: each changed path
   // that is itself a directory, plus the directories those paths sit in. The first
@@ -510,11 +552,11 @@ export class ScanReconciler {
     for (const relPath of candidates) {
       if (relPath === '' || !isDirInScope(scope, relPath)) continue;
       const stats = await stat(path.join(scope.rootPath, relPath)).catch(() => null);
-      if (stats?.isDirectory()) dirs.push({ relPath, dev: stats.dev, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
+      if (stats?.isDirectory())
+        dirs.push({ relPath, dev: stats.dev, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
     }
     return dirs;
   }
-
 
   // The changed paths, as the files this library holds: anything of a format that
   // is not ours or that sits outside the scope (§9.1) is not one. Whether each is

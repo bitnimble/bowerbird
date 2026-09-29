@@ -38,7 +38,13 @@ function build(rows = 500): { store: ShootsStore; presenter: ShootsPresenter } {
   store.rootPhotoCount = 7; // enough for the row that leads the list to exist
   store.shoots = Array.from({ length: rows }, (_, i) => shoot(`f${String(i).padStart(4, '0')}`));
   store.viewportHeight = 470; // ten rows
-  return { store, presenter: new ShootsPresenter(store, new SidebarPresenter(new SidebarStore(new AppSettingsStore()))) };
+  return {
+    store,
+    presenter: new ShootsPresenter(
+      store,
+      new SidebarPresenter(new SidebarStore(new AppSettingsStore())),
+    ),
+  };
 }
 
 describe('the keyboard cursor', () => {

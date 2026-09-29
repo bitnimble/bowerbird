@@ -39,10 +39,18 @@ export const FEATHER_FLOOR_PX = 4;
  * §5.2's `W` is half a piece's corridor capped at `feather`, both shares of the `long` edge, and a
  * mask's feather is the whole ramp: twice `W`, at the narrowest of the layer's pieces.
  */
-export function layersOf(pieces: readonly Piece[], base: number, long: number, feather: number): DrawnLayer[] {
+export function layersOf(
+  pieces: readonly Piece[],
+  base: number,
+  long: number,
+  feather: number,
+): DrawnLayer[] {
   const layers: DrawnLayer[] = [];
   const same = (a: Piece, b: { source: number; shift: Shift; gain: number }): boolean =>
-    a.source === b.source && a.shift[0] === b.shift[0] && a.shift[1] === b.shift[1] && a.gain === b.gain;
+    a.source === b.source &&
+    a.shift[0] === b.shift[0] &&
+    a.shift[1] === b.shift[1] &&
+    a.gain === b.gain;
   const featherOf = (taken: Piece[]): number =>
     Math.max(FEATHER_FLOOR_PX, long * Math.min(2 * feather, ...taken.map((p) => p.corridor)));
   for (const [at, piece] of pieces.entries()) {

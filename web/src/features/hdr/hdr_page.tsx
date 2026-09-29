@@ -153,7 +153,8 @@ const styles = stylex.create({
     top: '2px',
     bottom: '2px',
     borderRadius: '0 2px 2px 0',
-    backgroundImage: 'repeating-linear-gradient(-45deg, rgba(11, 13, 17, 0.55) 0 2px, transparent 2px 5px)',
+    backgroundImage:
+      'repeating-linear-gradient(-45deg, rgba(11, 13, 17, 0.55) 0 2px, transparent 2px 5px)',
   },
   overUnder: {
     top: '3px',
@@ -331,7 +332,13 @@ const XDR = HdrPageStrings.screenXdr();
 const OLED = HdrPageStrings.screenOled();
 const LCD = HdrPageStrings.screenLcd();
 
-const RANGES: { label: string; low: number; high: number; tone: Tone; under?: { label: string; low: number; high: number }[] }[] = [
+const RANGES: {
+  label: string;
+  low: number;
+  high: number;
+  tone: Tone;
+  under?: { label: string; low: number; high: number }[];
+}[] = [
   { label: HdrPageStrings.rangeEyes(), low: -14, high: 6, tone: 'eye' },
   { label: HdrPageStrings.rangeSensor(), low: -11, high: 3, tone: 'sensor' },
   {
@@ -370,7 +377,19 @@ function across(stops: number): number {
 }
 
 /** One labelled bar, with the stretch above white hatched over it. */
-function Bar({ label, low, high, tone, under = false }: { label: string; low: number; high: number; tone: Tone; under?: boolean }): JSX.Element {
+function Bar({
+  label,
+  low,
+  high,
+  tone,
+  under = false,
+}: {
+  label: string;
+  low: number;
+  high: number;
+  tone: Tone;
+  under?: boolean;
+}): JSX.Element {
   return (
     <div {...stylex.props(styles.row, under && styles.rowUnder)}>
       <Text as="div" style={[styles.label, under && styles.labelUnder]}>
@@ -378,7 +397,11 @@ function Bar({ label, low, high, tone, under = false }: { label: string; low: nu
       </Text>
       <div {...stylex.props(styles.track, under && styles.trackUnder)}>
         {TICKS.map((tick) => (
-          <span key={tick} {...stylex.props(styles.tick, tick === 0 && styles.tickWhite)} style={{ left: `${across(tick)}%` }} />
+          <span
+            key={tick}
+            {...stylex.props(styles.tick, tick === 0 && styles.tickWhite)}
+            style={{ left: `${across(tick)}%` }}
+          />
         ))}
         <span
           {...stylex.props(styles.bar, TONES[tone], under && styles.barUnder)}
@@ -409,7 +432,14 @@ function RangeChart(): JSX.Element {
           {/* What that format is cut down to by the screen it lands on. Indented, because
               each one is a subset of the bar above rather than a fifth thing. */}
           {range.under?.map((screen) => (
-            <Bar key={screen.label} label={screen.label} low={screen.low} high={screen.high} tone={range.tone} under />
+            <Bar
+              key={screen.label}
+              label={screen.label}
+              low={screen.low}
+              high={screen.high}
+              tone={range.tone}
+              under
+            />
           ))}
         </Fragment>
       ))}
@@ -419,7 +449,12 @@ function RangeChart(): JSX.Element {
         <span />
         <div {...stylex.props(styles.axis)}>
           {TICKS.map((tick) => (
-            <Text key={tick} variant="mono" as="span" style={[styles.axisTick, styles.at(`${across(tick)}%`)]}>
+            <Text
+              key={tick}
+              variant="mono"
+              as="span"
+              style={[styles.axisTick, styles.at(`${across(tick)}%`)]}
+            >
               {tick === 0 ? HdrPageStrings.axisWhite() : HdrPageStrings.axisTick(tick)}
             </Text>
           ))}
@@ -466,7 +501,11 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
         {...stylex.props(styles.layer, styles.layerBase, !hdr && styles.layerUp)}
       />
       {hdrVideo == null ? (
-        <img src={hdrSrc} alt={HdrPageStrings.hdrAlt(alt)} {...stylex.props(styles.layer, styles.layerOver, hdr && styles.layerUp)} />
+        <img
+          src={hdrSrc}
+          alt={HdrPageStrings.hdrAlt(alt)}
+          {...stylex.props(styles.layer, styles.layerOver, hdr && styles.layerUp)}
+        />
       ) : (
         <video
           src={hdrVideo.url}
@@ -478,8 +517,12 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
         />
       )}
       <span {...stylex.props(styles.pill)} aria-hidden>
-        <span {...stylex.props(styles.pillHalf, !hdr && styles.pillHalfOn)}>{HdrPageStrings.eightBit()}</span>
-        <span {...stylex.props(styles.pillHalf, hdr && styles.pillHalfOn)}>{HdrPageStrings.hdr()}</span>
+        <span {...stylex.props(styles.pillHalf, !hdr && styles.pillHalfOn)}>
+          {HdrPageStrings.eightBit()}
+        </span>
+        <span {...stylex.props(styles.pillHalf, hdr && styles.pillHalfOn)}>
+          {HdrPageStrings.hdr()}
+        </span>
       </span>
     </button>
   );

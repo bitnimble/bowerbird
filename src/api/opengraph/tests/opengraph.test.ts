@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { Hono } from 'hono';
 import { AppError } from '../../../errors';
-import type { PhotoDetail, PhotoListQuery, PhotoListResponse, PhotoSummary } from '../../../schemas/photos';
+import type {
+  PhotoDetail,
+  PhotoListQuery,
+  PhotoListResponse,
+  PhotoSummary,
+} from '../../../schemas/photos';
 import { PathSegment, route } from '../../../schemas/route';
 import type { AlbumsService } from '../../../services/albums/albums_service';
 import type { LibrariesService } from '../../../services/libraries/libraries_service';
@@ -27,7 +32,13 @@ const photo = {
 } as unknown as PhotoDetail;
 
 function listing(photos: Partial<PhotoSummary>[], photoTotal: number): PhotoListResponse {
-  return { photos: photos as PhotoSummary[], photo_total: photoTotal, offset: 0, limit: 1, ordering: 'taken_desc' };
+  return {
+    photos: photos as PhotoSummary[],
+    photo_total: photoTotal,
+    offset: 0,
+    limit: 1,
+    ordering: 'taken_desc',
+  };
 }
 
 function notFound(): never {
@@ -37,7 +48,9 @@ function notFound(): never {
 function serving(): { app: Hono; asked: PhotoListQuery[] } {
   const asked: PhotoListQuery[] = [];
   const openGraph = new OpenGraph(
-    { get: (id: string) => (id === 'lib00001' ? { name: 'Everything' } : notFound()) } as unknown as LibrariesService,
+    {
+      get: (id: string) => (id === 'lib00001' ? { name: 'Everything' } : notFound()),
+    } as unknown as LibrariesService,
     { get: () => ({ name: 'Trip "<2025>"' }) } as unknown as ShootsService,
     {
       get: (id: string) => {
@@ -51,7 +64,8 @@ function serving(): { app: Hono; asked: PhotoListQuery[] } {
         asked.push(query);
         return listing([{ id: 'newest01', tile_built_at: null }], 1234);
       },
-      listByShoot: () => listing([{ id: 'newest02', tile_built_at: '2026-03-04T00:00:00.000Z' }], 1),
+      listByShoot: () =>
+        listing([{ id: 'newest02', tile_built_at: '2026-03-04T00:00:00.000Z' }], 1),
       listByAlbum: () => listing([], 0),
     } as unknown as PhotoReadService,
   );
@@ -83,17 +97,27 @@ describe('OpenGraph', () => {
   });
 
   it('describes the photo, not the collection, when one is open inside a shoot', async () => {
-    const html = await head(`${route(PathSegment.shoots(), 'shoot001')}${route(PathSegment.photos(), 'photo001')}`);
+    const html = await head(
+      `${route(PathSegment.shoots(), 'shoot001')}${route(PathSegment.photos(), 'photo001')}`,
+    );
     expect(html).toContain('<meta property="og:title" content="DSC_0001.NEF" />');
   });
 
   it("gives a library its newest photo and its size, asking for the newest that isn't rejected", async () => {
     const { app, asked } = serving();
-    const html = await (await app.request(`http://photos.example${route(PathSegment.libraries(), 'lib00001', PathSegment.bin())}`)).text();
+    const html = await (
+      await app.request(
+        `http://photos.example${route(PathSegment.libraries(), 'lib00001', PathSegment.bin())}`,
+      )
+    ).text();
     expect(html).toContain('<meta property="og:title" content="Everything" />');
     expect(html).toContain('<meta property="og:description" content="1,234 photos" />');
-    expect(html).toContain('<meta property="og:image" content="http://photos.example/image/newest01/preview" />');
-    expect(asked).toMatchObject([{ ordering: 'taken_desc', limit: 1, triage: ['untriaged', 'picked'] }]);
+    expect(html).toContain(
+      '<meta property="og:image" content="http://photos.example/image/newest01/preview" />',
+    );
+    expect(asked).toMatchObject([
+      { ordering: 'taken_desc', limit: 1, triage: ['untriaged', 'picked'] },
+    ]);
   });
 
   it('escapes a collection name', async () => {

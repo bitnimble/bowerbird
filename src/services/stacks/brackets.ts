@@ -44,7 +44,10 @@ export function bracketsOf(frames: readonly SequencedFrame[]): Bracket[] {
   const found: Bracket[] = [];
   for (const lane of lanes.values()) {
     lane.sort(
-      (a, b) => a.timestamp - b.timestamp || (a.sequence.index ?? 0) - (b.sequence.index ?? 0) || a.id.localeCompare(b.id),
+      (a, b) =>
+        a.timestamp - b.timestamp ||
+        (a.sequence.index ?? 0) - (b.sequence.index ?? 0) ||
+        a.id.localeCompare(b.id),
     );
     let run: SequencedFrame[] = [];
     for (const frame of lane) {
@@ -63,7 +66,8 @@ export function bracketsOf(frames: readonly SequencedFrame[]): Bracket[] {
 
 function continues(previous: SequencedFrame, next: SequencedFrame, length: number): boolean {
   const [was, is] = [previous.sequence, next.sequence];
-  const follows = was.index == null || is.index == null ? was.index == is.index : is.index === was.index + 1;
+  const follows =
+    was.index == null || is.index == null ? was.index == is.index : is.index === was.index + 1;
   return (
     follows &&
     is.group === was.group &&
@@ -75,7 +79,12 @@ function continues(previous: SequencedFrame, next: SequencedFrame, length: numbe
 
 function isWhole(run: readonly SequencedFrame[]): boolean {
   const first = run[0];
-  if (first == null || run.length < 2 || (first.sequence.index != null && first.sequence.index !== 1)) return false;
+  if (
+    first == null ||
+    run.length < 2 ||
+    (first.sequence.index != null && first.sequence.index !== 1)
+  )
+    return false;
   return first.sequence.count == null || run.length === first.sequence.count;
 }
 

@@ -29,7 +29,9 @@ export const ShootPhotosPage = observer(function ShootPhotosPage(): JSX.Element 
   // The folder read from the library root down. Empty parts dropped, so a library
   // that has not landed yet leaves the path alone and a shoot on the root itself is
   // the library's name rather than a name with a trailing separator.
-  const folder = [library?.name, shoot?.folder_path].filter((part) => part != null && part !== '').join('/');
+  const folder = [library?.name, shoot?.folder_path]
+    .filter((part) => part != null && part !== '')
+    .join('/');
 
   useEffect(() => {
     void photos.open({ kind: 'shoot', shootId });
@@ -42,7 +44,11 @@ export const ShootPhotosPage = observer(function ShootPhotosPage(): JSX.Element 
         {shoot != null && (
           // A link rather than history: a deep link arrives here with nothing to go
           // back to, and a shoot names the library whose list it belongs to.
-          <Button render={<Link to={route(PathSegment.libraries(), shoot.library_id, PathSegment.shoots())} />}>
+          <Button
+            render={
+              <Link to={route(PathSegment.libraries(), shoot.library_id, PathSegment.shoots())} />
+            }
+          >
             <ArrowLeft size={ICON} />
             {ShootsPageStrings.shoots()}
           </Button>
@@ -52,7 +58,9 @@ export const ShootPhotosPage = observer(function ShootPhotosPage(): JSX.Element 
           label={CollectionListStrings.renameField(shoot?.name ?? '')}
           editable={shoot != null && library != null && !library.read_only}
           refusal={library?.read_only === true ? BulkBarStrings.notOnReadOnlyLibrary() : undefined}
-          validate={(name) => (ShootNameSchema.safeParse(name).success ? null : ShootPhotosStrings.folderNameOnly())}
+          validate={(name) =>
+            ShootNameSchema.safeParse(name).success ? null : ShootPhotosStrings.folderNameOnly()
+          }
           onRename={(name) => {
             if (shoot != null) void shoots.rename(shoot.id, name);
           }}
@@ -61,7 +69,9 @@ export const ShootPhotosPage = observer(function ShootPhotosPage(): JSX.Element 
       </PageHead>
 
       <GridControls />
-      <BulkBar collection={shoot == null ? undefined : { kind: 'shoot', id: shoot.id, name: shoot.name }} />
+      <BulkBar
+        collection={shoot == null ? undefined : { kind: 'shoot', id: shoot.id, name: shoot.name }}
+      />
       <PhotoGrid emptyHint={PhotoGridStrings.addFromLibraryHint()} />
     </Page>
   );

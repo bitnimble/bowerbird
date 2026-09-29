@@ -39,17 +39,16 @@ beforeEach(() => {
 
 describe('a photograph put away', () => {
   function shoot(id: string, folderPath: string, hidden = false): void {
-    db.query('INSERT INTO shoots (id, library_id, folder_path, name, is_hidden) VALUES (?, ?, ?, ?, ?)').run(
-      id,
-      LIB,
-      folderPath,
-      folderPath,
-      hidden ? 1 : 0,
-    );
+    db.query(
+      'INSERT INTO shoots (id, library_id, folder_path, name, is_hidden) VALUES (?, ?, ?, ?, ?)',
+    ).run(id, LIB, folderPath, folderPath, hidden ? 1 : 0);
   }
 
   const ids = (filters: PhotoListFilters): string[] =>
-    listing.listByLibrary(LIB, 'added_asc', 0, 10, filters).photos.map((p) => p.id).sort();
+    listing
+      .listByLibrary(LIB, 'added_asc', 0, 10, filters)
+      .photos.map((p) => p.id)
+      .sort();
 
   // The chip is a chip: ticked beside another it unions, so one grid holds the put-away and the live
   // together. Asked for alone it is the hidden on their own, which is the same rule with one arm.
@@ -61,9 +60,13 @@ describe('a photograph put away', () => {
     repo.setHidden(['live'], true);
 
     // Hidden or picked, which is what the filter panel sends: both, and not the hidden picks.
-    expect(ids({ includeDeleted: false, isHidden: true, triage: ['picked'], match: 'any' })).toEqual(['live', 'picked']);
+    expect(
+      ids({ includeDeleted: false, isHidden: true, triage: ['picked'], match: 'any' }),
+    ).toEqual(['live', 'picked']);
     // The rejected one is in neither arm, so the union does not widen to everything.
-    expect(ids({ includeDeleted: false, isHidden: true, triage: ['picked'], match: 'any' })).not.toContain('rejected');
+    expect(
+      ids({ includeDeleted: false, isHidden: true, triage: ['picked'], match: 'any' }),
+    ).not.toContain('rejected');
     // And untouched, the default still leaves the hidden one out.
     expect(ids({ includeDeleted: false })).toEqual(['picked', 'rejected']);
   });
@@ -75,9 +78,10 @@ describe('a photograph put away', () => {
     expect(ids({ includeDeleted: false })).toEqual(['shown']);
     expect(ids({ includeDeleted: false, isHidden: true })).toEqual(['live']);
     // The row says so itself, so a grid can label what it is showing without asking twice.
-    expect(listing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false, isHidden: true }).photos[0]?.is_hidden).toBe(
-      true,
-    );
+    expect(
+      listing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false, isHidden: true })
+        .photos[0]?.is_hidden,
+    ).toBe(true);
     // And it comes back, having had nothing done to it but the flag.
     repo.setHidden(['live'], false);
     expect(ids({ includeDeleted: false })).toEqual(['live', 'shown']);
@@ -108,7 +112,10 @@ describe('a photograph put away', () => {
     db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('live', 'also')").run();
 
     const inShoot = (): string[] =>
-      listing.listByShoot('s1', 'added_asc', 0, 10, { includeDeleted: false }).photos.map((p) => p.id).sort();
+      listing
+        .listByShoot('s1', 'added_asc', 0, 10, { includeDeleted: false })
+        .photos.map((p) => p.id)
+        .sort();
     expect(inShoot()).toEqual(['also', 'live']);
 
     repo.setHidden(['live'], true);
@@ -137,10 +144,13 @@ describe('a photograph put away', () => {
     insert('hidden-b', 'Away/b.arw');
     db.query("UPDATE photos SET shoot_id = 'open' WHERE id = 'shown-a'").run();
     db.query("UPDATE photos SET shoot_id = 'away' WHERE id = 'hidden-b'").run();
-    db.query("UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('shown-a', 'hidden-b')").run();
+    db.query(
+      "UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('shown-a', 'hidden-b')",
+    ).run();
     db.query("UPDATE photos SET is_representative = 1 WHERE id = 'shown-a'").run();
 
-    const row = listing.listByShoot('open', 'added_asc', 0, 10, { includeDeleted: false }).photos[0];
+    const row = listing.listByShoot('open', 'added_asc', 0, 10, { includeDeleted: false })
+      .photos[0];
     expect([row?.id, row?.stack_size]).toEqual(['shown-a', 1]);
   });
 
@@ -160,7 +170,10 @@ describe('a photograph put away', () => {
   // hidden one, which lists live rows, and gone from the Bin too.
   it('is in the Bin once binned, hidden or not', () => {
     repo.setHidden(['binned'], true);
-    const bin = listing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: true, isDeleted: true });
+    const bin = listing.listByLibrary(LIB, 'added_asc', 0, 10, {
+      includeDeleted: true,
+      isDeleted: true,
+    });
     expect(bin.photos.map((p) => p.id).sort()).toEqual(['binned', 'elsewhere']);
   });
 
@@ -185,7 +198,9 @@ describe('a photograph put away', () => {
   // through to the promotion subquery the flag exists to avoid.
   it('hands the stack’s flag to a member that is still shown', () => {
     insert('other', 'Trip/d.arw');
-    db.query("UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('live', 'other')").run();
+    db.query(
+      "UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('live', 'other')",
+    ).run();
     db.query("UPDATE photos SET is_representative = 1 WHERE id = 'live'").run();
 
     repo.setHidden(['live'], true);
@@ -210,7 +225,9 @@ describe('a photograph put away', () => {
 });
 
 describe('PhotoStateRepository.updateMany', () => {
-  const markOf = (id: string): { rating: number; triage: string | null; stamp_triage: string | null } =>
+  const markOf = (
+    id: string,
+  ): { rating: number; triage: string | null; stamp_triage: string | null } =>
     db.query('SELECT rating, triage, stamp_triage FROM photos WHERE id = ?').get(id) as {
       rating: number;
       triage: string | null;
@@ -256,12 +273,16 @@ describe('PhotoStateRepository.updateMany', () => {
 
     expect(repo.updateMany(many, { rating: 5, triage: 'rejected' })).toBe(many.length);
 
-    const marked = db.query("SELECT COUNT(*) AS n FROM photos WHERE rating = 5 AND triage = 'rejected'").get() as {
+    const marked = db
+      .query("SELECT COUNT(*) AS n FROM photos WHERE rating = 5 AND triage = 'rejected'")
+      .get() as {
       n: number;
     };
     expect(marked.n).toBe(many.length);
     // One stamp across every chunk, not one per statement.
-    const stamps = db.query('SELECT COUNT(DISTINCT stamp_triage) AS n FROM photos WHERE id LIKE ?').get('bulk%') as {
+    const stamps = db
+      .query('SELECT COUNT(DISTINCT stamp_triage) AS n FROM photos WHERE id LIKE ?')
+      .get('bulk%') as {
       n: number;
     };
     expect(stamps.n).toBe(1);

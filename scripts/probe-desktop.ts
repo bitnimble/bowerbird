@@ -29,7 +29,9 @@ function shell(): string {
     const candidate = join(ROOT, 'src-tauri', 'target', profile, 'app');
     if (existsSync(candidate)) return candidate;
   }
-  throw new Error('no desktop shell built. Run `bun run scripts/cargo.ts build --manifest-path src-tauri/Cargo.toml`.');
+  throw new Error(
+    'no desktop shell built. Run `bun run scripts/cargo.ts build --manifest-path src-tauri/Cargo.toml`.',
+  );
 }
 
 rmSync(HOME, { recursive: true, force: true });

@@ -20,7 +20,7 @@ tiles)~~ → ~~§10 (crate extraction)~~.
 
 **What §7 and §8 became.** The render rework had already done their hard halves:
 
-- A job carries `exposure` as a *gain* (`2^EV`), converted once in `processing_service` on the way
+- A job carries `exposure` as a _gain_ (`2^EV`), converted once in `processing_service` on the way
   in - the uniform is a multiplier and the document is stops, and converting in two places is how
   they come to disagree. `job.rs` refuses a non-positive gain rather than clamping, because that
   can only arrive by a caller sending stops where a multiplier belongs and grading the library
@@ -33,7 +33,7 @@ tiles)~~ → ~~§10 (crate extraction)~~.
   moved: a no-op save or an undo at the start of the history rebuilds nothing. `processUnprocessed`
   widens an in-flight run rather than starting a second, so twenty slider releases are one batch.
 - The renditions job now carries a `grid` target beside `full`, so the tile is rebuilt from the
-  render rather than staying the camera's JPEG. The tile is stamped *twice* per photo by design -
+  render rather than staying the camera's JPEG. The tile is stamped _twice_ per photo by design -
   once at the JPEG's pace so the grid fills, once from the render - and the second stamp is what
   makes a client re-fetch it.
 
@@ -56,12 +56,12 @@ and implementation gaps. §1-§6 survived with corrections, applied below. §7/�
 
 1. **The tick's frame and the job's frame are not the same pixels.** `edit::prepare`
    (`native/rawshim/src/edit.rs:173-209`) materialises the lens warp and then filters in PQ
-   *before* any grade. `hdr::graded` (`hdr.rs:302-334`) fuses the warp *inside*
-   `tone::grade_owned` (`tone.rs:247-283`) and filters *after* it (`hdr.rs:588-589`). So the
+   _before_ any grade. `hdr::graded` (`hdr.rs:302-334`) fuses the warp _inside_
+   `tone::grade_owned` (`tone.rs:247-283`) and filters _after_ it (`hdr.rs:588-589`). So the
    crate cannot simply run over the job's frame: the warp must be materialised first - a full
    extra ~366MB at 61MP, which is exactly the intermediate the fusion exists to avoid
    (`hdr_fit.rs:2180-2182`) - the scene peak changes because `grade_owned` deliberately peaks the
-   *unwarped* source (`tone.rs:242-246`), and the filters end up on opposite sides of the grade in
+   _unwarped_ source (`tone.rs:242-246`), and the filters end up on opposite sides of the grade in
    the two hosts. That last one means the editor would still not show what the export contains,
    which is the failure §10 exists to prevent.
 2. **The SDR rendition path has no grade to replace.** `tone.rs`'s grade is reached only through
@@ -76,13 +76,13 @@ and implementation gaps. §1-§6 survived with corrections, applied below. §7/�
 
 **Priced, since finding 2's fix turns on it.** `sdr_vs_hdr` (deleted with phase 0; at `ef8dade`) runs a whole
 `job::run` both ways at the shipped settings (`full_rendition_quantizer` 13, `hdr_crf` 10, and
-`hdr_preset` 8, which `processing_service.target` hands to *both* paths), 3840px on the Sony
+`hdr_preset` 8, which `processing_service.target` hands to _both_ paths), 3840px on the Sony
 fixture, medians of three:
 
-| | SDR | HDR |
-| --- | --- | --- |
-| whole job | 1805ms | 1722ms |
-| decode alone | 442ms | 361ms |
+|              | SDR    | HDR    |
+| ------------ | ------ | ------ |
+| whole job    | 1805ms | 1722ms |
+| decode alone | 442ms  | 361ms  |
 
 **An HDR rendition costs the same as an SDR one**, marginally less. Where the time goes at
 2566x3840: `image::finish` 648ms, the camera fit 431ms, the decode ~400ms, the grade 106ms,
@@ -90,14 +90,14 @@ fixture, medians of three:
 is shared.
 
 `image::finish` costs 667ms on u8 versus 648ms on u16. `job.rs`'s 8-bit SDR rationale is
-*memory*, not speed; SDR offers no speed advantage.
+_memory_, not speed; SDR offers no speed advantage.
 
 **The speed advantage belongs to embedded JPEG**, DESIGN §10.4 stage B: 124ms versus ~1.5s,
 a 12x `rendition_source` gap unrelated to dynamic range. Finding 2's fix costs **124ms to ~1.7s**
 per edited photo; choosing HDR adds no cost.
 
 (An earlier run of this benchmark reported HDR at 4.9x SDR. That was a benchmark error - a
-`preset: 0`, which is libavif's *slowest* speed and where 10-bit encoding dominates everything -
+`preset: 0`, which is libavif's _slowest_ speed and where 10-bit encoding dominates everything -
 not a property of the pipeline.)
 
 **Decided: (b).** Reconcile `prepare` and job frame definitions before crate extraction. Rejected
@@ -132,8 +132,8 @@ Three of the four divergences the review named are not divergences.
 
 **The one real divergence is the filter, and it is a difference of signal, not just of order.**
 
-- The job runs `tone::encode_pq` then `image::finish` (`hdr.rs:588-589`) - filtering the *fully
-  graded* PQ picture, tone curve, matrix, chroma and roll-off included.
+- The job runs `tone::encode_pq` then `image::finish` (`hdr.rs:588-589`) - filtering the _fully
+  graded_ PQ picture, tone curve, matrix, chroma and roll-off included.
 - The editor runs `filter_once` (`edit.rs:285-323`), which takes
   `pq(sample * reference_white_nits / levels.white)` - a plain exposure normalisation into PQ,
   with no grade in it - filters that, and inverts back to scene-linear.
@@ -150,7 +150,7 @@ measured noise sigma, the coarse chroma pass's 2%-of-full-scale cap and the deco
 anti-ringing range are all thresholds on differences, and only have one meaning in a
 perceptually-uniform bounded domain. `edit.rs:206` offers only "Filtered here, so a tick is the
 grade alone" - which reads as a tick-cost compromise. **§0.2.1 revises this**: the requirement
-§10.9 states is a *perceptual* domain, not the grade's output, and the editor's normalised PQ is
+§10.9 states is a _perceptual_ domain, not the grade's output, and the editor's normalised PQ is
 one. The editor's position was also measured rather than assumed (`88d84eb`) and bought a 43x
 per-tick win (`0ef4487`). So the job moves, not the editor.
 
@@ -162,18 +162,18 @@ with the lens warp left out so the only variable is where `finish` ran, and comp
 PQ frames in ΔE ITP (BT.2124, where 1.0 is nominally the threshold of visibility). Both LFS
 fixtures, all four strengths at 1.0, 1600px long edge:
 
-| N normalised-PQ vs G graded-PQ | Sony ARW | Canon CR3 |
-| --- | --- | --- |
-| mean ΔE ITP | 1.080 | 1.288 |
-| p95 / p99 | 3.31 / 5.74 | 3.99 / 6.34 |
-| share of pixels over 1.0 | 33.9% | 42.7% |
-| **after an ideal 1D curve in I** | **1.076** | **1.288** |
-| after ideal per-level I+Ct+Cp | 1.015 | 1.240 |
+| N normalised-PQ vs G graded-PQ   | Sony ARW    | Canon CR3   |
+| -------------------------------- | ----------- | ----------- |
+| mean ΔE ITP                      | 1.080       | 1.288       |
+| p95 / p99                        | 3.31 / 5.74 | 3.99 / 6.34 |
+| share of pixels over 1.0         | 33.9%       | 42.7%       |
+| **after an ideal 1D curve in I** | **1.076**   | **1.288**   |
+| after ideal per-level I+Ct+Cp    | 1.015       | 1.240       |
 
 **Visible.** Mean reaches the visibility threshold; a third to half of pixels exceed it.
 The editor/export difference exceeds rounding.
 
-**Not recoverable.** Correction rows are *upper bounds*: exact per-level means from the answer.
+**Not recoverable.** Correction rows are _upper bounds_: exact per-level means from the answer.
 Ideal 1D I correction removes 0.4% error on one fixture, none on the other. Three-channel
 correction removes 4-6%; Canon pixels above threshold rise from 42.7% to 43.7% despite lower mean.
 Filters make different local noise/structure decisions, not level-indexed errors. A later curve
@@ -197,10 +197,10 @@ resident textures" - so the note's original plan was the job's order, running pe
 
 That plan did not survive contact. §0 of the same note records it as one of four things the note
 got wrong: "`image::finish` is not a per-tick stage. It runs once, at the open, in the PQ domain
-(`edit::filter_once`). A tick is the grade alone." `filter_once` is the *correction*, not a
+(`edit::filter_once`). A tick is the grade alone." `filter_once` is the _correction_, not a
 deviation from the plan - and §0.2.1 below has the measurements behind it. Reinstating the per-tick
 version would undo a 645ms-to-15ms result and re-add a client `finish` port that was deliberately
-deleted. §5's observation that `finish` is a *shared* stage still stands, but it argues for one
+deleted. §5's observation that `finish` is a _shared_ stage still stands, but it argues for one
 implementation rather than for that one.
 
 ### 0.2.1 Correction: there are three arrangements, and the history matters
@@ -208,15 +208,15 @@ implementation rather than for that one.
 An earlier draft of §0.3 described the HDR still's order as though it were the only one. It is not,
 and DESIGN §10.9 leads with a different one:
 
-| path | defringe + denoise | sharpen |
-| --- | --- | --- |
-| SDR render (`job.rs:324`, `render_base:196-203`) | before the fit, on the 8-bit decode | after the warp, alone |
-| HDR still (`hdr.rs:588-589`) | after the transfer | after the transfer |
-| Editor (`edit.rs:285-323`) | at open, normalised PQ | at open, normalised PQ |
+| path                                             | defringe + denoise                  | sharpen                |
+| ------------------------------------------------ | ----------------------------------- | ---------------------- |
+| SDR render (`job.rs:324`, `render_base:196-203`) | before the fit, on the 8-bit decode | after the warp, alone  |
+| HDR still (`hdr.rs:588-589`)                     | after the transfer                  | after the transfer     |
+| Editor (`edit.rs:285-323`)                       | at open, normalised PQ              | at open, normalised PQ |
 
 The SDR split is measured (§10.9 line 2013-2015): the denoise runs before the fit because a colour
 transform fitted against a frame the denoise then cleans is calibrated on colour that will not
-exist - 22% of mean chroma - and the sharpen runs last because it deconvolves *the resample's*
+exist - 22% of mean chroma - and the sharpen runs last because it deconvolves _the resample's_
 blur and ahead of the warp would invert a point spread not yet applied. The HDR arrangement is
 §10.9's own "compromise" (line 2024), taken because its warp is in scene-linear and there is no
 display-referred slot ahead of it.
@@ -237,7 +237,7 @@ the tail raises the mean, consistent with `88d84eb`. Read beside `88d84eb`: wort
 but not necessarily noticeable.
 
 **Move the job, not the editor.** Post-grade editor filtering would undo a 43x per-tick win and
-restore a deleted port. §10.9 requires a *perceptual* domain, as `88d84eb` establishes; normalised
+restore a deleted port. §10.9 requires a _perceptual_ domain, as `88d84eb` establishes; normalised
 PQ qualifies. Move `encode_still`'s `finish` there before grade, delete the post-transfer call.
 Keep the editor authoritative, with no GPU `finish` or added tick cost.
 
@@ -255,10 +255,10 @@ There is no second implementation. Everything internal is 16-bit scene-linear th
 
 Both standing objections to this were measured and neither survives:
 
-| 3840px, Sony fixture | SDR path | HDR path |
-| --- | --- | --- |
-| whole job | 1805ms | **1722ms** |
-| peak RSS | 376MB | **341MB** |
+| 3840px, Sony fixture | SDR path | HDR path   |
+| -------------------- | -------- | ---------- |
+| whole job            | 1805ms   | **1722ms** |
+| peak RSS             | 376MB    | **341MB**  |
 
 The HDR path is cheaper on both. Memory was the one with a stated reason in the code - `job.rs`
 keeps the SDR decode 8-bit because "a 16-bit decode would be twice the memory for samples it
@@ -279,7 +279,7 @@ then sRGB OETF and 8-bit packing instead of `tone::encode_pq`: one output stage.
 **What it also buys:** a photo that needs both an SDR and an HDR rendition currently fits twice, at
 431ms each. Unified, it fits once.
 
-**What stays untouched:** the embedded-JPEG grid tile. That is a different *source*, not a
+**What stays untouched:** the embedded-JPEG grid tile. That is a different _source_, not a
 different pipeline, and it is where the real speed difference lives anyway (§10.4 stage B, 124ms).
 
 **The one open risk, and it is a colour question rather than a cost one.** SDR renditions would
@@ -303,18 +303,18 @@ currently denoise after warp: job fuses it into `grade_owned` then filters after
 editor materialises it in `edit::prepare` then runs `filter_once`.
 
 `denoise_before_warp` (deleted with phase 0; at `ef8dade`) tests it on a synthetic flat field carrying
-spatially uniform noise, because on a real frame the radial profile is mostly *scene* - a subject
+spatially uniform noise, because on a real frame the radial profile is mostly _scene_ - a subject
 in the middle reads as "noise" to any high-pass, and a first attempt at this measured the
 composition rather than the grain. With no content there is nothing to confound it, so any radial
 structure in the residual is the warp's doing. Median absolute high-pass on luma, per radial band,
 denoise only (the sharpen has its own reason to sit after the warp):
 
-| | centre | mid | corner | corner/centre |
-| --- | --- | --- | --- | --- |
-| input | 69.8 | 69.7 | 69.7 | 1.00x |
-| after the warp alone | 63.2 | 47.4 | 48.0 | **0.76x** |
-| A, warp then denoise | 18.5 | 10.6 | 10.9 | **0.59x** |
-| B, denoise then warp | 12.0 | 8.8 | 9.0 | **0.75x** |
+|                      | centre | mid  | corner | corner/centre |
+| -------------------- | ------ | ---- | ------ | ------------- |
+| input                | 69.8   | 69.7 | 69.7   | 1.00x         |
+| after the warp alone | 63.2   | 47.4 | 48.0   | **0.76x**     |
+| A, warp then denoise | 18.5   | 10.6 | 10.9   | **0.59x**     |
+| B, denoise then warp | 12.0   | 8.8  | 9.0    | **0.75x**     |
 
 **The warp destroys uniformity** - 1.00 to 0.76 - which is the claim, measured. **Denoising after
 it compounds that** to 0.59, because one global sigma over-denoises the radii where the resample
@@ -347,10 +347,10 @@ Per HDR target, in `encode_still` (`hdr.rs:566`):
 3. `hdr_args::target_size` for this target's output dimensions.
 4. **`hdr::prepare`** (`hdr.rs:267`):
    a. `tone::levels(source.samples, quantile)` - diffuse white and scene peak, taken on the
-      *original, unresized* decode. Deliberate (`hdr.rs:268-270`): both ends are quantiles over a
-      fixed sample count, so the anchor does not move with resolution.
+   _original, unresized_ decode. Deliberate (`hdr.rs:268-270`): both ends are quantiles over a
+   fixed sample count, so the anchor does not move with resolution.
    b. `image::box_resize_u16` to the target size, **in linear light**. Fit before grading
-      (`hdr.rs:273-278`), so a 61MP frame is not tone-mapped in full to produce a 3840px file.
+   (`hdr.rs:273-278`), so a 61MP frame is not tone-mapped in full to produce a 3840px file.
 5. **`PlanarWarp::for_lens`** - build the lens gather without applying it.
 6. **`grade_prepared_owned` -> `tone::grade_owned`** (`tone.rs:247`): one sweep with the warp fused
    into the colour transform. `lens.map_u16` gathers the warped sample, then per pixel
@@ -406,7 +406,7 @@ open questions or as later phases:
 - **The §10.9 split adopted** (§0.2.2 left this "on the table"; §0.2.3 measured it). Denoise and
   defringe before the geometric warp, sharpen after it.
 - **The domain question dissolved rather than answered.** §0.1's "which host moves" assumed a
-  buffer that stages convert into and out of. The base is now *coded once* into normalised PQ
+  buffer that stages convert into and out of. The base is now _coded once_ into normalised PQ
   immediately after `tone::levels` reads the anchor (`tone::encode_base`), and every stage from
   there to the shader is pointwise on what the buffer holds - both filter passes, the fit-to-size,
   the warp, the downscale. There is no per-stage domain left to disagree about. `image::Coding`,
@@ -429,11 +429,11 @@ built and none of it is needed:
 
 The page keeps its TypeScript host; Rust has its own, ~900 lines. What §10.1 lists as "moves into
 the crate" stays where it is on both sides, and what §10.1.1 lists as "things the port must
-preserve" became a *parity* checklist between two hosts rather than a porting one - which is what
+preserve" became a _parity_ checklist between two hosts rather than a porting one - which is what
 `fixtures/gpu/` and `peak-sampling.txt` exist to hold.
 
 So **§10, §10.0 and §10.1 are superseded**: read them for the reasoning, not the plan. §10.1.1 is
-still live and still correct. §10.2 is not superseded and has become *harder*: see below.
+still live and still correct. §10.2 is not superseded and has become _harder_: see below.
 
 **§10.2 is now a deployment blocker rather than a preparation.** `job::run` returns an error naming
 the missing driver where no adapter of any kind answers - there is no CPU grade to fall back to,
@@ -443,7 +443,7 @@ from §10 that must land before this feature ships, and it is unstarted.
 
 > **Done, and it corrects itself.** All three landed, and the picture of the failure above is
 > wrong in the way that matters. `mesa-vulkan-drivers` carries lavapipe, so an image with the
-> driver and *no* access to the card does not fail - it renders on a CPU rasteriser, correctly and
+> driver and _no_ access to the card does not fail - it renders on a CPU rasteriser, correctly and
 > slowly, saying nothing. Measured in a container here: with `devices:` and `group_add:` the app
 > reports `RADV RAPHAEL_MENDOCINO`; drop `group_add` alone and the same container reports
 > `llvmpipe`, silently. So the entrypoint now names the adapter at boot (`native/report_gpu.ts`),
@@ -483,12 +483,12 @@ The editor is `web/src/features/raw_edit/`. `RawEditPresenter.open` fetches a pr
 from `GET /api/image/:id/prepared` (`rawshim_edit.prepareEditAsync`, seconds of LibRaw on a
 thread the native side owns), hands it to `TickPipeline`, and every slider move after that is a
 uniform write and a dispatch chain over a buffer that never leaves the GPU. The only edit is
-`exposureEv`. It is *declared* in `tick.wgsl` - 50 lines holding `struct Tick` and two helpers,
-with no arithmetic in it - and *applied* in `colour.wgsl:88-89` and `:145-146`. `colour.wgsl` is
+`exposureEv`. It is _declared_ in `tick.wgsl` - 50 lines holding `struct Tick` and two helpers,
+with no arithmetic in it - and _applied_ in `colour.wgsl:88-89` and `:145-146`. `colour.wgsl` is
 where a new slider's math goes.
 
 Nothing is written anywhere. Closing the page loses the edit, and the stored renditions - built by
-`rawshim_job.runJob` from the RAW plus *app*-wide denoise/sharpen/grade settings (they live in
+`rawshim_job.runJob` from the RAW plus _app_-wide denoise/sharpen/grade settings (they live in
 `settingsRepo`, read at `image_api.ts:140-158`; only `rendition_source` and `rendition_hdr` are
 per-library) - have never heard of it.
 
@@ -541,7 +541,7 @@ CREATE TABLE IF NOT EXISTS photo_edit_history (
 ) WITHOUT ROWID;
 ```
 
-`WITHOUT ROWID` on both: a `TEXT PRIMARY KEY` on an ordinary table is *not* the rowid - SQLite
+`WITHOUT ROWID` on both: a `TEXT PRIMARY KEY` on an ordinary table is _not_ the rowid - SQLite
 aliases only `INTEGER PRIMARY KEY` - so every read would be an index descent plus a rowid-tree
 descent. These tables are small rows reached only by the whole key, which is the shape it is for.
 
@@ -569,7 +569,7 @@ Nothing is written for an unedited photo, so an untouched library pays nothing.
 The question was 100k photos with 500 edits each.
 
 The doc read - the one on every hot path - is one primary-key seek at any table size, and never
-touches the history. The *history* read is a seek plus an overflow chain plus a ~23KB
+touches the history. The _history_ read is a seek plus an overflow chain plus a ~23KB
 `JSON.parse`, and a commit is that plus a full re-serialise; "all the same single-row read" is
 true in the sense that undo, redo and a full history listing are all equally expensive, not in the
 sense that any of them is cheap. Only undo and redo pay it.
@@ -578,10 +578,10 @@ Disk, measured rather than estimated. A single-field delta serialises at ~45 byt
 (`{"from":{"exposure":-0.35},"to":{"exposure":0.7}}`); an earlier draft carried an `at` timestamp
 too, which was 31 of a claimed 60 bytes and which nothing in §5 or §6 ever reads, so it is gone.
 
-| | 500 deltas on every one of 100k photos | realistic: 20k photos, ~30 deltas |
-| --- | --- | --- |
-| `photo_edit_history` | ~2.3 GB | ~27 MB |
-| `photo_edits` | ~70 MB | ~14 MB |
+|                      | 500 deltas on every one of 100k photos | realistic: 20k photos, ~30 deltas |
+| -------------------- | -------------------------------------- | --------------------------------- |
+| `photo_edit_history` | ~2.3 GB                                | ~27 MB                            |
+| `photo_edits`        | ~70 MB                                 | ~14 MB                            |
 
 Note the cap below is 1000, not 500, so the true worst case is twice the first column. The
 row-per-delta alternative would have been ~10 GB for the same content, a third of it UUIDs.
@@ -640,7 +640,7 @@ the schema cannot express a version chain.
 **What v1 actually implements: `exposure`, and nothing else.** The other fields exist in the doc
 at their neutral defaults so the format does not change under the first real slider, but the
 shader has one edit today and this spec does not specify nine more. Two of them are not uniform
-tweaks at all: `whiteBalance` sits *behind* the camera-match fit - the prepared frame arrives
+tweaks at all: `whiteBalance` sits _behind_ the camera-match fit - the prepared frame arrives
 through a chroma lattice and matrix already fitted at the shot white balance (`fit.rs`,
 `hdr_fit.rs`), so moving it is prepare-time work, which contradicts §1's "the prepare is
 edit-independent". Each new parameter needs its own note saying what it does to a pixel and where
@@ -650,7 +650,7 @@ it composes in `colour.wgsl`'s chain; none of that is written yet.
 > what it predicted. Texture, clarity and dehaze are terms in `adjust.wgsl` reading a blur
 > `detail.wgsl` builds once per frame, not a stage of their own. And white balance is not
 > prepare-time: the decode already neutralised the as-shot illuminant, so asking for another is
-> the *ratio* of the two, which is one matrix per tick (`white_balance.wgsl`). Sitting behind
+> the _ratio_ of the two, which is one matrix per tick (`white_balance.wgsl`). Sitting behind
 > the fit is what makes that sound rather than what prevents it - the match keeps answering the
 > question it was fitted on. The prepare stayed edit-independent throughout.
 
@@ -763,7 +763,7 @@ run, and the job already runs the editor's shaders.
 takes `encode_to_buffer`'s counts back. Either side of that stays where it is: LibRaw's decode,
 the resize (still before the grade, per `hdr.rs:273`), and the AVIF encode. The lens warp stays a
 parameter - fused into the grade for the job, materialised at open for the editor, which §0.1
-establishes are the same pixels. The denoise and sharpen move *inside* the shared chain as of
+establishes are the same pixels. The denoise and sharpen move _inside_ the shared chain as of
 phase 0, rather than staying either side of it.
 
 The transfer figure an earlier draft gave was wrong twice over. `encode` packed `array<u32>`, one
@@ -792,7 +792,7 @@ so they are not the same event. Requeue on editor close, or after an idle interv
 
 Today `toStages` builds the tile from `'embedded'` - the camera's JPEG, ~125ms against ~1.5s for
 a render - and that split is what fills a 2000-frame shoot's grid in a minute instead of eleven.
-That stays. What changes is that a library which renders no longer *stops* at the JPEG tile.
+That stays. What changes is that a library which renders no longer _stops_ at the JPEG tile.
 
 **Render jobs already accept `grid`.** `job::Rendition` is `grid | full | max`; targets share
 decode, fit, filter and cut. A tile adds `Cut::downscale` and AVIF encoding. At 61MP, grid+full
@@ -837,9 +837,9 @@ both a `grid` and a `full` target is not `every`, so it would be stamped `rendit
 it. The test is "did this job write a grid target", not "was every target a grid target".
 
 **One inconsistency to pin while here.** `photos.rendition_source` is documented as "which pixels
-the grid tile was built from" in *two* places - `migrations.ts:106` and `schemas/photos.ts:82` -
+the grid tile was built from" in _two_ places - `migrations.ts:106` and `schemas/photos.ts:82` -
 while `finishRenditions` writes it from the renditions stage, under a comment explicitly saying it
-is *not* the tile's source. Two sites against the code, and nothing notices today because the tile
+is _not_ the tile's source. Two sites against the code, and nothing notices today because the tile
 only ever had one source. Once the tile has two, the column has to mean one thing; it should mean
 the tile's, which is what both comments already claim and the only reading anything would query.
 
@@ -888,7 +888,7 @@ own WebGPU, so one crate serves the editor tick and the rendition job with nothi
 between them.
 
 **This takes `docs/raw-edit-gpu.md` §6.2 in full**, which is worth being explicit about because
-that note's own §0 records it as *not* taken. §6.2 argued for wgpu in Rust precisely so "one Rust
+that note's own §0 records it as _not_ taken. §6.2 argued for wgpu in Rust precisely so "one Rust
 implementation serves the editor tick **and** the server's renditions", and raw-edit-gpu.md §0
 lists its rejection among four things the note got wrong or did not foresee - the shaders went
 into the page "which is where the canvas is". That reason is answered rather than ignored: wgpu on
@@ -917,7 +917,7 @@ it.
 `rgba16float` + `colorSpace: 'display-p3'` + `toneMapping: { mode: 'extended' }`, and
 raw-edit-gpu.md §7 is entirely about that being load-bearing and measured against a real PQ AVIF
 on both engines. wgpu 30 reaches it: `SurfaceConfiguration` carries a `color_space` field, and
-`SurfaceColorSpace::ExtendedDisplayP3` sets *both* dictionary members on the browser backend -
+`SurfaceColorSpace::ExtendedDisplayP3` sets _both_ dictionary members on the browser backend -
 `colorSpace: "display-p3"` and `toneMapping: { mode: "extended" }`
 (`wgpu-30.0.0/src/backend/webgpu.rs`, ~line 4265). That is the same canvas, configured by a
 different hand.
@@ -928,7 +928,7 @@ What reading cannot settle is whether a given browser and adapter offer that col
 wgpu-on-wasm beside an identical set through hand-written JS WebGPU, so a flat result would be
 attributable to the display rather than to wgpu.
 
-**Measured, and it passes.** On Chrome and Safari the two canvases are *identical*, and both step
+**Measured, and it passes.** On Chrome and Safari the two canvases are _identical_, and both step
 1x < 2x < 4x. `4x == 8x` on the panel it was run against, which is headroom rather than a fault:
 `SDR_WHITE_NITS` is 203, so those bars ask for 812 and 1624 nits and a display that runs out
 between the two shows the first and clips the second. The identical result across the two APIs is
@@ -945,7 +945,7 @@ So wgpu-on-wasm reaches the editor's canvas. That question is closed; §0's is n
 only - not Vulkan, not DX12, neither of which has an encoded-extended-Display-P3 swapchain colour
 space. Harmless here, because the client is always a browser and the job never has a surface at
 all, but it means a native window on Linux would not get this canvas. Related: `ExtendedSrgb` and
-`ExtendedDisplayP3` are sRGB-*encoded* extended range, not linear - wgpu's docs call confusing
+`ExtendedDisplayP3` are sRGB-_encoded_ extended range, not linear - wgpu's docs call confusing
 them with `ExtendedSrgbLinear` (scRGB) "the most common HDR setup mistake". Bowerbird's canvas is
 the encoded one, so the shader's output stays in the encoding it is in today.
 
@@ -992,8 +992,8 @@ after PQ, the SDR path, or a real decode - which is to say it exercises none of 
 currently asserts, and new fixtures on the job's own path are part of the work, not a footnote.
 
 **And the crate does not reduce this to one implementation.** `prelude.wgsl:3-5` says outright
-that the WGSL *is* a second implementation of `tone.rs`'s picture, and §7 keeps `tone.rs` as a
-test-only twin. Two implementations before, two after; what the crate removes is a *third* that
+that the WGSL _is_ a second implementation of `tone.rs`'s picture, and §7 keeps `tone.rs` as a
+test-only twin. Two implementations before, two after; what the crate removes is a _third_ that
 was never written. The earlier claim that the pin narrows to "two drivers running the same shader"
 was wrong.
 
@@ -1021,7 +1021,7 @@ rectangle (`shaders.ts:44-48`). Keep a shader-layout pin via `.wgsl` parsing or 
 
 ### 10.1.1 Things the port must preserve, because they fail silently
 
-These were drift hazards while two hosts existed. With one host they are a *porting* checklist
+These were drift hazards while two hosts existed. With one host they are a _porting_ checklist
 instead - each is a place where the obvious Rust spelling produces a clean run and a different
 picture:
 
@@ -1069,7 +1069,7 @@ Three changes, none architectural, one of which conflicts with something already
 - **The `dev` stage purge collides with this.** Line 91 does
   `dpkg --force-depends --purge libllvm19 libz3-4 mesa-libgallium libgl1-mesa-dri libglx-mesa0`
   to reclaim 192MB reached through ffmpeg's SDL2 dependency. `mesa-vulkan-drivers` is built on
-  `mesa-libgallium` and lavapipe *is* an LLVM JIT, so that purge removes exactly what the tests
+  `mesa-libgallium` and lavapipe _is_ an LLVM JIT, so that purge removes exactly what the tests
   would now need, and the stage's own comment says nothing may install after it. The dev stage
   has to stop purging Mesa wholesale, and it is worth re-measuring what is actually reclaimable
   once Vulkan has to stay.
@@ -1097,12 +1097,12 @@ twin, §7).
   `render()`, and `writeUniform` itself reads `this.context.canvas`. Both have to be lifted out
   before any surfaceless host can call it.
 - **§8's "downscale from the frame that comes back" reverses a documented decision.** `hdr.rs:274`
-  records fitting *before* grading precisely so a 61MP frame is not tone-mapped in full to make an
+  records fitting _before_ grading precisely so a 61MP frame is not tone-mapped in full to make an
   800px tile - and downscaling after the grade averages PQ-coded values, the same objection
   `frame.wgsl:56-59` raises.
 - **The pyramid and `chooseCandidates` are unconditional in the constructor** and both are pure
   cost for a one-shot job (~160MB of `rgba16uint` plus a reduce chain; and `useCandidates` lands
-  asynchronously *after* submit, so a single-pass job would never see it true). They need gating
+  asynchronously _after_ submit, so a single-pass job would never see it true). They need gating
   on "there is a region".
 - **Three more silent-failure hazards for §10.1.1**: the `unfilterable-float` sample type on the
   curves texture (wgpu's default is `Float { filterable: true }`, the wrong one); `const` rather

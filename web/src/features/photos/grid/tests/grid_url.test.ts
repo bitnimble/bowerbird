@@ -6,7 +6,10 @@ import { asksAnything, gridUrlHref, readGridUrl } from '../grid_url';
 const PAGE = `https://example.test${route(PathSegment.libraries(), 'lib-1')}`;
 
 test('a position and a question survive a round trip through the address bar', () => {
-  const state = { at: 4213, filters: { search: 'DSC02', takenFrom: '2024-03-01', takenTo: '2024-03-09' } };
+  const state = {
+    at: 4213,
+    filters: { search: 'DSC02', takenFrom: '2024-03-01', takenTo: '2024-03-09' },
+  };
   const href = gridUrlHref(PAGE, state);
   expect(readGridUrl(new URL(href).search)).toEqual(state);
 });

@@ -54,9 +54,18 @@ class StageCanvases {
   private counted = 0;
 
   /** A decoded frame, or `region` of it, drawn into `canvas` at `size`. */
-  async paint(canvas: HTMLCanvasElement, size: CanvasSize, frame: Decoded, shown: Shown): Promise<void> {
+  async paint(
+    canvas: HTMLCanvasElement,
+    size: CanvasSize,
+    frame: Decoded,
+    shown: Shown,
+  ): Promise<void> {
     if (this.released.has(canvas)) return;
-    const { id, handed, readback } = this.handOver(canvas, size, drawsOnThePage(shown.devicePeakNits));
+    const { id, handed, readback } = this.handOver(
+      canvas,
+      size,
+      drawsOnThePage(shown.devicePeakNits),
+    );
     const common = {
       kind: 'paint',
       canvas: id,
@@ -118,7 +127,12 @@ class StageCanvases {
             handed,
             ...size,
             base,
-            layers: layers.map((layer, at) => ({ picture: layer.picture, mask: masks[at]!, shift: [...layer.shift], gain: layer.gain })),
+            layers: layers.map((layer, at) => ({
+              picture: layer.picture,
+              mask: masks[at]!,
+              shift: [...layer.shift],
+              gain: layer.gain,
+            })),
             headroom,
             sourcePeak: PQ_CEILING_NITS / SDR_WHITE_NITS,
           },
@@ -140,11 +154,18 @@ class StageCanvases {
     if (numbered == null) return;
     this.numbered.delete(canvas);
     void gpuThread()
-      .ask(PaintedSchema.nullable(), { to: 'stage', ask: { kind: 'releaseCanvas', canvas: numbered.id } })
+      .ask(PaintedSchema.nullable(), {
+        to: 'stage',
+        ask: { kind: 'releaseCanvas', canvas: numbered.id },
+      })
       .catch(() => undefined);
   }
 
-  private handOver(canvas: HTMLCanvasElement, size: CanvasSize, readback: boolean): Numbered & { handed: OffscreenCanvas | null } {
+  private handOver(
+    canvas: HTMLCanvasElement,
+    size: CanvasSize,
+    readback: boolean,
+  ): Numbered & { handed: OffscreenCanvas | null } {
     const numbered = this.numbered.get(canvas);
     if (numbered != null) return { ...numbered, handed: null };
     canvas.width = size.width;
@@ -191,7 +212,8 @@ function headroomOf(devicePeakNits: number): number {
 }
 
 function lostIf(painted: Painted): void {
-  if (painted === 'lost') throw new CanvasLost('this canvas took a WebGPU context it cannot be drawn into');
+  if (painted === 'lost')
+    throw new CanvasLost('this canvas took a WebGPU context it cannot be drawn into');
 }
 
 export const stageCanvases = new StageCanvases();
@@ -200,7 +222,9 @@ export const stageCanvases = new StageCanvases();
  * A ref for a canvas the GPU thread draws, which lets the canvas go when the element does: the
  * thread holds what was handed over for as long as it is told to.
  */
-export function useStageCanvas(held: { current: HTMLCanvasElement | null }): (element: HTMLCanvasElement | null) => void {
+export function useStageCanvas(held: {
+  current: HTMLCanvasElement | null;
+}): (element: HTMLCanvasElement | null) => void {
   return useCallback(
     (element: HTMLCanvasElement | null) => {
       if (held.current != null && held.current !== element) stageCanvases.release(held.current);

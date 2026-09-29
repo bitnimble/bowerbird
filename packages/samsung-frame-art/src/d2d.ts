@@ -58,7 +58,10 @@ export async function receiveFiles(info: ConnInfo): Promise<Map<string, Uint8Arr
       if (header == null) throw new ResponseError('TV sent a file with no header');
       received = Number(header.num) + 1;
       total = Number(header.total);
-      files.set(`${String(header.fileID)}.${String(header.fileType)}`, await reader.read(Number(header.fileLength)));
+      files.set(
+        `${String(header.fileID)}.${String(header.fileType)}`,
+        await reader.read(Number(header.fileLength)),
+      );
     }
     return files;
   } finally {
@@ -69,7 +72,9 @@ export async function receiveFiles(info: ConnInfo): Promise<Map<string, Uint8Arr
 function openSocket(info: ConnInfo): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = info.secured
-      ? connectTls({ host: info.ip, port: info.port, rejectUnauthorized: false }, () => resolve(socket))
+      ? connectTls({ host: info.ip, port: info.port, rejectUnauthorized: false }, () =>
+          resolve(socket),
+        )
       : connectTcp({ host: info.ip, port: info.port }, () => resolve(socket));
     socket.once('error', reject);
   });

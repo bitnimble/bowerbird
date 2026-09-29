@@ -1,4 +1,8 @@
-import { type BrowseResponse, BrowseResponseSchema, CreateFolderRequestSchema } from '../../../src/schemas/browse';
+import {
+  type BrowseResponse,
+  BrowseResponseSchema,
+  CreateFolderRequestSchema,
+} from '../../../src/schemas/browse';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { request } from './request';
 

@@ -18,7 +18,10 @@ const LIVING_ROOM = { id: 'uuid:living', name: 'Living room', host: '10.0.0.5' }
 const sent: SendToFrameTvRequest[] = [];
 let refuse: (photoId: string) => Error | null = () => null;
 
-function presenter(target: PhotoTarget | null = null, enabled = true): { store: FrameTvStore; toasts: ToastsStore; presenter: FrameTvPresenter } {
+function presenter(
+  target: PhotoTarget | null = null,
+  enabled = true,
+): { store: FrameTvStore; toasts: ToastsStore; presenter: FrameTvPresenter } {
   const store = new FrameTvStore();
   store.tvs = [LIVING_ROOM];
   const settings = new AppSettingsStore();
@@ -29,7 +32,13 @@ function presenter(target: PhotoTarget | null = null, enabled = true): { store: 
   return {
     store,
     toasts,
-    presenter: new FrameTvPresenter(store, settings, viewer as never, photos as never, new ToastsPresenter(toasts)),
+    presenter: new FrameTvPresenter(
+      store,
+      settings,
+      viewer as never,
+      photos as never,
+      new ToastsPresenter(toasts),
+    ),
   };
 }
 
@@ -49,13 +58,18 @@ test('sends the photo at the rendition on screen and shows it', async () => {
 
   await frameTv.sendPhoto('aaaaaaaa', LIVING_ROOM.id);
 
-  expect(sent).toEqual([{ tv_id: LIVING_ROOM.id, photo_id: 'aaaaaaaa', rendition: 'max', show: true }]);
+  expect(sent).toEqual([
+    { tv_id: LIVING_ROOM.id, photo_id: 'aaaaaaaa', rendition: 'max', show: true },
+  ]);
   expect(toasts.toasts.map((toast) => toast.message)).toEqual(['Sent 1 photo to Living room.']);
 });
 
 test('sends a resolved selection in order, showing only the first', async () => {
-  photosApi.ids = (): Promise<{ photo_ids: string[] }> => Promise.resolve({ photo_ids: ['aaaaaaaa', 'bbbbbbbb', 'cccccccc'] });
-  const { toasts, presenter: frameTv } = presenter({ selection: { ranges: [], members: ['aaaaaaaa'] } } as never);
+  photosApi.ids = (): Promise<{ photo_ids: string[] }> =>
+    Promise.resolve({ photo_ids: ['aaaaaaaa', 'bbbbbbbb', 'cccccccc'] });
+  const { toasts, presenter: frameTv } = presenter({
+    selection: { ranges: [], members: ['aaaaaaaa'] },
+  } as never);
 
   await frameTv.sendSelection(LIVING_ROOM.id);
 
@@ -68,8 +82,11 @@ test('sends a resolved selection in order, showing only the first', async () => 
 });
 
 test('keeps going past a photo that fails, and says how many did not arrive', async () => {
-  refuse = (photoId) => (photoId === 'bbbbbbbb' ? new ApiError('NOT_FOUND', 'image not found on disk', 404) : null);
-  const { toasts, presenter: frameTv } = presenter({ photo_ids: ['aaaaaaaa', 'bbbbbbbb', 'cccccccc'] });
+  refuse = (photoId) =>
+    photoId === 'bbbbbbbb' ? new ApiError('NOT_FOUND', 'image not found on disk', 404) : null;
+  const { toasts, presenter: frameTv } = presenter({
+    photo_ids: ['aaaaaaaa', 'bbbbbbbb', 'cccccccc'],
+  });
 
   await frameTv.sendSelection(LIVING_ROOM.id);
 
@@ -92,7 +109,9 @@ test('stops at the first photo the TV does not answer for', async () => {
   await frameTv.sendSelection(LIVING_ROOM.id);
 
   expect(asked).toBe(1);
-  expect(toasts.toasts.map((toast) => toast.message)).toEqual(["We couldn't send 2 photos to Living room. Try again."]);
+  expect(toasts.toasts.map((toast) => toast.message)).toEqual([
+    "We couldn't send 2 photos to Living room. Try again.",
+  ]);
 });
 
 test('does not search the network while the integration is off', async () => {

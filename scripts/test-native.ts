@@ -52,7 +52,9 @@ function main(): void {
   if (flagged >= 0) {
     args.splice(flagged, 1);
     if (!existsSync(ICD)) {
-      process.stderr.write(`${SWIFTSHADER} wants ${ICD}, which \`bun run get:swiftshader\` fetches.\n`);
+      process.stderr.write(
+        `${SWIFTSHADER} wants ${ICD}, which \`bun run get:swiftshader\` fetches.\n`,
+      );
       process.exit(2);
     }
     env.VK_DRIVER_FILES = ICD;

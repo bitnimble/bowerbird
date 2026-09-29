@@ -24,7 +24,9 @@ test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, VIEWER_PHOTOS_DIR);
 });
 
-test('the detail view shows shooting metadata, the triage control and steps between photos', async ({ page }) => {
+test('the detail view shows shooting metadata, the triage control and steps between photos', async ({
+  page,
+}) => {
   await gotoPhoto(page, VIEWER_PHOTOS_DIR);
 
   // Three-way triage in the header, not a checkbox: "undecided" has to be
@@ -81,7 +83,9 @@ test('the detail view shows shooting metadata, the triage control and steps betw
 
 // A real click on a real tile inside a scroller, which is what needs a browser;
 // what the strip is *over* is `StripViewStore`'s arithmetic.
-test('the filmstrip lists the collection, and a tile opens its own photograph', async ({ page }) => {
+test('the filmstrip lists the collection, and a tile opens its own photograph', async ({
+  page,
+}) => {
   await gotoPhoto(page, VIEWER_PHOTOS_DIR);
 
   const navPath = pathOf(page);
@@ -111,17 +115,22 @@ test('a photo the catalogue does not have says so, with the reason', async ({ pa
 
 // Two detail fetches can be in flight at once - stepping is faster than the
 // round trip - and they need not answer in order.
-test('a detail that lands after the reader has stepped on does not replace the photo they are looking at', async ({ page }) => {
+test('a detail that lands after the reader has stepped on does not replace the photo they are looking at', async ({
+  page,
+}) => {
   await gotoLibrary(page, VIEWER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   const first = await tiles(page).first().locator('img').getAttribute('src');
   const firstId = photoIdOfImageUrl(first);
   expect(firstId).not.toBe('');
-  await page.route(`**${route(PathSegment.api(), PathSegment.photos(), firstId)}`, async (intercepted) => {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    await intercepted.continue();
-  });
+  await page.route(
+    `**${route(PathSegment.api(), PathSegment.photos(), firstId)}`,
+    async (intercepted) => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await intercepted.continue();
+    },
+  );
 
   // Stepping off before the first photo's detail has landed. The buttons have to
   // be live for that: their neighbours come from the photo the route asks for,
@@ -156,7 +165,10 @@ test('the arrows come back after leaving a photo and opening it again', async ({
     await expect(gallery(page)).toBeVisible();
     await openPhoto(page);
     await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByRole('button', { name: 'Next photo' }), `after ${round + 1} trips`).toBeEnabled({ timeout: 30_000 });
+    await expect(
+      page.getByRole('button', { name: 'Next photo' }),
+      `after ${round + 1} trips`,
+    ).toBeEnabled({ timeout: 30_000 });
   }
 });
 
@@ -170,10 +182,13 @@ test('the panels keep their shape while the next photo is loading', async ({ pag
   await showMetadata(page);
 
   // Held open, or the API answers before there is a loading state to observe.
-  await page.route(new RegExp(`${route(PathSegment.api(), PathSegment.photos())}/[^/?]+$`), async (intercepted) => {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    await intercepted.continue();
-  });
+  await page.route(
+    new RegExp(`${route(PathSegment.api(), PathSegment.photos())}/[^/?]+$`),
+    async (intercepted) => {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await intercepted.continue();
+    },
+  );
 
   // Every panel is up while the fetch is still out, holding its rows empty rather
   // than by keeping the previous photo's values.
@@ -182,7 +197,9 @@ test('the panels keep their shape while the next photo is loading', async ({ pag
   const camera = details.getByRole('group', { name: 'Camera', exact: true });
   await expect(camera.getByText('loading').first()).toBeVisible();
   // Info, Edits, Camera, Rendition, Original - triage is in the header and the rating in its menu.
-  await expect(details.getByRole('group', { name: /^(Info|Edits|Camera|Rendition details|Original)$/ })).toHaveCount(5);
+  await expect(
+    details.getByRole('group', { name: /^(Info|Edits|Camera|Rendition details|Original)$/ }),
+  ).toHaveCount(5);
 });
 
 function photoControls(page: Page): Locator {

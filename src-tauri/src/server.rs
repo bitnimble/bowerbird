@@ -39,7 +39,8 @@ impl Local {
             return None;
         }
         let mut signed_in = url.clone();
-        signed_in.query_pairs_mut()
+        signed_in
+            .query_pairs_mut()
             .clear()
             .extend_pairs(url.query_pairs().filter(|(name, _)| name != SIGN_IN_PARAM))
             .append_pair(SIGN_IN_PARAM, &self.token);
@@ -47,19 +48,25 @@ impl Local {
     }
 
     fn serves(&self, url: &str) -> bool {
-        url.strip_prefix(&self.origin).is_some_and(|path| path.starts_with('/'))
+        url.strip_prefix(&self.origin)
+            .is_some_and(|path| path.starts_with('/'))
     }
 }
 
 /// The local server's address, once it is answering.
 pub(crate) fn local_origin() -> Option<String> {
-    LOCAL.lock().ok().and_then(|held| held.as_ref().map(|local| local.origin.clone()))
+    LOCAL
+        .lock()
+        .ok()
+        .and_then(|held| held.as_ref().map(|local| local.origin.clone()))
 }
 
 /// The secret the local server requires of every request, where `url` is on it.
 pub(crate) fn token_for(url: &str) -> Option<String> {
     let held = LOCAL.lock().ok()?;
-    held.as_ref().filter(|local| local.serves(url)).map(|local| local.token.clone())
+    held.as_ref()
+        .filter(|local| local.serves(url))
+        .map(|local| local.token.clone())
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -85,7 +92,8 @@ pub(crate) fn recover(webview: &tauri::Webview<crate::Runtime>) {
 
 fn fresh_token() -> Result<String, String> {
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|err| format!("no randomness for the server's token: {err}"))?;
+    getrandom::fill(&mut bytes)
+        .map_err(|err| format!("no randomness for the server's token: {err}"))?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
@@ -114,10 +122,14 @@ fn sidecar_path() -> std::io::Result<PathBuf> {
         return Ok(PathBuf::from(named));
     }
     let exe = std::env::current_exe()?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| std::io::Error::new(ErrorKind::NotFound, "the executable has no directory"))?;
-    let name = if cfg!(windows) { "bowerbird-server.exe" } else { "bowerbird-server" };
+    let dir = exe.parent().ok_or_else(|| {
+        std::io::Error::new(ErrorKind::NotFound, "the executable has no directory")
+    })?;
+    let name = if cfg!(windows) {
+        "bowerbird-server.exe"
+    } else {
+        "bowerbird-server"
+    };
     Ok(dir.join(name))
 }
 
@@ -190,7 +202,8 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         ));
     }
     let data = data_dir(app)?;
-    std::fs::create_dir_all(&data).map_err(|err| format!("could not make {}: {err}", data.display()))?;
+    std::fs::create_dir_all(&data)
+        .map_err(|err| format!("could not make {}: {err}", data.display()))?;
 
     let port = free_port().map_err(|err| format!("no port to start the server on: {err}"))?;
     let token = fresh_token()?;
@@ -211,7 +224,10 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         .env("DATA_DIR", data.join("data"))
         .env("BOWERBIRD_WORKER_DIR", &workers)
         .env("BOWERBIRD_NATIVE_LIB", &native)
-        .env("BOWERBIRD_REFERENCE_FRAME", data.join("reference_frame.ARW"))
+        .env(
+            "BOWERBIRD_REFERENCE_FRAME",
+            data.join("reference_frame.ARW"),
+        )
         // Inherited so the server's own log lands wherever the app's does, which is
         // the only account of what went wrong when it will not start.
         .stdout(Stdio::inherit())
@@ -226,9 +242,12 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     watch_for_update(app.clone());
     wait_until_answering(&origin)?;
     eprintln!("[bowerbird] serving this library locally on {origin}");
-    let root = tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
+    let root =
+        tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
     let local = Local { origin, token };
-    let signed_in = local.sign_in(&root).ok_or("the local server refused its own address")?;
+    let signed_in = local
+        .sign_in(&root)
+        .ok_or("the local server refused its own address")?;
     if let Ok(mut held) = LOCAL.lock() {
         *held = Some(local);
     }
@@ -241,35 +260,37 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
 /// only one of them can own it. Half a second is nothing against an update that has just
 /// downloaded a hundred megabytes, and the thread ends with the server it is watching.
 fn watch_for_update(app: tauri::AppHandle<crate::Runtime>) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(500));
-        let Ok(mut held) = RUNNING.lock() else { return };
-        // Read out of the guard before it is written to: `try_wait` borrows the child,
-        // and clearing the slot while that borrow is alive does not compile.
-        let outcome = match held.as_mut() {
-            Some(child) => child.try_wait(),
-            None => return,
-        };
-        match outcome {
-            Ok(Some(status)) => {
-                let staged = status.code() == Some(crate::update::STAGED);
-                *held = None;
-                drop(held);
-                if !staged {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let Ok(mut held) = RUNNING.lock() else { return };
+            // Read out of the guard before it is written to: `try_wait` borrows the child,
+            // and clearing the slot while that borrow is alive does not compile.
+            let outcome = match held.as_mut() {
+                Some(child) => child.try_wait(),
+                None => return,
+            };
+            match outcome {
+                Ok(Some(status)) => {
+                    let staged = status.code() == Some(crate::update::STAGED);
+                    *held = None;
+                    drop(held);
+                    if !staged {
+                        return;
+                    }
+                    match crate::update::hand_over(&app) {
+                        Ok(()) => app.exit(0),
+                        Err(why) => {
+                            eprintln!("[bowerbird] {why}");
+                            // Without its server this window can do nothing, so it starts over rather than stay.
+                            app.restart();
+                        }
+                    }
                     return;
                 }
-                match crate::update::hand_over(&app) {
-                    Ok(()) => app.exit(0),
-                    Err(why) => {
-                        eprintln!("[bowerbird] {why}");
-                        // Without its server this window can do nothing, so it starts over rather than stay.
-                        app.restart();
-                    }
-                }
-                return;
+                Ok(None) => drop(held),
+                Err(_) => return,
             }
-            Ok(None) => drop(held),
-            Err(_) => return,
         }
     });
 }
@@ -291,7 +312,9 @@ fn wait_until_answering(origin: &str) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(100));
     }
     stop();
-    Err(format!("the server did not answer on {origin} within {READY_TIMEOUT:?}"))
+    Err(format!(
+        "the server did not answer on {origin} within {READY_TIMEOUT:?}"
+    ))
 }
 
 /// The folder to offer the reader, or nothing where there would be nothing to open it with -
@@ -303,7 +326,9 @@ pub fn app_data_dir(app: tauri::AppHandle<crate::Runtime>) -> Option<String> {
 
 #[cfg(desktop)]
 fn reachable_data_dir(app: &tauri::AppHandle<crate::Runtime>) -> Option<String> {
-    data_dir(app).ok().map(|dir| dir.to_string_lossy().into_owned())
+    data_dir(app)
+        .ok()
+        .map(|dir| dir.to_string_lossy().into_owned())
 }
 
 /// Android's storage is app-private: the folder is real and nothing on the device can open it.
@@ -318,7 +343,8 @@ pub fn open_app_data_dir(app: tauri::AppHandle<crate::Runtime>) -> Result<(), St
     let dir = data_dir(&app)?;
     // A shell pointed at a hosted library never starts a server, so nothing has made this
     // yet - and a file manager handed a path that is not there opens somewhere else instead.
-    std::fs::create_dir_all(&dir).map_err(|err| format!("could not make {}: {err}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| format!("could not make {}: {err}", dir.display()))?;
     open_folder(&dir).map_err(|err| format!("could not open {}: {err}", dir.display()))
 }
 
@@ -353,14 +379,18 @@ mod tests {
 
     #[test]
     fn the_page_signs_in_with_the_parameter_the_server_reads() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/api/require_token.ts");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/api/require_token.ts");
         let server = std::fs::read_to_string(path).unwrap();
         assert!(server.contains(&format!("SIGN_IN_PARAM = '{}'", super::SIGN_IN_PARAM)));
     }
 
     #[test]
     fn the_token_goes_only_to_the_local_server() {
-        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
+        let local = Local {
+            origin: "http://127.0.0.1:1234".into(),
+            token: "secret".into(),
+        };
         assert!(local.serves("http://127.0.0.1:1234/api/libraries"));
         assert!(!local.serves("http://127.0.0.1:12345/api/libraries"));
         assert!(!local.serves("http://127.0.0.1:1234.evil.test/api"));
@@ -369,23 +399,44 @@ mod tests {
 
     #[test]
     fn signing_in_keeps_the_open_photo_and_its_query_and_fragment() {
-        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
-        let here = tauri::Url::parse("http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc#detail").unwrap();
+        let local = Local {
+            origin: "http://127.0.0.1:1234".into(),
+            token: "secret".into(),
+        };
+        let here = tauri::Url::parse(
+            "http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc#detail",
+        )
+        .unwrap();
         let signed_in = local.sign_in(&here).unwrap();
-        assert_eq!(signed_in.as_str(), "http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc&token=secret#detail");
-        assert_eq!(here.as_str(), "http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc#detail");
+        assert_eq!(
+            signed_in.as_str(),
+            "http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc&token=secret#detail"
+        );
+        assert_eq!(
+            here.as_str(),
+            "http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc#detail"
+        );
     }
 
     #[test]
     fn signing_in_replaces_every_token_from_a_previous_attempt() {
-        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
+        let local = Local {
+            origin: "http://127.0.0.1:1234".into(),
+            token: "secret".into(),
+        };
         let here = tauri::Url::parse("http://127.0.0.1:1234/photos/abc12345?token=expired&sort=taken_desc&token=wrong#detail").unwrap();
-        assert_eq!(local.sign_in(&here).unwrap().as_str(), "http://127.0.0.1:1234/photos/abc12345?sort=taken_desc&token=secret#detail");
+        assert_eq!(
+            local.sign_in(&here).unwrap().as_str(),
+            "http://127.0.0.1:1234/photos/abc12345?sort=taken_desc&token=secret#detail"
+        );
     }
 
     #[test]
     fn signing_in_refuses_every_other_origin() {
-        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
+        let local = Local {
+            origin: "http://127.0.0.1:1234".into(),
+            token: "secret".into(),
+        };
         for address in [
             "http://127.0.0.1:12345/photos/abc12345",
             "http://127.0.0.1.evil.test:1234/photos/abc12345",

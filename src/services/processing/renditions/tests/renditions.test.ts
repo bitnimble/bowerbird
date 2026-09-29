@@ -9,8 +9,22 @@ const PANORAMA: StoredRecipe = {
   kind: 'panorama',
   version: 1,
   sources: [
-    { photoId: 'a', size: [6000, 4000], rotation: [1, 0, 0, 0], focal: 5200, lens: { crop: 1 }, gain: 1 },
-    { photoId: 'b', size: [6000, 4000], rotation: [1, 0, 0, 0], focal: 5200, lens: { crop: 1 }, gain: 1 },
+    {
+      photoId: 'a',
+      size: [6000, 4000],
+      rotation: [1, 0, 0, 0],
+      focal: 5200,
+      lens: { crop: 1 },
+      gain: 1,
+    },
+    {
+      photoId: 'b',
+      size: [6000, 4000],
+      rotation: [1, 0, 0, 0],
+      focal: 5200,
+      lens: { crop: 1 },
+      gain: 1,
+    },
   ],
   projection: 'cylindrical',
   canvas: [9000, 4200],
@@ -44,7 +58,9 @@ describe('sourceFor', () => {
   it('renders anything edited, whatever the library serves', () => {
     expect(sourceFor(row({ edited: true }))).toBe('render');
     // Which for a composite includes a frame someone developed rather than the canvas itself.
-    expect(sourceFor(row({ recipe: PANORAMA, inputs: ['a.arw', 'b.arw'], edited: true }))).toBe('render');
+    expect(sourceFor(row({ recipe: PANORAMA, inputs: ['a.arw', 'b.arw'], edited: true }))).toBe(
+      'render',
+    );
   });
 
   it('renders where an input has no camera rendering to take', () => {
@@ -84,7 +100,9 @@ describe('owedOf', () => {
   // And a frame someone has developed takes both back to a render, the cameras' JPEGs having no
   // way to carry the edit (`sourceFor`).
   it('renders a composite whose frames are edited, whatever the library serves', () => {
-    expect(owedOf(row({ recipe: PANORAMA, inputs: ['a.arw', 'b.arw'], edited: true, hdr: true }))).toEqual([
+    expect(
+      owedOf(row({ recipe: PANORAMA, inputs: ['a.arw', 'b.arw'], edited: true, hdr: true })),
+    ).toEqual([
       { rendition: 'grid', hdr: false, from: 'render' },
       { rendition: 'full', hdr: true, from: 'render' },
     ]);
@@ -93,7 +111,11 @@ describe('owedOf', () => {
   // A library that renders is the case where the viewer's copy is worth having in hand: the
   // reader who opens the panorama should not be the one to wait for a demosaic per frame.
   it('owes a composite the viewers copy where the library renders', () => {
-    expect(owedOf(row({ recipe: PANORAMA, inputs: ['a.arw', 'b.arw'], librarySource: 'render', hdr: true }))).toEqual([
+    expect(
+      owedOf(
+        row({ recipe: PANORAMA, inputs: ['a.arw', 'b.arw'], librarySource: 'render', hdr: true }),
+      ),
+    ).toEqual([
       { rendition: 'grid', hdr: false, from: 'render' },
       { rendition: 'full', hdr: true, from: 'render' },
     ]);
@@ -101,8 +123,12 @@ describe('owedOf', () => {
 
   it('never keeps the grid tile in HDR', () => {
     for (const librarySource of ['embedded', 'render'] as const) {
-      const owed = owedOf(row({ librarySource, hdr: true, recipe: PANORAMA, inputs: ['a.arw', 'b.arw'] }));
-      expect(owed.filter((want) => want.rendition === 'grid').map((want) => want.hdr)).toEqual([false]);
+      const owed = owedOf(
+        row({ librarySource, hdr: true, recipe: PANORAMA, inputs: ['a.arw', 'b.arw'] }),
+      );
+      expect(owed.filter((want) => want.rendition === 'grid').map((want) => want.hdr)).toEqual([
+        false,
+      ]);
     }
   });
 });

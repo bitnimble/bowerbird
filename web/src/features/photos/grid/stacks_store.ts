@@ -37,7 +37,10 @@ export class StacksStore {
   // follows the line, so where a tile ended up on one is not arithmetic the way a
   // column is - the same reason a masonry block's height is measured rather than
   // computed (§18.3.2). One tile per open stack, and only while it is open.
-  @observable accessor stackTileBoxes = new Map<string, { x: number; width: number; height: number }>();
+  @observable accessor stackTileBoxes = new Map<
+    string,
+    { x: number; width: number; height: number }
+  >();
   /**
    * The rows the merge running right now is about, or null.
    *

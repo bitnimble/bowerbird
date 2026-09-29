@@ -8,7 +8,8 @@ registerDom();
 const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 const { MemoryRouter } = await import('react-router-dom');
 const { BulkBar } = await import('../bulk_bar');
-const { StoresProvider, useListingStore, useMarksStore } = await import('../../../../app/stores_context');
+const { StoresProvider, useListingStore, useMarksStore } =
+  await import('../../../../app/stores_context');
 const { SelectionRanges } = await import('../../selection');
 
 const invoked: { command: string; args: unknown }[] = [];

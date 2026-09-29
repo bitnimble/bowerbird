@@ -29,15 +29,18 @@ function nextVersion(requested: string | undefined): string {
   if (requested != null) {
     if (HASH.test(requested)) {
       // Semver forbids a leading zero on an all-digit prerelease, and Tauri refuses the whole version.
-      if (/^0\d*$/.test(requested)) fail(`${requested} is all digits with a leading 0: pass a longer hash`);
+      if (/^0\d*$/.test(requested))
+        fail(`${requested} is all digits with a leading 0: pass a longer hash`);
       return `0.0.0-${requested}`;
     }
     const version = requested.replace(/^v/, '');
-    if (!SEMVER.test(version)) fail(`${requested} is neither a semver version (1.2.3, 1.2.3-rc1) nor a commit hash`);
+    if (!SEMVER.test(version))
+      fail(`${requested} is neither a semver version (1.2.3, 1.2.3-rc1) nor a commit hash`);
     return version;
   }
   const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(VERSION);
-  if (parts == null) fail(`VERSION is ${VERSION}, which has no patch to increment: name the version`);
+  if (parts == null)
+    fail(`VERSION is ${VERSION}, which has no patch to increment: name the version`);
   return `${parts[1]}.${parts[2]}.${Number(parts[3]) + 1}`;
 }
 

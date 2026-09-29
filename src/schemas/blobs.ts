@@ -43,7 +43,14 @@ export type BlobQueueResponse = z.infer<typeof BlobQueueResponseSchema>;
 
 export const TransferDirectionSchema = z.enum(['push', 'pull']);
 export type TransferDirection = z.infer<typeof TransferDirectionSchema>;
-export const TransferStateSchema = z.enum(['queued', 'active', 'paused', 'done', 'failed', 'cancelled']);
+export const TransferStateSchema = z.enum([
+  'queued',
+  'active',
+  'paused',
+  'done',
+  'failed',
+  'cancelled',
+]);
 export type TransferState = z.infer<typeof TransferStateSchema>;
 
 export const TransferSchema = z.object({
@@ -64,11 +71,19 @@ export const TransfersSchema = z.array(TransferSchema);
 
 export const TransfersQuerySchema = z.object({ library_id: IdSchema.optional() });
 
-export const BlobAppendQuerySchema = z.object({ offset: z.coerce.number().int().min(0).default(0) });
+export const BlobAppendQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0).default(0),
+});
 
 export const EvictResultSchema = z.object({
   evicted: z.array(z.string()),
-  refused: z.array(z.object({ photo_id: z.string(), reason: z.string(), error_code: BackupIssueCodeSchema.optional() })),
+  refused: z.array(
+    z.object({
+      photo_id: z.string(),
+      reason: z.string(),
+      error_code: BackupIssueCodeSchema.optional(),
+    }),
+  ),
 });
 export type EvictResult = z.infer<typeof EvictResultSchema>;
 
@@ -76,7 +91,7 @@ export const BlobHashResponseSchema = z.object({ content_hash: z.string() });
 export type BlobHashResponse = z.infer<typeof BlobHashResponseSchema>;
 export const BlobRenditionStatusSchema = z.object({ current: z.boolean() });
 export type BlobRenditionStatus = z.infer<typeof BlobRenditionStatusSchema>;
-export const BlobAppendResponseSchema =z.object({ staged: z.number().int().min(0) });
+export const BlobAppendResponseSchema = z.object({ staged: z.number().int().min(0) });
 export type BlobAppendResponse = z.infer<typeof BlobAppendResponseSchema>;
 // `held` short-circuits a push whose earlier run completed but whose location
 // row has not replicated back yet: the diff would re-send, and the receiver's

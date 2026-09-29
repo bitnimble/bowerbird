@@ -37,6 +37,10 @@ export function Heading({
   const inRow = useContext(HeadingInRow);
   const As = level === 1 ? 'h1' : 'h2';
   return (
-    <As {...stylex.props(headingStyles.base, headingStyles[As], inRow && headingStyles.inline, style)}>{children}</As>
+    <As
+      {...stylex.props(headingStyles.base, headingStyles[As], inRow && headingStyles.inline, style)}
+    >
+      {children}
+    </As>
   );
 }

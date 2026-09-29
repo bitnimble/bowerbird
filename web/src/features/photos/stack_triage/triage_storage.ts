@@ -58,7 +58,8 @@ function fromWire(wire: unknown): Session | null {
   if (wire == null || typeof wire !== 'object') return null;
   const { alive, seen, stopped } = wire as Partial<Wire>;
   if (!Array.isArray(alive) || !Array.isArray(seen)) return null;
-  if (!alive.every((id) => typeof id === 'string') || !seen.every((key) => typeof key === 'string')) return null;
+  if (!alive.every((id) => typeof id === 'string') || !seen.every((key) => typeof key === 'string'))
+    return null;
   return { alive, seen: new Set(seen), stopped: stopped === true };
 }
 
@@ -76,7 +77,9 @@ export function saveSession(stackId: string, stored: StoredSession): void {
         // judged pairs, so an unbounded history is quadratic in the stack size.
         // The write is swallowed below, so an over-quota session would otherwise
         // simply stop surviving reloads with nothing said.
-        history: stored.history.slice(-HISTORY_LIMIT).map((entry) => ({ ...entry, session: toWire(entry.session) })),
+        history: stored.history
+          .slice(-HISTORY_LIMIT)
+          .map((entry) => ({ ...entry, session: toWire(entry.session) })),
         baseline: stored.baseline,
         entryPhotoId: stored.entryPhotoId,
         bounds: stored.bounds,
@@ -126,7 +129,8 @@ export function loadSession(stackId: string): StoredSession | null {
     const stored = parsed.baseline;
     if (stored != null && typeof stored === 'object') {
       for (const [id, value] of Object.entries(stored as Record<string, unknown>)) {
-        if (value === 'untriaged' || value === 'picked' || value === 'rejected') baseline[id] = value;
+        if (value === 'untriaged' || value === 'picked' || value === 'rejected')
+          baseline[id] = value;
       }
     }
 
@@ -136,7 +140,9 @@ export function loadSession(stackId: string): StoredSession | null {
       baseline,
       entryPhotoId: typeof parsed.entryPhotoId === 'string' ? parsed.entryPhotoId : null,
       bounds: asBounds(parsed.bounds),
-      failed: Array.isArray(parsed.failed) ? parsed.failed.filter((id): id is string => typeof id === 'string') : [],
+      failed: Array.isArray(parsed.failed)
+        ? parsed.failed.filter((id): id is string => typeof id === 'string')
+        : [],
     };
   } catch {
     return null;
@@ -151,7 +157,9 @@ function asBounds(value: unknown): StoredSession['bounds'] {
 }
 
 function asChoice(value: unknown): HistoryEntry['choice'] {
-  return value === 'a' || value === 'b' || value === 'neither' || value === 'stopped' ? value : 'both';
+  return value === 'a' || value === 'b' || value === 'neither' || value === 'stopped'
+    ? value
+    : 'both';
 }
 
 // A preference about the machine rather than about the stack, so `localStorage`.

@@ -23,7 +23,11 @@ ensureIcons();
 // const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
 
 const config = JSON.stringify({ version: VERSION });
-const built = spawnSync('bun', ['x', '@tauri-apps/cli', 'build', '--config', config, ...process.argv.slice(2)], {
-  stdio: 'inherit',
-});
+const built = spawnSync(
+  'bun',
+  ['x', '@tauri-apps/cli', 'build', '--config', config, ...process.argv.slice(2)],
+  {
+    stdio: 'inherit',
+  },
+);
 if (built.status !== 0) process.exit(built.status ?? 1);

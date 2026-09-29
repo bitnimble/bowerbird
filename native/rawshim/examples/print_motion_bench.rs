@@ -9,10 +9,12 @@ fn main() -> Result<(), String> {
     // The desktop presentation, which draws every light sample per canvas pixel instead of reading
     // a cached field, and so is the one whose cost follows the reader's window.
     let direct = std::env::args().any(|arg| arg == "--scene");
-    let mut args = std::env::args().skip(1).filter(|arg| arg != "--framed" && arg != "--scene");
-    let path = args
-        .next()
-        .ok_or("usage: print_motion_bench <photograph> [long-edge] [frames] [--framed] [--scene]")?;
+    let mut args = std::env::args()
+        .skip(1)
+        .filter(|arg| arg != "--framed" && arg != "--scene");
+    let path = args.next().ok_or(
+        "usage: print_motion_bench <photograph> [long-edge] [frames] [--framed] [--scene]",
+    )?;
     let long: usize = args.next().map_or(Ok(1920), |value| {
         value.parse().map_err(|_| "invalid long edge")
     })?;
@@ -52,7 +54,11 @@ fn main() -> Result<(), String> {
     let pyramid =
         rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("source pyramid")?;
-    let display = Scene { framed, ..Scene::default() }.display_size((header.width, header.height));
+    let display = Scene {
+        framed,
+        ..Scene::default()
+    }
+    .display_size((header.width, header.height));
     let scale = long as f64 / display.0.max(display.1);
     let size = Size::measured(
         (display.0 * scale).round() as usize,
@@ -73,7 +79,11 @@ fn main() -> Result<(), String> {
         ..Grade::new(
             header.width,
             header.height,
-            rawshim::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
+            rawshim::tone::Levels {
+                white: header.white,
+                peak: header.peak,
+                floor: header.floor,
+            },
             header.grade.reference_white_nits,
             Light::exactly(1000.0),
         )
@@ -104,7 +114,11 @@ fn main() -> Result<(), String> {
         ("matte", Paper::Matte, 0.65, 1000.0),
     ] {
         let mut scene = Scene {
-            presentation: if direct { Presentation::Scene } else { Presentation::Surface },
+            presentation: if direct {
+                Presentation::Scene
+            } else {
+                Presentation::Surface
+            },
             framed,
             paper,
             roughness,

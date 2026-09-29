@@ -8,16 +8,15 @@ import { LibraryActivity } from '../../../activity/library_activity';
 const LIB = 'lib-share-service';
 
 const photoRenditions = {
-    locate: () => ({
-      library: { id: LIB, rendition_hdr: false },
-      photo: { id: 'p1', file_path: null, recipe: { kind: 'file', path: 'a.arw' } },
-    }),
-  } as unknown as ConstructorParameters<typeof ShareService>[0];
+  locate: () => ({
+    library: { id: LIB, rendition_hdr: false },
+    photo: { id: 'p1', file_path: null, recipe: { kind: 'file', path: 'a.arw' } },
+  }),
+} as unknown as ConstructorParameters<typeof ShareService>[0];
 
-const shares = new ShareService(
-  photoRenditions,
-  { shareable: () => Promise.resolve(new Uint8Array()) },
-);
+const shares = new ShareService(photoRenditions, {
+  shareable: () => Promise.resolve(new Uint8Array()),
+});
 
 function stored(variant: string): void {
   const directory = path.join(dataPathForLibraryId(LIB), 'renditions', variant);

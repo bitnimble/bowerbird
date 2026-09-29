@@ -12,8 +12,12 @@ export const BinNameSchema = z
   .string()
   .trim()
   .min(1)
-  .refine((name) => !/[/\\]/.test(name), { message: 'bin folder name must be a single folder name' })
-  .refine((name) => name !== '.' && name !== '..', { message: 'bin folder name must not be "." or ".."' });
+  .refine((name) => !/[/\\]/.test(name), {
+    message: 'bin folder name must be a single folder name',
+  })
+  .refine((name) => name !== '.' && name !== '..', {
+    message: 'bin folder name must not be "." or ".."',
+  });
 
 export const CreateLibraryRequestSchema = z.object({
   root_path: z.string().min(1),
@@ -141,10 +145,15 @@ export const FolderPathSchema = z
   .string()
   .min(1)
   .transform((p) => p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, ''))
-  .refine((p) => p !== '' && !p.startsWith('/') && !/^[A-Za-z]:/.test(p), { message: 'folder must be relative to the library root' })
-  .refine((p) => !p.split('/').some((segment) => segment === '.' || segment === '..' || segment === ''), {
-    message: 'folder must not contain "." or ".." segments',
-  });
+  .refine((p) => p !== '' && !p.startsWith('/') && !/^[A-Za-z]:/.test(p), {
+    message: 'folder must be relative to the library root',
+  })
+  .refine(
+    (p) => !p.split('/').some((segment) => segment === '.' || segment === '..' || segment === ''),
+    {
+      message: 'folder must not contain "." or ".." segments',
+    },
+  );
 
 export const SetFolderRuleRequestSchema = z.object({
   folder_path: FolderPathSchema,

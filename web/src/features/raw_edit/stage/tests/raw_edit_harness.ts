@@ -5,7 +5,12 @@ import { CropStore } from '../../crop/crop_store';
 import { EditStore } from '../../edit/edit_store';
 import type { EditAdjust, EditGeometry, Proof, Region } from '../../edits';
 import { KeystoneStore } from '../../keystone/keystone_store';
-import type { LocalPrepare, LocalTileRequest, Ticked, TileKeep } from '../../local_decode/local_open';
+import type {
+  LocalPrepare,
+  LocalTileRequest,
+  Ticked,
+  TileKeep,
+} from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
 import type { PrinterProfileSource } from '../../print/print_presenter';
@@ -119,7 +124,10 @@ export class FakeDecoder {
       this.loupeDraws += 1;
     }
     const words = this.stage.width * this.stage.height;
-    const stage = this.handsBack && tick.drawStage ? new Uint8Array(words * Uint32Array.BYTES_PER_ELEMENT) : null;
+    const stage =
+      this.handsBack && tick.drawStage
+        ? new Uint8Array(words * Uint32Array.BYTES_PER_ELEMENT)
+        : null;
     return this.landed().then(() => ({ stage, loupe: null }));
   }
 
@@ -289,7 +297,9 @@ export class FakeDecoder {
   /** Every loop a picture prepared elsewhere was told to hold the search of, and every release. */
   readonly searchedAround: ([number, number][] | null)[] = [];
 
-  setSearched(drawn: [number, number][] | null): Promise<{ missing: [number, number, number, number][] | null }> {
+  setSearched(
+    drawn: [number, number][] | null,
+  ): Promise<{ missing: [number, number, number, number][] | null }> {
     this.searchedAround.push(drawn);
     return Promise.resolve({ missing: null });
   }
@@ -301,10 +311,10 @@ export class FakeDecoder {
    * Points of the output onto the picture, as the module maps them: the identity, which a neutral
    * document makes it. A test that wants a geometry in the way assigns its own.
    */
-  pictureOfOutput: (geometry: EditGeometry, points: [number, number][]) => Promise<[number, number][]> = (
-    geometry,
-    points,
-  ) => {
+  pictureOfOutput: (
+    geometry: EditGeometry,
+    points: [number, number][],
+  ) => Promise<[number, number][]> = (geometry, points) => {
     this.mappedUnder.push(geometry);
     return Promise.resolve(points);
   };
@@ -325,7 +335,13 @@ export class FakeDecoder {
   /** Every thumbnail of a fill on offer asked for. */
   readonly optionThumbnails: { region: Region; showing: Repair | null; option: Repair }[] = [];
 
-  optionThumbnail(_side: number, _ev: number | null, region: Region, showing: Repair | null, option: Repair): Promise<Blob> {
+  optionThumbnail(
+    _side: number,
+    _ev: number | null,
+    region: Region,
+    showing: Repair | null,
+    option: Repair,
+  ): Promise<Blob> {
     this.optionThumbnails.push({ region, showing, option });
     return Promise.resolve(new Blob([new Uint8Array(1)], { type: 'image/png' }));
   }
@@ -395,7 +411,17 @@ export function openEditor(): Editor {
     loupe,
     print,
     device,
-    presenter: new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print, device, PRINTER_PROFILES),
+    presenter: new RawEditPresenter(
+      edit,
+      stage,
+      crop,
+      keystone,
+      repair,
+      loupe,
+      print,
+      device,
+      PRINTER_PROFILES,
+    ),
     decoder: new FakeDecoder(keystone),
   };
   // The presenter builds all of this when a photo opens, which needs a worker holding the RAW
@@ -406,7 +432,10 @@ export function openEditor(): Editor {
 }
 
 /** The open, as the presenter holds it: the worker's handle and the settings it opened with. */
-export function openedWith({ presenter, decoder }: Editor, overrides: Record<string, unknown> = {}): void {
+export function openedWith(
+  { presenter, decoder }: Editor,
+  overrides: Record<string, unknown> = {},
+): void {
   Object.assign(presenter, {
     local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 } },
     drawable: true,

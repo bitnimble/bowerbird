@@ -6,7 +6,9 @@
 //! model, and it is why ten frames cost sixteen parameters rather than a hundred.
 
 use crate::composite_pairs::{Match, Pair};
-use crate::composition::{conjugate, cross, from_axis_angle, multiply, normalise, rotate, Projection};
+use crate::composition::{
+    Projection, conjugate, cross, from_axis_angle, multiply, normalise, rotate,
+};
 use crate::px::{Share, TUNED_ON};
 
 /// Where every source points, in one frame.
@@ -76,7 +78,11 @@ const HUBER: Share = Share::of(2, TUNED_ON);
 /// Measured here: at 1616 the solve refuses two frames that do not overlap the rest, and at 800 it
 /// places them, six pixels of slack having quietly become twelve.
 fn across(share: Share, sizes: &[[usize; 2]]) -> f64 {
-    let long = sizes.iter().map(|size| size[0].max(size[1])).max().unwrap_or(0);
+    let long = sizes
+        .iter()
+        .map(|size| size[0].max(size[1]))
+        .max()
+        .unwrap_or(0);
     share.raw() * (long.max(1) as f64)
 }
 /// A source that keeps less than this share of its matches was never really seen.
@@ -119,13 +125,19 @@ pub enum Leash {
 /// `focal0` is in the matches' own pixels, and `leash` is how far from it the answer may go.
 pub fn solve(sizes: &[[usize; 2]], pairs: &[Pair], focal0: f64, leash: Leash) -> Option<Solved> {
     let placed = reachable(sizes.len(), pairs, FITTABLE);
-    let offered: Vec<Pair> =
-        pairs.iter().filter(|p| enough(p) && placed[p.a] && placed[p.b]).cloned().collect();
+    let offered: Vec<Pair> = pairs
+        .iter()
+        .filter(|p| enough(p) && placed[p.a] && placed[p.b])
+        .cloned()
+        .collect();
 
     let held = match leash {
         // `PANO_FOCAL_HELD` moves the leash, for measuring whether it is the thing binding.
         Leash::Told => Some(
-            std::env::var("PANO_FOCAL_HELD").ok().and_then(|v| v.parse().ok()).unwrap_or(FOCAL_HELD),
+            std::env::var("PANO_FOCAL_HELD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(FOCAL_HELD),
         ),
         Leash::Assumed => Some(FOCAL_ASSUMED),
         Leash::Free => None,
@@ -156,8 +168,10 @@ pub fn solve(sizes: &[[usize; 2]], pairs: &[Pair], focal0: f64, leash: Leash) ->
     let mut kept: Vec<Pair> = grew.iter().map(|&at| offered[at].clone()).collect();
 
     // `PANO_ATTEST` moves the bar, for sweeping how wide the band is that still answers correctly.
-    let attesting: usize =
-        std::env::var("PANO_ATTEST").ok().and_then(|v| v.parse().ok()).unwrap_or(ATTESTING);
+    let attesting: usize = std::env::var("PANO_ATTEST")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(ATTESTING);
     let outlier = across(OUTLIER, sizes);
     for _ in 0..3 {
         let before: usize = kept.iter().map(|p| p.matches.len()).sum();
@@ -208,11 +222,17 @@ pub fn solve(sizes: &[[usize; 2]], pairs: &[Pair], focal0: f64, leash: Leash) ->
     let dropped: Vec<usize> = (0..sizes.len())
         .filter(|&i| {
             let touching = |set: &[&Pair]| -> usize {
-                set.iter().filter(|p| p.a == i || p.b == i).map(|p| p.matches.len()).sum()
+                set.iter()
+                    .filter(|p| p.a == i || p.b == i)
+                    .map(|p| p.matches.len())
+                    .sum()
             };
             let asked = touching(&believed);
-            let held: usize =
-                kept.iter().filter(|p| p.a == i || p.b == i).map(|p| p.matches.len()).sum();
+            let held: usize = kept
+                .iter()
+                .filter(|p| p.a == i || p.b == i)
+                .map(|p| p.matches.len())
+                .sum();
             !placed[i] || !standing[i] || asked == 0 || (held as f64) < KEPT_SHARE * asked as f64
         })
         .collect();
@@ -220,7 +240,11 @@ pub fn solve(sizes: &[[usize; 2]], pairs: &[Pair], focal0: f64, leash: Leash) ->
     answer.kept = kept
         .iter()
         .map(|pair| {
-            (pair.a, pair.b, middle(pair_errors(sizes, &answer.rotations, answer.focal, pair)))
+            (
+                pair.a,
+                pair.b,
+                middle(pair_errors(sizes, &answer.rotations, answer.focal, pair)),
+            )
         })
         .collect();
     let (mut outer, mut every): (Vec<f64>, Vec<f64>) = (Vec::new(), Vec::new());
@@ -272,7 +296,9 @@ const CANVAS_LIMIT: usize = 65535;
 /// `full_scale` is full-resolution source pixels per pixel of the plane the solve ran on, so the
 /// canvas comes out at the sources' own resolution rather than the previews'.
 pub fn framed(solved: &Solved, sizes: &[[usize; 2]], full_scale: f64) -> Framing {
-    let kept: Vec<usize> = (0..sizes.len()).filter(|i| !solved.dropped.contains(i)).collect();
+    let kept: Vec<usize> = (0..sizes.len())
+        .filter(|i| !solved.dropped.contains(i))
+        .collect();
     let rays: Vec<[f64; 3]> = kept
         .iter()
         .flat_map(|&i| border(&sizes[i]).map(move |at| (i, at)))
@@ -284,7 +310,10 @@ pub fn framed(solved: &Solved, sizes: &[[usize; 2]], full_scale: f64) -> Framing
             // field of view the render does not have, by as much as `SCALE_LEASH`. Identical for a
             // pan, where every scale is one.
             let focal = solved.focal * solved.scales[i];
-            rotate(solved.rotations[i], [(x - cx) / focal, (y - cy) / focal, 1.0])
+            rotate(
+                solved.rotations[i],
+                [(x - cx) / focal, (y - cy) / focal, 1.0],
+            )
         })
         .collect();
 
@@ -306,14 +335,20 @@ pub fn framed(solved: &Solved, sizes: &[[usize; 2]], full_scale: f64) -> Framing
     let mut low = [f64::MAX; 2];
     let mut high = [f64::MIN; 2];
     for ray in &rays {
-        let Some(at) = surface(projection, *ray) else { continue };
+        let Some(at) = surface(projection, *ray) else {
+            continue;
+        };
         for axis in 0..2 {
             low[axis] = low[axis].min(at[axis]);
             high[axis] = high[axis].max(at[axis]);
         }
     }
 
-    let span = |axis: usize| ((high[axis] - low[axis]) / radians_per_pixel).ceil().max(1.0);
+    let span = |axis: usize| {
+        ((high[axis] - low[axis]) / radians_per_pixel)
+            .ceil()
+            .max(1.0)
+    };
     let (width, height) = (span(0), span(1));
     // Shrunk as a whole rather than clipped: a canvas over the limit is a panorama at more
     // resolution than it can be held at, not a panorama of the wrong shape.
@@ -408,11 +443,7 @@ fn ray_at(framing: &Framing, canvas: [f64; 2]) -> [f64; 3] {
 ///
 /// Row by row, each column carrying how far up it has been true: that turns every row into a
 /// histogram whose largest rectangle is the classic stack walk, and the whole grid into one pass.
-pub(crate) fn largest_inside(
-    covered: &[bool],
-    across: usize,
-    down: usize,
-) -> Option<[usize; 4]> {
+pub(crate) fn largest_inside(covered: &[bool], across: usize, down: usize) -> Option<[usize; 4]> {
     let mut heights = vec![0usize; across];
     let mut best: Option<(usize, [usize; 4])> = None;
     for row in 0..down {
@@ -454,9 +485,7 @@ fn surface(projection: Projection, ray: [f64; 3]) -> Option<[f64; 2]> {
             let flat = (x * x + z * z).sqrt();
             (flat > 1e-9).then(|| [x.atan2(z), y / flat])
         }
-        Projection::Equirectangular => {
-            Some([x.atan2(z), y.atan2((x * x + z * z).sqrt())])
-        }
+        Projection::Equirectangular => Some([x.atan2(z), y.atan2((x * x + z * z).sqrt())]),
     }
 }
 
@@ -464,9 +493,8 @@ fn surface(projection: Projection, ray: [f64; 3]) -> Option<[f64; 2]> {
 /// widest point of a rotated rectangle is always one of these.
 fn border(size: &[usize; 2]) -> impl Iterator<Item = [f64; 2]> {
     let (w, h) = (size[0] as f64, size[1] as f64);
-    (0..=2).flat_map(move |i| {
-        (0..=2).map(move |j| [w * f64::from(i) / 2.0, h * f64::from(j) / 2.0])
-    })
+    (0..=2)
+        .flat_map(move |i| (0..=2).map(move |j| [w * f64::from(i) / 2.0, h * f64::from(j) / 2.0]))
 }
 
 /// A stop either way of what the headers said, and no further.
@@ -758,7 +786,9 @@ fn grown(
             }
         }
 
-        let Some((_, at, seconded, disputing)) = best else { break };
+        let Some((_, at, seconded, disputing)) = best else {
+            break;
+        };
         if std::env::var_os("PANO_TRACE").is_some() {
             let pair = &offered[at];
             let over: Vec<String> = reaching
@@ -795,12 +825,7 @@ fn grown(
 }
 
 /// What one pair's matches reproject to, one per match, in the plane's own pixels.
-fn pair_errors(
-    sizes: &[[usize; 2]],
-    rotations: &[[f64; 4]],
-    focal: f64,
-    pair: &Pair,
-) -> Vec<f64> {
+fn pair_errors(sizes: &[[usize; 2]], rotations: &[[f64; 4]], focal: f64, pair: &Pair) -> Vec<f64> {
     pair.matches
         .iter()
         .filter_map(|m| reprojection(sizes, rotations, focal, pair.a, pair.b, m))
@@ -899,8 +924,9 @@ fn fit(
     };
     // On the log, so the bound is the same fraction either way.
     let reach = held.map_or(f64::INFINITY, |fraction| (1.0 + fraction).ln());
-    let mut log_focal =
-        from.map_or(0.0f64, |standing| (standing.focal / focal0).ln().clamp(-reach, reach));
+    let mut log_focal = from.map_or(0.0f64, |standing| {
+        (standing.focal / focal0).ln().clamp(-reach, reach)
+    });
     let focal_of = move |t: f64| focal0 * t.clamp(-reach, reach).exp();
 
     let free = 3 * (n - 1) + 1;
@@ -919,9 +945,19 @@ fn fit(
     };
 
     for _ in 0..ITERATIONS {
-        let weights: Vec<f64> = residual.iter().map(|r| huber_weight(*r, knee).sqrt()).collect();
-        let jacobian =
-            derivatives(sizes, &rotations, focal_of(log_focal), slope(log_focal), pairs, free, &weights);
+        let weights: Vec<f64> = residual
+            .iter()
+            .map(|r| huber_weight(*r, knee).sqrt())
+            .collect();
+        let jacobian = derivatives(
+            sizes,
+            &rotations,
+            focal_of(log_focal),
+            slope(log_focal),
+            pairs,
+            free,
+            &weights,
+        );
 
         let mut normal = vec![0.0; free * free];
         let mut rhs = vec![0.0; free];
@@ -1021,8 +1057,10 @@ pub fn scale_each(sizes: &[[usize; 2]], pairs: &[Pair], solved: &mut Solved) {
         if solved.dropped.contains(&source) {
             continue;
         }
-        let involved: Vec<&Pair> =
-            pairs.iter().filter(|p| p.a == source || p.b == source).collect();
+        let involved: Vec<&Pair> = pairs
+            .iter()
+            .filter(|p| p.a == source || p.b == source)
+            .collect();
         if involved.is_empty() {
             continue;
         }
@@ -1146,7 +1184,10 @@ fn scaled_projected(
 ) -> Option<[f64; 2]> {
     let (fx, fy) = (sizes[from][0] as f64 / 2.0, sizes[from][1] as f64 / 2.0);
     let out = focal * scales[from];
-    let world = rotate(rotations[from], [(at[0] - fx) / out, (at[1] - fy) / out, 1.0]);
+    let world = rotate(
+        rotations[from],
+        [(at[0] - fx) / out, (at[1] - fy) / out, 1.0],
+    );
     let d = rotate(conjugate(rotations[to]), world);
     if d[2] <= 1e-9 {
         return None;
@@ -1313,7 +1354,11 @@ struct Slope {
 }
 
 impl Slope {
-    const NONE: Slope = Slope { at: [0; 7], by: [0.0; 7], used: 0 };
+    const NONE: Slope = Slope {
+        at: [0; 7],
+        by: [0.0; 7],
+        used: 0,
+    };
 
     fn put(&mut self, at: usize, by: f64) {
         self.at[self.used] = at;
@@ -1325,7 +1370,9 @@ impl Slope {
     /// the dense row gave, for a reader that wants a column rather than a row.
     #[cfg(test)]
     fn by_parameter(&self, k: usize) -> f64 {
-        (0..self.used).find(|&i| self.at[i] == k).map_or(0.0, |i| self.by[i])
+        (0..self.used)
+            .find(|&i| self.at[i] == k)
+            .map_or(0.0, |i| self.by[i])
     }
 }
 
@@ -1387,7 +1434,12 @@ fn moved_by(
     }
     // The perspective divide's own derivative, which every term below goes through.
     let over = focal / d[2];
-    let by_d = |v: [f64; 3]| [over * (v[0] - d[0] / d[2] * v[2]), over * (v[1] - d[1] / d[2] * v[2])];
+    let by_d = |v: [f64; 3]| {
+        [
+            over * (v[0] - d[0] / d[2] * v[2]),
+            over * (v[1] - d[1] / d[2] * v[2]),
+        ]
+    };
 
     // A turn of either source moves the world vector by `w x world`, seen from `to`.
     let turned = |axis: usize| {
@@ -1417,23 +1469,20 @@ fn moved_by(
         ratio * through[1] + focal_slope * d[1] / d[2],
     ];
 
-    Some(Moves { from: from_rows, to: to_rows, focal: focal_moves })
+    Some(Moves {
+        from: from_rows,
+        to: to_rows,
+        focal: focal_moves,
+    })
 }
 
 /// Every match reprojected both ways, as pixel components.
-fn residuals(
-    sizes: &[[usize; 2]],
-    rotations: &[[f64; 4]],
-    focal: f64,
-    pairs: &[Pair],
-) -> Vec<f64> {
+fn residuals(sizes: &[[usize; 2]], rotations: &[[f64; 4]], focal: f64, pairs: &[Pair]) -> Vec<f64> {
     let mut out = Vec::new();
     for pair in pairs {
         for m in &pair.matches {
-            for (from, to, at, expected) in [
-                (pair.a, pair.b, m.a, m.b),
-                (pair.b, pair.a, m.b, m.a),
-            ] {
+            for (from, to, at, expected) in [(pair.a, pair.b, m.a, m.b), (pair.b, pair.a, m.b, m.a)]
+            {
                 match projected(sizes, rotations, focal, from, to, at) {
                     Some(p) => {
                         out.push(p[0] - expected[0]);
@@ -1462,7 +1511,10 @@ fn projected(
     at: [f64; 2],
 ) -> Option<[f64; 2]> {
     let (fx, fy) = (sizes[from][0] as f64 / 2.0, sizes[from][1] as f64 / 2.0);
-    let world = rotate(rotations[from], [(at[0] - fx) / focal, (at[1] - fy) / focal, 1.0]);
+    let world = rotate(
+        rotations[from],
+        [(at[0] - fx) / focal, (at[1] - fy) / focal, 1.0],
+    );
     let d = rotate(conjugate(rotations[to]), world);
     if d[2] <= 1e-9 {
         return None;
@@ -1497,7 +1549,11 @@ fn weighted_cost(residuals: &[f64], knee: f64) -> f64 {
         .iter()
         .map(|r| {
             let size = r.abs();
-            if size <= knee { r * r } else { knee * (2.0 * size - knee) }
+            if size <= knee {
+                r * r
+            } else {
+                knee * (2.0 * size - knee)
+            }
         })
         .sum()
 }
@@ -1608,7 +1664,11 @@ fn turned_enough(m: &[[f64; 3]; 3]) -> bool {
 /// The largest eigenvalue of a symmetric 3x3, by power iteration - the same tool
 /// `smallest_eigenvector` uses, without the shift that turns it around.
 fn largest_eigenvalue(m: &[[f64; 3]; 3]) -> f64 {
-    let mut v = [0.577_350_269_189_625_7, 0.577_350_269_189_625_7, 0.577_350_269_189_625_7];
+    let mut v = [
+        0.577_350_269_189_625_7,
+        0.577_350_269_189_625_7,
+        0.577_350_269_189_625_7,
+    ];
     for _ in 0..200 {
         let next = [dot(m[0], v), dot(m[1], v), dot(m[2], v)];
         let length = (next[0] * next[0] + next[1] * next[1] + next[2] * next[2]).sqrt();
@@ -1640,8 +1700,14 @@ fn smallest_eigenvector(m: &[[f64; 3]; 3]) -> [f64; 3] {
         [m[1][0], m[1][1] + ridge, m[1][2]],
         [m[2][0], m[2][1], m[2][2] + ridge],
     ];
-    let Some(inverse) = inverted(&ridged) else { return furthest_from(m, trace) };
-    let mut v = [0.577_350_269_189_625_7, 0.577_350_269_189_625_7, 0.577_350_269_189_625_7];
+    let Some(inverse) = inverted(&ridged) else {
+        return furthest_from(m, trace);
+    };
+    let mut v = [
+        0.577_350_269_189_625_7,
+        0.577_350_269_189_625_7,
+        0.577_350_269_189_625_7,
+    ];
     for _ in 0..64 {
         let next = [dot(inverse[0], v), dot(inverse[1], v), dot(inverse[2], v)];
         let length = (next[0] * next[0] + next[1] * next[1] + next[2] * next[2]).sqrt();
@@ -1660,7 +1726,8 @@ fn inverted(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
         let (c0, c1) = ((c + 1) % 3, (c + 2) % 3);
         m[r0][c0] * m[r1][c1] - m[r0][c1] * m[r1][c0]
     };
-    let determinant = m[0][0] * cofactor(0, 0) + m[0][1] * cofactor(0, 1) + m[0][2] * cofactor(0, 2);
+    let determinant =
+        m[0][0] * cofactor(0, 0) + m[0][1] * cofactor(0, 1) + m[0][2] * cofactor(0, 2);
     // Against the matrix's own scale: a scatter of unit vectors has a trace of however many there
     // are, and its determinant is the product of three eigenvalues of that size.
     let scale = (m[0][0] + m[1][1] + m[2][2]) / 3.0;
@@ -1686,7 +1753,11 @@ fn furthest_from(m: &[[f64; 3]; 3], trace: f64) -> [f64; 3] {
             flipped[r][c] = if r == c { trace - m[r][c] } else { -m[r][c] };
         }
     }
-    let mut v = [0.577_350_269_189_625_7, 0.577_350_269_189_625_7, 0.577_350_269_189_625_7];
+    let mut v = [
+        0.577_350_269_189_625_7,
+        0.577_350_269_189_625_7,
+        0.577_350_269_189_625_7,
+    ];
     for _ in 0..200 {
         let next = [dot(flipped[0], v), dot(flipped[1], v), dot(flipped[2], v)];
         let length = (next[0] * next[0] + next[1] * next[1] + next[2] * next[2]).sqrt();
@@ -1728,7 +1799,9 @@ fn largest_quaternion(m: &[[f64; 3]; 3]) -> [f64; 4] {
         ],
     ];
     // Shifted positive so the eigenvector power iteration converges to is the largest one's.
-    let shift: f64 = (0..4).map(|i| (0..4).map(|j| n[i][j].abs()).sum::<f64>()).fold(0.0, f64::max);
+    let shift: f64 = (0..4)
+        .map(|i| (0..4).map(|j| n[i][j].abs()).sum::<f64>())
+        .fold(0.0, f64::max);
     let mut v = [1.0, 0.0, 0.0, 0.0];
     for _ in 0..300 {
         let mut next = [0.0f64; 4];
@@ -1746,7 +1819,11 @@ fn largest_quaternion(m: &[[f64; 3]; 3]) -> [f64; 4] {
 
 fn normalised(v: [f64; 3]) -> [f64; 3] {
     let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if length < 1e-12 { [0.0, 0.0, 1.0] } else { [v[0] / length, v[1] / length, v[2] / length] }
+    if length < 1e-12 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [v[0] / length, v[1] / length, v[2] / length]
+    }
 }
 
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -1762,7 +1839,10 @@ mod tests {
 
     impl Rng {
         fn next(&mut self) -> f64 {
-            self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             ((self.0 >> 11) as f64) / ((1u64 << 53) as f64)
         }
 
@@ -1804,8 +1884,13 @@ mod tests {
         let mut tries = 0;
         while out.len() < 300 && tries < 20_000 {
             tries += 1;
-            let at = [rng.between(0.0, SIZE[0] as f64), rng.between(0.0, SIZE[1] as f64)];
-            let Some(there) = projected(&sizes, truth, FOCAL, a, b, at) else { continue };
+            let at = [
+                rng.between(0.0, SIZE[0] as f64),
+                rng.between(0.0, SIZE[1] as f64),
+            ];
+            let Some(there) = projected(&sizes, truth, FOCAL, a, b, at) else {
+                continue;
+            };
             if there[0] < 0.0
                 || there[1] < 0.0
                 || there[0] >= SIZE[0] as f64
@@ -1895,8 +1980,13 @@ mod tests {
         let mut tries = 0;
         while out.len() < 300 && tries < 20_000 {
             tries += 1;
-            let at = [rng.between(0.0, size[0] as f64), rng.between(0.0, size[1] as f64)];
-            let Some(there) = projected(&sizes, &truth, focal, 0, 1, at) else { continue };
+            let at = [
+                rng.between(0.0, size[0] as f64),
+                rng.between(0.0, size[1] as f64),
+            ];
+            let Some(there) = projected(&sizes, &truth, focal, 0, 1, at) else {
+                continue;
+            };
             if there[0] < 0.0
                 || there[1] < 0.0
                 || there[0] >= size[0] as f64
@@ -1905,9 +1995,20 @@ mod tests {
                 continue;
             }
             let mut off = || rng.between(-0.3, 0.3);
-            out.push(Match { a: at, b: [there[0] + off(), there[1] + off()], peak: 0.9 });
+            out.push(Match {
+                a: at,
+                b: [there[0] + off(), there[1] + off()],
+                peak: 0.9,
+            });
         }
-        vec![Pair { a: 0, b: 1, score: 0.8, found: out.len(), matches: out, vouched: false }]
+        vec![Pair {
+            a: 0,
+            b: 1,
+            score: 0.8,
+            found: out.len(),
+            matches: out,
+            vouched: false,
+        }]
     }
 
     /// The same two frames at five draws of the noise, which is how far a free focal moves for
@@ -1917,7 +2018,9 @@ mod tests {
         (1u64..=5)
             .map(|draw| {
                 let pairs = burst_pairs(TRUTH, radians, SEED.wrapping_mul(draw));
-                solve(&sizes, &pairs, TRUTH, Leash::Free).expect("one pair solves").focal
+                solve(&sizes, &pairs, TRUTH, Leash::Free)
+                    .expect("one pair solves")
+                    .focal
             })
             .collect()
     }
@@ -1939,9 +2042,15 @@ mod tests {
             focals.iter().copied().fold(f64::NEG_INFINITY, f64::max) - low
         };
         let still = free_focals(0.2e-3);
-        assert!(spread(&still) / TRUTH > 0.25, "five free solves of one burst: {still:?}");
+        assert!(
+            spread(&still) / TRUTH > 0.25,
+            "five free solves of one burst: {still:?}"
+        );
         let apart = free_focals(3.5e-3);
-        assert!(spread(&apart) / TRUTH < 0.1, "five free solves of wider frames: {apart:?}");
+        assert!(
+            spread(&apart) / TRUTH < 0.1,
+            "five free solves of wider frames: {apart:?}"
+        );
     }
 
     /// A guess is worth less than what the file said, so it may go further from where it started -
@@ -2006,9 +2115,13 @@ mod tests {
         let sizes = vec![WIDE; 2];
         for radians in [0.2e-3, 10.0e-3] {
             let pairs = burst_pairs_on(WIDE, CORNERS_AT_HALF, radians, SEED);
-            let leashed =
-                solve(&sizes, &pairs, (1.0 + FOCAL_ASSUMED) * CORNERS_AT_HALF, Leash::Assumed)
-                    .expect("one pair solves");
+            let leashed = solve(
+                &sizes,
+                &pairs,
+                (1.0 + FOCAL_ASSUMED) * CORNERS_AT_HALF,
+                Leash::Assumed,
+            )
+            .expect("one pair solves");
             println!(
                 "{:.1} mrad, focal 15% out: radial {:.3}px, settled at {:.0} against {CORNERS_AT_HALF:.0}",
                 radians * 1e3,
@@ -2049,7 +2162,10 @@ mod tests {
             "worst anywhere {anywhere:.3}px, radial {:.3}px against {:.3}px clean",
             solved.radial_px, clean.radial_px,
         );
-        assert!(anywhere > 2.5, "the blunder was thrown out before it could be measured: {anywhere:.3}px");
+        assert!(
+            anywhere > 2.5,
+            "the blunder was thrown out before it could be measured: {anywhere:.3}px"
+        );
         assert!(
             (solved.radial_px - clean.radial_px).abs() < 0.1,
             "the middle's blunder moved the corner check: {:.3}px against {:.3}px clean",
@@ -2081,11 +2197,22 @@ mod tests {
             .flat_map(|i| (1..8).map(move |j| (i, j)))
             .map(|(i, j)| {
                 let a = [cx + (i as f64 - 4.0) * 90.0, cy + (j as f64 - 4.0) * 60.0];
-                Match { a, b: [cx + (a[0] - cx) * scale, cy + (a[1] - cy) * scale], peak: 1.0 }
+                Match {
+                    a,
+                    b: [cx + (a[0] - cx) * scale, cy + (a[1] - cy) * scale],
+                    peak: 1.0,
+                }
             })
             .collect();
         let found = matches.len();
-        let pairs = vec![Pair { a: 0, b: 1, score: 1.0, matches, found, vouched: true }];
+        let pairs = vec![Pair {
+            a: 0,
+            b: 1,
+            score: 1.0,
+            matches,
+            found,
+            vouched: true,
+        }];
         let solved = Solved {
             scales: vec![1.0; 2],
             rotations,
@@ -2163,7 +2290,10 @@ mod tests {
         sizes.push(SIZE);
         pairs.retain(|p| p.a != 2 && p.b != 2);
         scale_each(&sizes, &pairs, &mut solved);
-        assert_eq!(solved.scales[2], 1.0, "a frame no pair reaches was given a scale anyway");
+        assert_eq!(
+            solved.scales[2], 1.0,
+            "a frame no pair reaches was given a scale anyway"
+        );
     }
 
     fn kept_worst(sizes: &[[usize; 2]], pairs: &[Pair], answer: &Solved) -> f64 {
@@ -2318,7 +2448,10 @@ mod tests {
         let mut m = [[0.0f64; 3]; 3];
         for i in 0..5 {
             let pan = (i as f64 - 2.0) * 12.0_f64.to_radians();
-            let ray = rotate(multiply(tilt, from_axis_angle([0.0, pan, 0.0])), [0.0, 0.0, 1.0]);
+            let ray = rotate(
+                multiply(tilt, from_axis_angle([0.0, pan, 0.0])),
+                [0.0, 0.0, 1.0],
+            );
             for (r, row) in m.iter_mut().enumerate() {
                 for (c, cell) in row.iter_mut().enumerate() {
                     *cell += ray[r] * ray[c];
@@ -2328,7 +2461,10 @@ mod tests {
 
         let found = smallest_eigenvector(&m);
         let agreement = dot(found, truth).abs();
-        assert!(agreement > 0.999_999, "the axis came back at {found:?} rather than {truth:?}");
+        assert!(
+            agreement > 0.999_999,
+            "the axis came back at {found:?} rather than {truth:?}"
+        );
     }
 
     /// A pan about an axis that is not vertical is turned until it is - which is what levels the
@@ -2342,7 +2478,10 @@ mod tests {
 
             // The pan's true axis is the world's vertical turned by the roll, and levelling is
             // exactly the claim that it ends up on the vertical again.
-            let truth = rotate(from_axis_angle([0.0, 0.0, roll.to_radians()]), [0.0, 1.0, 0.0]);
+            let truth = rotate(
+                from_axis_angle([0.0, 0.0, roll.to_radians()]),
+                [0.0, 1.0, 0.0],
+            );
             let landed = levelled_axis(&before, &after, truth);
             assert!(
                 landed[1].abs() > 0.9995,
@@ -2379,8 +2518,10 @@ mod tests {
     #[test]
     fn a_burst_that_barely_turns_keeps_the_references_own_vertical() {
         let held = from_axis_angle([0.1, 0.2, 0.05]);
-        let mut rotations =
-            vec![held, normalise(multiply(held, from_axis_angle([0.0003, 0.0005, -0.0002])))];
+        let mut rotations = vec![
+            held,
+            normalise(multiply(held, from_axis_angle([0.0003, 0.0005, -0.0002]))),
+        ];
         straighten(&mut rotations);
 
         assert!(
@@ -2398,7 +2539,10 @@ mod tests {
             radial_px: 0.0,
         };
         let canvas = framed(&solved, &[SIZE; 2], 1.0).canvas;
-        assert!(canvas[0] < SIZE[0] * 2, "two frames on top of each other framed a {canvas:?} canvas");
+        assert!(
+            canvas[0] < SIZE[0] * 2,
+            "two frames on top of each other framed a {canvas:?} canvas"
+        );
     }
 
     /// The crop is a real rectangle of what the sources cover rather than the whole canvas, whose
@@ -2420,10 +2564,18 @@ mod tests {
 
         let framing = framed(&solved, &sizes, 1.0);
         let [left, top, right, bottom] = framing.crop;
-        assert!(right - left > 0.5 && bottom - top > 0.2, "crop {:?} keeps nothing", framing.crop);
+        assert!(
+            right - left > 0.5 && bottom - top > 0.2,
+            "crop {:?} keeps nothing",
+            framing.crop
+        );
         assert!(left >= 0.0 && top >= 0.0 && right <= 1.0 && bottom <= 1.0);
         // And it is a trim rather than the whole canvas, which is what says the wedges were found.
-        assert!(top > 0.0 || bottom < 1.0, "crop {:?} trimmed nothing off a tilted pan", framing.crop);
+        assert!(
+            top > 0.0 || bottom < 1.0,
+            "crop {:?} trimmed nothing off a tilted pan",
+            framing.crop
+        );
     }
 
     /// Ground symmetric about the canvas centre must answer a crop symmetric about it too, so the
@@ -2470,11 +2622,19 @@ mod tests {
         let (solved, sizes) = covering(140.0, 50.0);
         let framing = framed(&solved, &sizes, 4.0);
 
-        assert!(framing.canvas[0] > 4 * SIZE[0], "canvas {:?} is narrower than a pan", framing.canvas);
+        assert!(
+            framing.canvas[0] > 4 * SIZE[0],
+            "canvas {:?} is narrower than a pan",
+            framing.canvas
+        );
         assert!((framing.radians_per_pixel - 1.0 / (FOCAL * 4.0)).abs() < 1e-12);
         // Symmetric coverage, so the axis lands in the middle of what was framed.
         let middle = |axis: usize| (framing.centre[axis] - framing.canvas[axis] as f64 / 2.0).abs();
-        assert!(middle(0) < 2.0 && middle(1) < 2.0, "centre {:?} off", framing.centre);
+        assert!(
+            middle(0) < 2.0 && middle(1) < 2.0,
+            "centre {:?} off",
+            framing.centre
+        );
 
         // Every corner of every source is on the canvas, which is what "framed around them" means.
         let p = Composition {
@@ -2512,8 +2672,10 @@ mod tests {
     /// agrees with the headers changes nothing.
     #[test]
     fn a_stop_of_exposure_is_a_gain_of_two() {
-        let exposures = vec![exposure_of(Some(1.0 / 100.0), Some(8.0), Some(100.0)),
-                             exposure_of(Some(1.0 / 200.0), Some(8.0), Some(100.0))];
+        let exposures = vec![
+            exposure_of(Some(1.0 / 100.0), Some(8.0), Some(100.0)),
+            exposure_of(Some(1.0 / 200.0), Some(8.0), Some(100.0)),
+        ];
         let matched = gains(&exposures, &[(0, 1, 2.0)], 0);
         assert!((matched[0] - 1.0).abs() < 1e-9, "{matched:?}");
         assert!((matched[1] - 2.0).abs() < 1e-9, "{matched:?}");
@@ -2578,7 +2740,10 @@ mod tests {
         // And what is kept is close, rather than a compromise between truth and coincidence.
         let apart = across(PAIR_APART, &sizes);
         for (a, b, error) in &solved.kept {
-            assert!(*error < apart, "{a}-{b} was kept at {error}px, past {apart}");
+            assert!(
+                *error < apart,
+                "{a}-{b} was kept at {error}px, past {apart}"
+            );
         }
     }
 
@@ -2655,12 +2820,19 @@ mod tests {
             "rested on a pair that cannot be true: {:?}",
             solved.kept
         );
-        assert!(solved.dropped.is_empty(), "every frame is reachable, yet {:?} went", solved.dropped);
+        assert!(
+            solved.dropped.is_empty(),
+            "every frame is reachable, yet {:?} went",
+            solved.dropped
+        );
         for at in 0..truth.len() {
             let want = multiply(conjugate(truth[0]), truth[at]);
             let got = multiply(conjugate(solved.rotations[0]), solved.rotations[at]);
             let apart = degrees_between(want, got);
-            assert!(apart < 1.0, "frame {at} came back {apart:.2} degrees from where it was shot");
+            assert!(
+                apart < 1.0,
+                "frame {at} came back {apart:.2} degrees from where it was shot"
+            );
         }
     }
 
@@ -2688,6 +2860,10 @@ mod tests {
         // 3 and 4 are a pair with no way back to the root, which is a set the tree cannot span.
         let solved =
             solve(&sizes, &pairs, SIZE[0] as f64, Leash::Free).expect("the rest still solves");
-        assert_eq!(solved.dropped, vec![3, 4], "the island away from the root is what goes");
+        assert_eq!(
+            solved.dropped,
+            vec![3, 4],
+            "the island away from the root is what goes"
+        );
     }
 }

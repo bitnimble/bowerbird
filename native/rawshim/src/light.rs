@@ -213,8 +213,12 @@ impl CurveCode {
 /// 2 to 16 finite points inside the unit square, rising in x and never falling in y.
 pub fn curve_is_valid(points: &[[f64; 2]]) -> bool {
     (2..=CURVE_MAX_POINTS).contains(&points.len())
-        && points.iter().all(|p| p.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)))
-        && points.windows(2).all(|p| p[0][0] < p[1][0] && p[0][1] <= p[1][1])
+        && points
+            .iter()
+            .all(|p| p.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)))
+        && points
+            .windows(2)
+            .all(|p| p[0][0] < p[1][0] && p[0][1] <= p[1][1])
 }
 
 pub fn curve_tangents(points: &[[f64; 2]]) -> Vec<f64> {
@@ -517,10 +521,25 @@ mod tests {
     fn tone_curve_table_matches_the_editor() {
         let examples = [
             ("identity", vec![[0.0, 0.0], [1.0, 1.0]]),
-            ("s-curve", vec![[0.0, 0.0], [0.2, 0.1], [0.5, 0.5], [0.8, 0.9], [1.0, 1.0]]),
+            (
+                "s-curve",
+                vec![[0.0, 0.0], [0.2, 0.1], [0.5, 0.5], [0.8, 0.9], [1.0, 1.0]],
+            ),
             ("crushed black", vec![[0.1, 0.0], [0.35, 0.25], [1.0, 1.0]]),
-            ("lifted black and pulled white", vec![[0.0, 0.08], [0.3, 0.38], [0.7, 0.72], [1.0, 0.9]]),
-            ("flat segment", vec![[0.0, 0.0], [0.25, 0.2], [0.5, 0.2], [0.75, 0.65], [1.0, 1.0]]),
+            (
+                "lifted black and pulled white",
+                vec![[0.0, 0.08], [0.3, 0.38], [0.7, 0.72], [1.0, 0.9]],
+            ),
+            (
+                "flat segment",
+                vec![
+                    [0.0, 0.0],
+                    [0.25, 0.2],
+                    [0.5, 0.2],
+                    [0.75, 0.65],
+                    [1.0, 1.0],
+                ],
+            ),
             (
                 "Sony DSC06597 camera",
                 vec![
@@ -541,18 +560,35 @@ mod tests {
             .into_iter()
             .map(|(name, points)| {
                 let tangents = curve_tangents(&points);
-                let samples = axes.iter().map(|&x| [x, curve_at(&points, &tangents, CurveCode::from_raw(x)).raw()]).collect();
-                CurveCase { name: name.to_string(), points, tangents, samples }
+                let samples = axes
+                    .iter()
+                    .map(|&x| {
+                        [
+                            x,
+                            curve_at(&points, &tangents, CurveCode::from_raw(x)).raw(),
+                        ]
+                    })
+                    .collect();
+                CurveCase {
+                    name: name.to_string(),
+                    points,
+                    tangents,
+                    samples,
+                }
             })
             .collect();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../test/fixtures/tables/tone-curve.json");
         if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|value| value == "1") {
-            std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&built).unwrap()))
-                .expect("tone curve table writes");
+            std::fs::write(
+                &path,
+                format!("{}\n", serde_json::to_string_pretty(&built).unwrap()),
+            )
+            .expect("tone curve table writes");
             return;
         }
-        let stored: Vec<CurveCase> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let stored: Vec<CurveCase> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(stored.len(), built.len());
         for (actual, expected) in stored.iter().zip(&built) {
             assert_eq!(actual.name, expected.name);
@@ -560,36 +596,63 @@ mod tests {
             assert_eq!(actual.tangents.len(), expected.tangents.len());
             assert_eq!(actual.samples.len(), expected.samples.len());
             for (left, right) in actual.points.iter().zip(&expected.points) {
-                assert!(left.iter().zip(right).all(|(a, b)| (a - b).abs() <= 1e-9), "{} points", actual.name);
+                assert!(
+                    left.iter().zip(right).all(|(a, b)| (a - b).abs() <= 1e-9),
+                    "{} points",
+                    actual.name
+                );
             }
             for (left, right) in actual.tangents.iter().zip(&expected.tangents) {
                 assert!((left - right).abs() <= 1e-9, "{} tangents", actual.name);
             }
             for (left, right) in actual.samples.iter().zip(&expected.samples) {
-                assert!(left.iter().zip(right).all(|(a, b)| (a - b).abs() <= 1e-9), "{} samples", actual.name);
+                assert!(
+                    left.iter().zip(right).all(|(a, b)| (a - b).abs() <= 1e-9),
+                    "{} samples",
+                    actual.name
+                );
             }
         }
     }
 
     #[test]
     fn curve_code_and_monotone_tangents_match_the_shader_contract() {
-        assert!(include_str!("../../../slang/light.slang")
-            .contains(&format!("public static const float CURVE_TOP_STOPS = {:?};", CURVE_TOP.raw())));
+        assert!(
+            include_str!("../../../slang/light.slang").contains(&format!(
+                "public static const float CURVE_TOP_STOPS = {:?};",
+                CURVE_TOP.raw()
+            ))
+        );
         let pivot: f64 = include_str!("../../../slang/adjust.slang")
-            .split_once("PIVOT = {").unwrap().1
-            .split_once('}').unwrap().0.trim().parse().unwrap();
+            .split_once("PIVOT = {")
+            .unwrap()
+            .1
+            .split_once('}')
+            .unwrap()
+            .0
+            .trim()
+            .parse()
+            .unwrap();
         assert_eq!(PIVOT.raw(), pivot);
-        assert!(include_str!("../../../slang/light.slang").contains(&format!("public static const uint CURVE_POINTS = {CURVE_MAX_POINTS};")));
+        assert!(
+            include_str!("../../../slang/light.slang").contains(&format!(
+                "public static const uint CURVE_POINTS = {CURVE_MAX_POINTS};"
+            ))
+        );
         assert_eq!(CurveCode::of_white_ratio(Gain::ONE).raw(), 0.5);
         assert_eq!(CurveCode::of_white_ratio(Gain::of(CURVE_TOP)).raw(), 1.0);
         assert_eq!(CurveCode::from_raw(1.0).white_ratio(), Gain::of(CURVE_TOP));
         let points = [[0.0, 0.1], [0.3, 0.1], [0.6, 0.8], [1.0, 1.0]];
         let tangents = curve_tangents(&points);
         assert_eq!(tangents[1], 0.0);
-        let values: Vec<f64> =
-            (0..=100).map(|i| curve_at(&points, &tangents, CurveCode::from_raw(i as f64 / 100.0)).raw()).collect();
+        let values: Vec<f64> = (0..=100)
+            .map(|i| curve_at(&points, &tangents, CurveCode::from_raw(i as f64 / 100.0)).raw())
+            .collect();
         assert!(values.windows(2).all(|pair| pair[0] <= pair[1] + 1e-12));
-        assert_eq!(curve_at(&points, &tangents, CurveCode::from_raw(-1.0)).raw(), 0.1);
+        assert_eq!(
+            curve_at(&points, &tangents, CurveCode::from_raw(-1.0)).raw(),
+            0.1
+        );
         assert!(curve_at(&points, &tangents, CurveCode::from_raw(1.2)).raw() > 1.0);
     }
 

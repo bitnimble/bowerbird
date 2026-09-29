@@ -76,7 +76,13 @@ export function DialogBody({
   );
 }
 
-export function DialogColumns({ ruled = false, children }: { ruled?: boolean; children: ReactNode }): JSX.Element {
+export function DialogColumns({
+  ruled = false,
+  children,
+}: {
+  ruled?: boolean;
+  children: ReactNode;
+}): JSX.Element {
   return <div {...stylex.props(styles.columns, ruled && styles.ruled)}>{children}</div>;
 }
 

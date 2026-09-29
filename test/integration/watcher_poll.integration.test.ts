@@ -8,7 +8,12 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { LibraryWatcher } from '../../src/services/sync/watch/library_watcher';
@@ -32,10 +37,11 @@ let reestablishDuringNextSync = false;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const abs = (rel: string) => path.join(root, rel);
 const row = (filePath: string) =>
-  db.query(`SELECT id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ?`).get(filePath) as
-    | { id: string; is_missing: number }
-    | null;
-const count = () => (db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 0').get() as { n: number }).n;
+  db
+    .query(`SELECT id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ?`)
+    .get(filePath) as { id: string; is_missing: number } | null;
+const count = () =>
+  (db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 0').get() as { n: number }).n;
 
 async function settle(check: () => boolean): Promise<void> {
   for (let i = 0; i < 40 && !check(); i++) await sleep(100);
@@ -44,7 +50,12 @@ async function settle(check: () => boolean): Promise<void> {
 beforeAll(async () => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-poll-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   const photoProcessingRepo = photoProcessing(db);
   const scan = new ScanService(
     photoScan(db, photoProcessingRepo),

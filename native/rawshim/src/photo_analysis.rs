@@ -283,8 +283,16 @@ impl PhotoAnalysis {
     /// whatever it had not measured itself, and the next open would measure it again.
     pub fn filled_from(mut self, stored: &PhotoAnalysis) -> PhotoAnalysis {
         let match_is_richer = self.from_raw.matched.is_none()
-            || (self.from_raw.matched.as_ref().is_some_and(|m| m.colour.is_none())
-                && stored.from_raw.matched.as_ref().is_some_and(|m| m.colour.is_some()));
+            || (self
+                .from_raw
+                .matched
+                .as_ref()
+                .is_some_and(|m| m.colour.is_none())
+                && stored
+                    .from_raw
+                    .matched
+                    .as_ref()
+                    .is_some_and(|m| m.colour.is_some()));
         let match_basis_agrees = match (self.from_render.set, stored.from_render.set) {
             (None, None) => true,
             (Some(mine_set), Some(stored_set)) if mine_set == stored_set => {
@@ -535,7 +543,9 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
     put_f32(out, colour.delta_e);
     put_f32(out, colour.exposure.raw());
     put_u32(out, colour.curve.len() as u32);
-    for point in &colour.curve { put_f32s(out, point); }
+    for point in &colour.curve {
+        put_f32s(out, point);
+    }
     put_f32(out, colour.camera_saturation.raw());
 
     match &colour.chroma {
@@ -582,7 +592,15 @@ fn take_match(at: &mut Reader<'_>) -> Option<HdrMatch> {
             Some([red, blue])
         }
     };
-    Some(HdrMatch { lens: Lens { distortion, crop, falloff, tca }, colour })
+    Some(HdrMatch {
+        lens: Lens {
+            distortion,
+            crop,
+            falloff,
+            tca,
+        },
+        colour,
+    })
 }
 
 fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
@@ -603,9 +621,13 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     let delta_e = at.f32()?;
     let exposure = crate::light::Stops::measured(at.f32()?);
     let count = at.u32()? as usize;
-    if count > 4096 { return None; }
+    if count > 4096 {
+        return None;
+    }
     let mut curve = Vec::with_capacity(count);
-    for _ in 0..count { curve.push([at.f32()?, at.f32()?]); }
+    for _ in 0..count {
+        curve.push([at.f32()?, at.f32()?]);
+    }
     let camera_saturation = crate::light::Gain::of_ratio(at.f32()?);
 
     let (chroma, surround) = match at.u8()? {
@@ -969,7 +991,8 @@ pub(crate) mod tests {
                 delta_e: 1.83,
                 exposure: crate::light::Stops::measured(0.625),
                 curve: [[0.0, 0.04], [0.35, 0.3], [0.68, 0.72], [1.0, 1.0]]
-                    .map(|point| point.map(|value| f64::from(value as f32))).to_vec(),
+                    .map(|point| point.map(|value| f64::from(value as f32)))
+                    .to_vec(),
                 camera_saturation: crate::light::Gain::of_ratio(1.125),
                 // Densified, as every map a fit hands out is: the writer stores its coarse
                 // decimation and the reader densifies back, so this round-trips exactly.
@@ -1088,10 +1111,16 @@ pub(crate) mod tests {
         }
         assert_eq!(is_colour.curve.len(), was_colour.curve.len());
         assert_eq!(is_colour.exposure, was_colour.exposure);
-        assert_eq!(is_colour.camera_saturation.raw(), was_colour.camera_saturation.raw());
+        assert_eq!(
+            is_colour.camera_saturation.raw(),
+            was_colour.camera_saturation.raw()
+        );
         assert_eq!(is_colour.curve, was_colour.curve);
         for (read, wrote) in is_colour.curve.iter().zip(&was_colour.curve) {
-            assert!(read.iter().zip(wrote).all(|(a, b)| (a - b).abs() < 1e-6), "{read:?} against {wrote:?}");
+            assert!(
+                read.iter().zip(wrote).all(|(a, b)| (a - b).abs() < 1e-6),
+                "{read:?} against {wrote:?}"
+            );
         }
         assert!((is_colour.saturation - was_colour.saturation).abs() < 1e-6);
         assert!((is_colour.delta_e - was_colour.delta_e).abs() < 1e-6);
@@ -1383,13 +1412,24 @@ pub(crate) mod tests {
     #[test]
     fn a_stored_curve_the_grade_would_refuse_is_not_read() {
         let mut blob = everything();
-        let colour = blob.from_raw.matched.as_mut().and_then(|m| m.colour.as_mut()).expect("colour");
+        let colour = blob
+            .from_raw
+            .matched
+            .as_mut()
+            .and_then(|m| m.colour.as_mut())
+            .expect("colour");
         colour.curve = vec![[0.5, 0.0], [0.4, 1.0]];
 
         let read = decode(&encode(&blob)).expect("the blob still reads");
         let matched = read.from_raw.matched.expect("lens survives");
-        assert!(matched.colour.is_none(), "an unsorted curve reached the grade");
-        assert_eq!(matched.lens.crop, f64::from(blob.from_raw.matched.as_ref().unwrap().lens.crop as f32));
+        assert!(
+            matched.colour.is_none(),
+            "an unsorted curve reached the grade"
+        );
+        assert_eq!(
+            matched.lens.crop,
+            f64::from(blob.from_raw.matched.as_ref().unwrap().lens.crop as f32)
+        );
         assert_eq!(read.from_raw.noise.is_some(), blob.from_raw.noise.is_some());
     }
 
@@ -1399,15 +1439,31 @@ pub(crate) mod tests {
             let mut blob = everything();
             let matched = blob.from_raw.matched.as_mut().unwrap();
             matched.colour.as_mut().unwrap().curve = (0..count)
-                .map(|i| [i as f64 / count.max(1) as f64; 2]).collect();
+                .map(|i| [i as f64 / count.max(1) as f64; 2])
+                .collect();
             let crop = matched.lens.crop;
-            let read = decode(&encode(&blob)).unwrap().from_raw.matched.expect("lens survives");
+            let read = decode(&encode(&blob))
+                .unwrap()
+                .from_raw
+                .matched
+                .expect("lens survives");
             assert!(read.colour.is_none());
             assert_eq!(read.lens.crop, f64::from(crop as f32));
         }
         let mut blob = everything();
-        blob.from_raw.matched.as_mut().unwrap().colour.as_mut().unwrap().exposure = crate::light::Stops::measured(f64::NAN);
-        let read = decode(&encode(&blob)).unwrap().from_raw.matched.expect("lens survives");
+        blob.from_raw
+            .matched
+            .as_mut()
+            .unwrap()
+            .colour
+            .as_mut()
+            .unwrap()
+            .exposure = crate::light::Stops::measured(f64::NAN);
+        let read = decode(&encode(&blob))
+            .unwrap()
+            .from_raw
+            .matched
+            .expect("lens survives");
         assert!(read.colour.is_none());
     }
 
@@ -1555,29 +1611,60 @@ pub(crate) mod tests {
     fn a_partial_match_inherits_colour_only_from_the_same_render_basis() {
         let stamp = |name: &str| SetStamp::of([(name, 1.0)], 0);
         let full = PhotoAnalysis {
-            from_raw: FromRaw { matched: Some(a_match()), ..Default::default() },
-            from_render: FromRender { levels: Some(a_levels()), set: Some(stamp("a")), ..Default::default() },
-        };
-        let lens = |set, white_quantile| PhotoAnalysis {
             from_raw: FromRaw {
-                matched: Some(HdrMatch { lens: a_match().lens, colour: None }),
+                matched: Some(a_match()),
                 ..Default::default()
             },
             from_render: FromRender {
-                levels: Some(MeasuredLevels { white_quantile, ..a_levels() }),
+                levels: Some(a_levels()),
+                set: Some(stamp("a")),
+                ..Default::default()
+            },
+        };
+        let lens = |set, white_quantile| PhotoAnalysis {
+            from_raw: FromRaw {
+                matched: Some(HdrMatch {
+                    lens: a_match().lens,
+                    colour: None,
+                }),
+                ..Default::default()
+            },
+            from_render: FromRender {
+                levels: Some(MeasuredLevels {
+                    white_quantile,
+                    ..a_levels()
+                }),
                 set: Some(set),
                 ..Default::default()
             },
         };
 
-        assert!(lens(stamp("a"), a_levels().white_quantile)
-            .filled_from(&full)
-            .from_raw.matched.expect("match").colour.is_some());
-        assert!(lens(stamp("b"), a_levels().white_quantile)
-            .filled_from(&full)
-            .from_raw.matched.expect("lens").colour.is_none());
-        assert!(lens(stamp("a"), a_levels().white_quantile + 0.01)
-            .filled_from(&full)
-            .from_raw.matched.expect("lens").colour.is_none());
+        assert!(
+            lens(stamp("a"), a_levels().white_quantile)
+                .filled_from(&full)
+                .from_raw
+                .matched
+                .expect("match")
+                .colour
+                .is_some()
+        );
+        assert!(
+            lens(stamp("b"), a_levels().white_quantile)
+                .filled_from(&full)
+                .from_raw
+                .matched
+                .expect("lens")
+                .colour
+                .is_none()
+        );
+        assert!(
+            lens(stamp("a"), a_levels().white_quantile + 0.01)
+                .filled_from(&full)
+                .from_raw
+                .matched
+                .expect("lens")
+                .colour
+                .is_none()
+        );
     }
 }

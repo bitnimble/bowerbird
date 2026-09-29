@@ -49,7 +49,12 @@ function row(id: string): PhotoSummary {
 // `api` is a module singleton, so this is the seam. Answers out of `collection`
 // as it stands when the request is *answered*, not when it is made, which is
 // what makes an overlapping pair of re-reads reproducible.
-photosApi.listLibrary = (_libraryId: string, params: PhotoListParams, _signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> => {
+photosApi.listLibrary = (
+  _libraryId: string,
+  params: PhotoListParams,
+  _signal?: AbortSignal,
+  activity?: RequestActivity,
+): Promise<PhotoListResponse> => {
   activities.push(activity);
   const offset = params.offset ?? 0;
   const limit = params.limit ?? 100;
@@ -75,11 +80,24 @@ function build(): { store: ListingStore; marks: MarksStore; presenter: PhotosPre
   const store = new ListingStore(stacks);
   const marks = new MarksStore(store, stacks);
   const viewer = new ViewerStore(store, stacks);
-  const presenter = new PhotosPresenter(store, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    store,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   return { store, marks, presenter };
 }
 
-async function openAt(count: number): Promise<{ store: ListingStore; marks: MarksStore; presenter: PhotosPresenter }> {
+async function openAt(
+  count: number,
+): Promise<{ store: ListingStore; marks: MarksStore; presenter: PhotosPresenter }> {
   collection = Array.from({ length: count }, (_, i) => `p${i}`);
   const built = build();
   built.presenter.setViewport(1000, 400);

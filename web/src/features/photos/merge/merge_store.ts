@@ -1,5 +1,10 @@
 import { comparer, computed, observable } from 'mobx';
-import { DEFAULT_FEATHER, type AssemblyRecipe, type Seams, type Takes } from '../../../../../src/schemas/assembly';
+import {
+  DEFAULT_FEATHER,
+  type AssemblyRecipe,
+  type Seams,
+  type Takes,
+} from '../../../../../src/schemas/assembly';
 import { type PhotoSummary } from '../../../../../src/schemas/photos';
 import { layersOf, type Drawing, type Piece } from './merge_layers';
 import { NO_SHIFT, shiftOf, type Shift } from './merge_rect';
@@ -15,7 +20,12 @@ export interface Swatch {
 type Loop = [number, number][];
 
 /** What `MergeStore.solved` is keyed by. */
-export function seamsKey(geometry: string, feather: number, base: number, picks: readonly number[]): string {
+export function seamsKey(
+  geometry: string,
+  feather: number,
+  base: number,
+  picks: readonly number[],
+): string {
   return `${geometry}|${feather}|${base}:${picks.join(',')}`;
 }
 
@@ -64,7 +74,8 @@ export class MergeStore {
   @observable accessor showingLines = true;
   /** Whether a click seeds a tile asking for the ground in place of what is there. */
   @observable accessor removing = false;
-  @observable accessor status: 'loading' | 'analysing' | 'ready' | 'error' | 'read-only' = 'loading';
+  @observable accessor status: 'loading' | 'analysing' | 'ready' | 'error' | 'read-only' =
+    'loading';
   @observable accessor loadError: string | null = null;
   /** `[0, 1]` while `status === 'analysing'`. */
   @observable accessor progress = 0;
@@ -118,7 +129,10 @@ export class MergeStore {
   @computed get geometry(): string {
     const recipe = this.recipe;
     if (recipe == null) return '';
-    const tiles = recipe.tiles.map((loop, tile) => [loop.map((v) => recipe.vertices[v]), takesOf(recipe, tile)]);
+    const tiles = recipe.tiles.map((loop, tile) => [
+      loop.map((v) => recipe.vertices[v]),
+      takesOf(recipe, tile),
+    ]);
     return hashOf(JSON.stringify(tiles));
   }
 
@@ -176,23 +190,23 @@ export class MergeStore {
     // `pieces` scales the SVG overlay by, so the mask and the outline agree.
     const { x: sx, y: sy } = this.layerScale;
     // A tile has no corridor of its own, as `Assembly::rendered` draws one.
-    const pieces: Piece[] =
-      this.unseamed ?
-        recipe.tiles.map((loop, t) => ({
+    const pieces: Piece[] = this.unseamed
+      ? recipe.tiles.map((loop, t) => ({
           source: picks[t]!,
           loop: this.onLayer(recipe.vertices, loop),
           shift: NO_SHIFT,
           gain: 1,
           corridor: 0,
         }))
-      : drawn == null ? []
-      : drawn.seams.tiles.map((loop, p) => ({
-          source: drawn.seams.source[p]!,
-          loop: this.onLayer(drawn.seams.vertices, loop),
-          shift: shiftOf(drawn.seams.warp[p]!, sx, sy),
-          gain: drawn.seams.exposure[p]!,
-          corridor: drawn.seams.corridor[p]!,
-        }));
+      : drawn == null
+        ? []
+        : drawn.seams.tiles.map((loop, p) => ({
+            source: drawn.seams.source[p]!,
+            loop: this.onLayer(drawn.seams.vertices, loop),
+            shift: shiftOf(drawn.seams.warp[p]!, sx, sy),
+            gain: drawn.seams.exposure[p]!,
+            corridor: drawn.seams.corridor[p]!,
+          }));
     const long = Math.max(this.layerSize?.width ?? 0, this.layerSize?.height ?? 0);
     return { base, layers: layersOf(pieces, base, long, this.feather) };
   }

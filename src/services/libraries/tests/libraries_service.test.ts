@@ -1,5 +1,13 @@
 import { describe, it, expect, jest } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../../../errors';
@@ -11,12 +19,29 @@ import { containsPath, getDataPath } from '../../../utils/paths';
 import { assertNoDataDirectoryOverlap } from '../libraries_service';
 import { build, mockRepo } from './libraries_service_test_helpers';
 
-const sample: Library = { id: 'id-1', root_path: '/x', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
+const sample: Library = {
+  id: 'id-1',
+  root_path: '/x',
+  bin_name: 'Bin',
+  read_only: false,
+  name: 'lib',
+  ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
-  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
+  render_skip_full: [],
+  render_skip_max: [],
+  denoiser: 'galosh',
+  include_subfolders: true,
+  include_non_raw: false,
+  auto_stack: true,
+  auto_stack_similarity: 0.78,
+  auto_stack_window_seconds: 60,
+  last_synced_at: null,
+  photo_count: 0,
+  missing_photo_count: 0,
+  unavailable_photo_count: 0,
+  rendered_photo_count: 0,
+};
 
 describe('LibrariesService.get', () => {
   it('returns the library when present', () => {
@@ -46,18 +71,36 @@ describe('LibrariesService.delete', () => {
 describe('LibrariesService.create', () => {
   it('throws VALIDATION_ERROR when root_path is not a directory', async () => {
     const service = build(mockRepo());
-    await expect(service.create({ root_path: '/definitely/not/here', bin_name: 'Bin', read_only: false, ordering: 'taken_desc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true })).rejects.toThrow(
-      /does not exist or is not a directory/,
-    );
+    await expect(
+      service.create({
+        root_path: '/definitely/not/here',
+        bin_name: 'Bin',
+        read_only: false,
+        ordering: 'taken_desc',
+        include_subfolders: true,
+        include_non_raw: false,
+        rendition_source: 'render',
+        auto_stack: true,
+      }),
+    ).rejects.toThrow(/does not exist or is not a directory/);
   });
 
   it('throws CONFLICT when the root is already registered', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     try {
       const service = build(mockRepo({ getByRootPath: jest.fn(() => sample) }));
-      await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'taken_desc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true })).rejects.toThrow(
-        /already registered/,
-      );
+      await expect(
+        service.create({
+          root_path: root,
+          bin_name: 'Bin',
+          read_only: false,
+          ordering: 'taken_desc',
+          include_subfolders: true,
+          include_non_raw: false,
+          rendition_source: 'render',
+          auto_stack: true,
+        }),
+      ).rejects.toThrow(/already registered/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -66,11 +109,24 @@ describe('LibrariesService.create', () => {
   it('maps a UNIQUE violation lost to a create race to CONFLICT (not a raw 500)', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     const insert = jest.fn(() => {
-      throw Object.assign(new Error('UNIQUE constraint failed: libraries.root_path'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+      throw Object.assign(new Error('UNIQUE constraint failed: libraries.root_path'), {
+        code: 'SQLITE_CONSTRAINT_UNIQUE',
+      });
     });
     try {
       const service = build(mockRepo({ getByRootPath: jest.fn(() => null), insert }));
-      await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'taken_desc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true })).rejects.toMatchObject({
+      await expect(
+        service.create({
+          root_path: root,
+          bin_name: 'Bin',
+          read_only: false,
+          ordering: 'taken_desc',
+          include_subfolders: true,
+          include_non_raw: false,
+          rendition_source: 'render',
+          auto_stack: true,
+        }),
+      ).rejects.toMatchObject({
         code: 'CONFLICT',
       });
       // A root with no library for it is left as the app found it.
@@ -88,7 +144,16 @@ describe('LibrariesService.create', () => {
     try {
       const service = build(mockRepo());
       await expect(
-        service.create({ root_path: root, bin_name: null, read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true }),
+        service.create({
+          root_path: root,
+          bin_name: null,
+          read_only: false,
+          ordering: 'added_asc',
+          include_subfolders: true,
+          include_non_raw: false,
+          rendition_source: 'render',
+          auto_stack: true,
+        }),
       ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -123,7 +188,16 @@ describe('LibrariesService.create', () => {
     const insert = jest.fn();
     try {
       const service = build(mockRepo({ insert }));
-      const library = await service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true });
+      const library = await service.create({
+        root_path: root,
+        bin_name: 'Bin',
+        read_only: false,
+        ordering: 'added_asc',
+        include_subfolders: true,
+        include_non_raw: false,
+        rendition_source: 'render',
+        auto_stack: true,
+      });
 
       expect(library.root_path).toBe(root);
       expect(library.name).toBe(path.basename(root));
@@ -131,14 +205,18 @@ describe('LibrariesService.create', () => {
       expect(() => IdSchema.parse(library.id)).not.toThrow();
       // The bin folder's identity rides into the INSERT, since the row it would
       // otherwise be written to does not exist yet (§12.3).
-      expect(insert).toHaveBeenCalledWith({ ...library, identity: expect.objectContaining({ ino: expect.any(Number) }) });
+      expect(insert).toHaveBeenCalledWith({
+        ...library,
+        identity: expect.objectContaining({ ino: expect.any(Number) }),
+      });
       // The bin exists from the moment the library does.
       expect(existsSync(path.join(root, 'Bin'))).toBe(true);
       // Outside the root, keyed by library id, with every rendition directory
       // made up front rather than lazily by a writer (§6).
       const data = getDataPath(library);
       expect(containsPath(root, data)).toBe(false);
-      for (const variant of renditionVariants()) expect(existsSync(path.join(data, 'renditions', variant))).toBe(true);
+      for (const variant of renditionVariants())
+        expect(existsSync(path.join(data, 'renditions', variant))).toBe(true);
       rmSync(data, { recursive: true, force: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -154,10 +232,21 @@ describe('LibrariesService.create', () => {
     const insert = jest.fn();
     try {
       const service = build(mockRepo({ insert }));
-      const library = await service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'embedded', auto_stack: false });
+      const library = await service.create({
+        root_path: root,
+        bin_name: 'Bin',
+        read_only: false,
+        ordering: 'added_asc',
+        include_subfolders: true,
+        include_non_raw: false,
+        rendition_source: 'embedded',
+        auto_stack: false,
+      });
       expect(library.rendition_source).toBe('embedded');
       expect(library.auto_stack).toBe(false);
-      expect(insert).toHaveBeenCalledWith(expect.objectContaining({ rendition_source: 'embedded', auto_stack: false }));
+      expect(insert).toHaveBeenCalledWith(
+        expect.objectContaining({ rendition_source: 'embedded', auto_stack: false }),
+      );
       rmSync(getDataPath(library), { recursive: true, force: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -171,7 +260,16 @@ describe('LibrariesService.create', () => {
     const insert = jest.fn();
     try {
       const service = build(mockRepo({ insert }));
-      const library = await service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true });
+      const library = await service.create({
+        root_path: root,
+        bin_name: 'Bin',
+        read_only: false,
+        ordering: 'added_asc',
+        include_subfolders: true,
+        include_non_raw: false,
+        rendition_source: 'render',
+        auto_stack: true,
+      });
       expect(library.name).toBe(`${path.basename(parent)} 2025`);
     } finally {
       rmSync(parent, { recursive: true, force: true });
@@ -207,10 +305,22 @@ describe('LibrariesService.create', () => {
     const insert = jest.fn();
     try {
       writeFileSync(path.join(root, 'Bin'), '');
-      const dataDirs = (): number => (existsSync(config.dataDir) ? readdirSync(config.dataDir).length : 0);
+      const dataDirs = (): number =>
+        existsSync(config.dataDir) ? readdirSync(config.dataDir).length : 0;
       const before = dataDirs();
       const service = build(mockRepo({ insert }));
-      await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true })).rejects.toMatchObject({
+      await expect(
+        service.create({
+          root_path: root,
+          bin_name: 'Bin',
+          read_only: false,
+          ordering: 'added_asc',
+          include_subfolders: true,
+          include_non_raw: false,
+          rendition_source: 'render',
+          auto_stack: true,
+        }),
+      ).rejects.toMatchObject({
         code: 'VALIDATION_ERROR',
       });
       expect(insert).not.toHaveBeenCalled();
@@ -231,7 +341,18 @@ describe('LibrariesService.create', () => {
     try {
       mkdirSync(path.join(root, 'Bin'));
       const service = build(mockRepo({ getByRootPath: jest.fn(() => null), insert }));
-      await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true })).rejects.toThrow('nope');
+      await expect(
+        service.create({
+          root_path: root,
+          bin_name: 'Bin',
+          read_only: false,
+          ordering: 'added_asc',
+          include_subfolders: true,
+          include_non_raw: false,
+          rendition_source: 'render',
+          auto_stack: true,
+        }),
+      ).rejects.toThrow('nope');
       expect(existsSync(path.join(root, 'Bin'))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -246,10 +367,21 @@ describe('LibrariesService.create', () => {
       mkdirSync(path.join(config.dataDir, 'nested'), { recursive: true });
       const service = build(mockRepo());
       await expect(
-        service.create({ root_path: path.join(config.dataDir, 'nested'), bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true }),
+        service.create({
+          root_path: path.join(config.dataDir, 'nested'),
+          bin_name: 'Bin',
+          read_only: false,
+          ordering: 'added_asc',
+          include_subfolders: true,
+          include_non_raw: false,
+          rendition_source: 'render',
+          auto_stack: true,
+        }),
       ).rejects.toThrow(/inside DATA_DIR/);
 
-      expect(() => assertNoDataDirectoryOverlap(path.dirname(config.dataDir))).toThrow(/is inside library root/);
+      expect(() => assertNoDataDirectoryOverlap(path.dirname(config.dataDir))).toThrow(
+        /is inside library root/,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -266,7 +398,9 @@ describe('LibrariesService.delete, on disk', () => {
       writeFileSync(path.join(data, 'renditions', 'grid', 'p1.avif'), '');
       writeFileSync(path.join(root, 'a.arw'), 'raw');
 
-      const service = build(mockRepo({ getById: jest.fn(() => library), delete: jest.fn(() => true) }));
+      const service = build(
+        mockRepo({ getById: jest.fn(() => library), delete: jest.fn(() => true) }),
+      );
       await service.delete(library.id);
 
       expect(existsSync(data)).toBe(false);

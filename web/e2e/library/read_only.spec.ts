@@ -18,7 +18,9 @@ import {
 // on disk is exactly what it was before any of that happened.
 function tree(dir: string, prefix = ''): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
     const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
     if (entry.isDirectory()) Object.assign(out, tree(path.join(dir, entry.name), rel));
     else {

@@ -29,7 +29,8 @@ export function withNewId(insert: (id: string) => void): string {
       return id;
     } catch (err) {
       // Not isUniqueViolation: a duplicate root_path or folder_path must not spend draws.
-      const collided = err instanceof Error && (err as { code?: unknown }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
+      const collided =
+        err instanceof Error && (err as { code?: unknown }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
       if (!collided || attempt === MAX_ID_ATTEMPTS) throw err;
     }
   }

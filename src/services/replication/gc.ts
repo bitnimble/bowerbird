@@ -39,7 +39,9 @@ function peersToWaitFor(db: Database, libraryId: string): Vector[] {
  */
 export function collectTombstones(db: Database, libraryId: string): number {
   const peers = peersToWaitFor(db, libraryId);
-  const passed = graves(db, libraryId).filter((grave) => !peers.some((vector) => lacks(vector, grave.stamp)));
+  const passed = graves(db, libraryId).filter(
+    (grave) => !peers.some((vector) => lacks(vector, grave.stamp)),
+  );
   if (passed.length === 0) return 0;
   // The stamp is part of the match: a deletion made since the read above rewrites
   // the grave with a newer stamp nobody has acknowledged yet.
@@ -75,7 +77,10 @@ export function peersHoldingUpCollection(db: Database, libraryId: string): strin
  * as a clone.
  */
 export function forgetPeer(db: Database, libraryId: string, peerId: string): void {
-  db.query('DELETE FROM replication_peer_vectors WHERE library_id = ? AND peer_id = ?').run(libraryId, peerId);
+  db.query('DELETE FROM replication_peer_vectors WHERE library_id = ? AND peer_id = ?').run(
+    libraryId,
+    peerId,
+  );
 }
 
 /**

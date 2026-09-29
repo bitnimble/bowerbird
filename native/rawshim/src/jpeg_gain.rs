@@ -87,7 +87,11 @@ fn segments(file: &[u8]) -> Vec<Segment<'_>> {
         if length < 2 || at + 2 + length > file.len() {
             break;
         }
-        out.push(Segment { marker, at: at + 4, body: &file[at + 4..at + 2 + length] });
+        out.push(Segment {
+            marker,
+            at: at + 4,
+            body: &file[at + 4..at + 2 + length],
+        });
         at += 2 + length;
     }
     out
@@ -114,8 +118,9 @@ fn iso_segment(file: &[u8]) -> Option<&[u8]> {
 /// MPF's offsets are from the end of the `MPF\0` tag's four bytes rather than from the file's
 /// start, which is the one thing about this format that a reader gets wrong once.
 fn second_image(file: &[u8]) -> Option<&[u8]> {
-    let segment =
-        segments(file).into_iter().find(|it| it.marker == APP2 && it.body.starts_with(MPF_TAG))?;
+    let segment = segments(file)
+        .into_iter()
+        .find(|it| it.marker == APP2 && it.body.starts_with(MPF_TAG))?;
     let tiff = segment.body.get(MPF_TAG.len()..)?;
     // The offsets an entry states are relative to this point: the byte after `MPF\0`.
     let base = segment.at + MPF_TAG.len();
@@ -214,7 +219,10 @@ mod tests {
             file.extend_from_slice(&((segment.len() + 2) as u16).to_be_bytes());
             file.extend_from_slice(segment);
             file.extend_from_slice(&[0xFF, SOS]);
-            assert!(second_image(&file).is_none(), "read {length} bytes of an index");
+            assert!(
+                second_image(&file).is_none(),
+                "read {length} bytes of an index"
+            );
         }
     }
 

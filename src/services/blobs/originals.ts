@@ -103,7 +103,9 @@ export class Originals {
    * away - is one culled while somebody was working on it.
    */
   touch(photoId: string): void {
-    this.db.query('UPDATE photos SET last_accessed_at = ? WHERE id = ?').run(new Date().toISOString(), photoId);
+    this.db
+      .query('UPDATE photos SET last_accessed_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), photoId);
   }
 
   /**
@@ -121,11 +123,22 @@ export class Originals {
    * whole RAW rather than the region decode the fork exists for. Ranged reads straight off the
    * mount are the upgrade, and they want an IO seam that reaches through the FFI.
    */
-  private async fetchFromBackup(library: LibraryConfiguration, photo: BasicPhoto): Promise<boolean> {
+  private async fetchFromBackup(
+    library: LibraryConfiguration,
+    photo: BasicPhoto,
+  ): Promise<boolean> {
     const holders = this.backups.holders(library.id, photo.id);
     const damage = holders.length === 0 ? this.backups.damageOf(library.id, photo.id) : null;
-    if (damage === 'missing') throw new BackupError('backup_missing', 'This original is missing from the backup. Restore it from another copy.');
-    if (damage === 'changed') throw new BackupError('backup_changed', 'This backup copy has changed. Restore the original from another copy.');
+    if (damage === 'missing')
+      throw new BackupError(
+        'backup_missing',
+        'This original is missing from the backup. Restore it from another copy.',
+      );
+    if (damage === 'changed')
+      throw new BackupError(
+        'backup_changed',
+        'This backup copy has changed. Restore the original from another copy.',
+      );
     let failure: BackupError | null = null;
     for (const peerId of holders) {
       const peer = passivePeerOf(this.db, peerId);
@@ -142,8 +155,15 @@ export class Originals {
       if (transfer == null) return true;
       const settled = await this.transfers.settled(transfer.id);
       if (settled.state === 'done') return true;
-      log.warn('an original did not come back', { photo: photo.id, state: settled.state, err: settled.error });
-      failure = new BackupError(transferIssueCode(settled), settled.error ?? "The original couldn't be restored. Check the backup and try again.");
+      log.warn('an original did not come back', {
+        photo: photo.id,
+        state: settled.state,
+        err: settled.error,
+      });
+      failure = new BackupError(
+        transferIssueCode(settled),
+        settled.error ?? "The original couldn't be restored. Check the backup and try again.",
+      );
     }
     if (failure != null) throw failure;
     return false;

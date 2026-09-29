@@ -13,8 +13,22 @@ const RECIPE = JSON.stringify({
   kind: 'panorama',
   version: 1,
   sources: [
-    { photoId: 'photo001', size: [6000, 4000], rotation: [1, 0, 0, 0], focal: 5200, lens: { crop: 1 }, gain: 1 },
-    { photoId: 'photo002', size: [6000, 4000], rotation: [1, 0, 0, 0], focal: 5200, lens: { crop: 1 }, gain: 1 },
+    {
+      photoId: 'photo001',
+      size: [6000, 4000],
+      rotation: [1, 0, 0, 0],
+      focal: 5200,
+      lens: { crop: 1 },
+      gain: 1,
+    },
+    {
+      photoId: 'photo002',
+      size: [6000, 4000],
+      rotation: [1, 0, 0, 0],
+      focal: 5200,
+      lens: { crop: 1 },
+      gain: 1,
+    },
   ],
   projection: 'cylindrical',
   canvas: [9000, 4200],
@@ -36,7 +50,9 @@ function composite(peer: Peer, id: string): void {
 
 function logged(peer: Peer, rowId: string): string[] {
   const rows = peer.db
-    .query('SELECT entity FROM replication_log WHERE library_id = ? AND row_id = ? AND deleted = 0 ORDER BY entity')
+    .query(
+      'SELECT entity FROM replication_log WHERE library_id = ? AND row_id = ? AND deleted = 0 ORDER BY entity',
+    )
     .all(LIB, rowId) as { entity: string }[];
   return rows.map((row) => row.entity);
 }
@@ -71,7 +87,9 @@ describe('a panorama', () => {
       },
     ]);
 
-    const row = peer.db.query('SELECT recipe, is_missing FROM photos WHERE id = ?').get('pano0001') as {
+    const row = peer.db
+      .query('SELECT recipe, is_missing FROM photos WHERE id = ?')
+      .get('pano0001') as {
       recipe: string;
       is_missing: number;
     };

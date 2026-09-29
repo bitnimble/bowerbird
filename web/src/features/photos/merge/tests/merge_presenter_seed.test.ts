@@ -10,7 +10,12 @@ import { MergePresenter } from '../merge_presenter';
 import { MergePresenterStrings } from '../merge_presenter.strings';
 import { loadMergeSession } from '../merge_storage';
 import { MergeStore } from '../merge_store';
-import { assemblyRecipeFixture, FIXTURE_SEEDS, NO_COMPOSITOR, triangleSeams } from './fixtures/assembly_recipe';
+import {
+  assemblyRecipeFixture,
+  FIXTURE_SEEDS,
+  NO_COMPOSITOR,
+  triangleSeams,
+} from './fixtures/assembly_recipe';
 
 beforeEach(() => {
   globalThis.sessionStorage = new MemoryStorage();
@@ -27,7 +32,11 @@ function build(): { store: MergeStore; presenter: MergePresenter } {
     store.unseamed = true;
     store.status = 'ready';
   });
-  const presenter = new MergePresenter(store, new ToastsPresenter(new ToastsStore()), NO_COMPOSITOR);
+  const presenter = new MergePresenter(
+    store,
+    new ToastsPresenter(new ToastsStore()),
+    NO_COMPOSITOR,
+  );
   return { store, presenter };
 }
 
@@ -122,7 +131,10 @@ test('a read-only page and an unloaded one seed nothing', () => {
   expect(store.recipe!.tiles).toHaveLength(2);
 
   const empty = new MergeStore();
-  new MergePresenter(empty, new ToastsPresenter(new ToastsStore()), NO_COMPOSITOR).seed({ x: 0, y: 0 });
+  new MergePresenter(empty, new ToastsPresenter(new ToastsStore()), NO_COMPOSITOR).seed({
+    x: 0,
+    y: 0,
+  });
   expect(empty.recipe).toBeNull();
 });
 
@@ -346,7 +358,8 @@ test('pieces of one frame read from different places are layers of their own, ea
   presenter.pick(0, 1);
   await settled();
 
-  const half = (loop: [number, number][]): [number, number][] => loop.map(([x, y]) => [x / 2, y / 2]);
+  const half = (loop: [number, number][]): [number, number][] =>
+    loop.map(([x, y]) => [x / 2, y / 2]);
   expect(drawn.at(-1)).toEqual([
     {
       source: 1,
@@ -438,7 +451,9 @@ test('a request that fails says so, and is asked again once the page wants somet
   presenter.pick(0, 1);
   await settled();
   expect(asked).toHaveLength(1);
-  expect(toasts.toasts.map(({ message }) => message)).toEqual([MergePresenterStrings.couldNotFindSeams()]);
+  expect(toasts.toasts.map(({ message }) => message)).toEqual([
+    MergePresenterStrings.couldNotFindSeams(),
+  ]);
 
   presenter.hoverTile(0);
   presenter.redraw();
@@ -475,7 +490,10 @@ test('a set refused inside a request is not asked for again, and the rest are ke
     });
   };
   runInAction(() => {
-    store.recipe = { ...store.recipe!, sources: [...store.recipe!.sources, store.recipe!.sources[0]!] };
+    store.recipe = {
+      ...store.recipe!,
+      sources: [...store.recipe!.sources, store.recipe!.sources[0]!],
+    };
   });
 
   presenter.seed({ x: 250, y: 250 });

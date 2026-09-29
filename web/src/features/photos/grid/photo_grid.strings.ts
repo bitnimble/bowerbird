@@ -3,12 +3,20 @@ import { type CompositeKind } from '../../../../../src/schemas/photos';
 export const PhotoGridStrings = {
   // A composite is named by what it is: the photograph the row happens to be drawn from is one
   // frame of several and its name says nothing about the picture on the tile.
-  tile: (selected: boolean, stackSize: number | null, filename: string, composite: CompositeKind | null) =>
+  tile: (
+    selected: boolean,
+    stackSize: number | null,
+    filename: string,
+    composite: CompositeKind | null,
+  ) =>
     `${selected ? 'selected, ' : ''}${
-      stackSize == null ? `photo ${filename}`
-      : composite === 'panorama' ? `panorama of ${stackSize} photos`
-      : composite === 'assembly' ? `merge of ${stackSize} photos`
-      : `stack of ${stackSize}, photo ${filename}`
+      stackSize == null
+        ? `photo ${filename}`
+        : composite === 'panorama'
+          ? `panorama of ${stackSize} photos`
+          : composite === 'assembly'
+            ? `merge of ${stackSize} photos`
+            : `stack of ${stackSize}, photo ${filename}`
     }`,
   pick: (filename: string) => `Select photo ${filename}`,
   /**

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { CaptureSequenceKindSchema } from './capture_sequence';
-import { OrderingSchema, PaginationSchema, PhotoIdListSchema, RenditionSourceSchema, SoftDeleteFilterSchema, IdSchema } from './common';
+import {
+  OrderingSchema,
+  PaginationSchema,
+  PhotoIdListSchema,
+  RenditionSourceSchema,
+  SoftDeleteFilterSchema,
+  IdSchema,
+} from './common';
 import { JobSchema } from './jobs';
 import { StoredRecipeSchema } from './recipes';
 import { ViewerRenditionSchema } from './settings';
@@ -10,11 +17,19 @@ import { ViewerRenditionSchema } from './settings';
 export const TriageSchema = z.enum(['untriaged', 'picked', 'rejected']);
 export type Triage = z.infer<typeof TriageSchema>;
 
-export const CompositeKindSchema = z.enum(['panorama', 'assembly', 'exposureBracket', 'focusBracket', 'pixelShift']);
+export const CompositeKindSchema = z.enum([
+  'panorama',
+  'assembly',
+  'exposureBracket',
+  'focusBracket',
+  'pixelShift',
+]);
 export type CompositeKind = z.infer<typeof CompositeKindSchema>;
 
 /** Every composite kind, as the list an SQL `IN` takes. */
-export const COMPOSITE_KINDS_SQL = CompositeKindSchema.options.map((kind) => `'${kind}'`).join(', ');
+export const COMPOSITE_KINDS_SQL = CompositeKindSchema.options
+  .map((kind) => `'${kind}'`)
+  .join(', ');
 
 export const PhotoSummarySchema = z.object({
   id: IdSchema,
@@ -251,64 +266,67 @@ export type PhotoMarks = z.infer<typeof PhotoMarksSchema>;
 
 const CommaListSchema = z
   .string()
-  .transform((s) => s.split(',').map((v) => v.trim()).filter((v) => v !== ''))
+  .transform((s) =>
+    s
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => v !== ''),
+  )
   .pipe(z.array(z.string()).min(1));
 
 // Boolean query params use stringbool() so ?is_missing=false parses as false.
-export const PhotoListQuerySchema = PaginationSchema
-  .extend(SoftDeleteFilterSchema.shape)
-  .extend({
-    // Overrides the collection's stored ordering for this request only. The web
-    // client does not send it - it sorts by editing the collection (§18.3.1), so
-    // that the sort is the same on the next device - and this is for a caller
-    // that wants one page in a different order without changing anything.
-    ordering: OrderingSchema.optional(),
-    // Case-insensitive substring match on file_path: how a photographer looks a
-    // frame up, by filename.
-    q: z.string().min(1).optional(),
-    rated: z.stringbool().optional(),
-    // Comma-separated verdicts to include, e.g. `triage=untriaged,picked` for the
-    // default gallery view that hides rejects. Omitted means all three.
-    triage: z
-      .string()
-      .transform((s) => s.split(',').map((v) => v.trim()))
-      .pipe(z.array(TriageSchema).min(1))
-      .optional(),
-    is_missing: z.stringbool().optional(),
-    // Includes the photographs put away, which are otherwise left out: hiding is the default a
-    // listing starts at rather than a slice of it. Only the asking form is a chip and honours
-    // `match`, so `is_hidden=true&triage=picked&match=any` is one grid holding both.
-    is_hidden: z.stringbool().optional(),
-    no_shoot: z.stringbool().optional(),
-    // Selects *only* (or only non-) soft-deleted rows, where include_deleted just
-    // widens the default exclusion. `include_deleted=true&is_deleted=true` is the
-    // Bin view; without this pair a client can ask for "deleted and live" but
-    // never for "deleted alone".
-    is_deleted: z.stringbool().optional(),
-    // Inclusive YYYY-MM-DD bounds on when the photo was taken.
-    taken_from: z.iso.date().optional(),
-    taken_to: z.iso.date().optional(),
-    // Comma-separated bodies and lenses, spelled as the RAW header spelled them.
-    camera_models: CommaListSchema.optional(),
-    lens_models: CommaListSchema.optional(),
-    // Comma-separated label ids, every one of which a photo must carry.
-    labels: CommaListSchema.optional(),
-    // How rated/triage/is_missing/is_hidden combine. 'any' is what makes a
-    // custom filter like "picks, unrated or missing" mean a union rather than an
-    // intersection, which as an intersection is almost always empty.
-    match: z.enum(['all', 'any']).optional(),
-    // Whether to answer with the total. Counted unless this says otherwise, so a
-    // caller that wants one page and its size asks for nothing special; a client
-    // walking a collection block by block turns it off after the first, because
-    // the count is a scan no ordering index covers and the answer cannot move
-    // underneath it.
-    count: z.stringbool().optional(),
-    // Every photograph of a stack as a row of its own, rather than the stack as
-    // one row (§19.5.4). Must be carried by every question about the same
-    // listing - a selection, a position lookup - or a position means one
-    // photograph to the client and another here.
-    expand_stacks: z.stringbool().optional(),
-  });
+export const PhotoListQuerySchema = PaginationSchema.extend(SoftDeleteFilterSchema.shape).extend({
+  // Overrides the collection's stored ordering for this request only. The web
+  // client does not send it - it sorts by editing the collection (§18.3.1), so
+  // that the sort is the same on the next device - and this is for a caller
+  // that wants one page in a different order without changing anything.
+  ordering: OrderingSchema.optional(),
+  // Case-insensitive substring match on file_path: how a photographer looks a
+  // frame up, by filename.
+  q: z.string().min(1).optional(),
+  rated: z.stringbool().optional(),
+  // Comma-separated verdicts to include, e.g. `triage=untriaged,picked` for the
+  // default gallery view that hides rejects. Omitted means all three.
+  triage: z
+    .string()
+    .transform((s) => s.split(',').map((v) => v.trim()))
+    .pipe(z.array(TriageSchema).min(1))
+    .optional(),
+  is_missing: z.stringbool().optional(),
+  // Includes the photographs put away, which are otherwise left out: hiding is the default a
+  // listing starts at rather than a slice of it. Only the asking form is a chip and honours
+  // `match`, so `is_hidden=true&triage=picked&match=any` is one grid holding both.
+  is_hidden: z.stringbool().optional(),
+  no_shoot: z.stringbool().optional(),
+  // Selects *only* (or only non-) soft-deleted rows, where include_deleted just
+  // widens the default exclusion. `include_deleted=true&is_deleted=true` is the
+  // Bin view; without this pair a client can ask for "deleted and live" but
+  // never for "deleted alone".
+  is_deleted: z.stringbool().optional(),
+  // Inclusive YYYY-MM-DD bounds on when the photo was taken.
+  taken_from: z.iso.date().optional(),
+  taken_to: z.iso.date().optional(),
+  // Comma-separated bodies and lenses, spelled as the RAW header spelled them.
+  camera_models: CommaListSchema.optional(),
+  lens_models: CommaListSchema.optional(),
+  // Comma-separated label ids, every one of which a photo must carry.
+  labels: CommaListSchema.optional(),
+  // How rated/triage/is_missing/is_hidden combine. 'any' is what makes a
+  // custom filter like "picks, unrated or missing" mean a union rather than an
+  // intersection, which as an intersection is almost always empty.
+  match: z.enum(['all', 'any']).optional(),
+  // Whether to answer with the total. Counted unless this says otherwise, so a
+  // caller that wants one page and its size asks for nothing special; a client
+  // walking a collection block by block turns it off after the first, because
+  // the count is a scan no ordering index covers and the answer cannot move
+  // underneath it.
+  count: z.stringbool().optional(),
+  // Every photograph of a stack as a row of its own, rather than the stack as
+  // one row (§19.5.4). Must be carried by every question about the same
+  // listing - a selection, a position lookup - or a position means one
+  // photograph to the client and another here.
+  expand_stacks: z.stringbool().optional(),
+});
 export type PhotoListQuery = z.infer<typeof PhotoListQuerySchema>;
 
 // The same filters as a list query, in JSON rather than in a query string, so a
@@ -357,9 +375,15 @@ const PhotoSelectionFields = z.object({
     // guarantees. It also bounds the work: overlapping runs could name the same
     // photo any number of times, so ten thousand copies of one whole-library run
     // would resolve to ten thousand times the library's ids.
-    .refine((ranges) => ranges.every((range, i) => range.end >= range.start && (i === 0 || range.start > ranges[i - 1]!.end)), {
-      message: 'ranges must be ascending, non-overlapping, and end at or after they start',
-    }),
+    .refine(
+      (ranges) =>
+        ranges.every(
+          (range, i) => range.end >= range.start && (i === 0 || range.start > ranges[i - 1]!.end),
+        ),
+      {
+        message: 'ranges must be ascending, non-overlapping, and end at or after they start',
+      },
+    ),
   // Photos picked out of an open stack. A collapsed listing gives a member no
   // position of its own (§19.6.1), so these travel by id beside the runs rather
   // than as a selection of their own - one selection covers both, and one action
@@ -418,7 +442,9 @@ export type PhotoModelsRequest = z.infer<typeof PhotoModelsRequestSchema>;
 // then be greyed rather than offered, the combination being one that lists
 // nothing. Bounded by what was actually shot, so a working library is tens of rows.
 export const PhotoModelsResponseSchema = z.object({
-  pairs: z.array(z.object({ camera_model: z.string().nullable(), lens_model: z.string().nullable() })),
+  pairs: z.array(
+    z.object({ camera_model: z.string().nullable(), lens_model: z.string().nullable() }),
+  ),
 });
 export type PhotoModelsResponse = z.infer<typeof PhotoModelsResponseSchema>;
 
@@ -468,7 +494,10 @@ export type PhotoRangeRequest = z.infer<typeof PhotoRangeRequestSchema>;
 // A bin also carries the id to stamp the rows it takes with, so its undo can
 // name the operation. Generated by the client, so the undo survives an answer
 // that never arrives.
-export const DeletePhotosRequestSchema = z.object({ target: PhotoTargetSchema, batch: IdSchema.optional() });
+export const DeletePhotosRequestSchema = z.object({
+  target: PhotoTargetSchema,
+  batch: IdSchema.optional(),
+});
 export type DeletePhotosRequest = z.infer<typeof DeletePhotosRequestSchema>;
 
 export const MarkPhotosRequestSchema = PhotoMarksSchema.extend({ target: PhotoTargetSchema });

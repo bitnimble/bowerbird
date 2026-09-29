@@ -26,14 +26,22 @@ fn main() {
         at += 1;
     }
     let header = std::str::from_utf8(&bytes[..at]).unwrap();
-    let dims: Vec<usize> =
-        header.split_whitespace().skip(1).take(2).map(|v| v.parse().unwrap()).collect();
+    let dims: Vec<usize> = header
+        .split_whitespace()
+        .skip(1)
+        .take(2)
+        .map(|v| v.parse().unwrap())
+        .collect();
     let (width, height, data) = (dims[0], dims[1], &bytes[at..]);
     let panel = (width - 8) / 2;
     let x1 = x1.min(panel);
     let px = |x: usize, y: usize, ours: bool| -> [f64; 3] {
         let i = (y * width + x + if ours { panel + 8 } else { 0 }) * 3;
-        [f64::from(data[i]), f64::from(data[i + 1]), f64::from(data[i + 2])]
+        [
+            f64::from(data[i]),
+            f64::from(data[i + 1]),
+            f64::from(data[i + 2]),
+        ]
     };
     let luma = |v: &[f64; 3]| 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
 
@@ -95,7 +103,10 @@ fn main() {
     eprintln!("{columns} columns with an edge in both panels");
     for (s, name) in ["left", "middle", "right", "all"].iter().enumerate() {
         let (sum, n) = shifts[s];
-        eprintln!("{name}: our edge sits {:+.1}px from the camera's", sum / n.max(1.0));
+        eprintln!(
+            "{name}: our edge sits {:+.1}px from the camera's",
+            sum / n.max(1.0)
+        );
     }
     for (s, name) in ["left", "middle", "right", "all"].iter().enumerate() {
         println!("== {name}");
@@ -111,7 +122,12 @@ fn main() {
                 b as isize * BIN - REACH,
                 ours[0] / lo - cam[0] / lc,
                 ours[2] / lo - cam[2] / lc,
-                cam[0], cam[1], cam[2], ours[0], ours[1], ours[2],
+                cam[0],
+                cam[1],
+                cam[2],
+                ours[0],
+                ours[1],
+                ours[2],
             );
         }
     }

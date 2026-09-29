@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../../../errors';
 import { Logger } from '../../../logger';
-import { EXPORT_FORMATS, exportFilename, honoured, type ExportOptions } from '../../../schemas/export';
+import {
+  EXPORT_FORMATS,
+  exportFilename,
+  honoured,
+  type ExportOptions,
+} from '../../../schemas/export';
 import { soleInputOf } from '../../../schemas/recipes';
 import { deleteScratchDirectory } from '../../../utils/deletions';
 import type { Originals } from '../../blobs/originals';
@@ -91,18 +96,34 @@ export class ExportService {
     const options = honoured(requested);
     const started = performance.now();
     log.info('export started', {
-      photo: photoId, format: options.format, longEdge: options.longEdge, quality: options.quality,
-      hdr: options.exportHdr, gainMap: options.gainMap, edits: options.includeEdits,
-      halfSize: options.halfSize, thumbnail: withThumbnail,
+      photo: photoId,
+      format: options.format,
+      longEdge: options.longEdge,
+      quality: options.quality,
+      hdr: options.exportHdr,
+      gainMap: options.gainMap,
+      edits: options.includeEdits,
+      halfSize: options.halfSize,
+      thumbnail: withThumbnail,
     });
     const { library } = this.photoRenditions.locate(photoId);
     const finish = this.activity.begin(library.id, 'exporting', photoId);
     try {
       const exported = await this.render(photoId, options, withThumbnail, onProgress);
-      log.info('export finished', { photo: photoId, format: options.format, bytes: exported.bytes.byteLength, ms: Math.round(performance.now() - started) });
+      log.info('export finished', {
+        photo: photoId,
+        format: options.format,
+        bytes: exported.bytes.byteLength,
+        ms: Math.round(performance.now() - started),
+      });
       return exported;
     } catch (err) {
-      log.error('export failed', { photo: photoId, format: options.format, ms: Math.round(performance.now() - started), err });
+      log.error('export failed', {
+        photo: photoId,
+        format: options.format,
+        ms: Math.round(performance.now() - started),
+        err,
+      });
       throw err;
     } finally {
       finish();
@@ -137,7 +158,12 @@ export class ExportService {
     // for it means, the composite being a row of its own to ask for.
     const panorama = this.panoramas?.renderable(photoId) ?? null;
     const render = (outputPath: string, settings: ExportOptions, tile?: string): Promise<void> => {
-      log.info('export rendering', { photo: photoId, source: panorama == null ? 'original' : 'composite', hdr: settings.exportHdr, longEdge: settings.longEdge });
+      log.info('export rendering', {
+        photo: photoId,
+        source: panorama == null ? 'original' : 'composite',
+        hdr: settings.exportHdr,
+        longEdge: settings.longEdge,
+      });
       if (panorama != null) {
         return this.processing.renderCompositeExport(
           photoId,
@@ -151,12 +177,14 @@ export class ExportService {
       }
       // Neither a file nor a recipe this build can compose, which is a row from a peer running a
       // later one. There is nothing to render, and saying so beats decoding a path that is not.
-      if (original == null) throw new AppError('VALIDATION_ERROR', `nothing here can render ${photoId}`);
+      if (original == null)
+        throw new AppError('VALIDATION_ERROR', `nothing here can render ${photoId}`);
       return this.processing.renderExport(original, photoId, library, outputPath, settings, tile);
     };
     // The file's own name where there is one, so an export lands beside the frame it came from;
     // the id otherwise, a composite having no filename of its own to be named after.
-    const named = panorama != null ? `panorama-${photoId}` : (soleInputOf(photo.recipe) ?? photo.id);
+    const named =
+      panorama != null ? `panorama-${photoId}` : (soleInputOf(photo.recipe) ?? photo.id);
 
     const scratch = await mkdtemp(path.join(tmpdir(), 'bowerbird-export-'));
     try {
@@ -172,12 +200,14 @@ export class ExportService {
       // rather than the whole of it.
       const share = (1 - ENCODE_SHARE) / (options.gainMap ? 2 : 1);
       await this.watched(0, share, onProgress, () => render(rendered, options, tile));
-      if (!options.gainMap) log.info('export encoding', { photo: photoId, format: options.format, gainMap: false });
+      if (!options.gainMap)
+        log.info('export encoding', { photo: photoId, format: options.format, gainMap: false });
       const bytes = options.gainMap
         ? await this.withGainMap(
             scratch,
             rendered,
-            (outputPath, settings) => this.watched(share, share, onProgress, () => render(outputPath, settings)),
+            (outputPath, settings) =>
+              this.watched(share, share, onProgress, () => render(outputPath, settings)),
             options,
             photoId,
           )
@@ -243,7 +273,10 @@ export class ExportService {
     if (options.format !== 'avif' && options.format !== 'jpeg') {
       throw new AppError('VALIDATION_ERROR', `a gain map in ${options.format} is not built yet`);
     }
-    const quality = encoderQuality(options.format === 'avif' ? 'avif-sdr' : 'jpeg', options.quality);
+    const quality = encoderQuality(
+      options.format === 'avif' ? 'avif-sdr' : 'jpeg',
+      options.quality,
+    );
     log.info('export encoding', { photo: photoId, format: options.format, gainMap: true });
     const speed = options.format === 'avif' ? this.settings.get().avif_speed : 0;
     return new Uint8Array(writeGainMap(base, alternate, options.format, quality, speed));
@@ -278,7 +311,11 @@ export class ExportService {
         return new Uint8Array(exportStill(rendered, options.exportHdr ? 'png-hdr' : 'png'));
       case 'jxl':
         return new Uint8Array(
-          exportStill(rendered, options.exportHdr ? 'jxl-hdr' : 'jxl', encoderQuality('jxl', options.quality)),
+          exportStill(
+            rendered,
+            options.exportHdr ? 'jxl-hdr' : 'jxl',
+            encoderQuality('jxl', options.quality),
+          ),
         );
       case 'tiff':
         return new Uint8Array(exportStill(rendered, 'tiff'));

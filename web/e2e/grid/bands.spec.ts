@@ -18,7 +18,10 @@ import {
 // aspect ratio against a stretched grid row, and a capped flex line - so this one
 // runs in Firefox as well as Chromium (`playwright.config.ts`). Its own library,
 // since the projects share a catalogue and each needs to be the one that stacked it.
-const FIXTURE = path.join(path.dirname(new URL(import.meta.url).pathname), '../../../test/fixtures/DSC02981.ARW');
+const FIXTURE = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  '../../../test/fixtures/DSC02981.ARW',
+);
 const NAMES = ['DSC09001.ARW', 'DSC09002.ARW'];
 
 // Both members are portrait, which is the shape that stretched a masonry band.
@@ -38,16 +41,23 @@ const box = async (locator: import('@playwright/test').Locator) => (await locato
 // cell edge: its members are the collection's tiles at the collection's places, and
 // they hold their own inset (`TILE_PAD`), so its ring lands on no photograph. What
 // this asserts is that none of them hangs *outside* it, in any view.
-async function expectInsetFromBand(page: import('@playwright/test').Page, where: string): Promise<void> {
+async function expectInsetFromBand(
+  page: import('@playwright/test').Page,
+  where: string,
+): Promise<void> {
   const band = await box(bands(page));
   const members = await bands(page).getByRole('listitem').all();
   for (const locator of members) {
     const member = await box(locator);
     expect(member.height, `${where}: a member with no height`).toBeGreaterThan(0);
     expect(member.y, `${where}: top edge`).toBeGreaterThanOrEqual(band.y - 0.5);
-    expect(member.y + member.height, `${where}: bottom edge`).toBeLessThanOrEqual(band.y + band.height + 0.5);
+    expect(member.y + member.height, `${where}: bottom edge`).toBeLessThanOrEqual(
+      band.y + band.height + 0.5,
+    );
     expect(member.x, `${where}: left edge`).toBeGreaterThanOrEqual(band.x - 0.5);
-    expect(member.x + member.width, `${where}: right edge`).toBeLessThanOrEqual(band.x + band.width + 0.5);
+    expect(member.x + member.width, `${where}: right edge`).toBeLessThanOrEqual(
+      band.x + band.width + 0.5,
+    );
   }
 }
 

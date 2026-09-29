@@ -20,7 +20,13 @@ const ROW_H = LIST_ROW_H + GRID_GAP;
 const AT = 3;
 
 function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoSummary {
-  return { id, width: 3000, height: 2000, stack_id: stackId, stack_size: stackSize } as unknown as PhotoSummary;
+  return {
+    id,
+    width: 3000,
+    height: 2000,
+    stack_id: stackId,
+    stack_size: stackSize,
+  } as unknown as PhotoSummary;
 }
 
 const MEMBERS = [photo('m0', 's1', 3), photo('m1', 's1', 3), photo('m2', 's1', 3)];
@@ -38,7 +44,18 @@ function build(stackSize: number): {
   const listing = new ListingStore(store);
   const marks = new MarksStore(listing, store);
   const viewer = new ViewerStore(listing, store);
-  const presenter = new PhotosPresenter(listing, marks, store, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    store,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => {
     listing.mode = 'list';
     listing.source = { kind: 'library', libraryId: 'lib' };
@@ -118,7 +135,11 @@ describe('a band whose row has stopped standing for a stack', () => {
 });
 
 describe('a band whose stack is stacked with more photos', () => {
-  const originals = { ...stubbed, createStack: stacksApi.create, listLibraryPhotos: photosApi.listLibrary };
+  const originals = {
+    ...stubbed,
+    createStack: stacksApi.create,
+    listLibraryPhotos: photosApi.listLibrary,
+  };
   afterEach(() => {
     photosApi.positions = originals.photoPositions;
     photosApi.listLibrary = originals.listLibraryPhotos;
@@ -132,7 +153,9 @@ describe('a band whose stack is stacked with more photos', () => {
     stacksApi.create = () => Promise.resolve({ id: 's2' } as never);
     photosApi.listLibrary = () =>
       Promise.resolve({
-        photos: Array.from({ length: 40 }, (_, index) => (index === AT ? photo('p3', 's2', 4) : photo(`p${index}`))),
+        photos: Array.from({ length: 40 }, (_, index) =>
+          index === AT ? photo('p3', 's2', 4) : photo(`p${index}`),
+        ),
         total: 100,
         ordering: 'taken_desc',
       } as never);
@@ -153,7 +176,12 @@ describe('a band whose stack is stacked with more photos', () => {
     await presenter.stackSelection();
 
     expect([...store.expansions.keys()]).toEqual(['s2']);
-    expect(store.expansions.get('s2')?.photos.map((member) => member.id)).toEqual(['m0', 'm1', 'm2', 'p5']);
+    expect(store.expansions.get('s2')?.photos.map((member) => member.id)).toEqual([
+      'm0',
+      'm1',
+      'm2',
+      'p5',
+    ]);
   });
 
   test('stays open as the new stack when every member was picked out of it', async () => {
@@ -171,12 +199,17 @@ describe('a band whose stack is stacked with more photos', () => {
     const other = [photo('n0', 's3', 2), photo('n1', 's3', 2)];
     let reRead: string[] = [];
     photosApi.positions = () => {
-      reRead = [...store.expansions.values()].flatMap((open) => open.photos.map((member) => member.id));
+      reRead = [...store.expansions.values()].flatMap((open) =>
+        open.photos.map((member) => member.id),
+      );
       return Promise.resolve({ s2: [AT] });
     };
     runInAction(() => {
       listing.rows.set(10, photo('p10', 's3', 2));
-      store.expansions = new Map([...store.expansions, ['s3', { stackId: 's3', position: 10, photos: other }]]);
+      store.expansions = new Map([
+        ...store.expansions,
+        ['s3', { stackId: 's3', position: 10, photos: other }],
+      ]);
       marks.selection = marks.selection.add(AT, AT).add(10, 10);
     });
 

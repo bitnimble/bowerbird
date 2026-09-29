@@ -24,7 +24,11 @@ let db: ReturnType<typeof createDatabase>;
 let service: PhotoMutationService;
 
 function photoRow(): { file_path: string; is_deleted: number; shoot_id: string | null } {
-  return db.query(`SELECT json_extract(recipe, '$.path') AS file_path, is_deleted, shoot_id FROM photos WHERE id = ?`).get(PHOTO) as {
+  return db
+    .query(
+      `SELECT json_extract(recipe, '$.path') AS file_path, is_deleted, shoot_id FROM photos WHERE id = ?`,
+    )
+    .get(PHOTO) as {
     file_path: string;
     is_deleted: number;
     shoot_id: string | null;
@@ -39,21 +43,17 @@ beforeEach(() => {
   db = createDatabase(':memory:');
   // `bin_name` is nullable now and NULL means "no bin", so a library that bins by
   // moving has to say so (§4.1).
-  db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name) VALUES (?, ?, ?, ?, ?)').run(
-    LIB,
-    root,
-    'lib',
-    'taken_desc',
-    'Bin',
-  );
-  db.query('INSERT INTO shoots (id, library_id, folder_path, name, ordering) VALUES (?, ?, ?, ?, ?)').run(
-    SHOOT,
-    LIB,
-    'Trip',
-    'Trip',
+  db.query(
+    'INSERT INTO libraries (id, root_path, name, ordering, bin_name) VALUES (?, ?, ?, ?, ?)',
+  ).run(LIB, root, 'lib', 'taken_desc', 'Bin');
+  db.query(
+    'INSERT INTO shoots (id, library_id, folder_path, name, ordering) VALUES (?, ?, ?, ?, ?)',
+  ).run(SHOOT, LIB, 'Trip', 'Trip', 'taken_desc');
+  db.query('INSERT INTO albums (id, name, ordering) VALUES (?, ?, ?)').run(
+    ALBUM,
+    'Keepers',
     'taken_desc',
   );
-  db.query('INSERT INTO albums (id, name, ordering) VALUES (?, ?, ?)').run(ALBUM, 'Keepers', 'taken_desc');
   db.query(
     `INSERT INTO photos (id, library_id, shoot_id, recipe, width, height, date_added)
      VALUES (?, ?, ?, '{"kind":"file","path":"Trip/a.arw"}', 100, 100, '2026-01-01T00:00:00.000Z')`,

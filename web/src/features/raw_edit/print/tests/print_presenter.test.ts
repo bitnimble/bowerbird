@@ -1,20 +1,38 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { drawnBy, GRADE, openEditor, openedWith, type Editor } from '../../stage/tests/raw_edit_harness';
+import {
+  drawnBy,
+  GRADE,
+  openEditor,
+  openedWith,
+  type Editor,
+} from '../../stage/tests/raw_edit_harness';
 import { REWINDOW_QUIET_MS } from '../../stage/raw_edit_presenter';
 import { regionOf } from '../../../photos/viewer/zoom_pan';
-import { DEFAULT_PRINT_SCENE, ENVIRONMENT_LIGHTING, printDisplaySize, PrintSceneSchema } from '../print_scene';
+import {
+  DEFAULT_PRINT_SCENE,
+  ENVIRONMENT_LIGHTING,
+  printDisplaySize,
+  PrintSceneSchema,
+} from '../print_scene';
 
 let editor: Editor;
-beforeEach(() => { editor = openEditor(); });
+beforeEach(() => {
+  editor = openEditor();
+});
 afterEach(() => editor.presenter.close());
 
 describe('print viewing', () => {
   test('framed display sizes match the native uniform-border fixture', async () => {
-    const table = await Bun.file(new URL('../../../../../../test/fixtures/tables/print-frame-size.txt', import.meta.url)).text();
+    const table = await Bun.file(
+      new URL('../../../../../../test/fixtures/tables/print-frame-size.txt', import.meta.url),
+    ).text();
     const rows = table.trim().split('\n');
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      const [width = 0, height = 0, framedWidth = 0, framedHeight = 0] = row.trim().split(/\s+/).map(Number);
+      const [width = 0, height = 0, framedWidth = 0, framedHeight = 0] = row
+        .trim()
+        .split(/\s+/)
+        .map(Number);
       const photo = { width, height };
       expect(printDisplaySize(photo, true)).toEqual({ width: framedWidth, height: framedHeight });
       expect(printDisplaySize(photo, false)).toEqual(photo);
@@ -31,18 +49,37 @@ describe('print viewing', () => {
     expect(editor.decoder.stage.width / editor.decoder.stage.height).toBeCloseTo(4750 / 3750, 2);
     expect(editor.decoder.frames.at(-1)?.output).toEqual({ width: 4000, height: 3000 });
 
-    const zoom = regionOf({ scale: 2, x: 0, y: 0 }, { width: 1000, height: 750 }, editor.presenter.displaySize);
+    const zoom = regionOf(
+      { scale: 2, x: 0, y: 0 },
+      { width: 1000, height: 750 },
+      editor.presenter.displaySize,
+    );
     editor.presenter.showRegion(zoom);
     await drawnBy(editor);
-    expect(editor.decoder.frames.at(-1)?.region).toEqual({ x: 1125, y: 937.5, width: 2500, height: 1875 });
+    expect(editor.decoder.frames.at(-1)?.region).toEqual({
+      x: 1125,
+      y: 937.5,
+      width: 2500,
+      height: 1875,
+    });
 
     editor.presenter.showRegion({ x: 9000, y: 9000, width: 1000, height: 750 });
     await drawnBy(editor);
-    expect(editor.decoder.frames.at(-1)?.region).toEqual({ x: 3750, y: 3000, width: 1000, height: 750 });
+    expect(editor.decoder.frames.at(-1)?.region).toEqual({
+      x: 3750,
+      y: 3000,
+      width: 1000,
+      height: 750,
+    });
     editor.presenter.print.setControl('keyLux', 2000);
     editor.presenter.print.resetTilt();
     await drawnBy(editor);
-    expect(editor.decoder.frames.at(-1)?.region).toEqual({ x: 3750, y: 3000, width: 1000, height: 750 });
+    expect(editor.decoder.frames.at(-1)?.region).toEqual({
+      x: 3750,
+      y: 3000,
+      width: 1000,
+      height: 750,
+    });
 
     editor.presenter.print.setFramed(false);
     await drawnBy(editor);
@@ -95,7 +132,11 @@ describe('print viewing', () => {
     editor.presenter.print.setPaper('gloss');
     editor.presenter.print.setTouch(true);
     await drawnBy(editor);
-    expect(editor.decoder.print).toMatchObject({ paper: 'gloss', presentation: 'surface', framed: true });
+    expect(editor.decoder.print).toMatchObject({
+      paper: 'gloss',
+      presentation: 'surface',
+      framed: true,
+    });
 
     editor.presenter.print.setTouch(false);
     editor.presenter.setSoftProof('hdr');
@@ -117,7 +158,12 @@ describe('print viewing', () => {
     editor.presenter.print.resetControl('roughness');
     editor.presenter.print.resetControl('keyLux');
     editor.presenter.print.resetControl('lightForward');
-    expect(editor.print.scene).toMatchObject({ paper: 'gloss', roughness: 0.16, keyLux: 133, lightForward: 1.65 });
+    expect(editor.print.scene).toMatchObject({
+      paper: 'gloss',
+      roughness: 0.16,
+      keyLux: 133,
+      lightForward: 1.65,
+    });
   });
 
   test('choosing an environment lights the print as that room does, and a reset goes back to its light', async () => {
@@ -126,8 +172,15 @@ describe('print viewing', () => {
     editor.presenter.print.setControl('fillLux', 40);
     editor.presenter.print.setEnvironment('meadow');
     expect(editor.print.scene).toMatchObject({
-      environment: 'meadow', paper: 'matte', keyLux: 80000, fillLux: 9570, lightTemperatureKelvin: 5400,
-      lightAcross: 4.45, lightHeight: 4.55, lightForward: 7.7, lightAngularDegrees: 0.5,
+      environment: 'meadow',
+      paper: 'matte',
+      keyLux: 80000,
+      fillLux: 9570,
+      lightTemperatureKelvin: 5400,
+      lightAcross: 4.45,
+      lightHeight: 4.55,
+      lightForward: 7.7,
+      lightAngularDegrees: 0.5,
     });
     editor.presenter.print.setControl('keyLux', 20000);
     editor.presenter.print.resetControl('keyLux');
@@ -137,7 +190,9 @@ describe('print viewing', () => {
   });
 
   test('every environment is lit as the module measures its map', async () => {
-    const table = await Bun.file(new URL('../../../../../../test/fixtures/tables/print-environments.json', import.meta.url)).json();
+    const table = await Bun.file(
+      new URL('../../../../../../test/fixtures/tables/print-environments.json', import.meta.url),
+    ).json();
     expect(ENVIRONMENT_LIGHTING).toEqual(table);
   });
 
@@ -148,7 +203,11 @@ describe('print viewing', () => {
     editor.presenter.print.setControl('keyLux', 2500);
     editor.presenter.print.setPaper('matte');
     expect(editor.print.scene).toMatchObject({
-      paper: 'matte', refractiveIndex: 1.5, surfaceTexture: 0, roughness: 0.84, keyLux: 2500,
+      paper: 'matte',
+      refractiveIndex: 1.5,
+      surfaceTexture: 0,
+      roughness: 0.84,
+      keyLux: 2500,
     });
   });
 
@@ -160,16 +219,26 @@ describe('print viewing', () => {
   });
 
   test('print framing defaults off and rejects non-boolean values', () => {
-    expect(PrintSceneSchema.parse({ ...DEFAULT_PRINT_SCENE, framed: undefined }).framed).toBe(false);
+    expect(PrintSceneSchema.parse({ ...DEFAULT_PRINT_SCENE, framed: undefined }).framed).toBe(
+      false,
+    );
     expect(PrintSceneSchema.safeParse({ ...DEFAULT_PRINT_SCENE, framed: 1 }).success).toBe(false);
   });
 
   test('backend print requests coverage only when effective surface framing changes', async () => {
-    openedWith(editor, { local: { decoder: editor.decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true } });
+    openedWith(editor, {
+      local: {
+        decoder: editor.decoder,
+        open: { longEdge: 0, grade: GRADE, defringe: 0.5 },
+        onTheBackend: true,
+      },
+    });
     editor.stage.preparedElsewhere = true;
     const coverage: boolean[] = [];
     editor.presenter.rewindow = async () => {
-      coverage.push(editor.decoder.print?.presentation === 'surface' && editor.decoder.print.framed);
+      coverage.push(
+        editor.decoder.print?.presentation === 'surface' && editor.decoder.print.framed,
+      );
     };
     const settled = async (): Promise<void> => {
       await drawnBy(editor);
@@ -208,14 +277,26 @@ describe('print viewing', () => {
   });
 
   test('backend print waits for a queued framing change to land before requesting coverage', async () => {
-    openedWith(editor, { local: { decoder: editor.decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true } });
+    openedWith(editor, {
+      local: {
+        decoder: editor.decoder,
+        open: { longEdge: 0, grade: GRADE, defringe: 0.5 },
+        onTheBackend: true,
+      },
+    });
     editor.stage.preparedElsewhere = true;
     const coverage: boolean[] = [];
     editor.presenter.rewindow = async () => {
-      coverage.push(editor.decoder.print?.presentation === 'surface' && editor.decoder.print.framed);
+      coverage.push(
+        editor.decoder.print?.presentation === 'surface' && editor.decoder.print.framed,
+      );
     };
-    let release = (): void => { throw new Error('no pending draw'); };
-    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let release = (): void => {
+      throw new Error('no pending draw');
+    };
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     editor.decoder.landed = () => pending;
     editor.presenter.print.setTouch(true);
     editor.presenter.setSoftProof('print3d');
@@ -256,8 +337,14 @@ describe('print viewing', () => {
     editor.presenter.print.setControl('lightTemperatureKelvin', 2700);
     await drawnBy(editor);
     expect(editor.decoder.print).toMatchObject({
-      paper: 'matte', roughness: 0.84, keyLux: 2340, refractiveIndex: 1.46,
-      lightForward: 2.5, paperLongEdgeMm: 420, surfaceTexture: 0, lightTemperatureKelvin: 2700,
+      paper: 'matte',
+      roughness: 0.84,
+      keyLux: 2340,
+      refractiveIndex: 1.46,
+      lightForward: 2.5,
+      paperLongEdgeMm: 420,
+      surfaceTexture: 0,
+      lightTemperatureKelvin: 2700,
     });
     expect(JSON.stringify(editor.edit.doc)).toBe(doc);
   });
@@ -284,7 +371,11 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.decoder.stage).toEqual(photo);
-    expect(editor.decoder.print).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
+    expect(editor.decoder.print).toMatchObject({
+      presentation: 'surface',
+      yawDegrees: 0,
+      pitchDegrees: 0,
+    });
     editor.presenter.print.beginDrag(1, 100, 100, 200);
     editor.presenter.print.moveDrag(1, 200, 150);
     editor.presenter.print.rotateBy(20, 30);
@@ -314,7 +405,11 @@ describe('print viewing', () => {
     expect(editor.decoder.print?.presentation).toBe('flat');
 
     editor.presenter.setSoftProof('print3d');
-    expect(editor.print.scene).toMatchObject({ presentation: 'scene', yawDegrees: 78, pitchDegrees: -85 });
+    expect(editor.print.scene).toMatchObject({
+      presentation: 'scene',
+      yawDegrees: 78,
+      pitchDegrees: -85,
+    });
     expect(editor.crop.cropping).toBe(false);
   });
 
@@ -325,7 +420,11 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('print');
     await drawnBy(editor);
     expect(editor.decoder.print?.presentation).toBe('flat');
-    expect(editor.decoder.proof).toEqual({ output: 'hdr', intent: 'perceptual', displayPeakNits: null });
+    expect(editor.decoder.proof).toEqual({
+      output: 'hdr',
+      intent: 'perceptual',
+      displayPeakNits: null,
+    });
     expect(editor.decoder.stage).toEqual(photo);
     editor.presenter.print.beginDrag(1, 100, 100, 200);
     expect(editor.print.dragging).toBe(false);
@@ -349,7 +448,11 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('srgb');
     editor.presenter.print.setRenderingIntent('relativeColorimetric');
     await drawnBy(editor);
-    expect(editor.decoder.proof).toEqual({ output: 'srgb', intent: 'relativeColorimetric', displayPeakNits: null });
+    expect(editor.decoder.proof).toEqual({
+      output: 'srgb',
+      intent: 'relativeColorimetric',
+      displayPeakNits: null,
+    });
     expect(editor.decoder.print).toBeNull();
   });
 
@@ -371,8 +474,14 @@ describe('print viewing', () => {
     editor.presenter.print.panBy(0.1, 0.05);
     editor.presenter.print.resetView();
     expect(editor.print.scene).toMatchObject({
-      paper: 'gloss', roughness: 0.16, fillLux: 40, yawDegrees: -12, pitchDegrees: 8,
-      zoom: 1, panX: 0, panY: 0,
+      paper: 'gloss',
+      roughness: 0.16,
+      fillLux: 40,
+      yawDegrees: -12,
+      pitchDegrees: 8,
+      zoom: 1,
+      panX: 0,
+      panY: 0,
     });
   });
 
@@ -408,12 +517,17 @@ describe('the printer', () => {
 
     await editor.presenter.print.setPrinterProfile('Satin PRO-200.icc');
     await drawnBy(editor);
-    expect(new TextDecoder().decode(editor.decoder.printerProfile ?? new Uint8Array())).toBe('Satin PRO-200.icc');
+    expect(new TextDecoder().decode(editor.decoder.printerProfile ?? new Uint8Array())).toBe(
+      'Satin PRO-200.icc',
+    );
     editor.presenter.print.setRenderingIntent('perceptual');
     editor.presenter.print.setBlackPointCompensation(false);
     await drawnBy(editor);
     expect(editor.decoder.printerProfileSends).toBe(1);
-    expect(editor.decoder.print).toMatchObject({ renderingIntent: 'perceptual', blackPointCompensation: false });
+    expect(editor.decoder.print).toMatchObject({
+      renderingIntent: 'perceptual',
+      blackPointCompensation: false,
+    });
 
     await editor.presenter.print.setPrinterProfile(null);
     await drawnBy(editor);
@@ -432,7 +546,11 @@ describe('the printer', () => {
     editor.presenter.setSoftProof('print');
     editor.presenter.print.setControl('printResolutionPpi', 300);
     editor.presenter.print.setInk('pigment');
-    expect(editor.print.scene).toMatchObject({ ink: 'pigment', inkSpreadMicrons: 50, printResolutionPpi: 300 });
+    expect(editor.print.scene).toMatchObject({
+      ink: 'pigment',
+      inkSpreadMicrons: 50,
+      printResolutionPpi: 300,
+    });
     editor.presenter.print.setPaper('matte');
     expect(editor.print.scene.inkSpreadMicrons).toBe(35);
     editor.presenter.print.setControl('inkSpreadMicrons', 60);

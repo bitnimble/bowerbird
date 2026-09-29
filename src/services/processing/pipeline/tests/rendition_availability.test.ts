@@ -34,7 +34,11 @@ describe('rendition availability after processing', () => {
     db = new Database(':memory:');
     runMigrations(db);
     root = mkdtempSync(path.join(tmpdir(), 'bb-rendition-availability-'));
-    db.query('INSERT INTO libraries (id, root_path, name, rendition_hdr) VALUES (?, ?, ?, 0)').run(LIB, root, LIB);
+    db.query('INSERT INTO libraries (id, root_path, name, rendition_hdr) VALUES (?, ?, ?, 0)').run(
+      LIB,
+      root,
+      LIB,
+    );
     renditions = new RenditionsRepository(db);
     photos = new PhotoProcessingRepository(db, renditions);
     libraries = new LibrariesRepository(db);
@@ -53,9 +57,10 @@ describe('rendition availability after processing', () => {
   });
 
   function add(photoId: string, sourcePresent = true): void {
-    db.query(`INSERT INTO photos (id, library_id, recipe, width, height, date_added)
-      VALUES (?, ?, json_object('kind', 'file', 'path', ?), 100, 100, ?)`)
-      .run(photoId, LIB, `${photoId}.arw`, AT);
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
+      VALUES (?, ?, json_object('kind', 'file', 'path', ?), 100, 100, ?)`,
+    ).run(photoId, LIB, `${photoId}.arw`, AT);
     if (sourcePresent) writeFileSync(path.join(root, `${photoId}.arw`), 'RAW');
     renditions.unqueue(photoId, ['grid', 'full']);
   }
@@ -94,21 +99,33 @@ describe('rendition availability after processing', () => {
 
     await expect(onDemand().buildRendition(CRASH, 'full', true)).rejects.toThrow('segfault');
 
-    expect(existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full', `${CRASH}.avif`))).toBe(false);
+    expect(
+      existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full', `${CRASH}.avif`)),
+    ).toBe(false);
     expect(libraries.getById(LIB)?.rendered_photo_count).toBe(0);
     expect(renditions.versions(CRASH)).toEqual({ grid: AT });
   });
 
   it('forgets a deleted composite copy when its frames cannot be composed', async () => {
     add('composite', false);
-    const recipe = readFileSync(path.join(import.meta.dir, '../../../../../test/fixtures/assembly-recipe.json'), 'utf8');
-    db.query("UPDATE photos SET recipe = json_set(?, '$.kind', 'assembly') WHERE id = ?").run(recipe, 'composite');
+    const recipe = readFileSync(
+      path.join(import.meta.dir, '../../../../../test/fixtures/assembly-recipe.json'),
+      'utf8',
+    );
+    db.query("UPDATE photos SET recipe = json_set(?, '$.kind', 'assembly') WHERE id = ?").run(
+      recipe,
+      'composite',
+    );
     built('composite', ['full']);
     const build = spyOn(processing, 'buildComposite').mockResolvedValue(false);
     try {
-      await expect(onDemand().buildRendition('composite', 'full', true)).rejects.toThrow('nothing on this device can compose');
+      await expect(onDemand().buildRendition('composite', 'full', true)).rejects.toThrow(
+        'nothing on this device can compose',
+      );
 
-      expect(existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full', 'composite.avif'))).toBe(false);
+      expect(
+        existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full', 'composite.avif')),
+      ).toBe(false);
       expect(libraries.getById(LIB)?.rendered_photo_count).toBe(0);
       expect(renditions.versions('composite')).toEqual({});
     } finally {
@@ -120,9 +137,13 @@ describe('rendition availability after processing', () => {
     add('missing', false);
     built('missing', ['full']);
 
-    await expect(onDemand().buildRendition('missing', 'full', true)).rejects.toThrow('nothing on this device can build');
+    await expect(onDemand().buildRendition('missing', 'full', true)).rejects.toThrow(
+      'nothing on this device can build',
+    );
 
-    expect(existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full', 'missing.avif'))).toBe(true);
+    expect(
+      existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full', 'missing.avif')),
+    ).toBe(true);
     expect(libraries.getById(LIB)?.rendered_photo_count).toBe(1);
     expect(renditions.versions('missing')).toEqual({ full: AT });
   });
@@ -151,7 +172,9 @@ describe('rendition availability after processing', () => {
     expect(libraries.getById(LIB)?.rendered_photo_count).toBe(1);
     expect(renditions.versions(CRASH)).toEqual({ full: AT, 'full-hdr': AT, max: AT });
     expect(photos.countPendingProcessing(LIB)).toBe(0);
-    expect(existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full-hdr', `${CRASH}.avif`))).toBe(true);
+    expect(
+      existsSync(path.join(dataPathForLibraryId(LIB), 'renditions', 'full-hdr', `${CRASH}.avif`)),
+    ).toBe(true);
   });
 
   it('forgets a failed target whose source vanished, while retaining retry work', async () => {

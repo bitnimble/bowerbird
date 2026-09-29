@@ -3,14 +3,19 @@
 // what this pins is the other half of that: the neutral each attribute is judged against,
 // and the handful of edits that are not sliders at all.
 import { describe, expect, test } from 'bun:test';
-import { neutralEdits, TONE_CURVE_KIND, type EditDoc } from '../../../../../../src/schemas/photo_edits';
+import {
+  neutralEdits,
+  TONE_CURVE_KIND,
+  type EditDoc,
+} from '../../../../../../src/schemas/photo_edits';
 import { editRows } from '../edit_rows';
 import { DUST, EDIT_SLIDERS } from '../../../raw_edit/edit_sliders';
 
 const doc = (over: Partial<EditDoc> = {}): EditDoc => ({ ...neutralEdits(), ...over }) as EditDoc;
 const FRAME = { width: 6000, height: 4000 };
 const rowsOf = (edits: EditDoc): ReturnType<typeof editRows> => editRows(edits, FRAME);
-const labels = (over: Partial<EditDoc> = {}): string[] => rowsOf(doc(over)).map(([label]) => String(label));
+const labels = (over: Partial<EditDoc> = {}): string[] =>
+  rowsOf(doc(over)).map(([label]) => String(label));
 
 test('an untouched document is not an edit', () => {
   expect(rowsOf(doc())).toEqual([]);
@@ -34,7 +39,19 @@ describe('every slider is judged against the neutral the editor resets it to', (
 test('a stored zero exposure and a stored curve are edits', () => {
   expect(labels({ exposure: null, contrast: 0 })).toEqual([]);
   expect(labels({ exposure: 0, contrast: 0 })).toEqual(['Exposure']);
-  expect(rowsOf(doc({ toneCurve: { kind: TONE_CURVE_KIND, points: [[0, 0.1], [1, 1]] } }))).toContainEqual(['Tone curve', 'Edited']);
+  expect(
+    rowsOf(
+      doc({
+        toneCurve: {
+          kind: TONE_CURVE_KIND,
+          points: [
+            [0, 0.1],
+            [1, 1],
+          ],
+        },
+      }),
+    ),
+  ).toContainEqual(['Tone curve', 'Edited']);
 });
 
 test('a crop is listed as what it kept, and a full frame is not a crop', () => {
@@ -42,7 +59,10 @@ test('a crop is listed as what it kept, and a full frame is not a crop', () => {
   // A rectangle fitted out of a straighten comes back a hair under the full frame, which is
   // not something the reader cropped.
   expect(labels({ cropRight: 0.9999 })).not.toContain('Crop');
-  expect(rowsOf(doc({ cropLeft: 0.1, cropRight: 0.9 }))).toContainEqual(['Crop', '80% × 100% (1.2:1)']);
+  expect(rowsOf(doc({ cropLeft: 0.1, cropRight: 0.9 }))).toContainEqual([
+    'Crop',
+    '80% × 100% (1.2:1)',
+  ]);
 });
 
 test('a crop names its shape on the picture the reader sees, turn and all', () => {

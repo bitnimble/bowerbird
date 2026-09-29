@@ -1,6 +1,10 @@
 import { computed, observable } from 'mobx';
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
-import { type PhotoDetail, type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
+import {
+  type PhotoDetail,
+  type PhotoSummary,
+  type Triage,
+} from '../../../../../src/schemas/photos';
 import { type RenditionFetchPhase } from '../../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { PathSegment, route } from '../../../../../src/schemas/route';
@@ -22,7 +26,8 @@ import type { RenderingIntent } from '../../../../../src/schemas/rendering_inten
 // than a detail plus two flags: "missing" carries the reason that made it
 // missing, so a failure to read one photo cannot be reported as the state of
 // another, and no combination of flags can describe a state that cannot happen.
-export type OpenPhoto = { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
+export type OpenPhoto =
+  { id: string; status: 'loading' | 'ready' } | { id: string; status: 'missing'; error: string };
 
 /**
  * The pixels the served image actually decoded to, and which file that was:
@@ -57,11 +62,13 @@ export class ViewerStore {
   /** Whether the frame on screen for this photograph carries HDR, which is what an HDR proof needs. */
   showsHdr(photoId: string): boolean {
     const { rendition } = this.frameOf(photoId);
-    return rendition !== 'embedded' && this.detailFor(photoId)?.renditions?.[rendition]?.hdr === true;
+    return (
+      rendition !== 'embedded' && this.detailFor(photoId)?.renditions?.[rendition]?.hdr === true
+    );
   }
 
   proofOf(photoId: string): 'hdr' | 'srgb' {
-    return this.showsHdr(photoId) ? this.proof ?? 'hdr' : 'srgb';
+    return this.showsHdr(photoId) ? (this.proof ?? 'hdr') : 'srgb';
   }
   // The renditions being built right now, as `photoId:rendition`. One set for
   // both ways a build starts - the reader choosing one that is not on disk, and
@@ -174,7 +181,12 @@ export class ViewerStore {
     // The run last, after the detail: a patched detail is re-read on every write,
     // where a run row is only replaced when the run is re-fetched, so putting it
     // first would show a verdict reverting on the photograph it was just set on.
-    return this.listing.rowById(photoId) ?? this.stacks.memberById(photoId) ?? this.detailFor(photoId) ?? this.neighbourById(photoId);
+    return (
+      this.listing.rowById(photoId) ??
+      this.stacks.memberById(photoId) ??
+      this.detailFor(photoId) ??
+      this.neighbourById(photoId)
+    );
   }
 
   /** A photo held only as part of the viewer's run - a stack member, or one off-screen. */
@@ -229,16 +241,23 @@ export class ViewerStore {
       // A deep link, for the moment before the library it loads behind itself
       // becomes the collection.
       return {
-        path: this.detailLibraryId == null ? route() : route(PathSegment.libraries(), this.detailLibraryId),
+        path:
+          this.detailLibraryId == null
+            ? route()
+            : route(PathSegment.libraries(), this.detailLibraryId),
         label: ViewerStoreStrings.backToLibrary(),
       };
     }
     const label =
-      source.kind === 'shoot' ? ShootPhotosStrings.shoot()
-      : source.kind === 'album' ? AlbumPhotosStrings.album()
-      : source.kind === 'bin' ? BinPageStrings.bin()
-      : source.kind === 'no_shoot' ? NoShootPhotosStrings.notInAnyShoot()
-      : ViewerStoreStrings.backToLibrary();
+      source.kind === 'shoot'
+        ? ShootPhotosStrings.shoot()
+        : source.kind === 'album'
+          ? AlbumPhotosStrings.album()
+          : source.kind === 'bin'
+            ? BinPageStrings.bin()
+            : source.kind === 'no_shoot'
+              ? NoShootPhotosStrings.notInAnyShoot()
+              : ViewerStoreStrings.backToLibrary();
     return { path: collectionPath(source), label };
   }
 
@@ -265,8 +284,11 @@ export class ViewerStore {
     // a row that composites one remakes it as itself, and one that hands over bytes from inside
     // its own file has no build to force past, so what there is to remake is the render behind
     // it (`renditions.ts`).
-    const target = this.showing === 'embedded' && !isComposite(this.openPhoto) ? 'full' : this.showing;
-    return this.detailFor(this.open?.id ?? '')?.renditions?.[target]?.built === true ? target : null;
+    const target =
+      this.showing === 'embedded' && !isComposite(this.openPhoto) ? 'full' : this.showing;
+    return this.detailFor(this.open?.id ?? '')?.renditions?.[target]?.built === true
+      ? target
+      : null;
   }
 
   /**
@@ -294,8 +316,12 @@ export class ViewerStore {
   sourceOf(photoId: string, rendition: ViewerRendition): string {
     const url = renditionsApi.url(photoId, rendition, this.renditionVersionOf(photoId, rendition));
     const orientationVersion =
-      rendition === 'embedded' && this.servedWhole(photoId, rendition) ? this.orientationVersions.get(photoId) : null;
-    return orientationVersion == null ? url : url + (url.includes('?') ? '&' : '?') + 'orientation=' + orientationVersion;
+      rendition === 'embedded' && this.servedWhole(photoId, rendition)
+        ? this.orientationVersions.get(photoId)
+        : null;
+    return orientationVersion == null
+      ? url
+      : url + (url.includes('?') ? '&' : '?') + 'orientation=' + orientationVersion;
   }
 
   /**
@@ -338,7 +364,11 @@ export class ViewerStore {
    * a choice made since, or an edit made since, was silently discarded.
    */
   shownRenditionOf(photoId: string): ViewerRendition {
-    return this.detailFor(photoId)?.shown_rendition ?? this.photoFor(photoId)?.shown_rendition ?? 'embedded';
+    return (
+      this.detailFor(photoId)?.shown_rendition ??
+      this.photoFor(photoId)?.shown_rendition ??
+      'embedded'
+    );
   }
 
   /** The rendition on screen: the reader's choice for this photo, or what the server resolved. */
@@ -364,14 +394,20 @@ export class ViewerStore {
   // The decoded size of the frame this view is asking about, or null when that
   // frame has not decoded for this photo.
   shownImageOf(photoId: string, rendition: ViewerRendition): ShownImage | null {
-    return this.shownImages.find((shown) => shown.photoId === photoId && shown.rendition === rendition) ?? null;
+    return (
+      this.shownImages.find(
+        (shown) => shown.photoId === photoId && shown.rendition === rendition,
+      ) ?? null
+    );
   }
 
   // The renditions of this photo that are decoded and mounted, in the order they
   // arrived. The stage keeps every one of them, so the picker is a choice between
   // frames the page already holds rather than a reason to fetch one again.
   renditionsShownOf(photoId: string): ViewerRendition[] {
-    return this.shownImages.filter((shown) => shown.photoId === photoId).map((shown) => shown.rendition);
+    return this.shownImages
+      .filter((shown) => shown.photoId === photoId)
+      .map((shown) => shown.rendition);
   }
 
   // This photo's detail, or null until one has been read for it. Asked by photo rather than
@@ -405,13 +441,20 @@ export class ViewerStore {
   @computed get neededBlocks(): number[] {
     if (this.listing.total === 0) return [0];
     const blocks = new Set<number>();
-    for (const { from, to } of [this.listing.visible, ...(this.stripSpan == null ? [] : [this.stripSpan])]) {
+    for (const { from, to } of [
+      this.listing.visible,
+      ...(this.stripSpan == null ? [] : [this.stripSpan]),
+    ]) {
       for (let index = from; index < to; index += BLOCK) blocks.add(Math.floor(index / BLOCK));
       if (to > from) blocks.add(Math.floor((to - 1) / BLOCK));
     }
     const open = this.detailIndex;
-    if (open >= 0) for (const index of [open - 1, open, open + 1]) blocks.add(Math.floor(Math.max(0, index) / BLOCK));
-    return [...blocks].filter((block) => block >= 0 && block < this.listing.blockCount).sort((a, b) => a - b);
+    if (open >= 0)
+      for (const index of [open - 1, open, open + 1])
+        blocks.add(Math.floor(Math.max(0, index) / BLOCK));
+    return [...blocks]
+      .filter((block) => block >= 0 && block < this.listing.blockCount)
+      .sort((a, b) => a - b);
   }
 
   // --- the open photo's neighbours ---
@@ -460,7 +503,9 @@ export class ViewerStore {
    * whichever of the pair they are standing on.
    */
   runCovering(photoIds: readonly (string | null)[], reach: number): string[] {
-    const at = photoIds.map((id) => this.neighbourhood.findIndex((photo) => photo.id === id)).filter((i) => i >= 0);
+    const at = photoIds
+      .map((id) => this.neighbourhood.findIndex((photo) => photo.id === id))
+      .filter((i) => i >= 0);
     if (at.length === 0) return [];
     return this.neighbourhood
       .slice(Math.max(0, Math.min(...at) - reach), Math.max(...at) + reach + 1)

@@ -44,7 +44,13 @@ pub fn tile_rect(
     level: (usize, usize),
 ) -> ((usize, usize), (usize, usize)) {
     let at = (column * TILE, row * TILE);
-    (at, (TILE.min(level.0.saturating_sub(at.0)), TILE.min(level.1.saturating_sub(at.1))))
+    (
+        at,
+        (
+            TILE.min(level.0.saturating_sub(at.0)),
+            TILE.min(level.1.saturating_sub(at.1)),
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -74,8 +80,14 @@ mod tests {
         let level = (TILE * 4, TILE * 4);
         assert_eq!(tiles_over((0, 0), (TILE, TILE), level), ((0, 0), (0, 0)));
         // One pixel over, and the column past it is wanted.
-        assert_eq!(tiles_over((0, 0), (TILE + 1, TILE), level), ((0, 0), (1, 0)));
-        assert_eq!(tiles_over((TILE, TILE), (TILE * 2, TILE), level), ((1, 1), (2, 1)));
+        assert_eq!(
+            tiles_over((0, 0), (TILE + 1, TILE), level),
+            ((0, 0), (1, 0))
+        );
+        assert_eq!(
+            tiles_over((TILE, TILE), (TILE * 2, TILE), level),
+            ((1, 1), (2, 1))
+        );
     }
 
     #[test]
@@ -83,7 +95,10 @@ mod tests {
         let level = (TILE + 4, TILE + 4);
         // Two columns of a level that is one tile and a sliver: a rectangle running off the end
         // asks for what is there rather than for a column the draw would then read out of bounds.
-        assert_eq!(tiles_over((TILE * 3, TILE * 3), (TILE, TILE), level), ((1, 1), (1, 1)));
+        assert_eq!(
+            tiles_over((TILE * 3, TILE * 3), (TILE, TILE), level),
+            ((1, 1), (1, 1))
+        );
         assert_eq!(tile_rect(1, 1, level), ((TILE, TILE), (4, 4)));
         // And nothing off it at all is still a square, because a request for none of a level is a
         // request this side never makes.

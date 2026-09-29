@@ -3,7 +3,11 @@
 // already on the row wrote it back anyway, once per pick.
 import { beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
-import { type PhotoDetail, type PhotoListResponse, type PhotoSummary } from '../../../../../../src/schemas/photos';
+import {
+  type PhotoDetail,
+  type PhotoListResponse,
+  type PhotoSummary,
+} from '../../../../../../src/schemas/photos';
 import { type ViewerRendition } from '../../../../../../src/schemas/settings';
 import { type PhotoListParams, photosApi } from '../../../../api/photos';
 import { PhotosPresenter } from '../../photos_presenter';
@@ -67,7 +71,18 @@ async function open(): Promise<PhotosPresenter> {
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, settings, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    absent,
+    settings,
+    absent,
+  );
   presenter.setViewport(1000, 400);
   await presenter.open({ kind: 'library', libraryId: LIB });
   runInAction(() => (store.open = { id: PHOTO, status: 'ready' }));

@@ -72,7 +72,6 @@ describe('a statement with one placeholder', () => {
     db.query('UPDATE p SET v = ?').run(['boxed']);
     expect(held(db)).toBe('boxed');
   });
-
 });
 
 describe('a query that matched nothing', () => {

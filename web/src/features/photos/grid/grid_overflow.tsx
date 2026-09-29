@@ -1,5 +1,15 @@
 import * as stylex from '@stylexjs/stylex';
-import { Layers2, LayoutDashboard, LayoutGrid, List, SquareCheck, SquareDashed, Star, ThumbsUp, Type } from 'lucide-react';
+import {
+  Layers2,
+  LayoutDashboard,
+  LayoutGrid,
+  List,
+  SquareCheck,
+  SquareDashed,
+  Star,
+  ThumbsUp,
+  Type,
+} from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useListingStore, useMarksStore, usePresenters } from '../../../app/stores_context';
 import { MenuCheckItem } from '../../../ui/check_menu';
@@ -19,7 +29,11 @@ type SelectionKey = 'all' | 'visible';
 
 const SELECTIONS: Option<SelectionKey>[] = [
   { value: 'all', label: GridControlsStrings.selectAll(), icon: <SquareCheck size={ICON} /> },
-  { value: 'visible', label: GridControlsStrings.selectVisible(), icon: <SquareDashed size={ICON} /> },
+  {
+    value: 'visible',
+    label: GridControlsStrings.selectVisible(),
+    icon: <SquareDashed size={ICON} />,
+  },
 ];
 
 /**
@@ -117,7 +131,22 @@ export const GridOverflow = observer(function GridOverflow(): JSX.Element {
 });
 
 const MODES: Option<ViewMode>[] = [
-  { value: 'grid', label: GridControlsStrings.modeGrid(), icon: <LayoutGrid size={ICON} />, iconOnly: true },
-  { value: 'masonry', label: GridControlsStrings.modeMasonry(), icon: <LayoutDashboard size={ICON} />, iconOnly: true },
-  { value: 'list', label: GridControlsStrings.modeList(), icon: <List size={ICON} />, iconOnly: true },
+  {
+    value: 'grid',
+    label: GridControlsStrings.modeGrid(),
+    icon: <LayoutGrid size={ICON} />,
+    iconOnly: true,
+  },
+  {
+    value: 'masonry',
+    label: GridControlsStrings.modeMasonry(),
+    icon: <LayoutDashboard size={ICON} />,
+    iconOnly: true,
+  },
+  {
+    value: 'list',
+    label: GridControlsStrings.modeList(),
+    icon: <List size={ICON} />,
+    iconOnly: true,
+  },
 ];

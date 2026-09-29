@@ -46,7 +46,12 @@ export function ColourDemo(): JSX.Element {
   return (
     <Demo>
       <DemoBar>
-        <SegmentedControl label={DEMO.colour.label} options={OPTIONS} value={profile} onChange={setProfile} />
+        <SegmentedControl
+          label={DEMO.colour.label}
+          options={OPTIONS}
+          value={profile}
+          onChange={setProfile}
+        />
       </DemoBar>
       <div {...stylex.props(styles.frame)}>
         <img {...stylex.props(styles.photo)} src={COLOUR_PHOTO.none} alt={DEMO.colour.neutralAlt} />

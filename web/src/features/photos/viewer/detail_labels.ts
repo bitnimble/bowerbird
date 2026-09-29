@@ -13,7 +13,8 @@ export const PENDING = PhotoDetailStrings.pending();
 // strip let the photo paint full-size and then shrink under itself when the
 // panels appeared.
 export function pendingUntil(photo: PhotoDetail | null) {
-  return (value: (p: PhotoDetail) => React.ReactNode): React.ReactNode => (photo == null ? PENDING : value(photo));
+  return (value: (p: PhotoDetail) => React.ReactNode): React.ReactNode =>
+    photo == null ? PENDING : value(photo);
 }
 
 // 1/250 reads as a shutter speed; 0.004 does not.
@@ -40,6 +41,7 @@ export function stageLabel(photo: PhotoDetail): string {
 export function takenLabel(iso: string | null, offset: string | null): string {
   const wallClock = captureDateTime(iso);
   if (wallClock == null) return PhotoDetailStrings.notRecorded();
-  return offset == null ? wallClock : PhotoDetailStrings.taken(wallClock, offset.replace(/:00$/, ''));
+  return offset == null
+    ? wallClock
+    : PhotoDetailStrings.taken(wallClock, offset.replace(/:00$/, ''));
 }
-

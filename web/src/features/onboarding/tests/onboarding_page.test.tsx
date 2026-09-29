@@ -22,10 +22,13 @@ const HOME = 'home';
 async function open(libraries: Library[], saves = true): Promise<UpdateSettingsRequest[]> {
   const writes: UpdateSettingsRequest[] = [];
   librariesApi.list = () => Promise.resolve(libraries);
-  librariesApi.getDefaults = () => Promise.resolve({} as Awaited<ReturnType<typeof librariesApi.getDefaults>>);
+  librariesApi.getDefaults = () =>
+    Promise.resolve({} as Awaited<ReturnType<typeof librariesApi.getDefaults>>);
   settingsApi.update = (patch) => {
     writes.push(patch);
-    return saves ? Promise.resolve({ ...DEFAULT_SETTINGS, ...patch }) : Promise.reject(new Error('offline'));
+    return saves
+      ? Promise.resolve({ ...DEFAULT_SETTINGS, ...patch })
+      : Promise.reject(new Error('offline'));
   };
   render(
     <MemoryRouter initialEntries={[route(PathSegment.welcome())]}>

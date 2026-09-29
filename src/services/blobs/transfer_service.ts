@@ -19,7 +19,12 @@ import { newId } from '../../schemas/id';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { soleInputOf } from '../../schemas/recipes';
 import { PathSegment, route } from '../../schemas/route';
-import { deleteBackedUpOriginal, deleteEmptyStagingDirectory, deleteEvictedOriginal, deleteStagedBlob } from '../../utils/deletions';
+import {
+  deleteBackedUpOriginal,
+  deleteEmptyStagingDirectory,
+  deleteEvictedOriginal,
+  deleteStagedBlob,
+} from '../../utils/deletions';
 import { contentHash } from '../../utils/hash';
 import { originalPathOf } from '../../utils/paths';
 import type { BackupLocations } from '../backup/backup_locations';
@@ -32,7 +37,14 @@ import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_pat
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import type { BlobLocations } from './blob_locations';
 import type { PeerTransport } from './peer';
-import { appendToStage, isOnDisk, materialise, stagePath, stagedSize, stagingDir } from './blob_store';
+import {
+  appendToStage,
+  isOnDisk,
+  materialise,
+  stagePath,
+  stagedSize,
+  stagingDir,
+} from './blob_store';
 import { unsettled } from '../replication/materialise';
 import { isEvicting, whileEvicting } from './evicting';
 import { LibraryActivity } from '../activity/library_activity';
@@ -54,7 +66,10 @@ const log = new Logger('blobs');
 function originalToTransfer(library: Library, photo: BasicPhoto): string {
   const abs = originalPathOf(library, photo);
   if (abs == null) {
-    throw new AppError('VALIDATION_ERROR', `${photo.id} is composed rather than imported, so it has no original to transfer`);
+    throw new AppError(
+      'VALIDATION_ERROR',
+      `${photo.id} is composed rather than imported, so it has no original to transfer`,
+    );
   }
   return abs;
 }
@@ -63,7 +78,8 @@ const PUSH_CHUNK = 8 * 1024 * 1024;
 const PROGRESS_EVERY = 4 * 1024 * 1024;
 const PROGRESS_NOTIFY_MS = 1000;
 
-const COLUMNS = 'id, library_id, photo_id, peer_id, direction, state, bytes_done, bytes_total, error, error_code';
+const COLUMNS =
+  'id, library_id, photo_id, peer_id, direction, state, bytes_done, bytes_total, error, error_code';
 
 /**
  * A verified staged blob becoming the photograph's original: renamed to the
@@ -94,11 +110,15 @@ export async function acceptVerifiedBlob(
     // Bytes arriving for a row that is not one file cannot be placed: there is no path they are
     // the contents of, and the recipe is what would have to have travelled instead.
     const at = soleInputOf(photo.recipe);
-    if (at == null) throw new AppError('VALIDATION_ERROR', `${photoId} is composed rather than imported`);
+    if (at == null)
+      throw new AppError('VALIDATION_ERROR', `${photoId} is composed rather than imported`);
     const outcome = await materialise(library, at, stageFile);
     if (!outcome.placed) {
       locations.flag(library.id, photoId, at, `target occupied by ${outcome.occupiedBy}`);
-      throw new AppError('CONFLICT', `${at} is occupied by ${outcome.occupiedBy}; staged copy kept`);
+      throw new AppError(
+        'CONFLICT',
+        `${at} is occupied by ${outcome.occupiedBy}; staged copy kept`,
+      );
     }
     locations.record(library.id, photoId);
     locations.clearFlag(library.id, photoId);
@@ -161,7 +181,9 @@ export class TransferService {
     for (const library of this.libraries.listConfigurations()) {
       const dir = stagingDir(library);
       if (!existsSync(dir)) continue;
-      swept += await this.activity.track(library.id, 'pruning', 'staged-originals', () => this.sweepStages(dir, library.id));
+      swept += await this.activity.track(library.id, 'pruning', 'staged-originals', () =>
+        this.sweepStages(dir, library.id),
+      );
     }
     if (swept > 0) log.info('swept staged originals nothing was waiting on', { files: swept });
     return swept;
@@ -199,7 +221,11 @@ export class TransferService {
     const library = this.library(libraryId);
     // The diff reads location rows, so this peer's own must be current first.
     await this.locations.reconcile(library);
-    const lacking = this.locations.heldHereLackedBy(libraryId, peer, this.scopeIds(libraryId, scope));
+    const lacking = this.locations.heldHereLackedBy(
+      libraryId,
+      peer,
+      this.scopeIds(libraryId, scope),
+    );
     return this.enqueue(libraryId, peer, 'push', lacking);
   }
 
@@ -230,7 +256,11 @@ export class TransferService {
     // so queuing the diff only spends a download apiece to learn that N times.
     if (library.read_only) throw new AppError('READ_ONLY', `library ${library.name} is read-only`);
     await this.locations.reconcile(library);
-    const lacking = this.locations.heldByLackedHere(libraryId, peer, this.scopeIds(libraryId, scope));
+    const lacking = this.locations.heldByLackedHere(
+      libraryId,
+      peer,
+      this.scopeIds(libraryId, scope),
+    );
     return this.enqueue(libraryId, peer, 'pull', lacking);
   }
 
@@ -249,7 +279,8 @@ export class TransferService {
     const library = this.library(photo.library_id);
     if (isOnDisk(originalToTransfer(library, photo))) return null;
     const holders = from == null ? this.otherHolders(library.id, photoId) : [from];
-    if (holders.length === 0) throw new AppError('NOT_FOUND', `no peer is recorded as holding ${photoId}`);
+    if (holders.length === 0)
+      throw new AppError('NOT_FOUND', `no peer is recorded as holding ${photoId}`);
     const peer = this.dialable(holders)[0];
     if (peer == null) {
       throw new AppError(
@@ -274,7 +305,9 @@ export class TransferService {
    */
   private otherHolders(libraryId: string, photoId: string): string[] {
     return [
-      ...this.locations.holders(libraryId, photoId).filter((peer) => peer !== this.locations.selfId()),
+      ...this.locations
+        .holders(libraryId, photoId)
+        .filter((peer) => peer !== this.locations.selfId()),
       ...this.backups.holders(libraryId, photoId),
     ];
   }
@@ -306,13 +339,21 @@ export class TransferService {
     const tried = new Set(
       (
         this.db
-          .query("SELECT peer_id FROM blob_transfers WHERE library_id = ? AND photo_id = ? AND direction = 'pull'")
+          .query(
+            "SELECT peer_id FROM blob_transfers WHERE library_id = ? AND photo_id = ? AND direction = 'pull'",
+          )
           .all(item.library_id, item.photo_id) as { peer_id: string }[]
       ).map((row) => row.peer_id),
     );
-    const next = this.dialable(this.otherHolders(item.library_id, item.photo_id)).find((peer) => !tried.has(peer));
+    const next = this.dialable(this.otherHolders(item.library_id, item.photo_id)).find(
+      (peer) => !tried.has(peer),
+    );
     if (next == null) return;
-    log.info('a fetch is moving to another holder', { photo: item.photo_id, from: item.peer_id, to: next });
+    log.info('a fetch is moving to another holder', {
+      photo: item.photo_id,
+      from: item.peer_id,
+      to: next,
+    });
     this.enqueue(item.library_id, next, 'pull', [item.photo_id]);
     const queued = this.byKey(item.library_id, item.photo_id, next, 'pull');
     if (queued != null) this.anyHolderWillDo.add(queued.id);
@@ -320,7 +361,9 @@ export class TransferService {
 
   list(libraryId?: string): Transfer[] {
     if (libraryId == null) {
-      return this.db.query(`SELECT ${COLUMNS} FROM blob_transfers ORDER BY queued_at, id`).all() as Transfer[];
+      return this.db
+        .query(`SELECT ${COLUMNS} FROM blob_transfers ORDER BY queued_at, id`)
+        .all() as Transfer[];
     }
     return this.db
       .query(`SELECT ${COLUMNS} FROM blob_transfers WHERE library_id = ? ORDER BY queued_at, id`)
@@ -329,7 +372,9 @@ export class TransferService {
 
   pending(libraryId: string): Transfer[] {
     return this.db
-      .query(`SELECT ${COLUMNS} FROM blob_transfers WHERE library_id = ? AND state IN ('queued', 'active') ORDER BY queued_at, id`)
+      .query(
+        `SELECT ${COLUMNS} FROM blob_transfers WHERE library_id = ? AND state IN ('queued', 'active') ORDER BY queued_at, id`,
+      )
       .all(libraryId) as Transfer[];
   }
 
@@ -342,7 +387,9 @@ export class TransferService {
   }
 
   get(id: string): Transfer {
-    const row = this.db.query(`SELECT ${COLUMNS} FROM blob_transfers WHERE id = ?`).get(id) as Transfer | null;
+    const row = this.db
+      .query(`SELECT ${COLUMNS} FROM blob_transfers WHERE id = ?`)
+      .get(id) as Transfer | null;
     if (row == null) throw new AppError('NOT_FOUND', `transfer not found: ${id}`);
     return row;
   }
@@ -361,7 +408,11 @@ export class TransferService {
   resume(id: string): void {
     const item = this.get(id);
     if (item.state !== 'paused' && item.state !== 'failed') return;
-    this.db.query("UPDATE blob_transfers SET state = 'queued', error = NULL, error_code = NULL WHERE id = ?").run(id);
+    this.db
+      .query(
+        "UPDATE blob_transfers SET state = 'queued', error = NULL, error_code = NULL WHERE id = ?",
+      )
+      .run(id);
     this.changed(item.library_id);
     this.kick();
   }
@@ -431,7 +482,9 @@ export class TransferService {
 
   /** Starts the queue without waiting on it; enqueue paths and startup call this. */
   kick(): void {
-    void this.drain().catch((error: unknown) => log.error('transfer queue stopped', { err: String(error) }));
+    void this.drain().catch((error: unknown) =>
+      log.error('transfer queue stopped', { err: String(error) }),
+    );
   }
 
   // One worker; a second drain awaits the one in flight rather than racing it.
@@ -496,7 +549,11 @@ export class TransferService {
         if (reason == null) evicted.push(photoId);
         else refused.push({ photo_id: photoId, reason });
       } catch (error) {
-        refused.push({ photo_id: photoId, reason: error instanceof Error ? error.message : String(error), error_code: backupIssueCode(error) });
+        refused.push({
+          photo_id: photoId,
+          reason: error instanceof Error ? error.message : String(error),
+          error_code: backupIssueCode(error),
+        });
       }
     }
     return { evicted, refused };
@@ -533,16 +590,33 @@ export class TransferService {
     const backup = passivePeerOf(this.db, peer);
     if (backup != null) {
       const entry = this.backups.entry(library.id, backup.peerId, photo.id);
-      if (entry == null) throw new BackupError('backup_missing', 'No backup copy is recorded. Run the backup again.');
+      if (entry == null)
+        throw new BackupError(
+          'backup_missing',
+          'No backup copy is recorded. Run the backup again.',
+        );
       return await libraryMutex.run(library.id, async () => {
         assertMirrorOf(backup.root, library.id, library.name, backup.peerId);
         try {
-          await deleteBackedUpOriginal(library.root_path, abs, backupPath(backup.root, entry.rel_path), recorded);
+          await deleteBackedUpOriginal(
+            library.root_path,
+            abs,
+            backupPath(backup.root, entry.rel_path),
+            recorded,
+          );
         } catch (error) {
           const code = backupIssueCode(error);
-          if (code === 'backup_missing') this.backups.mark(library.id, backup.peerId, photo.id, 'missing');
-          if (code === 'backup_changed') this.backups.mark(library.id, backup.peerId, photo.id, 'changed');
-          if (code === 'local_changed') this.backups.setIssue(library.id, backup.peerId, photo.id, { code, phase: 'offloading', photo_id: photo.id, path: at });
+          if (code === 'backup_missing')
+            this.backups.mark(library.id, backup.peerId, photo.id, 'missing');
+          if (code === 'backup_changed')
+            this.backups.mark(library.id, backup.peerId, photo.id, 'changed');
+          if (code === 'local_changed')
+            this.backups.setIssue(library.id, backup.peerId, photo.id, {
+              code,
+              phase: 'offloading',
+              photo_id: photo.id,
+              path: at,
+            });
           throw error;
         }
         this.backups.clearLocalIssues(library.id, photo.id);
@@ -604,7 +678,8 @@ export class TransferService {
     } catch (error) {
       return (error as Error).message;
     }
-    if (library.read_only) throw new BackupError('read_only', `library ${library.name} is read-only`);
+    if (library.read_only)
+      throw new BackupError('read_only', `library ${library.name} is read-only`);
     // Marked before the peer is asked and held until the file is gone, because the
     // question being asked of the peer is the one being asked of this device at the
     // same moment. Two peers each keeping a photograph "on the other" both hear yes
@@ -626,7 +701,8 @@ export class TransferService {
         const abs = originalPathOf(library, photo);
         // A row composed out of others holds no original, so there is nothing here an eviction
         // would free: what it costs this device is its renditions, which the cache sweeps.
-        if (at == null || abs == null) return 'this photograph is composed rather than imported, so it has no original to evict';
+        if (at == null || abs == null)
+          return 'this photograph is composed rather than imported, so it has no original to evict';
         if (!isOnDisk(abs)) return 'the original is not on this device';
         return await this.removeLocalCopy(photo, library, at, abs, recorded, peer);
       }),
@@ -643,7 +719,12 @@ export class TransferService {
     return rows.map((row) => row.id);
   }
 
-  private enqueue(libraryId: string, peer: string, direction: TransferDirection, photoIds: readonly string[]): number {
+  private enqueue(
+    libraryId: string,
+    peer: string,
+    direction: TransferDirection,
+    photoIds: readonly string[],
+  ): number {
     let queued = 0;
     this.db.transaction(() => {
       for (const photoId of photoIds) {
@@ -656,8 +737,16 @@ export class TransferService {
             )
             .run(newId(), libraryId, photoId, peer, direction, new Date().toISOString());
           queued += 1;
-        } else if (existing.state === 'failed' || existing.state === 'cancelled' || existing.state === 'done') {
-          this.db.query("UPDATE blob_transfers SET state = 'queued', error = NULL, error_code = NULL, bytes_done = 0, bytes_total = NULL WHERE id = ?").run(existing.id);
+        } else if (
+          existing.state === 'failed' ||
+          existing.state === 'cancelled' ||
+          existing.state === 'done'
+        ) {
+          this.db
+            .query(
+              "UPDATE blob_transfers SET state = 'queued', error = NULL, error_code = NULL, bytes_done = 0, bytes_total = NULL WHERE id = ?",
+            )
+            .run(existing.id);
           queued += 1;
         }
       }
@@ -666,16 +755,28 @@ export class TransferService {
     return queued;
   }
 
-  private byKey(libraryId: string, photoId: string, peer: string, direction: TransferDirection): Transfer | null {
+  private byKey(
+    libraryId: string,
+    photoId: string,
+    peer: string,
+    direction: TransferDirection,
+  ): Transfer | null {
     return this.db
-      .query(`SELECT ${COLUMNS} FROM blob_transfers WHERE library_id = ? AND photo_id = ? AND peer_id = ? AND direction = ?`)
+      .query(
+        `SELECT ${COLUMNS} FROM blob_transfers WHERE library_id = ? AND photo_id = ? AND peer_id = ? AND direction = ?`,
+      )
       .get(libraryId, photoId, peer, direction) as Transfer | null;
   }
 
   private async run(item: Transfer): Promise<void> {
     const abort = new AbortController();
     this.aborts.set(item.id, abort);
-    const kind = item.direction === 'pull' ? 'fetching' : passivePeerOf(this.db, item.peer_id) != null ? 'backing_up' : 'sending';
+    const kind =
+      item.direction === 'pull'
+        ? 'fetching'
+        : passivePeerOf(this.db, item.peer_id) != null
+          ? 'backing_up'
+          : 'sending';
     const finish = this.activity.begin(item.library_id, kind, item.photo_id);
     try {
       this.db.query("UPDATE blob_transfers SET state = 'active' WHERE id = ?").run(item.id);
@@ -684,13 +785,20 @@ export class TransferService {
       const library = this.library(item.library_id);
       if (item.direction === 'push') await this.push(item, photo, library, abort.signal);
       else await this.pull(item, photo, library, abort.signal);
-      if (!abort.signal.aborted) this.db.query("UPDATE blob_transfers SET state = 'done', error = NULL, error_code = NULL WHERE id = ? AND state = 'active'").run(item.id);
+      if (!abort.signal.aborted)
+        this.db
+          .query(
+            "UPDATE blob_transfers SET state = 'done', error = NULL, error_code = NULL WHERE id = ? AND state = 'active'",
+          )
+          .run(item.id);
     } catch (error) {
       // pause() and cancel() abort the in-flight request having already written
       // the state they wanted; overwriting it here would resurrect the item.
       if (abort.signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
-      this.db.query("UPDATE blob_transfers SET state = 'failed', error = ?, error_code = ? WHERE id = ?").run(message, backupIssueCode(error), item.id);
+      this.db
+        .query("UPDATE blob_transfers SET state = 'failed', error = ?, error_code = ? WHERE id = ?")
+        .run(message, backupIssueCode(error), item.id);
       // Queued rather than run here, so it is the drain that takes it and the
       // retry is bounded by the same single worker as everything else.
       if (this.anyHolderWillDo.has(item.id)) this.tryNextHolder(item);
@@ -703,20 +811,35 @@ export class TransferService {
     }
   }
 
-  private async push(item: Transfer, photo: BasicPhoto, library: Library, signal: AbortSignal): Promise<void> {
+  private async push(
+    item: Transfer,
+    photo: BasicPhoto,
+    library: Library,
+    signal: AbortSignal,
+  ): Promise<void> {
     const abs = originalToTransfer(library, photo);
-    if (!isOnDisk(abs)) throw new BackupError('local_missing', `The local original for ${soleInputOf(photo.recipe) ?? photo.id} is missing. Restore it before backing it up.`);
+    if (!isOnDisk(abs))
+      throw new BackupError(
+        'local_missing',
+        `The local original for ${soleInputOf(photo.recipe) ?? photo.id} is missing. Restore it before backing it up.`,
+      );
     const file = Bun.file(abs);
     const size = file.size;
 
-    const stagedRes = await this.transport.request(item.peer_id, route(photo.id, PathSegment.stage()), { signal });
-    if (!stagedRes.ok) throw new AppError('IO_ERROR', `peer answered ${stagedRes.status} for staged size`);
+    const stagedRes = await this.transport.request(
+      item.peer_id,
+      route(photo.id, PathSegment.stage()),
+      { signal },
+    );
+    if (!stagedRes.ok)
+      throw new AppError('IO_ERROR', `peer answered ${stagedRes.status} for staged size`);
     const { staged, held } = BlobStageResponseSchema.parse(await stagedRes.json());
     if (held) {
       this.progress(item, size, size);
       return;
     }
-    if (staged > size) throw new AppError('CONFLICT', `peer holds ${staged} staged bytes of a ${size}-byte file`);
+    if (staged > size)
+      throw new AppError('CONFLICT', `peer holds ${staged} staged bytes of a ${size}-byte file`);
 
     // §7.1: hashed while streaming - the bytes already staged prime the hash, the
     // rest is hashed as it is read to be sent, and no separate hashing pass runs.
@@ -732,14 +855,21 @@ export class TransferService {
       // finishes. Deletion mid-push fails the read and is answered already; this is
       // the case that reads fine and cannot progress.
       if (chunk.byteLength === 0) {
-        throw new AppError('IO_ERROR', `the original shrank under this transfer: ${sent} of ${size} bytes sent`);
+        throw new AppError(
+          'IO_ERROR',
+          `the original shrank under this transfer: ${sent} of ${size} bytes sent`,
+        );
       }
       hasher.update(chunk);
-      const res = await this.transport.request(item.peer_id, `${route(photo.id, PathSegment.stage())}?offset=${sent}`, {
-        method: 'PUT',
-        body: chunk,
-        signal,
-      });
+      const res = await this.transport.request(
+        item.peer_id,
+        `${route(photo.id, PathSegment.stage())}?offset=${sent}`,
+        {
+          method: 'PUT',
+          body: chunk,
+          signal,
+        },
+      );
       if (!res.ok) throw new AppError('IO_ERROR', `peer refused bytes at ${sent}: ${res.status}`);
       sent += chunk.byteLength;
       this.progress(item, sent, size);
@@ -747,16 +877,23 @@ export class TransferService {
     const computed = hasher.digest('hex');
     const recorded = this.photoMetadata.contentHashOf(photo.id);
     if (recorded != null && computed !== recorded) {
-      throw new BackupError('local_changed', 'The local original has changed. Check the file before backing it up.');
+      throw new BackupError(
+        'local_changed',
+        'The local original has changed. Check the file before backing it up.',
+      );
     }
     if (recorded != null) this.backups.clearLocalIssues(library.id, photo.id);
 
-    const commit = await this.transport.request(item.peer_id, route(photo.id, PathSegment.commit()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(BlobCommitRequestSchema.parse({ content_hash: recorded ?? computed })),
-      signal,
-    });
+    const commit = await this.transport.request(
+      item.peer_id,
+      route(photo.id, PathSegment.commit()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(BlobCommitRequestSchema.parse({ content_hash: recorded ?? computed })),
+        signal,
+      },
+    );
     if (!commit.ok) {
       throw new AppError('CONFLICT', `peer refused the transfer: ${await commitError(commit)}`);
     }
@@ -768,7 +905,12 @@ export class TransferService {
     this.locations.record(library.id, photo.id);
   }
 
-  private async pull(item: Transfer, photo: BasicPhoto, library: Library, signal: AbortSignal): Promise<void> {
+  private async pull(
+    item: Transfer,
+    photo: BasicPhoto,
+    library: Library,
+    signal: AbortSignal,
+  ): Promise<void> {
     if (library.read_only) throw new AppError('READ_ONLY', `library ${library.name} is read-only`);
     const stage = stagePath(library, photo.id);
     const original = originalToTransfer(library, photo);
@@ -783,11 +925,16 @@ export class TransferService {
         await deleteEmptyStagingDirectory(stagingDir(library));
         return;
       }
-      if ((await contentHash(original)) !== recorded) throw new BackupError('path_conflict', 'A different file occupies the local path. Move it before restoring the original.');
+      if ((await contentHash(original)) !== recorded)
+        throw new BackupError(
+          'path_conflict',
+          'A different file occupies the local path. Move it before restoring the original.',
+        );
       signal.throwIfAborted();
       if (existsSync(stage)) await deleteStagedBlob(stagingDir(library), stage);
-      const newlyArrived = !this.locations.heldBy(library.id, photo.id, this.locations.selfId())
-        || this.db.query('SELECT 1 FROM photos WHERE id = ? AND is_missing = 1').get(photo.id) != null;
+      const newlyArrived =
+        !this.locations.heldBy(library.id, photo.id, this.locations.selfId()) ||
+        this.db.query('SELECT 1 FROM photos WHERE id = ? AND is_missing = 1').get(photo.id) != null;
       this.locations.record(library.id, photo.id);
       this.locations.clearFlag(library.id, photo.id);
       this.backups.clearLocalIssues(library.id, photo.id);
@@ -799,10 +946,14 @@ export class TransferService {
     }
     let done = stagedSize(stage);
 
-    const res = await this.transport.request(item.peer_id, route(photo.id, PathSegment.original()), {
-      headers: done > 0 ? { range: `bytes=${done}-` } : {},
-      signal,
-    });
+    const res = await this.transport.request(
+      item.peer_id,
+      route(photo.id, PathSegment.original()),
+      {
+        headers: done > 0 ? { range: `bytes=${done}-` } : {},
+        signal,
+      },
+    );
     if (!res.ok || res.body == null) {
       throw new AppError('IO_ERROR', `peer answered ${res.status} for the original`);
     }
@@ -820,7 +971,8 @@ export class TransferService {
     });
     this.progress(item, done, total ?? done);
 
-    const expected = this.photoMetadata.contentHashOf(photo.id) ?? (await this.senderHash(item.peer_id, photo.id));
+    const expected =
+      this.photoMetadata.contentHashOf(photo.id) ?? (await this.senderHash(item.peer_id, photo.id));
     const computed = await contentHash(stage);
     signal.throwIfAborted();
     if (computed !== expected) {
@@ -829,13 +981,30 @@ export class TransferService {
       if (backup != null) {
         if ((await this.senderHash(item.peer_id, photo.id)) !== expected) {
           this.backups.mark(library.id, backup.peerId, photo.id, 'changed');
-          throw new BackupError('backup_changed', `The backup copy of ${soleInputOf(photo.recipe) ?? photo.id} has changed. Check the backup file and try again.`);
+          throw new BackupError(
+            'backup_changed',
+            `The backup copy of ${soleInputOf(photo.recipe) ?? photo.id} has changed. Check the backup file and try again.`,
+          );
         }
-        throw new BackupError('transfer_failed', 'The restored copy did not match the original. Try again to copy it from the start.');
+        throw new BackupError(
+          'transfer_failed',
+          'The restored copy did not match the original. Try again to copy it from the start.',
+        );
       }
-      throw new AppError('VALIDATION_ERROR', `discarded download of ${photo.id}: bytes hash ${computed}, expected ${expected}`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `discarded download of ${photo.id}: bytes hash ${computed}, expected ${expected}`,
+      );
     }
-    await acceptVerifiedBlob(this.photoPaths, this.photoMetadata, this.locations, library, photo.id, stage, this.build);
+    await acceptVerifiedBlob(
+      this.photoPaths,
+      this.photoMetadata,
+      this.locations,
+      library,
+      photo.id,
+      stage,
+      this.build,
+    );
     this.backups.clearLocalIssues(library.id, photo.id);
   }
 
@@ -846,10 +1015,15 @@ export class TransferService {
   }
 
   private progress(item: Transfer, done: number, total: number | null): void {
-    this.db.query('UPDATE blob_transfers SET bytes_done = ?, bytes_total = ? WHERE id = ?').run(done, total, item.id);
+    this.db
+      .query('UPDATE blob_transfers SET bytes_done = ?, bytes_total = ? WHERE id = ?')
+      .run(done, total, item.id);
     // performance.now, not Date.now: a clock set backwards would silence progress until it caught up.
     const now = performance.now();
-    if (now - (this.progressNotifiedAt.get(item.library_id) ?? Number.NEGATIVE_INFINITY) >= PROGRESS_NOTIFY_MS) {
+    if (
+      now - (this.progressNotifiedAt.get(item.library_id) ?? Number.NEGATIVE_INFINITY) >=
+      PROGRESS_NOTIFY_MS
+    ) {
       this.progressNotifiedAt.set(item.library_id, now);
       this.changed(item.library_id);
     }

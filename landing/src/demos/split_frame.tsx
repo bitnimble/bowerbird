@@ -147,7 +147,10 @@ export function SplitFrame({
   };
 
   return (
-    <div {...stylex.props(styles.split, loading && styles.pending, focusRing.within)} aria-busy={loading}>
+    <div
+      {...stylex.props(styles.split, loading && styles.pending, focusRing.within)}
+      aria-busy={loading}
+    >
       <div {...stylex.props(styles.contents, loading && styles.hidden)}>
         <div>{before}</div>
         {/* Clipped by overflow, not clip-path or a transform: either can flatten an HDR image to SDR. */}

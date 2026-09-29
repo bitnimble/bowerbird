@@ -3,12 +3,31 @@
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { Database } from '../../src/db/driver';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { latestMigrationMillis } from '../../src/db/migrate';
-import { BackupService, ScheduledBackup, findBackup, listBackups } from '../../src/services/maintenance/backup_service';
+import {
+  BackupService,
+  ScheduledBackup,
+  findBackup,
+  listBackups,
+} from '../../src/services/maintenance/backup_service';
 import { spaceNeededFor } from '../../src/services/maintenance/backup_worker';
 import { holdAgainstUse, restoreBackup } from '../../src/services/maintenance/restore';
 import { newestStamp } from '../../src/services/replication/restamp';
@@ -27,13 +46,19 @@ let backups: BackupService;
 let activity: LibraryActivity;
 
 function addLibrary(id: string, name: string): void {
-  db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(id, path.join(dir, name), name);
+  db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(
+    id,
+    path.join(dir, name),
+    name,
+  );
 }
 
 function libraryNames(file: string): string[] {
   const copy = new Database(file, { readonly: true });
   try {
-    return (copy.query('SELECT name FROM libraries ORDER BY name').all() as { name: string }[]).map((r) => r.name);
+    return (copy.query('SELECT name FROM libraries ORDER BY name').all() as { name: string }[]).map(
+      (r) => r.name,
+    );
   } finally {
     copy.close();
   }
@@ -113,7 +138,10 @@ test('a working file abandoned by a killed run is swept by the next one', async 
   await backups.backup(7);
   // What SIGKILL during `VACUUM INTO` leaves: dot-prefixed, so rotation cannot see
   // it, and the size of the catalogue. Nothing else would ever come looking.
-  const abandoned = path.join(backupsDir(dbPath), `.${path.basename(dbPath)}-2020-01-01T00-00-00-000Z-1.part`);
+  const abandoned = path.join(
+    backupsDir(dbPath),
+    `.${path.basename(dbPath)}-2020-01-01T00-00-00-000Z-1.part`,
+  );
   writeFileSync(abandoned, 'half a catalogue');
   // Old enough that no live run could still be writing it. A fresh one belongs to
   // something that is still going, which the test below covers.
@@ -131,7 +159,12 @@ test('rotation keeps the newest N and drops the rest', async () => {
   const made: string[] = [];
   for (let i = 0; i < 4; i++) made.push((await backups.backup(2)).path);
 
-  expect(everything()).toEqual(made.slice(-2).map((file) => path.basename(file)).sort());
+  expect(everything()).toEqual(
+    made
+      .slice(-2)
+      .map((file) => path.basename(file))
+      .sort(),
+  );
   // The count goes into the operator's log line, so it has to be the real one.
   expect((await backups.backup(2)).removed).toBe(1);
 });
@@ -455,7 +488,9 @@ test('an unreadable backup directory is raised, not reported as having no backup
     // ...but it must not take a rescued copy down with it. That path names its file
     // directly and has no business being refused because a directory it never reads
     // cannot be listed.
-    expect(await findBackup(dbPath, path.join(dir, 'rescued.db'))).toBe(path.join(dir, 'rescued.db'));
+    expect(await findBackup(dbPath, path.join(dir, 'rescued.db'))).toBe(
+      path.join(dir, 'rescued.db'),
+    );
   } finally {
     chmodSync(backupDir, 0o755);
   }
@@ -492,7 +527,9 @@ async function futureStampedSnapshot(): Promise<string> {
   );
   mkdirSync(backupsDir(dbPath), { recursive: true });
   const seeded = createDatabase(file);
-  seeded.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run('from-the-future', '/f', 'from-the-future');
+  seeded
+    .query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)')
+    .run('from-the-future', '/f', 'from-the-future');
   seeded.close();
   utimesSync(file, ahead, ahead);
   return file;
@@ -595,7 +632,10 @@ test('rotation never deletes the snapshot it just took', async () => {
   // and so the only arrangement where rotation could reach it.
   for (const hoursAgo of [3, 2]) {
     const when = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
-    const file = path.join(backupsDir(dbPath), `${path.basename(dbPath)}-${when.toISOString().replace(/[:.]/g, '-')}.db`);
+    const file = path.join(
+      backupsDir(dbPath),
+      `${path.basename(dbPath)}-${when.toISOString().replace(/[:.]/g, '-')}.db`,
+    );
     mkdirSync(backupsDir(dbPath), { recursive: true });
     createDatabase(file).close();
   }
@@ -651,9 +691,13 @@ test('lands a catalogue already lifted above the clock it replaced', async () =>
   // a replicating library and stamps of its own.
   const file = path.join(dir, 'snapshot.db');
   const snapshot = createDatabase(file);
-  snapshot.query("INSERT INTO libraries (id, root_path, name) VALUES (?, '/photos', 'holiday')").run(LIB);
+  snapshot
+    .query("INSERT INTO libraries (id, root_path, name) VALUES (?, '/photos', 'holiday')")
+    .run(LIB);
   snapshot.query('INSERT INTO replication_libraries (library_id) VALUES (?)').run(LIB);
-  snapshot.query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?').run('holiday', stamp(snapshot), LIB);
+  snapshot
+    .query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?')
+    .run('holiday', stamp(snapshot), LIB);
   const before = newestStamp(snapshot)!;
   snapshot.close();
 
@@ -663,8 +707,12 @@ test('lands a catalogue already lifted above the clock it replaced', async () =>
   // Read raw, so nothing has run against the file since it landed - no migrations,
   // no start, no deferred walk. What it holds is what the restore put there.
   const landed = new Database(dbPath, { readonly: true });
-  const stamps = landed.query('SELECT stamp FROM libraries WHERE id = ?').get(LIB) as { stamp: string };
-  const name = (landed.query('SELECT name FROM libraries WHERE id = ?').get(LIB) as { name: string }).name;
+  const stamps = landed.query('SELECT stamp FROM libraries WHERE id = ?').get(LIB) as {
+    stamp: string;
+  };
+  const name = (
+    landed.query('SELECT name FROM libraries WHERE id = ?').get(LIB) as { name: string }
+  ).name;
   landed.close();
 
   expect(name).toBe('holiday');
@@ -857,7 +905,10 @@ test('a working file from a run that is still going is left alone', async () => 
   addLibrary(LIB, 'holiday');
   // Two servers on one catalogue, or an overlapping restart. Sweeping every working
   // file on sight deletes the other run's output from under it mid-vacuum.
-  const inFlight = path.join(backupsDir(dbPath), `.${path.basename(dbPath)}-2020-01-01T00-00-00-000Z-9.part`);
+  const inFlight = path.join(
+    backupsDir(dbPath),
+    `.${path.basename(dbPath)}-2020-01-01T00-00-00-000Z-9.part`,
+  );
   mkdirSync(backupsDir(dbPath), { recursive: true });
   writeFileSync(inFlight, 'someone else is writing this');
 
@@ -871,7 +922,10 @@ test('a working file from a run that is still going is left alone', async () => 
 // flag latches, and every later run is skipped by a schedule still logging health.
 function stubWorker(body: string): string {
   const file = path.join(dir, `stub-worker-${body.length}.ts`);
-  writeFileSync(file, `declare const self: { onmessage: ((e: MessageEvent) => void) | null };\n${body}`);
+  writeFileSync(
+    file,
+    `declare const self: { onmessage: ((e: MessageEvent) => void) | null };\n${body}`,
+  );
   return `file://${file}`;
 }
 
@@ -955,7 +1009,13 @@ test('deleting a backup refuses anything that is not a flat file in the backup d
   await backups.backup(7);
 
   // The guard that stands between rotation and the rest of the disk.
-  await expect(deleteBackupFile(backupDir, path.join(backupDir, 'nested', 'x.db'))).rejects.toThrow(/not a file in/);
-  await expect(deleteBackupFile(backupDir, path.join(dir, 'bowerbird.db'))).rejects.toThrow(/not a file in/);
-  await expect(deleteBackupFile(backupDir, path.join(backupDir, 'DSC00001.ARW'))).rejects.toThrow(/is an original/);
+  await expect(deleteBackupFile(backupDir, path.join(backupDir, 'nested', 'x.db'))).rejects.toThrow(
+    /not a file in/,
+  );
+  await expect(deleteBackupFile(backupDir, path.join(dir, 'bowerbird.db'))).rejects.toThrow(
+    /not a file in/,
+  );
+  await expect(deleteBackupFile(backupDir, path.join(backupDir, 'DSC00001.ARW'))).rejects.toThrow(
+    /is an original/,
+  );
 });

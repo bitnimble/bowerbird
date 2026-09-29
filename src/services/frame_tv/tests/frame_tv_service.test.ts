@@ -34,13 +34,16 @@ class Fixture {
           return Promise.resolve(JPEG);
         },
       },
-      { get: (tvId) => this.tokens.get(tvId), set: (tvId, token) => void this.tokens.set(tvId, token) },
+      {
+        get: (tvId) => this.tokens.get(tvId),
+        set: (tvId, token) => void this.tokens.set(tvId, token),
+      },
       () => Promise.resolve([LIVING_ROOM]),
       (options) => {
         this.connected.push(options);
         return this.client();
       },
-      (photoId) => photoId === 'cccccccc' ? 'library-two' : 'library-one',
+      (photoId) => (photoId === 'cccccccc' ? 'library-two' : 'library-one'),
       this.activity,
     );
   }
@@ -64,7 +67,13 @@ class Fixture {
 }
 
 function request(overrides: Partial<SendToFrameTvRequest> = {}): SendToFrameTvRequest {
-  return { tv_id: LIVING_ROOM.id, photo_id: 'aaaaaaaa', rendition: 'max', show: true, ...overrides };
+  return {
+    tv_id: LIVING_ROOM.id,
+    photo_id: 'aaaaaaaa',
+    rendition: 'max',
+    show: true,
+    ...overrides,
+  };
 }
 
 describe('FrameTvService', () => {
@@ -75,7 +84,10 @@ describe('FrameTvService', () => {
 
     expect(fixture.jpegsAsked).toEqual(['max']);
     expect(fixture.uploads).toEqual([
-      { image: JPEG, options: { fileType: 'jpg', matte: 'none', portraitMatte: 'none', timeoutMs: 30_000 } },
+      {
+        image: JPEG,
+        options: { fileType: 'jpg', matte: 'none', portraitMatte: 'none', timeoutMs: 30_000 },
+      },
     ]);
     expect(fixture.selected).toEqual(['MY_F0001']);
   });
@@ -106,7 +118,9 @@ describe('FrameTvService', () => {
     await frameTvs.send(request());
     fixture.connected[0]?.onToken?.('new-token');
 
-    expect(fixture.connected.map(({ host, token }) => ({ host, token }))).toEqual([{ host: '10.0.0.5', token: 'old-token' }]);
+    expect(fixture.connected.map(({ host, token }) => ({ host, token }))).toEqual([
+      { host: '10.0.0.5', token: 'old-token' },
+    ]);
     expect(fixture.tokens.get(LIVING_ROOM.id)).toBe('new-token');
   });
 
@@ -143,8 +157,12 @@ describe('FrameTvService', () => {
     fixture.selectionStarted = selecting.resolve;
     const frameTvs = fixture.service();
     const first = frameTvs.send(request());
-    const second = frameTvs.send(request({ photo_id: 'bbbbbbbb' })).catch((error: unknown) => error instanceof Error ? error.message : String(error));
-    const other = frameTvs.send(request({ photo_id: 'cccccccc' })).catch((error: unknown) => error instanceof Error ? error.message : String(error));
+    const second = frameTvs
+      .send(request({ photo_id: 'bbbbbbbb' }))
+      .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+    const other = frameTvs
+      .send(request({ photo_id: 'cccccccc' }))
+      .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
 
     expect(fixture.activity.current('library-one')).toEqual([{ kind: 'sending_to_tv', count: 2 }]);
     expect(fixture.activity.current('library-two')).toEqual([{ kind: 'sending_to_tv', count: 1 }]);
@@ -194,12 +212,21 @@ describe('FrameTvService', () => {
 
 describe('frameTvFrom', () => {
   it('reads a Frame out of its REST description', () => {
-    const info = { name: '[TV] Samsung Frame (55)', device: { id: 'uuid:abc', name: 'Frame', FrameTVSupport: 'true' } };
-    expect(frameTvFrom('10.0.0.5', info)).toEqual({ id: 'uuid:abc', name: '[TV] Samsung Frame (55)', host: '10.0.0.5' });
+    const info = {
+      name: '[TV] Samsung Frame (55)',
+      device: { id: 'uuid:abc', name: 'Frame', FrameTVSupport: 'true' },
+    };
+    expect(frameTvFrom('10.0.0.5', info)).toEqual({
+      id: 'uuid:abc',
+      name: '[TV] Samsung Frame (55)',
+      host: '10.0.0.5',
+    });
   });
 
   it('passes over a TV that is not a Frame', () => {
-    expect(frameTvFrom('10.0.0.6', { name: 'TV', device: { id: 'uuid:def', FrameTVSupport: 'false' } })).toBeNull();
+    expect(
+      frameTvFrom('10.0.0.6', { name: 'TV', device: { id: 'uuid:def', FrameTVSupport: 'false' } }),
+    ).toBeNull();
   });
 
   it('passes over anything that is not a Samsung description', () => {

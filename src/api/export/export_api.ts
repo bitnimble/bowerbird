@@ -56,9 +56,9 @@ export class ExportApi {
         photoId,
         options,
         runId != null,
-        runId == null ?
-          undefined
-        : (fraction) => this.progressed({ run_id: runId, photo_id: photoId, fraction }),
+        runId == null
+          ? undefined
+          : (fraction) => this.progressed({ run_id: runId, photo_id: photoId, fraction }),
       );
       if (runId != null) this.history.began(runId, photoId, options, file.thumbnail);
 
@@ -82,7 +82,9 @@ export class ExportApi {
       return c.body(null, 204);
     });
 
-    app.get(route(PathSegment.exports()), (c) => c.json(respond(ExportRunsSchema, this.history.list())));
+    app.get(route(PathSegment.exports()), (c) =>
+      c.json(respond(ExportRunsSchema, this.history.list())),
+    );
 
     app.delete(route(PathSegment.exports()), (c) => {
       this.history.forgetAll();
@@ -94,14 +96,22 @@ export class ExportApi {
     app.post(route(PathSegment.exports(), PathSegment.queued()), async (c) => {
       const parsed = QueuedExportsRequestSchema.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) throw new AppError('VALIDATION_ERROR', 'not a queued export');
-      return c.json(respond(QueuedPhotosSchema, this.history.queued(parsed.data.photo_ids, parsed.data.include_edits)));
+      return c.json(
+        respond(
+          QueuedPhotosSchema,
+          this.history.queued(parsed.data.photo_ids, parsed.data.include_edits),
+        ),
+      );
     });
 
     // Before the row below it, which would otherwise take `runs` for an export's id.
-    app.delete(route(PathSegment.exports(), PathSegment.runs(), PathSegment.param('runId')), (c) => {
-      this.history.forgetRun(c.req.param('runId'));
-      return c.body(null, 204);
-    });
+    app.delete(
+      route(PathSegment.exports(), PathSegment.runs(), PathSegment.param('runId')),
+      (c) => {
+        this.history.forgetRun(c.req.param('runId'));
+        return c.body(null, 204);
+      },
+    );
 
     app.delete(route(PathSegment.exports(), PathSegment.param('id')), (c) => {
       this.history.forget(c.req.param('id'));

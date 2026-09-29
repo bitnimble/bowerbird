@@ -18,7 +18,9 @@ use rawshim::hdr_fit::{ChromaMap, HdrColour, TRUST_CEILING};
 /// Read rather than vendored, so a change to the shader is a change to this test. A copy
 /// would pass forever against whatever it was copied from.
 fn read_wgsl(name: &str) -> String {
-    let path = std::path::Path::new(env!("OUT_DIR")).join("wgsl").join(name);
+    let path = std::path::Path::new(env!("OUT_DIR"))
+        .join("wgsl")
+        .join(name);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
@@ -36,14 +38,27 @@ fn model() -> HdrColour {
         }
     }
     colour.anchor = TRUST_CEILING * 0.4;
-    colour.matrix = [[1.25, -0.2, -0.05], [-0.35, 1.5, -0.15], [0.02, -0.25, 1.23]];
+    colour.matrix = [
+        [1.25, -0.2, -0.05],
+        [-0.35, 1.5, -0.15],
+        [0.02, -0.25, 1.23],
+    ];
     colour.saturation = 1.08;
     colour.chroma = Some(ChromaMap::from_nodes(|x, y, z| {
         let scale = 1.04 + 0.03 * x as f64 - 0.02 * y as f64 + 0.05 * z as f64;
         let skew = 0.02 * (x as f64 - y as f64);
         let lift = 1.0 + 0.015 * (x as f64 - 2.0) - 0.01 * (y as f64 - 2.0) + 0.004 * z as f64;
-        [scale, skew, -skew, scale * 0.98, 0.004 * (x as f64 - 2.0), -0.003 * (y as f64 - 2.0), lift,
-         0.05 * (x as f64 - 2.0), -0.04 * (y as f64 - 2.0)]
+        [
+            scale,
+            skew,
+            -skew,
+            scale * 0.98,
+            0.004 * (x as f64 - 2.0),
+            -0.003 * (y as f64 - 2.0),
+            lift,
+            0.05 * (x as f64 - 2.0),
+            -0.04 * (y as f64 - 2.0),
+        ]
     }));
     colour
 }
@@ -141,7 +156,9 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
     words.push(1); // curve_is_camera
     for _ in 0..2 {
         for point in [[0.0, 0.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.0]] {
-            for value in point { f_push(&mut words, value); }
+            for value in point {
+                f_push(&mut words, value);
+            }
         }
         words.resize(words.len() + (rawshim::light::CURVE_MAX_POINTS - 2) * 4, 0);
     }
@@ -220,7 +237,10 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
     // of the frame the histogram in front of the scan actually holds.
     let cases: [(&str, Vec<(u32, u32)>); 3] = [
         ("a whole frame", vec![(dim, 999_900), (bright, 100)]),
-        ("candidates, and fewer of them than the rank", vec![(bright, 10)]),
+        (
+            "candidates, and fewer of them than the rank",
+            vec![(bright, 10)],
+        ),
         ("a single sample", vec![(bright, 1)]),
     ];
 
@@ -247,8 +267,10 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
         // business and `quantile` skips it once anything has been collected.
         let candidates = init(&1u32.to_le_bytes(), wgpu::BufferUsages::STORAGE);
         // Reference white is 1.0 in this uniform, so the peak comes back in units of it.
-        let edits =
-            init(&uniform(&model(), 1_000_000, 0.0), wgpu::BufferUsages::UNIFORM);
+        let edits = init(
+            &uniform(&model(), 1_000_000, 0.0),
+            wgpu::BufferUsages::UNIFORM,
+        );
         let readback = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
             size: 16,
@@ -260,10 +282,22 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
             label: Some("peak"),
             layout: &layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: histogram.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: peak.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: candidates.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: edits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: histogram.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: peak.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: candidates.as_entire_binding(),
+                },
             ],
         });
 
@@ -273,7 +307,9 @@ fn the_peak_scan_answers_a_sample_shorter_than_its_rank() {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        recording.encoder().copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
         recording.submit();
 
         let got = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
@@ -325,10 +361,17 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
     let bytes: Vec<u8> = fed.iter().flat_map(|v| v.to_bits().to_le_bytes()).collect();
     let mut recording = shipped.record();
     let mut init = |contents: &[u8], usage: wgpu::BufferUsages| {
-        recording.init(&wgpu::util::BufferInitDescriptor { label: None, contents, usage })
+        recording.init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents,
+            usage,
+        })
     };
     let histogram = init(&bytes, wgpu::BufferUsages::STORAGE);
-    let peak = init(&[0u8; 16], wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
+    let peak = init(
+        &[0u8; 16],
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    );
     let readback = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
         size: 16,
@@ -342,8 +385,14 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
         label: Some("bins"),
         layout: &pipeline.get_bind_group_layout(0),
         entries: &[
-            wgpu::BindGroupEntry { binding: 5, resource: histogram.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: peak.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: histogram.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: peak.as_entire_binding(),
+            },
         ],
     });
 
@@ -353,7 +402,9 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }
-    recording.encoder().copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&peak, 0, &readback, 0, 16);
     recording.submit();
 
     let got: Vec<u32> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
@@ -371,5 +422,10 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
     assert_eq!(got[1], PEAK_BINS - 1, "an infinity binned at {}", got[1]);
     assert_eq!(got[2], 0, "black binned at {}", got[2]);
     // Reference white is the middle of a range that spans fourteen stops either side of it.
-    assert_eq!(got[3], PEAK_BINS / 2, "reference white binned at {}", got[3]);
+    assert_eq!(
+        got[3],
+        PEAK_BINS / 2,
+        "reference white binned at {}",
+        got[3]
+    );
 }

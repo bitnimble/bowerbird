@@ -15,17 +15,30 @@ export const RENDER_STAGES = [
 export const RenderStageSchema = z.enum(RENDER_STAGES);
 export type RenderStage = z.infer<typeof RenderStageSchema>;
 
-export const OPTIONAL_STAGES = ['dust', 'denoise', 'lens', 'colour', 'defringe', 'sharpen'] as const;
+export const OPTIONAL_STAGES = [
+  'dust',
+  'denoise',
+  'lens',
+  'colour',
+  'defringe',
+  'sharpen',
+] as const;
 export const OptionalStageSchema = z.enum(OPTIONAL_STAGES);
 export type OptionalStage = z.infer<typeof OptionalStageSchema>;
 
 export const OptionalStagesSchema = z.array(OptionalStageSchema).transform(normaliseStages);
 
 export function normaliseStages(skipped: readonly string[]): OptionalStage[] {
-  return OPTIONAL_STAGES.filter((stage) => skipped.includes(stage) || (stage === 'colour' && skipped.includes('lens')));
+  return OPTIONAL_STAGES.filter(
+    (stage) => skipped.includes(stage) || (stage === 'colour' && skipped.includes('lens')),
+  );
 }
 
-export function setStage(skipped: readonly OptionalStage[], stage: OptionalStage, runs: boolean): OptionalStage[] {
+export function setStage(
+  skipped: readonly OptionalStage[],
+  stage: OptionalStage,
+  runs: boolean,
+): OptionalStage[] {
   const current = normaliseStages(skipped);
   return normaliseStages(runs ? current.filter((off) => off !== stage) : [...current, stage]);
 }
@@ -33,7 +46,10 @@ export function setStage(skipped: readonly OptionalStage[], stage: OptionalStage
 export const CameraMatchSchema = z.enum(['none', 'lens', 'lensAndColour']);
 export type CameraMatch = z.infer<typeof CameraMatchSchema>;
 
-export function cameraMatchWithStages(cameraMatch: CameraMatch, skipped: readonly OptionalStage[]): CameraMatch {
+export function cameraMatchWithStages(
+  cameraMatch: CameraMatch,
+  skipped: readonly OptionalStage[],
+): CameraMatch {
   if (cameraMatch === 'none' || skipped.includes('lens')) return 'none';
   if (cameraMatch === 'lens' || skipped.includes('colour')) return 'lens';
   return 'lensAndColour';
@@ -83,7 +99,9 @@ export function scaledToReference(timing: RenderTiming, pixels: number): RenderT
   return {
     ...timing,
     total: Math.round(timing.total * scale),
-    stages: Object.fromEntries(Object.entries(timing.stages).map(([stage, ms]) => [stage, Math.round(ms * scale)])),
+    stages: Object.fromEntries(
+      Object.entries(timing.stages).map(([stage, ms]) => [stage, Math.round(ms * scale)]),
+    ),
   };
 }
 
@@ -98,8 +116,28 @@ export function scaledToReference(timing: RenderTiming, pixels: number): RenderT
  * GALOSH's; PMRID's is scaled from it by the two filters' laps over a 24MP frame on that adapter.
  */
 export const ESTIMATED_MS: Record<RenderedRendition, Record<RenderStage, number>> = {
-  full: { read: 14, dust: 10, denoise: 20, demosaic: 20, lens: 55, colour: 375, defringe: 64, sharpen: 5, encode: 188 },
-  max: { read: 14, dust: 10, denoise: 20, demosaic: 20, lens: 55, colour: 375, defringe: 64, sharpen: 12, encode: 698 },
+  full: {
+    read: 14,
+    dust: 10,
+    denoise: 20,
+    demosaic: 20,
+    lens: 55,
+    colour: 375,
+    defringe: 64,
+    sharpen: 5,
+    encode: 188,
+  },
+  max: {
+    read: 14,
+    dust: 10,
+    denoise: 20,
+    demosaic: 20,
+    lens: 55,
+    colour: 375,
+    defringe: 64,
+    sharpen: 12,
+    encode: 698,
+  },
 };
 export const ESTIMATED_PMRID_DENOISE_MS = 30;
 
@@ -110,9 +148,9 @@ export function stageMs(
   measured: RenderTiming | undefined,
 ): Record<RenderStage, number> {
   const estimated =
-    denoiser === 'pmrid' ?
-      { ...ESTIMATED_MS[rendition], denoise: ESTIMATED_PMRID_DENOISE_MS }
-    : ESTIMATED_MS[rendition];
+    denoiser === 'pmrid'
+      ? { ...ESTIMATED_MS[rendition], denoise: ESTIMATED_PMRID_DENOISE_MS }
+      : ESTIMATED_MS[rendition];
   if (measured == null) return estimated;
   const result = { ...estimated };
   for (const stage of RENDER_STAGES) result[stage] = measured.stages[stage] ?? estimated[stage];

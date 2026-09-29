@@ -17,7 +17,18 @@ function build(total: number): { store: ListingStore; presenter: PhotosPresenter
   const store = new ListingStore(stacks);
   const marks = new MarksStore(store, stacks);
   const viewer = new ViewerStore(store, stacks);
-  const presenter = new PhotosPresenter(store, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    store,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => {
     store.mode = 'masonry';
     store.total = total;

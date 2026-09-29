@@ -52,12 +52,20 @@ export const UpdateDialog = observer(function UpdateDialog(): JSX.Element | null
   if (newest == null || current == null) return null;
 
   return (
-    <Modal open={store.dialogOpen} onOpenChange={updates.setDialogOpen} title={UpdatesStrings.whatsNew()}>
+    <Modal
+      open={store.dialogOpen}
+      onOpenChange={updates.setDialogOpen}
+      title={UpdatesStrings.whatsNew()}
+    >
       <PageHead>
         <Text variant="mono">{UpdatesStrings.fromVersion(current, newest.version)}</Text>
         <Spacer />
         {store.canInstall ? (
-          <Button variant="primary" disabled={store.install !== 'idle'} onClick={() => void updates.install()}>
+          <Button
+            variant="primary"
+            disabled={store.install !== 'idle'}
+            onClick={() => void updates.install()}
+          >
             <Sparkles size={ICON} />
             {INSTALL_LABEL[store.install]()}
           </Button>

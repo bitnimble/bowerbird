@@ -44,12 +44,20 @@ function library(id: string, hdr: boolean): Library {
   };
 }
 
-const stamps = { markTileBuilt: () => {}, markRenditionsBuilt: () => {}, markCopyBuilt: () => {} } as never;
+const stamps = {
+  markTileBuilt: () => {},
+  markRenditionsBuilt: () => {},
+  markCopyBuilt: () => {},
+} as never;
 
 // No camera match: it is a second of fitting that every picture here pays equally, and every
 // claim below is one render against another rather than either against an absolute.
 function processing(): ProcessingService {
-  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1, match_embedded_jpeg: false };
+  const settings: Settings = {
+    ...DEFAULT_SETTINGS,
+    processing_concurrency: 1,
+    match_embedded_jpeg: false,
+  };
   return new ProcessingService(
     stamps,
     {} as ConstructorParameters<typeof ProcessingService>[1],
@@ -65,19 +73,23 @@ async function shared(lib: Library): Promise<{ rendition: string; jpeg: Uint8Arr
   const service = processing();
   const rendition = getRenditionPath(lib, PHOTO, 'full', lib.rendition_hdr);
   await service.renderOne(FIXTURE, PHOTO, lib, 'full', lib.rendition_hdr);
-  const jpeg = await new ExportService(
-    {} as never,
-    service,
-    localOriginals(),
-    { get: () => DEFAULT_SETTINGS } as SettingsRepository,
-  ).shareable(PHOTO, rendition, lib.rendition_hdr);
+  const jpeg = await new ExportService({} as never, service, localOriginals(), {
+    get: () => DEFAULT_SETTINGS,
+  } as SettingsRepository).shareable(PHOTO, rendition, lib.rendition_hdr);
   return { rendition, jpeg };
 }
 
 function sizeOf(file: string): string {
   const probe = Bun.spawnSync([
-    'ffprobe', '-hide_banner', '-loglevel', 'error',
-    '-show_entries', 'stream=width,height', '-of', 'default=noprint_wrappers=1', file,
+    'ffprobe',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-show_entries',
+    'stream=width,height',
+    '-of',
+    'default=noprint_wrappers=1',
+    file,
   ]);
   return probe.stdout.toString().trim();
 }
@@ -124,7 +136,10 @@ test('an HDR rendition is shared as a JPEG with a gain map, at the size it alrea
     const base = path.join(data, 'base.jpg');
     writeFileSync(base, primary(jpeg));
     await processing().renderOne(FIXTURE, PHOTO, lib, 'full', false);
-    const [rolled, native] = _for_testing_deltaEToPreview([base, getRenditionPath(lib, PHOTO, 'full', false)], FIXTURE).meanDeltaE;
+    const [rolled, native] = _for_testing_deltaEToPreview(
+      [base, getRenditionPath(lib, PHOTO, 'full', false)],
+      FIXTURE,
+    ).meanDeltaE;
     expect(Math.abs(rolled! - native!)).toBeLessThan(1);
   } finally {
     rmSync(data, { recursive: true, force: true });

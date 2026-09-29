@@ -86,7 +86,9 @@ export class SelectionPresenter {
     // The anchor's own verb, so unpicking one photo of a run and shift-clicking
     // along it takes that stretch out rather than putting it back in.
     this.store.selection =
-      anchor?.selected === false ? this.store.selection.remove(from, to) : this.store.selection.add(from, to);
+      anchor?.selected === false
+        ? this.store.selection.remove(from, to)
+        : this.store.selection.add(from, to);
     // Moved here rather than by the caller, which would have to know to focus
     // *after* extending: focus is the fallback anchor, so focusing first would
     // make every range start and end on the photo just clicked.
@@ -107,8 +109,11 @@ export class SelectionPresenter {
   sweepTo(index: number): void {
     const anchor = this.store.lastToggled;
     if (this.sweepBase == null || anchor == null || index < 0) return;
-    const [from, to] = anchor.position <= index ? [anchor.position, index] : [index, anchor.position];
-    this.store.selection = anchor.selected ? this.sweepBase.add(from, to) : this.sweepBase.remove(from, to);
+    const [from, to] =
+      anchor.position <= index ? [anchor.position, index] : [index, anchor.position];
+    this.store.selection = anchor.selected
+      ? this.sweepBase.add(from, to)
+      : this.sweepBase.remove(from, to);
     this.focusAt(index);
   }
 
@@ -201,10 +206,15 @@ export class SelectionPresenter {
       this.store.selection = SelectionRanges.of(0, this.listing.total - 1);
       return;
     }
-    if (this.store.hasSelection) this.store.selection = rebase(this.store.selection, samples, domain);
+    if (this.store.hasSelection)
+      this.store.selection = rebase(this.store.selection, samples, domain);
     this.store.focusIndex = this.moved(this.store.focusIndex, samples, domain);
     const anchor = this.store.lastToggled;
-    if (anchor != null) this.store.lastToggled = { ...anchor, position: this.moved(anchor.position, samples, domain) };
+    if (anchor != null)
+      this.store.lastToggled = {
+        ...anchor,
+        position: this.moved(anchor.position, samples, domain),
+      };
   }
 
   private moved(index: number, samples: IndexSample[], domain: SelectionRanges): number {
@@ -231,16 +241,24 @@ export class SelectionPresenter {
 
   @action.bound
   retainMembers(live: ReadonlySet<string>): void {
-    this.store.selectedMembers = new Set([...this.store.selectedMembers].filter((id) => live.has(id)));
+    this.store.selectedMembers = new Set(
+      [...this.store.selectedMembers].filter((id) => live.has(id)),
+    );
   }
 
   @action.bound
   dropMembers(dropped: ReadonlySet<string>): void {
-    this.store.selectedMembers = new Set([...this.store.selectedMembers].filter((id) => !dropped.has(id)));
+    this.store.selectedMembers = new Set(
+      [...this.store.selectedMembers].filter((id) => !dropped.has(id)),
+    );
   }
 
   @action.bound
-  replace(selection: SelectionRanges, focusIndex: number, selectedMembers: ReadonlySet<string> = new Set()): void {
+  replace(
+    selection: SelectionRanges,
+    focusIndex: number,
+    selectedMembers: ReadonlySet<string> = new Set(),
+  ): void {
     this.store.selectedMembers = new Set(selectedMembers);
     this.store.selection = selection;
     this.store.focusIndex = focusIndex;
@@ -316,7 +334,10 @@ export class SelectionPresenter {
   private nameBandMembers(open: Expansion): void {
     if (!this.store.bandRowSelected(open)) return;
     this.store.selection = this.store.selection.remove(open.position, open.position);
-    this.store.selectedMembers = new Set([...this.store.selectedMembers, ...open.photos.map((photo) => photo.id)]);
+    this.store.selectedMembers = new Set([
+      ...this.store.selectedMembers,
+      ...open.photos.map((photo) => photo.id),
+    ]);
   }
 
   @action.bound

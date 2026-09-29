@@ -18,7 +18,10 @@ fn main() {
     let path = args.next().expect("swatch <image> [left,top,right,bottom]");
     let region: [f64; 4] = match args.next() {
         Some(text) => {
-            let parts: Vec<f64> = text.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+            let parts: Vec<f64> = text
+                .split(',')
+                .filter_map(|v| v.trim().parse().ok())
+                .collect();
             <[f64; 4]>::try_from(parts).expect("left,top,right,bottom")
         }
         None => [0.0, 0.0, 1.0, 1.0],

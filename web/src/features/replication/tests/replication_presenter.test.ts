@@ -7,7 +7,11 @@ import { type Transfer } from '../../../../../src/schemas/blobs';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { type Library } from '../../../../../src/schemas/libraries';
 import { type EditConflict } from '../../../../../src/schemas/photo_edits';
-import { type AddReplicaRequest, type PairedPeer, type PeersResponse } from '../../../../../src/schemas/replication';
+import {
+  type AddReplicaRequest,
+  type PairedPeer,
+  type PeersResponse,
+} from '../../../../../src/schemas/replication';
 import { blobsApi } from '../../../api/blobs';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { replicationApi } from '../../../api/replication';
@@ -65,20 +69,35 @@ function harness(): Harness {
     store,
     librariesStore,
     { load: () => Promise.resolve(void libraryLoads++) },
-    { reload: (activity) => { reloadActivities.push(activity); return Promise.resolve(void reloads++); } },
+    {
+      reload: (activity) => {
+        reloadActivities.push(activity);
+        return Promise.resolve(void reloads++);
+      },
+    },
     {
       show: (message: string) => toasts.push(message),
       showError: (message: string) => toasts.push(message),
     },
   );
-  return { store, librariesStore, presenter, reloads: () => reloads, reloadActivities, libraryLoads: () => libraryLoads, toasts };
+  return {
+    store,
+    librariesStore,
+    presenter,
+    reloads: () => reloads,
+    reloadActivities,
+    libraryLoads: () => libraryLoads,
+    toasts,
+  };
 }
 
 beforeEach(() => {
   replicationApi.listPeers = () => peersAnswer([PEER]);
   replicationApi.listAllPeers = () =>
     Promise.resolve({
-      libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: true, auto_transfer_originals: false }],
+      libraries: [
+        { library_id: 'lib', peers: [PEER], sync_originals: true, auto_transfer_originals: false },
+      ],
     });
   blobsApi.listTransfers = () => Promise.resolve([]);
   photoEditsApi.listConflicts = () => Promise.resolve([]);
@@ -107,7 +126,15 @@ test('a session re-reads the transfer queue, which it may have filled with origi
   const { presenter, store } = harness();
   replicationApi.replicate = () => Promise.resolve({ applied: 0, peers: 1 });
   blobsApi.listTransfers = () =>
-    Promise.resolve([{ id: 't', library_id: 'lib', photo_id: 'photo', direction: 'pull', state: 'done' } as Transfer]);
+    Promise.resolve([
+      {
+        id: 't',
+        library_id: 'lib',
+        photo_id: 'photo',
+        direction: 'pull',
+        state: 'done',
+      } as Transfer,
+    ]);
 
   await presenter.replicate('lib');
 
@@ -130,13 +157,22 @@ test('what is being fetched is the photos with a pull queued or running', () => 
 
 test('a completed transfer refreshes the grid as background work', async () => {
   const { presenter, store, reloadActivities } = harness();
-  const transfer = { id: 'transfer', photo_id: 'photo', direction: 'pull', state: 'active' } as Transfer;
-  runInAction(() => { store.transfers = [transfer]; });
+  const transfer = {
+    id: 'transfer',
+    photo_id: 'photo',
+    direction: 'pull',
+    state: 'active',
+  } as Transfer;
+  runInAction(() => {
+    store.transfers = [transfer];
+  });
   blobsApi.listTransfers = () => Promise.resolve([{ ...transfer, state: 'done' }]);
   try {
     await presenter.refreshTransfers();
     expect(reloadActivities).toEqual(['background']);
-  } finally { presenter.stop(); }
+  } finally {
+    presenter.stop();
+  }
 });
 
 test('a library nobody can be reached for says so rather than reporting success', async () => {
@@ -150,17 +186,22 @@ test('a library nobody can be reached for says so rather than reporting success'
 
 test('both candidates of one divergence are one entry, not two', async () => {
   const { store, presenter } = harness();
-  photoEditsApi.listConflicts = () => Promise.resolve([candidate('here', 'Desktop'), candidate('there', 'Macbook')]);
+  photoEditsApi.listConflicts = () =>
+    Promise.resolve([candidate('here', 'Desktop'), candidate('there', 'Macbook')]);
 
   await presenter.loadConflicts();
 
   expect(store.conflictedPhotos).toHaveLength(1);
-  expect(store.conflictedPhotos[0]?.candidates.map((c) => c.device)).toEqual(['Desktop', 'Macbook']);
+  expect(store.conflictedPhotos[0]?.candidates.map((c) => c.device)).toEqual([
+    'Desktop',
+    'Macbook',
+  ]);
 });
 
 test('keeping a candidate clears the divergence and re-reads the picture it changed', async () => {
   const { store, presenter, reloads } = harness();
-  photoEditsApi.listConflicts = () => Promise.resolve([candidate('here', 'Desktop'), candidate('there', 'Macbook')]);
+  photoEditsApi.listConflicts = () =>
+    Promise.resolve([candidate('here', 'Desktop'), candidate('there', 'Macbook')]);
   await presenter.loadConflicts();
 
   const kept: string[] = [];
@@ -242,7 +283,9 @@ test('the whole install is one request, and a library with no peers is not in it
   replicationApi.listAllPeers = () => {
     asks++;
     return Promise.resolve({
-      libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: false, auto_transfer_originals: true }],
+      libraries: [
+        { library_id: 'lib', peers: [PEER], sync_originals: false, auto_transfer_originals: true },
+      ],
     });
   };
 
@@ -307,7 +350,16 @@ test('a queued fetch is not queued again while it is still running', async () =>
 });
 
 const pull = (state: Transfer['state']): Transfer =>
-  ({ id: 't1', library_id: 'lib', photo_id: 'photo1', peer_id: PEER.peer_id, direction: 'pull', state, bytes_done: 0, bytes_total: 100 }) as Transfer;
+  ({
+    id: 't1',
+    library_id: 'lib',
+    photo_id: 'photo1',
+    peer_id: PEER.peer_id,
+    direction: 'pull',
+    state,
+    bytes_done: 0,
+    bytes_total: 100,
+  }) as Transfer;
 
 test('fetching an original to edit waits until it has landed', async () => {
   const { store, presenter } = harness();
@@ -328,7 +380,8 @@ test('fetching an original to edit outlasts a read of the queue that fails', asy
   const { store, presenter, toasts } = harness();
   blobsApi.fetchOriginal = () => Promise.resolve(pull('queued'));
   let reads = 0;
-  blobsApi.listTransfers = () => (reads++ === 0 ? Promise.reject(new Error('connection reset')) : Promise.resolve([pull('done')]));
+  blobsApi.listTransfers = () =>
+    reads++ === 0 ? Promise.reject(new Error('connection reset')) : Promise.resolve([pull('done')]);
 
   expect(await presenter.fetchOriginalAndWait('photo1')).toBe(true);
   expect(store.pullFor('photo1')?.state).toBe('done');
@@ -353,7 +406,9 @@ test('browsing hands back what the peer offers, without touching the library lis
       name: 'Desktop',
       clock_ms: 0,
       clock_skew_ms: 0,
-      libraries: [{ id: 'lib', name: 'Trip', photo_count: 12, read_only: false, replicating: true }],
+      libraries: [
+        { id: 'lib', name: 'Trip', photo_count: 12, read_only: false, replicating: true },
+      ],
     });
 
   const browsed = await presenter.browse('http://desktop:5173');
@@ -373,25 +428,41 @@ test('an address that answers nothing says so and adds no library', async () => 
   expect(store.linkError).toContain('Unable to connect');
 });
 
-test.each([true, false])('adding one forwards automatic transfers %s and re-reads the library list', async (autoTransferOriginals) => {
-  const { presenter, toasts } = harness();
-  const asked: AddReplicaRequest[] = [];
-  replicationApi.addReplica = (request) => {
-    asked.push(request);
-    return Promise.resolve({ library_id: request.library_id, peer_id: PEER.peer_id, applied: 240 });
-  };
+test.each([true, false])(
+  'adding one forwards automatic transfers %s and re-reads the library list',
+  async (autoTransferOriginals) => {
+    const { presenter, toasts } = harness();
+    const asked: AddReplicaRequest[] = [];
+    replicationApi.addReplica = (request) => {
+      asked.push(request);
+      return Promise.resolve({
+        library_id: request.library_id,
+        peer_id: PEER.peer_id,
+        applied: 240,
+      });
+    };
 
-  const added = await presenter.addReplica({
-    address: 'http://desktop:5173', library_id: 'lib', root_path: '/fixture/trip',
-    sync_originals: false, auto_transfer_originals: autoTransferOriginals,
-  });
+    const added = await presenter.addReplica({
+      address: 'http://desktop:5173',
+      library_id: 'lib',
+      root_path: '/fixture/trip',
+      sync_originals: false,
+      auto_transfer_originals: autoTransferOriginals,
+    });
 
-  expect(added).toBe(true);
-  expect(asked).toEqual([
-    { address: 'http://desktop:5173', library_id: 'lib', root_path: '/fixture/trip', sync_originals: false, auto_transfer_originals: autoTransferOriginals },
-  ]);
-  expect(toasts[0]).toBe('Synced library added with 240 changes so far.');
-});
+    expect(added).toBe(true);
+    expect(asked).toEqual([
+      {
+        address: 'http://desktop:5173',
+        library_id: 'lib',
+        root_path: '/fixture/trip',
+        sync_originals: false,
+        auto_transfer_originals: autoTransferOriginals,
+      },
+    ]);
+    expect(toasts[0]).toBe('Synced library added with 240 changes so far.');
+  },
+);
 
 // The library is committed before its catalogue arrives, so one that failed
 // part-way has left one behind and the list has to be re-read either way.
@@ -400,8 +471,11 @@ test('an add that failed still re-reads the library list', async () => {
   replicationApi.addReplica = () => Promise.reject(new Error('/photos/trip is not empty'));
 
   const added = await presenter.addReplica({
-    address: 'http://desktop:5173', library_id: 'lib', root_path: '/fixture/trip',
-    sync_originals: true, auto_transfer_originals: true,
+    address: 'http://desktop:5173',
+    library_id: 'lib',
+    root_path: '/fixture/trip',
+    sync_originals: true,
+    auto_transfer_originals: true,
   });
 
   expect(added).toBe(false);
@@ -451,12 +525,16 @@ test('an eviction the peer would not confirm reports what was kept, not just wha
   blobsApi.evictOriginals = () =>
     Promise.resolve({
       evicted: ['photo1'],
-      refused: [{ photo_id: 'photo2', reason: 'peer could not verify possession of a matching copy' }],
+      refused: [
+        { photo_id: 'photo2', reason: 'peer could not verify possession of a matching copy' },
+      ],
     });
 
   await presenter.removeLocalCopies({ photo_ids: ['photo1', 'photo2'] }, 'lib', PEER.peer_id);
 
-  expect(toasts[0]).toBe('Removed 1 local copy; kept 1 local copy because Macbook couldn\'t confirm a matching copy.');
+  expect(toasts[0]).toBe(
+    "Removed 1 local copy; kept 1 local copy because Macbook couldn't confirm a matching copy.",
+  );
   // The rows that lost their file are `is_missing` now, so the grid is stale.
   expect(reloads()).toBe(1);
 });
@@ -465,7 +543,10 @@ test('an eviction nothing survived does not claim a partial success', async () =
   const { store, presenter, toasts } = harness();
   store.peersByLibrary.set('lib', [PEER]);
   blobsApi.evictOriginals = () =>
-    Promise.resolve({ evicted: [], refused: [{ photo_id: 'photo1', reason: 'the original is not on this device' }] });
+    Promise.resolve({
+      evicted: [],
+      refused: [{ photo_id: 'photo1', reason: 'the original is not on this device' }],
+    });
 
   await presenter.removeLocalCopies({ photo_ids: ['photo1'] }, 'lib', PEER.peer_id);
 

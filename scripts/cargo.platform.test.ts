@@ -1,6 +1,15 @@
 import { afterEach, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,7 +26,10 @@ test('cargo fmt checks and formats only the selected crate', () => {
   const source = join(profile, 'src', 'lib.rs');
   const original = 'pub fn answer()->u32{42}\n';
   mkdirSync(join(profile, 'src'));
-  writeFileSync(manifest, '[package]\nname = "format_probe"\nversion = "0.1.0"\nedition = "2024"\n');
+  writeFileSync(
+    manifest,
+    '[package]\nname = "format_probe"\nversion = "0.1.0"\nedition = "2024"\n',
+  );
   writeFileSync(source, original);
 
   const run = (...args: string[]) =>

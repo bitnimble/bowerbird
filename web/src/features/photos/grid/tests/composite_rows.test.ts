@@ -42,14 +42,20 @@ function row(overrides: Partial<PhotoSummary> = {}): PhotoSummary {
 function stores() {
   const stacks = new StacksStore();
   const listing = new ListingStore(stacks);
-  return { listing, marks: new MarksStore(listing, stacks), viewer: new ViewerStore(listing, stacks) };
+  return {
+    listing,
+    marks: new MarksStore(listing, stacks),
+    viewer: new ViewerStore(listing, stacks),
+  };
 }
 
 test('a panorama is shown from its own copies, like any photograph', () => {
   const { listing, viewer } = stores();
   listing.rows.set(0, row({ composite_kind: 'panorama', frame_count: 3, file_path: null }));
 
-  expect(viewer.sourceOf('photo001', 'full')).toBe(renditionsApi.url('photo001', 'full', Date.parse(BUILT)));
+  expect(viewer.sourceOf('photo001', 'full')).toBe(
+    renditionsApi.url('photo001', 'full', Date.parse(BUILT)),
+  );
 });
 
 // Including the camera's own view of it: there is no RAW to lift a JPEG out of, so that view
@@ -60,14 +66,18 @@ test('a panorama asked for as the camera’s JPEG is served a composited one, ve
   const { listing, viewer } = stores();
   listing.rows.set(0, row({ composite_kind: 'panorama', frame_count: 3, file_path: null }));
 
-  expect(viewer.sourceOf('photo001', 'embedded')).toBe(renditionsApi.url('photo001', 'embedded', Date.parse(BUILT)));
+  expect(viewer.sourceOf('photo001', 'embedded')).toBe(
+    renditionsApi.url('photo001', 'embedded', Date.parse(BUILT)),
+  );
 });
 
 test('an ordinary photograph is shown at the rendition asked for', () => {
   const { listing, viewer } = stores();
   listing.rows.set(0, row());
 
-  expect(viewer.sourceOf('photo001', 'embedded')).not.toBe(renditionsApi.url('photo001', 'full', Date.parse(BUILT)));
+  expect(viewer.sourceOf('photo001', 'embedded')).not.toBe(
+    renditionsApi.url('photo001', 'full', Date.parse(BUILT)),
+  );
 });
 
 // A panorama's frames are named by its recipe rather than by a stack, so the bulk bar's stack

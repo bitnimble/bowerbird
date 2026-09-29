@@ -12,22 +12,27 @@ import type { SettingsRepository } from '../../../services/settings/settings_rep
 import { StorageUsageService } from '../../../services/maintenance/storage_usage_service';
 import { SettingsApi } from '../settings_api';
 
-const MEASURED: RenderTiming = { total: 800, stages: { colour: 400 }, measured_at: '2026-01-01T00:00:00.000Z' };
+const MEASURED: RenderTiming = {
+  total: 800,
+  stages: { colour: 400 },
+  measured_at: '2026-01-01T00:00:00.000Z',
+};
 
 function buildApp(
   read: () => RenderTimings = () => ({}),
   benchmarkRender: () => Promise<RenderTiming> = jest.fn(async () => MEASURED),
-  storageUsage = new StorageUsageService({ dataDir: '/missing-bowerbird-test-data', dbPath: '/missing-bowerbird-test-catalogue/catalogue.db' }),
+  storageUsage = new StorageUsageService({
+    dataDir: '/missing-bowerbird-test-data',
+    dbPath: '/missing-bowerbird-test-catalogue/catalogue.db',
+  }),
 ) {
   const settings = { get: jest.fn(() => DEFAULT_SETTINGS) } as unknown as SettingsRepository;
   const timings = { read: jest.fn(read), put: jest.fn() } as unknown as RenderTimingsFile;
   const app = new Hono();
-  app.route(route(PathSegment.api(), PathSegment.settings()), new SettingsApi(
-    settings,
-    timings,
-    benchmarkRender,
-    storageUsage,
-  ).routes);
+  app.route(
+    route(PathSegment.api(), PathSegment.settings()),
+    new SettingsApi(settings, timings, benchmarkRender, storageUsage).routes,
+  );
   applyErrorHandler(app);
   return { app, benchmarkRender };
 }
@@ -41,7 +46,9 @@ it('reports persistent storage usage through settings', async () => {
     writeFileSync(dbPath, Buffer.alloc(128));
     const storageUsage = new StorageUsageService({ dataDir: path.join(root, 'data'), dbPath });
     const { app } = buildApp(undefined, undefined, storageUsage);
-    const res = await app.request(route(PathSegment.api(), PathSegment.settings(), PathSegment.storageUsage()));
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.settings(), PathSegment.storageUsage()),
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ bytes: 128 });
   } finally {
@@ -59,7 +66,9 @@ describe('SettingsApi render timings', () => {
 
   it('times a render of the rendition the query names, with the denoiser it names', async () => {
     const { app, benchmarkRender } = buildApp();
-    const res = await app.request(`${AT}/${PathSegment.benchmark()}?rendition=max&denoiser=pmrid`, { method: 'POST' });
+    const res = await app.request(`${AT}/${PathSegment.benchmark()}?rendition=max&denoiser=pmrid`, {
+      method: 'POST',
+    });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(MEASURED);
     expect(benchmarkRender).toHaveBeenCalledWith('max', 'pmrid');
@@ -71,7 +80,9 @@ describe('SettingsApi render timings', () => {
     const { app, benchmarkRender } = buildApp();
     const at = `${AT}/${PathSegment.benchmark()}`;
 
-    expect((await app.request(`${at}?rendition=grid&denoiser=galosh`, { method: 'POST' })).status).toBe(400);
+    expect(
+      (await app.request(`${at}?rendition=grid&denoiser=galosh`, { method: 'POST' })).status,
+    ).toBe(400);
     expect((await app.request(`${at}?rendition=full`, { method: 'POST' })).status).toBe(400);
     expect((await app.request(at, { method: 'POST' })).status).toBe(400);
     expect(benchmarkRender).not.toHaveBeenCalled();

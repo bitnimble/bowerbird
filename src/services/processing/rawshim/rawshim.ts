@@ -21,12 +21,19 @@ import path from 'node:path';
 // What this platform calls a shared library. A compiled server is the only build
 // that ever runs anywhere but Linux, and it is told where to look rather than
 // guessing, so this is for the message as much as for the search.
-const LIB = process.platform === 'darwin' ? 'librawshim.dylib' : process.platform === 'win32' ? 'rawshim.dll' : 'librawshim.so';
+const LIB =
+  process.platform === 'darwin'
+    ? 'librawshim.dylib'
+    : process.platform === 'win32'
+      ? 'rawshim.dll'
+      : 'librawshim.so';
 
 // In order of preference, first hit wins.
 const CANDIDATES = [
   ...(process.env.BOWERBIRD_NATIVE_LIB == null ? [] : [process.env.BOWERBIRD_NATIVE_LIB]),
-  ...(process.env.BOWERBIRD_NATIVE_DIR == null ? [] : [path.join(process.env.BOWERBIRD_NATIVE_DIR, LIB)]),
+  ...(process.env.BOWERBIRD_NATIVE_DIR == null
+    ? []
+    : [path.join(process.env.BOWERBIRD_NATIVE_DIR, LIB)]),
   // Next to the source tree, which is a development build and what a live-mounted
   // dev container sees. Ahead of the container paths so a local `bun run
   // build:native` is what runs, rather than something the image shipped.
@@ -49,7 +56,10 @@ const SYMBOLS = {
     returns: FFIType.i64,
   },
   // Questions about pixels, for tests and pins. Same shape as bb_run_job.
-  bb_for_testing_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  bb_for_testing_debug: {
+    args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64],
+    returns: FFIType.i64,
+  },
   // One picture of a recipe, coded, for a client that will grade it itself. The same
   // shape as bb_run_job; what the reply *is* differs, and `ffi.rs` says how.
   bb_prepare_picture: {
@@ -73,7 +83,10 @@ const SYMBOLS = {
     returns: FFIType.i64,
   },
   // The camera's own preview, the same way.
-  bb_extract_embedded: { args: [FFIType.cstring, FFIType.u16, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  bb_extract_embedded: {
+    args: [FFIType.cstring, FFIType.u16, FFIType.ptr, FFIType.u64],
+    returns: FFIType.i64,
+  },
   // The one call that writes into the caller's buffer instead of filling it: a scrub is
   // length-preserving, so the file goes in and comes back the same size (DESIGN §18.8).
   bb_scrub_exif: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
@@ -108,7 +121,6 @@ const SYMBOLS = {
     args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.f32, FFIType.i64, FFIType.ptr],
     returns: FFIType.i32,
   },
-
 } as const;
 
 type Shim = ReturnType<typeof dlopen<typeof SYMBOLS>>['symbols'];
@@ -129,5 +141,7 @@ export function shim(): Shim {
       failures.push(`  ${candidate}: ${String(error)}`);
     }
   }
-  throw new Error(`could not load librawshim. Run \`bun run build:native\`. Tried:\n${failures.join('\n')}`);
+  throw new Error(
+    `could not load librawshim. Run \`bun run build:native\`. Tried:\n${failures.join('\n')}`,
+  );
 }

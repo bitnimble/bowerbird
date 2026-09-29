@@ -33,14 +33,21 @@ describe('gridRowHeight', () => {
   // tile keeps around it, or every frame in the grid would carry a hairline bar.
   test('is the 3:2 photograph, its own inset, and the gap under it', () => {
     const cell = (1000 - 3 * GRID_GAP) / 4;
-    expect(gridRowHeight(1000, 4)).toBeCloseTo((cell - 2 * TILE_PAD) / 1.5 + 2 * TILE_PAD + GRID_GAP);
+    expect(gridRowHeight(1000, 4)).toBeCloseTo(
+      (cell - 2 * TILE_PAD) / 1.5 + 2 * TILE_PAD + GRID_GAP,
+    );
   });
 });
 
 describe('blockTops', () => {
   test('measures what it can and estimates the rest', () => {
     const tops = blockTops(3, new Map([[1, 500]]), 200);
-    expect(tops).toEqual([0, 200 + GRID_GAP, 200 + 500 + 2 * GRID_GAP, 200 + 500 + 200 + 3 * GRID_GAP]);
+    expect(tops).toEqual([
+      0,
+      200 + GRID_GAP,
+      200 + 500 + 2 * GRID_GAP,
+      200 + 500 + 200 + 3 * GRID_GAP,
+    ]);
   });
 
   test('is empty for an empty collection', () => {
@@ -184,4 +191,3 @@ describe('masonryBlockEnd', () => {
     expect(end(2, 2)).toBe(2);
   });
 });
-

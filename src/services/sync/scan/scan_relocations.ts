@@ -60,7 +60,11 @@ export function detectRelocationsByIdentity(
     if (target == null) continue;
 
     claimed.add(target.relPath);
-    relocations.push({ shootId: shoot.id, oldFolderPath: shoot.folder_path, newFolderPath: target.relPath });
+    relocations.push({
+      shootId: shoot.id,
+      oldFolderPath: shoot.folder_path,
+      newFolderPath: target.relPath,
+    });
   }
 
   return relocations;
@@ -150,7 +154,9 @@ export function detectShootRelocations(
   // bucket, not just the nearest, because a shoot is answered by everything
   // beneath it - a parent whose own frames all live in a child folder still has
   // to be able to see that they moved together.
-  const under = new Map<string, { file_path: string }[]>(missing.map((shoot) => [shoot.folder_path, []]));
+  const under = new Map<string, { file_path: string }[]>(
+    missing.map((shoot) => [shoot.folder_path, []]),
+  );
   for (const photo of dbPhotos) {
     let prefix = '';
     for (const segment of photo.file_path.split('/').slice(0, -1)) {
@@ -178,9 +184,17 @@ export function detectShootRelocations(
     // Two shoots cannot occupy one folder, and a target another shoot already
     // owns means this is something other than a plain rename.
     const targetPath: string = target;
-    if (claimed.has(targetPath) || shoots.some((s) => s.id !== shoot.id && s.folder_path === targetPath)) continue;
+    if (
+      claimed.has(targetPath) ||
+      shoots.some((s) => s.id !== shoot.id && s.folder_path === targetPath)
+    )
+      continue;
     claimed.add(targetPath);
-    relocations.push({ shootId: shoot.id, oldFolderPath: shoot.folder_path, newFolderPath: targetPath });
+    relocations.push({
+      shootId: shoot.id,
+      oldFolderPath: shoot.folder_path,
+      newFolderPath: targetPath,
+    });
   }
 
   return relocations;

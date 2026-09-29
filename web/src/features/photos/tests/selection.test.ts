@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { type IndexSample, SelectionRanges, rebase } from '../selection';
 
-const ranges = (selection: SelectionRanges): [number, number][] => selection.ranges.map((r) => [r.start, r.end]);
+const ranges = (selection: SelectionRanges): [number, number][] =>
+  selection.ranges.map((r) => [r.start, r.end]);
 
 describe('add', () => {
   test('a whole library is one range', () => {
@@ -80,7 +81,8 @@ describe('rebase', () => {
   const samples = (moved: (number | null)[]): IndexSample[] =>
     moved.flatMap((to, from) => (to == null ? [] : [{ from, to }]));
   // Everything the caller re-read, which is what it may speak for.
-  const covering = (moved: (number | null)[]): SelectionRanges => SelectionRanges.of(0, moved.length - 1);
+  const covering = (moved: (number | null)[]): SelectionRanges =>
+    SelectionRanges.of(0, moved.length - 1);
 
   test('an insert inside a selected run splits it around the new photo', () => {
     // A B C at 0,1,2, all selected; X arrives between A and B.
@@ -93,7 +95,9 @@ describe('rebase', () => {
 
   test('an insert before a selected run just shifts it', () => {
     const moved = [1, 2, 3, ...Array.from({ length: 18 }, (_, i) => i + 4)];
-    expect(ranges(rebase(SelectionRanges.of(10, 20), samples(moved), covering(moved)))).toEqual([[11, 21]]);
+    expect(ranges(rebase(SelectionRanges.of(10, 20), samples(moved), covering(moved)))).toEqual([
+      [11, 21],
+    ]);
   });
 
   test('a removal inside a selected run drops that photo and closes the run', () => {
@@ -171,7 +175,9 @@ describe('rebase', () => {
 
   test('says nothing about positions past the end of what was re-read', () => {
     // Only 0..2 were sampled; the rest of the run is unverifiable, not shifted.
-    expect(ranges(rebase(SelectionRanges.of(0, 100), samples([1, 2, 3]), SelectionRanges.of(0, 2)))).toEqual([[1, 3]]);
+    expect(
+      ranges(rebase(SelectionRanges.of(0, 100), samples([1, 2, 3]), SelectionRanges.of(0, 2))),
+    ).toEqual([[1, 3]]);
   });
 
   test('does not drag a selection that sits below every sample', () => {

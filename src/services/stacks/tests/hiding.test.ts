@@ -23,13 +23,9 @@ let photoState: PhotoStateRepository;
 let stacks: StacksRepository;
 
 function shoot(id: string, folderPath: string, hidden: boolean): void {
-  db.query('INSERT INTO shoots (id, library_id, folder_path, name, is_hidden) VALUES (?, ?, ?, ?, ?)').run(
-    id,
-    LIB,
-    folderPath,
-    id,
-    hidden ? 1 : 0,
-  );
+  db.query(
+    'INSERT INTO shoots (id, library_id, folder_path, name, is_hidden) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, LIB, folderPath, id, hidden ? 1 : 0);
 }
 
 function photo(id: string, shootId: string | null): void {
@@ -42,9 +38,9 @@ function photo(id: string, shootId: string | null): void {
 /** What the tile says it stands for, and what the band actually hands back. */
 function tileAndBand(scope: { shootId?: string }): [number | undefined, string[]] {
   const listing =
-    scope.shootId == null ?
-      photoListing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false })
-    : photoListing.listByShoot(scope.shootId, 'added_asc', 0, 10, { includeDeleted: false });
+    scope.shootId == null
+      ? photoListing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false })
+      : photoListing.listByShoot(scope.shootId, 'added_asc', 0, 10, { includeDeleted: false });
   const tile = listing.photos.find((row) => row.stack_id === STACK);
   return [tile?.stack_size, stacks.memberIds(STACK, 'added_asc', false, scope.shootId).sort()];
 }
@@ -56,10 +52,9 @@ beforeEach(() => {
   photoListing = new PhotoListingRepository(db);
   photoState = new PhotoStateRepository(db, new StackMembership(db));
   stacks = new StacksRepository(db);
-  db.query("INSERT INTO stacks (id, library_id, origin, date_created) VALUES (?, ?, 'manual', '2026-01-01')").run(
-    STACK,
-    LIB,
-  );
+  db.query(
+    "INSERT INTO stacks (id, library_id, origin, date_created) VALUES (?, ?, 'manual', '2026-01-01')",
+  ).run(STACK, LIB);
 });
 
 describe('a stack under a hidden shoot', () => {
@@ -130,6 +125,11 @@ describe('what detection is allowed to consider', () => {
   it('takes them back once they are unhidden', () => {
     photoState.setHidden(['put-away'], false);
     db.query("UPDATE shoots SET is_hidden = 0 WHERE id = 'away'").run();
-    expect(stacks.candidates(LIB).map((c) => c.id).sort()).toEqual(['in-hidden-shoot', 'ordinary', 'put-away']);
+    expect(
+      stacks
+        .candidates(LIB)
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual(['in-hidden-shoot', 'ordinary', 'put-away']);
   });
 });

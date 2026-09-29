@@ -20,8 +20,18 @@ fn main() {
     };
     let numbers: Vec<usize> = args.filter_map(|a| a.parse().ok()).collect();
     let tile = match numbers.as_slice() {
-        [left, top, width, height] => rawshim::Tile { left: *left, top: *top, width: *width, height: *height },
-        _ => rawshim::Tile { left: 2000, top: 1400, width: 512, height: 512 },
+        [left, top, width, height] => rawshim::Tile {
+            left: *left,
+            top: *top,
+            width: *width,
+            height: *height,
+        },
+        _ => rawshim::Tile {
+            left: 2000,
+            top: 1400,
+            width: 512,
+            height: 512,
+        },
     };
 
     let amounts = rawshim::galosh::Detail::at(0.0, 0.0);
@@ -35,12 +45,28 @@ fn main() {
     // Twice, because the first pays for the GPU pipelines the frame decode already built and a
     // loupe's second tile is the one that matters.
     let halo = rawshim::RENDITION_TILE_HALO;
-    let view = rawshim::view::View::whole(rawshim::px::Size::exact(whole.width, whole.height))
-        .showing(rawshim::px::Rect::exact(tile.left, tile.top, tile.width, tile.height));
+    let view =
+        rawshim::view::View::whole(rawshim::px::Size::exact(whole.width, whole.height)).showing(
+            rawshim::px::Rect::exact(tile.left, tile.top, tile.width, tile.height),
+        );
     let glass = rawshim::dust::Known::Off;
-    rawshim::decode_rawler::decode_tile(&path, view, amounts, rawshim::galosh::Fit::Measure, halo, glass);
+    rawshim::decode_rawler::decode_tile(
+        &path,
+        view,
+        amounts,
+        rawshim::galosh::Fit::Measure,
+        halo,
+        glass,
+    );
     let started = std::time::Instant::now();
-    let Some(cut) = rawshim::decode_rawler::decode_tile(&path, view, amounts, rawshim::galosh::Fit::Measure, halo, glass) else {
+    let Some(cut) = rawshim::decode_rawler::decode_tile(
+        &path,
+        view,
+        amounts,
+        rawshim::galosh::Fit::Measure,
+        halo,
+        glass,
+    ) else {
         eprintln!("the tile declined");
         return;
     };
@@ -53,9 +79,10 @@ fn main() {
 
     // Both come off `decode_rawler`, which leaves the frame on the device for the pipeline; this
     // reads samples, so it says so.
-    let (Some(whole), Some(cut)) =
-        (pollster::block_on(whole.to_host()), pollster::block_on(cut.to_host()))
-    else {
+    let (Some(whole), Some(cut)) = (
+        pollster::block_on(whole.to_host()),
+        pollster::block_on(cut.to_host()),
+    ) else {
         eprintln!("the frames could not be read back");
         return;
     };
@@ -92,5 +119,8 @@ fn main() {
     // In the 16-bit samples the frame is carried in, so a few hundred is the demosaic seeing a
     // different neighbourhood at the tile's edge and tens of thousands is the wrong part of the
     // photograph.
-    println!("mean {:.1}  worst {worst}  over {counted} samples", total / counted as f64);
+    println!(
+        "mean {:.1}  worst {worst}  over {counted} samples",
+        total / counted as f64
+    );
 }

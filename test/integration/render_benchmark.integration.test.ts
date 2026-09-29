@@ -11,7 +11,20 @@ import type { PhotoPathsRepository } from '../../src/services/photos/paths/photo
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 
 const REFERENCE_FRAME = join(import.meta.dir, '../../assets/reference_frame.ARW');
-const TIFF_TYPE_BYTES: Partial<Record<number, number>> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8 };
+const TIFF_TYPE_BYTES: Partial<Record<number, number>> = {
+  1: 1,
+  2: 1,
+  3: 2,
+  4: 4,
+  5: 8,
+  6: 1,
+  7: 1,
+  8: 2,
+  9: 4,
+  10: 8,
+  11: 4,
+  12: 8,
+};
 
 function tiffValue(file: Buffer, ifd: number, tag: number): Buffer {
   if (ifd < 0 || ifd + 2 > file.length) throw new Error(`TIFF IFD offset ${ifd} is out of bounds`);
@@ -27,7 +40,8 @@ function tiffValue(file: Buffer, ifd: number, tag: number): Buffer {
     if (components === 0) throw new Error(`TIFF tag 0x${tag.toString(16)} is empty`);
     const bytes = typeBytes * components;
     const offset = bytes <= 4 ? entry + 8 : file.readUInt32LE(entry + 8);
-    if (offset + bytes > file.length) throw new Error(`TIFF tag 0x${tag.toString(16)} is out of bounds`);
+    if (offset + bytes > file.length)
+      throw new Error(`TIFF tag 0x${tag.toString(16)} is out of bounds`);
     return file.subarray(offset, offset + bytes);
   }
   throw new Error(`TIFF tag 0x${tag.toString(16)} is missing`);
@@ -44,7 +58,11 @@ test('the sanitization reader rejects an unknown TIFF field type', () => {
 });
 
 function service(): ProcessingService {
-  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1, match_embedded_jpeg: true };
+  const settings: Settings = {
+    ...DEFAULT_SETTINGS,
+    processing_concurrency: 1,
+    match_embedded_jpeg: true,
+  };
   return new ProcessingService(
     { markTileBuilt: () => {}, markRenditionsBuilt: () => {}, markCopyBuilt: () => {} } as never,
     {} as PhotoPathsRepository,
@@ -60,7 +78,8 @@ function timings(): { file: RenderTimingsFile; root: string } {
   return { file: new RenderTimingsFile(join(root, 'render_timings.json')), root };
 }
 
-const scratchDirs = (): string[] => readdirSync(tmpdir()).filter((entry) => entry.startsWith('bowerbird-benchmark-'));
+const scratchDirs = (): string[] =>
+  readdirSync(tmpdir()).filter((entry) => entry.startsWith('bowerbird-benchmark-'));
 
 test('the sanitized shipped frame prices every optional stage without a library', async () => {
   const raw = readFileSync(REFERENCE_FRAME);
@@ -82,7 +101,11 @@ test('the sanitized shipped frame prices every optional stage without a library'
   const { file: into, root } = timings();
   const before = scratchDirs();
   // A measurement of another rendition, to prove this one files beside it rather than over it.
-  into.put('max', 'galosh', { total: 999, stages: { denoise: 1 }, measured_at: '2026-01-01T00:00:00.000Z' });
+  into.put('max', 'galosh', {
+    total: 999,
+    stages: { denoise: 1 },
+    measured_at: '2026-01-01T00:00:00.000Z',
+  });
   try {
     const timing = await service().benchmarkRender('full', 'galosh', into);
 

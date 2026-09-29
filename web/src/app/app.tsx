@@ -29,7 +29,12 @@ import { UpdateDialog } from '../features/updates/update_dialog';
 import { ShowSidebar } from '../ui/page';
 import { drawer } from './drawer.stylex';
 import { HdrOutput } from './hdr_output';
-import { useAppSettingsStore, useLibrariesStore, usePresenters, useSidebarStore } from './stores_context';
+import {
+  useAppSettingsStore,
+  useLibrariesStore,
+  usePresenters,
+  useSidebarStore,
+} from './stores_context';
 import { useIsMobile, useIsTouch } from './device';
 import { useDrawerSwipe } from './drawer_swipe';
 
@@ -141,10 +146,22 @@ const COLLECTIONS = [
 ];
 
 const PHOTO_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'));
-const TRIAGE_ROUTE = route(PathSegment.stacks(), PathSegment.param('stackId'), PathSegment.triage());
+const TRIAGE_ROUTE = route(
+  PathSegment.stacks(),
+  PathSegment.param('stackId'),
+  PathSegment.triage(),
+);
 const MERGE_ROUTE = route(PathSegment.photos(), PathSegment.merge(), PathSegment.param('jobId'));
-const MERGE_EDIT_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'), PathSegment.merge());
-const MOCKUP_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'), PathSegment.mockup());
+const MERGE_EDIT_ROUTE = route(
+  PathSegment.photos(),
+  PathSegment.param('photoId'),
+  PathSegment.merge(),
+);
+const MOCKUP_ROUTE = route(
+  PathSegment.photos(),
+  PathSegment.param('photoId'),
+  PathSegment.mockup(),
+);
 const EDIT_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'), PathSegment.edit());
 
 // Nothing to land on until the libraries and settings are known: a fresh install
@@ -154,9 +171,15 @@ const Home = observer(function Home(): JSX.Element | null {
   const libraries = useLibrariesStore();
   const settings = useAppSettingsStore();
   if (libraries.loading || settings.loading) return null;
-  if (settings.onboardingComplete === false) return <Navigate to={route(PathSegment.welcome())} replace />;
+  if (settings.onboardingComplete === false)
+    return <Navigate to={route(PathSegment.welcome())} replace />;
   const first = libraries.libraries[0];
-  return <Navigate to={first == null ? route(PathSegment.settings()) : route(PathSegment.libraries(), first.id)} replace />;
+  return (
+    <Navigate
+      to={first == null ? route(PathSegment.settings()) : route(PathSegment.libraries(), first.id)}
+      replace
+    />
+  );
 });
 
 export const App = observer(function App(): JSX.Element {
@@ -178,7 +201,13 @@ export const App = observer(function App(): JSX.Element {
   useLayoutEffect(() => sidebarPresenter.setMobile(isMobile), [sidebarPresenter, isMobile]);
   useLayoutEffect(() => sidebarPresenter.navigated(pathname), [sidebarPresenter, pathname]);
 
-  useDrawerSwipe({ active: mobile, open: drawerOpen, setOpen: sidebarPresenter.setDrawerOpen, setDragging, shell });
+  useDrawerSwipe({
+    active: mobile,
+    open: drawerOpen,
+    setOpen: sidebarPresenter.setDrawerOpen,
+    setDragging,
+    shell,
+  });
   const toggleSidebar = sidebarPresenter.toggleOpen;
 
   if (pathname === route(PathSegment.welcome())) {
@@ -208,13 +237,20 @@ export const App = observer(function App(): JSX.Element {
       <ServerEvents />
       <CheckForUpdates />
       {mobile && (drawerOpen || dragging) && (
-        <div {...stylex.props(styles.scrim, dragging && styles.following)} onClick={toggleSidebar} />
+        <div
+          {...stylex.props(styles.scrim, dragging && styles.following)}
+          onClick={toggleSidebar}
+        />
       )}
       {/* Mounted throughout on a phone, where it is a drawer positioned by a transform: a
           swipe has to have something to pull in, and something to push back out. Off screen
           it is `visibility: hidden`, so it is neither tabbable nor in the way of a tap. */}
       {(mobile || sidebarOpen) && (
-        <Sidebar onCollapse={toggleSidebar} shown={(mobile && drawerOpen) || dragging} following={dragging} />
+        <Sidebar
+          onCollapse={toggleSidebar}
+          shown={(mobile && drawerOpen) || dragging}
+          following={dragging}
+        />
       )}
       {sidebarOpen && !mobile && !touch && <SidebarResizer />}
       <div {...stylex.props(styles.main)}>
@@ -245,22 +281,43 @@ export const App = observer(function App(): JSX.Element {
               />
               <Route path={route(PathSegment.exports())} element={<ExportsPage />} />
               <Route path={route(PathSegment.hdr())} element={<HdrPage />} />
-              <Route path={route(PathSegment.libraries(), PathSegment.param('libraryId'))} element={<LibraryPhotosPage />} />
               <Route
-                path={route(PathSegment.libraries(), PathSegment.param('libraryId'), PathSegment.shoots())}
+                path={route(PathSegment.libraries(), PathSegment.param('libraryId'))}
+                element={<LibraryPhotosPage />}
+              />
+              <Route
+                path={route(
+                  PathSegment.libraries(),
+                  PathSegment.param('libraryId'),
+                  PathSegment.shoots(),
+                )}
                 element={<ShootsPage />}
               />
               <Route
-                path={route(PathSegment.libraries(), PathSegment.param('libraryId'), PathSegment.bin())}
+                path={route(
+                  PathSegment.libraries(),
+                  PathSegment.param('libraryId'),
+                  PathSegment.bin(),
+                )}
                 element={<BinPage />}
               />
               <Route
-                path={route(PathSegment.libraries(), PathSegment.param('libraryId'), PathSegment.noShoot())}
+                path={route(
+                  PathSegment.libraries(),
+                  PathSegment.param('libraryId'),
+                  PathSegment.noShoot(),
+                )}
                 element={<NoShootPhotosPage />}
               />
-              <Route path={route(PathSegment.shoots(), PathSegment.param('shootId'))} element={<ShootPhotosPage />} />
+              <Route
+                path={route(PathSegment.shoots(), PathSegment.param('shootId'))}
+                element={<ShootPhotosPage />}
+              />
               <Route path={route(PathSegment.albums())} element={<AlbumsPage />} />
-              <Route path={route(PathSegment.albums(), PathSegment.param('albumId'))} element={<AlbumPhotosPage />} />
+              <Route
+                path={route(PathSegment.albums(), PathSegment.param('albumId'))}
+                element={<AlbumPhotosPage />}
+              />
               <Route path={route(PathSegment.editConflicts())} element={<ConflictsPage />} />
               {/* Both hang off the collection they were opened from, so which grid
                   the reader is in survives a reload. The bare pair below is still a

@@ -60,8 +60,12 @@ export function Modal({
         <Dialog.Backdrop {...stylex.props(styles.backdrop)} />
         <Dialog.Popup {...stylex.props(styles.popup)} initialFocus={initialFocus}>
           <div {...stylex.props(styles.head)}>
-            <Dialog.Title {...stylex.props(headingStyles.base, headingStyles.h2)}>{title}</Dialog.Title>
-            <Dialog.Close render={<Button variant="ghost" iconOnly aria-label={ModalStrings.close()} />}>
+            <Dialog.Title {...stylex.props(headingStyles.base, headingStyles.h2)}>
+              {title}
+            </Dialog.Title>
+            <Dialog.Close
+              render={<Button variant="ghost" iconOnly aria-label={ModalStrings.close()} />}
+            >
               <X size={ICON} />
             </Dialog.Close>
           </div>

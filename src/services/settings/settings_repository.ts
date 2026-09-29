@@ -1,5 +1,10 @@
 import type { Database } from '../../db/driver';
-import { DEFAULT_SETTINGS, SettingsSchema, type Settings, type UpdateSettingsRequest } from '../../schemas/settings';
+import {
+  DEFAULT_SETTINGS,
+  SettingsSchema,
+  type Settings,
+  type UpdateSettingsRequest,
+} from '../../schemas/settings';
 
 // Values are stored as text, so the default's type says what to read one back
 // as. Anything else (a nullable string) is already what it will be parsed as.
@@ -38,7 +43,9 @@ export class SettingsRepository {
     }
     this.cache = null;
     const settings = this.get();
-    const changed = (Object.keys(settings) as Array<keyof Settings>).some((key) => settings[key] !== before[key]);
+    const changed = (Object.keys(settings) as Array<keyof Settings>).some(
+      (key) => settings[key] !== before[key],
+    );
     if (changed) for (const listener of this.listeners) listener(settings);
     return settings;
   }
@@ -48,7 +55,10 @@ export class SettingsRepository {
   // not stop the viewer opening or the server booting.
   private read(): Settings {
     const settings: Record<string, unknown> = { ...DEFAULT_SETTINGS };
-    const rows = this.db.query('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
+    const rows = this.db.query('SELECT key, value FROM settings').all() as Array<{
+      key: string;
+      value: string;
+    }>;
     for (const { key, value } of rows) {
       const field = SettingsSchema.shape[key as keyof Settings];
       if (field == null) continue;
@@ -59,6 +69,10 @@ export class SettingsRepository {
   }
 
   private write(key: string, value: string): void {
-    this.db.query('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?').run(key, value, value);
+    this.db
+      .query(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?',
+      )
+      .run(key, value, value);
   }
 }

@@ -119,7 +119,11 @@ export const bar = stylex.create({
       // boneDim, not a divider tint: a slate thumb on ink is 1.2:1, and this is the only
       // readout of where in the collection the reader is. Forced colours flatten a bare
       // background to Canvas.
-      backgroundColor: { default: color.boneDim, ':hover': color.bone, '@media (forced-colors: active)': 'CanvasText' },
+      backgroundColor: {
+        default: color.boneDim,
+        ':hover': color.bone,
+        '@media (forced-colors: active)': 'CanvasText',
+      },
     },
   },
   thumbAcross: {
@@ -209,7 +213,10 @@ export const cells = stylex.create({
     transform: along === 'x' ? `translateX(${at}px)` : `translateY(${at}px)`,
   }),
   top: (top: number) => ({ top: `${top}px` }),
-  stripCells: (cell: number, spine: number) => ({ [gridVars.cell]: `${cell}px`, [gridVars.spine]: `${spine}px` }),
+  stripCells: (cell: number, spine: number) => ({
+    [gridVars.cell]: `${cell}px`,
+    [gridVars.spine]: `${spine}px`,
+  }),
 });
 
 export const band = stylex.create({
@@ -303,7 +310,10 @@ export const band = stylex.create({
     borderLeftColor: gridVars.band,
     borderBottomLeftRadius: size.radius,
   },
-  measured: (x: number, width: number) => ({ [gridVars.fuseX]: `${x}px`, [gridVars.fuseW]: `${width}px` }),
+  measured: (x: number, width: number) => ({
+    [gridVars.fuseX]: `${x}px`,
+    [gridVars.fuseW]: `${width}px`,
+  }),
   column: (columns: number, column: number) => ({
     [gridVars.fuseW]: `calc((100% - ${columns - 1} * ${size.gridGap}) / ${columns})`,
     [gridVars.fuseX]: `calc((${gridVars.fuseW} + ${size.gridGap}) * ${column})`,
@@ -461,7 +471,10 @@ export const tile = stylex.create({
       position: 'absolute',
       inset: 0,
       pointerEvents: 'none',
-      backgroundColor: { default: 'transparent', [stylex.when.ancestor(':hover', tileMarker)]: 'rgb(232 228 218 / 0.07)' },
+      backgroundColor: {
+        default: 'transparent',
+        [stylex.when.ancestor(':hover', tileMarker)]: 'rgb(232 228 218 / 0.07)',
+      },
       boxShadow: {
         default: 'inset 0 0 0 1px transparent',
         [stylex.when.ancestor(':hover', tileMarker)]: 'inset 0 0 0 1px rgb(232 228 218 / 0.22)',

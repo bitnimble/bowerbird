@@ -19,9 +19,15 @@ interface Page {
   image: { id: string; builtAt: string | null } | null;
 }
 
-const COLLECTION = new RegExp(`^/(${PathSegment.libraries()}|${PathSegment.shoots()}|${PathSegment.albums()})/([^/]+)`);
+const COLLECTION = new RegExp(
+  `^/(${PathSegment.libraries()}|${PathSegment.shoots()}|${PathSegment.albums()})/([^/]+)`,
+);
 const PHOTO = new RegExp(`/${PathSegment.photos()}/([^/]+)/?$`);
-const MOST_RECENT = PhotoListQuerySchema.parse({ ordering: 'taken_desc', limit: 1, triage: 'untriaged,picked' });
+const MOST_RECENT = PhotoListQuerySchema.parse({
+  ordering: 'taken_desc',
+  limit: 1,
+  triage: 'untriaged,picked',
+});
 
 /** Link-preview tags for the web client's pages, written into the shell a crawler is served. */
 export class OpenGraph {
@@ -43,15 +49,22 @@ export class OpenGraph {
       ['og:title', page.title],
       ['og:url', `${origin}${c.req.path}`],
     ];
-    if (page.description != null) tags.push(['og:description', page.description], ['description', page.description]);
+    if (page.description != null)
+      tags.push(['og:description', page.description], ['description', page.description]);
     if (page.image != null) {
       const url = `${origin}${route(PathSegment.image(), page.image.id, PathSegment.preview())}`;
       // Versioned so an unfurler's cache lets go of a tile rebuilt after an edit.
-      tags.push(['og:image', page.image.builtAt == null ? url : `${url}?v=${Date.parse(page.image.builtAt)}`]);
+      tags.push([
+        'og:image',
+        page.image.builtAt == null ? url : `${url}?v=${Date.parse(page.image.builtAt)}`,
+      ]);
     }
     tags.push(['twitter:card', page.image == null ? 'summary' : 'summary_large_image']);
     const meta = tags
-      .map(([key, value]) => `<meta ${key.startsWith('og:') ? 'property' : 'name'}="${key}" content="${Bun.escapeHTML(value)}" />`)
+      .map(
+        ([key, value]) =>
+          `<meta ${key.startsWith('og:') ? 'property' : 'name'}="${key}" content="${Bun.escapeHTML(value)}" />`,
+      )
       .join('');
     return new HTMLRewriter()
       .on('title', {
@@ -70,30 +83,43 @@ export class OpenGraph {
       const [, kind, id] = COLLECTION.exec(pathname) ?? [];
       if (id == null) return null;
       if (kind === PathSegment.shoots()) {
-        return this.describeCollection(this.shoots.get(id).name, this.photos.listByShoot(id, MOST_RECENT));
+        return this.describeCollection(
+          this.shoots.get(id).name,
+          this.photos.listByShoot(id, MOST_RECENT),
+        );
       }
       if (kind === PathSegment.albums()) {
-        return this.describeCollection(this.albums.get(id).name, this.photos.listByAlbum(id, MOST_RECENT));
+        return this.describeCollection(
+          this.albums.get(id).name,
+          this.photos.listByAlbum(id, MOST_RECENT),
+        );
       }
-      return this.describeCollection(this.libraries.get(id).name, this.photos.listByLibrary(id, MOST_RECENT));
+      return this.describeCollection(
+        this.libraries.get(id).name,
+        this.photos.listByLibrary(id, MOST_RECENT),
+      );
     } catch (err) {
       // Whatever went wrong, the reader still gets the app, just without a preview.
       if (!(err instanceof AppError && err.code === 'NOT_FOUND')) {
-        log.warn('could not describe a page for its link preview', { path: pathname, err: String(err) });
+        log.warn('could not describe a page for its link preview', {
+          path: pathname,
+          err: String(err),
+        });
       }
       return null;
     }
   }
 
   private describePhoto(photo: PhotoDetail): Page {
-    const title =
-      isComposite(photo.recipe) ?
-        OpenGraphStrings.panorama(sourcesOf(photo.recipe).length)
+    const title = isComposite(photo.recipe)
+      ? OpenGraphStrings.panorama(sourcesOf(photo.recipe).length)
       : (photo.file_path?.split('/').pop() ?? photo.id);
     const exposure = [
       photo.focal_length == null ? null : OpenGraphStrings.focalLength(photo.focal_length),
       photo.aperture == null ? null : OpenGraphStrings.aperture(photo.aperture),
-      photo.shutter_speed == null || photo.shutter_speed <= 0 ? null : OpenGraphStrings.shutter(photo.shutter_speed),
+      photo.shutter_speed == null || photo.shutter_speed <= 0
+        ? null
+        : OpenGraphStrings.shutter(photo.shutter_speed),
       photo.iso == null ? null : OpenGraphStrings.iso(photo.iso),
     ].filter((part) => part != null);
     const description = [
@@ -113,7 +139,8 @@ export class OpenGraph {
     const newest = recent.photos[0];
     return {
       title,
-      description: recent.photo_total == null ? null : OpenGraphStrings.photoCount(recent.photo_total),
+      description:
+        recent.photo_total == null ? null : OpenGraphStrings.photoCount(recent.photo_total),
       image: newest == null ? null : { id: newest.id, builtAt: newest.tile_built_at },
     };
   }
@@ -128,7 +155,8 @@ function dedupeMake(make: string | null, model: string | null): string[] {
 // refuses an `og:image` on a scheme the page was not served over.
 function originOf(c: Context): string {
   const url = new URL(c.req.url);
-  const proto = c.req.header('x-forwarded-proto')?.split(',')[0]?.trim() || url.protocol.slice(0, -1);
+  const proto =
+    c.req.header('x-forwarded-proto')?.split(',')[0]?.trim() || url.protocol.slice(0, -1);
   const host = c.req.header('x-forwarded-host')?.split(',')[0]?.trim() || url.host;
   return `${proto}://${host}`;
 }

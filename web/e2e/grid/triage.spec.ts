@@ -9,7 +9,8 @@ import { GRID_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import { cursorTile, gotoLibrary, tiles, useLibrary } from '../helpers';
 
 const picked = (scope: Locator) => scope.getByRole('button', { name: 'Clear Pick', pressed: true });
-const stars = (scope: Locator) => scope.getByRole('group', { name: 'Rating' }).getByRole('button', { pressed: true });
+const stars = (scope: Locator) =>
+  scope.getByRole('group', { name: 'Rating' }).getByRole('button', { pressed: true });
 
 // In order: each of these leaves a verdict on a tile, and the next one reads the
 // grid around it.
@@ -40,7 +41,9 @@ test('rating and picking work from the grid without opening a photo', async ({ p
   await expect(picked(first)).toBeVisible();
 });
 
-test('the verdict and rating on a tile are clickable, and clicking again clears them', async ({ page }) => {
+test('the verdict and rating on a tile are clickable, and clicking again clears them', async ({
+  page,
+}) => {
   await gotoLibrary(page, GRID_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   const tile = tiles(page).nth(1);
@@ -78,7 +81,9 @@ test('rejecting removes a photo from the default working set', async ({ page }) 
 
   await page.getByRole('button', { name: 'Rejects', exact: true }).click();
   await expect(tiles(page)).toHaveCount(1);
-  await expect(tiles(page).getByRole('button', { name: 'Clear Reject', pressed: true })).toHaveCount(1);
+  await expect(
+    tiles(page).getByRole('button', { name: 'Clear Reject', pressed: true }),
+  ).toHaveCount(1);
 
   // Pressing it again clears the verdict, which is the other half of the claim:
   // the photograph comes back to the set being worked through.

@@ -50,6 +50,7 @@ describe('reportsFileEvents', () => {
   });
 
   it('is true for a local filesystem, including a container overlay', () => {
-    for (const fs of ['ext4', 'btrfs', 'xfs', 'zfs', 'tmpfs', 'overlay']) expect(reportsFileEvents(fs)).toBe(true);
+    for (const fs of ['ext4', 'btrfs', 'xfs', 'zfs', 'tmpfs', 'overlay'])
+      expect(reportsFileEvents(fs)).toBe(true);
   });
 });

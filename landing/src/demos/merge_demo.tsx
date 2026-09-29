@@ -10,8 +10,26 @@ type Point = readonly [number, number];
 // Around each person in the frame, in fractions of its width and height. Both stand on the
 // paving, which is where the two frames agree: further back they disagree by their own parallax.
 const PEOPLE: readonly (readonly Point[])[] = [
-  [[0.316, 0.670], [0.342, 0.670], [0.352, 0.722], [0.360, 0.782], [0.358, 0.810], [0.300, 0.810], [0.297, 0.768], [0.308, 0.708]],
-  [[0.474, 0.648], [0.502, 0.648], [0.516, 0.702], [0.526, 0.800], [0.524, 0.846], [0.468, 0.846], [0.462, 0.782], [0.466, 0.700]],
+  [
+    [0.316, 0.67],
+    [0.342, 0.67],
+    [0.352, 0.722],
+    [0.36, 0.782],
+    [0.358, 0.81],
+    [0.3, 0.81],
+    [0.297, 0.768],
+    [0.308, 0.708],
+  ],
+  [
+    [0.474, 0.648],
+    [0.502, 0.648],
+    [0.516, 0.702],
+    [0.526, 0.8],
+    [0.524, 0.846],
+    [0.468, 0.846],
+    [0.462, 0.782],
+    [0.466, 0.7],
+  ],
 ];
 
 const FRAMES = [
@@ -102,7 +120,11 @@ export function MergeDemo(): JSX.Element {
         <img {...stylex.props(styles.photo)} src={MERGE_PHOTO.people} alt={DEMO.merge.alt} />
         {PEOPLE.map((piece, index) =>
           taken[index] === true ? (
-            <div key={index} {...stylex.props(styles.photo, styles.piece)} style={{ clipPath: polygon(piece) }}>
+            <div
+              key={index}
+              {...stylex.props(styles.photo, styles.piece)}
+              style={{ clipPath: polygon(piece) }}
+            >
               <img {...stylex.props(styles.pieceImage)} src={MERGE_PHOTO.clear} alt="" />
             </div>
           ) : null,

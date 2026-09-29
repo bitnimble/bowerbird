@@ -93,7 +93,8 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   }, [libraryId, shoots, librariesPresenter]);
 
   const library = libraries.byId.get(libraryId);
-  const readOnlyRefusal = library?.read_only === true ? BulkBarStrings.notOnReadOnlyLibrary() : undefined;
+  const readOnlyRefusal =
+    library?.read_only === true ? BulkBarStrings.notOnReadOnlyLibrary() : undefined;
 
   const actionsFor = useCallback(
     (row: CollectionRow): Option<string>[] | null => {
@@ -104,29 +105,42 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
       // hidden if the ancestor is ever unhidden (§12.4).
       const hidden = store.shootByFolder.get(row.key)?.hidden_directly === true;
       return [
-        ...(tracked ? [] : [{ value: 'adopt', label: ShootsPageStrings.addAsShoot(), icon: <Folder size={ICON} /> }]),
-        ...(tracked && store.renamingKey !== row.key ?
-          [
-            {
-              value: 'rename',
-              label: CollectionListStrings.rename(),
-              icon: <Pencil size={ICON} />,
-              disabled: readOnlyRefusal != null,
-              tooltip: readOnlyRefusal,
-            },
-          ]
-        : []),
+        ...(tracked
+          ? []
+          : [
+              {
+                value: 'adopt',
+                label: ShootsPageStrings.addAsShoot(),
+                icon: <Folder size={ICON} />,
+              },
+            ]),
+        ...(tracked && store.renamingKey !== row.key
+          ? [
+              {
+                value: 'rename',
+                label: CollectionListStrings.rename(),
+                icon: <Pencil size={ICON} />,
+                disabled: readOnlyRefusal != null,
+                tooltip: readOnlyRefusal,
+              },
+            ]
+          : []),
         createInSubfolder(readOnlyRefusal),
-        ...(tracked ?
-          [
-            {
-              value: 'hide',
-              label: hidden ? ShootsPageStrings.unhideShoot() : ShootsPageStrings.hideShoot(),
-              icon: hidden ? <Eye size={ICON} /> : <EyeOff size={ICON} />,
-            },
-            { value: 'delete', label: CollectionListStrings.delete(), icon: <Trash2 size={ICON} />, destructive: true },
-          ]
-        : []),
+        ...(tracked
+          ? [
+              {
+                value: 'hide',
+                label: hidden ? ShootsPageStrings.unhideShoot() : ShootsPageStrings.hideShoot(),
+                icon: hidden ? <Eye size={ICON} /> : <EyeOff size={ICON} />,
+              },
+              {
+                value: 'delete',
+                label: CollectionListStrings.delete(),
+                icon: <Trash2 size={ICON} />,
+                destructive: true,
+              },
+            ]
+          : []),
       ];
     },
     [store, readOnlyRefusal],
@@ -199,7 +213,9 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
         resetKey={`${libraryId}:${store.view}`}
       />
 
-      {store.loading && store.rows.length === 0 && <EmptyState title={ShootsPageStrings.readingFolders()} />}
+      {store.loading && store.rows.length === 0 && (
+        <EmptyState title={ShootsPageStrings.readingFolders()} />
+      )}
 
       {store.isEmpty && (
         <EmptyState title={ShootsPageStrings.noShootsYet()}>

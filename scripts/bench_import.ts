@@ -38,7 +38,10 @@ import { SettingsSchema } from '../src/schemas/settings';
 import { fileRecipe } from '../src/schemas/recipes';
 import type { PhotoListingRepository } from '../src/services/photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../src/services/photos/paths/photo_paths_repository';
-import type { PendingPhoto, PhotoProcessingRepository } from '../src/services/photos/renditions/photo_processing_repository';
+import type {
+  PendingPhoto,
+  PhotoProcessingRepository,
+} from '../src/services/photos/renditions/photo_processing_repository';
 import type { SettingsRepository } from '../src/services/settings/settings_repository';
 import type { FusedReply, FusedRequest } from './bench_import_worker';
 import type { FileMetadata } from '../src/services/processing/analysis/metadata';
@@ -63,7 +66,9 @@ interface Corpus {
  * would arrive warm and there would be nothing left to measure.
  */
 async function corpus(dir: string, limit: number): Promise<Corpus> {
-  const names = (await readdir(dir)).filter((name) => RAW_EXTENSIONS.includes(path.extname(name).toLowerCase()));
+  const names = (await readdir(dir)).filter((name) =>
+    RAW_EXTENSIONS.includes(path.extname(name).toLowerCase()),
+  );
   names.sort();
   const files: Corpus['files'] = [];
   for (const name of names) {
@@ -97,7 +102,10 @@ function gridTarget(dataPath: string, photoId: string) {
  * The scan covers the whole corpus before the first tile is built, which is what
  * `ScanService` does and what decides whether the tile pass finds a file still in memory.
  */
-async function split(files: Corpus['files'], libraryId: string): Promise<{ scan: number; tiles: number; metadata: FileMetadata[] }> {
+async function split(
+  files: Corpus['files'],
+  libraryId: string,
+): Promise<{ scan: number; tiles: number; metadata: FileMetadata[] }> {
   const pool = new ScanPool(() => settings.scan_concurrency);
   const metadata: FileMetadata[] = [];
 
@@ -153,7 +161,10 @@ async function split(files: Corpus['files'], libraryId: string): Promise<{ scan:
 }
 
 /** The same two answers per file, over one open, on a pool of the same width. */
-async function fused(files: Corpus['files'], libraryId: string): Promise<{ taken: number; metadata: FileMetadata[] }> {
+async function fused(
+  files: Corpus['files'],
+  libraryId: string,
+): Promise<{ taken: number; metadata: FileMetadata[] }> {
   const dataPath = dataPathForLibraryId(libraryId);
   const url = new URL('./bench_import_worker.ts', import.meta.url).href;
   const width = Math.min(settings.processing_concurrency, files.length);
@@ -200,7 +211,8 @@ async function fused(files: Corpus['files'], libraryId: string): Promise<{ taken
           metadata.push(event.data.metadata);
           assign();
         };
-        worker.onerror = (event: ErrorEvent) => reject(new Error(`fused worker crashed: ${event.message}`));
+        worker.onerror = (event: ErrorEvent) =>
+          reject(new Error(`fused worker crashed: ${event.message}`));
         assign();
       });
     }),
@@ -211,21 +223,42 @@ async function fused(files: Corpus['files'], libraryId: string): Promise<{ taken
 /** Both arms answer the catalogue the same way, or the comparison is between two things. */
 function agree(a: FileMetadata[], b: FileMetadata[]): void {
   const shape = (m: FileMetadata): string =>
-    JSON.stringify([m.width, m.height, m.orientation, m.dateTaken, m.iso, m.aperture, m.cameraModel, m.lensModel]);
+    JSON.stringify([
+      m.width,
+      m.height,
+      m.orientation,
+      m.dateTaken,
+      m.iso,
+      m.aperture,
+      m.cameraModel,
+      m.lensModel,
+    ]);
   const left = new Set(a.map(shape));
   const missing = b.filter((m) => !left.has(shape(m)));
   // Different corpora, so what has to match is the *kind* of answer: every field populated on
   // one arm is populated on the other. A fused header that silently dropped the lens name would
   // otherwise read as a saving.
-  const filled = (rows: FileMetadata[], key: keyof FileMetadata): number => rows.filter((m) => m[key] != null).length;
-  for (const key of ['dateTaken', 'iso', 'aperture', 'focalLength', 'cameraModel', 'lensModel'] as const) {
+  const filled = (rows: FileMetadata[], key: keyof FileMetadata): number =>
+    rows.filter((m) => m[key] != null).length;
+  for (const key of [
+    'dateTaken',
+    'iso',
+    'aperture',
+    'focalLength',
+    'cameraModel',
+    'lensModel',
+  ] as const) {
     const [split, fusedShare] = [filled(a, key) / a.length, filled(b, key) / b.length];
     if (Math.abs(split - fusedShare) > 0.02) {
-      throw new Error(`${key} is set on ${(split * 100).toFixed(0)}% of the split arm and ${(fusedShare * 100).toFixed(0)}% of the fused one`);
+      throw new Error(
+        `${key} is set on ${(split * 100).toFixed(0)}% of the split arm and ${(fusedShare * 100).toFixed(0)}% of the fused one`,
+      );
     }
   }
   if (missing.length === b.length && b.length > 0) {
-    console.log(`  (the two corpora share no frame, as intended: ${missing.length} distinct headers)`);
+    console.log(
+      `  (the two corpora share no frame, as intended: ${missing.length} distinct headers)`,
+    );
   }
 }
 
@@ -243,7 +276,9 @@ async function main(): Promise<void> {
   splitCorpus.files.length = count;
   fusedCorpus.files.length = count;
 
-  console.log(`${count} files each, scan_concurrency ${settings.scan_concurrency}, processing_concurrency ${settings.processing_concurrency}`);
+  console.log(
+    `${count} files each, scan_concurrency ${settings.scan_concurrency}, processing_concurrency ${settings.processing_concurrency}`,
+  );
   console.log(`  split ${splitDir}`);
   console.log(`  fused ${fusedDir}`);
 

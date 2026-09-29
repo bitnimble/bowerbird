@@ -35,7 +35,8 @@ test.beforeAll(async ({ browser }) => {
 });
 
 const rows = (page: Page) => collectionList(page).getByRole('listitem');
-const cursored = (page: Page) => collectionList(page).locator('[role="listitem"][aria-current="true"]');
+const cursored = (page: Page) =>
+  collectionList(page).locator('[role="listitem"][aria-current="true"]');
 
 test('keeps the library in the shell when a shoot is opened by deep link', async ({ page }) => {
   await gotoLibrary(page, PHOTOS_DIR, 'shoots');
@@ -175,7 +176,9 @@ test('a cursor survives the row under it being unmounted by a scroll', async ({ 
   }
 });
 
-test('adding a photo to a shoot moves the file out of the library root on disk', async ({ page }) => {
+test('adding a photo to a shoot moves the file out of the library root on disk', async ({
+  page,
+}) => {
   await gotoLibrary(page, PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
@@ -204,7 +207,9 @@ test('leaving a photo returns to the collection it was opened from', async ({ pa
 
   await openPhoto(page);
   await expect(page).toHaveURL(new RegExp(`${route(PathSegment.photos())}/`));
-  const back = page.getByRole('group', { name: 'Photo controls' }).getByRole('link', { name: 'Shoot', exact: true });
+  const back = page
+    .getByRole('group', { name: 'Photo controls' })
+    .getByRole('link', { name: 'Shoot', exact: true });
   // Named for where it goes, so it is not offering "Library" from inside a shoot.
   await expect(back).toBeVisible();
 
@@ -241,13 +246,17 @@ test('a photo can be taken back out of a shoot', async ({ page }) => {
 });
 
 // Last, because it renames the shoot the rest of this journey opens by name.
-test('the title of a shoot is the rename control, and refuses a name no folder could have', async ({ page }) => {
+test('the title of a shoot is the rename control, and refuses a name no folder could have', async ({
+  page,
+}) => {
   await gotoShoot(page, PHOTOS_DIR, 'Reef');
 
   await page.getByRole('heading', { name: 'Reef' }).getByRole('button').click();
   const field = page.getByRole('textbox', { name: 'Rename Reef' });
   await field.fill('a/b');
-  await expect(page.getByText('Enter a folder name without slashes or a leading dot.')).toBeVisible();
+  await expect(
+    page.getByText('Enter a folder name without slashes or a leading dot.'),
+  ).toBeVisible();
   await field.press('Enter');
   await expect(field).toBeVisible();
 

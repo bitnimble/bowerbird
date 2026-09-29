@@ -10,7 +10,8 @@ afterEach(cleanup);
 test('the phone verdict buttons omit keyboard shortcuts', () => {
   render(<TriageControl value="untriaged" onChange={() => {}} stretch />);
 
-  for (const label of ['Undecided', 'Reject', 'Pick']) expect(screen.getByRole('button', { name: label })).toBeTruthy();
+  for (const label of ['Undecided', 'Reject', 'Pick'])
+    expect(screen.getByRole('button', { name: label })).toBeTruthy();
   for (const key of ['Z', 'X', 'C']) expect(screen.queryByText(key)).toBeNull();
 });
 

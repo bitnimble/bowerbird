@@ -32,7 +32,10 @@ type GroupingInput = Parameters<RawshimCommandWorker['group']>[0] & { descriptor
  * rest of the band dimmed as being elsewhere and no gesture on that page able to
  * put it right.
  */
-export function runs(candidates: readonly StackCandidate[], windowSeconds: number): StackCandidate[][] {
+export function runs(
+  candidates: readonly StackCandidate[],
+  windowSeconds: number,
+): StackCandidate[][] {
   const byShoot = new Map<string | null, StackCandidate[]>();
   for (const candidate of candidates) {
     const inShoot = byShoot.get(candidate.shootId);
@@ -88,7 +91,10 @@ export class StacksService {
    */
   storeDescriptor(photoId: string, descriptor: Uint8Array): void {
     if (descriptor.length !== descriptorSize()) {
-      log.warn('ignoring a descriptor of the wrong size', { photo: photoId, bytes: descriptor.length });
+      log.warn('ignoring a descriptor of the wrong size', {
+        photo: photoId,
+        bytes: descriptor.length,
+      });
       return;
     }
     this.stacks.writeDescriptor(photoId, Buffer.from(descriptor));
@@ -119,10 +125,19 @@ export class StacksService {
     options: { ordering: Ordering; albumId?: string; shootId?: string; deleted?: boolean },
   ): PhotoSummary[] {
     this.get(stackId);
-    const members = this.stacks.memberIds(stackId, options.ordering, options.deleted ?? false, options.shootId);
-    const photos = members.map((id) => this.photoListing.getById(id)).filter((photo) => photo != null);
+    const members = this.stacks.memberIds(
+      stackId,
+      options.ordering,
+      options.deleted ?? false,
+      options.shootId,
+    );
+    const photos = members
+      .map((id) => this.photoListing.getById(id))
+      .filter((photo) => photo != null);
     const inAlbum =
-      options.albumId == null ? photos : photos.filter((photo) => photo.album_ids.includes(options.albumId!));
+      options.albumId == null
+        ? photos
+        : photos.filter((photo) => photo.album_ids.includes(options.albumId!));
     // A collapsed listing has no row for a member, so these are the only rows the viewer
     // ever has for one: unresolved, every member of an open band claims the camera's JPEG
     // and the client has nothing to correct it with (§18.5).
@@ -147,7 +162,8 @@ export class StacksService {
     // says must not exist, and which nothing later prunes because pruning only
     // ever looks at the stacks a create emptied.
     const photoIds = this.stacks.existingPhotoIds([...new Set(requested)]);
-    if (photoIds.length < 2) throw new AppError('VALIDATION_ERROR', 'a stack needs at least two photos');
+    if (photoIds.length < 2)
+      throw new AppError('VALIDATION_ERROR', 'a stack needs at least two photos');
     const libraryId = this.stacks.soleLibraryOf(photoIds);
     // A stack is library-wide but not library-crossing: its members share a
     // catalogue, and nothing in the grid could show a stack that spans two.
@@ -155,7 +171,9 @@ export class StacksService {
 
     const id = this.stacks.transaction(() => {
       const emptied = this.stacks.stackIdsOf(photoIds);
-      const stackId = withNewId((candidate) => this.stacks.create(candidate, libraryId, 'manual', new Date().toISOString()));
+      const stackId = withNewId((candidate) =>
+        this.stacks.create(candidate, libraryId, 'manual', new Date().toISOString()),
+      );
       this.stacks.addPhotos(stackId, photoIds);
       this.pruneStacks(emptied);
       return stackId;
@@ -305,19 +323,32 @@ export class StacksService {
     const made = this.stacks.transaction(() => {
       const current = this.libraries.getById(libraryId);
       if (current == null || !current.auto_stack) return 0;
-      if (this.descriptorRevision.get(libraryId) !== revision ||
+      if (
+        this.descriptorRevision.get(libraryId) !== revision ||
         current.auto_stack_similarity !== library.auto_stack_similarity ||
-        current.auto_stack_window_seconds !== library.auto_stack_window_seconds) return null;
+        current.auto_stack_window_seconds !== library.auto_stack_window_seconds
+      )
+        return null;
       const eligible = this.stacks.candidates(libraryId);
-      if (eligible.length !== candidates.length || eligible.some((candidate, index) => {
-        const before = candidates[index];
-        return before == null || candidate.id !== before.id || candidate.timestamp !== before.timestamp || candidate.shootId !== before.shootId;
-      })) return null;
+      if (
+        eligible.length !== candidates.length ||
+        eligible.some((candidate, index) => {
+          const before = candidates[index];
+          return (
+            before == null ||
+            candidate.id !== before.id ||
+            candidate.timestamp !== before.timestamp ||
+            candidate.shootId !== before.shootId
+          );
+        })
+      )
+        return null;
       // The old automatic stacks go first, and their photos go back to 'none'
       // rather than 'unstacked': this pass is detection changing its own mind,
       // not a person rejecting the grouping, so the photos must stay available
       // to the grouping being written a line later.
-      for (const stackId of this.stacks.autoStackIds(libraryId)) this.stacks.dissolve(stackId, false);
+      for (const stackId of this.stacks.autoStackIds(libraryId))
+        this.stacks.dissolve(stackId, false);
       const now = new Date().toISOString();
       for (const photoIds of members) {
         const id = withNewId((candidate) => this.stacks.create(candidate, libraryId, 'auto', now));
@@ -327,7 +358,11 @@ export class StacksService {
     });
 
     if (made == null) return null;
-    log.info('detected stacks', { library: libraryId, stacks: made, candidates: candidates.length });
+    log.info('detected stacks', {
+      library: libraryId,
+      stacks: made,
+      candidates: candidates.length,
+    });
     return made;
   }
 
@@ -346,7 +381,10 @@ export class StacksService {
       const now = new Date().toISOString();
       for (const { photoIds } of brackets) {
         const stacking = this.stacks.stackingOf(photoIds);
-        if (stacking.some((photo) => photo.stack_state === 'unstacked' || photo.origin === 'manual')) continue;
+        if (
+          stacking.some((photo) => photo.stack_state === 'unstacked' || photo.origin === 'manual')
+        )
+          continue;
         const held = stacking[0]?.stack_id;
         const alreadyStacked =
           held != null &&
@@ -354,7 +392,9 @@ export class StacksService {
           this.stacks.countMembers(held) === photoIds.length;
         if (alreadyStacked) continue;
         const emptied = this.stacks.stackIdsOf(photoIds);
-        const stackId = withNewId((candidate) => this.stacks.create(candidate, libraryId, 'bracket', now));
+        const stackId = withNewId((candidate) =>
+          this.stacks.create(candidate, libraryId, 'bracket', now),
+        );
         this.stacks.addPhotos(stackId, photoIds);
         this.pruneStacks(emptied);
         made++;

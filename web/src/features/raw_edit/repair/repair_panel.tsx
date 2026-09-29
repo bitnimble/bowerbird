@@ -33,7 +33,10 @@ function SeamedThumbnail({
     <>
       <img src={thumbnail.url} alt="" {...stylex.props(styles.thumbnailLayer)} />
       <svg viewBox="0 0 1 1" preserveAspectRatio="none" {...stylex.props(styles.thumbnailLayer)}>
-        <polygon points={thumbnail.seam.map(({ x, y }) => `${x},${y}`).join(' ')} {...stylex.props(styles.seam)} />
+        <polygon
+          points={thumbnail.seam.map(({ x, y }) => `${x},${y}`).join(' ')}
+          {...stylex.props(styles.seam)}
+        />
       </svg>
     </>
   );
@@ -57,9 +60,9 @@ export const RepairPanel = observer(function RepairPanel({
   styles: RawEditPanelStyles;
 }): JSX.Element {
   const options = store.repairOptions;
-  const prompt =
-    store.repairSolving ? RawEditPanelStrings.findingFills()
-    : store.repairRefusal ?? (options == null ? RawEditPanelStrings.drawAroundToRemove() : null);
+  const prompt = store.repairSolving
+    ? RawEditPanelStrings.findingFills()
+    : (store.repairRefusal ?? (options == null ? RawEditPanelStrings.drawAroundToRemove() : null));
   const repairs = edit.doc?.repairs ?? [];
   const blend = ((options?.[store.repairChoice]?.feather ?? 0) / STORED_LONG) * 100;
 
@@ -85,12 +88,16 @@ export const RepairPanel = observer(function RepairPanel({
           label={MergePageStrings.blend()}
           value={RawEditPanelStrings.percent(reading(blend, { min: 0, step: 0.05 }))}
           reset={null}
-          typing={store.repairSolving ? null : {
-            min: 0,
-            max: MOST_FEATHER * 100,
-            step: 0.05,
-            set: (percent) => presenter.repair.settleFeather(percent / 100),
-          }}
+          typing={
+            store.repairSolving
+              ? null
+              : {
+                  min: 0,
+                  max: MOST_FEATHER * 100,
+                  step: 0.05,
+                  set: (percent) => presenter.repair.settleFeather(percent / 100),
+                }
+          }
         >
           <Slider
             style={styles.slider}
@@ -137,7 +144,11 @@ export const RepairPanel = observer(function RepairPanel({
       {options != null && (
         <>
           <hr {...stylex.props(styles.divider)} />
-          <div {...stylex.props(styles.fills)} role="radiogroup" aria-label={RawEditPanelStrings.fills()}>
+          <div
+            {...stylex.props(styles.fills)}
+            role="radiogroup"
+            aria-label={RawEditPanelStrings.fills()}
+          >
             {options.map((_, at) => {
               const thumbnail = store.repairOptionThumbnails.get(at);
               return (
@@ -156,7 +167,11 @@ export const RepairPanel = observer(function RepairPanel({
                     disabled={store.repairSolving}
                     onClick={() => presenter.repair.choose(at)}
                   >
-                    {thumbnail == null ? at + 1 : <SeamedThumbnail thumbnail={thumbnail} styles={styles} />}
+                    {thumbnail == null ? (
+                      at + 1
+                    ) : (
+                      <SeamedThumbnail thumbnail={thumbnail} styles={styles} />
+                    )}
                   </button>
                 </Tooltip>
               );
@@ -166,9 +181,7 @@ export const RepairPanel = observer(function RepairPanel({
             <Button onClick={presenter.repair.apply} disabled={store.repairSolving}>
               {RawEditPanelStrings.applyFill()}
             </Button>
-            <Button onClick={presenter.repair.cancel}>
-              {RawEditPanelStrings.cancelFill()}
-            </Button>
+            <Button onClick={presenter.repair.cancel}>{RawEditPanelStrings.cancelFill()}</Button>
           </div>
         </>
       )}

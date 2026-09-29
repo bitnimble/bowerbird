@@ -25,17 +25,29 @@ fn main() {
     let params = rawler::decoders::RawDecodeParams::default();
 
     let started = std::time::Instant::now();
-    let whole = decoder.raw_image(&source, &params, false).expect("whole decode");
+    let whole = decoder
+        .raw_image(&source, &params, false)
+        .expect("whole decode");
     let whole_ms = started.elapsed().as_millis();
     let (width, height) = (whole.width, whole.height);
     let whole = samples(&whole);
     println!("{width}x{height}, whole decode {whole_ms}ms");
-    println!("{:>14}  {:>8}  {:>7}  {}", "crop at", "decode", "saved", "matches whole");
+    println!(
+        "{:>14}  {:>8}  {:>7}  {}",
+        "crop at", "decode", "saved", "matches whole"
+    );
 
-    for (x, y) in [(0, 0), (width / 2, height / 2), (width - CROP, height - CROP), (width / 4, height / 3)] {
+    for (x, y) in [
+        (0, 0),
+        (width / 2, height / 2),
+        (width - CROP, height - CROP),
+        (width / 4, height / 3),
+    ] {
         let region = Rect::new(Point::new(x, y), Dim2::new(CROP, CROP));
         let started = std::time::Instant::now();
-        let part = decoder.raw_image_region(&source, &params, region, false).expect("region decode");
+        let part = decoder
+            .raw_image_region(&source, &params, region, false)
+            .expect("region decode");
         let ms = started.elapsed().as_millis();
         let part = samples(&part);
 

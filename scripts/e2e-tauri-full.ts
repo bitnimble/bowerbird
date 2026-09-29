@@ -15,7 +15,14 @@ mkdirSync(HOME, { recursive: true });
 // Under `xvfb-run` because the binary the config launches is a real windowed app, and the
 // display has to be there before it starts rather than around the test process only.
 const suite = spawn(
-  ['xvfb-run', '-a', './node_modules/.bin/playwright', 'test', '--config', 'e2e-tauri/playwright.config.ts'],
+  [
+    'xvfb-run',
+    '-a',
+    './node_modules/.bin/playwright',
+    'test',
+    '--config',
+    'e2e-tauri/playwright.config.ts',
+  ],
   {
     cwd: ROOT,
     env: {

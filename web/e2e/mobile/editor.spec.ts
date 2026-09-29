@@ -3,7 +3,17 @@ import { test } from '../fixtures';
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { MOBILE_EDIT_PHOTOS_DIR } from '../fixture_library';
-import { editDiagnostics, editorFailure, editPreview, editTools, firstPhotoId, photoStage, softProof, useLibrary, waitForEditorLive } from '../helpers';
+import {
+  editDiagnostics,
+  editorFailure,
+  editPreview,
+  editTools,
+  firstPhotoId,
+  photoStage,
+  softProof,
+  useLibrary,
+  waitForEditorLive,
+} from '../helpers';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 test.describe.configure({ timeout: 180_000 });
@@ -16,12 +26,18 @@ test.beforeAll(async ({ browser }) => {
   await page.close();
 });
 
-test('phone tilt changes print lighting while the photo keeps its editor framing', async ({ page }) => {
+test('phone tilt changes print lighting while the photo keeps its editor framing', async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     let requests = 0;
     Object.defineProperty(globalThis, 'motionPermissionRequests', { get: () => requests });
     Object.defineProperty(DeviceOrientationEvent, 'requestPermission', {
-      value: async () => { requests += 1; return 'granted'; }, configurable: true,
+      value: async () => {
+        requests += 1;
+        return 'granted';
+      },
+      configurable: true,
     });
   });
   await page.route(/\/gpu_worker\.ts(?:\?|$)/, async (route) => {
@@ -41,28 +57,42 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page);
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
-  const aspect = await editPreview(page).evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height);
+  const aspect = await editPreview(page).evaluate(
+    (canvas: HTMLCanvasElement) => canvas.width / canvas.height,
+  );
   const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
   if (worker == null) throw new Error('The GPU worker was not created');
-  const Scene = z.object({ presentation: z.literal('surface'), yawDegrees: z.number(), pitchDegrees: z.number() });
-  const scene = async (): Promise<z.infer<typeof Scene>> => Scene.parse(
-    await worker.evaluate(() => Reflect.get(globalThis, 'printMotionScene')),
-  );
+  const Scene = z.object({
+    presentation: z.literal('surface'),
+    yawDegrees: z.number(),
+    pitchDegrees: z.number(),
+  });
+  const scene = async (): Promise<z.infer<typeof Scene>> =>
+    Scene.parse(await worker.evaluate(() => Reflect.get(globalThis, 'printMotionScene')));
   await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print');
   await expect(page.getByRole('region', { name: 'Rotate print' })).toHaveCount(0);
   await expect(page.getByRole('slider', { name: 'Horizontal rotation' })).toHaveCount(0);
   await expect(page.getByRole('slider', { name: 'Vertical rotation' })).toHaveCount(0);
-  await expect.poll(async () => editPreview(page).evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height))
+  await expect
+    .poll(async () =>
+      editPreview(page).evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height),
+    )
     .toBeCloseTo(aspect, 2);
   expect(await scene()).toEqual({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
   expect(await page.evaluate(() => Reflect.get(globalThis, 'motionPermissionRequests'))).toBe(1);
   await page.getByRole('tab', { name: 'Device tilt', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Enable tilt', exact: true })).toHaveCount(0);
   await page.evaluate(async () => {
-    window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 90, gamma: 0 }));
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 65, gamma: 15 }));
+    window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 90, gamma: 0 }),
+    );
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 65, gamma: 15 }),
+    );
   });
   await expect.poll(async () => (await scene()).yawDegrees).toBeCloseTo(15, 3);
   await expect.poll(async () => (await scene()).pitchDegrees).toBeCloseTo(-25, 3);
@@ -73,17 +103,26 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   const cdp = await page.context().newCDPSession(page);
   const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: point.y + 50 }] });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: point.x, y: point.y + 50 }],
+  });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
   expect(await scene()).toEqual(tilted);
   await softProof(page, 'HDR (Rec.2020 PQ)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
-  await page.evaluate(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 20, gamma: -30 })));
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 20, gamma: -30 }),
+    ),
+  );
   expect(await worker.evaluate(() => Reflect.get(globalThis, 'printMotionScene'))).toBeNull();
 });
 
-test('footer panels overlay the photo and isolate a slider throughout a touch drag', async ({ page }) => {
+test('footer panels overlay the photo and isolate a slider throughout a touch drag', async ({
+  page,
+}) => {
   await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page);
   const tabs = page.getByRole('tablist', { name: 'Edit panels' });
@@ -107,7 +146,9 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   const outside = { x: canvas.x + canvas.width / 2, y: canvas.y + 20 };
   await page.touchscreen.tap(outside.x, outside.y);
   await expect(panel).not.toBeVisible();
-  expect(await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents'))).toEqual([]);
+  expect(
+    await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents')),
+  ).toEqual([]);
   await tabs.getByRole('tab', { name: 'Colour', exact: true }).click();
   await expect(page.getByRole('tabpanel', { name: 'Colour', exact: true })).toBeVisible();
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
@@ -129,7 +170,10 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await expect(isolated).toContainText('EV');
   await expect(isolated).toHaveCSS('position', 'fixed');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x + 55, y: point.y }] });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: point.x + 55, y: point.y }],
+  });
   await expect.poll(() => slider.getAttribute('aria-valuenow')).not.toBe(value);
   await expect(isolated).toBeVisible();
   await expect(panel).toHaveCSS('opacity', '0');
@@ -137,10 +181,14 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await expect(isolated).toHaveCount(0);
   await expect(panel).toHaveCSS('opacity', '1');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
-  expect(await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents'))).toEqual([]);
+  expect(
+    await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents')),
+  ).toEqual([]);
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   await expect(panel).not.toBeVisible();
-  await expect(page.getByRole('tabpanel', { name: 'Light', exact: true, includeHidden: true })).toHaveCSS('visibility', 'hidden');
+  await expect(
+    page.getByRole('tabpanel', { name: 'Light', exact: true, includeHidden: true }),
+  ).toHaveCSS('visibility', 'hidden');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
   await cdp.detach();
 });
@@ -163,15 +211,22 @@ for (const { device, viewport, hasTouch, isMobile } of [
         if (isMobile) await page.getByRole('tab', { name, exact: true }).click();
         const group = page.getByRole('group', { name, exact: true });
         await expect(group).toBeVisible();
-        const widths = await group.getByRole('slider').evaluateAll((sliders) => sliders.map((slider) => {
-          const panel = slider.closest('[role="group"]');
-          const track = slider.parentElement?.parentElement;
-          if (panel == null || track == null) throw new Error('The print slider has no track or panel');
-          const style = getComputedStyle(panel);
-          const contentWidth = panel.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
-            - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
-          return track.getBoundingClientRect().width / contentWidth;
-        }));
+        const widths = await group.getByRole('slider').evaluateAll((sliders) =>
+          sliders.map((slider) => {
+            const panel = slider.closest('[role="group"]');
+            const track = slider.parentElement?.parentElement;
+            if (panel == null || track == null)
+              throw new Error('The print slider has no track or panel');
+            const style = getComputedStyle(panel);
+            const contentWidth =
+              panel.getBoundingClientRect().width -
+              parseFloat(style.paddingLeft) -
+              parseFloat(style.paddingRight) -
+              parseFloat(style.borderLeftWidth) -
+              parseFloat(style.borderRightWidth);
+            return track.getBoundingClientRect().width / contentWidth;
+          }),
+        );
         expect(widths).toHaveLength(count);
         for (const width of widths) expect(width).toBeCloseTo(1, 2);
       }
@@ -183,7 +238,9 @@ test.describe('zoom on a high density phone display with small memory', () => {
   test.use({ deviceScaleFactor: 3 });
   // Small memory is what sends a phone's open to the server, whose windows this zoom loads.
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => 4 }));
+    await page.addInitScript(() =>
+      Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => 4 }),
+    );
   });
 
   for (const { tool, panel, slider } of [
@@ -240,19 +297,24 @@ test.describe('zoom on a high density phone display with small memory', () => {
         await page.getByRole('checkbox', { name: 'Add frame', exact: true }).check();
         await paper.click();
       }
-      const drawnWindows = async (): Promise<string[]> => z.array(z.string()).parse(
-        await worker.evaluate(() => Reflect.get(globalThis, 'drawnPhotoWindows')),
-      );
+      const drawnWindows = async (): Promise<string[]> =>
+        z
+          .array(z.string())
+          .parse(await worker.evaluate(() => Reflect.get(globalThis, 'drawnPhotoWindows')));
       const previous = new Set(await drawnWindows());
       const prepared = page.waitForResponse((reply) => {
         const url = new URL(reply.url());
         const region = url.searchParams.get('region');
-        return url.pathname.endsWith('/prepare') && region != null && Number(region.split(',')[2]) < 0.99;
+        return (
+          url.pathname.endsWith('/prepare') && region != null && Number(region.split(',')[2]) < 0.99
+        );
       });
       await editPreview(page).tap();
       const response = await prepared;
       expect(response.status()).toBe(200);
-      await expect.poll(async () => (await drawnWindows()).some((key) => !previous.has(key))).toBe(true);
+      await expect
+        .poll(async () => (await drawnWindows()).some((key) => !previous.has(key)))
+        .toBe(true);
       await expect(editorFailure(page)).toHaveCount(0);
       await page.getByRole('tab', { name: panel, exact: true }).click();
       const control = page.getByRole('slider', { name: slider, exact: true });

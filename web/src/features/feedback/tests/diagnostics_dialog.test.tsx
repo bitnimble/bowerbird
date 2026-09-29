@@ -13,7 +13,9 @@ test('lists what this page runs in, each answer beside its name', async () => {
 
   expect(screen.getByRole('dialog', { name: 'Diagnostics' })).toBeTruthy();
   const rows = Object.fromEntries(
-    screen.getAllByRole('term').map((term) => [term.textContent, term.nextElementSibling?.textContent]),
+    screen
+      .getAllByRole('term')
+      .map((term) => [term.textContent, term.nextElementSibling?.textContent]),
   );
   expect(rows).toMatchObject({
     'GPU adapter': 'no WebGPU',

@@ -76,16 +76,19 @@ export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
         {step === 'preferences' && <PreferencesStep />}
 
         <Row style={styles.actions}>
-          {previous != null && <Button onClick={() => setStep(previous)}>{AddReplicaStrings.back()}</Button>}
+          {previous != null && (
+            <Button onClick={() => setStep(previous)}>{AddReplicaStrings.back()}</Button>
+          )}
           <Spacer />
-          {next == null ?
+          {next == null ? (
             <Button variant="primary" onClick={() => void finish()}>
               {OnboardingStrings.finish()}
             </Button>
-          : <Button variant={skipping ? 'default' : 'primary'} onClick={() => setStep(next)}>
+          ) : (
+            <Button variant={skipping ? 'default' : 'primary'} onClick={() => setStep(next)}>
               {skipping ? OnboardingStrings.skip() : AddReplicaStrings.next()}
             </Button>
-          }
+          )}
         </Row>
       </Page>
     </div>
@@ -101,11 +104,12 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
   return (
     <div {...stylex.props(styles.section)}>
       <Heading>{OnboardingStrings.welcome()}</Heading>
-      {none ?
+      {none ? (
         <Text variant="muted" as="p">
           {SettingsStrings.noLibrariesHint()}
         </Text>
-      : <List label={SettingsStrings.libraries()}>
+      ) : (
+        <List label={SettingsStrings.libraries()}>
           {store.libraries.map((library) => (
             <ListRow key={library.id}>
               <ListBody>
@@ -115,7 +119,7 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
             </ListRow>
           ))}
         </List>
-      }
+      )}
       <Row>
         <Button variant={none ? 'primary' : 'default'} onClick={() => setAdding(true)}>
           <FolderPlus size={ICON} />

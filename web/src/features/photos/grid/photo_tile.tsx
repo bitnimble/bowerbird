@@ -26,14 +26,7 @@ import { isComposite, photoPath, renditionVersion } from '../photos_store';
 import { PhotoGridStrings } from './photo_grid.strings';
 import { PhotoTileMarks } from './photo_tile_marks';
 import { PhotoTilePick } from './photo_tile_pick';
-import {
-  BADGE_ICON,
-  bandColourOf,
-  foot,
-  layoutOf,
-  tile,
-  type Layout,
-} from './photo_grid_styles';
+import { BADGE_ICON, bandColourOf, foot, layoutOf, tile, type Layout } from './photo_grid_styles';
 
 // The id for a row with no file behind it, which has no filename to be named by.
 function filename(filePath: string | null, id: string): string {
@@ -42,8 +35,8 @@ function filename(filePath: string | null, id: string): string {
 
 // A composite has no file to be named after, so it is named by what it is.
 function rowName(photo: PhotoSummary): string {
-  return photo.composite_kind != null ?
-      PhotoGridStrings.compositeName(photo.frame_count ?? 0, photo.composite_kind)
+  return photo.composite_kind != null
+    ? PhotoGridStrings.compositeName(photo.frame_count ?? 0, photo.composite_kind)
     : filename(photo.file_path, photo.id);
 }
 
@@ -161,7 +154,12 @@ export const PhotoTile = observer(function PhotoTile({
     // `tileSize` is written on every pointer move of the zoom drag. Re-observing
     // reports afresh, so nothing is lost by not reading now.
     const observer = new ResizeObserver(() => {
-      photos.measuredStackTile(stackId, element.offsetLeft, element.offsetWidth, element.offsetHeight);
+      photos.measuredStackTile(
+        stackId,
+        element.offsetLeft,
+        element.offsetWidth,
+        element.offsetHeight,
+      );
     });
     observer.observe(element);
     return () => observer.disconnect();
@@ -193,11 +191,15 @@ export const PhotoTile = observer(function PhotoTile({
   // many photographs are under it.
   const chip = (
     <>
-      {expanded ?
-        inStrip === 'x' ?
+      {expanded ? (
+        inStrip === 'x' ? (
           <ChevronLeft size={chevron} />
-        : <ChevronUp size={chevron} />
-      : <Layers size={22} />}
+        ) : (
+          <ChevronUp size={chevron} />
+        )
+      ) : (
+        <Layers size={22} />
+      )}
       {!expanded && <span {...stylex.props(tile.count)}>{counted ?? photo.stack_size}</span>}
     </>
   );
@@ -216,7 +218,11 @@ export const PhotoTile = observer(function PhotoTile({
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
       />
-      {!loaded && <span {...stylex.props(tile.pending)}>{failed ? PhotoStageStrings.noRenditionYet() : null}</span>}
+      {!loaded && (
+        <span {...stylex.props(tile.pending)}>
+          {failed ? PhotoStageStrings.noRenditionYet() : null}
+        </span>
+      )}
     </>
   );
   // A spine draws none of it: the photograph it stands for is a cell of the band beside it.
@@ -240,7 +246,10 @@ export const PhotoTile = observer(function PhotoTile({
         ringStyle(selected, cursor, open, expanded),
         // Open, the tile is ringed in the colour of the band it opened, which is what pairs
         // the two when several stacks on one row are open.
-        expanded && [tile.band, bandColourOf(bandKey == null ? undefined : listing.bandColours.get(bandKey))],
+        expanded && [
+          tile.band,
+          bandColourOf(bandKey == null ? undefined : listing.bandColours.get(bandKey)),
+        ],
         // Fused: this tile's band is the one immediately below its row, so the two share the
         // edge between them and neither draws it (§19.6).
         expanded && fused && inStrip == null && tile.fused,
@@ -341,7 +350,10 @@ export const PhotoTile = observer(function PhotoTile({
   );
 });
 
-const TileBadges = observer(function TileBadges({ photo, fileState }: {
+const TileBadges = observer(function TileBadges({
+  photo,
+  fileState,
+}: {
   photo: PhotoSummary;
   fileState: boolean;
 }): JSX.Element {
@@ -351,32 +363,46 @@ const TileBadges = observer(function TileBadges({ photo, fileState }: {
     <div {...stylex.props(tile.badges)}>
       {/* A photograph with no local copy has not gone - the RAW comes back when something needs
           it (§14.5) - so the snowflake, never the word that says the opposite. */}
-      {!fileState ? null
-      : (photo.is_missing || photo.is_offloaded) && replication.fetching.has(photo.id) ?
-        <span {...stylex.props(tile.badge, tile.fetching)}>{PhotoDetailStrings.stateFetching()}</span>
-      : photo.is_offloaded ?
+      {!fileState ? null : (photo.is_missing || photo.is_offloaded) &&
+        replication.fetching.has(photo.id) ? (
+        <span {...stylex.props(tile.badge, tile.fetching)}>
+          {PhotoDetailStrings.stateFetching()}
+        </span>
+      ) : photo.is_offloaded ? (
         <Tooltip label={PhotoDetailStrings.stateOnBackupHint()}>
-          <span {...stylex.props(tile.badge, tile.elsewhere)} aria-label={PhotoDetailStrings.stateOnBackup()}>
+          <span
+            {...stylex.props(tile.badge, tile.elsewhere)}
+            aria-label={PhotoDetailStrings.stateOnBackup()}
+          >
             <Snowflake size={BADGE_ICON} />
           </span>
         </Tooltip>
-      : photo.is_missing && catalogueOnly ?
+      ) : photo.is_missing && catalogueOnly ? (
         <Tooltip label={PhotoDetailStrings.stateOnSyncedDeviceHint()}>
-          <span {...stylex.props(tile.badge, tile.elsewhere)} aria-label={PhotoDetailStrings.stateOnSyncedDevice()}>
+          <span
+            {...stylex.props(tile.badge, tile.elsewhere)}
+            aria-label={PhotoDetailStrings.stateOnSyncedDevice()}
+          >
             <Network size={BADGE_ICON} />
           </span>
         </Tooltip>
-      : photo.is_missing && (
-          <span {...stylex.props(tile.badge, tile.missing)}>{PhotoDetailStrings.stateMissing()}</span>
+      ) : (
+        photo.is_missing && (
+          <span {...stylex.props(tile.badge, tile.missing)}>
+            {PhotoDetailStrings.stateMissing()}
+          </span>
         )
-      }
+      )}
       {photo.is_deleted && (
         <span {...stylex.props(tile.badge, tile.deleted)}>{PhotoDetailStrings.stateBinned()}</span>
       )}
       {/* Ungated, unlike the cull's two marks: a reader has to be able to tell which of these
           is put away, a grid holding the hidden beside the live being what the chip is for. */}
       {photo.is_hidden && (
-        <span {...stylex.props(tile.badge, tile.hidden)} aria-label={PhotoDetailStrings.stateHidden()}>
+        <span
+          {...stylex.props(tile.badge, tile.hidden)}
+          aria-label={PhotoDetailStrings.stateHidden()}
+        >
           <EyeOff size={BADGE_ICON} />
         </span>
       )}
@@ -415,7 +441,8 @@ const TileFoot = observer(function TileFoot({
     ? localDateTime(photo.ordering_date)
     : captureDateTime(photo.ordering_date);
   const badgeStackId = listing.stackBadgeId(photo);
-  const band = position == null || badgeStackId == null ? null : { stackId: badgeStackId, position };
+  const band =
+    position == null || badgeStackId == null ? null : { stackId: badgeStackId, position };
   const composite = photo.composite_kind ?? null;
   const name = rowName(photo);
   const list = listing.mode === 'list' && inStrip == null;
@@ -452,15 +479,21 @@ const TileFoot = observer(function TileFoot({
           aria-label={PhotoGridStrings.showCompositeFrames(photo.frame_count ?? 0, composite)}
           onClick={() => void photos.toggleBand(photo.id, position, composite)}
         >
-          {composite === 'panorama' ?
+          {composite === 'panorama' ? (
             <PanoramaIcon size={12} />
-          : <Layers size={12} aria-hidden="true" />}
+          ) : (
+            <Layers size={12} aria-hidden="true" />
+          )}
         </button>
       )}
       {band != null && inStrip == null && (
         <button
           type="button"
-          {...stylex.props(foot.badge, named && !compositeBadge && foot.badgeAfterName, focusRing.ring)}
+          {...stylex.props(
+            foot.badge,
+            named && !compositeBadge && foot.badgeAfterName,
+            focusRing.ring,
+          )}
           aria-expanded={stacks.expansions.has(band.stackId)}
           aria-label={PhotoGridStrings.showStack(filename(photo.file_path, photo.id))}
           onClick={() => void photos.toggleBand(band.stackId, band.position)}
@@ -470,8 +503,12 @@ const TileFoot = observer(function TileFoot({
       )}
       {/* The date is the list mode's second column, and a strip has no columns:
           drawn there it lands in the scrim over a thumbnail, under the name. */}
-      {listing.mode === 'list' && !inStrip && <Text variant="mono">{orderingDate ?? PhotoGridStrings.noDate()}</Text>}
-      {listing.showsMarks && !inStrip && (marks.showTriage || marks.showRating) && <PhotoTileMarks photo={photo} />}
+      {listing.mode === 'list' && !inStrip && (
+        <Text variant="mono">{orderingDate ?? PhotoGridStrings.noDate()}</Text>
+      )}
+      {listing.showsMarks && !inStrip && (marks.showTriage || marks.showRating) && (
+        <PhotoTileMarks photo={photo} />
+      )}
     </div>
   );
 });
@@ -482,7 +519,11 @@ const TileFoot = observer(function TileFoot({
 // one row per stack and a member has no position at all. Legitimate because a
 // band's members are loaded and on screen: what the virtual grid forbids is an
 // id standing in for a row this client has never held (§19.6).
-export const BandMember = observer(function BandMember({ photo }: { photo: PhotoSummary }): JSX.Element {
+export const BandMember = observer(function BandMember({
+  photo,
+}: {
+  photo: PhotoSummary;
+}): JSX.Element {
   const listing = useListingStore();
   const marks = useMarksStore();
   const viewer = useViewerStore();
@@ -590,7 +631,12 @@ export function cellStyle(layout: Layout, aspect: number, spine = false): stylex
 
 // An open stack's tile already wears a ring of the same weight in its band's colour, and that
 // colour is the only thing pairing it with the band below it (§19.6).
-export function ringStyle(selected: boolean, cursor: boolean, open: boolean, banded: boolean): stylex.StyleXStyles {
+export function ringStyle(
+  selected: boolean,
+  cursor: boolean,
+  open: boolean,
+  banded: boolean,
+): stylex.StyleXStyles {
   if (open) return [tile.ring, tile.open];
   if (banded) return null;
   if (cursor) return [tile.ring, tile.cursor];
@@ -603,7 +649,12 @@ function photoStyle(layout: Layout, spine: boolean): stylex.StyleXStyles {
 
 // A rejected frame stays visible when filtered to, but reads as set aside; so does a member a
 // shoot shows whole without holding it.
-function pictureStyle(layout: Layout, loaded: boolean, photo: PhotoSummary, outside: boolean): stylex.StyleXStyles {
+function pictureStyle(
+  layout: Layout,
+  loaded: boolean,
+  photo: PhotoSummary,
+  outside: boolean,
+): stylex.StyleXStyles {
   return [
     tile.img,
     layout === 'list' && tile.imgList,

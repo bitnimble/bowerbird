@@ -10,7 +10,12 @@ import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibrariesService } from '../../src/services/libraries/libraries_service';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import type { FileMetadata } from '../../src/services/processing/analysis/metadata';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
@@ -134,7 +139,11 @@ test('creating a library over a folder already at the bin name imports its photo
       `SELECT json_extract(recipe, '$.path') AS file_path, deleted_from_path, is_deleted FROM photos
          WHERE library_id = ? ORDER BY json_extract(recipe, '$.path')`,
     )
-    .all(library.id) as { file_path: string; deleted_from_path: string | null; is_deleted: number }[];
+    .all(library.id) as {
+    file_path: string;
+    deleted_from_path: string | null;
+    is_deleted: number;
+  }[];
   expect(rows).toEqual([
     // Where it would restore to, read off the mirrored layout rather than guessed.
     { file_path: 'Bin/Trip/old.arw', deleted_from_path: 'Trip/old.arw', is_deleted: 1 },

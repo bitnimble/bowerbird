@@ -19,18 +19,40 @@ const ROW_H = LIST_ROW_H + GRID_GAP;
 const EXPANDED = 140;
 
 function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoSummary {
-  return { id, width: 3000, height: 2000, stack_id: stackId, stack_size: stackSize } as unknown as PhotoSummary;
+  return {
+    id,
+    width: 3000,
+    height: 2000,
+    stack_id: stackId,
+    stack_size: stackSize,
+  } as unknown as PhotoSummary;
 }
 
 // List mode, so one column and a fixed row height make the scroll arithmetic
 // legible: a position is a row.
-function build(): { store: ListingStore; marks: MarksStore; stacks: StacksStore; presenter: PhotosPresenter } {
+function build(): {
+  store: ListingStore;
+  marks: MarksStore;
+  stacks: StacksStore;
+  presenter: PhotosPresenter;
+} {
   const absent = new Proxy({}, { get: () => () => undefined }) as never;
   const stacks = new StacksStore();
   const store = new ListingStore(stacks);
   const marks = new MarksStore(store, stacks);
   const viewer = new ViewerStore(store, stacks);
-  const presenter = new PhotosPresenter(store, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    store,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => {
     store.mode = 'list';
     store.source = { kind: 'library', libraryId: 'lib' };
@@ -46,7 +68,13 @@ const stubbed = { photoPositions: photosApi.positions, listLibraryPhotos: photos
 function serve(positions: Record<string, number[]>, total = EXPANDED): void {
   photosApi.positions = () => Promise.resolve(positions);
   photosApi.listLibrary = () =>
-    Promise.resolve({ photos: [], total, offset: 0, limit: 1, ordering: 'taken_desc' } as PhotoListResponse);
+    Promise.resolve({
+      photos: [],
+      total,
+      offset: 0,
+      limit: 1,
+      ordering: 'taken_desc',
+    } as PhotoListResponse);
 }
 
 describe('expanding every stack re-expresses the selection', () => {
@@ -74,7 +102,9 @@ describe('expanding every stack re-expresses the selection', () => {
     const { store, marks, stacks, presenter } = build();
     runInAction(() => {
       store.rows.set(3, photo('p3', 's1', 3));
-      stacks.expansions = new Map([['s1', { stackId: 's1', position: 3, photos: [photo('m0'), photo('m1'), photo('m2')] }]]);
+      stacks.expansions = new Map([
+        ['s1', { stackId: 's1', position: 3, photos: [photo('m0'), photo('m1'), photo('m2')] }],
+      ]);
       marks.selectedMembers = new Set(['m1']);
     });
     // The member by its own id; its stack's key would have named its siblings too.
@@ -157,7 +187,13 @@ describe('expanding every stack re-expresses the selection', () => {
     const { store, presenter } = build();
     photosApi.positions = () => Promise.reject(new Error('nope'));
     photosApi.listLibrary = () =>
-      Promise.resolve({ photos: [], total: EXPANDED, offset: 0, limit: 1, ordering: 'taken_desc' } as PhotoListResponse);
+      Promise.resolve({
+        photos: [],
+        total: EXPANDED,
+        offset: 0,
+        limit: 1,
+        ordering: 'taken_desc',
+      } as PhotoListResponse);
 
     await presenter.setExpandStacks(true);
 

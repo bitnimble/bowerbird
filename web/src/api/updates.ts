@@ -4,11 +4,21 @@ import { request } from './request';
 
 export const updatesApi = {
   get: (): Promise<UpdateStatus> =>
-    request(UpdateStatusSchema, 'GET', route(PathSegment.api(), PathSegment.updates()), undefined, { activity: 'background' }),
+    request(UpdateStatusSchema, 'GET', route(PathSegment.api(), PathSegment.updates()), undefined, {
+      activity: 'background',
+    }),
   /** Skips the cache, which is what the button in Settings is for. */
   check: (): Promise<UpdateStatus> =>
-    request(UpdateStatusSchema, 'POST', route(PathSegment.api(), PathSegment.updates(), PathSegment.check())),
+    request(
+      UpdateStatusSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.updates(), PathSegment.check()),
+    ),
   /** Answers, and then the server exits so the updater can start the new version. */
   apply: (): Promise<UpdateStatus> =>
-    request(UpdateStatusSchema, 'POST', route(PathSegment.api(), PathSegment.updates(), PathSegment.apply())),
+    request(
+      UpdateStatusSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.updates(), PathSegment.apply()),
+    ),
 };

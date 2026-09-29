@@ -27,7 +27,9 @@ fn main() {
     let source = RawSource::new(std::path::Path::new(&path)).expect("the file");
     let decoder = rawler::get_decoder(&source).expect("a decoder");
     let params = RawDecodeParams::default();
-    let image = decoder.raw_image(&source, &params, false).expect("a raw image");
+    let image = decoder
+        .raw_image(&source, &params, false)
+        .expect("a raw image");
     let (width, height) = (image.width, image.height);
     let RawImageData::Integer(samples) = &image.data else {
         panic!("a float raw");
@@ -70,9 +72,8 @@ fn main() {
             }
             if sy % 2 == 0 && sx % 2 == 0 && sy + 1 < height && sx + 1 < width {
                 whole_sites += 1;
-                let full = |dy: usize, dx: usize| {
-                    f32::from(samples[(sy + dy) * width + sx + dx]) >= white
-                };
+                let full =
+                    |dy: usize, dx: usize| f32::from(samples[(sy + dy) * width + sx + dx]) >= white;
                 if full(0, 0) && full(0, 1) && full(1, 0) && full(1, 1) {
                     whole_blown += 1;
                 }
@@ -107,7 +108,10 @@ fn main() {
                     let mut sum = 0u64;
                     for row in 0..BLOCK {
                         let from = (at + row) * width + across;
-                        sum += samples[from..from + BLOCK].iter().map(|v| u64::from(*v)).sum::<u64>();
+                        sum += samples[from..from + BLOCK]
+                            .iter()
+                            .map(|v| u64::from(*v))
+                            .sum::<u64>();
                     }
                     if sum > best.2 {
                         best = (across, at, sum);
@@ -167,8 +171,9 @@ fn main() {
     // at saturation and gained, which is what the demosaic hands the reconstruction.
     let conditioned = |colour: usize| {
         let floor = black.get(colour).copied().unwrap_or(0.0);
-        let filled =
-            ((sum[colour] as f32 / counts[colour].max(1) as f32 - floor) / (white - floor)).min(1.0);
+        let filled = ((sum[colour] as f32 / counts[colour].max(1) as f32 - floor)
+            / (white - floor))
+            .min(1.0);
         filled * ceiling[colour.min(2)]
     };
     let mean = [conditioned(0), conditioned(1), conditioned(2)];

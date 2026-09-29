@@ -50,7 +50,17 @@ const SKIP = new Set(['node_modules', 'target', 'dist', '.git']);
 
 // What a named file can be. Anything else in backticks is a symbol, a command or prose.
 const NAMED = new Set([
-  '.ts', '.tsx', '.rs', '.wgsl', '.md', '.json', '.toml', '.html', '.css', '.sh', '.yml',
+  '.ts',
+  '.tsx',
+  '.rs',
+  '.wgsl',
+  '.md',
+  '.json',
+  '.toml',
+  '.html',
+  '.css',
+  '.sh',
+  '.yml',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -68,7 +78,19 @@ function walk(dir: string, out: string[] = []): string[] {
 /** Every file in the repo, by name alone, because a comment rarely spells the whole path. */
 const everyFile = new Set<string>();
 const everyPath = new Set<string>();
-for (const dir of ['src', 'web', 'e2e-tauri', 'scripts', 'native', 'src-tauri', 'docs', 'test', 'slang', '.github', '.cargo']) {
+for (const dir of [
+  'src',
+  'web',
+  'e2e-tauri',
+  'scripts',
+  'native',
+  'src-tauri',
+  'docs',
+  'test',
+  'slang',
+  '.github',
+  '.cargo',
+]) {
   for (const path of walk(join(ROOT, dir))) {
     everyPath.add(relative(ROOT, path));
     everyFile.add(path.slice(path.lastIndexOf('/') + 1));
@@ -106,8 +128,9 @@ function exists(token: string): boolean {
 describe('a comment naming a file', () => {
   test('names one that exists', () => {
     const dangling: string[] = [];
-    const files = SOURCE.flatMap((dir) => walk(join(ROOT, dir)))
-      .concat(SOURCE_FILES.map((name) => join(ROOT, name)));
+    const files = SOURCE.flatMap((dir) => walk(join(ROOT, dir))).concat(
+      SOURCE_FILES.map((name) => join(ROOT, name)),
+    );
     for (const path of files) {
       if (!SOURCE_EXTENSIONS.has(extname(path))) continue;
       const from = relative(ROOT, path);

@@ -68,14 +68,20 @@ fn maker_note(tiff: &[u8]) -> Option<Vec<u8>> {
 /// takes the rendition worker - or, in the browser, the tab.
 fn ifd_entries(maker: &[u8]) -> Vec<(u16, f64)> {
     let be16 = |at: usize| -> Option<u16> {
-        maker.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]))
+        maker
+            .get(at..at + 2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]))
     };
     let be32 = |at: usize| -> Option<u32> {
-        maker.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        maker
+            .get(at..at + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     };
 
     let mut out = Vec::new();
-    let Some(count) = be16(IFD_AT) else { return out };
+    let Some(count) = be16(IFD_AT) else {
+        return out;
+    };
     for index in 0..usize::from(count) {
         let at = IFD_AT + 2 + index * 12;
         let (Some(tag), Some(kind), Some(payload)) = (be16(at), be16(at + 2), be32(at + 8)) else {
@@ -155,7 +161,10 @@ mod tests {
         maker.extend_from_slice(&[0x00, 0x01, b'M', b'M']);
         maker.extend_from_slice(&2u16.to_be_bytes());
         for length in 0..maker.len() {
-            assert!(ifd_entries(&maker[..length]).is_empty(), "read {length} bytes of a header");
+            assert!(
+                ifd_entries(&maker[..length]).is_empty(),
+                "read {length} bytes of a header"
+            );
         }
         // A count of two with no entries behind it.
         assert!(ifd_entries(&maker).is_empty());

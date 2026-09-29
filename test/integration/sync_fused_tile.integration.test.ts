@@ -16,7 +16,13 @@ import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 import { ProcessingService } from '../../src/services/processing/pipeline/processing_service';
-import { photoListing, photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoListing,
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { extractMetadata } from '../../src/services/processing/analysis/metadata';
 import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
 import { dataPathForLibraryId } from '../../src/utils/paths';
@@ -33,15 +39,17 @@ let processing: ProcessingService;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-fused-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   const photoProcessingRepo = photoProcessing(db);
   const paths = photoPaths(db);
-  processing = new ProcessingService(
-    photoProcessingRepo,
-    paths,
-    photoListing(db),
-    { get: () => DEFAULT_SETTINGS } as SettingsRepository,
-  );
+  processing = new ProcessingService(photoProcessingRepo, paths, photoListing(db), {
+    get: () => DEFAULT_SETTINGS,
+  } as SettingsRepository);
   scan = new ScanService(
     photoScan(db, photoProcessingRepo),
     paths,
@@ -56,7 +64,8 @@ beforeAll(() => {
       // The rendition batch is not what this is about, and running it would render the file.
       processUnprocessed() {},
       tileEncoding: () => processing.tileEncoding(),
-      adoptScannedTile: (photoId, dataPath, staged) => processing.adoptScannedTile(photoId, dataPath, staged),
+      adoptScannedTile: (photoId, dataPath, staged) =>
+        processing.adoptScannedTile(photoId, dataPath, staged),
       discardScannedTile: (staged) => processing.discardScannedTile(staged),
     },
     extractMetadata,
@@ -105,15 +114,14 @@ test('a stopped scan leaves none of its tiles behind', async () => {
   // Before, not only after: this test asserts on what is in that directory, so anything a
   // previous run left there when it failed would be counted as this run's leftovers.
   rmSync(dataPathForLibraryId(LIB2), { recursive: true, force: true });
-  db2.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB2, stopping, 'stop', 'taken_desc');
+  db2
+    .query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)')
+    .run(LIB2, stopping, 'stop', 'taken_desc');
   const photoProcessingRepo2 = photoProcessing(db2);
   const paths2 = photoPaths(db2);
-  const processing2 = new ProcessingService(
-    photoProcessingRepo2,
-    paths2,
-    photoListing(db2),
-    { get: () => DEFAULT_SETTINGS } as SettingsRepository,
-  );
+  const processing2 = new ProcessingService(photoProcessingRepo2, paths2, photoListing(db2), {
+    get: () => DEFAULT_SETTINGS,
+  } as SettingsRepository);
   for (const name of ['a.arw', 'b.arw', 'c.arw']) copyFileSync(FIXTURE, path.join(stopping, name));
 
   // Stops once a file has been read, but only after the library has rows: a *first* scan
@@ -134,7 +142,8 @@ test('a stopped scan leaves none of its tiles behind', async () => {
     {
       processUnprocessed() {},
       tileEncoding: () => processing2.tileEncoding(),
-      adoptScannedTile: (id, dataPath, staged) => processing2.adoptScannedTile(id, dataPath, staged),
+      adoptScannedTile: (id, dataPath, staged) =>
+        processing2.adoptScannedTile(id, dataPath, staged),
       discardScannedTile: (staged) => processing2.discardScannedTile(staged),
     },
     async (abs, stage) => {

@@ -5,13 +5,13 @@ thousands of photos after a trip.
 
 Bowerbird is _not_ stable. Decide which risks matter to your workflow:
 
-| Level | Description | Is it stable? |
-| --- | --- | --- |
-| Data-stable | Photos on disk | Yes. Bowerbird moves files but never deletes them. Read-only mode needs no write access to your photo folder. |
-| Catalogue-stable | Libraries, settings, picks/rejects, edits, stacks, albums | No. Schema changes may require a catalogue reset and re-import after an update. Migrations are best-effort; work finished before updating is unaffected by that risk. |
-| Renderer-stable | Existing edits look identical after updates | No. Pipeline changes will likely alter existing renders, usually to fix bugs or improve quality. Rendering will be locked at some point after a stable release, with some consistency guarantees. |
-| Application-stable | No crashes | No software can guarantee this. |
-| Device-stable | Consistent operation across devices | Tested on a Windows PC, Macbook Pro with M5 Pro, and Samsung Galaxy Fold 7. Other devices depend on bug reports. |
+| Level              | Description                                               | Is it stable?                                                                                                                                                                                     |
+| ------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Data-stable        | Photos on disk                                            | Yes. Bowerbird moves files but never deletes them. Read-only mode needs no write access to your photo folder.                                                                                     |
+| Catalogue-stable   | Libraries, settings, picks/rejects, edits, stacks, albums | No. Schema changes may require a catalogue reset and re-import after an update. Migrations are best-effort; work finished before updating is unaffected by that risk.                             |
+| Renderer-stable    | Existing edits look identical after updates               | No. Pipeline changes will likely alter existing renders, usually to fix bugs or improve quality. Rendering will be locked at some point after a stable release, with some consistency guarantees. |
+| Application-stable | No crashes                                                | No software can guarantee this.                                                                                                                                                                   |
+| Device-stable      | Consistent operation across devices                       | Tested on a Windows PC, Macbook Pro with M5 Pro, and Samsung Galaxy Fold 7. Other devices depend on bug reports.                                                                                  |
 
 ## features
 

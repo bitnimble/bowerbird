@@ -33,7 +33,11 @@ fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -114,10 +118,22 @@ pub(crate) async fn by_level(
         label: Some("fit_noise"),
         layout: &kernel(gpu).layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: evaluated.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: bits.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: partial.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: evaluated.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: bits.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: partial.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     {
@@ -132,7 +148,9 @@ pub(crate) async fn by_level(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&partial, 0, &staging, 0, (words * 4) as u64);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&partial, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &staging, |mapped| {
@@ -163,21 +181,31 @@ mod tests {
         const NOISE: &str = include_str!("../../../slang/fit_noise.slang");
         const PAIRS: &str = include_str!("../../../slang/fit_pairs.slang");
         let levels = format!("static const int MAP_LEVEL = {};", super::MAP_LEVEL);
-        assert!(NOISE.contains(&levels), "fit_noise.slang does not say `{levels}`");
+        assert!(
+            NOISE.contains(&levels),
+            "fit_noise.slang does not say `{levels}`"
+        );
         let frame = format!("static const uint FRAME = {};", super::FRAME);
-        assert!(PAIRS.contains(&frame), "fit_pairs.slang does not say `{frame}`");
+        assert!(
+            PAIRS.contains(&frame),
+            "fit_pairs.slang does not say `{frame}`"
+        );
     }
 
     /// Each level's variances, on the device, as the host works them out from the same plane: flat
     /// grid pixels only, a bit at or past `FRAME` not being flat.
     #[test]
     fn the_device_measures_the_scatter_the_host_does() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let (width, height, grid_width, grid_height) = (64usize, 48usize, 32usize, 24usize);
         let level_scale = 8.0;
         let mut seed = 5u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as f64 / (1u64 << 31) as f64
         };
         let evaluated: Vec<[f32; 4]> = (0..width * height)
@@ -204,7 +232,14 @@ mod tests {
         };
         let device = pollster::block_on(super::by_level(
             gpu,
-            &upload("evaluated", evaluated.iter().flatten().flat_map(|v| v.to_ne_bytes()).collect()),
+            &upload(
+                "evaluated",
+                evaluated
+                    .iter()
+                    .flatten()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect(),
+            ),
             (width, height),
             &upload("bits", bits.iter().flat_map(|v| v.to_ne_bytes()).collect()),
             (grid_width, grid_height),
@@ -215,19 +250,31 @@ mod tests {
         let mut sums = [[0.0f64; 3]; super::MAP_LEVEL];
         for qy in 0..height / 2 {
             for qx in 0..width / 2 {
-                let (gx, gy) = ((qx * 2 * grid_width / width), (qy * 2 * grid_height / height));
+                let (gx, gy) = (
+                    (qx * 2 * grid_width / width),
+                    (qy * 2 * grid_height / height),
+                );
                 if bits[gy * grid_width + gx] & (super::FRAME - 1) == 0 {
                     continue;
                 }
                 let e: [[f64; 4]; 4] = std::array::from_fn(|i| {
                     evaluated[(2 * qy + (i >> 1)) * width + 2 * qx + (i & 1)].map(f64::from)
                 });
-                let mean: [f64; 4] = std::array::from_fn(|c| e.iter().map(|v| v[c]).sum::<f64>() / 4.0);
+                let mean: [f64; 4] =
+                    std::array::from_fn(|c| e.iter().map(|v| v[c]).sum::<f64>() / 4.0);
                 let spread = |c: usize| {
-                    e.iter().map(|v| ((v[c] - v[3]) - (mean[c] - mean[3])).powi(2)).sum::<f64>() / 3.0
+                    e.iter()
+                        .map(|v| ((v[c] - v[3]) - (mean[c] - mean[3])).powi(2))
+                        .sum::<f64>()
+                        / 3.0
                 };
-                let level = ((mean[3].max(0.0).sqrt() * level_scale).round() as usize).min(super::MAP_LEVEL - 1);
-                sums[level] = [sums[level][0] + spread(0), sums[level][1] + spread(2), sums[level][2] + 1.0];
+                let level = ((mean[3].max(0.0).sqrt() * level_scale).round() as usize)
+                    .min(super::MAP_LEVEL - 1);
+                sums[level] = [
+                    sums[level][0] + spread(0),
+                    sums[level][1] + spread(2),
+                    sums[level][2] + 1.0,
+                ];
             }
         }
         let mut seen = 0;
@@ -237,7 +284,10 @@ mod tests {
                 Some([v0, v2]) => {
                     seen += 1;
                     for (got, want) in [(v0, s0 / n), (v2, s2 / n)] {
-                        assert!((got - want).abs() <= 1e-4 * want.abs(), "level {z}: {got} against {want}");
+                        assert!(
+                            (got - want).abs() <= 1e-4 * want.abs(),
+                            "level {z}: {got} against {want}"
+                        );
                     }
                 }
             }

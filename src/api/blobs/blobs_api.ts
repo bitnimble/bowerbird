@@ -33,14 +33,23 @@ import {
 } from '../../services/processing/renditions/renditions';
 import { isComposite } from '../../schemas/recipes';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
-import { appendToStage, isOnDisk, stagedSize, stagePath, stagingDir } from '../../services/blobs/blob_store';
+import {
+  appendToStage,
+  isOnDisk,
+  stagedSize,
+  stagePath,
+  stagingDir,
+} from '../../services/blobs/blob_store';
 import { contentHash } from '../../utils/hash';
 import { acceptVerifiedBlob, type TransferService } from '../../services/blobs/transfer_service';
 import { deleteEmptyStagingDirectory, deleteStagedBlob } from '../../utils/deletions';
 import { respond } from '../respond';
 import { takeAsLongAsItTakes } from '../long_requests';
 import type { PhotoMetadataRepository } from '../../services/photos/metadata/photo_metadata_repository';
-import type { BasicPhoto, PhotoPathsRepository } from '../../services/photos/paths/photo_paths_repository';
+import type {
+  BasicPhoto,
+  PhotoPathsRepository,
+} from '../../services/photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../../services/photos/renditions/photo_processing_repository';
 import type { LibrariesRepository } from '../../services/libraries/libraries_repository';
 import { LibraryActivity } from '../../services/activity/library_activity';
@@ -68,24 +77,38 @@ export class BlobsApi {
     private readonly resolve: (target: PhotoTarget) => string[] = (target) => {
       // Answering "nothing" for a selection would report an eviction that never
       // ran, which on this route reads as "those copies are gone".
-      if (!('photo_ids' in target)) throw new AppError('VALIDATION_ERROR', 'this server cannot resolve a selection');
+      if (!('photo_ids' in target))
+        throw new AppError('VALIDATION_ERROR', 'this server cannot resolve a selection');
       return target.photo_ids;
     },
     /** What renders a copy a peer asks for (§7.9). Null serves only what is already on disk. */
-    private readonly renditions: Pick<PhotoRenditionService, 'buildForPeer' | 'embeddedJpegForPeer'> | null = null,
+    private readonly renditions: Pick<
+      PhotoRenditionService,
+      'buildForPeer' | 'embeddedJpegForPeer'
+    > | null = null,
     private readonly activity = new LibraryActivity(),
   ) {
     const app = new Hono();
 
     // What a peer calls: the bytes, their hash, a live possession check for
     // eviction, and the staged upload a push lands in.
-    app.get(route(PathSegment.param('photoId'), PathSegment.original()), (c) => this.serveOriginal(c));
+    app.get(route(PathSegment.param('photoId'), PathSegment.original()), (c) =>
+      this.serveOriginal(c),
+    );
     // A rendition for a peer that cannot build one, rendered here if need be (§7.9). `hdr=1` names
     // the dynamic range, because that is a per-peer choice (§3.2) and the caller
     // wants the range its own library serves. `force=1` renders it again whatever is on disk.
-    app.get(route(PathSegment.param('photoId'), PathSegment.rendition(), PathSegment.param('rendition')), (c) => this.serveRendition(c));
     app.get(
-      route(PathSegment.param('photoId'), PathSegment.rendition(), PathSegment.param('rendition'), PathSegment.status()),
+      route(PathSegment.param('photoId'), PathSegment.rendition(), PathSegment.param('rendition')),
+      (c) => this.serveRendition(c),
+    );
+    app.get(
+      route(
+        PathSegment.param('photoId'),
+        PathSegment.rendition(),
+        PathSegment.param('rendition'),
+        PathSegment.status(),
+      ),
       (c) => this.renditionStatus(c),
     );
     app.get(route(PathSegment.param('photoId'), PathSegment.hash()), (c) => this.serveHash(c));
@@ -120,17 +143,25 @@ export class BlobsApi {
       this.transfers.resume(c.req.param('id'));
       return c.body(null, 204);
     });
-    app.post(route(PathSegment.transfers(), PathSegment.param('id'), PathSegment.cancel()), async (c) => {
-      await this.transfers.cancel(c.req.param('id'));
-      return c.body(null, 204);
-    });
+    app.post(
+      route(PathSegment.transfers(), PathSegment.param('id'), PathSegment.cancel()),
+      async (c) => {
+        await this.transfers.cancel(c.req.param('id'));
+        return c.body(null, 204);
+      },
+    );
     app.post(route(PathSegment.param('photoId'), PathSegment.fetch()), (c) => {
       const transfer = this.transfers.fetchOriginal(c.req.param('photoId') ?? '');
       return transfer == null ? c.body(null, 204) : c.json(respond(TransferSchema, transfer));
     });
     app.post(route(PathSegment.evict()), async (c) => {
       const body = EvictBlobsRequestSchema.parse(await c.req.json());
-      return c.json(respond(EvictResultSchema, await this.transfers.evict(this.resolve(body.target), body.peer_id)));
+      return c.json(
+        respond(
+          EvictResultSchema,
+          await this.transfers.evict(this.resolve(body.target), body.peer_id),
+        ),
+      );
     });
 
     this.routes = app;
@@ -143,7 +174,8 @@ export class BlobsApi {
     if (!isOnDisk(abs)) throw new AppError('NOT_FOUND', `original not on disk: ${photo.id}`);
     const size = file.size;
     const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
-    if (offset > size) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
+    if (offset > size)
+      throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
     const headers: Record<string, string> = {
       'Content-Type': 'application/octet-stream',
       'Content-Length': String(size - offset),
@@ -153,18 +185,31 @@ export class BlobsApi {
     const status = offset > 0 ? 206 : 200;
     if (c.req.method === 'HEAD') return new Response(null, { status, headers });
     if (this.photoMetadata.contentHashOf(photo.id) != null) {
-      return this.activity.response(library.id, 'sending', photo.id,
-        new Response(offset > 0 ? file.slice(offset) : file, { status, headers }));
+      return this.activity.response(
+        library.id,
+        'sending',
+        photo.id,
+        new Response(offset > 0 ? file.slice(offset) : file, { status, headers }),
+      );
     }
     // The photo's first transfer: hashed while streaming, off the read this
     // response is already paying for, and recorded when the last byte has gone
     // (§7.1). A resumed first transfer still reads from zero, so the hash always
     // covers the whole file.
-    return this.activity.response(library.id, 'sending', photo.id,
-      new Response(this.hashingBody(file, offset, photo, library), { status, headers }));
+    return this.activity.response(
+      library.id,
+      'sending',
+      photo.id,
+      new Response(this.hashingBody(file, offset, photo, library), { status, headers }),
+    );
   }
 
-  private hashingBody(file: ReturnType<typeof Bun.file>, offset: number, photo: BasicPhoto, library: Library): ReadableStream<Uint8Array> {
+  private hashingBody(
+    file: ReturnType<typeof Bun.file>,
+    offset: number,
+    photo: BasicPhoto,
+    library: Library,
+  ): ReadableStream<Uint8Array> {
     const hasher = new Bun.CryptoHasher('sha256');
     const reader = file.stream().getReader();
     const { photoMetadata, locations } = this;
@@ -211,22 +256,33 @@ export class BlobsApi {
     }
     const size = file.size;
     const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
-    if (offset > size) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
+    if (offset > size)
+      throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
     const headers: Record<string, string> = {
       'Content-Type': RENDITION_CONTENT_TYPE,
       'Content-Length': String(size - offset),
       'Accept-Ranges': 'bytes',
       // Always over the whole file, whatever the range: it is what the caller
       // verifies its assembled copy against.
-      'X-Content-Hash': await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(abs)),
+      'X-Content-Hash': await this.activity.track(library.id, 'checking_files', photo.id, () =>
+        contentHash(abs),
+      ),
       // What it was rendered from, so the caller can hold it against an edit this
       // device has not been told about yet.
       ...(builtFrom == null ? {} : { 'X-Rendition-Built-From': builtFrom }),
       ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${size - 1}/${size}` } : {}),
     };
-    if (c.req.method === 'HEAD') return new Response(null, { status: offset > 0 ? 206 : 200, headers });
-    return this.activity.response(library.id, 'sending_renditions', photo.id,
-      new Response(offset > 0 ? file.slice(offset) : file, { status: offset > 0 ? 206 : 200, headers }));
+    if (c.req.method === 'HEAD')
+      return new Response(null, { status: offset > 0 ? 206 : 200, headers });
+    return this.activity.response(
+      library.id,
+      'sending_renditions',
+      photo.id,
+      new Response(offset > 0 ? file.slice(offset) : file, {
+        status: offset > 0 ? 206 : 200,
+        headers,
+      }),
+    );
   }
 
   private renditionStatus(c: Context): Response {
@@ -241,30 +297,47 @@ export class BlobsApi {
     return c.json(respond(BlobRenditionStatusSchema, { current }));
   }
 
-  private async serveEmbedded(c: Context, photo: BasicPhoto, via: readonly string[]): Promise<Response> {
+  private async serveEmbedded(
+    c: Context,
+    photo: BasicPhoto,
+    via: readonly string[],
+  ): Promise<Response> {
     if (this.renditions != null) takeAsLongAsItTakes(c);
     const found = (await this.renditions?.embeddedJpegForPeer(photo.id, via)) ?? null;
-    if (found == null) throw new AppError('NOT_FOUND', `no current camera JPEG here for ${photo.id}`);
+    if (found == null)
+      throw new AppError('NOT_FOUND', `no current camera JPEG here for ${photo.id}`);
     const { bytes: jpeg, builtFrom } = found;
     const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
-    if (offset > jpeg.length) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${jpeg.length}-byte file`);
+    if (offset > jpeg.length)
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `range starts at ${offset} of a ${jpeg.length}-byte file`,
+      );
     const headers: Record<string, string> = {
       'Content-Type': 'image/jpeg',
       'Content-Length': String(jpeg.length - offset),
       'Accept-Ranges': 'bytes',
       'X-Content-Hash': new Bun.CryptoHasher('sha256').update(jpeg).digest('hex'),
       ...(builtFrom == null ? {} : { 'X-Rendition-Built-From': builtFrom }),
-      ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${jpeg.length - 1}/${jpeg.length}` } : {}),
+      ...(offset > 0
+        ? { 'Content-Range': `bytes ${offset}-${jpeg.length - 1}/${jpeg.length}` }
+        : {}),
     };
-    if (c.req.method === 'HEAD') return new Response(null, { status: offset > 0 ? 206 : 200, headers });
-    return this.activity.response(photo.library_id, 'sending_renditions', photo.id,
-      new Response(jpeg.subarray(offset), { status: offset > 0 ? 206 : 200, headers }));
+    if (c.req.method === 'HEAD')
+      return new Response(null, { status: offset > 0 ? 206 : 200, headers });
+    return this.activity.response(
+      photo.library_id,
+      'sending_renditions',
+      photo.id,
+      new Response(jpeg.subarray(offset), { status: offset > 0 ? 206 : 200, headers }),
+    );
   }
 
   private async serveHash(c: Context): Promise<Response> {
     const { photo, library } = this.locate(c);
     const recorded = this.photoMetadata.contentHashOf(photo.id);
-    if (recorded != null) return c.json(respond(BlobHashResponseSchema, { content_hash: recorded }));
+    if (recorded != null)
+      return c.json(respond(BlobHashResponseSchema, { content_hash: recorded }));
     // A first transfer that crashed between the stream and the store lands here:
     // the receiver holds the bytes and asks what they should hash to.
     const abs = this.originalPath(library, photo);
@@ -276,7 +349,9 @@ export class BlobsApi {
       // is refused for not matching it.
       throw new AppError('NOT_FOUND', `no settled original on disk: ${photo.id}`);
     }
-    const computed = await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(abs));
+    const computed = await this.activity.track(library.id, 'checking_files', photo.id, () =>
+      contentHash(abs),
+    );
     this.photoMetadata.setContentHash(photo.id, computed);
     this.locations.record(library.id, photo.id);
     return c.json(respond(BlobHashResponseSchema, { content_hash: computed }));
@@ -295,10 +370,14 @@ export class BlobsApi {
     if (this.transfers.isEvicting(library.id, photo.id) || !isOnDisk(abs)) {
       return c.json(respond(BlobVerifyResponseSchema, { held: false }));
     }
-    return c.json(respond(BlobVerifyResponseSchema, {
-      held: true,
-      content_hash: await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(abs)),
-    }));
+    return c.json(
+      respond(BlobVerifyResponseSchema, {
+        held: true,
+        content_hash: await this.activity.track(library.id, 'checking_files', photo.id, () =>
+          contentHash(abs),
+        ),
+      }),
+    );
   }
 
   private async stageStatus(c: Context): Promise<Response> {
@@ -307,8 +386,14 @@ export class BlobsApi {
     const original = this.originalPath(library, photo);
     const held = isOnDisk(original);
     const recorded = this.photoMetadata.contentHashOf(photo.id);
-    if (held && recorded != null && existsSync(stage)
-      && (await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(original))) === recorded) {
+    if (
+      held &&
+      recorded != null &&
+      existsSync(stage) &&
+      (await this.activity.track(library.id, 'checking_files', photo.id, () =>
+        contentHash(original),
+      )) === recorded
+    ) {
       await deleteStagedBlob(stagingDir(library), stage);
     }
     await deleteEmptyStagingDirectory(stagingDir(library));
@@ -331,7 +416,8 @@ export class BlobsApi {
    */
   private acceptingOriginals(c: Context): { photo: BasicPhoto; library: Library } {
     const located = this.locate(c);
-    if (located.library.read_only) throw new AppError('READ_ONLY', `library ${located.library.name} is read-only`);
+    if (located.library.read_only)
+      throw new AppError('READ_ONLY', `library ${located.library.name} is read-only`);
     this.assertKeepsOriginals(located.library);
     return located;
   }
@@ -344,8 +430,9 @@ export class BlobsApi {
     const { offset } = BlobAppendQuerySchema.parse(c.req.query());
     const body = c.req.raw.body;
     if (body == null) throw new AppError('VALIDATION_ERROR', 'no bytes in the request');
-    const staged = await this.activity.track(library.id, 'receiving', photo.id,
-      () => appendToStage(stagePath(library, photo.id), offset, body));
+    const staged = await this.activity.track(library.id, 'receiving', photo.id, () =>
+      appendToStage(stagePath(library, photo.id), offset, body),
+    );
     return c.json(respond(BlobAppendResponseSchema, { staged }));
   }
 
@@ -355,15 +442,27 @@ export class BlobsApi {
     const finish = this.activity.begin(library.id, 'receiving', photo.id);
     try {
       const stage = stagePath(library, photo.id);
-      if (!existsSync(stage)) throw new AppError('VALIDATION_ERROR', `nothing staged for ${photo.id}`);
+      if (!existsSync(stage))
+        throw new AppError('VALIDATION_ERROR', `nothing staged for ${photo.id}`);
 
       const recorded = this.photoMetadata.contentHashOf(photo.id);
       const computed = await contentHash(stage);
       if (computed !== content_hash || (recorded != null && computed !== recorded)) {
         await deleteStagedBlob(stagingDir(library), stage);
-        throw new AppError('VALIDATION_ERROR', `discarded staged ${photo.id}: bytes hash ${computed}, expected ${recorded ?? content_hash}`);
+        throw new AppError(
+          'VALIDATION_ERROR',
+          `discarded staged ${photo.id}: bytes hash ${computed}, expected ${recorded ?? content_hash}`,
+        );
       }
-      await acceptVerifiedBlob(this.photoPaths, this.photoMetadata, this.locations, library, photo.id, stage, this.build);
+      await acceptVerifiedBlob(
+        this.photoPaths,
+        this.photoMetadata,
+        this.locations,
+        library,
+        photo.id,
+        stage,
+        this.build,
+      );
       return c.body(null, 204);
     } finally {
       finish();
@@ -375,7 +474,7 @@ export class BlobsApi {
     throw new AppError(
       'CONFLICT',
       `this device is set not to keep the RAW files of "${library.name}". Turn on "Sync RAWs to this device" ` +
-        'under the library\'s synced devices to accept them.',
+        "under the library's synced devices to accept them.",
     );
   }
 
@@ -402,7 +501,10 @@ export class BlobsApi {
     // A peer asking for the original of a row that has none: what composes it is catalogue, and
     // travels as catalogue. Refused rather than answered with the path it would have had.
     if (abs == null) {
-      throw new AppError('VALIDATION_ERROR', `${photo.id} is composed rather than imported, so it has no original`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `${photo.id} is composed rather than imported, so it has no original`,
+      );
     }
     // A replicated path joined onto the root and read from disk (§11.2).
     if (!containsPath(library.root_path, abs)) {
@@ -415,7 +517,9 @@ export class BlobsApi {
 // The devices a peer's request has passed through, its sender last. A value that is not a peer id
 // names no device a request could be passed on to, so it is dropped.
 function viaOf(c: Context): string[] {
-  return (c.req.header(VIA_HEADER) ?? '').split(',').filter((id) => PeerIdSchema.safeParse(id).success);
+  return (c.req.header(VIA_HEADER) ?? '')
+    .split(',')
+    .filter((id) => PeerIdSchema.safeParse(id).success);
 }
 
 // `bytes=N-` only: a peer resumes from its staged size and never asks for less.

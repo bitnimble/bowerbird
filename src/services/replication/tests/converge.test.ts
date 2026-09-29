@@ -34,10 +34,16 @@ const SHOOTS = ['s1', 's2'];
 // Where this process's seeds start, so a long run can be split across several of them
 // (`scripts/converge.ts`, which is what `bun run converge` drives).
 const FIRST_SEED = Number(process.env.BOWERBIRD_CONVERGE_FIRST_SEED ?? 1);
-const SEEDS = Array.from({ length: Number(process.env.BOWERBIRD_CONVERGE_SEEDS ?? 40) }, (_, i) => FIRST_SEED + i);
+const SEEDS = Array.from(
+  { length: Number(process.env.BOWERBIRD_CONVERGE_SEEDS ?? 40) },
+  (_, i) => FIRST_SEED + i,
+);
 
 function seed(peer: Peer): void {
-  const photos = new PhotoScanRepository(peer.db, new PhotoProcessingRepository(peer.db, new RenditionsRepository(peer.db)));
+  const photos = new PhotoScanRepository(
+    peer.db,
+    new PhotoProcessingRepository(peer.db, new RenditionsRepository(peer.db)),
+  );
   for (const id of PHOTOS) {
     photos.insertFromScan({
       id,
@@ -75,18 +81,32 @@ function seed(peer: Peer): void {
 // Everything a photographer can do that replicates, as one-liners a random walk
 // can pick from.
 const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
-  (peer, rng) => new PhotoStateRepository(peer.db, new StackMembership(peer.db)).update(rng.pick(PHOTOS), { rating: rng.int(6) }),
+  (peer, rng) =>
+    new PhotoStateRepository(peer.db, new StackMembership(peer.db)).update(rng.pick(PHOTOS), {
+      rating: rng.int(6),
+    }),
   (peer, rng) =>
     new PhotoStateRepository(peer.db, new StackMembership(peer.db)).update(rng.pick(PHOTOS), {
       triage: rng.pick(['picked', 'rejected', 'untriaged']),
     }),
-  (peer, rng) => new PhotoStateRepository(peer.db, new StackMembership(peer.db)).update(rng.pick(PHOTOS), { notes: `note ${rng.int(100)}` }),
+  (peer, rng) =>
+    new PhotoStateRepository(peer.db, new StackMembership(peer.db)).update(rng.pick(PHOTOS), {
+      notes: `note ${rng.int(100)}`,
+    }),
   (peer, rng) => {
     const shootId = rng.pick([...SHOOTS, null]);
-    if (shootId != null && peer.db.query('SELECT 1 FROM shoots WHERE id = ?').get(shootId) == null) return;
-    new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).setShoot(rng.pick(PHOTOS), shootId);
+    if (shootId != null && peer.db.query('SELECT 1 FROM shoots WHERE id = ?').get(shootId) == null)
+      return;
+    new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).setShoot(
+      rng.pick(PHOTOS),
+      shootId,
+    );
   },
-  (peer, rng) => new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).setFilePath(rng.pick(PHOTOS), `moved-${rng.int(50)}.arw`),
+  (peer, rng) =>
+    new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).setFilePath(
+      rng.pick(PHOTOS),
+      `moved-${rng.int(50)}.arw`,
+    ),
   (peer, rng) => {
     const id = rng.pick(PHOTOS);
     const paths = new PhotoPathsRepository(peer.db, new StackMembership(peer.db));
@@ -131,7 +151,8 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
     const shootId = rng.pick(SHOOTS);
     const photoId = rng.pick([...PHOTOS, null]);
     if (peer.db.query('SELECT 1 FROM shoots WHERE id = ?').get(shootId) == null) return;
-    if (photoId != null && peer.db.query('SELECT 1 FROM photos WHERE id = ?').get(photoId) == null) return;
+    if (photoId != null && peer.db.query('SELECT 1 FROM photos WHERE id = ?').get(photoId) == null)
+      return;
     new ShootsRepository(peer.db).setBanner(shootId, photoId);
   },
   (peer, rng) => new FolderRulesRepository(peer.db).clear(LIB, rng.pick(SHOOTS)),
@@ -148,7 +169,11 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
   // folders onto one name comes up - the collision `shoots`' unique index refuses, settled by giving the
   // folder to whichever rename was earlier and sending the later one back (§5.6). That resolution is
   // what makes it a convergence question at all: deferred on both sides it could never agree.
-  (peer, rng) => new PhotoStateRepository(peer.db, new StackMembership(peer.db)).setHidden([rng.pick(PHOTOS)], rng.next() < 0.5),
+  (peer, rng) =>
+    new PhotoStateRepository(peer.db, new StackMembership(peer.db)).setHidden(
+      [rng.pick(PHOTOS)],
+      rng.next() < 0.5,
+    ),
   (peer, rng) => {
     const shootId = rng.pick(SHOOTS);
     if (peer.db.query('SELECT 1 FROM shoots WHERE id = ?').get(shootId) == null) return;
@@ -156,9 +181,9 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
   },
   (peer, rng) => {
     const shootId = rng.pick(SHOOTS);
-    const row = peer.db.query('SELECT folder_path FROM shoots WHERE id = ?').get(shootId) as
-      | { folder_path: string }
-      | null;
+    const row = peer.db.query('SELECT folder_path FROM shoots WHERE id = ?').get(shootId) as {
+      folder_path: string;
+    } | null;
     if (row == null) return;
     // Under a sibling or back out at the root, from a set both shoots draw from - so the two contend
     // for one folder often enough for a seed to find it.
@@ -169,7 +194,11 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
     // Not onto a folder this peer already has: the rename this stands for is one the scan followed on a
     // real disk, where two folders cannot share a path. The collision worth reaching is the one *across*
     // peers, where each rename was legal where it was made.
-    if (peer.db.query('SELECT 1 FROM shoots WHERE library_id = ? AND folder_path = ?').get(LIB, to) != null) return;
+    if (
+      peer.db.query('SELECT 1 FROM shoots WHERE library_id = ? AND folder_path = ?').get(LIB, to) !=
+      null
+    )
+      return;
     new ShootsRepository(peer.db).relocate(shootId, row.folder_path, to);
   },
   // Develop settings, in an editor session of their own (§5.3). Sessions are the
@@ -183,13 +212,19 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
     const state = edits.get(id);
     // A session per few edits rather than per edit, which is what an editor being
     // opened, worked in and closed looks like.
-    edits.save(id, { ...state.doc, exposure: rng.int(20) / 10 - 1 }, state.rev, `session${rng.int(4)}`);
+    edits.save(
+      id,
+      { ...state.doc, exposure: rng.int(20) / 10 - 1 },
+      state.rev,
+      `session${rng.int(4)}`,
+    );
   },
   // A folder leaving the library: the one thing that removes a photograph's row
   // outright rather than binning it, and the one that cascades - taking its
   // memberships, its banner and its edits with it inside SQLite, where no code
   // sees it happen.
-  (peer, rng) => new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).deleteByIds([rng.pick(PHOTOS)]),
+  (peer, rng) =>
+    new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).deleteByIds([rng.pick(PHOTOS)]),
   (peer, rng) => new ShootsRepository(peer.db).delete(rng.pick(SHOOTS)),
   // Names from a small set, so two peers creating the same name while apart comes up, which the merge
   // then has to settle the same way everywhere. Never one this peer already has: the service refuses it.
@@ -216,7 +251,9 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
     const kept = order
       .filter((label) => !removed.includes(label.id))
       .map((label) =>
-        label.id === renamed && !taken ? { id: label.id, name, colour: `#${rng.int(10)}00000` } : label,
+        label.id === renamed && !taken
+          ? { id: label.id, name, colour: `#${rng.int(10)}00000` }
+          : label,
       );
     labels.save(LIB, kept, removed);
   },
@@ -265,7 +302,11 @@ async function pushInto(
       return (await service.receive({ library_id: LIB, peer_id: sender, page: wire })).deferred;
     },
     done: async (delivered) =>
-      service.finishReceiving({ library_id: LIB, peer_id: sender, delivered: packVector(delivered) }),
+      service.finishReceiving({
+        library_id: LIB,
+        peer_id: sender,
+        delivered: packVector(delivered),
+      }),
   };
   await pushTo(from, sink, limit);
 }
@@ -287,7 +328,11 @@ function converged(peers: readonly Peer[]): void {
  * session - and a false one about the test, which is asking what they agree on
  * once they have all met.
  */
-function quiesce(peers: readonly Peer[], rng: Rng, links: readonly Link[] = everyPair(peers)): void {
+function quiesce(
+  peers: readonly Peer[],
+  rng: Rng,
+  links: readonly Link[] = everyPair(peers),
+): void {
   for (let round = 0; round < QUIESCE_ROUNDS; round++) {
     const before = peers.map((peer) => replicatedState(peer.db));
     meet(links, rng);
@@ -433,13 +478,19 @@ describe('convergence', () => {
     // Small pages, so there are enough of them for the two sessions to interleave
     // rather than each finishing inside one round trip.
     const order: string[] = [];
-    await Promise.all([pushInto(service, laptop, server, 3, order), pushInto(service, desktop, server, 3, order)]);
+    await Promise.all([
+      pushInto(service, laptop, server, 3, order),
+      pushInto(service, desktop, server, 3, order),
+    ]);
 
     // Asserted rather than assumed, because it is the whole premise: a change that
     // ran one session to its end before starting the other would leave everything
     // below passing while testing nothing this file does not already cover.
     const alternations = order.filter((name, i) => name !== order[i - 1]).length;
-    expect([`pages: ${order.join(',')}`, alternations > 2]).toEqual([`pages: ${order.join(',')}`, true]);
+    expect([`pages: ${order.join(',')}`, alternations > 2]).toEqual([
+      `pages: ${order.join(',')}`,
+      true,
+    ]);
 
     quiesce([server, laptop, desktop], rng);
     converged([server, laptop, desktop]);
@@ -447,22 +498,25 @@ describe('convergence', () => {
 
   // The shape the feature exists for: nobody meets anybody until the trip is
   // over, so every peer has a long run of work the others know nothing about.
-  it.each([1, 2, 3, 4, 5, 6, 7, 8])('converges four peers that never met until the end (seed %i)', (seedValue) => {
-    const rng = new Rng(seedValue * 104_729);
-    const peers = ['server', 'laptop', 'desktop', 'phone'].map(makePeer);
-    seed(peers[0]!);
-    quiesce(peers, rng);
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])(
+    'converges four peers that never met until the end (seed %i)',
+    (seedValue) => {
+      const rng = new Rng(seedValue * 104_729);
+      const peers = ['server', 'laptop', 'desktop', 'phone'].map(makePeer);
+      seed(peers[0]!);
+      quiesce(peers, rng);
 
-    for (const peer of peers) {
-      for (let step = 0; step < 40; step++) {
-        peer.advance(rng.int(3));
-        rng.pick(ACTIONS)(peer, rng);
+      for (const peer of peers) {
+        for (let step = 0; step < 40; step++) {
+          peer.advance(rng.int(3));
+          rng.pick(ACTIONS)(peer, rng);
+        }
       }
-    }
 
-    quiesce(peers, rng);
-    converged(peers);
-  });
+      quiesce(peers, rng);
+      converged(peers);
+    },
+  );
 
   it('merges two labels given one name apart into the one set last, holding both sets of photos', () => {
     const server = makePeer('server');
@@ -524,7 +578,11 @@ describe('convergence', () => {
 
     // The phone never held `label-a`, and the server deletes it before hearing of the phone's.
     phone.advance(20);
-    new LabelsRepository(phone.db).create(LIB, { id: 'label-b', name: 'Keeper', colour: '#00ff00' });
+    new LabelsRepository(phone.db).create(LIB, {
+      id: 'label-b',
+      name: 'Keeper',
+      colour: '#00ff00',
+    });
     new LabelsRepository(phone.db).addPhotos('label-b', LIB, ['p2']);
     server.advance(40);
     onServer.save(LIB, [], ['label-a']);
@@ -533,10 +591,11 @@ describe('convergence', () => {
     pull(laptop, server);
 
     expect(laptop.db.query('SELECT id FROM labels').all()).toEqual([{ id: 'label-b' }]);
-    expect(laptop.db.query("SELECT photo_id FROM photo_labels WHERE label_id = 'label-b' ORDER BY photo_id").all()).toEqual([
-      { photo_id: 'p1' },
-      { photo_id: 'p2' },
-    ]);
+    expect(
+      laptop.db
+        .query("SELECT photo_id FROM photo_labels WHERE label_id = 'label-b' ORDER BY photo_id")
+        .all(),
+    ).toEqual([{ photo_id: 'p1' }, { photo_id: 'p2' }]);
   });
 
   // The rule the random walk exercises by accident, stated on its own so that a
@@ -566,9 +625,10 @@ describe('convergence', () => {
       expect(peer.db.query('SELECT 1 FROM photos WHERE id = ?').get('p1')).toBeNull();
     }
     expect(replicatedState(laptop.db)).toBe(replicatedState(server.db));
-    expect(laptop.db.query('SELECT COUNT(*) AS n FROM stack_members WHERE photo_id = ?').get('p1')).toEqual({ n: 0 });
+    expect(
+      laptop.db.query('SELECT COUNT(*) AS n FROM stack_members WHERE photo_id = ?').get('p1'),
+    ).toEqual({ n: 0 });
   });
-
 
   it('makes one stack of two that overlap, keeping the union and the later stack', () => {
     const server = makePeer('server');
@@ -595,7 +655,9 @@ describe('convergence', () => {
         .all() as { stack_id: string; photo_id: string }[];
       expect(members.map((row) => row.photo_id)).toEqual(['p1', 'p2', 'p3']);
       expect(new Set(members.map((row) => row.stack_id))).toEqual(new Set(['stackbbbbbbbbbbbb']));
-      expect(peer.db.query('SELECT id FROM stacks ORDER BY id').all()).toEqual([{ id: 'stackbbbbbbbbbbbb' }]);
+      expect(peer.db.query('SELECT id FROM stacks ORDER BY id').all()).toEqual([
+        { id: 'stackbbbbbbbbbbbb' },
+      ]);
     }
     expect(replicatedState(laptop.db)).toBe(replicatedState(server.db));
   });
@@ -622,7 +684,9 @@ describe('convergence', () => {
 
     for (const peer of [server, laptop]) {
       const members = peer.db
-        .query("SELECT photo_id FROM stack_members WHERE stack_id = 'stackbbbbbbbbbbbb' ORDER BY photo_id")
+        .query(
+          "SELECT photo_id FROM stack_members WHERE stack_id = 'stackbbbbbbbbbbbb' ORDER BY photo_id",
+        )
         .all() as { photo_id: string }[];
       // p2 stays out. The collapse is machine work, minted just now, so left to
       // itself it would beat the removal every time rather than sometimes.
@@ -649,11 +713,16 @@ describe('convergence', () => {
     // it is where a restore puts the photograph back.
     photos.markDeleted('p1', 'Day1/p1.arw');
     replicate(server, laptop);
-    expect(laptop.db.query("SELECT is_deleted FROM photos WHERE id = 'p1'").get()).toMatchObject({ is_deleted: 1 });
+    expect(laptop.db.query("SELECT is_deleted FROM photos WHERE id = 'p1'").get()).toMatchObject({
+      is_deleted: 1,
+    });
 
     // The laptop takes it back out of the bin...
     laptop.advance();
-    new PhotoPathsRepository(laptop.db, new StackMembership(laptop.db)).markRestored('p1', 'Day1/p1.arw');
+    new PhotoPathsRepository(laptop.db, new StackMembership(laptop.db)).markRestored(
+      'p1',
+      'Day1/p1.arw',
+    );
 
     // ...and the server, which has not heard, renames the folder it was binned
     // from. A path correction, not a decision about binning - and it has to be
@@ -662,12 +731,18 @@ describe('convergence', () => {
     // peers start at the same instant, so one `advance` each leaves them level
     // and only the peer id breaks the tie.
     server.advance(120_000);
-    new PhotoPathsRepository(server.db, new StackMembership(server.db)).rewritePathPrefix(LIB, 'Day1', 'Journey');
+    new PhotoPathsRepository(server.db, new StackMembership(server.db)).rewritePathPrefix(
+      LIB,
+      'Day1',
+      'Journey',
+    );
 
     quiesce([server, laptop], new Rng(23));
 
     for (const peer of [server, laptop]) {
-      const row = peer.db.query("SELECT is_deleted, deleted_from_path FROM photos WHERE id = 'p1'").get() as {
+      const row = peer.db
+        .query("SELECT is_deleted, deleted_from_path FROM photos WHERE id = 'p1'")
+        .get() as {
         is_deleted: number;
         deleted_from_path: string | null;
       };
@@ -710,7 +785,11 @@ describe('convergence', () => {
     server.advance();
 
     // Now rename the folder on the server, whose origin for this row is stale.
-    new PhotoPathsRepository(server.db, new StackMembership(server.db)).rewritePathPrefix(LIB, 'Day1', 'Journey');
+    new PhotoPathsRepository(server.db, new StackMembership(server.db)).rewritePathPrefix(
+      LIB,
+      'Day1',
+      'Journey',
+    );
 
     const moved = server.db
       .query("SELECT json_extract(recipe, '$.path') AS path FROM photos WHERE id = 'p1'")
@@ -729,15 +808,23 @@ describe('convergence', () => {
     replicate(server, laptop);
 
     server.advance();
-    new PhotoPathsRepository(server.db, new StackMembership(server.db)).markDeleted('p1', 'Day1/p1.arw');
+    new PhotoPathsRepository(server.db, new StackMembership(server.db)).markDeleted(
+      'p1',
+      'Day1/p1.arw',
+    );
     // The laptop has not heard, and does something ordinary and later to the path.
     laptop.advance(120_000);
-    new PhotoPathsRepository(laptop.db, new StackMembership(laptop.db)).setFilePath('p1', 'Day2/p1.arw');
+    new PhotoPathsRepository(laptop.db, new StackMembership(laptop.db)).setFilePath(
+      'p1',
+      'Day2/p1.arw',
+    );
 
     quiesce([server, laptop], new Rng(31));
 
     for (const peer of [server, laptop]) {
-      const row = peer.db.query("SELECT is_deleted, deleted_from_path FROM photos WHERE id = 'p1'").get() as {
+      const row = peer.db
+        .query("SELECT is_deleted, deleted_from_path FROM photos WHERE id = 'p1'")
+        .get() as {
         is_deleted: number;
         deleted_from_path: string | null;
       };
@@ -768,13 +855,17 @@ describe('convergence', () => {
     edits.save('p1', { exposure: 0.5 } as never, 0, 'sessionone');
     replicate(server, laptop);
     // The first edit lands by insert, which does carry it.
-    const afterFirst = laptop.db.query("SELECT updated_at FROM photo_edits WHERE photo_id = 'p1'").get() as {
+    const afterFirst = laptop.db
+      .query("SELECT updated_at FROM photo_edits WHERE photo_id = 'p1'")
+      .get() as {
       updated_at: string;
     };
     expect(afterFirst.updated_at).toBe(
-      (server.db.query("SELECT updated_at FROM photo_edits WHERE photo_id = 'p1'").get() as {
-        updated_at: string;
-      }).updated_at,
+      (
+        server.db.query("SELECT updated_at FROM photo_edits WHERE photo_id = 'p1'").get() as {
+          updated_at: string;
+        }
+      ).updated_at,
     );
 
     // **Pushed back by hand, on both, because `updated_at` is the wall clock's and this
@@ -792,11 +883,15 @@ describe('convergence', () => {
     edits.save('p1', { ...held.doc, exposure: 1.5 }, held.rev, 'sessionone');
     replicate(server, laptop);
 
-    const mine = laptop.db.query("SELECT doc, updated_at FROM photo_edits WHERE photo_id = 'p1'").get() as {
+    const mine = laptop.db
+      .query("SELECT doc, updated_at FROM photo_edits WHERE photo_id = 'p1'")
+      .get() as {
       doc: string;
       updated_at: string;
     };
-    const theirs = server.db.query("SELECT doc, updated_at FROM photo_edits WHERE photo_id = 'p1'").get() as {
+    const theirs = server.db
+      .query("SELECT doc, updated_at FROM photo_edits WHERE photo_id = 'p1'")
+      .get() as {
       doc: string;
       updated_at: string;
     };
@@ -839,7 +934,9 @@ describe('convergence', () => {
 
     for (const peer of [server, laptop]) {
       const members = peer.db
-        .query("SELECT photo_id FROM stack_members WHERE stack_id = 'stackbbbbbbbbbbbb' ORDER BY photo_id")
+        .query(
+          "SELECT photo_id FROM stack_members WHERE stack_id = 'stackbbbbbbbbbbbb' ORDER BY photo_id",
+        )
         .all() as { photo_id: string }[];
       expect(members.map((row) => row.photo_id)).toEqual(['p1', 'p2', 'p3']);
     }
@@ -857,7 +954,9 @@ describe('convergence', () => {
     // would take two, and only one of them would have been written down.
     laptop.advance();
     laptop.db
-      .query("INSERT INTO shoots (id, library_id, parent_id, folder_path, name, stamp) VALUES (?, ?, 's1', ?, ?, ?)")
+      .query(
+        "INSERT INTO shoots (id, library_id, parent_id, folder_path, name, stamp) VALUES (?, ?, 's1', ?, ?, ?)",
+      )
       .run('s1child', LIB, 's1/inner', 'Inner', stampOf(laptop));
     server.advance();
     new ShootsRepository(server.db).delete('s1');
@@ -871,7 +970,9 @@ describe('convergence', () => {
     // row nobody can be sent and whoever holds a copy is never corrected. The
     // server never heard of the child, so it has nothing to say about it.
     const grave = laptop.db
-      .query("SELECT stamp FROM replication_log WHERE entity = 'shoot' AND row_id = 's1child' AND deleted = 1")
+      .query(
+        "SELECT stamp FROM replication_log WHERE entity = 'shoot' AND row_id = 's1child' AND deleted = 1",
+      )
       .get();
     expect(grave).not.toBeNull();
     expect(replicatedState(laptop.db)).toBe(replicatedState(server.db));
@@ -899,7 +1000,9 @@ describe('convergence', () => {
       // One photograph is a photograph, however it came to be one.
       expect(peer.db.query('SELECT id FROM stacks').all()).toEqual([]);
       expect(peer.db.query('SELECT photo_id FROM stack_members').all()).toEqual([]);
-      expect(peer.db.query('SELECT stack_id FROM photos WHERE id = ?').get('p1')).toEqual({ stack_id: null });
+      expect(peer.db.query('SELECT stack_id FROM photos WHERE id = ?').get('p1')).toEqual({
+        stack_id: null,
+      });
     }
     expect(replicatedState(laptop.db)).toBe(replicatedState(server.db));
   });

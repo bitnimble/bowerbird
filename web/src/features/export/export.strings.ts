@@ -28,7 +28,8 @@ export const ExportStrings = {
   exportHdrNeedsGainMap: (format: string) => `${format} needs a gain map for HDR. Add one below.`,
 
   gainMap: () => 'Add a gain map for SDR compatibility',
-  gainMapHint: () => 'Shows HDR on supported displays and SDR elsewhere in a file about a third larger',
+  gainMapHint: () =>
+    'Shows HDR on supported displays and SDR elsewhere in a file about a third larger',
 
   estimate: (size: string) => `About ${size}`,
   estimateUnknown: () => 'Size unknown',

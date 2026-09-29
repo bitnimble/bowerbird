@@ -54,7 +54,11 @@ export function LabelPill({
   onRemove: () => void;
 }): JSX.Element {
   return (
-    <span role="listitem" {...stylex.props(styles.pill)} style={{ backgroundColor: colour, color: textOn(colour) }}>
+    <span
+      role="listitem"
+      {...stylex.props(styles.pill)}
+      style={{ backgroundColor: colour, color: textOn(colour) }}
+    >
       {name}
       <button
         type="button"

@@ -15,12 +15,18 @@
 fn main() {
     let mut args = std::env::args().skip(1);
     let raw = args.next().expect("raw path");
-    let render_width: usize = args.next().expect("render width").parse().expect("a number");
+    let render_width: usize = args
+        .next()
+        .expect("render width")
+        .parse()
+        .expect("a number");
     let crop = args.next().expect("x,y,side");
     let out = args.next().expect("out jpg");
 
-    let parts: Vec<usize> =
-        crop.split(',').map(|v| v.parse().expect("x,y,side are numbers")).collect();
+    let parts: Vec<usize> = crop
+        .split(',')
+        .map(|v| v.parse().expect("x,y,side are numbers"))
+        .collect();
     let (x, y, side) = (parts[0], parts[1], parts[2]);
 
     let preview = rawshim::decode_embedded_rgb(&raw, 0).expect("the file embeds a preview");
@@ -30,10 +36,9 @@ fn main() {
     // in - and at 4:2:0 a chroma sample covers two of its own pixels each way, which over the ratio
     // to the sensor is several photosites. A chroma structure finer than that is not in the file to
     // disagree with, and reading one as a fault in the render is reading the container.
-    if let Some(jpeg) = rawshim::decode_rawler::upright_preview_jpeg(
-        &raw,
-        rawshim::decode_rawler::Preview::Largest,
-    ) {
+    if let Some(jpeg) =
+        rawshim::decode_rawler::upright_preview_jpeg(&raw, rawshim::decode_rawler::Preview::Largest)
+    {
         let mut at = 2usize;
         while at + 9 < jpeg.len() {
             if jpeg[at] != 0xff {
@@ -72,7 +77,11 @@ fn main() {
         data[into..into + pw * 3].copy_from_slice(&preview.data[from..from + pw * 3]);
     }
 
-    let cropped = rawshim::rgb::Rgb { data, width: pw, height: ph };
+    let cropped = rawshim::rgb::Rgb {
+        data,
+        width: pw,
+        height: ph,
+    };
     let encoded = rawshim::jpeg::encode(cropped.as_ref(), 95).expect("the crop encodes");
     std::fs::write(&out, encoded).unwrap_or_else(|why| panic!("{out}: {why}"));
     println!("wrote {out}");

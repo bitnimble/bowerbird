@@ -42,7 +42,13 @@ export class RenditionCache {
   }
 
   /** Records a fetched file, and gives back whatever the cap says can no longer stay. */
-  async keep(library: Library, photoId: string, rendition: Rendition, hdr: boolean, path: string): Promise<void> {
+  async keep(
+    library: Library,
+    photoId: string,
+    rendition: Rendition,
+    hdr: boolean,
+    path: string,
+  ): Promise<void> {
     const bytes = statSync(path, { throwIfNoEntry: false })?.size ?? 0;
     this.db
       .query(
@@ -73,7 +79,9 @@ export class RenditionCache {
   forget(libraryId: string, photoId: string, rendition: Rendition, hdr: boolean): void {
     this.db.transaction(() => {
       const forgotten = this.db
-        .query('DELETE FROM fetched_renditions WHERE library_id = ? AND photo_id = ? AND rendition = ? AND hdr = ?')
+        .query(
+          'DELETE FROM fetched_renditions WHERE library_id = ? AND photo_id = ? AND rendition = ? AND hdr = ?',
+        )
         .run(libraryId, photoId, rendition, hdr ? 1 : 0).changes;
       if (forgotten === 0) return;
       this.renditions.forgetBuilt(photoId, [renditionVariant(rendition, hdr)]);

@@ -96,7 +96,13 @@ describe('a drag held at a ratio', () => {
   };
 
   test('grows a corner along the diagonal, from the corner opposite', () => {
-    const got = aspectDraggedCrop(SQUARE, { x: 'right', y: 'bottom' }, { x: 0.15, y: 0 }, 1, PICTURE);
+    const got = aspectDraggedCrop(
+      SQUARE,
+      { x: 'right', y: 'bottom' },
+      { x: 0.15, y: 0 },
+      1,
+      PICTURE,
+    );
     expectRect(got, { left: 0.25, top: 0.2, right: 0.625, bottom: 0.7 });
   });
 
@@ -124,19 +130,23 @@ describe('a drag held at a ratio', () => {
     expectRect(tall, { left: 0.1, top: 0.1, right: 0.424, bottom: 0.676 });
     expect(aspectRatioOf(tall, PICTURE)).toBeCloseTo(3 / 4, 10);
 
-    expect(aspectRatioOf(aspectDraggedCrop(wide, se, { x: 0, y: 0.05 }, 4 / 3, PICTURE), PICTURE)).toBeCloseTo(
-      4 / 3,
-      10,
-    );
+    expect(
+      aspectRatioOf(aspectDraggedCrop(wide, se, { x: 0, y: 0.05 }, 4 / 3, PICTURE), PICTURE),
+    ).toBeCloseTo(4 / 3, 10);
     // Held as its portrait form, the same pointer gives the same answers.
-    expect(aspectRatioOf(aspectDraggedCrop(wide, se, { x: 0, y: 0.05 }, 3 / 4, PICTURE), PICTURE)).toBeCloseTo(
-      4 / 3,
-      10,
-    );
+    expect(
+      aspectRatioOf(aspectDraggedCrop(wide, se, { x: 0, y: 0.05 }, 3 / 4, PICTURE), PICTURE),
+    ).toBeCloseTo(4 / 3, 10);
   });
 
   test('keeps a side in the orientation it started in, however far it goes', () => {
-    const got = aspectDraggedCrop(SQUARE, { x: null, y: 'bottom' }, { x: 0, y: 0.4 }, 16 / 9, PICTURE);
+    const got = aspectDraggedCrop(
+      SQUARE,
+      { x: null, y: 'bottom' },
+      { x: 0, y: 0.4 },
+      16 / 9,
+      PICTURE,
+    );
     expect(aspectRatioOf(got, PICTURE)).toBeCloseTo(16 / 9, 10);
   });
 
@@ -152,7 +162,11 @@ describe('a drag held at a ratio', () => {
       { x: 'left', y: null },
     ] as const;
     for (const grip of grips) {
-      for (const by of [{ x: 0.9, y: -0.9 }, { x: -0.9, y: 0.9 }, { x: 0.05, y: 0.02 }]) {
+      for (const by of [
+        { x: 0.9, y: -0.9 },
+        { x: -0.9, y: 0.9 },
+        { x: 0.05, y: 0.02 },
+      ]) {
         const got = aspectDraggedCrop(SQUARE, grip, by, 16 / 9, PICTURE);
         const ratio = aspectRatioOf(got, PICTURE);
         expect(Math.max(ratio, 1 / ratio)).toBeCloseTo(16 / 9, 10);
@@ -167,7 +181,13 @@ describe('a drag held at a ratio', () => {
   test('never goes below the smallest crop, even against an edge with no room for it', () => {
     // 90 pixels below the anchor, where a 9:16 crop the minimum 80 wide needs 142.
     const low: CropRect = { left: 0.9, top: 0.97, right: 0.98, bottom: 0.99 };
-    const got = aspectDraggedCrop(low, { x: 'right', y: 'bottom' }, { x: -0.06, y: 0.5 }, 9 / 16, PICTURE);
+    const got = aspectDraggedCrop(
+      low,
+      { x: 'right', y: 'bottom' },
+      { x: -0.06, y: 0.5 },
+      9 / 16,
+      PICTURE,
+    );
     expect(got.right - got.left).toBeCloseTo(0.02, 10);
     expect(aspectRatioOf(got, PICTURE)).toBeCloseTo(9 / 16, 10);
     expect(got.top).toBeGreaterThanOrEqual(0);

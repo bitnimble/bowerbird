@@ -152,13 +152,24 @@ fn search(
     stated: Option<f32>,
 ) -> Option<Resolved> {
     let camera = body(make, model)?;
-    let crop =
-        picture_crop((camera.crop_factor > 0.0).then_some(camera.crop_factor), stated).unwrap_or(0.0);
+    let crop = picture_crop(
+        (camera.crop_factor > 0.0).then_some(camera.crop_factor),
+        stated,
+    )
+    .unwrap_or(0.0);
     // Ordered most- to least-likely, so this takes the best entry the file does not contradict
     // rather than re-ranking.
     lenses(camera, crop, lens)
         .into_iter()
-        .find(|entry| covers(entry.focal_min, entry.focal_max, entry.aperture_min, focal, aperture))
+        .find(|entry| {
+            covers(
+                entry.focal_min,
+                entry.focal_max,
+                entry.aperture_min,
+                focal,
+                aperture,
+            )
+        })
         .map(|lens| Resolved { lens, crop })
 }
 
@@ -222,7 +233,10 @@ fn cameras(make: &str, model: &str) -> Vec<&'static Camera> {
 /// camera's punctuation needs: "F2.8" against a database that writes "F/2.8" is a word the entry
 /// does not have.
 fn lenses(camera: &Camera, crop: f32, model: &str) -> Vec<&'static Lens> {
-    let mut pattern = Lens { model: model.to_owned(), ..Lens::default() };
+    let mut pattern = Lens {
+        model: model.to_owned(),
+        ..Lens::default()
+    };
     pattern.guess_parameters();
     let fuzzy = FuzzyStrCmp::new(&pattern.model, REQUIRE_EVERY_WORD);
 
@@ -236,7 +250,12 @@ fn lenses(camera: &Camera, crop: f32, model: &str) -> Vec<&'static Lens> {
     let mut scored: Vec<(i32, &'static Lens)> = db()
         .lenses
         .iter()
-        .map(|entry| (match_score(&pattern, entry, camera, crop, &fuzzy, &compatible), entry))
+        .map(|entry| {
+            (
+                match_score(&pattern, entry, camera, crop, &fuzzy, &compatible),
+                entry,
+            )
+        })
         .filter(|(score, _)| *score > 0)
         .collect();
     scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
@@ -291,9 +310,15 @@ fn match_score(
     }
 
     if !entry.mounts.is_empty() {
-        let fits = entry.mounts.iter().any(|it| it.eq_ignore_ascii_case(&camera.mount));
-        let adapts =
-            || compatible.iter().any(|c| entry.mounts.iter().any(|it| it.eq_ignore_ascii_case(c)));
+        let fits = entry
+            .mounts
+            .iter()
+            .any(|it| it.eq_ignore_ascii_case(&camera.mount));
+        let adapts = || {
+            compatible
+                .iter()
+                .any(|c| entry.mounts.iter().any(|it| it.eq_ignore_ascii_case(c)))
+        };
         match (fits, adapts()) {
             (true, _) => score += 10,
             (false, true) => score += 9,
@@ -391,7 +416,9 @@ fn body_crop(make: &str, model: &str) -> Option<f32> {
     if let Some(hit) = cropped().lock().ok()?.get(&key).copied() {
         return hit;
     }
-    let found = body(make, model).map(|it| it.crop_factor).filter(|it| *it > 0.0);
+    let found = body(make, model)
+        .map(|it| it.crop_factor)
+        .filter(|it| *it > 0.0);
     if let Ok(mut cache) = cropped().lock() {
         cache.insert(key, found);
     }
@@ -419,11 +446,22 @@ impl Diagonal {
         let (long, short) = (width.max(height) as u32, width.min(height) as u32);
         let (cx, cy) = (long as f32 / 2.0, short as f32 / 2.0);
         let half = (cx * cx + cy * cy).sqrt();
-        (Diagonal { centre: (cx, cy), half, along: (cx / half, cy / half) }, long, short)
+        (
+            Diagonal {
+                centre: (cx, cy),
+                half,
+                along: (cx / half, cy / half),
+            },
+            long,
+            short,
+        )
     }
 
     fn at(&self, r: f32) -> (f32, f32) {
-        (self.centre.0 + self.along.0 * r * self.half, self.centre.1 + self.along.1 * r * self.half)
+        (
+            self.centre.0 + self.along.0 * r * self.half,
+            self.centre.1 + self.along.1 * r * self.half,
+        )
     }
 
     /// How far a point that landed at `mapped` sits from the centre, as a fraction of the
@@ -470,7 +508,13 @@ pub fn distortion_knots(
 ) -> Option<Vec<f64>> {
     let resolved = resolve(make, model, lens, focal, aperture, crop)?;
     let (diagonal, long, short) = Diagonal::of(width, height);
-    let modifier = enabling(&resolved, focal, long, short, Modifier::enable_distortion_correction)?;
+    let modifier = enabling(
+        &resolved,
+        focal,
+        long,
+        short,
+        Modifier::enable_distortion_correction,
+    )?;
 
     let mut out = Vec::with_capacity(KNOTS);
     for i in 0..KNOTS {
@@ -510,7 +554,13 @@ pub fn tca_knots(
 ) -> Option<[Vec<f64>; 2]> {
     let resolved = resolve(make, model, lens, focal, aperture, crop)?;
     let (diagonal, long, short) = Diagonal::of(width, height);
-    let modifier = enabling(&resolved, focal, long, short, Modifier::enable_tca_correction)?;
+    let modifier = enabling(
+        &resolved,
+        focal,
+        long,
+        short,
+        Modifier::enable_tca_correction,
+    )?;
 
     let mut red = Vec::with_capacity(KNOTS);
     let mut blue = Vec::with_capacity(KNOTS);

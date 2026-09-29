@@ -28,10 +28,13 @@ test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, THUMBNAIL_PHOTOS_DIR);
 });
 
-test("a selection's grid tiles are rebuilt from the bulk bar, and pushed to the tile that changed alone", async ({ page }) => {
+test("a selection's grid tiles are rebuilt from the bulk bar, and pushed to the tile that changed alone", async ({
+  page,
+}) => {
   await gotoLibrary(page, THUMBNAIL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
-  const src = (index: number): Promise<string | null> => tiles(page).nth(index).locator('img').getAttribute('src');
+  const src = (index: number): Promise<string | null> =>
+    tiles(page).nth(index).locator('img').getAttribute('src');
   const [rebuilt, untouched] = [await src(0), await src(1)];
 
   await selectPhoto(page);
@@ -74,14 +77,19 @@ test('rebuilding a photo rendition leaves its grid tile where it is', async ({ p
     { timeout: 180_000 },
   );
   // Long enough for the announcement to have arrived and been applied.
-  await expect.poll(async () => (await tiles(page).nth(1).locator('img').getAttribute('src')) ?? '').not.toBe('');
+  await expect
+    .poll(async () => (await tiles(page).nth(1).locator('img').getAttribute('src')) ?? '')
+    .not.toBe('');
   await page.waitForTimeout(1000);
   expect(await tile.getAttribute('src')).toBe(before);
 
   // And the viewer's own URL did move, so the announcement was heard - it is the
   // stage that changed, not the fact of a change, that the tile ignored.
   const versioned = `${route(PathSegment.renditions(), 'full')}?v=`;
-  const fetched = page.waitForRequest((request) => request.url().includes(`${photoId}${versioned}`), { timeout: 60_000 });
+  const fetched = page.waitForRequest(
+    (request) => request.url().includes(`${photoId}${versioned}`),
+    { timeout: 60_000 },
+  );
   await openPhoto(page);
   await fetched;
   await expect(shownFrame(page)).toHaveAccessibleName(/Rendered RAW$/, { timeout: 60_000 });

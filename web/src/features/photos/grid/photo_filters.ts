@@ -1,4 +1,8 @@
-import { type PhotoDaysResponse, type PhotoModelsResponse, type Triage } from '../../../../../src/schemas/photos';
+import {
+  type PhotoDaysResponse,
+  type PhotoModelsResponse,
+  type Triage,
+} from '../../../../../src/schemas/photos';
 import type { PhotoSource } from '../photos_store';
 
 // What the user narrowed the view to. Separate from PhotoSource: the source is
@@ -50,20 +54,27 @@ export function dayDensities(days: readonly PhotoDay[]): Map<string, number> {
  * One copy for both the greying and the trimming that follows an untick: a second would
  * be a row the menu offers and the presenter then takes away.
  */
-export function reachableModels(pairs: readonly ModelPair[], side: keyof ModelPair, partners: readonly string[]): Set<string> {
+export function reachableModels(
+  pairs: readonly ModelPair[],
+  side: keyof ModelPair,
+  partners: readonly string[],
+): Set<string> {
   const other: keyof ModelPair = side === 'camera_model' ? 'lens_model' : 'camera_model';
   const reached = new Set<string>();
   for (const pair of pairs) {
     const value = pair[side];
     if (value == null) continue;
     const against = pair[other];
-    if (partners.length === 0 || (against != null && partners.includes(against))) reached.add(value);
+    if (partners.length === 0 || (against != null && partners.includes(against)))
+      reached.add(value);
   }
   return reached;
 }
 
 export function distinctSorted(values: (string | null)[]): string[] {
-  return [...new Set(values.filter((value): value is string => value != null))].sort((a, b) => a.localeCompare(b));
+  return [...new Set(values.filter((value): value is string => value != null))].sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 // A gallery opens on the working set: everything not yet rejected. Rejecting is

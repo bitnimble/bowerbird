@@ -40,14 +40,19 @@ describe('a composite kind this build has never heard of', () => {
   it('is not marked missing', () => {
     const peer = makePeer('a');
     applyRecipeCellAs(peer, 'p1', JSON.stringify({ kind: 'mosaic', sources: [{ photoId: 'f1' }] }));
-    const row = peer.db.query('SELECT is_missing FROM photos WHERE id = ?').get('p1') as { is_missing: number };
+    const row = peer.db.query('SELECT is_missing FROM photos WHERE id = ?').get('p1') as {
+      is_missing: number;
+    };
     expect(row.is_missing).toBe(0);
   });
 });
 
 const SAMPLE = AssemblyRecipeSchema.parse(
   JSON.parse(
-    readFileSync(join(import.meta.dir, '..', '..', '..', '..', 'test', 'fixtures', 'assembly-recipe.json'), 'utf8'),
+    readFileSync(
+      join(import.meta.dir, '..', '..', '..', '..', 'test', 'fixtures', 'assembly-recipe.json'),
+      'utf8',
+    ),
   ),
 );
 
@@ -62,7 +67,11 @@ function assembled(peer: Peer): { id: string; recipe: string } {
       .run(source.photoId, LIB, `${source.photoId}.arw`);
   }
   const stacks = new StackMembership(peer.db);
-  const id = new PhotoCompositesRepository(peer.db, stacks, new PhotoPathsRepository(peer.db, stacks)).insertComposite({
+  const id = new PhotoCompositesRepository(
+    peer.db,
+    stacks,
+    new PhotoPathsRepository(peer.db, stacks),
+  ).insertComposite({
     libraryId: LIB,
     kind: 'assembly',
     recipe: SAMPLE,
@@ -86,7 +95,9 @@ describe('an assembly this build made', () => {
 
     applyRecipeCellAs(peer, made.id, made.recipe);
 
-    const row = peer.db.query('SELECT recipe, is_missing FROM photos WHERE id = ?').get(made.id) as {
+    const row = peer.db
+      .query('SELECT recipe, is_missing FROM photos WHERE id = ?')
+      .get(made.id) as {
       recipe: string;
       is_missing: number;
     };
@@ -99,7 +110,9 @@ describe('an assembly this build made', () => {
     const frames = peer.db
       .query('SELECT photo_id FROM photo_sources WHERE composed_id = ? ORDER BY at')
       .all(made.id) as { photo_id: string }[];
-    expect(frames.map((frame) => frame.photo_id)).toEqual(SAMPLE.sources.map((source) => source.photoId));
+    expect(frames.map((frame) => frame.photo_id)).toEqual(
+      SAMPLE.sources.map((source) => source.photoId),
+    );
   });
 
   // §2.7's reopen is the one thing that changes a recipe after insertion, so it is the one thing
@@ -108,17 +121,25 @@ describe('an assembly this build made', () => {
     const maker = makePeer('made');
     const made = assembled(maker);
     maker.advance();
-    const before = (maker.db.query('SELECT stamp_placement AS at FROM photos WHERE id = ?').get(made.id) as {
-      at: string;
-    }).at;
+    const before = (
+      maker.db.query('SELECT stamp_placement AS at FROM photos WHERE id = ?').get(made.id) as {
+        at: string;
+      }
+    ).at;
 
     const stacks = new StackMembership(maker.db);
-    new PhotoCompositesRepository(maker.db, stacks, new PhotoPathsRepository(maker.db, stacks)).updateRecipe(made.id, {
+    new PhotoCompositesRepository(
+      maker.db,
+      stacks,
+      new PhotoPathsRepository(maker.db, stacks),
+    ).updateRecipe(made.id, {
       ...SAMPLE,
       pick: [0, 0],
     });
 
-    const after = maker.db.query('SELECT recipe, stamp_placement AS at FROM photos WHERE id = ?').get(made.id) as {
+    const after = maker.db
+      .query('SELECT recipe, stamp_placement AS at FROM photos WHERE id = ?')
+      .get(made.id) as {
       recipe: string;
       at: string;
     };
@@ -127,7 +148,10 @@ describe('an assembly this build made', () => {
     const peer = makePeer('told');
     applyRecipeCellAs(peer, made.id, after.recipe);
     const arrived = RecipeSchema.parse(
-      JSON.parse((peer.db.query('SELECT recipe FROM photos WHERE id = ?').get(made.id) as { recipe: string }).recipe),
+      JSON.parse(
+        (peer.db.query('SELECT recipe FROM photos WHERE id = ?').get(made.id) as { recipe: string })
+          .recipe,
+      ),
     );
     expect(arrived.kind === 'assembly' && arrived.pick).toEqual([0, 0]);
   });
@@ -136,11 +160,16 @@ describe('an assembly this build made', () => {
   it('leaves a peer that built the old picks owing its copies again', () => {
     const made = assembled(makePeer('made'));
     const peer = makePeer('told');
-    peer.db.query("UPDATE libraries SET rendition_hdr = 0 WHERE id = ?").run(LIB);
+    peer.db.query('UPDATE libraries SET rendition_hdr = 0 WHERE id = ?').run(LIB);
     const photos = new PhotoProcessingRepository(peer.db, new RenditionsRepository(peer.db));
     applyRecipeCellAs(peer, made.id, made.recipe);
     for (const variant of ['grid', 'full'] as const) {
-      photos.markCopyBuilt(made.id, '2026-06-01T00:00:00.000Z', photos.builtFromOf(made.id), variant);
+      photos.markCopyBuilt(
+        made.id,
+        '2026-06-01T00:00:00.000Z',
+        photos.builtFromOf(made.id),
+        variant,
+      );
     }
     expect(photos.queueEditedSince([made.id])).toBe(0);
 

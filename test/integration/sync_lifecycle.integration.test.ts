@@ -8,7 +8,12 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -26,7 +31,12 @@ let scan: ScanService;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-life-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   const photoProcessingRepo = photoProcessing(db);
   scan = new ScanService(
     photoScan(db, photoProcessingRepo),

@@ -1,4 +1,10 @@
-import { expect, type APIRequestContext, type Browser, type Locator, type Page } from '@playwright/test';
+import {
+  expect,
+  type APIRequestContext,
+  type Browser,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 import { z } from 'zod';
 import { type RenditionSource } from '../../src/schemas/common';
 import {
@@ -36,7 +42,12 @@ export const FIRST_FRAME = { timeout: 45_000 };
 export async function addLibrary(
   page: Page,
   rootPath: string,
-  options: { autoStack?: boolean; readOnly?: boolean; includeNonRaw?: boolean; photos?: number } = {},
+  options: {
+    autoStack?: boolean;
+    readOnly?: boolean;
+    includeNonRaw?: boolean;
+    photos?: number;
+  } = {},
 ): Promise<void> {
   await forgetLibrary(page, rootPath);
   const created = await page.request.post(route(PathSegment.api(), PathSegment.libraries()), {
@@ -73,7 +84,13 @@ async function waitForImport(page: Page, rootPath: string, photos: number): Prom
         const library = await libraryAt(page, rootPath);
         if (library == null) return 'not listed';
         const response = await page.request.get(
-          route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.sync(), PathSegment.status()),
+          route(
+            PathSegment.api(),
+            PathSegment.libraries(),
+            library.id,
+            PathSegment.sync(),
+            PathSegment.status(),
+          ),
         );
         const { status } = LibraryScanStatusSchema.parse(await response.json());
         return `${status}, ${library.photo_count} photos`;
@@ -86,7 +103,9 @@ async function waitForImport(page: Page, rootPath: string, photos: number): Prom
 async function libraryAt(page: Page, rootPath: string): Promise<Library | undefined> {
   const listed = await page.request.get(route(PathSegment.api(), PathSegment.libraries()));
   expect(listed.ok()).toBe(true);
-  return LibrariesSchema.parse(await listed.json()).find((library) => library.root_path === rootPath);
+  return LibrariesSchema.parse(await listed.json()).find(
+    (library) => library.root_path === rootPath,
+  );
 }
 
 export async function libraryOf(page: Page, rootPath: string): Promise<Library> {
@@ -99,12 +118,18 @@ export async function libraryOf(page: Page, rootPath: string): Promise<Library> 
 export async function forgetLibrary(page: Page, rootPath: string): Promise<void> {
   const held = await libraryAt(page, rootPath);
   if (held == null) return;
-  const deleted = await page.request.delete(route(PathSegment.api(), PathSegment.libraries(), held.id));
+  const deleted = await page.request.delete(
+    route(PathSegment.api(), PathSegment.libraries(), held.id),
+  );
   expect(deleted.ok()).toBe(true);
 }
 
 /** A library's grid, or its Shoots page or Bin, by its address. */
-export async function gotoLibrary(page: Page, rootPath: string, within?: 'shoots' | 'bin'): Promise<void> {
+export async function gotoLibrary(
+  page: Page,
+  rootPath: string,
+  within?: 'shoots' | 'bin',
+): Promise<void> {
   const library = route(PathSegment.libraries(), (await libraryOf(page, rootPath)).id);
   const section = { shoots: route(PathSegment.shoots()), bin: route(PathSegment.bin()) };
   await page.goto(within == null ? library : `${library}${section[within]}`);
@@ -113,8 +138,12 @@ export async function gotoLibrary(page: Page, rootPath: string, within?: 'shoots
 /** A shoot's grid, by its address, found by the folder it is. */
 export async function gotoShoot(page: Page, rootPath: string, folderPath: string): Promise<void> {
   const library = await libraryOf(page, rootPath);
-  const listed = await page.request.get(route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.shoots()));
-  const shoot = ShootListSchema.parse(await listed.json()).find((each) => each.folder_path === folderPath);
+  const listed = await page.request.get(
+    route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.shoots()),
+  );
+  const shoot = ShootListSchema.parse(await listed.json()).find(
+    (each) => each.folder_path === folderPath,
+  );
   if (shoot == null) throw new Error(`no shoot at ${folderPath} in ${rootPath}`);
   await page.goto(route(PathSegment.shoots(), shoot.id));
 }
@@ -126,7 +155,9 @@ export async function gotoShoot(page: Page, rootPath: string, folderPath: string
 export async function gotoPhoto(page: Page, rootPath: string, within = ''): Promise<string> {
   const library = await libraryOf(page, rootPath);
   const photoId = await firstPhotoId(page, rootPath);
-  await page.goto(`${route(PathSegment.libraries(), library.id)}${route(PathSegment.photos(), photoId)}${within}`);
+  await page.goto(
+    `${route(PathSegment.libraries(), library.id)}${route(PathSegment.photos(), photoId)}${within}`,
+  );
   return photoId;
 }
 
@@ -168,7 +199,10 @@ export async function useLibrary(
   const page = await browser.newPage();
   // `photos` for a root with a list of its own (`fixture_library.ts`): waiting for
   // the wrong count reads as a library that never arrived.
-  await addLibrary(page, rootPath, { includeNonRaw: options.includeNonRaw, photos: options.photos });
+  await addLibrary(page, rootPath, {
+    includeNonRaw: options.includeNonRaw,
+    photos: options.photos,
+  });
   await page.close();
 }
 
@@ -176,16 +210,26 @@ export async function useLibrary(
  * Points a library at the pixels its renditions are built from. Set before the page under test
  * is opened: a page already open holds the library it loaded.
  */
-export async function setRenditionSource(page: Page, rootPath: string, source: RenditionSource): Promise<void> {
+export async function setRenditionSource(
+  page: Page,
+  rootPath: string,
+  source: RenditionSource,
+): Promise<void> {
   const library = await libraryOf(page, rootPath);
-  const response = await page.request.patch(route(PathSegment.api(), PathSegment.libraries(), library.id), {
-    data: { rendition_source: source } satisfies UpdateLibraryRequest,
-  });
+  const response = await page.request.patch(
+    route(PathSegment.api(), PathSegment.libraries(), library.id),
+    {
+      data: { rendition_source: source } satisfies UpdateLibraryRequest,
+    },
+  );
   expect(response.ok()).toBe(true);
 }
 
 /** Which rendition the photo viewer opens at, an app-wide setting rather than a per-library one. */
-export function setViewerRendition(request: APIRequestContext, mode: ViewerRenditionMode): Promise<void> {
+export function setViewerRendition(
+  request: APIRequestContext,
+  mode: ViewerRenditionMode,
+): Promise<void> {
   return patchSettings(request, { viewer_rendition_mode: mode });
 }
 
@@ -209,8 +253,13 @@ export function setOnboardingComplete(request: APIRequestContext, done: boolean)
   return patchSettings(request, { onboarding_complete: done });
 }
 
-async function patchSettings(request: APIRequestContext, settings: UpdateSettingsRequest): Promise<void> {
-  const response = await request.patch(route(PathSegment.api(), PathSegment.settings()), { data: settings });
+async function patchSettings(
+  request: APIRequestContext,
+  settings: UpdateSettingsRequest,
+): Promise<void> {
+  const response = await request.patch(route(PathSegment.api(), PathSegment.settings()), {
+    data: settings,
+  });
   expect(response.ok()).toBe(true);
 }
 
@@ -295,7 +344,9 @@ export async function toggleExpandStacks(page: Page): Promise<void> {
 
 // Row housekeeping lives behind the ⋮ menu; a click on the name opens the shoot.
 export async function shootAction(page: Page, shootName: string, action: string): Promise<void> {
-  await shootRow(page, shootName).getByRole('button', { name: `Actions for ${shootName}` }).click();
+  await shootRow(page, shootName)
+    .getByRole('button', { name: `Actions for ${shootName}` })
+    .click();
   await page.getByRole('menuitem', { name: action }).click();
 }
 
@@ -329,10 +380,13 @@ export function rowTiles(page: Page): Locator {
 }
 
 export function bands(page: Page): Locator {
-  return gallery(page).getByRole('group', { name: /\d+ photos in this stack|\d+ frames of this (panorama|merge)/ });
+  return gallery(page).getByRole('group', {
+    name: /\d+ photos in this stack|\d+ frames of this (panorama|merge)/,
+  });
 }
 
-const FRAME = /^(selected, )?(photo |stack of \d+, photo |panorama of \d+ photos|merge of \d+ photos)/;
+const FRAME =
+  /^(selected, )?(photo |stack of \d+, photo |panorama of \d+ photos|merge of \d+ photos)/;
 
 // What a click on the picture lands on: a link into the photograph, or a stack's disclosure.
 export function frames(scope: Page | Locator): Locator {
@@ -362,7 +416,9 @@ export function ticked(cells: Locator, count: number): Promise<boolean[]> {
 
 // A band joined to the tile that opened it draws the bridge across the row gap as its `::before`.
 export function fusedBands(page: Page): Promise<number> {
-  return bands(page).evaluateAll((all) => all.filter((band) => getComputedStyle(band, '::before').content !== 'none').length);
+  return bands(page).evaluateAll(
+    (all) => all.filter((band) => getComputedStyle(band, '::before').content !== 'none').length,
+  );
 }
 
 export function selectionBar(page: Page): Locator {
@@ -409,9 +465,17 @@ export function stepZoom(page: Page): Promise<void> {
 // Every menu the viewer offers is one popup under one button, on every screen, so
 // picking any of them is this and then the item - under its own heading, because
 // each rendition is named twice in there: once to look at, once to download.
-export async function photoAction(page: Page, section: string, name: string, options?: { exact?: boolean }): Promise<void> {
+export async function photoAction(
+  page: Page,
+  section: string,
+  name: string,
+  options?: { exact?: boolean },
+): Promise<void> {
   await page.getByRole('button', { name: 'More' }).click();
-  await page.getByRole('group', { name: section }).getByRole('menuitem', { name, exact: options?.exact }).click();
+  await page
+    .getByRole('group', { name: section })
+    .getByRole('menuitem', { name, exact: options?.exact })
+    .click();
 }
 
 /**
@@ -423,7 +487,9 @@ export async function emulateHdrDisplay(page: Page): Promise<void> {
     const answer = window.matchMedia.bind(window);
     window.matchMedia = (query) => {
       const list = answer(query);
-      return query === '(dynamic-range: high)' ? Object.create(list, { matches: { value: true } }) : list;
+      return query === '(dynamic-range: high)'
+        ? Object.create(list, { matches: { value: true } })
+        : list;
     };
   });
 }
@@ -458,14 +524,18 @@ export async function recordCanvasContexts(page: Page): Promise<() => Promise<st
   return async () => {
     const worker = page.workers().find((each) => each.url().includes('gpu_worker'));
     if (worker == null) throw new Error('The GPU worker was not created');
-    return z.array(z.string()).parse(await worker.evaluate(() => Reflect.get(globalThis, 'canvasContexts')));
+    return z
+      .array(z.string())
+      .parse(await worker.evaluate(() => Reflect.get(globalThis, 'canvasContexts')));
   };
 }
 
 /** Chooses a proof from the bar's soft proof menu, or from its overflow menu on a phone. */
 export async function softProof(page: Page, proof: string): Promise<void> {
   const button = page.getByRole('button', { name: /^Soft proof/ });
-  await ((await button.count()) > 0 ? button : page.getByRole('button', { name: 'More', exact: true })).click();
+  await (
+    (await button.count()) > 0 ? button : page.getByRole('button', { name: 'More', exact: true })
+  ).click();
   await page.getByRole('menuitem', { name: proof, exact: true }).click();
 }
 
@@ -512,8 +582,13 @@ export function editDiagnostics(page: Page): Locator {
 }
 
 /** A `WxH` diagnostic, as numbers; zero where it is not there yet. */
-export async function editDiagnosticSize(page: Page, name: 'data-size' | 'data-stage'): Promise<[number, number]> {
-  const [width = 0, height = 0] = ((await editDiagnostics(page).getAttribute(name)) ?? '0x0').split('x').map(Number);
+export async function editDiagnosticSize(
+  page: Page,
+  name: 'data-size' | 'data-stage',
+): Promise<[number, number]> {
+  const [width = 0, height = 0] = ((await editDiagnostics(page).getAttribute(name)) ?? '0x0')
+    .split('x')
+    .map(Number);
   return [width, height];
 }
 
@@ -575,6 +650,8 @@ export async function waitForEditorLive(page: Page, timeout = 170_000): Promise<
 
 /** The revision the server holds a photograph's edits at, which a save that landed moves. */
 export async function savedRev(page: Page, photoId: string): Promise<number> {
-  const response = await page.request.get(route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()));
+  const response = await page.request.get(
+    route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()),
+  );
   return EditStateSchema.parse(await response.json()).rev;
 }

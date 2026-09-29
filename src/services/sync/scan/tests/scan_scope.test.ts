@@ -15,7 +15,10 @@ describe('holding a stalled materialisation out of a scan', () => {
   };
 
   it('takes the photograph out of both channels, not just the live one', () => {
-    const kept = withoutStalled(all, [{ photoId: 'p1', wasAt: 'Day1/a.arw' }, { photoId: 'p3', wasAt: 'Bin/Day1/c.arw' }]);
+    const kept = withoutStalled(all, [
+      { photoId: 'p1', wasAt: 'Day1/a.arw' },
+      { photoId: 'p3', wasAt: 'Bin/Day1/c.arw' },
+    ]);
 
     expect(kept.dbPhotos.map((p) => p.id)).toEqual(['p2']);
     expect(kept.binned).toEqual([]);

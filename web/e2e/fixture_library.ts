@@ -12,7 +12,10 @@ const E2E_DIR = path.dirname(new URL(import.meta.url).pathname);
 // and a rerun starts from a known-empty state. Keyed by checkout so parallel
 // worktrees don't wipe each other's fixture mid-run, but stable across reruns
 // of one checkout so the copies are overwritten rather than piling up in /tmp.
-const CHECKOUT_KEY = createHash('sha1').update(path.resolve(E2E_DIR, '../..')).digest('hex').slice(0, 8);
+const CHECKOUT_KEY = createHash('sha1')
+  .update(path.resolve(E2E_DIR, '../..'))
+  .digest('hex')
+  .slice(0, 8);
 export const E2E_ROOT = path.join(tmpdir(), `bowerbird-e2e-${CHECKOUT_KEY}`);
 // One library root per spec file. Each worker has a catalogue of its own, but the
 // roots on disk are the run's, so specs that move files (binning, moving into
@@ -157,7 +160,8 @@ function mergeBurst(directory: string): void {
     { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'inherit'] },
   );
   if (run.status !== 0) throw new Error(`could not write the merge burst into ${scratch}`);
-  for (const name of MERGE_PHOTO_NAMES) copyFileSync(path.join(scratch, name), path.join(directory, name));
+  for (const name of MERGE_PHOTO_NAMES)
+    copyFileSync(path.join(scratch, name), path.join(directory, name));
   rmSync(scratch, { recursive: true, force: true });
 }
 

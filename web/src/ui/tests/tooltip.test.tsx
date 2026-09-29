@@ -48,7 +48,9 @@ test('no label shows nothing', async () => {
 
 test('a label that is not the name describes the trigger', () => {
   renderTooltip('Rename Beach', <button type="button">Beach</button>);
-  expect(screen.getByRole('button', { name: 'Beach' }).getAttribute('aria-description')).toBe('Rename Beach');
+  expect(screen.getByRole('button', { name: 'Beach' }).getAttribute('aria-description')).toBe(
+    'Rename Beach',
+  );
 });
 
 test('a button that is only an icon shows its name', async () => {

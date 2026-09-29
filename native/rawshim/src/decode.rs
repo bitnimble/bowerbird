@@ -52,7 +52,13 @@ pub async fn frame_from_bytes(
     dust: crate::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
     match crate::decode_rendered::is_rendered_bytes(bytes) {
-        true => whole(&crate::decode_rendered::hold(bytes).ok()?, at_least_long_edge).await,
+        true => {
+            whole(
+                &crate::decode_rendered::hold(bytes).ok()?,
+                at_least_long_edge,
+            )
+            .await
+        }
         false => {
             crate::decode_rawler::decode_bytes_async(bytes, detail, at_least_long_edge, fit, dust)
                 .await
@@ -74,7 +80,14 @@ pub fn frame_from_path(
     dust: crate::dust::Wanted<'_>,
 ) -> Option<crate::frame::Frame> {
     if !crate::decode_rendered::is_rendered(path) {
-        return crate::decode_rawler::decode_fitted(path, detail, at_least_long_edge, force_half, fit, dust);
+        return crate::decode_rawler::decode_fitted(
+            path,
+            detail,
+            at_least_long_edge,
+            force_half,
+            fit,
+            dust,
+        );
     }
     let bytes = std::fs::read(path).ok()?;
     let held = crate::decode_rendered::hold(&bytes).ok()?;
@@ -82,7 +95,10 @@ pub fn frame_from_path(
 }
 
 #[cfg(feature = "renditions")]
-pub fn frame_from_path_unturned(path: &str, at_least_long_edge: u32) -> Option<crate::frame::Frame> {
+pub fn frame_from_path_unturned(
+    path: &str,
+    at_least_long_edge: u32,
+) -> Option<crate::frame::Frame> {
     let held = held_unturned(path).ok()?;
     pollster::block_on(whole(&held, at_least_long_edge))
 }
@@ -108,7 +124,13 @@ pub(crate) async fn whole(
 ) -> Option<crate::frame::Frame> {
     let size = held.size();
     let scale = crate::view::Scale::for_long_edge(size.raw(), at_least_long_edge);
-    held.window(Rect { at: crate::px::At::ORIGIN, size }, scale)
+    held.window(
+        Rect {
+            at: crate::px::At::ORIGIN,
+            size,
+        },
+        scale,
+    )
 }
 
 /// One window of a photograph on disk or in hand, which is what a loupe tile and a band of a
@@ -141,7 +163,9 @@ pub async fn tile_from(
         _ => None,
     };
     if let Some(bytes) = rendered {
-        return crate::decode_rendered::hold(bytes).ok()?.window(view.window, view.scale);
+        return crate::decode_rendered::hold(bytes)
+            .ok()?
+            .window(view.window, view.scale);
     }
     let raw = match source {
         // Lazily, because this is a region read: `decode_rawler::mapped` says what the prefault in
@@ -162,14 +186,18 @@ pub async fn shifted_tile_from(
     prior: &[crate::pixel_shift::Offset],
     recipe: &crate::composition::Composition,
 ) -> Option<crate::frame::Frame> {
-    if paths.iter().any(|path| crate::decode_rendered::is_rendered(path)) {
+    if paths
+        .iter()
+        .any(|path| crate::decode_rendered::is_rendered(path))
+    {
         return None;
     }
     let sources = paths
         .iter()
         .map(|path| crate::decode_rawler::mapped(path))
         .collect::<Option<Vec<_>>>()?;
-    crate::decode_rawler::decode_shifted_tile(&sources, view, detail, fit, halo, prior, recipe).await
+    crate::decode_rawler::decode_shifted_tile(&sources, view, detail, fit, halo, prior, recipe)
+        .await
 }
 
 /// Where a photograph's bytes are, for the two entry points that take a file rather than an open.
@@ -230,7 +258,10 @@ impl Held {
         report: crate::open_stage::Report<'_>,
     ) -> Option<crate::frame::Frame> {
         match self {
-            Held::Mosaic(held) => held.frame(detail, at_least_long_edge, fit, dust, report).await,
+            Held::Mosaic(held) => {
+                held.frame(detail, at_least_long_edge, fit, dust, report)
+                    .await
+            }
             Held::Rendered(held) => whole(held, at_least_long_edge).await,
         }
     }
@@ -242,7 +273,9 @@ impl Held {
     /// demosaiced has no such neighbours - what it would find on one is the reconstruction's own
     /// texture, everywhere.
     pub async fn dust(&self) -> Option<Vec<crate::dust::Spot>> {
-        let Held::Mosaic(held) = self else { return None };
+        let Held::Mosaic(held) = self else {
+            return None;
+        };
         let gpu = crate::gpu::device()?;
         crate::dust::detect(gpu, held.device_mosaic(), &held.glass()).await
     }

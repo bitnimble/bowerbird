@@ -43,5 +43,6 @@ export const StackTriageStrings = {
   nothingToCompare: () => 'No photos to triage',
   tooFewPhotos: () => 'This stack needs at least 2 photos to triage.',
 
-  round: (number: number, a: string, b: string, left: number) => `Round ${number}: ${a} and ${b}. ${left} left.`,
+  round: (number: number, a: string, b: string, left: number) =>
+    `Round ${number}: ${a} and ${b}. ${left} left.`,
 };

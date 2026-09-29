@@ -17,7 +17,10 @@ import {
 // A stack in the viewer's filmstrip, which is the one place its cells are laid out
 // against a real box: what the strip's own arithmetic says about a spine is
 // `strip_view.test.ts`, and this is that arithmetic meeting the stylesheet.
-const FIXTURE = path.join(path.dirname(new URL(import.meta.url).pathname), '../../../test/fixtures/DSC02981.ARW');
+const FIXTURE = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  '../../../test/fixtures/DSC02981.ARW',
+);
 const NAMES = ['DSC09101.ARW', 'DSC09102.ARW'];
 const ROOT = path.join(E2E_ROOT, 'viewer-filmstrip');
 
@@ -27,7 +30,9 @@ const ROOT = path.join(E2E_ROOT, 'viewer-filmstrip');
 test.use({ viewport: { width: 1000, height: 1200 } });
 test.describe.configure({ timeout: 180_000 });
 
-test('an open stack is a spine, and the photograph on the stage is ringed inside its band', async ({ page }) => {
+test('an open stack is a spine, and the photograph on the stage is ringed inside its band', async ({
+  page,
+}) => {
   mkdirSync(ROOT, { recursive: true });
   for (const name of NAMES) copyFileSync(FIXTURE, path.join(ROOT, name));
   await addLibrary(page, ROOT, { autoStack: true, photos: NAMES.length });
@@ -52,7 +57,9 @@ test('an open stack is a spine, and the photograph on the stage is ringed inside
   const strip = gallery(page);
   await expect(strip).toHaveCSS('overflow-x', 'auto');
 
-  const spine = strip.getByRole('listitem').filter({ has: page.getByRole('button', { name: /stack of \d+/, expanded: true }) });
+  const spine = strip
+    .getByRole('listitem')
+    .filter({ has: page.getByRole('button', { name: /stack of \d+/, expanded: true }) });
   const member = bands(page).getByRole('listitem').first();
   await expect(spine).toHaveCount(1);
   // The frame the stack's tile would show is the first cell of its band, so it is

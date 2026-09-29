@@ -42,7 +42,9 @@ const CURRENT = 'crs:ProcessVersion="6.7" crs:Version="13.2"';
 
 describe('parseXmp: versions', () => {
   it('reads the *2012 tags at process version 6.7', () => {
-    const settings = parseAttrs('crs:ProcessVersion="6.7" crs:Exposure2012="+0.5" crs:Shadows2012="40"');
+    const settings = parseAttrs(
+      'crs:ProcessVersion="6.7" crs:Exposure2012="+0.5" crs:Shadows2012="40"',
+    );
     expect(settings.legacy).toBe(false);
     expect(settings.processVersion).toEqual({ generation: 3, raw: '6.7' });
     expect(settings.tone.exposure).toBe(0.5);
@@ -61,7 +63,9 @@ describe('parseXmp: versions', () => {
   });
 
   it('reports a version it cannot parse instead of reading it as absent', () => {
-    const settings = parseAttrs('crs:ProcessVersion="banana" crs:Version="17.x" crs:Exposure2012="+1.0"');
+    const settings = parseAttrs(
+      'crs:ProcessVersion="banana" crs:Version="17.x" crs:Exposure2012="+1.0"',
+    );
     expect(settings.processVersion).toEqual({ generation: null, raw: 'banana' });
     expect(settings.issues).toEqual([
       { tag: 'crs:ProcessVersion', reason: 'unparseable', value: 'banana' },
@@ -83,8 +87,8 @@ describe('parseXmp: versions', () => {
 
   it('reads a pre-2012 file into legacyTone and leaves tone at its defaults', () => {
     const settings = parseAttrs(
-      'crs:ProcessVersion="5.7" crs:Exposure="+0.80" crs:Brightness="60" crs:Contrast="30" crs:FillLight="12" crs:Clarity="15"'
-        + ' crs:Temperature="5500" crs:Tint="+8" crs:HueAdjustmentAqua="-20" crs:Sharpness="70" crs:HasCrop="True" crs:CropRight="0.5"',
+      'crs:ProcessVersion="5.7" crs:Exposure="+0.80" crs:Brightness="60" crs:Contrast="30" crs:FillLight="12" crs:Clarity="15"' +
+        ' crs:Temperature="5500" crs:Tint="+8" crs:HueAdjustmentAqua="-20" crs:Sharpness="70" crs:HasCrop="True" crs:CropRight="0.5"',
     );
     expect(settings.legacy).toBe(true);
     expect(settings.legacyTone).toMatchObject({
@@ -108,7 +112,12 @@ describe('parseXmp: versions', () => {
 
   it('omits an unconfirmed legacy default rather than guessing a number', () => {
     const settings = parseAttrs('crs:ProcessVersion="5.7" crs:Exposure="+0.10"');
-    expect(settings.legacyTone).toMatchObject({ brightness: null, contrast: null, shadows: null, curveName: null });
+    expect(settings.legacyTone).toMatchObject({
+      brightness: null,
+      contrast: null,
+      shadows: null,
+      curveName: null,
+    });
     expect(settings.legacyTone?.highlightRecovery).toBe(0);
   });
 
@@ -175,7 +184,13 @@ describe('parseXmp: values and defaults', () => {
     expect(settings.tone.curveName).toBe('Linear');
     // And the blocks whose defaults are all zero are still fully populated:
     // absence of a tag is that tag's default, never a missing block.
-    expect(settings.presence).toEqual({ texture: 0, clarity: 0, dehaze: 0, vibrance: 0, saturation: 0 });
+    expect(settings.presence).toEqual({
+      texture: 0,
+      clarity: 0,
+      dehaze: 0,
+      vibrance: 0,
+      saturation: 0,
+    });
     expect(settings.calibration).toEqual({
       shadowTint: 0,
       redHue: 0,
@@ -185,7 +200,16 @@ describe('parseXmp: values and defaults', () => {
       blueHue: 0,
       blueSaturation: 0,
     });
-    expect(settings.hsl.hue).toEqual({ red: 0, orange: 0, yellow: 0, green: 0, aqua: 0, blue: 0, purple: 0, magenta: 0 });
+    expect(settings.hsl.hue).toEqual({
+      red: 0,
+      orange: 0,
+      yellow: 0,
+      green: 0,
+      aqua: 0,
+      blue: 0,
+      purple: 0,
+      magenta: 0,
+    });
     expect(settings.hsl.gray).toEqual(settings.hsl.hue);
     expect(settings.profile).toEqual({ cameraProfile: null, cameraProfileDigest: null });
     expect(settings.metadata.subject).toEqual([]);
@@ -203,9 +227,9 @@ describe('parseXmp: values and defaults', () => {
 
   it('reads a colour grade from the split-toning tags it shares storage with', () => {
     const settings = parseAttrs(
-      `${CURRENT} crs:SplitToningShadowHue="220" crs:SplitToningShadowSaturation="18"`
-        + ' crs:SplitToningHighlightHue="45" crs:SplitToningHighlightSaturation="12" crs:SplitToningBalance="-10"'
-        + ' crs:ColorGradeMidtoneHue="120" crs:ColorGradeMidtoneSat="8" crs:ColorGradeShadowLum="-5" crs:ColorGradeBlending="70"',
+      `${CURRENT} crs:SplitToningShadowHue="220" crs:SplitToningShadowSaturation="18"` +
+        ' crs:SplitToningHighlightHue="45" crs:SplitToningHighlightSaturation="12" crs:SplitToningBalance="-10"' +
+        ' crs:ColorGradeMidtoneHue="120" crs:ColorGradeMidtoneSat="8" crs:ColorGradeShadowLum="-5" crs:ColorGradeBlending="70"',
     );
     expect(settings.colorGrading).toEqual({
       splitToningShadowHue: 220,
@@ -231,12 +255,16 @@ describe('parseXmp: values and defaults', () => {
     expect(asShot.whiteBalance.temperature).toBeNull();
     expect(asShot.whiteBalance.tint).toBeNull();
 
-    const preset = parseAttrs(`${CURRENT} crs:WhiteBalance="Cloudy" crs:Temperature="6500" crs:Tint="-4"`);
+    const preset = parseAttrs(
+      `${CURRENT} crs:WhiteBalance="Cloudy" crs:Temperature="6500" crs:Tint="-4"`,
+    );
     expect(preset.whiteBalance).toMatchObject({ mode: 'Cloudy', temperature: 6500, tint: -4 });
   });
 
   it('keeps the incremental white balance apart from the Kelvin pair', () => {
-    const settings = parseAttrs(`${CURRENT} crs:IncrementalTemperature="-30" crs:IncrementalTint="+15"`);
+    const settings = parseAttrs(
+      `${CURRENT} crs:IncrementalTemperature="-30" crs:IncrementalTint="+15"`,
+    );
     expect(settings.whiteBalance).toEqual({
       mode: 'As Shot',
       temperature: null,
@@ -251,16 +279,28 @@ describe('parseXmp: values and defaults', () => {
     expect(settings.tone.contrast).toBe(100);
     expect(settings.tone.exposure).toBe(-5);
     expect(settings.issues).toHaveLength(2);
-    expect(settings.issues).toContainEqual({ tag: 'crs:Contrast2012', reason: 'clamped', value: '240' });
-    expect(settings.issues).toContainEqual({ tag: 'crs:Exposure2012', reason: 'clamped', value: '-9.5' });
+    expect(settings.issues).toContainEqual({
+      tag: 'crs:Contrast2012',
+      reason: 'clamped',
+      value: '240',
+    });
+    expect(settings.issues).toContainEqual({
+      tag: 'crs:Exposure2012',
+      reason: 'clamped',
+      value: '-9.5',
+    });
   });
 
   it('imports every other tag around an unparseable value', () => {
-    const settings = parseAttrs(`${CURRENT} crs:Contrast2012="banana" crs:Whites2012="15" crs:Texture="20"`);
+    const settings = parseAttrs(
+      `${CURRENT} crs:Contrast2012="banana" crs:Whites2012="15" crs:Texture="20"`,
+    );
     expect(settings.tone.contrast).toBe(0);
     expect(settings.tone.whites).toBe(15);
     expect(settings.presence.texture).toBe(20);
-    expect(settings.issues).toEqual([{ tag: 'crs:Contrast2012', reason: 'unparseable', value: 'banana' }]);
+    expect(settings.issues).toEqual([
+      { tag: 'crs:Contrast2012', reason: 'unparseable', value: 'banana' },
+    ]);
   });
 
   it('rounds a real written into an integer tag without complaint', () => {
@@ -271,7 +311,9 @@ describe('parseXmp: values and defaults', () => {
   });
 
   it('keeps an unrecognised enum value verbatim', () => {
-    const settings = parseAttrs(`${CURRENT} crs:WhiteBalance="Underwater" crs:ToneCurveName2012="My Preset"`);
+    const settings = parseAttrs(
+      `${CURRENT} crs:WhiteBalance="Underwater" crs:ToneCurveName2012="My Preset"`,
+    );
     expect(settings.whiteBalance.mode).toBe('Underwater');
     expect(settings.tone.curveName).toBe('My Preset');
     expect(settings.issues).toEqual([
@@ -283,19 +325,31 @@ describe('parseXmp: values and defaults', () => {
 
 describe('parseXmp: geometry', () => {
   it('treats crs:HasCrop as authoritative over stale edges', () => {
-    const settings = parseAttrs(`${CURRENT} crs:HasCrop="False" crs:CropTop="0.2" crs:CropLeft="0.1" crs:CropBottom="0.8" crs:CropRight="0.7"`);
-    expect(settings.geometry).toMatchObject({ hasCrop: false, cropTop: 0, cropLeft: 0, cropBottom: 1, cropRight: 1 });
+    const settings = parseAttrs(
+      `${CURRENT} crs:HasCrop="False" crs:CropTop="0.2" crs:CropLeft="0.1" crs:CropBottom="0.8" crs:CropRight="0.7"`,
+    );
+    expect(settings.geometry).toMatchObject({
+      hasCrop: false,
+      cropTop: 0,
+      cropLeft: 0,
+      cropBottom: 1,
+      cropRight: 1,
+    });
   });
 
   it('refuses a degenerate crop rectangle', () => {
-    const settings = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropTop="0.9" crs:CropBottom="0.4"`);
+    const settings = parseAttrs(
+      `${CURRENT} crs:HasCrop="True" crs:CropTop="0.9" crs:CropBottom="0.4"`,
+    );
     expect(settings.geometry.hasCrop).toBe(false);
     expect(settings.geometry.cropBottom).toBe(1);
     expect(settings.issues).toEqual([{ tag: 'crs:CropTop', reason: 'malformed', value: '0.9' }]);
   });
 
   it('refuses a horizontally degenerate rectangle too', () => {
-    const settings = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropLeft="0.8" crs:CropRight="0.3"`);
+    const settings = parseAttrs(
+      `${CURRENT} crs:HasCrop="True" crs:CropLeft="0.8" crs:CropRight="0.3"`,
+    );
     expect(settings.geometry).toMatchObject({ hasCrop: false, cropLeft: 0, cropRight: 1 });
     expect(settings.issues).toEqual([{ tag: 'crs:CropLeft', reason: 'malformed', value: '0.8' }]);
   });
@@ -309,28 +363,45 @@ describe('parseXmp: geometry', () => {
   it('drops the straighten angle along with the crop it belonged to', () => {
     const undone = parseAttrs(`${CURRENT} crs:HasCrop="False" crs:CropAngle="-12.5"`);
     expect(undone.geometry.cropAngle).toBe(0);
-    const kept = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropAngle="-12.5" crs:CropRight="0.9"`);
+    const kept = parseAttrs(
+      `${CURRENT} crs:HasCrop="True" crs:CropAngle="-12.5" crs:CropRight="0.9"`,
+    );
     expect(kept.geometry.cropAngle).toBe(-12.5);
   });
 
   it('falls back rather than clamping an unknown enumerated code', () => {
     const style = parseAttrs(`${CURRENT} crs:PostCropVignetteStyle="9"`);
     expect(style.effects.postCropVignetteStyle).toBe(1);
-    expect(style.issues).toEqual([{ tag: 'crs:PostCropVignetteStyle', reason: 'unconvertible', value: '9' }]);
+    expect(style.issues).toEqual([
+      { tag: 'crs:PostCropVignetteStyle', reason: 'unconvertible', value: '9' },
+    ]);
 
     const orientation = parseAttrs(`${CURRENT} tiff:Orientation="9"`);
     expect(orientation.geometry.orientation).toBeNull();
-    expect(orientation.issues).toEqual([{ tag: 'tiff:Orientation', reason: 'unconvertible', value: '9' }]);
+    expect(orientation.issues).toEqual([
+      { tag: 'tiff:Orientation', reason: 'unconvertible', value: '9' },
+    ]);
 
     const upright = parseAttrs(`${CURRENT} crs:PerspectiveUpright="7"`);
     expect(upright.geometry.perspectiveUpright).toBe(0);
-    expect(upright.issues).toEqual([{ tag: 'crs:PerspectiveUpright', reason: 'unconvertible', value: '7' }]);
+    expect(upright.issues).toEqual([
+      { tag: 'crs:PerspectiveUpright', reason: 'unconvertible', value: '7' },
+    ]);
   });
 
   it('carries an absolute-unit crop through and says it cannot be read as fractions', () => {
-    const settings = parseAttrs(`${CURRENT} crs:HasCrop="True" crs:CropUnits="1" crs:CropWidth="8" crs:CropHeight="10" crs:CropRight="0.6" crs:CropBottom="0.9"`);
-    expect(settings.geometry).toMatchObject({ cropUnits: 1, cropWidth: 8, cropHeight: 10, cropRight: 0.6 });
-    expect(settings.issues).toEqual([{ tag: 'crs:CropUnits', reason: 'unconvertible', value: '1' }]);
+    const settings = parseAttrs(
+      `${CURRENT} crs:HasCrop="True" crs:CropUnits="1" crs:CropWidth="8" crs:CropHeight="10" crs:CropRight="0.6" crs:CropBottom="0.9"`,
+    );
+    expect(settings.geometry).toMatchObject({
+      cropUnits: 1,
+      cropWidth: 8,
+      cropHeight: 10,
+      cropRight: 0.6,
+    });
+    expect(settings.issues).toEqual([
+      { tag: 'crs:CropUnits', reason: 'unconvertible', value: '1' },
+    ]);
   });
 
   it('distinguishes an automatic upright correction from none', () => {
@@ -345,7 +416,9 @@ describe('parseXmp: geometry', () => {
   });
 
   it('names the opaque upright payloads without decoding them', () => {
-    const settings = parseAttrs(`${CURRENT} crs:PerspectiveUpright="2" crs:UprightVersion="151388160" crs:UprightPreview="False" crs:UprightTransform_0="1.0 0.0" crs:UprightFourSegments_0="0"`);
+    const settings = parseAttrs(
+      `${CURRENT} crs:PerspectiveUpright="2" crs:UprightVersion="151388160" crs:UprightPreview="False" crs:UprightTransform_0="1.0 0.0" crs:UprightFourSegments_0="0"`,
+    );
     expect(settings.geometry.uprightVersion).toBe(151388160);
     expect(settings.unsupported).toContain('crs:UprightTransform_0');
     expect(settings.unsupported).toContain('crs:UprightFourSegments_0');
@@ -355,11 +428,20 @@ describe('parseXmp: geometry', () => {
 });
 
 describe('parseXmp: curves, flags and metadata', () => {
-  const IDENTITY = [{ x: 0, y: 0 }, { x: 255, y: 255 }];
+  const IDENTITY = [
+    { x: 0, y: 0 },
+    { x: 255, y: 255 },
+  ];
 
   it('reads an identity curve the same however it is written', () => {
-    const spaced = parseAttrs(CURRENT, '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>');
-    const tight = parseAttrs(CURRENT, '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0,0</rdf:li><rdf:li>255,255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>');
+    const spaced = parseAttrs(
+      CURRENT,
+      '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>',
+    );
+    const tight = parseAttrs(
+      CURRENT,
+      '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0,0</rdf:li><rdf:li>255,255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>',
+    );
     const absent = parseAttrs(CURRENT);
     expect(spaced.tone.curve).toEqual(IDENTITY);
     expect(tight.tone).toEqual(spaced.tone);
@@ -371,8 +453,14 @@ describe('parseXmp: curves, flags and metadata', () => {
       CURRENT,
       '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>oops</rdf:li><rdf:li>128, 150</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>',
     );
-    expect(settings.tone.curve).toEqual([{ x: 0, y: 0 }, { x: 128, y: 150 }, { x: 255, y: 255 }]);
-    expect(settings.issues).toEqual([{ tag: 'crs:ToneCurvePV2012', reason: 'malformed', value: 'oops' }]);
+    expect(settings.tone.curve).toEqual([
+      { x: 0, y: 0 },
+      { x: 128, y: 150 },
+      { x: 255, y: 255 },
+    ]);
+    expect(settings.issues).toEqual([
+      { tag: 'crs:ToneCurvePV2012', reason: 'malformed', value: 'oops' },
+    ]);
   });
 
   it('treats a half-written point as malformed rather than as zero', () => {
@@ -380,17 +468,26 @@ describe('parseXmp: curves, flags and metadata', () => {
       CURRENT,
       '<crs:ToneCurvePV2012Red><rdf:Seq><rdf:li>0,</rdf:li><rdf:li>64, 70</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012Red>',
     );
-    expect(settings.tone.curveRed).toEqual([{ x: 64, y: 70 }, { x: 255, y: 255 }]);
-    expect(settings.issues).toEqual([{ tag: 'crs:ToneCurvePV2012Red', reason: 'malformed', value: '0,' }]);
+    expect(settings.tone.curveRed).toEqual([
+      { x: 64, y: 70 },
+      { x: 255, y: 255 },
+    ]);
+    expect(settings.issues).toEqual([
+      { tag: 'crs:ToneCurvePV2012Red', reason: 'malformed', value: '0,' },
+    ]);
   });
 
   it('falls back to identity when too few points survive', () => {
-    const settings = parseAttrs(CURRENT, '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>junk</rdf:li></rdf:Seq></crs:ToneCurvePV2012>');
+    const settings = parseAttrs(
+      CURRENT,
+      '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>junk</rdf:li></rdf:Seq></crs:ToneCurvePV2012>',
+    );
     expect(settings.tone.curve).toEqual(IDENTITY);
   });
 
   it('populates both the HSL and the gray mixer sets whatever the conversion flag says', () => {
-    const body = 'crs:HueAdjustmentRed="10" crs:SaturationAdjustmentBlue="-20" crs:LuminanceAdjustmentGreen="5" crs:GrayMixerOrange="35"';
+    const body =
+      'crs:HueAdjustmentRed="10" crs:SaturationAdjustmentBlue="-20" crs:LuminanceAdjustmentGreen="5" crs:GrayMixerOrange="35"';
     const mono = parseAttrs(`${CURRENT} crs:ConvertToGrayscale="True" ${body}`);
     expect(mono.hsl.convertToGrayscale).toBe(true);
     expect(mono.hsl.hue.red).toBe(10);
@@ -405,18 +502,25 @@ describe('parseXmp: curves, flags and metadata', () => {
   });
 
   it('accepts either spelling of a flag', () => {
-    expect(parseAttrs(`${CURRENT} crs:ConvertToGrayscale="true"`).hsl.convertToGrayscale).toBe(true);
+    expect(parseAttrs(`${CURRENT} crs:ConvertToGrayscale="true"`).hsl.convertToGrayscale).toBe(
+      true,
+    );
     expect(parseAttrs(`${CURRENT} crs:ConvertToGrayscale="1"`).hsl.convertToGrayscale).toBe(true);
     expect(parseAttrs(`${CURRENT} crs:ConvertToGrayscale="0"`).hsl.convertToGrayscale).toBe(false);
     const bad = parseAttrs(`${CURRENT} crs:ConvertToGrayscale="maybe"`);
     expect(bad.hsl.convertToGrayscale).toBe(false);
-    expect(bad.issues).toEqual([{ tag: 'crs:ConvertToGrayscale', reason: 'unparseable', value: 'maybe' }]);
+    expect(bad.issues).toEqual([
+      { tag: 'crs:ConvertToGrayscale', reason: 'unparseable', value: 'maybe' },
+    ]);
   });
 
   it('imports every setting of an already-applied file and flags it', () => {
-    const edit = 'crs:Exposure2012="+1.00" crs:Texture="30" crs:Temperature="5200" crs:GrainAmount="8"'
-      + ' crs:HueAdjustmentRed="12" crs:Sharpness="60" crs:HasCrop="True" crs:CropRight="0.7" crs:ShadowTint="4"';
-    const applied = parseAttrs(`${CURRENT} crs:HasSettings="True" crs:AlreadyApplied="True" ${edit}`);
+    const edit =
+      'crs:Exposure2012="+1.00" crs:Texture="30" crs:Temperature="5200" crs:GrainAmount="8"' +
+      ' crs:HueAdjustmentRed="12" crs:Sharpness="60" crs:HasCrop="True" crs:CropRight="0.7" crs:ShadowTint="4"';
+    const applied = parseAttrs(
+      `${CURRENT} crs:HasSettings="True" crs:AlreadyApplied="True" ${edit}`,
+    );
     const pending = parseAttrs(`${CURRENT} crs:HasSettings="True" ${edit}`);
     expect(applied.alreadyApplied).toBe(true);
     expect(pending.alreadyApplied).toBe(false);
@@ -427,31 +531,45 @@ describe('parseXmp: curves, flags and metadata', () => {
   });
 
   it('keeps the wall clock of a zoneless date and normalises Z', () => {
-    const settings = parseAttrs(`${CURRENT} xmp:CreateDate="2024-03-11T10:22:33" xmp:ModifyDate="2024-03-11T10:22:33+11:00" xmp:MetadataDate="2024-03-11T10:22:33Z"`);
+    const settings = parseAttrs(
+      `${CURRENT} xmp:CreateDate="2024-03-11T10:22:33" xmp:ModifyDate="2024-03-11T10:22:33+11:00" xmp:MetadataDate="2024-03-11T10:22:33Z"`,
+    );
     expect(settings.metadata.createDate).toEqual({ value: '2024-03-11T10:22:33', offset: null });
-    expect(settings.metadata.modifyDate).toEqual({ value: '2024-03-11T10:22:33', offset: '+11:00' });
-    expect(settings.metadata.metadataDate).toEqual({ value: '2024-03-11T10:22:33', offset: '+00:00' });
+    expect(settings.metadata.modifyDate).toEqual({
+      value: '2024-03-11T10:22:33',
+      offset: '+11:00',
+    });
+    expect(settings.metadata.metadataDate).toEqual({
+      value: '2024-03-11T10:22:33',
+      offset: '+00:00',
+    });
   });
 
   it('reports an unparseable date as null', () => {
     const settings = parseAttrs(`${CURRENT} xmp:CreateDate="last tuesday"`);
     expect(settings.metadata.createDate).toBeNull();
-    expect(settings.issues).toEqual([{ tag: 'xmp:CreateDate', reason: 'unparseable', value: 'last tuesday' }]);
+    expect(settings.issues).toEqual([
+      { tag: 'xmp:CreateDate', reason: 'unparseable', value: 'last tuesday' },
+    ]);
   });
 
   it('refuses a date whose digits are in range only as digits', () => {
-    const settings = parseAttrs(`${CURRENT} xmp:CreateDate="2024-13-45T99:99" xmp:ModifyDate="2024-02"`);
+    const settings = parseAttrs(
+      `${CURRENT} xmp:CreateDate="2024-13-45T99:99" xmp:ModifyDate="2024-02"`,
+    );
     expect(settings.metadata.createDate).toBeNull();
-    expect(settings.issues).toEqual([{ tag: 'xmp:CreateDate', reason: 'unparseable', value: '2024-13-45T99:99' }]);
+    expect(settings.issues).toEqual([
+      { tag: 'xmp:CreateDate', reason: 'unparseable', value: '2024-13-45T99:99' },
+    ]);
     expect(settings.metadata.modifyDate).toEqual({ value: '2024-02', offset: null });
   });
 
   it('reads both keyword tags, the rating and the sidecar filenames', () => {
     const settings = parseAttrs(
       `${CURRENT} xmp:Rating="-1" xmp:Label="Red" photoshop:SidecarForExtension="CR2" crs:RawFileName="IMG_1234.CR2"`,
-      '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li><rdf:li>dusk</rdf:li></rdf:Bag></dc:subject>'
-        + '<lr:hierarchicalSubject><rdf:Bag><rdf:li>Animals|Birds|Owl</rdf:li></rdf:Bag></lr:hierarchicalSubject>'
-        + '<dc:creator><rdf:Seq><rdf:li>A Photographer</rdf:li></rdf:Seq></dc:creator>',
+      '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li><rdf:li>dusk</rdf:li></rdf:Bag></dc:subject>' +
+        '<lr:hierarchicalSubject><rdf:Bag><rdf:li>Animals|Birds|Owl</rdf:li></rdf:Bag></lr:hierarchicalSubject>' +
+        '<dc:creator><rdf:Seq><rdf:li>A Photographer</rdf:li></rdf:Seq></dc:creator>',
     );
     expect(settings.metadata.rating).toBe(-1);
     expect(settings.metadata.label).toBe('Red');
@@ -463,8 +581,13 @@ describe('parseXmp: curves, flags and metadata', () => {
   });
 
   it('records a camera profile as a reference without resolving it', () => {
-    const settings = parseAttrs(`${CURRENT} crs:CameraProfile="Camera Standard" crs:CameraProfileDigest="54650A341B5B5CCAE8442D0B43A92BCE"`);
-    expect(settings.profile).toEqual({ cameraProfile: 'Camera Standard', cameraProfileDigest: '54650A341B5B5CCAE8442D0B43A92BCE' });
+    const settings = parseAttrs(
+      `${CURRENT} crs:CameraProfile="Camera Standard" crs:CameraProfileDigest="54650A341B5B5CCAE8442D0B43A92BCE"`,
+    );
+    expect(settings.profile).toEqual({
+      cameraProfile: 'Camera Standard',
+      cameraProfileDigest: '54650A341B5B5CCAE8442D0B43A92BCE',
+    });
   });
 });
 
@@ -478,9 +601,9 @@ describe('parseXmp: unsupported tags', () => {
   it('names a mask group without storing any of its contents', () => {
     const settings = parseAttrs(
       `${CURRENT} crs:Exposure2012="+0.20"`,
-      '<crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li rdf:parseType="Resource">'
-        + '<crs:CorrectionAmount>1</crs:CorrectionAmount><crs:LocalExposure2012>0.75</crs:LocalExposure2012>'
-        + '</rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections>',
+      '<crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li rdf:parseType="Resource">' +
+        '<crs:CorrectionAmount>1</crs:CorrectionAmount><crs:LocalExposure2012>0.75</crs:LocalExposure2012>' +
+        '</rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections>',
     );
     expect(settings.tone.exposure).toBe(0.2);
     expect(settings.unsupported).toEqual(['crs:MaskGroupBasedCorrections']);
@@ -488,7 +611,9 @@ describe('parseXmp: unsupported tags', () => {
   });
 
   it('does not name properties outside the crs namespace', () => {
-    const settings = parseAttrs(`${CURRENT} xmpMM:DocumentID="xmp.did:1234" exif:FNumber="4/1" xmp:Rating="3"`);
+    const settings = parseAttrs(
+      `${CURRENT} xmpMM:DocumentID="xmp.did:1234" exif:FNumber="4/1" xmp:Rating="3"`,
+    );
     expect(settings.unsupported).toEqual([]);
     expect(settings.metadata.rating).toBe(3);
   });
@@ -496,13 +621,17 @@ describe('parseXmp: unsupported tags', () => {
   it('names the parts of a Look it declines, and keeps LookName separate', () => {
     const settings = parseAttrs(
       `${CURRENT} crs:LookName="Adobe Landscape"`,
-      '<crs:Look rdf:parseType="Resource"><crs:Name>Adobe Landscape</crs:Name><crs:Amount>1</crs:Amount>'
-        + '<crs:Something>x</crs:Something>'
-        + '<crs:Parameters rdf:parseType="Resource"><crs:Version>13.2</crs:Version><crs:LookTable>E1095149FDB39D7A057BAB208837E2E1</crs:LookTable></crs:Parameters>'
-        + '</crs:Look>',
+      '<crs:Look rdf:parseType="Resource"><crs:Name>Adobe Landscape</crs:Name><crs:Amount>1</crs:Amount>' +
+        '<crs:Something>x</crs:Something>' +
+        '<crs:Parameters rdf:parseType="Resource"><crs:Version>13.2</crs:Version><crs:LookTable>E1095149FDB39D7A057BAB208837E2E1</crs:LookTable></crs:Parameters>' +
+        '</crs:Look>',
     );
     expect(settings.look?.name).toBe('Adobe Landscape');
-    expect(settings.unsupported).toEqual(['crs:Look/crs:Parameters', 'crs:Look/crs:Something', 'crs:LookName']);
+    expect(settings.unsupported).toEqual([
+      'crs:Look/crs:Parameters',
+      'crs:Look/crs:Something',
+      'crs:LookName',
+    ]);
     expect(JSON.stringify(settings)).not.toContain('E1095149FDB39D7A057BAB208837E2E1');
   });
 
@@ -510,7 +639,11 @@ describe('parseXmp: unsupported tags', () => {
     const settings = parse(
       `${description(`${CURRENT} crs:RetouchAreas="a" crs:PointColors="b"`)}\n${description('crs:RetouchAreas="a" crs:HDREditMode="1"')}`,
     );
-    expect(settings.unsupported).toEqual(['crs:HDREditMode', 'crs:PointColors', 'crs:RetouchAreas']);
+    expect(settings.unsupported).toEqual([
+      'crs:HDREditMode',
+      'crs:PointColors',
+      'crs:RetouchAreas',
+    ]);
   });
 
   it('has no look at all when the structure is absent', () => {
@@ -536,31 +669,31 @@ describe('parseXmp: unsupported tags', () => {
 // across two rdf:Description blocks the way a writer groups them by namespace.
 describe('parseXmp: a whole sidecar', () => {
   const settings = parse(`${description(
-    'crs:Version="15.1" crs:ProcessVersion="15.4" crs:HasSettings="True" crs:WhiteBalance="Custom"'
-      + ' crs:Temperature="5850" crs:Tint="+12" crs:Exposure2012="+0.45" crs:Contrast2012="+8" crs:Highlights2012="-40"'
-      + ' crs:Shadows2012="+35" crs:Whites2012="+10" crs:Blacks2012="-15" crs:Texture="+12" crs:Clarity2012="+6"'
-      + ' crs:Dehaze="+7.5" crs:Vibrance="+18" crs:Saturation="-4" crs:ParametricShadows="+5" crs:ParametricHighlightSplit="80"'
-      + ' crs:Sharpness="55" crs:SharpenRadius="1.2" crs:LuminanceSmoothing="18" crs:ColorNoiseReduction="30"'
-      + ' crs:HueAdjustmentOrange="-8" crs:SaturationAdjustmentAqua="+14" crs:LuminanceAdjustmentBlue="-22"'
-      + ' crs:SplitToningShadowHue="215" crs:SplitToningShadowSaturation="14" crs:ColorGradeMidtoneLum="-3"'
-      + ' crs:LensProfileEnable="1" crs:LensProfileName="Canon EF 24-70mm f/2.8L II USM" crs:AutoLateralCA="True"'
-      + ' crs:PostCropVignetteAmount="-18" crs:PostCropVignetteStyle="2" crs:GrainAmount="12"'
-      + ' crs:ShadowTint="+3" crs:BlueHue="-6"'
-      + ' crs:HasCrop="True" crs:CropTop="0.05" crs:CropLeft="0.02" crs:CropBottom="0.95" crs:CropRight="0.98"'
-      + ' crs:CropAngle="-1.75" crs:PerspectiveVertical="-12" crs:PerspectiveUpright="1" crs:UprightVersion="151388160"'
-      + ' crs:UprightTransform_0="0.998, 0.0" crs:CameraProfile="Adobe Color" crs:RawFileName="IMG_1234.CR2"',
-    '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>64, 56</rdf:li><rdf:li>192, 200</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>'
-      + '<crs:Look rdf:parseType="Resource"><crs:Name>Adobe Color</crs:Name><crs:Amount>1</crs:Amount>'
-      + '<crs:UUID>B952C231111CD8E0ECCF14B86BAA7077</crs:UUID>'
-      + '<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Profiles</rdf:li></rdf:Alt></crs:Group></crs:Look>'
-      + '<crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li rdf:parseType="Resource"><crs:CorrectionAmount>1</crs:CorrectionAmount></rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections>',
+    'crs:Version="15.1" crs:ProcessVersion="15.4" crs:HasSettings="True" crs:WhiteBalance="Custom"' +
+      ' crs:Temperature="5850" crs:Tint="+12" crs:Exposure2012="+0.45" crs:Contrast2012="+8" crs:Highlights2012="-40"' +
+      ' crs:Shadows2012="+35" crs:Whites2012="+10" crs:Blacks2012="-15" crs:Texture="+12" crs:Clarity2012="+6"' +
+      ' crs:Dehaze="+7.5" crs:Vibrance="+18" crs:Saturation="-4" crs:ParametricShadows="+5" crs:ParametricHighlightSplit="80"' +
+      ' crs:Sharpness="55" crs:SharpenRadius="1.2" crs:LuminanceSmoothing="18" crs:ColorNoiseReduction="30"' +
+      ' crs:HueAdjustmentOrange="-8" crs:SaturationAdjustmentAqua="+14" crs:LuminanceAdjustmentBlue="-22"' +
+      ' crs:SplitToningShadowHue="215" crs:SplitToningShadowSaturation="14" crs:ColorGradeMidtoneLum="-3"' +
+      ' crs:LensProfileEnable="1" crs:LensProfileName="Canon EF 24-70mm f/2.8L II USM" crs:AutoLateralCA="True"' +
+      ' crs:PostCropVignetteAmount="-18" crs:PostCropVignetteStyle="2" crs:GrainAmount="12"' +
+      ' crs:ShadowTint="+3" crs:BlueHue="-6"' +
+      ' crs:HasCrop="True" crs:CropTop="0.05" crs:CropLeft="0.02" crs:CropBottom="0.95" crs:CropRight="0.98"' +
+      ' crs:CropAngle="-1.75" crs:PerspectiveVertical="-12" crs:PerspectiveUpright="1" crs:UprightVersion="151388160"' +
+      ' crs:UprightTransform_0="0.998, 0.0" crs:CameraProfile="Adobe Color" crs:RawFileName="IMG_1234.CR2"',
+    '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>64, 56</rdf:li><rdf:li>192, 200</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>' +
+      '<crs:Look rdf:parseType="Resource"><crs:Name>Adobe Color</crs:Name><crs:Amount>1</crs:Amount>' +
+      '<crs:UUID>B952C231111CD8E0ECCF14B86BAA7077</crs:UUID>' +
+      '<crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Profiles</rdf:li></rdf:Alt></crs:Group></crs:Look>' +
+      '<crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li rdf:parseType="Resource"><crs:CorrectionAmount>1</crs:CorrectionAmount></rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections>',
   )}
 ${description(
-    'tiff:Orientation="1" xmp:Rating="4" xmp:Label="Green" xmp:CreateDate="2025-11-02T17:41:09+11:00"'
-      + ' photoshop:DateCreated="2025-11-02T17:41:09+11:00" photoshop:SidecarForExtension="CR2"',
-    '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li><rdf:li>dusk</rdf:li></rdf:Bag></dc:subject>'
-      + '<lr:hierarchicalSubject><rdf:Bag><rdf:li>Animals|Birds|Owl</rdf:li></rdf:Bag></lr:hierarchicalSubject>',
-  )}`);
+  'tiff:Orientation="1" xmp:Rating="4" xmp:Label="Green" xmp:CreateDate="2025-11-02T17:41:09+11:00"' +
+    ' photoshop:DateCreated="2025-11-02T17:41:09+11:00" photoshop:SidecarForExtension="CR2"',
+  '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li><rdf:li>dusk</rdf:li></rdf:Bag></dc:subject>' +
+    '<lr:hierarchicalSubject><rdf:Bag><rdf:li>Animals|Birds|Owl</rdf:li></rdf:Bag></lr:hierarchicalSubject>',
+)}`);
 
   it('resolves the versions', () => {
     expect(settings.processVersion).toEqual({ generation: 6, raw: '15.4' });
@@ -572,18 +705,59 @@ ${description(
   });
 
   it('reads the develop settings', () => {
-    expect(settings.whiteBalance).toEqual({ mode: 'Custom', temperature: 5850, tint: 12, incrementalTemperature: 0, incrementalTint: 0 });
-    expect(settings.tone).toMatchObject({ exposure: 0.45, contrast: 8, highlights: -40, shadows: 35, whites: 10, blacks: -15 });
-    expect(settings.tone.curve).toEqual([{ x: 0, y: 0 }, { x: 64, y: 56 }, { x: 192, y: 200 }, { x: 255, y: 255 }]);
+    expect(settings.whiteBalance).toEqual({
+      mode: 'Custom',
+      temperature: 5850,
+      tint: 12,
+      incrementalTemperature: 0,
+      incrementalTint: 0,
+    });
+    expect(settings.tone).toMatchObject({
+      exposure: 0.45,
+      contrast: 8,
+      highlights: -40,
+      shadows: 35,
+      whites: 10,
+      blacks: -15,
+    });
+    expect(settings.tone.curve).toEqual([
+      { x: 0, y: 0 },
+      { x: 64, y: 56 },
+      { x: 192, y: 200 },
+      { x: 255, y: 255 },
+    ]);
     expect(settings.tone.parametricHighlightSplit).toBe(80);
-    expect(settings.presence).toEqual({ texture: 12, clarity: 6, dehaze: 7.5, vibrance: 18, saturation: -4 });
+    expect(settings.presence).toEqual({
+      texture: 12,
+      clarity: 6,
+      dehaze: 7.5,
+      vibrance: 18,
+      saturation: -4,
+    });
     expect(settings.hsl.hue.orange).toBe(-8);
     expect(settings.hsl.saturation.aqua).toBe(14);
     expect(settings.hsl.luminance.blue).toBe(-22);
-    expect(settings.detail).toMatchObject({ sharpness: 55, sharpenRadius: 1.2, luminanceSmoothing: 18, colorNoiseReduction: 30 });
-    expect(settings.colorGrading).toMatchObject({ splitToningShadowHue: 215, splitToningShadowSaturation: 14, colorGradeMidtoneLuminance: -3 });
-    expect(settings.lens).toMatchObject({ lensProfileEnable: true, lensProfileName: 'Canon EF 24-70mm f/2.8L II USM', autoLateralCA: true });
-    expect(settings.effects).toMatchObject({ postCropVignetteAmount: -18, postCropVignetteStyle: 2, grainAmount: 12 });
+    expect(settings.detail).toMatchObject({
+      sharpness: 55,
+      sharpenRadius: 1.2,
+      luminanceSmoothing: 18,
+      colorNoiseReduction: 30,
+    });
+    expect(settings.colorGrading).toMatchObject({
+      splitToningShadowHue: 215,
+      splitToningShadowSaturation: 14,
+      colorGradeMidtoneLuminance: -3,
+    });
+    expect(settings.lens).toMatchObject({
+      lensProfileEnable: true,
+      lensProfileName: 'Canon EF 24-70mm f/2.8L II USM',
+      autoLateralCA: true,
+    });
+    expect(settings.effects).toMatchObject({
+      postCropVignetteAmount: -18,
+      postCropVignetteStyle: 2,
+      grainAmount: 12,
+    });
     expect(settings.calibration).toMatchObject({ shadowTint: 3, blueHue: -6 });
     expect(settings.profile.cameraProfile).toBe('Adobe Color');
     expect(settings.look).toMatchObject({ name: 'Adobe Color', amount: 1, group: 'Profiles' });
@@ -614,7 +788,10 @@ ${description(
   });
 
   it('names what it declined and reports nothing else', () => {
-    expect(settings.unsupported).toEqual(['crs:MaskGroupBasedCorrections', 'crs:UprightTransform_0']);
+    expect(settings.unsupported).toEqual([
+      'crs:MaskGroupBasedCorrections',
+      'crs:UprightTransform_0',
+    ]);
     expect(settings.issues).toEqual([]);
   });
 });

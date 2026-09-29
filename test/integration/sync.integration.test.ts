@@ -8,7 +8,12 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -27,16 +32,21 @@ let opens = 0; // counts LibRaw opens so we can assert the stat quick-check skip
 
 const abs = (rel: string) => path.join(root, rel);
 const row = (filePath: string) =>
-  db.query(`SELECT id, shoot_id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ?`).get(filePath) as
-    | { id: string; shoot_id: string | null; is_missing: number }
-    | null;
+  db
+    .query(`SELECT id, shoot_id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ?`)
+    .get(filePath) as { id: string; shoot_id: string | null; is_missing: number } | null;
 const count = () => (db.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number }).n;
 
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-int-'));
   outside = mkdtempSync(path.join(tmpdir(), 'bb-out-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   const processing = photoProcessing(db);
   // No-op processing trigger: this suite exercises scan/diff detection with real
   // metadata, not rendition generation (validated separately).
@@ -138,13 +148,9 @@ test('restoring the file at its path clears missing (reappearance)', async () =>
 });
 
 test('moving a file into a known shoot folder reconciles shoot_id', async () => {
-  db.query('INSERT INTO shoots (id, library_id, folder_path, name, ordering) VALUES (?, ?, ?, ?, ?)').run(
-    'sh1',
-    LIB,
-    'ShootFolder',
-    'ShootFolder',
-    'taken_desc',
-  );
+  db.query(
+    'INSERT INTO shoots (id, library_id, folder_path, name, ordering) VALUES (?, ?, ?, ?, ?)',
+  ).run('sh1', LIB, 'ShootFolder', 'ShootFolder', 'taken_desc');
   mkdirSync(abs('ShootFolder'));
   renameSync(abs('renamed.arw'), abs('ShootFolder/renamed.arw'));
   await scan.scanLibrary(LIB);
@@ -155,7 +161,9 @@ test('moving a file into a known shoot folder reconciles shoot_id', async () => 
 // folder moved rather than vanished, so this exercises the whole chain: scan ->
 // per-file move detection -> whole-folder inference -> bulk prefix rewrite.
 test('a shoot folder renamed on disk relocates the shoot instead of orphaning its photos', async () => {
-  const folderPath = () => (db.query('SELECT folder_path FROM shoots WHERE id = ?').get('sh1') as { folder_path: string }).folder_path;
+  const folderPath = () =>
+    (db.query('SELECT folder_path FROM shoots WHERE id = ?').get('sh1') as { folder_path: string })
+      .folder_path;
   // A photo binned out of the shoot. Its file is in the library's one bin, which
   // scan never scans, so nothing in the move detection can speak for it; only the
   // prefix rewrite can.
@@ -185,7 +193,11 @@ test('a shoot folder renamed on disk relocates the shoot instead of orphaning it
     deleted_from_path: string;
     is_deleted: number;
   };
-  expect(binned).toEqual({ file_path: 'Bin/ShootFolder/old.arw', deleted_from_path: 'Renamed/old.arw', is_deleted: 1 });
+  expect(binned).toEqual({
+    file_path: 'Bin/ShootFolder/old.arw',
+    deleted_from_path: 'Renamed/old.arw',
+    is_deleted: 1,
+  });
   // Counted as moved, and emphatically not as removed-and-added.
   expect(status.photos_moved).toBe(1);
   expect(status.photos_removed).toBe(0);
@@ -196,7 +208,9 @@ test('a shoot folder renamed on disk relocates the shoot instead of orphaning it
 // each filename, which by the paths alone is identical to renaming the folder.
 // The shoot did not move, so it must not be relocated into its own subfolder.
 test('sorting a shoot into a subfolder leaves the shoot where it is', async () => {
-  const folderPath = () => (db.query('SELECT folder_path FROM shoots WHERE id = ?').get('sh1') as { folder_path: string }).folder_path;
+  const folderPath = () =>
+    (db.query('SELECT folder_path FROM shoots WHERE id = ?').get('sh1') as { folder_path: string })
+      .folder_path;
   mkdirSync(abs('Renamed/Selects'));
   renameSync(abs('Renamed/renamed.arw'), abs('Renamed/Selects/renamed.arw'));
 

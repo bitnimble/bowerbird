@@ -26,7 +26,10 @@ export async function moveIntoDir(from: string, dir: string, filename: string): 
         n--;
         continue;
       }
-      throw new AppError('IO_ERROR', `failed to move ${from} into ${dir}: ${(err as Error).message}`);
+      throw new AppError(
+        'IO_ERROR',
+        `failed to move ${from} into ${dir}: ${(err as Error).message}`,
+      );
     }
     await unlinkMovedFile(from, candidate);
     return candidate;

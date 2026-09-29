@@ -80,7 +80,9 @@ function applyMigrations(db: Database): void {
     created_at NUMERIC
   )`);
   const applied = new Set(
-    (db.query('SELECT hash FROM __drizzle_migrations').all() as { hash: string }[]).map((row) => row.hash),
+    (db.query('SELECT hash FROM __drizzle_migrations').all() as { hash: string }[]).map(
+      (row) => row.hash,
+    ),
   );
   const owed = journal().filter((entry) => !applied.has(entry.tag));
   if (owed.length === 0) return;
@@ -88,7 +90,8 @@ function applyMigrations(db: Database): void {
   // Restored rather than turned on afterwards: whether keys are enforced is the connection's
   // business, and `createDatabase` is what decides it. A migration that left them on would enforce
   // them on a connection that had asked for them off.
-  const enforcing = (db.query('PRAGMA foreign_keys').get() as { foreign_keys: number } | undefined)?.foreign_keys;
+  const enforcing = (db.query('PRAGMA foreign_keys').get() as { foreign_keys: number } | undefined)
+    ?.foreign_keys;
   db.exec('PRAGMA foreign_keys = OFF');
   try {
     for (const entry of owed) {
@@ -98,7 +101,10 @@ function applyMigrations(db: Database): void {
           const trimmed = statement.trim();
           if (trimmed !== '') db.exec(trimmed);
         }
-        db.query('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)').run(entry.tag, entry.when);
+        db.query('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)').run(
+          entry.tag,
+          entry.when,
+        );
       })();
     }
   } finally {
@@ -119,7 +125,9 @@ export function runMigrations(db: Database): void {
 // other peers key their version vectors by. Changing it would make this peer a stranger to its own
 // writes.
 function seedIdentity(db: Database): void {
-  db.query('INSERT OR IGNORE INTO replication_identity (singleton, peer_id, name) VALUES (1, ?, ?)').run(
+  db.query(
+    'INSERT OR IGNORE INTO replication_identity (singleton, peer_id, name) VALUES (1, ?, ?)',
+  ).run(
     newId(),
     // Every handshake carries this name and refuses a longer one, and a macOS host name can be 255.
     hostname().slice(0, DEVICE_NAME_MAX_LENGTH) || 'This device',

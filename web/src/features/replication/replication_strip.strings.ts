@@ -23,7 +23,7 @@ export const ReplicationStripStrings = {
   stopSyncingQuestion: (libraryName: string, deviceName: string) =>
     `Stop syncing "${libraryName}" with ${deviceName}?`,
   stopSyncingWarning: (deviceName: string, sole: number) =>
-    (sole === 0
+    sole === 0
       ? 'Your files stay where they are. You can pair them again.'
-      : `${sole} ${sole === 1 ? 'photo exists' : 'photos exist'} only on ${deviceName}. Fetch the originals before you stop syncing. Your files stay where they are.`),
+      : `${sole} ${sole === 1 ? 'photo exists' : 'photos exist'} only on ${deviceName}. Fetch the originals before you stop syncing. Your files stay where they are.`,
 };

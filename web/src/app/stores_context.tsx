@@ -149,7 +149,9 @@ function build(): { stores: Stores; presenters: Presenters } {
   const appSettings = new AppSettingsPresenter(stores.appSettings, toasts);
   // A finished scan moves the library's photo count, and sorting a grid edits
   // the collection it is of, so both write through the presenter that owns it.
-  const libraries = new LibrariesPresenter(stores.libraries, toasts, (statuses) => scan.observeStatuses(statuses));
+  const libraries = new LibrariesPresenter(stores.libraries, toasts, (statuses) =>
+    scan.observeStatuses(statuses),
+  );
   const deviceSettings = new DeviceSettingsPresenter(stores.deviceSettings);
   const photos = new PhotosPresenter(
     stores.listing,
@@ -164,7 +166,13 @@ function build(): { stores: Stores; presenters: Presenters } {
     appSettings,
     stores.deviceSettings,
   );
-  const replication = new ReplicationPresenter(stores.replication, stores.libraries, libraries, photos, toasts);
+  const replication = new ReplicationPresenter(
+    stores.replication,
+    stores.libraries,
+    libraries,
+    photos,
+    toasts,
+  );
   const scan = new ScanPresenter(stores.scan, photos, libraries);
   // Writes every verdict through the photos presenter, so the gallery behind the session
   // keeps its rows correct.
@@ -179,7 +187,14 @@ function build(): { stores: Stores; presenters: Presenters } {
   // deleted label from the grid's filter the same way.
   const labels = new LabelsPresenter(stores.labels, stores.labelEditor, photos, toasts);
   const backup = new BackupPresenter(stores.backup, photos, toasts);
-  const events = new EventsPresenter(photos, replication, stackTriage, exportPhotos, labels, backup);
+  const events = new EventsPresenter(
+    photos,
+    replication,
+    stackTriage,
+    exportPhotos,
+    labels,
+    backup,
+  );
   const presenters: Presenters = {
     libraries,
     photos,
@@ -200,7 +215,13 @@ function build(): { stores: Stores; presenters: Presenters } {
     feedback: new FeedbackPresenter(stores.feedback, toasts),
     updates: new UpdatesPresenter(stores.updates),
     sidebar,
-    frameTv: new FrameTvPresenter(stores.frameTv, stores.appSettings, stores.viewer, photos, toasts),
+    frameTv: new FrameTvPresenter(
+      stores.frameTv,
+      stores.appSettings,
+      stores.viewer,
+      photos,
+      toasts,
+    ),
     labels,
   };
   return { stores, presenters };
@@ -257,8 +278,12 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                           <FeedbackStoreContext.Provider value={stores.feedback}>
                                             <FrameTvStoreContext.Provider value={stores.frameTv}>
                                               <LabelsStoreContext.Provider value={stores.labels}>
-                                                <LabelEditorStoreContext.Provider value={stores.labelEditor}>
-                                                  <ConfirmStoreContext.Provider value={stores.confirm}>
+                                                <LabelEditorStoreContext.Provider
+                                                  value={stores.labelEditor}
+                                                >
+                                                  <ConfirmStoreContext.Provider
+                                                    value={stores.confirm}
+                                                  >
                                                     {children}
                                                   </ConfirmStoreContext.Provider>
                                                 </LabelEditorStoreContext.Provider>
@@ -292,30 +317,50 @@ function required<T>(value: T | null, name: string): T {
   return value;
 }
 
-export const useLibrariesStore = (): LibrariesStore => required(useContext(LibrariesStoreContext), 'LibrariesStore');
-export const useListingStore = (): ListingStore => required(useContext(ListingStoreContext), 'ListingStore');
-export const useMarksStore = (): MarksStore => required(useContext(MarksStoreContext), 'MarksStore');
-export const useStacksStore = (): StacksStore => required(useContext(StacksStoreContext), 'StacksStore');
-export const useViewerStore = (): ViewerStore => required(useContext(ViewerStoreContext), 'ViewerStore');
-export const useShootsStore = (): ShootsStore => required(useContext(ShootsStoreContext), 'ShootsStore');
-export const useAlbumsStore = (): AlbumsStore => required(useContext(AlbumsStoreContext), 'AlbumsStore');
+export const useLibrariesStore = (): LibrariesStore =>
+  required(useContext(LibrariesStoreContext), 'LibrariesStore');
+export const useListingStore = (): ListingStore =>
+  required(useContext(ListingStoreContext), 'ListingStore');
+export const useMarksStore = (): MarksStore =>
+  required(useContext(MarksStoreContext), 'MarksStore');
+export const useStacksStore = (): StacksStore =>
+  required(useContext(StacksStoreContext), 'StacksStore');
+export const useViewerStore = (): ViewerStore =>
+  required(useContext(ViewerStoreContext), 'ViewerStore');
+export const useShootsStore = (): ShootsStore =>
+  required(useContext(ShootsStoreContext), 'ShootsStore');
+export const useAlbumsStore = (): AlbumsStore =>
+  required(useContext(AlbumsStoreContext), 'AlbumsStore');
 export const useScanStore = (): ScanStore => required(useContext(ScanStoreContext), 'ScanStore');
 export const useReplicationStore = (): ReplicationStore =>
   required(useContext(ReplicationStoreContext), 'ReplicationStore');
-export const useBackupStore = (): BackupStore => required(useContext(BackupStoreContext), 'BackupStore');
-export const useToastsStore = (): ToastsStore => required(useContext(ToastsStoreContext), 'ToastsStore');
-export const useConfirmStore = (): ConfirmStore => required(useContext(ConfirmStoreContext), 'ConfirmStore');
-export const useAppSettingsStore = (): AppSettingsStore => required(useContext(AppSettingsStoreContext), 'AppSettingsStore');
+export const useBackupStore = (): BackupStore =>
+  required(useContext(BackupStoreContext), 'BackupStore');
+export const useToastsStore = (): ToastsStore =>
+  required(useContext(ToastsStoreContext), 'ToastsStore');
+export const useConfirmStore = (): ConfirmStore =>
+  required(useContext(ConfirmStoreContext), 'ConfirmStore');
+export const useAppSettingsStore = (): AppSettingsStore =>
+  required(useContext(AppSettingsStoreContext), 'AppSettingsStore');
 export const useDeviceSettingsStore = (): DeviceSettingsStore =>
   required(useContext(DeviceSettingsStoreContext), 'DeviceSettingsStore');
-export const useStackTriageStore = (): StackTriageStore => required(useContext(StackTriageStoreContext), 'StackTriageStore');
-export const useExportStore = (): ExportStore => required(useContext(ExportStoreContext), 'ExportStore');
-export const useExportHistoryStore = (): ExportHistoryStore => required(useContext(ExportHistoryStoreContext), 'ExportHistoryStore');
-export const useUpdatesStore = (): UpdatesStore => required(useContext(UpdatesStoreContext), 'UpdatesStore');
-export const useFeedbackStore = (): FeedbackStore => required(useContext(FeedbackStoreContext), 'FeedbackStore');
-export const useSidebarStore = (): SidebarStore => required(useContext(SidebarStoreContext), 'SidebarStore');
-export const useFrameTvStore = (): FrameTvStore => required(useContext(FrameTvStoreContext), 'FrameTvStore');
-export const useLabelsStore = (): LabelsStore => required(useContext(LabelsStoreContext), 'LabelsStore');
+export const useStackTriageStore = (): StackTriageStore =>
+  required(useContext(StackTriageStoreContext), 'StackTriageStore');
+export const useExportStore = (): ExportStore =>
+  required(useContext(ExportStoreContext), 'ExportStore');
+export const useExportHistoryStore = (): ExportHistoryStore =>
+  required(useContext(ExportHistoryStoreContext), 'ExportHistoryStore');
+export const useUpdatesStore = (): UpdatesStore =>
+  required(useContext(UpdatesStoreContext), 'UpdatesStore');
+export const useFeedbackStore = (): FeedbackStore =>
+  required(useContext(FeedbackStoreContext), 'FeedbackStore');
+export const useSidebarStore = (): SidebarStore =>
+  required(useContext(SidebarStoreContext), 'SidebarStore');
+export const useFrameTvStore = (): FrameTvStore =>
+  required(useContext(FrameTvStoreContext), 'FrameTvStore');
+export const useLabelsStore = (): LabelsStore =>
+  required(useContext(LabelsStoreContext), 'LabelsStore');
 export const useLabelEditorStore = (): LabelEditorStore =>
   required(useContext(LabelEditorStoreContext), 'LabelEditorStore');
-export const usePresenters = (): Presenters => required(useContext(PresentersContext), 'Presenters');
+export const usePresenters = (): Presenters =>
+  required(useContext(PresentersContext), 'Presenters');

@@ -11,7 +11,12 @@ import type { SettingsRepository } from '../../settings/settings_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
 import { renditionSkips, withStagesOff } from '../renditions/render_stages';
 import { openCompositeWorker, type CompositeWorker } from '../workers/composite_worker';
-import type { CompositeJob, CompositeJobSource, RenditionSource, RenditionWritten } from '../workers/processing_types';
+import type {
+  CompositeJob,
+  CompositeJobSource,
+  RenditionSource,
+  RenditionWritten,
+} from '../workers/processing_types';
 import { developed } from './developed';
 import type { RenderTargets } from './render_targets';
 
@@ -28,8 +33,6 @@ export class CompositeRenderer {
     private readonly settings: SettingsRepository,
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
   ) {}
-
-
 
   /**
    * A panorama's sources, searched for the recipe that composites them.
@@ -66,8 +69,6 @@ export class CompositeRenderer {
     return recipe;
   }
 
-
-
   /**
    * A set of frames, searched for the tiles an assembly would carve them into (§3).
    *
@@ -98,11 +99,10 @@ export class CompositeRenderer {
     });
     // A native refusal already arrives as a rejection carrying its own reason; this is the belt
     // for a worker that somehow answered with nothing at all.
-    if (analysed == null) throw new AppError('VALIDATION_ERROR', 'this burst could not be carved into tiles');
+    if (analysed == null)
+      throw new AppError('VALIDATION_ERROR', 'this burst could not be carved into tiles');
     return analysed;
   }
-
-
 
   /**
    * An assembly's seams for each of `picks` in place of the recipe's own, over the volume its carve
@@ -111,7 +111,12 @@ export class CompositeRenderer {
    * On a worker of its own, kept open: a reader is waiting on it after every pick, and it never
    * touches the device the carve and the renders queue for.
    */
-  async solveSeams(recipe: AssemblyRecipe, picks: number[][], volumePath: string, library: Library): Promise<string> {
+  async solveSeams(
+    recipe: AssemblyRecipe,
+    picks: number[][],
+    volumePath: string,
+    library: Library,
+  ): Promise<string> {
     if (this.seaming?.crashed() === true) {
       this.seaming.close();
       this.seaming = null;
@@ -135,8 +140,6 @@ export class CompositeRenderer {
     if (solved == null) throw new AppError('VALIDATION_ERROR', 'the seams could not be solved');
     return solved;
   }
-
-
 
   /**
    * One source's own picture of an assembly's canvas (§4.3), written where a draft's layers live.
@@ -171,18 +174,35 @@ export class CompositeRenderer {
       // No row to key it by, as a prepare of a draft has none.
       photoId: '',
       sources,
-      recipe: { ...recipe, kind: 'assembly', vertices: [], tiles: [], pick: [], base: at, seams: undefined },
+      recipe: {
+        ...recipe,
+        kind: 'assembly',
+        vertices: [],
+        tiles: [],
+        pick: [],
+        base: at,
+        seams: undefined,
+      },
       dataPath,
       targets: [
-        { ...this.targets.composedTarget(dataPath, '', recipe, 'assembly', 'full', library.rendition_hdr, 'render'), outputPath },
+        {
+          ...this.targets.composedTarget(
+            dataPath,
+            '',
+            recipe,
+            'assembly',
+            'full',
+            library.rendition_hdr,
+            'render',
+          ),
+          outputPath,
+        },
       ],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser),
       ...this.targets.render(),
     });
   }
-
-
 
   /**
    * §4.2's settled preview: the picture this recipe composes, at the layers' own size.
@@ -212,15 +232,24 @@ export class CompositeRenderer {
       recipe: { ...recipe, kind: 'assembly' },
       dataPath,
       targets: [
-        { ...this.targets.composedTarget(dataPath, '', recipe, 'assembly', 'full', library.rendition_hdr, 'render'), outputPath },
+        {
+          ...this.targets.composedTarget(
+            dataPath,
+            '',
+            recipe,
+            'assembly',
+            'full',
+            library.rendition_hdr,
+            'render',
+          ),
+          outputPath,
+        },
       ],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser),
       ...this.targets.render(),
     });
   }
-
-
 
   /**
    * A composite's rendition, built now because somebody asked for it by name.
@@ -231,10 +260,17 @@ export class CompositeRenderer {
    * while the frames sit right there. Answers false for a row that is not a composite, so the
    * caller can go on to its file.
    */
-  async buildComposite(photoId: string, library: Library, rendition: Rendition, hdr: boolean): Promise<boolean> {
+  async buildComposite(
+    photoId: string,
+    library: Library,
+    rendition: Rendition,
+    hdr: boolean,
+  ): Promise<boolean> {
     const composite = this.compositeOf(photoId);
     if (composite == null) return false;
-    const from = composite.sources.every((source) => hasEmbeddedJpeg(source.rawFilePath)) ? 'embedded' : 'render';
+    const from = composite.sources.every((source) => hasEmbeddedJpeg(source.rawFilePath))
+      ? 'embedded'
+      : 'render';
     // The tile may come from the cameras' own JPEGs, and the camera view is nothing but that
     // request at the viewer's size; anything else the reader asks for by name comes off the RAWs,
     // which is the whole reason they asked for it.
@@ -243,7 +279,17 @@ export class CompositeRenderer {
     const builtFrom = this.photoProcessing.builtFromOf(photoId);
     const on = this.openComposite();
     try {
-      await this.buildCompositeRendition(photoId, composite.sources, composite.recipe, composite.kind, library, rendition, hdr, source, on);
+      await this.buildCompositeRendition(
+        photoId,
+        composite.sources,
+        composite.recipe,
+        composite.kind,
+        library,
+        rendition,
+        hdr,
+        source,
+        on,
+      );
     } finally {
       on.close();
     }
@@ -263,8 +309,6 @@ export class CompositeRenderer {
     this.announce(photoId, { stage: rendition === 'grid' ? 'tile' : 'renditions', version });
     return true;
   }
-
-
 
   /**
    * One of a panorama's renditions, composited from its frames and filed under the panorama.
@@ -298,7 +342,9 @@ export class CompositeRenderer {
           recipe,
           dataPath,
           reportProgress: watched,
-          targets: [this.targets.composedTarget(dataPath, photoId, recipe, kind, rendition, hdr, source)],
+          targets: [
+            this.targets.composedTarget(dataPath, photoId, recipe, kind, rendition, hdr, source),
+          ],
           grade: this.targets.grade(),
           // The composite's own document, which the merge wrote the align's framing into: a panorama
           // is a photograph, so what frames it is the field that frames every other one.
@@ -309,8 +355,6 @@ export class CompositeRenderer {
       ),
     );
   }
-
-
 
   /**
    * A worker to run a panorama's jobs on, held open until the caller closes it.
@@ -327,8 +371,6 @@ export class CompositeRenderer {
   openComposite(): CompositeWorker {
     return openCompositeWorker();
   }
-
-
 
   /** One panorama job on a worker of its own, for a caller with only the one. */
   async runComposite(job: CompositeJob): Promise<string | undefined> {

@@ -1,11 +1,19 @@
 import { describe, it, expect } from 'bun:test';
-import { isDirInScope, isFileInScope, isPathAllowed, libraryScope, type LibraryScope } from '../scope';
+import {
+  isDirInScope,
+  isFileInScope,
+  isPathAllowed,
+  libraryScope,
+  type LibraryScope,
+} from '../scope';
 
 const ROOT = '/lib';
 
 // Built through the real constructor rather than as a literal, so the tests
 // cannot drift from how a scope is actually assembled.
-function scope(over: { includeSubfolders?: boolean; excluded?: Set<string>; binName?: string } = {}): LibraryScope {
+function scope(
+  over: { includeSubfolders?: boolean; excluded?: Set<string>; binName?: string } = {},
+): LibraryScope {
   return libraryScope(
     {
       root_path: ROOT,
@@ -39,7 +47,7 @@ describe('isDirInScope', () => {
 
   // The name is the library's, so a root that already had a Bin of the user's own
   // keeps it and skips whatever the bin was named instead.
-  it('skips the library\'s own bin name, and nothing else', () => {
+  it("skips the library's own bin name, and nothing else", () => {
     const renamed = scope({ binName: 'Deleted' });
     expect(isDirInScope(renamed, 'Deleted')).toBe(false);
     expect(isDirInScope(renamed, 'Deleted/Trip')).toBe(false);

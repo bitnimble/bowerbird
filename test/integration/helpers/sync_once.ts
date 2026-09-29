@@ -20,7 +20,12 @@ import { extractMetadata } from '../../../src/services/processing/analysis/metad
 import { AppError } from '../../../src/errors';
 import { photoMetadata, photoPaths, photoProcessing, photoScan } from './photo_repositories';
 
-const [role, dbPath, libraryId, signals] = process.argv.slice(2) as ['hold' | 'scan', string, string, string];
+const [role, dbPath, libraryId, signals] = process.argv.slice(2) as [
+  'hold' | 'scan',
+  string,
+  string,
+  string,
+];
 const held = path.join(signals, 'held');
 const released = path.join(signals, 'released');
 

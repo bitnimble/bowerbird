@@ -178,7 +178,8 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
     if (!event.isPrimary || held.current != null) return;
     // The pair the reader says they are drawing, and it has to have room. A third upright line
     // fixes the vertical a second time and the horizontal not at all.
-    if (box.width === 0 || box.height === 0 || store.guidePairs[store.guideKind].length >= PAIR) return;
+    if (box.width === 0 || box.height === 0 || store.guidePairs[store.guideKind].length >= PAIR)
+      return;
     event.preventDefault();
     event.stopPropagation();
     const surface = event.currentTarget;
@@ -279,7 +280,10 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
                 cannot read off the picture: two lines of one colour are what gets corrected
                 together, and a line that came out the other way changes colour as it is drawn. */}
             <line
-              {...stylex.props(styles.line, isUpright(guide) ? styles.lineVertical : styles.lineHorizontal)}
+              {...stylex.props(
+                styles.line,
+                isUpright(guide) ? styles.lineVertical : styles.lineHorizontal,
+              )}
               x1={guide.x1 * 100}
               y1={guide.y1 * 100}
               x2={guide.x2 * 100}
@@ -311,7 +315,10 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
           {([1, 2] as const).map((end) => (
             <div
               key={end}
-              {...stylex.props(styles.end, isUpright(guide) ? styles.endVertical : styles.endHorizontal)}
+              {...stylex.props(
+                styles.end,
+                isUpright(guide) ? styles.endVertical : styles.endHorizontal,
+              )}
               onPointerDown={drag(index, end)}
               style={placed(end === 1 ? guide.x1 : guide.x2, end === 1 ? guide.y1 : guide.y2)}
             />

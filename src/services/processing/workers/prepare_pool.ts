@@ -102,10 +102,7 @@ export function pictureLevel(
     // even column - so a span taken from where the client asked would end short of it by however
     // far the origin moved, and the client would mark a tile resident with a strip of it black.
     const width = Math.min(evenSpan(askedLeft + askedWide - left, Math.ceil), shape.width - left);
-    const height = Math.min(
-      Math.max(Math.ceil(askedTop + askedTall - top), 1),
-      shape.height - top,
-    );
+    const height = Math.min(Math.max(Math.ceil(askedTop + askedTall - top), 1), shape.height - top);
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
       return null;
     }
@@ -130,16 +127,17 @@ export function pictureLevel(
   // **From the region on screen, not from the window grown around it.** The margin is slack to
   // pan into and never anything the reader is looking at, so a level picked off it would serve the
   // whole window one rung coarser than the stage can show.
-  const level = shown == null
-    ? coarsestLevel(long)
-    : levelForStage(
-        long,
-        Math.max(
-          clampFraction(shown.region.width) * canvasWide,
-          clampFraction(shown.region.height) * canvasTall,
-        ),
-        Math.max(shown.stage, 1),
-      );
+  const level =
+    shown == null
+      ? coarsestLevel(long)
+      : levelForStage(
+          long,
+          Math.max(
+            clampFraction(shown.region.width) * canvasWide,
+            clampFraction(shown.region.height) * canvasTall,
+          ),
+          Math.max(shown.stage, 1),
+        );
   // The level's own shape, from the twin `prepare-levels.txt` holds against the library's: both
   // axes floored to even, and no halving past the size a composite is ever assembled at.
   const { width: levelWide, height: levelTall } = levelSize(canvasWide, canvasTall, level);
@@ -151,10 +149,7 @@ export function pictureLevel(
   const fromTop = clampFraction(asked?.y ?? 0) * levelTall;
   const left = Math.min(evenAt(fromLeft), Math.max(levelWide - 2, 0));
   const top = Math.min(Math.floor(fromTop), Math.max(levelTall - 1, 0));
-  const width = Math.min(
-    evenSpan(fromLeft + wide * levelWide - left, Math.ceil),
-    levelWide - left,
-  );
+  const width = Math.min(evenSpan(fromLeft + wide * levelWide - left, Math.ceil), levelWide - left);
   const height = Math.min(
     Math.max(Math.ceil(fromTop + tall * levelTall - top), 1),
     levelTall - top,

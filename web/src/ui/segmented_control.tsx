@@ -152,7 +152,8 @@ export function SegmentedControl<T extends string>({
       option.value === held && option.tone === 'reject' && styles.heldReject,
       itemStyle,
     );
-  const iconName = (option: Option<T>): string | undefined => (option.iconOnly === true ? option.label : undefined);
+  const iconName = (option: Option<T>): string | undefined =>
+    option.iconOnly === true ? option.label : undefined;
   const contents = (option: Option<T>): JSX.Element => (
     <>
       {option.icon}
@@ -173,7 +174,12 @@ export function SegmentedControl<T extends string>({
       >
         {options.map((option) => (
           <Tooltip key={option.value} label={iconName(option)}>
-            <Radio.Root value={option.value} aria-label={iconName(option)} tabIndex={tabIndex} {...item(option)}>
+            <Radio.Root
+              value={option.value}
+              aria-label={iconName(option)}
+              tabIndex={tabIndex}
+              {...item(option)}
+            >
               {contents(option)}
             </Radio.Root>
           </Tooltip>
@@ -196,7 +202,12 @@ export function SegmentedControl<T extends string>({
     >
       {options.map((option) => (
         <Tooltip key={option.value} label={iconName(option)}>
-          <Toggle value={option.value} aria-label={iconName(option)} tabIndex={tabIndex} {...item(option)}>
+          <Toggle
+            value={option.value}
+            aria-label={iconName(option)}
+            tabIndex={tabIndex}
+            {...item(option)}
+          >
             {contents(option)}
           </Toggle>
         </Tooltip>

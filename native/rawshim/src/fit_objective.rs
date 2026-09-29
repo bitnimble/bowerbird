@@ -60,7 +60,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -211,10 +215,25 @@ pub(crate) fn paired(
             candidates * (2 * blocks + 1 + blocks.div_ceil(GROUP)),
             readable,
         ),
-        records: held(gpu, "fit objective records", candidates * pixels * RECORD_WORDS, readable),
-        bins: held(gpu, "fit objective bins", candidates * BINS_PER_CANDIDATE, cleared),
+        records: held(
+            gpu,
+            "fit objective records",
+            candidates * pixels * RECORD_WORDS,
+            readable,
+        ),
+        bins: held(
+            gpu,
+            "fit objective bins",
+            candidates * BINS_PER_CANDIDATE,
+            cleared,
+        ),
         curves: held(gpu, "fit objective curves", candidates * LEVELS, readable),
-        score: held(gpu, "fit objective score", candidates * SCORE_WORDS, cleared),
+        score: held(
+            gpu,
+            "fit objective score",
+            candidates * SCORE_WORDS,
+            cleared,
+        ),
         // Two 256-level tables, rewritten each round because the curve they come off is.
         falloff_tables: held(
             gpu,
@@ -263,20 +282,50 @@ impl Paired {
             label: Some("fit_objective"),
             layout: &kernels(self.gpu).layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.stacked.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.jpeg.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: gain.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: self.counts.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: self.records.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: self.bins.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: self.curves.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: self.score.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.stacked.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.jpeg.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: gain.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.counts.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.records.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.bins.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.curves.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.score.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: self.falloff_tables.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry { binding: 9, resource: self.falloff_bins.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: self.falloff_bins.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         })
     }
@@ -363,7 +412,9 @@ impl Paired {
             words,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-        recording.encoder().copy_buffer_to_buffer(&self.score, 0, &out, 0, (words * 4) as u64);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.score, 0, &out, 0, (words * 4) as u64);
         recording.submit();
         let read = read_words(self.gpu, &out).await?;
         Some(
@@ -395,7 +446,9 @@ impl Paired {
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
         let from = (candidate * LEVELS * 4) as u64;
-        recording.encoder().copy_buffer_to_buffer(&self.curves, from, &out, 0, (LEVELS * 4) as u64);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.curves, from, &out, 0, (LEVELS * 4) as u64);
         recording.submit();
         let read = read_words(self.gpu, &out).await?;
         Some(std::array::from_fn(|level| read[level] as u8))
@@ -427,7 +480,9 @@ impl Paired {
             .chain(linear.iter().copied())
             .flat_map(|v| (v as f32).to_ne_bytes())
             .collect();
-        self.gpu.queue.write_buffer(&self.falloff_tables, 0, &tables);
+        self.gpu
+            .queue
+            .write_buffer(&self.falloff_tables, 0, &tables);
 
         let blocks = admitted.div_ceil(BLOCK).max(1);
         let words = blocks * FALLOFF_BINS * FALLOFF_WORDS;
@@ -494,7 +549,10 @@ mod tests {
             format!("static const int PHASES = {};", super::PHASES),
             format!("static const int GROUP = {};", super::GROUP),
         ] {
-            assert!(SOURCE.contains(&line), "fit_objective.slang does not say `{line}`");
+            assert!(
+                SOURCE.contains(&line),
+                "fit_objective.slang does not say `{line}`"
+            );
         }
     }
 }

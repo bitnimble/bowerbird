@@ -53,8 +53,10 @@ pub fn run() {
         .on_window_event(|window, event| {
             // The server outlives the window otherwise, holding the catalogue against
             // the next start and leaving a process nobody can see.
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed)
-                && window.label() == "main"
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) && window.label() == "main"
             {
                 server::stop();
                 #[cfg(desktop)]

@@ -2,8 +2,8 @@
 //! override its module declares, so any subset of them can be handed to it, and an unlisted one
 //! reads none, so it is handed nothing.
 
-use naga::compact::{compact, KeepUnused};
-use rawshim::wgsl_overrides::{reads_overrides, READS_OVERRIDES};
+use naga::compact::{KeepUnused, compact};
+use rawshim::wgsl_overrides::{READS_OVERRIDES, reads_overrides};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,11 @@ fn emitted(dir: PathBuf, under: &str) -> Vec<String> {
     for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
         let entry = entry.expect("a staged shader");
         let name = entry.file_name().to_string_lossy().into_owned();
-        let at = if under.is_empty() { name.clone() } else { format!("{under}/{name}") };
+        let at = if under.is_empty() {
+            name.clone()
+        } else {
+            format!("{under}/{name}")
+        };
         if entry.path().is_dir() {
             found.extend(emitted(entry.path(), &at));
         } else if name.ends_with(".wgsl") {
@@ -23,7 +27,11 @@ fn emitted(dir: PathBuf, under: &str) -> Vec<String> {
 }
 
 fn names(module: &naga::Module) -> BTreeSet<String> {
-    module.overrides.iter().filter_map(|(_, it)| it.name.clone()).collect()
+    module
+        .overrides
+        .iter()
+        .filter_map(|(_, it)| it.name.clone())
+        .collect()
 }
 
 /// The overrides `entry` reaches: the module cut down to that entry point alone, with everything
@@ -51,17 +59,29 @@ fn only_listed_entry_points_read_overrides() {
             let listed = reads_overrides(shader, &entry.name);
             if listed && read != declared {
                 let unread: Vec<_> = declared.difference(&read).collect();
-                found.push(format!("  {shader} `{}` is listed but never reads {unread:?}", entry.name));
+                found.push(format!(
+                    "  {shader} `{}` is listed but never reads {unread:?}",
+                    entry.name
+                ));
             }
             if !listed && !read.is_empty() {
-                found.push(format!("  {shader} `{}` reads {read:?} but is not listed", entry.name));
+                found.push(format!(
+                    "  {shader} `{}` reads {read:?} but is not listed",
+                    entry.name
+                ));
             }
         }
     }
     for (shader, entries) in READS_OVERRIDES {
         if !shaders.iter().any(|it| it == shader) {
-            found.push(format!("  {shader} is listed but was not emitted ({entries:?})"));
+            found.push(format!(
+                "  {shader} is listed but was not emitted ({entries:?})"
+            ));
         }
     }
-    assert!(found.is_empty(), "READS_OVERRIDES disagrees with the shaders:\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "READS_OVERRIDES disagrees with the shaders:\n{}",
+        found.join("\n")
+    );
 }

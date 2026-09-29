@@ -30,7 +30,9 @@ afterEach(forgetPeers);
 // against somebody else's clock.
 function edited(peer: Peer, photoId: string, at: string): void {
   peer.db
-    .query("INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp) VALUES (?, '{}', 0, 1, ?, ?)")
+    .query(
+      "INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp) VALUES (?, '{}', 0, 1, ?, ?)",
+    )
     .run(photoId, BUILT_AT, at);
 }
 
@@ -73,7 +75,10 @@ describe('fetching a rendition through a peer', () => {
     const message = `This photo's original is missing. Restore it to "${path.join(local.root, 'Day1/one.arw')}" and scan the library again.`;
 
     for (const rendition of ['full', 'max'] as const) {
-      await expect(local.fetch.ensureCurrent('photo1', rendition)).rejects.toMatchObject({ code: 'NOT_FOUND', message });
+      await expect(local.fetch.ensureCurrent('photo1', rendition)).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        message,
+      });
     }
 
     expect(request).not.toHaveBeenCalled();
@@ -90,7 +95,12 @@ describe('fetching a rendition through a peer', () => {
     const target = getRenditionPath(library(local), 'photo1', 'max', hdr);
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, 'MAX-BYTES');
-    local.photoProcessing.markCopyBuilt('photo1', BUILT_AT, BUILT_FROM, renditionVariant('max', hdr));
+    local.photoProcessing.markCopyBuilt(
+      'photo1',
+      BUILT_AT,
+      BUILT_FROM,
+      renditionVariant('max', hdr),
+    );
     edited(local, 'photo1', EDITED_AFTER);
 
     await local.fetch.ensureCurrent('photo1', 'max');
@@ -220,7 +230,9 @@ describe('fetching a rendition through a peer', () => {
     buildTile(a, 'photo1', 'TILE-BYTES', EDITED_BEFORE);
     edited(a, 'photo1', EDITED_AFTER);
 
-    await expect(b.fetch.ensureCurrent('photo1', 'grid')).rejects.toThrow(/no peer holds a current/);
+    await expect(b.fetch.ensureCurrent('photo1', 'grid')).rejects.toThrow(
+      /no peer holds a current/,
+    );
     expect(existsSync(tilePath(b, 'photo1'))).toBe(false);
   });
 
@@ -230,7 +242,9 @@ describe('fetching a rendition through a peer', () => {
 
     await b.fetch.ensureCurrent('photo1', 'max');
 
-    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1');
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe(
+      'max-hdr of photo1',
+    );
   });
 
   it('has the holder lift the camera JPEG out of its original', async () => {
@@ -239,7 +253,9 @@ describe('fetching a rendition through a peer', () => {
 
     await b.fetch.ensureCurrent('photo1', 'embedded');
 
-    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'embedded', false), 'utf8')).toBe('CAMERA-JPEG');
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'embedded', false), 'utf8')).toBe(
+      'CAMERA-JPEG',
+    );
   });
 
   describe('through a device that holds no original either', () => {
@@ -258,8 +274,12 @@ describe('fetching a rendition through a peer', () => {
 
       await c.fetch.ensureCurrent('photo1', 'max');
 
-      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1');
-      expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1');
+      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'max', true), 'utf8')).toBe(
+        'max-hdr of photo1',
+      );
+      expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe(
+        'max-hdr of photo1',
+      );
     });
 
     it('passes a forced render on, past the copy it holds itself', async () => {
@@ -268,8 +288,12 @@ describe('fetching a rendition through a peer', () => {
 
       await c.fetch.ensureCurrent('photo1', 'max', true);
 
-      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1, forced');
-      expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1, forced');
+      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'max', true), 'utf8')).toBe(
+        'max-hdr of photo1, forced',
+      );
+      expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe(
+        'max-hdr of photo1, forced',
+      );
     });
 
     it("passes on the camera's JPEG", async () => {
@@ -278,7 +302,9 @@ describe('fetching a rendition through a peer', () => {
 
       await c.fetch.ensureCurrent('photo1', 'embedded');
 
-      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'embedded', false), 'utf8')).toBe('CAMERA-JPEG');
+      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'embedded', false), 'utf8')).toBe(
+        'CAMERA-JPEG',
+      );
     });
 
     it('passes on a tile the holder built', async () => {
@@ -299,17 +325,23 @@ describe('fetching a rendition through a peer', () => {
       addPhoto(c, 'photo1', 'Day1/one.arw');
       pair(b, c, 'photo1');
 
-      await expect(c.fetch.ensureCurrent('photo1', 'full')).rejects.toThrow(/no peer holds a current/);
+      await expect(c.fetch.ensureCurrent('photo1', 'full')).rejects.toThrow(
+        /no peer holds a current/,
+      );
     });
   });
 
   it('takes pictures from a peer on a library that keeps no originals', async () => {
     const { b } = holderAndReplica();
-    b.db.query('UPDATE replication_libraries SET sync_originals = 0 WHERE library_id = ?').run(b.lib);
+    b.db
+      .query('UPDATE replication_libraries SET sync_originals = 0 WHERE library_id = ?')
+      .run(b.lib);
 
     await b.fetch.ensureCurrent('photo1', 'full');
 
-    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe('full-hdr of photo1');
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe(
+      'full-hdr of photo1',
+    );
   });
 
   it('takes a photo from a peer on a library that keeps no originals, until its original is fetched here', () => {
@@ -321,7 +353,9 @@ describe('fetching a rendition through a peer', () => {
     };
     expect(b.fetch.takesFromPeer(library(b), photo())).toBe(false);
 
-    b.db.query('UPDATE replication_libraries SET sync_originals = 0 WHERE library_id = ?').run(b.lib);
+    b.db
+      .query('UPDATE replication_libraries SET sync_originals = 0 WHERE library_id = ?')
+      .run(b.lib);
     expect(b.fetch.takesFromPeer(library(b), photo())).toBe(true);
 
     mkdirSync(path.join(b.root, 'Day1'), { recursive: true });
@@ -336,7 +370,9 @@ describe('fetching a rendition through a peer', () => {
 
     await b.fetch.ensureCurrent('photo1', 'full', true);
 
-    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe('full-hdr of photo1, forced');
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe(
+      'full-hdr of photo1, forced',
+    );
     expect(b.announced).toEqual(['renditions of photo1']);
   });
 
@@ -345,8 +381,12 @@ describe('fetching a rendition through a peer', () => {
     await b.fetch.ensureCurrent('photo1', 'full');
     net.delete(a.id);
 
-    await expect(b.fetch.ensureCurrent('photo1', 'full', true)).rejects.toThrow(/no peer holds a current/);
-    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe('full-hdr of photo1');
+    await expect(b.fetch.ensureCurrent('photo1', 'full', true)).rejects.toThrow(
+      /no peer holds a current/,
+    );
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe(
+      'full-hdr of photo1',
+    );
   });
 
   it('keeps a stale cached copy rather than a hole when no peer can answer', async () => {

@@ -126,7 +126,13 @@ export function buildDiff(
 
   for (const db of dbPhotos) {
     if (!presentPaths.has(db.file_path)) {
-      removed.push({ photoId: db.id, filePath: db.file_path, fileHash: db.file_hash, wasMissing: db.is_missing, channel });
+      removed.push({
+        photoId: db.id,
+        filePath: db.file_path,
+        fileHash: db.file_hash,
+        wasMissing: db.is_missing,
+        channel,
+      });
       continue;
     }
     // Present but unreadable (stat ok, extract threw): we never confirmed its
@@ -164,7 +170,9 @@ export function buildDiff(
   return { removed, added, modified, reappeared };
 }
 
-function groupByHash<T extends { fileHash: string | null }>(entries: readonly T[]): Map<string, T[]> {
+function groupByHash<T extends { fileHash: string | null }>(
+  entries: readonly T[],
+): Map<string, T[]> {
   const map = new Map<string, T[]>();
   for (const entry of entries) {
     if (entry.fileHash == null) continue;
@@ -175,7 +183,11 @@ function groupByHash<T extends { fileHash: string | null }>(entries: readonly T[
   return map;
 }
 
-const CROSSING: Record<string, Crossing['direction']> = { 'live>bin': 'in', 'bin>live': 'out', 'bin>bin': 'within' };
+const CROSSING: Record<string, Crossing['direction']> = {
+  'live>bin': 'in',
+  'bin>live': 'out',
+  'bin>bin': 'within',
+};
 
 // Phase 2 move detection (DESIGN §9.3). `isInAlbum` biases which duplicates are
 // kept as moves (preserving album membership) when removals outnumber additions.
@@ -186,7 +198,10 @@ const CROSSING: Record<string, Crossing['direction']> = { 'live>bin': 'in', 'bin
 // A pair whose halves disagree on channel becomes a `Crossing` rather than a
 // `MoveEntry`: `detectShootRelocations` reads `moves`, and a binned file's
 // movement is not evidence about a live shoot folder.
-export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => boolean): MoveResult {
+export function detectMoves(
+  diff: LibraryDiff,
+  isInAlbum: (photoId: string) => boolean,
+): MoveResult {
   const addedByHash = groupByHash(diff.added);
   const removedByHash = groupByHash(diff.removed);
 
@@ -220,24 +235,40 @@ export function detectMoves(diff: LibraryDiff, isInAlbum: (photoId: string) => b
       usedRemoved.add(r);
       usedAdded.add(a);
       const direction = CROSSING[`${r.channel}>${a.channel}`];
-      if (direction == null) moves.push({ photoId: r.photoId, oldFilePath: r.filePath, newFilePath: a.filePath, fileHash: hash });
-      else crossings.push({ photoId: r.photoId, oldFilePath: r.filePath, newFilePath: a.filePath, direction });
+      if (direction == null)
+        moves.push({
+          photoId: r.photoId,
+          oldFilePath: r.filePath,
+          newFilePath: a.filePath,
+          fileHash: hash,
+        });
+      else
+        crossings.push({
+          photoId: r.photoId,
+          oldFilePath: r.filePath,
+          newFilePath: a.filePath,
+          direction,
+        });
     };
 
     // Album members first, so the excess (kept as removals) are non-album photos.
     const free = (list: readonly RemovedEntry[]): RemovedEntry[] =>
-      list.filter((r) => !usedRemoved.has(r)).sort((a, b) => Number(isInAlbum(b.photoId)) - Number(isInAlbum(a.photoId)));
+      list
+        .filter((r) => !usedRemoved.has(r))
+        .sort((a, b) => Number(isInAlbum(b.photoId)) - Number(isInAlbum(a.photoId)));
 
     for (const channel of ['live', 'bin'] as const) {
       const removals = free(removedList.filter((r) => r.channel === channel));
       const additions = addedList.filter((a) => a.channel === channel && !usedAdded.has(a));
-      for (let i = 0; i < Math.min(removals.length, additions.length); i++) pair(removals[i]!, additions[i]!);
+      for (let i = 0; i < Math.min(removals.length, additions.length); i++)
+        pair(removals[i]!, additions[i]!);
     }
     // Whatever is left can only pair across the channels, which is what a hand
     // binning or a hand restore looks like.
     const removals = free(removedList);
     const additions = addedList.filter((a) => !usedAdded.has(a));
-    for (let i = 0; i < Math.min(removals.length, additions.length); i++) pair(removals[i]!, additions[i]!);
+    for (let i = 0; i < Math.min(removals.length, additions.length); i++)
+      pair(removals[i]!, additions[i]!);
   }
 
   return {

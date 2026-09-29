@@ -22,20 +22,27 @@ function run(command: [string, ...string[]], cwd = ROOT): void {
     timeout: 5 * 60 * 1000,
   });
   if (result.error != null) throw result.error;
-  if (result.status !== 0) throw new Error(`${command.join(' ')} failed with ${result.signal ?? result.status}`);
+  if (result.status !== 0)
+    throw new Error(`${command.join(' ')} failed with ${result.signal ?? result.status}`);
 }
 
 try {
   let count = 0;
   const files = ['src', 'scripts', 'web/src', 'packages', 'test']
-    .flatMap((directory) => [...new Bun.Glob('**/*.platform.test.{ts,tsx}').scanSync({ cwd: join(ROOT, directory) })]
-      .map((file) => join(directory, file)))
+    .flatMap((directory) =>
+      [...new Bun.Glob('**/*.platform.test.{ts,tsx}').scanSync({ cwd: join(ROOT, directory) })].map(
+        (file) => join(directory, file),
+      ),
+    )
     .map((file) => file.split(sep).join('/'))
     .sort();
   for (const file of files) {
     if (!selected(file)) continue;
     console.log(`platform test: ${file}`);
-    run([process.execPath, 'test', join(ROOT, file)], file.startsWith('web/') ? join(ROOT, 'web') : ROOT);
+    run(
+      [process.execPath, 'test', join(ROOT, file)],
+      file.startsWith('web/') ? join(ROOT, 'web') : ROOT,
+    );
     count++;
   }
 
@@ -48,7 +55,10 @@ try {
 
   const exports = 'src-tauri/src/export_paths.rs';
   if (selected(exports)) {
-    const executable = join(scratch, process.platform === 'win32' ? 'export-path-tests.exe' : 'export-path-tests');
+    const executable = join(
+      scratch,
+      process.platform === 'win32' ? 'export-path-tests.exe' : 'export-path-tests',
+    );
     console.log(`platform test: ${exports}`);
     run(['rustc', '--edition=2021', '--test', exports, '-o', executable]);
     run([executable]);

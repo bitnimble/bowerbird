@@ -16,7 +16,10 @@ import type { LibrariesRepository } from './libraries_repository';
  * freed inode number is the likeliest to be recycled into §9.1.1's false-positive
  * case.
  */
-export async function ensureBinFolder(library: Library, libraries: LibrariesRepository): Promise<string> {
+export async function ensureBinFolder(
+  library: Library,
+  libraries: LibrariesRepository,
+): Promise<string> {
   const bin = getBinPath(library);
   if (bin == null) throw new AppError('READ_ONLY', `library ${library.id} has no bin folder`);
   const before = statSync(bin, { throwIfNoEntry: false });
@@ -25,10 +28,16 @@ export async function ensureBinFolder(library: Library, libraries: LibrariesRepo
   try {
     await mkdir(bin);
   } catch (err) {
-    const createdConcurrently = err instanceof Error && 'code' in err && err.code === 'EEXIST' &&
+    const createdConcurrently =
+      err instanceof Error &&
+      'code' in err &&
+      err.code === 'EEXIST' &&
       statSync(bin, { throwIfNoEntry: false })?.isDirectory() === true;
     if (!createdConcurrently) {
-      throw new AppError('IO_ERROR', `failed to create directory ${bin}: ${err instanceof Error ? err.message : String(err)}`);
+      throw new AppError(
+        'IO_ERROR',
+        `failed to create directory ${bin}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   const made = statSync(bin, { throwIfNoEntry: false });

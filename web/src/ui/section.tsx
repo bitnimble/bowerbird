@@ -16,7 +16,9 @@ export function Section({ label, children }: { label?: string; children: ReactNo
       {/* A menu of one subject names nothing: the heading is what tells two groups apart, and
           over a single group it is a word the reader has to skip on the way to the action. */}
       {label != null && (
-        <Menu.GroupLabel {...stylex.props(textStyles.label, menuStyles.groupLabel)}>{label}</Menu.GroupLabel>
+        <Menu.GroupLabel {...stylex.props(textStyles.label, menuStyles.groupLabel)}>
+          {label}
+        </Menu.GroupLabel>
       )}
       {children}
     </Menu.Group>

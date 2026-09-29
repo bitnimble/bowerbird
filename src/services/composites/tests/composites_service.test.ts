@@ -32,7 +32,16 @@ import { LibraryActivity } from '../../activity/library_activity';
 
 const LIB = 'panoramas-service-test';
 
-const ASSEMBLY_SAMPLE = path.join(import.meta.dir, '..', '..', '..', '..', 'test', 'fixtures', 'assembly-recipe.json');
+const ASSEMBLY_SAMPLE = path.join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  '..',
+  'test',
+  'fixtures',
+  'assembly-recipe.json',
+);
 
 const posted: CompositeJob[] = [];
 
@@ -72,7 +81,10 @@ function analysed(photoIds: readonly string[]): string {
   return JSON.stringify({
     recipe: {
       ...sample,
-      sources: photoIds.map((photoId, at) => ({ ...sample.sources[at % sample.sources.length]!, photoId })),
+      sources: photoIds.map((photoId, at) => ({
+        ...sample.sources[at % sample.sources.length]!,
+        photoId,
+      })),
     },
     unaligned: true,
     warnings: [],
@@ -110,7 +122,9 @@ const holding: (() => void)[] = [];
 let onHeldCarve: (() => void) | null = null;
 
 function waitForHeldCarve(): Promise<void> {
-  return new Promise((resolve) => { onHeldCarve = resolve; });
+  return new Promise((resolve) => {
+    onHeldCarve = resolve;
+  });
 }
 
 /** A worker that aligns whatever it is given and renders nothing. */
@@ -124,7 +138,9 @@ class MockWorker {
       seamed.push(job);
       queueMicrotask(() => {
         const answers = job.picks.map((pick) => (new Set(pick).size === 1 ? null : SOLVED));
-        this.onmessage?.({ data: { photoId: job.photoId, success: true, composite: JSON.stringify(answers) } });
+        this.onmessage?.({
+          data: { photoId: job.photoId, success: true, composite: JSON.stringify(answers) },
+        });
       });
       return;
     }
@@ -138,7 +154,11 @@ class MockWorker {
         }
         writeFileSync(job.volumePath, 'volume');
         this.onmessage?.({
-          data: { photoId: job.photoId, success: true, composite: analysed(job.sources.map((s) => s.photoId)) },
+          data: {
+            photoId: job.photoId,
+            success: true,
+            composite: analysed(job.sources.map((s) => s.photoId)),
+          },
         });
       };
       if (heldOpen) {
@@ -158,7 +178,9 @@ class MockWorker {
       plantedRenditionFile = path.join(dir, `${job.photoId}${RENDITION_EXTENSION}`);
       writeFileSync(plantedRenditionFile, '');
       queueMicrotask(() => {
-        this.onmessage?.({ data: { photoId: job.photoId, success: false, error: 'the device went away' } });
+        this.onmessage?.({
+          data: { photoId: job.photoId, success: false, error: 'the device went away' },
+        });
       });
       return;
     }
@@ -259,7 +281,9 @@ beforeEach(() => {
     renditions,
     // Told where the documents are, as the server wires it: a composite's framing is one of them,
     // so a render that could not read them would compose the whole canvas.
-    new ProcessingService(photoProcessing, photoPaths, photoListing, settings(), (photoId) => edits.docFor(photoId)),
+    new ProcessingService(photoProcessing, photoPaths, photoListing, settings(), (photoId) =>
+      edits.docFor(photoId),
+    ),
     edits,
     localOriginals(),
     activity,
@@ -314,9 +338,7 @@ describe('CompositesService.merge', () => {
         photoListing.listByLibrary(LIB, 'added_desc', 0, 50, { includeDeleted: false }).photos,
         libraries,
         settings(),
-      ).find(
-        (row) => row.id === id,
-      )?.shown_rendition;
+      ).find((row) => row.id === id)?.shown_rendition;
 
     expect(shownFor(photoId)).toBe('embedded');
 
@@ -336,7 +358,13 @@ describe('CompositesService.merge', () => {
   it('fits a lens nothing has measured and aligns again, rather than stitching without one', async () => {
     lensless = ['photo001'];
     const measured: string[] = [];
-    const processing = new ProcessingService(photoProcessing, photoPaths, photoListing, settings(), (id) => edits.docFor(id));
+    const processing = new ProcessingService(
+      photoProcessing,
+      photoPaths,
+      photoListing,
+      settings(),
+      (id) => edits.docFor(id),
+    );
     processing.measureCameraMatch = async (_raw: string, photoId: string): Promise<void> => {
       measured.push(photoId);
       lensless = [];
@@ -367,7 +395,9 @@ describe('CompositesService.merge', () => {
     const { photoId } = await panoramas.mergePanorama(['photo001', 'photo002']);
 
     const doc = edits.get(photoId).doc;
-    expect([doc.cropLeft, doc.cropTop, doc.cropRight, doc.cropBottom]).toEqual([0.05, 0.1, 0.95, 0.9]);
+    expect([doc.cropLeft, doc.cropTop, doc.cropRight, doc.cropBottom]).toEqual([
+      0.05, 0.1, 0.95, 0.9,
+    ]);
     // And the renders were told: a job that framed nothing would write the whole canvas.
     expect(posted[1]?.geometry.crop).toEqual([0.05, 0.1, 0.95, 0.9]);
     const made = photoListing.getById(photoId);
@@ -412,7 +442,11 @@ describe('CompositesService.merge', () => {
     expect(posted.map((job) => job.want)).toEqual(['align', 'render']);
     expect(posted[1]?.targets[0]?.source).toBe('embedded');
     expect(Object.keys(renditions.versions(photoId)).sort()).toEqual(['grid']);
-    expect(db.query('SELECT variant FROM renditions WHERE photo_id = ? AND needs_build = 1').all(photoId)).toEqual([]);
+    expect(
+      db
+        .query('SELECT variant FROM renditions WHERE photo_id = ? AND needs_build = 1')
+        .all(photoId),
+    ).toEqual([]);
   });
 
   // **A frame someone has developed is not the picture its camera wrote.** Composite that camera's
@@ -462,12 +496,16 @@ describe('CompositesService.merge', () => {
 
   it('a merge that fails while building leaves no row, no edits, no rendition rows and no files', async () => {
     // The frames already own rendition rows of their own, so unmoved proves it, not zero.
-    const renditionsBefore = (db.query('SELECT COUNT(*) AS n FROM renditions').get() as { n: number }).n;
+    const renditionsBefore = (
+      db.query('SELECT COUNT(*) AS n FROM renditions').get() as { n: number }
+    ).n;
 
     failNextBuild = true;
     await expect(panoramas.mergePanorama(['photo001', 'photo002'])).rejects.toThrow();
 
-    const rows = db.query("SELECT id FROM photos WHERE json_extract(recipe, '$.kind') != 'file'").all();
+    const rows = db
+      .query("SELECT id FROM photos WHERE json_extract(recipe, '$.kind') != 'file'")
+      .all();
     expect(rows).toEqual([]);
     expect(db.query('SELECT COUNT(*) AS n FROM photo_edits').get()).toEqual({ n: 0 });
     expect(db.query('SELECT COUNT(*) AS n FROM renditions').get()).toEqual({ n: renditionsBefore });
@@ -477,7 +515,12 @@ describe('CompositesService.merge', () => {
 });
 
 /** These photographs as one bracket stack, each the frame of `kind` at its place in `order`. */
-function bracket(kind: CaptureSequenceKind, order: string[], origin = 'bracket', indexed = true): void {
+function bracket(
+  kind: CaptureSequenceKind,
+  order: string[],
+  origin = 'bracket',
+  indexed = true,
+): void {
   db.query('INSERT INTO stacks (id, library_id, origin, date_created) VALUES (?, ?, ?, ?)').run(
     'burst',
     LIB,
@@ -499,10 +542,20 @@ describe('CompositesService.mergeBracket', () => {
     // Against the order they were taken in, so the one that decides is visible.
     bracket('pixelShift', ['photo003', 'photo001', 'photo004', 'photo002']);
 
-    const { photoId } = await panoramas.mergeBracket(['photo001', 'photo002', 'photo003', 'photo004']);
+    const { photoId } = await panoramas.mergeBracket([
+      'photo001',
+      'photo002',
+      'photo003',
+      'photo004',
+    ]);
 
     expect(photoPaths.getBasicById(photoId)?.recipe.kind).toBe('pixelShift');
-    expect(photoComposites.framesOf(photoId)).toEqual(['photo003', 'photo001', 'photo004', 'photo002']);
+    expect(photoComposites.framesOf(photoId)).toEqual([
+      'photo003',
+      'photo001',
+      'photo004',
+      'photo002',
+    ]);
     const align = posted[0];
     expect(align?.want === 'align' && align.shape).toBe('pixelShift');
   });
@@ -533,7 +586,9 @@ describe('CompositesService.mergeBracket', () => {
 
   it('refuses a pixel shift missing a frame', async () => {
     bracket('pixelShift', ['photo001', 'photo002', 'photo003']);
-    await expect(panoramas.mergeBracket(['photo001', 'photo002', 'photo003'])).rejects.toThrow(/exactly its 4/);
+    await expect(panoramas.mergeBracket(['photo001', 'photo002', 'photo003'])).rejects.toThrow(
+      /exactly its 4/,
+    );
   });
 });
 
@@ -596,7 +651,9 @@ describe('CompositesService.startAssembly', () => {
 
   it('refuses a binned photograph, and one that is gone', () => {
     db.query('UPDATE photos SET is_deleted = 1 WHERE id = ?').run('photo002');
-    expect(() => panoramas.startAssembly(['photo001', 'photo002'])).toThrow(/photo002 is in the bin/);
+    expect(() => panoramas.startAssembly(['photo001', 'photo002'])).toThrow(
+      /photo002 is in the bin/,
+    );
     expect(() => panoramas.startAssembly(['photo001', 'nothere1'])).toThrow(/nothere1 is gone/);
   });
 
@@ -698,7 +755,13 @@ describe('CompositesService.startAssembly', () => {
     // Each is the recipe's geometry with no tiles over its base: same set, same coding - which is
     // what makes a layer the pixels the finished picture would take from it.
     for (const [at, job] of renders.entries()) {
-      const recipe = job.recipe as { kind: string; tiles: number[][]; pick: number[]; base: number; seams?: unknown };
+      const recipe = job.recipe as {
+        kind: string;
+        tiles: number[][];
+        pick: number[];
+        base: number;
+        seams?: unknown;
+      };
       expect(recipe.kind).toBe('assembly');
       expect(recipe.base).toBe(at);
       expect([recipe.tiles, recipe.pick, recipe.seams]).toEqual([[], [], undefined]);
@@ -733,10 +796,12 @@ describe('CompositesService.startAssembly', () => {
     const sample = AssemblyRecipeSchema.parse(JSON.parse(readFileSync(ASSEMBLY_SAMPLE, 'utf8')));
     const library = libraries.getById(LIB)!;
 
-    expect(layerKeyOf({ ...library, rendition_source: 'embedded' }, sample, 'lensAndColour')).not.toBe(
+    expect(
+      layerKeyOf({ ...library, rendition_source: 'embedded' }, sample, 'lensAndColour'),
+    ).not.toBe(layerKeyOf(library, sample, 'lensAndColour'));
+    expect(layerKeyOf(library, sample, 'lens')).not.toBe(
       layerKeyOf(library, sample, 'lensAndColour'),
     );
-    expect(layerKeyOf(library, sample, 'lens')).not.toBe(layerKeyOf(library, sample, 'lensAndColour'));
   });
 
   it('cancel stops a carve, and the job says it was cancelled rather than that it failed', async () => {
@@ -805,7 +870,9 @@ describe('CompositesService seams', () => {
 
     expect(seams).toEqual([SOLVED, null]);
     expect(seamed).toHaveLength(1);
-    expect(seamed[0]?.volumePath).toBe(draftVolumePath(dataPathForLibraryId(LIB), recipe.seamVolume!));
+    expect(seamed[0]?.volumePath).toBe(
+      draftVolumePath(dataPathForLibraryId(LIB), recipe.seamVolume!),
+    );
     expect(seamed[0]?.picks).toEqual([
       [1, 0],
       [1, 1],
@@ -825,7 +892,11 @@ describe('CompositesService seams', () => {
     const recipe = await carved();
     posted.length = 0;
 
-    const { photoId } = await panoramas.commitAssembly({ ...recipe, pick: [1, 0], seams: undefined });
+    const { photoId } = await panoramas.commitAssembly({
+      ...recipe,
+      pick: [1, 0],
+      seams: undefined,
+    });
 
     const stored = photoPaths.getBasicById(photoId)?.recipe;
     expect(stored?.kind === 'assembly' && stored.seams).toEqual(SOLVED);
@@ -881,7 +952,10 @@ describe('CompositesService seams', () => {
     await carved();
 
     const layers = posted.filter((job) => job.want === 'render');
-    expect(layers.map((job) => (job.recipe as AssemblyRecipe).seams)).toEqual([undefined, undefined]);
+    expect(layers.map((job) => (job.recipe as AssemblyRecipe).seams)).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 });
 
@@ -897,9 +971,11 @@ describe('CompositesService.commitAssembly', () => {
   };
 
   const assemblies = (): string[] =>
-    (db.query("SELECT id FROM photos WHERE json_extract(recipe, '$.kind') = 'assembly'").all() as { id: string }[]).map(
-      (row) => row.id,
-    );
+    (
+      db.query("SELECT id FROM photos WHERE json_extract(recipe, '$.kind') = 'assembly'").all() as {
+        id: string;
+      }[]
+    ).map((row) => row.id);
 
   it('writes the photograph the recipe composes and builds what it owes', async () => {
     const { photoId } = await panoramas.commitAssembly(finished());
@@ -925,7 +1001,11 @@ describe('CompositesService.commitAssembly', () => {
 
     expect(assemblies()).toEqual([]);
     expect(db.query('SELECT COUNT(*) AS n FROM photo_edits').get()).toEqual({ n: 0 });
-    expect(db.query('SELECT COUNT(*) AS n FROM renditions WHERE photo_id NOT IN (SELECT id FROM photos)').get()).toEqual({
+    expect(
+      db
+        .query('SELECT COUNT(*) AS n FROM renditions WHERE photo_id NOT IN (SELECT id FROM photos)')
+        .get(),
+    ).toEqual({
       n: 0,
     });
     expect(existsSync(plantedRenditionFile as string)).toBe(false);
@@ -973,7 +1053,9 @@ describe('CompositesService.commitAssembly', () => {
     it('refuses a photograph that is not an assembly', async () => {
       const { photoId } = await panoramas.mergePanorama(['photo001', 'photo002']);
 
-      await expect(panoramas.updateAssembly(photoId, finished())).rejects.toThrow(/not an assembly/);
+      await expect(panoramas.updateAssembly(photoId, finished())).rejects.toThrow(
+        /not an assembly/,
+      );
     });
   });
 

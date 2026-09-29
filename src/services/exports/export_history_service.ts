@@ -3,7 +3,12 @@ import { Logger } from '../../logger';
 import type { ExportOptions } from '../../schemas/export';
 import { newId } from '../../schemas/id';
 import { EditDocSchema } from '../../schemas/photo_edits';
-import type { ExportRun, ExportedPhoto, QueuedPhoto, RecordExportRequest } from '../../schemas/exports';
+import type {
+  ExportRun,
+  ExportedPhoto,
+  QueuedPhoto,
+  RecordExportRequest,
+} from '../../schemas/exports';
 import { soleInputOf } from '../../schemas/recipes';
 import type { PhotoEditsRepository } from '../photo_edits/photo_edits_repository';
 import { PATH_OF } from '../photos/paths/photo_paths_repository';
@@ -75,7 +80,12 @@ export class ExportHistoryService {
    * send it back would be a picture crossing the wire twice for nothing. What the client
    * still owes is the destination, which is the one part of an export the server never sees.
    */
-  began(runId: string, photoId: string, options: ExportOptions, thumbnail: Uint8Array | null): void {
+  began(
+    runId: string,
+    photoId: string,
+    options: ExportOptions,
+    thumbnail: Uint8Array | null,
+  ): void {
     const { photo } = this.photoRenditions.locate(photoId);
     const edits = options.includeEdits ? (this.edits.docFor(photoId)?.doc ?? null) : null;
     this.db
@@ -141,7 +151,9 @@ export class ExportHistoryService {
     // Counted before it is grouped: this runs once per exported file, and a bulk export of a
     // thousand photographs would otherwise group and sort the whole history a thousand times
     // to be told each time that nothing has to go.
-    const { files } = this.db.query('SELECT COUNT(*) AS files FROM exports').get() as { files: number };
+    const { files } = this.db.query('SELECT COUNT(*) AS files FROM exports').get() as {
+      files: number;
+    };
     if (files <= limit) return;
 
     const runs = this.db.query(RUNS_BY_AGE).all() as { run_id: string; files: number }[];
@@ -152,15 +164,18 @@ export class ExportHistoryService {
       if (kept <= limit) return;
       drop.run(run.run_id);
       kept -= run.files;
-      log.info('dropped the oldest export run to stay inside the history limit', { run: run.run_id, limit });
+      log.info('dropped the oldest export run to stay inside the history limit', {
+        run: run.run_id,
+        limit,
+      });
     }
   }
 
   /** The stored AVIF, or null where none was made. */
   thumbnailFor(id: string): Uint8Array | null {
-    const row = this.db.query('SELECT thumbnail FROM exports WHERE id = ?').get(id) as
-      | { thumbnail: Uint8Array | null }
-      | null;
+    const row = this.db.query('SELECT thumbnail FROM exports WHERE id = ?').get(id) as {
+      thumbnail: Uint8Array | null;
+    } | null;
     return row?.thumbnail ?? null;
   }
 
@@ -195,7 +210,11 @@ export class ExportHistoryService {
     for (const row of rows) {
       // The rows arrive newest first, so the run's own moment is its first row's and every
       // later one falls in under it.
-      const run = runs.get(row.run_id) ?? { id: row.run_id, exported_at: row.exported_at, photos: [] };
+      const run = runs.get(row.run_id) ?? {
+        id: row.run_id,
+        exported_at: row.exported_at,
+        photos: [],
+      };
       run.photos.push(photoOf(row));
       runs.set(row.run_id, run);
     }
@@ -238,7 +257,9 @@ export class ExportHistoryService {
         .all(...chunk) as QueuedRow[];
       for (const row of rows) found.set(row.photo_id, queuedOf(row, includeEdits));
     }
-    return photoIds.map((id) => found.get(id)).filter((photo): photo is QueuedPhoto => photo != null);
+    return photoIds
+      .map((id) => found.get(id))
+      .filter((photo): photo is QueuedPhoto => photo != null);
   }
 
   forget(id: string): void {

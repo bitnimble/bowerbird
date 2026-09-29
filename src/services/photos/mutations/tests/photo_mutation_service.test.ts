@@ -28,16 +28,38 @@ describe('PhotoMutationService.delete', () => {
       writeFileSync(path.join(dataDir, 'renditions', 'grid', 'p1.avif'), '');
       writeFileSync(path.join(dataDir, 'renditions', 'full', 'p1.avif'), '');
 
-      const lib: Library = { id: 'photos-delete', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
-  rendition_source: 'embedded' as const,
-  rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
-  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
+      const lib: Library = {
+        id: 'photos-delete',
+        root_path: root,
+        bin_name: 'Bin',
+        read_only: false,
+        name: 'lib',
+        ordering: 'added_asc',
+        rendition_source: 'embedded' as const,
+        rendition_hdr: false,
+        render_skip_full: [],
+        render_skip_max: [],
+        denoiser: 'galosh',
+        include_subfolders: true,
+        include_non_raw: false,
+        auto_stack: true,
+        auto_stack_similarity: 0.78,
+        auto_stack_window_seconds: 60,
+        last_synced_at: null,
+        photo_count: 0,
+        missing_photo_count: 0,
+        unavailable_photo_count: 0,
+        rendered_photo_count: 0,
+      };
       const markDeleted = jest.fn();
       // getBasicByIds, not getById: the delete reads the four columns it needs
       // for a whole batch rather than a detail payload per photo (§12.1).
-      const photo = { id: 'p1', library_id: 'photos-delete', shoot_id: null, recipe: fileRecipe('a.arw') };
+      const photo = {
+        id: 'p1',
+        library_id: 'photos-delete',
+        shoot_id: null,
+        recipe: fileRecipe('a.arw'),
+      };
       const { service } = build({
         photoPaths: { getBasicByIds: jest.fn(() => [photo]), markDeleted },
         libraries: { getById: jest.fn(() => lib) },
@@ -66,12 +88,29 @@ describe('PhotoMutationService.delete', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-del-'));
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
-      const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
-  rendition_source: 'embedded' as const,
-  rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
-  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
+      const lib: Library = {
+        id: 'lib',
+        root_path: root,
+        bin_name: 'Bin',
+        read_only: false,
+        name: 'lib',
+        ordering: 'added_asc',
+        rendition_source: 'embedded' as const,
+        rendition_hdr: false,
+        render_skip_full: [],
+        render_skip_max: [],
+        denoiser: 'galosh',
+        include_subfolders: true,
+        include_non_raw: false,
+        auto_stack: true,
+        auto_stack_similarity: 0.78,
+        auto_stack_window_seconds: 60,
+        last_synced_at: null,
+        photo_count: 0,
+        missing_photo_count: 0,
+        unavailable_photo_count: 0,
+        rendered_photo_count: 0,
+      };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, recipe: fileRecipe('a.arw') };
       const { service } = build({
         photoPaths: {
@@ -124,10 +163,17 @@ describe('PhotoMutationService.delete', () => {
         unavailable_photo_count: 0,
         rendered_photo_count: 0,
       };
-      const getBasicByIds = jest.fn(() => ids.map((id) => ({ id, library_id: 'lib', shoot_id: null, recipe: fileRecipe(`${id}.arw`) })));
+      const getBasicByIds = jest.fn(() =>
+        ids.map((id) => ({
+          id,
+          library_id: 'lib',
+          shoot_id: null,
+          recipe: fileRecipe(`${id}.arw`),
+        })),
+      );
       // Counted by hand: jest.fn erases the generic the repository declares.
       let commits = 0;
-      const transaction = <T,>(fn: () => T): T => {
+      const transaction = <T>(fn: () => T): T => {
         commits++;
         return fn();
       };
@@ -158,7 +204,10 @@ describe('PhotoMutationService.update', () => {
     expect(() => service.update('p1', { rating: 5 })).toThrow(AppError);
   });
   it('returns the refreshed detail on success', () => {
-    const { service } = build({ photoState: { update: jest.fn(() => true) }, read: { get: jest.fn(() => detail) } });
+    const { service } = build({
+      photoState: { update: jest.fn(() => true) },
+      read: { get: jest.fn(() => detail) },
+    });
     expect(service.update('p1', { rating: 5 })).toMatchObject(detail);
   });
 });

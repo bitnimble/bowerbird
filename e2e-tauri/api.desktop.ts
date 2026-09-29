@@ -46,11 +46,14 @@ test.describe('Bowerbird desktop shell', () => {
   });
 
   test('reaches its server by URL with the cookie it was signed in with, and nothing else does', async () => {
-    const statuses = await shell.evaluate(async (path: string) => {
-      const signedIn = await fetch(path);
-      const stranger = await fetch(path, { credentials: 'omit' });
-      return { signedIn: signedIn.status, stranger: stranger.status };
-    }, route(PathSegment.api(), PathSegment.libraries()));
+    const statuses = await shell.evaluate(
+      async (path: string) => {
+        const signedIn = await fetch(path);
+        const stranger = await fetch(path, { credentials: 'omit' });
+        return { signedIn: signedIn.status, stranger: stranger.status };
+      },
+      route(PathSegment.api(), PathSegment.libraries()),
+    );
     expect(statuses).toEqual({ signedIn: 200, stranger: 401 });
   });
 

@@ -353,7 +353,9 @@ impl Galosh {
                     binding: *binding,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: *read_only },
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: *read_only,
+                        },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -390,7 +392,11 @@ impl Galosh {
                 },
                 cache: None,
             });
-            Kernel { pipeline, layout, name }
+            Kernel {
+                pipeline,
+                layout,
+                name,
+            }
         };
 
         // The entry point and the file are one name in every kernel here, so it is written once.
@@ -449,7 +455,11 @@ impl Galosh {
             pass12_pair: kernel!(
                 "pass12",
                 &[(0, R), (1, W)],
-                &[(PHASE_SPIN_ID, 2.0), (PHASE_SPIN_Y_ID, 4.0), (PHASE_DIAGONAL_ID, 1.0)]
+                &[
+                    (PHASE_SPIN_ID, 2.0),
+                    (PHASE_SPIN_Y_ID, 4.0),
+                    (PHASE_DIAGONAL_ID, 1.0)
+                ]
             ),
             lpixel_lh_den_fused: kernel!("lpixel_lh_den_fused", &[(0, R), (1, W), (2, W)]),
             lpixel_lh_den_unpooled: kernel!(
@@ -466,7 +476,17 @@ impl Galosh {
             coarse_correct: kernel!("coarse_correct", &[(0, R), (1, R), (2, W)]),
             chroma_reconstruct: kernel!(
                 "chroma_reconstruct",
-                &[(0, R), (1, R), (2, R), (3, R), (4, R), (5, R), (6, W), (7, W), (8, W)]
+                &[
+                    (0, R),
+                    (1, R),
+                    (2, R),
+                    (3, R),
+                    (4, R),
+                    (5, R),
+                    (6, W),
+                    (7, W),
+                    (8, W)
+                ]
             ),
             copy_2d_clamped: kernel!("copy_2d_clamped", &[(0, R), (1, W)]),
             smoothstep_blend_3p: kernel!(
@@ -489,7 +509,17 @@ impl Galosh {
             ),
             restore_mosaic: kernel!(
                 "restore_mosaic",
-                &[(0, R), (1, R), (2, R), (3, R), (4, W), (5, R), (6, R), (7, R), (8, R)]
+                &[
+                    (0, R),
+                    (1, R),
+                    (2, R),
+                    (3, R),
+                    (4, W),
+                    (5, R),
+                    (6, R),
+                    (7, R),
+                    (8, R)
+                ]
             ),
         })
     }
@@ -548,7 +578,10 @@ pub struct NoiseFit {
 impl NoiseFit {
     /// The model the rest of the pipeline describes a frame's noise with.
     pub fn model(&self) -> NoiseModel {
-        NoiseModel { alpha: self.alpha, sigma_sq: self.sigma_sq }
+        NoiseModel {
+            alpha: self.alpha,
+            sigma_sq: self.sigma_sq,
+        }
     }
 
     /// Whether this is a fit anything should be handed, rather than one to refuse and refit.
@@ -580,7 +613,11 @@ impl NoiseFit {
     /// intact, which reads as a rendered picture rather than a broken one.
     fn dark_ref_is_self_consistent(&self) -> bool {
         let lo = self.dark_ref.iter().copied().fold(f32::INFINITY, f32::min);
-        let hi = self.dark_ref.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let hi = self
+            .dark_ref
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
         hi - lo <= ACHROMATIC_RANGE
     }
 }
@@ -729,9 +766,7 @@ pub struct Detail {
 /// Luminance as a multiple of the noise it measured, where PMRID reads it as the share of the
 /// residual it predicted to keep - and `crate::pmrid::denoise` says why that is not a mismatch to
 /// paper over.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Denoiser {
     /// The blind denoise, which measures this frame and filters it on its own statistics.
@@ -745,7 +780,11 @@ pub enum Denoiser {
 impl Detail {
     /// Both halves as a reader set them.
     pub const fn at(luminance: f64, colour: f64) -> Detail {
-        Detail { luminance: Some(luminance), colour: Some(colour), denoiser: Denoiser::Galosh }
+        Detail {
+            luminance: Some(luminance),
+            colour: Some(colour),
+            denoiser: Denoiser::Galosh,
+        }
     }
 
     /// The same pair, driving the other filter.
@@ -754,8 +793,11 @@ impl Detail {
     }
 
     /// Neither, which is what a document that has never been edited holds.
-    pub const AUTO: Detail =
-        Detail { luminance: None, colour: None, denoiser: Denoiser::Galosh };
+    pub const AUTO: Detail = Detail {
+        luminance: None,
+        colour: None,
+        denoiser: Denoiser::Galosh,
+    };
 
     /// Whether either half is still a measurement rather than a number.
     pub fn needs_a_fit(&self) -> bool {
@@ -785,7 +827,10 @@ impl Detail {
             Some(fit) => fit.model().suggested_amounts(),
             None => (0.0, 0.0),
         };
-        (self.luminance.unwrap_or(luma.round()), self.colour.unwrap_or(colour.round()))
+        (
+            self.luminance.unwrap_or(luma.round()),
+            self.colour.unwrap_or(colour.round()),
+        )
     }
 
     /// The same pair in the units the kernels read.
@@ -822,7 +867,6 @@ pub const COARSE_SCALE: i32 = 4;
 /// eight-pixel edge it stops, which is what keeps this from flattening a face.
 const COARSE_RANGE: f32 = 2.0;
 
-
 /// How many dispatches a run records before it stops, which is `usize::MAX` for everything but
 /// the profile sweep.
 ///
@@ -835,8 +879,7 @@ const COARSE_RANGE: f32 = 2.0;
 /// The buffers stay sized for the whole run, so a truncated call differs from a full one only in
 /// the dispatches it did not record. That is what makes the difference between two counts the cost
 /// of the kernels between them, rather than the cost of a differently-shaped allocation.
-static STOP_AFTER: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(usize::MAX);
+static STOP_AFTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
 
 pub fn stop_after(dispatches: usize) {
     STOP_AFTER.store(dispatches, std::sync::atomic::Ordering::Relaxed);
@@ -873,7 +916,9 @@ fn block_stride(per_channel: usize, blocks_across: usize) -> usize {
         a
     }
     let wanted = (per_channel / NE_TARGET_BLOCKS).max(1);
-    (wanted..).find(|s| gcd(*s, blocks_across.max(1)) == 1).unwrap_or(1)
+    (wanted..)
+        .find(|s| gcd(*s, blocks_across.max(1)) == 1)
+        .unwrap_or(1)
 }
 
 /// The kernels the last run recorded, in the order it recorded them.
@@ -881,8 +926,7 @@ fn block_stride(per_channel: usize, blocks_across: usize) -> usize {
 /// Kept only while a profile is being read, since the sequence is a fact about one call's shape -
 /// a supplied fit skips Phase 2's iterations, a cached table skips two more - so it has to come
 /// from the run being priced rather than from a list written beside it.
-static DISPATCHED: std::sync::Mutex<Vec<(&'static str, u32)>> =
-    std::sync::Mutex::new(Vec::new());
+static DISPATCHED: std::sync::Mutex<Vec<(&'static str, u32)>> = std::sync::Mutex::new(Vec::new());
 
 /// Each kernel the last run recorded, with the workgroups it was dispatched over.
 ///
@@ -890,7 +934,10 @@ static DISPATCHED: std::sync::Mutex<Vec<(&'static str, u32)>> =
 /// workgroups onto its cores, so one that offers fewer than the device has slots leaves the rest
 /// idle however long it runs, and no amount of work inside the kernel reaches them.
 pub fn dispatched() -> Vec<(&'static str, u32)> {
-    DISPATCHED.lock().unwrap_or_else(|held| held.into_inner()).clone()
+    DISPATCHED
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())
+        .clone()
 }
 
 /// The inverse-GAT table, kept between calls.
@@ -954,9 +1001,15 @@ fn reconstruct_binds<'a>(
     out: &'a [crate::gpu::Buffer; 3],
 ) -> [(u32, &'a crate::gpu::Buffer); 9] {
     [
-        (0, &coarse[0]), (1, &coarse[1]), (2, &coarse[2]),
-        (3, &guide[0]), (4, &guide[1]), (5, &guide[2]),
-        (6, &out[0]), (7, &out[1]), (8, &out[2]),
+        (0, &coarse[0]),
+        (1, &coarse[1]),
+        (2, &coarse[2]),
+        (3, &guide[0]),
+        (4, &guide[1]),
+        (5, &guide[2]),
+        (6, &out[0]),
+        (7, &out[1]),
+        (8, &out[2]),
     ]
 }
 
@@ -975,7 +1028,14 @@ pub async fn denoise(
     cfa: &crate::cfa::Cfa,
     amounts: Amounts,
 ) -> NoiseFit {
-    run(gpu, galosh, mosaic, cfa, Work::Denoise { amounts, fit: None }).await
+    run(
+        gpu,
+        galosh,
+        mosaic,
+        cfa,
+        Work::Denoise { amounts, fit: None },
+    )
+    .await
 }
 
 /// The same, over a frame whose whole-frame statistics were measured somewhere else.
@@ -992,7 +1052,17 @@ pub async fn denoise_with(
     amounts: Amounts,
     fit: NoiseFit,
 ) -> NoiseFit {
-    run(gpu, galosh, mosaic, cfa, Work::Denoise { amounts, fit: Some(fit) }).await
+    run(
+        gpu,
+        galosh,
+        mosaic,
+        cfa,
+        Work::Denoise {
+            amounts,
+            fit: Some(fit),
+        },
+    )
+    .await
 }
 
 /// The tile a progressive denoise is cut into, and what a caller with no reason to choose should
@@ -1052,13 +1122,9 @@ pub async fn denoise_in_tiles(
     {
         let bytes = (width * height * 4) as u64;
         let mut recording = gpu.record();
-        recording.encoder().copy_buffer_to_buffer(
-            &mosaic.buffer,
-            0,
-            &filtered.buffer,
-            0,
-            bytes,
-        );
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&mosaic.buffer, 0, &filtered.buffer, 0, bytes);
         recording.submit();
     }
     let mut finished = 0usize;
@@ -1087,7 +1153,13 @@ pub async fn denoise_in_tiles(
                 let window = mosaic.window(gpu, left, top, rw, rh);
                 denoise_with(gpu, galosh, &window, cfa, amounts, fit).await;
                 let (x1, y1) = (x1.min(right), y1.min(bottom));
-                window.copy_rect(gpu, (x0 - left, y0 - top), &filtered, (x0, y0), (x1 - x0, y1 - y0));
+                window.copy_rect(
+                    gpu,
+                    (x0 - left, y0 - top),
+                    &filtered,
+                    (x0, y0),
+                    (x1 - x0, y1 - y0),
+                );
             }
             finished += 1;
             done(finished as f32 / tiles as f32);
@@ -1152,7 +1224,10 @@ pub fn wanted(stored: Option<NoiseFit>, detail: Detail) -> Fit {
 enum Work {
     /// Stop once the whole-frame statistics are known; the frame itself is left alone.
     FitOnly,
-    Denoise { amounts: Amounts, fit: Option<NoiseFit> },
+    Denoise {
+        amounts: Amounts,
+        fit: Option<NoiseFit>,
+    },
 }
 
 async fn run(
@@ -1168,7 +1243,10 @@ async fn run(
     let (pw, ph) = cfa.period();
     let slots = (pw * ph) as i32;
     let amounts = match work {
-        Work::FitOnly => Amounts { luma: 0.0, colour: 0.0 },
+        Work::FitOnly => Amounts {
+            luma: 0.0,
+            colour: 0.0,
+        },
         Work::Denoise { amounts, .. } => amounts,
     };
     let amounts = Amounts {
@@ -1180,7 +1258,10 @@ async fn run(
         _ => None,
     };
     let fit_only = matches!(work, Work::FitOnly);
-    assert!(width % 2 == 0 && height % 2 == 0, "the mosaic's dimensions pair into 2x2 sites");
+    assert!(
+        width % 2 == 0 && height % 2 == 0,
+        "the mosaic's dimensions pair into 2x2 sites"
+    );
 
     // The same switch the decode and the open report through, because what this splits out is
     // the part of a call that does not scale with the region: a run over tiles pays it per tile,
@@ -1209,7 +1290,11 @@ async fn run(
     }
     macro_rules! trio {
         ($label:expr, $len:expr) => {
-            [plane!($label, $len), plane!($label, $len), plane!($label, $len)]
+            [
+                plane!($label, $len),
+                plane!($label, $len),
+                plane!($label, $len),
+            ]
         };
     }
 
@@ -1278,7 +1363,9 @@ async fn run(
     let kept = supplied.filter(|_| !fit_only).and_then(|fit| {
         let (alpha, sigma_sq) = table_key(&fit);
         let mut tables = TABLES.lock().unwrap_or_else(|held| held.into_inner());
-        let at = tables.iter().position(|t| t.alpha == alpha && t.sigma_sq == sigma_sq)?;
+        let at = tables
+            .iter()
+            .position(|t| t.alpha == alpha && t.sigma_sq == sigma_sq)?;
         let table = tables.remove(at);
         gpu.queue.write_buffer(&lut_d, 0, &table.d);
         gpu.queue.write_buffer(&lut_x, 0, &table.x);
@@ -1293,8 +1380,10 @@ async fn run(
     // `Tally` hands back a total, rather than a TwoSum sum and its compensation, which would
     // have to travel together to mean anything.
     let slices = gpu.reduction_slices;
-    let sigma_partial =
-        plane!("galosh sigma partial", slots as usize * slices as usize * (SIGMA_BINS + 1));
+    let sigma_partial = plane!(
+        "galosh sigma partial",
+        slots as usize * slices as usize * (SIGMA_BINS + 1)
+    );
     let partial = plane!("galosh partial", DR_WORKGROUPS as usize * 5);
     let partial_resid = plane!("galosh partial resid", DR_WORKGROUPS as usize * 2);
 
@@ -1319,7 +1408,10 @@ async fn run(
     let walks = amounts.luma > 0.0;
     let coarse_half = plane!("galosh L coarse half", if walks { half } else { 0 });
     let coarse = plane!("galosh L coarse", if walks { tail(lcw * lch) } else { 0 });
-    let coarse_den = plane!("galosh L coarse den", if walks { tail(lcw * lch) } else { 0 });
+    let coarse_den = plane!(
+        "galosh L coarse den",
+        if walks { tail(lcw * lch) } else { 0 }
+    );
     // Which anchors the walk reaches, which is what decides whether a level is built at all: the
     // blend reads the ones above it, and a plane nothing has written is bound as the noisy anchor
     // instead. The quarter level alone is a quarter of a gigabyte at 61MP, so a slider in the lower
@@ -1356,8 +1448,12 @@ async fn run(
     });
     let mut pushes = Pushes { bytes: Vec::new() };
     let wh = pushes.add(&[Word::I(w), Word::I(h)]);
-    let wh_period =
-        pushes.add(&[Word::I(w), Word::I(h), Word::I(pw as i32), Word::I(ph as i32)]);
+    let wh_period = pushes.add(&[
+        Word::I(w),
+        Word::I(h),
+        Word::I(pw as i32),
+        Word::I(ph as i32),
+    ]);
     let block_stats = pushes.add(&[
         Word::I(w),
         Word::I(h),
@@ -1368,11 +1464,15 @@ async fn run(
         Word::I(pw as i32),
         Word::I(ph as i32),
     ]);
-    let finalize =
-        pushes.add(&[Word::I(w), Word::I(h), Word::I(slots * ne_sampled as i32)]);
+    let finalize = pushes.add(&[Word::I(w), Word::I(h), Word::I(slots * ne_sampled as i32)]);
     let thresh_slot = pushes.add(&[Word::I(15)]);
-    let lap_hist =
-        pushes.add(&[Word::I(w), Word::I(h), Word::I(15), Word::I(pw as i32), Word::I(ph as i32)]);
+    let lap_hist = pushes.add(&[
+        Word::I(w),
+        Word::I(h),
+        Word::I(15),
+        Word::I(pw as i32),
+        Word::I(ph as i32),
+    ]);
     let n_wg = pushes.add(&[Word::I(DR_WORKGROUPS as i32)]);
     let sigma_slice = pushes.add(&[
         Word::I(w),
@@ -1403,7 +1503,13 @@ async fn run(
         Word::I(reconstructs_bayer as i32),
     ]);
     let detail_push = |subtract: bool| {
-        [Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(hh as i32), Word::I(subtract as i32)]
+        [
+            Word::I(w),
+            Word::I(h),
+            Word::I(hw as i32),
+            Word::I(hh as i32),
+            Word::I(subtract as i32),
+        ]
     };
     let detail_predict = pushes.add(&detail_push(false));
     let detail_out = pushes.add(&detail_push(true));
@@ -1434,8 +1540,12 @@ async fn run(
         Word::I(lch as i32),
         Word::I(COARSE_SCALE),
     ]);
-    let overlap = pushes
-        .add(&[Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(reconstructs_bayer as i32)]);
+    let overlap = pushes.add(&[
+        Word::I(w),
+        Word::I(h),
+        Word::I(hw as i32),
+        Word::I(reconstructs_bayer as i32),
+    ]);
     let down_h = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32)]);
     let green_sign = Word::F(if !reconstructs_bayer {
         0.0
@@ -1446,7 +1556,14 @@ async fn run(
     });
     let floor = Word::F(FORCED_RATIO_FLOOR.or(f64::from(RATIO_FLOOR)));
     let loess = |w: usize, h: usize, noise: f32| {
-        [Word::I(w as i32), Word::I(h as i32), Word::F(LOESS_STRENGTH), floor, Word::F(noise), green_sign]
+        [
+            Word::I(w as i32),
+            Word::I(h as i32),
+            Word::F(LOESS_STRENGTH),
+            floor,
+            Word::F(noise),
+            green_sign,
+        ]
     };
     let loess_h = pushes.add(&loess(hw, hh, 1.0));
     let down_q = pushes.add(&[Word::I(cq_w as i32), Word::I(cq_h as i32)]);
@@ -1467,18 +1584,34 @@ async fn run(
     let blend = pushes.add(&[
         Word::I(hw as i32),
         Word::I(hh as i32),
-        Word::F(if reconstructs_bayer { amounts.colour.max(1.0) } else { amounts.colour }),
+        Word::F(if reconstructs_bayer {
+            amounts.colour.max(1.0)
+        } else {
+            amounts.colour
+        }),
     ]);
     let reconstruct_bayer = pushes.add(&[
-        Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(hh as i32), packed[0], Word::F(amounts.colour),
+        Word::I(w),
+        Word::I(h),
+        Word::I(hw as i32),
+        Word::I(hh as i32),
+        packed[0],
+        Word::F(amounts.colour),
         Word::I(phase_pooled() as i32),
         Word::I(restores_detail as i32),
     ]);
-    let whole_to_whole =
-        pushes.add(&[Word::I(w), Word::I(h), Word::I(w), Word::I(h)]);
+    let whole_to_whole = pushes.add(&[Word::I(w), Word::I(h), Word::I(w), Word::I(h)]);
     let reach = Word::F(FORCED_LEVEL_REACH.or(f64::from(LEVEL_REACH)));
     let reconstruct = |fw: usize, fh: usize, cw: usize, ch: usize, noise: f32| {
-        [Word::I(fw as i32), Word::I(fh as i32), Word::I(cw as i32), Word::I(ch as i32), Word::F(noise), reach, green_sign]
+        [
+            Word::I(fw as i32),
+            Word::I(fh as i32),
+            Word::I(cw as i32),
+            Word::I(ch as i32),
+            Word::F(noise),
+            reach,
+            green_sign,
+        ]
     };
     let reconstruct_q_h = pushes.add(&reconstruct(hw, hh, cq_w, cq_h, 1.0));
     let reconstruct_e_q = pushes.add(&reconstruct(cq_w, cq_h, ce_w, ce_h, 0.5));
@@ -1532,7 +1665,10 @@ async fn run(
     };
 
     let groups = |w: usize, h: usize, tile: u32| {
-        ((w as u32).div_ceil(tile).max(1), (h as u32).div_ceil(tile).max(1))
+        (
+            (w as u32).div_ceil(tile).max(1),
+            (h as u32).div_ceil(tile).max(1),
+        )
     };
     let (fx, fy) = groups(width, height, 16);
     let (hx, hy) = groups(hw, hh, 16);
@@ -1551,7 +1687,10 @@ async fn run(
         let recorded = std::cell::Cell::new(0usize);
         let naming = stop_after == usize::MAX && crate::clock::watched();
         if naming {
-            DISPATCHED.lock().unwrap_or_else(|held| held.into_inner()).clear();
+            DISPATCHED
+                .lock()
+                .unwrap_or_else(|held| held.into_inner())
+                .clear();
         }
         let mut run = |kernel: &Kernel, group: &wgpu::BindGroup, offset: u32, x: u32, y: u32| {
             if done.get() || recorded.get() >= stop_after {
@@ -1580,7 +1719,10 @@ async fn run(
         // frame this region was cut from, in which case it is already in `params` and none of
         // these whole-region reductions would be measuring the right thing anyway.
         if supplied.is_none() {
-            let g = bind(&galosh.ne_block_stats, &[(0, &raw), (1, &blk_mean), (2, &blk_var)]);
+            let g = bind(
+                &galosh.ne_block_stats,
+                &[(0, &raw), (1, &blk_mean), (2, &blk_var)],
+            );
             run(
                 &galosh.ne_block_stats,
                 &g,
@@ -1588,21 +1730,39 @@ async fn run(
                 (slots as u32 * ne_sampled as u32).div_ceil(64).max(1),
                 1,
             );
-            let g = bind(&galosh.ne_finalize, &[(0, &blk_mean), (1, &blk_var), (3, &params)]);
+            let g = bind(
+                &galosh.ne_finalize,
+                &[(0, &blk_mean), (1, &blk_var), (3, &params)],
+            );
             run(&galosh.ne_finalize, &g, finalize, 1, 1);
-            let g = bind(&galosh.ne_dark_thresh_hist, &[(0, &raw), (1, &dark_thresh_hist)]);
+            let g = bind(
+                &galosh.ne_dark_thresh_hist,
+                &[(0, &raw), (1, &dark_thresh_hist)],
+            );
             let (tx, ty) = groups((hw + 2) / 3, (hh + 2) / 3, 16);
             run(&galosh.ne_dark_thresh_hist, &g, wh_period, tx, ty);
-            let g = bind(&galosh.ne_dark_thresh_finalize, &[(0, &dark_thresh_hist), (1, &params)]);
+            let g = bind(
+                &galosh.ne_dark_thresh_finalize,
+                &[(0, &dark_thresh_hist), (1, &params)],
+            );
             run(&galosh.ne_dark_thresh_finalize, &g, thresh_slot, 1, 1);
-            let g = bind(&galosh.ne_dark_lap_hist, &[(0, &raw), (1, &params), (2, &dark_lap_hist)]);
+            let g = bind(
+                &galosh.ne_dark_lap_hist,
+                &[(0, &raw), (1, &params), (2, &dark_lap_hist)],
+            );
             run(&galosh.ne_dark_lap_hist, &g, lap_hist, hx, hy);
-            let g = bind(&galosh.ne_dark_finalize, &[(0, &dark_lap_hist), (1, &params)]);
+            let g = bind(
+                &galosh.ne_dark_finalize,
+                &[(0, &dark_lap_hist), (1, &params)],
+            );
             run(&galosh.ne_dark_finalize, &g, thresh_slot, 1, 1);
         }
 
         // Phase 1: into the GAT domain, and the table that comes back out of it.
-        let g = bind(&galosh.gat_forward_full, &[(0, &raw), (1, &full_a), (6, &params)]);
+        let g = bind(
+            &galosh.gat_forward_full,
+            &[(0, &raw), (1, &full_a), (6, &params)],
+        );
         run(&galosh.gat_forward_full, &g, wh, fx, fy);
         // The table that undoes the GAT, which only the last phase reads: a fit stops before it,
         // and the series it sums is long enough that leaving it in doubles what a fit costs.
@@ -1619,8 +1779,17 @@ async fn run(
         // The per-CFA sigmas and their RMS, which are whole-region reductions like Phase 0's.
         if supplied.is_none() {
             let g = bind(&galosh.sigma_per_cfa, &[(0, &full_a), (1, &sigma_partial)]);
-            run(&galosh.sigma_per_cfa, &g, sigma_slice, slots as u32 * slices, 1);
-            let g = bind(&galosh.sigma_per_cfa_merge, &[(0, &sigma_partial), (1, &params)]);
+            run(
+                &galosh.sigma_per_cfa,
+                &g,
+                sigma_slice,
+                slots as u32 * slices,
+                1,
+            );
+            let g = bind(
+                &galosh.sigma_per_cfa_merge,
+                &[(0, &sigma_partial), (1, &params)],
+            );
             run(&galosh.sigma_per_cfa_merge, &g, sigma_merge, 4, 1);
             let g = bind(&galosh.unified_sigma, &[(0, &params)]);
             run(&galosh.unified_sigma, &g, wh, 1, 1);
@@ -1631,14 +1800,19 @@ async fn run(
         // Phase 2: the per-slot dark reference, by three IRLS iterations.
         let g = bind(&galosh.irls_seed, &[(0, &params)]);
         run(&galosh.irls_seed, &g, wh, 1, 1);
-        let reduce =
-            bind(&galosh.dark_ref_reduce, &[(0, &full_a), (1, &raw), (2, &params), (3, &partial)]);
+        let reduce = bind(
+            &galosh.dark_ref_reduce,
+            &[(0, &full_a), (1, &raw), (2, &params), (3, &partial)],
+        );
         let reduce_fin = bind(&galosh.dark_ref_finalize, &[(0, &partial), (1, &params)]);
         let resid = bind(
             &galosh.dark_resid_reduce,
             &[(0, &full_a), (1, &raw), (2, &params), (3, &partial_resid)],
         );
-        let resid_fin = bind(&galosh.dark_resid_finalize, &[(0, &partial_resid), (1, &params)]);
+        let resid_fin = bind(
+            &galosh.dark_resid_finalize,
+            &[(0, &partial_resid), (1, &params)],
+        );
         // The references themselves, which the IRLS reduces over the whole region - so a supplied
         // fit skips the iterations and `dark_sub_full` below subtracts the frame's own.
         //
@@ -1718,9 +1892,15 @@ async fn run(
         // Phase 6b: the band the full-resolution pass is blind to, smoothed rather than shrunk.
         if walks {
             // Each push is the *source's* shape, this kernel's destination being half of it.
-            let g = bind(&galosh.box_downsample_2x, &[(0, &full_b), (1, &coarse_half)]);
+            let g = bind(
+                &galosh.box_downsample_2x,
+                &[(0, &full_b), (1, &coarse_half)],
+            );
             run(&galosh.box_downsample_2x, &g, wh, hx, hy);
-            let g = bind(&galosh.box_downsample_2x, &[(0, &coarse_half), (1, &coarse)]);
+            let g = bind(
+                &galosh.box_downsample_2x,
+                &[(0, &coarse_half), (1, &coarse)],
+            );
             let (lx, ly) = groups(lcw, lch, 16);
             run(&galosh.box_downsample_2x, &g, down_coarse, lx, ly);
             let g = bind(&galosh.coarse_smooth, &[(0, &coarse), (1, &coarse_den)]);
@@ -1746,45 +1926,73 @@ async fn run(
             }
         }
         if walks_third {
-            for (from, to) in [(&l_h_den, &l_q), (&c_h[0], &c_q[0]), (&c_h[1], &c_q[1]), (&c_h[2], &c_q[2])] {
+            for (from, to) in [
+                (&l_h_den, &l_q),
+                (&c_h[0], &c_q[0]),
+                (&c_h[1], &c_q[1]),
+                (&c_h[2], &c_q[2]),
+            ] {
                 let g = bind(&galosh.box_downsample_2x, &[(0, from), (1, to)]);
                 run(&galosh.box_downsample_2x, &g, down_h, qx, qy);
             }
         }
 
         if walks_fourth {
-            for (from, to) in [(&l_q, &l_e), (&c_q[0], &c_e[0]), (&c_q[1], &c_e[1]), (&c_q[2], &c_e[2])] {
+            for (from, to) in [
+                (&l_q, &l_e),
+                (&c_q[0], &c_e[0]),
+                (&c_q[1], &c_e[1]),
+                (&c_q[2], &c_e[2]),
+            ] {
                 let g = bind(&galosh.box_downsample_2x, &[(0, from), (1, to)]);
                 run(&galosh.box_downsample_2x, &g, down_q, ex, ey);
             }
         }
 
         if filters_colour {
-            let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_h_den, &c_h, &c_loess_h));
+            let g = bind(
+                &galosh.loess_chroma_3p_tiled,
+                &loess_binds(&l_h_den, &c_h, &c_loess_h),
+            );
             let (lx, ly) = groups(hw, hh, LOESS_TILE);
             run(&galosh.loess_chroma_3p_tiled, &g, loess_h, lx, ly);
         }
 
         if walks_third {
-            let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_q, &c_q, &c_loess_q));
+            let g = bind(
+                &galosh.loess_chroma_3p_tiled,
+                &loess_binds(&l_q, &c_q, &c_loess_q),
+            );
             let (lx, ly) = groups(cq_w, cq_h, LOESS_TILE);
             run(&galosh.loess_chroma_3p_tiled, &g, loess_q, lx, ly);
         }
         if walks_fourth {
-            let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_e, &c_e, &c_loess_e));
+            let g = bind(
+                &galosh.loess_chroma_3p_tiled,
+                &loess_binds(&l_e, &c_e, &c_loess_e),
+            );
             let (lx, ly) = groups(ce_w, ce_h, LOESS_TILE);
             run(&galosh.loess_chroma_3p_tiled, &g, loess_e, lx, ly);
         }
 
         if walks_third {
-            let g = bind(&galosh.chroma_reconstruct, &reconstruct_binds(&c_loess_q, &c_loess_h, &c_q_h));
+            let g = bind(
+                &galosh.chroma_reconstruct,
+                &reconstruct_binds(&c_loess_q, &c_loess_h, &c_q_h),
+            );
             run(&galosh.chroma_reconstruct, &g, reconstruct_q_h, hx, hy);
         }
 
         if walks_fourth {
-            let g = bind(&galosh.chroma_reconstruct, &reconstruct_binds(&c_loess_e, &c_loess_q, &c_e_q));
+            let g = bind(
+                &galosh.chroma_reconstruct,
+                &reconstruct_binds(&c_loess_e, &c_loess_q, &c_e_q),
+            );
             run(&galosh.chroma_reconstruct, &g, reconstruct_e_q, qx, qy);
-            let g = bind(&galosh.chroma_reconstruct, &reconstruct_binds(&c_e_q, &c_q_h, &c_e_h));
+            let g = bind(
+                &galosh.chroma_reconstruct,
+                &reconstruct_binds(&c_e_q, &c_q_h, &c_e_h),
+            );
             run(&galosh.chroma_reconstruct, &g, reconstruct_e_h, hx, hy);
         }
 
@@ -1813,8 +2021,13 @@ async fn run(
             let g = bind(
                 &galosh.reconstruct_bayer,
                 &[
-                    (0, &c_loess_h[0]), (1, &c_loess_h[1]), (2, &c_loess_h[2]),
-                    (3, &full_a), (4, &raw), (5, &params), (6, &full_b),
+                    (0, &c_loess_h[0]),
+                    (1, &c_loess_h[1]),
+                    (2, &c_loess_h[2]),
+                    (3, &full_a),
+                    (4, &raw),
+                    (5, &params),
+                    (6, &full_b),
                 ],
             );
             run(&galosh.reconstruct_bayer, &g, reconstruct_bayer, fx, fy);
@@ -1855,9 +2068,11 @@ async fn run(
     // Taken on the way past, so keeping the table costs this run one 32KB copy onto a map it was
     // already going to wait for, rather than a submit of its own.
     if let Some((d, x, table_params)) = &staged {
-        for (from, out, len) in
-            [(&lut_d, d, LUT_SIZE as u64), (&lut_x, x, LUT_SIZE as u64), (&lut_params, table_params, 8)]
-        {
+        for (from, out, len) in [
+            (&lut_d, d, LUT_SIZE as u64),
+            (&lut_x, x, LUT_SIZE as u64),
+            (&lut_params, table_params, 8),
+        ] {
             encoder.copy_buffer_to_buffer(from, 0, out, 0, len * 4);
         }
     }
@@ -1867,7 +2082,9 @@ async fn run(
     // bounds a tiled run: dropping a plane's last handle *schedules* its release against the work
     // still pending, so without a wait here the next tile allocates while this one's gigabyte is
     // still owed - which at 61MP is every tile's planes resident at once.
-    crate::gpu::finished(gpu).await.expect("the denoise finished");
+    crate::gpu::finished(gpu)
+        .await
+        .expect("the denoise finished");
     lap("dispatch");
 
     if let (Some((d, x, table_params)), Some(fit)) = (&staged, supplied) {
@@ -1895,7 +2112,9 @@ async fn run(
     }
     let measured = match supplied {
         Some(fit) => fit,
-        None => crate::gpu::read_back(gpu, &fitted, fit_of).await.expect("the model mapped"),
+        None => crate::gpu::read_back(gpu, &fitted, fit_of)
+            .await
+            .expect("the model mapped"),
     };
     lap("read back");
     measured
@@ -1911,18 +2130,21 @@ fn fit_of(mapped: &[u8]) -> NoiseFit {
         alpha: at(P_ALPHA),
         sigma_sq: at(P_SIGMA_SQ),
         unified_sigma: at(P_UNIFIED_SIGMA),
-        dark_ref: [at(P_DARK_REF0), at(P_DARK_REF0 + 1), at(P_DARK_REF0 + 2), at(P_DARK_REF0 + 3)],
+        dark_ref: [
+            at(P_DARK_REF0),
+            at(P_DARK_REF0 + 1),
+            at(P_DARK_REF0 + 2),
+            at(P_DARK_REF0 + 3),
+        ],
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ACHROMATIC_RANGE, ALPHA_MIN, Amounts, COLOUR_LEAD, Denoiser, Detail, NoiseFit, NoiseModel,
-        P_ALPHA,
-        P_DARK_REF0,
-        P_INV_SG, P_SIGMA_SQ, P_UNIFIED_SIGMA, DARK_HIST_BINS, LUT_SIZE, SIGMA_BINS, denoise, device,
-        phases,
+        ACHROMATIC_RANGE, ALPHA_MIN, Amounts, COLOUR_LEAD, DARK_HIST_BINS, Denoiser, Detail,
+        LUT_SIZE, NoiseFit, NoiseModel, P_ALPHA, P_DARK_REF0, P_INV_SG, P_SIGMA_SQ,
+        P_UNIFIED_SIGMA, SIGMA_BINS, denoise, device, phases,
     };
 
     /// How many phases every frame is shrunk over, which is a quality decision rather than a tuning.
@@ -1953,10 +2175,14 @@ mod tests {
         const SLANG: &str = include_str!("../../../slang/galosh/prelude.slang");
         let declared = |name: &str| {
             let opener = format!("public static const int {name} = ");
-            let start = SLANG.find(&opener).unwrap_or_else(|| panic!("{name} is declared"));
+            let start = SLANG
+                .find(&opener)
+                .unwrap_or_else(|| panic!("{name} is declared"));
             let rest = &SLANG[start + opener.len()..];
             let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-            digits.parse::<usize>().unwrap_or_else(|_| panic!("{name} is a number"))
+            digits
+                .parse::<usize>()
+                .unwrap_or_else(|_| panic!("{name} is a number"))
         };
         for (name, here) in [
             ("P_UNIFIED_SIGMA", P_UNIFIED_SIGMA),
@@ -1965,21 +2191,35 @@ mod tests {
             ("P_ALPHA", P_ALPHA),
             ("P_SIGMA_SQ", P_SIGMA_SQ),
         ] {
-            assert_eq!(declared(name), here, "{name}: the shader and this host disagree");
+            assert_eq!(
+                declared(name),
+                here,
+                "{name}: the shader and this host disagree"
+            );
         }
     }
 
     #[test]
     fn the_table_sizes_are_the_ones_the_shader_declares() {
         const SLANG: &str = include_str!("../../../slang/galosh/prelude.slang");
-        for (name, here) in
-            [("SIGMA_BINS", SIGMA_BINS), ("DARK_HIST_BINS", DARK_HIST_BINS), ("LUT_SIZE", LUT_SIZE)]
-        {
+        for (name, here) in [
+            ("SIGMA_BINS", SIGMA_BINS),
+            ("DARK_HIST_BINS", DARK_HIST_BINS),
+            ("LUT_SIZE", LUT_SIZE),
+        ] {
             let opener = format!("public static const int {name} = ");
-            let start = SLANG.find(&opener).unwrap_or_else(|| panic!("{name} is declared"));
-            let digits: String =
-                SLANG[start + opener.len()..].chars().take_while(char::is_ascii_digit).collect();
-            assert_eq!(digits.parse::<usize>().ok(), Some(here), "{name}: the shader and this host disagree");
+            let start = SLANG
+                .find(&opener)
+                .unwrap_or_else(|| panic!("{name} is declared"));
+            let digits: String = SLANG[start + opener.len()..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            assert_eq!(
+                digits.parse::<usize>().ok(),
+                Some(here),
+                "{name}: the shader and this host disagree"
+            );
         }
     }
 
@@ -1993,10 +2233,15 @@ mod tests {
         const SLANG: &str = include_str!("../../../slang/galosh/prelude.slang");
         let opener = "public static const float ALPHA_MIN = ";
         let start = SLANG.find(opener).expect("the prelude declares ALPHA_MIN");
-        let literal: String =
-            SLANG[start + opener.len()..].chars().take_while(|c| *c != ';').collect();
+        let literal: String = SLANG[start + opener.len()..]
+            .chars()
+            .take_while(|c| *c != ';')
+            .collect();
         let declared: f32 = literal.trim().parse().expect("ALPHA_MIN is a number");
-        assert_eq!(declared, ALPHA_MIN, "the shader and this host floor alpha differently");
+        assert_eq!(
+            declared, ALPHA_MIN,
+            "the shader and this host floor alpha differently"
+        );
     }
 
     /// The grid the two dark-reference reducers stride, against the dispatch they are given.
@@ -2008,7 +2253,10 @@ mod tests {
     #[test]
     fn the_reducers_stride_the_grid_the_host_dispatches() {
         const SLANG: &str = include_str!("../../../slang/galosh/prelude.slang");
-        let line = format!("public static const int DR_WORKGROUPS = {};", super::DR_WORKGROUPS);
+        let line = format!(
+            "public static const int DR_WORKGROUPS = {};",
+            super::DR_WORKGROUPS
+        );
         assert!(SLANG.contains(&line), "the prelude does not say `{line}`");
     }
 
@@ -2021,11 +2269,21 @@ mod tests {
     fn the_achromatic_range_is_the_one_the_shader_declares() {
         const SLANG: &str = include_str!("../../../slang/galosh/prelude.slang");
         let opener = "public static const float ACHROMATIC_RANGE = ";
-        let start = SLANG.find(opener).expect("the prelude declares ACHROMATIC_RANGE");
-        let literal: String =
-            SLANG[start + opener.len()..].chars().take_while(|c| *c != ';').collect();
-        let declared: f32 = literal.trim().parse().expect("ACHROMATIC_RANGE is a number");
-        assert_eq!(declared, ACHROMATIC_RANGE, "the shader and this host gate neutrality differently");
+        let start = SLANG
+            .find(opener)
+            .expect("the prelude declares ACHROMATIC_RANGE");
+        let literal: String = SLANG[start + opener.len()..]
+            .chars()
+            .take_while(|c| *c != ';')
+            .collect();
+        let declared: f32 = literal
+            .trim()
+            .parse()
+            .expect("ACHROMATIC_RANGE is a number");
+        assert_eq!(
+            declared, ACHROMATIC_RANGE,
+            "the shader and this host gate neutrality differently"
+        );
     }
 
     /// A fit whose per-slot references have drifted apart is refused rather than applied.
@@ -2042,8 +2300,14 @@ mod tests {
         };
         assert!(sane.usable(), "a measured fit was refused");
 
-        let drifted = NoiseFit { dark_ref: [56.22, 56.12, 91.0, 56.17], ..sane };
-        assert!(!drifted.usable(), "a reference the blocks cannot have said was accepted");
+        let drifted = NoiseFit {
+            dark_ref: [56.22, 56.12, 91.0, 56.17],
+            ..sane
+        };
+        assert!(
+            !drifted.usable(),
+            "a reference the blocks cannot have said was accepted"
+        );
     }
 
     /// The Detail track's landmarks.
@@ -2055,7 +2319,11 @@ mod tests {
         // The calibrated point - exactly the noise Phase 0 measured, treated as noise - is not the
         // midpoint. The track stops short of twice it, so 1.0 sits above the middle.
         let calibrated = Amounts::from_sliders(62.5, 62.5);
-        assert!((calibrated.luma - 1.0).abs() < 1e-6, "luma {}", calibrated.luma);
+        assert!(
+            (calibrated.luma - 1.0).abs() < 1e-6,
+            "luma {}",
+            calibrated.luma
+        );
 
         // Colour's landmarks are its anchors, one per third of the track: the half-resolution
         // regression exactly at a third, the quarter-resolution level at two thirds, and the walk
@@ -2063,7 +2331,11 @@ mod tests {
         let third = Amounts::from_sliders(0.0, 100.0 / 3.0);
         assert!((third.colour - 1.0).abs() < 1e-6, "colour {}", third.colour);
         let two_thirds = Amounts::from_sliders(0.0, 200.0 / 3.0);
-        assert!((two_thirds.colour - 2.0).abs() < 1e-6, "colour {}", two_thirds.colour);
+        assert!(
+            (two_thirds.colour - 2.0).abs() < 1e-6,
+            "colour {}",
+            two_thirds.colour
+        );
 
         // The end of each track. Luminance stops where the library's noisiest frame was still a
         // photograph rather than a blur; colour stops where `smoothstep_blend_3p` stops answering,
@@ -2080,14 +2352,22 @@ mod tests {
         // thing nothing else in either suite would notice.
         let shipped = Amounts::from_sliders(20.0, 30.0);
         assert!((shipped.luma - 0.32).abs() < 1e-6, "luma {}", shipped.luma);
-        assert!((shipped.colour - 0.9).abs() < 1e-6, "colour {}", shipped.colour);
+        assert!(
+            (shipped.colour - 0.9).abs() < 1e-6,
+            "colour {}",
+            shipped.colour
+        );
     }
 
     /// The pair the two halves of the Detail panel are suggested at.
     #[test]
     fn the_suggested_colour_runs_ahead_of_the_luminance() {
         let at = |read: f32| {
-            NoiseModel { alpha: 0.0, sigma_sq: read * read }.suggested_amounts()
+            NoiseModel {
+                alpha: 0.0,
+                sigma_sq: read * read,
+            }
+            .suggested_amounts()
         };
         // A base-ISO frame is declined on both halves rather than on one.
         assert_eq!(at(0.00026), (0.0, 0.0));
@@ -2097,14 +2377,23 @@ mod tests {
         // under-denoising colour is mottle and never does. This is `DSC00982` at ISO 12800.
         let (luma, colour) = at(0.00275);
         assert!((35.0..45.0).contains(&luma), "luma {luma}");
-        assert_eq!(colour, 100.0, "the noisiest frame in the library does not ask for every scale");
+        assert_eq!(
+            colour, 100.0,
+            "the noisiest frame in the library does not ask for every scale"
+        );
 
         // A frame the ramp puts mid-track, where the lead is the lead rather than the clamp: this
         // is `DSC05282` at ISO 4000, the frame the eighth-resolution anchor was measured on.
         let (luma, colour) = at(0.00187);
         assert!(colour > luma, "colour {colour} does not lead luma {luma}");
-        assert!((colour - luma * COLOUR_LEAD).abs() < 1e-6, "colour {colour} is not the lead");
-        assert!((70.0..85.0).contains(&colour), "colour {colour} does not reach the coarse level");
+        assert!(
+            (colour - luma * COLOUR_LEAD).abs() < 1e-6,
+            "colour {colour} is not the lead"
+        );
+        assert!(
+            (70.0..85.0).contains(&colour),
+            "colour {colour} does not reach the coarse level"
+        );
     }
 
     /// What an unset slider resolves to, and what a decode may conclude before it has measured.
@@ -2134,12 +2423,22 @@ mod tests {
             unified_sigma: 1.2,
             dark_ref: [0.0; 4],
         };
-        let (luma, colour) = NoiseModel { alpha: 0.0, sigma_sq: noisy.sigma_sq }.suggested_amounts();
-        assert_eq!(Detail::AUTO.resolved(Some(noisy)), (luma.round(), colour.round()));
+        let (luma, colour) = NoiseModel {
+            alpha: 0.0,
+            sigma_sq: noisy.sigma_sq,
+        }
+        .suggested_amounts();
+        assert_eq!(
+            Detail::AUTO.resolved(Some(noisy)),
+            (luma.round(), colour.round())
+        );
 
         // Half set is half resolved: a reader who moved one slider is not asking the frame about
         // the other one as well.
-        let half = Detail { luminance: Some(4.0), ..Detail::AUTO };
+        let half = Detail {
+            luminance: Some(4.0),
+            ..Detail::AUTO
+        };
         assert_eq!(half.resolved(Some(noisy)), (4.0, colour.round()));
 
         // **A decode cannot say an unset slider does nothing until it has measured**, which is what
@@ -2151,7 +2450,10 @@ mod tests {
 
         // A clean frame is declined on both halves, and that is the whole of what a fit can say -
         // so an automatic decode of one filters nothing rather than filtering a little.
-        let clean = NoiseFit { sigma_sq: 0.00026 * 0.00026, ..noisy };
+        let clean = NoiseFit {
+            sigma_sq: 0.00026 * 0.00026,
+            ..noisy
+        };
         assert_eq!(Detail::AUTO.resolved(Some(clean)), (0.0, 0.0));
         assert!(!Detail::AUTO.amounts(Some(clean)).does_anything());
     }
@@ -2175,8 +2477,12 @@ mod tests {
     /// to differ.
     #[test]
     fn a_kept_table_belongs_to_the_fit_it_was_built_for() {
-        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
-        let Some(gpu) = crate::gpu::device() else { return };
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let Some(kernels) = device(gpu) else { return };
 
         let (w, h) = (192usize, 192usize);
@@ -2186,7 +2492,14 @@ mod tests {
         let amounts = Amounts::from_sliders(50.0, 50.0);
         let denoised = |fit: super::NoiseFit| {
             let out = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
-            pollster::block_on(super::denoise_with(gpu, kernels, &out, &rggb(), amounts, fit));
+            pollster::block_on(super::denoise_with(
+                gpu,
+                kernels,
+                &out,
+                &rggb(),
+                amounts,
+                fit,
+            ));
             read(gpu, &out)
         };
         let built = || super::TABLES_BUILT.load(std::sync::atomic::Ordering::Relaxed);
@@ -2201,20 +2514,42 @@ mod tests {
         };
         // A different sensor in the two numbers the table is a function of and nothing else, so a
         // key ignoring either would collide here.
-        let other = super::NoiseFit { alpha: 0.0079_3, sigma_sq: 4.41e-5, ..one };
+        let other = super::NoiseFit {
+            alpha: 0.0079_3,
+            sigma_sq: 4.41e-5,
+            ..one
+        };
 
         let before = built();
         let first = denoised(one);
-        assert_eq!(built(), before + 1, "the first run of a new fit did not sum a table");
+        assert_eq!(
+            built(),
+            before + 1,
+            "the first run of a new fit did not sum a table"
+        );
 
         let between = denoised(other);
-        assert_eq!(built(), before + 2, "a different fit reused another fit's table");
+        assert_eq!(
+            built(),
+            before + 2,
+            "a different fit reused another fit's table"
+        );
 
         let again = denoised(one);
-        assert_eq!(built(), before + 2, "a fit already summed was summed a second time");
+        assert_eq!(
+            built(),
+            before + 2,
+            "a fit already summed was summed a second time"
+        );
 
-        assert_eq!(first, again, "the kept table changed what the same fit produced");
-        assert_ne!(first, between, "two different fits denoised to the same frame");
+        assert_eq!(
+            first, again,
+            "the kept table changed what the same fit produced"
+        );
+        assert_ne!(
+            first, between,
+            "two different fits denoised to the same frame"
+        );
     }
 
     /// Tiling is a schedule and not a filter, and the progress it reports is a fraction.
@@ -2230,8 +2565,12 @@ mod tests {
     /// absence and this test would pass against the bug it exists for.
     #[test]
     fn tiling_the_denoise_does_not_move_a_sample() {
-        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
-        let Some(gpu) = crate::gpu::device() else { return };
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let Some(kernels) = device(gpu) else { return };
 
         let (w, h) = (1792usize, 1792usize);
@@ -2245,7 +2584,14 @@ mod tests {
         let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
         let fit = pollster::block_on(super::fit(gpu, kernels, &uploaded, &rggb()));
         let whole = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
-        pollster::block_on(super::denoise_with(gpu, kernels, &whole, &rggb(), amounts, fit));
+        pollster::block_on(super::denoise_with(
+            gpu,
+            kernels,
+            &whole,
+            &rggb(),
+            amounts,
+            fit,
+        ));
         let whole = read(gpu, &whole);
 
         for tile in [128usize, 192, 256] {
@@ -2264,11 +2610,23 @@ mod tests {
             ));
             let actual = read(gpu, &tiled);
             assert_eq!(actual.len(), whole.len());
-            if let Some((at, (&got, &expected))) = actual.iter().zip(&whole).enumerate().find(|(_, (a, b))| a != b) {
+            if let Some((at, (&got, &expected))) = actual
+                .iter()
+                .zip(&whole)
+                .enumerate()
+                .find(|(_, (a, b))| a != b)
+            {
                 panic!("a {tile}px tiling moved sample {at}: {got} instead of {expected}");
             }
-            assert!(ticks.len() > 1, "a {tile}px tiling reported {} tiles", ticks.len());
-            assert!(ticks.windows(2).all(|pair| pair[1] > pair[0]), "{ticks:?} went backwards");
+            assert!(
+                ticks.len() > 1,
+                "a {tile}px tiling reported {} tiles",
+                ticks.len()
+            );
+            assert!(
+                ticks.windows(2).all(|pair| pair[1] > pair[0]),
+                "{ticks:?} went backwards"
+            );
             assert_eq!(ticks.last(), Some(&1.0), "{tile}px did not report finished");
         }
     }
@@ -2280,18 +2638,40 @@ mod tests {
     /// alpha is zero throughout because the slope is precisely what this rule does not consult.
     #[test]
     fn a_clean_frame_is_left_alone_and_a_noisy_one_is_not() {
-        let at = |read: f32| NoiseModel { alpha: 0.0, sigma_sq: read * read }.suggested_amount();
+        let at = |read: f32| {
+            NoiseModel {
+                alpha: 0.0,
+                sigma_sq: read * read,
+            }
+            .suggested_amount()
+        };
         // Base ISO, across both libraries: the whole range is declined rather than put through
         // the chain to be left alone.
         for clean in [0.00017, 0.00026, 0.00036, 0.00052] {
-            assert_eq!(at(clean), 0.0, "a base-ISO frame at {clean} asks for nothing");
+            assert_eq!(
+                at(clean),
+                0.0,
+                "a base-ISO frame at {clean} asks for nothing"
+            );
         }
         // ISO 250 is barely off the gate, and the library's noisiest frame - DSC00982 at ISO 12800
         // - is where the track was judged against the body's JPEG. Nothing measured reaches the
         // upper half, the ramp erring towards grain rather than towards smearing.
-        assert!((1.0..20.0).contains(&at(0.00088)), "ISO 250 asks {}", at(0.00088));
-        assert!((20.0..35.0).contains(&at(0.00211)), "ISO 5000 asks {}", at(0.00211));
-        assert!((35.0..45.0).contains(&at(0.00275)), "ISO 12800 asks {}", at(0.00275));
+        assert!(
+            (1.0..20.0).contains(&at(0.00088)),
+            "ISO 250 asks {}",
+            at(0.00088)
+        );
+        assert!(
+            (20.0..35.0).contains(&at(0.00211)),
+            "ISO 5000 asks {}",
+            at(0.00211)
+        );
+        assert!(
+            (35.0..45.0).contains(&at(0.00275)),
+            "ISO 12800 asks {}",
+            at(0.00275)
+        );
         // Ramped rather than stepped, so two frames either side of the gate are not two
         // different photographs.
         assert!(at(0.0007) < at(0.0009));
@@ -2305,8 +2685,14 @@ mod tests {
     /// asks for less than a third of what the other does; keyed on the read floor it does not.
     #[test]
     fn a_collapsed_slope_does_not_decide_the_amount() {
-        let collapsed = NoiseModel { alpha: 0.000024, sigma_sq: 0.00000759 };
-        let intact = NoiseModel { alpha: 0.001258, sigma_sq: 0.00000635 };
+        let collapsed = NoiseModel {
+            alpha: 0.000024,
+            sigma_sq: 0.00000759,
+        };
+        let intact = NoiseModel {
+            alpha: 0.001258,
+            sigma_sq: 0.00000635,
+        };
         assert!(
             collapsed.suggested_amount() > intact.suggested_amount(),
             "the noisier frame asks for more: {} against {}",
@@ -2343,8 +2729,16 @@ mod tests {
         // what the table could be summed for.
         let clean = frame_with_noise(width, height, 0.0005);
         let uploaded = crate::condition::Mosaic::upload(gpu, &clean, width, height);
-        let fit =
-            pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts { luma: 1.0, colour: 1.0 }));
+        let fit = pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts {
+                luma: 1.0,
+                colour: 1.0,
+            },
+        ));
         let denoised = read(gpu, &uploaded);
 
         assert!(
@@ -2395,15 +2789,24 @@ mod tests {
                 let (x, y) = (at % width, at / width);
                 let slot = (y & 1) | ((x & 1) << 1);
                 let ridge = height as f32 * 0.45 + 20.0 * (x as f32 / 97.0).sin();
-                let level: f32 =
-                    if (y as f32) < ridge { [0.08, 0.11, 0.11, 0.16][slot] } else { 0.002 };
+                let level: f32 = if (y as f32) < ridge {
+                    [0.08, 0.11, 0.11, 0.16][slot]
+                } else {
+                    0.002
+                };
                 let sigma = 0.0005 + 0.01 * level.sqrt();
                 (level + (uniform() + uniform() + uniform() - 1.5) * sigma).clamp(0.0, 1.0)
             })
             .collect();
 
         let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-        pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts::from_sliders(40.0, 40.0)));
+        pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts::from_sliders(40.0, 40.0),
+        ));
         let denoised = read(gpu, &uploaded);
 
         for row in 0..height {
@@ -2443,14 +2846,24 @@ mod tests {
             .map(|at| {
                 let (x, y) = (at % width, at / width);
                 let slot = (y & 1) | ((x & 1) << 1);
-                let level: f32 = if x > width / 2 { [0.20, 0.34, 0.34, 0.12][slot] } else { 0.0 };
+                let level: f32 = if x > width / 2 {
+                    [0.20, 0.34, 0.34, 0.12][slot]
+                } else {
+                    0.0
+                };
                 let sigma = read_noise + 0.01 * level.sqrt();
                 level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma
             })
             .collect();
 
         let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-        pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts::from_sliders(40.0, 40.0)));
+        pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts::from_sliders(40.0, 40.0),
+        ));
         let denoised = read(gpu, &uploaded);
 
         let black: Vec<f64> = (16..height - 16)
@@ -2486,7 +2899,11 @@ mod tests {
             (seed >> 40) as f32 / 16777216.0
         };
         let level = |x: usize, slot: usize| -> f32 {
-            if x < edge { 0.1 } else { [0.03, 0.18, 0.18, 0.03][slot] }
+            if x < edge {
+                0.1
+            } else {
+                [0.03, 0.18, 0.18, 0.03][slot]
+            }
         };
         let noisy: Vec<f32> = (0..width * height)
             .map(|at| {
@@ -2498,12 +2915,21 @@ mod tests {
             .collect();
 
         let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-        pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts::from_sliders(0.0, 100.0)));
+        pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts::from_sliders(0.0, 100.0),
+        ));
         let denoised = read(gpu, &uploaded);
 
         // The red sites, averaged down each column: the grey side is 0.1 and the green side 0.03.
         for x in (0..width).step_by(2).filter(|x| x.abs_diff(edge) >= 6) {
-            let mean = (0..height).step_by(2).map(|y| denoised[y * width + x]).sum::<f32>()
+            let mean = (0..height)
+                .step_by(2)
+                .map(|y| denoised[y * width + x])
+                .sum::<f32>()
                 / (height / 2) as f32;
             let off = (mean - level(x, 0)).abs() / 0.07;
             // Ungated, six pixels off the step read a quarter of it and twelve read 0.07.
@@ -2513,7 +2939,9 @@ mod tests {
 
     #[test]
     fn a_plate_keeps_its_colour_without_noise_or_directional_grain() {
-        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
 
@@ -2522,51 +2950,123 @@ mod tests {
             .join("../../test/fixtures/mosaics/red-plate-rim.f32");
         let bytes = std::fs::read(path).expect("the plate's mosaic");
         assert_eq!(bytes.len(), width * height * 4);
-        let mosaic: Vec<f32> =
-            bytes.chunks_exact(4).map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]])).collect();
+        let mosaic: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+            .collect();
         let rcd = crate::demosaic::device(gpu).expect("the demosaic kernels");
         let low_pass = |plane: &[f64], hole: isize| -> Vec<f64> {
             let mut smoothed = plane.to_vec();
             for (stride, size) in [(1, width), (width, height)] {
-                smoothed = (0..plane.len()).map(|at| {
-                    let position = at / stride % size;
-                    [1.0, 4.0, 6.0, 4.0, 1.0].into_iter().enumerate().map(|(tap, weight)| {
-                        let neighbour = (position as isize + (tap as isize - 2) * hole)
-                            .clamp(0, size as isize - 1) as usize;
-                        weight * smoothed[at - position * stride + neighbour * stride] / 16.0
-                    }).sum()
-                }).collect();
+                smoothed = (0..plane.len())
+                    .map(|at| {
+                        let position = at / stride % size;
+                        [1.0, 4.0, 6.0, 4.0, 1.0]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(tap, weight)| {
+                                let neighbour = (position as isize + (tap as isize - 2) * hole)
+                                    .clamp(0, size as isize - 1)
+                                    as usize;
+                                weight * smoothed[at - position * stride + neighbour * stride]
+                                    / 16.0
+                            })
+                            .sum()
+                    })
+                    .collect();
             }
             smoothed
         };
         // Fixed noise budgets in preview codes of 255; changing them weakens regression coverage.
         let budgets = [
-            (1.0, [
-                [[1.297094919, 0.712056294], [0.619382527, 0.474773657], [0.362962954, 0.334762412]],
-                [[2.455099568, 1.143731500], [1.131751345, 0.889216033], [0.737119740, 0.651836320]],
-            ]),
-            (1.35, [
-                [[1.239549811, 0.673791894], [0.595188773, 0.438468152], [0.327387536, 0.286349654]],
-                [[2.249911676, 1.032192491], [1.023864620, 0.789141386], [0.637942304, 0.559494575]],
-            ]),
-            (2.0, [
-                [[1.130417958, 0.589624808], [0.582204233, 0.400156991], [0.331636811, 0.273442708]],
-                [[1.944914664, 0.827576316], [0.870718198, 0.625624022], [0.546510353, 0.483125570]],
-            ]),
-            (3.0, [
-                [[1.115272005, 0.581262017], [0.558324149, 0.369815323], [0.294650478, 0.227699657]],
-                [[1.893297836, 0.798270642], [0.780362605, 0.542186515], [0.440758418, 0.387218849]],
-            ]),
+            (
+                1.0,
+                [
+                    [
+                        [1.297094919, 0.712056294],
+                        [0.619382527, 0.474773657],
+                        [0.362962954, 0.334762412],
+                    ],
+                    [
+                        [2.455099568, 1.143731500],
+                        [1.131751345, 0.889216033],
+                        [0.737119740, 0.651836320],
+                    ],
+                ],
+            ),
+            (
+                1.35,
+                [
+                    [
+                        [1.239549811, 0.673791894],
+                        [0.595188773, 0.438468152],
+                        [0.327387536, 0.286349654],
+                    ],
+                    [
+                        [2.249911676, 1.032192491],
+                        [1.023864620, 0.789141386],
+                        [0.637942304, 0.559494575],
+                    ],
+                ],
+            ),
+            (
+                2.0,
+                [
+                    [
+                        [1.130417958, 0.589624808],
+                        [0.582204233, 0.400156991],
+                        [0.331636811, 0.273442708],
+                    ],
+                    [
+                        [1.944914664, 0.827576316],
+                        [0.870718198, 0.625624022],
+                        [0.546510353, 0.483125570],
+                    ],
+                ],
+            ),
+            (
+                3.0,
+                [
+                    [
+                        [1.115272005, 0.581262017],
+                        [0.558324149, 0.369815323],
+                        [0.294650478, 0.227699657],
+                    ],
+                    [
+                        [1.893297836, 0.798270642],
+                        [0.780362605, 0.542186515],
+                        [0.440758418, 0.387218849],
+                    ],
+                ],
+            ),
         ];
         for sensor_orientation in [false, true] {
-            let orientation = if sensor_orientation { "sensor" } else { "upright" };
+            let orientation = if sensor_orientation {
+                "sensor"
+            } else {
+                "upright"
+            };
             let index = |x: usize, y: usize| {
-                if sensor_orientation { x * height + height - 1 - y } else { y * width + x }
+                if sensor_orientation {
+                    x * height + height - 1 - y
+                } else {
+                    y * width + x
+                }
             };
             let (sample_width, sample_height, quad, dark_ref) = if sensor_orientation {
-                (height, width, [0, 1, 1, 2], [37.809074, 37.36227, 37.358116, 36.996742])
+                (
+                    height,
+                    width,
+                    [0, 1, 1, 2],
+                    [37.809074, 37.36227, 37.358116, 36.996742],
+                )
             } else {
-                (width, height, [1, 2, 0, 1], [37.358116, 37.809074, 36.996742, 37.36227])
+                (
+                    width,
+                    height,
+                    [1, 2, 0, 1],
+                    [37.358116, 37.809074, 36.996742, 37.36227],
+                )
             };
             let mut samples = vec![0.0; mosaic.len()];
             for y in 0..height {
@@ -2582,37 +3082,60 @@ mod tests {
                 dark_ref,
             };
             let filtered = |colour: f32| -> crate::condition::Mosaic {
-                let uploaded = crate::condition::Mosaic::upload(gpu, &samples, sample_width, sample_height);
-                let amounts = Amounts { luma: 0.528, colour };
-                pollster::block_on(super::denoise_with(gpu, galosh, &uploaded, &cfa, amounts, fit));
+                let uploaded =
+                    crate::condition::Mosaic::upload(gpu, &samples, sample_width, sample_height);
+                let amounts = Amounts {
+                    luma: 0.528,
+                    colour,
+                };
+                pollster::block_on(super::denoise_with(
+                    gpu, galosh, &uploaded, &cfa, amounts, fit,
+                ));
                 uploaded
             };
             let rows = |denoised: &[f32]| -> Vec<[f64; 2]> {
-                (0..height / 2).map(|site| {
-                    let mean = |dx: usize, dy: usize| {
-                        (200..520).step_by(2).map(|x| f64::from(denoised[index(x + dx, site * 2 + dy)]))
-                            .sum::<f64>() / 160.0
-                    };
-                    [mean(0, 1), mean(1, 0)]
-                }).collect()
+                (0..height / 2)
+                    .map(|site| {
+                        let mean = |dx: usize, dy: usize| {
+                            (200..520)
+                                .step_by(2)
+                                .map(|x| f64::from(denoised[index(x + dx, site * 2 + dy)]))
+                                .sum::<f64>()
+                                / 160.0
+                        };
+                        [mean(0, 1), mean(1, 0)]
+                    })
+                    .collect()
             };
             let band_contrast = |profile: &[[f64; 2]]| {
-                (138..154).step_by(2).map(|y| profile[y / 2][1] - profile[y / 2][0]).sum::<f64>()
+                (138..154)
+                    .step_by(2)
+                    .map(|y| profile[y / 2][1] - profile[y / 2][0])
+                    .sum::<f64>()
             };
             let chroma_noise = |rgb: &[u8]| -> [[[f64; 2]; 3]; 2] {
                 std::array::from_fn(|axis| {
-                    let mut plane: Vec<f64> = (0..width * height).map(|at| {
-                        let pixel = &rgb[index(at % width, at / width) * 3..][..3];
-                        let luma = pixel.iter().zip(crate::image::LUMA)
-                            .map(|(&value, weight)| f64::from(value) * f64::from(weight)).sum::<f64>();
-                        f64::from(pixel[2 * axis]) - luma
-                    }).collect();
+                    let mut plane: Vec<f64> = (0..width * height)
+                        .map(|at| {
+                            let pixel = &rgb[index(at % width, at / width) * 3..][..3];
+                            let luma = pixel
+                                .iter()
+                                .zip(crate::image::LUMA)
+                                .map(|(&value, weight)| f64::from(value) * f64::from(weight))
+                                .sum::<f64>();
+                            f64::from(pixel[2 * axis]) - luma
+                        })
+                        .collect();
                     std::array::from_fn(|band| {
                         let hole = 1isize << band;
                         let smoothed = low_pass(&plane, hole);
-                        let mut detail: Vec<f64> = (16..42).flat_map(|y| (160..560).map(move |x| y * width + x))
-                            .map(|at| (plane[at] - smoothed[at]).abs()).collect();
-                        let rms = (detail.iter().map(|value| value * value).sum::<f64>() / detail.len() as f64).sqrt();
+                        let mut detail: Vec<f64> = (16..42)
+                            .flat_map(|y| (160..560).map(move |x| y * width + x))
+                            .map(|at| (plane[at] - smoothed[at]).abs())
+                            .collect();
+                        let rms = (detail.iter().map(|value| value * value).sum::<f64>()
+                            / detail.len() as f64)
+                            .sqrt();
                         detail.sort_unstable_by(f64::total_cmp);
                         let middle = detail.len() / 2;
                         let mad = 1.4826 * (detail[middle - 1] + detail[middle]) * 0.5;
@@ -2626,38 +3149,65 @@ mod tests {
                 let uploaded = filtered(colour);
                 let denoised = rows(&read(gpu, &uploaded));
                 let retained = band_contrast(&denoised) / reference;
-                assert!(retained > 0.8,
-                    "{orientation}, colour {colour} retained {retained:.3} of the blue band's contrast");
+                assert!(
+                    retained > 0.8,
+                    "{orientation}, colour {colour} retained {retained:.3} of the blue band's contrast"
+                );
                 for y in (100..120).step_by(2) {
                     let [red, blue] = denoised[y / 2];
-                    assert!(red > blue, "{orientation}, colour {colour}, red plate row {y}: R {red:.5}, B {blue:.5}");
+                    assert!(
+                        red > blue,
+                        "{orientation}, colour {colour}, red plate row {y}: R {red:.5}, B {blue:.5}"
+                    );
                 }
                 for y in (140..148).step_by(2) {
                     let [red, blue] = denoised[y / 2];
-                    assert!(blue > red, "{orientation}, colour {colour}, blue rim row {y}: R {red:.5}, B {blue:.5}");
+                    assert!(
+                        blue > red,
+                        "{orientation}, colour {colour}, blue rim row {y}: R {red:.5}, B {blue:.5}"
+                    );
                 }
-                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(gpu, rcd, &uploaded, &cfa, |bytes| {
-                    bytes.chunks_exact(4).map(|word| {
-                        let value = f32::from_ne_bytes(word.try_into().unwrap());
-                        ((value * 8.0).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
-                    }).collect::<Vec<_>>()
-                })).expect("the plate's preview");
+                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(
+                    gpu,
+                    rcd,
+                    &uploaded,
+                    &cfa,
+                    |bytes| {
+                        bytes
+                            .chunks_exact(4)
+                            .map(|word| {
+                                let value = f32::from_ne_bytes(word.try_into().unwrap());
+                                ((value * 8.0).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round()
+                                    as u8
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                ))
+                .expect("the plate's preview");
                 let noise = chroma_noise(&rgb);
                 for (axis, name) in ["Cr", "Cb"].into_iter().enumerate() {
                     for band in 0..3 {
                         for (metric, label) in ["RMS", "MAD"].into_iter().enumerate() {
-                            let (actual, original) = (noise[axis][band][metric], budget[axis][band][metric]);
-                            assert!(actual <= original * 1.05,
+                            let (actual, original) =
+                                (noise[axis][band][metric], budget[axis][band][metric]);
+                            assert!(
+                                actual <= original * 1.05,
                                 "{orientation}, colour {colour}, background {name}, hole {}, {label}: {actual:.6} exceeds original {original:.6} by more than 5%",
-                                1 << band);
+                                1 << band
+                            );
                         }
                     }
                 }
                 if colour == 3.0 {
-                    let luma: Vec<f64> = (0..width * height).map(|at| {
-                        rgb[index(at % width, at / width) * 3..][..3].iter().zip(crate::image::LUMA)
-                            .map(|(&value, weight)| f64::from(value) * f64::from(weight)).sum()
-                    }).collect();
+                    let luma: Vec<f64> = (0..width * height)
+                        .map(|at| {
+                            rgb[index(at % width, at / width) * 3..][..3]
+                                .iter()
+                                .zip(crate::image::LUMA)
+                                .map(|(&value, weight)| f64::from(value) * f64::from(weight))
+                                .sum()
+                        })
+                        .collect();
                     let blurred = low_pass(&low_pass(&luma, 1), 1);
                     let detail: Vec<_> = luma.iter().zip(blurred).map(|(a, b)| a - b).collect();
                     let correlation = |dx: isize| {
@@ -2666,21 +3216,28 @@ mod tests {
                             for x in 200..520 {
                                 let a = detail[y * width + x];
                                 let b = detail[(y + 2) * width + (x as isize + dx) as usize];
-                                for (sum, value) in sums.iter_mut().zip([a, b, a*a, b*b, a*b, 1.0]) {
+                                for (sum, value) in
+                                    sums.iter_mut().zip([a, b, a * a, b * b, a * b, 1.0])
+                                {
                                     *sum += value;
                                 }
                             }
                         }
                         let [a, b, aa, bb, ab, n] = sums;
-                        let correlation = (ab - a*b/n) / ((aa - a*a/n) * (bb - b*b/n)).sqrt();
-                        (correlation, (aa/n).sqrt())
+                        let correlation =
+                            (ab - a * b / n) / ((aa - a * a / n) * (bb - b * b / n)).sqrt();
+                        (correlation, (aa / n).sqrt())
                     };
                     let (along, rms) = correlation(2);
                     let (across, _) = correlation(-2);
-                    assert!((along - across).abs() < 0.06,
-                        "{orientation}: diagonal grain correlations {along:.4}/{across:.4} favour one direction");
-                    assert!(rms < 5.59 * 1.05,
-                        "{orientation}: removing streaks increased fine-grain RMS to {rms:.4}");
+                    assert!(
+                        (along - across).abs() < 0.06,
+                        "{orientation}: diagonal grain correlations {along:.4}/{across:.4} favour one direction"
+                    );
+                    assert!(
+                        rms < 5.59 * 1.05,
+                        "{orientation}: removing streaks increased fine-grain RMS to {rms:.4}"
+                    );
                 }
             }
         }
@@ -2720,7 +3277,13 @@ mod tests {
             .collect();
 
         let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-        pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts::from_sliders(40.0, 0.0)));
+        pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts::from_sliders(40.0, 0.0),
+        ));
         let denoised = read(gpu, &uploaded);
 
         for band in [1.0f32, 2.0, 3.0, 4.0] {
@@ -2730,18 +3293,26 @@ mod tests {
                 .collect();
             let lift = ring.iter().sum::<f32>() / ring.len() as f32 / outside - 1.0;
             // A ceiling of half on the interior gains read 0.16 here, one pixel out.
-            assert!(lift.abs() < 0.04, "{band}px outside the rim is lifted by {lift:.3}");
+            assert!(
+                lift.abs() < 0.04,
+                "{band}px outside the rim is lifted by {lift:.3}"
+            );
         }
     }
 
     #[test]
     fn fine_detail_on_a_grey_subject_does_not_come_back_as_colour() {
-        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let rcd = crate::demosaic::device(gpu).expect("the demosaic kernels");
         let fit = NoiseFit {
-            alpha: 1e-5, sigma_sq: 1e-6, unified_sigma: 1.0, dark_ref: [200.00375; 4],
+            alpha: 1e-5,
+            sigma_sq: 1e-6,
+            unified_sigma: 1.0,
+            dark_ref: [200.00375; 4],
         };
 
         let (width, height) = (256, 192);
@@ -2763,57 +3334,88 @@ mod tests {
                 let along = (x as f32 + diagonal * y as f32) * std::f32::consts::TAU / 6.0;
                 0.25 * (1.0 + 0.4 * along.sin())
             };
-            let clean: Vec<f32> = (0..width * height).map(|at| scene(at % width, at / width)).collect();
+            let clean: Vec<f32> = (0..width * height)
+                .map(|at| scene(at % width, at / width))
+                .collect();
             let noisy: Vec<f32> = (0..width * height)
                 .map(|at| {
                     let level = clean[at];
                     let sigma = (fit.alpha * level + fit.sigma_sq).sqrt();
-                    (level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma).clamp(0.0, 1.0)
+                    (level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma)
+                        .clamp(0.0, 1.0)
                 })
                 .collect();
 
             let error_at = |colour: f32| {
                 let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
                 pollster::block_on(super::denoise_with(
-                    gpu, galosh, &uploaded, &cfa, Amounts { luma: 0.0, colour }, fit,
+                    gpu,
+                    galosh,
+                    &uploaded,
+                    &cfa,
+                    Amounts { luma: 0.0, colour },
+                    fit,
                 ));
-                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(gpu, rcd, &uploaded, &cfa, |bytes| {
-                    bytes.chunks_exact(4).map(|word| f32::from_ne_bytes(word.try_into().unwrap())).collect::<Vec<_>>()
-                })).expect("the grey picture");
+                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(
+                    gpu,
+                    rcd,
+                    &uploaded,
+                    &cfa,
+                    |bytes| {
+                        bytes
+                            .chunks_exact(4)
+                            .map(|word| f32::from_ne_bytes(word.try_into().unwrap()))
+                            .collect::<Vec<_>>()
+                    },
+                ))
+                .expect("the grey picture");
                 let margin = crate::demosaic::MARGIN as usize;
                 let mut sums = [0.0f64; 7];
                 for y in height / 2 + margin..height - margin {
                     for x in margin..width - margin {
                         let at = y * width + x;
                         let pixel = &rgb[at * 3..][..3];
-                        let luma = pixel.iter().zip(crate::image::LUMA)
-                            .map(|(&value, weight)| f64::from(value) * f64::from(weight)).sum::<f64>();
+                        let luma = pixel
+                            .iter()
+                            .zip(crate::image::LUMA)
+                            .map(|(&value, weight)| f64::from(value) * f64::from(weight))
+                            .sum::<f64>();
                         let truth = f64::from(clean[at]);
                         let red_green = f64::from(pixel[0] - pixel[1]);
                         let blue_green = f64::from(pixel[2] - pixel[1]);
                         for (sum, value) in sums.iter_mut().zip([
-                            truth, luma, truth*truth, truth*luma, red_green*red_green, blue_green*blue_green, 1.0,
+                            truth,
+                            luma,
+                            truth * truth,
+                            truth * luma,
+                            red_green * red_green,
+                            blue_green * blue_green,
+                            1.0,
                         ]) {
                             *sum += value;
                         }
                     }
                 }
                 let [truth, luma, power, product, red, blue, n] = sums;
-                let gain = (product - truth*luma/n) / (power - truth*truth/n);
-                ([(red/n).sqrt(), (blue/n).sqrt()], gain)
+                let gain = (product - truth * luma / n) / (power - truth * truth / n);
+                ([(red / n).sqrt(), (blue / n).sqrt()], gain)
             };
             let untouched = error_at(0.0);
             for colour in [1.0, 2.0, 3.0] {
                 let smoothed = error_at(colour);
                 for axis in 0..2 {
-                    assert!(smoothed.0[axis] <= untouched.0[axis] * 1.05,
+                    assert!(
+                        smoothed.0[axis] <= untouched.0[axis] * 1.05,
                         "Bayer {quad:?}, colour {colour}: false-colour RMS {} against {} without colour denoise",
-                        smoothed.0[axis], untouched.0[axis]);
+                        smoothed.0[axis],
+                        untouched.0[axis]
+                    );
                 }
                 assert!(
                     smoothed.1 >= untouched.1 * 0.95,
                     "Bayer {quad:?}, colour {colour}: texture gain {} against {} without colour denoise",
-                    smoothed.1, untouched.1,
+                    smoothed.1,
+                    untouched.1,
                 );
             }
         }
@@ -2859,7 +3461,13 @@ mod tests {
             .collect();
 
         let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-        pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts::from_sliders(0.0, 27.0)));
+        pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts::from_sliders(0.0, 27.0),
+        ));
         let denoised = read(gpu, &uploaded);
 
         // The texture's own amplitude in the answer, by projection, away from the reflected edges.
@@ -2874,7 +3482,10 @@ mod tests {
         }
         let kept = along / power;
         // 0.69 with the bracket and 0.33 without it.
-        assert!(kept > 0.6, "the colour denoise kept {kept:.3} of the texture");
+        assert!(
+            kept > 0.6,
+            "the colour denoise kept {kept:.3} of the texture"
+        );
     }
 
     /// The pattern every synthetic frame here is written in, `frame_with_noise`'s four levels
@@ -2923,15 +3534,19 @@ mod tests {
     /// take out of a flat field.
     fn variance(frame: &[f32], width: usize, x0: usize, y0: usize, size: usize) -> f32 {
         let at = |x: usize, y: usize| frame[y * width + x];
-        let samples: Vec<f32> =
-            (0..size).flat_map(|y| (0..size).map(move |x| (x, y))).map(|(x, y)| at(x0 + 2 * x, y0 + 2 * y)).collect();
+        let samples: Vec<f32> = (0..size)
+            .flat_map(|y| (0..size).map(move |x| (x, y)))
+            .map(|(x, y)| at(x0 + 2 * x, y0 + 2 * y))
+            .collect();
         let mean = samples.iter().sum::<f32>() / samples.len() as f32;
         samples.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / samples.len() as f32
     }
 
     #[test]
     fn a_non_bayer_two_by_two_preserves_neutral_brightness() {
-        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let cfa = crate::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern");
@@ -2939,23 +3554,39 @@ mod tests {
         let (width, height) = (64, 64);
         let level = 0.25;
         let fit = NoiseFit {
-            alpha: 1e-5, sigma_sq: 1e-6, unified_sigma: 1.0, dark_ref: [0.0; 4],
+            alpha: 1e-5,
+            sigma_sq: 1e-6,
+            unified_sigma: 1.0,
+            dark_ref: [0.0; 4],
         };
         for colour in [0.0, 3.0] {
-            let mosaic = crate::condition::Mosaic::upload(gpu, &vec![level; width * height], width, height);
+            let mosaic =
+                crate::condition::Mosaic::upload(gpu, &vec![level; width * height], width, height);
             pollster::block_on(super::denoise_with(
-                gpu, galosh, &mosaic, &cfa, Amounts { luma: 0.528, colour }, fit,
+                gpu,
+                galosh,
+                &mosaic,
+                &cfa,
+                Amounts {
+                    luma: 0.528,
+                    colour,
+                },
+                fit,
             ));
             for value in read(gpu, &mosaic) {
-                assert!((value - level).abs() < 1e-4,
-                    "colour {colour}: neutral brightness {level} became {value}");
+                assert!(
+                    (value - level).abs() < 1e-4,
+                    "colour {colour}: neutral brightness {level} became {value}"
+                );
             }
         }
     }
 
     #[test]
     fn colour_denoise_preserves_mean_colour_on_a_flat_surface() {
-        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (256, 192);
@@ -2970,26 +3601,46 @@ mod tests {
         for colour in [1.0, 1.35, 2.0, 3.0] {
             let uploaded = original.duplicate(gpu);
             pollster::block_on(super::denoise_with(
-                gpu, galosh, &uploaded, &rggb(), Amounts { luma: 0.528, colour }, fit,
+                gpu,
+                galosh,
+                &uploaded,
+                &rggb(),
+                Amounts {
+                    luma: 0.528,
+                    colour,
+                },
+                fit,
             ));
             let denoised = read(gpu, &uploaded);
             for (slot, expected) in [0.20, 0.34, 0.36, 0.12].into_iter().enumerate() {
                 let (dx, dy) = (slot >> 1, slot & 1);
-                let mean = (16..80).step_by(2).flat_map(|y| {
-                    let values = &denoised;
-                    (16..80).step_by(2).map(move |x| f64::from(values[(y + dy) * width + x + dx]))
-                }).sum::<f64>() / 1024.0;
-                assert!((mean - expected).abs() < 0.003,
-                    "colour {colour}, slot {slot}: mean {mean:.5}, expected {expected:.5}");
+                let mean = (16..80)
+                    .step_by(2)
+                    .flat_map(|y| {
+                        let values = &denoised;
+                        (16..80)
+                            .step_by(2)
+                            .map(move |x| f64::from(values[(y + dy) * width + x + dx]))
+                    })
+                    .sum::<f64>()
+                    / 1024.0;
+                assert!(
+                    (mean - expected).abs() < 0.003,
+                    "colour {colour}, slot {slot}: mean {mean:.5}, expected {expected:.5}"
+                );
             }
-            assert!(variance(&denoised, width, 16, 16, 32) < variance(&noisy, width, 16, 16, 32) * 0.5,
-                "colour {colour} leaves more than half the flat surface's noise variance");
+            assert!(
+                variance(&denoised, width, 16, 16, 32) < variance(&noisy, width, 16, 16, 32) * 0.5,
+                "colour {colour} leaves more than half the flat surface's noise variance"
+            );
         }
     }
 
     #[test]
     fn colour_amount_starts_from_zero_without_a_jump() {
-        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
         let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let galosh = device(gpu).expect("the GALOSH kernels");
         let (width, height) = (256, 192);
@@ -2998,15 +3649,30 @@ mod tests {
         let at = |colour| {
             let mosaic = source.duplicate(gpu);
             pollster::block_on(super::denoise_with(
-                gpu, galosh, &mosaic, &rggb(), Amounts { luma: 0.528, colour }, fit,
+                gpu,
+                galosh,
+                &mosaic,
+                &rggb(),
+                Amounts {
+                    luma: 0.528,
+                    colour,
+                },
+                fit,
             ));
             read(gpu, &mosaic)
         };
         let zero = at(0.0);
         let near = at(0.001);
-        let jump = zero.iter().zip(near).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
-        assert!(jump * 65535.0 <= 2.0,
-            "colour amount approaching zero jumps by {} full-scale counts", jump * 65535.0);
+        let jump = zero
+            .iter()
+            .zip(near)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            jump * 65535.0 <= 2.0,
+            "colour amount approaching zero jumps by {} full-scale counts",
+            jump * 65535.0
+        );
     }
 
     #[test]
@@ -3022,7 +3688,16 @@ mod tests {
         let (width, height) = (256, 192);
         let noisy = frame(width, height);
         let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-        pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts { luma: 1.0, colour: 1.0 }));
+        pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts {
+                luma: 1.0,
+                colour: 1.0,
+            },
+        ));
         let denoised = read(gpu, &uploaded);
 
         assert!(

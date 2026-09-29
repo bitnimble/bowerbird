@@ -20,13 +20,19 @@ export class AssembliesApi {
     // §2.8's seams for each pick set; `null` where the recipe's carve volume has been reaped.
     app.post(route(PathSegment.seams()), async (c) => {
       const { recipe, picks } = SeamsRequestSchema.parse(await c.req.json());
-      return c.json(respond(SolvedSeamsResponseSchema, { seams: await this.composites.solveSeams(recipe, picks) }));
+      return c.json(
+        respond(SolvedSeamsResponseSchema, {
+          seams: await this.composites.solveSeams(recipe, picks),
+        }),
+      );
     });
 
     // §4.2's settled preview: this pick set through the render the page is promising.
     app.post(route(PathSegment.preview()), async (c) => {
       const { recipe } = PreviewRequestSchema.parse(await c.req.json());
-      return c.json(respond(AssemblyPreviewSchema, { url: await this.composites.previewOf(recipe) }));
+      return c.json(
+        respond(AssemblyPreviewSchema, { url: await this.composites.previewOf(recipe) }),
+      );
     });
 
     this.routes = app;
@@ -61,9 +67,12 @@ export class AssembliesApi {
       }
       const dataPath = dataPathForLibraryId(libraryId);
       const file = Bun.file(
-        preview == null ? draftLayerPath(dataPath, layerKey, at) : draftPreviewPath(dataPath, layerKey, preview),
+        preview == null
+          ? draftLayerPath(dataPath, layerKey, at)
+          : draftPreviewPath(dataPath, layerKey, preview),
       );
-      if (!(await file.exists())) throw new AppError('NOT_FOUND', 'that draft layer has been reaped');
+      if (!(await file.exists()))
+        throw new AppError('NOT_FOUND', 'that draft layer has been reaped');
       return new Response(file, {
         headers: {
           'Content-Type': 'image/avif',

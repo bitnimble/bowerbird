@@ -1,12 +1,15 @@
 export const ExportsPageStrings = {
   exports: () => 'Exports',
   // What the sidebar's entry becomes while anything is queued.
-  exporting: (photos: number) => (photos === 1 ? 'Exporting 1 photo' : `Exporting ${photos} photos`),
-  exportingCount: (done: number, total: number) => `Exporting ${Math.min(done + 1, total)} of ${total}`,
+  exporting: (photos: number) =>
+    photos === 1 ? 'Exporting 1 photo' : `Exporting ${photos} photos`,
+  exportingCount: (done: number, total: number) =>
+    `Exporting ${Math.min(done + 1, total)} of ${total}`,
   inProgress: () => 'In progress',
   exportHistory: () => 'Export history',
   photographs: (photos: number) => (photos === 1 ? '1 photo' : `${photos} photos`),
-  waitingToExport: (photos: number) => (photos === 1 ? '1 photo waiting' : `${photos} photos waiting`),
+  waitingToExport: (photos: number) =>
+    photos === 1 ? '1 photo waiting' : `${photos} photos waiting`,
   stoppingExport: () => 'Stopping after this photo',
   stopExport: () => 'Stop this export',
   removeFromQueue: () => 'Remove from queue',

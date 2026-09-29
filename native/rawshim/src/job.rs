@@ -293,7 +293,10 @@ impl Job {
     }
 
     pub(crate) fn pixel_geometry(&self) -> crate::image::Geometry {
-        crate::image::Geometry { rotate: 0, ..self.geometry }
+        crate::image::Geometry {
+            rotate: 0,
+            ..self.geometry
+        }
     }
 
     #[cfg(feature = "renditions")]
@@ -468,17 +471,19 @@ fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOption
 /// The frame a target cuts from `photograph`, before the reader's geometry: `hdr_args::target_size`,
 /// shrunk until what the geometry writes of it still opens in every AVIF reader. A straighten's
 /// bounding box is larger than the frame it turns, so a frame at the limit can write past it.
-fn drawn_size(
-    job: &Job,
-    photograph: (usize, usize),
-    options: &EncodeOptions,
-) -> hdr_args::Size {
+fn drawn_size(job: &Job, photograph: (usize, usize), options: &EncodeOptions) -> hdr_args::Size {
     let mut options = options.clone();
     loop {
         let size = hdr_args::target_size(photograph.0 as u32, photograph.1 as u32, &options);
-        let (width, height) =
-            hdr::cropped_size(size.width as usize, size.height as usize, job.pixel_geometry());
-        let written = hdr_args::Size { width: width as u32, height: height as u32 };
+        let (width, height) = hdr::cropped_size(
+            size.width as usize,
+            size.height as usize,
+            job.pixel_geometry(),
+        );
+        let written = hdr_args::Size {
+            width: width as u32,
+            height: height as u32,
+        };
         let fits = hdr_args::decodable(written);
         if fits == written {
             return size;
@@ -723,15 +728,12 @@ impl Base {
         let dust = job.dust.wanted(stored.from_raw.dust.as_deref());
         let frame = match raw {
             #[cfg(feature = "renditions")]
-            Raw::Path(path) if job.preserve_source_orientation => crate::decode::frame_from_path_unturned(path, size),
-            Raw::Path(path) => crate::decode::frame_from_path(
-                path,
-                job.detail(),
-                size,
-                job.half_size,
-                fit,
-                dust,
-            ),
+            Raw::Path(path) if job.preserve_source_orientation => {
+                crate::decode::frame_from_path_unturned(path, size)
+            }
+            Raw::Path(path) => {
+                crate::decode::frame_from_path(path, job.detail(), size, job.half_size, fit, dust)
+            }
             Raw::Bytes(_) if job.preserve_source_orientation => {
                 return Err("source orientation can only be preserved from a file".into());
             }
@@ -911,7 +913,12 @@ impl Base {
         rendered: &[&Target],
         stored: &crate::photo_analysis::PhotoAnalysis,
     ) -> Option<Result<Base, String>> {
-        pollster::block_on(Base::window(job, Raw::Path(&job.raw_file_path), rendered, stored))
+        pollster::block_on(Base::window(
+            job,
+            Raw::Path(&job.raw_file_path),
+            rendered,
+            stored,
+        ))
     }
 
     async fn window(
@@ -943,7 +950,11 @@ impl Base {
         // resized on its own lands on a grid the whole frame's resize never had. That case is worth
         // having and is not this one: it needs a tolerance rather than the equality below.
         let sized = |target: &Target| {
-            let size = drawn_size(job, photograph, &encode_options(job, target, &target.output_path));
+            let size = drawn_size(
+                job,
+                photograph,
+                &encode_options(job, target, &target.output_path),
+            );
             (size.width as usize, size.height as usize)
         };
         let out = sized(rendered.first()?);
@@ -1021,7 +1032,10 @@ impl Base {
                 // `frame` below is the header's own dimensions, which are the sensor's.
                 sensor_long: None,
                 defocus: crate::base::Defringe::Take(defocus),
-                photo_analysis: job.photo_analysis.as_deref().map(|analysis| with_camera_match(analysis, job.camera_match)),
+                photo_analysis: job
+                    .photo_analysis
+                    .as_deref()
+                    .map(|analysis| with_camera_match(analysis, job.camera_match)),
                 // None throughout this file: a rendition is built by a host with libavif, which
                 // reads the field's picture where it stands.
                 scale,
@@ -1158,7 +1172,10 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         // The particles travel in here too, and they are the photograph's rather than this
         // rectangle's, so a tile denied the analysis corrects no dust while the render beside it
         // does. Stripping the match keeps the reason above and leaves the rest.
-        photo_analysis: job.photo_analysis.as_deref().map(|analysis| with_camera_match(analysis, job.camera_match)),
+        photo_analysis: job
+            .photo_analysis
+            .as_deref()
+            .map(|analysis| with_camera_match(analysis, job.camera_match)),
         // A loupe is showing the reader the export's own pixels, so it never halves.
         scale: crate::view::Scale::Full,
         repairs: job.repairs.clone(),
@@ -1399,12 +1416,29 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     let base = assembled(job, largest_size(&first), &first, None, &[])?;
     lap("decode, open");
     step(job);
-    let measured = pollster::block_on(render(job, base, &first, |target, coded, width, height, options| {
-        if measuring.as_ref().is_some_and(|value| std::ptr::eq(target, value)) {
-            return Ok(());
-        }
-        write(coded, width, height, target, options, output_rotation, exif, &mut outcome)
-    }))?;
+    let measured = pollster::block_on(render(
+        job,
+        base,
+        &first,
+        |target, coded, width, height, options| {
+            if measuring
+                .as_ref()
+                .is_some_and(|value| std::ptr::eq(target, value))
+            {
+                return Ok(());
+            }
+            write(
+                coded,
+                width,
+                height,
+                target,
+                options,
+                output_rotation,
+                exif,
+                &mut outcome,
+            )
+        },
+    ))?;
     outcome.photo_analysis = measured.owed;
     if banded.is_empty() {
         return Ok(outcome);
@@ -1415,7 +1449,16 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     };
     lap("hold");
     for target in banded {
-        pollster::block_on(bands(job, target, &held, &measured.known, measured.peak, output_rotation, exif, &mut outcome))?;
+        pollster::block_on(bands(
+            job,
+            target,
+            &held,
+            &measured.known,
+            measured.peak,
+            output_rotation,
+            exif,
+            &mut outcome,
+        ))?;
         lap("bands, encode, write");
         step(job);
     }
@@ -1427,11 +1470,16 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
 #[cfg(feature = "renditions")]
 fn exif_block(
     job: &Job,
-    opened: Option<(&rawler::rawsource::RawSource, &dyn rawler::decoders::Decoder)>,
+    opened: Option<(
+        &rawler::rawsource::RawSource,
+        &dyn rawler::decoders::Decoder,
+    )>,
 ) -> Option<Vec<u8>> {
     let recorded = match (opened, &job.composite) {
         (Some((source, decoder)), _) => crate::exif::Recorded::opened(source, decoder),
-        (None, Some(composite)) => crate::exif::Recorded::read(&composite.sources.first()?.raw_file_path),
+        (None, Some(composite)) => {
+            crate::exif::Recorded::read(&composite.sources.first()?.raw_file_path)
+        }
         (None, None) => crate::exif::Recorded::read(&job.raw_file_path),
     };
     recorded?.block(crate::exif::NON_IDENTIFYING)
@@ -1469,13 +1517,20 @@ fn is_banded(job: &Job, target: &Target) -> bool {
         return false;
     };
     let photograph = (header.width as usize, header.height as usize);
-    let drawn = drawn_size(job, photograph, &encode_options(job, target, &target.output_path));
+    let drawn = drawn_size(
+        job,
+        photograph,
+        &encode_options(job, target, &target.output_path),
+    );
     let scale = crate::view::Scale::for_long_edge(photograph, drawn.width.max(drawn.height));
     let decoded = scale.of(photograph.0) * scale.of(photograph.1);
     let (drawn_width, drawn_height) = (drawn.width as usize, drawn.height as usize);
     // A straighten's bounding box is larger than the frame it turns.
-    let (out_width, out_height) = hdr::cropped_size(drawn_width, drawn_height, job.pixel_geometry());
-    [drawn_width * drawn_height, decoded, out_width * out_height].into_iter().any(|pixels| pixels > BANDED_PIXELS)
+    let (out_width, out_height) =
+        hdr::cropped_size(drawn_width, drawn_height, job.pixel_geometry());
+    [drawn_width * drawn_height, decoded, out_width * out_height]
+        .into_iter()
+        .any(|pixels| pixels > BANDED_PIXELS)
 }
 
 /// Output rows in a band of `pixels`, within what a grid of them may be (`avif::encode_grid`): at
@@ -1484,7 +1539,9 @@ fn is_banded(job: &Job, target: &Target) -> bool {
 #[cfg(feature = "renditions")]
 fn band_rows(width: usize, height: usize, pixels: usize) -> usize {
     let budget = (pixels / width.max(1)) / 64 * 64;
-    budget.max(64).max(height.div_ceil(256).next_multiple_of(64))
+    budget
+        .max(64)
+        .max(height.div_ceil(256).next_multiple_of(64))
 }
 
 /// One target, rendered a band of output rows at a time and written as a grid of them.
@@ -1517,14 +1574,22 @@ async fn bands(
             hdr::encode_bands(bands.collect(), width, &options, rotate, exif)
         }
         Output::Srgb => {
-            let bands: Vec<Vec<u8>> = graded.bands.into_iter().filter_map(|band| match band {
-                Coded::Srgb(samples) => Some(samples),
-                Coded::Pq(_) => None,
-            }).collect();
+            let bands: Vec<Vec<u8>> = graded
+                .bands
+                .into_iter()
+                .filter_map(|band| match band {
+                    Coded::Srgb(samples) => Some(samples),
+                    Coded::Pq(_) => None,
+                })
+                .collect();
             if target.rendition == Rendition::Grid {
                 let samples = bands.concat();
                 describe_if_grid(
-                    crate::rgb::RgbRef { width, height, data: &samples },
+                    crate::rgb::RgbRef {
+                        width,
+                        height,
+                        data: &samples,
+                    },
                     target,
                     outcome,
                 );
@@ -1569,7 +1634,8 @@ pub(crate) async fn graded_bands(
     let photograph = held.size().raw();
     let options = encode_options(job, target, &target.output_path);
     let size = drawn_size(job, photograph, &options);
-    let drawn = crate::px::Size::<crate::px::Drawn>::exact(size.width as usize, size.height as usize);
+    let drawn =
+        crate::px::Size::<crate::px::Drawn>::exact(size.width as usize, size.height as usize);
     let geometry = job.pixel_geometry();
     let out = hdr::cropped_out(drawn, geometry);
     let (out_width, out_height) = out.raw();
@@ -1586,8 +1652,12 @@ pub(crate) async fn graded_bands(
     let mut bands = Vec::with_capacity(out_height.div_ceil(rows));
     for top in (0..out_height).step_by(rows) {
         let rows = rows.min(out_height - top);
-        let band = crate::gpu::Band { top: crate::px::Place::measured(top), rows: crate::px::Span::measured(rows) };
-        let (left, top_read, width, height) = crate::image::rows_footprint(drawn, out, geometry, band).raw();
+        let band = crate::gpu::Band {
+            top: crate::px::Place::measured(top),
+            rows: crate::px::Span::measured(rows),
+        };
+        let (left, top_read, width, height) =
+            crate::image::rows_footprint(drawn, out, geometry, band).raw();
         let request = crate::tile::TileRequest {
             tile: [left, top_read, width, height],
             frame: [photograph.0, photograph.1],
@@ -1616,7 +1686,10 @@ pub(crate) async fn graded_bands(
             ..scene.gpu_grade(window.width, window.height, output)
         }
         .showing(geometry)
-        .windowed(drawn, crate::px::At::exact(window.origin.0, window.origin.1))
+        .windowed(
+            drawn,
+            crate::px::At::exact(window.origin.0, window.origin.1),
+        )
         .banded(band);
         let frame = frame.into_frame();
         let up = gpu.upload_resident(&frame, &grade, &peak);
@@ -1624,7 +1697,9 @@ pub(crate) async fn graded_bands(
         match target.output {
             Output::Pq => {
                 bands.push(Coded::Pq(up.coded(&grade).await.ok_or(unread)?));
-                let coded = up.encoded_frame().ok_or("the encode left no frame on the device")?;
+                let coded = up
+                    .encoded_frame()
+                    .ok_or("the encode left no frame on the device")?;
                 if !target.still_full_chroma {
                     let band = crate::base::chroma_leak(gpu, base, coded, out_width, rows)
                         .await
@@ -1641,7 +1716,12 @@ pub(crate) async fn graded_bands(
         drop(up);
         frame.reclaim();
     }
-    Ok(Graded { size: (out_width, out_height), bands, leak, light })
+    Ok(Graded {
+        size: (out_width, out_height),
+        bands,
+        leak,
+        light,
+    })
 }
 
 /// One step of a job somebody is watching (`Job::report_progress`).
@@ -1715,8 +1795,14 @@ pub(crate) async fn render(
     // Refused rather than clamped where it is not positive: a gain of zero or less is not a
     // dark picture, it is a caller that sent stops where a multiplier belongs, and grading
     // every photo in the library black is a worse answer than saying so.
-    if job.exposure.is_some_and(|exposure| !exposure.raw().is_finite()) {
-        return Err(format!("an exposure is a number of stops: {:?}", job.exposure));
+    if job
+        .exposure
+        .is_some_and(|exposure| !exposure.raw().is_finite())
+    {
+        return Err(format!(
+            "an exposure is a number of stops: {:?}",
+            job.exposure
+        ));
     }
     let scene = tone::SceneGrade::new(
         matched.as_ref().and_then(|m| m.colour.as_ref()),
@@ -1742,9 +1828,7 @@ pub(crate) async fn render(
             );
             let noise = sharpen_noise.at(
                 crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
-                crate::px::Span::<crate::px::Drawn>::exact(
-                    size.width.max(size.height) as usize,
-                ),
+                crate::px::Span::<crate::px::Drawn>::exact(size.width.max(size.height) as usize),
             );
             let cut = hdr::Cut::from_base(frame, lens, size, job.sharpen, sigma, noise);
             repaired(&cut, job)?;
@@ -1774,7 +1858,8 @@ pub(crate) async fn render(
     // would still be graded by one.
     let at_rest = job.exposure.is_none() && job.adjust == crate::gpu::Adjust::none();
     // The cache key omits match mode, so neutral peaks must not reuse or replace matched peaks.
-    let keeps_peak = at_rest && describes_the_photograph && matched.as_ref().is_some_and(|m| m.colour.is_some());
+    let keeps_peak =
+        at_rest && describes_the_photograph && matched.as_ref().is_some_and(|m| m.colour.is_some());
     let known_peak = match keeps_peak {
         true => stored
             .from_render
@@ -1806,7 +1891,8 @@ pub(crate) async fn render(
         let mut grade = crate::gpu::Grade {
             intent: target.intent,
             ..scene.gpu_grade(cut.width, cut.height, output)
-        }.showing(job.pixel_geometry());
+        }
+        .showing(job.pixel_geometry());
         if let Some(window) = window {
             // Which takes the blur's scale with it. A *whole* frame keeps its own even when it has
             // been downscaled - at 1600 off a 3840 base the photograph is 1600 by then, and the
@@ -1860,7 +1946,9 @@ pub(crate) async fn render(
         }
         if target.output == Output::Pq {
             let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
-            let coded = up.encoded_frame().ok_or("the encode left no frame on the device")?;
+            let coded = up
+                .encoded_frame()
+                .ok_or("the encode left no frame on the device")?;
             let tally = crate::base::content_light(gpu, base, coded, out_width, out_height)
                 .await
                 .ok_or("the content light could not be measured")?;
@@ -1883,7 +1971,9 @@ pub(crate) async fn render(
     let peak: Light<DisplayNits> = match known_peak {
         Some(nits) => nits,
         None => Light::measured(f64::from(
-            gpu.peak_of(&scene_peak).await.ok_or("the scene peak could not be read back")?,
+            gpu.peak_of(&scene_peak)
+                .await
+                .ok_or("the scene peak could not be read back")?,
         )),
     };
     // The peak the frames above rolled off against, kept so no later render of this photograph
@@ -1964,12 +2054,19 @@ pub async fn render_bytes(job: &Job, bytes: &[u8]) -> Result<Vec<u8>, String> {
     let base = single(job, Raw::Bytes(bytes), largest_size(&rendered), &rendered).await?;
     let mut graded = None;
     let photo_analysis = render(job, base, &rendered, |_, coded, width, height, options| {
-        graded = Some((coded, width, height, options.still_chroma == Chroma::Yuv444, options.content_light));
+        graded = Some((
+            coded,
+            width,
+            height,
+            options.still_chroma == Chroma::Yuv444,
+            options.content_light,
+        ));
         Ok(())
     })
     .await?
     .owed;
-    let (coded, width, height, full_chroma, content_light) = graded.ok_or("the job rendered nothing")?;
+    let (coded, width, height, full_chroma, content_light) =
+        graded.ok_or("the job rendered nothing")?;
     framed(
         &RenderedHeader {
             width,
@@ -2039,7 +2136,10 @@ pub fn write_rendered(job: &Job, framed: &[u8]) -> Result<Outcome, String> {
     if target.size != 0 && header.width.max(header.height) > target.size as usize {
         return Err("this picture exceeds the requested rendition size".into());
     }
-    let size = hdr_args::Size { width: header.width as u32, height: header.height as u32 };
+    let size = hdr_args::Size {
+        width: header.width as u32,
+        height: header.height as u32,
+    };
     if hdr_args::decodable(size) != size {
         return Err("this picture is larger than an AVIF can hold".into());
     }
@@ -2050,7 +2150,16 @@ pub fn write_rendered(job: &Job, framed: &[u8]) -> Result<Outcome, String> {
     options.content_light = header.content_light;
     let mut outcome = Outcome::default();
     let exif = exif_block(job, None);
-    write(coded, header.width, header.height, target, &options, header.rotation, exif.as_deref(), &mut outcome)?;
+    write(
+        coded,
+        header.width,
+        header.height,
+        target,
+        &options,
+        header.rotation,
+        exif.as_deref(),
+        &mut outcome,
+    )?;
     outcome.photo_analysis = header.photo_analysis;
     Ok(outcome)
 }
@@ -2170,7 +2279,10 @@ mod tests {
             capped.height as usize,
             job.pixel_geometry(),
         );
-        let written = hdr_args::Size { width: width as u32, height: height as u32 };
+        let written = hdr_args::Size {
+            width: width as u32,
+            height: height as u32,
+        };
         assert_eq!(hdr_args::decodable(written), written);
     }
 
@@ -2185,7 +2297,10 @@ mod tests {
             output,
             rotation: 0,
             full_chroma: true,
-            content_light: Some(crate::hdr_args::ContentLight { max_cll: 1480, max_fall: 90 }),
+            content_light: Some(crate::hdr_args::ContentLight {
+                max_cll: 1480,
+                max_fall: 90,
+            }),
             photo_analysis: Some(vec![1, 2, 3]),
         };
         framed(&header, &coded).expect("the frame serialises")
@@ -2201,14 +2316,19 @@ mod tests {
         assert!(error.contains("rotation"), "{error}");
     }
 
-
     #[cfg(feature = "renditions")]
     #[test]
     fn a_rendered_frame_reads_back_as_it_was_written() {
         let (header, coded) = unframed(&rendered(Output::Pq, 3, 2, 18)).expect("the frame reads");
         assert_eq!((header.width, header.height), (3, 2));
         assert!(header.full_chroma);
-        assert_eq!(header.content_light, Some(crate::hdr_args::ContentLight { max_cll: 1480, max_fall: 90 }));
+        assert_eq!(
+            header.content_light,
+            Some(crate::hdr_args::ContentLight {
+                max_cll: 1480,
+                max_fall: 90
+            })
+        );
         assert_eq!(header.photo_analysis, Some(vec![1, 2, 3]));
         // 40000 is code 2499.43 of 4095, which crosses as 2499 and comes back as its sixteen bits.
         assert!(matches!(coded, Coded::Pq(samples) if samples == vec![39_993; 18]));
@@ -2261,7 +2381,9 @@ mod tests {
         )
         .expect("the job parses");
         assert_eq!(
-            write_rendered(&job, &rendered(Output::Pq, 3, 2, 18)).err().as_deref(),
+            write_rendered(&job, &rendered(Output::Pq, 3, 2, 18))
+                .err()
+                .as_deref(),
             Some("this picture was rendered for the other dynamic range")
         );
     }

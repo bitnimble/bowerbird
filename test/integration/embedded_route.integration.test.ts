@@ -45,7 +45,9 @@ test('the camera JPEG revalidates instead of being sent again', async () => {
   expect(etag).not.toBeNull();
   expect((await first.arrayBuffer()).byteLength).toBeGreaterThan(0);
 
-  const again = await app.request('/image/p1/renditions/embedded', { headers: { 'if-none-match': etag! } });
+  const again = await app.request('/image/p1/renditions/embedded', {
+    headers: { 'if-none-match': etag! },
+  });
   expect(again.status).toBe(304);
   expect((await again.arrayBuffer()).byteLength).toBe(0);
 });
@@ -53,7 +55,9 @@ test('the camera JPEG revalidates instead of being sent again', async () => {
 test('a stale validator is served the bytes', async () => {
   const app = serving();
 
-  const stale = await app.request('/image/p1/renditions/embedded', { headers: { 'if-none-match': '"0-0"' } });
+  const stale = await app.request('/image/p1/renditions/embedded', {
+    headers: { 'if-none-match': '"0-0"' },
+  });
   expect(stale.status).toBe(200);
   expect((await stale.arrayBuffer()).byteLength).toBeGreaterThan(0);
 });
@@ -67,7 +71,9 @@ test('a rotation edit changes embedded JPEG metadata and validator', async () =>
   expect(etag).not.toBeNull();
 
   edit.rotate = 180;
-  const second = await app.request('/image/p1/renditions/embedded', { headers: { 'if-none-match': etag! } });
+  const second = await app.request('/image/p1/renditions/embedded', {
+    headers: { 'if-none-match': etag! },
+  });
   expect(second.status).toBe(200);
   expect(second.headers.get('etag')).not.toBe(etag);
   expect(Buffer.from(await second.arrayBuffer()).equals(before)).toBe(false);

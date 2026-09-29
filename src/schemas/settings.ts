@@ -14,7 +14,14 @@ export type ViewerRendition = z.infer<typeof ViewerRenditionSchema>;
 // two follow whatever was chosen last, either across the catalogue or for the
 // photo being opened. `best_available` takes the highest of them already on
 // disk, so it never costs a build - the camera's JPEG where nothing is.
-export const ViewerRenditionModeSchema = z.enum(['embedded', 'full', 'max', 'remember', 'remember_per_photo', 'best_available']);
+export const ViewerRenditionModeSchema = z.enum([
+  'embedded',
+  'full',
+  'max',
+  'remember',
+  'remember_per_photo',
+  'best_available',
+]);
 export type ViewerRenditionMode = z.infer<typeof ViewerRenditionModeSchema>;
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -22,7 +29,9 @@ export const LogLevelSchema = z.enum(LOG_LEVELS);
 export type LogLevel = z.infer<typeof LogLevelSchema>;
 
 // Local time of day as "HH:MM", or "" to disable whatever it schedules.
-const TimeOfDaySchema = z.string().regex(/^$|^([01]?\d|2[0-3]):[0-5]\d$/, 'expected HH:MM, or "" to disable');
+const TimeOfDaySchema = z
+  .string()
+  .regex(/^$|^([01]?\d|2[0-3]):[0-5]\d$/, 'expected HH:MM, or "" to disable');
 
 export const SettingsSchema = z.object({
   viewer_rendition_mode: ViewerRenditionModeSchema.default('remember'),

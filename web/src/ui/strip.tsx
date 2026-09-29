@@ -72,10 +72,18 @@ export function StripLabel({
 }
 
 /** Idle is still; `processing` is the scan, `working` whatever runs after or beside it. */
-export function StatusDot({ state = 'idle' }: { state?: 'idle' | 'processing' | 'working' }): JSX.Element {
+export function StatusDot({
+  state = 'idle',
+}: {
+  state?: 'idle' | 'processing' | 'working';
+}): JSX.Element {
   return (
     <span
-      {...stylex.props(styles.dot, state !== 'idle' && styles.pulse, state !== 'idle' && styles[state])}
+      {...stylex.props(
+        styles.dot,
+        state !== 'idle' && styles.pulse,
+        state !== 'idle' && styles[state],
+      )}
       aria-hidden="true"
     />
   );

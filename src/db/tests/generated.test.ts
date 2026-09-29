@@ -72,8 +72,12 @@ describe('the generated migrations carry what the schema declares', () => {
   it('builds every column each table declares', () => {
     for (const table of declared) {
       const name = getTableName(table);
-      const wanted = getTableConfig(table).columns.map((column) => column.name).sort();
-      const actual = (db.query(`PRAGMA table_info(${JSON.stringify(name)})`).all() as { name: string }[])
+      const wanted = getTableConfig(table)
+        .columns.map((column) => column.name)
+        .sort();
+      const actual = (
+        db.query(`PRAGMA table_info(${JSON.stringify(name)})`).all() as { name: string }[]
+      )
         .map((column) => column.name)
         .sort();
       expect({ [name]: actual }).toEqual({ [name]: wanted });
@@ -89,7 +93,9 @@ describe('the generated migrations carry what the schema declares', () => {
       const config = getTableConfig(table);
       // A key of several columns is declared on the table rather than on any one of them, so
       // membership is the two places put together.
-      const keyed = new Set(config.primaryKeys.flatMap((key) => key.columns.map((column) => column.name)));
+      const keyed = new Set(
+        config.primaryKeys.flatMap((key) => key.columns.map((column) => column.name)),
+      );
       const wanted = Object.fromEntries(
         config.columns.map((column) => [
           column.name,
@@ -112,7 +118,11 @@ describe('the generated migrations carry what the schema declares', () => {
       const actual = Object.fromEntries(
         rows.map((column) => [
           column.name,
-          { notNull: column.notnull === 1, hasDefault: column.dflt_value != null, primaryKey: column.pk > 0 },
+          {
+            notNull: column.notnull === 1,
+            hasDefault: column.dflt_value != null,
+            primaryKey: column.pk > 0,
+          },
         ]),
       );
       expect({ [name]: actual }).toEqual({ [name]: wanted });
@@ -137,7 +147,9 @@ describe('the generated migrations carry what the schema declares', () => {
         .sort();
       // One row per column, so a key of several arrives as several rows sharing an `id`.
       const columns = new Map<number, string[]>();
-      const keys = db.query(`PRAGMA foreign_key_list(${JSON.stringify(name)})`).all() as ForeignKeyRow[];
+      const keys = db
+        .query(`PRAGMA foreign_key_list(${JSON.stringify(name)})`)
+        .all() as ForeignKeyRow[];
       for (const row of keys) columns.set(row.id, [...(columns.get(row.id) ?? []), row.from]);
       const actual = keys
         .filter((row) => row.seq === 0)

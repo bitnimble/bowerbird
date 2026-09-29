@@ -263,7 +263,10 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     let rows: Vec<String> = cases
         .iter()
         .map(|(name, exposure, adjust)| {
-            let words: Vec<String> = at(*exposure, adjust.clone()).iter().map(u32::to_string).collect();
+            let words: Vec<String> = at(*exposure, adjust.clone())
+                .iter()
+                .map(u32::to_string)
+                .collect();
             let or_null = |v: Option<f64>| match v {
                 Some(v) => v.to_string(),
                 None => "null".to_string(),
@@ -481,7 +484,11 @@ fn the_editor_fills_a_reduction_the_way_this_host_does() {
     let cases = [
         Reduction::whole((96, 64), (48, 32), (2.0, 2.0)),
         Reduction::whole((129, 67), (64, 33), (2.0, 2.0)),
-        Reduction::whole((6000, 4000), (1600, 1067), (6000.0 / 1600.0, 4000.0 / 1067.0)),
+        Reduction::whole(
+            (6000, 4000),
+            (1600, 1067),
+            (6000.0 / 1600.0, 4000.0 / 1067.0),
+        ),
         Reduction::whole((1, 1), (1, 1), (1.0, 1.0)),
         Reduction {
             source: (36564, 2210),
@@ -625,8 +632,15 @@ fn the_encode_pass_reproduces_the_recorded_frame() {
     let levels = levels(gpu, &samples, WIDTH, HEIGHT, grade.white_quantile);
 
     for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
-        for (exposure, ev) in [(Some(Stops::ZERO), "0"), (Some(Stops::measured(1.0)), "1"), (Some(Stops::measured(-1.5)), "-1.5"), (None, "camera")] {
-            if exposure.is_none() && colour.is_none() { continue; }
+        for (exposure, ev) in [
+            (Some(Stops::ZERO), "0"),
+            (Some(Stops::measured(1.0)), "1"),
+            (Some(Stops::measured(-1.5)), "-1.5"),
+            (None, "camera"),
+        ] {
+            if exposure.is_none() && colour.is_none() {
+                continue;
+            }
             // Stops, which is what the uniform carries now: `colour.slang` raises them, so a
             // gain here would be a second conversion on top of the shader's.
             let mut prepared = Prepared {
@@ -686,8 +700,15 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
     let levels = levels(gpu, &samples, WIDTH, HEIGHT, grade.white_quantile);
 
     for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
-        for (exposure, ev) in [(Some(Stops::ZERO), "0"), (Some(Stops::measured(1.0)), "1"), (Some(Stops::measured(-1.5)), "-1.5"), (None, "camera")] {
-            if exposure.is_none() && colour.is_none() { continue; }
+        for (exposure, ev) in [
+            (Some(Stops::ZERO), "0"),
+            (Some(Stops::measured(1.0)), "1"),
+            (Some(Stops::measured(-1.5)), "-1.5"),
+            (None, "camera"),
+        ] {
+            if exposure.is_none() && colour.is_none() {
+                continue;
+            }
             // Stops, which is what the uniform carries now: `colour.slang` raises them, so a
             // gain here would be a second conversion on top of the shader's.
             let mut prepared = Prepared {
@@ -714,8 +735,12 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
                 },
             );
 
-            Snapshot::signal(&got, frame_size(), rawshim::gpu::Output::Rolled.mastered(grade.reference_white_nits))
-                .check(&format!("grade/{name}-ev{ev}-rolled"), GRADED);
+            Snapshot::signal(
+                &got,
+                frame_size(),
+                rawshim::gpu::Output::Rolled.mastered(grade.reference_white_nits),
+            )
+            .check(&format!("grade/{name}-ev{ev}-rolled"), GRADED);
         }
     }
 }
@@ -1895,7 +1920,13 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
     let grading = |geometry: rawshim::image::Geometry| rawshim::gpu::Grade {
         output: rawshim::gpu::Output::Rolled,
         geometry,
-        ..rawshim::gpu::Grade::new(width, height, levels, settings.reference_white_nits, DISPLAY)
+        ..rawshim::gpu::Grade::new(
+            width,
+            height,
+            levels,
+            settings.reference_white_nits,
+            DISPLAY,
+        )
     };
 
     let whole = gpu.encode(&coded, &grading(rawshim::image::Geometry::none()));
@@ -2008,7 +2039,8 @@ fn pano_of_two() -> (Composition, Vec<String>) {
                     samples[at + 2] = code.saturating_add(300).min(65535);
                 }
             }
-            let png = rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
+            let png =
+                rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
             std::fs::write(&path, &png).expect("writing the fixture source");
             path.to_string_lossy().into_owned()
         })
@@ -2121,7 +2153,8 @@ fn assembly_of_three() -> (Composition, Vec<String>) {
                     samples[at + 2] = code.saturating_add(300).min(65535);
                 }
             }
-            let png = rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
+            let png =
+                rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
             std::fs::write(&path, &png).expect("writing the fixture source");
             path.to_string_lossy().into_owned()
         })

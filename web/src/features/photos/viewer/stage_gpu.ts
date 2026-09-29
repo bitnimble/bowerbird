@@ -100,7 +100,11 @@ let drawing: Drawing | null = null;
 // Exported for the one test that can tell a masked pipeline from a plain one without an adapter.
 export function pipelinesFor(device: GPUDevice): Drawing {
   if (drawing?.device === device) return drawing;
-  const pipeline = (code: string, fragment: string, target?: GPUColorTargetState): GPURenderPipeline => {
+  const pipeline = (
+    code: string,
+    fragment: string,
+    target?: GPUColorTargetState,
+  ): GPURenderPipeline => {
     const module = device.createShaderModule({ code });
     return device.createRenderPipeline({
       layout: 'auto',
@@ -111,8 +115,14 @@ export function pipelinesFor(device: GPUDevice): Drawing {
   };
   drawing = {
     device,
-    colour: device.createBuffer({ size: COLOUR_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-    region: device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+    colour: device.createBuffer({
+      size: COLOUR_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    }),
+    region: device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    }),
     imported: pipeline(IMPORTED, 'imported'),
     planar: pipeline(PLANAR_WGSL, 'planar'),
     // Premultiplied source over what is already there: the fragment writes the picture times its
@@ -143,14 +153,34 @@ export function onChromaGrid(region: Region, chroma: number, frame: Region): Reg
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
-export function storedRegion(region: Region, rotation: 0 | 90 | 180 | 270, width: number, height: number): Region {
+export function storedRegion(
+  region: Region,
+  rotation: 0 | 90 | 180 | 270,
+  width: number,
+  height: number,
+): Region {
   switch (rotation) {
     case 90:
-      return { x: region.y, y: height - region.x - region.width, width: region.height, height: region.width };
+      return {
+        x: region.y,
+        y: height - region.x - region.width,
+        width: region.height,
+        height: region.width,
+      };
     case 180:
-      return { x: width - region.x - region.width, y: height - region.y - region.height, width: region.width, height: region.height };
+      return {
+        x: width - region.x - region.width,
+        y: height - region.y - region.height,
+        width: region.width,
+        height: region.height,
+      };
     case 270:
-      return { x: width - region.y - region.height, y: region.x, width: region.height, height: region.width };
+      return {
+        x: width - region.y - region.height,
+        y: region.x,
+        width: region.height,
+        height: region.width,
+      };
     default:
       return region;
   }
@@ -179,7 +209,8 @@ function planarOf(picture: StagePicture, rotation: 0 | 90 | 180 | 270 = 0): Plan
       displayWidth: sideways ? height : width,
       displayHeight: sideways ? width : height,
       layout,
-      upload: (device, region) => Promise.resolve(planesFrom(device, picture, region, layout.chroma)),
+      upload: (device, region) =>
+        Promise.resolve(planesFrom(device, picture, region, layout.chroma)),
       described: `${bits}-bit ${subsampled ? '4:2:0' : '4:4:4'} planes ${width}x${height}`,
     };
   }
@@ -206,7 +237,12 @@ function isPlanes(picture: StagePicture | ImageBitmap): picture is PlanarPicture
 }
 
 /** Planes already in memory, uploaded straight from it: the rows of `region` and nothing else. */
-export function planesFrom(device: GPUDevice, { samples, layout }: PlanarPicture, region: Region, chroma: number): GPUTexture[] {
+export function planesFrom(
+  device: GPUDevice,
+  { samples, layout }: PlanarPicture,
+  region: Region,
+  chroma: number,
+): GPUTexture[] {
   return layout.planes.slice(0, 3).map((plane, at) => {
     const span = at === 0 ? 1 : chroma;
     const width = Math.ceil(region.width * span);
@@ -217,7 +253,10 @@ export function planesFrom(device: GPUDevice, { samples, layout }: PlanarPicture
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
     const offset =
-      samples.byteOffset + plane.offset + region.y * span * plane.stride + region.x * span * Uint16Array.BYTES_PER_ELEMENT;
+      samples.byteOffset +
+      plane.offset +
+      region.y * span * plane.stride +
+      region.x * span * Uint16Array.BYTES_PER_ELEMENT;
     device.queue.writeTexture(
       { texture },
       samples.buffer,
@@ -287,7 +326,10 @@ export class StagePainter {
     }
     // The frames arrive as clones of the page's, sharing its decode, and each is closed here once
     // drawn: an open clone holds the whole decoded frame for as long as it lives.
-    const pictures = ask.kind === 'paint' ? [ask.picture] : [ask.base, ...ask.layers.map((layer) => layer.picture)];
+    const pictures =
+      ask.kind === 'paint'
+        ? [ask.picture]
+        : [ask.base, ...ask.layers.map((layer) => layer.picture)];
     const masks = ask.kind === 'paint' ? [] : ask.layers.map((layer) => layer.mask);
     try {
       if (ask.kind === 'paintMasked') return await this.paintMasked(this.sized(ask), ask);
@@ -329,7 +371,10 @@ export class StagePainter {
 
   /** The same, into a texture of this thread's that is handed back for the page to show. */
   private async paintReadback(ask: Paint): Promise<Painted> {
-    const extended = await this.paintExtended({ readback: { width: ask.width, height: ask.height } }, ask);
+    const extended = await this.paintExtended(
+      { readback: { width: ask.width, height: ask.height } },
+      ask,
+    );
     if (extended !== 'declined' || isPlanes(ask.picture)) return extended;
     const canvas = new OffscreenCanvas(ask.width, ask.height);
     await drawFlat(canvas, ask);
@@ -372,12 +417,19 @@ export class StagePainter {
     if (planar != null) return this.paintPlanar(onto, ask, device, planar);
     if (!isFrame(picture)) return 'declined';
     if (carriesHdr(picture)) {
-      this.warn(`an HDR frame (${described(picture)}) is not one the planar path reads, so it is imported and drawn flat`);
+      this.warn(
+        `an HDR frame (${described(picture)}) is not one the planar path reads, so it is imported and drawn flat`,
+      );
     }
     return this.paintImported(onto, ask, device, picture);
   }
 
-  private async paintPlanar(onto: Onto, ask: Paint, device: GPUDevice, planar: Planar): Promise<Painted> {
+  private async paintPlanar(
+    onto: Onto,
+    ask: Paint,
+    device: GPUDevice,
+    planar: Planar,
+  ): Promise<Painted> {
     const { region, rotation, proof } = ask;
     const whole = { x: 0, y: 0, width: planar.displayWidth, height: planar.displayHeight };
     const stored = storedRegion(region ?? whole, rotation, planar.codedWidth, planar.codedHeight);
@@ -435,7 +487,12 @@ export class StagePainter {
     }
   }
 
-  private async paintImported(onto: Onto, ask: Paint, device: GPUDevice, frame: VideoFrame): Promise<Painted> {
+  private async paintImported(
+    onto: Onto,
+    ask: Paint,
+    device: GPUDevice,
+    frame: VideoFrame,
+  ): Promise<Painted> {
     const limit = device.limits.maxTextureDimension2D;
     if (Math.max(frame.codedWidth, frame.codedHeight) > limit) {
       return this.decline(`${described(frame)} is past this device's ${limit}px texture limit`);
@@ -461,7 +518,12 @@ export class StagePainter {
     try {
       surface = surfaceOf(onto, device);
       if (surface == null) return this.decline('the canvas gave no WebGPU context');
-      const { x, y, width, height } = ask.region ?? { x: 0, y: 0, width: frame.displayWidth, height: frame.displayHeight };
+      const { x, y, width, height } = ask.region ?? {
+        x: 0,
+        y: 0,
+        width: frame.displayWidth,
+        height: frame.displayHeight,
+      };
       const span = new Float32Array([
         x / frame.displayWidth,
         y / frame.displayHeight,
@@ -501,7 +563,9 @@ export class StagePainter {
     if (device == null) return this.decline('there is no WebGPU device');
     const basePlanar = planarOf(base);
     if (basePlanar == null) {
-      return this.decline(`a composite's base (${isFrame(base) ? described(base) : 'planes'}) is not planar PQ`);
+      return this.decline(
+        `a composite's base (${isFrame(base) ? described(base) : 'planes'}) is not planar PQ`,
+      );
     }
     const limit = device.limits.maxTextureDimension2D;
     if (Math.max(basePlanar.displayWidth, basePlanar.displayHeight) > limit) {
@@ -549,10 +613,16 @@ export class StagePainter {
         // the flag the copy is a validation error rather than an exception: the mask stays at zero,
         // every masked layer then contributes nothing, and the canvas shows the base frame whatever
         // the reader picks.
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
       });
       spent.push(mask);
-      device.queue.copyExternalImageToTexture({ source }, { texture: mask }, [canvas.width, canvas.height]);
+      device.queue.copyExternalImageToTexture({ source }, { texture: mask }, [
+        canvas.width,
+        canvas.height,
+      ]);
       return { planes, uniform, mask };
     };
 
@@ -565,7 +635,10 @@ export class StagePainter {
       // the picture around the tile black.
       const passes: Prepared[] = [];
       try {
-        for (const { picture, mask, shift, gain } of [{ picture: base, mask: null, shift: [0, 0] as const, gain: 1 }, ...layers]) {
+        for (const { picture, mask, shift, gain } of [
+          { picture: base, mask: null, shift: [0, 0] as const, gain: 1 },
+          ...layers,
+        ]) {
           const pass = await prepare(picture, mask, shift, gain);
           if (pass != null) passes.push(pass);
         }
@@ -603,7 +676,10 @@ export class StagePainter {
           ...(mask == null ? [] : [{ binding: 4, resource: mask.createView() }]),
         ];
         pass.setPipeline(pipeline);
-        pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries }));
+        pass.setBindGroup(
+          0,
+          device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries }),
+        );
         pass.draw(3);
       }
       pass.end();
@@ -626,7 +702,10 @@ export class StagePainter {
 
   private giveUp(err: unknown): void {
     this.declined = true;
-    console.error('stage: a WebGPU draw failed, so every later frame is drawn through a 2D canvas in SDR until a reload', err);
+    console.error(
+      'stage: a WebGPU draw failed, so every later frame is drawn through a 2D canvas in SDR until a reload',
+      err,
+    );
   }
 
   /** Once per message: the same refusal comes back on every paint, and each arrow key is one. */
@@ -686,7 +765,13 @@ function surfaceOf(onto: Onto, device: GPUDevice): Surface | null {
     if (context == null) return null;
     configure(context, device);
     const view = context.getCurrentTexture().createView();
-    return { view, width: canvas.width, height: canvas.height, finish: () => Promise.resolve('drawn'), dispose: () => {} };
+    return {
+      view,
+      width: canvas.width,
+      height: canvas.height,
+      finish: () => Promise.resolve('drawn'),
+      dispose: () => {},
+    };
   }
   const { width, height } = onto.readback;
   const texture = device.createTexture({
@@ -707,9 +792,18 @@ function surfaceOf(onto: Onto, device: GPUDevice): Surface | null {
 async function packed(device: GPUDevice, drawn: GPUTexture): Promise<Painted> {
   const { width, height } = drawn;
   const bytes = width * height * Uint32Array.BYTES_PER_ELEMENT;
-  const words = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-  const read = device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const size = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const words = device.createBuffer({
+    size: bytes,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  });
+  const read = device.createBuffer({
+    size: bytes,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  });
+  const size = device.createBuffer({
+    size: 16,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
   try {
     device.queue.writeBuffer(size, 0, new Uint32Array([width, height, 0, 0]));
     const drawing = pipelinesFor(device);
@@ -751,7 +845,10 @@ async function packed(device: GPUDevice, drawn: GPUTexture): Promise<Painted> {
  * measured on a 1500-nit render, where a clip would blow the 2.9% of samples above SDR white and
  * this blows 0.04%.
  */
-async function drawFlat(canvas: OffscreenCanvas, { picture, region, rotation }: Paint): Promise<void> {
+async function drawFlat(
+  canvas: OffscreenCanvas,
+  { picture, region, rotation }: Paint,
+): Promise<void> {
   const flat = canvas.getContext('2d');
   // Null once the canvas has been configured for WebGPU, because a canvas holds one kind of
   // context for its whole life. Reported rather than skipped: `drawImage` silently doing
@@ -768,17 +865,35 @@ async function drawFlat(canvas: OffscreenCanvas, { picture, region, rotation }: 
   try {
     const drawn = bitmap ?? picture;
     if (region == null) flat.drawImage(drawn, 0, 0, canvas.width, canvas.height);
-    else flat.drawImage(drawn, region.x, region.y, region.width, region.height, 0, 0, canvas.width, canvas.height);
+    else
+      flat.drawImage(
+        drawn,
+        region.x,
+        region.y,
+        region.width,
+        region.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
   } finally {
     bitmap?.close();
   }
 }
 
 /** One full-screen triangle through `pipeline`, onto a cleared target. */
-function drawOnce(device: GPUDevice, view: GPUTextureView, pipeline: GPURenderPipeline, entries: GPUBindGroupEntry[]): void {
+function drawOnce(
+  device: GPUDevice,
+  view: GPUTextureView,
+  pipeline: GPURenderPipeline,
+  entries: GPUBindGroupEntry[],
+): void {
   const commands = device.createCommandEncoder();
   const pass = commands.beginRenderPass({
-    colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+    colorAttachments: [
+      { view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
+    ],
   });
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries }));
@@ -801,7 +916,20 @@ export function colourWords(
   sourcePeak = 1,
 ): Float32Array {
   const words = new Float32Array(COLOUR_BYTES / 4);
-  words.set([headroom, SDR_WHITE_NITS, sample[0], sample[1], layout.depth, layout.chroma, shift[0], shift[1], gain, rotation, proof, sourcePeak]);
+  words.set([
+    headroom,
+    SDR_WHITE_NITS,
+    sample[0],
+    sample[1],
+    layout.depth,
+    layout.chroma,
+    shift[0],
+    shift[1],
+    gain,
+    rotation,
+    proof,
+    sourcePeak,
+  ]);
   return words;
 }
 

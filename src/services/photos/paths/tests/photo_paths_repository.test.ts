@@ -25,19 +25,26 @@ function insert(id: string, filePath: string, deletedFrom?: string): void {
 }
 
 function deletedFromOf(id: string): string | null {
-  return (db.query('SELECT deleted_from_path FROM photos WHERE id = ?').get(id) as { deleted_from_path: string | null })
-    .deleted_from_path;
+  return (
+    db.query('SELECT deleted_from_path FROM photos WHERE id = ?').get(id) as {
+      deleted_from_path: string | null;
+    }
+  ).deleted_from_path;
 }
 
 function inputsOf(id: string): string[] {
-  return (db.query('SELECT path FROM photo_inputs WHERE photo_id = ? ORDER BY path').all(id) as { path: string }[]).map(
-    (row) => row.path,
-  );
+  return (
+    db.query('SELECT path FROM photo_inputs WHERE photo_id = ? ORDER BY path').all(id) as {
+      path: string;
+    }[]
+  ).map((row) => row.path);
 }
 
 function filePathOf(id: string): string {
   return (
-    db.query(`SELECT json_extract(recipe, '$.path') AS path FROM photos WHERE id = ?`).get(id) as { path: string }
+    db.query(`SELECT json_extract(recipe, '$.path') AS path FROM photos WHERE id = ?`).get(id) as {
+      path: string;
+    }
   ).path;
 }
 
@@ -45,7 +52,10 @@ beforeEach(() => {
   db = new Database(':memory:');
   runMigrations(db);
   repo = new PhotoPathsRepository(db, new StackMembership(db));
-  scan = new PhotoScanRepository(db, new PhotoProcessingRepository(db, new RenditionsRepository(db)));
+  scan = new PhotoScanRepository(
+    db,
+    new PhotoProcessingRepository(db, new RenditionsRepository(db)),
+  );
   insert('live', 'Trip/a.arw');
   insert('binned', 'Bin/Trip/b.arw', 'Trip/b.arw');
   insert('elsewhere', 'Bin/Other/c.arw', 'Other/c.arw');
@@ -54,7 +64,12 @@ beforeEach(() => {
 describe('PhotoPathsRepository.listUnderFolder', () => {
   it('finds a binned photo by the folder it came from, not by where its file now is', () => {
     expect(repo.listUnderFolder(LIB, 'Trip').map((p) => p.id)).toEqual(['live']);
-    expect(repo.listUnderFolder(LIB, 'Trip', true).map((p) => p.id).sort()).toEqual(['binned', 'live']);
+    expect(
+      repo
+        .listUnderFolder(LIB, 'Trip', true)
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(['binned', 'live']);
     // The bin is not a folder of the library's, so asking for it finds nothing.
     expect(repo.listUnderFolder(LIB, 'Bin', true)).toEqual([]);
     expect(repo.listUnderFolder(LIB, 'Other', true).map((p) => p.id)).toEqual(['elsewhere']);

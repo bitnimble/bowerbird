@@ -11,10 +11,25 @@ import { CropPanel, GeometryControls } from './crop/crop_panel';
 import { EditControl, SelectControl } from './edit_control';
 import type { CropStore } from './crop/crop_store';
 import type { EditStore } from './edit/edit_store';
-import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, snapped, sliderValue, reading, type SliderSpec } from './edit_sliders';
+import {
+  COLOUR,
+  DETAIL,
+  DUST,
+  EFFECTS,
+  LIGHT,
+  snapped,
+  sliderValue,
+  reading,
+  type SliderSpec,
+} from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
-import { TEMPERATURE_KELVIN, TINT, type ColourProfile, type Denoiser } from '../../../../src/schemas/photo_edits';
+import {
+  TEMPERATURE_KELVIN,
+  TINT,
+  type ColourProfile,
+  type Denoiser,
+} from '../../../../src/schemas/photo_edits';
 import { KeystonePanel } from './keystone/keystone_panel';
 import type { KeystoneStore } from './keystone/keystone_store';
 import { styles } from './raw_edit_panel.stylex';
@@ -26,7 +41,6 @@ import { proofPanels } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
 import { MobileEditPanels, type MobileEditPanel } from './mobile_edit_panels';
 import { ToneCurveEditor } from './tone_curve/tone_curve_editor';
-
 
 const COLOUR_PROFILES: Option<ColourProfile>[] = [
   { value: 'none', label: RawEditPanelStrings.colourProfileNone() },
@@ -132,7 +146,8 @@ const EditSlider = observer(function EditSlider({
   // state a value the module has not resolved - which is exactly what this row is here to stop.
   const unknown = followsPhoto && stored == null && measured == null;
   const shut = disabled === true || !stage.editable;
-  const format = (at: number): string => RawEditPanelStrings.valueWithUnit(reading(at, spec), spec.unit ?? '');
+  const format = (at: number): string =>
+    RawEditPanelStrings.valueWithUnit(reading(at, spec), spec.unit ?? '');
 
   return (
     <EditControl
@@ -241,7 +256,8 @@ const WhiteBalance = observer(function WhiteBalance({
   const back =
     disabled || !moved
       ? null
-      : (): void => presenter.settle({ whiteBalanceMode: 'As Shot', temperature: null, tint: null });
+      : (): void =>
+          presenter.settle({ whiteBalanceMode: 'As Shot', temperature: null, tint: null });
 
   return (
     <>
@@ -265,7 +281,14 @@ const WhiteBalance = observer(function WhiteBalance({
             label={RawEditPanelStrings.temperature()}
             value={RawEditPanelStrings.kelvin(balance.temperature)}
             reset={back}
-            typing={disabled ? null : { ...TEMPERATURE_RANGE, set: (temperature) => presenter.settleBalance({ temperature }) }}
+            typing={
+              disabled
+                ? null
+                : {
+                    ...TEMPERATURE_RANGE,
+                    set: (temperature) => presenter.settleBalance({ temperature }),
+                  }
+            }
           >
             <Slider
               style={styles.slider}
@@ -286,7 +309,9 @@ const WhiteBalance = observer(function WhiteBalance({
             label={RawEditPanelStrings.tint()}
             value={reading(balance.tint, TINT_RANGE)}
             reset={back}
-            typing={disabled ? null : { ...TINT_RANGE, set: (tint) => presenter.settleBalance({ tint }) }}
+            typing={
+              disabled ? null : { ...TINT_RANGE, set: (tint) => presenter.settleBalance({ tint }) }
+            }
           >
             <Slider
               style={styles.slider}
@@ -343,11 +368,33 @@ const DenoiserChoice = observer(function DenoiserChoice({
   );
 });
 
-function panelGroup(id: string, title: string, content: React.ReactNode, busy = false): MobileEditPanel {
-  return { id, title, content: <Group title={title} busy={busy}>{content}</Group> };
+function panelGroup(
+  id: string,
+  title: string,
+  content: React.ReactNode,
+  busy = false,
+): MobileEditPanel {
+  return {
+    id,
+    title,
+    content: (
+      <Group title={title} busy={busy}>
+        {content}
+      </Group>
+    ),
+  };
 }
 
-export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, keystone, repair, print, presenter, mobile = false }: {
+export const RawEditPanel = observer(function RawEditPanel({
+  edit,
+  stage,
+  crop,
+  keystone,
+  repair,
+  print,
+  presenter,
+  mobile = false,
+}: {
   edit: EditStore;
   stage: StageStore;
   crop: CropStore;
@@ -359,8 +406,16 @@ export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, 
 }): JSX.Element {
   const notice = (edit.saveStatus === 'conflict' || edit.saveStatus === 'failed') && (
     <Panel style={styles.group}>
-      {edit.saveStatus === 'conflict' && <Text variant="muted" as="p">{RawEditPanelStrings.editedElsewhere()}</Text>}
-      {edit.saveStatus === 'failed' && <Text variant="muted" as="p">{RawEditPanelStrings.couldNotSave()}</Text>}
+      {edit.saveStatus === 'conflict' && (
+        <Text variant="muted" as="p">
+          {RawEditPanelStrings.editedElsewhere()}
+        </Text>
+      )}
+      {edit.saveStatus === 'failed' && (
+        <Text variant="muted" as="p">
+          {RawEditPanelStrings.couldNotSave()}
+        </Text>
+      )}
     </Panel>
   );
   let scope: string;
@@ -368,48 +423,144 @@ export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, 
   if (crop.cropping) {
     scope = 'crop';
     panels = [
-      { id: 'aspect', title: RawEditPanelStrings.aspectRatio(), content:
-        <CropPanel edit={edit} stage={stage} store={crop} presenter={presenter} styles={styles} section="aspect" /> },
-      { id: 'crop', title: EditToolsStrings.crop(), content:
-        <CropPanel edit={edit} stage={stage} store={crop} presenter={presenter} styles={styles} section="geometry" /> },
+      {
+        id: 'aspect',
+        title: RawEditPanelStrings.aspectRatio(),
+        content: (
+          <CropPanel
+            edit={edit}
+            stage={stage}
+            store={crop}
+            presenter={presenter}
+            styles={styles}
+            section="aspect"
+          />
+        ),
+      },
+      {
+        id: 'crop',
+        title: EditToolsStrings.crop(),
+        content: (
+          <CropPanel
+            edit={edit}
+            stage={stage}
+            store={crop}
+            presenter={presenter}
+            styles={styles}
+            section="geometry"
+          />
+        ),
+      },
     ];
   } else if (keystone.keystoning) {
     scope = 'perspective';
-    panels = [{ id: 'perspective', title: EditToolsStrings.perspective(), content:
-      <KeystonePanel stage={stage} store={keystone} presenter={presenter} styles={styles} /> }];
+    panels = [
+      {
+        id: 'perspective',
+        title: EditToolsStrings.perspective(),
+        content: (
+          <KeystonePanel stage={stage} store={keystone} presenter={presenter} styles={styles} />
+        ),
+      },
+    ];
   } else if (repair.repairing) {
     scope = 'repair';
-    panels = [{ id: 'repair', title: EditToolsStrings.repair(), content:
-      <RepairPanel edit={edit} stage={stage} store={repair} presenter={presenter} styles={styles} /> }];
+    panels = [
+      {
+        id: 'repair',
+        title: EditToolsStrings.repair(),
+        content: (
+          <RepairPanel
+            edit={edit}
+            stage={stage}
+            store={repair}
+            presenter={presenter}
+            styles={styles}
+          />
+        ),
+      },
+    ];
   } else {
     scope = 'adjust';
-    const sliders = (specs: readonly SliderSpec[]): React.ReactNode => specs.map((spec) =>
-      <EditSlider key={spec.key} edit={edit} stage={stage} presenter={presenter} spec={spec} />);
+    const sliders = (specs: readonly SliderSpec[]): React.ReactNode =>
+      specs.map((spec) => (
+        <EditSlider key={spec.key} edit={edit} stage={stage} presenter={presenter} spec={spec} />
+      ));
     panels = [
-      panelGroup('light', RawEditPanelStrings.groupLight(), <>
-        {sliders(LIGHT)}
-        <ToneCurveEditor edit={edit} stage={stage} presenter={presenter} />
-      </>),
-      panelGroup('white-balance', RawEditPanelStrings.groupWhiteBalance(), <WhiteBalance edit={edit} stage={stage} presenter={presenter} />),
-      panelGroup('colour', RawEditPanelStrings.groupColour(), <>
-        <ColourProfileChoice edit={edit} presenter={presenter} />{sliders(COLOUR)}
-      </>),
+      panelGroup(
+        'light',
+        RawEditPanelStrings.groupLight(),
+        <>
+          {sliders(LIGHT)}
+          <ToneCurveEditor edit={edit} stage={stage} presenter={presenter} />
+        </>,
+      ),
+      panelGroup(
+        'white-balance',
+        RawEditPanelStrings.groupWhiteBalance(),
+        <WhiteBalance edit={edit} stage={stage} presenter={presenter} />,
+      ),
+      panelGroup(
+        'colour',
+        RawEditPanelStrings.groupColour(),
+        <>
+          <ColourProfileChoice edit={edit} presenter={presenter} />
+          {sliders(COLOUR)}
+        </>,
+      ),
       panelGroup('effects', RawEditPanelStrings.groupEffects(), sliders(EFFECTS)),
-      panelGroup('detail', RawEditPanelStrings.groupDetail(), <>
-        {stage.mosaic && stage.denoises && <DenoiserChoice edit={edit} presenter={presenter} />}
-        {sliders(DETAIL.filter((spec) => (stage.mosaic && stage.denoises) || spec.key === 'sharpening'))}
-        {!stage.mosaic && <Text variant="muted" as="p">{RawEditPanelStrings.noMosaic()}</Text>}
-        {stage.mosaic && !stage.denoises && <Text variant="muted" as="p">{RawEditPanelStrings.noDenoise()}</Text>}
-      </>, stage.repreparing),
-      ...(stage.mosaic ? [panelGroup('dust', RawEditPanelStrings.groupDustRemoval(),
-        <Dust edit={edit} stage={stage} presenter={presenter} />, stage.repreparing)] : []),
-      panelGroup('geometry', RawEditPanelStrings.groupGeometry(), <GeometryControls edit={edit} stage={stage} store={crop} presenter={presenter} styles={styles} />),
+      panelGroup(
+        'detail',
+        RawEditPanelStrings.groupDetail(),
+        <>
+          {stage.mosaic && stage.denoises && <DenoiserChoice edit={edit} presenter={presenter} />}
+          {sliders(
+            DETAIL.filter((spec) => (stage.mosaic && stage.denoises) || spec.key === 'sharpening'),
+          )}
+          {!stage.mosaic && (
+            <Text variant="muted" as="p">
+              {RawEditPanelStrings.noMosaic()}
+            </Text>
+          )}
+          {stage.mosaic && !stage.denoises && (
+            <Text variant="muted" as="p">
+              {RawEditPanelStrings.noDenoise()}
+            </Text>
+          )}
+        </>,
+        stage.repreparing,
+      ),
+      ...(stage.mosaic
+        ? [
+            panelGroup(
+              'dust',
+              RawEditPanelStrings.groupDustRemoval(),
+              <Dust edit={edit} stage={stage} presenter={presenter} />,
+              stage.repreparing,
+            ),
+          ]
+        : []),
+      panelGroup(
+        'geometry',
+        RawEditPanelStrings.groupGeometry(),
+        <GeometryControls
+          edit={edit}
+          stage={stage}
+          store={crop}
+          presenter={presenter}
+          styles={styles}
+        />,
+      ),
       ...proofPanels(stage.softProof, print, presenter.print, !stage.editable),
     ];
   }
   if (mobile) return <MobileEditPanels panels={panels} scope={scope} notice={notice} />;
-  return <div {...stylex.props(styles.panel)}>
-    {notice}
-    {panels.map(({ id, content }) => <Fragment key={id}>{content}</Fragment>)}
-  </div>;
+  return (
+    <div {...stylex.props(styles.panel)}>
+      {notice}
+      {panels.map(({ id, content }) => (
+        <Fragment key={id}>{content}</Fragment>
+      ))}
+    </div>
+  );
 });

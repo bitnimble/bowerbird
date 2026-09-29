@@ -10,7 +10,10 @@ import { isDirInScope, type LibraryScope } from './scope';
 // listing the files would be handing over the catalogue's contents to answer it.
 
 /** Anywhere on the server, in absolute paths. */
-export async function browseAbsolute(dir: string, writable?: (dir: string) => boolean): Promise<BrowseResponse> {
+export async function browseAbsolute(
+  dir: string,
+  writable?: (dir: string) => boolean,
+): Promise<BrowseResponse> {
   const names = await directoryNames(dir);
   const parent = path.dirname(dir);
   return {
@@ -27,8 +30,10 @@ export async function createFolder(dir: string): Promise<void> {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'EEXIST') throw new AppError('CONFLICT', `${dir} already exists`);
-    if (code === 'ENOENT' || code === 'ENOTDIR') throw new AppError('NOT_FOUND', `no such directory: ${path.dirname(dir)}`);
-    if (code === 'EACCES' || code === 'EPERM') throw new AppError('VALIDATION_ERROR', `cannot create ${dir}: permission denied`);
+    if (code === 'ENOENT' || code === 'ENOTDIR')
+      throw new AppError('NOT_FOUND', `no such directory: ${path.dirname(dir)}`);
+    if (code === 'EACCES' || code === 'EPERM')
+      throw new AppError('VALIDATION_ERROR', `cannot create ${dir}: permission denied`);
     throw err;
   }
 }
@@ -47,7 +52,8 @@ export async function foldersUnder(scope: LibraryScope): Promise<string[]> {
     visited.add(real);
     // A folder that has become unreadable since it was listed costs its own
     // subtree, not the whole answer; the root is the one that is worth a failure.
-    const names = relDir === '' ? await directoryNames(absDir) : await directoryNames(absDir).catch(() => []);
+    const names =
+      relDir === '' ? await directoryNames(absDir) : await directoryNames(absDir).catch(() => []);
     for (const name of names) {
       const rel = relDir === '' ? name : `${relDir}/${name}`;
       if (!isDirInScope(scope, rel)) continue;
@@ -66,8 +72,10 @@ async function directoryNames(dir: string): Promise<string[]> {
     entries = await readdir(dir, { withFileTypes: true });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') throw new AppError('NOT_FOUND', `no such directory: ${dir}`);
-    if (code === 'EACCES' || code === 'EPERM') throw new AppError('VALIDATION_ERROR', `cannot read ${dir}: permission denied`);
+    if (code === 'ENOENT' || code === 'ENOTDIR')
+      throw new AppError('NOT_FOUND', `no such directory: ${dir}`);
+    if (code === 'EACCES' || code === 'EPERM')
+      throw new AppError('VALIDATION_ERROR', `cannot read ${dir}: permission denied`);
     throw err;
   }
 
@@ -85,7 +93,10 @@ async function directoryNames(dir: string): Promise<string[]> {
 // A symlinked directory is still somewhere photographs can live, and a mount
 // pointed at by one is a common way to reach an external drive, so the target is
 // what decides. A broken or unreadable link is simply not offered.
-async function isDirectory(dir: string, entry: { name: string; isDirectory: () => boolean; isSymbolicLink: () => boolean }): Promise<boolean> {
+async function isDirectory(
+  dir: string,
+  entry: { name: string; isDirectory: () => boolean; isSymbolicLink: () => boolean },
+): Promise<boolean> {
   if (entry.isDirectory()) return true;
   if (!entry.isSymbolicLink()) return false;
   try {

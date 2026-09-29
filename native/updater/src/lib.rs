@@ -61,13 +61,19 @@ impl Phase {
     }
 
     fn named(name: &OsStr) -> Option<Phase> {
-        [Phase::Swap, Phase::Restore, Phase::Finish].into_iter().find(|phase| name == phase.name())
+        [Phase::Swap, Phase::Restore, Phase::Finish]
+            .into_iter()
+            .find(|phase| name == phase.name())
     }
 }
 
 #[derive(Debug, PartialEq)]
 enum Invocation {
-    Update { plan: PlanArgs, wait: u32, relaunch: Vec<OsString> },
+    Update {
+        plan: PlanArgs,
+        wait: u32,
+        relaunch: Vec<OsString>,
+    },
     /// One step of an update, run elevated by the unelevated helper that is doing the rest.
     Phase { plan: PlanArgs, phase: Phase },
 }
@@ -81,7 +87,11 @@ struct PlanArgs {
 
 impl PlanArgs {
     fn into_plan(self) -> Plan {
-        Plan { home: self.home, install: self.install, renames: self.renames }
+        Plan {
+            home: self.home,
+            install: self.install,
+            renames: self.renames,
+        }
     }
 }
 
@@ -99,7 +109,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> i32 {
         }
     };
     match invocation {
-        Invocation::Update { plan, wait, relaunch } => {
+        Invocation::Update {
+            plan,
+            wait,
+            relaunch,
+        } => {
             let plan = plan.into_plan();
             match update(&plan, wait, &relaunch, INFANCY) {
                 Ok(()) => 0,
@@ -126,14 +140,23 @@ pub fn main(args: impl IntoIterator<Item = OsString>) -> i32 {
 ///
 /// Whatever happens, the reader is left with an app running: a swap that fails is undone and
 /// the old version started, and a new version that dies on startup is swapped back out.
-pub fn update(plan: &Plan, wait: u32, relaunch: &[OsString], infancy: Duration) -> Result<(), String> {
+pub fn update(
+    plan: &Plan,
+    wait: u32,
+    relaunch: &[OsString],
+    infancy: Duration,
+) -> Result<(), String> {
     wait_for_exit(wait, WAIT_FOR_APP)?;
 
     if let Err(why) = in_phase(plan, Phase::Swap) {
         discard_staged(plan);
         return Err(match start(relaunch) {
-            Ok(_) => format!("the update could not be installed, so the version that was there is running again: {why}"),
-            Err(started) => format!("the update could not be installed ({why}), and the version that was there did not start: {started}"),
+            Ok(_) => format!(
+                "the update could not be installed, so the version that was there is running again: {why}"
+            ),
+            Err(started) => format!(
+                "the update could not be installed ({why}), and the version that was there did not start: {started}"
+            ),
         });
     }
     log(&plan.home, "installed the staged update");
@@ -142,7 +165,10 @@ pub fn update(plan: &Plan, wait: u32, relaunch: &[OsString], infancy: Duration) 
     match start_and_watch(relaunch, infancy) {
         Started::Healthy => in_phase(plan, Phase::Finish),
         Started::Failed(why) => {
-            log(&plan.home, &format!("the new version failed on startup ({why}); putting the old one back"));
+            log(
+                &plan.home,
+                &format!("the new version failed on startup ({why}); putting the old one back"),
+            );
             // Started whether or not the restore worked: whatever is installed now is a better
             // answer than no app at all.
             let restored = in_phase(plan, Phase::Restore);
@@ -164,7 +190,9 @@ fn run_phase(plan: &Plan, phase: Phase) -> Result<(), String> {
     match phase {
         Phase::Swap => swap(plan),
         Phase::Restore => restore(&plan.install),
-        Phase::Finish => sweep(&plan.install, PREVIOUS).and_then(|()| sweep(&plan.install, INCOMING)),
+        Phase::Finish => {
+            sweep(&plan.install, PREVIOUS).and_then(|()| sweep(&plan.install, INCOMING))
+        }
     }
 }
 
@@ -179,18 +207,26 @@ fn swap(plan: &Plan) -> Result<(), String> {
         return Err("no complete update is staged".into());
     }
     let staged = plan.home.join("staged");
-    let entries = sorted_entries(&staged).map_err(|err| format!("could not read {}: {err}", staged.display()))?;
+    let entries = sorted_entries(&staged)
+        .map_err(|err| format!("could not read {}: {err}", staged.display()))?;
     if entries.is_empty() {
         return Err(format!("{} is empty", staged.display()));
     }
-    let names: Vec<(OsString, OsString)> = entries.into_iter().map(|entry| (installed_name(plan, &entry), entry)).collect();
+    let names: Vec<(OsString, OsString)> = entries
+        .into_iter()
+        .map(|entry| (installed_name(plan, &entry), entry))
+        .collect();
 
     for (name, entry) in &names {
         let incoming = beside(&plan.install, name, INCOMING);
         let moved = remove_any(&incoming).and_then(|()| move_tree(&staged.join(entry), &incoming));
         if let Err(err) = moved {
             let _ = sweep(&plan.install, INCOMING);
-            return Err(format!("could not move {} into {}: {err}", entry.to_string_lossy(), plan.install.display()));
+            return Err(format!(
+                "could not move {} into {}: {err}",
+                entry.to_string_lossy(),
+                plan.install.display()
+            ));
         }
     }
 
@@ -200,7 +236,13 @@ fn swap(plan: &Plan) -> Result<(), String> {
         let previous = beside(&plan.install, name, PREVIOUS);
         let had = live.symlink_metadata().is_ok();
         let outcome = remove_any(&previous)
-            .and_then(|()| if had { rename(&live, &previous) } else { Ok(()) })
+            .and_then(|()| {
+                if had {
+                    rename(&live, &previous)
+                } else {
+                    Ok(())
+                }
+            })
             .and_then(|()| rename(&beside(&plan.install, name, INCOMING), &live));
         if let Err(err) = outcome {
             if had && live.symlink_metadata().is_err() {
@@ -218,7 +260,11 @@ fn swap(plan: &Plan) -> Result<(), String> {
 /// Takes back what [`swap`] did, newest first.
 fn unswap(install: &Path, swapped: &[(&OsStr, bool)]) {
     for (name, had) in swapped.iter().rev() {
-        let _ = if *had { put_back(install, name) } else { remove_any(&install.join(name)) };
+        let _ = if *had {
+            put_back(install, name)
+        } else {
+            remove_any(&install.join(name))
+        };
     }
 }
 
@@ -230,7 +276,10 @@ fn restore(install: &Path) -> Result<(), String> {
     let mut failed = None;
     for (_, name) in marked(install, PREVIOUS)? {
         if let Err(err) = put_back(install, &name) {
-            failed.get_or_insert(format!("could not put {} back: {err}", install.join(&name).display()));
+            failed.get_or_insert(format!(
+                "could not put {} back: {err}",
+                install.join(&name).display()
+            ));
         }
     }
     failed.map_or(Ok(()), Err)
@@ -264,11 +313,16 @@ fn sweep(install: &Path, suffix: &str) -> Result<(), String> {
 
 /// The install's entries carrying `suffix`, with the name each stands beside.
 fn marked(install: &Path, suffix: &str) -> Result<Vec<(OsString, OsString)>, String> {
-    let entries = sorted_entries(install).map_err(|err| format!("could not read {}: {err}", install.display()))?;
+    let entries = sorted_entries(install)
+        .map_err(|err| format!("could not read {}: {err}", install.display()))?;
     Ok(entries
         .into_iter()
         .filter_map(|entry| {
-            let name = entry.to_str()?.strip_prefix('.')?.strip_suffix(suffix)?.to_owned();
+            let name = entry
+                .to_str()?
+                .strip_prefix('.')?
+                .strip_suffix(suffix)?
+                .to_owned();
             (!name.is_empty()).then(|| (entry, OsString::from(name)))
         })
         .collect())
@@ -338,7 +392,9 @@ pub fn writable(dir: &Path) -> bool {
 }
 
 fn sorted_entries(dir: &Path) -> io::Result<Vec<OsString>> {
-    let mut names: Vec<OsString> = fs::read_dir(dir)?.map(|entry| entry.map(|entry| entry.file_name())).collect::<io::Result<_>>()?;
+    let mut names: Vec<OsString> = fs::read_dir(dir)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<io::Result<_>>()?;
     names.sort();
     Ok(names)
 }
@@ -353,7 +409,13 @@ fn remove_any(path: &Path) -> io::Result<()> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(err) => return Err(err),
     };
-    retrying(|| if metadata.is_dir() { fs::remove_dir_all(path) } else { fs::remove_file(path) })
+    retrying(|| {
+        if metadata.is_dir() {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        }
+    })
 }
 
 fn rename(from: &Path, to: &Path) -> io::Result<()> {
@@ -416,12 +478,15 @@ fn wait_for_exit(pid: u32, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     loop {
         // Safety: signal 0 sends nothing and only asks whether the process exists.
-        let alive = unsafe { libc::kill(pid, 0) } == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        let alive = unsafe { libc::kill(pid, 0) } == 0
+            || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
         if !alive {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("the app (process {pid}) did not exit within {timeout:?}"));
+            return Err(format!(
+                "the app (process {pid}) did not exit within {timeout:?}"
+            ));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -430,7 +495,9 @@ fn wait_for_exit(pid: u32, timeout: Duration) -> Result<(), String> {
 #[cfg(windows)]
 fn wait_for_exit(pid: u32, timeout: Duration) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
-    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
 
     // Safety: a handle opened only to wait on, and closed before returning.
     unsafe {
@@ -444,7 +511,9 @@ fn wait_for_exit(pid: u32, timeout: Duration) -> Result<(), String> {
         if waited == WAIT_OBJECT_0 {
             Ok(())
         } else {
-            Err(format!("the app (process {pid}) did not exit within {timeout:?}"))
+            Err(format!(
+                "the app (process {pid}) did not exit within {timeout:?}"
+            ))
         }
     }
 }
@@ -454,12 +523,25 @@ fn wait_for_exit(pid: u32, timeout: Duration) -> Result<(), String> {
 fn elevated(plan: &Plan, phase: Phase) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
-    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, INFINITE, WaitForSingleObject,
+    };
+    use windows_sys::Win32::UI::Shell::{
+        SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
+    };
 
-    let wide = |text: &OsStr| text.encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
-    let exe = std::env::current_exe().map_err(|err| format!("could not find this helper: {err}"))?;
-    let parameters = phase_args(plan, phase).iter().map(|arg| quoted(arg)).collect::<Vec<_>>().join(" ");
+    let wide = |text: &OsStr| {
+        text.encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>()
+    };
+    let exe =
+        std::env::current_exe().map_err(|err| format!("could not find this helper: {err}"))?;
+    let parameters = phase_args(plan, phase)
+        .iter()
+        .map(|arg| quoted(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
     let verb = wide(OsStr::new("runas"));
     let file = wide(exe.as_os_str());
     let parameters = wide(OsStr::new(&parameters));
@@ -487,7 +569,11 @@ fn elevated(plan: &Plan, phase: Phase) -> Result<(), String> {
         if code == 0 {
             Ok(())
         } else {
-            Err(format!("the elevated {} failed; {} says why", phase.name(), plan.home.join("updater.log").display()))
+            Err(format!(
+                "the elevated {} failed; {} says why",
+                phase.name(),
+                plan.home.join("updater.log").display()
+            ))
         }
     }
 }
@@ -505,7 +591,12 @@ fn phase_args(plan: &Plan, phase: Phase) -> Vec<OsString> {
 }
 
 fn plan_args(plan: &Plan) -> Vec<OsString> {
-    let mut args: Vec<OsString> = vec!["--home".into(), plan.home.clone().into(), "--install".into(), plan.install.clone().into()];
+    let mut args: Vec<OsString> = vec![
+        "--home".into(),
+        plan.home.clone().into(),
+        "--install".into(),
+        plan.install.clone().into(),
+    ];
     for (from, to) in &plan.renames {
         let mut pair = from.clone();
         pair.push("=");
@@ -527,7 +618,11 @@ fn quoted(arg: &OsStr) -> String {
             backslashes += 1;
             continue;
         }
-        let escaped = if c == '"' { backslashes * 2 + 1 } else { backslashes };
+        let escaped = if c == '"' {
+            backslashes * 2 + 1
+        } else {
+            backslashes
+        };
         out.extend(std::iter::repeat('\\').take(escaped));
         out.push(c);
         backslashes = 0;
@@ -551,18 +646,30 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Invocation, String> {
             relaunch.extend(args.by_ref());
             break;
         }
-        let mut value = || args.next().ok_or_else(|| format!("{} needs a value", arg.to_string_lossy()));
+        let mut value = || {
+            args.next()
+                .ok_or_else(|| format!("{} needs a value", arg.to_string_lossy()))
+        };
         match arg.to_str() {
             Some("--home") => home = Some(PathBuf::from(value()?)),
             Some("--install") => install = Some(PathBuf::from(value()?)),
             Some("--wait") => {
                 let pid = value()?;
-                wait = Some(pid.to_str().and_then(|pid| pid.parse::<u32>().ok()).ok_or("--wait takes a process id")?);
+                wait = Some(
+                    pid.to_str()
+                        .and_then(|pid| pid.parse::<u32>().ok())
+                        .ok_or("--wait takes a process id")?,
+                );
             }
-            Some("--phase") => phase = Some(Phase::named(&value()?).ok_or("--phase is swap, restore or finish")?),
+            Some("--phase") => {
+                phase = Some(Phase::named(&value()?).ok_or("--phase is swap, restore or finish")?)
+            }
             Some("--rename") => {
                 let pair = value()?;
-                let (from, to) = pair.to_str().and_then(|pair| pair.split_once('=')).ok_or("--rename takes <from>=<to>")?;
+                let (from, to) = pair
+                    .to_str()
+                    .and_then(|pair| pair.split_once('='))
+                    .ok_or("--rename takes <from>=<to>")?;
                 renames.push((OsString::from(from), OsString::from(to)));
             }
             _ => return Err(format!("unexpected {}", arg.to_string_lossy())),
@@ -576,8 +683,14 @@ fn parse(args: impl Iterator<Item = OsString>) -> Result<Invocation, String> {
     };
     match (phase, wait) {
         (Some(phase), None) => Ok(Invocation::Phase { plan, phase }),
-        (None, Some(wait)) if !relaunch.is_empty() => Ok(Invocation::Update { plan, wait, relaunch }),
-        (None, Some(_)) => Err("nothing to start after the update: put the app's command after --".into()),
+        (None, Some(wait)) if !relaunch.is_empty() => Ok(Invocation::Update {
+            plan,
+            wait,
+            relaunch,
+        }),
+        (None, Some(_)) => {
+            Err("nothing to start after the update: put the app's command after --".into())
+        }
         _ => Err("either --wait <pid> -- <app> or --phase <phase>".into()),
     }
 }
@@ -593,8 +706,14 @@ pub fn update_args(plan: &Plan, wait: u32, relaunch: &[OsString]) -> Vec<OsStrin
 
 fn log(home: &Path, line: &str) {
     eprintln!("[bowerbird-updater] {line}");
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
-    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(home.join("updater.log")) {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(home.join("updater.log"))
+    {
         let _ = writeln!(file, "{seconds} {line}");
     }
 }
@@ -650,7 +769,11 @@ mod tests {
     }
 
     fn entries(dir: &Path) -> Vec<String> {
-        sorted_entries(dir).unwrap().into_iter().map(|name| name.to_string_lossy().into_owned()).collect()
+        sorted_entries(dir)
+            .unwrap()
+            .into_iter()
+            .map(|name| name.to_string_lossy().into_owned())
+            .collect()
     }
 
     /// A process that has already exited and been reaped, so waiting on it returns at once.
@@ -666,7 +789,10 @@ mod tests {
     #[cfg(unix)]
     fn app(plan: &Plan, version: &str, code: i32) -> String {
         let log = plan.home.join("starts");
-        format!("#!/bin/sh\necho {version} >> '{}'\nexit {code}\n", log.display())
+        format!(
+            "#!/bin/sh\necho {version} >> '{}'\nexit {code}\n",
+            log.display()
+        )
     }
 
     #[cfg(unix)]
@@ -678,8 +804,22 @@ mod tests {
     fn a_swap_replaces_the_payloads_entries_and_leaves_the_rest() {
         let dir = scratch();
         let plan = plan(&dir);
-        install(&plan, &[("Bowerbird", "old shell"), ("resources/server.js", "old"), ("uninstall", "kept")]);
-        stage(&plan, &[("bowerbird-app", "new shell"), ("resources/server.js", "new"), ("added.dll", "new")]);
+        install(
+            &plan,
+            &[
+                ("Bowerbird", "old shell"),
+                ("resources/server.js", "old"),
+                ("uninstall", "kept"),
+            ],
+        );
+        stage(
+            &plan,
+            &[
+                ("bowerbird-app", "new shell"),
+                ("resources/server.js", "new"),
+                ("added.dll", "new"),
+            ],
+        );
 
         swap(&plan).unwrap();
 
@@ -687,10 +827,16 @@ mod tests {
         assert_eq!(read(plan.install.join("resources/server.js")), "new");
         assert_eq!(read(plan.install.join("added.dll")), "new");
         assert_eq!(read(plan.install.join("uninstall")), "kept");
-        assert_eq!(read(plan.install.join(".Bowerbird.bowerbird-previous")), "old shell");
+        assert_eq!(
+            read(plan.install.join(".Bowerbird.bowerbird-previous")),
+            "old shell"
+        );
 
         run_phase(&plan, Phase::Finish).unwrap();
-        assert_eq!(entries(&plan.install), ["Bowerbird", "added.dll", "resources", "uninstall"]);
+        assert_eq!(
+            entries(&plan.install),
+            ["Bowerbird", "added.dll", "resources", "uninstall"]
+        );
     }
 
     #[cfg(unix)]
@@ -719,8 +865,17 @@ mod tests {
     fn a_restore_puts_back_every_entry_the_swap_replaced() {
         let dir = scratch();
         let plan = plan(&dir);
-        install(&plan, &[("Bowerbird", "old shell"), ("resources/server.js", "old")]);
-        stage(&plan, &[("bowerbird-app", "new shell"), ("resources/server.js", "new")]);
+        install(
+            &plan,
+            &[("Bowerbird", "old shell"), ("resources/server.js", "old")],
+        );
+        stage(
+            &plan,
+            &[
+                ("bowerbird-app", "new shell"),
+                ("resources/server.js", "new"),
+            ],
+        );
         swap(&plan).unwrap();
 
         run_phase(&plan, Phase::Restore).unwrap();
@@ -773,7 +928,13 @@ mod tests {
         executable(&plan.home.join("staged/bowerbird-app"));
         let shell = plan.install.join("Bowerbird");
 
-        update(&plan, gone(), &[shell.clone().into()], Duration::from_secs(10)).unwrap();
+        update(
+            &plan,
+            gone(),
+            &[shell.clone().into()],
+            Duration::from_secs(10),
+        )
+        .unwrap();
 
         assert_eq!(read(plan.home.join("starts")), "new\n");
         assert_eq!(entries(&plan.install), ["Bowerbird"]);
@@ -792,7 +953,13 @@ mod tests {
         executable(&plan.home.join("staged/bowerbird-app"));
         let shell = plan.install.join("Bowerbird");
 
-        update(&plan, gone(), &[shell.clone().into()], Duration::from_secs(10)).unwrap();
+        update(
+            &plan,
+            gone(),
+            &[shell.clone().into()],
+            Duration::from_secs(10),
+        )
+        .unwrap();
 
         // The second start is not watched, so it may still be writing.
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -834,8 +1001,14 @@ mod tests {
 
         let copied = dir.join("to/Contents/MacOS/app");
         assert_eq!(read(&copied), "binary");
-        assert_eq!(fs::metadata(&copied).unwrap().permissions().mode() & 0o777, 0o755);
-        assert_eq!(fs::read_link(dir.join("to/Contents/current")).unwrap(), Path::new("MacOS/app"));
+        assert_eq!(
+            fs::metadata(&copied).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            fs::read_link(dir.join("to/Contents/current")).unwrap(),
+            Path::new("MacOS/app")
+        );
     }
 
     #[test]
@@ -845,14 +1018,21 @@ mod tests {
             install: "/Applications".into(),
             renames: vec![("Bowerbird.app".into(), "Bowerbird 2.app".into())],
         };
-        let relaunch: Vec<OsString> = vec!["/Applications/Bowerbird 2.app/Contents/MacOS/app".into(), "--flag".into()];
+        let relaunch: Vec<OsString> = vec![
+            "/Applications/Bowerbird 2.app/Contents/MacOS/app".into(),
+            "--flag".into(),
+        ];
 
         let parsed = parse(update_args(&plan, 42, &relaunch).into_iter()).unwrap();
 
         assert_eq!(
             parsed,
             Invocation::Update {
-                plan: PlanArgs { home: plan.home.clone(), install: plan.install.clone(), renames: plan.renames.clone() },
+                plan: PlanArgs {
+                    home: plan.home.clone(),
+                    install: plan.install.clone(),
+                    renames: plan.renames.clone()
+                },
                 wait: 42,
                 relaunch,
             }
@@ -861,7 +1041,10 @@ mod tests {
 
     #[test]
     fn a_command_line_with_nothing_to_start_is_refused() {
-        let args: Vec<OsString> = ["--wait", "1", "--home", "/h", "--install", "/i"].iter().map(OsString::from).collect();
+        let args: Vec<OsString> = ["--wait", "1", "--home", "/h", "--install", "/i"]
+            .iter()
+            .map(OsString::from)
+            .collect();
         assert!(parse(args.into_iter()).is_err());
     }
 }

@@ -10,13 +10,17 @@ import { PhotoScanRepository } from '../../../src/services/photos/scan/photo_sca
 import { RenditionsRepository } from '../../../src/services/processing/renditions/renditions_repository';
 import { StackMembership } from '../../../src/services/stacks/stack_membership';
 
-export const photoListing = (db: Database): PhotoListingRepository => new PhotoListingRepository(db);
+export const photoListing = (db: Database): PhotoListingRepository =>
+  new PhotoListingRepository(db);
 
-export const photoNavigation = (db: Database): PhotoNavigationRepository => new PhotoNavigationRepository(db);
+export const photoNavigation = (db: Database): PhotoNavigationRepository =>
+  new PhotoNavigationRepository(db);
 
-export const photoState = (db: Database): PhotoStateRepository => new PhotoStateRepository(db, new StackMembership(db));
+export const photoState = (db: Database): PhotoStateRepository =>
+  new PhotoStateRepository(db, new StackMembership(db));
 
-export const photoPaths = (db: Database): PhotoPathsRepository => new PhotoPathsRepository(db, new StackMembership(db));
+export const photoPaths = (db: Database): PhotoPathsRepository =>
+  new PhotoPathsRepository(db, new StackMembership(db));
 
 export const photoProcessing = (db: Database): PhotoProcessingRepository =>
   new PhotoProcessingRepository(db, new RenditionsRepository(db));
@@ -24,8 +28,10 @@ export const photoProcessing = (db: Database): PhotoProcessingRepository =>
 export const photoScan = (db: Database, processing = photoProcessing(db)): PhotoScanRepository =>
   new PhotoScanRepository(db, processing);
 
-export const photoMetadata = (db: Database, processing = photoProcessing(db)): PhotoMetadataRepository =>
-  new PhotoMetadataRepository(db, processing);
+export const photoMetadata = (
+  db: Database,
+  processing = photoProcessing(db),
+): PhotoMetadataRepository => new PhotoMetadataRepository(db, processing);
 
 export function photoComposites(db: Database): PhotoCompositesRepository {
   const stacks = new StackMembership(db);

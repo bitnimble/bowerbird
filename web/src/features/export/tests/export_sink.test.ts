@@ -54,7 +54,11 @@ function folder(holding: string[]): { handle: FileSystemDirectoryHandle; created
 async function exportInto(
   holding: string[],
   filename: string | null,
-): Promise<{ created: string[]; asked: { runId?: string }[]; save: (photoId: string) => Promise<string> }> {
+): Promise<{
+  created: string[];
+  asked: { runId?: string }[];
+  save: (photoId: string) => Promise<string>;
+}> {
   const { handle, created } = folder(holding);
   const asked: { runId?: string }[] = [];
   (window as { showDirectoryPicker?: unknown }).showDirectoryPicker = () => Promise.resolve(handle);
@@ -114,39 +118,50 @@ test('a render the library did not name is refused', async () => {
   expect(created).toEqual([]);
 });
 
-test.each([1, 2])('a native export of %s photos picks a folder and saves through the shell', async (count) => {
-  const calls: { command: string; args: unknown }[] = [];
-  const path = 'C:\\Users\\Reader\\Autumn trip';
-  Object.defineProperty(globalThis, '__TAURI__', {
-    value: {
-      core: {
-        invoke: async (command: string, args: unknown) => {
-          calls.push({ command, args });
-          return command === 'pick_export_folder' ? { kind: 'picked', path } : `${path}\\photo.jpg`;
+test.each([1, 2])(
+  'a native export of %s photos picks a folder and saves through the shell',
+  async (count) => {
+    const calls: { command: string; args: unknown }[] = [];
+    const path = 'C:\\Users\\Reader\\Autumn trip';
+    Object.defineProperty(globalThis, '__TAURI__', {
+      value: {
+        core: {
+          invoke: async (command: string, args: unknown) => {
+            calls.push({ command, args });
+            return command === 'pick_export_folder'
+              ? { kind: 'picked', path }
+              : `${path}\\photo.jpg`;
+          },
         },
       },
-    },
-    configurable: true,
-  });
-  const options = ExportOptionsSchema.parse({});
+      configurable: true,
+    });
+    const options = ExportOptionsSchema.parse({});
 
-  const sink = await chooseSink(count);
-  expect(sink).not.toBeNull();
-  expect(await sink?.save('photo1', options, 'run1')).toBe(`${path}\\photo.jpg`);
-  expect(calls).toEqual([
-    { command: 'pick_export_folder', args: {} },
-    { command: 'export_to_folder', args: { folder: path, photoId: 'photo1', options, runId: 'run1' } },
-  ]);
-});
+    const sink = await chooseSink(count);
+    expect(sink).not.toBeNull();
+    expect(await sink?.save('photo1', options, 'run1')).toBe(`${path}\\photo.jpg`);
+    expect(calls).toEqual([
+      { command: 'pick_export_folder', args: {} },
+      {
+        command: 'export_to_folder',
+        args: { folder: path, photoId: 'photo1', options, runId: 'run1' },
+      },
+    ]);
+  },
+);
 
-test.each(['dismissed', 'unsupported'])('the shell’s %s folder answer preserves export behavior', async (kind) => {
-  Object.defineProperty(globalThis, '__TAURI__', {
-    value: { core: { invoke: async () => ({ kind }) } },
-    configurable: true,
-  });
+test.each(['dismissed', 'unsupported'])(
+  'the shell’s %s folder answer preserves export behavior',
+  async (kind) => {
+    Object.defineProperty(globalThis, '__TAURI__', {
+      value: { core: { invoke: async () => ({ kind }) } },
+      configurable: true,
+    });
 
-  const sink = await chooseSink(2);
+    const sink = await chooseSink(2);
 
-  if (kind === 'dismissed') expect(sink).toBeNull();
-  else expect(sink).not.toBeNull();
-});
+    if (kind === 'dismissed') expect(sink).toBeNull();
+    else expect(sink).not.toBeNull();
+  },
+);

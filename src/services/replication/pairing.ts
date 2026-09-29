@@ -146,12 +146,15 @@ export function setAutoTransfersOriginals(db: Database, libraryId: string, value
  * side can stop offering to send bytes it would refuse. Advisory only: the
  * refusal that counts is the receiving peer's, at the moment they arrive.
  */
-export function recordPeerAppetite(db: Database, libraryId: string, peerId: string, wants: boolean): void {
-  db.query('UPDATE replication_peers SET wants_originals = ? WHERE library_id = ? AND peer_id = ?').run(
-    wants ? 1 : 0,
-    libraryId,
-    peerId,
-  );
+export function recordPeerAppetite(
+  db: Database,
+  libraryId: string,
+  peerId: string,
+  wants: boolean,
+): void {
+  db.query(
+    'UPDATE replication_peers SET wants_originals = ? WHERE library_id = ? AND peer_id = ?',
+  ).run(wants ? 1 : 0, libraryId, peerId);
 }
 
 /** Where to reach a peer, or null for one that only ever dials us. */
@@ -168,7 +171,10 @@ export function peerAddress(db: Database, libraryId: string, peerId: string): st
  * Active only: what a session merges is a catalogue, and a backup folder has none (§14.1). Its
  * address is a directory, so a run that took it would dial a path.
  */
-export function reachablePeers(db: Database, libraryId: string): { peerId: string; address: string }[] {
+export function reachablePeers(
+  db: Database,
+  libraryId: string,
+): { peerId: string; address: string }[] {
   return (
     db
       .query(
@@ -184,7 +190,9 @@ export function assertPaired(db: Database, libraryId: string, peerId: string): v
   // A passive peer never asks for anything - it is a directory - so a request arriving under one's
   // id is not a peer of this library however the row reads.
   const paired = db
-    .query("SELECT 1 FROM replication_peers WHERE library_id = ? AND peer_id = ? AND kind = 'active'")
+    .query(
+      "SELECT 1 FROM replication_peers WHERE library_id = ? AND peer_id = ? AND kind = 'active'",
+    )
     .get(libraryId, peerId);
   if (paired == null) {
     throw new AppError('NOT_FOUND', `peer ${peerId} is not paired with library ${libraryId}`);
@@ -208,7 +216,10 @@ export function pairedPeers(db: Database, libraryId: string): PairedPeer[] {
   return rows.map(({ protocol, schema_version, ...row }) => ({
     ...row,
     wants_originals: row.wants_originals !== 0,
-    outdated: protocol == null || schema_version == null ? null : outdatedSide(ours, { protocol, schema: schema_version }),
+    outdated:
+      protocol == null || schema_version == null
+        ? null
+        : outdatedSide(ours, { protocol, schema: schema_version }),
   }));
 }
 
@@ -217,13 +228,15 @@ export function thisBuild(): BuildVersion {
 }
 
 /** What a peer said it runs, which is how either end knows which device to update. */
-export function recordPeerVersion(db: Database, libraryId: string, peerId: string, version: BuildVersion): void {
-  db.query('UPDATE replication_peers SET protocol = ?, schema_version = ? WHERE library_id = ? AND peer_id = ?').run(
-    version.protocol,
-    version.schema,
-    libraryId,
-    peerId,
-  );
+export function recordPeerVersion(
+  db: Database,
+  libraryId: string,
+  peerId: string,
+  version: BuildVersion,
+): void {
+  db.query(
+    'UPDATE replication_peers SET protocol = ?, schema_version = ? WHERE library_id = ? AND peer_id = ?',
+  ).run(version.protocol, version.schema, libraryId, peerId);
 }
 
 /**
@@ -235,7 +248,9 @@ export function recordPeerVersion(db: Database, libraryId: string, peerId: strin
  */
 export function everyPairing(db: Database): AllPeersResponse['libraries'] {
   const rows = db
-    .query('SELECT library_id, sync_originals, auto_transfer_originals FROM replication_libraries ORDER BY library_id')
+    .query(
+      'SELECT library_id, sync_originals, auto_transfer_originals FROM replication_libraries ORDER BY library_id',
+    )
     .all() as { library_id: string; sync_originals: number; auto_transfer_originals: number }[];
   return rows.map((row) => ({
     library_id: row.library_id,
@@ -246,7 +261,12 @@ export function everyPairing(db: Database): AllPeersResponse['libraries'] {
 }
 
 /** What went wrong last time, or null once a session gets through (§8.6). */
-export function recordPeerOutcome(db: Database, libraryId: string, peerId: string, error: string | null): void {
+export function recordPeerOutcome(
+  db: Database,
+  libraryId: string,
+  peerId: string,
+  error: string | null,
+): void {
   db.query('UPDATE replication_peers SET last_error = ? WHERE library_id = ? AND peer_id = ?').run(
     error,
     libraryId,
@@ -255,10 +275,17 @@ export function recordPeerOutcome(db: Database, libraryId: string, peerId: strin
 }
 
 /** Whether the peer's name changed. */
-export function recordPeerName(db: Database, libraryId: string, peerId: string, name: string): boolean {
+export function recordPeerName(
+  db: Database,
+  libraryId: string,
+  peerId: string,
+  name: string,
+): boolean {
   return (
     db
-      .query('UPDATE replication_peers SET name = ? WHERE library_id = ? AND peer_id = ? AND name != ?')
+      .query(
+        'UPDATE replication_peers SET name = ? WHERE library_id = ? AND peer_id = ? AND name != ?',
+      )
       .run(name, libraryId, peerId, name).changes > 0
   );
 }
@@ -268,7 +295,12 @@ export function recordPeerName(db: Database, libraryId: string, peerId: string, 
  * collection, and if it ever returns it is refused and re-pairs fresh, arriving
  * as a clone.
  */
-export function forgetPairedPeer(db: Database, libraryId: string, peerId: string, locations: BlobLocations): void {
+export function forgetPairedPeer(
+  db: Database,
+  libraryId: string,
+  peerId: string,
+  locations: BlobLocations,
+): void {
   db.transaction(() => {
     const removed = db
       .query('DELETE FROM replication_peers WHERE library_id = ? AND peer_id = ?')
@@ -284,11 +316,9 @@ export function forgetPairedPeer(db: Database, libraryId: string, peerId: string
 }
 
 export function markReplicated(db: Database, libraryId: string, peerId: string): void {
-  db.query('UPDATE replication_peers SET last_replicated_at = ? WHERE library_id = ? AND peer_id = ?').run(
-    new Date().toISOString(),
-    libraryId,
-    peerId,
-  );
+  db.query(
+    'UPDATE replication_peers SET last_replicated_at = ? WHERE library_id = ? AND peer_id = ?',
+  ).run(new Date().toISOString(), libraryId, peerId);
 }
 
 export function deviceName(db: Database): string {

@@ -33,7 +33,12 @@ function main(): void {
 function build(): void {
   const installed = resolve(HOME, 'installed');
   // pkg-config and python3 for dav1d's meson; nasm for aom's and dav1d's x86 assembly.
-  vcpkgInstall(installed, NAME, ['pkg-config', 'python3', ...(process.arch === 'x64' ? ['nasm'] : [])], true);
+  vcpkgInstall(
+    installed,
+    NAME,
+    ['pkg-config', 'python3', ...(process.arch === 'x64' ? ['nasm'] : [])],
+    true,
+  );
 
   // The one decision the overlay port exists for, checked where it would have gone missing: a
   // libavif without sharpyuv links, and then answers `NOT_IMPLEMENTED` to every 4:2:0 encode.
@@ -56,16 +61,22 @@ function linkLines(installed: string): string[] {
   const pkgconf = hostPath(installed, `tools/pkgconf/${WINDOWS ? 'pkgconf.exe' : 'pkgconf'}`);
   const asked = spawnSync(pkgconf, ['--static', '--libs', ...MODULES], {
     encoding: 'utf8',
-    env: { ...process.env, PKG_CONFIG_LIBDIR: resolve(target, 'lib/pkgconfig'), PKG_CONFIG_PATH: '' },
+    env: {
+      ...process.env,
+      PKG_CONFIG_LIBDIR: resolve(target, 'lib/pkgconfig'),
+      PKG_CONFIG_PATH: '',
+    },
   });
-  if (asked.status !== 0) throw new Error(`pkgconf --static --libs ${MODULES.join(' ')}: ${asked.stderr}`);
+  if (asked.status !== 0)
+    throw new Error(`pkgconf --static --libs ${MODULES.join(' ')}: ${asked.stderr}`);
 
   const inside = (path: string): string => {
     const at = relative(HOME, resolve(path));
     if (at.startsWith('..')) throw new Error(`pkgconf named ${path}, which is outside ${HOME}`);
     return at.replaceAll('\\', '/');
   };
-  const archive = (library: string): string => resolve(target, 'lib', WINDOWS ? `${library}.lib` : `lib${library}.a`);
+  const archive = (library: string): string =>
+    resolve(target, 'lib', WINDOWS ? `${library}.lib` : `lib${library}.a`);
 
   const libraries: string[] = [];
   const lines = [`include ${inside(resolve(target, 'include'))}`];
@@ -77,7 +88,8 @@ function linkLines(installed: string): string[] {
   }
   // The last mention of each kept, which is where pkgconf puts a library after everything needing it.
   const ordered = libraries.filter((library, at) => libraries.lastIndexOf(library) === at);
-  for (const library of ordered) lines.push(`${existsSync(archive(library)) ? 'static' : 'dylib'} ${library}`);
+  for (const library of ordered)
+    lines.push(`${existsSync(archive(library)) ? 'static' : 'dylib'} ${library}`);
   return [...new Set(lines)];
 }
 

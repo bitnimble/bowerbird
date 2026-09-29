@@ -19,13 +19,24 @@ type FeatureCopy = {
 
 export type Feature = FeatureCopy['frontmatter'] & { id: string; Body: MDXContent };
 
-const FEATURE_ORDER = ['hdr', 'stacks', 'triage', 'colour', 'editing', 'dust', 'merge', 'panorama', 'nas'];
+const FEATURE_ORDER = [
+  'hdr',
+  'stacks',
+  'triage',
+  'colour',
+  'editing',
+  'dust',
+  'merge',
+  'panorama',
+  'nas',
+];
 
 const FEATURE_COPY = import.meta.glob<FeatureCopy>('./copy/features/*.mdx', { eager: true });
 
 export const FEATURES: readonly Feature[] = FEATURE_ORDER.map((id) => {
   const copy = FEATURE_COPY[`./copy/features/${id}.mdx`];
-  if (copy == null) throw new Error(`FEATURE_ORDER names ${id}, which has no copy/features/${id}.mdx`);
+  if (copy == null)
+    throw new Error(`FEATURE_ORDER names ${id}, which has no copy/features/${id}.mdx`);
   return { ...copy.frontmatter, id, Body: copy.default };
 });
 
@@ -76,7 +87,8 @@ export const DEMO = {
     alt: 'A dusk sky with sensor dust spots across it',
   },
   stacks: {
-    toggle: (count: number, open: boolean) => `${open ? 'Close' : 'Open'} the stack of ${count} photos`,
+    toggle: (count: number, open: boolean) =>
+      `${open ? 'Close' : 'Open'} the stack of ${count} photos`,
     alt: (name: string) => `Sample photo ${name}`,
   },
   triage: {

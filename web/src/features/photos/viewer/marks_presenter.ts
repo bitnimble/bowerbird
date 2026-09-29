@@ -24,7 +24,11 @@ export class MarksPresenter {
     await this.patch(photoId, { rating });
   }
 
-  async setTriage(photoId: string, triage: Triage, options: { quiet?: boolean } = {}): Promise<boolean> {
+  async setTriage(
+    photoId: string,
+    triage: Triage,
+    options: { quiet?: boolean } = {},
+  ): Promise<boolean> {
     return this.patch(photoId, { triage }, options);
   }
 

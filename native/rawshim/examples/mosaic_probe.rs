@@ -56,7 +56,10 @@ fn main() {
     );
 
     let cfa = held.cfa();
-    assert!(cfa.aligned(x, y), "the window origin must align to the CFA period");
+    assert!(
+        cfa.aligned(x, y),
+        "the window origin must align to the CFA period"
+    );
     let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa));
     eprintln!("fit: {fit:?}");
 
@@ -100,8 +103,11 @@ fn main() {
     pgm(&format!("{out}/green.pgm"), &green, w / 2, h / 2);
 
     for (gain, name) in [(20.0f32, "x20"), (100.0, "x100")] {
-        let diff: Vec<f32> =
-            before.iter().zip(&after).map(|(b, a)| 0.5 + (a - b) * gain).collect();
+        let diff: Vec<f32> = before
+            .iter()
+            .zip(&after)
+            .map(|(b, a)| 0.5 + (a - b) * gain)
+            .collect();
         pgm(&format!("{out}/action-{name}.pgm"), &diff, w, h);
     }
 
@@ -110,15 +116,21 @@ fn main() {
     let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");
     let rgb = |samples: &[f32]| {
         let uploaded = rawshim::condition::Mosaic::upload(gpu, samples, w, h);
-        pollster::block_on(rawshim::demosaic::demosaic_plane(gpu, rcd, &uploaded, &cfa, |bytes| {
-            bytes
-                .chunks_exact(4)
-                .map(|word| {
-                    let linear = f32::from_ne_bytes([word[0], word[1], word[2], word[3]]);
-                    ((linear * 8.0).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
-                })
-                .collect::<Vec<u8>>()
-        }))
+        pollster::block_on(rawshim::demosaic::demosaic_plane(
+            gpu,
+            rcd,
+            &uploaded,
+            &cfa,
+            |bytes| {
+                bytes
+                    .chunks_exact(4)
+                    .map(|word| {
+                        let linear = f32::from_ne_bytes([word[0], word[1], word[2], word[3]]);
+                        ((linear * 8.0).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
+                    })
+                    .collect::<Vec<u8>>()
+            },
+        ))
         .expect("demosaics")
     };
     let (rgb_before, rgb_after) = (rgb(&before), rgb(&after));

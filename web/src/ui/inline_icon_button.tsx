@@ -29,7 +29,12 @@ export function InlineIconButton({
 }): JSX.Element {
   return (
     <Tooltip label={label}>
-      <button type="button" {...stylex.props(styles.button, focusRing.ring)} aria-label={label} onClick={onClick}>
+      <button
+        type="button"
+        {...stylex.props(styles.button, focusRing.ring)}
+        aria-label={label}
+        onClick={onClick}
+      >
         {children}
       </button>
     </Tooltip>

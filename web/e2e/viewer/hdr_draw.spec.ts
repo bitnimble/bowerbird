@@ -39,7 +39,9 @@ test.beforeAll(async ({ browser }) => {
 // read off the library rather than assumed - and a library that came back SDR would send this
 // spec looking in the right place for the wrong claim.
 async function hdrRendition(request: APIRequestContext, photoId: string): Promise<string> {
-  const libraries = (await (await request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)).json()) as {
+  const libraries = (await (
+    await request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)
+  ).json()) as {
     id: string;
     root_path: string;
     rendition_hdr: boolean;
@@ -137,11 +139,16 @@ test('an HDR rendition reaches the GPU and draws a photograph', async ({ page })
   const format = await page.evaluate(async (url: string) => {
     const response = await fetch(url);
     if (!response.ok) return `fetch ${response.status}`;
-    const Decoder = (globalThis as unknown as {
-      ImageDecoder?: new (init: unknown) => { decode(): Promise<{ image: VideoFrame }> };
-    }).ImageDecoder;
+    const Decoder = (
+      globalThis as unknown as {
+        ImageDecoder?: new (init: unknown) => { decode(): Promise<{ image: VideoFrame }> };
+      }
+    ).ImageDecoder;
     if (Decoder == null) return 'no ImageDecoder';
-    const { image } = await new Decoder({ data: await response.arrayBuffer(), type: 'image/avif' }).decode();
+    const { image } = await new Decoder({
+      data: await response.arrayBuffer(),
+      type: 'image/avif',
+    }).decode();
     return `${String(image.format)} ${String(image.colorSpace.transfer)} full=${String(image.colorSpace.fullRange)}`;
   }, source);
   expect(format, 'the stage drew the twelve-bit PQ rendition').toBe('I420P12 pq full=false');

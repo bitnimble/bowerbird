@@ -39,7 +39,9 @@ fn png(width: usize, height: usize) -> Vec<u8> {
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().expect("the header writes");
-        writer.write_image_data(&scene(width, height)).expect("the pixels write");
+        writer
+            .write_image_data(&scene(width, height))
+            .expect("the pixels write");
     }
     out
 }
@@ -51,8 +53,8 @@ fn a_png_opens_through_the_chain_a_raw_opens_through() {
         return;
     }
     let (width, height) = (320usize, 200);
-    let opened = rawshim::edit::prepare_bytes(&png(width, height), &request(0), 30.0)
-        .expect("a PNG opens");
+    let opened =
+        rawshim::edit::prepare_bytes(&png(width, height), &request(0), 30.0).expect("a PNG opens");
     let header = &opened.header;
 
     assert_eq!((header.width, header.height), (width, height));
@@ -61,19 +63,32 @@ fn a_png_opens_through_the_chain_a_raw_opens_through() {
     // illuminant the samples were divided by: both are the neutral arm rather than an error.
     assert!(!header.matched);
     assert!(header.as_shot.is_none());
-    assert!(!header.mosaic, "so the panel closes the Detail pair and the Dust group");
-    assert!(header.noise_fit.is_none(), "and there is no mosaic to have fitted one off");
+    assert!(
+        !header.mosaic,
+        "so the panel closes the Detail pair and the Dust group"
+    );
+    assert!(
+        header.noise_fit.is_none(),
+        "and there is no mosaic to have fitted one off"
+    );
 
     // The levels are the photograph's, measured off the frame the chain coded: an sRGB picture
     // whose brightest pixels are white puts diffuse white at the top of the scale.
-    assert!(header.white.raw() > 40000.0, "diffuse white came back at {}", header.white.raw());
+    assert!(
+        header.white.raw() > 40000.0,
+        "diffuse white came back at {}",
+        header.white.raw()
+    );
     assert!(header.peak >= header.white);
     // And the frame is a picture rather than a flat buffer, which is what a decode that lost its
     // pixels somewhere in the chain would leave. These are normalised PQ, not the linear samples
     // the levels above are in (`tone::encode_base`), so what is asked of them is the spread.
     let brightest = opened.samples.iter().copied().max().unwrap_or(0);
     let darkest = opened.samples.iter().copied().min().unwrap_or(0);
-    assert!(brightest - darkest > 20000, "the coded frame runs {darkest}..{brightest}");
+    assert!(
+        brightest - darkest > 20000,
+        "the coded frame runs {darkest}..{brightest}"
+    );
 }
 
 /// The Detail amounts are the mosaic's, and a picture that has none must come back the same

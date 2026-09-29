@@ -11,7 +11,11 @@ describe('foldersUnder', () => {
     'follows a symlinked folder once',
     withRoot(async (root) => {
       mkdirSync(path.join(root, 'Trip/Import'), { recursive: true });
-      symlinkSync(path.join(root, 'Trip'), path.join(root, 'Trip/Import/loop'), process.platform === 'win32' ? 'junction' : 'dir');
+      symlinkSync(
+        path.join(root, 'Trip'),
+        path.join(root, 'Trip/Import/loop'),
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
 
       const found = await foldersUnder(scope(root));
 

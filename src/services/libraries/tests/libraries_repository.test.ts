@@ -17,7 +17,9 @@ beforeEach(() => {
   runMigrations(db);
   repository = new LibrariesRepository(db);
   renditions = new RenditionsRepository(db);
-  db.query("INSERT INTO libraries (id, root_path, name) VALUES (?, '/photos', 'Photos')").run(LIBRARY);
+  db.query("INSERT INTO libraries (id, root_path, name) VALUES (?, '/photos', 'Photos')").run(
+    LIBRARY,
+  );
 });
 
 afterEach(() => db.close());
@@ -30,12 +32,9 @@ function insertPhoto(id: string, missing = false, deleted = false, libraryId = L
 }
 
 function recordHolder(id: string, peer: string, libraryId = LIBRARY): void {
-  db.query('INSERT INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)').run(
-    libraryId,
-    id,
-    peer,
-    'held',
-  );
+  db.query(
+    'INSERT INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)',
+  ).run(libraryId, id, peer, 'held');
 }
 
 function pair(peer: string, kind: 'active' | 'passive' = 'active'): void {
@@ -58,8 +57,19 @@ describe('library photo counts', () => {
   it('reads fresh configuration without aggregate fields and leaves full counts live', () => {
     const configuration = repository.getConfiguration(LIBRARY);
     if (configuration == null) throw new Error('library configuration missing');
-    expect(configuration).toMatchObject({ id: LIBRARY, root_path: '/photos', name: 'Photos', rendition_hdr: true, denoiser: 'galosh' });
-    for (const field of ['photo_count', 'missing_photo_count', 'unavailable_photo_count', 'rendered_photo_count']) {
+    expect(configuration).toMatchObject({
+      id: LIBRARY,
+      root_path: '/photos',
+      name: 'Photos',
+      rendition_hdr: true,
+      denoiser: 'galosh',
+    });
+    for (const field of [
+      'photo_count',
+      'missing_photo_count',
+      'unavailable_photo_count',
+      'rendered_photo_count',
+    ]) {
       expect(configuration).not.toHaveProperty(field);
     }
     expect(repository.listConfigurations()).toEqual([configuration]);
@@ -187,7 +197,10 @@ describe('library photo counts', () => {
          VALUES ('composite', ?, json_object('kind', 'panorama', 'sources',
            json_array(json_object('photoId', 'frame'))), 200, 100, ?)`,
     ).run(LIBRARY, BUILT_AT);
-    renditions.markBuilt('composite', 'full-hdr', BUILT_AT, null, { from: 'render', matched: false });
+    renditions.markBuilt('composite', 'full-hdr', BUILT_AT, null, {
+      from: 'render',
+      matched: false,
+    });
     expect(counts()).toEqual({ photos: 2, missing: 0, unavailable: 1, rendered: 1 });
   });
 });

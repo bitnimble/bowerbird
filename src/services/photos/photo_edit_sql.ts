@@ -16,7 +16,10 @@ export type EditStamp = (alias: string) => string;
 const storedStamp: EditStamp = (alias) => `${alias}.stamp`;
 
 /** The newest develop document behind the rows this one composes, for a `photos` aliased `alias`. */
-const INPUTS_EDITED_STAMP = (alias: string, stampOf: EditStamp): string => `(SELECT MAX(${stampOf('fe')})
+const INPUTS_EDITED_STAMP = (
+  alias: string,
+  stampOf: EditStamp,
+): string => `(SELECT MAX(${stampOf('fe')})
     FROM photo_sources s JOIN photo_edits fe ON fe.photo_id = s.photo_id
    WHERE s.composed_id = ${alias}id)`;
 
@@ -24,7 +27,10 @@ const INPUTS_EDITED_STAMP = (alias: string, stampOf: EditStamp): string => `(SEL
  * What a row's copies are built from, as the newest stamp behind them: its own document, and for a
  * composite its frames' documents and its recipe, which moves with `stamp_placement`.
  */
-export const BUILT_FROM_STAMP = (alias: string, stampOf: EditStamp = storedStamp): string => `NULLIF(MAX(
+export const BUILT_FROM_STAMP = (
+  alias: string,
+  stampOf: EditStamp = storedStamp,
+): string => `NULLIF(MAX(
     COALESCE((SELECT ${stampOf('oe')} FROM photo_edits oe WHERE oe.photo_id = ${alias}id), ''),
     COALESCE(${INPUTS_EDITED_STAMP(alias, stampOf)}, ''),
     COALESCE(CASE WHEN json_extract(${alias}recipe, '$.kind') IN (${COMPOSITE_KINDS_SQL})

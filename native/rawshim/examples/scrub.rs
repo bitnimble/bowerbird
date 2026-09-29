@@ -33,22 +33,37 @@ fn main() {
 
 fn short(bytes: &[u8], little: bool, at: usize) -> Option<u16> {
     let v: [u8; 2] = bytes.get(at..at + 2)?.try_into().ok()?;
-    Some(if little { u16::from_le_bytes(v) } else { u16::from_be_bytes(v) })
+    Some(if little {
+        u16::from_le_bytes(v)
+    } else {
+        u16::from_be_bytes(v)
+    })
 }
 
 fn long(bytes: &[u8], little: bool, at: usize) -> Option<usize> {
     let v: [u8; 4] = bytes.get(at..at + 4)?.try_into().ok()?;
-    Some(if little { u32::from_le_bytes(v) } else { u32::from_be_bytes(v) } as usize)
+    Some(if little {
+        u32::from_le_bytes(v)
+    } else {
+        u32::from_be_bytes(v)
+    } as usize)
 }
 
 fn entry(bytes: &[u8], little: bool, ifd: usize, want: u16) -> Option<usize> {
     let count = short(bytes, little, ifd)? as usize;
-    (0..count).map(|k| ifd + 2 + 12 * k).find(|at| short(bytes, little, *at) == Some(want))
+    (0..count)
+        .map(|k| ifd + 2 + 12 * k)
+        .find(|at| short(bytes, little, *at) == Some(want))
 }
 
 /// Every entry of the directory at `ifd` that `zero` names, its value zeroed where it lies. Offsets
 /// are from the start of `tiff`.
-fn zero_entries(tiff: &mut [u8], little: bool, ifd: usize, zero: impl Fn(u16) -> Option<usize>) -> Option<Vec<u16>> {
+fn zero_entries(
+    tiff: &mut [u8],
+    little: bool,
+    ifd: usize,
+    zero: impl Fn(u16) -> Option<usize>,
+) -> Option<Vec<u16>> {
     let count = short(tiff, little, ifd)? as usize;
     let mut zeroed = Vec::new();
     for k in 0..count {
@@ -63,7 +78,9 @@ fn zero_entries(tiff: &mut [u8], little: bool, ifd: usize, zero: impl Fn(u16) ->
             _ => return None,
         };
         let size = size.checked_mul(long(tiff, little, at + 4)?)?;
-        if limit != usize::MAX && size < limit { return None; }
+        if limit != usize::MAX && size < limit {
+            return None;
+        }
         let data = match size <= 4 {
             true => at + 8,
             false => long(tiff, little, at + 8)?,
@@ -98,8 +115,11 @@ fn zero_canon_note(bytes: &mut [u8]) -> Option<Vec<u16>> {
     let little = tiff.get(..2)? == b"II";
     let ifd = long(tiff, little, 4)?;
     zero_entries(tiff, little, ifd, |tag| {
-        if tag == CANON_LENS_INFO { Some(5) }
-        else { CANON_IDENTITY.contains(&tag).then_some(usize::MAX) }
+        if tag == CANON_LENS_INFO {
+            Some(5)
+        } else {
+            CANON_IDENTITY.contains(&tag).then_some(usize::MAX)
+        }
     })
 }
 
@@ -110,7 +130,10 @@ fn boxed(bytes: &[u8], from: usize, to: usize, want: &[u8; 4]) -> Option<(usize,
         let declared = u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?) as usize;
         let kind = bytes.get(at + 4..at + 8)?;
         let (header, size) = match declared {
-            1 => (16, u64::from_be_bytes(bytes.get(at + 8..at + 16)?.try_into().ok()?) as usize),
+            1 => (
+                16,
+                u64::from_be_bytes(bytes.get(at + 8..at + 16)?.try_into().ok()?) as usize,
+            ),
             0 => (8, to - at),
             _ => (8, declared),
         };
@@ -151,7 +174,10 @@ mod tests {
         file.extend_from_slice(&tiff);
         let before = file.clone();
 
-        assert_eq!(super::zero_canon_note(&mut file), Some(vec![super::CANON_LENS_INFO]));
+        assert_eq!(
+            super::zero_canon_note(&mut file),
+            Some(vec![super::CANON_LENS_INFO])
+        );
         assert_eq!(&file[40..45], &[0; 5]);
         assert_eq!(&file[..40], &before[..40]);
         assert_eq!(&file[45..], &before[45..]);

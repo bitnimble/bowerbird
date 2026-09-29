@@ -16,9 +16,15 @@ const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
 function probe(file: string): string {
   const result = Bun.spawnSync([
-    'ffprobe', '-hide_banner', '-loglevel', 'error',
-    '-show_entries', 'stream=width,height,pix_fmt,color_range,color_primaries,color_transfer,color_space',
-    '-of', 'default=nw=1', file,
+    'ffprobe',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-show_entries',
+    'stream=width,height,pix_fmt,color_range,color_primaries,color_transfer,color_space',
+    '-of',
+    'default=nw=1',
+    file,
   ]);
   if (result.exitCode !== 0) throw new Error(`ffprobe failed: ${result.stderr.toString()}`);
   return result.stdout.toString().trim();
@@ -30,28 +36,32 @@ for (const [chroma, pixFmt] of [
   ['420', 'pix_fmt=yuv420p12le'],
   ['444', 'pix_fmt=yuv444p12le'],
 ] as const) {
-  test(
-    `an HDR still is tagged as one, ${chroma}`,
-    () => {
-      const dir = mkdtempSync(path.join(tmpdir(), 'bb-avif-'));
-      try {
-        const out = path.join(dir, 'still.avif');
-        _for_testing_encodeHdr(FIXTURE, {
-          outputPath: out, referenceWhiteNits: 203,
-          whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
+  test(`an HDR still is tagged as one, ${chroma}`, () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bb-avif-'));
+    try {
+      const out = path.join(dir, 'still.avif');
+      _for_testing_encodeHdr(
+        FIXTURE,
+        {
+          outputPath: out,
+          referenceWhiteNits: 203,
+          whiteQuantile: 0.9,
+          crf: 30,
+          preset: 10,
+          maxEdge: 640,
           stillFullChroma: chroma === '444',
-        }, { decodeSize: 640 });
+        },
+        { decodeSize: 640 },
+      );
 
-        const read = probe(out);
-        expect(read).toContain(pixFmt);
-        expect(read).toContain('color_range=tv');
-        expect(read).toContain('color_transfer=smpte2084');
-        expect(read).toContain('color_primaries=bt2020');
-        expect(read).toContain('color_space=bt2020nc');
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    180_000,
-  );
+      const read = probe(out);
+      expect(read).toContain(pixFmt);
+      expect(read).toContain('color_range=tv');
+      expect(read).toContain('color_transfer=smpte2084');
+      expect(read).toContain('color_primaries=bt2020');
+      expect(read).toContain('color_space=bt2020nc');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
 }

@@ -12,7 +12,16 @@ import { AssembliesApi } from '../assemblies_api';
 const RECIPE = AssemblyRecipeSchema.parse(
   JSON.parse(
     readFileSync(
-      path.join(import.meta.dir, '..', '..', '..', '..', 'test', 'fixtures', 'assembly-recipe.json'),
+      path.join(
+        import.meta.dir,
+        '..',
+        '..',
+        '..',
+        '..',
+        'test',
+        'fixtures',
+        'assembly-recipe.json',
+      ),
       'utf8',
     ),
   ),
@@ -75,7 +84,10 @@ describe('AssembliesApi', () => {
   });
 
   it.each([
-    ['a recipe whose picks disagree with its tiles', { recipe: { ...RECIPE, pick: [0] }, picks: [RECIPE.pick] }],
+    [
+      'a recipe whose picks disagree with its tiles',
+      { recipe: { ...RECIPE, pick: [0] }, picks: [RECIPE.pick] },
+    ],
     ['a pick set one short of the tiles', { recipe: RECIPE, picks: [[0]] }],
     ['a request carrying no recipe at all', { picks: [RECIPE.pick] }],
   ])('refuses %s', async (_, body) => {

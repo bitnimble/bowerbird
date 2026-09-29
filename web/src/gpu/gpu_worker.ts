@@ -52,7 +52,11 @@ worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
     worker.postMessage(AnswerSchema.parse({ id, ok: true, value }), transfer ?? []);
   } catch (error) {
     worker.postMessage(
-      AnswerSchema.parse({ id, ok: false, error: error instanceof Error ? error.message : String(error) }),
+      AnswerSchema.parse({
+        id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }),
     );
   }
 };
@@ -71,10 +75,14 @@ async function openDevice(): Promise<GPUDevice | null> {
 
 type Report = (stage: string) => void;
 
-async function answer(message: Message, report: Report): Promise<{ value: unknown; transfer?: Transferable[] }> {
+async function answer(
+  message: Message,
+  report: Report,
+): Promise<{ value: unknown; transfer?: Transferable[] }> {
   await device;
   // wgpu unwraps what a lost device refuses, so past this point every call would panic as `unreachable`.
-  if (lost != null && message.to !== 'close') throw new Error(`the GPU was reset (${lost}); reload the page`);
+  if (lost != null && message.to !== 'close')
+    throw new Error(`the GPU was reset (${lost}); reload the page`);
   switch (message.to) {
     case 'stage': {
       const value = await (await painter).answer(message.ask);
@@ -120,7 +128,10 @@ class Open {
     this.release();
   }
 
-  async answer(ask: OpenAsk, report: Report): Promise<{ value: unknown; transfer?: Transferable[] }> {
+  async answer(
+    ask: OpenAsk,
+    report: Report,
+  ): Promise<{ value: unknown; transfer?: Transferable[] }> {
     switch (ask.kind) {
       case 'hold':
         this.raw = ask.raw;
@@ -226,7 +237,14 @@ class Open {
       }
       case 'optionThumbnail': {
         const canvas = new OffscreenCanvas(ask.side, ask.side);
-        this.drawing().drawOptionThumbnail(canvas, ask.side, ask.ev, ask.region, ask.showing ?? undefined, ask.option);
+        this.drawing().drawOptionThumbnail(
+          canvas,
+          ask.side,
+          ask.ev,
+          ask.region,
+          ask.showing ?? undefined,
+          ask.option,
+        );
         return { value: await eightBitPng(canvas) };
       }
       case 'tick': {
@@ -236,16 +254,27 @@ class Open {
         if (ask.stage != null) editor.resizeStage(ask.stage.width, ask.stage.height);
         if (ask.adjust != null) editor.setAdjust(ask.adjust);
         if (ask.geometry != null) editor.setGeometry(ask.geometry);
-        if (ask.proof != null) editor.setProof(ask.proof.output, ask.proof.intent, ask.proof.displayPeakNits ?? undefined);
-        if (ask.printerProfile !== undefined) editor.setPrinterProfile(ask.printerProfile ?? undefined);
+        if (ask.proof != null)
+          editor.setProof(
+            ask.proof.output,
+            ask.proof.intent,
+            ask.proof.displayPeakNits ?? undefined,
+          );
+        if (ask.printerProfile !== undefined)
+          editor.setPrinterProfile(ask.printerProfile ?? undefined);
         if (ask.print != null) await printEnvironment(ask.print.environment);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
         await finishDraw();
         // wasm-bindgen copies a returned Vec out into a fresh ArrayBuffer; its d.ts just does not say so.
-        const stage = ask.drawStage ? ((await editor.heldStage()) as Uint8Array<ArrayBuffer> | undefined) : undefined;
-        const loupe = ask.loupe != null ? ((await editor.heldLoupe()) as Uint8Array<ArrayBuffer> | undefined) : undefined;
+        const stage = ask.drawStage
+          ? ((await editor.heldStage()) as Uint8Array<ArrayBuffer> | undefined)
+          : undefined;
+        const loupe =
+          ask.loupe != null
+            ? ((await editor.heldLoupe()) as Uint8Array<ArrayBuffer> | undefined)
+            : undefined;
         return {
           value: { stage: stage ?? null, loupe: loupe ?? null },
           transfer: [stage?.buffer, loupe?.buffer].filter((buffer) => buffer != null),
@@ -302,10 +331,15 @@ class Open {
    * exists to avoid - and for dust that would also throw away the particle detection, which is the
    * expensive half and does not depend on any of them.
    */
-  private async preparedAt(request: string, mosaic: PrepareCrossing, report: Report): Promise<string> {
+  private async preparedAt(
+    request: string,
+    mosaic: PrepareCrossing,
+    report: Report,
+  ): Promise<string> {
     await networkWeights(mosaic.denoiser);
     if (this.held?.request !== request) this.release();
-    const held = this.held?.held ?? this.keep(await holdRaw(this.heldRaw(), request, report), request);
+    const held =
+      this.held?.held ?? this.keep(await holdRaw(this.heldRaw(), request, report), request);
     const { enabled, sensitivity, intensity } = mosaic.dust;
     return held.prepare(
       mosaic.luminance,
@@ -339,11 +373,25 @@ class Open {
    * The same open, from a rendition's own file decoded in this tab. A JPEG is decoded by the
    * module; an HDR AVIF arrives as its planes, and an SDR one as the browser's own RGBA.
    */
-  private async renditionAt(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string> {
+  private async renditionAt(
+    file: Uint8Array<ArrayBuffer>,
+    request: string,
+    report: Report,
+  ): Promise<string> {
     report('decoding');
     const held = await heldRendition(file, request, report);
     this.release();
-    return this.keep(held, request).prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]', report);
+    return this.keep(held, request).prepare(
+      undefined,
+      undefined,
+      'galosh',
+      0,
+      false,
+      0,
+      0,
+      '[]',
+      report,
+    );
   }
 }
 
@@ -384,36 +432,51 @@ async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<vo
 
 /** A print environment's map, fetched once for the tab the first time a scene names it. */
 async function printEnvironment(environment: Environment): Promise<void> {
-  const fetching = environments.get(environment) ?? fetch(printEnvironmentUrls[environment])
-    .then(async (answer) => {
-      if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
-      holdPrintEnvironment(environment, new Uint8Array(await answer.arrayBuffer()));
-    })
-    .catch((why: unknown) => {
-      environments.delete(environment);
-      throw why;
-    });
+  const fetching =
+    environments.get(environment) ??
+    fetch(printEnvironmentUrls[environment])
+      .then(async (answer) => {
+        if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
+        holdPrintEnvironment(environment, new Uint8Array(await answer.arrayBuffer()));
+      })
+      .catch((why: unknown) => {
+        environments.delete(environment);
+        throw why;
+      });
   environments.set(environment, fetching);
   await fetching;
 }
 
-async function heldRendition(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<HeldRaw> {
+async function heldRendition(
+  file: Uint8Array<ArrayBuffer>,
+  request: string,
+  report: Report,
+): Promise<HeldRaw> {
   if (file[0] === 0xff && file[1] === 0xd8) return holdRaw(file, request, report);
-  const planes = (await webCodecsPlanes(file)) ?? (canDecodeAvifPlanes() ? await decodeAvifPlanes(file) : null);
-  if (planes != null) return holdPlanes(file, planes.samples, JSON.stringify(planes.layout), request);
+  const planes =
+    (await webCodecsPlanes(file)) ?? (canDecodeAvifPlanes() ? await decodeAvifPlanes(file) : null);
+  if (planes != null)
+    return holdPlanes(file, planes.samples, JSON.stringify(planes.layout), request);
   // Neither decoder hands over anything but PQ, and the module refuses an HDR file that got here.
   const { rgba, width, height } = await decodedPixels(file);
   return holdPixels(file, rgba, width, height, request);
 }
 
-async function decodedPixels(avif: Uint8Array<ArrayBuffer>): Promise<{ rgba: Uint8Array; width: number; height: number }> {
+async function decodedPixels(
+  avif: Uint8Array<ArrayBuffer>,
+): Promise<{ rgba: Uint8Array; width: number; height: number }> {
   const bitmap = await createImageBitmap(new Blob([avif], { type: 'image/avif' }));
   try {
     const { width, height } = bitmap;
     const context = new OffscreenCanvas(width, height).getContext('2d');
-    if (context == null) throw new Error('this worker would not open a 2D canvas to read an SDR rendition');
+    if (context == null)
+      throw new Error('this worker would not open a 2D canvas to read an SDR rendition');
     context.drawImage(bitmap, 0, 0);
-    return { rgba: new Uint8Array(context.getImageData(0, 0, width, height).data.buffer), width, height };
+    return {
+      rgba: new Uint8Array(context.getImageData(0, 0, width, height).data.buffer),
+      width,
+      height,
+    };
   } finally {
     bitmap.close();
   }

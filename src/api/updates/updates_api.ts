@@ -17,7 +17,9 @@ export class UpdatesApi {
     app.get(route(), async (c) => c.json(respond(UpdateStatusSchema, await this.updates.check())));
 
     // What the button in Settings asks: skip the cache and go and look.
-    app.post(route(PathSegment.check()), async (c) => c.json(respond(UpdateStatusSchema, await this.updates.check(true))));
+    app.post(route(PathSegment.check()), async (c) =>
+      c.json(respond(UpdateStatusSchema, await this.updates.check(true))),
+    );
 
     // Answered before the process exits, which is why the status is read first: the
     // reply itself is the last thing this server does on the old version.

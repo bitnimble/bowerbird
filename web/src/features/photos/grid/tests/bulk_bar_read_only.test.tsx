@@ -13,8 +13,14 @@ registerDom();
 const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 const { MemoryRouter } = await import('react-router-dom');
 const { BulkBar } = await import('../bulk_bar');
-const { StoresProvider, useLibrariesStore, useListingStore, useMarksStore, useReplicationStore, useShootsStore } =
-  await import('../../../../app/stores_context');
+const {
+  StoresProvider,
+  useLibrariesStore,
+  useListingStore,
+  useMarksStore,
+  useReplicationStore,
+  useShootsStore,
+} = await import('../../../../app/stores_context');
 const { SelectionRanges } = await import('../../selection');
 
 afterEach(cleanup);
@@ -45,7 +51,10 @@ function Seed({ readOnly, synced }: { readOnly: boolean; synced: boolean }): nul
   const replication = useReplicationStore();
   useEffect(() => {
     runInAction(() => {
-      if (synced) replication.peersByLibrary = new Map([['lib', [{ peer_id: 'laptop', name: 'Laptop' } as PairedPeer]]]);
+      if (synced)
+        replication.peersByLibrary = new Map([
+          ['lib', [{ peer_id: 'laptop', name: 'Laptop' } as PairedPeer]],
+        ]);
       libraries.libraries = [{ id: 'lib', name: 'Reef', read_only: readOnly } as Library];
       shoots.shoots = [shoot('dawn', 'Dawn'), shoot('dusk', 'Dusk')];
       listing.source = { kind: 'shoot', shootId: DAWN.id };
@@ -77,7 +86,9 @@ test('filing into and out of a shoot is greyed on a read-only library, and says 
   for (const name of ['Move to another shoot', 'Remove from Dawn']) {
     const item = screen.getByRole('menuitem', { name });
     expect(item.getAttribute('aria-disabled')).toBe('true');
-    expect(item.getAttribute('aria-description')).toBe('Turn off read-only mode to use this action.');
+    expect(item.getAttribute('aria-description')).toBe(
+      'Turn off read-only mode to use this action.',
+    );
   }
 });
 

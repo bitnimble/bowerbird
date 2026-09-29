@@ -101,8 +101,10 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element | null {
           <Panel flush>
             <SettingRow
               label={SettingsStrings.defaultRendition()}
-              onReset={resetTo(mode, settings.defaults?.viewer_rendition_mode, (v) =>
-                void appSettings.setViewerRenditionMode(v),
+              onReset={resetTo(
+                mode,
+                settings.defaults?.viewer_rendition_mode,
+                (v) => void appSettings.setViewerRenditionMode(v),
               )}
             >
               <Select
@@ -112,7 +114,10 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element | null {
                 onChange={(next) => void appSettings.setViewerRenditionMode(next)}
               />
             </SettingRow>
-            <ToggleSetting field="hide_sidebar_in_viewer" label={SettingsStrings.hideSidebarInViewer()} />
+            <ToggleSetting
+              field="hide_sidebar_in_viewer"
+              label={SettingsStrings.hideSidebarInViewer()}
+            />
             <DisplayPeak />
           </Panel>
 
@@ -205,7 +210,11 @@ const DisplayPeak = observer(function DisplayPeak(): JSX.Element {
     <SettingRow
       label={label}
       hint={SettingsStrings.displayPeakNitsHint()}
-      onReset={resetTo(device.displayPeakNits, DEFAULT_DISPLAY_PEAK_NITS, deviceSettings.setDisplayPeakNits)}
+      onReset={resetTo(
+        device.displayPeakNits,
+        DEFAULT_DISPLAY_PEAK_NITS,
+        deviceSettings.setDisplayPeakNits,
+      )}
     >
       <TextField
         style={settingStyles.field}
@@ -290,8 +299,18 @@ const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {
         <>
           <GroupTitle>{SettingsStrings.groupResolution()}</GroupTitle>
           <Panel flush>
-            <NumberSetting field="grid_rendition_size" label={SettingsStrings.gridRenditionSize()} suffix="px" min={1} />
-            <NumberSetting field="full_rendition_size" label={SettingsStrings.fullRenditionSize()} suffix="px" min={1} />
+            <NumberSetting
+              field="grid_rendition_size"
+              label={SettingsStrings.gridRenditionSize()}
+              suffix="px"
+              min={1}
+            />
+            <NumberSetting
+              field="full_rendition_size"
+              label={SettingsStrings.fullRenditionSize()}
+              suffix="px"
+              min={1}
+            />
             <NumberSetting
               field="panorama_full_rendition_size"
               label={SettingsStrings.panoramaFullRenditionSize()}
@@ -365,12 +384,12 @@ const UpdateSettings = observer(function UpdateSettings(): JSX.Element | null {
           label={UpdatesStrings.version()}
           hint={
             store.failure ??
-            (status.checked_at == null ?
-              UpdatesStrings.neverChecked()
-            : UpdatesStrings.lastChecked(relativeTime(status.checked_at)))
+            (status.checked_at == null
+              ? UpdatesStrings.neverChecked()
+              : UpdatesStrings.lastChecked(relativeTime(status.checked_at)))
           }
         >
-          {available == null ?
+          {available == null ? (
             <>
               <Text variant="mono">{status.current}</Text>
               <Button disabled={store.checking} onClick={() => void updates.check(true)}>
@@ -378,13 +397,14 @@ const UpdateSettings = observer(function UpdateSettings(): JSX.Element | null {
                 {store.checking ? UpdatesStrings.checking() : UpdatesStrings.checkNow()}
               </Button>
             </>
+          ) : (
             // The same dialog the sidebar's badge opens: what is in a release is the thing
             // worth reading before installing it, whichever way you got here.
-          : <Button variant="primary" onClick={updates.openDialog}>
+            <Button variant="primary" onClick={updates.openDialog}>
               <Sparkles size={ICON} />
               {UpdatesStrings.updateAvailable(available.version)}
             </Button>
-          }
+          )}
         </SettingRow>
       </Panel>
     </>
@@ -439,8 +459,17 @@ function UiScale(): JSX.Element | null {
   };
 
   return (
-    <SettingRow label={SettingsStrings.uiScale()} hint={failure ?? undefined} onReset={resetTo(scale, '1', choose)}>
-      <Select label={SettingsStrings.uiScale()} options={UI_SCALES} value={scale} onChange={choose} />
+    <SettingRow
+      label={SettingsStrings.uiScale()}
+      hint={failure ?? undefined}
+      onReset={resetTo(scale, '1', choose)}
+    >
+      <Select
+        label={SettingsStrings.uiScale()}
+        options={UI_SCALES}
+        value={scale}
+        onChange={choose}
+      />
     </SettingRow>
   );
 }
@@ -517,7 +546,9 @@ function AppDataFolder(): JSX.Element | null {
       <Button
         onClick={() => {
           setFailure(null);
-          void openAppDataDir().catch(() => setFailure(SettingsStrings.couldNotOpenAppDataFolder()));
+          void openAppDataDir().catch(() =>
+            setFailure(SettingsStrings.couldNotOpenAppDataFolder()),
+          );
         }}
       >
         <FolderOpen size={ICON} />
@@ -592,8 +623,10 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
               <Panel>
                 <SettingRow
                   label={SettingsStrings.logLevel()}
-                  onReset={resetTo(settings.log_level, store.defaults?.log_level, (v) =>
-                    void write({ log_level: v }),
+                  onReset={resetTo(
+                    settings.log_level,
+                    store.defaults?.log_level,
+                    (v) => void write({ log_level: v }),
                   )}
                 >
                   <Select
@@ -622,17 +655,21 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
         <>
           <GroupTitle>{SettingsStrings.groupMaintenance()}</GroupTitle>
           <Panel flush>
-            <SettingRow
-              label={SettingsStrings.diskUsage()}
-              hint={SettingsStrings.diskUsageHint()}
-            >
-              <output aria-label={SettingsStrings.diskUsage()} aria-busy={store.storageUsage.kind === 'loading'}>
-                {store.storageUsage.kind === 'failed' ? SettingsStrings.couldNotMeasureDiskUsage()
-                : store.storageUsage.kind === 'ready' ? fileSizeLabel(store.storageUsage.bytes)
-                : SettingsStrings.calculatingDiskUsage()}
+            <SettingRow label={SettingsStrings.diskUsage()} hint={SettingsStrings.diskUsageHint()}>
+              <output
+                aria-label={SettingsStrings.diskUsage()}
+                aria-busy={store.storageUsage.kind === 'loading'}
+              >
+                {store.storageUsage.kind === 'failed'
+                  ? SettingsStrings.couldNotMeasureDiskUsage()
+                  : store.storageUsage.kind === 'ready'
+                    ? fileSizeLabel(store.storageUsage.bytes)
+                    : SettingsStrings.calculatingDiskUsage()}
               </output>
               {store.storageUsage.kind === 'failed' && (
-                <Button onClick={appSettings.loadStorageUsage}>{SettingsStrings.retryDiskUsage()}</Button>
+                <Button onClick={appSettings.loadStorageUsage}>
+                  {SettingsStrings.retryDiskUsage()}
+                </Button>
               )}
             </SettingRow>
             {settings != null && (
@@ -655,7 +692,9 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
                   field="backup_keep"
                   label={SettingsStrings.backupKeep()}
                   min={1}
-                  disabledReason={settings.backup_every_days > 0 ? undefined : SettingsStrings.backupsOff()}
+                  disabledReason={
+                    settings.backup_every_days > 0 ? undefined : SettingsStrings.backupsOff()
+                  }
                 />
                 <NumberSetting
                   field="export_history_limit"

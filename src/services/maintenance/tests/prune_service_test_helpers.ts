@@ -28,7 +28,10 @@ export function usingPruneService(): void {
     db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(LIB, root, 'Trip');
     prune = new PruneService(
       new LibrariesRepository(db),
-      new PhotoMetadataRepository(db, new PhotoProcessingRepository(db, new RenditionsRepository(db))),
+      new PhotoMetadataRepository(
+        db,
+        new PhotoProcessingRepository(db, new RenditionsRepository(db)),
+      ),
       activity,
     );
   });

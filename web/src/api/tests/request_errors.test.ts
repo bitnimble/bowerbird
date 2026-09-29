@@ -82,7 +82,8 @@ describe('a transport that never got an answer', () => {
   });
 
   test('and an Error rejection, as fetch produces', async () => {
-    globalThis.fetch = (() => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
+    globalThis.fetch = (() =>
+      Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
 
     const error = (await settingsApi.get().catch((e: unknown) => e)) as ApiError;
     expect(error.message).toContain('Failed to fetch');

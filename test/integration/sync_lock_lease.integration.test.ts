@@ -11,7 +11,12 @@ import { createDatabase } from '../../src/db/connection';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
@@ -34,7 +39,12 @@ beforeEach(() => {
   for (let i = 0; i < COPIES; i++) copyFileSync(FIXTURE, path.join(root, `p${i}.arw`));
 
   const db = createDatabase(dbPath);
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   db.close();
 });
 
@@ -52,24 +62,20 @@ async function run(role: 'hold' | 'scan'): Promise<string[]> {
   return out.trim().split('\n');
 }
 
-test(
-  'a lease held by another process refuses the scan, and lets it through once released',
-  async () => {
-    const [holder, syncer] = await Promise.all([run('hold'), run('scan')]);
+test('a lease held by another process refuses the scan, and lets it through once released', async () => {
+  const [holder, syncer] = await Promise.all([run('hold'), run('scan')]);
 
-    expect(holder).toEqual(['held']);
-    // Nothing else can have refused it: `libraryMutex` is process-global, so the
-    // two processes cannot see each other's.
-    expect(syncer).toEqual(['while held: SYNC_IN_PROGRESS', 'once free: ok']);
+  expect(holder).toEqual(['held']);
+  // Nothing else can have refused it: `libraryMutex` is process-global, so the
+  // two processes cannot see each other's.
+  expect(syncer).toEqual(['while held: SYNC_IN_PROGRESS', 'once free: ok']);
 
-    // And the refused run imported nothing, so the tree is in the catalogue once.
-    const db = createDatabase(dbPath);
-    const { count } = db.query('SELECT COUNT(*) AS count FROM photos').get() as { count: number };
-    db.close();
-    expect(count).toBe(COPIES);
-  },
-  60_000,
-);
+  // And the refused run imported nothing, so the tree is in the catalogue once.
+  const db = createDatabase(dbPath);
+  const { count } = db.query('SELECT COUNT(*) AS count FROM photos').get() as { count: number };
+  db.close();
+  expect(count).toBe(COPIES);
+}, 60_000);
 
 // Reclaim is by expiry, so a container killed and restarted within seconds finds
 // its own dead run still holding the lease. Swallowing that would drop the

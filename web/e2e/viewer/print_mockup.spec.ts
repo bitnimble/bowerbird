@@ -30,21 +30,34 @@ test.beforeAll(async ({ browser }) => {
 });
 
 /** What the mockup fetched to draw from, once the viewer's own frame is already on screen. */
-function drawnFrom(page: Page, photoId: string): { renditions: () => string[]; others: () => string[] } {
+function drawnFrom(
+  page: Page,
+  photoId: string,
+): { renditions: () => string[]; others: () => string[] } {
   const requested: URL[] = [];
   page.on('request', (request) => requested.push(new URL(request.url())));
   const renditions = route(photoId, PathSegment.renditions());
   return {
-    renditions: () => requested.filter((url) => url.pathname.includes(`${renditions}/`))
-      .map((url) => url.pathname.slice(url.pathname.lastIndexOf('/') + 1)),
-    others: () => requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare()))
-      || url.pathname.endsWith(route(PathSegment.download(), 'original'))).map((url) => url.pathname),
+    renditions: () =>
+      requested
+        .filter((url) => url.pathname.includes(`${renditions}/`))
+        .map((url) => url.pathname.slice(url.pathname.lastIndexOf('/') + 1)),
+    others: () =>
+      requested
+        .filter(
+          (url) =>
+            url.pathname.endsWith(route(PathSegment.prepare())) ||
+            url.pathname.endsWith(route(PathSegment.download(), 'original')),
+        )
+        .map((url) => url.pathname),
   };
 }
 
 // The mockup prints what the viewer is showing, which here is the camera's JPEG: the RAW never
 // crosses, and this browser decodes the file itself.
-test('the viewer prints the camera JPEG it shows, and comes back to the photograph unedited', async ({ page }) => {
+test('the viewer prints the camera JPEG it shows, and comes back to the photograph unedited', async ({
+  page,
+}) => {
   const photoId = await gotoPhoto(page, PRINT_PHOTOS_DIR);
   const photoPath = new URL(page.url()).pathname;
   const revision = await savedRev(page, photoId);
@@ -73,7 +86,10 @@ test('the viewer prints the camera JPEG it shows, and comes back to the photogra
 test('the viewer prints the max rendition it shows', async ({ page }) => {
   await setViewerRendition(page.request, 'max');
   const shown = page.waitForResponse(
-    (response) => response.request().method() === 'GET' && response.ok() && new URL(response.url()).pathname.endsWith('/max'),
+    (response) =>
+      response.request().method() === 'GET' &&
+      response.ok() &&
+      new URL(response.url()).pathname.endsWith('/max'),
     DRAWN,
   );
   const photoId = await gotoPhoto(page, PRINT_PHOTOS_DIR);
@@ -88,7 +104,9 @@ test('the viewer prints the max rendition it shows', async ({ page }) => {
   expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);
 });
 
-test('the flat print and the sheet are one open, and the flat one has no light to set', async ({ page }) => {
+test('the flat print and the sheet are one open, and the flat one has no light to set', async ({
+  page,
+}) => {
   await gotoPhoto(page, PRINT_PHOTOS_DIR);
 
   await softProof(page, 'Printed media');
@@ -104,7 +122,10 @@ test('the flat print and the sheet are one open, and the flat one has no light t
 
 test('the mockup opens on its own address, and escape leaves it', async ({ page }) => {
   await gotoPhoto(page, PRINT_PHOTOS_DIR, route(PathSegment.mockup()));
-  const photoPath = new URL(page.url()).pathname.replace(new RegExp(`${route(PathSegment.mockup())}$`), '');
+  const photoPath = new URL(page.url()).pathname.replace(
+    new RegExp(`${route(PathSegment.mockup())}$`),
+    '',
+  );
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
   await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
 
@@ -124,7 +145,9 @@ test('a rendition of either range is opened in the browser', async ({ page }) =>
     const opened: Record<string, unknown> = {};
     await renditionsApi.build(photoId, 'max');
     for (const rendition of ['max', 'grid'] as const) {
-      const file = new Uint8Array(await (await fetch(renditionsApi.url(photoId, rendition))).arrayBuffer());
+      const file = new Uint8Array(
+        await (await fetch(renditionsApi.url(photoId, rendition))).arrayBuffer(),
+      );
       const decoder = new LocalDecoder();
       try {
         const header = await decoder.holdRendition(file, {

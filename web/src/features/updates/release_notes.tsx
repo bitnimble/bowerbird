@@ -111,7 +111,12 @@ function inline(text: string): ReactNode[] {
   for (const match of text.matchAll(INLINE)) {
     const [whole, label, href, code, bold, bare] = match;
     if (match.index > at) parts.push(<Fragment key={at}>{text.slice(at, match.index)}</Fragment>);
-    if (code != null) parts.push(<code key={match.index} {...stylex.props(styles.code)}>{code}</code>);
+    if (code != null)
+      parts.push(
+        <code key={match.index} {...stylex.props(styles.code)}>
+          {code}
+        </code>,
+      );
     else if (bold != null) parts.push(<strong key={match.index}>{bold}</strong>);
     else parts.push(<Link key={match.index} href={(href ?? bare)!} label={label ?? bare ?? ''} />);
     at = match.index + whole.length;
@@ -124,7 +129,12 @@ function Link({ href, label }: { href: string; label: string }): JSX.Element {
   // http and https only: a `javascript:` href is script running inside the app.
   if (!/^https?:\/\//i.test(href)) return <>{label}</>;
   return (
-    <a {...stylex.props(styles.link, focusRing.ring)} href={href} target="_blank" rel="noreferrer noopener">
+    <a
+      {...stylex.props(styles.link, focusRing.ring)}
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+    >
       {label}
     </a>
   );

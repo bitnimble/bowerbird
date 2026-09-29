@@ -44,7 +44,10 @@ export function spaceNeededFor(mainBytes: number, walBytes: number): number {
 
 async function requireSpaceFor(job: BackupJob): Promise<void> {
   const main = await stat(job.dbPath);
-  const wal = await stat(`${job.dbPath}-wal`).then((s) => s.size, () => 0);
+  const wal = await stat(`${job.dbPath}-wal`).then(
+    (s) => s.size,
+    () => 0,
+  );
   const needed = spaceNeededFor(main.size, wal);
   const { bavail, bsize } = await statfs(path.dirname(job.outPath));
   const free = bavail * bsize;
@@ -62,10 +65,13 @@ async function requireSpaceFor(job: BackupJob): Promise<void> {
 function verify(outPath: string, expectedVersion: number): void {
   const copy = new Database(outPath, { readonly: true });
   try {
-    const { quick_check: result } = copy.query('PRAGMA quick_check').get() as { quick_check: string };
+    const { quick_check: result } = copy.query('PRAGMA quick_check').get() as {
+      quick_check: string;
+    };
     if (result !== 'ok') throw new Error(`quick_check says ${result}`);
     const version = userVersion(copy);
-    if (version !== expectedVersion) throw new Error(`user_version is ${version}, expected ${expectedVersion}`);
+    if (version !== expectedVersion)
+      throw new Error(`user_version is ${version}, expected ${expectedVersion}`);
   } finally {
     copy.close();
   }

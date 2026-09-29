@@ -82,7 +82,9 @@ describe('deleteGeneratedFile', () => {
       writeFileSync(raw, 'raw');
       await expect(deleteGeneratedFile(root, raw)).rejects.toThrow(/not a generated file/);
       // The Bin sits at the library root, but even a data-directory one is refused.
-      await expect(deleteGeneratedFile(root, path.join(root, 'bin', 'a.arw'))).rejects.toThrow(/not a generated file/);
+      await expect(deleteGeneratedFile(root, path.join(root, 'bin', 'a.arw'))).rejects.toThrow(
+        /not a generated file/,
+      );
       expect(existsSync(raw)).toBe(true);
     }),
   );
@@ -161,7 +163,11 @@ describe('deleteDataDirectory', () => {
 describe('deleteBackedUpOriginal', () => {
   // Every arm of this one: it is the only place an original a reader still has is removed on
   // purpose, and each check exists because the copy it trusts can be wrong in a different way.
-  async function shaped(root: string, local: string, onBackup: string): Promise<{ raw: string; copy: string }> {
+  async function shaped(
+    root: string,
+    local: string,
+    onBackup: string,
+  ): Promise<{ raw: string; copy: string }> {
     const raw = path.join(root, 'library', 'a.arw');
     const copy = path.join(root, 'backup', 'a.arw');
     mkdirSync(path.dirname(raw), { recursive: true });
@@ -190,7 +196,9 @@ describe('deleteBackedUpOriginal', () => {
       const hash = await contentHash(copy);
       rmSync(copy);
 
-      await expect(deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash)).rejects.toMatchObject({ issueCode: 'backup_missing' });
+      await expect(
+        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash),
+      ).rejects.toMatchObject({ issueCode: 'backup_missing' });
       expect(existsSync(raw)).toBe(true);
     }),
   );
@@ -202,7 +210,9 @@ describe('deleteBackedUpOriginal', () => {
       const hash = await contentHash(copy);
       writeFileSync(copy, 'half a RAW');
 
-      await expect(deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash)).rejects.toMatchObject({ issueCode: 'backup_changed' });
+      await expect(
+        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash),
+      ).rejects.toMatchObject({ issueCode: 'backup_changed' });
       expect(existsSync(raw)).toBe(true);
     }),
   );
@@ -241,40 +251,50 @@ describe('unlinkMovedFile', () => {
     withTmp(async (root) => {
       const from = path.join(root, 'a.arw');
       writeFileSync(from, 'raw');
-      await expect(unlinkMovedFile(from, path.join(root, 'Bin', 'a.arw'))).rejects.toThrow(/does not exist/);
+      await expect(unlinkMovedFile(from, path.join(root, 'Bin', 'a.arw'))).rejects.toThrow(
+        /does not exist/,
+      );
       expect(existsSync(from)).toBe(true);
     }),
   );
 });
 
 describe('deleteEmptyStagingDirectory', () => {
-  it('removes only an empty staging directory, preserving partials and originals', withTmp(async (root) => {
-    const dir = path.join(root, '.bowerbird-staging');
-    const partial = path.join(dir, 'p1.partial');
-    mkdirSync(dir);
-    writeFileSync(partial, 'unfinished');
-    await deleteEmptyStagingDirectory(dir);
-    expect(readFileSync(partial, 'utf8')).toBe('unfinished');
+  it(
+    'removes only an empty staging directory, preserving partials and originals',
+    withTmp(async (root) => {
+      const dir = path.join(root, '.bowerbird-staging');
+      const partial = path.join(dir, 'p1.partial');
+      mkdirSync(dir);
+      writeFileSync(partial, 'unfinished');
+      await deleteEmptyStagingDirectory(dir);
+      expect(readFileSync(partial, 'utf8')).toBe('unfinished');
 
-    writeFileSync(path.join(dir, 'keep.arw'), 'users own');
-    await deleteStagedBlob(dir, partial);
-    expect(existsSync(partial)).toBe(false);
-    expect(readFileSync(path.join(dir, 'keep.arw'), 'utf8')).toBe('users own');
+      writeFileSync(path.join(dir, 'keep.arw'), 'users own');
+      await deleteStagedBlob(dir, partial);
+      expect(existsSync(partial)).toBe(false);
+      expect(readFileSync(path.join(dir, 'keep.arw'), 'utf8')).toBe('users own');
 
-    rmSync(path.join(dir, 'keep.arw'));
-    await deleteEmptyStagingDirectory(dir);
-    await deleteEmptyStagingDirectory(dir);
-    expect(existsSync(dir)).toBe(false);
-    expect(existsSync(root)).toBe(true);
-  }));
+      rmSync(path.join(dir, 'keep.arw'));
+      await deleteEmptyStagingDirectory(dir);
+      await deleteEmptyStagingDirectory(dir);
+      expect(existsSync(dir)).toBe(false);
+      expect(existsSync(root)).toBe(true);
+    }),
+  );
 
-  it('refuses other directories and leaves a file occupying the staging path', withTmp(async (root) => {
-    const dir = path.join(root, '.bowerbird-staging');
-    await expect(deleteEmptyStagingDirectory(root)).rejects.toThrow('not a blob staging directory');
-    expect(existsSync(root)).toBe(true);
+  it(
+    'refuses other directories and leaves a file occupying the staging path',
+    withTmp(async (root) => {
+      const dir = path.join(root, '.bowerbird-staging');
+      await expect(deleteEmptyStagingDirectory(root)).rejects.toThrow(
+        'not a blob staging directory',
+      );
+      expect(existsSync(root)).toBe(true);
 
-    writeFileSync(dir, 'users own');
-    await deleteEmptyStagingDirectory(dir);
-    expect(readFileSync(dir, 'utf8')).toBe('users own');
-  }));
+      writeFileSync(dir, 'users own');
+      await deleteEmptyStagingDirectory(dir);
+      expect(readFileSync(dir, 'utf8')).toBe('users own');
+    }),
+  );
 });

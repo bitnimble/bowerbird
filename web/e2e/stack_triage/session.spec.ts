@@ -40,7 +40,11 @@ async function countOf(page: Page, stackId: string, triage: string): Promise<num
 
 // The session's own stack, taken from the route it is running on.
 function stackIdOf(page: Page): string {
-  return new RegExp(`${route(PathSegment.stacks())}/([^/]+)${route(PathSegment.triage())}`).exec(page.url())?.[1] ?? '';
+  return (
+    new RegExp(`${route(PathSegment.stacks())}/([^/]+)${route(PathSegment.triage())}`).exec(
+      page.url(),
+    )?.[1] ?? ''
+  );
 }
 
 // Puts every member back to untriaged.
@@ -61,7 +65,9 @@ async function clearVerdicts(page: Page): Promise<void> {
   const { photos } = (await rows.json()) as { photos: { id: string; stack_id: string | null }[] };
   const stackId = photos.find((photo) => photo.stack_id != null)?.stack_id;
   if (stackId == null) return;
-  const members = (await (await page.request.get(stackPhotosUrl(stackId))).json()) as { id: string }[];
+  const members = (await (await page.request.get(stackPhotosUrl(stackId))).json()) as {
+    id: string;
+  }[];
   for (const member of members) {
     await page.request.patch(`${route(PathSegment.api(), PathSegment.photos(), member.id)}`, {
       data: { triage: 'untriaged' },
@@ -101,10 +107,15 @@ async function enterTriage(page: Page): Promise<void> {
 test('a stack of identical frames is set up to be triaged', async ({ page }) => {
   await addLibrary(page, TRIAGE_DIR, { autoStack: true, photos: TRIAGE_PHOTO_NAMES.length });
   await gotoLibrary(page, TRIAGE_DIR);
-  await expect(stackFrames(page)).toHaveAccessibleName(new RegExp(`stack of ${TRIAGE_PHOTO_NAMES.length}, `), { timeout: 45_000 });
+  await expect(stackFrames(page)).toHaveAccessibleName(
+    new RegExp(`stack of ${TRIAGE_PHOTO_NAMES.length}, `),
+    { timeout: 45_000 },
+  );
 });
 
-test('the viewer offers the way in for any member of a stack, not just its representative', async ({ page }) => {
+test('the viewer offers the way in for any member of a stack, not just its representative', async ({
+  page,
+}) => {
   // Every member, including the ones a collapsed listing gives no row of their
   // own: `stack_size` is 1 on all of them, so gating the button on it would hide
   // it everywhere it is actually reachable from.
@@ -152,7 +163,9 @@ test('either arrow of either axis casts, and Pick both is Space alone', async ({
   await expect.poll(() => countOf(page, stackIdOf(page), 'rejected'), { timeout: 20_000 }).toBe(1);
 });
 
-test('a decisive verdict holds the winner over, and re-judging it from the queue discards what came after', async ({ page }) => {
+test('a decisive verdict holds the winner over, and re-judging it from the queue discards what came after', async ({
+  page,
+}) => {
   await enterTriage(page);
 
   const pool = TRIAGE_PHOTO_NAMES.length;
@@ -185,7 +198,9 @@ test('a decisive verdict holds the winner over, and re-judging it from the queue
 
 // Flipped in three kinds of round: the first; one whose *both* frames are new to the
 // stage; and one holding a winner carried over from the round before.
-test('flip shows one frame at a time and keeps both reachable, round after round, and split draws both', async ({ page }) => {
+test('flip shows one frame at a time and keeps both reachable, round after round, and split draws both', async ({
+  page,
+}) => {
   await enterTriage(page);
 
   // Both frames of the round are mounted under one photoKey: that is what makes
@@ -247,7 +262,9 @@ test('flip shows one frame at a time and keeps both reachable, round after round
   // The fixture is one RAW copied under three names, so both frames share an
   // aspect and equal area means equal boxes.
   expect(boxes).toHaveLength(2);
-  expect(Math.abs(boxes[0]!.width * boxes[0]!.height - boxes[1]!.width * boxes[1]!.height)).toBeLessThan(4);
+  expect(
+    Math.abs(boxes[0]!.width * boxes[0]!.height - boxes[1]!.width * boxes[1]!.height),
+  ).toBeLessThan(4);
 
   await page.getByRole('button', { name: 'Flip' }).click();
   await expect(page.getByRole('group', { name: 'Which photo to show' })).toBeVisible();
@@ -258,7 +275,9 @@ test('flip shows one frame at a time and keeps both reachable, round after round
 // from: a decisive session usually rejects it, and a rejected photo has left the
 // gallery's filter, so the viewer could say nothing about what came before or
 // after it and both arrows were dead.
-test('a session runs to its end, writes its verdicts, and ends on a live photo in the collection it was entered from', async ({ page }) => {
+test('a session runs to its end, writes its verdicts, and ends on a live photo in the collection it was entered from', async ({
+  page,
+}) => {
   await enterTriage(page);
   const entry = page.url();
   // Off the route while the session is still on it: the screen leaves for the
@@ -308,7 +327,9 @@ test('a session runs to its end, writes its verdicts, and ends on a live photo i
   expect(listing.photos.map((photo) => photo.id)).toContain(landed);
 });
 
-test('Pick remaining photos ends the session with everything still in the pool', async ({ page }) => {
+test('Pick remaining photos ends the session with everything still in the pool', async ({
+  page,
+}) => {
   await enterTriage(page);
   const stackId = stackIdOf(page);
 

@@ -54,9 +54,11 @@ export const BulkBarStrings = {
   removeLocalCopyKeptOn: (peerName: string) => `Remove local copy (kept on ${peerName})`,
   removeLocalCopyQuestion: (count: number, allSelected: boolean) =>
     `Remove ${
-      count < 2 ? 'this local copy'
-      : allSelected ? 'every selected local copy'
-      : `${count} local copies`
+      count < 2
+        ? 'this local copy'
+        : allSelected
+          ? 'every selected local copy'
+          : `${count} local copies`
     } from this device?`,
   removeLocalCopyWarning: (peerName: string) =>
     `${peerName} must confirm each original. Unconfirmed files stay here. Your catalogue and edits stay, and you can fetch the originals again.`,

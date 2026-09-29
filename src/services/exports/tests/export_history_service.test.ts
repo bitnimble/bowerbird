@@ -22,7 +22,12 @@ let tile: (photoId: string) => Uint8Array | null;
 // lives is read back out of the catalogue by the listing itself.
 const photos = {
   locate: (photoId: string) => ({
-    photo: { id: photoId, library_id: 'lib', recipe: fileRecipe(`raw/${photoId}.arw`), shoot_id: null },
+    photo: {
+      id: photoId,
+      library_id: 'lib',
+      recipe: fileRecipe(`raw/${photoId}.arw`),
+      shoot_id: null,
+    },
     library: { id: 'lib', name: 'Trips' },
   }),
 } as unknown as PhotoRenditionService;
@@ -131,7 +136,9 @@ test('a photograph leaving the catalogue leaves its exports behind', async () =>
 // matched them in.
 test('a queued run reads as the rows it is about to become', async () => {
   addPhoto('p2');
-  db.query(`INSERT INTO shoots (id, library_id, name, folder_path) VALUES ('sh', 'lib', 'Day 2', 'Trip/Day 2')`).run();
+  db.query(
+    `INSERT INTO shoots (id, library_id, name, folder_path) VALUES ('sh', 'lib', 'Day 2', 'Trip/Day 2')`,
+  ).run();
   db.query(`UPDATE photos SET shoot_id = 'sh' WHERE id = 'p2'`).run();
   // When a copy was written is the `renditions` table's, keyed by the variant it is of.
   db.query(
@@ -229,8 +236,12 @@ test('a stored document that will not parse reads as no edits rather than throwi
 test('a run is stamped by the newest file in it', async () => {
   record('p1', 'run1');
   record('p2', 'run1');
-  db.query(`UPDATE exports SET exported_at = '2026-01-01T00:00:00.000Z' WHERE photo_id = 'p1'`).run();
-  db.query(`UPDATE exports SET exported_at = '2026-02-01T00:00:00.000Z' WHERE photo_id = 'p2'`).run();
+  db.query(
+    `UPDATE exports SET exported_at = '2026-01-01T00:00:00.000Z' WHERE photo_id = 'p1'`,
+  ).run();
+  db.query(
+    `UPDATE exports SET exported_at = '2026-02-01T00:00:00.000Z' WHERE photo_id = 'p2'`,
+  ).run();
 
   expect(history.list()[0]?.exported_at).toBe('2026-02-01T00:00:00.000Z');
 });
@@ -313,7 +324,12 @@ test('a row says which library and shoot hold the photograph', async () => {
   record('p2', 'run1');
 
   const [inside, outside] = history.list()[0]!.photos;
-  expect(inside).toMatchObject({ library_id: 'lib', library_name: 'Trips', shoot_id: 's1', shoot_name: 'Japan/Day 2' });
+  expect(inside).toMatchObject({
+    library_id: 'lib',
+    library_name: 'Trips',
+    shoot_id: 's1',
+    shoot_name: 'Japan/Day 2',
+  });
   expect(outside).toMatchObject({ library_name: 'Trips', shoot_id: null, shoot_name: null });
 });
 
@@ -371,7 +387,9 @@ test('a render nobody reported a destination for is not listed', async () => {
 test('a render that never landed is swept', async () => {
   addPhoto('p1');
   began('p1', 'run1');
-  db.query(`UPDATE exports SET exported_at = '2020-01-01T00:00:00.000Z' WHERE output_path IS NULL`).run();
+  db.query(
+    `UPDATE exports SET exported_at = '2020-01-01T00:00:00.000Z' WHERE output_path IS NULL`,
+  ).run();
 
   record('p2', 'run2');
 

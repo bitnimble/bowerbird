@@ -21,7 +21,10 @@ export class AlbumsStore extends CollectionListStore<AlbumRow> {
       key: album.id,
       album,
       name: album.name,
-      meta: CollectionListStrings.subtitle(GridControlsStrings.ordering(album.ordering), album.photo_count),
+      meta: CollectionListStrings.subtitle(
+        GridControlsStrings.ordering(album.ordering),
+        album.photo_count,
+      ),
       bannerPhotoId: album.banner_photo_id,
       href: collectionPath({ kind: 'album', albumId: album.id }),
       depth: 0,

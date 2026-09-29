@@ -8,7 +8,12 @@ import { ToastsStore } from '../../../toasts/toasts_store';
 import { MergePresenter } from '../merge_presenter';
 import { loadMergeSession, saveMergeSession } from '../merge_storage';
 import { MergeStore } from '../merge_store';
-import { assemblyRecipeFixture, FIXTURE_SEEDS, NO_COMPOSITOR, triangleSeams } from './fixtures/assembly_recipe';
+import {
+  assemblyRecipeFixture,
+  FIXTURE_SEEDS,
+  NO_COMPOSITOR,
+  triangleSeams,
+} from './fixtures/assembly_recipe';
 
 const solving = compositesApi.solveSeams;
 const live: MergePresenter[] = [];
@@ -37,7 +42,11 @@ function build(): { store: MergeStore; presenter: MergePresenter; asked: Assembl
     asked.push(recipe);
     return Promise.resolve({ seams: picks.map((pick) => triangleSeams(pick, pick.length - 1, 4)) });
   };
-  const presenter = new MergePresenter(store, new ToastsPresenter(new ToastsStore()), NO_COMPOSITOR);
+  const presenter = new MergePresenter(
+    store,
+    new ToastsPresenter(new ToastsStore()),
+    NO_COMPOSITOR,
+  );
   live.push(presenter);
   return { store, presenter, asked };
 }

@@ -11,20 +11,37 @@ import { StacksService } from '../stacks_service';
 
 const LIBRARY = 'lib00001';
 
-function context(): { db: Database; activity: LibraryActivity; stacks: StacksService; repository: StacksRepository } {
+function context(): {
+  db: Database;
+  activity: LibraryActivity;
+  stacks: StacksService;
+  repository: StacksRepository;
+} {
   const db = new Database(':memory:');
   runMigrations(db);
-  db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(LIBRARY, '/tmp/grouping', 'Grouping');
+  db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(
+    LIBRARY,
+    '/tmp/grouping',
+    'Grouping',
+  );
   const descriptor = Buffer.alloc(descriptorSize());
   descriptor[0] = descriptorFormat();
   for (const [index, seconds] of [0, 1, 120, 121].entries()) {
     const taken = new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
-    db.query(`INSERT INTO photos (id, library_id, recipe, width, height, date_taken, date_added, descriptor)
-      VALUES (?, ?, json_object('kind', 'file', 'path', ?), 3000, 2000, ?, ?, ?)`).run(`photo00${index}`, LIBRARY, `${index}.ARW`, taken, taken, descriptor);
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_taken, date_added, descriptor)
+      VALUES (?, ?, json_object('kind', 'file', 'path', ?), 3000, 2000, ?, ?, ?)`,
+    ).run(`photo00${index}`, LIBRARY, `${index}.ARW`, taken, taken, descriptor);
   }
   const activity = new LibraryActivity();
   const repository = new StacksRepository(db);
-  const stacks = new StacksService(repository, new PhotoListingRepository(db), new LibrariesRepository(db), new SettingsRepository(db), activity);
+  const stacks = new StacksService(
+    repository,
+    new PhotoListingRepository(db),
+    new LibrariesRepository(db),
+    new SettingsRepository(db),
+    activity,
+  );
   return { db, activity, stacks, repository };
 }
 
@@ -64,12 +81,16 @@ test('photos arriving during detection are included before automatic stacks are 
   const { db, stacks, repository } = context();
   try {
     const detection = stacks.detectAsync(LIBRARY);
-    db.query(`INSERT INTO photos (id, library_id, recipe, width, height, date_taken, date_added, descriptor)
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_taken, date_added, descriptor)
       SELECT 'photo004', library_id, json_object('kind', 'file', 'path', '4.ARW'), width, height, date_taken, date_added, descriptor
-      FROM photos WHERE id = 'photo003'`).run();
+      FROM photos WHERE id = 'photo003'`,
+    ).run();
     expect(await detection).toBe(2);
     const groups = repository.autoStackIds(LIBRARY);
-    expect(groups.map((id) => repository.memberIds(id, 'taken_desc').length).sort()).toEqual([2, 3]);
+    expect(groups.map((id) => repository.memberIds(id, 'taken_desc').length).sort()).toEqual([
+      2, 3,
+    ]);
   } finally {
     db.close();
   }
@@ -101,7 +122,12 @@ for (const change of [
       const second = stacks.detectAsync(LIBRARY);
       expect(await first).toBe(change.stackCount);
       expect(await second).toBe(change.stackCount);
-      expect(repository.autoStackIds(LIBRARY).map((id) => repository.memberIds(id, 'taken_desc').length).sort()).toEqual(change.members);
+      expect(
+        repository
+          .autoStackIds(LIBRARY)
+          .map((id) => repository.memberIds(id, 'taken_desc').length)
+          .sort(),
+      ).toEqual(change.members);
       expect(activity.current(LIBRARY)).toEqual([]);
     } finally {
       db.close();

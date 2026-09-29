@@ -34,7 +34,10 @@ export function makePeer(name: string): Peer {
   // the peers here would agree about a deletion the running app does not.
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
-  db.query("INSERT INTO libraries (id, root_path, name) VALUES (?, ?, 'Trip')").run(LIB, `/photos/${name}`);
+  db.query("INSERT INTO libraries (id, root_path, name) VALUES (?, ?, 'Trip')").run(
+    LIB,
+    `/photos/${name}`,
+  );
   db.query('INSERT INTO replication_libraries (library_id) VALUES (?)').run(LIB);
 
   // A clock the test drives rather than the system's. Every stamp in a run is
@@ -83,8 +86,10 @@ export class Rng {
   }
 }
 
-const LABELS = 'SELECT id, library_id, name, colour, position, stamp, stamp_position FROM labels ORDER BY id';
-const PHOTO_LABELS = 'SELECT label_id, photo_id, stamp FROM photo_labels ORDER BY label_id, photo_id';
+const LABELS =
+  'SELECT id, library_id, name, colour, position, stamp, stamp_position FROM labels ORDER BY id';
+const PHOTO_LABELS =
+  'SELECT label_id, photo_id, stamp FROM photo_labels ORDER BY label_id, photo_id';
 
 /**
  * Everything about a library that is supposed to be the same on every peer, keyed
@@ -96,7 +101,11 @@ const PHOTO_LABELS = 'SELECT label_id, photo_id, stamp FROM photo_labels ORDER B
  */
 export function replicatedRows(db: Database): Map<string, string> {
   const rows = new Map<string, string>();
-  const dump = (label: string, sql: string, key: (row: Record<string, unknown>) => string): void => {
+  const dump = (
+    label: string,
+    sql: string,
+    key: (row: Record<string, unknown>) => string,
+  ): void => {
     for (const row of db.query(sql).all() as Record<string, unknown>[]) {
       rows.set(`${label} ${key(row)}`, JSON.stringify(row));
     }
@@ -130,8 +139,10 @@ export function replicatedRows(db: Database): Map<string, string> {
     'SELECT library_id, folder_path, rule, stamp FROM folder_rules ORDER BY folder_path',
     (row) => String(row.folder_path),
   );
-  dump('shoot_banner', 'SELECT shoot_id, photo_id, stamp FROM shoot_banners ORDER BY shoot_id', (row) =>
-    String(row.shoot_id),
+  dump(
+    'shoot_banner',
+    'SELECT shoot_id, photo_id, stamp FROM shoot_banners ORDER BY shoot_id',
+    (row) => String(row.shoot_id),
   );
   // Every replicated column, not a readable subset: a column left out of this is
   // one no seed can ever disagree about, and `updated_at` hid a peer that stopped
@@ -141,8 +152,10 @@ export function replicatedRows(db: Database): Map<string, string> {
     'SELECT photo_id, doc, cursor, session_id, chain, updated_at, stamp FROM photo_edits ORDER BY photo_id',
     (row) => String(row.photo_id),
   );
-  dump('photo_edit_history', 'SELECT photo_id, deltas FROM photo_edit_history ORDER BY photo_id', (row) =>
-    String(row.photo_id),
+  dump(
+    'photo_edit_history',
+    'SELECT photo_id, deltas FROM photo_edit_history ORDER BY photo_id',
+    (row) => String(row.photo_id),
   );
   // The library's own settings replicate too, and the walk renames it. Without
   // this the rename ran on every seed and nothing ever looked at the result.
@@ -231,14 +244,23 @@ export function replicatedState(db: Database): string {
             stamp_imported, stamp_triage, stamp_placement, stamp_bin, stamp_stack, stamp_hidden
        FROM photos ORDER BY id`,
   );
-  dump('shoots', 'SELECT id, library_id, parent_id, folder_path, name, description, ordering, is_hidden, stamp, stamp_hidden, stamp_folder FROM shoots ORDER BY id');
+  dump(
+    'shoots',
+    'SELECT id, library_id, parent_id, folder_path, name, description, ordering, is_hidden, stamp, stamp_hidden, stamp_folder FROM shoots ORDER BY id',
+  );
   dump(
     'stacks',
     `SELECT id, library_id, origin, date_created, created_stamp, stamp
        FROM stacks ORDER BY id`,
   );
-  dump('stack_members', 'SELECT stack_id, photo_id, stamp FROM stack_members ORDER BY stack_id, photo_id');
-  dump('folder_rules', 'SELECT library_id, folder_path, rule, stamp FROM folder_rules ORDER BY folder_path');
+  dump(
+    'stack_members',
+    'SELECT stack_id, photo_id, stamp FROM stack_members ORDER BY stack_id, photo_id',
+  );
+  dump(
+    'folder_rules',
+    'SELECT library_id, folder_path, rule, stamp FROM folder_rules ORDER BY folder_path',
+  );
   dump('shoot_banners', 'SELECT shoot_id, photo_id, stamp FROM shoot_banners ORDER BY shoot_id');
   dump(
     'photo_edits',
@@ -251,7 +273,10 @@ export function replicatedState(db: Database): string {
             auto_stack_similarity, auto_stack_window_seconds, rendition_source, rendition_hdr, stamp
        FROM libraries ORDER BY id`,
   );
-  dump('blob_locations', 'SELECT library_id, photo_id, peer_id, stamp FROM blob_locations ORDER BY photo_id, peer_id');
+  dump(
+    'blob_locations',
+    'SELECT library_id, photo_id, peer_id, stamp FROM blob_locations ORDER BY photo_id, peer_id',
+  );
   dump('labels', LABELS);
   dump('photo_labels', PHOTO_LABELS);
   // The log is deliberately not compared. It is an index over what this replica
@@ -279,7 +304,8 @@ export function invariants(db: Database): string[] {
         GROUP BY stack_id HAVING flagged <> 1`,
     )
     .all() as { stack_id: string; flagged: number }[];
-  for (const row of unrepresented) complaints.push(`${row.stack_id}: ${row.flagged} members stand for it`);
+  for (const row of unrepresented)
+    complaints.push(`${row.stack_id}: ${row.flagged} members stand for it`);
 
   // A binned photograph with nowhere to go back to. Both peers agreeing on it is
   // not enough - they can converge on the same wrong value, which is exactly what
@@ -292,7 +318,9 @@ export function invariants(db: Database): string[] {
   for (const row of rootless) complaints.push(`${row.id}: binned with no path to go back to`);
 
   const orphans = db
-    .query('SELECT id FROM photos WHERE shoot_id IS NOT NULL AND shoot_id NOT IN (SELECT id FROM shoots)')
+    .query(
+      'SELECT id FROM photos WHERE shoot_id IS NOT NULL AND shoot_id NOT IN (SELECT id FROM shoots)',
+    )
     .all() as { id: string }[];
   for (const row of orphans) complaints.push(`${row.id}: points at a shoot that is gone`);
 
@@ -319,7 +347,8 @@ export function invariants(db: Database): string[] {
            WHERE entity = ? AND deleted = 0 AND row_id NOT IN (SELECT ${key} FROM ${table})`,
       )
       .all(entity) as { row_id: string }[];
-    for (const row of stale) complaints.push(`${entity} ${row.row_id}: logged as live, but the row has gone`);
+    for (const row of stale)
+      complaints.push(`${entity} ${row.row_id}: logged as live, but the row has gone`);
   }
   for (const [entity, joined] of [
     ['stack_member', "SELECT stack_id || '/' || photo_id FROM stack_members"],
@@ -327,9 +356,12 @@ export function invariants(db: Database): string[] {
     ['photo_label', "SELECT label_id || '/' || photo_id FROM photo_labels"],
   ] as const) {
     const stale = db
-      .query(`SELECT row_id FROM replication_log WHERE entity = ? AND deleted = 0 AND row_id NOT IN (${joined})`)
+      .query(
+        `SELECT row_id FROM replication_log WHERE entity = ? AND deleted = 0 AND row_id NOT IN (${joined})`,
+      )
       .all(entity) as { row_id: string }[];
-    for (const row of stale) complaints.push(`${entity} ${row.row_id}: logged as live, but the row has gone`);
+    for (const row of stale)
+      complaints.push(`${entity} ${row.row_id}: logged as live, but the row has gone`);
   }
 
   // And the other direction: a row nothing in the log names is a row no peer will

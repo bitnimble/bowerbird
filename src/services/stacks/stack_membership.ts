@@ -73,7 +73,9 @@ export class StackMembership {
 
   /** Empties a stack, for a caller that is about to delete it. */
   clear(stackId: string, released: boolean, at: string): void {
-    const members = this.db.query('SELECT photo_id FROM stack_members WHERE stack_id = ?').all(stackId) as {
+    const members = this.db
+      .query('SELECT photo_id FROM stack_members WHERE stack_id = ?')
+      .all(stackId) as {
       photo_id: string;
     }[];
     for (const member of members) this.release(member.photo_id, stackId, released, at);
@@ -134,7 +136,9 @@ export class StackMembership {
       .query('SELECT library_id, stack_id FROM stack_members WHERE photo_id = ? AND stack_id <> ?')
       .all(photoId, joining) as { library_id: string; stack_id: string }[];
     if (left.length === 0) return [];
-    this.db.query('DELETE FROM stack_members WHERE photo_id = ? AND stack_id <> ?').run(photoId, joining);
+    this.db
+      .query('DELETE FROM stack_members WHERE photo_id = ? AND stack_id <> ?')
+      .run(photoId, joining);
     for (const row of left) {
       tombstone(this.db, row.library_id, 'stack_member', `${row.stack_id}/${photoId}`, at);
     }
@@ -156,7 +160,8 @@ export class StackMembership {
       .query('DELETE FROM stack_members WHERE stack_id = ? AND photo_id = ?')
       .run(stackId, photoId).changes;
     if (gone === 0) return 0;
-    if (row != null) tombstone(this.db, row.library_id, 'stack_member', `${stackId}/${photoId}`, at);
+    if (row != null)
+      tombstone(this.db, row.library_id, 'stack_member', `${stackId}/${photoId}`, at);
     // `is_representative = 1`: out of a stack a photograph stands for itself, and
     // the listing shows a row with no stack on that flag alone. Left at 0 - which
     // is what every member but one carries - the photograph vanishes from every

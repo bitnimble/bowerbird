@@ -139,8 +139,14 @@ describe('stagePointOf', () => {
   });
 
   test('is the origin before the stage is measured or the frame known', () => {
-    expect(stagePointOf({ x: 10, y: 10 }, FITTED_VIEW, { width: 0, height: 0 }, NATURAL)).toEqual({ x: 0, y: 0 });
-    expect(stagePointOf({ x: 10, y: 10 }, FITTED_VIEW, BOX, { width: 0, height: 0 })).toEqual({ x: 0, y: 0 });
+    expect(stagePointOf({ x: 10, y: 10 }, FITTED_VIEW, { width: 0, height: 0 }, NATURAL)).toEqual({
+      x: 0,
+      y: 0,
+    });
+    expect(stagePointOf({ x: 10, y: 10 }, FITTED_VIEW, BOX, { width: 0, height: 0 })).toEqual({
+      x: 0,
+      y: 0,
+    });
   });
 });
 
@@ -151,7 +157,11 @@ describe('zooming about the point the reader asked for', () => {
 
   test('leaves the region around that point rather than the middle', () => {
     // A quarter in from the top left, which is where the click landed.
-    const view = clampPan(zoomAbout(FITTED_VIEW, 2, maxScaleFor(1 / fitScale(BOX, NATURAL)), box, { x: 250, y: 200 }), BOX, NATURAL);
+    const view = clampPan(
+      zoomAbout(FITTED_VIEW, 2, maxScaleFor(1 / fitScale(BOX, NATURAL)), box, { x: 250, y: 200 }),
+      BOX,
+      NATURAL,
+    );
     const region = regionOf(view, BOX, NATURAL);
 
     expect(region.width).toBeLessThan(NATURAL.width);
@@ -164,7 +174,11 @@ describe('zooming about the point the reader asked for', () => {
   });
 
   test('a pan moves the window without resizing it', () => {
-    const zoomed = clampPan(zoomAbout(FITTED_VIEW, 2, maxScaleFor(1 / fitScale(BOX, NATURAL)), box, { x: 250, y: 200 }), BOX, NATURAL);
+    const zoomed = clampPan(
+      zoomAbout(FITTED_VIEW, 2, maxScaleFor(1 / fitScale(BOX, NATURAL)), box, { x: 250, y: 200 }),
+      BOX,
+      NATURAL,
+    );
     // The picture goes the other way to the pointer, so dragging left moves the window right.
     const panned = clampPan({ ...zoomed, x: zoomed.x - 120 }, BOX, NATURAL);
 
@@ -209,7 +223,7 @@ describe('zooming about the point the reader asked for', () => {
 });
 
 describe('how far in a zoom may go', () => {
-  test('is twice the frame\'s own pixels', () => {
+  test("is twice the frame's own pixels", () => {
     const native = 1 / fitScale(BOX, NATURAL);
     // Which the readout calls 200%, whatever the stage is.
     expect(percentOf(maxScaleFor(native), 1 / native)).toBe(200);
@@ -226,7 +240,7 @@ describe('how far in a zoom may go', () => {
 // that survives the trip through it is the whole of the slider being wired the right way
 // round. Transposed, every drag would land somewhere else entirely.
 describe('the scale as a percentage, and back', () => {
-  test('is 100% at the frame\'s own pixels', () => {
+  test("is 100% at the frame's own pixels", () => {
     const fit = fitScale(BOX, NATURAL);
     expect(percentOf(1 / fit, fit)).toBe(100);
     expect(scaleOf(100, fit)).toBeCloseTo(1 / fit);

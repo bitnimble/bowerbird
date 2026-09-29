@@ -38,25 +38,28 @@ fn probe(path: &str) -> Result<(), String> {
     let sampled = resize(render.as_ref(), searched.width, searched.height);
 
     let header = rawshim::header::read_path(path);
-    let lens = header.as_ref().map_or(String::new(), |h| rawshim::header::name(&h.lens_model).to_string());
+    let lens = header.as_ref().map_or(String::new(), |h| {
+        rawshim::header::name(&h.lens_model).to_string()
+    });
     let focal = header.as_ref().map_or(0.0, |h| h.focal);
     println!("== {path}");
-    println!("   {lens} at {focal}mm, {}x{} plane", searched.width, searched.height);
+    println!(
+        "   {lens} at {focal}mm, {}x{} plane",
+        searched.width, searched.height
+    );
 
     // The lateral correction is per channel and this is luma, so the geometry is asked
     // about on its own.
-    let shipped = fit::Lens { tca: None, ..matched.lens };
+    let shipped = fit::Lens {
+        tca: None,
+        ..matched.lens
+    };
     report("uncorrected", &sampled, &searched, &fit::Lens::none());
     report("as shipped", &sampled, &searched, &shipped);
     Ok(())
 }
 
-fn report(
-    label: &str,
-    render: &rawshim::rgb::Rgb,
-    preview: &hdr_fit::Source,
-    lens: &fit::Lens,
-) {
+fn report(label: &str, render: &rawshim::rgb::Rgb, preview: &hdr_fit::Source, lens: &fit::Lens) {
     let stride = (((preview.width * preview.height) as f64 / POINTS as f64).sqrt() as usize).max(1);
     let gpu = rawshim::gpu::device().expect("an adapter");
     let ours = hdr_fit::Source {
@@ -65,17 +68,21 @@ fn report(
         height: render.height,
     };
     let settling = hdr_fit::Settling::new(gpu, &ours, preview, stride);
-    let Some(measured) =
-        pollster::block_on(hdr_fit::registration(gpu, &settling, lens, BINS))
+    let Some(measured) = pollster::block_on(hdr_fit::registration(gpu, &settling, lens, BINS))
     else {
         println!("   {label:<14} nothing registered");
         return;
     };
-    let half = ((preview.width as f64 / 2.0).powi(2) + (preview.height as f64 / 2.0).powi(2)).sqrt();
+    let half =
+        ((preview.width as f64 / 2.0).powi(2) + (preview.height as f64 / 2.0).powi(2)).sqrt();
     let row: Vec<String> = measured
         .radial
         .iter()
         .map(|v| v.map_or("  -  ".into(), |shift| format!("{:+.2}", shift * half)))
         .collect();
-    println!("   {label:<14} {}   ({} matched)", row.join(" "), measured.matched);
+    println!(
+        "   {label:<14} {}   ({} matched)",
+        row.join(" "),
+        measured.matched
+    );
 }

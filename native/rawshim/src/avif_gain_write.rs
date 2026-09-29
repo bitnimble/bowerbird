@@ -20,7 +20,8 @@ pub(crate) const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 const AVIF_TRANSFORM_IMIR: u32 = 1 << 3;
 const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = raw::avifRGBFormat::AVIF_RGB_FORMAT_RGB;
-const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat = raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420;
+const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat =
+    raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420;
 /// Rec.2020 primaries, PQ, Rec.2020 non-constant luminance: what every HDR still here is.
 pub(crate) const HDR_CICP: (u16, u16) = (9, 16);
 /// sRGB primaries and transfer, which is what the SDR arm is written as.
@@ -30,7 +31,12 @@ pub(crate) const UNSPECIFIED: u16 = 2;
 
 /// What libavif wrote into its diagnostics, which is where a refusal explains itself.
 pub(crate) fn said(diagnostics: &raw::avifDiagnostics) -> String {
-    let bytes = diagnostics.error.iter().take_while(|c| **c != 0).map(|c| *c as u8).collect::<Vec<_>>();
+    let bytes = diagnostics
+        .error
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect::<Vec<_>>();
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
@@ -86,7 +92,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     unsafe {
         let read = raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len());
         if read != AVIF_RESULT_OK {
-            return Err(format!("libavif could not decode: {}", crate::avif::message(read)));
+            return Err(format!(
+                "libavif could not decode: {}",
+                crate::avif::message(read)
+            ));
         }
 
         let mut rgb = std::mem::zeroed::<raw::avifRGBImage>();
@@ -117,7 +126,11 @@ pub(crate) fn orientation_tag(image: &crate::avif::Image) -> Result<u16, String>
         if image.transformFlags & AVIF_TRANSFORM_IMIR != 0 {
             return Err("a mirrored gain-map AVIF is not supported".into());
         }
-        let angle = if image.transformFlags & AVIF_TRANSFORM_IROT != 0 { image.irot.angle } else { 0 };
+        let angle = if image.transformFlags & AVIF_TRANSFORM_IROT != 0 {
+            image.irot.angle
+        } else {
+            0
+        };
         match angle {
             0 => Ok(1),
             1 => Ok(8),
@@ -236,7 +249,11 @@ mod tests {
             W,
             H,
             &crate::avif::StillOptions {
-                cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
+                cicp: crate::avif::Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
@@ -253,15 +270,22 @@ mod tests {
     fn a_written_gain_map_is_one_the_reader_finds() {
         let (base, alternate) = encoded();
         let combined = combine(&base, &alternate, 20, 10).expect("the combine");
-        assert!(combined.len() > base.len(), "a file with a map in it is larger than one without");
+        assert!(
+            combined.len() > base.len(),
+            "a file with a map in it is larger than one without"
+        );
 
-        let (map, width, height, _, _) = crate::avif::gain_map(&combined).expect("the reader finds a map");
+        let (map, width, height, _, _) =
+            crate::avif::gain_map(&combined).expect("the reader finds a map");
         assert_eq!((width, height), (W, H));
         // Not a constant: the ramp clips in one arm and not the other, so the gain has to vary
         // across it. A map of one value is what a broken computation produces.
         let low = map.iter().copied().min().expect("samples");
         let high = map.iter().copied().max().expect("samples");
-        assert!(high > low, "the map is flat at {low}, so nothing was measured between the arms");
+        assert!(
+            high > low,
+            "the map is flat at {low}, so nothing was measured between the arms"
+        );
     }
 
     /// The one quality there is reaches both images, which is what makes a second knob pointless
@@ -286,7 +310,11 @@ mod tests {
             W,
             H,
             &crate::avif::StillOptions {
-                cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
+                cicp: crate::avif::Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 10,
                 speed: 10,
@@ -299,13 +327,19 @@ mod tests {
         // map: a quality that stopped at the base would leave them the same size.
         let coarse = combine(&base, &alternate, 55, 10).expect("a coarse encode");
         let fine = combine(&base, &alternate, 5, 10).expect("a fine encode");
-        assert!(fine.len() > coarse.len(), "{} against {}", fine.len(), coarse.len());
+        assert!(
+            fine.len() > coarse.len(),
+            "{} against {}",
+            fine.len(),
+            coarse.len()
+        );
     }
 
     #[test]
     fn two_sizes_are_refused_rather_than_resampled() {
         let (base, _) = encoded();
-        let small = crate::avif::encode_rgb8(vec![0u8; 8 * 8 * 3].into(), 8, 8, 20, 10, true).expect("a small arm");
+        let small = crate::avif::encode_rgb8(vec![0u8; 8 * 8 * 3].into(), 8, 8, 20, 10, true)
+            .expect("a small arm");
         assert!(combine(&base, &small, 20, 10).is_err());
     }
 
@@ -315,22 +349,29 @@ mod tests {
         let base = crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, 180, None)
             .expect("rotated SDR arm");
         let (_, alternate) = encoded();
-        assert_eq!(combine(&base, &alternate, 20, 10).err().as_deref(),
-            Some("gain-map arms have different orientations"));
+        assert_eq!(
+            combine(&base, &alternate, 20, 10).err().as_deref(),
+            Some("gain-map arms have different orientations")
+        );
     }
 
     #[test]
     fn combined_gain_map_keeps_base_orientation() {
         let (sdr, hdr) = arms();
         let exif = crate::exif::tests::block();
-        let base = crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, 90, Some(&exif))
-            .expect("SDR arm");
+        let base =
+            crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, 90, Some(&exif))
+                .expect("SDR arm");
         let alternate = crate::avif::encode_still_rotated(
             hdr.into(),
             W,
             H,
             &crate::avif::StillOptions {
-                cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
+                cicp: crate::avif::Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
@@ -338,7 +379,8 @@ mod tests {
             },
             90,
             Some(&exif),
-        ).expect("HDR arm");
+        )
+        .expect("HDR arm");
         let combined = combine(&base, &alternate, 20, 10).expect("combined gain map");
         let decoded = decode(&combined).expect("decoded combined image");
         assert_eq!(orientation_tag(&decoded.image).expect("orientation"), 6);
@@ -352,7 +394,9 @@ mod tests {
 unsafe fn write(image: *mut raw::avifImage, quality: i32, speed: i32) -> Result<Vec<u8>, String> {
     let encoder = crate::avif::Encoder::new()?;
     unsafe {
-        (*encoder.0).maxThreads = std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(1);
+        (*encoder.0).maxThreads = std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
+            .unwrap_or(1);
         (*encoder.0).speed = speed;
         (*encoder.0).minQuantizer = quality;
         (*encoder.0).maxQuantizer = quality;
@@ -366,7 +410,10 @@ unsafe fn write(image: *mut raw::avifImage, quality: i32, speed: i32) -> Result<
         match (status, output.bytes()) {
             (AVIF_RESULT_OK, Some(written)) => Ok(written),
             (AVIF_RESULT_OK, None) => Err("libavif returned no bytes".to_string()),
-            _ => Err(format!("libavif could not encode: {}", crate::avif::message(status))),
+            _ => Err(format!(
+                "libavif could not encode: {}",
+                crate::avif::message(status)
+            )),
         }
     }
 }

@@ -199,7 +199,9 @@ pub fn widest(tca: Option<&[Vec<f64>; 2]>) -> f64 {
     curve
         .iter()
         .flat_map(|knots| knots.iter())
-        .fold(1.0f64, |peak, knot| peak.max(1.0 + knot / crate::image::SPLINE_UNIT))
+        .fold(1.0f64, |peak, knot| {
+            peak.max(1.0 + knot / crate::image::SPLINE_UNIT)
+        })
 }
 
 /// Radii the measurement bins point sources into, centre outward.
@@ -292,7 +294,16 @@ async fn nulling_shift(
     band: (f64, f64),
 ) -> Option<f64> {
     const STEPS: usize = 30;
-    sweep(frame, slot, false, guess - REFINE_REACH, guess + REFINE_REACH, STEPS, band).await
+    sweep(
+        frame,
+        slot,
+        false,
+        guess - REFINE_REACH,
+        guess + REFINE_REACH,
+        STEPS,
+        band,
+    )
+    .await
 }
 
 /// Per-bin measurements turned into a knot curve, with the flat term removed.
@@ -371,16 +382,16 @@ pub async fn measure(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> 
     for slot in 0..2 {
         // Frame-wide first. Every bin's refinement starts from this, which is what keeps
         // each of them out of its own aliases.
-        let Some(scale) = nulling_scale(frame, slot).await else { continue };
+        let Some(scale) = nulling_scale(frame, slot).await else {
+            continue;
+        };
         // Displacement against radius, one point per bin that resolves. A bin holding fewer
         // than `MIN_PER_BIN` points scores no candidate at all, so it contributes nothing.
         let mut samples: Vec<(f64, f64)> = Vec::new();
         for pair in MEASURE_BINS.windows(2) {
             let (low, high) = (pair[0], pair[1]);
             let at = (low + high) / 2.0;
-            if let Some(shift) =
-                nulling_shift(frame, slot, scale * at * half, (low, high)).await
-            {
+            if let Some(shift) = nulling_shift(frame, slot, scale * at * half, (low, high)).await {
                 samples.push((at, shift));
             }
         }
@@ -405,8 +416,10 @@ pub async fn measure(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> 
             .iter()
             .map(|(radius, shift)| (radius * half - mean_radius) * (shift - mean_shift))
             .sum();
-        let variance: f64 =
-            samples.iter().map(|(radius, _)| (radius * half - mean_radius).powi(2)).sum();
+        let variance: f64 = samples
+            .iter()
+            .map(|(radius, _)| (radius * half - mean_radius).powi(2))
+            .sum();
         let slope = match variance > 0.0 {
             true => covariance / variance,
             false => 0.0,
@@ -447,10 +460,7 @@ pub async fn measure(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> 
 /// there the curve is allowed through unverified rather than dropped: absence of evidence
 /// is not evidence, and refusing every frame without stars would disable the correction
 /// almost everywhere it is wanted.
-async fn improves(
-    frame: &crate::tca_device::Frame,
-    curve: &[Vec<f64>; 2],
-) -> Option<bool> {
+async fn improves(frame: &crate::tca_device::Frame, curve: &[Vec<f64>; 2]) -> Option<bool> {
     let band = (POINT_FROM, ANY_RADIUS.1);
     let before = frame.haloed(None, band).await?;
     let after = frame.haloed(Some(curve), band).await?;
@@ -471,13 +481,12 @@ async fn improves(
 }
 
 /// What can be judged from the curve alone, without reading a pixel.
-fn plausible(
-    frame: &crate::tca_device::Frame,
-    curve: [Vec<f64>; 2],
-) -> Option<[Vec<f64>; 2]> {
+fn plausible(frame: &crate::tca_device::Frame, curve: [Vec<f64>; 2]) -> Option<[Vec<f64>; 2]> {
     let half = frame.half();
     let reach = |knots: &Vec<f64>| {
-        knots.iter().fold(0.0f64, |peak, knot| peak.max((knot / crate::image::SPLINE_UNIT).abs()))
+        knots.iter().fold(0.0f64, |peak, knot| {
+            peak.max((knot / crate::image::SPLINE_UNIT).abs())
+        })
     };
     let (red, blue) = (reach(&curve[0]), reach(&curve[1]));
     if red > MAX_SCALE || blue > MAX_SCALE {
@@ -492,10 +501,7 @@ fn plausible(
 }
 
 /// Whether a curve is worth applying, and the one place that decides it.
-async fn accept(
-    frame: &crate::tca_device::Frame,
-    curve: [Vec<f64>; 2],
-) -> Option<[Vec<f64>; 2]> {
+async fn accept(frame: &crate::tca_device::Frame, curve: [Vec<f64>; 2]) -> Option<[Vec<f64>; 2]> {
     let curve = plausible(frame, curve)?;
     // Last, because it is the only test here that reads the picture rather than the
     // curve, and the cheap arithmetic above rejects most candidates before it runs.
@@ -546,7 +552,11 @@ mod tests {
                 }
             }
         }
-        Rgb { width, height, data }
+        Rgb {
+            width,
+            height,
+            data,
+        }
     }
 
     /// Rescales one channel radially by *reading* at `scale`, which is the same
@@ -573,7 +583,11 @@ mod tests {
                 data[(y * w + x) * 3 + channel] = value.round().clamp(0.0, 255.0) as u8;
             }
         }
-        Rgb { width: w, height: h, data }
+        Rgb {
+            width: w,
+            height: h,
+            data,
+        }
     }
 
     /// A curve's scale at the corner, which for the flat ones `estimate` produces is
@@ -600,7 +614,9 @@ mod tests {
         // The check the module is worth having: a known misregistration has to come back
         // as itself. Three search-based estimators answered ~0 on a frame carrying a
         // real one, which is exactly what this would have caught.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = checks(900, 600);
         for injected in [1.0008f64, 1.0015, 0.9988] {
             let found = estimated(gpu, &inject(&source, 0, injected)).expect("a scale");
@@ -617,11 +633,16 @@ mod tests {
     /// easy thing to get backwards here and a sign error reads as a plausible scale.
     #[test]
     fn applying_the_estimate_cancels_the_aberration() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let aberrated = inject(&checks(900, 600), 0, 1.0015);
         let found = estimated(gpu, &aberrated).expect("a scale");
         let corrected = inject(&aberrated, 0, corner(&found, 0));
-        assert!((corner(&found, 1) - 1.0).abs() < 0.0004, "blue should not have moved");
+        assert!(
+            (corner(&found, 1) - 1.0).abs() < 0.0004,
+            "blue should not have moved"
+        );
         assert!(
             estimated(gpu, &corrected).is_none(),
             "correcting by the estimate has to leave nothing worth correcting",
@@ -632,19 +653,26 @@ mod tests {
     fn tells_red_from_blue() {
         // One channel moved must not be reported against the other, or a correction
         // lands on the channel that was already registered.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let moved = inject(&checks(900, 600), 2, 1.0015);
         let found = estimated(gpu, &moved).expect("a scale");
         let (red, blue) = (corner(&found, 0), corner(&found, 1));
         assert!((blue - 1.0 / 1.0015).abs() < 0.0004, "blue {blue}");
-        assert!((red - 1.0).abs() < 0.0004, "red moved to {red} when only blue was");
+        assert!(
+            (red - 1.0).abs() < 0.0004,
+            "red moved to {red} when only blue was"
+        );
     }
 
     /// A curve the file records reaches the warp as recorded, shape and all - the one
     /// thing `supplied_curve` promises, and why nothing refits its strength.
     #[test]
     fn a_supplied_curve_is_applied_as_recorded() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         const KNOTS: usize = 8;
         let aberrated = inject(&starfield(1200, 900), 0, 1.0015);
         // A ramp rather than a flat scale, so a path that quietly refitted this would have
@@ -679,12 +707,20 @@ mod tests {
                 for oy in -1isize..=1 {
                     for ox in -1isize..=1 {
                         let value = if (ox, oy) == (0, 0) { 235 } else { 150 };
-                        put((x as isize + ox) as usize, (y as isize + oy) as usize, value);
+                        put(
+                            (x as isize + ox) as usize,
+                            (y as isize + oy) as usize,
+                            value,
+                        );
                     }
                 }
             }
         }
-        Rgb { width, height, data }
+        Rgb {
+            width,
+            height,
+            data,
+        }
     }
 
     /// A radial colour cast - colour vignetting, or a sky that reddens towards the edge -
@@ -702,7 +738,11 @@ mod tests {
                 data[i] = value.round().clamp(0.0, 255.0) as u8;
             }
         }
-        Rgb { width: w, height: h, data }
+        Rgb {
+            width: w,
+            height: h,
+            data,
+        }
     }
 
     #[test]
@@ -722,14 +762,19 @@ mod tests {
         // `slopes` counts zero samples and `estimate` declines before it has read anything
         // about colour at all. This test passed for a while with `estimate` returning None
         // unconditionally, which is worth exactly nothing.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let clean = checks(900, 600);
         assert!(
             estimated(gpu, &inject(&clean, 0, 1.0015)).is_some(),
             "the fixture must be one this estimator can actually read, or the assertions \
              below pass on a decline that has nothing to do with a colour cast",
         );
-        assert!(estimated(gpu, &clean).is_none(), "the fixture itself must carry nothing");
+        assert!(
+            estimated(gpu, &clean).is_none(),
+            "the fixture itself must carry nothing"
+        );
 
         for strength in [0.05f64, 0.15, 0.3] {
             let cast = colour_cast(&clean, 0, strength);
@@ -749,11 +794,19 @@ mod tests {
         let mut data = source.data.clone();
         let mut state = 0x2545_F491_4F6C_DD1Du64;
         for value in data.iter_mut() {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let unit = ((state >> 33) as f64 / f64::from(u32::MAX >> 1)) - 1.0;
-            *value = (f64::from(*value) + unit * amplitude).round().clamp(0.0, 255.0) as u8;
+            *value = (f64::from(*value) + unit * amplitude)
+                .round()
+                .clamp(0.0, 255.0) as u8;
         }
-        Rgb { width: source.width, height: source.height, data }
+        Rgb {
+            width: source.width,
+            height: source.height,
+            data,
+        }
     }
 
     #[test]
@@ -771,7 +824,9 @@ mod tests {
         // `checks` rather than `starfield`, for the reason recorded on the colour-cast
         // test above: a starfield gives `slopes` nothing that clears `MIN_EDGE`, so the
         // decline says nothing about noise.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let clean = checks(900, 600);
         assert!(
             estimated(gpu, &inject(&clean, 0, 1.0015)).is_some(),
@@ -794,7 +849,9 @@ mod tests {
         // point sources, and the frame was then judged on the colour of a bridge. A thin
         // bright line falls away in every direction at any radius wider than the line, so
         // isolation alone passes it and only compactness rejects it.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let (w, h) = (600usize, 400usize);
         let mut frame = vec![18u8; w * h * 3];
         // A diagonal wire across the outer frame, one pixel wide.
@@ -806,14 +863,24 @@ mod tests {
                 }
             }
         }
-        let wire = Rgb { width: w, height: h, data: frame };
+        let wire = Rgb {
+            width: w,
+            height: h,
+            data: frame,
+        };
         let found = framed(gpu, &wire).points;
-        assert_eq!(found, 0, "a one-pixel wire was read as {found} point sources");
+        assert_eq!(
+            found, 0,
+            "a one-pixel wire was read as {found} point sources"
+        );
 
         // And the same detector does find actual point sources, so the assertion above
         // is not passing because it finds nothing anywhere.
         let stars = starfield(1200, 900);
-        assert!(framed(gpu, &stars).points > MIN_POINTS, "no stars found in a starfield");
+        assert!(
+            framed(gpu, &stars).points > MIN_POINTS,
+            "no stars found in a starfield"
+        );
     }
 
     #[test]
@@ -822,7 +889,9 @@ mod tests {
         // fires on frames with no aberration and overshoots by 2-3x on those it reads,
         // leaving them worse than untouched. Nothing downstream noticed, because nothing
         // downstream looked.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let aberrated = framed(gpu, &inject(&starfield(1200, 900), 0, 1.0015));
         let judged = |curve| pollster::block_on(improves(&aberrated, &curve));
 
@@ -853,10 +922,15 @@ mod tests {
         // A portrait or a flat wall offers no point sources. Refusing those would disable
         // the correction almost everywhere it is wanted, so they pass unverified - absence
         // of evidence is not evidence of harm.
-        let Some(gpu) = crate::gpu::device() else { return };
-        let flat_frame = Rgb { width: 400, height: 300, data: vec![128u8; 400 * 300 * 3] };
-        let judged =
-            pollster::block_on(improves(&framed(gpu, &flat_frame), &flat(1.001, 1.0)));
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let flat_frame = Rgb {
+            width: 400,
+            height: 300,
+            data: vec![128u8; 400 * 300 * 3],
+        };
+        let judged = pollster::block_on(improves(&framed(gpu, &flat_frame), &flat(1.001, 1.0)));
         assert_eq!(judged, None);
     }
 
@@ -866,7 +940,9 @@ mod tests {
         // only the one this test calls. A supplied curve pointing the wrong way is the
         // case that shipped: the Sony tag was read backwards for a while and nothing
         // rejected it.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let aberrated = framed(gpu, &inject(&starfield(1200, 900), 0, 1.0015));
         assert!(
             pollster::block_on(accept(&aberrated, flat(1.0015, 1.0))).is_none(),
@@ -888,12 +964,20 @@ mod tests {
                 for oy in -1isize..=1 {
                     for ox in -1isize..=1 {
                         let value = if (ox, oy) == (0, 0) { 230u8 } else { 145 };
-                        put((x as isize + ox) as usize, (y as isize + oy) as usize, value);
+                        put(
+                            (x as isize + ox) as usize,
+                            (y as isize + oy) as usize,
+                            value,
+                        );
                     }
                 }
             }
         }
-        Rgb { width, height, data }
+        Rgb {
+            width,
+            height,
+            data,
+        }
     }
 
     #[test]
@@ -901,7 +985,9 @@ mod tests {
         // The check the regression never passed and this exists to replace it: a known
         // misregistration has to come back as itself, on a frame built to look like what
         // the measurement actually runs on.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = wide_starfield(1600, 1200);
         // Tolerance scales with the injection: what is left over is the part the fitted
         // intercept charges to the flat term, which is proportional to the signal rather
@@ -916,7 +1002,11 @@ mod tests {
                 "injected {injected}, wanted {wanted}, measured {red}",
             );
             // And the channel that was not moved is not corrected.
-            assert!((corner(&found, 1) - 1.0).abs() < 0.0004, "blue moved to {}", corner(&found, 1));
+            assert!(
+                (corner(&found, 1) - 1.0).abs() < 0.0004,
+                "blue moved to {}",
+                corner(&found, 1)
+            );
         }
     }
 
@@ -930,7 +1020,9 @@ mod tests {
     /// a different scale for every radius.
     #[test]
     fn a_large_aberration_is_measured_rather_than_aliased() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = wide_starfield(1600, 1200);
         for injected in [1.003f64, 1.005] {
             let found = measured(gpu, &inject(&source, 0, injected)).expect("a scale");
@@ -954,7 +1046,9 @@ mod tests {
         // readable red correction away with the unreadable blue one - the wrong way round,
         // red being most of what the eye sees here. Blue is starved by
         // giving it nothing to measure: only red is displaced.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = wide_starfield(1600, 1200);
         let found = measured(gpu, &inject(&source, 0, 1.0012)).expect("a scale");
         assert!(
@@ -968,7 +1062,9 @@ mod tests {
     fn the_measurement_declines_a_registered_frame() {
         // Where the regression manufactured a scale from scene edges, this has to report
         // nothing at all - which is most of the point of replacing it.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         assert!(measured(gpu, &wide_starfield(1600, 1200)).is_none());
         assert!(measured(gpu, &noisy(&wide_starfield(1600, 1200), 12.0)).is_none());
     }
@@ -979,7 +1075,9 @@ mod tests {
         // frames of a lens whose own recorded profile says it has almost none. A lateral
         // aberration is a magnification difference and cannot be flat, so fitting through
         // the origin has to decline this rather than fit a curve to it.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = wide_starfield(1600, 1200);
         let (w, h) = (source.width, source.height);
         let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
@@ -1007,7 +1105,11 @@ mod tests {
                 data[(y * w + x) * 3] = value.round().clamp(0.0, 255.0) as u8;
             }
         }
-        let flat = Rgb { width: w, height: h, data };
+        let flat = Rgb {
+            width: w,
+            height: h,
+            data,
+        };
 
         // **The positive control, and it is what makes the assertion below mean anything.**
         // Without it this passes just as well on a frame the measurement cannot read at
@@ -1016,7 +1118,11 @@ mod tests {
         // its *shape* is what gets declined.
         let radial = inject(&source, 0, 1.0006);
         let read = measured(gpu, &radial).expect("a radial 0.6px must be measurable");
-        assert!((corner(&read, 0) - 1.0 / 1.0006).abs() < 0.0002, "{}", corner(&read, 0));
+        assert!(
+            (corner(&read, 0) - 1.0 / 1.0006).abs() < 0.0002,
+            "{}",
+            corner(&read, 0)
+        );
 
         // Whatever it reports must be far smaller than a curve fitted to the flat term
         // would be. Fitted freely, 0.6px everywhere reads as roughly 0.6px at the corner.
@@ -1024,21 +1130,32 @@ mod tests {
             None => 0.0,
             Some(found) => (corner(&found, 0) - 1.0).abs() * 1000.0,
         };
-        assert!(corner_px < 0.35, "a flat displacement was fitted as {corner_px} at the corner");
+        assert!(
+            corner_px < 0.35,
+            "a flat displacement was fitted as {corner_px} at the corner"
+        );
     }
 
     #[test]
     fn declines_a_frame_that_carries_nothing() {
         // A registered frame must report None rather than a scale of noise, so the warp
         // keeps its shared-ratio path and no pixel is resampled for nothing.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         assert!(estimated(gpu, &checks(900, 600)).is_none());
     }
 
     #[test]
     fn declines_a_frame_with_no_edges_to_read() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let flat = Rgb { width: 200, height: 200, data: vec![128u8; 200 * 200 * 3] };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let flat = Rgb {
+            width: 200,
+            height: 200,
+            data: vec![128u8; 200 * 200 * 3],
+        };
         assert!(estimated(gpu, &flat).is_none());
     }
 }

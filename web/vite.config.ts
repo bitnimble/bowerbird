@@ -39,7 +39,12 @@ const shaders = {
 // /image to the API, which VITE_API_URL / VITE_API_PORT locate. Nothing in the
 // browser knows the API's address, so it need not be reachable from one.
 export default defineConfig({
-  plugins: [shaders, { enforce: 'pre', ...mdx() }, stylex.vite(), react({ include: /\.(mdx|tsx?)$/ })],
+  plugins: [
+    shaders,
+    { enforce: 'pre', ...mdx() },
+    stylex.vite(),
+    react({ include: /\.(mdx|tsx?)$/ }),
+  ],
   // Pre-bundled, the dev server deadlocks: StyleX's transform `load`s each import, which for an
   // optimized dep waits on the optimizer, which waits on that transform. No page ever loads.
   optimizeDeps: { exclude: ['@stylexjs/stylex'] },
@@ -57,7 +62,9 @@ export default defineConfig({
         // not have to build a sibling package before this one will start. `tsconfig.json`
         // carries the same mapping for the typecheck.
         find: 'avif-hdr-video',
-        replacement: fileURLToPath(new URL('../packages/avif-hdr-video/src/index.ts', import.meta.url)),
+        replacement: fileURLToPath(
+          new URL('../packages/avif-hdr-video/src/index.ts', import.meta.url),
+        ),
       },
       {
         // Settings schemas live under ../src and import zod. Vite resolves bare imports

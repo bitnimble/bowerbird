@@ -148,7 +148,8 @@ export async function fetchPinned(url: string): Promise<Response> {
       if (answer.ok) return answer;
       failure = `${answer.status} ${answer.statusText}`;
       await answer.body?.cancel();
-      if (answer.status !== 429 && answer.status < 500) throw new Error(`${url} answered ${failure}`);
+      if (answer.status !== 429 && answer.status < 500)
+        throw new Error(`${url} answered ${failure}`);
     }
     if (attempt === FETCH_ATTEMPTS) throw new Error(`${url} answered ${failure}, ${attempt} times`);
     const wait = 2 ** attempt * 1000;

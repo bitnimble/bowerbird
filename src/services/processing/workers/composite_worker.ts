@@ -23,7 +23,9 @@ export interface CompositeWorker {
 }
 
 export function openCompositeWorker(): CompositeWorker {
-  const worker = new Worker(workerEntry('processing_worker', new URL('./processing_worker.ts', import.meta.url)));
+  const worker = new Worker(
+    workerEntry('processing_worker', new URL('./processing_worker.ts', import.meta.url)),
+  );
   // A worker that crashed is not a worker any more - the thread is gone, and a job posted to it
   // would wait for an answer nobody is left to send.
   let crashed: string | null = null;

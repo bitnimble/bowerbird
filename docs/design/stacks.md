@@ -15,7 +15,7 @@ since shoots mirror folders (§4.1), photos in two folders span two shoots.
 ### 19.1 Why not a perceptual hash
 
 64-bit perceptual hashes fail on a labelled 231-frame folder: dHash's worst true
-pair scores 0.531 while a verified *different-scene* pair scores 0.641; DCT pHash
+pair scores 0.531 while a verified _different-scene_ pair scores 0.641; DCT pHash
 scores 0.406 against 0.594. Both margins are **negative**; no threshold separates
 same-scene from different-scene pairs.
 
@@ -41,11 +41,11 @@ members, such as two lenses on one subject.
 On `photos`: `stack_id`, `descriptor` (a BLOB, §19.3), and `stack_state`, which
 is the three answers to "is this photo in a stack?"
 
-| value | meaning | detection may claim it |
-|---|---|---|
-| `none` | never been in one | yes |
-| `stacked` | currently in one | yes, if the stack is `auto` |
-| `unstacked` | a human pulled it out | **never** |
+| value       | meaning               | detection may claim it      |
+| ----------- | --------------------- | --------------------------- |
+| `none`      | never been in one     | yes                         |
+| `stacked`   | currently in one      | yes, if the stack is `auto` |
+| `unstacked` | a human pulled it out | **never**                   |
 
 `stack_state` is `stacked` exactly when `stack_id` is set. The repository writes
 both together rather than a `CHECK` spanning them, because a library delete
@@ -73,7 +73,7 @@ Three properties do the work:
 - **Rank normalization** is the exposure and white-balance invariance: any
   monotonic tone curve leaves the ordering of the cells alone, so it leaves the
   descriptor alone. Cells that tie share the mean of the ranks they span, and
-  cells are rounded to the precision the descriptor stores *before* being
+  cells are rounded to the precision the descriptor stores _before_ being
   ranked. Both matter more than they look: a flat sky, a blown highlight and a
   neutral shadow are long runs of equal cells, and the chromaticity of a grey
   region differs cell to cell only in the last bits of a float division. Ranking
@@ -129,7 +129,7 @@ already generates descriptors.
 
 Candidates are walked once in time order, **within a shoot**, growing one stack
 at a time. The next photo joins when **both** hold: it is no more than
-`auto_stack_window_seconds` after the photo before it, *not* after the stack's
+`auto_stack_window_seconds` after the photo before it, _not_ after the stack's
 first photo; and it clears `auto_stack_similarity` against **every** photo
 already in the stack, not merely against its neighbour.
 
@@ -139,7 +139,7 @@ can take the grouping apart - so a stack detection formed across a folder
 boundary is one the reader cannot answer. Two cards filed into a folder each is
 the ordinary way to arrive at frames seconds apart that were never one burst.
 Photos in no shoot are grouped together, the library root being a folder like any
-other. A stack a *person* made may still span shoots: that is them saying so.
+other. A stack a _person_ made may still span shoots: that is them saying so.
 
 The clique requirement bounds chaining: scene drift eventually stops matching
 the first frame, ending the stack. Largest stack in the labelled folder: seven.
@@ -209,7 +209,7 @@ member the promotion arm would pick in an unfiltered listing, so the two agree.
 Deprioritised rather than excluded: a stack whose members are all rejected still
 has exactly one flagged member, and the index keeps meaning what it means. The
 comparison has to be null-safe (`COALESCE(triage, '')`), because `untriaged` is
-stored as NULL and `NULL = 'rejected'` is NULL, which SQLite sorts *before* 0 -
+stored as NULL and `NULL = 'rejected'` is NULL, which SQLite sorts _before_ 0 -
 so the oldest untriaged frame would outrank the newest keeper on nothing but its
 NULL.
 
@@ -220,7 +220,7 @@ stacks spanning days.
 The promotion arm carries the **same scope and filters as the outer query**,
 which is what keeps the properties the window gave for free. An album is strict,
 because a member it does not hold is not a candidate to stand for the stack. A
-shoot promotes to the newest *in-shoot* member, so it never shows a tile for a
+shoot promotes to the newest _in-shoot_ member, so it never shows a tile for a
 photograph that is not in it. And a filter promotes rather than making the stack
 vanish.
 
@@ -248,7 +248,7 @@ one join; clients need no member ids.
 `GET /api/stacks/:id/photos` returns every member; `?album_id=` narrows to what
 that album holds. `?shoot_id=` narrows nothing - each row carries its own
 `shoot_id`, which is all the client needs to dim the members that are elsewhere -
-it names the shoot whose *hiding* this band is exempt from, so a band opened on a
+it names the shoot whose _hiding_ this band is exempt from, so a band opened on a
 hidden shoot's own page holds the members that page's tile counted (§12.4). Both
 are the same rule: a band has to agree with the listing it was opened from, which
 is also why it is told which side of the bin to answer for.
@@ -258,10 +258,10 @@ stack as one tile; Previous and Next visit every frame of it. Two endpoints answ
 the same listing with `representativeFilter` left off, and nothing else in the
 system uses them, so the collapse is untouched everywhere it matters:
 
-| method | path | purpose |
-|---|---|---|
-| `POST` | `/api/photos/neighbours` | the run around one photograph, ±50 by default |
-| `POST` | `/api/photos/range` | the run between two, either end optional, capped |
+| method | path                     | purpose                                          |
+| ------ | ------------------------ | ------------------------------------------------ |
+| `POST` | `/api/photos/neighbours` | the run around one photograph, ±50 by default    |
+| `POST` | `/api/photos/range`      | the run between two, either end optional, capped |
 
 Both take the same scope and filters a position lookup does, and both are a
 **keyset seek** off a row's own sort key rather than an offset: a position in an
@@ -281,12 +281,12 @@ including stack triage's tournament seeding; defaults silently let band, viewer
 and triage ordering disagree.
 
 Two spellings in it are load-bearing and look wrong, so they are commented where
-they sit. The group predicate must be the indexed *expression* `(date_taken IS
+they sit. The group predicate must be the indexed _expression_ `(date_taken IS
 NULL) = 0|1`, never `IS NULL` / `IS NOT NULL` on the column: only the exact
 expression matches `idx_photos_*_order_taken`, and without it the leading column
 is unconstrained, the row-value comparison cannot become a range constraint, and
 the whole collection is scanned into a temp b-tree - 4.8ms against 0.01ms at 40k
-rows. And `date_taken IS NULL` must be *absent* from each seek arm's `ORDER BY`,
+rows. And `date_taken IS NULL` must be _absent_ from each seek arm's `ORDER BY`,
 where it is a constant, or the ordering stops matching the index for the same
 reason.
 
@@ -296,7 +296,7 @@ end of a library answers with the beginning of it.
 
 #### 19.5.4 Expand all stacks
 
-**Expand all stacks**, beside filters and sort, uncollapses the *listing*. Every
+**Expand all stacks**, beside filters and sort, uncollapses the _listing_. Every
 frame becomes an ordinary collection row in one stream; it does not open bands.
 
 It is `representativeFilter` left off - the same absence the viewer's two
@@ -314,7 +314,7 @@ The flag identifies the listing and travels in query strings and selection/posit
 `filters`. Omitting it makes position 400 refer to different photos on client and
 server (§19.5.1).
 
-For the same reason nothing in the grid *renders* from it. The rows in hand
+For the same reason nothing in the grid _renders_ from it. The rows in hand
 already say what they are, so a click on a tile reads `stack_size`, not the
 setting, and the two can never disagree mid-switch. Two things read the setting
 deliberately, and both are cases a row of 1 cannot be told apart from a lone
@@ -325,7 +325,7 @@ member of every stack would otherwise wear.
 **The switch keeps the reader's place and their selection**, which is most of the
 work. Every position in the collection changes, so both are named by **key** -
 `COALESCE(stack_id, id)`, exactly as an open band is (§19.6.1) - and re-resolved
-through one `POST /api/photos/positions` against the listing being switched *to*.
+through one `POST /api/photos/positions` against the listing being switched _to_.
 That endpoint answers with the positions a key names rather than a position, which
 is the whole of what makes one lookup enough: a stack id is one row collapsed and
 every member of it expanded, so a selected stack becomes its frames going one way
@@ -382,7 +382,7 @@ which is also how the stack closes.
 closes its band and leaves the selection exactly as it was: looking inside a stack
 must not throw away whatever the reader had already chosen. Its tick box selects the
 row, which is also how Unstack is reached, and cmd-click does the same; either
-leaves the band as it found it. What *does* leave the selection is
+leaves the band as it found it. What _does_ leave the selection is
 closing a band: its members go with it, since a closed stack would leave them acted
 on with nothing on screen saying so, and the collapsed row that replaces them is
 not the same thing as three of its frames (§19.6.1).
@@ -452,7 +452,7 @@ cell** (`TILE_PAD`), and that one piece is what makes the rest of it work:
   a kink in the one line the eye actually follows.
 - The **gap between two photographs is the gap plus two insets** (`GRID_GAP` plus
   twice `TILE_PAD`), which is where the air between frames comes from. `GRID_GAP`
-  itself stays small, because it is what separates two *rings*, and two rings a
+  itself stays small, because it is what separates two _rings_, and two rings a
   photograph's width apart do not read as a pair.
 - A tile has **no backdrop of its own**: the photograph's is the hit overlay's,
   clipped to the inset, so what shows between two frames is the bed the grid sits on.
@@ -494,7 +494,7 @@ stack opened at the start of a line across the whole grid and pushed its
 neighbours below the band. Which tile ends a line is the one thing the photos'
 shapes decide rather than the row arithmetic, so `masonryLineStarts` replays the
 wrap from the same flex bases the container packs from; nothing is measured. A
-band flushed after the block's *last* line takes the `::after` that eats that
+band flushed after the block's _last_ line takes the `::after` that eats that
 line's free space with it, so that line is given an end of its own.
 
 Measured block height accounts for masonry bands automatically, requiring no
@@ -541,7 +541,7 @@ to move. That goes to `rail.anchor` rather than moving the scroller (§18.3.2), 
 nothing the reader is doing to it is interrupted; only what the anchor cannot
 absorb reaches `rail.top`. Every input is a number the store already holds, so the
 correction is exact rather than a measurement - but it has to be taken from
-*before* the band changed, because the band is also what changed the collection's
+_before_ the band changed, because the band is also what changed the collection's
 height.
 
 That correction is owed by a **re-read** as much as by a click, and for a while it
@@ -555,7 +555,7 @@ form that describes several bands changing at once.
 collapsed, so the server numbers one row per stack and members are not in that
 numbering at all. They are selected **by id**, in a set held beside the position
 ranges. This stays inside the rule the virtual grid enforces rather than bending
-it - what must never happen is an id standing in for an *unloaded* row, and a
+it - what must never happen is an id standing in for an _unloaded_ row, and a
 band's members are loaded, on screen, and few.
 
 **Band and grid selections are one.** Wire selections carry `members` beside
@@ -570,12 +570,12 @@ members with the positions (§18.3.1).
 The bulk bar counts **entries**, where a stack counts as one, because the client
 cannot know the sizes of stacks in a selection covering rows it has never held.
 
-| action | shown when |
-|---|---|
-| Stack | two or more entries selected |
-| Unstack | a selected row this client is holding is a stack |
-| Remove from stack | band members are selected, of one stack or several |
-| Merge photos | always, its two rows individually refused or greyed by name (below) |
+| action            | shown when                                                          |
+| ----------------- | ------------------------------------------------------------------- |
+| Stack             | two or more entries selected                                        |
+| Unstack           | a selected row this client is holding is a stack                    |
+| Remove from stack | band members are selected, of one stack or several                  |
+| Merge photos      | always, its two rows individually refused or greyed by name (below) |
 
 Stacking a selection that already contains stacked photos moves those photos into
 the new stack; any stack left with fewer than two members is deleted, because a
@@ -601,7 +601,7 @@ presents binary comparisons until the surviving pool contains unbeaten photos.
 
 Terms, used exactly and only this way: a **round** is one pair put to the
 photographer; the **pool** is the photos still in contention; **decisive** means
-*Pick A* or *Pick B*, where exactly one photo leaves; a **draw** is *Both*.
+_Pick A_ or _Pick B_, where exactly one photo leaves; a **draw** is _Both_.
 **A** and **B** are the two slots on screen, never photo names.
 
 ### 20.1 The tournament
@@ -610,7 +610,11 @@ photographer; the **pool** is the photos still in contention; **decisive** means
 feature lives.
 
 ```ts
-interface Session { alive: readonly string[]; seen: ReadonlySet<string>; stopped: boolean }
+interface Session {
+  alive: readonly string[];
+  seen: ReadonlySet<string>;
+  stopped: boolean;
+}
 ```
 
 `seen` holds every pair already judged, keyed by the two ids sorted and joined
@@ -623,14 +627,14 @@ to carry.
 `nextRound` is one scan: the first pair in index order over the pool, `(0,1)`,
 `(0,2)`, … then `(1,2)`, whose key is not in `seen`. That is the whole rule.
 
-| verdict | the pool |
-|---|---|
-| Pick A | B removed, A moved to the **front** |
-| Pick B | A removed, B moved to the front |
-| Both | A then B moved to the back, in that order |
-| Neither | both removed |
+| verdict | the pool                                  |
+| ------- | ----------------------------------------- |
+| Pick A  | B removed, A moved to the **front**       |
+| Pick B  | A removed, B moved to the front           |
+| Both    | A then B moved to the back, in that order |
+| Neither | both removed                              |
 
-`a` and `b` are the round's slots throughout this section. What the *photographer*
+`a` and `b` are the round's slots throughout this section. What the _photographer_
 calls A and B is a side of the screen, which §20.4 draws and the presenter maps
 back to a slot.
 
@@ -645,7 +649,7 @@ the same front pair.
 
 **What it guarantees.** Every round either removes a photo or adds a pair, both
 monotone and bounded, so a session terminates and no round repeats. A session that
-ends by *exhaustion* returns a keep set that is a **clique of mutual draws**: every
+ends by _exhaustion_ returns a keep set that is a **clique of mutual draws**: every
 pair of survivors was judged, and any decisive judgement would have removed one of
 them. No photo is kept without having been held up against every other kept photo.
 Keep the rest forfeits that knowingly, for the rounds never asked.
@@ -704,7 +708,7 @@ when it lands, so a rewind racing one still in flight takes that one back too.
 The **queue** lists **Completed** (newest first, each round's thumbnails and its
 verdict; selecting one rewinds to it) and **Upcoming**, read-only. Upcoming assumes
 **every remaining round draws**, which is the run the pure functions produce for
-`Both` repeated, and the only assumption under which the list *only shrinks*.
+`Both` repeated, and the only assumption under which the list _only shrinks_.
 Assuming the winner keeps winning would make it grow whenever the winner lost.
 Capped at 20, with the overflow counted from `remainingPairs`.
 
@@ -751,7 +755,7 @@ from `arrangement`, flip's one from `fitted` - the largest box of that aspect in
 the space, `min(W, H·a)` by that over `a`. Before an aspect is knowable the box is
 the whole space rather than nothing, since a stage of no extent never paints, so
 never decodes, so the aspect it was waiting for never arrives. Flip sizes to the
-frame that is *up*, not to the round: the frame wears the colour, so a box the
+frame that is _up_, not to the round: the frame wears the colour, so a box the
 shape of the other one would put that colour a letterbox away from the picture it
 names.
 
@@ -779,14 +783,14 @@ row or column makes that area largest. With aspect `a`, area `S`, `s = √S`, an
 - column: `s = min( max(0, H − gap) / (1/√aA + 1/√aB),  W / max(√aA, √aB) )`
 
 Each constraint is a linear upper bound on `s`, so the smaller is the maximum. The
-larger `s` wins; a tie goes to the row. The clamp is *inside* the expression
+larger `s` wins; a tie goes to the row. The clamp is _inside_ the expression
 because `s²` squares away a negative sign, so a box narrower than the gutter would
 otherwise render two photos in a container of negative width.
 
 Equal area rather than a common extent, which hands the two photos areas in the
 ratio `aA/aB` exactly, 2.25× on a 3:2 beside a 2:3, and size is persuasive in a
 tool whose job is a fair comparison. It is not even reliably the smaller picture:
-where width binds it uses *more* of the screen than a common height. `W` and `H`
+where width binds it uses _more_ of the screen than a common height. `W` and `H`
 are observables the presenter writes from a `ResizeObserver`, which is the one
 input that cannot come from a store already held.
 
@@ -809,7 +813,7 @@ pixels.
 
 One header holds everything the session is steered with, so the frames get the
 rest of the window: Back, Undo and Keep the rest anchored left, the four verdicts
-across the middle, and the flip/split switch and *Queue (n)* anchored right. Under
+across the middle, and the flip/split switch and _Queue (n)_ anchored right. Under
 the frames, in flip only, Show A / peek / Show B. The verdicts sit deliberately
 apart from both ends, because a misclick here rejects a photograph.
 
@@ -820,12 +824,12 @@ end groups claim equal width, so the middle's centre is the bar's rather than ha
 their difference off it; and Both and Neither sit in flanks of equal width, so the
 picks' centre is the middle's rather than all four buttons'.
 
-Equal width *claims* still let oversized end groups wrap: phones use three rows
+Equal width _claims_ still let oversized end groups wrap: phones use three rows
 without centring. Absolute positioning was rejected because centred verdicts would
 overlap those groups on narrow screens.
 
 **The bar is one line, and that is what decides where the counter lives.** Spelled
-out in the header, *n left (out of N) · up to k rounds* is wide enough that the
+out in the header, _n left (out of N) · up to k rounds_ is wide enough that the
 left group wraps, costing a line of the height this arrangement exists to give the
 photographs. So the pool count rides on the queue's own trigger - `Queue (3)`,
 which is where somebody wondering what is left would look anyway - and the full
@@ -850,8 +854,8 @@ the pair out in a row or a column depending on which gives the larger area
 (§20.4), so a binding that followed the arrangement would change meaning under a
 resize - and `←`/`→` on a pair stacked top and bottom point at nothing. Binding
 `↑` and `↓` as well costs `↓` its Both, which had `Space` anyway, and leaves every
-key meaning one fixed thing: `→` and `↓` are both *the second photograph*,
-whatever is on screen. Only the *hint* follows the arrangement (`sideKeys`), on
+key meaning one fixed thing: `→` and `↓` are both _the second photograph_,
+whatever is on screen. Only the _hint_ follows the arrangement (`sideKeys`), on
 the verdict buttons and on the halves themselves.
 
 `V` rather than `Tab`, which an earlier draft used: swallowing `Tab` took keyboard
@@ -861,7 +865,7 @@ browsing, and a presentation toggle is not. For the same reason the handler
 ignores keys from inside a popup, where `Space` on a queue row would otherwise
 cast a verdict rather than select the round under it.
 
-Disable verdicts until both frames of *this* round decode. Clear readiness each
+Disable verdicts until both frames of _this_ round decode. Clear readiness each
 round so undo/queue navigation cannot enable verdicts before painting.
 
 **Prefetch** is the first ten survivors, and it only fetches. The frames are
@@ -896,7 +900,7 @@ reaches the viewer from a stack. A stack has two or more members by construction
 
 Leaving mid-session is an explicit route to the entry photo, falling back to its
 library; not `navigate(-1)`, which nothing in the app uses and which strands
-anyone who refreshed. A *finished* session leaves by itself, to the survivor that
+anyone who refreshed. A _finished_ session leaves by itself, to the survivor that
 sorts **first** in the collection's order: the frame the judging was towards, and
 one the viewer can place, where the photo the session was entered from has usually
 been rejected and so left the gallery's filter with both its arrows dead. That one
@@ -928,7 +932,7 @@ over four, a randomised sweep asserting no repeated round and that every keep se
 is a clique of mutual draws, the worked case where two drawn photos still meet the
 winner, `Neither` emptying the pool, the `upcomingRounds` cap and shrinkage, and
 `arrangement` by aspect number rather than by adjective, a 3:1 panorama beside a
-portrait chooses the *row*, and only turns over past about 4.5:1.
+portrait chooses the _row_, and only turns over past about 4.5:1.
 
 `PhotoStage`'s existing behaviour was pinned by e2e before the refactor: zoom
 survives a rendition change and resets on a photo change. The screen takes an e2e

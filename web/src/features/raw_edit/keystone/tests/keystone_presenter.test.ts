@@ -6,12 +6,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { RawEditPresenter } from '../../stage/raw_edit_presenter';
 import type { EditStore } from '../../edit/edit_store';
-import {
-  drawnBy,
-  FakeDecoder,
-  openEditor,
-  type Editor,
-} from '../../stage/tests/raw_edit_harness';
+import { drawnBy, FakeDecoder, openEditor, type Editor } from '../../stage/tests/raw_edit_harness';
 import type { KeystoneStore } from '../keystone_store';
 
 let editor: Editor;

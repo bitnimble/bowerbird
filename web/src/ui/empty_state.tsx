@@ -18,7 +18,13 @@ const styles = stylex.create({
 });
 
 /** What stands where a page's content would be, saying why there is none. */
-export function EmptyState({ title, children }: { title?: string; children?: ReactNode }): JSX.Element {
+export function EmptyState({
+  title,
+  children,
+}: {
+  title?: string;
+  children?: ReactNode;
+}): JSX.Element {
   return (
     <div {...stylex.props(styles.empty)}>
       {title != null && <div {...stylex.props(styles.title)}>{title}</div>}

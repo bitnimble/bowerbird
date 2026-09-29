@@ -40,7 +40,13 @@ test('tilePolygons is each outline, in the decoded layer pixels', () => {
 test('the geometry names the outlines, so the same tiles read the same key', () => {
   const store = ready();
   const before = store.geometry;
-  runInAction(() => (store.recipe = { ...store.recipe!, vertices: store.recipe!.vertices.map(([x, y]) => [x + 1, y]) }));
+  runInAction(
+    () =>
+      (store.recipe = {
+        ...store.recipe!,
+        vertices: store.recipe!.vertices.map(([x, y]) => [x + 1, y]),
+      }),
+  );
   expect(store.geometry).not.toBe(before);
   runInAction(() => (store.recipe = assemblyRecipeFixture()));
   expect(store.geometry).toBe(before);
@@ -50,7 +56,10 @@ const solvedFor = (pick: number[], zone = 0): Seams => triangleSeams(pick, zone,
 
 function solve(store: MergeStore, seams: Seams, geometry = store.geometry): void {
   runInAction(() =>
-    store.solved.set(seamsKey(geometry, store.balancedFeather, seams.base, seams.pick), { seams, geometry }),
+    store.solved.set(seamsKey(geometry, store.balancedFeather, seams.base, seams.pick), {
+      seams,
+      geometry,
+    }),
   );
 }
 
@@ -135,7 +144,14 @@ test('a swatch is outlined by its own growth, then the largest another frame fou
   runInAction(() => (store.openTile = 1));
   expect(store.outlineFor(1)).toEqual(store.tilePolygons[1]!);
 
-  const small = { ...solvedFor([0, 0], 1), vertices: [[0, 0], [10, 0], [0, 10]] as [number, number][] };
+  const small = {
+    ...solvedFor([0, 0], 1),
+    vertices: [
+      [0, 0],
+      [10, 0],
+      [0, 10],
+    ] as [number, number][],
+  };
   solve(store, small);
   solve(store, solvedFor([0, 1], 1));
   expect(store.outlineFor(0)).toEqual([
@@ -173,7 +189,8 @@ test('an open tile is searching until every frame of it is solved or refused', (
     store.recipe = { ...store.recipe!, seamVolume: 'key' };
     store.openTile = 1;
   });
-  const picksWith = (source: number): number[] => store.picks.map((held, tile) => (tile === 1 ? source : held));
+  const picksWith = (source: number): number[] =>
+    store.picks.map((held, tile) => (tile === 1 ? source : held));
   expect(store.searching).toBe(true);
 
   solve(store, solvedFor(picksWith(0), 1));

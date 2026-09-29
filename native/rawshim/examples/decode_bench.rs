@@ -21,7 +21,10 @@ fn main() {
         return;
     }
 
-    println!("{:>30}  {:>9}  {:>8}  {:>8}  {:>9}  {}", "file", "pixels", "first", "best", "MP/s", "checksum");
+    println!(
+        "{:>30}  {:>9}  {:>8}  {:>8}  {:>9}  {}",
+        "file", "pixels", "first", "best", "MP/s", "checksum"
+    );
 
     let mut total_pixels = 0f64;
     let mut total_best = 0f64;
@@ -48,12 +51,8 @@ fn main() {
         let mut best = first;
         for _ in 1..ROUNDS {
             let round = std::time::Instant::now();
-            let frame = rawshim::decode_frame_denoised(
-                path,
-                0,
-                Default::default(),
-                Default::default(),
-            );
+            let frame =
+                rawshim::decode_frame_denoised(path, 0, Default::default(), Default::default());
             let taken = round.elapsed().as_secs_f64();
             if frame.is_some() && taken < best {
                 best = taken;
@@ -76,7 +75,10 @@ fn main() {
     if total_best > 0.0 {
         println!(
             "{:>30}  {total_pixels:>6.2}MP  {:>8}  {:>6.0}ms  {:>9.1}",
-            "total", "", total_best * 1000.0, total_pixels / total_best
+            "total",
+            "",
+            total_best * 1000.0,
+            total_pixels / total_best
         );
     }
 }

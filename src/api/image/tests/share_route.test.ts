@@ -24,7 +24,10 @@ interface Asked {
   hdr: boolean;
 }
 
-function serving(renditionHdr: boolean, recipe: StoredRecipe = { kind: 'file', path: 'a.arw' }): { app: Hono; asked: Asked[] } {
+function serving(
+  renditionHdr: boolean,
+  recipe: StoredRecipe = { kind: 'file', path: 'a.arw' },
+): { app: Hono; asked: Asked[] } {
   const asked: Asked[] = [];
   const photos = {
     locate: () => ({
@@ -102,10 +105,16 @@ it('refuses a rendition that has not been built', async () => {
 // A composite has no file to lift a JPEG out of, so its camera view is the stored copy, transcoded.
 it("shares a composite's stored camera view", async () => {
   const at = stored('embedded');
-  const panorama = { kind: 'panorama', version: 1, sources: [{ photoId: 'f1' }, { photoId: 'f2' }] } as unknown as StoredRecipe;
+  const panorama = {
+    kind: 'panorama',
+    version: 1,
+    sources: [{ photoId: 'f1' }, { photoId: 'f2' }],
+  } as unknown as StoredRecipe;
   const { app, asked } = serving(true, panorama);
 
-  const answer = await app.request(route(PathSegment.image(), 'p1', PathSegment.share(), 'embedded'));
+  const answer = await app.request(
+    route(PathSegment.image(), 'p1', PathSegment.share(), 'embedded'),
+  );
 
   expect(answer.status).toBe(200);
   expect(asked).toEqual([{ photoId: 'p1', renditionPath: at, hdr: false }]);
@@ -115,7 +124,9 @@ it("shares a composite's stored camera view", async () => {
 it("refuses the camera's JPEG where there is none to be had", async () => {
   const { app, asked } = serving(false, { kind: 'file', path: 'nowhere/a.arw' });
 
-  const answer = await app.request(route(PathSegment.image(), 'p1', PathSegment.share(), 'embedded'));
+  const answer = await app.request(
+    route(PathSegment.image(), 'p1', PathSegment.share(), 'embedded'),
+  );
 
   expect(answer.status).toBe(404);
   expect(asked).toEqual([]);

@@ -12,7 +12,12 @@ import type { FileMetadata } from '../../src/services/processing/analysis/metada
 import type { ProcessingScope } from '../../src/services/processing/pipeline/processing_service';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -51,7 +56,10 @@ function metadata(absPath: string): FileMetadata {
 let root: string;
 let db: ReturnType<typeof createDatabase>;
 
-function build(processing: ProcessingTrigger, extract: (absPath: string) => Promise<FileMetadata>): ScanService {
+function build(
+  processing: ProcessingTrigger,
+  extract: (absPath: string) => Promise<FileMetadata>,
+): ScanService {
   const photoProcessingRepo = photoProcessing(db);
   return new ScanService(
     photoScan(db, photoProcessingRepo),
@@ -75,7 +83,12 @@ function count(): number {
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-resume-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
 });
 
 afterEach(() => {
@@ -122,7 +135,9 @@ test('a scoped run hands the rendition batch its own files, not the library back
   const status = await scan.scanLibrary(LIB, { paths: ['d.arw'] });
 
   expect(status.photos_added).toBe(1);
-  const added = db.query(`SELECT id FROM photos WHERE json_extract(recipe, '$.path') = ?`).get('d.arw') as { id: string };
+  const added = db
+    .query(`SELECT id FROM photos WHERE json_extract(recipe, '$.path') = ?`)
+    .get('d.arw') as { id: string };
   expect(scopes[1]?.photoIds).toEqual([added.id]);
   // The status counts that run's own work too, or one changed file would report
   // itself as four renditions outstanding.
@@ -131,11 +146,15 @@ test('a scoped run hands the rendition batch its own files, not the library back
 
 test('a fresh process reports the work the last one left, without starting it', async () => {
   for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
-  await build({ processUnprocessed: () => {} }, async (absPath) => metadata(absPath)).scanLibrary(LIB);
+  await build({ processUnprocessed: () => {} }, async (absPath) => metadata(absPath)).scanLibrary(
+    LIB,
+  );
 
   // Stands in for the restart: same database, no in-memory status at all.
   let asked = 0;
-  const restarted = build({ processUnprocessed: () => void asked++ }, async (absPath) => metadata(absPath));
+  const restarted = build({ processUnprocessed: () => void asked++ }, async (absPath) =>
+    metadata(absPath),
+  );
   const status = restarted.getScanStatus(LIB);
 
   expect(status.status).toBe('idle');

@@ -2,7 +2,12 @@
 // next one. Here because only a browser can answer a reload.
 import { expect } from '@playwright/test';
 import { test } from '../fixtures';
-import { PHOTO_NAMES, URL_OTHER_PHOTOS_DIR, URL_PHOTOS_DIR, URL_PHOTO_NAMES } from '../fixture_library';
+import {
+  PHOTO_NAMES,
+  URL_OTHER_PHOTOS_DIR,
+  URL_PHOTOS_DIR,
+  URL_PHOTO_NAMES,
+} from '../fixture_library';
 import { addLibrary, gallery, gotoLibrary, openLibrary, tiles } from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
@@ -37,7 +42,9 @@ test('a reload comes back to the photograph the window started on', async ({ pag
   await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(was - row);
 });
 
-test('a search survives a reload of the tab, and is not carried into another library or a fresh visit', async ({ page }) => {
+test('a search survives a reload of the tab, and is not carried into another library or a fresh visit', async ({
+  page,
+}) => {
   await gotoLibrary(page, URL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
   const library = page.url();

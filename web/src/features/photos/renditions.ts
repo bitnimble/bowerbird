@@ -7,5 +7,7 @@ import { RenditionsStrings } from './renditions.strings';
 // four names for the same file (§10.2).
 export function renditionLabel(rendition: ViewerRendition): string {
   if (rendition === 'embedded') return RenditionsStrings.embeddedJpeg();
-  return rendition === 'full' ? RenditionsStrings.renderedRaw() : RenditionsStrings.renderedRawMaxQuality();
+  return rendition === 'full'
+    ? RenditionsStrings.renderedRaw()
+    : RenditionsStrings.renderedRawMaxQuality();
 }

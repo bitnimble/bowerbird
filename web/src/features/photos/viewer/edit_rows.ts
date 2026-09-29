@@ -46,7 +46,8 @@ export function editRows(doc: EditDoc, frame: Size | null): Row[] {
 
   EDIT_SLIDERS.forEach(slider);
 
-  if (doc.toneCurve != null) rows.push([ToneCurveEditorStrings.heading(), PhotoDetailStrings.edited()]);
+  if (doc.toneCurve != null)
+    rows.push([ToneCurveEditorStrings.heading(), PhotoDetailStrings.edited()]);
 
   // Only with the Kelvins that carry it: a sidecar names the camera's own mode ("Daylight")
   // beside no temperature at all, and the render then uses the as-shot multipliers - so the
@@ -58,11 +59,13 @@ export function editRows(doc: EditDoc, frame: Size | null): Row[] {
   if (doc.temperature != null) {
     rows.push([RawEditPanelStrings.temperature(), RawEditPanelStrings.kelvin(doc.temperature)]);
   }
-  if (doc.tint != null) rows.push([RawEditPanelStrings.tint(), reading(doc.tint, { min: -150, step: 1 })]);
+  if (doc.tint != null)
+    rows.push([RawEditPanelStrings.tint(), reading(doc.tint, { min: -150, step: 1 })]);
 
   // The pair below it correct nothing while the switch is off, so a document that turned it
   // off says that and stops.
-  if (!doc.dustRemoval) rows.push([RawEditPanelStrings.groupDustRemoval(), PhotoDetailStrings.dustRemovalOff()]);
+  if (!doc.dustRemoval)
+    rows.push([RawEditPanelStrings.groupDustRemoval(), PhotoDetailStrings.dustRemovalOff()]);
   else DUST.forEach(slider);
 
   if (doc.cropAngle !== 0) {
@@ -71,7 +74,8 @@ export function editRows(doc: EditDoc, frame: Size | null): Row[] {
       RawEditPanelStrings.degrees(reading(doc.cropAngle, { min: -45, step: 0.05 })),
     ]);
   }
-  if (doc.rotate !== 0) rows.push([PhotoDetailStrings.rotate(), RawEditPanelStrings.degrees(String(doc.rotate))]);
+  if (doc.rotate !== 0)
+    rows.push([PhotoDetailStrings.rotate(), RawEditPanelStrings.degrees(String(doc.rotate))]);
   // Rounded before the comparison, not after: a rectangle fitted out of a straighten comes
   // back a hair under the full frame, and an unrounded test calls that a crop of 100%.
   const width = percent(doc.cropRight - doc.cropLeft);

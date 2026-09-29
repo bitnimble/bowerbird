@@ -29,7 +29,12 @@ export function PanoramaDemo(): JSX.Element {
       <img {...stylex.props(styles.panorama)} src={PANORAMA_PHOTO} alt={DEMO.panorama.alt} />
       <div {...stylex.props(styles.frames)}>
         {PANORAMA_FRAMES.map((frame, at) => (
-          <img key={frame} {...stylex.props(styles.frame)} src={frame} alt={DEMO.panorama.frame(at)} />
+          <img
+            key={frame}
+            {...stylex.props(styles.frame)}
+            src={frame}
+            alt={DEMO.panorama.frame(at)}
+          />
         ))}
       </div>
     </Demo>

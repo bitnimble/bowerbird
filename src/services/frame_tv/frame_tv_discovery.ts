@@ -5,7 +5,10 @@ import type { FrameTv } from '../../schemas/frame_tv';
 const SSDP_ADDRESS = '239.255.255.250';
 const SSDP_PORT = 1900;
 // DIAL as well as Samsung's own: some firmware answers only one of the two.
-const SEARCH_TARGETS = ['urn:samsung.com:device:RemoteControlReceiver:1', 'urn:dial-multiscreen-org:service:dial:1'];
+const SEARCH_TARGETS = [
+  'urn:samsung.com:device:RemoteControlReceiver:1',
+  'urn:dial-multiscreen-org:service:dial:1',
+];
 const SEARCH_MS = 2000;
 const DESCRIBE_TIMEOUT_MS = 2000;
 
@@ -56,7 +59,9 @@ function searchHosts(): Promise<string[]> {
 
 async function describe(host: string): Promise<FrameTv | null> {
   try {
-    const response = await fetch(`http://${host}:8001/api/v2/`, { signal: AbortSignal.timeout(DESCRIBE_TIMEOUT_MS) });
+    const response = await fetch(`http://${host}:8001/api/v2/`, {
+      signal: AbortSignal.timeout(DESCRIBE_TIMEOUT_MS),
+    });
     return frameTvFrom(host, await response.json());
   } catch {
     return null;

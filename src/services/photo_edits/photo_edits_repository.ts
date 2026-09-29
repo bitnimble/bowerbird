@@ -53,7 +53,15 @@ export class PhotoEditsRepository {
   checkpoint(photoId: string): EditCheckpoint {
     const row = this.row(photoId);
     if (row == null) {
-      return { doc: neutralEdits(), rev: 0, canUndo: false, canRedo: false, cursor: 0, history: [], stamp: null };
+      return {
+        doc: neutralEdits(),
+        rev: 0,
+        canUndo: false,
+        canRedo: false,
+        cursor: 0,
+        history: [],
+        stamp: null,
+      };
     }
     const history = this.history(photoId);
     // Bounded by the history that is actually there, not just by the cursor. A
@@ -79,15 +87,20 @@ export class PhotoEditsRepository {
    * it redoes to.
    */
   save(photoId: string, doc: EditDoc, rev: number, session?: string): EditState {
-    return this.write(photoId, rev, (current, history, cursor) => {
-      const delta = diffEdits(current, doc);
-      if (delta == null) return null;
-      // The redo tail goes first: a new edit after an undo is a new branch, and
-      // the steps it replaces are no longer reachable.
-      const kept = [...history.slice(0, cursor), delta];
-      const capped = kept.slice(Math.max(0, kept.length - MAX_EDIT_HISTORY));
-      return { doc, history: capped, cursor: capped.length };
-    }, session);
+    return this.write(
+      photoId,
+      rev,
+      (current, history, cursor) => {
+        const delta = diffEdits(current, doc);
+        if (delta == null) return null;
+        // The redo tail goes first: a new edit after an undo is a new branch, and
+        // the steps it replaces are no longer reachable.
+        const kept = [...history.slice(0, cursor), delta];
+        const capped = kept.slice(Math.max(0, kept.length - MAX_EDIT_HISTORY));
+        return { doc, history: capped, cursor: capped.length };
+      },
+      session,
+    );
   }
 
   undo(photoId: string, rev: number): EditState {
@@ -109,8 +122,18 @@ export class PhotoEditsRepository {
     });
   }
 
-  restore(photoId: string, rev: number, checkpoint: Pick<EditCheckpoint, 'doc' | 'cursor' | 'history'>, session: string): EditState {
-    return this.write(photoId, rev, () => ({ doc: checkpoint.doc, history: checkpoint.history, cursor: checkpoint.cursor }), session);
+  restore(
+    photoId: string,
+    rev: number,
+    checkpoint: Pick<EditCheckpoint, 'doc' | 'cursor' | 'history'>,
+    session: string,
+  ): EditState {
+    return this.write(
+      photoId,
+      rev,
+      () => ({ doc: checkpoint.doc, history: checkpoint.history, cursor: checkpoint.cursor }),
+      session,
+    );
   }
 
   /**
@@ -206,7 +229,10 @@ export class PhotoEditsRepository {
    * of it". Undo and redo carry no session of their own and continue the one that
    * is there, being steps inside the same open editor.
    */
-  private lineage(row: Row | null, session: string | undefined): { session: string | null; chain: SessionHop[] } {
+  private lineage(
+    row: Row | null,
+    session: string | undefined,
+  ): { session: string | null; chain: SessionHop[] } {
     const held = row?.session_id ?? null;
     const chain = parseChain(row?.chain);
     if (session == null || session === held) return { session: held, chain };
@@ -216,7 +242,9 @@ export class PhotoEditsRepository {
 
   private row(photoId: string): Row | null {
     return this.db
-      .query('SELECT doc, cursor, rev, session_id, chain, stamp FROM photo_edits WHERE photo_id = ?')
+      .query(
+        'SELECT doc, cursor, rev, session_id, chain, stamp FROM photo_edits WHERE photo_id = ?',
+      )
       .get(photoId) as Row | null;
   }
 

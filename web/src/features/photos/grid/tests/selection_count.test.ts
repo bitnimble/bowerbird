@@ -44,7 +44,9 @@ test('a stack row counts for every photograph in it', () => {
 test('members of a selected stack are not counted twice', () => {
   const { marks: s, stacks } = stores();
   s.selection = SelectionRanges.of(1, 1);
-  stacks.expansions = new Map([['stack-1', { stackId: 'stack-1', position: 1, photos: [row('m0'), row('m1'), row('m2')] }]]);
+  stacks.expansions = new Map([
+    ['stack-1', { stackId: 'stack-1', position: 1, photos: [row('m0'), row('m1'), row('m2')] }],
+  ]);
   s.selectedMembers = new Set(['m1']);
   expect(s.selectionCount).toBe(3);
 });
@@ -52,7 +54,9 @@ test('members of a selected stack are not counted twice', () => {
 test('members picked out of a band whose row is not selected count on their own', () => {
   const { marks: s, stacks } = stores();
   s.selection = SelectionRanges.of(0, 0);
-  stacks.expansions = new Map([['stack-1', { stackId: 'stack-1', position: 1, photos: [row('m0'), row('m1'), row('m2')] }]]);
+  stacks.expansions = new Map([
+    ['stack-1', { stackId: 'stack-1', position: 1, photos: [row('m0'), row('m1'), row('m2')] }],
+  ]);
   s.selectedMembers = new Set(['m1']);
   expect(s.selectionCount).toBe(2);
 });
@@ -65,7 +69,7 @@ test('rows the client is not holding count one apiece', () => {
 
 // What the bulk bar's verdict and stars light up from, and so what pressing one
 // would clear rather than set.
-test('the marks are the selection\'s only where every photograph in it carries the same one', () => {
+test("the marks are the selection's only where every photograph in it carries the same one", () => {
   const { listing, marks: s } = stores();
   listing.rows = new Map([
     [0, row('a', null, { triage: 'picked', rating: 3 })],
@@ -96,7 +100,14 @@ test('a member picked out of a band carries its marks into the answer', () => {
   listing.rows = new Map([[0, row('a', null, { triage: 'picked', rating: 2 })]]);
   s.selection = SelectionRanges.of(0, 0);
   stacks.expansions = new Map([
-    ['stack-1', { stackId: 'stack-1', position: 1, photos: [row('m0', null, { triage: 'picked', rating: 5 })] }],
+    [
+      'stack-1',
+      {
+        stackId: 'stack-1',
+        position: 1,
+        photos: [row('m0', null, { triage: 'picked', rating: 5 })],
+      },
+    ],
   ]);
   s.selectedMembers = new Set(['m0']);
   expect(s.selectedMarks).toEqual({ triage: 'picked', rating: null });
@@ -306,7 +317,10 @@ test('the banner is the first selected photograph in listing order', () => {
   // A member hangs off the row its stack sits at, which is above the row picked here.
   s.selection = SelectionRanges.of(2, 2);
   stacks.expansions = new Map([
-    ['stack-1', { stackId: 'stack-1', position: 1, photos: [row('m0', { id: 'stack-1', size: 1 })] }],
+    [
+      'stack-1',
+      { stackId: 'stack-1', position: 1, photos: [row('m0', { id: 'stack-1', size: 1 })] },
+    ],
   ]);
   s.selectedMembers = new Set(['m0']);
   expect(s.firstSelectedPhotoId).toBe('m0');

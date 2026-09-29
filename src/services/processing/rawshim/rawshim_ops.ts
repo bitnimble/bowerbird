@@ -43,7 +43,11 @@ const HEADER = {
 } as const;
 
 /** `header::SEQUENCE_*`. */
-const SEQUENCE_KINDS: Record<number, CaptureSequenceKind> = { 1: 'pixelShift', 2: 'exposureBracket', 3: 'focusBracket' };
+const SEQUENCE_KINDS: Record<number, CaptureSequenceKind> = {
+  1: 'pixelShift',
+  2: 'exposureBracket',
+  3: 'focusBracket',
+};
 
 function sequenceOf(view: DataView): CaptureSequence | null {
   const kind = SEQUENCE_KINDS[view.getUint32(HEADER.sequenceKind, true)];
@@ -77,7 +81,9 @@ export function readHeaderFields(filePath: string): RawHeaderFields {
   const S = shim();
   const size = Number(S.bb_header_size());
   if (size !== HEADER.size) {
-    throw new Error(`BbHeader is ${size} bytes but this reader assumes ${HEADER.size}; the offsets here need updating`);
+    throw new Error(
+      `BbHeader is ${size} bytes but this reader assumes ${HEADER.size}; the offsets here need updating`,
+    );
   }
 
   const raw = new Uint8Array(size);
@@ -191,7 +197,8 @@ export function extractEmbedded(filePath: string, rotate = 0): Buffer | null {
   // Uninitialised, because the pages this never writes are never touched: a 90MB
   // bound zeroed on every request would cost more than the extraction.
   const out = Buffer.allocUnsafe(stats.size);
-  const extract = (buffer: Buffer): number => Number(shim().bb_extract_embedded(path, rotate, ptr(buffer), buffer.byteLength));
+  const extract = (buffer: Buffer): number =>
+    Number(shim().bb_extract_embedded(path, rotate, ptr(buffer), buffer.byteLength));
   const written = extract(out);
   if (written === -2) throw new Error('rawshim could not tag the preview orientation');
   if (written < 0) throw new Error(`rawshim could not read the preview of ${filePath}`);

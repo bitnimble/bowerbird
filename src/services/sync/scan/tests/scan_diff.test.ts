@@ -5,7 +5,12 @@ import type { DbPhoto, DiskFile, LibraryDiff } from '../scan_diff';
 
 const META = {} as FileMetadata;
 const disk = (filePath: string, hash: string): DiskFile => ({ filePath, hash, metadata: META });
-const db = (id: string, file_path: string, file_hash: string | null, is_missing = false): DbPhoto => ({
+const db = (
+  id: string,
+  file_path: string,
+  file_hash: string | null,
+  is_missing = false,
+): DbPhoto => ({
   id,
   file_path,
   file_hash,
@@ -24,7 +29,9 @@ describe('buildDiff', () => {
       [disk('b.arw', 'hX'), disk('d.arw', 'h4')],
     );
     expect(diff.removed.map((r) => r.photoId)).toEqual(['p3']);
-    expect(diff.modified.map((m) => [m.photoId, m.oldHash, m.newHash])).toEqual([['p2', 'h2', 'hX']]);
+    expect(diff.modified.map((m) => [m.photoId, m.oldHash, m.newHash])).toEqual([
+      ['p2', 'h2', 'hX'],
+    ]);
     expect(diff.added.map((a) => a.filePath)).toEqual(['d.arw']);
     expect(diff.reappeared).toEqual([]);
   });
@@ -37,7 +44,12 @@ describe('buildDiff', () => {
   });
 
   it('leaves a present-but-unreadable (extract-failed) missing file untouched, not reappeared', () => {
-    const diff = buildDiff([db('p1', 'a.arw', 'h1', true)], present('a.arw'), [], new Set(['a.arw']));
+    const diff = buildDiff(
+      [db('p1', 'a.arw', 'h1', true)],
+      present('a.arw'),
+      [],
+      new Set(['a.arw']),
+    );
     expect(diff.reappeared).toEqual([]);
     expect(diff.removed).toEqual([]);
     expect(diff.modified).toEqual([]);
@@ -46,9 +58,13 @@ describe('buildDiff', () => {
 
 describe('detectMoves', () => {
   it('pairs a removed and added file with the same hash as one move', () => {
-    const diff = buildDiff([db('p1', 'old/a.arw', 'h1')], present('new/a.arw'), [disk('new/a.arw', 'h1')]);
+    const diff = buildDiff([db('p1', 'old/a.arw', 'h1')], present('new/a.arw'), [
+      disk('new/a.arw', 'h1'),
+    ]);
     const result = detectMoves(diff, noAlbums);
-    expect(result.moves).toEqual([{ photoId: 'p1', oldFilePath: 'old/a.arw', newFilePath: 'new/a.arw', fileHash: 'h1' }]);
+    expect(result.moves).toEqual([
+      { photoId: 'p1', oldFilePath: 'old/a.arw', newFilePath: 'new/a.arw', fileHash: 'h1' },
+    ]);
     expect(result.added).toEqual([]);
     expect(result.removed).toEqual([]);
   });
@@ -73,8 +89,20 @@ describe('detectMoves', () => {
   it('album bias: keeps the album member as the move, non-album as the removal', () => {
     const diff: LibraryDiff = {
       removed: [
-        { photoId: 'notInAlbum', filePath: 'x1.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
-        { photoId: 'inAlbum', filePath: 'x2.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
+        {
+          photoId: 'notInAlbum',
+          filePath: 'x1.arw',
+          fileHash: 'h',
+          wasMissing: false,
+          channel: 'live',
+        },
+        {
+          photoId: 'inAlbum',
+          filePath: 'x2.arw',
+          fileHash: 'h',
+          wasMissing: false,
+          channel: 'live',
+        },
       ],
       added: [{ filePath: 'y.arw', fileHash: 'h', metadata: META, channel: 'live' }],
       modified: [],
@@ -88,9 +116,27 @@ describe('detectMoves', () => {
   it('modified+added-with-old-hash: the addition becomes a new photo, not a move', () => {
     // A modified in place (h1 -> h2); B added carrying the original h1.
     const diff: LibraryDiff = {
-      removed: [{ photoId: 'pRemoved', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false, channel: 'live' }],
+      removed: [
+        {
+          photoId: 'pRemoved',
+          filePath: 'gone.arw',
+          fileHash: 'h1',
+          wasMissing: false,
+          channel: 'live',
+        },
+      ],
       added: [{ filePath: 'B.arw', fileHash: 'h1', metadata: META, channel: 'live' }],
-      modified: [{ photoId: 'pA', filePath: 'A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false, channel: 'live' }],
+      modified: [
+        {
+          photoId: 'pA',
+          filePath: 'A.arw',
+          oldHash: 'h1',
+          newHash: 'h2',
+          metadata: META,
+          wasMissing: false,
+          channel: 'live',
+        },
+      ],
       reappeared: [],
     };
     const result = detectMoves(diff, noAlbums);
@@ -105,12 +151,24 @@ describe('detectMoves', () => {
     // P1 modified h1->h2; two files carry h1: one is the relocated original (a new
     // photo), the other is the move destination of removed P2.
     const diff: LibraryDiff = {
-      removed: [{ photoId: 'p2', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false, channel: 'live' }],
+      removed: [
+        { photoId: 'p2', filePath: 'gone.arw', fileHash: 'h1', wasMissing: false, channel: 'live' },
+      ],
       added: [
         { filePath: 'B.arw', fileHash: 'h1', metadata: META, channel: 'live' },
         { filePath: 'C.arw', fileHash: 'h1', metadata: META, channel: 'live' },
       ],
-      modified: [{ photoId: 'p1', filePath: 'A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false, channel: 'live' }],
+      modified: [
+        {
+          photoId: 'p1',
+          filePath: 'A.arw',
+          oldHash: 'h1',
+          newHash: 'h2',
+          metadata: META,
+          wasMissing: false,
+          channel: 'live',
+        },
+      ],
       reappeared: [],
     };
     const result = detectMoves(diff, noAlbums);
@@ -128,7 +186,13 @@ describe('detectMoves', () => {
     const diff: LibraryDiff = {
       removed: [
         { photoId: 'live', filePath: 'a.arw', fileHash: 'h', wasMissing: false, channel: 'live' },
-        { photoId: 'binnedInAlbum', filePath: 'Bin/a.arw', fileHash: 'h', wasMissing: false, channel: 'bin' },
+        {
+          photoId: 'binnedInAlbum',
+          filePath: 'Bin/a.arw',
+          fileHash: 'h',
+          wasMissing: false,
+          channel: 'bin',
+        },
       ],
       added: [{ filePath: 'moved/a.arw', fileHash: 'h', metadata: META, channel: 'live' }],
       modified: [],
@@ -142,7 +206,15 @@ describe('detectMoves', () => {
 
   it('reads a pair whose halves disagree on channel as a crossing, not a move', () => {
     const diff: LibraryDiff = {
-      removed: [{ photoId: 'p1', filePath: 'Trip/a.arw', fileHash: 'h', wasMissing: false, channel: 'live' }],
+      removed: [
+        {
+          photoId: 'p1',
+          filePath: 'Trip/a.arw',
+          fileHash: 'h',
+          wasMissing: false,
+          channel: 'live',
+        },
+      ],
       added: [{ filePath: 'Bin/Trip/a.arw', fileHash: 'h', metadata: META, channel: 'bin' }],
       modified: [],
       reappeared: [],
@@ -158,12 +230,20 @@ describe('detectMoves', () => {
 
   // A bin-side modification consuming a live addition would leave the relocated
   // original unimported.
-  it('reserves a modified file\'s old hash within its own channel', () => {
+  it("reserves a modified file's old hash within its own channel", () => {
     const diff: LibraryDiff = {
       removed: [],
       added: [{ filePath: 'B.arw', fileHash: 'h1', metadata: META, channel: 'live' }],
       modified: [
-        { photoId: 'binned', filePath: 'Bin/A.arw', oldHash: 'h1', newHash: 'h2', metadata: META, wasMissing: false, channel: 'bin' },
+        {
+          photoId: 'binned',
+          filePath: 'Bin/A.arw',
+          oldHash: 'h1',
+          newHash: 'h2',
+          metadata: META,
+          wasMissing: false,
+          channel: 'bin',
+        },
       ],
       reappeared: [],
     };
@@ -172,8 +252,12 @@ describe('detectMoves', () => {
   });
 
   it('matches a previously-missing record against a reappearance at a new path', () => {
-    const diff = buildDiff([db('p1', 'old.arw', 'h1', true)], present('new.arw'), [disk('new.arw', 'h1')]);
+    const diff = buildDiff([db('p1', 'old.arw', 'h1', true)], present('new.arw'), [
+      disk('new.arw', 'h1'),
+    ]);
     const result = detectMoves(diff, noAlbums);
-    expect(result.moves).toEqual([{ photoId: 'p1', oldFilePath: 'old.arw', newFilePath: 'new.arw', fileHash: 'h1' }]);
+    expect(result.moves).toEqual([
+      { photoId: 'p1', oldFilePath: 'old.arw', newFilePath: 'new.arw', fileHash: 'h1' },
+    ]);
   });
 });

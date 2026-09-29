@@ -131,7 +131,9 @@ export const TriageQueue = observer(function TriageQueue({
               >
                 {a != null && <img src={thumbnail(a)} alt="" {...stylex.props(styles.thumbnail)} />}
                 {b != null && <img src={thumbnail(b)} alt="" {...stylex.props(styles.thumbnail)} />}
-                <Text variant="muted">{choices.find((choice) => choice.verdict === entry.choice)?.label ?? ''}</Text>
+                <Text variant="muted">
+                  {choices.find((choice) => choice.verdict === entry.choice)?.label ?? ''}
+                </Text>
               </button>
             );
           })}
@@ -155,7 +157,9 @@ export const TriageQueue = observer(function TriageQueue({
             </div>
           );
         })}
-        {store.upcomingOverflow > 0 && <Text variant="muted">{StackTriageStrings.andMore(store.upcomingOverflow)}</Text>}
+        {store.upcomingOverflow > 0 && (
+          <Text variant="muted">{StackTriageStrings.andMore(store.upcomingOverflow)}</Text>
+        )}
       </div>
     </PopoverButton>
   );

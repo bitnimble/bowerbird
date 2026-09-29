@@ -16,7 +16,11 @@ fn main() {
         let (x, y) = spec.split_once(',').expect("x,y");
         (x.parse().expect("a column"), y.parse().expect("a row"))
     });
-    assert_eq!(paths.len(), 4, "pixel_shift_probe wants the burst's four frames, then optionally x,y");
+    assert_eq!(
+        paths.len(),
+        4,
+        "pixel_shift_probe wants the burst's four frames, then optionally x,y"
+    );
     let mut frames: Vec<(u32, rawler::RawImage)> = paths
         .iter()
         .map(|path| {
@@ -25,7 +29,10 @@ fn main() {
         })
         .collect();
     frames.sort_by_key(|(shot, _)| *shot);
-    println!("shots {:?}", frames.iter().map(|(shot, _)| *shot).collect::<Vec<_>>());
+    println!(
+        "shots {:?}",
+        frames.iter().map(|(shot, _)| *shot).collect::<Vec<_>>()
+    );
 
     let first = &frames[0].1;
     let (width, height) = (first.width, first.height);
@@ -43,7 +50,12 @@ fn main() {
 
     let mut scored: Vec<((f64, f64), [(i32, i32); 4])> = candidates()
         .into_iter()
-        .map(|shifts| (disagreement(&samples, cfa, width, top, left, &shifts), shifts))
+        .map(|shifts| {
+            (
+                disagreement(&samples, cfa, width, top, left, &shifts),
+                shifts,
+            )
+        })
         .collect();
     scored.sort_by(|a, b| a.0.1.total_cmp(&b.0.1));
     for ((p90, mean_square), shifts) in scored.iter().take(8) {
@@ -55,7 +67,10 @@ fn main() {
     let reference = block_luma(samples[0], width, top, left);
     for (frame, frame_samples) in samples.iter().enumerate().skip(1) {
         let (dy, dx) = displacement(&reference, &block_luma(frame_samples, width, top, left));
-        println!("frame {} sits ({dy:+.2}, {dx:+.2}) photosites from the first", frame + 1);
+        println!(
+            "frame {} sits ({dy:+.2}, {dx:+.2}) photosites from the first",
+            frame + 1
+        );
     }
     println!("search prior SHIFTS {:?}", rawshim::pixel_shift::SHIFTS);
 }
@@ -110,7 +125,10 @@ fn displacement(reference: &[f64], frame: &[f64]) -> (f64, f64) {
     let mut fine = coarse;
     for qy in -8..=8 {
         for qx in -8..=8 {
-            let (dy, dx) = (coarse.1 + f64::from(qy) / 8.0, coarse.2 + f64::from(qx) / 8.0);
+            let (dy, dx) = (
+                coarse.1 + f64::from(qy) / 8.0,
+                coarse.2 + f64::from(qx) / 8.0,
+            );
             let sum = cost(dy, dx);
             if sum < fine.0 {
                 fine = (sum, dy, dx);
@@ -125,10 +143,20 @@ fn displacement(reference: &[f64], frame: &[f64]) -> (f64, f64) {
 fn candidates() -> Vec<[(i32, i32); 4]> {
     let steps = |parity: (i32, i32)| -> Vec<(i32, i32)> {
         let along = |moves: i32| if moves == 1 { vec![-1, 1] } else { vec![0] };
-        along(parity.0).into_iter().flat_map(|dy| along(parity.1).into_iter().map(move |dx| (dy, dx))).collect()
+        along(parity.0)
+            .into_iter()
+            .flat_map(|dy| along(parity.1).into_iter().map(move |dx| (dy, dx)))
+            .collect()
     };
     let parities = [(0, 1), (1, 0), (1, 1)];
-    let orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    let orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
     let mut out = Vec::new();
     for order in orders {
         for a in steps(parities[order[0]]) {

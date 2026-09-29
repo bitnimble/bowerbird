@@ -26,7 +26,9 @@ async function labelNames(page: Page): Promise<string[]> {
     .map((label) => label.name);
 }
 
-test('a label made in the viewer stays on the photo across a reload, and comes off', async ({ page }) => {
+test('a label made in the viewer stays on the photo across a reload, and comes off', async ({
+  page,
+}) => {
   await gotoPhoto(page, LABEL_PHOTOS_DIR);
   await showMetadata(page);
   await expect(page.getByRole('group', { name: 'Info', exact: true })).toBeVisible();
@@ -78,7 +80,9 @@ test('the edit dialog reorders labels by dragging them', async ({ page }) => {
   expect(await labelNames(page)).toEqual(['Sea', 'Keeper', 'Sky']);
 });
 
-test('a question asked over the edit dialog closes alone, and its answer acts', async ({ page }) => {
+test('a question asked over the edit dialog closes alone, and its answer acts', async ({
+  page,
+}) => {
   await gotoPhoto(page, LABEL_PHOTOS_DIR);
   await showMetadata(page);
   await labelsRow(page).getByRole('button', { name: 'Add label' }).click();

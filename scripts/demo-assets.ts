@@ -56,7 +56,8 @@ import { runJob } from '../src/services/processing/rawshim/rawshim_job';
 function rawFor(slug: string): string {
   const variable = `BOWERBIRD_DEMO_${slug.toUpperCase().replaceAll('-', '_')}`;
   const path = process.env[variable];
-  if (path == null || path === '') throw new Error(`${variable} must name the raw to build ${slug} from`);
+  if (path == null || path === '')
+    throw new Error(`${variable} must name the raw to build ${slug} from`);
   return path;
 }
 
@@ -168,11 +169,17 @@ function target(slug: string): JobTarget {
 
 function run(command: string, args: string[], stdin?: NodeJS.ReadableStream): Promise<void> {
   return new Promise((ok, fail) => {
-    const child = spawn(command, args, { stdio: [stdin == null ? 'ignore' : 'pipe', 'ignore', 'pipe'] });
+    const child = spawn(command, args, {
+      stdio: [stdin == null ? 'ignore' : 'pipe', 'ignore', 'pipe'],
+    });
     const err: Buffer[] = [];
     child.stderr?.on('data', (chunk: Buffer) => err.push(chunk));
     child.on('error', fail);
-    child.on('close', (code) => (code === 0 ? ok() : fail(new Error(`${command} exited ${code}: ${Buffer.concat(err).toString()}`))));
+    child.on('close', (code) =>
+      code === 0
+        ? ok()
+        : fail(new Error(`${command} exited ${code}: ${Buffer.concat(err).toString()}`)),
+    );
     stdin?.pipe(child.stdin!);
   });
 }
@@ -187,16 +194,44 @@ function run(command: string, args: string[], stdin?: NodeJS.ReadableStream): Pr
  */
 async function clipToWhite(slug: string, wide = true): Promise<void> {
   const input = wide ? 'pin=bt2020:min=bt2020nc' : 'pin=bt709:min=bt709';
-  const ffmpeg = spawn('ffmpeg', [
-    '-y', '-hide_banner', '-loglevel', 'error',
-    '-i', outputPath(slug, true),
-    '-vf',
-    `zscale=tin=smpte2084:${input}:npl=${SETTINGS.hdr_reference_white_nits}:t=iec61966-2-1:p=bt709:m=bt709:r=limited`,
-    '-pix_fmt', SETTINGS.sdr_full_chroma ? 'yuv444p' : 'yuv420p',
-    '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
-  ], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const ffmpeg = spawn(
+    'ffmpeg',
+    [
+      '-y',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      outputPath(slug, true),
+      '-vf',
+      `zscale=tin=smpte2084:${input}:npl=${SETTINGS.hdr_reference_white_nits}:t=iec61966-2-1:p=bt709:m=bt709:r=limited`,
+      '-pix_fmt',
+      SETTINGS.sdr_full_chroma ? 'yuv444p' : 'yuv420p',
+      '-f',
+      'yuv4mpegpipe',
+      '-strict',
+      '-1',
+      '-',
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
   const quantizer = String(encoderQuality('avif-sdr', SETTINGS.full_rendition_quality));
-  await run('avifenc', ['--stdin', '--cicp', '1/13/1', '--min', quantizer, '--max', quantizer, '-s', '4', outputPath(slug, false)], ffmpeg.stdout);
+  await run(
+    'avifenc',
+    [
+      '--stdin',
+      '--cicp',
+      '1/13/1',
+      '--min',
+      quantizer,
+      '--max',
+      quantizer,
+      '-s',
+      '4',
+      outputPath(slug, false),
+    ],
+    ffmpeg.stdout,
+  );
 }
 
 // The swatch strip that opens the page, which is not a photograph and not a scene.
@@ -315,7 +350,12 @@ const TO_2020 = [
  * it is the same colour stated in the wider space.
  */
 function whitePoint(colour: [number, number, number]): number {
-  return 1 / Math.max(...TO_2020.map((row) => row[0]! * colour[0]! + row[1]! * colour[1]! + row[2]! * colour[2]!));
+  return (
+    1 /
+    Math.max(
+      ...TO_2020.map((row) => row[0]! * colour[0]! + row[1]! * colour[1]! + row[2]! * colour[2]!),
+    )
+  );
 }
 
 /**
@@ -327,7 +367,9 @@ function whitePoint(colour: [number, number, number]): number {
  * khaki and the blues to a grey-green, which is not what any JPEG has ever done.
  */
 function toRec2020(colour: number[], scale: number): number[] {
-  return TO_2020.map((row) => (row[0]! * colour[0]! + row[1]! * colour[1]! + row[2]! * colour[2]!) * scale);
+  return TO_2020.map(
+    (row) => (row[0]! * colour[0]! + row[1]! * colour[1]! + row[2]! * colour[2]!) * scale,
+  );
 }
 
 function swatchFrame(): Float32Array {
@@ -350,7 +392,11 @@ function swatchFrame(): Float32Array {
       const srgb = colour.map((level) => (eightBit ? Math.min(level * step, 1) : level * step));
       const wide = toRec2020(srgb, scale);
       const at = y * SWATCH_WIDTH + x;
-      for (const [channel, plane] of [[0, 2], [1, 0], [2, 1]] as const) {
+      for (const [channel, plane] of [
+        [0, 2],
+        [1, 0],
+        [2, 1],
+      ] as const) {
         out[plane * pixels + at] = wide[channel]!;
       }
     }
@@ -399,18 +445,56 @@ function contentLight(samples: Float32Array): string {
  * cheaper than being the only file here that no other browser has seen before.
  */
 async function buildSwatches(): Promise<void> {
-  const ffmpeg = spawn('ffmpeg', [
-    '-y', '-hide_banner', '-loglevel', 'error',
-    '-f', 'rawvideo', '-pix_fmt', 'gbrpf32le', '-s', `${SWATCH_WIDTH}x${SWATCH_HEIGHT}`, '-i', '-',
-    '-vf',
-    `zscale=pin=bt2020:tin=linear:min=bt2020nc:p=bt2020:m=bt2020nc:r=limited:t=smpte2084:npl=${SETTINGS.hdr_reference_white_nits}`,
-    '-pix_fmt', 'yuv420p10le',
-    '-f', 'yuv4mpegpipe', '-strict', '-1', '-',
-  ], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const ffmpeg = spawn(
+    'ffmpeg',
+    [
+      '-y',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'gbrpf32le',
+      '-s',
+      `${SWATCH_WIDTH}x${SWATCH_HEIGHT}`,
+      '-i',
+      '-',
+      '-vf',
+      `zscale=pin=bt2020:tin=linear:min=bt2020nc:p=bt2020:m=bt2020nc:r=limited:t=smpte2084:npl=${SETTINGS.hdr_reference_white_nits}`,
+      '-pix_fmt',
+      'yuv420p10le',
+      '-f',
+      'yuv4mpegpipe',
+      '-strict',
+      '-1',
+      '-',
+    ],
+    { stdio: ['pipe', 'pipe', 'inherit'] },
+  );
   const samples = swatchFrame();
-  Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
+  Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(
+    ffmpeg.stdin!,
+  );
   const out = join(OUT, 'swatches.avif');
-  await run('avifenc', ['--stdin', '--cicp', '9/16/9', '--clli', contentLight(samples), '--min', '0', '--max', '0', '-s', '4', out], ffmpeg.stdout!);
+  await run(
+    'avifenc',
+    [
+      '--stdin',
+      '--cicp',
+      '9/16/9',
+      '--clli',
+      contentLight(samples),
+      '--min',
+      '0',
+      '--max',
+      '0',
+      '-s',
+      '4',
+      out,
+    ],
+    ffmpeg.stdout!,
+  );
   console.error(`[demo-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
 }
 
@@ -430,7 +514,9 @@ async function buildColour(): Promise<void> {
   const raw = rawFor(COLOUR);
   for (const profile of ['matched', 'none'] as const) {
     renderSrgb(raw, colourPath(profile), profile, profile === 'none' ? NEUTRAL_EXPOSURE : null);
-    console.error(`[demo-assets] colour ${profile}: ${(Bun.file(colourPath(profile)).size / 1024).toFixed(0)}kB`);
+    console.error(
+      `[demo-assets] colour ${profile}: ${(Bun.file(colourPath(profile)).size / 1024).toFixed(0)}kB`,
+    );
   }
 }
 
@@ -475,15 +561,24 @@ async function buildPanorama(): Promise<void> {
   // set aligned again, as `CompositesService.aligned` does it.
   for (const photoId of aligned.lensless) {
     const source = sources.find((each) => each.photoId === photoId)!;
-    const fit = runJob({ ...job, rawFilePath: source.rawFilePath, cameraMatch: 'lensAndColour', measure: true, targets: [] });
-    if (fit.photoAnalysis == null) throw new Error(`nothing could fit the lens ${source.rawFilePath} was shot on`);
+    const fit = runJob({
+      ...job,
+      rawFilePath: source.rawFilePath,
+      cameraMatch: 'lensAndColour',
+      measure: true,
+      targets: [],
+    });
+    if (fit.photoAnalysis == null)
+      throw new Error(`nothing could fit the lens ${source.rawFilePath} was shot on`);
     source.photoAnalysis = Array.from(fit.photoAnalysis);
   }
   if (aligned.lensless.length > 0) aligned = align(job, sources);
 
   const { recipe, dropped, lensless } = aligned;
-  if (dropped.length > 0) throw new Error(`the align left ${dropped.join(', ')} out of the panorama`);
-  if (lensless.length > 0) throw new Error(`the lens ${lensless.join(', ')} was shot on is still unfitted`);
+  if (dropped.length > 0)
+    throw new Error(`the align left ${dropped.join(', ')} out of the panorama`);
+  if (lensless.length > 0)
+    throw new Error(`the lens ${lensless.join(', ')} was shot on is still unfitted`);
 
   const out = join(LANDING_OUT, 'panorama.avif');
   runJob({
@@ -492,7 +587,12 @@ async function buildPanorama(): Promise<void> {
     // merge trims them: the align's own crop, on the field every render already takes.
     geometry: { ...AS_METERED.geometry, crop: recipe.crop },
     targets: [
-      { ...target('panorama'), output: 'srgb', outputPath: out, size: canvasLongEdgeFor(recipe, PANORAMA_EDGE) },
+      {
+        ...target('panorama'),
+        output: 'srgb',
+        outputPath: out,
+        size: canvasLongEdgeFor(recipe, PANORAMA_EDGE),
+      },
     ],
     composite: { want: 'render', recipe: { ...recipe, kind: 'panorama' }, sources },
   });
@@ -505,7 +605,11 @@ async function buildPanorama(): Promise<void> {
 }
 
 function align(job: Omit<Job, 'targets'>, sources: JobCompositeSource[]): Aligned {
-  const answered = runJob({ ...job, targets: [], composite: { want: 'align', shape: 'pan', sources } });
+  const answered = runJob({
+    ...job,
+    targets: [],
+    composite: { want: 'align', shape: 'pan', sources },
+  });
   if (answered.composite == null) throw new Error('the panorama frames did not align');
   return AlignedSchema.parse(JSON.parse(answered.composite));
 }
@@ -586,12 +690,17 @@ async function build(scene: string): Promise<void> {
     // second step leaves the first behind - and these outputs are committed, where a
     // half-built pair is a picture the page shows against one it does not. The worker
     // cleans up for the same reason (`processing_worker.ts`).
-    for (const hdr of [false, true]) await Bun.file(outputPath(scene, hdr)).delete().catch(() => {});
+    for (const hdr of [false, true])
+      await Bun.file(outputPath(scene, hdr))
+        .delete()
+        .catch(() => {});
     throw failure;
   }
 
   const sizes = [false, true].map((hdr) => Bun.file(outputPath(scene, hdr)).size);
-  console.error(`[demo-assets] ${scene}: ${(sizes[0]! / 1024).toFixed(0)}kB SDR, ${(sizes[1]! / 1024).toFixed(0)}kB HDR`);
+  console.error(
+    `[demo-assets] ${scene}: ${(sizes[0]! / 1024).toFixed(0)}kB SDR, ${(sizes[1]! / 1024).toFixed(0)}kB HDR`,
+  );
 }
 
 const asked = process.argv.slice(2);

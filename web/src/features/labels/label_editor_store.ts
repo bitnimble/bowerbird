@@ -39,14 +39,21 @@ export class LabelEditorStore {
     const named = (draft: DraftLabel): string => draft.name.trim().toLowerCase();
     return new Set(
       this.drafts
-        .filter((draft) => renamed(draft) && this.drafts.some((other) => other.key !== draft.key && named(other) === named(draft)))
+        .filter(
+          (draft) =>
+            renamed(draft) &&
+            this.drafts.some((other) => other.key !== draft.key && named(other) === named(draft)),
+        )
         .map((draft) => draft.key),
     );
   }
 
   @computed get canSave(): boolean {
     return (
-      this.dirty && !this.saving && this.duplicates.size === 0 && this.drafts.every((draft) => draft.name.trim() !== '')
+      this.dirty &&
+      !this.saving &&
+      this.duplicates.size === 0 &&
+      this.drafts.every((draft) => draft.name.trim() !== '')
     );
   }
 }

@@ -13,7 +13,8 @@ describe('LibrariesApi', () => {
   describe('the folder tree and the shoots put away', () => {
     function withTree(): { root: string; drop: () => void } {
       const root = mkdtempSync(path.join(tmpdir(), 'bowerbird-folders-'));
-      for (const folder of ['Trip', 'Trip/Day one', 'Other']) mkdirSync(path.join(root, folder), { recursive: true });
+      for (const folder of ['Trip', 'Trip/Day one', 'Other'])
+        mkdirSync(path.join(root, folder), { recursive: true });
       return { root, drop: () => rmSync(root, { recursive: true, force: true }) };
     }
 
@@ -32,7 +33,9 @@ describe('LibrariesApi', () => {
       const { root, drop } = withTree();
       try {
         const { app, shoots } = appOver(root, ['Trip']);
-        const res = await app.request(route(PathSegment.api(), PathSegment.libraries(), LIBRARY_ID, PathSegment.folders()));
+        const res = await app.request(
+          route(PathSegment.api(), PathSegment.libraries(), LIBRARY_ID, PathSegment.folders()),
+        );
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual(['Other']);
         expect(shoots.hiddenFolders).toHaveBeenCalledWith(LIBRARY_ID);

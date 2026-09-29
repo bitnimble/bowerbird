@@ -1,7 +1,12 @@
 import { action } from 'mobx';
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { describe } from '../../../errors';
-import { STORED_LONG, storedLoop, storedSize, type Repair } from '../../../../../src/schemas/stored_grid';
+import {
+  STORED_LONG,
+  storedLoop,
+  storedSize,
+  type Repair,
+} from '../../../../../src/schemas/stored_grid';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import { RawEditPanelStrings } from '../raw_edit_panel.strings';
 import type { LocalDecoder } from '../local_decode/local_decoder';
@@ -108,12 +113,17 @@ export class RepairPresenter {
     const seams = doc.repairs.map((repair) => repair.seam);
     const shown = this.store.repairShownAt == null ? null : doc.repairs[this.store.repairShownAt];
     const source =
-      shown == null ? [] : shown.seam.map(([x, y]): [number, number] => [x + shown.donor[0], y + shown.donor[1]]);
+      shown == null
+        ? []
+        : shown.seam.map(([x, y]): [number, number] => [x + shown.donor[0], y + shown.donor[1]]);
     const asked = JSON.stringify([geometry, seams, source]);
     if (asked === this.outlinesOf) return;
     this.outlinesOf = asked;
     const grid = storedSize(this.stage.width, this.stage.height);
-    const points = [...seams.flat(), ...source].map(([x, y]): [number, number] => [x / grid.width, y / grid.height]);
+    const points = [...seams.flat(), ...source].map(([x, y]): [number, number] => [
+      x / grid.width,
+      y / grid.height,
+    ]);
     local.decoder.outputOfPicture(geometry, points).then(
       action((mapped: [number, number][]) => {
         if (this.host.closed() || this.outlinesOf !== asked) return;
@@ -125,7 +135,10 @@ export class RepairPresenter {
         this.store.repairOutlines = seams.map((seam) => seam.map(next));
         this.store.repairSourceOutline = shown == null ? null : source.map(next);
         this.outlined = new Map(
-          seams.map((seam, index) => [outlineKey(geometry, seam), this.store.repairOutlines[index] ?? []]),
+          seams.map((seam, index) => [
+            outlineKey(geometry, seam),
+            this.store.repairOutlines[index] ?? [],
+          ]),
         );
         void this.followThumbnails();
       }),
@@ -191,7 +204,8 @@ export class RepairPresenter {
     const repairs = this.edit.doc?.repairs ?? [];
     for (const [index, key] of this.store.repairKeys.entries()) {
       const repair = repairs[index];
-      const outline = repair == null ? undefined : this.outlined.get(outlineKey(geometry, repair.seam));
+      const outline =
+        repair == null ? undefined : this.outlined.get(outlineKey(geometry, repair.seam));
       if (repair == null || outline == null || outline.length === 0) continue;
       if (this.store.repairThumbnails.has(key) || this.thumbnailRefused.has(key)) continue;
       const onOutput = outline.map(({ x, y }) => ({ x: x * output.width, y: y * output.height }));
@@ -247,7 +261,10 @@ export class RepairPresenter {
           option,
         );
         if (this.host.closed() || this.offers !== offer) return;
-        this.keepOptionThumbnail(index, { url: URL.createObjectURL(png), seam: seams[index] ?? [] });
+        this.keepOptionThumbnail(index, {
+          url: URL.createObjectURL(png),
+          seam: seams[index] ?? [],
+        });
       } catch {
         // Its number stands in for it.
       }
@@ -256,7 +273,10 @@ export class RepairPresenter {
 
   @action.bound
   private keepOptionThumbnail(index: number, thumbnail: RepairThumbnail): void {
-    this.store.repairOptionThumbnails = new Map([...this.store.repairOptionThumbnails, [index, thumbnail]]);
+    this.store.repairOptionThumbnails = new Map([
+      ...this.store.repairOptionThumbnails,
+      [index, thumbnail],
+    ]);
   }
 
   @action.bound
@@ -279,7 +299,8 @@ export class RepairPresenter {
       URL.revokeObjectURL(url);
       return false;
     });
-    if (kept.length !== this.store.repairThumbnails.size) this.store.repairThumbnails = new Map(kept);
+    if (kept.length !== this.store.repairThumbnails.size)
+      this.store.repairThumbnails = new Map(kept);
   }
 
   /** The loop whose fills are on offer, and where they would go. */
@@ -515,7 +536,10 @@ export class RepairPresenter {
     this.moves += 1;
     const grid = storedSize(this.stage.width, this.stage.height);
     const [[fx, fy] = [0, 0], [tx, ty] = [0, 0]] = ends;
-    const by: [number, number] = [Math.round((tx - fx) * grid.width), Math.round((ty - fy) * grid.height)];
+    const by: [number, number] = [
+      Math.round((tx - fx) * grid.width),
+      Math.round((ty - fy) * grid.height),
+    ];
     if (part === 'fill') {
       const fill = movedFill(shown, by, grid);
       this.fillMoved = true;
@@ -524,7 +548,11 @@ export class RepairPresenter {
       const choice = this.store.repairChoice;
       const source = movedSource(shown, by, grid);
       const options = this.store.repairOptions ?? [];
-      this.place(at, options.map((option, index) => (index === choice ? source : option)), choice);
+      this.place(
+        at,
+        options.map((option, index) => (index === choice ? source : option)),
+        choice,
+      );
     }
     this.solveAtRest();
   }
@@ -611,14 +639,21 @@ export class RepairPresenter {
         if (this.host.closed()) return;
         if (missing != null) await this.host.rewindow();
       }
-      const offered = await local.decoder.solveRepair(drawn, at.base, this.store.repairGrows, showing, donor);
+      const offered = await local.decoder.solveRepair(
+        drawn,
+        at.base,
+        this.store.repairGrows,
+        showing,
+        donor,
+      );
       if (local.onTheBackend) await local.decoder.setSearched(null, null);
       if (this.host.closed() || this.moves !== move) return;
       if (placed == null) this.offer(offered, at);
       else if (placed.kept == null) this.settleMoved(offered[0]);
       else this.offer(offered, at, placed.kept);
     } catch (error) {
-      if (!this.host.closed() && this.moves === move && placed == null) this.refuse(describe(error), at);
+      if (!this.host.closed() && this.moves === move && placed == null)
+        this.refuse(describe(error), at);
     } finally {
       this.setSolving(false);
     }
@@ -633,7 +668,11 @@ export class RepairPresenter {
     if (solved == null || at == null || options == null || moved == null) return;
     const choice = this.store.repairChoice;
     const settled = { ...solved, feather: moved.feather };
-    this.place(at, options.map((option, index) => (index === choice ? settled : option)), choice);
+    this.place(
+      at,
+      options.map((option, index) => (index === choice ? settled : option)),
+      choice,
+    );
   }
 
   /** Solves out, which can overlap: a loop's, and a moved fill's still landing. */
@@ -665,7 +704,9 @@ export class RepairPresenter {
             kept,
             ...solved
               .filter((option) => !sameFill(option, kept))
-              .map((option) => (kept.feather == null ? option : { ...option, feather: kept.feather })),
+              .map((option) =>
+                kept.feather == null ? option : { ...option, feather: kept.feather },
+              ),
           ];
     if (options.length === 0) {
       this.refuse(RawEditPanelStrings.nothingToFillFrom(), at);
@@ -707,7 +748,12 @@ export class RepairPresenter {
  * the document's repairs, the repairs either side of it, and the repair it stands in for where the
  * reader has reopened one.
  */
-type RepairAt = { drawn: [number, number][]; index: number; base: Repair[]; replaced: Repair | null };
+type RepairAt = {
+  drawn: [number, number][];
+  index: number;
+  base: Repair[];
+  replaced: Repair | null;
+};
 
 /** The repairs as they were before `at`'s loop: with the repair it reopened, where it did. */
 function unoffered(at: RepairAt): Repair[] {
@@ -720,14 +766,26 @@ function spliced(repairs: readonly Repair[], index: number, repair: Repair): Rep
 }
 
 /** How far `points` may move along one axis of a grid `extent` steps long and all stay on it. */
-function withinGrid(points: readonly (readonly [number, number])[], axis: 0 | 1, by: number, extent: number): number {
+function withinGrid(
+  points: readonly (readonly [number, number])[],
+  axis: 0 | 1,
+  by: number,
+  extent: number,
+): number {
   const at = points.map((point) => point[axis]);
   return Math.min(Math.max(by, -Math.min(...at)), extent - Math.max(...at));
 }
 
 /** `repair`'s donor moved `by` steps, as far as keeps where it reads from on the picture. */
-function movedSource(repair: Repair, by: [number, number], grid: { width: number; height: number }): Repair {
-  const read = repair.seam.map(([x, y]): [number, number] => [x + repair.donor[0], y + repair.donor[1]]);
+function movedSource(
+  repair: Repair,
+  by: [number, number],
+  grid: { width: number; height: number },
+): Repair {
+  const read = repair.seam.map(([x, y]): [number, number] => [
+    x + repair.donor[0],
+    y + repair.donor[1],
+  ]);
   return {
     ...repair,
     donor: [
@@ -741,10 +799,15 @@ function movedSource(repair: Repair, by: [number, number], grid: { width: number
  * `repair` moved `by` steps, as far as keeps it on the picture, still reading its fill from where
  * it did - and so its donor moved back by as much.
  */
-function movedFill(repair: Repair, by: [number, number], grid: { width: number; height: number }): Repair {
+function movedFill(
+  repair: Repair,
+  by: [number, number],
+  grid: { width: number; height: number },
+): Repair {
   const all = [...repair.drawn, ...repair.seam];
   const [dx, dy] = [withinGrid(all, 0, by[0], grid.width), withinGrid(all, 1, by[1], grid.height)];
-  const moved = (points: Repair['seam']): Repair['seam'] => points.map(([x, y]) => [x + dx, y + dy]);
+  const moved = (points: Repair['seam']): Repair['seam'] =>
+    points.map(([x, y]) => [x + dx, y + dy]);
   return {
     ...repair,
     drawn: moved(repair.drawn),
@@ -757,9 +820,19 @@ function movedFill(repair: Repair, by: [number, number], grid: { width: number; 
 function squareAround(points: readonly Point[]): Region {
   const xs = points.map(({ x }) => x);
   const ys = points.map(({ y }) => y);
-  const [left, right, top, bottom] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const [left, right, top, bottom] = [
+    Math.min(...xs),
+    Math.max(...xs),
+    Math.min(...ys),
+    Math.max(...ys),
+  ];
   const side = Math.max(right - left, bottom - top, 1) * REPAIR_THUMBNAIL_MARGIN;
-  return { x: (left + right) / 2 - side / 2, y: (top + bottom) / 2 - side / 2, width: side, height: side };
+  return {
+    x: (left + right) / 2 - side / 2,
+    y: (top + bottom) / 2 - side / 2,
+    width: side,
+    height: side,
+  };
 }
 
 /** `point` of the output as fractions of `region`. */

@@ -60,7 +60,10 @@ const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/.pmrid
 /// them at all ([`crate::wasm::hold_pmrid_weights`]).
 #[cfg(not(target_arch = "wasm32"))]
 fn weights() -> Option<&'static [u8]> {
-    Some(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.pmrid/weights.bin")))
+    Some(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/.pmrid/weights.bin"
+    )))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -121,7 +124,10 @@ struct Net {
 
 impl Net {
     fn at(&self, name: &str) -> usize {
-        *self.offsets.get(name).unwrap_or_else(|| panic!("the weights hold {name}"))
+        *self
+            .offsets
+            .get(name)
+            .unwrap_or_else(|| panic!("the weights hold {name}"))
     }
 
     fn plane(&mut self, channels: usize, level: u32) -> usize {
@@ -192,7 +198,10 @@ impl Net {
     /// writes a third to do what the convolution could have done as it stored. Folded, the tensor
     /// between them never exists.
     fn add(&mut self, input: usize, skip: usize, relu: bool) -> usize {
-        let last = self.layers.last_mut().expect("a residual follows something");
+        let last = self
+            .layers
+            .last_mut()
+            .expect("a residual follows something");
         let shaped = self.tensors[input].channels == self.tensors[skip].channels
             && self.tensors[input].level == self.tensors[skip].level;
         // **The producing layer must not rectify its own output first.** A decoder stage's
@@ -292,7 +301,11 @@ impl Net {
 
 /// The network of `models/net_torch.py`, as the layers this shader dispatches.
 fn build(offsets: HashMap<String, usize>) -> (Net, usize) {
-    let mut net = Net { tensors: Vec::new(), layers: Vec::new(), offsets };
+    let mut net = Net {
+        tensors: Vec::new(),
+        layers: Vec::new(),
+        offsets,
+    };
     let input = net.plane(4, 0);
 
     let conv0 = net.dense(input, "conv0.conv", 16, 3, 1, true);
@@ -394,8 +407,13 @@ const STEP: usize = 16;
 /// network's planes run from 262144 pixels down to 1024, so a tile wide enough to carry the shallow
 /// layers leaves eight workgroups across at the deepest ones, and a tile tall enough for 512 output
 /// channels does most of its work on rows a 16-channel layer does not have.
-const TILES: [(usize, usize, usize); 5] =
-    [(5, 32, 128), (6, 16, 128), (7, 32, 64), (8, 32, 32), (9, 16, 64)];
+const TILES: [(usize, usize, usize); 5] = [
+    (5, 32, 128),
+    (6, 16, 128),
+    (7, 32, 64),
+    (8, 32, 32),
+    (9, 16, 64),
+];
 
 /// `tile_wide` in `slang/pmrid.slang`: how many pixels across a separable tile of `columns` is.
 fn tile_wide(columns: usize) -> usize {
@@ -524,7 +542,9 @@ struct Coop {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Pmrid> {
     static BUILT: std::sync::OnceLock<Option<Pmrid>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Some(build_kernels(gpu, weights()?, Arm::Matrix))).as_ref()
+    BUILT
+        .get_or_init(|| Some(build_kernels(gpu, weights()?, Arm::Matrix)))
+        .as_ref()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -559,7 +579,9 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], fastest:
         })
         .collect();
     let (net, prediction) = build(offsets);
-    let coop = (fastest == Arm::Matrix).then(|| coop_kernels(gpu, &net, weights)).flatten();
+    let coop = (fastest == Arm::Matrix)
+        .then(|| coop_kernels(gpu, &net, weights))
+        .flatten();
     let device = gpu.describing();
     let arm = match coop {
         Some(_) => Arm::Matrix,
@@ -655,7 +677,16 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], fastest:
         Arm::Float => std::mem::size_of::<f32>(),
         Arm::Matrix | Arm::Half => std::mem::size_of::<half::f16>(),
     };
-    Pmrid { arm, layout, pipelines, weights: held, coop, net, prediction, cell }
+    Pmrid {
+        arm,
+        layout,
+        pipelines,
+        weights: held,
+        coop,
+        net,
+        prediction,
+        cell,
+    }
 }
 
 /// `slang/pmrid.slang` as WGSL, holding its arena in `half` or in `float` ([`Pmrid::cell`]).
@@ -680,12 +711,15 @@ fn forward_pass(half: bool) -> &'static str {
 fn passthrough(
     backend: wgpu::Backend,
 ) -> Option<(wgpu::ShaderModuleDescriptorPassthrough<'static>, usize)> {
-    let mut handed =
-        wgpu::ShaderModuleDescriptorPassthrough { label: Some("pmrid coop"), ..Default::default() };
+    let mut handed = wgpu::ShaderModuleDescriptorPassthrough {
+        label: Some("pmrid coop"),
+        ..Default::default()
+    };
     match backend {
         wgpu::Backend::Metal => {
-            handed.msl =
-                Some(include_str!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.metal")).into());
+            handed.msl = Some(
+                include_str!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.metal")).into(),
+            );
             Some((handed, METAL_FRAGMENT))
         }
         wgpu::Backend::Vulkan => {
@@ -774,8 +808,11 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, net: &Net, weights: &[u8]) -> Option<Coop
             })
             .collect()
     };
-    let (separable, pointwise, upsample) =
-        (pipelines("separable"), pipelines("pointwise"), pipelines("upsample"));
+    let (separable, pointwise, upsample) = (
+        pipelines("separable"),
+        pipelines("pointwise"),
+        pipelines("upsample"),
+    );
 
     let (packed, weights_at) = coop_weights(net, weights, fragment);
     let mut recording = gpu.record();
@@ -786,7 +823,15 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, net: &Net, weights: &[u8]) -> Option<Coop
     });
     recording.submit();
 
-    Some(Coop { layout, separable, pointwise, upsample, weights: held, weights_at, fragment })
+    Some(Coop {
+        layout,
+        separable,
+        pointwise,
+        upsample,
+        weights: held,
+        weights_at,
+        fragment,
+    })
 }
 
 /// The pointwise weights in `half`, each layer's held a fragment at a time, and where each one is.
@@ -805,7 +850,9 @@ fn coop_weights(net: &Net, weights: &[u8], fragment: usize) -> (Vec<u16>, Vec<us
         // A 1x1's weights are `[out][in]` already; an upsample's are `[in][out][2][2]`, and its
         // rows are `(out, tap)` ([`Matrix`]).
         let (rows, weight): (usize, &dyn Fn(usize, usize) -> usize) = match layer.op {
-            Op::Upsample => (out_c * 4, &|row, cell| (cell * out_c + row / 4) * 4 + row % 4),
+            Op::Upsample => (out_c * 4, &|row, cell| {
+                (cell * out_c + row / 4) * 4 + row % 4
+            }),
             _ if as_matrix(layer, net) => (out_c, &|row, cell| row * depth + cell),
             _ => continue,
         };
@@ -1033,7 +1080,9 @@ fn window(gpu: &crate::gpu::Gpu, pmrid: &Pmrid, width: usize, height: usize) -> 
         packed * cells as u64 <= most
     };
     let (widths, heights) = (spans(width), spans(height));
-    let tried = widths.iter().flat_map(|across| heights.iter().map(move |down| (across, down)));
+    let tried = widths
+        .iter()
+        .flat_map(|across| heights.iter().map(move |down| (across, down)));
     tried
         .filter(|((across, _), (down, _))| binds(*across, *down))
         .min_by_key(|((across, wide), (down, tall))| across * wide * down * tall)
@@ -1049,7 +1098,9 @@ fn spans(extent: usize) -> Vec<(usize, usize)> {
     let widest = (even(extent) / site).max(1) * site;
     let mut spans: Vec<(usize, usize)> = (1..=extent.div_ceil(site))
         .map(|count| {
-            let window = (extent.div_ceil(count) + 2 * HALO).next_multiple_of(site).min(widest);
+            let window = (extent.div_ceil(count) + 2 * HALO)
+                .next_multiple_of(site)
+                .min(widest);
             (window, tiles(extent, window).len())
         })
         .collect();
@@ -1124,7 +1175,10 @@ struct Kept<K, T> {
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 impl<K: PartialEq, T> Kept<K, T> {
     const fn new() -> Kept<K, T> {
-        Kept { holds: 0, idle: Vec::new() }
+        Kept {
+            holds: 0,
+            idle: Vec::new(),
+        }
     }
 
     fn release(&mut self) {
@@ -1157,7 +1211,8 @@ static KEPT: std::sync::Mutex<Kept<(usize, usize, Arm), Session>> =
 
 #[cfg(not(target_arch = "wasm32"))]
 fn kept() -> std::sync::MutexGuard<'static, Kept<(usize, usize, Arm), Session>> {
-    KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    KEPT.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Keeps each frame's arena for the next frame of its size, until every hold is released: for a
@@ -1238,7 +1293,12 @@ impl Session {
             mapped_at_creation: false,
         });
         let matrices: Vec<Option<Matrix>> = (0..net.layers.len())
-            .map(|index| pmrid.coop.as_ref().and_then(|coop| matrix(net, coop, index, pw, ph)))
+            .map(|index| {
+                pmrid
+                    .coop
+                    .as_ref()
+                    .and_then(|coop| matrix(net, coop, index, pw, ph))
+            })
             .collect();
         let tiles: Vec<usize> = net
             .layers
@@ -1332,7 +1392,10 @@ impl Session {
                             binding: 0,
                             resource: pmrid.weights.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry { binding: 1, resource: self.arena.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.arena.as_entire_binding(),
+                        },
                         wgpu::BindGroupEntry {
                             binding: 2,
                             resource: mosaic.buffer.as_entire_binding(),
@@ -1341,8 +1404,14 @@ impl Session {
                             binding: 3,
                             resource: filtered.buffer.as_entire_binding(),
                         },
-                        wgpu::BindGroupEntry { binding: 20, resource: uniform.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 21, resource: self.edges.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 20,
+                            resource: uniform.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 21,
+                            resource: self.edges.as_entire_binding(),
+                        },
                     ],
                 })
             })
@@ -1355,8 +1424,14 @@ impl Session {
                 label: Some("pmrid coop"),
                 layout: &coop.layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: coop.weights.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.arena.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: coop.weights.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.arena.as_entire_binding(),
+                    },
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: pmrid.weights.as_entire_binding(),
@@ -1375,7 +1450,8 @@ impl Session {
         pw: usize,
         ph: usize,
     ) {
-        gpu.queue.write_buffer(&self.edges, 0, bytemuck::bytes_of(edges));
+        gpu.queue
+            .write_buffer(&self.edges, 0, bytemuck::bytes_of(edges));
         let net = &pmrid.net;
         let mut recording = gpu.record();
         recording.holding(&self.arena);
@@ -1397,8 +1473,14 @@ impl Session {
                     continue;
                 }
                 if let Some(matrix) = self.matrices[at] {
-                    let coop = pmrid.coop.as_ref().expect("a matrix means the kernels are built");
-                    let group = self.coop_group.as_ref().expect("and a group to dispatch them in");
+                    let coop = pmrid
+                        .coop
+                        .as_ref()
+                        .expect("a matrix means the kernels are built");
+                    let group = self
+                        .coop_group
+                        .as_ref()
+                        .expect("and a group to dispatch them in");
                     let (width, height) = (pw >> output.level, ph >> output.level);
                     let mut shape = Shape {
                         rows: output.channels as u32,
@@ -1423,20 +1505,28 @@ impl Session {
                             shape.kernel = spread.kernel as u32;
                             shape.stride = spread.stride as u32;
                             shape.spread_at = spread.weights_at as u32;
-                            let tiles =
-                                (width.div_ceil(SEPARABLE_WIDE), height.div_ceil(SEPARABLE_TALL));
+                            let tiles = (
+                                width.div_ceil(SEPARABLE_WIDE),
+                                height.div_ceil(SEPARABLE_TALL),
+                            );
                             (&coop.separable[rows], tiles, rows)
                         }
-                        Matrix::Pointwise(rows) => {
-                            (&coop.pointwise[rows], (width * height / POINTWISE_PIXELS, 1), rows)
-                        }
+                        Matrix::Pointwise(rows) => (
+                            &coop.pointwise[rows],
+                            (width * height / POINTWISE_PIXELS, 1),
+                            rows,
+                        ),
                         Matrix::Upsample(rows) => {
                             let (width, height) = (pw >> input.level, ph >> input.level);
                             shape.rows = output.channels as u32 * 4;
                             shape.columns = (width * height) as u32;
                             shape.in_width = width as u32;
                             shape.in_height = height as u32;
-                            (&coop.upsample[rows], (width * height / POINTWISE_PIXELS, 1), rows)
+                            (
+                                &coop.upsample[rows],
+                                (width * height / POINTWISE_PIXELS, 1),
+                                rows,
+                            )
                         }
                     };
                     pass.set_bind_group(0, group, &[]);
@@ -1511,7 +1601,13 @@ impl Session {
 /// kernel.
 fn spatial(layer: &Layer, net: &Net) -> usize {
     let (input, output) = (net.tensors[layer.input], net.tensors[layer.output]);
-    let shape = (layer.kernel, layer.stride, layer.pad, input.channels, output.channels);
+    let shape = (
+        layer.kernel,
+        layer.stride,
+        layer.pad,
+        input.channels,
+        output.channels,
+    );
     match shape {
         (3, 1, 1, 4, 16) => SPATIAL_16,
         (3, 1, 1, 16, 4) => SPATIAL_4,
@@ -1626,7 +1722,11 @@ mod tests {
         assert_eq!(kept.take(shape), Some('a'));
         kept.put(shape, 'a');
         kept.put(other, 'b');
-        assert_eq!(kept.take(shape), None, "a shape no longer rendered is still held");
+        assert_eq!(
+            kept.take(shape),
+            None,
+            "a shape no longer rendered is still held"
+        );
 
         kept.release();
         assert_eq!(kept.take(other), Some('b'), "freed while a hold remains");
@@ -1667,7 +1767,12 @@ mod tests {
         .expect("the shader is beside its host");
         let mut marked: Vec<usize> = source
             .lines()
-            .filter_map(|line| line.strip_prefix("DISPATCHED(")?.strip_suffix(')')?.parse().ok())
+            .filter_map(|line| {
+                line.strip_prefix("DISPATCHED(")?
+                    .strip_suffix(')')?
+                    .parse()
+                    .ok()
+            })
             .collect();
         let mut held = super::COOP_ROWS.to_vec();
         marked.sort_unstable();
@@ -1695,7 +1800,9 @@ mod tests {
     /// never written.
     #[test]
     fn a_photosite_is_denoised_once() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let network = super::device(gpu).expect("the network built");
         let height = 256;
         let tile = 1024;
@@ -1751,8 +1858,10 @@ mod tests {
 
         let width = 1000;
         let narrow = denoised(width, super::window(gpu, network, width, height));
-        let (inside, edge) =
-            (spread(&narrow, width, 100, 500), spread(&narrow, width, width - 64, width - 8));
+        let (inside, edge) = (
+            spread(&narrow, width, 100, 500),
+            spread(&narrow, width, width - 64, width - 8),
+        );
         assert!(
             (edge / inside - 1.0).abs() < 0.1,
             "the last columns keep {edge:.2e} of noise where the rest keeps {inside:.2e}",
@@ -1762,7 +1871,9 @@ mod tests {
     /// A frame denoised in an arena another frame left behind comes out as it does in a new one.
     #[test]
     fn a_kept_arena_denoises_what_a_new_one_does() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let network = super::device(gpu).expect("the network built");
         let (width, height) = (512, 256);
         let denoised = |seed: u64| {
@@ -1784,7 +1895,15 @@ mod tests {
             };
             let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
             let detail = crate::galosh::Detail::at(100.0, 100.0);
-            super::denoise(gpu, network, &mut mosaic, &cfa, [1.0, 1.0, 1.0], detail, fit);
+            super::denoise(
+                gpu,
+                network,
+                &mut mosaic,
+                &cfa,
+                [1.0, 1.0, 1.0],
+                detail,
+                fit,
+            );
             pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
         };
         let fresh = denoised(7);
@@ -1794,7 +1913,10 @@ mod tests {
         let reused = denoised(7);
         super::release_arenas();
 
-        assert!(fresh == reused, "the second frame read what the first left in its arena");
+        assert!(
+            fresh == reused,
+            "the second frame read what the first left in its arena"
+        );
     }
 
     /// What each arm costs over a whole photograph on this adapter, and how far apart their
@@ -1810,7 +1932,9 @@ mod tests {
     fn pmrid_arms_on_a_photograph() {
         use std::io::Write;
         const RUNS: usize = 5;
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let weights = super::weights().expect("the weights");
         let arms: Vec<(super::Arm, super::Pmrid)> =
             [super::Arm::Matrix, super::Arm::Half, super::Arm::Float]
@@ -1821,7 +1945,10 @@ mod tests {
         let mut report = std::io::stderr();
 
         super::hold_arenas();
-        for path in [crate::fixture_tests::sony(), crate::fixture_tests::clipped()] {
+        for path in [
+            crate::fixture_tests::sony(),
+            crate::fixture_tests::clipped(),
+        ] {
             let bytes = std::fs::read(&path).expect("the fixture reads");
             let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
             let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
@@ -1888,7 +2015,10 @@ mod tests {
                 }
             }
             let (arm, mean) = apart_most;
-            assert!(mean < 0.05, "{name}: {arm:?} is {mean:.4} codes from Float on average");
+            assert!(
+                mean < 0.05,
+                "{name}: {arm:?} is {mean:.4} codes from Float on average"
+            );
         }
         super::release_arenas();
     }
@@ -1931,7 +2061,9 @@ mod tests {
     /// own.
     #[test]
     fn every_arm_denoises_what_the_float_arm_does() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let weights = super::weights().expect("the weights");
         let float = super::build_kernels(gpu, weights, super::Arm::Float);
 
@@ -1959,7 +2091,15 @@ mod tests {
         let detail = crate::galosh::Detail::at(100.0, 100.0);
         let filtered = |kernels: &super::Pmrid| {
             let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
-            super::denoise(gpu, kernels, &mut mosaic, &cfa, [1.0, 1.0, 1.0], detail, fit);
+            super::denoise(
+                gpu,
+                kernels,
+                &mut mosaic,
+                &cfa,
+                [1.0, 1.0, 1.0],
+                detail,
+                fit,
+            );
             pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
         };
         let against = filtered(&float);
@@ -1975,7 +2115,11 @@ mod tests {
                 .map(|(a, b)| f64::from((a - b).abs()))
                 .fold(0.0, f64::max);
             // 0.08 on this frame, and a quarter of a code is the room another driver's rounding has.
-            assert!(worst * 255.0 < 0.25, "{arm:?} is {:.4} codes from Float", worst * 255.0);
+            assert!(
+                worst * 255.0 < 0.25,
+                "{arm:?} is {:.4} codes from Float",
+                worst * 255.0
+            );
         }
     }
 }

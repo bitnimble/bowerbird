@@ -128,7 +128,8 @@ class Sim {
     for (const b of mounted) {
       const was = this.topPhoto;
       this.presenter.measuredBlock(b, this.layout(b).height, WIDTH);
-      if (this.topPhoto !== was) this.moved.push(`block ${b} measured: photo ${was} -> ${this.topPhoto}`);
+      if (this.topPhoto !== was)
+        this.moved.push(`block ${b} measured: photo ${was} -> ${this.topPhoto}`);
     }
     this.scrollTop = this.store.rail.top;
     this.deliverRows();
@@ -206,9 +207,15 @@ function run({ blocks, latency, dy, steps, turn = steps }: Run): string[] {
     // much, which is the shapes arriving rather than the scroll slipping.
     const moved = heading > 0 ? now - was : was - now;
     if (step !== turn && was >= 0 && now >= 0 && (moved < -4 || moved > 40)) {
-      jumps.push(...sim.moved, `step ${step}: photo ${was} -> ${now}; rail ${sim.store.rail.top.toFixed(0)}`);
+      jumps.push(
+        ...sim.moved,
+        `step ${step}: photo ${was} -> ${now}; rail ${sim.store.rail.top.toFixed(0)}`,
+      );
     }
-    if (now < 0) jumps.push(`step ${step}: nothing is drawn at the top edge; rail ${sim.store.rail.top.toFixed(0)}`);
+    if (now < 0)
+      jumps.push(
+        `step ${step}: nothing is drawn at the top edge; rail ${sim.store.rail.top.toFixed(0)}`,
+      );
     was = now;
   }
   return jumps;
@@ -227,7 +234,8 @@ describe('scrolling masonry', () => {
           };
           for (const [name, spec] of Object.entries(cases)) {
             const jumps = run(spec);
-            if (jumps.length > 0) found[`${name}, blocks ${blocks} latency ${latency} dy ${dy}`] = jumps.slice(0, 4);
+            if (jumps.length > 0)
+              found[`${name}, blocks ${blocks} latency ${latency} dy ${dy}`] = jumps.slice(0, 4);
           }
         }
       }

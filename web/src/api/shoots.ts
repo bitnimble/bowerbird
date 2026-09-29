@@ -1,4 +1,9 @@
-import { type PhotoListResponse, PhotoListResponseSchema, type PhotoTarget, PhotoTargetSchema } from '../../../src/schemas/photos';
+import {
+  type PhotoListResponse,
+  PhotoListResponseSchema,
+  type PhotoTarget,
+  PhotoTargetSchema,
+} from '../../../src/schemas/photos';
 import { PathSegment, route } from '../../../src/schemas/route';
 import type { RequestActivity } from '../../../src/schemas/request_activity';
 import {
@@ -24,19 +29,38 @@ export const shootsApi = {
       'GET',
       `${route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.shoots())}${includeHidden ? '?include_hidden=true' : ''}`,
     ),
-  get: (id: string): Promise<Shoot> => request(ShootSchema, 'GET', route(PathSegment.api(), PathSegment.shoots(), id)),
+  get: (id: string): Promise<Shoot> =>
+    request(ShootSchema, 'GET', route(PathSegment.api(), PathSegment.shoots(), id)),
   create: (body: CreateShootRequest): Promise<Shoot> =>
-    request(ShootSchema, 'POST', route(PathSegment.api(), PathSegment.shoots()), CreateShootRequestSchema.parse(body)),
+    request(
+      ShootSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.shoots()),
+      CreateShootRequestSchema.parse(body),
+    ),
   update: (id: string, body: UpdateShootRequest): Promise<Shoot> =>
-    request(ShootSchema, 'PATCH', route(PathSegment.api(), PathSegment.shoots(), id), UpdateShootRequestSchema.parse(body)),
+    request(
+      ShootSchema,
+      'PATCH',
+      route(PathSegment.api(), PathSegment.shoots(), id),
+      UpdateShootRequestSchema.parse(body),
+    ),
   // How many photo records `photos: 'remove'` would take, counted by the server
   // with the same query the delete runs (§8.5).
   removal: (id: string): Promise<ShootRemoval> =>
-    request(ShootRemovalSchema, 'GET', route(PathSegment.api(), PathSegment.shoots(), id, PathSegment.removal())),
+    request(
+      ShootRemovalSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.shoots(), id, PathSegment.removal()),
+    ),
   // 'remove' takes the photo records and their renditions with the shoot; the
   // files on disk are untouched either way (§8.5).
   delete: (id: string, photos: 'keep' | 'remove'): Promise<void> =>
-    request(NothingSchema, 'DELETE', `${route(PathSegment.api(), PathSegment.shoots(), id)}?photos=${photos}`),
+    request(
+      NothingSchema,
+      'DELETE',
+      `${route(PathSegment.api(), PathSegment.shoots(), id)}?photos=${photos}`,
+    ),
   addPhotos: (id: string, target: PhotoTarget): Promise<void> =>
     request(
       NothingSchema,
@@ -51,7 +75,12 @@ export const shootsApi = {
       route(PathSegment.api(), PathSegment.shoots(), id, PathSegment.photos()),
       PhotoTargetSchema.parse(target),
     ),
-  listPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
+  listPhotos: (
+    id: string,
+    params: PhotoListParams,
+    signal?: AbortSignal,
+    activity?: RequestActivity,
+  ): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',

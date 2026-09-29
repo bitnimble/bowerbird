@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Build only these, comma-separated: docker, android, macos, windows. Empty builds everything."
+        description: 'Build only these, comma-separated: docker, android, macos, windows. Empty builds everything.'
         type: string
-        default: ""
+        default: ''
 
 # Read, for every job but the one that cuts the release. `publish` widens it for itself:
 # a build job that can write to the repository is a build job that can rewrite a tag.
@@ -412,7 +412,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: dtolnay/rust-toolchain@stable
         with:

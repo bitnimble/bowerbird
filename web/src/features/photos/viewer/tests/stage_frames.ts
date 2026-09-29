@@ -77,7 +77,11 @@ export function forgetFrames(): void {
 
 void mock.module('../stage_bitmaps', () => ({
   ...real,
-  decodeFrame: (source: string, _whole = false, activity: RequestActivity = 'interactive'): Promise<Frame> =>
+  decodeFrame: (
+    source: string,
+    _whole = false,
+    activity: RequestActivity = 'interactive',
+  ): Promise<Frame> =>
     new Promise<Frame>((resolve) => {
       activities.set(source, activity);
       const settle = (): void => {

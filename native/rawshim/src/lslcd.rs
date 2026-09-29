@@ -156,7 +156,12 @@ fn solve_design() -> Option<Vec<f64>> {
         let omega = (point as f64 + 0.5) * step;
         let phi = basis_at(omega);
         let want = target(omega);
-        let weight = step * if omega >= STOPBAND { STOPBAND_WEIGHT } else { 1.0 };
+        let weight = step
+            * if omega >= STOPBAND {
+                STOPBAND_WEIGHT
+            } else {
+                1.0
+            };
         for i in 0..TAPS {
             against[i] += phi[i] * want * weight;
             for j in 0..TAPS {
@@ -258,7 +263,13 @@ impl Lslcd {
         });
         let planes = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("lslcd planes"),
-            entries: &[uniform(0), storage(1, true), storage(2, false), storage(3, false), storage(4, false)],
+            entries: &[
+                uniform(0),
+                storage(1, true),
+                storage(2, false),
+                storage(3, false),
+                storage(4, false),
+            ],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -279,7 +290,11 @@ impl Lslcd {
                     // Every stage here runs on a 6x6 period and no other, so `mosaic.slang`'s
                     // modulo is a compile-time one.
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: crate::wgsl_overrides::for_entry("lslcd.wgsl", name, &xtrans.constants()),
+                        constants: crate::wgsl_overrides::for_entry(
+                            "lslcd.wgsl",
+                            name,
+                            &xtrans.constants(),
+                        ),
                         ..Default::default()
                     },
                     cache: None,
@@ -355,19 +370,36 @@ pub fn record(
         label: Some("lslcd planes"),
         layout: &lslcd.planes,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: taps.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: mid.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: chroma.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: rgb.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: taps.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: mid.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: chroma.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: rgb.as_entire_binding(),
+            },
         ],
     });
 
     {
-        let mut pass = recording.encoder().begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("lslcd"),
-            timestamp_writes: None,
-        });
+        let mut pass = recording
+            .encoder()
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("lslcd"),
+                timestamp_writes: None,
+            });
         pass.set_bind_group(0, shape_group, &[]);
         pass.set_bind_group(1, &plane_group, &[]);
         let groups_x = width.div_ceil(8) as u32;
@@ -381,7 +413,12 @@ pub fn record(
     }
 
     lap("record");
-    Some(crate::demosaic::Recorded { recording, rgb, width, height })
+    Some(crate::demosaic::Recorded {
+        recording,
+        rgb,
+        width,
+        height,
+    })
 }
 
 #[cfg(test)]
@@ -390,7 +427,11 @@ mod tests {
     use crate::cfa::tests::{XTRANS, parse};
 
     fn amplitude(taps: &[f32; TAPS], omega: f64) -> f64 {
-        basis_at(omega).iter().zip(taps).map(|(phi, tap)| phi * f64::from(*tap)).sum()
+        basis_at(omega)
+            .iter()
+            .zip(taps)
+            .map(|(phi, tap)| phi * f64::from(*tap))
+            .sum()
     }
 
     /// §3.2, which is what makes a carrier's leakage zero rather than small.
@@ -405,8 +446,14 @@ mod tests {
         let at = |basis: [f64; TAPS]| -> f64 {
             basis.iter().zip(&taps).map(|(phi, tap)| phi * tap).sum()
         };
-        assert!((at(basis_at(0.0)) - 1.0).abs() < 1e-12, "DC gain is exactly one");
-        assert!(at(basis_at(STOPBAND)).abs() < 1e-12, "the nearest carrier group");
+        assert!(
+            (at(basis_at(0.0)) - 1.0).abs() < 1e-12,
+            "DC gain is exactly one"
+        );
+        assert!(
+            at(basis_at(STOPBAND)).abs() < 1e-12,
+            "the nearest carrier group"
+        );
         assert!(at(basis_at(std::f64::consts::PI)).abs() < 1e-12, "the rest");
         assert!(
             at(slope_at(STOPBAND)).abs() < 1e-12,
@@ -469,17 +516,32 @@ mod tests {
         for cfa in [parse(XTRANS, 6, 6), Cfa::bayer([0, 1, 1, 2]).unwrap()] {
             let basis = Basis::of(&cfa).unwrap();
             let slots = cfa.slots() as f64;
-            let masks: Vec<(f64, f64)> =
-                (0..cfa.slots()).map(|i| basis.masks(cfa.colour_of_slot(i))).collect();
+            let masks: Vec<(f64, f64)> = (0..cfa.slots())
+                .map(|i| basis.masks(cfa.colour_of_slot(i)))
+                .collect();
             let mean1: f64 = masks.iter().map(|m| m.0).sum::<f64>() / slots;
             let mean2: f64 = masks.iter().map(|m| m.1).sum::<f64>() / slots;
             let cross: f64 = masks.iter().map(|m| m.0 * m.1).sum::<f64>() / slots;
             let square1: f64 = masks.iter().map(|m| m.0 * m.0).sum::<f64>() / slots;
             let square2: f64 = masks.iter().map(|m| m.1 * m.1).sum::<f64>() / slots;
-            assert!(mean1.abs() < 1e-12 && mean2.abs() < 1e-12, "neither mask carries DC");
-            assert!(cross.abs() < 1e-12, "the two estimates do not share a baseband term");
-            assert!((square1 - basis.k1).abs() < 1e-12, "{square1} != {}", basis.k1);
-            assert!((square2 - basis.k2).abs() < 1e-12, "{square2} != {}", basis.k2);
+            assert!(
+                mean1.abs() < 1e-12 && mean2.abs() < 1e-12,
+                "neither mask carries DC"
+            );
+            assert!(
+                cross.abs() < 1e-12,
+                "the two estimates do not share a baseband term"
+            );
+            assert!(
+                (square1 - basis.k1).abs() < 1e-12,
+                "{square1} != {}",
+                basis.k1
+            );
+            assert!(
+                (square2 - basis.k2).abs() < 1e-12,
+                "{square2} != {}",
+                basis.k2
+            );
         }
     }
 
@@ -517,7 +579,16 @@ mod tests {
         let cfa = parse(XTRANS, 6, 6);
         assert_eq!(
             carriers(&cfa, 0),
-            vec![(0, 2), (0, 4), (2, 0), (2, 2), (2, 4), (4, 0), (4, 2), (4, 4)]
+            vec![
+                (0, 2),
+                (0, 4),
+                (2, 0),
+                (2, 2),
+                (2, 4),
+                (4, 0),
+                (4, 2),
+                (4, 4)
+            ]
         );
         assert_eq!(carriers(&cfa, 1), vec![(1, 3), (3, 1), (3, 5), (5, 3)]);
     }

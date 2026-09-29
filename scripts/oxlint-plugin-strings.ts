@@ -97,7 +97,8 @@ interface Context {
   report(descriptor: { node: Node; message: string }): void;
 }
 
-const NEEDS_A_STRINGS_FILE = 'reads as text to the user; move it to the .strings.ts beside this component';
+const NEEDS_A_STRINGS_FILE =
+  'reads as text to the user; move it to the .strings.ts beside this component';
 
 /**
  * Whether a literal is something a reader reads, as opposed to something they see.
@@ -123,7 +124,10 @@ const schemaOf = (required: string[], optional: string[] = []): [Record<string, 
   {
     type: 'object',
     properties: Object.fromEntries(
-      [...required, ...optional].map((key) => [key, { type: 'array', items: { type: 'string' }, minItems: 1 }]),
+      [...required, ...optional].map((key) => [
+        key,
+        { type: 'array', items: { type: 'string' }, minItems: 1 },
+      ]),
     ),
     ...(required.length > 0 ? { required } : {}),
     additionalProperties: false,
@@ -232,9 +236,13 @@ export default {
         const check = (element: JsxElement): void => {
           for (const child of element.children) {
             const text =
-              child.type === 'JSXText' ? (isProse((child as JsxText).value) ? (child as JsxText).value : null)
-              : child.type === 'JSXExpressionContainer' ? proseText((child as JsxContainer).expression)
-              : null;
+              child.type === 'JSXText'
+                ? isProse((child as JsxText).value)
+                  ? (child as JsxText).value
+                  : null
+                : child.type === 'JSXExpressionContainer'
+                  ? proseText((child as JsxContainer).expression)
+                  : null;
             if (text == null) continue;
             context.report({ node: child, message: `"${text.trim()}" ${NEEDS_A_STRINGS_FILE}` });
           }
@@ -264,7 +272,9 @@ export default {
             if (name == null || !restricted.has(name)) return;
             const value = node.value;
             const text =
-              value?.type === 'JSXExpressionContainer' ? proseText((value as JsxContainer).expression) : proseText(value);
+              value?.type === 'JSXExpressionContainer'
+                ? proseText((value as JsxContainer).expression)
+                : proseText(value);
             report(value ?? node, name, text);
           },
           // `{...{ 'aria-label': 'Close' }}` reaches the same attribute by another road.

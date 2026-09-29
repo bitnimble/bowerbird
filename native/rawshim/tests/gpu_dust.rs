@@ -8,7 +8,7 @@
 //!
 //! Skipped where no Vulkan adapter answers, loudly rather than silently.
 
-use rawshim::dust::{self, Removal, Spot, BINS, SPAN};
+use rawshim::dust::{self, BINS, Removal, SPAN, Spot};
 
 /// A flat mosaic with one particle's shadow multiplied into it, in the shape a spot describes.
 ///
@@ -37,8 +37,8 @@ fn shadowed(width: usize, height: usize, spot: &Spot, level: f32) -> Vec<f32> {
         let along = (radius / SPAN * BINS as f32 - 0.5).clamp(0.0, (BINS - 1) as f32);
         let low = along.floor() as usize;
         let high = (low + 1).min(BINS - 1);
-        let dip = spot.profile[low]
-            + (spot.profile[high] - spot.profile[low]) * (along - along.floor());
+        let dip =
+            spot.profile[low] + (spot.profile[high] - spot.profile[low]) * (along - along.floor());
         *sample *= (-dip).exp();
     }
     samples
@@ -73,7 +73,10 @@ fn the_kernel_divides_the_shadow_it_was_given_back_out() {
     let before = shadowed(width, height, &spot, LEVEL);
     let centre = (spot.y as usize * 2) * width + spot.x as usize * 2;
     let deepest = 1.0 - before[centre] / LEVEL;
-    assert!(deepest > 0.10, "the planted shadow is only {deepest}, so nothing is being tested");
+    assert!(
+        deepest > 0.10,
+        "the planted shadow is only {deepest}, so nothing is being tested"
+    );
 
     let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, width, height);
     dust::correct(
@@ -81,7 +84,10 @@ fn the_kernel_divides_the_shadow_it_was_given_back_out() {
         dust::device(gpu),
         &mosaic,
         std::slice::from_ref(&spot),
-        Removal { sensitivity: 0.5, intensity: 1.0 },
+        Removal {
+            sensitivity: 0.5,
+            intensity: 1.0,
+        },
         (0, 0),
     );
     let after = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");
@@ -137,7 +143,10 @@ fn planted(sensor: &rawshim::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Ve
     for (at, sample) in samples.iter_mut().enumerate() {
         noise = noise.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         let grain = (noise >> 8) as f32 / (1 << 24) as f32 - 0.5;
-        let (x, y) = ((at % sensor.width) as f32 / 2.0, (at / sensor.width) as f32 / 2.0);
+        let (x, y) = (
+            (at % sensor.width) as f32 / 2.0,
+            (at / sensor.width) as f32 / 2.0,
+        );
         let dip: f32 = spots
             .iter()
             .map(|(cx, cy, radius, depth)| {
@@ -151,10 +160,7 @@ fn planted(sensor: &rawshim::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Ve
 }
 
 /// What the search makes of a planted frame, or None where no adapter answered.
-fn found(
-    sensor: &rawshim::dust::Sensor,
-    spots: &[(f32, f32, f32, f32)],
-) -> Option<Vec<Spot>> {
+fn found(sensor: &rawshim::dust::Sensor, spots: &[(f32, f32, f32, f32)]) -> Option<Vec<Spot>> {
     found_in(sensor, sensor, spots)
 }
 
@@ -166,8 +172,7 @@ fn found_in(
 ) -> Option<Vec<Spot>> {
     let gpu = rawshim::gpu::device()?;
     let samples = planted(plane, spots);
-    let mosaic =
-        rawshim::condition::Mosaic::upload(gpu, &samples, plane.width, plane.height);
+    let mosaic = rawshim::condition::Mosaic::upload(gpu, &samples, plane.width, plane.height);
     pollster::block_on(rawshim::dust::detect(gpu, &mosaic, sensor))
 }
 
@@ -177,7 +182,12 @@ fn a_particle_is_found_where_it_was_put() {
         eprintln!("SKIPPED: no adapter answered, so nothing was searched for.");
         return;
     };
-    assert_eq!(spots.len(), 1, "found {:?}", spots.iter().map(|s| (s.x, s.y)).collect::<Vec<_>>());
+    assert_eq!(
+        spots.len(),
+        1,
+        "found {:?}",
+        spots.iter().map(|s| (s.x, s.y)).collect::<Vec<_>>()
+    );
     let spot = &spots[0];
     assert!((spot.x - 180.0).abs() < 3.0, "x is {}", spot.x);
     assert!((spot.y - 220.0).abs() < 3.0, "y is {}", spot.y);
@@ -185,11 +195,22 @@ fn a_particle_is_found_where_it_was_put() {
     // The profile is what the correction divides out, so the plateau has to be the dip that was
     // planted rather than merely something positive. Measured against the ring the depth is read
     // from, which is why this is a tolerance and not an equality.
-    assert!((spot.profile[0] - 0.12).abs() < 0.03, "the plateau is {}", spot.profile[0]);
-    assert!(spot.profile[0] > spot.profile[BINS - 1], "the profile does not fall off");
+    assert!(
+        (spot.profile[0] - 0.12).abs() < 0.03,
+        "the plateau is {}",
+        spot.profile[0]
+    );
+    assert!(
+        spot.profile[0] > spot.profile[BINS - 1],
+        "the profile does not fall off"
+    );
     // Round, because a round particle was planted: the ellipse must not invent an elongation out of
     // noise, or every correction wears two lobes.
-    assert!((spot.axes.0 / spot.axes.1 - 1.0).abs() < 0.25, "axes {:?}", spot.axes);
+    assert!(
+        (spot.axes.0 / spot.axes.1 - 1.0).abs() < 0.25,
+        "axes {:?}",
+        spot.axes
+    );
 }
 
 /// A denser body is read coarser, and still says where a particle is in the frame's own coordinates.
@@ -202,7 +223,11 @@ fn a_particle_is_found_where_it_was_put() {
 fn a_denser_body_still_answers_in_frame_coordinates() {
     // A real 61MP body reaches this at f/10.
     let dense = sized(3200);
-    assert_eq!(dense.shrink(), 2, "this body was meant to be worth reading coarser");
+    assert_eq!(
+        dense.shrink(),
+        2,
+        "this body was meant to be worth reading coarser"
+    );
     let put = (700.0, 480.0, 16.0, 0.12);
     let Some(spots) = found(&dense, &[put]) else {
         eprintln!("SKIPPED: no adapter answered, so the coarse read was not run.");
@@ -213,7 +238,11 @@ fn a_denser_body_still_answers_in_frame_coordinates() {
     assert!((spots[0].x - put.0).abs() < 4.0, "x is {}", spots[0].x);
     assert!((spots[0].y - put.1).abs() < 4.0, "y is {}", spots[0].y);
     // And the radius comes back in that grid too, or the footprint is corrected at half size.
-    assert!((spots[0].scale - put.2).abs() < 6.0, "scale is {}", spots[0].scale);
+    assert!(
+        (spots[0].scale - put.2).abs() < 6.0,
+        "scale is {}",
+        spots[0].scale
+    );
 }
 
 /// A frame that is not square puts its particle at the coordinates it was planted at.
@@ -238,7 +267,12 @@ fn a_frame_that_is_not_square_answers_the_right_way_round() {
         eprintln!("SKIPPED: no adapter answered, so the oblong frame was not read.");
         return;
     };
-    assert_eq!(spots.len(), 1, "found {:?}", spots.iter().map(|s| (s.x, s.y)).collect::<Vec<_>>());
+    assert_eq!(
+        spots.len(),
+        1,
+        "found {:?}",
+        spots.iter().map(|s| (s.x, s.y)).collect::<Vec<_>>()
+    );
     assert!((spots[0].x - put.0).abs() < 3.0, "x is {}", spots[0].x);
     assert!((spots[0].y - put.1).abs() < 3.0, "y is {}", spots[0].y);
 }
@@ -295,7 +329,11 @@ fn a_clean_frame_offers_nothing() {
         eprintln!("SKIPPED: no adapter answered, so the clean frame was not read.");
         return;
     };
-    assert!(spots.is_empty(), "a clean frame reported {} particles", spots.len());
+    assert!(
+        spots.is_empty(),
+        "a clean frame reported {} particles",
+        spots.len()
+    );
 }
 
 /// Two particles close enough for their footprints to touch come back as one correction.
@@ -311,16 +349,27 @@ fn a_clean_frame_offers_nothing() {
 #[test]
 fn overlapping_footprints_are_one_spot() {
     let apart = |gap: f32| {
-        found(&sized(1200), &[(300.0, 300.0, 6.0, 0.12), (300.0 + gap, 300.0, 6.0, 0.10)])
+        found(
+            &sized(1200),
+            &[(300.0, 300.0, 6.0, 0.12), (300.0 + gap, 300.0, 6.0, 0.10)],
+        )
     };
     let Some(touching) = apart(20.0) else {
         eprintln!("SKIPPED: no adapter answered, so the prune was not run.");
         return;
     };
     // Two masks, one surviving footprint.
-    assert_eq!(touching.len(), 1, "two overlapping footprints were both kept");
+    assert_eq!(
+        touching.len(),
+        1,
+        "two overlapping footprints were both kept"
+    );
     // And far enough apart that neither reaches the other, both stand.
-    assert_eq!(apart(60.0).expect("the same adapter").len(), 2, "two particles were pruned to one");
+    assert_eq!(
+        apart(60.0).expect("the same adapter").len(),
+        2,
+        "two particles were pruned to one"
+    );
 }
 
 /// A picture that does not start at the corner of the readable plane is read from the right place,
@@ -332,19 +381,29 @@ fn overlapping_footprints_are_one_spot() {
 #[test]
 fn a_picture_inside_a_larger_plane_is_read_from_where_it_starts() {
     let plane = sized(1200);
-    let inset = rawshim::dust::Sensor { crop: (16, 8, 1100, 1100), ..plane };
+    let inset = rawshim::dust::Sensor {
+        crop: (16, 8, 1100, 1100),
+        ..plane
+    };
     // Planted in the plane's coordinates, so the search has to apply the origin to find it.
     let Some(spots) = found_in(&plane, &inset, &[(180.0, 220.0, 6.0, 0.12)]) else {
         eprintln!("SKIPPED: no adapter answered, so the inset picture was not read.");
         return;
     };
-    assert_eq!(spots.len(), 1, "the particle was not found inside the inset picture");
+    assert_eq!(
+        spots.len(),
+        1,
+        "the particle was not found inside the inset picture"
+    );
     assert!((spots[0].x - 180.0).abs() < 2.0, "x is {}", spots[0].x);
     assert!((spots[0].y - 220.0).abs() < 2.0, "y is {}", spots[0].y);
 
     // A crop the file says is larger than the plane holding it reads as far as the plane goes,
     // rather than off the end of it.
-    let overrun = rawshim::dust::Sensor { crop: (100, 100, 1200, 1200), ..plane };
+    let overrun = rawshim::dust::Sensor {
+        crop: (100, 100, 1200, 1200),
+        ..plane
+    };
     let _ = found_in(&plane, &overrun, &[(180.0, 220.0, 6.0, 0.12)]);
 }
 
@@ -364,7 +423,11 @@ fn an_elongated_particle_is_divided_out_at_its_own_angle() {
     const LEVEL: f32 = 0.5;
     // Unit product, as the search normalises them, and a real angle rather than a right one.
     let turn = (0.6f32, 0.8f32);
-    let spot = Spot { axes: (1.6, 1.0 / 1.6), turn, ..a_spot(64.0, 70.0) };
+    let spot = Spot {
+        axes: (1.6, 1.0 / 1.6),
+        turn,
+        ..a_spot(64.0, 70.0)
+    };
 
     let before = shadowed(width, height, &spot, LEVEL);
     let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, width, height);
@@ -373,14 +436,21 @@ fn an_elongated_particle_is_divided_out_at_its_own_angle() {
         dust::device(gpu),
         &mosaic,
         std::slice::from_ref(&spot),
-        Removal { sensitivity: 0.5, intensity: 1.0 },
+        Removal {
+            sensitivity: 0.5,
+            intensity: 1.0,
+        },
         (0, 0),
     );
     let after = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");
 
-    let planted = before.iter().fold(0.0f32, |worst, v| worst.max(1.0 - v / LEVEL));
+    let planted = before
+        .iter()
+        .fold(0.0f32, |worst, v| worst.max(1.0 - v / LEVEL));
     assert!(planted > 0.10, "the planted shadow is only {planted}");
-    let worst = after.iter().fold(0.0f32, |worst, v| worst.max((v / LEVEL - 1.0).abs()));
+    let worst = after
+        .iter()
+        .fold(0.0f32, |worst, v| worst.max((v / LEVEL - 1.0).abs()));
     assert!(worst < 1e-4, "an elongated spot left {worst} behind");
 }
 
@@ -393,7 +463,10 @@ fn a_spot_below_the_reader_bar_is_left_alone() {
         return;
     };
     let (width, height) = (128usize, 128usize);
-    let spot = Spot { snr: 3.0, ..a_spot(32.0, 32.0) };
+    let spot = Spot {
+        snr: 3.0,
+        ..a_spot(32.0, 32.0)
+    };
     let before = shadowed(width, height, &spot, 0.5);
 
     let mosaic = rawshim::condition::Mosaic::upload(gpu, &before, width, height);
@@ -403,7 +476,10 @@ fn a_spot_below_the_reader_bar_is_left_alone() {
         &mosaic,
         std::slice::from_ref(&spot),
         // The least sensitive end, whose bar is well above this spot's confidence.
-        Removal { sensitivity: 0.0, intensity: 1.0 },
+        Removal {
+            sensitivity: 0.0,
+            intensity: 1.0,
+        },
         (0, 0),
     );
     let after = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");
@@ -432,7 +508,10 @@ fn a_window_corrects_where_the_frame_would_have() {
             dust::device(gpu),
             &mosaic,
             std::slice::from_ref(&spot),
-            Removal { sensitivity: 0.5, intensity: 1.0 },
+            Removal {
+                sensitivity: 0.5,
+                intensity: 1.0,
+            },
             origin,
         );
         pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
@@ -447,7 +526,10 @@ fn a_window_corrects_where_the_frame_would_have() {
     // the file is that an untouched band matches an untouched frame perfectly, so a spot silently
     // dropped by the gate - or a pass that never encoded - would leave both sides identical and
     // this green.
-    assert_ne!(frame, whole, "the correction did nothing, so the comparison proves nothing");
+    assert_ne!(
+        frame, whole,
+        "the correction did nothing, so the comparison proves nothing"
+    );
 
     let cut = correct(&band, width, rows, (0, top));
 
@@ -482,9 +564,15 @@ fn no_intensity_is_no_change_at_all() {
         dust::device(gpu),
         &mosaic,
         std::slice::from_ref(&spot),
-        Removal { sensitivity: 1.0, intensity: 0.0 },
+        Removal {
+            sensitivity: 1.0,
+            intensity: 0.0,
+        },
         (0, 0),
     );
     let after = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");
-    assert_eq!(after, before, "an intensity of zero still moved the picture");
+    assert_eq!(
+        after, before,
+        "an intensity of zero still moved the picture"
+    );
 }

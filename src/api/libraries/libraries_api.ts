@@ -48,19 +48,25 @@ export class LibrariesApi {
 
     app.get(route(), (c) => c.json(respond(LibrariesSchema, this.service.list())));
 
-    app.get(route(PathSegment.activity()), (c) => c.json(respond(ActivitySnapshotSchema, {
-      libraries: this.service.list().map((library) => ({
-        ...library,
-        scan: this.scan.getScanStatus(library.id),
-        activities: this.activityFor(library.id),
-      })),
-      global: this.globalActivity(),
-    })));
+    app.get(route(PathSegment.activity()), (c) =>
+      c.json(
+        respond(ActivitySnapshotSchema, {
+          libraries: this.service.list().map((library) => ({
+            ...library,
+            scan: this.scan.getScanStatus(library.id),
+            activities: this.activityFor(library.id),
+          })),
+          global: this.globalActivity(),
+        }),
+      ),
+    );
 
     // What a new library is created with, so a client can offer "put this back"
     // without carrying a copy of the schema's defaults. Above `/:id`, which would
     // otherwise take `defaults` for a library id.
-    app.get(route(PathSegment.defaults()), (c) => c.json(respond(LibrarySettingsSchema, DEFAULT_LIBRARY_SETTINGS)));
+    app.get(route(PathSegment.defaults()), (c) =>
+      c.json(respond(LibrarySettingsSchema, DEFAULT_LIBRARY_SETTINGS)),
+    );
 
     // Every folder inside this library, in the root-relative paths a shoot's
     // folder is stored as. Whole tree in one answer rather than a level per
@@ -77,7 +83,9 @@ export class LibrariesApi {
       const library = this.service.get(c.req.param('id'));
       const { include_hidden } = HiddenShootsQuerySchema.parse(c.req.query());
       const folders = await foldersUnder(this.scan.scopeFor(library));
-      const shown = include_hidden ? folders : foldersOutside(folders, this.shoots.hiddenFolders(library.id));
+      const shown = include_hidden
+        ? folders
+        : foldersOutside(folders, this.shoots.hiddenFolders(library.id));
       return c.json(respond(LibraryFoldersSchema, shown));
     });
 
@@ -85,7 +93,12 @@ export class LibrariesApi {
     // and writes go through the library so an id that does not exist is a 404
     // here rather than a rule nothing will ever consult.
     app.get(route(PathSegment.param('id'), PathSegment.folderRules()), (c) =>
-      c.json(respond(FolderRulesSchema, this.folderRules.listByLibrary(this.service.get(c.req.param('id')).id))),
+      c.json(
+        respond(
+          FolderRulesSchema,
+          this.folderRules.listByLibrary(this.service.get(c.req.param('id')).id),
+        ),
+      ),
     );
 
     app.put(route(PathSegment.param('id'), PathSegment.folderRules()), async (c) => {
@@ -108,7 +121,9 @@ export class LibrariesApi {
     // running and will succeed, and reports it as an error.
     app.post(route(PathSegment.param('id'), PathSegment.sync()), async (c) => {
       takeAsLongAsItTakes(c);
-      return c.json(respond(LibraryScanStatusSchema, await this.scan.scanLibrary(c.req.param('id'))));
+      return c.json(
+        respond(LibraryScanStatusSchema, await this.scan.scanLibrary(c.req.param('id'))),
+      );
     });
 
     // Returns as soon as the run has been told to stop; it settles back to idle
@@ -135,10 +150,16 @@ export class LibrariesApi {
     // the stacking settings are not retroactive, so changing one otherwise waits
     // for the next import to mean anything (§19.4).
     app.post(route(PathSegment.param('id'), PathSegment.jobs(), PathSegment.stacks()), async (c) =>
-      c.json(respond(DetectStacksResponseSchema, { stacks: await this.detectStacks(this.service.get(c.req.param('id')).id) })),
+      c.json(
+        respond(DetectStacksResponseSchema, {
+          stacks: await this.detectStacks(this.service.get(c.req.param('id')).id),
+        }),
+      ),
     );
 
-    app.get(route(PathSegment.param('id')), (c) => c.json(respond(LibrarySchema, this.service.get(c.req.param('id')))));
+    app.get(route(PathSegment.param('id')), (c) =>
+      c.json(respond(LibrarySchema, this.service.get(c.req.param('id')))),
+    );
 
     app.patch(route(PathSegment.param('id')), async (c) => {
       const body = UpdateLibraryRequestSchema.parse(await c.req.json());

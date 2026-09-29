@@ -1,6 +1,6 @@
 # Take best parts: a photograph assembled from a burst
 
-A second composite recipe: combine burst frames aimed at the *same* scene, replacing unwanted
+A second composite recipe: combine burst frames aimed at the _same_ scene, replacing unwanted
 parts of a preferred base frame - a blink, passing car or moving branch - with parts from other frames.
 
 Two use cases decide every choice below:
@@ -11,7 +11,7 @@ Two use cases decide every choice below:
   so the picture has no car.
 
 A **tile** here is a polygon assigned a frame. Disambiguate `composite_tile.rs` render windows as
-*canvas windows*, and `grid` renditions as *grid tiles*.
+_canvas windows_, and `grid` renditions as _grid tiles_.
 
 ## 1. What this costs
 
@@ -22,21 +22,21 @@ polygon simplification or band split. §3 and §5.2 need new pins and design-cha
 
 What genuinely carries over:
 
-| Piece | What it already does | Used here for |
-|---|---|---|
-| `slang/composite_features.slang`, `composite_align::paired` | Harris corners, descriptors, Lowe's ratio test | Alignment, unchanged |
-| `composite_pairs.rs` | Coarse translation correlation and a dense refine | Alignment, unchanged |
-| `composite_solve.rs` | One rotation per source, one focal for all | Alignment, with the focal leashed (§3.1) |
-| `composite_align::assumed_focal` | 55-degree HFOV fallback where EXIF is silent | The same fallback here (§3.1) |
-| `composite_tile::prepared`, `From::Original` | A source prepared with `Strengths { sharpen: 0, defringe: 0 }`, `Detail::at(0, 0)`, `Known::Off`, and the lens applied from the *recipe* at gather time | The analysis planes (§3.0) |
-| `slang/composite_gather.slang` | A source into a canvas window, `Through::Lens`, plus a weight | Gathering planes and rendering, with the weight read rather than computed (§5.2) |
-| `slang/composite_blend.slang` | Layers accumulated in light, resolved to codes | The coverage mix, unchanged (§5.2) |
-| `base.rs::light_of_code`, `base::pyramid_of` | The inverse-PQ table; a box-mean pyramid | Every measurement's space (§3.0); the base of the lowpass (§5.2) |
-| `galosh::NoiseModel` | Noise as a function of level, fitted per frame | The tint's noise floor (§3.3) |
-| `dust.rs` / `slang/dust_find.slang` | A shader finds; the host walks a **shrunk** mask; a bounded list crosses back | The precedent, and its limit, for §3.4-§3.7 |
-| `stage_gpu.ts::paintExtended` | A `VideoFrame` drawn through a render pipeline onto an `rgba16float` canvas | The page's canvas, in HDR (§4.1) |
-| `ui/submenu.tsx` | A nested menu section, already used in `bulk_bar.tsx` | The menu change (§2.1) |
-| `triage_storage.ts` | The **pattern** for session state that survives a reload | Modelled, not imported - it swallows a quota failure and this must not (§4.4) |
+| Piece                                                       | What it already does                                                                                                                                    | Used here for                                                                    |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `slang/composite_features.slang`, `composite_align::paired` | Harris corners, descriptors, Lowe's ratio test                                                                                                          | Alignment, unchanged                                                             |
+| `composite_pairs.rs`                                        | Coarse translation correlation and a dense refine                                                                                                       | Alignment, unchanged                                                             |
+| `composite_solve.rs`                                        | One rotation per source, one focal for all                                                                                                              | Alignment, with the focal leashed (§3.1)                                         |
+| `composite_align::assumed_focal`                            | 55-degree HFOV fallback where EXIF is silent                                                                                                            | The same fallback here (§3.1)                                                    |
+| `composite_tile::prepared`, `From::Original`                | A source prepared with `Strengths { sharpen: 0, defringe: 0 }`, `Detail::at(0, 0)`, `Known::Off`, and the lens applied from the _recipe_ at gather time | The analysis planes (§3.0)                                                       |
+| `slang/composite_gather.slang`                              | A source into a canvas window, `Through::Lens`, plus a weight                                                                                           | Gathering planes and rendering, with the weight read rather than computed (§5.2) |
+| `slang/composite_blend.slang`                               | Layers accumulated in light, resolved to codes                                                                                                          | The coverage mix, unchanged (§5.2)                                               |
+| `base.rs::light_of_code`, `base::pyramid_of`                | The inverse-PQ table; a box-mean pyramid                                                                                                                | Every measurement's space (§3.0); the base of the lowpass (§5.2)                 |
+| `galosh::NoiseModel`                                        | Noise as a function of level, fitted per frame                                                                                                          | The tint's noise floor (§3.3)                                                    |
+| `dust.rs` / `slang/dust_find.slang`                         | A shader finds; the host walks a **shrunk** mask; a bounded list crosses back                                                                           | The precedent, and its limit, for §3.4-§3.7                                      |
+| `stage_gpu.ts::paintExtended`                               | A `VideoFrame` drawn through a render pipeline onto an `rgba16float` canvas                                                                             | The page's canvas, in HDR (§4.1)                                                 |
+| `ui/submenu.tsx`                                            | A nested menu section, already used in `bulk_bar.tsx`                                                                                                   | The menu change (§2.1)                                                           |
+| `triage_storage.ts`                                         | The **pattern** for session state that survives a reload                                                                                                | Modelled, not imported - it swallows a quota failure and this must not (§4.4)    |
 
 Explicitly **not** reuse:
 
@@ -186,20 +186,20 @@ few points across. **Press-and-hold** a swatch previews and **release** picks it
 
 **Use panorama sources gathered onto one canvas.** Existing `composite_tile` camera-picture
 preparation sets sharpen/defringe to zero, GALOSH fit-only, dust off; `composite_gather` applies
-the *recipe's* lens ratio table. This yields demosaiced PQ in corrected geometry without stages
+the _recipe's_ lens ratio table. This yields demosaiced PQ in corrected geometry without stages
 that hide or invent differences, reusing the panorama grid-tile path.
 
 What that means for each stage the render has:
 
-| Stage | In the plane | Why |
-|---|---|---|
-| decode, linearise | yes | decoded **whole**, not at the decoder's halved size - a halved decode collapses quads and skips RCD, and a residual over a mosaic measures the mosaic |
-| GALOSH | fit only | its noise model is measured (§3.3 reads it); it corrects nothing, because a denoise would hide what this is looking for |
-| demosaic (RCD) | yes | |
-| lens | at gather | the recipe is stated in the camera's corrected geometry and the solve's rotations live there; `composite_gather` applies the recipe's lens per source, so **every frame on a lens takes the same table** |
-| the colour fit | **no** | never runs here; the lens the gather applies comes from the recipe, which §3.0's last paragraph fills |
-| grade, tone, defringe, sharpen, dust, chroma leak | **no** | a burst takes one grade and it cancels out of a difference; the rest hide or invent edges |
-| downsample | after the demosaic | to `ANALYSIS_LONG = 3000`, through `base::resize` |
+| Stage                                             | In the plane       | Why                                                                                                                                                                                                      |
+| ------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| decode, linearise                                 | yes                | decoded **whole**, not at the decoder's halved size - a halved decode collapses quads and skips RCD, and a residual over a mosaic measures the mosaic                                                    |
+| GALOSH                                            | fit only           | its noise model is measured (§3.3 reads it); it corrects nothing, because a denoise would hide what this is looking for                                                                                  |
+| demosaic (RCD)                                    | yes                |                                                                                                                                                                                                          |
+| lens                                              | at gather          | the recipe is stated in the camera's corrected geometry and the solve's rotations live there; `composite_gather` applies the recipe's lens per source, so **every frame on a lens takes the same table** |
+| the colour fit                                    | **no**             | never runs here; the lens the gather applies comes from the recipe, which §3.0's last paragraph fills                                                                                                    |
+| grade, tone, defringe, sharpen, dust, chroma leak | **no**             | a burst takes one grade and it cancels out of a difference; the rest hide or invent edges                                                                                                                |
+| downsample                                        | after the demosaic | to `ANALYSIS_LONG = 3000`, through `base::resize`                                                                                                                                                        |
 
 **Fit unmeasured lenses once per lens and store in recipe.** `CompositesService.aligned` fits
 one photograph per lens; `shared_lenses` distributes the table, avoiding per-frame fits and
@@ -249,7 +249,7 @@ axes. An assumed focal off by half - a 24mm lens against a 55-degree guess - lea
 **Those are the terms' own sizes, not what survives the fit**, and the difference is why the check
 below is not derived from them. The rotation is fitted against the same correspondences, so most of
 a focal error is absorbed as a turn: measured on the solve's fixture at exactly that geometry, ten
-percent leaves **0.10px** of radial pattern rather than 1.75, and a focal off by *half* leaves
+percent leaves **0.10px** of radial pattern rather than 1.75, and a focal off by _half_ leaves
 0.86px. The separation is the other half of it - at 10 mrad, where a real hand-held pair sits
 (§3.10's is 14), that same off-by-half reads 2.46px. A bound sized off the expansion refuses
 nothing.
@@ -287,7 +287,7 @@ bearing:
 
 **The check catches incorrect file focal, not assumed focal.** A 15% assumed leash either lets
 observable focal recover or leaves no observable residual: §3.1 fixture, 15% error, under a
-hundredth pixel at either end. *Told* focal stays within 2% of file metadata; half-wrong remains
+hundredth pixel at either end. _Told_ focal stays within 2% of file metadata; half-wrong remains
 wrong and reads 2.46px against the bound.
 
 **The solve reports it, not the align's caller**, because the align keeps no matches past its own
@@ -429,7 +429,7 @@ moved piece decodes no more than it reads.
 ### 3.7b Seams for the picks
 
 A seed is where a reader pointed, not where a seam belongs. Once its pick is known the question is
-where *those* frames agree, so the seams are solved per pick set (`assembly_seams.rs`): an
+where _those_ frames agree, so the seams are solved per pick set (`assembly_seams.rs`): an
 alpha-expansion over the picked frames on the shrunk grid, with the tiles as the data term and the
 picked frames' own disagreement as the smoothness.
 
@@ -554,9 +554,9 @@ Beside the recipe, and not part of it, `Analysed` carries §3.1's radial reading
 **The decodes dominate, and they are cheap.** `assemble` times `analyse` whole and then
 re-runs its two halves over the same recipe:
 
-| burst | frames | whole | the plane gather | §3.3 to §3.5 |
-|---|---|---|---|---|
-| `DSC09468/69`, 7008x4672 | 2 | 0.4s | 0.3s | under 0.05s |
+| burst                    | frames | whole | the plane gather | §3.3 to §3.5 |
+| ------------------------ | ------ | ----- | ---------------- | ------------ |
+| `DSC09468/69`, 7008x4672 | 2      | 0.4s  | 0.3s             | under 0.05s  |
 
 So a whole decode, GALOSH's fit, RCD, the lens gather and the resize together are about 0.15s a
 frame on 33MP, and twelve frames of them is a second or two. Behind that, Lowe-ratio matching is
@@ -613,29 +613,29 @@ doubling cannot also hide a 7% brightness step.
 reached §3.3 at all, and both were this chapter being wrong rather than the code being wrong.
 
 **A lens that is the identity read as no lens at all.** `composite_align::shared_lenses` takes the
-knot-by-knot median of a group's fits, and it took the knot *count* through a `?`: a fit whose lens
+knot-by-knot median of a group's fits, and it took the knot _count_ through a `?`: a fit whose lens
 has no distortion term has no knots, so the group came back unfitted and §3.1 refused the set by
 name. A synthetic camera is exactly that case, and so is any body whose fit found nothing to
 correct. `None` there now means nobody measured the lens, which is the thing the refusal is about.
 
 **§3.1's corner check measures the bend, not the texture, and that is what makes its bound
 spendable.** The statistic is the outer fifth's median inlier residual **less the whole field's**
-(§3.1). Read as the *worst* inlier in the outer fifth instead, it is a draw from the tail of the
+(§3.1). Read as the _worst_ inlier in the outer fifth instead, it is a draw from the tail of the
 inlier population rather than a radial pattern: on the real burst, 519 outer matches with a median of
 1.04px, a p90 of 1.98px and a maximum of **4.14px**; the synthetic's are 1389 matches, median 1.27px,
 maximum 4.11px. Both maxima are what the outlier round's own tolerance permits and both grow with the
 number of matches, so a check read off one measures a frame's texture. The median alone does not
-escape it either - 1.04px of that burst's 1.04px *is* its whole field, which reads 0.97px - and it is
+escape it either - 1.04px of that burst's 1.04px _is_ its whole field, which reads 0.97px - and it is
 the difference that has no floor. As a difference, and with the frames both bursts actually hold:
 
 The synthetic burst these are from is three `synth_raw` DNGs at the default 3000x2000, the second
 shifted `17,11` and the third `-11,17`, each carrying a 240-pixel square at `1200,900`, `1500,900`
 and `1350,1150` - stated so that every figure in this section can be produced again.
 
-| | real, 2 frames | synthetic, 3 frames |
-|---|---|---|
-| §3.1's radial check, on the 1616px plane it was measured on: 0.72 and 0.45 analysis px against a bound of 1.15 | **0.385px** | **0.241px** |
-| the focal it was checked against | the file's, on `Leash::Told` | assumed, on `Leash::Assumed` |
+|                                                                                                                | real, 2 frames               | synthetic, 3 frames          |
+| -------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------- |
+| §3.1's radial check, on the 1616px plane it was measured on: 0.72 and 0.45 analysis px against a bound of 1.15 | **0.385px**                  | **0.241px**                  |
+| the focal it was checked against                                                                               | the file's, on `Leash::Told` | assumed, on `Leash::Assumed` |
 
 **A seed on the real burst grows to its bird.** `assemble --pick 0 --draw 800,730,820,750`
 seeds a 20-pixel square on the head of the standing penguin and solves it: the piece takes the
@@ -687,7 +687,7 @@ HDR rendition is. Rebuildable from the recipe alone (§2.7).
 **Two keys, named apart.** The **session key** is the analysis job's id, or the photograph's for a
 finished one (§2.7); it names the session and the route. The **layer key** (`layerKeyOf`) covers
 what the layers' pixels are a function of - the library's rendition setting and the geometry every
-layer is drawn in - and names the layer files. A frame's *edit* does not enter it, because §3.0's
+layer is drawn in - and names the layer files. A frame's _edit_ does not enter it, because §3.0's
 planes take no grade.
 
 **Save posts the full recipe**, kilobytes of geometry, loops, picks and base. Cache eviction
@@ -769,7 +769,7 @@ weight_s(x) = smoothstep(-W(x), W(x), signed distance to the union s owns)
   transform, capped by the recipe's **`feather`** share of the long edge (`FEATHER = 0.0025` where it
   names none, and the reader's slider on the page otherwise, up to `0.015`) and **by the owning tile's own maximum
   interior distance**, so a thin tile still reaches full weight rather than the reader's pick being
-  applied at sixty percent: at the tile's deepest point the signed distance *is* that inradius, and
+  applied at sixty percent: at the tile's deepest point the signed distance _is_ that inradius, and
   `smoothstep(-W, W, inradius)` is 1 only where `W <= inradius`. Floored at `W_high`, which a render
   small enough for the feather to fall under the high band reaches - anti-aliasing a staircase still has
   to happen. The cap is folded in at the emit, `Assembly::corridor[t]` being
@@ -800,7 +800,7 @@ out = mix( lowpass(layer),          W_low  )
   split wavelength the tile takes the high band alone.
 - **The lowpass is built over the whole crop once**, a coarse decode a source area-averaged onto a
   grid of the split's own wavelength, and every window samples it. A truncated halo per window gives
-  a different truncation each side of a window boundary, which is a visible *window* seam unrelated
+  a different truncation each side of a window boundary, which is a visible _window_ seam unrelated
   to any image seam. The crop rather than the canvas, because a box mean reaching past the frames'
   intersection averages in the black outside one source's own frame; an area average rather than the
   5-tap binomial, because a box's sidelobes are identical on both sides of every seam and cancel out
@@ -832,7 +832,7 @@ reader opens it, through `PhotoDetail.rendition_to_build` and `POST
 copy beside it, not to the canvas's own native resolution: `target()`'s `wide` branch is about a
 panorama's several-frame canvas and an assembly's is one frame across.
 
-A canvas is the one row that has to *ask* for its camera view, because it is the one row that has
+A canvas is the one row that has to _ask_ for its camera view, because it is the one row that has
 no file to lift one out of - which is why `resolveRenditionToBuild` names `embedded` for a
 composite and for nothing else.
 
@@ -861,8 +861,8 @@ immediate rebuild debt. In `catch`, **delete row, edits, rendition rows and file
 - A loop that straightened into a line is dropped.
 - The subdivision is watertight - every cut edge is shared - and every loop is simple.
 - An absent `pick` renders a panorama window to its new pin.
-- The bands remove a known exposure *ratio* without doubling detail, and the seam reads the two
-  frames' *geometric* mean, each asserted against the single-feather alternative rather than a bare
+- The bands remove a known exposure _ratio_ without doubling detail, and the seam reads the two
+  frames' _geometric_ mean, each asserted against the single-feather alternative rather than a bare
   constant. **Not a halo across a luminance step**: with a gain between two frames the detail is
   proportional and the ratio cancels out of `l - low` exactly, so light and log2 draw the same
   picture and no mutation can make such a test fail.
@@ -919,7 +919,7 @@ kinds), `processing.md` §10.1 (what a composite owes), and a screen in `web.md`
 - **More than twelve frames.** §2.1, for §3.9's reason.
 - **A browser composite through wasm.** §4.1.
 - **The grade, the denoise, the sharpen and the colour fit, in the analysis.** §3.0.
-- **A measured per-*source* exposure gain.** `composite_solve::gains` can compute one from pairwise
+- **A measured per-_source_ exposure gain.** `composite_solve::gains` can compute one from pairwise
   overlap ratios; its one caller passes none, so a burst's per-source gain is always the header
   arithmetic. What an assembly needs is measured **per piece** rather than per source (§3.7a),
   because what a swapped patch has to match is the ground it lands in and that is a different

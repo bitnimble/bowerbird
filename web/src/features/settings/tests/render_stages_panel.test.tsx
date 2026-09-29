@@ -33,15 +33,29 @@ beforeEach(() => {
   settingsApi.renderTimings = () => Promise.resolve({});
 });
 
-function Harness({ matchEmbeddedJpeg, library }: { matchEmbeddedJpeg: boolean; library: Library }): JSX.Element {
+function Harness({
+  matchEmbeddedJpeg,
+  library,
+}: {
+  matchEmbeddedJpeg: boolean;
+  library: Library;
+}): JSX.Element {
   const settings = useAppSettingsStore();
-  useEffect(() => runInAction(() => {
-    settings.settings = { ...DEFAULT_SETTINGS, match_embedded_jpeg: matchEmbeddedJpeg };
-  }), [matchEmbeddedJpeg, settings]);
+  useEffect(
+    () =>
+      runInAction(() => {
+        settings.settings = { ...DEFAULT_SETTINGS, match_embedded_jpeg: matchEmbeddedJpeg };
+      }),
+    [matchEmbeddedJpeg, settings],
+  );
   return <RenderStagesPanel library={library} />;
 }
 
-async function open(timings: RenderTimings = {}, matchEmbeddedJpeg = true, library = LIBRARY): Promise<void> {
+async function open(
+  timings: RenderTimings = {},
+  matchEmbeddedJpeg = true,
+  library = LIBRARY,
+): Promise<void> {
   settingsApi.renderTimings = () => Promise.resolve(timings);
   render(
     <StoresProvider>
@@ -57,7 +71,8 @@ const measuredNow = (stages: RenderTiming['stages']): RenderTiming => ({
   measured_at: new Date().toISOString(),
 });
 
-const ticked = (name: string): boolean => (screen.getByRole('checkbox', { name }) as HTMLInputElement).checked;
+const ticked = (name: string): boolean =>
+  (screen.getByRole('checkbox', { name }) as HTMLInputElement).checked;
 
 test('a stage a render cannot do without has a cost and nothing to press', async () => {
   await open();
@@ -70,7 +85,9 @@ test('an unticked box is a stage this rendition leaves out', async () => {
   await open();
   expect(ticked('Match lens')).toBe(false);
   expect(ticked('Match camera colour')).toBe(false);
-  expect(screen.getByRole('checkbox', { name: 'Match camera colour' }).hasAttribute('disabled')).toBe(true);
+  expect(
+    screen.getByRole('checkbox', { name: 'Match camera colour' }).hasAttribute('disabled'),
+  ).toBe(true);
   expect(ticked('Denoise')).toBe(true);
 });
 
@@ -88,7 +105,9 @@ test('the other rendition reads its own list', async () => {
   });
   expect(ticked('Match lens')).toBe(true);
   expect(ticked('Match camera colour')).toBe(true);
-  expect(screen.getByRole('checkbox', { name: 'Match camera colour' }).hasAttribute('disabled')).toBe(false);
+  expect(
+    screen.getByRole('checkbox', { name: 'Match camera colour' }).hasAttribute('disabled'),
+  ).toBe(false);
 });
 
 test('global camera matching off shows both dependent stages inactive', async () => {
@@ -104,7 +123,17 @@ test('global camera matching off shows both dependent stages inactive', async ()
 });
 
 test('the total is what the stages this rendition runs cost together', async () => {
-  const stages = { read: 10, dust: 20, denoise: 30, demosaic: 40, lens: 1000, colour: 2000, defringe: 50, sharpen: 60, encode: 70 };
+  const stages = {
+    read: 10,
+    dust: 20,
+    denoise: 30,
+    demosaic: 40,
+    lens: 1000,
+    colour: 2000,
+    defringe: 50,
+    sharpen: 60,
+    encode: 70,
+  };
   await open({ full: { galosh: measuredNow(stages) } });
   // `full` leaves out the lens and the colour match.
   expect(screen.getByText('Total').parentElement?.textContent).toBe('Total~280 ms');
@@ -135,10 +164,15 @@ test("a library on the other denoiser quotes that denoiser's cost, and measures 
     return Promise.resolve(measuredNow({ denoise: 77 }));
   };
   // A GALOSH measurement says nothing about what PMRID costs here.
-  await open({ full: { galosh: measuredNow({ denoise: 5 }) } }, true, { ...LIBRARY, denoiser: 'pmrid' });
+  await open({ full: { galosh: measuredNow({ denoise: 5 }) } }, true, {
+    ...LIBRARY,
+    denoiser: 'pmrid',
+  });
   expect(screen.getByText('Estimated')).toBeTruthy();
   expect(screen.getByText(`~${ESTIMATED_PMRID_DENOISE_MS} ms`)).toBeTruthy();
-  expect(screen.getByRole('combobox', { name: 'Denoiser' }).textContent).toContain('Quality (PMRID)');
+  expect(screen.getByRole('combobox', { name: 'Denoiser' }).textContent).toContain(
+    'Quality (PMRID)',
+  );
 
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Measure' }));

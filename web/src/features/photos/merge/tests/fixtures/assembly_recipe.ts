@@ -9,7 +9,17 @@ export const NO_COMPOSITOR: Compositor = { draw: () => undefined, drawSettled: (
 
 /** The seams of a pick set that takes the base everywhere: no pieces, so nothing is drawn over it. */
 export function noSeams(pick: number[], base = 0): Seams {
-  return { pick, base, vertices: [], tiles: [], source: [], zone: [], corridor: [], warp: [], exposure: [] };
+  return {
+    pick,
+    base,
+    vertices: [],
+    tiles: [],
+    source: [],
+    zone: [],
+    corridor: [],
+    warp: [],
+    exposure: [],
+  };
 }
 
 /** A carve job that has finished, over `recipe`, with no layers to decode. */
@@ -66,8 +76,22 @@ export function assemblyRecipeFixture(): AssemblyRecipe {
   return {
     version: 1,
     sources: [
-      { photoId: 'frame001', size: [100, 100], rotation: [0, 0, 0, 1], focal: 50, lens: { crop: 1 }, gain: 1 },
-      { photoId: 'frame002', size: [100, 100], rotation: [0, 0, 0, 1], focal: 50, lens: { crop: 1 }, gain: 1 },
+      {
+        photoId: 'frame001',
+        size: [100, 100],
+        rotation: [0, 0, 0, 1],
+        focal: 50,
+        lens: { crop: 1 },
+        gain: 1,
+      },
+      {
+        photoId: 'frame002',
+        size: [100, 100],
+        rotation: [0, 0, 0, 1],
+        focal: 50,
+        lens: { crop: 1 },
+        gain: 1,
+      },
     ],
     projection: 'rectilinear',
     canvas: [1000, 1000],

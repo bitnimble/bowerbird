@@ -34,18 +34,28 @@ function build(previewAssembly?: typeof compositesApi.previewAssembly): {
     store.status = 'ready';
     const none = noSeams([0, 0]);
     store.solved.set(store.keyOf([0, 0]), { seams: none, geometry: store.geometry });
-    store.solved.set(store.keyOf([1, 0]), { seams: triangleSeams([1, 0], 0, 500), geometry: store.geometry });
+    store.solved.set(store.keyOf([1, 0]), {
+      seams: triangleSeams([1, 0], 0, 500),
+      geometry: store.geometry,
+    });
   });
   const wanted: AssemblyRecipe[] = [];
   const settled: string[] = [];
-  const preview = previewAssembly ?? ((recipe: AssemblyRecipe) => {
-    wanted.push(recipe);
-    return Promise.resolve({ url: `/image/drafts/lib/key/preview-${wanted.length}` });
-  });
-  const presenter = new MergePresenter(store, new ToastsPresenter(new ToastsStore()), {
-    draw: () => undefined,
-    drawSettled: (url) => settled.push(url),
-  }, preview);
+  const preview =
+    previewAssembly ??
+    ((recipe: AssemblyRecipe) => {
+      wanted.push(recipe);
+      return Promise.resolve({ url: `/image/drafts/lib/key/preview-${wanted.length}` });
+    });
+  const presenter = new MergePresenter(
+    store,
+    new ToastsPresenter(new ToastsStore()),
+    {
+      draw: () => undefined,
+      drawSettled: (url) => settled.push(url),
+    },
+    preview,
+  );
   live.push(presenter);
   return { store, presenter, wanted, settled };
 }

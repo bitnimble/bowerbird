@@ -39,7 +39,8 @@ function build(): { store: SidebarStore; presenter: SidebarPresenter } {
   return { store, presenter: new SidebarPresenter(store) };
 }
 
-const names = (store: SidebarStore): string[] => (store.shootsByLibrary.get('lib') ?? []).map((s) => s.name);
+const names = (store: SidebarStore): string[] =>
+  (store.shootsByLibrary.get('lib') ?? []).map((s) => s.name);
 
 // The sidebar is chrome, so what the reader did to it is theirs to come back to.
 test('what was opened and how wide it was dragged come back', () => {

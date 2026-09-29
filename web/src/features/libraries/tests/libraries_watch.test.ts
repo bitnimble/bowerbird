@@ -25,15 +25,25 @@ const LIBRARY = LibrarySchema.parse({
 
 function snapshot(library = LIBRARY, processing = 0): ActivitySnapshot {
   return {
-    libraries: [{
-      ...library,
-      activities: [],
-      scan: {
-        library_id: library.id, status: 'idle', photos_to_scan: 0, photos_scanned: 0,
-        photos_added: 0, photos_removed: 0, photos_moved: 0, photos_modified: 0,
-        photos_processing: processing, photos_processed: 0, photos_per_second: null,
+    libraries: [
+      {
+        ...library,
+        activities: [],
+        scan: {
+          library_id: library.id,
+          status: 'idle',
+          photos_to_scan: 0,
+          photos_scanned: 0,
+          photos_added: 0,
+          photos_removed: 0,
+          photos_moved: 0,
+          photos_modified: 0,
+          photos_processing: processing,
+          photos_processed: 0,
+          photos_per_second: null,
+        },
       },
-    }],
+    ],
     global: [],
   };
 }

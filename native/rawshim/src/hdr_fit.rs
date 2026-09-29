@@ -154,7 +154,11 @@ fn srgb_eotf_f(coded: f64) -> f64 {
 /// The sRGB transfer's inverse, for a JPEG's 8-bit level: the camera's own encoding, undone.
 pub fn srgb_eotf(level: u8) -> f64 {
     let c = f64::from(level) / 255.0;
-    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 /// The frame's own light at arm's length: a small luma plane of the whole photograph,
@@ -176,7 +180,11 @@ pub struct SurroundThumb {
 impl SurroundThumb {
     /// No thumb, for a colour with no lattice to read one.
     pub fn none() -> SurroundThumb {
-        SurroundThumb { width: 0, height: 0, data: Vec::new() }
+        SurroundThumb {
+            width: 0,
+            height: 0,
+            data: Vec::new(),
+        }
     }
 }
 
@@ -466,11 +474,26 @@ struct LevelNoise {
 /// the scatter that matters is the widest.
 fn warped_scatter(u: f64, variance: f64) -> f64 {
     // Five-point Gauss-Hermite over a unit normal.
-    const AT: [f64; 5] = [0.0, 1.355_626_18, -1.355_626_18, 2.856_970_01, -2.856_970_01];
-    const WEIGHT: [f64; 5] = [0.533_333_33, 0.222_075_92, 0.222_075_92, 0.011_257_41, 0.011_257_41];
+    const AT: [f64; 5] = [
+        0.0,
+        1.355_626_18,
+        -1.355_626_18,
+        2.856_970_01,
+        -2.856_970_01,
+    ];
+    const WEIGHT: [f64; 5] = [
+        0.533_333_33,
+        0.222_075_92,
+        0.222_075_92,
+        0.011_257_41,
+        0.011_257_41,
+    ];
     let d = u * u.abs();
     let sigma = variance.max(0.0).sqrt();
-    AT.iter().zip(WEIGHT).map(|(z, w)| w * (ChromaMap::warp(d + z * sigma) - u).powi(2)).sum()
+    AT.iter()
+        .zip(WEIGHT)
+        .map(|(z, w)| w * (ChromaMap::warp(d + z * sigma) - u).powi(2))
+        .sum()
 }
 
 /// **Both groups beyond the 2x2 earn their place, asked on the render.** They were added against
@@ -503,14 +526,17 @@ impl ChromaMap {
             for z in 0..MAP_LEVEL {
                 for y in 0..MAP_CHROMA {
                     for x in 0..MAP_CHROMA {
-                        nodes[((s * MAP_LEVEL + z) * MAP_CHROMA + y) * MAP_CHROMA + x] =
-                            f(x, y, z);
+                        nodes[((s * MAP_LEVEL + z) * MAP_CHROMA + y) * MAP_CHROMA + x] = f(x, y, z);
                     }
                 }
             }
         }
         let reach = ChromaMap::warp(CHROMA_REACH);
-        ChromaMap { low: [-reach; 2], scale: [ChromaMap::scale_for(reach); 2], ..ChromaMap::coarse_shell(nodes) }
+        ChromaMap {
+            low: [-reach; 2],
+            scale: [ChromaMap::scale_for(reach); 2],
+            ..ChromaMap::coarse_shell(nodes)
+        }
     }
 
     /// The map that does exactly what the saturation scalar does.
@@ -531,7 +557,11 @@ impl ChromaMap {
     pub fn from_saturation(saturation: f64) -> ChromaMap {
         let node = [saturation, 0.0, 0.0, saturation, 0.0, 0.0, 1.0, 0.0, 0.0];
         let reach = ChromaMap::warp(CHROMA_REACH);
-        ChromaMap { low: [-reach; 2], scale: [ChromaMap::scale_for(reach); 2], ..ChromaMap::coarse_shell(vec![node; MAP_NODES]) }
+        ChromaMap {
+            low: [-reach; 2],
+            scale: [ChromaMap::scale_for(reach); 2],
+            ..ChromaMap::coarse_shell(vec![node; MAP_NODES])
+        }
     }
 
     /// A map at the fitted grid's own shape, for the constructors that fill one in.
@@ -594,7 +624,11 @@ impl ChromaMap {
         for (node, values) in lattice.iter_mut().zip(nodes.chunks_exact(NODE_VALUES)) {
             node.copy_from_slice(values);
         }
-        Some(ChromaMap { low, scale, ..ChromaMap::coarse_shell(lattice) })
+        Some(ChromaMap {
+            low,
+            scale,
+            ..ChromaMap::coarse_shell(lattice)
+        })
     }
 
     /// The lattice as one flat array, `NODE_VALUES` per node, in `correct`'s index order.
@@ -635,8 +669,12 @@ impl ChromaMap {
         // proportion to how much of a picture lives in them, and cheaper than a cube root
         // in a loop this size. The surround takes the same root for the same reason.
         let (z, fz) = Self::axis(level.max(0.0).sqrt(), MAP_LEVEL, 0.0, axes.level_scale);
-        let (s, fs) =
-            Self::axis(surround.max(0.0).sqrt(), MAP_SURROUND, 0.0, axes.surround_scale);
+        let (s, fs) = Self::axis(
+            surround.max(0.0).sqrt(),
+            MAP_SURROUND,
+            0.0,
+            axes.surround_scale,
+        );
         ([x, y, z, s], [fx, fy, fz, fs])
     }
 
@@ -671,7 +709,10 @@ impl ChromaMap {
             .iter()
             .map(|node| std::array::from_fn(|k| scalar[k] + strength * (node[k] - scalar[k])))
             .collect();
-        ChromaMap { nodes, ..self.clone() }
+        ChromaMap {
+            nodes,
+            ..self.clone()
+        }
     }
 
     /// Each node keeping `1 / (1 + r)` of its departure from the scalar `saturation`, `r` being a
@@ -685,18 +726,29 @@ impl ChromaMap {
             .iter()
             .enumerate()
             .map(|(n, node)| {
-                let (x, y, z) = (n % chroma, (n / chroma) % chroma, (n / (chroma * chroma)) % self.level_count);
+                let (x, y, z) = (
+                    n % chroma,
+                    (n / chroma) % chroma,
+                    (n / (chroma * chroma)) % self.level_count,
+                );
                 let spread = noise.variance[z].map_or(0.0, |variance| {
-                    [x, y].iter().enumerate().map(|(axis, at)| {
-                        let u = self.low[axis] + *at as f64 / self.scale[axis];
-                        warped_scatter(u, variance[axis]) * self.scale[axis].powi(2)
-                    }).sum()
+                    [x, y]
+                        .iter()
+                        .enumerate()
+                        .map(|(axis, at)| {
+                            let u = self.low[axis] + *at as f64 / self.scale[axis];
+                            warped_scatter(u, variance[axis]) * self.scale[axis].powi(2)
+                        })
+                        .sum()
                 });
                 let keep = 1.0 / (1.0 + spread);
                 std::array::from_fn(|k| scalar[k] + keep * (node[k] - scalar[k]))
             })
             .collect();
-        ChromaMap { nodes, ..self.clone() }
+        ChromaMap {
+            nodes,
+            ..self.clone()
+        }
     }
 
     /// Each node keeping the share of its departure from the scalar `saturation` that `judged`,
@@ -712,7 +764,9 @@ impl ChromaMap {
             .map(|(n, node)| {
                 let a = &judged.ata[n];
                 let form = |x: [f64; 3], y: [f64; 3]| -> f64 {
-                    (0..3).map(|i| (0..3).map(|j| x[i] * a[i][j] * y[j]).sum::<f64>()).sum()
+                    (0..3)
+                        .map(|i| (0..3).map(|j| x[i] * a[i][j] * y[j]).sum::<f64>())
+                        .sum()
                 };
                 let strength = |rows: &[([usize; 3], [f64; 3])]| -> f64 {
                     let (mut slope, mut curvature) = (0.0, 0.0);
@@ -731,15 +785,20 @@ impl ChromaMap {
                 };
                 let chroma =
                     strength(&[([0, 1, 4], judged.atb[n][0]), ([2, 3, 5], judged.atb[n][1])]);
-                let light =
-                    strength(&[([7, 8, 6], [judged.lda[n][0], judged.lda[n][1], judged.ltb[n]])]);
+                let light = strength(&[(
+                    [7, 8, 6],
+                    [judged.lda[n][0], judged.lda[n][1], judged.ltb[n]],
+                )]);
                 std::array::from_fn(|k| {
                     let keep = if k < 6 { chroma } else { light };
                     scalar[k] + keep * (node[k] - scalar[k])
                 })
             })
             .collect();
-        ChromaMap { nodes, ..self.clone() }
+        ChromaMap {
+            nodes,
+            ..self.clone()
+        }
     }
 
     /// The applied form of a fitted lattice: smoothed, then resampled dense.
@@ -762,7 +821,11 @@ impl ChromaMap {
         let nodes = Self::project(&self.nodes, s * l * c, c, 1);
         let nodes = Self::project(&nodes, s * l, c, c);
         let nodes = Self::project(&nodes, s, l, c * c);
-        ChromaMap { nodes, ..self.clone() }.densified()
+        ChromaMap {
+            nodes,
+            ..self.clone()
+        }
+        .densified()
     }
 
     /// Dense samples of the Catmull-Rom curve the node values control.
@@ -831,8 +894,7 @@ impl ChromaMap {
         let p1: Vec<f64> = (0..l).map(|z| z as f64 - mean).collect();
         let m2 = p1.iter().map(|v| v * v).sum::<f64>() / l as f64;
         let p2: Vec<f64> = p1.iter().map(|v| v * v - m2).collect();
-        let m4 = p1.iter().map(|v| v.powi(4)).sum::<f64>()
-            / p1.iter().map(|v| v * v).sum::<f64>();
+        let m4 = p1.iter().map(|v| v.powi(4)).sum::<f64>() / p1.iter().map(|v| v * v).sum::<f64>();
         let p3: Vec<f64> = p1.iter().map(|v| v.powi(3) - m4 * v).collect();
         let (n1, n2, n3) = (
             p1.iter().map(|v| v * v).sum::<f64>(),
@@ -855,7 +917,10 @@ impl ChromaMap {
                 }
             }
         }
-        ChromaMap { nodes, ..self.clone() }
+        ChromaMap {
+            nodes,
+            ..self.clone()
+        }
     }
 
     /// The fitted lattice `densified` was built from, at the shape the sidecar stores.
@@ -871,8 +936,7 @@ impl ChromaMap {
             for z in 0..MAP_LEVEL {
                 for y in 0..MAP_CHROMA {
                     for x in 0..MAP_CHROMA {
-                        let at = ((s * self.level_count + z * d) * self.chroma_count
-                            + y * d)
+                        let at = ((s * self.level_count + z * d) * self.chroma_count + y * d)
                             * self.chroma_count
                             + x * d;
                         nodes.push(self.nodes[at]);
@@ -1011,7 +1075,11 @@ impl ChromaMap {
     /// Gaussian elimination with partial pivoting, every `NODE_VALUES` right-hand side at
     /// once. The matrix is a Catmull-Rom normal matrix: tiny, symmetric positive definite,
     /// so a pivot is always there to take.
-    fn solve(normal: &[f64], mut rhs: Vec<[f64; NODE_VALUES]>, n: usize) -> Vec<[f64; NODE_VALUES]> {
+    fn solve(
+        normal: &[f64],
+        mut rhs: Vec<[f64; NODE_VALUES]>,
+        n: usize,
+    ) -> Vec<[f64; NODE_VALUES]> {
         let mut a = normal.to_vec();
         for col in 0..n {
             let pivot = (col..n)
@@ -1049,7 +1117,6 @@ impl ChromaMap {
         }
         rhs
     }
-
 }
 
 /// The whole transform: what the lens did, then what the camera did to its colour.
@@ -1086,7 +1153,10 @@ impl CameraMatch {
     pub fn apply(self, matched: Option<HdrMatch>) -> Option<HdrMatch> {
         match self {
             Self::None => None,
-            Self::Lens => matched.map(|m| HdrMatch { lens: m.lens, colour: None }),
+            Self::Lens => matched.map(|m| HdrMatch {
+                lens: m.lens,
+                colour: None,
+            }),
             Self::LensAndColour => matched,
         }
     }
@@ -1100,10 +1170,18 @@ mod camera_match_tests {
     fn camera_match_applies_only_the_requested_parts() {
         let matched = crate::photo_analysis::tests::a_match();
         assert!(CameraMatch::None.apply(Some(matched.clone())).is_none());
-        let lens = CameraMatch::Lens.apply(Some(matched.clone())).expect("lens");
+        let lens = CameraMatch::Lens
+            .apply(Some(matched.clone()))
+            .expect("lens");
         assert_eq!(lens.lens.crop, matched.lens.crop);
         assert!(lens.colour.is_none());
-        assert!(CameraMatch::LensAndColour.apply(Some(matched.clone())).expect("match").colour.is_some());
+        assert!(
+            CameraMatch::LensAndColour
+                .apply(Some(matched.clone()))
+                .expect("match")
+                .colour
+                .is_some()
+        );
         assert!(!CameraMatch::None.needs_fit(None));
         assert!(CameraMatch::Lens.needs_fit(None));
         assert!(!CameraMatch::Lens.needs_fit(Some(&lens)));
@@ -1123,12 +1201,18 @@ mod camera_match_tests {
     fn camera_match_lens_analysis_round_trips_and_gains_colour_without_losing_it() {
         use crate::photo_analysis::{self, FromRaw, PhotoAnalysis};
         let full = PhotoAnalysis {
-            from_raw: FromRaw { matched: Some(photo_analysis::tests::a_match()), ..Default::default() },
+            from_raw: FromRaw {
+                matched: Some(photo_analysis::tests::a_match()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let lens = PhotoAnalysis {
             from_raw: FromRaw {
-                matched: Some(HdrMatch { lens: full.from_raw.matched.as_ref().unwrap().lens.clone(), colour: None }),
+                matched: Some(HdrMatch {
+                    lens: full.from_raw.matched.as_ref().unwrap().lens.clone(),
+                    colour: None,
+                }),
                 ..Default::default()
             },
             ..Default::default()
@@ -1140,7 +1224,14 @@ mod camera_match_tests {
         assert!((matched.lens.crop - 1.0234).abs() < 1e-6);
         assert!(full.adds_to(&lens));
         assert!(!lens.adds_to(&full));
-        assert!(lens.filled_from(&full).from_raw.matched.expect("match").colour.is_some());
+        assert!(
+            lens.filled_from(&full)
+                .from_raw
+                .matched
+                .expect("match")
+                .colour
+                .is_some()
+        );
     }
 }
 
@@ -1291,7 +1382,12 @@ fn through(measured: &[(usize, f64, f64)], reach: usize) -> Vec<f64> {
         }
         if !(held > 0.0) {
             let level = fits.last().map_or(0.0, |window| window.level);
-            fits.push(Window { here, width, level, slope: 0.0 });
+            fits.push(Window {
+                here,
+                width,
+                level,
+                slope: 0.0,
+            });
             continue;
         }
         // **A mean of the window rather than a line through it lifts every shadow.** The toe turns
@@ -1304,7 +1400,12 @@ fn through(measured: &[(usize, f64, f64)], reach: usize) -> Vec<f64> {
             true => (sum_dy / held - mean_d * mean_y) / spread,
             false => 0.0,
         };
-        fits.push(Window { here, width, level: mean_y - slope * mean_d, slope });
+        fits.push(Window {
+            here,
+            width,
+            level: mean_y - slope * mean_d,
+            slope,
+        });
     }
     // The knot values are windowed fits and carry the window's sampling noise, which
     // the cubic below draws faithfully - and the curve is read once per channel, so a
@@ -1393,7 +1494,11 @@ fn pool_violators(points: &mut [(usize, f64, f64)]) {
             }
             blocks.pop();
             let total = held + block.1;
-            block = ((mean * held + block.0 * block.1) / total, total, span + block.2);
+            block = (
+                (mean * held + block.0 * block.1) / total,
+                total,
+                span + block.2,
+            );
         }
         blocks.push(block);
     }
@@ -1455,8 +1560,9 @@ impl HdrColour {
     /// A fit always produces a real one; this is for the tests and for a caller with no fit
     /// yet, both of which need a known-good transform rather than a fitted one.
     pub fn identity() -> Self {
-        let ramp: Vec<f64> =
-            (0..BINS).map(|i| (i as f64 / (BINS - 1) as f64) * TRUST_CEILING).collect();
+        let ramp: Vec<f64> = (0..BINS)
+            .map(|i| (i as f64 / (BINS - 1) as f64) * TRUST_CEILING)
+            .collect();
         HdrColour {
             curves: [ramp.clone(), ramp.clone(), ramp],
             ceiling: TRUST_CEILING,
@@ -1505,7 +1611,9 @@ impl Evaluated {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_buffer_to_buffer(&self.buffer, 0, &staging, 0, bytes);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.buffer, 0, &staging, 0, bytes);
         recording.submit();
         crate::gpu::read_back(gpu, &staging, |mapped| {
             mapped
@@ -1544,14 +1652,16 @@ fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
             has_dynamic_offset: false,
             min_binding_size: None,
         };
-        let texture = |dimension: wgpu::TextureViewDimension, filterable: bool| {
-            wgpu::BindingType::Texture {
+        let texture =
+            |dimension: wgpu::TextureViewDimension, filterable: bool| wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable },
                 view_dimension: dimension,
                 multisampled: false,
-            }
-        };
-        let (d2, d3) = (wgpu::TextureViewDimension::D2, wgpu::TextureViewDimension::D3);
+            };
+        let (d2, d3) = (
+            wgpu::TextureViewDimension::D2,
+            wgpu::TextureViewDimension::D3,
+        );
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fit_model"),
             entries: &[
@@ -1562,7 +1672,10 @@ fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
                 entry(4, buffer(READ)),
                 entry(5, buffer(READ)),
                 entry(6, buffer(WRITE)),
-                entry(7, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
+                entry(
+                    7,
+                    wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                ),
                 entry(10, texture(d3, true)),
                 entry(11, texture(d3, true)),
                 entry(20, buffer(UNIFORM)),
@@ -1619,11 +1732,14 @@ pub fn evaluate(
     stage: Stage,
 ) -> Evaluated {
     let mut words = vec![0u8; samples.len().max(1) * 16];
-    words.par_chunks_mut(16).zip(samples.par_iter()).for_each(|(word, sample)| {
-        for (c, value) in sample.iter().enumerate() {
-            word[c * 4..c * 4 + 4].copy_from_slice(&value.to_ne_bytes());
-        }
-    });
+    words
+        .par_chunks_mut(16)
+        .zip(samples.par_iter())
+        .for_each(|(word, sample)| {
+            for (c, value) in sample.iter().enumerate() {
+                word[c * 4..c * 4 + 4].copy_from_slice(&value.to_ne_bytes());
+            }
+        });
     let input = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit model input"),
         contents: &words,
@@ -1650,39 +1766,74 @@ pub fn evaluate_over(
         mapped_at_creation: false,
     });
     if count == 0 {
-        return Evaluated { buffer: output, count };
+        return Evaluated {
+            buffer: output,
+            count,
+        };
     }
     let mut recording = gpu.record();
     recording.holding(input);
     let mut init = |label: &str, contents: &[u8], usage: wgpu::BufferUsages| {
-        recording.init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage })
+        recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents,
+            usage,
+        })
     };
     let uniform: Vec<u8> = crate::gpu::uniform_words(&probe_grade(colour), colour)
         .iter()
         .flat_map(|v| v.to_ne_bytes())
         .collect();
     let edits = init("fit model edit", &uniform, wgpu::BufferUsages::UNIFORM);
-    let push: Vec<u8> =
-        [count as i32, stage as i32, 0, 0].iter().flat_map(|v| v.to_ne_bytes()).collect();
+    let push: Vec<u8> = [count as i32, stage as i32, 0, 0]
+        .iter()
+        .flat_map(|v| v.to_ne_bytes())
+        .collect();
     let push = init("fit model push", &push, wgpu::BufferUsages::UNIFORM);
-    let matrix: Vec<u8> =
-        colour.matrix.iter().flatten().flat_map(|v| (*v as f32).to_ne_bytes()).collect();
+    let matrix: Vec<u8> = colour
+        .matrix
+        .iter()
+        .flatten()
+        .flat_map(|v| (*v as f32).to_ne_bytes())
+        .collect();
     let matrix = init("fit model matrix", &matrix, wgpu::BufferUsages::STORAGE);
     let (chroma, chroma_luma, chroma_tint) = gpu.lattice(colour);
     let curves = gpu.curves(colour);
-    let (chroma, chroma_luma, chroma_tint, curves) =
-        (chroma.view(), chroma_luma.view(), chroma_tint.view(), curves.view());
+    let (chroma, chroma_luma, chroma_tint, curves) = (
+        chroma.view(),
+        chroma_luma.view(),
+        chroma_tint.view(),
+        curves.view(),
+    );
     let kernel = model_device(gpu);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fit_model"),
         layout: &kernel.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&curves) },
-            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&chroma) },
-            wgpu::BindGroupEntry { binding: 4, resource: matrix.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: input.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: output.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: edits.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&curves),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&chroma),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: matrix.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: input.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: output.as_entire_binding(),
+            },
             wgpu::BindGroupEntry {
                 binding: 7,
                 resource: wgpu::BindingResource::Sampler(gpu.sampler()),
@@ -1695,7 +1846,10 @@ pub fn evaluate_over(
                 binding: 11,
                 resource: wgpu::BindingResource::TextureView(&chroma_tint),
             },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     {
@@ -1706,7 +1860,10 @@ pub fn evaluate_over(
         pass.dispatch_workgroups(across, down, 1);
     }
     recording.submit();
-    Evaluated { buffer: output, count }
+    Evaluated {
+        buffer: output,
+        count,
+    }
 }
 
 /// [`evaluate`], read back: the stage's colour and luma at each sample.
@@ -1779,11 +1936,15 @@ fn gathered(
         recording.holding(surround);
     }
     let idle = unused_buffer(&mut recording);
-    let block: Vec<u8> =
-        [count as i32, plane.pixels() as i32, i32::from(surround.is_some()), 0]
-            .iter()
-            .flat_map(|v| v.to_ne_bytes())
-            .collect();
+    let block: Vec<u8> = [
+        count as i32,
+        plane.pixels() as i32,
+        i32::from(surround.is_some()),
+        0,
+    ]
+    .iter()
+    .flat_map(|v| v.to_ne_bytes())
+    .collect();
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit gather push"),
         contents: &block,
@@ -1794,14 +1955,26 @@ fn gathered(
         label: Some("fit_gather"),
         layout: &built.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: plane.buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: at.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: plane.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: at.as_entire_binding(),
+            },
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: surround.unwrap_or(&idle).as_entire_binding(),
             },
-            wgpu::BindGroupEntry { binding: 3, resource: samples.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: samples.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     {
@@ -1902,7 +2075,9 @@ pub fn srgb_to_rec2020() -> [[f64; 3]; 3] {
 #[cfg(test)]
 pub fn in_the_shader(name: &str) -> [[f64; 3]; 3] {
     let source = include_str!("../../../slang/primaries.slang");
-    let start = source.find(&format!("{name} = float3x3")).expect("the constant is there");
+    let start = source
+        .find(&format!("{name} = float3x3"))
+        .expect("the constant is there");
     let body = &source[start..source[start..].find(");").expect("it is closed") + start];
     let found: Vec<f64> = body
         .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
@@ -1921,7 +2096,11 @@ pub fn in_the_shader(name: &str) -> [[f64; 3]; 3] {
 /// with them too - neither of us is gamut-mapping, just refusing to encode a negative.
 pub fn srgb_oetf(value: f64) -> f64 {
     let c = value.clamp(0.0, 1.0);
-    if c <= 0.0031308 { 12.92 * c } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+    if c <= 0.0031308 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
 }
 
 /// The camera's rendering as the fit will compare against it, and the weights and pair
@@ -1960,8 +2139,9 @@ impl Pairs {
     fn linear_on(&self, gpu: &'static crate::gpu::Gpu) -> &crate::gpu::Buffer {
         self.linear.get_or_init(|| {
             let mut bytes = vec![0u8; self.at.len().max(1) * 16];
-            for (word, (t, balance)) in
-                bytes.chunks_exact_mut(16).zip(self.target.iter().zip(self.balance.iter()))
+            for (word, (t, balance)) in bytes
+                .chunks_exact_mut(16)
+                .zip(self.target.iter().zip(self.balance.iter()))
             {
                 for c in 0..3 {
                     word[c * 4..][..4].copy_from_slice(&(t[c] as f32).to_ne_bytes());
@@ -1980,9 +2160,12 @@ impl Pairs {
 /// A pixel list where the gather reads it.
 fn indices_on(gpu: &'static crate::gpu::Gpu, at: &[usize]) -> crate::gpu::Buffer {
     let mut bytes = vec![0u8; at.len().max(1) * 4];
-    bytes.par_chunks_mut(4).zip(at.par_iter()).for_each(|(word, p)| {
-        word.copy_from_slice(&(*p as u32).to_ne_bytes());
-    });
+    bytes
+        .par_chunks_mut(4)
+        .zip(at.par_iter())
+        .for_each(|(word, p)| {
+            word.copy_from_slice(&(*p as u32).to_ne_bytes());
+        });
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit gather at"),
         contents: &bytes,
@@ -2018,15 +2201,30 @@ impl Pairs {
     fn split(&self, gpu: &'static crate::gpu::Gpu) -> (Pairs, Pairs) {
         let held = |k: usize| k % HOLDOUT_EVERY == 0;
         let take = |want_held: bool| {
-            let at: Vec<usize> = self.at.iter().enumerate()
-                .filter(|(k, _)| held(*k) == want_held).map(|(_, v)| *v).collect();
+            let at: Vec<usize> = self
+                .at
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| held(*k) == want_held)
+                .map(|(_, v)| *v)
+                .collect();
             Pairs {
                 indices: indices_on(gpu, &at),
                 at,
-                target: self.target.iter().enumerate().filter(|(k, _)| held(*k) == want_held)
-                    .map(|(_, v)| *v).collect(),
-                balance: self.balance.iter().enumerate().filter(|(k, _)| held(*k) == want_held)
-                    .map(|(_, v)| *v).collect(),
+                target: self
+                    .target
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| held(*k) == want_held)
+                    .map(|(_, v)| *v)
+                    .collect(),
+                balance: self
+                    .balance
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| held(*k) == want_held)
+                    .map(|(_, v)| *v)
+                    .collect(),
                 to_srgb: self.to_srgb,
                 // Both halves keep the whole grey set. `grey_balance` is not gated on anything,
                 // so there is nothing to hold out from, and halving it would only make the
@@ -2113,7 +2311,10 @@ impl Pairs {
             }
         }
         Pairs {
-            target: at.iter().map(|p| [0, 1, 2].map(|c| jpeg.data[p * 3 + c])).collect(),
+            target: at
+                .iter()
+                .map(|p| [0, 1, 2].map(|c| jpeg.data[p * 3 + c]))
+                .collect(),
             balance: vec![1.0; at.len()],
             indices: indices_on(gpu, &at),
             at,
@@ -2124,7 +2325,6 @@ impl Pairs {
             linear: std::cell::OnceCell::new(),
         }
     }
-
 }
 
 /// What one probe scored: the mean deltaE, hue-balanced and flat, and the flat mean inside each
@@ -2152,7 +2352,10 @@ fn harm(score: &Score, reference: &Score) -> f64 {
     let Some(top) = excess.iter().copied().reduce(f64::max) else {
         return 0.0;
     };
-    let weight: f64 = excess.iter().map(|x| ((x - top) / HARM_SOFTNESS).exp()).sum();
+    let weight: f64 = excess
+        .iter()
+        .map(|x| ((x - top) / HARM_SOFTNESS).exp())
+        .sum();
     top + HARM_SOFTNESS * (weight / excess.len() as f64).ln()
 }
 
@@ -2174,7 +2377,8 @@ const HARM_WEIGHT: f64 = BIAS_WEIGHT;
 /// the device - and it is where the bias pooling and the two weightings live, which want `f64`.
 fn folded(blocks: impl IntoIterator<Item = crate::fit_score::Partial>) -> Score {
     let (mut balanced, mut flat, mut n, mut counted) = (0.0, 0.0, 0.0f64, 0.0f64);
-    let (mut gamut_balanced, mut gamut_flat, mut n_all, mut counted_all) = (0.0, 0.0, 0.0f64, 0.0f64);
+    let (mut gamut_balanced, mut gamut_flat, mut n_all, mut counted_all) =
+        (0.0, 0.0, 0.0f64, 0.0f64);
     let mut bias = [[0.0f64; 2]; BIAS_BUCKETS];
     let mut seen = [0.0f64; BIAS_BUCKETS];
     let mut class_error = [0.0f64; COLOUR_CLASSES];
@@ -2314,7 +2518,11 @@ impl Judges {
                 &frame.balance,
             ),
             (
-                floats_on(gpu, "fit wide samples", wides.iter().flat_map(|s| [s.v[0], s.v[1], s.v[2], s.s])),
+                floats_on(
+                    gpu,
+                    "fit wide samples",
+                    wides.iter().flat_map(|s| [s.v[0], s.v[1], s.v[2], s.s]),
+                ),
                 wides.len(),
                 &wide_target,
                 &wide_hue,
@@ -2332,12 +2540,22 @@ impl Judges {
         let parts = populations.map(|(own, n, target, balance)| {
             recording.holding(&own);
             let (at, bytes) = ((from * 16) as u64, (n * 16) as u64);
-            recording.encoder().copy_buffer_to_buffer(&own, 0, &samples, at, bytes);
+            recording
+                .encoder()
+                .copy_buffer_to_buffer(&own, 0, &samples, at, bytes);
             from += n;
-            (from - n, n, Rescored::new(gpu, n, target, balance, &held.to_srgb, 1))
+            (
+                from - n,
+                n,
+                Rescored::new(gpu, n, target, balance, &held.to_srgb, 1),
+            )
         });
         recording.submit();
-        Judges { samples, count, parts }
+        Judges {
+            samples,
+            count,
+            parts,
+        }
     }
 
     /// Each population's mean deltaE, hue-balanced and flat, and per colour class.
@@ -2351,13 +2569,20 @@ impl Judges {
         let mut scored = Vec::with_capacity(3);
         for (from, n, rescored) in &self.parts {
             let scoring = rescored.over(gpu, &evaluated.buffer, *from, *n);
-            let mut partials =
-                scoring.partials(&crate::fit_score::Shape::Saturation, &neutral).await?;
+            let mut partials = scoring
+                .partials(&crate::fit_score::Shape::Saturation, &neutral)
+                .await?;
             scored.push(partials.remove(0));
         }
         let [held, frame, wide]: [Vec<crate::fit_score::Partial>; 3] = scored.try_into().ok()?;
-        let (sum, weight) = wide.iter().fold((0.0, 0.0), |a, b| (a.0 + b.balanced, a.1 + b.weight));
-        Some(Judged { held: folded(held), frame: folded(frame), wide: sum / f64::max(weight, 1e-9) })
+        let (sum, weight) = wide
+            .iter()
+            .fold((0.0, 0.0), |a, b| (a.0 + b.balanced, a.1 + b.weight));
+        Some(Judged {
+            held: folded(held),
+            frame: folded(frame),
+            wide: sum / f64::max(weight, 1e-9),
+        })
     }
 }
 
@@ -2470,7 +2695,10 @@ impl Moments {
     }
 
     fn trace(&self) -> f64 {
-        (0..3).map(|o| (0..3).map(|i| self.ata[o][i][i]).sum::<f64>()).sum::<f64>() / 3.0
+        (0..3)
+            .map(|o| (0..3).map(|i| self.ata[o][i][i]).sum::<f64>())
+            .sum::<f64>()
+            / 3.0
     }
 
     /// The matrix this set asks for, damped by `ridge` towards the identity, and held
@@ -2492,7 +2720,9 @@ impl Moments {
                 ata[i][i] += ridge * scale;
             }
             atb[o] += ridge * scale;
-            neutral_row(&ata, &atb).or_else(|| solve_row(&ata, &atb)).unwrap_or(IDENTITY[o])
+            neutral_row(&ata, &atb)
+                .or_else(|| solve_row(&ata, &atb))
+                .unwrap_or(IDENTITY[o])
         })
     }
 }
@@ -2741,7 +2971,10 @@ async fn grey_balance(
     // `chroma` still `None` the surround is never read.
     let samples = gathered(gpu, render, &pairs.grey_indices, pairs.greys.len(), None);
     let mut ours = [0.0f64; 3];
-    for v in evaluate_over(gpu, colour, &samples, pairs.greys.len(), Stage::Full).read(gpu).await? {
+    for v in evaluate_over(gpu, colour, &samples, pairs.greys.len(), Stage::Full)
+        .read(gpu)
+        .await?
+    {
         for c in 0..3 {
             ours[c] += f64::from(v[c]);
         }
@@ -2825,7 +3058,14 @@ impl Rescored {
     /// For the ridge candidates and the identity beside them.
     fn of_candidates(gpu: &'static crate::gpu::Gpu, pairs: &Pairs) -> Rescored {
         let probes = RIDGE_CANDIDATES.len() + 1;
-        Rescored::new(gpu, pairs.at.len(), &pairs.target, &pairs.balance, &pairs.to_srgb, probes)
+        Rescored::new(
+            gpu,
+            pairs.at.len(),
+            &pairs.target,
+            &pairs.balance,
+            &pairs.to_srgb,
+            probes,
+        )
     }
 
     /// The scoring, over `count` samples of `evaluated` from `from` on.
@@ -2840,7 +3080,9 @@ impl Rescored {
             let mut recording = gpu.record();
             recording.holding(evaluated);
             let (at, bytes) = ((from * 16) as u64, (count * 16) as u64);
-            recording.encoder().copy_buffer_to_buffer(evaluated, at, &self.below, 0, bytes);
+            recording
+                .encoder()
+                .copy_buffer_to_buffer(evaluated, at, &self.below, 0, bytes);
             recording.submit();
         }
         &self.scoring
@@ -2891,7 +3133,10 @@ async fn fitted_matrix_for(
             .collect();
         eprintln!("  matrix candidates {}", ridges.join(", "));
     }
-    Some((fitted_matrix(&candidates, &scored, &frame_scored, unmatched), candidates))
+    Some((
+        fitted_matrix(&candidates, &scored, &frame_scored, unmatched),
+        candidates,
+    ))
 }
 
 /// Each ridge candidate's scores, off the device.
@@ -2910,15 +3155,15 @@ async fn scored_on_matrices(
             saturation: 1.0,
         })
         .collect();
-    let partials = scoring.partials(&crate::fit_score::Shape::Matrix, &probes).await?;
+    let partials = scoring
+        .partials(&crate::fit_score::Shape::Matrix, &probes)
+        .await?;
     Some(partials.into_iter().map(folded).collect())
 }
 
 /// `a` after `b`, as one matrix.
 fn compose3(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    std::array::from_fn(|r| {
-        std::array::from_fn(|c| (0..3).map(|k| a[r][k] * b[k][c]).sum())
-    })
+    std::array::from_fn(|r| std::array::from_fn(|c| (0..3).map(|k| a[r][k] * b[k][c]).sum()))
 }
 
 /// A 3x3 inverse, by solving the matrix against each basis vector. None when singular.
@@ -2928,7 +3173,9 @@ pub(crate) fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
         solve_row(m, &[0.0, 1.0, 0.0])?,
         solve_row(m, &[0.0, 0.0, 1.0])?,
     ];
-    Some(std::array::from_fn(|r| std::array::from_fn(|c| columns[c][r])))
+    Some(std::array::from_fn(|r| {
+        std::array::from_fn(|c| columns[c][r])
+    }))
 }
 
 /// The widest saturation the search may return, and the resolution it stops at.
@@ -3028,7 +3275,10 @@ async fn fitted_saturation(
     // Neutral first, then the sweep: they do not depend on each other, and asked one at a
     // time they leave most of the machine idle.
     let probes: Vec<f64> = std::iter::once(1.0)
-        .chain((0..=SATURATION_SWEEP).map(|step| low + (high - low) * step as f64 / SATURATION_SWEEP as f64))
+        .chain(
+            (0..=SATURATION_SWEEP)
+                .map(|step| low + (high - low) * step as f64 / SATURATION_SWEEP as f64),
+        )
         .collect();
     // **On a sample of the pairs, and only this pass.** All the sweep decides is which of the
     // nineteen brackets to refine inside, and a bracket is 0.05 wide where the answer is wanted to
@@ -3038,8 +3288,11 @@ async fn fitted_saturation(
     let sample = pairs.every(gpu, SWEEP_STRIDE);
     let taken = gathered(gpu, render, &sample.indices, sample.at.len(), None);
     let sampled = evaluate_over(gpu, colour, &taken, sample.at.len(), stage);
-    let swept =
-        scored_on(&scoring_over(gpu, &sample, sampled.buffer, probes.len()), &probes).await?;
+    let swept = scored_on(
+        &scoring_over(gpu, &sample, sampled.buffer, probes.len()),
+        &probes,
+    )
+    .await?;
 
     let (mut at, mut best) = (1.0, swept[0]);
     for (probe, here) in probes.iter().zip(&swept).skip(1) {
@@ -3117,10 +3370,20 @@ const SCORE_BLOCK: usize = 256;
 async fn scored_on(scoring: &crate::fit_score::Scoring, sweep: &[f64]) -> Option<Vec<f64>> {
     let probes: Vec<crate::fit_score::Probe> = sweep
         .iter()
-        .map(|s| crate::fit_score::Probe { matrix: [[0.0; 3]; 3], saturation: *s })
+        .map(|s| crate::fit_score::Probe {
+            matrix: [[0.0; 3]; 3],
+            saturation: *s,
+        })
         .collect();
-    let partials = scoring.partials(&crate::fit_score::Shape::Saturation, &probes).await?;
-    Some(partials.into_iter().map(|blocks| folded(blocks).balanced).collect())
+    let partials = scoring
+        .partials(&crate::fit_score::Shape::Saturation, &probes)
+        .await?;
+    Some(
+        partials
+            .into_iter()
+            .map(|blocks| folded(blocks).balanced)
+            .collect(),
+    )
 }
 
 /// Weight a node needs before it is trusted on its own rather than on the frame's.
@@ -3299,7 +3562,10 @@ pub struct Reach {
 
 impl Reach {
     /// What registers two renderings of one photograph, at the size the camera match works in.
-    pub const NARROW: Reach = Reach { patch: PATCH, search: SEARCH };
+    pub const NARROW: Reach = Reach {
+        patch: PATCH,
+        search: SEARCH,
+    };
 
     /// The same reach as `NARROW` has at `TUNED_ON`, in the pixels of a plane whose long edge is
     /// `long` - but never smaller than `NARROW`.
@@ -3316,7 +3582,10 @@ impl Reach {
             let scaled = (of as f64 * long as f64 / TUNED_ON as f64).round() as isize;
             scaled.max(of)
         };
-        Reach { patch: share(PATCH), search: share(SEARCH) }
+        Reach {
+            patch: share(PATCH),
+            search: share(SEARCH),
+        }
     }
 
     /// How far from the plane's edge a point has to sit for its window to be readable.
@@ -3443,7 +3712,8 @@ pub fn kernel(
     }
 }
 
-pub(crate) const READ: wgpu::BufferBindingType = wgpu::BufferBindingType::Storage { read_only: true };
+pub(crate) const READ: wgpu::BufferBindingType =
+    wgpu::BufferBindingType::Storage { read_only: true };
 pub(crate) const WRITE: wgpu::BufferBindingType =
     wgpu::BufferBindingType::Storage { read_only: false };
 pub(crate) const UNIFORM: wgpu::BufferBindingType = wgpu::BufferBindingType::Uniform;
@@ -3470,8 +3740,15 @@ pub fn search_device(gpu: &'static crate::gpu::Gpu) -> &'static Searching {
     static BUILT: std::sync::OnceLock<Searching> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         const WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/correspond.wgsl"));
-        const BINDINGS: &[(u32, wgpu::BufferBindingType)] =
-            &[(0, READ), (1, READ), (2, READ), (3, WRITE), (4, READ), (5, READ), (20, UNIFORM)];
+        const BINDINGS: &[(u32, wgpu::BufferBindingType)] = &[
+            (0, READ),
+            (1, READ),
+            (2, READ),
+            (3, WRITE),
+            (4, READ),
+            (5, READ),
+            (20, UNIFORM),
+        ];
         Searching {
             tabulated: kernel(gpu, "correspond", WGSL, BINDINGS, &[("0", 1.0)]),
             inline: kernel(gpu, "correspond", WGSL, BINDINGS, &[("0", 0.0)]),
@@ -3498,7 +3775,15 @@ const PACKED_BOX_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
 
 fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| kernel(gpu, "fit_box_packed", SHAPING_WGSL, PACKED_BOX_BINDINGS, &[]))
+    BUILT.get_or_init(|| {
+        kernel(
+            gpu,
+            "fit_box_packed",
+            SHAPING_WGSL,
+            PACKED_BOX_BINDINGS,
+            &[],
+        )
+    })
 }
 
 fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
@@ -3508,7 +3793,15 @@ fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
             gpu,
             "fit_register",
             include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_register.wgsl")),
-            &[(0, READ), (1, READ), (2, READ), (3, READ), (4, WRITE), (5, WRITE), (20, UNIFORM)],
+            &[
+                (0, READ),
+                (1, READ),
+                (2, READ),
+                (3, READ),
+                (4, WRITE),
+                (5, WRITE),
+                (20, UNIFORM),
+            ],
             &[],
         )
     })
@@ -3544,9 +3837,12 @@ fn unused_buffer(recording: &mut crate::gpu::Recording<'_>) -> crate::gpu::Buffe
 /// Interleaved samples as the f32 RGB `fit_warp.slang` reads.
 fn rgb_words<T: Copy + Sync>(samples: &[T], to_f32: impl Fn(T) -> f32 + Sync) -> Vec<u8> {
     let mut bytes = vec![0u8; samples.len() * 4];
-    bytes.par_chunks_mut(4).zip(samples.par_iter()).for_each(|(word, v)| {
-        word.copy_from_slice(&to_f32(*v).to_ne_bytes());
-    });
+    bytes
+        .par_chunks_mut(4)
+        .zip(samples.par_iter())
+        .for_each(|(word, v)| {
+            word.copy_from_slice(&to_f32(*v).to_ne_bytes());
+        });
     bytes
 }
 
@@ -3590,7 +3886,9 @@ fn staged(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(plane, 0, &staging, 0, bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(plane, 0, &staging, 0, bytes);
     staging
 }
 
@@ -3607,17 +3905,30 @@ async fn plane_read(
             .collect::<Vec<f64>>()
     })
     .await?;
-    Some(Plane { width, height, data })
+    Some(Plane {
+        width,
+        height,
+        data,
+    })
 }
 
 /// What one `fit_warp.slang` dispatch makes of its source.
 enum Shape<'a> {
     /// Through the lens, onto the grid `out` is sized for, every sample scaled on the way.
-    Warp { lens: &'a crate::fit::Lens, luma: bool, scale: f64 },
+    Warp {
+        lens: &'a crate::fit::Lens,
+        luma: bool,
+        scale: f64,
+    },
     Luma,
-    Box { finish: Finish },
+    Box {
+        finish: Finish,
+    },
     /// `Box` over 8-bit RGB uploaded as its own bytes, each code averaged as `levels[code]`.
-    PackedBox { levels: &'a [f32; 256], finish: Finish },
+    PackedBox {
+        levels: &'a [f32; 256],
+        finish: Finish,
+    },
 }
 
 /// What a shaping does to each pixel on the way out, in the pass rather than on the host over
@@ -3669,8 +3980,11 @@ impl Shaping {
                     lens.crop,
                     &lens.channels(),
                 );
-                let contents: Vec<u8> =
-                    tables.iter().flatten().flat_map(|v| (*v as f32).to_ne_bytes()).collect();
+                let contents: Vec<u8> = tables
+                    .iter()
+                    .flatten()
+                    .flat_map(|v| (*v as f32).to_ne_bytes())
+                    .collect();
                 let ratios = recording.init(&wgpu::util::BufferInitDescriptor {
                     label: Some("fit warp ratios"),
                     contents: &contents,
@@ -3683,7 +3997,13 @@ impl Shaping {
                     || (sw, sh) != (width, height);
                 (warp_device(gpu), ratios, (0, 1), moves, luma)
             }
-            Shape::Luma => (warp_device(gpu), unused_buffer(recording), (0, 1), false, true),
+            Shape::Luma => (
+                warp_device(gpu),
+                unused_buffer(recording),
+                (0, 1),
+                false,
+                true,
+            ),
             Shape::Box { finish } => {
                 // The polynomial stays on the host, tabulated per radius bucket exactly as the
                 // geometry search's own table is, so the shader looks up rather than evaluates.
@@ -3759,12 +4079,26 @@ impl Shaping {
                     binding: source_binding,
                     resource: source.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry { binding: table_binding, resource: table.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: table_binding,
+                    resource: table.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         });
-        Shaping { pipeline: &kernel.pipeline, group, width, height }
+        Shaping {
+            pipeline: &kernel.pipeline,
+            group,
+            width,
+            height,
+        }
     }
 
     fn dispatch(&self, pass: &mut wgpu::ComputePass<'_>) {
@@ -3882,7 +4216,9 @@ impl DevicePlane {
             (source.width, source.height),
             &smaller,
             (width, height),
-            Shape::Box { finish: Finish::None },
+            Shape::Box {
+                finish: Finish::None,
+            },
         );
         let plane = DevicePlane::empty(gpu, width, height);
         let taking = Shaping::new(
@@ -3970,9 +4306,18 @@ impl DevicePlane {
             label: Some("patch stats"),
             layout: &kernels.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         });
         {
@@ -4073,7 +4418,9 @@ fn readable(
     theirs: &DevicePlane,
     reach: Reach,
 ) -> Vec<[i32; 2]> {
-    let Some(about) = about else { return points.to_vec() };
+    let Some(about) = about else {
+        return points.to_vec();
+    };
     let margin = reach.margin() as i32;
     let (width, height) = (theirs.width as i32, theirs.height as i32);
     points
@@ -4081,7 +4428,8 @@ fn readable(
         .zip(about)
         .map(|(point, given)| {
             let (cx, cy) = (point[0] + given[0], point[1] + given[1]);
-            let inside = cx - margin >= 0 && cy - margin >= 0 && cx + margin < width && cy + margin < height;
+            let inside =
+                cx - margin >= 0 && cy - margin >= 0 && cx + margin < width && cy + margin < height;
             match inside {
                 true => *point,
                 false => [-1, -1],
@@ -4093,10 +4441,13 @@ fn readable(
 /// Two ints a point, as `correspond.slang` reads its `at` and its `given`.
 fn point_words(pairs: &[[i32; 2]]) -> Vec<u8> {
     let mut bytes = vec![0u8; pairs.len() * 8];
-    bytes.par_chunks_mut(8).zip(pairs.par_iter()).for_each(|(word, p)| {
-        word[..4].copy_from_slice(&p[0].to_ne_bytes());
-        word[4..].copy_from_slice(&p[1].to_ne_bytes());
-    });
+    bytes
+        .par_chunks_mut(8)
+        .zip(pairs.par_iter())
+        .for_each(|(word, p)| {
+            word[..4].copy_from_slice(&p[0].to_ne_bytes());
+            word[4..].copy_from_slice(&p[1].to_ne_bytes());
+        });
     bytes
 }
 
@@ -4250,19 +4601,45 @@ impl Asking {
             label: Some("correspond"),
             layout: &search_device(gpu).tabulated.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: ours.buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: theirs.buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: at.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: found.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: their_stats.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: ours.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: theirs.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: at.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: found.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: their_stats.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: given.unwrap_or(&filler).as_entire_binding(),
                 },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         });
-        Asking { found, staging, push, filler, group, points, tabulated: theirs.stats.is_some() }
+        Asking {
+            found,
+            staging,
+            push,
+            filler,
+            group,
+            points,
+            tabulated: theirs.stats.is_some(),
+        }
     }
 
     fn dispatch(&self, gpu: &'static crate::gpu::Gpu, pass: &mut wgpu::ComputePass<'_>) {
@@ -4340,15 +4717,17 @@ struct Corresponded {
 /// between the fit reading corresponded pixels and the fit being *scored* on them: with
 /// the objective still measured against the blurred planes, every gate in the fit would be
 /// asking a smeared oracle whether a sharply-sampled correction was an improvement.
-async fn registered(
-    gpu: &'static crate::gpu::Gpu,
-    planes: &FitPlanes,
-) -> Option<Corresponded> {
+async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option<Corresponded> {
     let (width, height) = (planes.render.width, planes.render.height);
     let (ours, theirs) = (&planes.sharp.wide, &planes.sharp.camera);
     let scale = ours.width / width.max(1);
     let held = |render: crate::gpu::Buffer, jpeg: crate::gpu::Buffer| {
-        Some(Corresponded { render, jpeg, width, height })
+        Some(Corresponded {
+            render,
+            jpeg,
+            width,
+            height,
+        })
     };
     if scale == 0 || ours.width != theirs.width || ours.height != theirs.height {
         return held(planes.render.buffer.clone(), planes.jpeg.buffer.clone());
@@ -4359,15 +4738,16 @@ async fn registered(
     // needs no map from a compaction back to a position. A position the margins exclude is asked
     // about as `(-1, -1)`, which `correspond.slang` answers with the outcome that means nothing
     // was found.
-    let (held_wide, held_tall) =
-        (ours.width.min(theirs.width) as isize, ours.height.min(theirs.height) as isize);
+    let (held_wide, held_tall) = (
+        ours.width.min(theirs.width) as isize,
+        ours.height.min(theirs.height) as isize,
+    );
     let asked: Vec<[i32; 2]> = (0..width * height)
         .into_par_iter()
         .map(|p| {
             let x = ((p % width) * scale) as isize;
             let y = ((p / width) * scale) as isize;
-            let inside =
-                x >= edge && y >= edge && x < held_wide - edge && y < held_tall - edge;
+            let inside = x >= edge && y >= edge && x < held_wide - edge && y < held_tall - edge;
             match inside {
                 true => [x as i32, y as i32],
                 false => [-1, -1],
@@ -4390,7 +4770,9 @@ async fn registered(
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_buffer_to_buffer(from, 0, &out, 0, bytes);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(from, 0, &out, 0, bytes);
         out
     };
     let mine = carried(&mut recording, &planes.render.buffer);
@@ -4440,11 +4822,26 @@ async fn registered(
                 binding: 1,
                 resource: planes.sharp.camera.buffer.as_entire_binding(),
             },
-            wgpu::BindGroupEntry { binding: 2, resource: asking.found.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: gains.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: mine.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: camera.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: asking.found.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: gains.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: mine.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: camera.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     {
@@ -4550,7 +4947,10 @@ async fn surround_plane(
             .collect::<Vec<f64>>()
     })
     .await?;
-    Some(Surround { buffer: plane.buffer, of })
+    Some(Surround {
+        buffer: plane.buffer,
+        of,
+    })
 }
 
 /// How far the four neighbours two pixels out may sit from the centre, in luma and
@@ -4602,7 +5002,12 @@ async fn wide_samples(
     // **The gates first, then one search for everything that passed them.** The tests are pure
     // reads of the camera's plane, so they run before anything is corresponded - and the search,
     // which is what costs, then goes to the device as a single batch.
-    let planes = crate::fit_wide::Planes { ours: wide, theirs: target, falloff: sharp.falloff, ceiling };
+    let planes = crate::fit_wide::Planes {
+        ours: wide,
+        theirs: target,
+        falloff: sharp.falloff,
+        ceiling,
+    };
     let Some(admitted) = crate::fit_wide::admit(gpu, &planes).await else {
         return Vec::new();
     };
@@ -4610,8 +5015,7 @@ async fn wide_samples(
     // the probes go to the device as one batch; the gather itself keeps the row-major order the
     // gate wrote, which is the order every moment is summed in.
     let tiles_across = width.div_ceil(WIDE_TILE);
-    let mut tiles: Vec<Vec<[i32; 2]>> =
-        vec![Vec::new(); tiles_across * height.div_ceil(WIDE_TILE)];
+    let mut tiles: Vec<Vec<[i32; 2]>> = vec![Vec::new(); tiles_across * height.div_ceil(WIDE_TILE)];
     for point in &admitted.at {
         tiles[(point[1] as usize / WIDE_TILE) * tiles_across + (point[0] as usize / WIDE_TILE)]
             .push(*point);
@@ -4647,7 +5051,11 @@ async fn wide_samples(
         .map(|(open, count)| {
             (0..*count)
                 .filter_map(|k| searched[open + k].as_ref())
-                .max_by(|a, b| b.featureless.cmp(&a.featureless).then(a.peak.total_cmp(&b.peak)))
+                .max_by(|a, b| {
+                    b.featureless
+                        .cmp(&a.featureless)
+                        .then(a.peak.total_cmp(&b.peak))
+                })
                 // Rounded: what a tile hands its pixels is where to centre a whole-offset
                 // search, and the sub-pixel remainder is measured again per pixel below.
                 .map_or([0, 0], |found| {
@@ -4674,8 +5082,7 @@ async fn wide_samples(
         WIDE_REFINE,
     );
     lap("refine search");
-    let Some(taken) = crate::fit_wide::gather(gpu, &planes, &admitted, &refined.found).await
-    else {
+    let Some(taken) = crate::fit_wide::gather(gpu, &planes, &admitted, &refined.found).await else {
         return Vec::new();
     };
     // The hue weight the pairs carry and the neighbourhood the lattice reads, looked up on the
@@ -4689,7 +5096,12 @@ async fn wide_samples(
             let fit_at = (point[1] as usize / 2).min(fit_tall - 1) * fit_wide
                 + (point[0] as usize / 2).min(fit_wide - 1);
             let hue = census.weigh(weights, fit_at) * lit_trust(&t);
-            Some(WideSample { v, t, hue, s: surround[fit_at] })
+            Some(WideSample {
+                v,
+                t,
+                hue,
+                s: surround[fit_at],
+            })
         })
         .collect();
     lap("gather");
@@ -4808,16 +5220,31 @@ async fn pair_moments(
     let count = pairs.at.len();
     let samples = gathered(gpu, render, &pairs.indices, count, Some(&surround.buffer));
     let through = evaluate_over(gpu, colour, &samples, count, Stage::ToneMatrix);
-    let surrounds = floats_on(gpu, "fit lattice surround", (0..count).map(|k| surround.of[pairs.at[k]]));
+    let surrounds = floats_on(
+        gpu,
+        "fit lattice surround",
+        (0..count).map(|k| surround.of[pairs.at[k]]),
+    );
     let hue = floats_on(
         gpu,
         "fit lattice hue",
-        (0..count).map(|k| match pairs.target[k].iter().any(|c| *c >= CAMERA_CLIPPING) {
-            true => 0.0,
-            false => census.weigh(weights, pairs.at[k]) * lit_trust(&pairs.target[k]),
-        }),
+        (0..count).map(
+            |k| match pairs.target[k].iter().any(|c| *c >= CAMERA_CLIPPING) {
+                true => 0.0,
+                false => census.weigh(weights, pairs.at[k]) * lit_trust(&pairs.target[k]),
+            },
+        ),
     );
-    lattice_moments(gpu, &through.buffer, pairs.linear_on(gpu), &surrounds, &hue, count, axes).await
+    lattice_moments(
+        gpu,
+        &through.buffer,
+        pairs.linear_on(gpu),
+        &surrounds,
+        &hue,
+        count,
+        axes,
+    )
+    .await
 }
 
 /// The wide samples' landings folded into the lattice's nodes, for the colours the fit grid cannot
@@ -4842,10 +5269,23 @@ async fn wide_moments(
         .map(|s| [s.v[0] as f32, s.v[1] as f32, s.v[2] as f32, s.s as f32])
         .collect();
     let through = evaluate(gpu, colour, &samples, Stage::ToneMatrix);
-    let target = floats_on(gpu, "fit wide target", wides.iter().flat_map(|s| [s.t[0], s.t[1], s.t[2], 0.0]));
+    let target = floats_on(
+        gpu,
+        "fit wide target",
+        wides.iter().flat_map(|s| [s.t[0], s.t[1], s.t[2], 0.0]),
+    );
     let surround = floats_on(gpu, "fit wide surround", wides.iter().map(|s| s.s));
     let hue = floats_on(gpu, "fit wide hue", wides.iter().map(|s| s.hue));
-    lattice_moments(gpu, &through.buffer, &target, &surround, &hue, wides.len(), axes).await
+    lattice_moments(
+        gpu,
+        &through.buffer,
+        &target,
+        &surround,
+        &hue,
+        wides.len(),
+        axes,
+    )
+    .await
 }
 
 fn floats_on(
@@ -4929,7 +5369,17 @@ fn fitted_chroma(
     saturation: f64,
 ) -> Option<ChromaMap> {
     const NODES: usize = MAP_NODES;
-    let ChromaMoments { ata, atb, sx, st, btb, lta, lda, ltb, seen } = moments;
+    let ChromaMoments {
+        ata,
+        atb,
+        sx,
+        st,
+        btb,
+        lta,
+        lda,
+        ltb,
+        seen,
+    } = moments;
 
     // Each node solved on its own, then pulled back toward the scalar by how little it
     // saw. A node with nothing keeps nothing of its own.
@@ -5053,7 +5503,9 @@ fn fitted_chroma(
             }
         }
         if emitted > 0.0 && btb[node] > 0.0 {
-            let gain = (btb[node] / emitted).sqrt().clamp(1.0 / MAP_MAX_GAIN, MAP_MAX_GAIN);
+            let gain = (btb[node] / emitted)
+                .sqrt()
+                .clamp(1.0 / MAP_MAX_GAIN, MAP_MAX_GAIN);
             for v in &mut solved {
                 *v *= gain;
             }
@@ -5121,7 +5573,11 @@ async fn fit_colour(
         frame_target,
         ..
     } = selected;
-    let census = HueCensus { of: hues, counted, total };
+    let census = HueCensus {
+        of: hues,
+        counted,
+        total,
+    };
     let balance = hue_balance(&census, BALANCE_LIMIT);
     // A separate, looser weighting for the lattice alone. The cap exists because a global
     // fit driven by a frame's forty rarest pixels is noise - but a lattice node is not a
@@ -5172,7 +5628,11 @@ async fn fit_colour(
         to_srgb: rec2020_to_srgb(),
         linear: std::cell::OnceCell::new(),
     };
-    let source = Source { buffer: planes.render.clone(), width, height };
+    let source = Source {
+        buffer: planes.render.clone(),
+        width,
+        height,
+    };
     let evidence = crate::fit_curve::Evidence {
         render: planes.render.clone(),
         jpeg: planes.jpeg.clone(),
@@ -5232,11 +5692,15 @@ async fn fit_colour(
     // rare one is only as bad as what is left of that after the lattice. Each against the one
     // reference, the identity with its own saturation, so their costs and harms are comparable.
     let saturated = async |matrix: [[f64; 3]; 3]| -> Option<HdrColour> {
-        let mut trial = HdrColour { matrix, ..model.clone() };
+        let mut trial = HdrColour {
+            matrix,
+            ..model.clone()
+        };
         // One scalar on top, because a 3x3 cannot express a saturation that varies with
         // level and the camera's does. It stays one number for the reason on the field
         // itself.
-        trial.saturation = fitted_saturation(gpu, &trial, &source, &even, Stage::ToneMatrix).await?;
+        trial.saturation =
+            fitted_saturation(gpu, &trial, &source, &even, Stage::ToneMatrix).await?;
         Some(trial)
     };
     let reference = judges.judge(gpu, &saturated(IDENTITY).await?).await?;
@@ -5274,7 +5738,12 @@ async fn fit_colour(
         let (spent, chroma, score) = fitted_lattice(
             gpu,
             &trial,
-            &Lattice { sharp, evidence: &evidence, source: &source, surround: &surround },
+            &Lattice {
+                sharp,
+                evidence: &evidence,
+                source: &source,
+                surround: &surround,
+            },
             [&train, &held, &frame],
             [&wide_train, &wide_held],
             (&map_balance, &census),
@@ -5282,7 +5751,10 @@ async fn fit_colour(
         )
         .await?;
         if crate::clock::watched() {
-            eprintln!("  matrix {matrix:.3?}: {spent:.3}, lattice {}", chroma.is_some());
+            eprintln!(
+                "  matrix {matrix:.3?}: {spent:.3}, lattice {}",
+                chroma.is_some()
+            );
         }
         if chosen.as_ref().is_none_or(|(held, _, _)| spent < *held) {
             chosen = Some((spent, HdrColour { chroma, ..trial }, score));
@@ -5304,7 +5776,11 @@ async fn fit_colour(
                 data.push(f64::from(half::f16::from_f64(surround.of[at])));
             }
         }
-        colour.surround = SurroundThumb { width: tw, height: th, data };
+        colour.surround = SurroundThumb {
+            width: tw,
+            height: th,
+            data,
+        };
     }
 
     colour.delta_e = scored.balanced;
@@ -5347,7 +5823,12 @@ async fn fitted_lattice(
     (map_balance, census): (&[f64], &HueCensus),
     cost: impl AsyncFn(&HdrColour) -> Option<(f64, Score)>,
 ) -> Option<(f64, Option<ChromaMap>, Score)> {
-    let Lattice { sharp, evidence, source, surround } = *on;
+    let Lattice {
+        sharp,
+        evidence,
+        source,
+        surround,
+    } = *on;
     let (width, height) = (source.width, source.height);
     // Then the hue-dependent part, kept only if it earns its place. Least squares on
     // chroma minimises chroma error, and this fit is judged on deltaE - the same gap
@@ -5374,7 +5855,10 @@ async fn fitted_lattice(
     // measured better.
     let mut lap = crate::clock::laps("  lattice ");
     let looked_up = sharp.evaluated(gpu, colour);
-    let axes = LatticeAxes::of(colour, chroma_span(gpu, &sharp.wide, &looked_up.buffer).await?);
+    let axes = LatticeAxes::of(
+        colour,
+        chroma_span(gpu, &sharp.wide, &looked_up.buffer).await?,
+    );
     lap("span");
     let noise = LevelNoise {
         variance: crate::fit_noise::by_level(
@@ -5389,30 +5873,67 @@ async fn fitted_lattice(
     };
     lap("noise");
     if crate::clock::watched() {
-        let sigma = noise.variance.map(|v| v.map(|axes| axes.map(|a| (a.sqrt() * 1e4).round() / 1e4)));
+        let sigma = noise
+            .variance
+            .map(|v| v.map(|axes| axes.map(|a| (a.sqrt() * 1e4).round() / 1e4)));
         eprintln!("  colour chroma noise by level {sigma:?}");
     }
     let (scalar, unmapped) = cost(colour).await?;
     let mapped = async |map: &ChromaMap| {
-        cost(&HdrColour { chroma: Some(map.clone()), ..colour.clone() }).await
+        cost(&HdrColour {
+            chroma: Some(map.clone()),
+            ..colour.clone()
+        })
+        .await
     };
     // A ladder of candidates rather than one, because the wide samples change what the
     // fit believes and the choice must be free to disagree by degree. A cell only they
     // reach is fully taught at any weight on the ladder - `MAP_CONFIDENCE` is 2 against
     // thousands of samples - so what the ladder actually offers is how far they may
     // outvote the pairs in the cells both populations reach.
-    let taught =
-        pair_moments(gpu, colour, source, &axes, surround, train, map_balance, census).await?;
+    let taught = pair_moments(
+        gpu,
+        colour,
+        source,
+        &axes,
+        surround,
+        train,
+        map_balance,
+        census,
+    )
+    .await?;
     lap("pair moments");
     let wide_taught = wide_moments(gpu, colour, &axes, wide_train).await?;
     lap("wide moments");
-    let mut held_out =
-        pair_moments(gpu, colour, source, &axes, surround, held, map_balance, census).await?;
+    let mut held_out = pair_moments(
+        gpu,
+        colour,
+        source,
+        &axes,
+        surround,
+        held,
+        map_balance,
+        census,
+    )
+    .await?;
     held_out.add(
-        &pair_moments(gpu, colour, source, &axes, surround, frame, map_balance, census).await?,
+        &pair_moments(
+            gpu,
+            colour,
+            source,
+            &axes,
+            surround,
+            frame,
+            map_balance,
+            census,
+        )
+        .await?,
         1.0,
     );
-    held_out.add(&wide_moments(gpu, colour, &axes, wide_held).await?, WIDE_STANDS_FOR);
+    held_out.add(
+        &wide_moments(gpu, colour, &axes, wide_held).await?,
+        WIDE_STANDS_FOR,
+    );
     lap("held-out moments");
     let mut rungs: Option<(f64, ChromaMap, Score)> = None;
     for wide_weight in [0.0, 0.002, 0.01, 0.05, 0.25, 1.0, 4.0] {
@@ -5444,7 +5965,10 @@ async fn fitted_lattice(
         let at = |strength: f64| map.at_strength(colour.saturation, strength).smoothed();
         let mut judged = vec![(whole, 1.0, score)];
         let (mut low, mut high) = (0.0, 1.0);
-        let mut inner = [high - INVERSE_PHI * (high - low), low + INVERSE_PHI * (high - low)];
+        let mut inner = [
+            high - INVERSE_PHI * (high - low),
+            low + INVERSE_PHI * (high - low),
+        ];
         let mut costs = [0.0; 2];
         for (k, strength) in inner.iter().enumerate() {
             let (spent, score) = mapped(&at(*strength)).await?;
@@ -5536,11 +6060,15 @@ async fn fit_model(
     let samples = Gathered {
         pairs: gathered(gpu, source, &pairs.indices, pairs.at.len(), None),
         frame: gathered(gpu, source, &frame.indices, frame.at.len(), None),
-        scoring: [Rescored::of_candidates(gpu, pairs), Rescored::of_candidates(gpu, frame)],
+        scoring: [
+            Rescored::of_candidates(gpu, pairs),
+            Rescored::of_candidates(gpu, frame),
+        ],
     };
     let mut candidates = Vec::new();
     for round in 0..FIT_ROUNDS {
-        (colour.matrix, candidates) = fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
+        (colour.matrix, candidates) =
+            fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
         lap("matrix");
         let Some(inverse) = invert3(&colour.matrix).filter(|_| round + 1 < FIT_ROUNDS) else {
             break;
@@ -5620,7 +6148,10 @@ pub async fn preview_planes(
             // Into the primaries the fit works in, here rather than in a second pass over the
             // plane on the host. The matrix is linear, so it agrees either side of the box - and
             // this way it runs over a thousandth of the pixels the source has.
-            Shape::PackedBox { levels: &eotf, finish: Finish::Matrix(srgb_to_rec2020()) },
+            Shape::PackedBox {
+                levels: &eotf,
+                finish: Finish::Matrix(srgb_to_rec2020()),
+            },
         ),
         Shaping::new(
             gpu,
@@ -5629,7 +6160,10 @@ pub async fn preview_planes(
             (w, h),
             &codes_out,
             (tw, th),
-            Shape::PackedBox { levels: &identity, finish: Finish::Codes },
+            Shape::PackedBox {
+                levels: &identity,
+                finish: Finish::Codes,
+            },
         ),
     ];
     {
@@ -5643,8 +6177,16 @@ pub async fn preview_planes(
     // search reads the coded one, and `FINISH_CODES` already put the second on the 255 steps a
     // JPEG's levels live on - so neither has to come back to be rounded and sent up again.
     Some((
-        Source { buffer: light_out, width: tw, height: th },
-        Source { buffer: codes_out, width: tw, height: th },
+        Source {
+            buffer: light_out,
+            width: tw,
+            height: th,
+        },
+        Source {
+            buffer: codes_out,
+            width: tw,
+            height: th,
+        },
     ))
 }
 
@@ -5662,9 +6204,11 @@ pub async fn fit_linearised(
     // The normalisation is the only per-fit thing about the plane, and it rides the warp that
     // reads it: a pass of its own would be the whole plane back to the host and up again, between
     // two passes that both already have it.
-    let colour =
-        fit_model_planes(gpu, plane, 1.0 / levels.white.raw(), wide_jpeg, &lens).await?;
-    Some(HdrMatch { lens, colour: Some(colour) })
+    let colour = fit_model_planes(gpu, plane, 1.0 / levels.white.raw(), wide_jpeg, &lens).await?;
+    Some(HdrMatch {
+        lens,
+        colour: Some(colour),
+    })
 }
 
 const CAMERA_CURVE_MAX_POINTS: usize = 6;
@@ -5694,7 +6238,8 @@ async fn camera_curve(
     if !exposed_pivot.raw().is_finite() || exposed_pivot.raw() <= CAMERA_MIN_PIVOT_SHARE.raw() {
         return None;
     }
-    let bounded = (exposed_pivot.raw() / pivot.raw()).log2()
+    let bounded = (exposed_pivot.raw() / pivot.raw())
+        .log2()
         .clamp(-CAMERA_EXPOSURE_LIMIT.raw(), CAMERA_EXPOSURE_LIMIT.raw());
     let exposure = Stops::measured(f64::from(bounded as f32));
     let gain = Gain::of(exposure);
@@ -5720,11 +6265,15 @@ async fn camera_curve(
         .into_iter()
         .zip(responses)
         .map(|(x, output)| {
-            let y = CurveCode::of_white_ratio(over_white(output[3])).raw().clamp(0.0, 1.0);
+            let y = CurveCode::of_white_ratio(over_white(output[3]))
+                .raw()
+                .clamp(0.0, 1.0);
             [x, y]
         })
         .collect();
-    if target[0][1] > pivot_code * (1.0 - CAMERA_MIN_SLOPE) { return None; }
+    if target[0][1] > pivot_code * (1.0 - CAMERA_MIN_SLOPE) {
+        return None;
+    }
     let (curve, error) = fitted_camera_curve(&target, pivot_code);
     Some((exposure, curve, error))
 }
@@ -5735,30 +6284,61 @@ fn fitted_camera_curve(target: &[[f64; 2]], pivot: f64) -> (Vec<[f64; 2]>, f64) 
     for &[x, y] in target {
         let offset = (y - CAMERA_MIN_SLOPE * x).clamp(0.0, 1.0 - CAMERA_MIN_SLOPE);
         let pivot_offset = pivot * (1.0 - CAMERA_MIN_SLOPE);
-        let bounded = if x < pivot { offset.min(pivot_offset) } else { offset.max(pivot_offset) };
+        let bounded = if x < pivot {
+            offset.min(pivot_offset)
+        } else {
+            offset.max(pivot_offset)
+        };
         last = last.max(bounded);
         monotone.push([x, last + CAMERA_MIN_SLOPE * x]);
     }
-    let mut curve = vec![[0.0, monotone[0][1]], [pivot, pivot], [1.0, last + CAMERA_MIN_SLOPE]];
+    let mut curve = vec![
+        [0.0, monotone[0][1]],
+        [pivot, pivot],
+        [1.0, last + CAMERA_MIN_SLOPE],
+    ];
     loop {
         let tangents = crate::light::curve_tangents(&curve);
         let mut max_error = 0.0f64;
         let mut eligible: Option<(usize, f64)> = None;
         for (index, &[x, y]) in monotone.iter().enumerate() {
-            let error = (crate::light::curve_at(&curve, &tangents, crate::light::CurveCode::from_raw(x)).raw() - y).abs();
+            let error =
+                (crate::light::curve_at(&curve, &tangents, crate::light::CurveCode::from_raw(x))
+                    .raw()
+                    - y)
+                    .abs();
             max_error = max_error.max(error);
-            if curve.iter().all(|point| (point[0] - x).abs() >= CAMERA_KNOT_GAP)
+            if curve
+                .iter()
+                .all(|point| (point[0] - x).abs() >= CAMERA_KNOT_GAP)
                 && eligible.is_none_or(|(_, best)| error > best)
             {
                 eligible = Some((index, error));
             }
         }
-        if max_error < CAMERA_CURVE_MAX_ERROR || curve.len() == CAMERA_CURVE_MAX_POINTS || eligible.is_none() {
-            for point in &mut curve { for value in point { *value = f64::from(*value as f32); } }
+        if max_error < CAMERA_CURVE_MAX_ERROR
+            || curve.len() == CAMERA_CURVE_MAX_POINTS
+            || eligible.is_none()
+        {
+            for point in &mut curve {
+                for value in point {
+                    *value = f64::from(*value as f32);
+                }
+            }
             let tangents = crate::light::curve_tangents(&curve);
-            let error = monotone.iter().map(|&[x, y]|
-                (crate::light::curve_at(&curve, &tangents, crate::light::CurveCode::from_raw(x)).raw() - y).abs()
-            ).fold(0.0f64, f64::max);
+            let error = monotone
+                .iter()
+                .map(|&[x, y]| {
+                    (crate::light::curve_at(
+                        &curve,
+                        &tangents,
+                        crate::light::CurveCode::from_raw(x),
+                    )
+                    .raw()
+                        - y)
+                        .abs()
+                })
+                .fold(0.0f64, f64::max);
             return (curve, error);
         }
         let (index, _) = eligible.expect("an eligible knot");
@@ -5820,7 +6400,11 @@ async fn prepared_planes(
             (wide, tall),
             &warped,
             (wide, tall),
-            Shape::Warp { lens, luma: false, scale },
+            Shape::Warp {
+                lens,
+                luma: false,
+                scale,
+            },
         ),
         Shaping::new(
             gpu,
@@ -5843,7 +6427,9 @@ async fn prepared_planes(
             (camera_wide, camera_tall),
             &jpeg_out,
             (fit_wide, fit_tall),
-            Shape::Box { finish: Finish::None },
+            Shape::Box {
+                finish: Finish::None,
+            },
         ),
     ];
     {
@@ -5880,8 +6466,16 @@ async fn prepared_planes(
         render: render_blurred,
         jpeg: jpeg_blurred,
         sharp: Sharp {
-            wide: Source { buffer: warped, width: wide, height: tall },
-            camera: Source { buffer: camera, width: camera_wide, height: camera_tall },
+            wide: Source {
+                buffer: warped,
+                width: wide,
+                height: tall,
+            },
+            camera: Source {
+                buffer: camera,
+                width: camera_wide,
+                height: camera_tall,
+            },
             falloff: lens.falloff,
         },
         resident: Wide { ours, theirs },
@@ -5975,7 +6569,11 @@ pub(crate) fn warped_planes(
                 (sw, sh),
                 plane,
                 (width, height),
-                Shape::Warp { lens, luma: false, scale: 1.0 },
+                Shape::Warp {
+                    lens,
+                    luma: false,
+                    scale: 1.0,
+                },
             )
         })
         .collect();
@@ -6061,7 +6659,10 @@ impl Settling {
         };
         let asked: Vec<[i32; 2]> = (0..across * down)
             .filter_map(|p| {
-                let (x, y) = (((p % across) * stride) as isize, ((p / across) * stride) as isize);
+                let (x, y) = (
+                    ((p % across) * stride) as isize,
+                    ((p / across) * stride) as isize,
+                );
                 let held = inside(x, y, render.width, render.height)
                     && inside(x, y, preview.width, preview.height);
                 held.then_some([x as i32, y as i32])
@@ -6138,7 +6739,11 @@ pub async fn registration(
         (width, height),
         &settling.ours.buffer,
         (width, height),
-        Shape::Warp { lens, luma: true, scale: 1.0 },
+        Shape::Warp {
+            lens,
+            luma: true,
+            scale: 1.0,
+        },
     );
     let asking = Asking::new(
         gpu,
@@ -6176,8 +6781,12 @@ pub async fn registration(
             // nothing about where the camera put anything - but it is also not a point
             // this geometry failed, so it carries its zero into the misfit and no radial.
             let squared = found.dx * found.dx + found.dy * found.dy;
-            let shift = (!found.featureless && radius >= 1.0)
-                .then(|| ((found.dx * dx + found.dy * dy) / radius / half, radius / half));
+            let shift = (!found.featureless && radius >= 1.0).then(|| {
+                (
+                    (found.dx * dx + found.dy * dy) / radius / half,
+                    radius / half,
+                )
+            });
             (bin, shift, squared)
         })
         .collect();
@@ -6228,10 +6837,14 @@ pub async fn correspondence_at(
         width: render.width,
         height: render.height,
     };
-    let theirs =
-        Source { buffer: preview.buffer.clone(), width: preview.width, height: preview.height };
-    let FitPlanes { sharp, resident, .. } =
-        prepared_planes(gpu, &ours, 1.0, theirs, lens).await?;
+    let theirs = Source {
+        buffer: preview.buffer.clone(),
+        width: preview.width,
+        height: preview.height,
+    };
+    let FitPlanes {
+        sharp, resident, ..
+    } = prepared_planes(gpu, &ours, 1.0, theirs, lens).await?;
     let edge = PATCH + SEARCH;
     // The margins are the tighter of the two planes', which is what a window inside both means.
     let (wide, tall) = (
@@ -6244,8 +6857,9 @@ pub async fn correspondence_at(
         .filter(|(x, y)| holds(*x as isize, *y as isize))
         .map(|(x, y)| [*x as i32, *y as i32])
         .collect();
-    let searched =
-        corresponded(gpu, &resident.ours, &resident.theirs, &inside).await.unwrap_or_default();
+    let searched = corresponded(gpu, &resident.ours, &resident.theirs, &inside)
+        .await
+        .unwrap_or_default();
     let mut taken = searched.into_iter();
     let found = points
         .iter()
@@ -6256,7 +6870,11 @@ pub async fn correspondence_at(
         .collect();
     // Read back for looking at, which is the whole point of this one: the fit itself never brings
     // either plane down.
-    Some((read_plane(gpu, &sharp.wide).await?, read_plane(gpu, &sharp.camera).await?, found))
+    Some((
+        read_plane(gpu, &sharp.wide).await?,
+        read_plane(gpu, &sharp.camera).await?,
+        found,
+    ))
 }
 
 /// The long edge a caller should decode the preview to.
@@ -6301,15 +6919,21 @@ pub fn render_srgb8(
     let white = white.raw();
     let mut data = vec![0u8; plane.width * plane.height * 3];
     let to_srgb = rec2020_to_srgb();
-    data.par_chunks_mut(3).zip(plane.data.par_chunks(3)).for_each(|(out, px)| {
-        // sRGB primaries first, which is where the camera's JPEG lives; the fit works in
-        // Rec.2020.
-        let v = apply3(&to_srgb, px[0] / white, px[1] / white, px[2] / white);
-        for c in 0..3 {
-            out[c] = (255.0 * srgb_oetf(v[c])).round() as u8;
-        }
-    });
-    crate::rgb::Rgb { width: plane.width, height: plane.height, data }
+    data.par_chunks_mut(3)
+        .zip(plane.data.par_chunks(3))
+        .for_each(|(out, px)| {
+            // sRGB primaries first, which is where the camera's JPEG lives; the fit works in
+            // Rec.2020.
+            let v = apply3(&to_srgb, px[0] / white, px[1] / white, px[2] / white);
+            for c in 0..3 {
+                out[c] = (255.0 * srgb_oetf(v[c])).round() as u8;
+            }
+        });
+    crate::rgb::Rgb {
+        width: plane.width,
+        height: plane.height,
+        data,
+    }
 }
 
 #[cfg(test)]
@@ -6322,10 +6946,15 @@ mod tests {
         let colour = HdrColour::identity();
         let (exposure, curve, error) = pollster::block_on(camera_curve(gpu, &colour)).unwrap();
         let pivot = crate::light::PIVOT.raw();
-        let grey = pollster::block_on(evaluated(gpu, &colour, &[[pivot as f32; 4]], Stage::Full)).unwrap()[0][3];
+        let grey = pollster::block_on(evaluated(gpu, &colour, &[[pivot as f32; 4]], Stage::Full))
+            .unwrap()[0][3];
         let expected = f64::from((f64::from(grey) / pivot).log2() as f32);
         assert_eq!(exposure.raw(), expected);
-        assert!(curve.iter().any(|p| p[0] > 0.0 && p[0] < 1.0 && p[0] == p[1]));
+        assert!(
+            curve
+                .iter()
+                .any(|p| p[0] > 0.0 && p[0] < 1.0 && p[0] == p[1])
+        );
         assert!(curve.iter().flatten().all(|&v| v == f64::from(v as f32)));
         assert!(curve.windows(2).all(|p| p[1][1] > p[0][1]));
         assert!(error < CAMERA_CURVE_MAX_ERROR, "neutral fit error {error}");
@@ -6335,11 +6964,19 @@ mod tests {
         assert_eq!(degenerate.curve, crate::light::IDENTITY_CURVE);
         assert_eq!(degenerate.exposure, crate::light::Stops::ZERO);
         let mut deep = HdrColour::identity();
-        for channel in &mut deep.curves { for light in channel { *light = light.powi(4); } }
+        for channel in &mut deep.curves {
+            for light in channel {
+                *light = light.powi(4);
+            }
+        }
         let (exposure, _, _) = pollster::block_on(camera_curve(gpu, &deep)).unwrap();
         assert_eq!(exposure.raw(), -CAMERA_EXPOSURE_LIMIT.raw());
         let mut raised = HdrColour::identity();
-        for channel in &mut raised.curves { for light in channel { *light = 0.8 + 0.2 * *light; } }
+        for channel in &mut raised.curves {
+            for light in channel {
+                *light = 0.8 + 0.2 * *light;
+            }
+        }
         assert!(pollster::block_on(camera_curve(gpu, &raised)).is_none());
     }
 
@@ -6354,7 +6991,11 @@ mod tests {
         let (curve, _) = fitted_camera_curve(&target, 0.28);
         assert!((3..=CAMERA_CURVE_MAX_POINTS).contains(&curve.len()));
         assert!(curve.contains(&[f64::from(0.28f32); 2]));
-        assert!(curve.windows(2).all(|pair| pair[1][0] - pair[0][0] + 1e-7 >= CAMERA_KNOT_GAP));
+        assert!(
+            curve
+                .windows(2)
+                .all(|pair| pair[1][0] - pair[0][0] + 1e-7 >= CAMERA_KNOT_GAP)
+        );
 
         let target = [[0.04, 0.3], [0.05, 0.6], [0.96, 0.9], [1.0, 1.0]];
         let (curve, error) = fitted_camera_curve(&target, 0.5);
@@ -6383,8 +7024,14 @@ mod tests {
                 usage: wgpu::BufferUsages::STORAGE,
             })
         };
-        pollster::block_on(crate::fit_pairs::select(gpu, &flat(ours), &flat(theirs), side, side))
-            .expect("the device selected")
+        pollster::block_on(crate::fit_pairs::select(
+            gpu,
+            &flat(ours),
+            &flat(theirs),
+            side,
+            side,
+        ))
+        .expect("the device selected")
     }
 
     /// The centre of a 5x5, which is the only pixel a border-skipping mask and a gradient three
@@ -6400,9 +7047,15 @@ mod tests {
     /// margin's taper, and measures nothing.
     #[test]
     fn a_camera_black_over_our_signal_teaches_the_toe() {
-        assert!(masked([0.05; 3], [0.0003; 3]) != 0, "camera black over our signal");
+        assert!(
+            masked([0.05; 3], [0.0003; 3]) != 0,
+            "camera black over our signal"
+        );
         assert!(masked([0.001; 3], [0.0003; 3]) != 0, "dark on both sides");
-        assert!(masked([0.001; 3], [0.2; 3]) == 0, "our taper under camera content");
+        assert!(
+            masked([0.001; 3], [0.2; 3]) == 0,
+            "our taper under camera content"
+        );
         assert!(masked([0.0; 3], [0.0003; 3]) == 0, "an exact-zero margin");
     }
 
@@ -6415,12 +7068,26 @@ mod tests {
             0b111,
             "every channel is inside the curves' domain"
         );
-        assert!(crushed.at.contains(&CENTRE), "a saturated colour is still a colour");
+        assert!(
+            crushed.at.contains(&CENTRE),
+            "a saturated colour is still a colour"
+        );
         let dark = [0.004, 0.002, 0.0004];
         let black = selection([0.4, 0.2, 0.05], dark);
-        assert!(black.at.contains(&CENTRE), "a near-black camera pixel is a pair");
-        assert!(lit_trust(&dark) < 0.05, "which says almost nothing: {}", lit_trust(&dark));
-        assert_eq!(lit_trust(&[0.3, 0.1, 0.0004]), 1.0, "a crushed blue is still a lit colour");
+        assert!(
+            black.at.contains(&CENTRE),
+            "a near-black camera pixel is a pair"
+        );
+        assert!(
+            lit_trust(&dark) < 0.05,
+            "which says almost nothing: {}",
+            lit_trust(&dark)
+        );
+        assert_eq!(
+            lit_trust(&[0.3, 0.1, 0.0004]),
+            1.0,
+            "a crushed blue is still a lit colour"
+        );
         assert_eq!(trust(0.0), 0.0);
         assert_eq!(trust(CAMERA_CRUSHED), 0.5);
         assert_eq!(trust(2.0 * CAMERA_CRUSHED), 1.0);
@@ -6433,16 +7100,39 @@ mod tests {
         let (width, height) = (99, 100);
         let (dark, lit, saturated) = ([0.005, 0.003, 0.001], [0.3, 0.1, 0.06], [0.3, 0.01, 0.0]);
         assert!(lit_trust(&dark) < THIN_TRUST / 2.0);
-        let render = Plane { width, height, data: vec![0.2; width * height * 3] };
-        let data = (0..width * height).flat_map(|p| [dark, lit, saturated][p % 3]).collect();
-        let pairs = Pairs::over(searching(), &render, &Plane { width, height, data });
+        let render = Plane {
+            width,
+            height,
+            data: vec![0.2; width * height * 3],
+        };
+        let data = (0..width * height)
+            .flat_map(|p| [dark, lit, saturated][p % 3])
+            .collect();
+        let pairs = Pairs::over(
+            searching(),
+            &render,
+            &Plane {
+                width,
+                height,
+                data,
+            },
+        );
         let thinned = pairs.thinned(searching(), |k| lit_trust(&pairs.target[k]));
         let sum = |set: &Pairs, of: [f64; 3]| -> (f64, usize) {
-            let at = set.target.iter().zip(&set.balance).filter(|(t, _)| **t == of);
+            let at = set
+                .target
+                .iter()
+                .zip(&set.balance)
+                .filter(|(t, _)| **t == of);
             at.fold((0.0, 0), |(w, n), (_, b)| (w + b, n + 1))
         };
         let third = width * height / 3;
-        let whole: f64 = pairs.target.iter().filter(|t| **t == dark).map(lit_trust).sum();
+        let whole: f64 = pairs
+            .target
+            .iter()
+            .filter(|t| **t == dark)
+            .map(lit_trust)
+            .sum();
         let (kept, survivors) = sum(&thinned, dark);
         assert!((kept / whole - 1.0).abs() < 0.05, "{kept} against {whole}");
         assert!(survivors < third * 3 / 4, "{survivors} dark pairs kept");
@@ -6457,11 +7147,23 @@ mod tests {
         let (v, red) = ([0.5, 0.05, 0.03], [0.5, 0.05, 0.001]);
         let blue_on_red = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.1, 0.0, 0.9]];
         let (mut under, mut over) = (Moments::default(), Moments::default());
-        under.add(1.0, &v, &red, &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]);
+        under.add(
+            1.0,
+            &v,
+            &red,
+            &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
+        );
         over.add(1.0, &v, &red, &blue_on_red);
         let (full, blue) = (over.ata[0][0][0], |m: &Moments| m.ata[2][0][0]);
-        assert!(blue(&under) < 0.01 * full, "under the bound is no error: {}", blue(&under));
-        assert!((blue(&over) / full - 1.0).abs() < 1e-9, "past it, the blue row counts it in full");
+        assert!(
+            blue(&under) < 0.01 * full,
+            "under the bound is no error: {}",
+            blue(&under)
+        );
+        assert!(
+            (blue(&over) / full - 1.0).abs() < 1e-9,
+            "past it, the blue row counts it in full"
+        );
         assert_eq!((under.ata[0], under.ata[1]), (over.ata[0], over.ata[1]));
     }
 
@@ -6469,18 +7171,35 @@ mod tests {
     /// bound, for every matrix it is asked about at once.
     #[test]
     fn the_device_adds_a_pair_as_the_host_does() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let pairs: Vec<([f64; 3], [f64; 3], f64)> = (0..300)
             .map(|k| {
                 let f = k as f64 / 300.0;
-                let v = [0.1 + 0.5 * f, 0.05 + 0.3 * (1.0 - f), 0.02 + 0.02 * (k % 13) as f64];
+                let v = [
+                    0.1 + 0.5 * f,
+                    0.05 + 0.3 * (1.0 - f),
+                    0.02 + 0.02 * (k % 13) as f64,
+                ];
                 let t = [0.9 * v[0], 1.05 * v[1], [0.0, 0.01, 0.03, 0.2][k % 4]];
                 (v, t, 0.5 + (k % 5) as f64)
             })
             .collect();
-        let matrices = [IDENTITY, [[0.9, 0.05, 0.05], [0.0, 1.0, 0.0], [0.2, -0.1, 0.9]]];
-        let below = floats_on(gpu, "test below", pairs.iter().flat_map(|(v, _, _)| [v[0], v[1], v[2], 0.0]));
-        let target = floats_on(gpu, "test target", pairs.iter().flat_map(|(_, t, w)| [t[0], t[1], t[2], *w]));
+        let matrices = [
+            IDENTITY,
+            [[0.9, 0.05, 0.05], [0.0, 1.0, 0.0], [0.2, -0.1, 0.9]],
+        ];
+        let below = floats_on(
+            gpu,
+            "test below",
+            pairs.iter().flat_map(|(v, _, _)| [v[0], v[1], v[2], 0.0]),
+        );
+        let target = floats_on(
+            gpu,
+            "test target",
+            pairs.iter().flat_map(|(_, t, w)| [t[0], t[1], t[2], *w]),
+        );
         let blocks = pollster::block_on(crate::fit_moments::partials(
             gpu,
             &below,
@@ -6521,7 +7240,10 @@ mod tests {
             ([0.2, 0.3, 0.4], [0.2, 0.3, 0.36]),
             ([0.3, 0.3, 0.3], [0.3, 0.3, 0.3]),
         ];
-        let reds = [([0.6, 0.06, 0.04], [0.6, 0.06, 0.0]), ([0.5, 0.1, 0.05], [0.5, 0.1, 0.0])];
+        let reds = [
+            ([0.6, 0.06, 0.04], [0.6, 0.06, 0.0]),
+            ([0.5, 0.1, 0.05], [0.5, 0.1, 0.0]),
+        ];
         let solved = |with_reds: bool| {
             let mut matrix = IDENTITY;
             for _ in 0..CENSOR_ROUNDS {
@@ -6543,7 +7265,10 @@ mod tests {
         for (v, _) in &reds {
             let (held, free) = (blue_of(&held, v), blue_of(&free, v));
             assert!(free > 0.1, "without the bound the red takes blue: {free}");
-            assert!(held < free / 4.0, "the bound keeps it off: {held} against {free}");
+            assert!(
+                held < free / 4.0,
+                "the bound keeps it off: {held} against {free}"
+            );
         }
     }
 
@@ -6559,16 +7284,29 @@ mod tests {
         // still the picture: `hdr_fit` marks its balance negative and the objective reads it for
         // the gamut alone.
         let clipped = selection_across(9, [0.4, 0.2, 0.05], [0.99, 0.99, 0.99]);
-        assert!(!clipped.at.contains(&INSIDE), "a clipped camera pixel is not a pair");
-        assert!(clipped.frame_at.contains(&INSIDE), "and is still the picture");
+        assert!(
+            !clipped.at.contains(&INSIDE),
+            "a clipped camera pixel is not a pair"
+        );
+        assert!(
+            clipped.frame_at.contains(&INSIDE),
+            "and is still the picture"
+        );
 
         // Nor is the warp's black margin scene content.
         let margin = selection_across(9, [0.0; 3], [0.3, 0.1, 0.05]);
-        assert!(!margin.frame_at.contains(&INSIDE), "an exact-zero margin is not the picture");
+        assert!(
+            !margin.frame_at.contains(&INSIDE),
+            "an exact-zero margin is not the picture"
+        );
 
         // One in sixteen of the interior, and the camera's colour carried with each.
         assert_eq!(clipped.frame_at.len(), clipped.frame_target.len());
-        assert_eq!(clipped.frame_at, vec![INSIDE], "the stride grid's interior of a 9x9");
+        assert_eq!(
+            clipped.frame_at,
+            vec![INSIDE],
+            "the stride grid's interior of a 9x9"
+        );
         for c in 0..3 {
             assert!(
                 (clipped.frame_target[0][c] - 0.99).abs() < 1e-6,
@@ -6592,21 +7330,34 @@ mod tests {
         let pairs = scores([(1.0, 1.0), (1.5, 1.5), (2.0, 2.0)]);
 
         let agreeing = scores([(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)]);
-        assert_eq!(fitted_matrix(&candidates, &pairs, &agreeing, unmatched), wild);
+        assert_eq!(
+            fitted_matrix(&candidates, &pairs, &agreeing, unmatched),
+            wild
+        );
         // On the picture it loses more than it won on the pairs.
         let disagreeing = scores([(0.0, 4.0), (0.0, 1.5), (0.0, 1.49)]);
-        assert_eq!(fitted_matrix(&candidates, &pairs, &disagreeing, unmatched), tame);
+        assert_eq!(
+            fitted_matrix(&candidates, &pairs, &disagreeing, unmatched),
+            tame
+        );
         // Worse on the picture by less than it is better on the pairs, it keeps its place - which
         // a margin on the picture alone would have refused it for.
         let costly = scores([(0.0, 1.4), (0.0, 1.0), (0.0, 1.0)]);
         assert_eq!(fitted_matrix(&candidates, &pairs, &costly, unmatched), wild);
         // And the identity is a candidate like any other: it wins when its sum is the least.
         let hopeless = scores([(0.0, 5.0), (0.0, 4.0), (0.0, 1.0)]);
-        assert_eq!(fitted_matrix(&candidates, &pairs, &hopeless, unmatched), IDENTITY);
+        assert_eq!(
+            fitted_matrix(&candidates, &pairs, &hopeless, unmatched),
+            IDENTITY
+        );
     }
 
     fn unclassed(balanced: f64, flat: f64) -> Score {
-        Score { balanced, flat, classes: [(0.0, 0.0); COLOUR_CLASSES] }
+        Score {
+            balanced,
+            flat,
+            classes: [(0.0, 0.0); COLOUR_CLASSES],
+        }
     }
 
     /// Each class over so many pairs that its excess counts in full.
@@ -6632,17 +7383,31 @@ mod tests {
         let reference = classed(2.0, &[(0, 1.0), (3, 2.0), (7, 4.0)]);
         let score = classed(1.5, &[(0, 0.5), (3, 4.5), (7, 5.0), (9, 30.0)]);
         let worst = harm(&score, &reference);
-        assert!(worst < 2.23 && worst > 2.22, "the class 2.5 worse, alone: {worst}");
+        assert!(
+            worst < 2.23 && worst > 2.22,
+            "the class 2.5 worse, alone: {worst}"
+        );
         let better = classed(1.0, &[(0, 0.5), (3, 1.0), (7, 3.0)]);
         let improved = harm(&better, &reference);
-        assert!(improved < -0.5 && improved > -1.0, "every class better: {improved}");
+        assert!(
+            improved < -0.5 && improved > -1.0,
+            "every class better: {improved}"
+        );
 
         let mut few = score;
         few.classes[3].1 = CLASS_CONFIDENCE;
         let shared = harm(&few, &reference);
-        assert!(shared > 1.0 && shared < 1.25, "half of 2.5 beside a 1.0 shares: {shared}");
+        assert!(
+            shared > 1.0 && shared < 1.25,
+            "half of 2.5 beside a 1.0 shares: {shared}"
+        );
 
-        let at = |seventh: f64| harm(&classed(1.5, &[(0, 0.5), (3, 4.5), (7, seventh)]), &reference);
+        let at = |seventh: f64| {
+            harm(
+                &classed(1.5, &[(0, 0.5), (3, 4.5), (7, seventh)]),
+                &reference,
+            )
+        };
         let steps: Vec<f64> = (0..=40).map(|k| at(5.5 + 0.05 * k as f64)).collect();
         let jumps: Vec<f64> = steps.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(
@@ -6668,16 +7433,18 @@ mod tests {
     fn perceptual_score(target: [f64; 3], ours: [f64; 3]) -> (Score, f64) {
         let gpu = searching();
         let below = crate::fit_score::below_buffer(gpu, &[(ours, 0.0)]);
-        let scoring = crate::fit_score::Scoring::new(gpu, below, &[target], &[1.0], &IDENTITY, 2, 1);
+        let scoring =
+            crate::fit_score::Scoring::new(gpu, below, &[target], &[1.0], &IDENTITY, 2, 1);
         let blocks = pollster::block_on(scoring.partials(
             &crate::fit_score::Shape::Saturation,
             &[crate::fit_score::Probe::neutral()],
         ))
         .unwrap()
         .remove(0);
-        let bias = blocks.iter().flat_map(|b| b.bias).fold([0.0; 2], |sum, v| {
-            [sum[0] + v[0], sum[1] + v[1]]
-        });
+        let bias = blocks
+            .iter()
+            .flat_map(|b| b.bias)
+            .fold([0.0; 2], |sum, v| [sum[0] + v[0], sum[1] + v[1]]);
         (folded(blocks), bias[0].hypot(bias[1]))
     }
 
@@ -6686,7 +7453,12 @@ mod tests {
         let light = |codes: [u8; 3]| codes.map(srgb_eotf);
         let (dark, _) = perceptual_score(light([2, 2, 2]), light([3, 2, 2]));
         let (lit, _) = perceptual_score(light([128, 128, 128]), light([129, 128, 128]));
-        assert!(dark.flat < 0.2 * lit.flat, "near-black {} against lit {}", dark.flat, lit.flat);
+        assert!(
+            dark.flat < 0.2 * lit.flat,
+            "near-black {} against lit {}",
+            dark.flat,
+            lit.flat
+        );
         assert!(dark.flat < 0.1, "near-black chroma costs {}", dark.flat);
         assert_eq!(dark.balanced, dark.flat);
     }
@@ -6694,9 +7466,19 @@ mod tests {
     #[test]
     fn the_colour_bias_preserves_hue_priority_and_ignores_lightness() {
         let linear = |[l, a, b]: [f64; 3]| {
-            let unf = |f: f64| if f > 0.206893 { f * f * f } else { (f - 16.0 / 116.0) / 7.787 };
+            let unf = |f: f64| {
+                if f > 0.206893 {
+                    f * f * f
+                } else {
+                    (f - 16.0 / 116.0) / 7.787
+                }
+            };
             let fy = (l + 16.0) / 116.0;
-            let xyz = [0.95047 * unf(fy + a / 500.0), unf(fy), 1.08883 * unf(fy - b / 200.0)];
+            let xyz = [
+                0.95047 * unf(fy + a / 500.0),
+                unf(fy),
+                1.08883 * unf(fy - b / 200.0),
+            ];
             std::array::from_fn(|r| (0..3).map(|c| XYZ_TO_SRGB[r][c] * xyz[c]).sum())
         };
         let target = linear([55.0, 35.0, 35.0]);
@@ -6705,9 +7487,22 @@ mod tests {
         let (saturated, _) = perceptual_score(target, linear([55.0, 35.0 + radial, 35.0 + radial]));
         let chroma = 35.0 * 2.0f64.sqrt();
         let hue = std::f64::consts::FRAC_PI_4 + 2.0 * (2.0 / chroma).asin();
-        let (turned, _) = perceptual_score(target, linear([55.0, chroma * hue.cos(), chroma * hue.sin()]));
-        assert!(turned.flat > 2.0 * saturated.flat, "hue {} against chroma {}", turned.flat, saturated.flat);
-        assert!(lighter.flat > saturated.flat, "lightness {} against chroma {}", lighter.flat, saturated.flat);
+        let (turned, _) = perceptual_score(
+            target,
+            linear([55.0, chroma * hue.cos(), chroma * hue.sin()]),
+        );
+        assert!(
+            turned.flat > 2.0 * saturated.flat,
+            "hue {} against chroma {}",
+            turned.flat,
+            saturated.flat
+        );
+        assert!(
+            lighter.flat > saturated.flat,
+            "lightness {} against chroma {}",
+            lighter.flat,
+            saturated.flat
+        );
         let (_, tint) = perceptual_score([128u8; 3].map(srgb_eotf), [140u8; 3].map(srgb_eotf));
         assert!(tint < 1e-3, "lightness alone produced colour bias {tint}");
     }
@@ -6717,7 +7512,9 @@ mod tests {
     #[test]
     fn noise_damps_the_greys_of_a_noisy_level_first() {
         let map = ChromaMap::from_nodes(|_, _, _| [1.3, 0.0, 0.0, 1.3, 0.0, 0.0, 1.0, 0.0, 0.0]);
-        let quiet = LevelNoise { variance: [None; MAP_LEVEL] };
+        let quiet = LevelNoise {
+            variance: [None; MAP_LEVEL],
+        };
         assert_eq!(map.noise_damped(1.0, &quiet).nodes, map.nodes);
 
         let mut variance = [None; MAP_LEVEL];
@@ -6727,19 +7524,35 @@ mod tests {
         let kept = |x, z| (damped.nodes[at(x, z)][0] - 1.0) / 0.3;
         let grey = (-map.low[0] * map.scale[0]).round() as usize;
         let vivid = MAP_CHROMA - 1;
-        assert!((kept(grey, 1) - 1.0).abs() < 1e-12, "a quiet level keeps all of it");
-        assert!(kept(grey, 2) < kept(vivid, 2), "{} against {}", kept(grey, 2), kept(vivid, 2));
+        assert!(
+            (kept(grey, 1) - 1.0).abs() < 1e-12,
+            "a quiet level keeps all of it"
+        );
+        assert!(
+            kept(grey, 2) < kept(vivid, 2),
+            "{} against {}",
+            kept(grey, 2),
+            kept(vivid, 2)
+        );
         assert!(kept(vivid, 2) < 1.0);
     }
 
     /// Most of the pairs in one cell, as a dark frame puts them, so its run is cut into slices.
     #[test]
     fn the_device_lattice_sums_what_the_host_landing_does() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let axes = LatticeAxes { span: [[-0.4, 7.5]; 2], level_scale: 8.0, surround_scale: 2.0 };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let axes = LatticeAxes {
+            span: [[-0.4, 7.5]; 2],
+            level_scale: 8.0,
+            surround_scale: 2.0,
+        };
         let mut seed = 7u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as f64 / (1u64 << 31) as f64
         };
         let (mut through, mut target, mut surround, mut weight) = (vec![], vec![], vec![], vec![]);
@@ -6748,7 +7561,11 @@ mod tests {
                 true => (0.05 + 0.8 * next(), 0.2),
                 false => (0.03 + 0.002 * next(), 0.002),
             };
-            let m = [level + spread * (next() - 0.5), level, level + spread * (next() - 0.5)];
+            let m = [
+                level + spread * (next() - 0.5),
+                level,
+                level + spread * (next() - 0.5),
+            ];
             let luma = LUMA[0] * m[0] + LUMA[1] * m[1] + LUMA[2] * m[2];
             through.push([m[0] as f32, m[1] as f32, m[2] as f32, luma as f32]);
             target.push([m[0] * 1.1, m[1], m[2] * 0.9]);
@@ -6767,8 +7584,18 @@ mod tests {
         };
         let device = pollster::block_on(crate::fit_lattice::moments(
             gpu,
-            &upload("through", through.iter().flatten().flat_map(|v| v.to_ne_bytes()).collect()),
-            &upload("target", floats(&mut target.iter().flat_map(|t| [t[0], t[1], t[2], 1.0]))),
+            &upload(
+                "through",
+                through
+                    .iter()
+                    .flatten()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect(),
+            ),
+            &upload(
+                "target",
+                floats(&mut target.iter().flat_map(|t| [t[0], t[1], t[2], 1.0])),
+            ),
             &upload("surround", floats(&mut surround.iter().copied())),
             &upload("weight", floats(&mut weight.iter().copied())),
             through.len(),
@@ -6794,7 +7621,10 @@ mod tests {
             host.land(&at, &share, weight[k], [d0, d2, ours], reached, theirs);
         }
         let busiest = host.seen.iter().copied().fold(0.0, f64::max);
-        assert!(busiest > 4.0 * 256.0, "one cell holds several slices: {busiest}");
+        assert!(
+            busiest > 4.0 * 256.0,
+            "one cell holds several slices: {busiest}"
+        );
         for node in 0..MAP_NODES {
             let mut want = [0.0; crate::fit_lattice::NODE_WORDS];
             for a in 0..3 {
@@ -6810,13 +7640,20 @@ mod tests {
                 want[18 + a] = host.st[node][a];
                 want[23 + a] = host.lda[node][a];
             }
-            (want[20], want[21], want[22], want[25]) =
-                (host.btb[node], host.lta[node], host.ltb[node], host.seen[node]);
+            (want[20], want[21], want[22], want[25]) = (
+                host.btb[node],
+                host.lta[node],
+                host.ltb[node],
+                host.seen[node],
+            );
             for (word, want) in want.iter().enumerate() {
                 let got = device[node][word];
                 // Signed sums can cancel to near nothing, so the floor scales with what landed.
                 let allowed = 1e-4 * want.abs() + 1e-5 * host.seen[node];
-                assert!((got - want).abs() <= allowed, "node {node} word {word}: {got} against {want}");
+                assert!(
+                    (got - want).abs() <= allowed,
+                    "node {node} word {word}: {got} against {want}"
+                );
             }
         }
     }
@@ -6838,20 +7675,44 @@ mod tests {
         assert!((kept(0) - 1.0).abs() < 1e-3, "{}", kept(0));
         assert!(kept(1).abs() < 1e-3, "{}", kept(1));
         assert!((kept(2) - 0.5).abs() < 1e-3, "{}", kept(2));
-        assert!((kept(3) - 1.0).abs() < 1e-12, "a node nothing judged keeps its own");
+        assert!(
+            (kept(3) - 1.0).abs() < 1e-12,
+            "a node nothing judged keeps its own"
+        );
     }
 
     /// A candidate that wins the means by ruining one small class of colour loses to one that
     /// leaves every class alone, whichever of the two scores the class is ruined in.
     #[test]
     fn a_matrix_that_ruins_one_class_of_colour_loses() {
-        let wild = [[0.93, -0.04, 0.11], [-0.07, 0.91, 0.16], [0.31, -0.55, 1.24]];
-        let tame = [[0.93, -0.02, 0.09], [-0.09, 0.97, 0.12], [0.01, -0.10, 1.09]];
+        let wild = [
+            [0.93, -0.04, 0.11],
+            [-0.07, 0.91, 0.16],
+            [0.31, -0.55, 1.24],
+        ];
+        let tame = [
+            [0.93, -0.02, 0.09],
+            [-0.09, 0.97, 0.12],
+            [0.01, -0.10, 1.09],
+        ];
         let candidates = [IDENTITY, tame, wild];
-        let pairs = [unclassed(12.9, 12.9), unclassed(8.8, 8.8), unclassed(6.0, 6.0)];
-        let unclassed_frames = [unclassed(0.0, 12.4), unclassed(0.0, 10.0), unclassed(0.0, 7.8)];
+        let pairs = [
+            unclassed(12.9, 12.9),
+            unclassed(8.8, 8.8),
+            unclassed(6.0, 6.0),
+        ];
+        let unclassed_frames = [
+            unclassed(0.0, 12.4),
+            unclassed(0.0, 10.0),
+            unclassed(0.0, 7.8),
+        ];
         assert_eq!(
-            fitted_matrix(&candidates, &pairs, &unclassed_frames, [&pairs[0], &unclassed_frames[0]]),
+            fitted_matrix(
+                &candidates,
+                &pairs,
+                &unclassed_frames,
+                [&pairs[0], &unclassed_frames[0]]
+            ),
             wild,
             "without the classes the means alone prefer it"
         );
@@ -6861,7 +7722,10 @@ mod tests {
             classed(10.0, &[(0, 1.35), (5, 2.8), (6, 3.0)]),
             classed(7.8, &[(0, 1.3), (5, 2.3), (6, 7.6)]),
         ];
-        assert_eq!(fitted_matrix(&candidates, &pairs, &frames, [&pairs[0], &frames[0]]), tame);
+        assert_eq!(
+            fitted_matrix(&candidates, &pairs, &frames, [&pairs[0], &frames[0]]),
+            tame
+        );
 
         let classed_pairs = [
             classed(12.9, &[(0, 1.4), (4, 3.0)]).with_balanced(12.9),
@@ -6885,7 +7749,10 @@ mod tests {
     fn the_gamut_floor_is_the_one_the_shader_declares() {
         const SOURCE: &str = include_str!("../../../slang/prelude.slang");
         let line = format!("public static const float GAMUT_FLOOR = {GAMUT_FLOOR};");
-        assert!(SOURCE.contains(&line), "prelude.slang does not say `{line}`");
+        assert!(
+            SOURCE.contains(&line),
+            "prelude.slang does not say `{line}`"
+        );
     }
 
     /// The knee is the identity inside it, continuous and C1 at it, and holds the floor past it.
@@ -6900,14 +7767,24 @@ mod tests {
     fn the_knee_holds_the_floor_without_a_step() {
         let luma = |v: [f64; 3]| -> f64 { (0..3).map(|c| LUMA[c] * v[c].max(0.0)).sum() };
         let inside = [0.5, 0.1, 0.05];
-        assert_eq!(in_gamut(inside), inside, "a colour inside the knee is untouched");
+        assert_eq!(
+            in_gamut(inside),
+            inside,
+            "a colour inside the knee is untouched"
+        );
         let mut last = in_gamut([0.5, 0.1, 0.06])[2];
         for step in 1..=200 {
             let v = [0.5, 0.1, 0.06 - 0.001 * f64::from(step)];
             let held = in_gamut(v);
-            assert!((luma(held) - luma(v)).abs() < 1e-9, "the luma moved at {v:?}");
+            assert!(
+                (luma(held) - luma(v)).abs() < 1e-9,
+                "the luma moved at {v:?}"
+            );
             let lowest = held.iter().copied().fold(f64::INFINITY, f64::min);
-            assert!(lowest >= GAMUT_FLOOR * luma(v) - 1e-9, "under the floor at {v:?}: {held:?}");
+            assert!(
+                lowest >= GAMUT_FLOOR * luma(v) - 1e-9,
+                "under the floor at {v:?}: {held:?}"
+            );
             // Falls to the floor and then sits on it, rather than falling forever. The floor is a
             // fraction of the colour's own luma and that luma is now held, so a colour pushed
             // further out keeps the channel where it is instead of carrying it down - which is the
@@ -6916,7 +7793,10 @@ mod tests {
             // It does creep up on the way, by 8.4e-7 over the whole sweep, because the rescale that
             // restores the luma grows as the colour goes further out while the floor it multiplies
             // is already flat. Measured rather than allowed for: the bound is ten times it.
-            assert!(held[2] - last < 1e-5 && last - held[2] < 0.002, "a step at {v:?}");
+            assert!(
+                held[2] - last < 1e-5 && last - held[2] < 0.002,
+                "a step at {v:?}"
+            );
             last = held[2];
         }
     }
@@ -7042,17 +7922,22 @@ mod tests {
         let (shift_x, shift_y) = (1.3, -0.6);
         let ours = DevicePlane::from_luma(gpu, &shifted_plane(w, h, 0.0, 0.0), w, h);
         let theirs = DevicePlane::from_luma(gpu, &shifted_plane(w, h, shift_x, shift_y), w, h);
-        let points: Vec<[i32; 2]> =
-            (0..5).flat_map(|i| (0..5).map(move |j| [16 + i * 14, 16 + j * 14])).collect();
+        let points: Vec<[i32; 2]> = (0..5)
+            .flat_map(|i| (0..5).map(move |j| [16 + i * 14, 16 + j * 14]))
+            .collect();
 
         let found = pollster::block_on(corresponded(gpu, &ours, &theirs, &points))
             .expect("the device searches");
 
         let hits: Vec<&Found> = found.iter().flatten().filter(|f| !f.featureless).collect();
         assert!(hits.len() >= 20, "{} of 25 points matched", hits.len());
-        let mean = |of: fn(&Found) -> f64| hits.iter().map(|f| of(f)).sum::<f64>() / hits.len() as f64;
+        let mean =
+            |of: fn(&Found) -> f64| hits.iter().map(|f| of(f)).sum::<f64>() / hits.len() as f64;
         let (dx, dy) = (mean(|f| f.dx), mean(|f| f.dy));
-        assert!((dx - shift_x).abs() < 0.15 && (dy - shift_y).abs() < 0.15, "found ({dx}, {dy})");
+        assert!(
+            (dx - shift_x).abs() < 0.15 && (dy - shift_y).abs() < 0.15,
+            "found ({dx}, {dy})"
+        );
     }
 
     /// A belief the caller hands in is where the search looks, however far away it is.
@@ -7066,12 +7951,17 @@ mod tests {
         let (w, h) = (96usize, 96usize);
         let (shift_x, shift_y) = (23, -9);
         let ours = DevicePlane::from_luma(gpu, &shifted_plane(w, h, 0.0, 0.0), w, h);
-        let theirs =
-            DevicePlane::from_luma(gpu, &shifted_plane(w, h, f64::from(shift_x), f64::from(shift_y)), w, h);
+        let theirs = DevicePlane::from_luma(
+            gpu,
+            &shifted_plane(w, h, f64::from(shift_x), f64::from(shift_y)),
+            w,
+            h,
+        );
         // Inside the plane both before and after the shift, so every point is one the search may
         // read rather than one it declines at the edge.
-        let points: Vec<[i32; 2]> =
-            (0..5).flat_map(|i| (0..5).map(move |j| [16 + i * 8, 24 + j * 8])).collect();
+        let points: Vec<[i32; 2]> = (0..5)
+            .flat_map(|i| (0..5).map(move |j| [16 + i * 8, 24 + j * 8]))
+            .collect();
         let given = vec![[shift_x, shift_y]; points.len()];
 
         let found = pollster::block_on(corresponded_about(
@@ -7087,7 +7977,8 @@ mod tests {
 
         let hits: Vec<&Found> = found.iter().flatten().filter(|f| !f.featureless).collect();
         assert!(hits.len() >= 20, "{} of 25 points matched", hits.len());
-        let mean = |of: fn(&Found) -> f64| hits.iter().map(|f| of(f)).sum::<f64>() / hits.len() as f64;
+        let mean =
+            |of: fn(&Found) -> f64| hits.iter().map(|f| of(f)).sum::<f64>() / hits.len() as f64;
         let (dx, dy) = (mean(|f| f.dx), mean(|f| f.dy));
         // Reported against the point, so the belief is part of the answer rather than something
         // the caller has to add back on.
@@ -7118,9 +8009,16 @@ mod tests {
                 .lines()
                 .filter_map(|line| line.trim().strip_prefix("int ")?.strip_suffix(';'))
                 .collect();
-            assert_eq!(&fields[fields.len() - of.len()..], of, "the uniform's tail moved");
+            assert_eq!(
+                &fields[fields.len() - of.len()..],
+                of,
+                "the uniform's tail moved"
+            );
         };
-        tail(include_str!("../../../slang/correspond.slang"), &["patch", "search"]);
+        tail(
+            include_str!("../../../slang/correspond.slang"),
+            &["patch", "search"],
+        );
         tail(include_str!("../../../slang/patch_stats.slang"), &["patch"]);
     }
 
@@ -7130,7 +8028,11 @@ mod tests {
         let samples: Vec<[f32; 4]> = samples.iter().map(|s| s.map(|v| v as f32)).collect();
         let out = pollster::block_on(evaluated(gpu, colour, &samples, stage))
             .expect("the device evaluates the model");
-        Some(out.iter().map(|v| [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])]).collect())
+        Some(
+            out.iter()
+                .map(|v| [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])])
+                .collect(),
+        )
     }
 
     /// The ratio table is sized on the host and indexed on the device; a length that drifted is
@@ -7138,8 +8040,14 @@ mod tests {
     #[test]
     fn the_shader_reads_the_table_the_host_builds() {
         const SOURCE: &str = include_str!("../../../slang/fit_warp.slang");
-        let last = format!("static const int TABLE_LAST = {};", crate::image::RATIO_TABLE_LAST);
-        assert!(SOURCE.contains(&last), "fit_warp.slang does not say `{last}`");
+        let last = format!(
+            "static const int TABLE_LAST = {};",
+            crate::image::RATIO_TABLE_LAST
+        );
+        assert!(
+            SOURCE.contains(&last),
+            "fit_warp.slang does not say `{last}`"
+        );
     }
 
     fn identity_colour() -> HdrColour {
@@ -7150,7 +8058,14 @@ mod tests {
     /// `through` takes.
     fn samples_of_f64(render: &Plane, at: &[usize]) -> Vec<[f64; 4]> {
         at.iter()
-            .map(|p| [render.data[p * 3], render.data[p * 3 + 1], render.data[p * 3 + 2], 0.0])
+            .map(|p| {
+                [
+                    render.data[p * 3],
+                    render.data[p * 3 + 1],
+                    render.data[p * 3 + 2],
+                    0.0,
+                ]
+            })
             .collect()
     }
 
@@ -7173,7 +8088,9 @@ mod tests {
         // curve for a level as well as for a colour, so an identity one has to come back out.
         let levels = [0.0, 0.1, 0.45, 0.9, 1.6, 4.0];
         let samples: Vec<[f64; 4]> = levels.iter().map(|v| [*v, *v, *v, 0.0]).collect();
-        let Some(out) = through(&identity_colour(), Stage::Full, &samples) else { return };
+        let Some(out) = through(&identity_colour(), Stage::Full, &samples) else {
+            return;
+        };
         for (value, out) in levels.iter().zip(&out) {
             assert!((out[0] - value).abs() < 1e-5, "{value} -> {out:?}");
         }
@@ -7185,19 +8102,30 @@ mod tests {
         // apart as brightness rises. A shared gain keeps the ratio, so a bright
         // orange stays orange and only gets brighter.
         let samples = [[0.6, 0.3, 0.15, 0.0], [2.4, 1.2, 0.6, 0.0]];
-        let Some(out) = through(&identity_colour(), Stage::Full, &samples) else { return };
+        let Some(out) = through(&identity_colour(), Stage::Full, &samples) else {
+            return;
+        };
         let ratio_low = out[0][1] / out[0][0];
         let ratio_high = out[1][1] / out[1][0];
-        assert!((ratio_low - ratio_high).abs() < 1e-5, "hue drifted: {ratio_low} vs {ratio_high}");
+        assert!(
+            (ratio_low - ratio_high).abs() < 1e-5,
+            "hue drifted: {ratio_low} vs {ratio_high}"
+        );
     }
 
     #[test]
     fn saturation_below_one_pulls_towards_luma() {
         let mut colour = identity_colour();
         colour.saturation = 0.5;
-        let Some(out) = through(&colour, Stage::Full, &[[0.8, 0.2, 0.2, 0.0]]) else { return };
+        let Some(out) = through(&colour, Stage::Full, &[[0.8, 0.2, 0.2, 0.0]]) else {
+            return;
+        };
         let l = LUMA[0] * 0.8 + LUMA[1] * 0.2 + LUMA[2] * 0.2;
-        assert!((out[0][0] - (l + (0.8 - l) * 0.5)).abs() < 1e-5, "{:?}", out[0]);
+        assert!(
+            (out[0][0] - (l + (0.8 - l) * 0.5)).abs() < 1e-5,
+            "{:?}",
+            out[0]
+        );
     }
 
     /// Every value `f16`-exact, so `densified`'s storage quantisation changes nothing and
@@ -7205,8 +8133,18 @@ mod tests {
     fn a_bumpy_map() -> ChromaMap {
         ChromaMap::from_nodes(|x, y, z| {
             let v = (x as f64 * 0.71 + y as f64 * 1.13 + z as f64 * 0.37).sin() * 0.1;
-            [1.0 + v, v * 0.5, -v * 0.3, 1.0 - v, v, -v, 1.0 + v * 0.2, v * 0.1, -v * 0.1]
-                .map(|value| f64::from(half::f16::from_f64(value)))
+            [
+                1.0 + v,
+                v * 0.5,
+                -v * 0.3,
+                1.0 - v,
+                v,
+                -v,
+                1.0 + v * 0.2,
+                v * 0.1,
+                -v * 0.1,
+            ]
+            .map(|value| f64::from(half::f16::from_f64(value)))
         })
     }
 
@@ -7227,10 +8165,18 @@ mod tests {
         }));
         let m = [0.3, -0.11, 0.0];
         let l = LUMA[0] * m[0] + LUMA[1] * m[1] + LUMA[2] * m[2];
-        assert!(l > 0.0 && (m[0] - l) / l > 1.0 / LUMA[0] - 1.0, "not past the gamut: {l}");
+        assert!(
+            l > 0.0 && (m[0] - l) / l > 1.0 / LUMA[0] - 1.0,
+            "not past the gamut: {l}"
+        );
         let edge = l / LUMA[0];
-        let samples = [[m[0], m[1] + 0.5 * m[0], 0.0, 0.0], [edge, 0.5 * edge, 0.0, 0.0]];
-        let Some(out) = through(&colour, Stage::Full, &samples) else { return };
+        let samples = [
+            [m[0], m[1] + 0.5 * m[0], 0.0, 0.0],
+            [edge, 0.5 * edge, 0.0, 0.0],
+        ];
+        let Some(out) = through(&colour, Stage::Full, &samples) else {
+            return;
+        };
         // The chroma differs - each keeps its own - but the lightness the pair produced is read
         // off the index, and the index past the gamut is held to the edge's.
         let luma = |v: &[f64; 3]| LUMA[0] * v[0] + LUMA[1] * v[1] + LUMA[2] * v[2];
@@ -7279,11 +8225,17 @@ mod tests {
             m.nodes[(z * m.chroma_count + y) * m.chroma_count + x][4]
         };
         let ridges = |values: Vec<f64>| -> f64 {
-            values.windows(3).map(|w| (w[2] - 2.0 * w[1] + w[0]).abs()).fold(0.0, f64::max)
+            values
+                .windows(3)
+                .map(|w| (w[2] - 2.0 * w[1] + w[0]).abs())
+                .fold(0.0, f64::max)
         };
         let coarse = ridges((0..MAP_LEVEL).map(|z| coarse_at(&map, z)).collect());
-        let smooth =
-            ridges((0..dense.level_count).map(|z| dense_at(&dense, z)).collect());
+        let smooth = ridges(
+            (0..dense.level_count)
+                .map(|z| dense_at(&dense, z))
+                .collect(),
+        );
         // The whole slope change of a fitted cell against one dense step's share of it.
         // Theory says `MAP_DENSITY`^2 apart for an even spread; the curvature bunches
         // towards the fitted nodes, so half that is what the resample must clear.
@@ -7359,7 +8311,10 @@ mod tests {
         // posterises a shadow.
         let at = |x: f64| curve[bin_of(x)];
         let (low, high) = (at(bad * 1.5), at(bad * 3.0));
-        assert!(high > low + 1e-4, "the shadows flattened: {low} then {high}");
+        assert!(
+            high > low + 1e-4,
+            "the shadows flattened: {low} then {high}"
+        );
 
         // And the outlier is pulled down toward its neighbours rather than dragging them up: it
         // saw ten pairs against the thousands around it, so it has no business setting a floor.
@@ -7400,7 +8355,10 @@ mod tests {
         for b in 1..BINS {
             assert!(curve[b] >= curve[b - 1], "curve dipped at {b}");
         }
-        assert!(curve[BINS - 1] > curve[BINS / 2], "the tail must keep climbing");
+        assert!(
+            curve[BINS - 1] > curve[BINS / 2],
+            "the tail must keep climbing"
+        );
     }
 
     /// A camera's shape: a toe that expands chroma, a shoulder that compresses it, and a
@@ -7423,12 +8381,16 @@ mod tests {
         let knee = TRUST_CEILING * 0.4;
         let anchor = chroma_anchor(&shouldered(knee), TRUST_CEILING);
         let step = TRUST_CEILING / (BINS - 1) as f64;
-        assert!((anchor - knee).abs() <= step, "anchor {anchor} against the knee at {knee}");
+        assert!(
+            (anchor - knee).abs() <= step,
+            "anchor {anchor} against the knee at {knee}"
+        );
 
         // A curve that never expands has nowhere better to read, and must not reach into
         // the toe for one.
-        let flat: Vec<f64> =
-            (0..BINS).map(|b| (b as f64 / (BINS - 1) as f64).powf(0.45) * 0.9).collect();
+        let flat: Vec<f64> = (0..BINS)
+            .map(|b| (b as f64 / (BINS - 1) as f64).powf(0.45) * 0.9)
+            .collect();
         assert_eq!(chroma_anchor(&flat, TRUST_CEILING), TRUST_CEILING);
     }
 
@@ -7448,13 +8410,19 @@ mod tests {
             let high = v[0].max(v[1]).max(v[2]);
             (high - v[0].min(v[1]).min(v[2])) / high
         };
-        let levels: Vec<f64> = (0..=12).map(|step| TRUST_CEILING * f64::powi(1.3, step)).collect();
-        let mut samples: Vec<[f64; 4]> =
-            levels.iter().map(|level| [*level, level * 0.55, level * 0.2, 0.0]).collect();
+        let levels: Vec<f64> = (0..=12)
+            .map(|step| TRUST_CEILING * f64::powi(1.3, step))
+            .collect();
+        let mut samples: Vec<[f64; 4]> = levels
+            .iter()
+            .map(|level| [*level, level * 0.55, level * 0.2, 0.0])
+            .collect();
         let above = TRUST_CEILING * 1.001;
         samples.push([above, above * 0.55, above * 0.2, 0.0]);
         samples.push([3.0, 3.0, 3.0, 0.0]);
-        let Some(out) = through(&colour, Stage::Tone, &samples) else { return };
+        let Some(out) = through(&colour, Stage::Tone, &samples) else {
+            return;
+        };
 
         let mut last = saturation(out[0]);
         for step in 1..=12 {
@@ -7462,15 +8430,28 @@ mod tests {
             assert!(now > last, "step {step} lost colour: {now} after {last}");
             last = now;
         }
-        assert!(last > saturation(out[0]) * 1.1, "the climb never amounted to anything");
+        assert!(
+            last > saturation(out[0]) * 1.1,
+            "the climb never amounted to anything"
+        );
 
         // Continuous across the join, and the shoulder still decides the brightest channel.
         let (below, above) = (out[0], out[13]);
-        assert!((saturation(above) - saturation(below)).abs() < 1e-3, "{above:?} after {below:?}");
-        assert!((above[0] / below[0] - 1.001).abs() < 1e-3, "the peak moved: {above:?}");
+        assert!(
+            (saturation(above) - saturation(below)).abs() < 1e-3,
+            "{above:?} after {below:?}"
+        );
+        assert!(
+            (above[0] / below[0] - 1.001).abs() < 1e-3,
+            "the peak moved: {above:?}"
+        );
 
         // A neutral highlight has no colour to keep and must not acquire one.
-        assert!(saturation(out[14]) < 1e-6, "a neutral highlight came out {:?}", out[14]);
+        assert!(
+            saturation(out[14]) < 1e-6,
+            "a neutral highlight came out {:?}",
+            out[14]
+        );
     }
 
     /// A lawn and a dog are different hues to the census, which is the whole premise of weighting
@@ -7481,7 +8462,10 @@ mod tests {
         let brown = selection([0.45, 0.25, 0.12], [0.45, 0.25, 0.12]).hues[CENTRE];
         let green = selection([0.16, 0.40, 0.10], [0.16, 0.40, 0.10]).hues[CENTRE];
         assert_ne!(brown, green, "both landed in bucket {brown}");
-        assert!(usize::from(brown.max(green)) < HUE_SLOTS - 1, "one of them read as grey");
+        assert!(
+            usize::from(brown.max(green)) < HUE_SLOTS - 1,
+            "one of them read as grey"
+        );
     }
 
     #[test]
@@ -7496,17 +8480,30 @@ mod tests {
         for bucket in &of {
             counted[usize::from(*bucket)] += 1;
         }
-        let census = HueCensus { of, counted, total: 40 * 40 };
+        let census = HueCensus {
+            of,
+            counted,
+            total: 40 * 40,
+        };
 
         let weights = hue_balance(&census, BALANCE_LIMIT);
         let share = |want: usize| -> f64 {
-            (0..40 * 40).filter(|p| p % 10 == want).map(|p| census.weigh(&weights, p)).sum()
+            (0..40 * 40)
+                .filter(|p| p % 10 == want)
+                .map(|p| census.weigh(&weights, p))
+                .sum()
         };
         let (brown, green) = (share(0), (1..10).map(share).sum::<f64>());
         // Nine to one by area; the weighting has to pull that much closer to parity
         // without inverting it, since the grass is still most of what there is to fit.
-        assert!(green / brown < 4.0, "the dominant hue still owns it: {green} against {brown}");
-        assert!(green > brown, "the rare hue took over instead: {green} against {brown}");
+        assert!(
+            green / brown < 4.0,
+            "the dominant hue still owns it: {green} against {brown}"
+        );
+        assert!(
+            green > brown,
+            "the rare hue took over instead: {green} against {brown}"
+        );
     }
 
     /// One hue held across the whole brightness range, dark enough at the bottom to stay
@@ -7520,8 +8517,19 @@ mod tests {
                 data[p * 3 + c] = hue[c] * level;
             }
         }
-        let jpeg = Plane { width, height, data };
-        (Plane { width, height, data: jpeg.data.clone() }, jpeg)
+        let jpeg = Plane {
+            width,
+            height,
+            data,
+        };
+        (
+            Plane {
+                width,
+                height,
+                data: jpeg.data.clone(),
+            },
+            jpeg,
+        )
     }
 
     #[test]
@@ -7534,13 +8542,23 @@ mod tests {
         let (render, jpeg) = ramped_planes([0.4, 0.4, 0.4]);
         let ramp: Vec<f64> = (0..BINS).map(|i| i as f64 / (BINS - 1) as f64).collect();
         let pairs = Pairs::over(searching(), &render, &jpeg);
-        let colour = HdrColour { curves: [ramp.clone(), ramp.clone(), ramp], ..HdrColour::identity() };
+        let colour = HdrColour {
+            curves: [ramp.clone(), ramp.clone(), ramp],
+            ..HdrColour::identity()
+        };
         let source = source_of(searching(), &render);
-        let found = pollster::block_on(
-            fitted_saturation(searching(), &colour, &source, &pairs, Stage::ToneMatrix),
-        )
+        let found = pollster::block_on(fitted_saturation(
+            searching(),
+            &colour,
+            &source,
+            &pairs,
+            Stage::ToneMatrix,
+        ))
         .expect("the device scores");
-        assert!((found - 1.0).abs() < 1e-9, "invented a saturation out of a flat frame: {found}");
+        assert!(
+            (found - 1.0).abs() < 1e-9,
+            "invented a saturation out of a flat frame: {found}"
+        );
     }
 
     #[test]
@@ -7548,11 +8566,20 @@ mod tests {
         let gpu = searching();
         let mut seed = 11u64;
         let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) as f64 / (1u64 << 31) as f64
         };
         let data: Vec<f64> = (0..96 * 80 * 3).map(|_| 0.05 + 0.6 * next()).collect();
-        let plane = source_of(gpu, &Plane { width: 96, height: 80, data });
+        let plane = source_of(
+            gpu,
+            &Plane {
+                width: 96,
+                height: 80,
+                data,
+            },
+        );
         let evaluated = evaluate_over(
             gpu,
             &HdrColour::identity(),
@@ -7561,15 +8588,23 @@ mod tests {
             Stage::ToneMatrix,
         );
         let ranks = [7, plane.pixels() - 13];
-        let picked =
-            pollster::block_on(crate::fit_span::spans(gpu, &evaluated.buffer, &plane, ranks))
-                .expect("ranked");
+        let picked = pollster::block_on(crate::fit_span::spans(
+            gpu,
+            &evaluated.buffer,
+            &plane,
+            ranks,
+        ))
+        .expect("ranked");
         let read = pollster::block_on(evaluated.read(gpu)).expect("read");
         for axis in 0..2 {
             let mut spread: Vec<f32> = read.iter().map(|m| m[axis * 2] - m[3]).collect();
             spread.sort_by(f32::total_cmp);
             for (rank, at) in ranks.iter().enumerate() {
-                assert_eq!(picked[axis][rank], f64::from(spread[*at]), "axis {axis} rank {at}");
+                assert_eq!(
+                    picked[axis][rank],
+                    f64::from(spread[*at]),
+                    "axis {axis} rank {at}"
+                );
             }
         }
     }
@@ -7586,8 +8621,16 @@ mod tests {
         for p in 0..64 * 64 {
             data.extend_from_slice(if p % 2 == 0 { &grey } else { &red });
         }
-        let wide_render = Plane { width: 64, height: 64, data };
-        let wide_jpeg = Plane { width: 64, height: 64, data: vec![0.0; 64 * 64 * 3] };
+        let wide_render = Plane {
+            width: 64,
+            height: 64,
+            data,
+        };
+        let wide_jpeg = Plane {
+            width: 64,
+            height: 64,
+            data: vec![0.0; 64 * 64 * 3],
+        };
         let sharp = Sharp {
             wide: source_of(searching(), &wide_render),
             camera: source_of(searching(), &wide_jpeg),
@@ -7611,7 +8654,10 @@ mod tests {
             );
             // A grey has to land exactly on a node for the map to leave it alone.
             let zero = (0.0 - low) * scale;
-            assert!((zero - zero.round()).abs() < 1e-9, "zero sits between nodes, at {zero}");
+            assert!(
+                (zero - zero.round()).abs() < 1e-9,
+                "zero sits between nodes, at {zero}"
+            );
         }
     }
 
@@ -7644,11 +8690,18 @@ mod tests {
             };
 
             let pairs = Pairs::over(searching(), &render, &target);
-            let neutral = HdrColour { saturation: 1.0, ..applied };
+            let neutral = HdrColour {
+                saturation: 1.0,
+                ..applied
+            };
             let source = source_of(searching(), &render);
-            let found = pollster::block_on(
-                fitted_saturation(searching(), &neutral, &source, &pairs, Stage::ToneMatrix),
-            )
+            let found = pollster::block_on(fitted_saturation(
+                searching(),
+                &neutral,
+                &source,
+                &pairs,
+                Stage::ToneMatrix,
+            ))
             .expect("the device scores");
             assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
         }
@@ -7664,10 +8717,16 @@ mod tests {
                 .chunks(3)
                 .flat_map(|px| {
                     let luma: f64 = (0..3).map(|c| LUMA[c] * px[c]).sum();
-                    px.iter().map(move |v| luma + (v - luma) * want).collect::<Vec<_>>()
+                    px.iter()
+                        .map(move |v| luma + (v - luma) * want)
+                        .collect::<Vec<_>>()
                 })
                 .collect();
-            let target = Plane { width: render.width, height: render.height, data };
+            let target = Plane {
+                width: render.width,
+                height: render.height,
+                data,
+            };
             let pairs = Pairs::over(searching(), &render, &target);
             let source = source_of(searching(), &render);
             let found = pollster::block_on(fitted_saturation(
@@ -7690,22 +8749,31 @@ mod tests {
         // Every channel converging on one curve is what makes neutral in mean neutral
         // out, rather than leaving it to three guesses that happen to agree.
         let (plane, preview) = warm_chart();
-        let fitted =
-            pollster::block_on(fit(
-                searching(),
-                &source_of(searching(), &plane),
-                unit_levels(),
-                &preview,
-                crate::fit::Lens::none(),
-            ))
-                .expect("the chart is fittable");
+        let fitted = pollster::block_on(fit(
+            searching(),
+            &source_of(searching(), &plane),
+            unit_levels(),
+            &preview,
+            crate::fit::Lens::none(),
+        ))
+        .expect("the chart is fittable");
 
         // Read where the grade reads a blown sky: the shared gain scales the pixel so
         // its brightest channel sits at the top of the domain.
-        let out = through(fitted.colour.as_ref().expect("colour"), Stage::Tone, &[[1.0, 1.0, 1.0, 0.0]])
-            .expect("an adapter for the fit's search")[0];
-        let (high, low) = (out[0].max(out[1]).max(out[2]), out[0].min(out[1]).min(out[2]));
-        assert!(high / low - 1.0 < 0.01, "a neutral highlight came out {out:?}");
+        let out = through(
+            fitted.colour.as_ref().expect("colour"),
+            Stage::Tone,
+            &[[1.0, 1.0, 1.0, 0.0]],
+        )
+        .expect("an adapter for the fit's search")[0];
+        let (high, low) = (
+            out[0].max(out[1]).max(out[2]),
+            out[0].min(out[1]).min(out[2]),
+        );
+        assert!(
+            high / low - 1.0 < 0.01,
+            "a neutral highlight came out {out:?}"
+        );
     }
 
     #[test]
@@ -7713,20 +8781,29 @@ mod tests {
         // Converging the curves is not desaturation: what carries a highlight's colour
         // is the pixel, not the curve, so a warm one stays warm.
         let (plane, preview) = warm_chart();
-        let fitted =
-            pollster::block_on(fit(
-                searching(),
-                &source_of(searching(), &plane),
-                unit_levels(),
-                &preview,
-                crate::fit::Lens::none(),
-            ))
-                .expect("the chart is fittable");
+        let fitted = pollster::block_on(fit(
+            searching(),
+            &source_of(searching(), &plane),
+            unit_levels(),
+            &preview,
+            crate::fit::Lens::none(),
+        ))
+        .expect("the chart is fittable");
 
-        let out = through(fitted.colour.as_ref().expect("colour"), Stage::Tone, &[[1.2, 0.6, 0.3, 0.0]])
-            .expect("an adapter for the fit's search")[0];
-        assert!(out[0] > out[1] * 1.3, "the warm highlight went flat: {out:?}");
-        assert!(out[1] > out[2] * 1.2, "the warm highlight went flat: {out:?}");
+        let out = through(
+            fitted.colour.as_ref().expect("colour"),
+            Stage::Tone,
+            &[[1.2, 0.6, 0.3, 0.0]],
+        )
+        .expect("an adapter for the fit's search")[0];
+        assert!(
+            out[0] > out[1] * 1.3,
+            "the warm highlight went flat: {out:?}"
+        );
+        assert!(
+            out[1] > out[2] * 1.2,
+            "the warm highlight went flat: {out:?}"
+        );
     }
 
     #[test]
@@ -7786,7 +8863,12 @@ mod tests {
             // Everything the three channels have in common, tinted four ways so the
             // matrix has more than a grey axis to fit against.
             let level = 0.004 + (i as f64 / 59.0) * 0.196;
-            let tint = [[1.0, 1.0, 1.0], [1.0, 0.85, 0.7], [0.8, 1.0, 0.9], [0.9, 0.85, 1.0]][i % 4];
+            let tint = [
+                [1.0, 1.0, 1.0],
+                [1.0, 0.85, 0.7],
+                [0.8, 1.0, 0.9],
+                [0.9, 0.85, 1.0],
+            ][i % 4];
             [0, 1, 2].map(|c| level * tint[c])
         };
 
@@ -7809,9 +8891,17 @@ mod tests {
             }
         }
 
-        let camera_plane = Plane { width: width * 2, height: height * 2, data: rendered };
+        let camera_plane = Plane {
+            width: width * 2,
+            height: height * 2,
+            data: rendered,
+        };
         (
-            Plane { width: width * 2, height: height * 2, data: scene },
+            Plane {
+                width: width * 2,
+                height: height * 2,
+                data: scene,
+            },
             render_srgb8(&camera_plane, crate::light::Light::measured(1.0)),
         )
     }
@@ -7832,15 +8922,14 @@ mod tests {
         // all three would be asserting against the design and could only be met by
         // loosening it until it said nothing.
         let (plane, preview) = warm_chart();
-        let fitted =
-            pollster::block_on(fit(
-                searching(),
-                &source_of(searching(), &plane),
-                unit_levels(),
-                &preview,
-                crate::fit::Lens::none(),
-            ))
-                .expect("the chart is fittable");
+        let fitted = pollster::block_on(fit(
+            searching(),
+            &source_of(searching(), &plane),
+            unit_levels(),
+            &preview,
+            crate::fit::Lens::none(),
+        ))
+        .expect("the chart is fittable");
 
         // Through the whole model, not through `curves` alone. The tone stage is one shared
         // shape, so per-channel behaviour is the *model's* to produce and reading a curve on its
@@ -7852,8 +8941,12 @@ mod tests {
         // of this chart reached.
         let levels = [0.4, 0.5, 0.6];
         let samples: Vec<[f64; 4]> = levels.iter().map(|l| [*l, *l, *l, *l]).collect();
-        let outs = through(fitted.colour.as_ref().expect("colour"), Stage::Full, &samples)
-            .expect("an adapter for the fit's search");
+        let outs = through(
+            fitted.colour.as_ref().expect("colour"),
+            Stage::Full,
+            &samples,
+        )
+        .expect("an adapter for the fit's search");
         for (level, out) in levels.iter().copied().zip(outs) {
             for c in 0..3 {
                 let at = out[c] / camera(c, level) - 1.0;
@@ -7864,10 +8957,17 @@ mod tests {
             // 8.4% hot at 0.4 and 19.2% at 0.6 - a spread that widens with level is exactly
             // what the eye reads as a cast, where an even offset reads as exposure.
             let (high, low) = (
-                (0..3).map(|c| out[c] / camera(c, level)).fold(f64::MIN, f64::max),
-                (0..3).map(|c| out[c] / camera(c, level)).fold(f64::MAX, f64::min),
+                (0..3)
+                    .map(|c| out[c] / camera(c, level))
+                    .fold(f64::MIN, f64::max),
+                (0..3)
+                    .map(|c| out[c] / camera(c, level))
+                    .fold(f64::MAX, f64::min),
             );
-            assert!(high / low - 1.0 < 0.085, "channels {high:.3}/{low:.3} apart at {level}");
+            assert!(
+                high / low - 1.0 < 0.085,
+                "channels {high:.3}/{low:.3} apart at {level}"
+            );
         }
     }
 
@@ -7881,7 +8981,11 @@ mod tests {
         // strength the render is denoised by, so what the transform must do instead is
         // leave neighbours as close together as it found them.
         let mut colour = identity_colour();
-        colour.matrix = [[1.06, -0.04, -0.02], [-0.03, 1.05, -0.02], [-0.02, -0.05, 1.07]];
+        colour.matrix = [
+            [1.06, -0.04, -0.02],
+            [-0.03, 1.05, -0.02],
+            [-0.02, -0.05, 1.07],
+        ];
         colour.saturation = 1.08;
 
         let bases = [[0.12, 0.10, 0.09], [0.40, 0.30, 0.22], [0.75, 0.74, 0.72]];
@@ -7894,7 +8998,9 @@ mod tests {
                 [[base[0], base[1], base[2], 0.0], [n[0], n[1], n[2], 0.0]]
             })
             .collect();
-        let Some(out) = through(&colour, Stage::Full, &samples) else { return };
+        let Some(out) = through(&colour, Stage::Full, &samples) else {
+            return;
+        };
         for (k, base) in bases.into_iter().enumerate() {
             let near = near(base);
             let (a, b) = (out[k * 2], out[k * 2 + 1]);
@@ -7935,11 +9041,17 @@ mod tests {
         }
         for grey in [0.05, 0.4, 0.9, 2.5] {
             let out = apply3(&matrix, grey, grey, grey);
-            let (high, low) = (out[0].max(out[1]).max(out[2]), out[0].min(out[1]).min(out[2]));
+            let (high, low) = (
+                out[0].max(out[1]).max(out[2]),
+                out[0].min(out[1]).min(out[2]),
+            );
             assert!(high - low < 1e-9, "grey {grey} came out {out:?}");
         }
         // And it did use the freedom rather than sitting at the identity.
-        assert!(matrix[1][0].abs() > 0.05, "no cross-channel term was fitted: {matrix:?}");
+        assert!(
+            matrix[1][0].abs() > 0.05,
+            "no cross-channel term was fitted: {matrix:?}"
+        );
     }
 
     #[test]
@@ -7955,7 +9067,10 @@ mod tests {
         // handed for it.
         let v = apply3(&rec2020_to_srgb(), 0.5, 0.5, 0.5);
         let out = [0, 1, 2].map(|c| (255.0 * srgb_oetf(v[c])).round());
-        assert!((out[0] - out[1]).abs() <= 1.0 && (out[1] - out[2]).abs() <= 1.0, "{out:?}");
+        assert!(
+            (out[0] - out[1]).abs() <= 1.0 && (out[1] - out[2]).abs() <= 1.0,
+            "{out:?}"
+        );
         assert!(out[0] > 150.0 && out[0] < 200.0, "mid grey, got {}", out[0]);
     }
 
@@ -7968,15 +9083,27 @@ mod tests {
     /// the index from the same span and a disagreement drops the tail of the plane silently.
     #[test]
     fn the_correspondence_dispatch_covers_its_points_within_the_device_limit() {
-        for points in [1usize, 63, 64, 6_000, 3_300_000, 4_194_240, 4_229_376, 60_200_000] {
+        for points in [
+            1usize, 63, 64, 6_000, 3_300_000, 4_194_240, 4_229_376, 60_200_000,
+        ] {
             let span = dispatch_span(points);
             let across = span / CORRESPOND_GROUP as usize;
             let groups = points.div_ceil(CORRESPOND_GROUP as usize).max(1);
             let down = groups.div_ceil(across);
-            assert!(across <= 65535 && down <= 65535, "{points} asks {across} by {down}");
-            assert!(across * CORRESPOND_GROUP as usize * down >= points, "{points} uncovered");
+            assert!(
+                across <= 65535 && down <= 65535,
+                "{points} asks {across} by {down}"
+            );
+            assert!(
+                across * CORRESPOND_GROUP as usize * down >= points,
+                "{points} uncovered"
+            );
             // Every launched group does work: the spare is under one row of them.
-            assert!(across * down - groups < across, "{points} wastes {} groups", across * down);
+            assert!(
+                across * down - groups < across,
+                "{points} wastes {} groups",
+                across * down
+            );
         }
     }
 
@@ -8012,7 +9139,10 @@ mod tests {
                     seen[point] = true;
                 }
             }
-            assert!(seen.iter().all(|hit| *hit), "{points}: a point was never dispatched");
+            assert!(
+                seen.iter().all(|hit| *hit),
+                "{points}: a point was never dispatched"
+            );
         }
     }
 

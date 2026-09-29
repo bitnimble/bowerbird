@@ -86,7 +86,13 @@ export class ReplicationService {
                 EXISTS (SELECT 1 FROM replication_libraries r WHERE r.library_id = l.id) AS replicating
            FROM libraries l ORDER BY l.name`,
       )
-      .all() as { id: string; name: string; read_only: number; photo_count: number; replicating: number }[];
+      .all() as {
+      id: string;
+      name: string;
+      read_only: number;
+      photo_count: number;
+      replicating: number;
+    }[];
     return {
       peer_id: peerId(this.db),
       name: deviceName(this.db),
@@ -150,9 +156,9 @@ export class ReplicationService {
     if (!canSend(sending ? ours : request, sending ? request : ours)) {
       throw new AppError(
         'OUTDATED',
-        outdated === 'peer' ?
-          "This device's version of Bowerbird is older than the other device's. Update Bowerbird on this device, then sync again."
-        : "The other device's version of Bowerbird is older than this one. Update Bowerbird on the other device, then sync again.",
+        outdated === 'peer'
+          ? "This device's version of Bowerbird is older than the other device's. Update Bowerbird on this device, then sync again."
+          : "The other device's version of Bowerbird is older than this one. Update Bowerbird on the other device, then sync again.",
         // What the caller records of this build, the refusal being all it will hear.
         [ours],
       );
@@ -169,7 +175,8 @@ export class ReplicationService {
     // The peer stating what it holds, which is what tombstone GC is bounded by (§8.3).
     recordPeer(this.db, request.library_id, request.peer_id, unpackVector(request.coverage));
     recordPeerAppetite(this.db, request.library_id, request.peer_id, request.wants_originals);
-    if (recordPeerName(this.db, request.library_id, request.peer_id, request.name)) this.changed(request.library_id);
+    if (recordPeerName(this.db, request.library_id, request.peer_id, request.name))
+      this.changed(request.library_id);
     return {
       ...ours,
       peer_id: peerId(this.db),
@@ -182,7 +189,13 @@ export class ReplicationService {
 
   changes(request: ChangesRequest): Page {
     assertPaired(this.db, request.library_id, request.peer_id);
-    return page(this.db, request.library_id, unpackVector(request.held), request.cursor, request.limit);
+    return page(
+      this.db,
+      request.library_id,
+      unpackVector(request.held),
+      request.cursor,
+      request.limit,
+    );
   }
 
   /**
@@ -305,12 +318,15 @@ export class ReplicationService {
   }
 
   private writableLibrary(libraryId: string): { name: string } {
-    const library = this.db.query('SELECT name, read_only FROM libraries WHERE id = ?').get(libraryId) as {
+    const library = this.db
+      .query('SELECT name, read_only FROM libraries WHERE id = ?')
+      .get(libraryId) as {
       name: string;
       read_only: number;
     } | null;
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    if (library.read_only !== 0) throw new AppError('READ_ONLY', 'replication requires a writable library');
+    if (library.read_only !== 0)
+      throw new AppError('READ_ONLY', 'replication requires a writable library');
     return library;
   }
 }

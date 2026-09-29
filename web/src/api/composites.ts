@@ -15,7 +15,12 @@ import {
   SolvedSeamsResponseSchema,
 } from '../../../src/schemas/assembly';
 import { type CompositePhoto, CompositePhotoSchema } from '../../../src/schemas/composition';
-import { type PhotoSummary, PhotoSummaryListSchema, type PhotoTarget, PhotoTargetSchema } from '../../../src/schemas/photos';
+import {
+  type PhotoSummary,
+  PhotoSummaryListSchema,
+  type PhotoTarget,
+  PhotoTargetSchema,
+} from '../../../src/schemas/photos';
 import { PathSegment, route } from '../../../src/schemas/route';
 import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { NothingSchema, request } from './request';
@@ -53,7 +58,11 @@ export const compositesApi = {
       PhotoTargetSchema.parse(target),
     ),
   /** The frames a panorama is composed from, in the order its recipe names them. */
-  listFrames: (id: string, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoSummary[]> =>
+  listFrames: (
+    id: string,
+    signal?: AbortSignal,
+    activity?: RequestActivity,
+  ): Promise<PhotoSummary[]> =>
     request(
       PhotoSummaryListSchema,
       'GET',
@@ -70,7 +79,10 @@ export const compositesApi = {
       PhotoTargetSchema.parse({ photo_ids: photoIds }),
     ),
   getAssemblyJob: (jobId: string, signal?: AbortSignal): Promise<AssemblyJob> =>
-    request(AssemblyJobSchema, 'GET', assemblyJob(jobId), undefined, { signal, activity: 'background' }),
+    request(AssemblyJobSchema, 'GET', assemblyJob(jobId), undefined, {
+      signal,
+      activity: 'background',
+    }),
   /** Stops a job's carve at its next boundary, letting go of the device (§3.9). */
   cancelAssembly: (jobId: string): Promise<void> =>
     request(NothingSchema, 'POST', `${assemblyJob(jobId)}${route(PathSegment.cancel())}`),
@@ -86,14 +98,23 @@ export const compositesApi = {
     request(
       CompositePhotoSchema,
       'POST',
-      route(PathSegment.api(), PathSegment.composites(), PathSegment.assembly(), PathSegment.commit()),
+      route(
+        PathSegment.api(),
+        PathSegment.composites(),
+        PathSegment.assembly(),
+        PathSegment.commit(),
+      ),
       CommitAssemblyRequestSchema.parse({ recipe }),
     ),
   /**
    * Where the frames meet for each of `picks` in place of the recipe's own: `null` for a set whose
    * solve was refused, and for all of them once the carve's volume has been reaped.
    */
-  solveSeams: (recipe: AssemblyRecipe, picks: number[][], signal?: AbortSignal): Promise<SolvedSeamsResponse> =>
+  solveSeams: (
+    recipe: AssemblyRecipe,
+    picks: number[][],
+    signal?: AbortSignal,
+  ): Promise<SolvedSeamsResponse> =>
     request(
       SolvedSeamsResponseSchema,
       'POST',
@@ -113,7 +134,12 @@ export const compositesApi = {
   /** Done on a reopened assembly: updates the row's recipe in place rather than inserting a
    * second photograph. */
   updateAssembly: (photoId: string, recipe: AssemblyRecipe): Promise<CompositePhoto> =>
-    request(CompositePhotoSchema, 'PUT', assemblyOf(photoId), CommitAssemblyRequestSchema.parse({ recipe })),
+    request(
+      CompositePhotoSchema,
+      'PUT',
+      assemblyOf(photoId),
+      CommitAssemblyRequestSchema.parse({ recipe }),
+    ),
 
   /**
    * A draft's layer, which the server names as the path it serves it at (§4.3).

@@ -14,11 +14,23 @@ import { NothingSchema, request } from './request';
 
 export const labelsApi = {
   list: (activity?: RequestActivity): Promise<Label[]> =>
-    request(LabelListSchema, 'GET', route(PathSegment.api(), PathSegment.labels()), undefined, { activity }),
+    request(LabelListSchema, 'GET', route(PathSegment.api(), PathSegment.labels()), undefined, {
+      activity,
+    }),
   create: (body: CreateLabelRequest): Promise<Label> =>
-    request(LabelSchema, 'POST', route(PathSegment.api(), PathSegment.labels()), CreateLabelRequestSchema.parse(body)),
+    request(
+      LabelSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.labels()),
+      CreateLabelRequestSchema.parse(body),
+    ),
   save: (body: SaveLabelsRequest): Promise<Label[]> =>
-    request(LabelListSchema, 'PUT', route(PathSegment.api(), PathSegment.labels()), SaveLabelsRequestSchema.parse(body)),
+    request(
+      LabelListSchema,
+      'PUT',
+      route(PathSegment.api(), PathSegment.labels()),
+      SaveLabelsRequestSchema.parse(body),
+    ),
   addPhotos: (id: string, target: PhotoTarget): Promise<void> =>
     request(
       NothingSchema,

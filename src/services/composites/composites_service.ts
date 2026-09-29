@@ -19,8 +19,19 @@ import {
   type ReopenedAssembly,
   type Seams,
 } from '../../schemas/assembly';
-import type { CompositePhase, CompositePhoto, CompositeProgress, Composition } from '../../schemas/composition';
-import { AlignedSchema, framingEdits, isComposite, type Aligned, type Composed } from '../../schemas/recipes';
+import type {
+  CompositePhase,
+  CompositePhoto,
+  CompositeProgress,
+  Composition,
+} from '../../schemas/composition';
+import {
+  AlignedSchema,
+  framingEdits,
+  isComposite,
+  type Aligned,
+  type Composed,
+} from '../../schemas/recipes';
 import { existsSync } from 'node:fs';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import {
@@ -41,7 +52,12 @@ import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_pat
 import type { PhotoProcessingRepository } from '../photos/renditions/photo_processing_repository';
 import type { ProcessingService } from '../processing/pipeline/processing_service';
 import type { CompositeWorker } from '../processing/workers/composite_worker';
-import { JOB_CANCELLED, NO_RUNNING_JOB, type RunningJob, watchingJobProgress } from '../processing/rawshim/rawshim_job';
+import {
+  JOB_CANCELLED,
+  NO_RUNNING_JOB,
+  type RunningJob,
+  watchingJobProgress,
+} from '../processing/rawshim/rawshim_job';
 import type { CompositeJobSource } from '../processing/workers/processing_types';
 import { owedOf, renditionVariant } from '../processing/renditions/renditions';
 import type { RenditionsRepository } from '../processing/renditions/renditions_repository';
@@ -75,7 +91,11 @@ const PHASES = [
  * the geometry every layer is drawn in. A layer is one frame over the whole canvas, so the tiles
  * are not in it, and neither is a frame's edit, §3.0's planes taking no grade.
  */
-export function layerKeyOf(library: Library, recipe: AssemblyRecipe, cameraMatch: CameraMatch): string {
+export function layerKeyOf(
+  library: Library,
+  recipe: AssemblyRecipe,
+  cameraMatch: CameraMatch,
+): string {
   const of = {
     source: library.rendition_source,
     hdr: library.rendition_hdr,
@@ -185,7 +205,11 @@ export class CompositesService {
   async mergeBracket(photoIds: readonly string[]): Promise<CompositePhoto> {
     const frames = this.photoComposites.sequencesOf(photoIds);
     const stacks = new Set(frames.map((frame) => frame.stackId));
-    if (frames.length !== photoIds.length || stacks.size !== 1 || frames.some((frame) => frame.origin !== 'bracket')) {
+    if (
+      frames.length !== photoIds.length ||
+      stacks.size !== 1 ||
+      frames.some((frame) => frame.origin !== 'bracket')
+    ) {
       throw new AppError('VALIDATION_ERROR', 'these photographs are not one bracket stack');
     }
     const kinds = new Set(frames.map((frame) => frame.sequence?.kind));
@@ -194,11 +218,16 @@ export class CompositesService {
       throw new AppError('VALIDATION_ERROR', 'these photographs are not one capture');
     }
     if (kind === 'pixelShift' && frames.length !== PIXEL_SHIFT_FRAMES) {
-      throw new AppError('VALIDATION_ERROR', `a pixel shift is merged from exactly its ${PIXEL_SHIFT_FRAMES} frames`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `a pixel shift is merged from exactly its ${PIXEL_SHIFT_FRAMES} frames`,
+      );
     }
     // A frame that does not say which shot it was is placed by when it was taken.
-    const ordered = frames.every((frame) => frame.sequence?.index != null) ?
-        [...frames].sort((a, b) => (a.sequence?.index ?? 0) - (b.sequence?.index ?? 0)).map((frame) => frame.photoId)
+    const ordered = frames.every((frame) => frame.sequence?.index != null)
+      ? [...frames]
+          .sort((a, b) => (a.sequence?.index ?? 0) - (b.sequence?.index ?? 0))
+          .map((frame) => frame.photoId)
       : this.photoComposites.orderedForComposite(photoIds).map((photo) => photo.id);
     return await this.serially(ordered, () => this.mergeNow(ordered, kind));
   }
@@ -232,7 +261,9 @@ export class CompositesService {
     let photoId: string | null = null;
     try {
       const shape = kind === 'panorama' ? 'pan' : kind;
-      const aligned = await this.watched(watching, 0, () => this.aligned(sources, library, on, shape));
+      const aligned = await this.watched(watching, 0, () =>
+        this.aligned(sources, library, on, shape),
+      );
       const recipe: Composed = { ...aligned, kind };
 
       // The row before the pixels: it is what the copies are keyed by, and what the client is
@@ -281,7 +312,10 @@ export class CompositesService {
     // The one refusal `framesOf` has no reason to know about: a panorama has no such cap, and this
     // one is on the carving rather than on the decodes (§3.9).
     if (photoIds.length > MOST_SOURCES) {
-      throw new AppError('VALIDATION_ERROR', `an assembly is made of at most ${MOST_SOURCES} photographs`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `an assembly is made of at most ${MOST_SOURCES} photographs`,
+      );
     }
     const { library, sources } = this.framesOf(photoIds);
     const job: AssemblyJob = {
@@ -306,7 +340,10 @@ export class CompositesService {
       },
       (err: unknown) => {
         if (job.status !== 'analysing') return;
-        if (this.cancelledJobs.delete(job.id) || (err instanceof Error && err.message === JOB_CANCELLED)) {
+        if (
+          this.cancelledJobs.delete(job.id) ||
+          (err instanceof Error && err.message === JOB_CANCELLED)
+        ) {
           job.status = 'cancelled';
           return;
         }
@@ -383,14 +420,24 @@ export class CompositesService {
         stopIfCancelled();
         answered = await analyse();
         if (LenslessSchema.safeParse(JSON.parse(answered)).success) {
-          throw new AppError('VALIDATION_ERROR', 'these photographs were taken on a lens nothing could measure');
+          throw new AppError(
+            'VALIDATION_ERROR',
+            'these photographs were taken on a lens nothing could measure',
+          );
         }
       }
       const parsed = AnalysedSchema.safeParse(JSON.parse(answered));
       if (!parsed.success) {
-        throw new AppError('VALIDATION_ERROR', 'the analysis answered tiles this build cannot read');
+        throw new AppError(
+          'VALIDATION_ERROR',
+          'the analysis answered tiles this build cannot read',
+        );
       }
-      const seamVolume = layerKeyOf(library, parsed.data.recipe, this.processing.cameraMatchFor(library, 'full'));
+      const seamVolume = layerKeyOf(
+        library,
+        parsed.data.recipe,
+        this.processing.cameraMatchFor(library, 'full'),
+      );
       const volumePath = draftVolumePath(getDataPath(library), seamVolume);
       await mkdir(path.dirname(volumePath), { recursive: true });
       await rename(pendingVolume, volumePath);
@@ -401,7 +448,10 @@ export class CompositesService {
       });
       return { analysed, layers };
     } catch (err) {
-      if (this.cancelledJobs.delete(job.id) || (err instanceof Error && err.message === JOB_CANCELLED)) {
+      if (
+        this.cancelledJobs.delete(job.id) ||
+        (err instanceof Error && err.message === JOB_CANCELLED)
+      ) {
         throw new AppError('VALIDATION_ERROR', 'cancelled');
       }
       throw err;
@@ -467,14 +517,17 @@ export class CompositesService {
 
     const library = this.libraries.getConfiguration(photo.library_id);
     if (library == null) throw new AppError('NOT_FOUND', 'that library is gone');
-    const layers = await this.serially(recipe.sources.map((source) => source.photoId), async () => {
-      const on = this.processing.openComposite();
-      try {
-        return await this.layersFor(recipe, library, on);
-      } finally {
-        on.close();
-      }
-    });
+    const layers = await this.serially(
+      recipe.sources.map((source) => source.photoId),
+      async () => {
+        const on = this.processing.openComposite();
+        try {
+          return await this.layersFor(recipe, library, on);
+        } finally {
+          on.close();
+        }
+      },
+    );
     return { recipe, layers, missingSources };
   }
 
@@ -485,7 +538,9 @@ export class CompositesService {
    */
   async solveSeams(recipe: AssemblyRecipe, picks: number[][]): Promise<(Seams | null)[] | null> {
     const { library } = await this.framesFor(recipe);
-    return this.activity.track(library.id, 'merging', newId(), () => this.solved(recipe, picks, library));
+    return this.activity.track(library.id, 'merging', newId(), () =>
+      this.solved(recipe, picks, library),
+    );
   }
 
   /**
@@ -501,34 +556,53 @@ export class CompositesService {
     // a solve here, which is what keeps a preview one render rather than a solve and a render.
     const held = recipe.seams;
     const ready =
-      held != null && held.base === recipe.base && held.pick.every((source, tile) => source === recipe.pick[tile]) ?
-        recipe
-      : await this.activity.track(library.id, 'merging', newId(), () => this.seamed(recipe, library));
+      held != null &&
+      held.base === recipe.base &&
+      held.pick.every((source, tile) => source === recipe.pick[tile])
+        ? recipe
+        : await this.activity.track(library.id, 'merging', newId(), () =>
+            this.seamed(recipe, library),
+          );
     const dataPath = getDataPath(library);
     const layerKey = layerKeyOf(library, ready, this.processing.cameraMatchFor(library, 'full'));
     const outputPath = draftPreviewPath(dataPath, layerKey, pictureKeyOf(ready));
     if (!existsSync(outputPath)) {
-      await this.serially(ready.sources.map((source) => source.photoId), async () => {
-        const on = this.processing.openComposite();
-        try {
-          const sources = ready.sources.map((source) => this.sourceOf(source.photoId, library));
-          await this.processing.buildAssemblyPreview(sources, ready, library, outputPath, on);
-        } finally {
-          on.close();
-        }
-      });
+      await this.serially(
+        ready.sources.map((source) => source.photoId),
+        async () => {
+          const on = this.processing.openComposite();
+          try {
+            const sources = ready.sources.map((source) => this.sourceOf(source.photoId, library));
+            await this.processing.buildAssemblyPreview(sources, ready, library, outputPath, on);
+          } finally {
+            on.close();
+          }
+        },
+      );
     }
     return previewUrlOf(library.id, layerKey, pictureKeyOf(ready));
   }
 
-  private async solved(recipe: AssemblyRecipe, picks: number[][], library: Library): Promise<(Seams | null)[] | null> {
+  private async solved(
+    recipe: AssemblyRecipe,
+    picks: number[][],
+    library: Library,
+  ): Promise<(Seams | null)[] | null> {
     if (recipe.seamVolume == null) return null;
     const volumePath = draftVolumePath(getDataPath(library), recipe.seamVolume);
     if (!existsSync(volumePath)) return null;
-    const answered = await this.processing.solveSeams({ ...recipe, seams: undefined }, picks, volumePath, library);
+    const answered = await this.processing.solveSeams(
+      { ...recipe, seams: undefined },
+      picks,
+      volumePath,
+      library,
+    );
     const parsed = SolvedSeamsSchema.safeParse(JSON.parse(answered));
     if (!parsed.success) {
-      throw new AppError('VALIDATION_ERROR', 'the seam solve answered pieces this build cannot read');
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'the seam solve answered pieces this build cannot read',
+      );
     }
     return parsed.data;
   }
@@ -565,7 +639,10 @@ export class CompositesService {
    * this composites a canvas out of every frame and holds the device while it does.
    */
   commitAssembly(recipe: AssemblyRecipe): Promise<CompositePhoto> {
-    return this.serially(recipe.sources.map((source) => source.photoId), () => this.commitNow(recipe));
+    return this.serially(
+      recipe.sources.map((source) => source.photoId),
+      () => this.commitNow(recipe),
+    );
   }
 
   private async commitNow(asked: AssemblyRecipe): Promise<CompositePhoto> {
@@ -598,7 +675,10 @@ export class CompositesService {
    * date, its shoot, its rating and its place in every album are the row's already.
    */
   updateAssembly(photoId: string, recipe: AssemblyRecipe): Promise<CompositePhoto> {
-    return this.serially(recipe.sources.map((source) => source.photoId), () => this.updateNow(photoId, recipe));
+    return this.serially(
+      recipe.sources.map((source) => source.photoId),
+      () => this.updateNow(photoId, recipe),
+    );
   }
 
   private async updateNow(photoId: string, asked: AssemblyRecipe): Promise<CompositePhoto> {
@@ -637,7 +717,9 @@ export class CompositesService {
   }
 
   /** The library a recipe's frames are in, and the files behind them - every one re-checked. */
-  private async framesFor(recipe: AssemblyRecipe): Promise<{ library: Library; sources: CompositeJobSource[] }> {
+  private async framesFor(
+    recipe: AssemblyRecipe,
+  ): Promise<{ library: Library; sources: CompositeJobSource[] }> {
     const first = recipe.sources[0];
     if (first == null) throw new AppError('VALIDATION_ERROR', 'this recipe names no frames');
     const library = this.libraries.getConfiguration(this.frameOf(first.photoId).library_id);
@@ -646,14 +728,18 @@ export class CompositesService {
       recipe.sources.map((source) => source.photoId),
       library,
     );
-    return { library, sources: recipe.sources.map((source) => this.sourceOf(source.photoId, library)) };
+    return {
+      library,
+      sources: recipe.sources.map((source) => this.sourceOf(source.photoId, library)),
+    };
   }
 
   /** One frame of a draft, still where the page left it. */
   private frameOf(photoId: string): BasicPhoto {
     const frame = this.photoPaths.getBasicById(photoId);
     if (frame == null) throw new AppError('NOT_FOUND', `${photoId} is gone`);
-    if (this.photoMetadata.isBinned(photoId)) throw new AppError('NOT_FOUND', `${photoId} is in the bin`);
+    if (this.photoMetadata.isBinned(photoId))
+      throw new AppError('NOT_FOUND', `${photoId} is in the bin`);
     return frame;
   }
 
@@ -661,7 +747,10 @@ export class CompositesService {
     const frame = this.frameOf(photoId);
     const rawFilePath = originalPathOf(library, frame);
     if (rawFilePath == null) {
-      throw new AppError('VALIDATION_ERROR', `${photoId} is composed, so it cannot be a frame of one`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `${photoId} is composed, so it cannot be a frame of one`,
+      );
     }
     return { photoId, rawFilePath };
   }
@@ -685,14 +774,27 @@ export class CompositesService {
     on: CompositeWorker,
     shape: AlignShape,
   ): Promise<Composition> {
-    let answered = await this.processing.alignComposite(library.id, this.searchable(sources, library), library, on, shape);
+    let answered = await this.processing.alignComposite(
+      library.id,
+      this.searchable(sources, library),
+      library,
+      on,
+      shape,
+    );
     let aligned = this.readAlignment(answered);
     if (aligned.lensless.length > 0) {
       await this.fitLensless(aligned.lensless, sources, library, on);
-      answered = await this.processing.alignComposite(library.id, this.searchable(sources, library), library, on, shape);
+      answered = await this.processing.alignComposite(
+        library.id,
+        this.searchable(sources, library),
+        library,
+        on,
+        shape,
+      );
       aligned = this.readAlignment(answered);
     }
-    for (const warning of aligned.warnings) log.warn('the alignment has something to say', { warning });
+    for (const warning of aligned.warnings)
+      log.warn('the alignment has something to say', { warning });
     return aligned.recipe;
   }
 
@@ -712,14 +814,19 @@ export class CompositesService {
       await this.processing
         // On the merge's own worker: the device is already open and the modules already compiled.
         .measureCameraMatch(source.rawFilePath, photoId, library, on)
-        .catch((err: unknown) => log.warn('could not fit the lens this set was shot on', { photo: photoId, err }));
+        .catch((err: unknown) =>
+          log.warn('could not fit the lens this set was shot on', { photo: photoId, err }),
+        );
     }
   }
 
   private readAlignment(answered: string): Aligned {
     const parsed = AlignedSchema.safeParse(JSON.parse(answered));
     if (!parsed.success) {
-      throw new AppError('VALIDATION_ERROR', 'the alignment answered a recipe this build cannot read');
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'the alignment answered a recipe this build cannot read',
+      );
     }
     return parsed.data;
   }
@@ -736,7 +843,9 @@ export class CompositesService {
    * so a frame that has been renamed or moved is still found, and one that has been deleted is
    * what makes this answer null rather than a render that fails half way.
    */
-  renderable(photoId: string): { kind: CompositeKind; recipe: Composed; sources: CompositeJobSource[] } | null {
+  renderable(
+    photoId: string,
+  ): { kind: CompositeKind; recipe: Composed; sources: CompositeJobSource[] } | null {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null || !isComposite(photo.recipe)) return null;
     const library = this.libraries.getConfiguration(photo.library_id);
@@ -770,7 +879,8 @@ export class CompositesService {
     const byId = new Map(offered.map((source) => [source.photoId, source]));
     const sources = recipe.sources.map((source) => {
       const frame = byId.get(source.photoId);
-      if (frame == null) throw new AppError('NOT_FOUND', `${source.photoId} is not one of these photographs`);
+      if (frame == null)
+        throw new AppError('NOT_FOUND', `${source.photoId} is not one of these photographs`);
       return frame;
     });
 
@@ -836,7 +946,13 @@ export class CompositesService {
   ): Promise<T> {
     const before = PHASES.slice(0, at).reduce((sum, phase) => sum + phase.share, 0);
     const { phase, share } = PHASES[at]!;
-    return await watchingJobProgress(this.runningJob, before, share, (fraction) => this.report({ ...watching, phase, fraction }), run);
+    return await watchingJobProgress(
+      this.runningJob,
+      before,
+      share,
+      (fraction) => this.report({ ...watching, phase, fraction }),
+      run,
+    );
   }
 
   private report(progress: CompositeProgress): void {
@@ -899,7 +1015,9 @@ export class CompositesService {
     // Which frame the row takes its date and its shoot from: the one the solve made everything
     // else relative to, so the panorama files itself where the pan was shot.
     const referenceOf = (recipe: Composition): string =>
-      recipe.sources[recipe.reference]?.photoId ?? recipe.sources[0]?.photoId ?? sources[0]!.photoId;
+      recipe.sources[recipe.reference]?.photoId ??
+      recipe.sources[0]?.photoId ??
+      sources[0]!.photoId;
     return { library, sources, referenceOf };
   }
 }

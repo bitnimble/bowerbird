@@ -55,7 +55,8 @@ export const listStyles = stylex.create({
     display: 'block',
     width: '100%',
     height: '100%',
-    backgroundImage: 'repeating-linear-gradient(45deg, #14171d, #14171d 4px, #191d24 4px, #191d24 8px)',
+    backgroundImage:
+      'repeating-linear-gradient(45deg, #14171d, #14171d 4px, #191d24 4px, #191d24 8px)',
   },
 });
 
@@ -82,13 +83,16 @@ export function List({
   );
 }
 
-export function ListRow({ style, children }: { style?: stylex.StyleXStyles; children: ReactNode }): JSX.Element {
+export function ListRow({
+  style,
+  children,
+}: {
+  style?: stylex.StyleXStyles;
+  children: ReactNode;
+}): JSX.Element {
   const announced = useContext(Announced);
   return (
-    <div
-      {...stylex.props(listStyles.row, style)}
-      role={announced ? 'listitem' : undefined}
-    >
+    <div {...stylex.props(listStyles.row, style)} role={announced ? 'listitem' : undefined}>
       {children}
     </div>
   );

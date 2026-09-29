@@ -23,7 +23,11 @@ test('each setting is written and read back independently', () => {
   const { settings, db } = repo();
   settings.update({ viewer_rendition_mode: 'max' });
   settings.update({ last_viewer_rendition: 'full' });
-  expect(settings.get()).toEqual({ ...DEFAULT_SETTINGS, viewer_rendition_mode: 'max', last_viewer_rendition: 'full' });
+  expect(settings.get()).toEqual({
+    ...DEFAULT_SETTINGS,
+    viewer_rendition_mode: 'max',
+    last_viewer_rendition: 'full',
+  });
   db.close();
 });
 
@@ -44,8 +48,12 @@ test('a value the app no longer understands reads as the default', () => {
   const { settings, db } = repo();
   // Over the top of the seeded default, which is what a newer build writing a
   // value this one cannot read actually leaves behind.
-  db.query("INSERT OR REPLACE INTO settings (key, value) VALUES ('viewer_rendition_mode', 'holographic')").run();
-  db.query("INSERT OR REPLACE INTO settings (key, value) VALUES ('grid_rendition_quality', 'lots')").run();
+  db.query(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('viewer_rendition_mode', 'holographic')",
+  ).run();
+  db.query(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('grid_rendition_quality', 'lots')",
+  ).run();
   expect(settings.get().viewer_rendition_mode).toBe('remember');
   expect(settings.get().grid_rendition_quality).toBe(DEFAULT_SETTINGS.grid_rendition_quality);
   db.close();
@@ -55,7 +63,9 @@ test('null clears what was remembered rather than storing it', () => {
   const { settings, db } = repo();
   settings.update({ last_viewer_rendition: 'max' });
   expect(settings.update({ last_viewer_rendition: null }).last_viewer_rendition).toBeNull();
-  expect(db.query("SELECT COUNT(*) n FROM settings WHERE key = 'last_viewer_rendition'").get()).toEqual({ n: 0 });
+  expect(
+    db.query("SELECT COUNT(*) n FROM settings WHERE key = 'last_viewer_rendition'").get(),
+  ).toEqual({ n: 0 });
   db.close();
 });
 

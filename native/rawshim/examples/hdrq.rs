@@ -32,7 +32,10 @@ fn options(edge: usize) -> EncodeOptions {
         grade: grade(),
         crf: 10,
         preset: 8,
-        strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
+        strengths: Strengths {
+            sharpen: 1.0,
+            defringe: 1.0,
+        },
         sharpen_sigma: None,
         max_edge: edge as f64,
         content_light: None,
@@ -81,10 +84,7 @@ fn sdr_to_pq(code: u16, full: f64) -> f64 {
         false => ((v + 0.055) / 1.055).powf(2.4),
     };
     // An SDR file's 1.0 is diffuse white, which is where its codes land on the absolute curve.
-    rawshim::tone::pq(
-        Light::<DisplayNits>::exactly(203.0) * Gain::of_ratio(linear),
-    )
-    .raw()
+    rawshim::tone::pq(Light::<DisplayNits>::exactly(203.0) * Gain::of_ratio(linear)).raw()
 }
 
 /// The blacks a comparison is run at, in nits, below which it treats the picture as one level.
@@ -103,8 +103,7 @@ const BLACK_NITS: [f64; 5] = [0.1, 0.5, 1.0, 2.0, 5.0];
 const TARGET_SDR: i32 = 10;
 
 fn rmse_in_pq(a: &[u16], b: &[u16], full: f64, sdr: bool, black: f64) -> f64 {
-    let floor =
-        rawshim::tone::pq(Light::<DisplayNits>::measured(black)).raw();
+    let floor = rawshim::tone::pq(Light::<DisplayNits>::measured(black)).raw();
     let signal = |c: u16| {
         match sdr {
             true => sdr_to_pq(c, full),
@@ -112,8 +111,11 @@ fn rmse_in_pq(a: &[u16], b: &[u16], full: f64, sdr: bool, black: f64) -> f64 {
         }
         .max(floor)
     };
-    let sum: f64 =
-        a.iter().zip(b.iter()).map(|(x, y)| (signal(*x) - signal(*y)).powi(2)).sum();
+    let sum: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (signal(*x) - signal(*y)).powi(2))
+        .sum();
     (sum / a.len() as f64).sqrt() * 1023.0
 }
 
@@ -126,16 +128,30 @@ fn main() {
 
     // The document's shipped defaults, so this is the picture the library actually writes.
     let detail = rawshim::galosh::Detail::at(luma, colour);
-    let frame = rawshim::decode_frame_denoised(&path, 0, detail, Default::default())
-        .expect("decode");
+    let frame =
+        rawshim::decode_frame_denoised(&path, 0, detail, Default::default()).expect("decode");
     let samples = frame.samples16().expect("16-bit").to_vec();
-    let source = Source { samples: &samples, width: frame.width, height: frame.height };
+    let source = Source {
+        samples: &samples,
+        width: frame.width,
+        height: frame.height,
+    };
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
     let resident = frame.on_device(gpu).expect("the frame reaches the device");
     let matched = rawshim::fit_hdr_for(&resident, &path, 0.9);
 
-    let (pq, w, h) = hdr::graded_as(&source, &options(edge), matched.as_ref(), rawshim::gpu::Output::Pq);
-    let (srgb, _, _) = hdr::graded_as(&source, &options(edge), matched.as_ref(), rawshim::gpu::Output::Srgb);
+    let (pq, w, h) = hdr::graded_as(
+        &source,
+        &options(edge),
+        matched.as_ref(),
+        rawshim::gpu::Output::Pq,
+    );
+    let (srgb, _, _) = hdr::graded_as(
+        &source,
+        &options(edge),
+        matched.as_ref(),
+        rawshim::gpu::Output::Srgb,
+    );
     let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
 
     println!("{w}x{h}");
@@ -149,7 +165,11 @@ fn main() {
             w,
             h,
             &avif::StillOptions {
-                cicp: avif::Cicp { primaries, transfer, matrix },
+                cicp: avif::Cicp {
+                    primaries,
+                    transfer,
+                    matrix,
+                },
                 format: chroma.avif_format(),
                 quantizer: q,
                 speed: 8,
@@ -178,14 +198,28 @@ fn main() {
             .expect("the rendition");
         let (hdr_back, _, _) = avif::decode_at(&hdr_bytes, 16).expect("the still decodes");
         let (sdr_back, _, _) = avif::decode_at(&sdr_bytes, 8).expect("the rendition decodes");
-        hdr_scores
-            .push(BLACK_NITS.iter().map(|b| rmse_in_pq(&pq, &hdr_back, 65535.0, false, *b)).collect());
-        sdr_scores
-            .push(BLACK_NITS.iter().map(|b| rmse_in_pq(&srgb16, &sdr_back, 255.0, true, *b)).collect());
-        sizes.push((hdr_bytes.len() as f64 / 1024.0, sdr_bytes.len() as f64 / 1024.0));
+        hdr_scores.push(
+            BLACK_NITS
+                .iter()
+                .map(|b| rmse_in_pq(&pq, &hdr_back, 65535.0, false, *b))
+                .collect(),
+        );
+        sdr_scores.push(
+            BLACK_NITS
+                .iter()
+                .map(|b| rmse_in_pq(&srgb16, &sdr_back, 255.0, true, *b))
+                .collect(),
+        );
+        sizes.push((
+            hdr_bytes.len() as f64 / 1024.0,
+            sdr_bytes.len() as f64 / 1024.0,
+        ));
     }
 
-    println!("\nsize and distortion by quantizer, 4:2:0 as shipped, black at {} nits", BLACK_NITS[0]);
+    println!(
+        "\nsize and distortion by quantizer, 4:2:0 as shipped, black at {} nits",
+        BLACK_NITS[0]
+    );
     println!("       hdr                             sdr");
     for (i, q) in QUANTIZERS.iter().enumerate() {
         println!(
@@ -200,7 +234,10 @@ fn main() {
     // the metric is most sensitive. Settling as the floor rises is what says it has.
     println!("\nthe hdr quantizer matching sdr q{TARGET_SDR}, by the black it is measured against");
     for (b, black) in BLACK_NITS.iter().enumerate() {
-        let row = QUANTIZERS.iter().position(|q| *q == TARGET_SDR).expect("the target");
+        let row = QUANTIZERS
+            .iter()
+            .position(|q| *q == TARGET_SDR)
+            .expect("the target");
         let target = sdr_scores[row][b];
         let (i, _) = hdr_scores
             .iter()
@@ -233,7 +270,11 @@ fn main() {
             w,
             h,
             &avif::StillOptions {
-                cicp: avif::Cicp { primaries, transfer, matrix },
+                cicp: avif::Cicp {
+                    primaries,
+                    transfer,
+                    matrix,
+                },
                 format: Chroma::Yuv420.avif_format(),
                 quantizer: q,
                 speed: 8,
@@ -257,7 +298,11 @@ fn main() {
     println!("\nwhat 4:2:0 costs at q0, where the quantizer is not in the way");
     let sub = still(0, Chroma::Yuv420);
     let full = still(0, Chroma::Yuv444);
-    println!("  4:2:0 {:.1} kB    4:4:4 {:.1} kB", sub.len() as f64 / 1024.0, full.len() as f64 / 1024.0);
+    println!(
+        "  4:2:0 {:.1} kB    4:4:4 {:.1} kB",
+        sub.len() as f64 / 1024.0,
+        full.len() as f64 / 1024.0
+    );
     let a = avif::decode(&sub).expect("the 4:2:0 decode");
     let b = avif::decode(&full).expect("the 4:4:4 decode");
     let (mean, worst) = mean_abs(&a.data, &b.data);

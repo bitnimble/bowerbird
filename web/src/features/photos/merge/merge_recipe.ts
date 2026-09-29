@@ -11,7 +11,12 @@ function stated(takes: Takes[]): Takes[] | undefined {
   return takes.every((asked) => asked === 'subject') ? undefined : takes;
 }
 
-export function withSeed(recipe: AssemblyRecipe, rect: Rect, pick: number, takes: Takes): AssemblyRecipe {
+export function withSeed(
+  recipe: AssemblyRecipe,
+  rect: Rect,
+  pick: number,
+  takes: Takes,
+): AssemblyRecipe {
   const first = recipe.vertices.length;
   return {
     ...recipe,

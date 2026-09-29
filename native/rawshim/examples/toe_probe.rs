@@ -28,9 +28,15 @@ const TOE: usize = 16;
 
 fn grey(path: &str, values: &[u8], width: usize, height: usize) {
     let rgb: Vec<u8> = values.iter().flat_map(|v| [*v, *v, *v]).collect();
-    let bytes =
-        rawshim::jpeg::encode(rawshim::rgb::RgbRef { width, height, data: &rgb }, 92)
-            .expect("the mask encodes");
+    let bytes = rawshim::jpeg::encode(
+        rawshim::rgb::RgbRef {
+            width,
+            height,
+            data: &rgb,
+        },
+        92,
+    )
+    .expect("the mask encodes");
     std::fs::write(path, bytes).expect("the mask writes");
     eprintln!("wrote {path}");
 }
@@ -55,14 +61,23 @@ fn main() {
     // Averaged from the 16-bit samples rather than through `image::resize`, which takes bytes: the
     // whole question is about levels under a hundredth of white, and an 8-bit intermediate has two
     // codes to say that in.
-    let (wide, tall) = (GRID.min(frame.width), GRID.min(frame.width) * frame.height / frame.width);
+    let (wide, tall) = (
+        GRID.min(frame.width),
+        GRID.min(frame.width) * frame.height / frame.width,
+    );
     let box_w = frame.width as f64 / wide as f64;
     let box_h = frame.height as f64 / tall as f64;
     let mut ours = vec![0.0f64; wide * tall];
     for y in 0..tall {
         for x in 0..wide {
-            let (x0, x1) = ((x as f64 * box_w) as usize, (((x + 1) as f64 * box_w) as usize).min(frame.width));
-            let (y0, y1) = ((y as f64 * box_h) as usize, (((y + 1) as f64 * box_h) as usize).min(frame.height));
+            let (x0, x1) = (
+                (x as f64 * box_w) as usize,
+                (((x + 1) as f64 * box_w) as usize).min(frame.width),
+            );
+            let (y0, y1) = (
+                (y as f64 * box_h) as usize,
+                (((y + 1) as f64 * box_h) as usize).min(frame.height),
+            );
             let mut total = 0.0f64;
             let mut seen = 0usize;
             for row in y0..y1.max(y0 + 1) {
@@ -96,7 +111,11 @@ fn main() {
         if count[bin] == 0 {
             continue;
         }
-        println!("{bin:>4} {:>9.4} {:>9}", sum[bin] / count[bin] as f64, count[bin]);
+        println!(
+            "{bin:>4} {:>9.4} {:>9}",
+            sum[bin] / count[bin] as f64,
+            count[bin]
+        );
     }
 
     // The frame at a readable brightness, with each of the darkest bins drawn white over it, so a

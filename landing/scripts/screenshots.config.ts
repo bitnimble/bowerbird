@@ -39,7 +39,14 @@ export default defineConfig({
       cwd: REPO,
       url: `${API_URL}${route(PathSegment.api(), PathSegment.libraries())}`,
       reuseExistingServer: false,
-      env: { DB_PATH, DATA_DIR, PORT: String(API_PORT), HOST: '127.0.0.1', BOWERBIRD_UPDATE_REPO: '', LOG_LEVEL: 'warn' },
+      env: {
+        DB_PATH,
+        DATA_DIR,
+        PORT: String(API_PORT),
+        HOST: '127.0.0.1',
+        BOWERBIRD_UPDATE_REPO: '',
+        LOG_LEVEL: 'warn',
+      },
     },
     {
       command: `bun run ../scripts/vite.ts --port ${WEB_PORT} --strictPort`,

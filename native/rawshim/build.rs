@@ -27,7 +27,11 @@ fn main() {
         return;
     }
     let include = codecs();
-    std::fs::write(out.join("bindings.rs"), server_bindings(&include).to_string()).expect("write bindings");
+    std::fs::write(
+        out.join("bindings.rs"),
+        server_bindings(&include).to_string(),
+    )
+    .expect("write bindings");
 }
 
 /// PMRID's published weights, which `src/pmrid.rs` embeds.
@@ -37,8 +41,8 @@ fn main() {
 /// the compiler and the codecs: what a photograph looks like is not allowed to depend on which
 /// files happen to be beside the binary.
 fn weights() {
-    let home = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
-        .join(".pmrid");
+    let home =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join(".pmrid");
     for name in ["weights.bin", "weights.json"] {
         let at = home.join(name);
         println!("cargo:rerun-if-changed={}", at.display());
@@ -106,8 +110,8 @@ fn shaders(out: &Path) {
         // A file declaring itself a module is one another file imports, not a stage of its own.
         // Compiling it alone would emit a module with no entry point, which is a shader nothing can
         // dispatch and a file no host asks for.
-        let source = std::fs::read_to_string(&from)
-            .unwrap_or_else(|e| panic!("{}: {e}", from.display()));
+        let source =
+            std::fs::read_to_string(&from).unwrap_or_else(|e| panic!("{}: {e}", from.display()));
         if source.lines().any(|line| line.starts_with("module ")) {
             continue;
         }
@@ -123,10 +127,17 @@ fn shaders(out: &Path) {
         match to.strip_prefix("passthrough/") {
             Some(name) => {
                 let at = |extension: &str| {
-                    out.join("passthrough").join(name.replace(".slang", extension))
+                    out.join("passthrough")
+                        .join(name.replace(".slang", extension))
                 };
                 compile(&slangc, &from, &at(".spv"), &[], &[]);
-                compile(&slangc, &from, &at(".metal"), &dispatched(&source), &["-DFRAGMENT=8"]);
+                compile(
+                    &slangc,
+                    &from,
+                    &at(".metal"),
+                    &dispatched(&source),
+                    &["-DFRAGMENT=8"],
+                );
             }
             None => {
                 let to = staged.join(to.replace(".slang", ".wgsl"));
@@ -151,14 +162,20 @@ fn shaders(out: &Path) {
 /// can watch and report. The bare name at the end is the one that does not exist, and it is kept
 /// only so the failure names what it looked for.
 fn slangc() -> PathBuf {
-    let binary = if cfg!(windows) { "slangc.exe" } else { "slangc" };
+    let binary = if cfg!(windows) {
+        "slangc.exe"
+    } else {
+        "slangc"
+    };
     env::var("BOWERBIRD_SLANGC")
         .map(PathBuf::from)
         .ok()
         .filter(|it| it.exists())
         .or_else(|| Some(PathBuf::from(".slangc").join(binary)).filter(|it| it.exists()))
         .or_else(|| {
-            env::split_paths(&env::var_os("PATH")?).map(|at| at.join(binary)).find(|it| it.exists())
+            env::split_paths(&env::var_os("PATH")?)
+                .map(|at| at.join(binary))
+                .find(|it| it.exists())
         })
         .unwrap_or_else(|| PathBuf::from(binary))
 }
@@ -166,7 +183,9 @@ fn slangc() -> PathBuf {
 /// Shader files under `root`, each with the path it keeps relative to it.
 fn gather(root: &Path) -> Vec<(PathBuf, String)> {
     let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir(root) else { return found };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return found;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -206,7 +225,11 @@ fn compile(slangc: &Path, from: &Path, to: &Path, entry_points: &[String], defin
     let mut command = Command::new(slangc);
     match to.extension().and_then(|it| it.to_str()) {
         Some("spv") => {
-            command.arg("-target").arg("spirv").arg("-capability").arg("spvCooperativeMatrixKHR");
+            command
+                .arg("-target")
+                .arg("spirv")
+                .arg("-capability")
+                .arg("spvCooperativeMatrixKHR");
         }
         Some("metal") => {
             command.arg("-target").arg("metal");
@@ -217,7 +240,11 @@ fn compile(slangc: &Path, from: &Path, to: &Path, entry_points: &[String], defin
     }
     command.args(defines);
     for entry in entry_points {
-        command.arg("-entry").arg(entry).arg("-stage").arg("compute");
+        command
+            .arg("-entry")
+            .arg(entry)
+            .arg("-stage")
+            .arg("compute");
     }
     let run = command.arg(from).arg("-o").arg(to).output();
     let run = run.unwrap_or_else(|e| {
@@ -306,7 +333,10 @@ fn server_bindings(include: &Path) -> bindgen::Bindings {
         .clang_arg(format!("-I{}", include.display()))
         // A C enum is `int` under MSVC and `unsigned` elsewhere, so a bare constant that
         // type-checks against a `uint32_t` here fails only on Windows. As a newtype, it fails here.
-        .default_enum_style(bindgen::EnumVariation::NewType { is_bitfield: false, is_global: false })
+        .default_enum_style(bindgen::EnumVariation::NewType {
+            is_bitfield: false,
+            is_global: false,
+        })
         .prepend_enum_name(false);
     jxl_functions(avif_functions(builder))
         .generate()
@@ -328,7 +358,10 @@ fn codecs() -> PathBuf {
     let home = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".codecs");
     let link = home.join("link.txt");
     let lines = std::fs::read_to_string(&link).unwrap_or_else(|_| {
-        panic!("{}: no codecs here. This build links the pinned ones:\n\n    bun run get:codecs", home.display())
+        panic!(
+            "{}: no codecs here. This build links the pinned ones:\n\n    bun run get:codecs",
+            home.display()
+        )
     });
     // A rebuilt tree is a new directory behind the same link, and so a new file here.
     println!("cargo:rerun-if-changed={}", link.display());
@@ -337,15 +370,19 @@ fn codecs() -> PathBuf {
     for line in lines.lines() {
         match line.split_once(' ') {
             Some(("include", at)) => include = Some(home.join(at)),
-            Some(("search", at)) => println!("cargo:rustc-link-search=native={}", home.join(at).display()),
+            Some(("search", at)) => {
+                println!("cargo:rustc-link-search=native={}", home.join(at).display())
+            }
             Some(("static", library)) => println!("cargo:rustc-link-lib=static={library}"),
             Some(("dylib", library)) => println!("cargo:rustc-link-lib={library}"),
-            _ => panic!("{}: `{line}` is not a line `get:codecs` writes", link.display()),
+            _ => panic!(
+                "{}: `{line}` is not a line `get:codecs` writes",
+                link.display()
+            ),
         }
     }
     include.unwrap_or_else(|| panic!("{}: names no include directory", link.display()))
 }
-
 
 /// JPEG XL, which only an export writes.
 fn jxl_functions(builder: bindgen::Builder) -> bindgen::Builder {
@@ -357,4 +394,3 @@ fn jxl_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_type("JxlPixelFormat")
         .allowlist_type("JxlColorEncoding")
 }
-

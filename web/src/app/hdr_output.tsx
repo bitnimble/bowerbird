@@ -20,5 +20,12 @@ export function HdrOutput(): JSX.Element {
   // Chrome only leaves SDR output while an HDR-tagged image is painted somewhere, and a WebGPU
   // canvas drawn from a worker does not count, so without this every stage and editor clips at
   // SDR white. Painted, not hidden: an unpainted image may not count either.
-  return <img src={route(PathSegment.hdr(), 'swatches.avif')} alt="" aria-hidden {...stylex.props(styles.pixel)} />;
+  return (
+    <img
+      src={route(PathSegment.hdr(), 'swatches.avif')}
+      alt=""
+      aria-hidden
+      {...stylex.props(styles.pixel)}
+    />
+  );
 }

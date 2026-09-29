@@ -39,7 +39,11 @@ fn main() {
                 .take(2)
                 .map(|v| v.parse().unwrap())
                 .collect();
-            rawshim::rgb::Rgb { width: dims[0], height: dims[1], data: bytes[at..].to_vec() }
+            rawshim::rgb::Rgb {
+                width: dims[0],
+                height: dims[1],
+                data: bytes[at..].to_vec(),
+            }
         }
     };
     let panel = (image.width - 8) / 2;
@@ -58,8 +62,8 @@ fn main() {
             };
             let (lc, lo) = (l(cam), l(ours));
             for (k, c) in [0usize, 2].into_iter().enumerate() {
-                field[(y * panel + x) * 2 + k] = f64::from(image.data[ours + c]) / lo
-                    - f64::from(image.data[cam + c]) / lc;
+                field[(y * panel + x) * 2 + k] =
+                    f64::from(image.data[ours + c]) / lo - f64::from(image.data[cam + c]) / lc;
             }
         }
     }
@@ -68,19 +72,31 @@ fn main() {
         let radius = 100usize;
         let mut low = field.clone();
         for horizontal in [true, false] {
-            let (span, lines) = if horizontal { (panel, height) } else { (height, panel) };
+            let (span, lines) = if horizontal {
+                (panel, height)
+            } else {
+                (height, panel)
+            };
             let src = low.clone();
             for line in 0..lines {
                 for i in 0..span {
                     let (lo, hi) = (i.saturating_sub(radius), (i + radius).min(span - 1));
                     let mut acc = [0.0f64; 2];
                     for j in lo..=hi {
-                        let at = if horizontal { line * panel + j } else { j * panel + line };
+                        let at = if horizontal {
+                            line * panel + j
+                        } else {
+                            j * panel + line
+                        };
                         acc[0] += src[at * 2];
                         acc[1] += src[at * 2 + 1];
                     }
                     let n = (hi - lo + 1) as f64;
-                    let at = if horizontal { line * panel + i } else { i * panel + line };
+                    let at = if horizontal {
+                        line * panel + i
+                    } else {
+                        i * panel + line
+                    };
                     low[at * 2] = acc[0] / n;
                     low[at * 2 + 1] = acc[1] / n;
                 }
@@ -98,7 +114,11 @@ fn main() {
         data[p * 3 + 1] = (128.0 - (r + b) * 0.5 * gain).clamp(0.0, 255.0) as u8;
         data[p * 3 + 2] = (128.0 + b * gain).clamp(0.0, 255.0) as u8;
     }
-    let image = rawshim::rgb::Rgb { width: panel, height, data };
+    let image = rawshim::rgb::Rgb {
+        width: panel,
+        height,
+        data,
+    };
     std::fs::write(out, rawshim::jpeg::encode(image.as_ref(), 95).unwrap()).unwrap();
     eprintln!("wrote {out}");
 }

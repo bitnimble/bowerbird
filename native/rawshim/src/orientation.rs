@@ -43,7 +43,10 @@ pub fn of_heif(turn: heif::Orientation) -> rawler::decoders::Orientation {
 
 /// Whether this turn swaps the picture's axes.
 pub fn transposes(orientation: rawler::decoders::Orientation) -> bool {
-    matches!(orientation, O::Transpose | O::Rotate90 | O::Transverse | O::Rotate270)
+    matches!(
+        orientation,
+        O::Transpose | O::Rotate90 | O::Transverse | O::Rotate270
+    )
 }
 
 /// A rectangle named in the upright picture, as the rectangle of the stored one it reads.
@@ -75,7 +78,10 @@ pub fn unoriented_rect(
         }
     };
 
-    let far = (tile.left + tile.width.saturating_sub(1), tile.top + tile.height.saturating_sub(1));
+    let far = (
+        tile.left + tile.width.saturating_sub(1),
+        tile.top + tile.height.saturating_sub(1),
+    );
     let (ax, ay) = back(tile.left, tile.top);
     let (bx, by) = back(far.0, far.1);
     crate::Tile {
@@ -168,13 +174,19 @@ mod tests {
                 _ => O::Normal,
             };
             // A picture whose every pixel names where it came from, turned.
-            let stored: Vec<u16> =
-                (0..width * height).flat_map(|at| [at as u16, 0, 0]).collect();
+            let stored: Vec<u16> = (0..width * height)
+                .flat_map(|at| [at as u16, 0, 0])
+                .collect();
             let (turned, out_w, _) = orient(stored, width, height, turn);
 
             // One pixel of the upright picture, found in the stored raster by the corner walk.
             let (ox, oy) = (2usize, 1usize);
-            let window = crate::Tile { left: ox, top: oy, width: 1, height: 1 };
+            let window = crate::Tile {
+                left: ox,
+                top: oy,
+                width: 1,
+                height: 1,
+            };
             let back = unoriented_rect(window, width, height, turn);
             assert_eq!(
                 turned[(oy * out_w + ox) * 3],

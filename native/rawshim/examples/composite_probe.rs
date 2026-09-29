@@ -909,7 +909,12 @@ fn analysis_for(path: &str) -> Option<Vec<u8>> {
         rawshim::dust::Wanted::Off,
     )?;
     let resident = frame.on_device(gpu)?;
-    let (matched, levels) = rawshim::fit_hdr_measured(&resident, path, WHITE_QUANTILE, rawshim::hdr_fit::CameraMatch::LensAndColour)?;
+    let (matched, levels) = rawshim::fit_hdr_measured(
+        &resident,
+        path,
+        WHITE_QUANTILE,
+        rawshim::hdr_fit::CameraMatch::LensAndColour,
+    )?;
     let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
     analysis.from_raw.matched = Some(matched);
     analysis.from_render.levels = Some(rawshim::photo_analysis::MeasuredLevels {

@@ -40,11 +40,23 @@ pub(crate) fn channels(pixels: &Pixels) -> Vec<Channel> {
                 n += 1;
             };
             match pixels {
-                Pixels::Eight(data) => data.iter().skip(c).step_by(3).for_each(|v| visit(u32::from(*v))),
-                Pixels::Sixteen(data) => data.iter().skip(c).step_by(3).for_each(|v| visit(u32::from(*v))),
+                Pixels::Eight(data) => data
+                    .iter()
+                    .skip(c)
+                    .step_by(3)
+                    .for_each(|v| visit(u32::from(*v))),
+                Pixels::Sixteen(data) => data
+                    .iter()
+                    .skip(c)
+                    .step_by(3)
+                    .for_each(|v| visit(u32::from(*v))),
                 Pixels::Resident(_) => panic!("{ON_THE_DEVICE}"),
             }
-            Channel { min: if n == 0 { 0 } else { min }, max, mean: if n == 0 { 0.0 } else { sum / n as f64 } }
+            Channel {
+                min: if n == 0 { 0 } else { min },
+                max,
+                mean: if n == 0 { 0.0 } else { sum / n as f64 },
+            }
         })
         .collect()
 }
@@ -59,7 +71,10 @@ pub(crate) fn channels(pixels: &Pixels) -> Vec<Channel> {
 pub(crate) fn to_bytes(pixels: &Pixels) -> Vec<u8> {
     match pixels {
         Pixels::Eight(data) => data.clone(),
-        Pixels::Sixteen(data) => data.iter().flat_map(|sample| sample.to_ne_bytes()).collect(),
+        Pixels::Sixteen(data) => data
+            .iter()
+            .flat_map(|sample| sample.to_ne_bytes())
+            .collect(),
         Pixels::Resident(_) => panic!("{ON_THE_DEVICE}"),
     }
 }
@@ -106,7 +121,13 @@ pub fn summarise(frame: &Frame) -> DecodeSummary {
 /// test, and the algorithm is short and fully specified. Only ever compared against
 /// itself - a pin says "the same as last time", not "this specific hash".
 fn sha1_hex(data: &[u8]) -> String {
-    let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
     let mut message = data.to_vec();
     let bits = (data.len() as u64) * 8;
     message.push(0x80);
@@ -158,19 +179,79 @@ fn sha1_hex(data: &[u8]) -> String {
 #[cfg(test)]
 pub(crate) fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
-        0x428a_2f98, 0x7137_4491, 0xb5c0_fbcf, 0xe9b5_dba5, 0x3956_c25b, 0x59f1_11f1, 0x923f_82a4,
-        0xab1c_5ed5, 0xd807_aa98, 0x1283_5b01, 0x2431_85be, 0x550c_7dc3, 0x72be_5d74, 0x80de_b1fe,
-        0x9bdc_06a7, 0xc19b_f174, 0xe49b_69c1, 0xefbe_4786, 0x0fc1_9dc6, 0x240c_a1cc, 0x2de9_2c6f,
-        0x4a74_84aa, 0x5cb0_a9dc, 0x76f9_88da, 0x983e_5152, 0xa831_c66d, 0xb003_27c8, 0xbf59_7fc7,
-        0xc6e0_0bf3, 0xd5a7_9147, 0x06ca_6351, 0x1429_2967, 0x27b7_0a85, 0x2e1b_2138, 0x4d2c_6dfc,
-        0x5338_0d13, 0x650a_7354, 0x766a_0abb, 0x81c2_c92e, 0x9272_2c85, 0xa2bf_e8a1, 0xa81a_664b,
-        0xc24b_8b70, 0xc76c_51a3, 0xd192_e819, 0xd699_0624, 0xf40e_3585, 0x106a_a070, 0x19a4_c116,
-        0x1e37_6c08, 0x2748_774c, 0x34b0_bcb5, 0x391c_0cb3, 0x4ed8_aa4a, 0x5b9c_ca4f, 0x682e_6ff3,
-        0x748f_82ee, 0x78a5_636f, 0x84c8_7814, 0x8cc7_0208, 0x90be_fffa, 0xa450_6ceb, 0xbef9_a3f7,
+        0x428a_2f98,
+        0x7137_4491,
+        0xb5c0_fbcf,
+        0xe9b5_dba5,
+        0x3956_c25b,
+        0x59f1_11f1,
+        0x923f_82a4,
+        0xab1c_5ed5,
+        0xd807_aa98,
+        0x1283_5b01,
+        0x2431_85be,
+        0x550c_7dc3,
+        0x72be_5d74,
+        0x80de_b1fe,
+        0x9bdc_06a7,
+        0xc19b_f174,
+        0xe49b_69c1,
+        0xefbe_4786,
+        0x0fc1_9dc6,
+        0x240c_a1cc,
+        0x2de9_2c6f,
+        0x4a74_84aa,
+        0x5cb0_a9dc,
+        0x76f9_88da,
+        0x983e_5152,
+        0xa831_c66d,
+        0xb003_27c8,
+        0xbf59_7fc7,
+        0xc6e0_0bf3,
+        0xd5a7_9147,
+        0x06ca_6351,
+        0x1429_2967,
+        0x27b7_0a85,
+        0x2e1b_2138,
+        0x4d2c_6dfc,
+        0x5338_0d13,
+        0x650a_7354,
+        0x766a_0abb,
+        0x81c2_c92e,
+        0x9272_2c85,
+        0xa2bf_e8a1,
+        0xa81a_664b,
+        0xc24b_8b70,
+        0xc76c_51a3,
+        0xd192_e819,
+        0xd699_0624,
+        0xf40e_3585,
+        0x106a_a070,
+        0x19a4_c116,
+        0x1e37_6c08,
+        0x2748_774c,
+        0x34b0_bcb5,
+        0x391c_0cb3,
+        0x4ed8_aa4a,
+        0x5b9c_ca4f,
+        0x682e_6ff3,
+        0x748f_82ee,
+        0x78a5_636f,
+        0x84c8_7814,
+        0x8cc7_0208,
+        0x90be_fffa,
+        0xa450_6ceb,
+        0xbef9_a3f7,
         0xc671_78f2,
     ];
     let mut h: [u32; 8] = [
-        0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a, 0x510e_527f, 0x9b05_688c, 0x1f83_d9ab,
+        0x6a09_e667,
+        0xbb67_ae85,
+        0x3c6e_f372,
+        0xa54f_f53a,
+        0x510e_527f,
+        0x9b05_688c,
+        0x1f83_d9ab,
         0x5be0_cd19,
     ];
     let mut message = data.to_vec();
@@ -224,7 +305,11 @@ pub(crate) fn sha256_hex(data: &[u8]) -> String {
 
 /// What a debug command asks for.
 #[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Command {
     /// A decode, described rather than returned.
     DecodeSummary {
@@ -366,7 +451,9 @@ struct Shared {
 fn shared() -> &'static std::sync::Mutex<Shared> {
     static SHARED: std::sync::OnceLock<std::sync::Mutex<Shared>> = std::sync::OnceLock::new();
     SHARED.get_or_init(|| {
-        std::sync::Mutex::new(Shared { linear: std::collections::HashMap::new() })
+        std::sync::Mutex::new(Shared {
+            linear: std::collections::HashMap::new(),
+        })
     })
 }
 
@@ -374,15 +461,22 @@ fn linear_decode(path: &str) -> Result<std::sync::Arc<Frame>, String> {
     if let Some(frame) = shared().lock().unwrap().linear.get(path) {
         return Ok(frame.clone());
     }
-    let frame = std::sync::Arc::new(
-        crate::decode_frame(path, 0).ok_or("could not decode scene-linear")?,
-    );
-    shared().lock().unwrap().linear.insert(path.to_string(), frame.clone());
+    let frame =
+        std::sync::Arc::new(crate::decode_frame(path, 0).ok_or("could not decode scene-linear")?);
+    shared()
+        .lock()
+        .unwrap()
+        .linear
+        .insert(path.to_string(), frame.clone());
     Ok(frame)
 }
 
 /// The HDR colour match, fitted the way the product fits it.
-fn hdr_match(path: &str, linear: &Frame, spec: &GradeSpec) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
+fn hdr_match(
+    path: &str,
+    linear: &Frame,
+    spec: &GradeSpec,
+) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
     let gpu = crate::gpu::device().ok_or("the fit needs an adapter")?;
     let frame = linear.on_device(gpu).ok_or("the frame could not be read")?;
     Ok(crate::fit_hdr_for(&frame, path, spec.white_quantile))
@@ -426,25 +520,38 @@ pub(crate) fn luma_quantiles(
 
 pub fn run(command: &Command) -> Result<Reply, String> {
     match command {
-        Command::DecodeSummary { path, at_least_long_edge } => {
+        Command::DecodeSummary {
+            path,
+            at_least_long_edge,
+        } => {
             let frame = crate::decode_frame(path, *at_least_long_edge).ok_or("could not decode")?;
-            Ok(Reply { summary: Some(summarise(&frame)), ..Reply::default() })
+            Ok(Reply {
+                summary: Some(summarise(&frame)),
+                ..Reply::default()
+            })
         }
-        Command::EncodeHdr { path, with_match, grade, decode_size } => {
+        Command::EncodeHdr {
+            path,
+            with_match,
+            grade,
+            decode_size,
+        } => {
             // Only the whole-frame decode is shared: it is the one the pins reuse, and
             // a sized one is cheap enough that caching it would only risk handing back
             // the wrong size.
             let linear = match decode_size {
                 0 => linear_decode(path)?,
-                size => std::sync::Arc::new(
-                    crate::decode_frame(path, *size).ok_or("could not decode")?,
-                ),
+                size => {
+                    std::sync::Arc::new(crate::decode_frame(path, *size).ok_or("could not decode")?)
+                }
             };
             let matched = match with_match {
                 false => None,
                 true => hdr_match(path, &linear, grade)?,
             };
-            let samples = linear.samples16().ok_or("the encode needs a 16-bit decode")?;
+            let samples = linear
+                .samples16()
+                .ok_or("the encode needs a 16-bit decode")?;
             // Copied, because the shared decode is cached for the pins that reuse it and
             // the encode filters the frame it is handed. A debug command can afford it.
             crate::hdr::encode_still(
@@ -456,17 +563,26 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             )?;
             Ok(Reply::default())
         }
-        Command::DeltaEToPreview { image_paths, raw_path } => {
+        Command::DeltaEToPreview {
+            image_paths,
+            raw_path,
+        } => {
             let images: Vec<crate::rgb::Rgb> = image_paths
                 .iter()
                 .map(|path| {
-                    let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
+                    let encoded =
+                        std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
                     crate::image::decode(&encoded, 0)
                         .map_err(|e| format!("could not decode {path}: {e}"))
                 })
                 .collect::<Result<_, String>>()?;
-            let longest = images.iter().map(|image| image.width.max(image.height)).max().unwrap_or(0);
-            let preview = crate::decode_embedded_rgb(raw_path, longest).ok_or("no embedded preview")?;
+            let longest = images
+                .iter()
+                .map(|image| image.width.max(image.height))
+                .max()
+                .unwrap_or(0);
+            let preview =
+                crate::decode_embedded_rgb(raw_path, longest).ok_or("no embedded preview")?;
 
             // Sampled on a normalised grid rather than by index, because the images are
             // not the same shape: the preview is distortion-cropped, so at an 800px long
@@ -475,7 +591,8 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             let linear = |v: [f64; 3]| [0, 1, 2].map(|c| crate::hdr_fit::srgb_eotf(v[c] as u8));
             let counted = 4000usize;
             let mut targets = Vec::with_capacity(counted);
-            let mut ours: Vec<Vec<([f64; 3], f64)>> = vec![Vec::with_capacity(counted); images.len()];
+            let mut ours: Vec<Vec<([f64; 3], f64)>> =
+                vec![Vec::with_capacity(counted); images.len()];
             for step in 0..counted {
                 let u = (step % 61) as f64 / 61.0;
                 let v = (step as f64 / counted as f64) % 1.0;
@@ -497,9 +614,10 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                     256,
                     1,
                 );
-                let blocks = pollster::block_on(
-                    scoring.partials(&crate::fit_score::Shape::Saturation, &[crate::fit_score::Probe::neutral()]),
-                )
+                let blocks = pollster::block_on(scoring.partials(
+                    &crate::fit_score::Shape::Saturation,
+                    &[crate::fit_score::Probe::neutral()],
+                ))
                 .ok_or("the colour distance could not be read back")?
                 .remove(0);
                 mean_delta_e.push(blocks.iter().map(|b| b.flat).sum::<f64>() / counted as f64);
@@ -515,7 +633,8 @@ pub fn run(command: &Command) -> Result<Reply, String> {
             })
         }
         Command::PreviewSummary { path, size } => {
-            let preview = crate::decode_embedded_rgb(path, *size as usize).ok_or("no embedded preview")?;
+            let preview =
+                crate::decode_embedded_rgb(path, *size as usize).ok_or("no embedded preview")?;
             let pixels = Pixels::Eight(preview.data);
             Ok(Reply {
                 summary: Some(DecodeSummary {
@@ -531,9 +650,12 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 ..Reply::default()
             })
         }
-        Command::TileCrops { image_paths, output_path, window, scale } => {
-            tile_crops(image_paths, output_path, *window as usize, *scale as usize)
-        }
+        Command::TileCrops {
+            image_paths,
+            output_path,
+            window,
+            scale,
+        } => tile_crops(image_paths, output_path, *window as usize, *scale as usize),
     }
 }
 
@@ -547,10 +669,8 @@ fn tile_crops(
     let images: Vec<crate::rgb::Rgb> = image_paths
         .iter()
         .map(|path| {
-            let encoded =
-                std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
-            crate::image::decode(&encoded, 0)
-                .map_err(|e| format!("could not decode {path}: {e}"))
+            let encoded = std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"))?;
+            crate::image::decode(&encoded, 0).map_err(|e| format!("could not decode {path}: {e}"))
         })
         .collect::<Result<_, String>>()?;
     let first = images.first().ok_or("no images to tile")?;
@@ -644,7 +764,10 @@ mod tests {
         );
         // Past one block, where the padding and the length suffix are easiest to get
         // wrong: 64 bytes is exactly a block, so this exercises the extra one.
-        assert_eq!(sha1_hex(&[b'a'; 64]), "0098ba824b5c16427bd7a1122a5a442a25ec644d");
+        assert_eq!(
+            sha1_hex(&[b'a'; 64]),
+            "0098ba824b5c16427bd7a1122a5a442a25ec644d"
+        );
     }
 
     #[test]
@@ -688,8 +811,10 @@ mod tests {
         // The digest has to see the same bytes the old byte-buffer did, or every pin
         // regenerated against it would be comparing a different thing.
         let frame = Frame::new(1, 1, Pixels::Sixteen(vec![0x0102, 0x0304, 0x0506]));
-        let expected: Vec<u8> =
-            [0x0102u16, 0x0304, 0x0506].iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let expected: Vec<u8> = [0x0102u16, 0x0304, 0x0506]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
         assert_eq!(summarise(&frame).sha1, sha1_hex(&expected));
         assert_eq!(summarise(&frame).bytes, 6);
         assert_eq!(summarise(&frame).samples, 3);

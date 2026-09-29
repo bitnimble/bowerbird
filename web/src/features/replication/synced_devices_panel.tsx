@@ -36,14 +36,20 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
             label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
             // What is true now, in the same words the add dialog uses: a hint that
             // describes the *other* state reads as a description of this one.
-            hint={store.syncsOriginals(library.id) ? SyncedDevicesStrings.keepsOriginals() : SyncedDevicesStrings.catalogueOnly()}
+            hint={
+              store.syncsOriginals(library.id)
+                ? SyncedDevicesStrings.keepsOriginals()
+                : SyncedDevicesStrings.catalogueOnly()
+            }
           >
             <input
               {...stylex.props(focusRing.ring)}
               type="checkbox"
               aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
               checked={store.syncsOriginals(library.id)}
-              onChange={(e) => void replication.setSyncOriginals(library.id, e.currentTarget.checked)}
+              onChange={(e) =>
+                void replication.setSyncOriginals(library.id, e.currentTarget.checked)
+              }
             />
           </SettingRow>
           <SettingRow label={SyncedDevicesStrings.autoTransferOriginals()}>
@@ -52,7 +58,9 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
               type="checkbox"
               aria-label={SyncedDevicesStrings.autoTransferOriginals()}
               checked={store.autoTransfersOriginals(library.id)}
-              onChange={(e) => void replication.setAutoTransferOriginals(library.id, e.currentTarget.checked)}
+              onChange={(e) =>
+                void replication.setAutoTransferOriginals(library.id, e.currentTarget.checked)
+              }
             />
           </SettingRow>
         </>

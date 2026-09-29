@@ -87,7 +87,13 @@ function open(
   // have fallen back to, so a row reading one of those fails here.
   stage.detail = status === 'live' ? [24, 76] : null;
   // The same for the camera match's own tone, fitted rather than chosen, so off every step too.
-  stage.cameraCurve = { kind: TONE_CURVE_KIND, points: [[0, 0.1], [1, 1]] };
+  stage.cameraCurve = {
+    kind: TONE_CURVE_KIND,
+    points: [
+      [0, 0.1],
+      [1, 1],
+    ],
+  };
   stage.cameraExposure = 0.347;
   stage.cameraSaturation = 17;
   stage.noiseFit = noiseFit;
@@ -149,7 +155,9 @@ describe('the edit panel', () => {
 
   test('shows the exposure in the document own unit', () => {
     open({ exposure: -1.5 });
-    expect((screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe('-1.50 EV');
+    expect(
+      (screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value,
+    ).toBe('-1.50 EV');
   });
 
   test('settles a value typed finer than the slider steps', () => {
@@ -181,7 +189,9 @@ describe('the edit panel', () => {
   test('shows the camera exposure rounded to its slider step', () => {
     open();
     const light = within(screen.getByRole('group', { name: 'Light' }));
-    expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe('+0.35 EV');
+    expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe(
+      '+0.35 EV',
+    );
   });
 
   test('keeps the camera exposure and saturation with the colour profile off', () => {
@@ -189,7 +199,9 @@ describe('the edit panel', () => {
     expect(
       (screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value,
     ).toBe('+0.35 EV');
-    expect((screen.getByRole('textbox', { name: 'Saturation value' }) as HTMLInputElement).value).toBe('+17');
+    expect(
+      (screen.getByRole('textbox', { name: 'Saturation value' }) as HTMLInputElement).value,
+    ).toBe('+17');
   });
 
   test('resets saturation to the camera value', () => {
@@ -203,15 +215,15 @@ describe('the edit panel', () => {
     const { calls } = open({ exposure: 1.5 });
 
     screen.getByLabelText('Reset Exposure').click();
-    expect(calls).toEqual([
-      { name: 'settle', value: { exposure: null } },
-    ]);
+    expect(calls).toEqual([{ name: 'settle', value: { exposure: null } }]);
   });
 
   test('leaves the exposure readout unknown until the header arrives', () => {
     open({}, null, false, 'opening');
     expect(screen.queryByRole('textbox', { name: 'Exposure value' })).toBeNull();
-    expect((screen.getByRole('slider', { name: 'Exposure' }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole('slider', { name: 'Exposure' }) as HTMLInputElement).disabled).toBe(
+      true,
+    );
   });
 
   test('offers nothing to reset on a parameter nobody has moved', () => {
@@ -290,7 +302,8 @@ describe('the edit panel', () => {
   // The pair below the switch means nothing while it is off - there is no list of particles for a
   // confidence to cut or a depth to scale - so they are shut rather than left to do nothing.
   test('shuts the dust sliders until the switch is on', () => {
-    const shut = (): boolean => (screen.getByRole('slider', { name: 'Sensitivity' }) as HTMLInputElement).disabled;
+    const shut = (): boolean =>
+      (screen.getByRole('slider', { name: 'Sensitivity' }) as HTMLInputElement).disabled;
 
     open({ dustRemoval: false });
     expect(shut()).toBe(true);
@@ -339,7 +352,9 @@ describe('the edit panel', () => {
 
     // Neither mark has a role or a name, being drawing, so they are found inside the slider's own
     // group; the fill is the one with a width.
-    const slider = screen.getByRole('slider', { name: 'Colour' }).closest<HTMLElement>('[role="group"]');
+    const slider = screen
+      .getByRole('slider', { name: 'Colour' })
+      .closest<HTMLElement>('[role="group"]');
     const marks = [...(slider?.querySelectorAll<HTMLElement>('span[style]') ?? [])];
     const fill = marks.find((mark) => mark.style.width !== '');
     const tick = marks.find((mark) => mark.style.width === '');
@@ -355,10 +370,16 @@ describe('the edit panel', () => {
     const { calls } = open({ colourNoise: null, luminanceNoise: null });
 
     expect(screen.getByRole('slider', { name: 'Colour' }).getAttribute('aria-valuenow')).toBe('76');
-    expect(screen.getByRole('slider', { name: 'Luminance' }).getAttribute('aria-valuenow')).toBe('24');
+    expect(screen.getByRole('slider', { name: 'Luminance' }).getAttribute('aria-valuenow')).toBe(
+      '24',
+    );
     const detail = within(screen.getByRole('group', { name: 'Detail' }));
-    expect((detail.getByRole('textbox', { name: 'Colour value' }) as HTMLInputElement).value).toBe('76');
-    expect((detail.getByRole('textbox', { name: 'Luminance value' }) as HTMLInputElement).value).toBe('24');
+    expect((detail.getByRole('textbox', { name: 'Colour value' }) as HTMLInputElement).value).toBe(
+      '76',
+    );
+    expect(
+      (detail.getByRole('textbox', { name: 'Luminance value' }) as HTMLInputElement).value,
+    ).toBe('24');
     // Untouched, so there is nothing to reset back to.
     screen.getByLabelText('Reset Colour').click();
     expect(calls).toEqual([]);

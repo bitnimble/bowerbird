@@ -133,7 +133,10 @@ export const replicationPeers = sqliteTable(
     protocol: integer('protocol'),
     schemaVersion: integer('schema_version'),
   },
-  (t) => [primaryKey({ columns: [t.libraryId, t.peerId] }), check('replication_peers_kind', oneOf(t.kind, PEER_KINDS))],
+  (t) => [
+    primaryKey({ columns: [t.libraryId, t.peerId] }),
+    check('replication_peers_kind', oneOf(t.kind, PEER_KINDS)),
+  ],
 );
 
 // A materialisation that found its target occupied (§7.7): the entry is skipped, never overwritten

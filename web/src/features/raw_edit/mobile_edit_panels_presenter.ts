@@ -16,11 +16,16 @@ export class MobileEditPanelsPresenter {
   navigate = (id: string, ids: readonly string[], key: string): string | null => {
     if (this.store.activeSlider != null || ids.length === 0) return null;
     const index = ids.indexOf(id);
-    const next = key === 'ArrowRight' ? (index + 1) % ids.length
-      : key === 'ArrowLeft' ? (index + ids.length - 1) % ids.length
-      : key === 'Home' ? 0
-      : key === 'End' ? ids.length - 1
-      : null;
+    const next =
+      key === 'ArrowRight'
+        ? (index + 1) % ids.length
+        : key === 'ArrowLeft'
+          ? (index + ids.length - 1) % ids.length
+          : key === 'Home'
+            ? 0
+            : key === 'End'
+              ? ids.length - 1
+              : null;
     if (next == null) return null;
     this.store.selectedId = ids[next] ?? null;
     this.store.expanded = true;

@@ -1,7 +1,13 @@
 // The AVIF decoder's own thread (`avif_planes.ts`): an instance of the module, its memory, and the
 // pool its threads run on.
 
-import type { DecodeAnswer, DecodeAsk, DecodeReply, DecoderStart, PlanesLayout } from './avif_planes';
+import type {
+  DecodeAnswer,
+  DecodeAsk,
+  DecodeReply,
+  DecoderStart,
+  PlanesLayout,
+} from './avif_planes';
 import { ThreadPool } from './avif_pool';
 import { wasiImports } from './wasi';
 
@@ -61,7 +67,10 @@ class Decoder {
         height: word(4),
         bits: word(5) === 12 ? 12 : 10,
         subsampled: word(6) === 1,
-        planes: [0, 1, 2].map((plane) => ({ offset: word(7 + plane * 2), stride: word(8 + plane * 2) })),
+        planes: [0, 1, 2].map((plane) => ({
+          offset: word(7 + plane * 2),
+          stride: word(8 + plane * 2),
+        })),
       };
       return { id, planes: { samples, layout } };
     } finally {

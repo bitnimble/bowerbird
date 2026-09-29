@@ -19,8 +19,10 @@ fn main() {
     let path = args.next().expect("frame_probe <raw> <x,y,w,h>...");
     let windows: Vec<(usize, usize, usize, usize)> = args
         .map(|spec| {
-            let v: Vec<usize> =
-                spec.split(',').map(|n| n.parse().expect("x,y,w,h are numbers")).collect();
+            let v: Vec<usize> = spec
+                .split(',')
+                .map(|n| n.parse().expect("x,y,w,h are numbers"))
+                .collect();
             (v[0], v[1], v[2], v[3])
         })
         .collect();

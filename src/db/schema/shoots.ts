@@ -57,7 +57,9 @@ export const shoots = sqliteTable(
     index('idx_shoots_library').on(t.libraryId),
     index('idx_shoots_parent').on(t.parentId),
     // What every listing's hidden clause reads, and on a library that hides nothing it is empty.
-    index('idx_shoots_hidden').on(t.isHidden).where(sql`${t.isHidden} = 1`),
+    index('idx_shoots_hidden')
+      .on(t.isHidden)
+      .where(sql`${t.isHidden} = 1`),
     index('idx_shoots_identity').on(
       t.libraryId,
       t.folderPath,

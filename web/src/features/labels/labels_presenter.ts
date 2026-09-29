@@ -11,7 +11,16 @@ import { type DraftLabel, type LabelEditorStore, renamed } from './label_editor_
 import type { LabelsStore } from './labels_store';
 import { LabelsPresenterStrings } from './labels_presenter.strings';
 
-const LABEL_COLOURS = ['#e5484d', '#f76b15', '#ffc53d', '#46a758', '#12a594', '#0090ff', '#8e4ec6', '#d6409f'];
+const LABEL_COLOURS = [
+  '#e5484d',
+  '#f76b15',
+  '#ffc53d',
+  '#46a758',
+  '#12a594',
+  '#0090ff',
+  '#8e4ec6',
+  '#d6409f',
+];
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
@@ -52,7 +61,9 @@ export class LabelsPresenter {
   async labelPhoto(photoId: string, labelId: string, labelled: boolean): Promise<void> {
     const target = { photo_ids: [photoId] };
     try {
-      await (labelled ? labelsApi.addPhotos(labelId, target) : labelsApi.removePhotos(labelId, target));
+      await (labelled
+        ? labelsApi.addPhotos(labelId, target)
+        : labelsApi.removePhotos(labelId, target));
     } catch (err) {
       this.toasts.showError(LabelsPresenterStrings.couldNotChangeLabels(), message(err));
       return;
@@ -72,7 +83,9 @@ export class LabelsPresenter {
       this.toasts.showError(LabelsPresenterStrings.couldNotChangeLabels(), message(err));
       return;
     }
-    this.toasts.show(LabelsPresenterStrings.labelled(count, this.store.byId.get(labelId)?.name ?? ''));
+    this.toasts.show(
+      LabelsPresenterStrings.labelled(count, this.store.byId.get(labelId)?.name ?? ''),
+    );
     // A grid filtered by this label now holds more photos.
     await this.photos.reload('background');
   }
@@ -84,7 +97,8 @@ export class LabelsPresenter {
     this.beginEditing(libraryId, choosesLibrary);
     // Fresh counts, which the delete confirmation quotes: labelling photos since the last load moved them.
     await this.load();
-    if (this.editor.libraryId === libraryId && !this.editor.dirty) this.beginEditing(libraryId, choosesLibrary);
+    if (this.editor.libraryId === libraryId && !this.editor.dirty)
+      this.beginEditing(libraryId, choosesLibrary);
   }
 
   @action.bound
@@ -156,7 +170,10 @@ export class LabelsPresenter {
         })),
         removed: this.editor.removed,
       });
-      this.setLabels([...this.store.labels.filter((label) => label.library_id !== libraryId), ...saved]);
+      this.setLabels([
+        ...this.store.labels.filter((label) => label.library_id !== libraryId),
+        ...saved,
+      ]);
     } catch {
       this.failSave(LabelsPresenterStrings.couldNotSaveLabels());
       return false;
@@ -169,16 +186,14 @@ export class LabelsPresenter {
   private beginEditing(libraryId: string, choosesLibrary: boolean): void {
     this.editor.libraryId = libraryId;
     this.editor.choosesLibrary = choosesLibrary;
-    this.editor.drafts = this.store.labelsOf(libraryId).map(
-      (label): DraftLabel => ({
-        key: this.draftKey(),
-        id: label.id,
-        name: label.name,
-        colour: label.colour,
-        photoCount: label.photo_count,
-        original: { name: label.name, colour: label.colour },
-      }),
-    );
+    this.editor.drafts = this.store.labelsOf(libraryId).map((label): DraftLabel => ({
+      key: this.draftKey(),
+      id: label.id,
+      name: label.name,
+      colour: label.colour,
+      photoCount: label.photo_count,
+      original: { name: label.name, colour: label.colour },
+    }));
     this.editor.removed = [];
     this.editor.dirty = false;
     this.editor.saving = false;
@@ -186,7 +201,9 @@ export class LabelsPresenter {
   }
 
   private editDraft(key: string, fields: Partial<Pick<DraftLabel, 'name' | 'colour'>>): void {
-    this.editor.drafts = this.editor.drafts.map((draft) => (draft.key === key ? { ...draft, ...fields } : draft));
+    this.editor.drafts = this.editor.drafts.map((draft) =>
+      draft.key === key ? { ...draft, ...fields } : draft,
+    );
     this.editor.dirty = true;
   }
 

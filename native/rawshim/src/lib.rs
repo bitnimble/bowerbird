@@ -94,35 +94,36 @@ pub mod avif;
 /// Writing a gain map beside a picture, which only an export asks for.
 #[cfg(feature = "renditions")]
 pub mod avif_gain_write;
-/// The same, in the spelling a JPEG carries it.
-#[cfg(feature = "renditions")]
-pub mod jpeg_gain_write;
-/// JPEG XL, the same.
-#[cfg(feature = "renditions")]
-pub mod jxl_write;
-/// PNG, which an export can ask for and nothing else writes.
-#[cfg(feature = "renditions")]
-pub mod png_write;
-/// TIFF, the same.
-#[cfg(feature = "renditions")]
-pub mod tiff_write;
-/// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
-#[cfg(all(feature = "renditions", not(target_arch = "wasm32")))]
-pub mod snapshot;
 /// The stages between the demosaic and the grade, moving onto the GPU one at a time.
 pub mod base;
-/// Where a patch of one frame lies in another, or elsewhere in its own.
-pub mod patch_search;
-pub mod photo_analysis;
-pub mod view;
-/// What a uniform block is, according to the shader that reads it.
-#[cfg(test)]
-mod wgsl_layout;
-pub mod wgsl_overrides;
 /// Which colour each photosite carries, as a period rather than as a 2x2.
 pub mod cfa;
 /// The monotonic clock the timed paths read, which `wasm32` has none of.
 pub mod clock;
+/// A set of photographs into a recipe: what overlaps what, and where each one points.
+pub mod composite_align;
+/// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*
+/// - which is the one thing a correlation search cannot say.
+pub mod composite_features;
+/// What a job asks of a composite: align a set of photographs, or render the recipe that came out.
+///
+/// The server's half, like `job` it hands its work to: the browser opens one photograph and has
+/// no rendition to build, so a composite is not something it can be asked for.
+#[cfg(feature = "renditions")]
+pub mod composite_job;
+/// What two frames of a composite have in common: how far apart they sit, and where their content
+/// corresponds once that is known.
+pub mod composite_pairs;
+/// A world, and what a camera pointed at it would have recorded: the synthetic views a composite's
+/// alignment is exercised against, and the library the end-to-end suite composes one out of.
+pub mod composite_scene;
+/// Where each frame of a composite points, and how long the lens was, from what the pairs found.
+pub mod composite_solve;
+/// One rectangle of a composite's canvas, gathered source by source and blended.
+pub mod composite_tile;
+/// What a composition is: the sources a composite is made of, where each one points, and the
+/// surface they are projected onto. A panorama is one recipe over it; an assembly is another.
+pub mod composition;
 /// The sensor's samples into the mosaic, with the samples crossing to the GPU rather than it.
 pub mod condition;
 #[cfg(feature = "renditions")]
@@ -144,23 +145,19 @@ pub mod exif;
 pub mod ffi;
 pub mod fit;
 mod fit_curve;
-mod fit_objective;
-mod fit_pairs;
 mod fit_lattice;
 mod fit_moments;
 mod fit_noise;
+mod fit_objective;
+mod fit_pairs;
 pub mod fit_score;
+pub mod fit_source;
 mod fit_span;
 mod fit_wide;
-pub mod fit_source;
 pub mod frame;
 /// The denoise, on the mosaic, before anything has averaged a neighbour into it.
 pub mod galosh;
-/// The other denoise, in the same place: a learned network a reader can choose instead.
-pub mod pmrid;
 pub mod gpu;
-pub mod print;
-pub mod printer_gamut;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
@@ -168,10 +165,16 @@ pub mod header;
 /// The HEVC bitstream inside a HEIC, into the code values the linearise reads.
 pub mod hevc;
 pub mod image;
+pub mod job;
 pub mod jpeg;
 /// The gain map a JPEG carries as its second MPF image, in either spelling of the terms.
 pub mod jpeg_gain;
-pub mod job;
+/// The same, in the spelling a JPEG carries it.
+#[cfg(feature = "renditions")]
+pub mod jpeg_gain_write;
+/// JPEG XL, the same.
+#[cfg(feature = "renditions")]
+pub mod jxl_write;
 pub mod lens;
 pub mod light;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
@@ -183,40 +186,26 @@ pub mod open;
 pub mod open_stage;
 /// Which way up a file says its picture goes, in the numbering both hosts and both shaders use.
 pub mod orientation;
-pub mod planes;
-/// A set of photographs into a recipe: what overlaps what, and where each one points.
-pub mod composite_align;
-/// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*
-/// - which is the one thing a correlation search cannot say.
-pub mod composite_features;
-/// What a job asks of a composite: align a set of photographs, or render the recipe that came out.
-///
-/// The server's half, like `job` it hands its work to: the browser opens one photograph and has
-/// no rendition to build, so a composite is not something it can be asked for.
-#[cfg(feature = "renditions")]
-pub mod composite_job;
-/// What two frames of a composite have in common: how far apart they sit, and where their content
-/// corresponds once that is known.
-pub mod composite_pairs;
-/// A world, and what a camera pointed at it would have recorded: the synthetic views a composite's
-/// alignment is exercised against, and the library the end-to-end suite composes one out of.
-pub mod composite_scene;
-/// Where each frame of a composite points, and how long the lens was, from what the pairs found.
-pub mod composite_solve;
-/// What a composition is: the sources a composite is made of, where each one points, and the
-/// surface they are projected onto. A panorama is one recipe over it; an assembly is another.
-pub mod composition;
-/// One rectangle of a composite's canvas, gathered source by source and blended.
-pub mod composite_tile;
 pub mod parallel;
-pub mod pixel_shift;
-mod pixel_shift_align;
+/// Where a patch of one frame lies in another, or elsewhere in its own.
+pub mod patch_search;
+pub mod photo_analysis;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
 ///
 /// A rendition stopped one stage early, so a reader dragging a slider and the export they are
 /// heading towards are the same picture.
 #[cfg(feature = "renditions")]
 pub mod picture;
+pub mod pixel_shift;
+mod pixel_shift_align;
+pub mod planes;
+/// The other denoise, in the same place: a learned network a reader can choose instead.
+pub mod pmrid;
+/// PNG, which an export can ask for and nothing else writes.
+#[cfg(feature = "renditions")]
+pub mod png_write;
+pub mod print;
+pub mod printer_gamut;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
 pub mod progress;
 pub mod px;
@@ -227,19 +216,30 @@ pub mod resident;
 pub mod retouched_frame;
 pub mod rgb;
 pub mod scrub;
+/// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
+#[cfg(all(feature = "renditions", not(target_arch = "wasm32")))]
+pub mod snapshot;
 #[cfg(feature = "renditions")]
 pub mod stacks;
 pub mod tca;
 pub mod tca_device;
+/// TIFF, the same.
+#[cfg(feature = "renditions")]
+pub mod tiff_write;
 pub mod tile;
 pub mod tile_grid;
 pub mod tone;
 /// What a delivered picture's code values mean: somebody else's transfer, in somebody else's
 /// primaries, undone into the light the pipeline grades.
 pub mod transfer;
+pub mod view;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
+/// What a uniform block is, according to the shader that reads it.
+#[cfg(test)]
+mod wgsl_layout;
+pub mod wgsl_overrides;
 pub mod white_balance;
 
 /// libavif and libjxl, which only a `renditions` build binds. An editor build links no C at all
@@ -301,7 +301,9 @@ mod console {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn announce_panics() {
-    std::panic::set_hook(Box::new(|panicked| console::warn(&format!("rawshim: {panicked}"))));
+    std::panic::set_hook(Box::new(|panicked| {
+        console::warn(&format!("rawshim: {panicked}"))
+    }));
 }
 
 pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
@@ -351,7 +353,11 @@ pub(crate) fn release_freed_memory() {
 /// Every caller on this side wants a `Frame`; only the FFI boundary wants a pointer, and it is
 /// the one place that builds one.
 pub fn decode_frame(path: &str, at_least_long_edge: u32) -> Option<frame::Frame> {
-    decode_frame_via(DecodeSource::Path(path), at_least_long_edge, galosh::Detail::at(0.0, 0.0))
+    decode_frame_via(
+        DecodeSource::Path(path),
+        at_least_long_edge,
+        galosh::Detail::at(0.0, 0.0),
+    )
 }
 
 /// The same decode, with the mosaic denoised before it is demosaiced.
@@ -365,7 +371,13 @@ pub fn decode_frame_denoised(
     detail: galosh::Detail,
     fit: galosh::Fit,
 ) -> Option<frame::Frame> {
-    decode_frame_cropped(DecodeSource::Path(path), at_least_long_edge, detail, None, fit)
+    decode_frame_cropped(
+        DecodeSource::Path(path),
+        at_least_long_edge,
+        detail,
+        None,
+        fit,
+    )
 }
 
 /// `fit` is what the decode does about the noise, and only an in-memory decode is ever asked:
@@ -395,7 +407,13 @@ fn decode_frame_via(
     at_least_long_edge: u32,
     detail: galosh::Detail,
 ) -> Option<frame::Frame> {
-    decode_frame_cropped(source, at_least_long_edge, detail, None, galosh::Fit::Measure)
+    decode_frame_cropped(
+        source,
+        at_least_long_edge,
+        detail,
+        None,
+        galosh::Fit::Measure,
+    )
 }
 
 /// `at_least_long_edge` is a floor rather than a size: the smallest long edge that would still
@@ -577,7 +595,13 @@ pub fn fit_hdr_for(
     raw_path: &str,
     quantile: f64,
 ) -> Option<hdr_fit::HdrMatch> {
-    fit_hdr_measured(frame, raw_path, quantile, hdr_fit::CameraMatch::LensAndColour).map(|(matched, _)| matched)
+    fit_hdr_measured(
+        frame,
+        raw_path,
+        quantile,
+        hdr_fit::CameraMatch::LensAndColour,
+    )
+    .map(|(matched, _)| matched)
 }
 
 /// `fit_hdr_for`, with the levels the match was fitted against - which `open::measure` would
@@ -592,8 +616,15 @@ pub fn fit_hdr_measured(
     let gpu = gpu::device()?;
     guard("fit_hdr_for", None, || {
         let geometry = ffi::geometry_for(raw_path)?;
-        pollster::block_on(hdr::fit_all(gpu, raw_path, frame, quantile, geometry, camera_match))
-            .map(|(_, matched, levels)| (matched, levels))
+        pollster::block_on(hdr::fit_all(
+            gpu,
+            raw_path,
+            frame,
+            quantile,
+            geometry,
+            camera_match,
+        ))
+        .map(|(_, matched, levels)| (matched, levels))
     })
 }
 
@@ -821,7 +852,9 @@ mod tests {
     #[test]
     #[ignore = "wants a real RAW on this machine"]
     fn tile_cost() {
-        let Ok(path) = std::env::var("BOWERBIRD_TILE_RAW") else { return };
+        let Ok(path) = std::env::var("BOWERBIRD_TILE_RAW") else {
+            return;
+        };
         // The decode either side of the tile, which is what the region read is measured against.
         // `tile_check` is the finer instrument - it compares a tile against the frame's own
         // pixels - and this is the wall clock a reader waits on.
@@ -844,9 +877,16 @@ mod tests {
                 let colour = fitted.colour.as_ref().expect("a colour fit");
                 let numbers = colour.curves.iter().map(Vec::len).sum::<usize>()
                     + 9
-                    + colour.chroma.as_ref().map_or(0, |map| map.nodes_flat().len())
+                    + colour
+                        .chroma
+                        .as_ref()
+                        .map_or(0, |map| map.nodes_flat().len())
                     + fitted.lens.distortion.as_ref().map_or(0, Vec::len)
-                    + fitted.lens.tca.as_ref().map_or(0, |pair| pair[0].len() + pair[1].len())
+                    + fitted
+                        .lens
+                        .tca
+                        .as_ref()
+                        .map_or(0, |pair| pair[0].len() + pair[1].len())
                     + 3;
                 let blob = photo_analysis::encode(&photo_analysis::PhotoAnalysis {
                     from_raw: photo_analysis::FromRaw {
@@ -872,18 +912,32 @@ mod tests {
                 .showing(px::Rect::exact(2000, 1400, side, side))
         };
         let sliders = galosh::Detail::at(40.0, 40.0);
-        decode_tile(&path, seeing(400), sliders, galosh::Fit::Measure, RENDITION_TILE_HALO);
+        decode_tile(
+            &path,
+            seeing(400),
+            sliders,
+            galosh::Fit::Measure,
+            RENDITION_TILE_HALO,
+        );
         for side in [400usize, 700] {
             let started = std::time::Instant::now();
-            let tile =
-                decode_tile(&path, seeing(side), sliders, galosh::Fit::Measure, RENDITION_TILE_HALO);
+            let tile = decode_tile(
+                &path,
+                seeing(side),
+                sliders,
+                galosh::Fit::Measure,
+                RENDITION_TILE_HALO,
+            );
             let took = started.elapsed().as_millis();
             let frame = tile.expect("the tile decodes");
             println!(
                 "  whole tile, {side}px        {took:>5}ms  {}x{}",
                 frame.width, frame.height,
             );
-            assert!(frame.width <= side + 8 && frame.height <= side + 8, "the crop is the tile");
+            assert!(
+                frame.width <= side + 8 && frame.height <= side + 8,
+                "the crop is the tile"
+            );
         }
     }
 
@@ -910,5 +964,4 @@ mod tests {
             "and an ordinary return untouched"
         );
     }
-
 }

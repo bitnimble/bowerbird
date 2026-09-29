@@ -102,7 +102,8 @@ export function StageDetail({
   }, [view]);
 
   const fit = fitScale(box, natural);
-  const density = fit * resting.scale * (typeof window === 'undefined' ? 1 : window.devicePixelRatio);
+  const density =
+    fit * resting.scale * (typeof window === 'undefined' ? 1 : window.devicePixelRatio);
   // What the fitted frame actually puts on screen, which is not always the cap: a JPEG decodes
   // at the steps its own coding allows, so asking for 4096 of a 9504-pixel file returns 3564 -
   // and a decoder that scales nothing at all returns the whole file, which the canvas under it
@@ -112,12 +113,15 @@ export function StageDetail({
   const fitted = decodedFrame(source);
   const onScreen = fitted == null ? null : fittedCanvasSize(fitted);
   const held =
-    onScreen == null ? 0 : Math.max(onScreen.width, onScreen.height) / Math.max(natural.width, natural.height, 1);
+    onScreen == null
+      ? 0
+      : Math.max(onScreen.width, onScreen.height) / Math.max(natural.width, natural.height, 1);
   const wanted = !hidden && held > 0 && held < 1 && density > held * DETAIL_THRESHOLD;
 
   // The visible rectangle of the frame, in its own pixels.
   const seen = visibleRegion(box, natural, resting, fit);
-  const enough = covered != null && covers(covered.region, seen) && Math.abs(covered.density - density) < 0.001;
+  const enough =
+    covered != null && covers(covered.region, seen) && Math.abs(covered.density - density) < 0.001;
   const region = wanted && !enough ? marginedRegion(seen, natural) : covered?.region;
   const key = region == null ? '' : `${region.x} ${region.y} ${region.width} ${region.height}`;
   // The region a draw failed for, which is as sharp as it will get until the view moves.
@@ -264,4 +268,3 @@ function covers(outer: Region, inner: Region): boolean {
     outer.y + outer.height >= inner.y + inner.height
   );
 }
-

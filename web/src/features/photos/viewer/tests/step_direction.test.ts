@@ -48,7 +48,18 @@ function build(): { listing: ListingStore; store: ViewerStore; presenter: Photos
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   return { listing, store, presenter };
 }
 

@@ -45,13 +45,20 @@ export class FrameTvPresenter {
     try {
       photoIds = 'photo_ids' in target ? target.photo_ids : (await photosApi.ids(target)).photo_ids;
     } catch (err) {
-      this.toasts.showError(FrameTvPresenterStrings.couldNotSendSelection(this.store.nameOf(tvId)), describe(err));
+      this.toasts.showError(
+        FrameTvPresenterStrings.couldNotSendSelection(this.store.nameOf(tvId)),
+        describe(err),
+      );
       return;
     }
     await this.send(photoIds, null, tvId);
   }
 
-  private async send(photoIds: string[], rendition: ViewerRendition | null, tvId: string): Promise<void> {
+  private async send(
+    photoIds: string[],
+    rendition: ViewerRendition | null,
+    tvId: string,
+  ): Promise<void> {
     const name = this.store.nameOf(tvId);
     const message = FrameTvPresenterStrings.sending(name, photoIds.length);
     const toast = this.toasts.showProgress(message, 0);
@@ -73,7 +80,11 @@ export class FrameTvPresenter {
       this.toasts.dismiss(toast);
     }
     if (failure == null) this.toasts.show(FrameTvPresenterStrings.sent(name, sent));
-    else this.toasts.showError(FrameTvPresenterStrings.couldNotSend(name, photoIds.length - sent), failure);
+    else
+      this.toasts.showError(
+        FrameTvPresenterStrings.couldNotSend(name, photoIds.length - sent),
+        failure,
+      );
   }
 
   @action.bound

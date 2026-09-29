@@ -107,7 +107,10 @@ export const PreparedHeaderSchema = z.object({
 export type PreparedHeader = z.infer<typeof PreparedHeaderSchema>;
 
 /** A prepared picture's framed header: the open's, or why there is none. */
-export const PreparedReplyHeaderSchema = z.union([z.object({ error: z.string() }), PreparedHeaderSchema]);
+export const PreparedReplyHeaderSchema = z.union([
+  z.object({ error: z.string() }),
+  PreparedHeaderSchema,
+]);
 export type PreparedReplyHeader = z.infer<typeof PreparedReplyHeaderSchema>;
 
 /** A header the module answered as JSON text, read. */

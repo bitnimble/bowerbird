@@ -9,7 +9,9 @@ afterEach(cleanup);
 
 const noSlashes = (name: string): string | null => (name.includes('/') ? 'no slashes' : null);
 
-function open(props: { editable?: boolean; onRename?: (name: string) => void } = {}): HTMLInputElement {
+function open(
+  props: { editable?: boolean; onRename?: (name: string) => void } = {},
+): HTMLInputElement {
   render(
     <EditableHeading
       value="Beach"
@@ -25,7 +27,13 @@ function open(props: { editable?: boolean; onRename?: (name: string) => void } =
 
 test('a read-only library leaves the title as a title, saying why on hover', () => {
   render(
-    <EditableHeading value="Beach" label="Rename Beach" editable={false} refusal="Not here" onRename={() => {}} />,
+    <EditableHeading
+      value="Beach"
+      label="Rename Beach"
+      editable={false}
+      refusal="Not here"
+      onRename={() => {}}
+    />,
   );
   expect(screen.queryByRole('button')).toBeNull();
   expect(screen.getByText('Beach').getAttribute('aria-description')).toBe('Not here');
@@ -36,7 +44,9 @@ test('a read-only library leaves the title as a title, saying why on hover', () 
 test('the heading is named by the title rather than by what clicking it does', () => {
   render(<EditableHeading value="Beach" label="Rename Beach" editable onRename={() => {}} />);
   expect(screen.getByRole('heading', { name: 'Beach' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Beach' }).getAttribute('aria-description')).toBe('Rename Beach');
+  expect(screen.getByRole('button', { name: 'Beach' }).getAttribute('aria-description')).toBe(
+    'Rename Beach',
+  );
 });
 
 test('Enter renames', () => {

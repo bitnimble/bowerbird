@@ -12,6 +12,8 @@ describe('SettingsSchema defaults', () => {
   // one-field PATCH into a reset of everything else - so the update schema strips
   // them first.
   it('accepts a one-field patch without filling the rest', () => {
-    expect(UpdateSettingsRequestSchema.parse({ log_level: 'debug' })).toEqual({ log_level: 'debug' });
+    expect(UpdateSettingsRequestSchema.parse({ log_level: 'debug' })).toEqual({
+      log_level: 'debug',
+    });
   });
 });

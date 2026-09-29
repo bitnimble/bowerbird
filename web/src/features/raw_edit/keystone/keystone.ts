@@ -90,10 +90,7 @@ function meeting(a: Vec3, b: Vec3): Vec3 {
 }
 
 const lineThrough = (guide: KeystoneGuide, width: number, height: number): Vec3 =>
-  cross(
-    [guide.x1 * width, guide.y1 * height, 1],
-    [guide.x2 * width, guide.y2 * height, 1],
-  );
+  cross([guide.x1 * width, guide.y1 * height, 1], [guide.x2 * width, guide.y2 * height, 1]);
 
 /**
  * The correction two or four guides ask for, or null where they ask for nothing.
@@ -115,7 +112,9 @@ export function keystoneFromGuides(
   if (width <= 0 || height <= 0) return null;
 
   const upright = guides.filter(isUpright).map((guide) => lineThrough(guide, width, height));
-  const level = guides.filter((guide) => !isUpright(guide)).map((guide) => lineThrough(guide, width, height));
+  const level = guides
+    .filter((guide) => !isUpright(guide))
+    .map((guide) => lineThrough(guide, width, height));
 
   // The horizon: through both vanishing points where the reader gave both pairs, and through
   // the one they did give otherwise. A single pair fixes a single axis, and the direction it
@@ -134,7 +133,11 @@ export function keystoneFromGuides(
   // Scaled by the frame, so the comparison is "how far outside the picture is the horizon"
   // rather than a bare number whose size depends on the units above.
   const reach = Math.hypot(horizon[0] * width, horizon[1] * height);
-  if (!Number.isFinite(reach) || Math.abs(horizon[2]) < 1e-9 || reach / Math.abs(horizon[2]) < 1e-6) {
+  if (
+    !Number.isFinite(reach) ||
+    Math.abs(horizon[2]) < 1e-9 ||
+    reach / Math.abs(horizon[2]) < 1e-6
+  ) {
     return null;
   }
   // **About the middle of the picture, not the corner the pixel grid happens to start at.**
@@ -189,10 +192,10 @@ export function keystoneFromGuides(
   const fit: Mat3 = [
     scale,
     0,
-    width / 2 - scale * (left + right) / 2,
+    width / 2 - (scale * (left + right)) / 2,
     0,
     scale,
-    height / 2 - scale * (top + bottom) / 2,
+    height / 2 - (scale * (top + bottom)) / 2,
     0,
     0,
     1,
@@ -204,10 +207,17 @@ export function keystoneFromGuides(
   // Into fractions of the frame: `diag(w, h)` on the way in, its inverse on the way out. The
   // matrix then says the same thing about an 800px tile and a 61MP native rendition, which is
   // what lets one document drive both.
-  const scaled = multiply(
-    multiply([1 / width, 0, 0, 0, 1 / height, 0, 0, 0, 1], inverse),
-    [width, 0, 0, 0, height, 0, 0, 0, 1],
-  );
+  const scaled = multiply(multiply([1 / width, 0, 0, 0, 1 / height, 0, 0, 0, 1], inverse), [
+    width,
+    0,
+    0,
+    0,
+    height,
+    0,
+    0,
+    0,
+    1,
+  ]);
   if (!scaled.every((value) => Number.isFinite(value)) || Math.abs(scaled[8]) < 1e-12) return null;
   const normalised = scaled.map((value) => value / scaled[8]) as Mat3;
   return normalised.slice(0, 8) as Keystone;
@@ -229,7 +239,11 @@ export function keystoneAt(keystone: Keystone, x: number, y: number): { x: numbe
  * the guides where the corrected picture put them. Null where the matrix cannot be inverted,
  * which `keystoneFromGuides` does not produce but a document from elsewhere could.
  */
-export function keystoneShows(keystone: Keystone, x: number, y: number): { x: number; y: number } | null {
+export function keystoneShows(
+  keystone: Keystone,
+  x: number,
+  y: number,
+): { x: number; y: number } | null {
   const forward = invert([...keystone, 1] as Mat3);
   if (forward == null) return null;
   const at = apply(forward, [x, y, 1]);

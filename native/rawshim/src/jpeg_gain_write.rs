@@ -13,10 +13,13 @@
 //! as the base being SDR: this format is picked when the file is going somewhere unknown, and a
 //! one-channel map is what every reader of either spelling handles.
 
-use crate::avif_gain_write::{AVIF_RESULT_OK, GainMap, HDR_CICP, SDR_CICP, UNSPECIFIED, decode, orientation_tag, said};
+use crate::avif_gain_write::{
+    AVIF_RESULT_OK, GainMap, HDR_CICP, SDR_CICP, UNSPECIFIED, decode, orientation_tag, said,
+};
 use crate::raw;
 
-const AVIF_PIXEL_FORMAT_YUV400: raw::avifPixelFormat = raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV400;
+const AVIF_PIXEL_FORMAT_YUV400: raw::avifPixelFormat =
+    raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV400;
 
 const APP1: u8 = 0xE1;
 const APP2: u8 = 0xE2;
@@ -61,11 +64,17 @@ pub fn combine(base: &[u8], alternate: &[u8], quality: i32) -> Result<Vec<u8>, S
     let (base_rgb, width, height, map, terms, orientation) = compute(base, alternate)?;
 
     let base_jpeg = crate::jpeg::encode(
-        crate::rgb::RgbRef { width, height, data: &base_rgb },
+        crate::rgb::RgbRef {
+            width,
+            height,
+            data: &base_rgb,
+        },
         quality,
     )?;
     let base_jpeg = match crate::avif::exif(base) {
-        Some(exif) => crate::jpeg::with_exif(&base_jpeg, &exif).ok_or("the EXIF does not fit a JPEG")?,
+        Some(exif) => {
+            crate::jpeg::with_exif(&base_jpeg, &exif).ok_or("the EXIF does not fit a JPEG")?
+        }
         None => base_jpeg,
     };
     let map_jpeg = encode_grey(&map, width, height, quality)?;
@@ -84,7 +93,10 @@ pub fn combine(base: &[u8], alternate: &[u8], quality: i32) -> Result<Vec<u8>, S
 }
 
 /// Both arms decoded, and the map libavif derives between them.
-fn compute(base: &[u8], alternate: &[u8]) -> Result<(Vec<u8>, usize, usize, Vec<u8>, Terms, u16), String> {
+fn compute(
+    base: &[u8],
+    alternate: &[u8],
+) -> Result<(Vec<u8>, usize, usize, Vec<u8>, Terms, u16), String> {
     let base = decode(base)?;
     let alternate = decode(alternate)?;
     let orientation = orientation_tag(&base.image)?;
@@ -189,7 +201,11 @@ fn spliced(jpeg: Vec<u8>, at: usize, segments: &[u8]) -> Vec<u8> {
 
 /// The two pictures, their two spellings of the terms, and the index that binds them.
 fn assemble(base_jpeg: Vec<u8>, map_jpeg: Vec<u8>, terms: &Terms) -> Vec<u8> {
-    let map_front = [segment(APP1, &xmp(&map_xmp(terms))), segment(APP2, &iso_payload(terms))].concat();
+    let map_front = [
+        segment(APP1, &xmp(&map_xmp(terms))),
+        segment(APP2, &iso_payload(terms)),
+    ]
+    .concat();
     let map = spliced(map_jpeg, 2, &map_front);
 
     let directory = segment(APP1, &xmp(&primary_xmp(map.len())));
@@ -204,11 +220,19 @@ fn assemble(base_jpeg: Vec<u8>, map_jpeg: Vec<u8>, terms: &Terms) -> Vec<u8> {
     let mpf_base = index_at + 4 + MPF_TAG.len();
     // The index's own size does not depend on what it states, so one pass over the lengths is
     // enough: two entries is always the same 82 bytes.
-    let primary_length = base_jpeg.len() + directory.len() + segment(APP2, &mpf(0, 0, 0)).len() + iso_stub.len();
+    let primary_length =
+        base_jpeg.len() + directory.len() + segment(APP2, &mpf(0, 0, 0)).len() + iso_stub.len();
 
     let front = [
         directory,
-        segment(APP2, &mpf(primary_length, (primary_length - mpf_base) as u32, map.len())),
+        segment(
+            APP2,
+            &mpf(
+                primary_length,
+                (primary_length - mpf_base) as u32,
+                map.len(),
+            ),
+        ),
         iso_stub,
     ]
     .concat();
@@ -261,7 +285,13 @@ fn iso_payload(terms: &Terms) -> Vec<u8> {
     });
     out.extend_from_slice(&rational(terms.base_headroom));
     out.extend_from_slice(&rational(terms.alternate_headroom));
-    for term in [terms.min, terms.max, terms.gamma, terms.base_offset, terms.alternate_offset] {
+    for term in [
+        terms.min,
+        terms.max,
+        terms.gamma,
+        terms.base_offset,
+        terms.alternate_offset,
+    ] {
         out.extend_from_slice(&rational(term));
     }
     out
@@ -336,7 +366,11 @@ mod tests {
             W,
             H,
             &crate::avif::StillOptions {
-                cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
+                cicp: crate::avif::Cicp {
+                    primaries: 9,
+                    transfer: 16,
+                    matrix: 9,
+                },
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
@@ -366,7 +400,10 @@ mod tests {
         assert_eq!((map.width, map.height), (W, H));
         let low = map.samples.iter().copied().min().expect("samples");
         let high = map.samples.iter().copied().max().expect("samples");
-        assert!(high > low, "the map is flat at {low}, so nothing was measured between the arms");
+        assert!(
+            high > low,
+            "the map is flat at {low}, so nothing was measured between the arms"
+        );
     }
 
     /// The `hdrgm:` spelling is the one an older reader parses, so it has to state real terms.
@@ -389,7 +426,8 @@ mod tests {
     #[test]
     fn two_sizes_are_refused_rather_than_resampled() {
         let (base, _) = arms();
-        let small = crate::avif::encode_rgb8(vec![0u8; 8 * 8 * 3].into(), 8, 8, 20, 10, true).expect("a small arm");
+        let small = crate::avif::encode_rgb8(vec![0u8; 8 * 8 * 3].into(), 8, 8, 20, 10, true)
+            .expect("a small arm");
         assert!(combine(&base, &small, 90).is_err());
     }
 
@@ -403,10 +441,18 @@ mod tests {
         let file = combine(&base, &alternate, 90).expect("the combine");
         let probe = crate::decode_rendered::probe(&file).expect("the header");
         assert_eq!(probe.orientation, 6);
-        let carried = crate::exif::Recorded::parse(&probe.exif.expect("an EXIF block")).expect("it parses");
+        let carried =
+            crate::exif::Recorded::parse(&probe.exif.expect("an EXIF block")).expect("it parses");
         assert_eq!(carried.block(crate::exif::NON_IDENTIFYING), Some(exif));
-        assert!(crate::jpeg_gain::read(&file, None).is_some(), "the map is still found");
-        let at = |tag: &[u8]| file.windows(tag.len()).position(|window| window == tag).expect("the segment");
+        assert!(
+            crate::jpeg_gain::read(&file, None).is_some(),
+            "the map is still found"
+        );
+        let at = |tag: &[u8]| {
+            file.windows(tag.len())
+                .position(|window| window == tag)
+                .expect("the segment")
+        };
         assert!(at(b"Exif\0\0") < at(MPF_TAG), "MPF follows the Exif APP1");
     }
 }

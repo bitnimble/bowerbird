@@ -11,13 +11,18 @@ export class PrinterProfilesApi {
 
   constructor(dir: string) {
     const app = new Hono();
-    app.get(route(), async (c) => c.json(respond(PrinterProfilesSchema, { profiles: await listPrinterProfiles(dir) })));
+    app.get(route(), async (c) =>
+      c.json(respond(PrinterProfilesSchema, { profiles: await listPrinterProfiles(dir) })),
+    );
 
     app.get(route(PathSegment.param('name')), async (c) => {
       const name = c.req.param('name');
       // Served only by a name the listing gave, so no path reaches outside the folder.
-      if (!(await listPrinterProfiles(dir)).includes(name)) throw new AppError('NOT_FOUND', `no printer profile named ${name}`);
-      return new Response(Bun.file(path.join(dir, name)), { headers: { 'Content-Type': 'application/vnd.iccprofile' } });
+      if (!(await listPrinterProfiles(dir)).includes(name))
+        throw new AppError('NOT_FOUND', `no printer profile named ${name}`);
+      return new Response(Bun.file(path.join(dir, name)), {
+        headers: { 'Content-Type': 'application/vnd.iccprofile' },
+      });
     });
 
     this.routes = app;

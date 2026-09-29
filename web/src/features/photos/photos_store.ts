@@ -121,10 +121,7 @@ export function sourceOfPath(pathname: string): PhotoSource | null {
  * it at all, part of a stack, or more than a single whole one.
  */
 export type StackSelection =
-  | { kind: 'stack'; stackId: string }
-  | { kind: 'none' }
-  | { kind: 'partial' }
-  | { kind: 'extra' };
+  { kind: 'stack'; stackId: string } | { kind: 'none' } | { kind: 'partial' } | { kind: 'extra' };
 
 /** More than this many frames is refused before the request is ever built. */
 export const MERGE_MAX_FRAMES = 12;
@@ -164,7 +161,10 @@ export type PhotoStamps = Pick<PhotoSummary, 'tile_built_at' | 'renditions_built
 // none of which a version a client made up for itself could manage (§13.5). 0
 // before that file has ever been written, which leaves the URL plain and the
 // ETag in charge.
-export function renditionVersion(photo: PhotoStamps | null | undefined, rendition: Rendition | ViewerRendition): number {
+export function renditionVersion(
+  photo: PhotoStamps | null | undefined,
+  rendition: Rendition | ViewerRendition,
+): number {
   // Nothing builds the camera's JPEG of a row that names a file, so no stamp describes it and
   // the ETag is the whole story. A canvas composites one, and then the URL has to move when it
   // lands: a frame that 404d is remembered by its source, so a copy built under the URL that

@@ -11,12 +11,32 @@ import { TriageControlStrings } from './triage_control.strings';
 export const TRIAGE_KEYS: Record<string, Triage> = { z: 'untriaged', x: 'rejected', c: 'picked' };
 
 const OPTIONS: Option<Triage>[] = [
-  { value: 'untriaged', label: TriageControlStrings.undecided(), icon: <CircleDashed size={ICON} />, hint: 'Z' },
-  { value: 'rejected', label: TriageControlStrings.reject(), icon: <ThumbsDown size={ICON} />, tone: 'reject', hint: 'X' },
-  { value: 'picked', label: TriageControlStrings.pick(), icon: <ThumbsUp size={ICON} />, tone: 'pick', hint: 'C' },
+  {
+    value: 'untriaged',
+    label: TriageControlStrings.undecided(),
+    icon: <CircleDashed size={ICON} />,
+    hint: 'Z',
+  },
+  {
+    value: 'rejected',
+    label: TriageControlStrings.reject(),
+    icon: <ThumbsDown size={ICON} />,
+    tone: 'reject',
+    hint: 'X',
+  },
+  {
+    value: 'picked',
+    label: TriageControlStrings.pick(),
+    icon: <ThumbsUp size={ICON} />,
+    tone: 'pick',
+    hint: 'C',
+  },
 ];
 
-const OPTIONS_WITHOUT_HINTS: Option<Triage>[] = OPTIONS.map((option) => ({ ...option, hint: undefined }));
+const OPTIONS_WITHOUT_HINTS: Option<Triage>[] = OPTIONS.map((option) => ({
+  ...option,
+  hint: undefined,
+}));
 
 // Three states, not a checkbox: "not yet decided" is different from "decided
 // against", and a two-state control cannot say which one a photo is in.

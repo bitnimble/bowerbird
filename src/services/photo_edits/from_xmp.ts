@@ -74,7 +74,9 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   if (settings.alreadyApplied) {
     return {
       doc: null,
-      reasons: ['these settings are already baked into the pixels; applying them would double-process'],
+      reasons: [
+        'these settings are already baked into the pixels; applying them would double-process',
+      ],
       unsupported,
     };
   }
@@ -85,12 +87,16 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   // also why "As Shot" is a null pair rather than a number this layer invents.
   const custom = whiteBalance.temperature != null && whiteBalance.tint != null;
   if (!custom && (whiteBalance.temperature != null || whiteBalance.tint != null)) {
-    reasons.push('the white balance states only one of temperature and tint, so it was left as shot');
+    reasons.push(
+      'the white balance states only one of temperature and tint, so it was left as shot',
+    );
   }
   // The relative pair is the control for JPEG and TIFF sources. We only edit RAW,
   // so a file using it is describing a photo this import cannot be for.
   if (whiteBalance.incrementalTemperature !== 0 || whiteBalance.incrementalTint !== 0) {
-    reasons.push('the white balance is the relative kind written for non-raw sources, and was not carried');
+    reasons.push(
+      'the white balance is the relative kind written for non-raw sources, and was not carried',
+    );
   }
 
   // `hasCrop` is authoritative and the edges are stale without it: a crop the reader undid
@@ -110,14 +116,20 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   // Absolute units mean the fractions are not the whole story and converting needs the
   // frame's dimensions, which the parser says it does not have either.
   if (geometry.hasCrop && geometry.cropUnits !== 0) {
-    reasons.push('the crop is stated in absolute units, which this import cannot convert, so it was left uncropped');
+    reasons.push(
+      'the crop is stated in absolute units, which this import cannot convert, so it was left uncropped',
+    );
   }
   // Still unsupported with a perspective tool in the editor, and not an oversight. The sidecar
   // states its correction as slider positions on a parameterisation of its own; this document
   // holds the homography a pair of guides produced. There is no conversion without knowing what
   // those sliders mean in degrees, and a number carried across on the strength of sharing a name
   // is a photograph bent by an amount nobody asked for.
-  if (geometry.perspectiveVertical !== 0 || geometry.perspectiveHorizontal !== 0 || geometry.perspectiveRotate !== 0) {
+  if (
+    geometry.perspectiveVertical !== 0 ||
+    geometry.perspectiveHorizontal !== 0 ||
+    geometry.perspectiveRotate !== 0
+  ) {
     unsupported.push('the perspective corrections');
   }
 
@@ -152,8 +164,11 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
     tone.parametricLights !== 0 ||
     tone.parametricHighlights !== 0;
   if (parametric) unsupported.push('the parametric curve');
-  if ([tone.curve, tone.curveRed, tone.curveGreen, tone.curveBlue].some((curve) =>
-    curve[0]?.x !== 0 || curve.at(-1)?.x !== 255 || curve.some(({ x, y }) => x !== y))) {
+  if (
+    [tone.curve, tone.curveRed, tone.curveGreen, tone.curveBlue].some(
+      (curve) => curve[0]?.x !== 0 || curve.at(-1)?.x !== 255 || curve.some(({ x, y }) => x !== y),
+    )
+  ) {
     unsupported.push(FromXmpStrings.pointCurves());
   }
 
@@ -167,7 +182,10 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   const moved = Object.keys(neutral).some(
     (key) =>
       key !== 'version' &&
-      !sameEditValue((doc as Record<string, unknown>)[key], (neutral as Record<string, unknown>)[key]),
+      !sameEditValue(
+        (doc as Record<string, unknown>)[key],
+        (neutral as Record<string, unknown>)[key],
+      ),
   );
   // Ordered ahead of the process-version refusal on purpose. A sidecar holding a
   // rating and nothing else states no version either, so checking the era first
@@ -195,7 +213,9 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
     if (legacyToneMoved(settings.legacyTone)) {
       return {
         doc: null,
-        reasons: [`${version} predates process version 2012, whose controls these are; no mapping is calibrated`],
+        reasons: [
+          `${version} predates process version 2012, whose controls these are; no mapping is calibrated`,
+        ],
         unsupported,
       };
     }

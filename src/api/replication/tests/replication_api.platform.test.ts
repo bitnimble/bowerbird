@@ -28,17 +28,22 @@ describe('clone (§9)', () => {
 describe('sessions over HTTP (§6.2)', () => {
   // The trip, and the whole point of the feature: only the laptop can dial, so if
   // dialling did not also *offer*, a fortnight of work would stay on the laptop.
-  it('carries the dialling peer\'s own work to a peer that can never dial back', async () => {
+  it("carries the dialling peer's own work to a peer that can never dial back", async () => {
     const { origin, clone } = await pairedClone();
     await pullFromRemote(clone.replica, origin.url);
 
     // The origin knows no address for the clone - a laptop is behind whatever
     // network it is on - so it can never start a session of its own.
     expect(
-      origin.db.query('SELECT address FROM replication_peers WHERE peer_id = ?').get(peerIdOf(clone.db)),
+      origin.db
+        .query('SELECT address FROM replication_peers WHERE peer_id = ?')
+        .get(peerIdOf(clone.db)),
     ).toEqual({ address: null });
 
-    new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', { rating: 4, notes: 'shot on the trip' });
+    new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', {
+      rating: 4,
+      notes: 'shot on the trip',
+    });
     const given = await pushToRemote(clone.replica, origin.url);
 
     expect(given.applied).toBeGreaterThan(0);

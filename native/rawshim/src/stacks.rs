@@ -88,7 +88,10 @@ struct View {
 
 impl View {
     fn bounds(&self, width: usize, height: usize) -> (usize, usize, usize, usize) {
-        let (w, h) = ((width as f32 * self.crop) as usize, (height as f32 * self.crop) as usize);
+        let (w, h) = (
+            (width as f32 * self.crop) as usize,
+            (height as f32 * self.crop) as usize,
+        );
         (((width - w) / 2), ((height - h) / 2), w.max(1), h.max(1))
     }
 }
@@ -158,8 +161,11 @@ impl Cells {
     /// The coarse grid, which is this one folded two by two.
     fn folded(&self) -> Cells {
         let side = self.side / 2;
-        let mut into =
-            Cells { side, channels: vec![0; side * side * 3], counts: vec![0; side * side] };
+        let mut into = Cells {
+            side,
+            channels: vec![0; side * side * 3],
+            counts: vec![0; side * side],
+        };
         for y in 0..self.side {
             for x in 0..self.side {
                 let (from, to) = (y * self.side + x, (y / 2) * side + x / 2);
@@ -190,7 +196,9 @@ fn cell_counts(w: usize, h: usize, cells: usize) -> Vec<u32> {
         spans
     };
     let (across, down) = (spans(w), spans(h));
-    (0..cells * cells).map(|cell| across[cell % cells] * down[cell / cells]).collect()
+    (0..cells * cells)
+        .map(|cell| across[cell % cells] * down[cell / cells])
+        .collect()
 }
 
 /// Box-averaged luma on an exact grid, squashing aspect.
@@ -249,7 +257,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -287,7 +299,10 @@ fn params_block(
     for (x0, y0, w, h) in bounds {
         fields.extend([*x0 as i32, *y0 as i32, *w as i32, *h as i32]);
     }
-    fields.iter().flat_map(|field| field.to_ne_bytes()).collect()
+    fields
+        .iter()
+        .flat_map(|field| field.to_ne_bytes())
+        .collect()
 }
 
 /// Both views' grids, in one pass over the frame.
@@ -336,9 +351,18 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
         label: Some("stacks"),
         layout: &built.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: sums.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: sums.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
 
@@ -349,7 +373,9 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
         let (x, y) = crate::base::groups(pixels);
         pass.dispatch_workgroups(x, y, 1);
     }
-    recording.encoder().copy_buffer_to_buffer(&sums, 0, &out, 0, sums_bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&sums, 0, &out, 0, sums_bytes);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {
@@ -474,7 +500,11 @@ fn trimmed_distance(a: &[u8], b: &[u8], side: usize, window: usize, offset: (usi
 /// that way, which is how this was found.
 fn coarse_offset(a: &[u8], b: &[u8]) -> (usize, usize) {
     let pad = (COARSE - COARSE_WINDOW) / 2;
-    let mut best = (window_distance(a, b, COARSE, COARSE_WINDOW, (pad, pad)), pad, pad);
+    let mut best = (
+        window_distance(a, b, COARSE, COARSE_WINDOW, (pad, pad)),
+        pad,
+        pad,
+    );
     for oy in 0..=2 * pad {
         for ox in 0..=2 * pad {
             let distance = window_distance(a, b, COARSE, COARSE_WINDOW, (ox, oy));
@@ -536,7 +566,12 @@ pub fn similarity(a: &[u8], b: &[u8]) -> f32 {
 /// ends there on its own. That is why chaining needs no separate guard.
 ///
 /// Returns a group index per frame, or -1 for one that ended up alone.
-pub fn group(descriptors: &[u8], timestamps: &[i64], threshold: f32, window_seconds: i64) -> Vec<i32> {
+pub fn group(
+    descriptors: &[u8],
+    timestamps: &[i64],
+    threshold: f32,
+    window_seconds: i64,
+) -> Vec<i32> {
     let count = timestamps.len();
     let mut groups = vec![-1i32; count];
     if count == 0 {
@@ -598,7 +633,15 @@ mod tests {
         height: usize,
         data: &[u8],
     ) -> Vec<u8> {
-        describe(gpu, RgbRef { width, height, data }).expect("the device hands the grids back")
+        describe(
+            gpu,
+            RgbRef {
+                width,
+                height,
+                data,
+            },
+        )
+        .expect("the device hands the grids back")
     }
 
     /// A gradient sky over a darker ground, which is the shape of most of the
@@ -612,7 +655,11 @@ mod tests {
     fn scene(brightness: f32, shift: f32) -> Vec<u8> {
         frame(160, 120, |x, y| {
             let horizon = 0.55 + shift;
-            let base = if y < horizon { 200.0 - 120.0 * y } else { 60.0 - 30.0 * (y - horizon) };
+            let base = if y < horizon {
+                200.0 - 120.0 * y
+            } else {
+                60.0 - 30.0 * (y - horizon)
+            };
             let lit = ((base + 40.0 * x) * brightness).clamp(0.0, 255.0) as u8;
             [lit, (lit as f32 * 0.95) as u8, (lit as f32 * 0.8) as u8]
         })
@@ -620,14 +667,18 @@ mod tests {
 
     #[test]
     fn descriptor_is_the_declared_size() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let data = scene(1.0, 0.0);
         assert_eq!(describe_frame(gpu, 160, 120, &data).len(), DESCRIPTOR_BYTES);
     }
 
     #[test]
     fn a_frame_matches_itself_exactly() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let data = scene(1.0, 0.0);
         let descriptor = describe_frame(gpu, 160, 120, &data);
         assert_eq!(similarity(&descriptor, &descriptor), 1.0);
@@ -637,16 +688,26 @@ mod tests {
     /// what lets a descriptor written months ago be compared against one taken now.
     #[test]
     fn describing_one_frame_twice_gives_the_same_bytes() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let data = scene(1.0, 0.0);
-        assert_eq!(describe_frame(gpu, 160, 120, &data), describe_frame(gpu, 160, 120, &data));
+        assert_eq!(
+            describe_frame(gpu, 160, 120, &data),
+            describe_frame(gpu, 160, 120, &data)
+        );
     }
 
     #[test]
     fn similarity_is_symmetric() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let (a, b) = (scene(1.0, 0.0), scene(0.7, 0.04));
-        let (da, db) = (describe_frame(gpu, 160, 120, &a), describe_frame(gpu, 160, 120, &b));
+        let (da, db) = (
+            describe_frame(gpu, 160, 120, &a),
+            describe_frame(gpu, 160, 120, &b),
+        );
         assert_eq!(similarity(&da, &db), similarity(&db, &da));
     }
 
@@ -654,36 +715,67 @@ mod tests {
     /// still reads as that scene: a monotonic curve cannot reorder the cells.
     #[test]
     fn exposure_change_leaves_the_descriptor_alone() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let (bright, dark) = (scene(1.0, 0.0), scene(0.55, 0.0));
-        let (a, b) = (describe_frame(gpu, 160, 120, &bright), describe_frame(gpu, 160, 120, &dark));
-        assert!(similarity(&a, &b) > 0.95, "exposure change scored {}", similarity(&a, &b));
+        let (a, b) = (
+            describe_frame(gpu, 160, 120, &bright),
+            describe_frame(gpu, 160, 120, &dark),
+        );
+        assert!(
+            similarity(&a, &b) > 0.95,
+            "exposure change scored {}",
+            similarity(&a, &b)
+        );
     }
 
     /// Aspect is squashed, so a crop or a second body must not read as a change.
     #[test]
     fn aspect_ratio_alone_is_not_a_difference() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let wide = frame(200, 100, |_, y| [(220.0 - 160.0 * y) as u8; 3]);
         let tall = frame(100, 200, |_, y| [(220.0 - 160.0 * y) as u8; 3]);
-        let (a, b) = (describe_frame(gpu, 200, 100, &wide), describe_frame(gpu, 100, 200, &tall));
-        assert!(similarity(&a, &b) > 0.95, "aspect change scored {}", similarity(&a, &b));
+        let (a, b) = (
+            describe_frame(gpu, 200, 100, &wide),
+            describe_frame(gpu, 100, 200, &tall),
+        );
+        assert!(
+            similarity(&a, &b) > 0.95,
+            "aspect change scored {}",
+            similarity(&a, &b)
+        );
     }
 
     /// A frame of sky over ground against a frame of vertical stripes: different
     /// pictures, and the score has to say so well below any usable threshold.
     #[test]
     fn a_different_scene_scores_far_lower() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let sky = scene(1.0, 0.0);
-        let stripes = frame(160, 120, |x, _| [if (x * 8.0) as u32 % 2 == 0 { 230 } else { 40 }; 3]);
-        let (a, b) = (describe_frame(gpu, 160, 120, &sky), describe_frame(gpu, 160, 120, &stripes));
-        assert!(similarity(&a, &b) < 0.7, "unrelated frames scored {}", similarity(&a, &b));
+        let stripes = frame(160, 120, |x, _| {
+            [if (x * 8.0) as u32 % 2 == 0 { 230 } else { 40 }; 3]
+        });
+        let (a, b) = (
+            describe_frame(gpu, 160, 120, &sky),
+            describe_frame(gpu, 160, 120, &stripes),
+        );
+        assert!(
+            similarity(&a, &b) < 0.7,
+            "unrelated frames scored {}",
+            similarity(&a, &b)
+        );
     }
 
     #[test]
     fn grouping_needs_two_to_make_a_stack() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let data = scene(1.0, 0.0);
         let descriptor = describe_frame(gpu, 160, 120, &data);
         assert_eq!(group(&descriptor, &[0], 0.78, 60), vec![-1]);
@@ -691,10 +783,14 @@ mod tests {
 
     #[test]
     fn alike_and_adjacent_frames_stack() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let frames = [scene(1.0, 0.0), scene(0.9, 0.01), scene(0.95, 0.0)];
-        let descriptors: Vec<u8> =
-            frames.iter().flat_map(|f| describe_frame(gpu, 160, 120, f)).collect();
+        let descriptors: Vec<u8> = frames
+            .iter()
+            .flat_map(|f| describe_frame(gpu, 160, 120, f))
+            .collect();
         assert_eq!(group(&descriptors, &[0, 5, 9], 0.78, 60), vec![0, 0, 0]);
     }
 
@@ -702,10 +798,14 @@ mod tests {
     /// when they are otherwise identical.
     #[test]
     fn a_gap_wider_than_the_window_ends_a_stack() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let frames = [scene(1.0, 0.0), scene(1.0, 0.0), scene(1.0, 0.0)];
-        let descriptors: Vec<u8> =
-            frames.iter().flat_map(|f| describe_frame(gpu, 160, 120, f)).collect();
+        let descriptors: Vec<u8> = frames
+            .iter()
+            .flat_map(|f| describe_frame(gpu, 160, 120, f))
+            .collect();
         assert_eq!(group(&descriptors, &[0, 5, 400], 0.78, 60), vec![0, 0, -1]);
     }
 
@@ -713,11 +813,17 @@ mod tests {
     /// first, so the stack has to end rather than chain onto it.
     #[test]
     fn a_frame_unlike_the_first_member_starts_a_new_stack() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let frames = [scene(1.0, 0.0), scene(1.0, 0.0)];
-        let stripes = frame(160, 120, |x, _| [if (x * 8.0) as u32 % 2 == 0 { 230 } else { 40 }; 3]);
-        let mut descriptors: Vec<u8> =
-            frames.iter().flat_map(|f| describe_frame(gpu, 160, 120, f)).collect();
+        let stripes = frame(160, 120, |x, _| {
+            [if (x * 8.0) as u32 % 2 == 0 { 230 } else { 40 }; 3]
+        });
+        let mut descriptors: Vec<u8> = frames
+            .iter()
+            .flat_map(|f| describe_frame(gpu, 160, 120, f))
+            .collect();
         descriptors.extend(describe_frame(gpu, 160, 120, &stripes));
         assert_eq!(group(&descriptors, &[0, 5, 9], 0.78, 60), vec![0, 0, -1]);
     }
@@ -735,7 +841,9 @@ mod tests {
 
     #[test]
     fn a_repeating_pattern_still_matches_itself() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let data = striped();
         let descriptor = describe_frame(gpu, 160, 120, &data);
         assert_eq!(similarity(&descriptor, &descriptor), 1.0);
@@ -744,16 +852,25 @@ mod tests {
     /// A pan, which the two directions weigh differently unless both are taken.
     #[test]
     fn similarity_is_symmetric_under_a_pan() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let base = scene(1.0, 0.0);
         let panned = frame(160, 120, |x, y| {
             let (sx, sy) = ((x + 0.18).min(0.999), (y + 0.09).min(0.999));
             let horizon = 0.55;
-            let value = if sy < horizon { 200.0 - 120.0 * sy } else { 60.0 - 30.0 * (sy - horizon) };
+            let value = if sy < horizon {
+                200.0 - 120.0 * sy
+            } else {
+                60.0 - 30.0 * (sy - horizon)
+            };
             let lit = (value + 40.0 * sx).clamp(0.0, 255.0) as u8;
             [lit, (lit as f32 * 0.95) as u8, (lit as f32 * 0.8) as u8]
         });
-        let (a, b) = (describe_frame(gpu, 160, 120, &base), describe_frame(gpu, 160, 120, &panned));
+        let (a, b) = (
+            describe_frame(gpu, 160, 120, &base),
+            describe_frame(gpu, 160, 120, &panned),
+        );
         assert_eq!(similarity(&a, &b), similarity(&b, &a));
     }
 
@@ -761,38 +878,58 @@ mod tests {
     /// which frame the walk reached first.
     #[test]
     fn grouping_does_not_depend_on_order() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let frames = [scene(1.0, 0.0), scene(0.85, 0.03)];
-        let forward: Vec<u8> =
-            frames.iter().flat_map(|f| describe_frame(gpu, 160, 120, f)).collect();
-        let backward: Vec<u8> =
-            frames.iter().rev().flat_map(|f| describe_frame(gpu, 160, 120, f)).collect();
+        let forward: Vec<u8> = frames
+            .iter()
+            .flat_map(|f| describe_frame(gpu, 160, 120, f))
+            .collect();
+        let backward: Vec<u8> = frames
+            .iter()
+            .rev()
+            .flat_map(|f| describe_frame(gpu, 160, 120, f))
+            .collect();
         let a = group(&forward, &[0, 5], 0.78, 60);
         let b = group(&backward, &[0, 5], 0.78, 60);
-        assert_eq!(a.iter().filter(|g| **g >= 0).count(), b.iter().filter(|g| **g >= 0).count());
+        assert_eq!(
+            a.iter().filter(|g| **g >= 0).count(),
+            b.iter().filter(|g| **g >= 0).count()
+        );
     }
 
     /// A corrupt timestamp must not wrap the gap into "adjacent", nor panic
     /// across the FFI boundary.
     #[test]
     fn an_extreme_timestamp_gap_is_not_adjacent() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let frames = [scene(1.0, 0.0), scene(1.0, 0.0)];
-        let descriptors: Vec<u8> =
-            frames.iter().flat_map(|f| describe_frame(gpu, 160, 120, f)).collect();
-        assert_eq!(group(&descriptors, &[i64::MIN, i64::MAX], 0.78, 60), vec![-1, -1]);
+        let descriptors: Vec<u8> = frames
+            .iter()
+            .flat_map(|f| describe_frame(gpu, 160, 120, f))
+            .collect();
+        assert_eq!(
+            group(&descriptors, &[i64::MIN, i64::MAX], 0.78, 60),
+            vec![-1, -1]
+        );
     }
 
     #[test]
     fn a_lower_threshold_admits_more() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let frames = [scene(1.0, 0.0), scene(0.4, 0.08)];
-        let descriptors: Vec<u8> =
-            frames.iter().flat_map(|f| describe_frame(gpu, 160, 120, f)).collect();
+        let descriptors: Vec<u8> = frames
+            .iter()
+            .flat_map(|f| describe_frame(gpu, 160, 120, f))
+            .collect();
         let strict = group(&descriptors, &[0, 5], 0.999, 60);
         let loose = group(&descriptors, &[0, 5], 0.5, 60);
         assert_eq!(strict, vec![-1, -1]);
         assert_eq!(loose, vec![0, 0]);
     }
 }
-

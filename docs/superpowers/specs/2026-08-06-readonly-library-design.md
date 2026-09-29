@@ -14,19 +14,19 @@ defines binning; the move prevents re-import, which can be prevented more cheapl
 
 **A bare `§N` is a section of this document. The main design is cited as `DESIGN §N`.**
 
-| term | meaning |
-|---|---|
-| **read-only** | the library's `read_only` flag is set: the app writes nothing under `root_path` |
-| **the bin** | `<root_path>/<bin_name>`, for a library whose `bin_name` is not `NULL` |
-| **binned** | `is_deleted = 1`, whatever the file's position on disk |
-| **in-place binning** | binned with no move: `file_path` unchanged |
-| **claimed** | a path some row's `file_path` names; **unclaimed** is the negation |
-| **the live channel** | the existing walk and diff, over the library minus the bin, against `is_deleted = 0` rows |
-| **the bin channel** | the same walk and diff, over the bin alone, against `is_deleted = 1` rows (§6) |
-| **a crossing** | a move whose halves land in different channels: the file entered or left the bin |
-| **followed** | a hand-renamed folder recognised by its recorded inode identity and adopted under its new name, rather than read as a deletion plus an addition |
-| **the creation invariant** | a library with a `bin_name` has the folder and its recorded identity from creation (§2.3) |
-| **scoped sync** | a watcher-driven sync restricted to named paths, as against the nightly full sync |
+| term                       | meaning                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **read-only**              | the library's `read_only` flag is set: the app writes nothing under `root_path`                                                                 |
+| **the bin**                | `<root_path>/<bin_name>`, for a library whose `bin_name` is not `NULL`                                                                          |
+| **binned**                 | `is_deleted = 1`, whatever the file's position on disk                                                                                          |
+| **in-place binning**       | binned with no move: `file_path` unchanged                                                                                                      |
+| **claimed**                | a path some row's `file_path` names; **unclaimed** is the negation                                                                              |
+| **the live channel**       | the existing walk and diff, over the library minus the bin, against `is_deleted = 0` rows                                                       |
+| **the bin channel**        | the same walk and diff, over the bin alone, against `is_deleted = 1` rows (§6)                                                                  |
+| **a crossing**             | a move whose halves land in different channels: the file entered or left the bin                                                                |
+| **followed**               | a hand-renamed folder recognised by its recorded inode identity and adopted under its new name, rather than read as a deletion plus an addition |
+| **the creation invariant** | a library with a `bin_name` has the folder and its recorded identity from creation (§2.3)                                                       |
+| **scoped sync**            | a watcher-driven sync restricted to named paths, as against the nightly full sync                                                               |
 
 ## 1. Scope
 
@@ -50,7 +50,7 @@ Four independent fixes apply to **every** library:
 **§8 should ship first and alone.** It shares no code with the rest, fixes a bug that
 exists today, and is the one piece where being wrong corrupts the catalogue.
 
-Out of scope: read-only *photographs* in a writable library, per-folder permissions,
+Out of scope: read-only _photographs_ in a writable library, per-folder permissions,
 export, and importing into a read-only library.
 
 **Supersedes** (qualified, because several numbers collide with this document's):
@@ -109,11 +109,11 @@ would point the bin channel at the whole library. `string | null` also makes the
 compiler find the `getBinPath` callers that must decide what a library with no bin
 does (§2.5).
 
-| `read_only` | `bin_name` | meaning |
-|---|---|---|
-| 0 | set | today's library |
-| 1 | `NULL` | born read-only: nothing on disk can record a binning, so the flag is the only truth |
-| 1 | set | flipped to read-only: an existing bin holds RAWs the app put there, still honoured |
+| `read_only` | `bin_name` | meaning                                                                             |
+| ----------- | ---------- | ----------------------------------------------------------------------------------- |
+| 0           | set        | today's library                                                                     |
+| 1           | `NULL`     | born read-only: nothing on disk can record a binning, so the flag is the only truth |
+| 1           | set        | flipped to read-only: an existing bin holds RAWs the app put there, still honoured  |
 
 `read_only = 0` with `bin_name IS NULL` never persists (§2.2).
 
@@ -197,7 +197,7 @@ is the only place with enough evidence to tell "deleted" from "renamed".
 `PATCH` with a `bin_name` renames `<root>/<old>` to `<root>/<new>`. DESIGN §4.1
 refuses this today because it would "strand every already-binned RAW in a folder the
 scan would then walk straight back in" - an argument against changing the setting
-*alone*. Changing it and moving the folder together strands nothing.
+_alone_. Changing it and moving the folder together strands nothing.
 
 A `bin_name` equal to the stored value is a no-op returning the row unchanged.
 Refused with `READ_ONLY` for a read-only library - that check runs first, so a
@@ -215,7 +215,7 @@ operation has no commit to join - then `bin_name` and the prefix rewrite go into
 
 1. `rename(oldBinPath, newBinPath)`. Same parent directory, so `EXDEV` is impossible
    and no copy fallback is needed - this is not `moveIntoDir`, which exists to suffix
-   colliding *files*. `ENOENT` is an `IO_ERROR` naming the path and the remedy ("run
+   colliding _files_. `ENOENT` is an `IO_ERROR` naming the path and the remedy ("run
    a full sync, then retry"): the folder's absence means the photographer moved or
    deleted it, and recreating is right for one and wrong for the other, where it
    would orphan the real bin and leave §6.3 to adopt the orphan and revert the name
@@ -229,7 +229,7 @@ operation has no commit to join - then `bin_name` and the prefix rewrite go into
 `bin_dev`/`bin_ino`/`bin_birthtime` are left alone - `rename` preserves the inode.
 
 **Rename before commit.** A crash leaves `<new>` with stale columns, repaired by
-§6.3. Commit-first would make recovery follow the *old* folder and revert the name.
+§6.3. Commit-first would make recovery follow the _old_ folder and revert the name.
 
 `LibrariesService.update` becomes `async` for this (it is synchronous today,
 `libraries_service.ts:145-168`, and `libraries_api.ts:92` gains an `await`).
@@ -238,7 +238,7 @@ operation has no commit to join - then `bin_name` and the prefix rewrite go into
 whole operation, like every mutation that moves files - but:
 
 - **Every operation that derives a path from `bin_name` must re-read the library row
-  *inside* the mutex.** `syncLibrary` reads it at `sync_service.ts:196` and enters at
+  _inside_ the mutex.** `syncLibrary` reads it at `sync_service.ts:196` and enters at
   `:225`; `PhotosService.delete` at `:443` and `:447`; `restore` at `:545` and
   `:547`. `bin_name` was immutable, so none of them had to care. With a rename in
   play, a queued bin move resumes with a stale name, `ensureDir` **recreates the old
@@ -268,10 +268,10 @@ the ones this design adds:
 Generated files leave the library root **for every library**, and `data_path` is
 deleted.
 
-| | holds | env | Docker |
-|---|---|---|---|
-| **config** | the SQLite database | `DB_PATH` | `/config` |
-| **data** | every generated file, per library | `DATA_DIR` | `/data` |
+|            | holds                             | env        | Docker    |
+| ---------- | --------------------------------- | ---------- | --------- |
+| **config** | the SQLite database               | `DB_PATH`  | `/config` |
+| **data**   | every generated file, per library | `DATA_DIR` | `/data`   |
 
 ```
 /config/bowerbird.db
@@ -302,7 +302,7 @@ The Bin does not move: originals belong beside the photographs they came from
 
 - **`assertNoDataDirectoryOverlap`** (`libraries_service.ts:118-129`) and its tests.
 - **The data-directory rule in `isPathAllowed`** (`scope.ts:69-71`), plus
-  `LibraryScope.dataPath` *and* `resolvedDataPath`, and `libraryScope()`'s `dataPath`
+  `LibraryScope.dataPath` _and_ `resolvedDataPath`, and `libraryScope()`'s `dataPath`
   parameter (`scope.ts:24-37`). Callers to update: `sync_service.ts:142`,
   `shoots_service.ts:269`, and the fixtures in `utils/tests/files.test.ts:50`,
   `utils/tests/scope.test.ts:12`, `test/integration/watcher_ignores.platform.test.ts:42`.
@@ -314,7 +314,7 @@ The Bin does not move: originals belong beside the photographs they came from
 - **The "it contains the library root" guard** (`libraries_service.ts:37-40`) and
   **the rescue-originals-to-the-Bin step** (`:42-48`). The rescue existed for a
   `data_path` aimed somewhere unwise; there is no such path, and a read-only library
-  has nowhere to rescue *to*. `deleteDataDirectory`'s `findOriginalsAnywhere` check
+  has nowhere to rescue _to_. `deleteDataDirectory`'s `findOriginalsAnywhere` check
   stays as an assertion rather than a trigger: `rm -rf` is the one call here that
   cannot be undone.
 - **`data_path` through the row types and queries**: `dataPathFor` and the column;
@@ -346,7 +346,7 @@ Two things follow, and both need doing in this commit:
   between files that clean up after themselves is a flake waiting for a parallel run.
 
 Also worth checking rather than assuming: `src/db/tests/migrations.test.ts:37,210`
-hand-builds a legacy `libraries` table *including* `data_path`, to test migrating from
+hand-builds a legacy `libraries` table _including_ `data_path`, to test migrating from
 it. None of the ten migrations reads that column, so those fixtures should keep
 passing - but they now describe a shape the app never produces, and that is the kind of
 fixture that quietly stops meaning anything.
@@ -363,14 +363,14 @@ longer reach them. §13 recreates the catalogue anyway.
 
 ### 3.2 Docker
 
-`/data` is currently the *database* volume (`docker-compose.yml:18,25`), so it is
+`/data` is currently the _database_ volume (`docker-compose.yml:18,25`), so it is
 being repurposed and the volume name changes with it.
 
 ```yaml
 volumes:
-  - "${PHOTOS_DIR:-./photos}:/photos:ro"    # :ro for a read-only library
+  - '${PHOTOS_DIR:-./photos}:/photos:ro' # :ro for a read-only library
   - bowerbird-config:/config
-  - "${DATA_VOLUME:-bowerbird-data}:/data"  # a named volume, or a host path for bulk storage
+  - '${DATA_VOLUME:-bowerbird-data}:/data' # a named volume, or a host path for bulk storage
 environment:
   DB_PATH: /config/bowerbird.db
   DATA_DIR: /data
@@ -401,13 +401,14 @@ that skips `setFilePath`. The rollback path (`:498-507`) becomes unreachable, be
 
 `restore` branches on **where the file is**; `read_only` only decides whether the bin
 branch may move anything. Three arms, because two would break every writable library
+
 - whose binned files are all inside the bin:
 
-| the row's file | result |
-|---|---|
-| outside the bin | `markRestored(id, photo.file_path)`, no move |
-| inside the bin, writable | today's move out of the bin, unchanged |
-| inside the bin, read-only | refused with `READ_ONLY` |
+| the row's file            | result                                       |
+| ------------------------- | -------------------------------------------- |
+| outside the bin           | `markRestored(id, photo.file_path)`, no move |
+| inside the bin, writable  | today's move out of the bin, unchanged       |
+| inside the bin, read-only | refused with `READ_ONLY`                     |
 
 Avoid `moveIntoDir(from, dirname(from), basename(from))`: it hits `EEXIST`, chooses
 `a_1.arw`, then `unlinkMovedFile` removes the source (`files.ts:31`), **silently renaming** it.
@@ -430,7 +431,7 @@ page browsable.
 Today `listForSync` selects only `is_deleted = 0` rows (`photos_repository.ts:739`)
 and the scan skips the bin by name (`scope.ts:59`). The file is invisible because it
 is somewhere the walk does not go. Remove the move and it is in scope with no row to
-match, so every sync imports it as a *new* photograph while the original row stays
+match, so every sync imports it as a _new_ photograph while the original row stays
 flagged: one duplicate per binned photo, per sync.
 
 > **A path claimed by a binned row is not the live channel's business.**
@@ -454,7 +455,7 @@ In `syncLibrary`:
    (§6.6) - without this an in-place binned file the watcher reports is an unclaimed
    addition and inserts a second live row every time anyone touches it.
 
-Partitioning *after* the scan would throw the work away having already paid for it:
+Partitioning _after_ the scan would throw the work away having already paid for it:
 with `dbByPath` from `listForSync` alone every binned file looks new, and 100k binned
 RAWs would decode 100k RAW headers nightly.
 
@@ -469,13 +470,13 @@ RAWs into it; a bin folder in `dirs` letting `detectRelocationsByIdentity` reloc
 shoot inside the bin; mirroring duplicating the shoots tree; the bin pickable in the
 UI. One guard in a shared function beats four in its callers, so DESIGN §6's
 one-predicate rule and DESIGN §9.8's claim that the scan and watcher "cannot disagree"
-both stand - it is only DESIGN §9.8's *lock* paragraph that this design falsifies, for
+both stand - it is only DESIGN §9.8's _lock_ paragraph that this design falsifies, for
 an unrelated reason (§1).
 
 ## 6. The bin channel
 
 The bin gets **its own walk**, whose output goes only to the binned rows - a
-*secondary* scan of the bin rather than the bin folded into the primary one.
+_secondary_ scan of the bin rather than the bin folded into the primary one.
 
 ### 6.1 The shapes this needs
 
@@ -553,17 +554,17 @@ Then the existing machinery with the binned rows as the database side. The four
 branches already mean exactly this (`sync_algorithm.ts:81-108`), so none is restated
 as a rule of its own:
 
-| `buildDiff` says | result |
-|---|---|
-| `removed` | `is_missing = 1` |
-| `reappeared` | clear `is_missing` |
-| `modified` | re-hash, update the row |
-| `added` | §6.5 |
+| `buildDiff` says | result                  |
+| ---------------- | ----------------------- |
+| `removed`        | `is_missing = 1`        |
+| `reappeared`     | clear `is_missing`      |
+| `modified`       | re-hash, update the row |
+| `added`          | §6.5                    |
 
 `is_missing` on a binned row is unreachable today, so a photograph whose RAW was
 deleted out of the Bin still appears there with an original that 404s. The display
 side already works (`photo_grid.tsx:254`, and the Bin page uses `PhotoGrid`), which
-is why a photo binned while *already* missing does show the badge.
+is why a photo binned while _already_ missing does show the badge.
 
 `listMissingForSync` and `listMissing` filter `is_deleted = 0`, so a missing binned
 photo stays out of the missing-photos view and is marked in the Bin instead: that
@@ -576,7 +577,7 @@ DESIGN §9.4.1 already handles for a shoot, and it is answered the same way - by
 folder's inode identity. Undetected it is the worst outcome in this document: the
 live channel walks `Rubbish/`, its files are unclaimed additions whose hashes match
 the binned rows exactly (a rename preserves mtime and size, and `computeFileHash` is
-a digest of those - `hash.ts:7-21`), and every binned row pairs as a crossing *out*
+a digest of those - `hash.ts:7-21`), and every binned row pairs as a crossing _out_
 of the bin. The whole bin restored, `deleted_from_path` destroyed, every undo batch
 unresolvable (`idsDeletedInBatch` filters `is_deleted = 1`).
 
@@ -598,7 +599,7 @@ four things:
 
 **The trigger is the identity turning up in `dirs`.** A directory reaches `dirs` only
 if the live walk did not skip it, and the walk skips by name, so a directory carrying
-the recorded identity *is* the bin under a name that no longer matches. That covers a
+the recorded identity _is_ the bin under a name that no longer matches. That covers a
 case-only difference too, where the recorded path still resolves and no existence test
 would fire.
 
@@ -619,13 +620,13 @@ So excluding a `dirs` entry that carries the identity is unconditional, but rewr
 
 - `statSync(getBinPath(library))` fails, or returns a **different** `dev:ino` than
   recorded. Not the existence test rejected above: on a case-insensitive filesystem
-  it returns the *same* inode, so a case-only rename is still handled by exclusion
+  it returns the _same_ inode, so a case-only rename is still handled by exclusion
   without a spurious rename - and bind mounts and hardlinks die here.
 - the candidate contains **at least one file claimed by a binned row** (a prefix
   match against `binned`, already in memory). A newly created folder claims none.
 
 Otherwise, and for a nested candidate (`getBinPath` joins a single name, so a bin one
-folder deep is not *expressible*, which is a constraint inherited from
+folder deep is not _expressible_, which is a constraint inherited from
 `BinNameSchema` rather than a principle), or two candidates, or `ino` 0: **the bin
 channel is skipped for that run** and the reason logged, rows untouched.
 
@@ -636,7 +637,7 @@ from appearing as a deleted bin.
 
 **Detection runs on a scoped sync too**, even though §6.6 skips the walk and diff
 there. It is a `dirs` test and costs nothing, and a Finder rename of a root-level
-folder is delivered *by the watcher* - so without it a scoped run sees the bin's files
+folder is delivered _by the watcher_ - so without it a scoped run sees the bin's files
 as unclaimed live additions and inserts one new live row per binned RAW. The
 persisted writes are whole-table prefix updates, so they are complete even from a
 scoped run.
@@ -650,7 +651,7 @@ the other. The `channel` tags give the direction, so there is no position to tes
   `shoot_id` rather than letting the move's own
   `setFilePathAndShoot(…, shootFor(newPath))` null it (`shootFor` on a bin path is
   `null`, and an app-driven bin preserves membership,
-  `photos_repository.ts:667-670`). If the row is *already* binned this is a path
+  `photos_repository.ts:667-670`). If the row is _already_ binned this is a path
   update only - no `markDeleted`, which would null `deleted_batch` and drop it from
   its batch's undo.
 - **bin removal + live addition** - hand-restored. `markRestored`, plus `shoot_id`
@@ -679,7 +680,7 @@ and `A/c.arw` is an unpaired live removal, that is the crossing, and §6.4's fir
 applies to the existing row - which also removes that removal from `result.removed`
 so `setMissing` does not fire. This survives the case a hash cannot see: the file was
 copied into the bin and the original deleted, or touched on the way, so the mtimes
-differ. Without it that crossing produces a missing live row *and* a second
+differ. Without it that crossing produces a missing live row _and_ a second
 already-binned row for one frame.
 
 Such a row has no renditions and `PENDING_PROCESSING` excludes `is_deleted = 1`
@@ -692,7 +693,7 @@ work nobody asked for.
 The bin walk runs alongside the live one; §6.3's detection sits between the walk and
 `scanFiles`; pairing happens before the apply, because `result.added` is consumed
 inside it (`sync_service.ts:425-428`) and a pass afterwards would insert the file
-*and* re-point the binned row at it, leaving two rows claiming one path with no
+_and_ re-point the binned row at it, leaving two rows claiming one path with no
 UNIQUE to stop them (`idx_photos_file_path` is not unique, `migrations.ts:138`).
 
 **Every row write §6 produces is applied inside the same `photos.transaction` as the
@@ -736,7 +737,7 @@ subquery over `is_deleted = 0` (`libraries_repository.ts:23-28`).
 ## 7. Shoots
 
 A shoot is a folder (DESIGN §4.3) and membership is decided by the folder a file sits
-in (DESIGN §9.4), so "add these photographs to that shoot" *is* a file move -
+in (DESIGN §9.4), so "add these photographs to that shoot" _is_ a file move -
 `reconcileShootFolders` restates membership from the path whenever a new mirrored
 shoot appears (`sync_service.ts:827`), so a database-only override would revert.
 
@@ -764,7 +765,7 @@ never a file), and mirroring itself.
 ## 8. The sync lock becomes a table
 
 The lock protects the catalogue, not the tree - DESIGN §9.7 calls it "the
-cross-process source of truth for *is this library syncing*" - so it belongs in the
+cross-process source of truth for _is this library syncing_" - so it belongs in the
 catalogue. In one process the correctness already comes from `libraryMutex`; the
 comment at `sync_service.ts:222-224` says the file lock is taken first only "to keep
 sync-vs-sync fail-fast (409)". Its sole unique contribution is cross-process
@@ -808,7 +809,7 @@ so a stalled holder cannot resurrect a lock somebody took over. It is driven by 
 work rather than a timer, because the scan and apply are synchronous and a
 `setInterval` is starved precisely when the lease matters. The refresh points must
 cover all four blocking stretches, not just the obvious one: `scanLibraryTree`'s walk
-(the lease is taken at `:207`, *before* `libraryMutex` and the walk), `scanFiles`'
+(the lease is taken at `:207`, _before_ `libraryMutex` and the walk), `scanFiles`'
 first stat loop (`:915-931`, which has no callback today), `reportScan` in the second
 loop (`:953`), and `insertBatch`. Throttled on a `Date.now()` compare.
 
@@ -842,7 +843,7 @@ no lock special case.
 
 ### 8.1 Liveness stops depending on the PID
 
-`pidAlive` asks `process.kill(pid, 0)` in the *asking* process's PID namespace, which
+`pidAlive` asks `process.kill(pid, 0)` in the _asking_ process's PID namespace, which
 is not the namespace the number was minted in. Container A holds the lock as its PID
 1; container B checks PID 1, finds its own init, and refuses to sync **permanently**.
 Or A holds PID 37, which does not exist in B, so B declares it stale and both sync at
@@ -906,7 +907,7 @@ for `read_only: false` over a root failing the `access` check, `update` when cle
 `read_only` on such a root, and `update` for a `bin_name` rename on a read-only
 library - that check running first, so a read-only library never sees `CONFLICT`.
 
-A *writable* library's rename raises `CONFLICT` when the new name is already a folder
+A _writable_ library's rename raises `CONFLICT` when the new name is already a folder
 at the root. `ShootsService.create` and `addPhotos` for a destination under the bin
 raise `VALIDATION_ERROR` in any library: not a legal shoot target regardless of the
 flag.
@@ -928,7 +929,7 @@ UpdateLibraryRequest    read_only: z.boolean().optional()
 
 ```ts
 // config.ts - alongside port, host, dbPath
-dataDir: path.resolve(process.env.DATA_DIR ?? './data')
+dataDir: path.resolve(process.env.DATA_DIR ?? './data');
 ```
 
 **`read_only` and the three identity columns stay out of `LibrarySettingsSchema`**
@@ -969,8 +970,8 @@ applies only when a `bin_name` is supplied.
 
 ## 12. UI
 
-**Add-library dialog** (`add_library_dialog.tsx`) gains one checkbox, *Don't change
-anything in this folder*, ticked and disabled when the listing reports
+**Add-library dialog** (`add_library_dialog.tsx`) gains one checkbox, _Don't change
+anything in this folder_, ticked and disabled when the listing reports
 `writable: false`. Ticking it hides the bin-name field - and must also drop `bin`
 from the submit guard at `:182`, which otherwise disables Add for ever. A `READ_ONLY`
 from `POST` re-ticks the checkbox rather than surfacing a bare error, since `access`
@@ -989,7 +990,7 @@ until a full sync pairs it.
 
 **Restore** stays visible but disabled for a photograph whose file is inside a
 read-only library's bin, with "clear the flag first" in the tooltip. **Add to shoot**
-and **Remove from shoot** are hidden for a read-only library; *Add to album* is the
+and **Remove from shoot** are hidden for a read-only library; _Add to album_ is the
 thing to reach for.
 
 ## 13. Schema, not migration
@@ -1023,7 +1024,7 @@ The two highest-value tests, neither of which any other test substitutes for:
 - **Integration, a read-only library over a fixture tree with the directory
   permissions actually dropped**, so a stray write fails the test rather than passing
   unnoticed. Sync, bin, restore, undo, rate, stack, album.
-- **Integration, two *processes* over one database file** - not two `Database` handles
+- **Integration, two _processes_ over one database file** - not two `Database` handles
   in one process, since `fcntl` locks are per-inode and invisible to a same-process
   test. Both told to sync one fixture library at once; exactly one wins, the loser
   raises `SYNC_IN_PROGRESS`, and the photo count afterwards is the file count rather
@@ -1056,14 +1057,14 @@ Unit, the ones the document's own arguments hang on:
 - A binned album member does not outrank a live removal for the same hash (the
   channel-first tie-break).
 - Pairing before the apply leaves one row, not a duplicate plus a re-pointed original.
-- A scoped sync touches no binned row's `is_missing`, but a bin rename the *watcher*
+- A scoped sync touches no binned row's `is_missing`, but a bin rename the _watcher_
   reports is still followed and imports no duplicates.
 - A create whose insert fails leaves no bin folder behind. `ensureBinFolder`
   re-records the identity when it recreates a deleted bin.
 - **A hand-renamed shoot folder in a read-only library leaves its in-place binned rows
   reachable**: one row afterwards, not a live duplicate plus an orphan. This is
   `rewritePathPrefix`'s stale-`file_path` bug (§6.1) and nothing else in the suite
-  covers it, because it needs a *shoot* rename over a library whose binned rows sit
+  covers it, because it needs a _shoot_ rename over a library whose binned rows sit
   outside any bin.
 - A followed bin rename that also marks a row missing does both, rather than the
   `setMissing` guard swallowing the second write (§6.6's ordering).
@@ -1097,7 +1098,7 @@ the bin, which stops being true when nothing moved it there:
   (for an in-place row the two columns are equal, so the `deleted_from_path` branch
   still matches), but the stated reason does not.
 - `photos_service.ts:428-438` and `:535-540`, `delete`'s and `restore`'s doc comments,
-  which describe moving the RAW to a Bin as what binning *is*.
+  which describe moving the RAW to a Bin as what binning _is_.
 
 `delete`'s comment was **already** wrong on a second count, before this design touched
 it: "the library's sync lock is taken once" described a lock the method does not take -

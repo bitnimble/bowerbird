@@ -12,7 +12,9 @@ import { MessageSchema, ReplySchema, type Addressed } from './gpu_protocol';
  * mounted until the frame arrived.
  */
 export class GpuThread {
-  private readonly worker = new Worker(new URL('./gpu_worker.ts', import.meta.url), { type: 'module' });
+  private readonly worker = new Worker(new URL('./gpu_worker.ts', import.meta.url), {
+    type: 'module',
+  });
   private readonly waiting = new Map<
     number,
     {

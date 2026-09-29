@@ -68,7 +68,11 @@ export class RenditionFetchService {
     /** Told of a fetched copy that replaced one already served, so a client's URL for it moves. */
     private readonly announce: (photoId: string, written: RenditionWritten) => void = () => {},
     /** Told what a fetch is waiting on while it waits, and null once it has settled. */
-    private readonly announcePhase: (photoId: string, rendition: Rendition, phase: RenditionFetchPhase | null) => void = () => {},
+    private readonly announcePhase: (
+      photoId: string,
+      rendition: Rendition,
+      phase: RenditionFetchPhase | null,
+    ) => void = () => {},
     private readonly cache: RenditionCache = new RenditionCache(db),
     private readonly activity = new LibraryActivity(),
   ) {}
@@ -112,10 +116,12 @@ export class RenditionFetchService {
     let reported = false;
     // A grid scroll fetches tiles by the hundred, and nothing draws a tile's wait.
     const report =
-      rendition === 'grid' ? undefined : (phase: RenditionFetchPhase): void => {
-        reported = true;
-        this.announcePhase(photoId, rendition, phase);
-      };
+      rendition === 'grid'
+        ? undefined
+        : (phase: RenditionFetchPhase): void => {
+            reported = true;
+            this.announcePhase(photoId, rendition, phase);
+          };
     const run = this.fetchIfStale(photo, library, rendition, hdr, force, report).finally(() => {
       this.fetching.delete(key);
       if (reported) this.announcePhase(photoId, rendition, null);
@@ -133,7 +139,13 @@ export class RenditionFetchService {
    * Settles either way, the caller serving what is cached if it is current, except where `force`
    * could not be passed on, which throws.
    */
-  async relay(photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[], force = false): Promise<void> {
+  async relay(
+    photoId: string,
+    rendition: Rendition,
+    hdr: boolean,
+    via: readonly string[],
+    force = false,
+  ): Promise<void> {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null) return;
     const library = this.libraries.getConfiguration(photo.library_id);
@@ -148,7 +160,12 @@ export class RenditionFetchService {
     try {
       await this.fetch(photo, library, rendition, hdr, target, editedFrom, force, via);
     } catch (error) {
-      log.warn('could not pass a peer’s request on', { photo: photo.id, rendition, via, err: String(error) });
+      log.warn('could not pass a peer’s request on', {
+        photo: photo.id,
+        rendition,
+        via,
+        err: String(error),
+      });
       if (force) throw error;
     }
   }
@@ -221,10 +238,14 @@ export class RenditionFetchService {
     const finish = this.activity.begin(library.id, 'fetching', photo.id);
     try {
       const passedThrough = [...via, this.locations.selfId()];
-      const query = new URLSearchParams({ ...(hdr ? { hdr: '1' } : {}), ...(force ? { force: '1' } : {}) }).toString();
+      const query = new URLSearchParams({
+        ...(hdr ? { hdr: '1' } : {}),
+        ...(force ? { force: '1' } : {}),
+      }).toString();
       for (const peer of this.candidates(library.id, photo.id, passedThrough)) {
         try {
-          if (report != null) report(force ? 'rendering' : await this.phaseAt(peer, photo.id, rendition, hdr));
+          if (report != null)
+            report(force ? 'rendering' : await this.phaseAt(peer, photo.id, rendition, hdr));
           const res = await this.transport.request(
             peer,
             `${route(photo.id, PathSegment.rendition(), rendition)}${query === '' ? '' : `?${query}`}`,
@@ -240,7 +261,8 @@ export class RenditionFetchService {
           // Anything outside it is read as no answer, which refuses the copy rather
           // than trusting it.
           const reported = res.headers.get('x-rendition-built-from');
-          const senderBuiltFrom = reported != null && stampWithinSkew(this.db, reported) ? reported : null;
+          const senderBuiltFrom =
+            reported != null && stampWithinSkew(this.db, reported) ? reported : null;
           if (reported != null && senderBuiltFrom == null) {
             log.warn('a peer reported a rendition built from a stamp this clock will not take', {
               photo: photo.id,
@@ -258,7 +280,12 @@ export class RenditionFetchService {
           await this.accept(photo, library, rendition, hdr, target, res, senderBuiltFrom, expected);
           return;
         } catch (error) {
-          log.warn('could not fetch a rendition from a peer', { photo: photo.id, rendition, peer, err: String(error) });
+          log.warn('could not fetch a rendition from a peer', {
+            photo: photo.id,
+            rendition,
+            peer,
+            err: String(error),
+          });
         }
       }
       throw new AppError(
@@ -270,7 +297,12 @@ export class RenditionFetchService {
     }
   }
 
-  private async phaseAt(peer: string, photoId: string, rendition: Rendition, hdr: boolean): Promise<RenditionFetchPhase> {
+  private async phaseAt(
+    peer: string,
+    photoId: string,
+    rendition: Rendition,
+    hdr: boolean,
+  ): Promise<RenditionFetchPhase> {
     // The camera's JPEG is lifted out of the RAW as it is asked for, which is no render.
     if (rendition === 'embedded') return 'fetching';
     try {
@@ -304,7 +336,10 @@ export class RenditionFetchService {
       await appendToStage(staging, 0, res.body as ReadableStream<Uint8Array>);
       const computed = await contentHash(staging);
       if (computed !== expected) {
-        throw new AppError('VALIDATION_ERROR', `discarded fetched ${rendition} of ${photo.id}: bytes hash ${computed}, expected ${expected}`);
+        throw new AppError(
+          'VALIDATION_ERROR',
+          `discarded fetched ${rendition} of ${photo.id}: bytes hash ${computed}, expected ${expected}`,
+        );
       }
     } catch (error) {
       await deleteGeneratedFile(getDataPath(library), staging);
@@ -317,7 +352,11 @@ export class RenditionFetchService {
     const builtAt = this.record(photo.id, rendition, hdr, builtFrom);
     // A first copy is already on its way to whoever asked for it; announced, every tile scrolled
     // past would be fetched twice.
-    if (replaced) this.announce(photo.id, { stage: rendition === 'grid' ? 'tile' : 'renditions', version: builtAt });
+    if (replaced)
+      this.announce(photo.id, {
+        stage: rendition === 'grid' ? 'tile' : 'renditions',
+        version: builtAt,
+      });
     // Counted against the cap only once it is a file: this device cannot rebuild
     // any of these, so nothing but a cap decides how many it keeps (§7.9).
     await this.cache.keep(library, photo.id, rendition, hdr, target);
@@ -332,13 +371,19 @@ export class RenditionFetchService {
   // Only the variant fetched is stamped, and the siblings on disk are left where
   // they are: each carries its own answer, so a stale one says so when it is asked
   // for rather than needing to have been deleted while this one landed.
-  private record(photoId: string, rendition: Rendition, hdr: boolean, builtFrom: string | null): string {
+  private record(
+    photoId: string,
+    rendition: Rendition,
+    hdr: boolean,
+    builtFrom: string | null,
+  ): string {
     const builtAt = new Date().toISOString();
     const variant = renditionVariant(rendition, hdr);
     // No source: a fetched copy is the sender's render of a file this device may not even hold,
     // and "unknown" is the truth. What reads it wants a picture it knows is the camera's own.
     if (rendition === 'grid') this.photoProcessing.markTileBuilt(photoId, builtAt, builtFrom, null);
-    else if (rendition === 'full') this.photoProcessing.markRenditionsBuilt(photoId, builtAt, 'render', builtFrom, variant);
+    else if (rendition === 'full')
+      this.photoProcessing.markRenditionsBuilt(photoId, builtAt, 'render', builtFrom, variant);
     else this.photoProcessing.markCopyBuilt(photoId, builtAt, builtFrom, variant);
     return builtAt;
   }
@@ -346,7 +391,11 @@ export class RenditionFetchService {
   // Holders of the original first: they are the peers the catalogue records as
   // able to build, so a build is likeliest to exist there. Any other paired peer
   // may still answer, from a copy it has or by passing the request on.
-  private candidates(libraryId: string, photoId: string, passedThrough: readonly string[]): string[] {
+  private candidates(
+    libraryId: string,
+    photoId: string,
+    passedThrough: readonly string[],
+  ): string[] {
     const holders = new Set(this.locations.holders(libraryId, photoId));
     return pairedPeers(this.db, libraryId)
       .map((peer) => peer.peer_id)

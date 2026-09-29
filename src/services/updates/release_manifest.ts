@@ -34,7 +34,8 @@ export function parseReleaseManifest(text: string): ReleaseManifest {
       assets[platform] = {};
       continue;
     }
-    if (platform == null) throw new Error(`release.yml: "${line.trim()}" is indented under nothing`);
+    if (platform == null)
+      throw new Error(`release.yml: "${line.trim()}" is indented under nothing`);
     assets[platform]![key!] = value;
   }
 
@@ -72,7 +73,11 @@ function unquote(value: string): string {
  * written in `VERSION`.
  */
 export function compareVersions(a: string, b: string): number {
-  const parts = (v: string): number[] => v.replace(/^v/, '').split(/[.+-]/).map((p) => Number.parseInt(p, 10));
+  const parts = (v: string): number[] =>
+    v
+      .replace(/^v/, '')
+      .split(/[.+-]/)
+      .map((p) => Number.parseInt(p, 10));
   const left = parts(a);
   const right = parts(b);
   for (let i = 0; i < Math.max(left.length, right.length); i++) {

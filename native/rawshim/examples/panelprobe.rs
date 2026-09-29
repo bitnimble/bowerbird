@@ -12,8 +12,12 @@ fn main() {
     let [path, x0, y0, x1, y1] = &args[..] else {
         panic!("panelprobe <stitched.ppm> <x0> <y0> <x1> <y1>")
     };
-    let (x0, y0, x1, y1): (usize, usize, usize, usize) =
-        (x0.parse().unwrap(), y0.parse().unwrap(), x1.parse().unwrap(), y1.parse().unwrap());
+    let (x0, y0, x1, y1): (usize, usize, usize, usize) = (
+        x0.parse().unwrap(),
+        y0.parse().unwrap(),
+        x1.parse().unwrap(),
+        y1.parse().unwrap(),
+    );
     let bytes = std::fs::read(path).unwrap();
     let mut cuts = 0usize;
     let mut at = 0usize;
@@ -24,8 +28,12 @@ fn main() {
         at += 1;
     }
     let header = std::str::from_utf8(&bytes[..at]).unwrap();
-    let dims: Vec<usize> =
-        header.split_whitespace().skip(1).take(2).map(|v| v.parse().unwrap()).collect();
+    let dims: Vec<usize> = header
+        .split_whitespace()
+        .skip(1)
+        .take(2)
+        .map(|v| v.parse().unwrap())
+        .collect();
     let (width, data) = (dims[0], &bytes[at..]);
     let panel = (width - 8) / 2;
 
@@ -53,7 +61,12 @@ fn main() {
             let (lc, lo) = (l(&cam).max(1.0), l(&ours).max(1.0));
             println!(
                 "cell {cx},{cy}: cam {:3.0},{:3.0},{:3.0}  ours {:3.0},{:3.0},{:3.0}  dr {:+.3} db {:+.3}",
-                cam[0], cam[1], cam[2], ours[0], ours[1], ours[2],
+                cam[0],
+                cam[1],
+                cam[2],
+                ours[0],
+                ours[1],
+                ours[2],
                 ours[0] / lo - cam[0] / lc,
                 ours[2] / lo - cam[2] / lc,
             );

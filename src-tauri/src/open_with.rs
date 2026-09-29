@@ -34,15 +34,19 @@ pub(crate) async fn original_path(photo_id: &str) -> Result<PathBuf, String> {
     }
     let url = format!("{}/image/{photo_id}/original", crate::api::origin());
     let (_, bytes) = fetched(&url).await?;
-    let original: Original =
-        serde_json::from_slice(&bytes).map_err(|e| format!("{url} answered something else: {e}"))?;
+    let original: Original = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("{url} answered something else: {e}"))?;
     Ok(original.path)
 }
 
 /// One folder per photo, so opening it again replaces the copy rather than numbering another.
 async fn downloaded(photo_id: &str) -> Result<PathBuf, String> {
-    let folder = crate::export_paths::plain(photo_id).ok_or_else(|| format!("not a photo id: {photo_id}"))?;
-    let url = format!("{}/image/{photo_id}/download/original", crate::api::origin());
+    let folder = crate::export_paths::plain(photo_id)
+        .ok_or_else(|| format!("not a photo id: {photo_id}"))?;
+    let url = format!(
+        "{}/image/{photo_id}/download/original",
+        crate::api::origin()
+    );
     let (named, bytes) = fetched(&url).await?;
     let named = named.ok_or_else(|| format!("{url} did not name the file it answered with"))?;
     let folder = std::env::temp_dir().join("bowerbird-open").join(folder);
@@ -87,9 +91,9 @@ async fn choose(window: &Window, file: &Path) -> Result<(), String> {
 
 #[cfg(all(desktop, not(any(target_os = "macos", target_os = "windows"))))]
 async fn portal(window: &Window, file: &Path) -> Result<(), String> {
-    use ashpd::desktop::open_uri::OpenFileRequest;
-    use ashpd::desktop::ResponseError;
     use ashpd::WindowIdentifier;
+    use ashpd::desktop::ResponseError;
+    use ashpd::desktop::open_uri::OpenFileRequest;
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
     let opened = std::fs::File::open(file).map_err(|e| format!("could not open {file:?}: {e}"))?;
@@ -131,9 +135,11 @@ async fn choose(window: &Window, file: &Path) -> Result<(), String> {
 /// Modal, so it holds its thread until the reader chooses.
 #[cfg(target_os = "windows")]
 fn open_with_dialog(parent: isize, file: &[u16]) -> Result<(), i32> {
-    use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows_sys::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize,
+    };
     use windows_sys::Win32::UI::Shell::{
-        SHOpenWithDialog, OAIF_EXEC, OAIF_HIDE_REGISTRATION, OPENASINFO,
+        OAIF_EXEC, OAIF_HIDE_REGISTRATION, OPENASINFO, SHOpenWithDialog,
     };
     // HRESULT_FROM_WIN32(ERROR_CANCELLED)
     const CANCELLED: i32 = 0x8007_04C7_u32 as i32;
@@ -175,8 +181,8 @@ async fn choose(window: &Window, file: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn popup(window: &Window, file: &Path) -> Result<(), String> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::Manager;
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 
     let failed = |e: tauri::Error| format!("could not show the applications for {file:?}: {e}");
     let menu = Menu::new(window).map_err(failed)?;
@@ -185,8 +191,10 @@ fn popup(window: &Window, file: &Path) -> Result<(), String> {
         let item = MenuItem::with_id(window, id, label, true, None::<&str>).map_err(failed)?;
         menu.append(&item).map_err(failed)?;
     }
-    menu.append(&PredefinedMenuItem::separator(window).map_err(failed)?).map_err(failed)?;
-    let other = MenuItem::with_id(window, OTHER_ID, "Other…", true, None::<&str>).map_err(failed)?;
+    menu.append(&PredefinedMenuItem::separator(window).map_err(failed)?)
+        .map_err(failed)?;
+    let other =
+        MenuItem::with_id(window, OTHER_ID, "Other…", true, None::<&str>).map_err(failed)?;
     menu.append(&other).map_err(failed)?;
 
     *window.state::<Offered>().0.lock().unwrap() = Some(file.to_path_buf());
@@ -210,10 +218,17 @@ fn applications_for(file: &Path) -> Vec<(PathBuf, String)> {
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::NSURL;
 
-    let Some(url) = NSURL::from_file_path(file) else { return Vec::new() };
+    let Some(url) = NSURL::from_file_path(file) else {
+        return Vec::new();
+    };
     let workspace = NSWorkspace::sharedWorkspace();
-    let default = workspace.URLForApplicationToOpenURL(&url).and_then(|app| app.to_file_path());
-    let name = |app: &Path| app.file_stem().map(|stem| stem.to_string_lossy().into_owned());
+    let default = workspace
+        .URLForApplicationToOpenURL(&url)
+        .and_then(|app| app.to_file_path());
+    let name = |app: &Path| {
+        app.file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+    };
 
     let mut others: Vec<(PathBuf, String)> = workspace
         .URLsForApplicationsToOpenURL(&url)
@@ -224,7 +239,8 @@ fn applications_for(file: &Path) -> Vec<(PathBuf, String)> {
         .collect();
     others.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
 
-    let default = default.and_then(|app| name(&app).map(|label| (app, format!("{label} (default)"))));
+    let default =
+        default.and_then(|app| name(&app).map(|label| (app, format!("{label} (default)"))));
     default.into_iter().chain(others).collect()
 }
 
@@ -237,7 +253,9 @@ pub fn chosen(app: &tauri::AppHandle<crate::Runtime>, event: tauri::menu::MenuEv
     if id != OTHER_ID && !id.starts_with(MENU_ID) {
         return;
     }
-    let Some(file) = app.state::<Offered>().0.lock().unwrap().take() else { return };
+    let Some(file) = app.state::<Offered>().0.lock().unwrap().take() else {
+        return;
+    };
     if let Some(application) = id.strip_prefix(MENU_ID) {
         open_in(Path::new(application), &file);
         return;
@@ -257,12 +275,19 @@ pub fn chosen(app: &tauri::AppHandle<crate::Runtime>, event: tauri::menu::MenuEv
 #[cfg(target_os = "macos")]
 fn open_in(application: &Path, file: &Path) {
     // Spawned, never waited on: `open` returns once the application has the file.
-    if let Err(e) = std::process::Command::new("open").arg("-a").arg(application).arg(file).spawn() {
+    if let Err(e) = std::process::Command::new("open")
+        .arg("-a")
+        .arg(application)
+        .arg(file)
+        .spawn()
+    {
         eprintln!("[bowerbird] could not open {file:?} in {application:?}: {e}");
     }
 }
 
 #[cfg(not(desktop))]
 async fn choose(_window: &Window, file: &Path) -> Result<(), String> {
-    Err(format!("this platform has no application chooser for {file:?}"))
+    Err(format!(
+        "this platform has no application chooser for {file:?}"
+    ))
 }

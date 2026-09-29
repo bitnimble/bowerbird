@@ -12,7 +12,8 @@ const { MergePage } = await import('../merge_page');
 const { MergePageStrings } = await import('../merge_page.strings');
 const { PhotoStageStrings } = await import('../../viewer/photo_stage.strings');
 const { mergeJobPath } = await import('../../photos_store');
-const { readyJobFixture, saveSeededSession, triangleSeams } = await import('./fixtures/assembly_recipe');
+const { readyJobFixture, saveSeededSession, triangleSeams } =
+  await import('./fixtures/assembly_recipe');
 
 const stubbed = {
   getAssemblyJob: compositesApi.getAssemblyJob,
@@ -54,7 +55,10 @@ function renderJob(): void {
         React.createElement(
           Routes,
           null,
-          React.createElement(Route, { path: mergeJobPath(':jobId', null), element: React.createElement(MergePage) }),
+          React.createElement(Route, {
+            path: mergeJobPath(':jobId', null),
+            element: React.createElement(MergePage),
+          }),
         ),
       ),
     ),
@@ -115,7 +119,9 @@ test('an analysis with no tiles shows a stage that takes a click', async () => {
   compositesApi.getAssemblyJob = () => Promise.resolve(readyJobFixture());
   renderJob();
   await settled();
-  const remove = screen.getByRole('button', { name: MergePageStrings.removeObjects() }) as HTMLButtonElement;
+  const remove = screen.getByRole('button', {
+    name: MergePageStrings.removeObjects(),
+  }) as HTMLButtonElement;
   expect(remove.disabled).toBe(false);
   expect(outlines()).toHaveLength(0);
 });
@@ -142,7 +148,10 @@ test('frames the analysis found unaligned are flagged in the bar, and aligned on
   cleanup();
 
   compositesApi.getAssemblyJob = () =>
-    Promise.resolve({ ...job, carved: { ...job.carved!, analysed: { ...job.carved!.analysed, unaligned: true } } });
+    Promise.resolve({
+      ...job,
+      carved: { ...job.carved!, analysed: { ...job.carved!.analysed, unaligned: true } },
+    });
   renderJob();
   await settled();
   expect(screen.getByRole('img', { name: MergePageStrings.unaligned() })).toBeTruthy();
@@ -177,7 +186,9 @@ test('a pick draws only the piece solved for it, and that piece opens its tile',
 
   fireEvent.keyDown(window, { key: ']' });
   // Until every frame's growth of the tile is solved, a swatch would only show the tile as drawn.
-  expect(screen.getByRole('status', { name: /finding the best parts of each frame/i })).toBeTruthy();
+  expect(
+    screen.getByRole('status', { name: /finding the best parts of each frame/i }),
+  ).toBeTruthy();
   expect(screen.queryByRole('button', { name: /choose frame/i })).toBeNull();
   fireEvent.keyDown(window, { key: '2' });
   expect(screen.getByRole('dialog')).toBeTruthy();
@@ -187,7 +198,9 @@ test('a pick draws only the piece solved for it, and that piece opens its tile',
     await waitFor(() => expect(held.length > 0 || swatch() != null).toBe(true));
     held.shift()?.();
   }
-  expect(screen.queryByRole('status', { name: /finding the best parts of each frame/i })).toBeNull();
+  expect(
+    screen.queryByRole('status', { name: /finding the best parts of each frame/i }),
+  ).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Choose frame 2' }));
 
   await waitFor(() => expect(pieces()).toHaveLength(1));

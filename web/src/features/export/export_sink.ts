@@ -54,7 +54,16 @@ async function shellFolder(invoke: Invoke): Promise<ExportSink | null> {
     case 'picked':
       return {
         save: async (photoId, options, run) =>
-          z.string().parse(await invoke('export_to_folder', { folder: folder.path, photoId, options, runId: run })),
+          z
+            .string()
+            .parse(
+              await invoke('export_to_folder', {
+                folder: folder.path,
+                photoId,
+                options,
+                runId: run,
+              }),
+            ),
       };
   }
 }
@@ -64,7 +73,11 @@ async function pickedDirectory(picker: Picker): Promise<ExportSink | null> {
   try {
     // `id` is what makes the picker reopen where the last export went rather than at home,
     // and `startIn` is only the first time.
-    directory = await picker.call(window, { mode: 'readwrite', id: 'export', startIn: 'downloads' });
+    directory = await picker.call(window, {
+      mode: 'readwrite',
+      id: 'export',
+      startIn: 'downloads',
+    });
   } catch (err) {
     // Only `AbortError` is a reader saying no. A `SecurityError` is this having been reached
     // past the click's transient activation, which is the one bug the ordering above guards
@@ -116,7 +129,11 @@ function named(filename: string | null): string {
 function downloads(): ExportSink {
   return {
     async save(photoId, options, run): Promise<string> {
-      const { bytes, mediaType, filename } = await exportsApi.create({ photoId, options, runId: run });
+      const { bytes, mediaType, filename } = await exportsApi.create({
+        photoId,
+        options,
+        runId: run,
+      });
       const name = named(filename);
       const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mediaType }));
       const link = document.createElement('a');

@@ -203,8 +203,11 @@ impl Multiply {
     /// `(rows_of_the_layer / rows) * (columns_of_the_layer / columns)` of them - so a narrow tile
     /// reads the same activation plane over and over, and this is how many times.
     fn read(&self, arm: &Arm) -> u64 {
-        let (rows, columns, depth) =
-            (u64::from(self.rows), u64::from(self.columns), u64::from(self.depth));
+        let (rows, columns, depth) = (
+            u64::from(self.rows),
+            u64::from(self.columns),
+            u64::from(self.depth),
+        );
         let tiles = (rows / u64::from(arm.rows)) * (columns / u64::from(arm.columns));
         let weights = u64::from(arm.rows) * depth;
         let samples = depth * u64::from(arm.columns);
@@ -298,7 +301,10 @@ fn device() -> Gpu {
     let entry = unsafe { ash::Entry::load() }.expect("a Vulkan loader");
     let application = vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_3);
     let instance = unsafe {
-        entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&application), None)
+        entry.create_instance(
+            &vk::InstanceCreateInfo::default().application_info(&application),
+            None,
+        )
     }
     .expect("a Vulkan instance");
 
@@ -317,7 +323,10 @@ fn device() -> Gpu {
         .expect("a device with VK_KHR_cooperative_matrix");
 
     let described = unsafe { instance.get_physical_device_properties(physical) };
-    let named = described.device_name_as_c_str().unwrap_or_default().to_string_lossy();
+    let named = described
+        .device_name_as_c_str()
+        .unwrap_or_default()
+        .to_string_lossy();
     eprintln!("{named}, {:?}", described.device_type);
 
     // Which cooperative-matrix extensions the driver has at all, since the shapes below are only
@@ -326,7 +335,10 @@ fn device() -> Gpu {
     for extension in unsafe { instance.enumerate_device_extension_properties(physical) }
         .expect("the device extensions")
     {
-        let name = extension.extension_name_as_c_str().unwrap_or_default().to_string_lossy();
+        let name = extension
+            .extension_name_as_c_str()
+            .unwrap_or_default()
+            .to_string_lossy();
         if name.contains("cooperative") {
             eprintln!("  {name} v{}", extension.spec_version);
         }
@@ -363,7 +375,10 @@ fn device() -> Gpu {
                 && shape.result_type == c
         })
     };
-    assert!(wanted(vk::ComponentTypeKHR::FLOAT16), "no 16x16x16 f16 configuration on this device");
+    assert!(
+        wanted(vk::ComponentTypeKHR::FLOAT16),
+        "no 16x16x16 f16 configuration on this device"
+    );
     let accumulates_wide = wanted(vk::ComponentTypeKHR::FLOAT32);
 
     let families = unsafe { instance.get_physical_device_queue_family_properties(physical) };
@@ -373,8 +388,9 @@ fn device() -> Gpu {
         .expect("a compute queue") as u32;
 
     let priorities = [1.0f32];
-    let queues =
-        [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
+    let queues = [vk::DeviceQueueCreateInfo::default()
+        .queue_family_index(family)
+        .queue_priorities(&priorities)];
     // What the driver says a compiled pipeline holds, for `registers`, where the driver has it.
     let describes = unsafe { instance.enumerate_device_extension_properties(physical) }
         .expect("the device extensions")
@@ -388,8 +404,10 @@ fn device() -> Gpu {
     }
     let mut executables = vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR::default()
         .pipeline_executable_info(describes);
-    let mut coop = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
-    let mut eleven = vk::PhysicalDeviceVulkan11Features::default().storage_buffer16_bit_access(true);
+    let mut coop =
+        vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
+    let mut eleven =
+        vk::PhysicalDeviceVulkan11Features::default().storage_buffer16_bit_access(true);
     let mut twelve = vk::PhysicalDeviceVulkan12Features::default()
         .shader_float16(true)
         .vulkan_memory_model(true)
@@ -434,7 +452,10 @@ fn device() -> Gpu {
 /// What the driver compiled each of a rendition's kernels into: registers, shared memory, and
 /// whatever else it reports, which is what decides how many workgroups a multiprocessor holds.
 fn registers(gpu: &Gpu, entry_points: &[String]) {
-    assert!(gpu.describes, "this driver has no VK_KHR_pipeline_executable_properties");
+    assert!(
+        gpu.describes,
+        "this driver has no VK_KHR_pipeline_executable_properties"
+    );
     let device = &gpu.device;
     let executables = ash::khr::pipeline_executable_properties::Device::new(&gpu.instance, device);
     // Every binding either shader declares: this one's six, and `pmrid.slang`'s two uniforms.
@@ -473,7 +494,10 @@ fn registers(gpu: &Gpu, entry_points: &[String]) {
     // Another module's SPIR-V where the first argument names a file, so a WGSL stage compiled by
     // `slangc -target spirv` can be asked the same question.
     let (spirv, entry_points) = match entry_points.first().filter(|it| it.ends_with(".spv")) {
-        Some(path) => (std::fs::read(path).expect("the SPIR-V file"), &entry_points[1..]),
+        Some(path) => (
+            std::fs::read(path).expect("the SPIR-V file"),
+            &entry_points[1..],
+        ),
         None => (
             include_bytes!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.spv")).to_vec(),
             entry_points,
@@ -522,7 +546,10 @@ fn registers(gpu: &Gpu, entry_points: &[String]) {
                             _ => format!("{:.2}", it.value.f64),
                         }
                     };
-                    format!("{} {value}", it.name_as_c_str().unwrap_or_default().to_string_lossy())
+                    format!(
+                        "{} {value}",
+                        it.name_as_c_str().unwrap_or_default().to_string_lossy()
+                    )
                 })
                 .collect();
             eprintln!("{name}: {}", said.join(", "));
@@ -589,27 +616,40 @@ impl Gpu {
         let kind = (0..self.memory.memory_type_count)
             .find(|at| {
                 wants.memory_type_bits & (1 << at) != 0
-                    && self.memory.memory_types[*at as usize].property_flags.contains(asked)
+                    && self.memory.memory_types[*at as usize]
+                        .property_flags
+                        .contains(asked)
             })
             .expect("a memory type");
         let memory = unsafe {
             self.device.allocate_memory(
-                &vk::MemoryAllocateInfo::default().allocation_size(wants.size).memory_type_index(kind),
+                &vk::MemoryAllocateInfo::default()
+                    .allocation_size(wants.size)
+                    .memory_type_index(kind),
                 None,
             )
         }
         .expect("device memory");
         unsafe { self.device.bind_buffer_memory(buffer, memory, 0) }.expect("bound");
-        Held { buffer, memory, bytes }
+        Held {
+            buffer,
+            memory,
+            bytes,
+        }
     }
 
     fn fill(&self, held: &Held, values: &[u16]) {
-        assert!(values.len() * 2 <= held.bytes as usize, "the fill is larger than the buffer");
+        assert!(
+            values.len() * 2 <= held.bytes as usize,
+            "the fill is larger than the buffer"
+        );
         let bytes = (values.len() * 2) as u64;
         let staged = self.staging(bytes);
-        let mapped =
-            unsafe { self.device.map_memory(staged.memory, 0, bytes, vk::MemoryMapFlags::empty()) }
-                .expect("mapped");
+        let mapped = unsafe {
+            self.device
+                .map_memory(staged.memory, 0, bytes, vk::MemoryMapFlags::empty())
+        }
+        .expect("mapped");
         unsafe {
             std::ptr::copy_nonoverlapping(values.as_ptr(), mapped.cast::<u16>(), values.len());
             self.device.unmap_memory(staged.memory);
@@ -619,13 +659,18 @@ impl Gpu {
     }
 
     fn read(&self, held: &Held, count: usize) -> Vec<u16> {
-        assert!(count * 2 <= held.bytes as usize, "the read is larger than the buffer");
+        assert!(
+            count * 2 <= held.bytes as usize,
+            "the read is larger than the buffer"
+        );
         let bytes = (count * 2) as u64;
         let staged = self.staging(bytes);
         self.copy(held, &staged, bytes);
-        let mapped =
-            unsafe { self.device.map_memory(staged.memory, 0, bytes, vk::MemoryMapFlags::empty()) }
-                .expect("mapped");
+        let mapped = unsafe {
+            self.device
+                .map_memory(staged.memory, 0, bytes, vk::MemoryMapFlags::empty())
+        }
+        .expect("mapped");
         let mut out = vec![0u16; count];
         unsafe {
             std::ptr::copy_nonoverlapping(mapped.cast::<u16>(), out.as_mut_ptr(), count);
@@ -703,13 +748,23 @@ fn main() {
     // that moves the dispatch floor the run reports at the end, and that floor is a sixth of what the
     // fastest shape costs. What it costs in return is the activations of `batch` tiles resident at
     // once, which is the reason the default is one.
-    let batch: usize = std::env::args().nth(2).map_or(1, |it| it.parse().expect("a batch size"));
-    assert!(tiles % batch == 0, "{tiles} tiles do not divide into batches of {batch}");
+    let batch: usize = std::env::args()
+        .nth(2)
+        .map_or(1, |it| it.parse().expect("a batch size"));
+    assert!(
+        tiles % batch == 0,
+        "{tiles} tiles do not divide into batches of {batch}"
+    );
 
     let packed = SENSOR_TILE / 2;
     let layers = multiplies(packed);
-    let dispatched: Vec<Multiply> =
-        layers.iter().map(|it| Multiply { columns: it.columns * batch as u32, ..*it }).collect();
+    let dispatched: Vec<Multiply> = layers
+        .iter()
+        .map(|it| Multiply {
+            columns: it.columns * batch as u32,
+            ..*it
+        })
+        .collect();
     let groups = tiles / batch;
     let macs: u64 = layers.iter().map(Multiply::macs).sum();
     eprintln!(
@@ -727,8 +782,10 @@ fn main() {
     // writes `rows * columns` of a region sized to the largest of them - and the question here is
     // the rate. It does mean the answer is arithmetic over whatever is in the buffer, which is what
     // [`correct`] is for.
-    let weights_halves: usize =
-        layers.iter().map(|it| (it.rows as usize) * (it.depth as usize)).sum();
+    let weights_halves: usize = layers
+        .iter()
+        .map(|it| (it.rows as usize) * (it.depth as usize))
+        .sum();
     let widest: usize = dispatched
         .iter()
         .map(|it| (it.columns as usize) * (it.rows.max(it.depth) as usize))
@@ -742,9 +799,18 @@ fn main() {
 
     // Anything but zero, and small enough that a `half` accumulation over 512 terms stays finite.
     let noise = |seed: usize| half::f16::from_f32(((seed % 17) as f32 - 8.0) / 64.0).to_bits();
-    gpu.fill(&weights, &(0..weights_halves).map(noise).collect::<Vec<_>>());
-    gpu.fill(&ping, &(0..widest).map(|at| noise(at + 5)).collect::<Vec<_>>());
-    gpu.fill(&pong, &(0..widest).map(|at| noise(at + 11)).collect::<Vec<_>>());
+    gpu.fill(
+        &weights,
+        &(0..weights_halves).map(noise).collect::<Vec<_>>(),
+    );
+    gpu.fill(
+        &ping,
+        &(0..widest).map(|at| noise(at + 5)).collect::<Vec<_>>(),
+    );
+    gpu.fill(
+        &pong,
+        &(0..widest).map(|at| noise(at + 11)).collect::<Vec<_>>(),
+    );
 
     // `wide` three times, and only the last is read: the `float` shapes answer into binding 5. The
     // arena at 1 and the biases at 2 are the network's own dispatch, which nothing measured here
@@ -762,13 +828,19 @@ fn main() {
         let behind = run
             .arms
             .iter()
-            .find(|it| it.name == match arm.name.contains("wide") {
-                true => "widef_1x2x1",
-                false => "halff_1x2x1",
+            .find(|it| {
+                it.name
+                    == match arm.name.contains("wide") {
+                        true => "widef_1x2x1",
+                        false => "halff_1x2x1",
+                    }
             })
             .expect("a shape every layer divides by");
         let tried = [arm, behind];
-        if layers.iter().any(|it| !tried.iter().any(|arm| it.fits(arm))) {
+        if layers
+            .iter()
+            .any(|it| !tried.iter().any(|arm| it.fits(arm)))
+        {
             eprintln!("{}: not every layer divides by this tile", arm.name);
             continue;
         }
@@ -842,14 +914,27 @@ fn main() {
     // What the same run costs with the multiplies taken out of it: one workgroup a layer, so the
     // dispatches and the barriers between them are all that is left. A layer of this network is a
     // few hundred microseconds of device, and there are 43 of them a tile.
-    let smallest = run.arms.iter().find(|it| it.name == "wide_1x1x1").expect("the smallest arm");
+    let smallest = run
+        .arms
+        .iter()
+        .find(|it| it.name == "wide_1x1x1")
+        .expect("the smallest arm");
     let empty: Vec<Multiply> = (0..layers.len())
-        .map(|_| Multiply { rows: FRAG, columns: FRAG, depth: FRAG, weights_at: 0 })
+        .map(|_| Multiply {
+            rows: FRAG,
+            columns: FRAG,
+            depth: FRAG,
+            weights_at: 0,
+        })
         .collect();
     run.time(&gpu, &[smallest], &empty, groups);
-    let floor =
-        (0..3).map(|_| run.time(&gpu, &[smallest], &empty, groups)).fold(f64::INFINITY, f64::min);
-    eprintln!("{} dispatches with no work in them: {floor:.1}ms", layers.len() * groups);
+    let floor = (0..3)
+        .map(|_| run.time(&gpu, &[smallest], &empty, groups))
+        .fold(f64::INFINITY, f64::min);
+    eprintln!(
+        "{} dispatches with no work in them: {floor:.1}ms",
+        layers.len() * groups
+    );
 
     run.shut(&gpu);
     for held in [&weights, &ping, &pong, &wide] {
@@ -929,9 +1014,7 @@ impl Run {
         // that dispatches something undefined.
         let shapes: Vec<_> = SHAPES
             .iter()
-            .filter(|(name, ..)| {
-                gpu.accumulates_wide || !name.to_string_lossy().contains("wide")
-            })
+            .filter(|(name, ..)| gpu.accumulates_wide || !name.to_string_lossy().contains("wide"))
             .collect();
         let entry_points: Vec<_> = shapes
             .iter()
@@ -945,7 +1028,9 @@ impl Run {
         let asked: Vec<_> = entry_points
             .iter()
             .map(|stage| {
-                vk::ComputePipelineCreateInfo::default().layout(pipeline_layout).stage(*stage)
+                vk::ComputePipelineCreateInfo::default()
+                    .layout(pipeline_layout)
+                    .stage(*stage)
             })
             .collect();
         let built =
@@ -974,21 +1059,29 @@ impl Run {
             .descriptor_count(held.len() as u32)];
         let pool = unsafe {
             device.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default().max_sets(1).pool_sizes(&sizes),
+                &vk::DescriptorPoolCreateInfo::default()
+                    .max_sets(1)
+                    .pool_sizes(&sizes),
                 None,
             )
         }
         .expect("a descriptor pool");
         let set = unsafe {
             device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool).set_layouts(&layouts),
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(pool)
+                    .set_layouts(&layouts),
             )
         }
         .expect("a descriptor set")[0];
 
         let regions: Vec<_> = held
             .iter()
-            .map(|it| [vk::DescriptorBufferInfo::default().buffer(it.buffer).range(vk::WHOLE_SIZE)])
+            .map(|it| {
+                [vk::DescriptorBufferInfo::default()
+                    .buffer(it.buffer)
+                    .range(vk::WHOLE_SIZE)]
+            })
             .collect();
         let writes: Vec<_> = regions
             .iter()
@@ -1051,7 +1144,9 @@ impl Run {
     fn time(&self, gpu: &Gpu, arms: &[&Arm], layers: &[Multiply], tiles: usize) -> f64 {
         let device = &gpu.device;
         unsafe {
-            device.reset_command_buffer(self.buffer, vk::CommandBufferResetFlags::empty()).expect("reset");
+            device
+                .reset_command_buffer(self.buffer, vk::CommandBufferResetFlags::empty())
+                .expect("reset");
             device
                 .begin_command_buffer(self.buffer, &vk::CommandBufferBeginInfo::default())
                 .expect("begin");
@@ -1092,7 +1187,10 @@ impl Run {
                     // The first shape the layer divides by. A shape that reads several steps of the
                     // depth at once cannot take a sixteen-channel layer, and this network has
                     // those, so the shallow shape behind it is what they run.
-                    let arm = arms.iter().find(|it| layer.fits(it)).expect("a shape that fits");
+                    let arm = arms
+                        .iter()
+                        .find(|it| layer.fits(it))
+                        .expect("a shape that fits");
                     device.cmd_bind_pipeline(
                         self.buffer,
                         vk::PipelineBindPoint::COMPUTE,
@@ -1128,7 +1226,9 @@ impl Run {
 
             let buffers = [self.buffer];
             let submit = [vk::SubmitInfo::default().command_buffers(&buffers)];
-            device.queue_submit(gpu.queue, &submit, vk::Fence::null()).expect("submitted");
+            device
+                .queue_submit(gpu.queue, &submit, vk::Fence::null())
+                .expect("submitted");
             device.queue_wait_idle(gpu.queue).expect("finished");
 
             let mut stamps = [0u64; 2];
@@ -1173,11 +1273,19 @@ fn correct(gpu: &Gpu, run: &Run, weights: &Held, ping: &Held, pong: &Held) {
         ("halff_2x2x1_2", true),
         ("halfu_1x2x2_2", true),
         ("halfd_2x2x2_2", true),
-    ]
-    {
-        let arm = run.arms.iter().find(|it| it.name == name).expect("the reference arm");
+    ] {
+        let arm = run
+            .arms
+            .iter()
+            .find(|it| it.name == name)
+            .expect("the reference arm");
         let (rows, columns, depth) = (arm.rows.max(FRAG), arm.columns.max(FRAG), 64u32);
-        let layer = Multiply { rows, columns, depth, weights_at: 0 };
+        let layer = Multiply {
+            rows,
+            columns,
+            depth,
+            weights_at: 0,
+        };
         run.time(gpu, &[arm], &[layer], 1);
 
         let a = gpu.read(weights, (rows * depth) as usize);

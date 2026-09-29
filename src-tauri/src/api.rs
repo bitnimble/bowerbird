@@ -74,7 +74,10 @@ fn config_file(app: &tauri::AppHandle<crate::Runtime>) -> Option<std::path::Path
             return Some(beside);
         }
     }
-    app.path().app_config_dir().ok().map(|dir| dir.join("config.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join("config.json"))
 }
 
 /// Whether this path can be created and written. Leaves the file behind if it already
@@ -109,8 +112,13 @@ pub fn load_config(app: &tauri::AppHandle<crate::Runtime>) {
 
 /// Saved before it is adopted, so a write that fails leaves the running app and the file
 /// still agreeing on the old value rather than disagreeing until a restart.
-fn update(app: &tauri::AppHandle<crate::Runtime>, change: impl FnOnce(&mut Config)) -> Result<(), String> {
-    let mut held = CONFIG.write().map_err(|_| "the config is locked".to_string())?;
+fn update(
+    app: &tauri::AppHandle<crate::Runtime>,
+    change: impl FnOnce(&mut Config),
+) -> Result<(), String> {
+    let mut held = CONFIG
+        .write()
+        .map_err(|_| "the config is locked".to_string())?;
     let mut next = (*held).clone().unwrap_or_default();
     change(&mut next);
     save(app, &next)?;
@@ -120,7 +128,9 @@ fn update(app: &tauri::AppHandle<crate::Runtime>, change: impl FnOnce(&mut Confi
 
 /// Writes the whole object back, so a field added later is not dropped by this one.
 fn save(app: &tauri::AppHandle<crate::Runtime>, config: &Config) -> Result<(), String> {
-    let Some(path) = config_file(app) else { return Ok(()) };
+    let Some(path) = config_file(app) else {
+        return Ok(());
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("could not make {parent:?}: {e}"))?;
     }
@@ -143,7 +153,11 @@ pub fn set_server_origin(
     value: String,
 ) -> Result<String, String> {
     let trimmed = value.trim().trim_end_matches('/').to_string();
-    let server = if trimmed.is_empty() { None } else { Some(trimmed) };
+    let server = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    };
     update(&app, |config| config.server = server)?;
     // The event stream is following the old address and will not notice on its own: it
     // re-reads the origin only when a connection ends, and a server that is still running
@@ -166,7 +180,9 @@ pub fn ui_scale() -> f64 {
 #[tauri::command]
 pub fn set_ui_scale(app: tauri::AppHandle<crate::Runtime>, value: f64) -> Result<(), String> {
     if !UI_SCALES.contains(&value) {
-        return Err(format!("an interface scale of {value} is outside {UI_SCALES:?}"));
+        return Err(format!(
+            "an interface scale of {value} is outside {UI_SCALES:?}"
+        ));
     }
     update(&app, |config| config.ui_scale = Some(value))?;
     apply_ui_scale(&app)
@@ -174,8 +190,12 @@ pub fn set_ui_scale(app: tauri::AppHandle<crate::Runtime>, value: f64) -> Result
 
 pub fn apply_ui_scale(app: &tauri::AppHandle<crate::Runtime>) -> Result<(), String> {
     use tauri::Manager;
-    let Some(window) = app.get_webview_window("main") else { return Ok(()) };
-    window.set_zoom(ui_scale()).map_err(|e| format!("could not scale the window: {e}"))
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    window
+        .set_zoom(ui_scale())
+        .map_err(|e| format!("could not scale the window: {e}"))
 }
 
 /// Every request the shell makes, so none reaches the local server without its token.
@@ -222,10 +242,13 @@ impl Request {
             .map_err(|e| format!("bad method {}: {e}", self.method))?;
         let mut send = request(method, url);
         if let Some(activity) = self.activity {
-            send = send.header("X-Bowerbird-Activity", match activity {
-                RequestActivity::Interactive => "interactive",
-                RequestActivity::Background => "background",
-            });
+            send = send.header(
+                "X-Bowerbird-Activity",
+                match activity {
+                    RequestActivity::Interactive => "interactive",
+                    RequestActivity::Background => "background",
+                },
+            );
         }
         if let Some(body) = self.body {
             send = send.json(&body);
@@ -251,7 +274,8 @@ pub async fn api(request: String) -> Result<Response, String> {
         serde_json::from_str(&request).map_err(|e| format!("bad request: {e}"))?;
 
     let url = format!("{}{}", origin(), request.path);
-    let reply = request.into_http(&url)?
+    let reply = request
+        .into_http(&url)?
         .send()
         .await
         .map_err(|e| format!("could not reach {url}: {e}"))?;
@@ -354,7 +378,10 @@ fn asset_preflight(
     let response = tauri::http::Response::builder()
         .status(204)
         .header("access-control-allow-methods", "GET, OPTIONS")
-        .header("access-control-allow-headers", FORWARDED_TO_LIBRARY.join(", "))
+        .header(
+            "access-control-allow-headers",
+            FORWARDED_TO_LIBRARY.join(", "),
+        )
         .body(Vec::new())
         .expect("fixed preflight headers are valid");
     Some(with_asset_cors(response, origin))
@@ -378,18 +405,26 @@ fn with_asset_cors(
     if let Some(origin) = origin {
         response.headers_mut().insert(
             "access-control-allow-origin",
-            origin.parse().expect("trusted webview origins are valid headers"),
+            origin
+                .parse()
+                .expect("trusted webview origins are valid headers"),
         );
-        response.headers_mut().insert("vary", tauri::http::HeaderValue::from_static("Origin"));
+        response
+            .headers_mut()
+            .insert("vary", tauri::http::HeaderValue::from_static("Origin"));
     }
     response
 }
 
 fn asset_headers(headers: &tauri::http::HeaderMap) -> Vec<(String, String)> {
-    headers.iter()
+    headers
+        .iter()
         .filter(|(name, _)| FORWARDED_TO_LIBRARY.contains(&name.as_str()))
         .filter_map(|(name, value)| {
-            value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
         })
         .collect()
 }
@@ -414,8 +449,14 @@ const KEPT_FROM_LIBRARY: [&str; 7] = [
 ];
 
 /// And what the page's own request has to carry through for those to mean anything.
-const FORWARDED_TO_LIBRARY: [&str; 6] =
-    ["accept", "range", "if-none-match", "if-modified-since", "cache-control", "x-bowerbird-activity"];
+const FORWARDED_TO_LIBRARY: [&str; 6] = [
+    "accept",
+    "range",
+    "if-none-match",
+    "if-modified-since",
+    "cache-control",
+    "x-bowerbird-activity",
+];
 /// Android's bundled page, and Vite's in `tauri android dev`.
 const WEBVIEW_ORIGINS: [&str; 2] = ["http://tauri.localhost", "http://localhost:5199"];
 
@@ -460,13 +501,23 @@ async fn fetch(url: &str, forwarded: &[(String, String)]) -> Result<Fetched, req
         .iter()
         .filter(|(name, _)| KEPT_FROM_LIBRARY.contains(&name.as_str()))
         .filter_map(|(name, value)| {
-            value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
         })
         .collect();
     if !headers.iter().any(|(name, _)| name == "content-type") {
-        headers.push(("content-type".to_string(), "application/octet-stream".to_string()));
+        headers.push((
+            "content-type".to_string(),
+            "application/octet-stream".to_string(),
+        ));
     }
-    Ok(Fetched { status, headers, body: reply.bytes().await?.to_vec() })
+    Ok(Fetched {
+        status,
+        headers,
+        body: reply.bytes().await?.to_vec(),
+    })
 }
 
 fn bad_gateway(why: &str) -> tauri::http::Response<Vec<u8>> {
@@ -479,7 +530,7 @@ fn bad_gateway(why: &str) -> tauri::http::Response<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{asset_cors_origin, asset_headers, asset_preflight, with_asset_cors, Request};
+    use super::{Request, asset_cors_origin, asset_headers, asset_preflight, with_asset_cors};
 
     #[test]
     fn asset_get_forwards_activity_and_range_without_unrelated_headers() {
@@ -487,29 +538,50 @@ mod tests {
             .header("X-Bowerbird-Activity", "background")
             .header("Range", "bytes=0-99")
             .header("Cookie", "private=value")
-            .body(Vec::<u8>::new()).unwrap();
+            .body(Vec::<u8>::new())
+            .unwrap();
         let mut forwarded = asset_headers(request.headers());
         forwarded.sort();
-        assert_eq!(forwarded, vec![
-            ("range".to_string(), "bytes=0-99".to_string()),
-            ("x-bowerbird-activity".to_string(), "background".to_string()),
-        ]);
+        assert_eq!(
+            forwarded,
+            vec![
+                ("range".to_string(), "bytes=0-99".to_string()),
+                ("x-bowerbird-activity".to_string(), "background".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn asset_activity_preflight_is_answered_without_fetching_a_picture() {
         let request = tauri::http::Request::builder()
             .header("Origin", "http://tauri.localhost")
-            .body(Vec::<u8>::new()).unwrap();
+            .body(Vec::<u8>::new())
+            .unwrap();
         let origin = asset_cors_origin(request.headers());
         let response = asset_preflight(&tauri::http::Method::OPTIONS, origin);
-        assert_eq!(response.as_ref().map(|reply| reply.status().as_u16()), Some(204));
+        assert_eq!(
+            response.as_ref().map(|reply| reply.status().as_u16()),
+            Some(204)
+        );
         let response = response.unwrap();
-        assert_eq!(response.headers()["access-control-allow-origin"], "http://tauri.localhost");
+        assert_eq!(
+            response.headers()["access-control-allow-origin"],
+            "http://tauri.localhost"
+        );
         assert_eq!(response.headers()["vary"], "Origin");
-        assert_eq!(response.headers()["access-control-allow-methods"], "GET, OPTIONS");
-        let allowed = response.headers()["access-control-allow-headers"].to_str().unwrap();
-        for header in ["x-bowerbird-activity", "range", "if-none-match", "cache-control"] {
+        assert_eq!(
+            response.headers()["access-control-allow-methods"],
+            "GET, OPTIONS"
+        );
+        let allowed = response.headers()["access-control-allow-headers"]
+            .to_str()
+            .unwrap();
+        for header in [
+            "x-bowerbird-activity",
+            "range",
+            "if-none-match",
+            "cache-control",
+        ] {
             assert!(allowed.split(", ").any(|value| value == header));
         }
         assert!(response.body().is_empty());
@@ -517,19 +589,31 @@ mod tests {
 
         let untrusted = tauri::http::Request::builder()
             .header("Origin", "https://attacker.example")
-            .body(Vec::<u8>::new()).unwrap();
+            .body(Vec::<u8>::new())
+            .unwrap();
         let response = asset_preflight(
             &tauri::http::Method::OPTIONS,
             asset_cors_origin(untrusted.headers()),
-        ).unwrap();
-        assert!(!response.headers().contains_key("access-control-allow-origin"));
+        )
+        .unwrap();
+        assert!(
+            !response
+                .headers()
+                .contains_key("access-control-allow-origin")
+        );
     }
 
     #[test]
     fn asset_get_allows_only_the_requesting_webview_origin() {
-        let response = tauri::http::Response::builder().status(404).body(Vec::new()).unwrap();
+        let response = tauri::http::Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .unwrap();
         let response = with_asset_cors(response, Some("http://tauri.localhost"));
-        assert_eq!(response.headers()["access-control-allow-origin"], "http://tauri.localhost");
+        assert_eq!(
+            response.headers()["access-control-allow-origin"],
+            "http://tauri.localhost"
+        );
         assert_eq!(response.headers()["vary"], "Origin");
     }
 
@@ -541,10 +625,25 @@ mod tests {
                 "body": { "id": "photo" }, "activity": activity,
             });
             let request: Request = serde_json::from_value(input).unwrap();
-            let http = request.into_http("http://localhost/api/photos/neighbours").unwrap().build().unwrap();
-            assert_eq!(http.headers().get("X-Bowerbird-Activity").and_then(|value| value.to_str().ok()), Some(activity));
-            assert_eq!(http.headers().get("content-type").unwrap(), "application/json");
-            assert_eq!(http.body().and_then(|body| body.as_bytes()).unwrap(), b"{\"id\":\"photo\"}");
+            let http = request
+                .into_http("http://localhost/api/photos/neighbours")
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(
+                http.headers()
+                    .get("X-Bowerbird-Activity")
+                    .and_then(|value| value.to_str().ok()),
+                Some(activity)
+            );
+            assert_eq!(
+                http.headers().get("content-type").unwrap(),
+                "application/json"
+            );
+            assert_eq!(
+                http.body().and_then(|body| body.as_bytes()).unwrap(),
+                b"{\"id\":\"photo\"}"
+            );
         }
     }
 }

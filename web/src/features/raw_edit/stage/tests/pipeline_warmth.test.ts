@@ -121,7 +121,11 @@ function layoutOf(device: GPUDevice, label: string, binding = 0): GPUPipelineLay
 function build(device: GPUDevice, label: string, code: string, binding = 0): GPUComputePipeline {
   return device.createComputePipeline({
     layout: layoutOf(device, label, binding),
-    compute: { module: device.createShaderModule({ label, code }), entryPoint: 'main', constants: { 0: 1 } },
+    compute: {
+      module: device.createShaderModule({ label, code }),
+      entryPoint: 'main',
+      constants: { 0: 1 },
+    },
   });
 }
 
@@ -146,7 +150,10 @@ function codeOf(warmed: Record<string, unknown> | undefined): string | undefined
 }
 
 /** A session that dispatches what `session` builds, and has saved its recipes by the end. */
-async function dispatched(store: RecipeStore, session: (device: GPUDevice) => object): Promise<void> {
+async function dispatched(
+  store: RecipeStore,
+  session: (device: GPUDevice) => object,
+): Promise<void> {
   const first = installed(store);
   first.pass.setPipeline(session(await first.adapter.requestDevice()) as GPUComputePipeline);
   await new Promise((resolve) => setTimeout(resolve, 2100));
@@ -298,7 +305,10 @@ test('unlabelled pipelines keep a recipe each', async () => {
   first.pass.setPipeline(build(device, '', 'fn two() {}'));
   await new Promise((resolve) => setTimeout(resolve, 2100));
 
-  expect(store.kept?.recipes.map((recipe) => recipe.stages.compute)).toEqual(['fn one() {}', 'fn two() {}']);
+  expect(store.kept?.recipes.map((recipe) => recipe.stages.compute)).toEqual([
+    'fn one() {}',
+    'fn two() {}',
+  ]);
 });
 
 test('a recipe no session has drawn with for a month is dropped', async () => {
@@ -323,7 +333,10 @@ test('a pipeline created again later in the session is dispatched as its edited 
   next.pass.setPipeline(build(device, 'a', 'fn a() { edited(); }'));
   next.pass.setPipeline(build(device, 'a', 'fn a() { edited(); }'));
   expect(FakeDevice.compiled).toEqual(['fn a() { edited(); }']);
-  expect(FakePass.set).toEqual([{ compiled: 'fn a() { edited(); }' }, { compiled: 'fn a() { edited(); }' }]);
+  expect(FakePass.set).toEqual([
+    { compiled: 'fn a() { edited(); }' },
+    { compiled: 'fn a() { edited(); }' },
+  ]);
 });
 
 test('an edited pipeline dispatched before its warming finishes compiles there, and replaces its recipe', async () => {
@@ -335,5 +348,7 @@ test('an edited pipeline dispatched before its warming finishes compiles there, 
   next.pass.setPipeline(build(await next.adapter.requestDevice(), 'a', 'fn a() { edited(); }'));
   expect(FakePass.set).toEqual([{ compiled: 'fn a() { edited(); }' }]);
   await new Promise((resolve) => setTimeout(resolve, 2100));
-  expect(store.kept?.recipes.map((recipe) => recipe.stages)).toEqual([{ compute: 'fn a() { edited(); }' }]);
+  expect(store.kept?.recipes.map((recipe) => recipe.stages)).toEqual([
+    { compute: 'fn a() { edited(); }' },
+  ]);
 });

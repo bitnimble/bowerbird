@@ -42,9 +42,15 @@ export function loadViewState(source: PhotoSource): Partial<ViewState> | null {
     // Hand-edited or written by an older version: take only what is usable
     // rather than letting a bad shape break opening the collection.
     return {
-      ...(parsed.filters != null && typeof parsed.filters === 'object' ? { filters: durable(parsed.filters) } : {}),
-      ...(typeof parsed.tileSize === 'number' && parsed.tileSize > 0 ? { tileSize: parsed.tileSize } : {}),
-      ...(parsed.mode === 'grid' || parsed.mode === 'masonry' || parsed.mode === 'list' ? { mode: parsed.mode } : {}),
+      ...(parsed.filters != null && typeof parsed.filters === 'object'
+        ? { filters: durable(parsed.filters) }
+        : {}),
+      ...(typeof parsed.tileSize === 'number' && parsed.tileSize > 0
+        ? { tileSize: parsed.tileSize }
+        : {}),
+      ...(parsed.mode === 'grid' || parsed.mode === 'masonry' || parsed.mode === 'list'
+        ? { mode: parsed.mode }
+        : {}),
       ...(typeof parsed.expandStacks === 'boolean' ? { expandStacks: parsed.expandStacks } : {}),
       ...(typeof parsed.showFilenames === 'boolean' ? { showFilenames: parsed.showFilenames } : {}),
       ...(typeof parsed.showTriage === 'boolean' ? { showTriage: parsed.showTriage } : {}),

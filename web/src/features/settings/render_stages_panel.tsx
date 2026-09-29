@@ -72,7 +72,11 @@ const RENDITION_TABS: Option<RenderedRendition>[] = RENDERED_RENDITIONS.map((ren
  * What the stages run is this library's; what they cost is the machine's, measured once against a
  * full-frame sensor rather than once per catalogue.
  */
-export const RenderStagesPanel = observer(function RenderStagesPanel({ library }: { library: Library }): JSX.Element {
+export const RenderStagesPanel = observer(function RenderStagesPanel({
+  library,
+}: {
+  library: Library;
+}): JSX.Element {
   const [rendition, setRendition] = useState<RenderedRendition>('full');
   const settings = useAppSettingsStore();
   const { appSettings, libraries } = usePresenters();
@@ -83,7 +87,8 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
   const busy = settings.isBenchmarking(rendition, library.denoiser);
   const cameraMatching = settings.settings?.match_embedded_jpeg !== false;
   const runs = (stage: RenderStage): boolean =>
-    (!['lens', 'colour'].includes(stage) || cameraMatching) && (!isOptional(stage) || !skipped.includes(stage));
+    (!['lens', 'colour'].includes(stage) || cameraMatching) &&
+    (!isOptional(stage) || !skipped.includes(stage));
   const total = RENDER_STAGES.filter(runs).reduce((sum, stage) => sum + ms[stage], 0);
 
   return (
@@ -104,25 +109,27 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
           stage={stage}
           ms={ms[stage]}
           disabledReason={
-            (stage === 'lens' || stage === 'colour') && !cameraMatching ? SettingsStrings.cameraMatchingOff()
-            : stage === 'colour' && skipped.includes('lens') ? SettingsStrings.colourNeedsLens()
-            : undefined
+            (stage === 'lens' || stage === 'colour') && !cameraMatching
+              ? SettingsStrings.cameraMatchingOff()
+              : stage === 'colour' && skipped.includes('lens')
+                ? SettingsStrings.colourNeedsLens()
+                : undefined
           }
           runs={runs(stage)}
           onChange={
-            isOptional(stage) ?
-              (next) => void libraries.setRenderStage(library.id, rendition, stage, next)
-            : undefined
+            isOptional(stage)
+              ? (next) => void libraries.setRenderStage(library.id, rendition, stage, next)
+              : undefined
           }
           control={
-            stage === 'denoise' ?
+            stage === 'denoise' ? (
               <Select
                 label={RawEditPanelStrings.denoiser()}
                 options={DENOISERS}
                 value={library.denoiser}
                 onChange={(next) => void libraries.setDenoiser(library.id, next)}
               />
-            : undefined
+            ) : undefined
           }
         />
       ))}
@@ -134,9 +141,9 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
 
       <Row style={styles.measure}>
         <Text variant="muted">
-          {measured == null ?
-            SettingsStrings.stagesEstimated()
-          : SettingsStrings.stagesMeasured(relativeTime(measured.measured_at))}
+          {measured == null
+            ? SettingsStrings.stagesEstimated()
+            : SettingsStrings.stagesMeasured(relativeTime(measured.measured_at))}
         </Text>
         <Spacer />
         <Button
@@ -175,9 +182,10 @@ function StageRow({
     <SettingRow label={label} disabledReason={disabledReason}>
       {control}
       <Text variant="muted">{SettingsStrings.stageCost(ms)}</Text>
-      {onChange == null ?
+      {onChange == null ? (
         <span {...stylex.props(styles.noBox)} />
-      : <input
+      ) : (
+        <input
           {...stylex.props(focusRing.ring)}
           type="checkbox"
           aria-label={label}
@@ -185,7 +193,7 @@ function StageRow({
           disabled={disabledReason != null}
           onChange={(e) => onChange(e.currentTarget.checked)}
         />
-      }
+      )}
     </SettingRow>
   );
 }

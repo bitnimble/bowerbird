@@ -42,12 +42,24 @@ import { GridDateRangeFilter } from './grid_calendar';
 type CustomKey = 'untriaged' | 'picked' | 'rejected' | 'unrated' | 'rated' | 'missing' | 'hidden';
 
 const CUSTOM: Option<CustomKey>[] = [
-  { value: 'untriaged', label: GridControlsStrings.viewUntriaged(), icon: <CircleDashed size={ICON} /> },
+  {
+    value: 'untriaged',
+    label: GridControlsStrings.viewUntriaged(),
+    icon: <CircleDashed size={ICON} />,
+  },
   { value: 'picked', label: GridControlsStrings.viewPicks(), icon: <ThumbsUp size={ICON} /> },
   { value: 'rejected', label: GridControlsStrings.viewRejects(), icon: <ThumbsDown size={ICON} /> },
   { value: 'unrated', label: GridControlsStrings.customUnrated(), icon: <Star size={ICON} /> },
-  { value: 'rated', label: GridControlsStrings.customRated(), icon: <Star size={ICON} fill="currentColor" /> },
-  { value: 'missing', label: GridControlsStrings.customMissingFile(), icon: <Unplug size={ICON} /> },
+  {
+    value: 'rated',
+    label: GridControlsStrings.customRated(),
+    icon: <Star size={ICON} fill="currentColor" />,
+  },
+  {
+    value: 'missing',
+    label: GridControlsStrings.customMissingFile(),
+    icon: <Unplug size={ICON} />,
+  },
   { value: 'hidden', label: GridControlsStrings.customHidden(), icon: <EyeOff size={ICON} /> },
 ];
 
@@ -67,7 +79,10 @@ function withCustom(filters: PhotoFilters, keys: CustomKey[]): PhotoFilters {
 }
 
 function customToFilters(keys: CustomKey[]): PhotoFilters {
-  const triage = keys.filter((k): k is 'untriaged' | 'picked' | 'rejected' => k === 'untriaged' || k === 'picked' || k === 'rejected');
+  const triage = keys.filter(
+    (k): k is 'untriaged' | 'picked' | 'rejected' =>
+      k === 'untriaged' || k === 'picked' || k === 'rejected',
+  );
   const wantsRated = keys.includes('rated');
   const wantsUnrated = keys.includes('unrated');
   return {
@@ -132,7 +147,8 @@ const ModelFilter = observer(function ModelFilter({
   const { photos } = usePresenters();
   const options = which === 'camera' ? store.cameraModelOptions : store.lensModelOptions;
   const enabled = which === 'camera' ? store.enabledCameraModels : store.enabledLensModels;
-  const selected = (which === 'camera' ? store.filters.cameraModels : store.filters.lensModels) ?? [];
+  const selected =
+    (which === 'camera' ? store.filters.cameraModels : store.filters.lensModels) ?? [];
   // A library whose files carry no such header has nothing to offer, and an empty
   // submenu is worse than no row.
   if (options.length === 0) return null;
@@ -141,16 +157,28 @@ const ModelFilter = observer(function ModelFilter({
     <Popover.Root open={open} onOpenChange={onOpen}>
       {/* Hover as well as press: the row reads as a submenu, and the panel around it is a
           popover, which has no submenu of its own to borrow the behaviour from. */}
-      <Popover.Trigger {...stylex.props(menuStyles.item, styles.submenu, focusRing.ring)} openOnHover>
+      <Popover.Trigger
+        {...stylex.props(menuStyles.item, styles.submenu, focusRing.ring)}
+        openOnHover
+      >
         {icon}
         {label}
         {/* What is ticked out of sight, so the panel says a list is narrowed without it
             being opened. */}
         {selected.length > 0 && <span {...stylex.props(menuStyles.badge)}>{selected.length}</span>}
-        <ChevronRight size={ICON} {...stylex.props(styles.caret, selected.length === 0 && styles.caretAlone)} />
+        <ChevronRight
+          size={ICON}
+          {...stylex.props(styles.caret, selected.length === 0 && styles.caretAlone)}
+        />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner {...stylex.props(menuStyles.positioner)} side="right" align="start" sideOffset={4} sticky>
+        <Popover.Positioner
+          {...stylex.props(menuStyles.positioner)}
+          side="right"
+          align="start"
+          sideOffset={4}
+          sticky
+        >
           <Popover.Popup {...stylex.props(menuStyles.popup, styles.models)} aria-label={label}>
             {options.map((model) => (
               <label key={model} {...stylex.props(menuStyles.item, styles.check)}>
@@ -198,15 +226,30 @@ const LabelFilter = observer(function LabelFilter({
 
   return (
     <Popover.Root open={open} onOpenChange={onOpen}>
-      <Popover.Trigger {...stylex.props(menuStyles.item, styles.submenu, focusRing.ring)} openOnHover>
+      <Popover.Trigger
+        {...stylex.props(menuStyles.item, styles.submenu, focusRing.ring)}
+        openOnHover
+      >
         <Tag size={ICON} />
         {PhotoDetailStrings.labels()}
         {selected.length > 0 && <span {...stylex.props(menuStyles.badge)}>{selected.length}</span>}
-        <ChevronRight size={ICON} {...stylex.props(styles.caret, selected.length === 0 && styles.caretAlone)} />
+        <ChevronRight
+          size={ICON}
+          {...stylex.props(styles.caret, selected.length === 0 && styles.caretAlone)}
+        />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner {...stylex.props(menuStyles.positioner)} side="right" align="start" sideOffset={4} sticky>
-          <Popover.Popup {...stylex.props(menuStyles.popup, styles.models)} aria-label={PhotoDetailStrings.labels()}>
+        <Popover.Positioner
+          {...stylex.props(menuStyles.positioner)}
+          side="right"
+          align="start"
+          sideOffset={4}
+          sticky
+        >
+          <Popover.Popup
+            {...stylex.props(menuStyles.popup, styles.models)}
+            aria-label={PhotoDetailStrings.labels()}
+          >
             <button
               type="button"
               {...stylex.props(menuStyles.item, styles.check, styles.action, focusRing.ring)}
@@ -222,15 +265,23 @@ const LabelFilter = observer(function LabelFilter({
               const offered = labelsStore.labelsOf(libraryId);
               if (offered.length === 0) return null;
               return (
-                <Section key={libraryId} label={grouped ? librariesStore.byId.get(libraryId)?.name : undefined}>
+                <Section
+                  key={libraryId}
+                  label={grouped ? librariesStore.byId.get(libraryId)?.name : undefined}
+                >
                   {offered.map((label) => (
                     <label key={label.id} {...stylex.props(menuStyles.item, styles.check)}>
                       <input
                         type="checkbox"
                         checked={selected.includes(label.id)}
-                        onChange={(event) => void photos.toggleLabelFilter(label.id, event.target.checked)}
+                        onChange={(event) =>
+                          void photos.toggleLabelFilter(label.id, event.target.checked)
+                        }
                       />
-                      <span {...stylex.props(menuStyles.dot, styles.swatch)} style={{ backgroundColor: label.colour }} />
+                      <span
+                        {...stylex.props(menuStyles.dot, styles.swatch)}
+                        style={{ backgroundColor: label.colour }}
+                      />
                       {label.name}
                     </label>
                   ))}
@@ -269,7 +320,9 @@ export const GridFilterMenu = observer(function GridFilterMenu(): JSX.Element {
       onOpenChange={setPanelOpen}
       active={count > 0}
       iconOnly
-      label={count > 0 ? GridControlsStrings.filtersWithCount(count) : GridControlsStrings.filters()}
+      label={
+        count > 0 ? GridControlsStrings.filtersWithCount(count) : GridControlsStrings.filters()
+      }
       trigger={<Filter size={ICON} />}
       badge={count > 0 ? count : undefined}
     >
@@ -283,7 +336,9 @@ export const GridFilterMenu = observer(function GridFilterMenu(): JSX.Element {
                   type="checkbox"
                   checked={on.includes(option.value)}
                   onChange={(event) => {
-                    const next = event.target.checked ? [...on, option.value] : on.filter((k) => k !== option.value);
+                    const next = event.target.checked
+                      ? [...on, option.value]
+                      : on.filter((k) => k !== option.value);
                     void photos.setFilters(withCustom(f, next));
                   }}
                 />

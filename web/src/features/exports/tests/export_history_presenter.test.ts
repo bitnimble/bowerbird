@@ -156,7 +156,12 @@ test('showing a file in its folder is asked of the shell, and only offered there
 
   const asked: { command: string; args: unknown }[] = [];
   (globalThis as { __TAURI__?: unknown }).__TAURI__ = {
-    core: { invoke: (command: string, args: unknown) => { asked.push({ command, args }); return Promise.resolve(); } },
+    core: {
+      invoke: (command: string, args: unknown) => {
+        asked.push({ command, args });
+        return Promise.resolve();
+      },
+    },
   };
 
   expect(presenter.canReveal).toBe(true);

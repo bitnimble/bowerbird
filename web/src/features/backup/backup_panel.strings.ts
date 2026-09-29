@@ -4,7 +4,8 @@ export const BackupStrings = {
   folderLabel: () => 'Backup folder',
   folderPlaceholder: () => '/Volumes/NAS/Photos',
   confirmFolder: () => 'Use this backup folder?',
-  confirmFolderBody: (path: string) => `Confirm that ${path} is the backup folder you want to use for this library.`,
+  confirmFolderBody: (path: string) =>
+    `Confirm that ${path} is the backup folder you want to use for this library.`,
   useFolder: () => 'Use folder',
   backingUp: () => 'Backing up…',
   operationBusy: () => 'Wait for the backup operation to finish.',
@@ -19,13 +20,18 @@ export const BackupStrings = {
   removeWithoutFetching: () => 'Remove without fetching',
   fetching: () => 'Restoring…',
   preparingFetch: () => 'Finding originals to restore…',
-  fetchedOf: (done: number, total: number) => `${done} of ${total} ${total === 1 ? 'original' : 'originals'} restored`,
+  fetchedOf: (done: number, total: number) =>
+    `${done} of ${total} ${total === 1 ? 'original' : 'originals'} restored`,
   fetchingFile: (path: string, percent: number) => `${path} · ${percent}%`,
-  restoreFailed: (count: number) => `We couldn't restore ${count} ${count === 1 ? 'original' : 'originals'}.`,
-  restorePaused: (count: number) => `Restoring ${count} ${count === 1 ? 'original' : 'originals'} is paused.`,
-  restoreCancelled: (count: number) => `Restoring ${count} ${count === 1 ? 'original' : 'originals'} was cancelled.`,
+  restoreFailed: (count: number) =>
+    `We couldn't restore ${count} ${count === 1 ? 'original' : 'originals'}.`,
+  restorePaused: (count: number) =>
+    `Restoring ${count} ${count === 1 ? 'original' : 'originals'} is paused.`,
+  restoreCancelled: (count: number) =>
+    `Restoring ${count} ${count === 1 ? 'original' : 'originals'} was cancelled.`,
   storageLimit: () => 'Local storage limit',
   gigabytes: () => 'GB',
-  storageLimitHint: () => 'Above this limit, local copies used least recently can be removed after their backup copies are checked.',
+  storageLimitHint: () =>
+    'Above this limit, local copies used least recently can be removed after their backup copies are checked.',
   storageLimitReadOnly: () => "Read-only libraries can't remove local originals.",
 };

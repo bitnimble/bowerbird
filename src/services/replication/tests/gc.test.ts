@@ -84,7 +84,9 @@ describe('tombstone GC', () => {
     // with a vector that covers none of the server's work.
     const phone = makePeer('phone');
     paired(server, laptop, phone);
-    phone.db.query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?').run('Phone trip', stamp(phone.db), LIB);
+    phone.db
+      .query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?')
+      .run('Phone trip', stamp(phone.db), LIB);
     pull(server, phone);
     replicate(laptop, server);
 
@@ -102,7 +104,9 @@ describe('tombstone GC', () => {
     seed(server);
     const laptop = makePeer('laptop');
     const phone = makePeer('phone');
-    phone.db.query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?').run('Phone trip', stamp(phone.db), LIB);
+    phone.db
+      .query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?')
+      .run('Phone trip', stamp(phone.db), LIB);
     pull(server, phone);
     replicate(laptop, server);
 
@@ -142,7 +146,7 @@ describe('tombstone GC', () => {
     expect(collectTombstones(server.db, LIB)).toBe(1);
   });
 
-  it('retracts a forgotten peer\'s claims on the originals, and says what only it holds', () => {
+  it("retracts a forgotten peer's claims on the originals, and says what only it holds", () => {
     const server = makePeer('server');
     seed(server);
     const laptop = makePeer('laptop');
@@ -154,7 +158,9 @@ describe('tombstone GC', () => {
     // server holds p2 as well.
     for (const photo of ['p1', 'p2']) {
       server.db
-        .query('INSERT INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)')
+        .query(
+          'INSERT INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)',
+        )
         .run(LIB, photo, departing, stamp(server.db));
     }
     locations.record(LIB, 'p2');

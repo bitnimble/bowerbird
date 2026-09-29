@@ -15,7 +15,13 @@ import { NothingSchema, request } from './request';
 // Backing a library's originals up to a folder (§14).
 export const backupApi = {
   list: (): Promise<{ backups: BackupStatus[] }> =>
-    request(BackupStatusesSchema, 'GET', route(PathSegment.api(), PathSegment.backup()), undefined, { activity: 'background' }),
+    request(
+      BackupStatusesSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.backup()),
+      undefined,
+      { activity: 'background' },
+    ),
   setFolder: (libraryId: string, path: string): Promise<BackupStatus> =>
     request(
       BackupStatusSchema,
@@ -47,5 +53,9 @@ export const backupApi = {
     ),
   // Copies what the folder is owed and then culls, so it is minutes rather than seconds.
   run: (libraryId: string): Promise<BackupRunResponse> =>
-    request(BackupRunResponseSchema, 'POST', route(PathSegment.api(), PathSegment.backup(), libraryId, PathSegment.run())),
+    request(
+      BackupRunResponseSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.backup(), libraryId, PathSegment.run()),
+    ),
 };

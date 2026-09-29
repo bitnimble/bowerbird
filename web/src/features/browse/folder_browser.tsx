@@ -131,7 +131,7 @@ export const FolderBrowser = observer(function FolderBrowser({
     if (root.trim() === '' || browser.store.loading || confirming) return;
     setConfirming(true);
     try {
-      if (browser.store.listing?.path !== root && !await browser.presenter.open(root)) return;
+      if (browser.store.listing?.path !== root && !(await browser.presenter.open(root))) return;
       if (mine !== opening.current) return;
       const listing = browser.store.listing;
       if (listing == null) return;
@@ -148,10 +148,22 @@ export const FolderBrowser = observer(function FolderBrowser({
         <Folder size={ICON} />
         {FolderBrowserStrings.chooseFolder()}
       </Button>
-      {store.selectedPath !== '' && <Text variant="mono" as="p" style={styles.path}>{store.selectedPath}</Text>}
-      {store.error != null && <Text variant="mono" tone="error">{store.error}</Text>}
+      {store.selectedPath !== '' && (
+        <Text variant="mono" as="p" style={styles.path}>
+          {store.selectedPath}
+        </Text>
+      )}
+      {store.error != null && (
+        <Text variant="mono" tone="error">
+          {store.error}
+        </Text>
+      )}
       {!presenter.native && (
-        <Modal open={choosing} onOpenChange={(next) => !next && close()} title={FolderBrowserStrings.chooseFolder()}>
+        <Modal
+          open={choosing}
+          onOpenChange={(next) => !next && close()}
+          title={FolderBrowserStrings.chooseFolder()}
+        >
           <DialogBody height="capped">
             <FolderTree
               store={browser.store}
@@ -164,7 +176,11 @@ export const FolderBrowser = observer(function FolderBrowser({
             />
             <DialogActions>
               <Button onClick={close}>{ModalStrings.cancel()}</Button>
-              <Button variant="primary" disabled={path.trim() === '' || browser.store.loading} onClick={() => void choose()}>
+              <Button
+                variant="primary"
+                disabled={path.trim() === '' || browser.store.loading}
+                onClick={() => void choose()}
+              >
                 {FolderBrowserStrings.chooseFolder()}
               </Button>
             </DialogActions>
@@ -280,7 +296,9 @@ const FolderTree = observer(function FolderTree({
       )}
       <div {...stylex.props(styles.list)}>
         {store.error != null && <Text variant="mono">{store.error}</Text>}
-        {listing?.directories.length === 0 && <Text variant="muted">{FolderBrowserStrings.noFolders()}</Text>}
+        {listing?.directories.length === 0 && (
+          <Text variant="muted">{FolderBrowserStrings.noFolders()}</Text>
+        )}
         {listing?.directories.map((directory) => (
           <button
             key={directory.path}

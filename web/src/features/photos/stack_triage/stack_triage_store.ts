@@ -74,7 +74,10 @@ export class StackTriageStore {
   // entered from, read off the viewer's run at entry and stored with the session.
   // Handing these to a range gives the stack back in the collection's own order,
   // so nothing here has to know which end of that order is "after".
-  @observable.ref accessor bounds: { from: string | null; to: string | null } = { from: null, to: null };
+  @observable.ref accessor bounds: { from: string | null; to: string | null } = {
+    from: null,
+    to: null,
+  };
   /** Photos whose triage write did not land. Reported rather than compensated (§20.2). */
   @observable accessor failed = new Set<string>();
   @observable accessor loadError: string | null = null;

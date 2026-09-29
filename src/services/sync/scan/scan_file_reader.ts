@@ -38,7 +38,6 @@ export class ScanFileReader {
     private readonly scanConcurrency: () => number,
   ) {}
 
-
   // Stats each file and opens/hashes ONLY the ones that are new or whose mtime+size
   // changed vs the stored record (§9.1). Unchanged files are never opened, so a
   // no-op scan does zero decoding. Shared by the full and scoped paths.
@@ -120,7 +119,11 @@ export class ScanFileReader {
     // an unchanged file's "read" is the null that stands for one that never happened.
     const unchanged = (file: Scanned): boolean => {
       const record = dbByPath.get(file.relPath);
-      return record != null && record.date_updated === file.stats.mtime.toISOString() && record.file_size === file.stats.size;
+      return (
+        record != null &&
+        record.date_updated === file.stats.mtime.toISOString() &&
+        record.file_size === file.stats.size
+      );
     };
     // The denominator before the first read rather than with the first result: reads are
     // started ahead of the results being used, so a strip that waited for one would show

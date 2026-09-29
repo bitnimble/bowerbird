@@ -24,11 +24,20 @@ import { NothingSchema, request } from './request';
 export const replicationApi = {
   // Replication (docs/replication.md §6.5, §10): the peers a synced library
   // replicates with, and what this device keeps of it.
-  listPeers: (libraryId: string, activity: RequestActivity = 'interactive'): Promise<PeersResponse> =>
+  listPeers: (
+    libraryId: string,
+    activity: RequestActivity = 'interactive',
+  ): Promise<PeersResponse> =>
     request(
       PeersResponseSchema,
       'GET',
-      route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.peers()),
+      route(
+        PathSegment.api(),
+        PathSegment.replication(),
+        PathSegment.libraries(),
+        libraryId,
+        PathSegment.peers(),
+      ),
       undefined,
       { activity },
     ),
@@ -49,14 +58,29 @@ export const replicationApi = {
     request(
       SyncOriginalsResponseSchema,
       'PATCH',
-      route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.originals()),
+      route(
+        PathSegment.api(),
+        PathSegment.replication(),
+        PathSegment.libraries(),
+        libraryId,
+        PathSegment.originals(),
+      ),
       SyncOriginalsRequestSchema.parse({ sync_originals: syncOriginals }),
     ),
-  setAutoTransferOriginals: (libraryId: string, autoTransfer: boolean): Promise<{ cancelled: number }> =>
+  setAutoTransferOriginals: (
+    libraryId: string,
+    autoTransfer: boolean,
+  ): Promise<{ cancelled: number }> =>
     request(
       SyncOriginalsResponseSchema,
       'PATCH',
-      route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.originals()),
+      route(
+        PathSegment.api(),
+        PathSegment.replication(),
+        PathSegment.libraries(),
+        libraryId,
+        PathSegment.originals(),
+      ),
       SyncOriginalsRequestSchema.parse({ auto_transfer_originals: autoTransfer }),
     ),
   // This device joining somebody else's library (§9.1). Browsing registers
@@ -66,7 +90,12 @@ export const replicationApi = {
     request(
       BrowsedRemoteSchema,
       'POST',
-      route(PathSegment.api(), PathSegment.replication(), PathSegment.replicas(), PathSegment.browse()),
+      route(
+        PathSegment.api(),
+        PathSegment.replication(),
+        PathSegment.replicas(),
+        PathSegment.browse(),
+      ),
       BrowseRemoteRequestSchema.parse({ address }),
     ),
   addReplica: (body: AddReplicaRequest): Promise<ReplicaSummary> =>
@@ -80,10 +109,20 @@ export const replicationApi = {
     request(
       ReplicateResultSchema,
       'POST',
-      route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.replicate()),
+      route(
+        PathSegment.api(),
+        PathSegment.replication(),
+        PathSegment.libraries(),
+        libraryId,
+        PathSegment.replicate(),
+      ),
     ),
   deviceName: (): Promise<DeviceName> =>
-    request(DeviceNameSchema, 'GET', route(PathSegment.api(), PathSegment.replication(), PathSegment.device())),
+    request(
+      DeviceNameSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.replication(), PathSegment.device()),
+    ),
   setDeviceName: (name: string): Promise<DeviceName> =>
     request(
       DeviceNameSchema,
@@ -111,6 +150,13 @@ export const replicationApi = {
     request(
       NothingSchema,
       'DELETE',
-      route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.peers(), peerId),
+      route(
+        PathSegment.api(),
+        PathSegment.replication(),
+        PathSegment.libraries(),
+        libraryId,
+        PathSegment.peers(),
+        peerId,
+      ),
     ),
 };

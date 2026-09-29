@@ -180,7 +180,11 @@ export const CollectionList = observer(function CollectionList({
         role="list"
         aria-label={CollectionListStrings.rowsLabel(store.rows.length)}
       >
-        <div {...stylex.props(styles.content)} role="presentation" style={{ height: store.scrollHeight }}>
+        <div
+          {...stylex.props(styles.content)}
+          role="presentation"
+          style={{ height: store.scrollHeight }}
+        >
           <div
             {...stylex.props(styles.window)}
             role="presentation"
@@ -233,7 +237,8 @@ const CollectionListKeys = observer(function CollectionListKeys({
 
       // Menus portal outside the list; the sidebar and the view control keep their
       // own arrows. Only once the list has focus do these keys mean the cursor.
-      const fromList = target == null || target === document.body || scroller.current?.contains(target) === true;
+      const fromList =
+        target == null || target === document.body || scroller.current?.contains(target) === true;
 
       switch (e.key) {
         case 'ArrowDown':
@@ -323,7 +328,8 @@ const ListRow = observer(function ListRow({
   // a file that is not there yet. Held per photo id rather than as a flag, so a
   // different banner is tried rather than tarred by the last one's failure.
   const [missingBanner, setMissingBanner] = useState<string | null>(null);
-  const banner = row.bannerPhotoId == null || row.bannerPhotoId === missingBanner ? null : row.bannerPhotoId;
+  const banner =
+    row.bannerPhotoId == null || row.bannerPhotoId === missingBanner ? null : row.bannerPhotoId;
   const expanded = store.expanded.has(row.key);
   const editing = store.renamingKey === row.key;
   const cursored = store.cursorKey === row.key;
@@ -342,7 +348,8 @@ const ListRow = observer(function ListRow({
     if (self == null) return;
     const active = document.activeElement;
     if (self.contains(active)) return;
-    if (active != null && active !== document.body && scroller.current?.contains(active) !== true) return;
+    if (active != null && active !== document.body && scroller.current?.contains(active) !== true)
+      return;
     self.focus({ preventScroll: true });
   }, [cursored, store.cursorSeq, scroller, presenter]);
 
@@ -389,7 +396,11 @@ const ListRow = observer(function ListRow({
       {row.expandable ? (
         <Button
           iconOnly
-          aria-label={expanded ? CollectionListStrings.collapse(row.name) : CollectionListStrings.expand(row.name)}
+          aria-label={
+            expanded
+              ? CollectionListStrings.collapse(row.name)
+              : CollectionListStrings.expand(row.name)
+          }
           aria-expanded={expanded}
           onClick={() => presenter.toggleExpanded(row.key)}
         >
@@ -403,10 +414,17 @@ const ListRow = observer(function ListRow({
 
       <span {...stylex.props(listStyles.banner, hidden && styles.hidden)} aria-hidden="true">
         {banner == null ? (
-          <span {...stylex.props(listStyles.bannerNone, unclaimed && [styles.unclaimed, styles.unclaimedBanner])}>
-            {row.tone === 'virtual' ?
+          <span
+            {...stylex.props(
+              listStyles.bannerNone,
+              unclaimed && [styles.unclaimed, styles.unclaimedBanner],
+            )}
+          >
+            {row.tone === 'virtual' ? (
               <Images size={ICON} />
-            : row.tone === 'untracked' && <Folder size={ICON} />}
+            ) : (
+              row.tone === 'untracked' && <Folder size={ICON} />
+            )}
           </span>
         ) : (
           <img

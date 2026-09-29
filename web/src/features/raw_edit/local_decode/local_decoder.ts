@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import { type Repair, RepairSchema } from '../../../../../src/schemas/photo_edits';
-import {
-  type Job as RenditionCommand,
-} from '../../../../../src/schemas/jobs';
+import { type Job as RenditionCommand } from '../../../../../src/schemas/jobs';
 import type { EditAdjust, EditGeometry, Proof, Region } from '../edits';
 import type { PrintScene } from '../print/print_scene';
 import {
@@ -46,7 +44,11 @@ export class LocalDecoder {
    * (`job::render_bytes`). The RAW is transferred.
    */
   render(raw: Uint8Array<ArrayBuffer>, job: RenditionCommand): Promise<Uint8Array<ArrayBuffer>> {
-    return this.ask(BytesSchema, { kind: 'render', raw, job: JSON.stringify(job), denoiser: job.denoiser }, [raw.buffer]);
+    return this.ask(
+      BytesSchema,
+      { kind: 'render', raw, job: JSON.stringify(job), denoiser: job.denoiser },
+      [raw.buffer],
+    );
   }
 
   /**
@@ -58,7 +60,11 @@ export class LocalDecoder {
    * only these stages and what follows them run a second time - the read, the levels, the
    * conditioning and the particle detection, which are most of an open, were settled above.
    */
-  prepare(request: LocalOpen, mosaic: LocalPrepare, onStage?: (stage: OpenStage) => void): Promise<string> {
+  prepare(
+    request: LocalOpen,
+    mosaic: LocalPrepare,
+    onStage?: (stage: OpenStage) => void,
+  ): Promise<string> {
     return this.ask(
       JsonSchema,
       { kind: 'prepare', request: JSON.stringify(request), mosaic: crossing(mosaic) },
@@ -115,7 +121,9 @@ export class LocalDecoder {
     framed: Uint8Array<ArrayBuffer>,
     asked: [number, number, number, number][],
   ): Promise<string> {
-    return this.ask(JsonSchema, { kind: 'takeTiles', framed, asked: JSON.stringify(asked) }, [framed.buffer]);
+    return this.ask(JsonSchema, { kind: 'takeTiles', framed, asked: JSON.stringify(asked) }, [
+      framed.buffer,
+    ]);
   }
 
   /**
@@ -161,7 +169,10 @@ export class LocalDecoder {
     width: number,
     height: number,
   ): Promise<void> {
-    return this.nothing({ kind: 'attach', which, canvas, width, height }, canvas == null ? [] : [canvas]);
+    return this.nothing(
+      { kind: 'attach', which, canvas, width, height },
+      canvas == null ? [] : [canvas],
+    );
   }
 
   releaseLoupe(): Promise<void> {
@@ -192,7 +203,12 @@ export class LocalDecoder {
    * **`rows` has to be even except on the band that ends the frame**, which is what lets the copy
    * begin on a word: see `HeldRaw::band_into`.
    */
-  bandInto(mosaic: LocalPrepare, top: number, rows: number, frame: [number, number]): Promise<void> {
+  bandInto(
+    mosaic: LocalPrepare,
+    top: number,
+    rows: number,
+    frame: [number, number],
+  ): Promise<void> {
     return this.nothing({ kind: 'bandInto', mosaic: crossing(mosaic), top, rows, frame });
   }
 
@@ -301,7 +317,13 @@ export class LocalDecoder {
    * `region` of the output with `option` drawn in place of `showing`, the fill the frame is drawn
    * with at the loop, as `repairThumbnail` draws: what choosing `option` would show.
    */
-  optionThumbnail(side: number, ev: number | null, region: Region, showing: Repair | null, option: Repair): Promise<Blob> {
+  optionThumbnail(
+    side: number,
+    ev: number | null,
+    region: Region,
+    showing: Repair | null,
+    option: Repair,
+  ): Promise<Blob> {
     return this.ask(BlobSchema, {
       kind: 'optionThumbnail',
       side,

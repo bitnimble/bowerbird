@@ -32,7 +32,7 @@ This review determined the split; §8 records actual costs and remaining work fo
 5. **The prepare worker is one job at a time.** `openComposite` chains them
    (`processing_service.ts:679-713`), so every reader's every zoom would queue behind every other,
    and an HTTP abort cannot cancel a synchronous `bb_prepare_window` already inside `bun:ffi`.
-6. **A 20-110MB buffer has to be *transferred* across the worker boundary**, and
+6. **A 20-110MB buffer has to be _transferred_ across the worker boundary**, and
    `self.postMessage` is typed `(message: ProcessingResult) => void`
    (`processing_worker.ts:28`), whose union carries no bytes.
 7. **`ensureOutputDirs` runs before the kind check** and maps `job.targets`
@@ -44,17 +44,17 @@ This review determined the split; §8 records actual costs and remaining work fo
    field to hand them back through.
 9. **A composite window has no halo.** `keep` is `[0, 0, width, height]` (`composite_tile.rs:766`), and
    `MARGIN = 3` is in the source's own pixels where the gather's four-tap stencil needs two
-   *decoded* ones (`composite_tile.rs:457`), so two adjacent windows clamp differently over their
+   _decoded_ ones (`composite_tile.rs:457`), so two adjacent windows clamp differently over their
    shared boundary.
 10. **A window no source covers is a hard error** (`composite_tile.rs:754`), where a render leaves it as
     the zeros it was allocated with (`composite_job.rs:647-656`). Panning into a hand-held pan's corner
     wedge would fail the panel.
 11. **`region` is in the output's pixels, after geometry** (`raw_edit_store.ts:74-80`), while a
-    window is in the canvas's - and for a panorama the row's `width`/`height` is *already*
+    window is in the canvas's - and for a panorama the row's `width`/`height` is _already_
     `displaySize(canvas, framingEdits(recipe))` (`photos_repository.ts:1492`), so a naive header
     frames the picture twice.
 
-**Whole-canvas backend prepare avoids all eleven.** The held frame *is* the photograph: existing
+**Whole-canvas backend prepare avoids all eleven.** The held frame _is_ the photograph: existing
 draw (`window: None`), `base::pyramid_of`, one whole-picture peak, `as_shot`, levels and match
 from a prepare covering the reference. One window means no seams and unchanged region semantics.
 
@@ -76,14 +76,14 @@ Landed: `composition.rs`, committed as `feat(recipe): a single photograph is a r
 canvas has levels`, with the round-trip, placement and level tests.
 
 `placement` belongs to Part B; Part A neither chooses gathers nor merges orchestrations. It
-landed early to pin Part B's premise: a one-source recipe *is* the photograph.
+landed early to pin Part B's premise: a one-source recipe _is_ the photograph.
 
 ### 1.2 The composite's own analysis, and its sharpen
 
 Today `composite_job::base` reports `analysis: PhotoAnalysis::default()` (`composite_job.rs:702`), `stored:`
 the reference's (`:687-692`, `:704`) and `wb_gains: [1, 1, 1]` (`:714`). Since `job::run` files
-`analysis.filled_from(&stored)` (`job.rs:1326`), a composite's row is filed with the *reference
-frame's* levels and match, and `sharpen_noise_table` (`job.rs:1191-1197`) gets no fit, so the
+`analysis.filled_from(&stored)` (`job.rs:1326`), a composite's row is filed with the _reference
+frame's_ levels and match, and `sharpen_noise_table` (`job.rs:1191-1197`) gets no fit, so the
 deconvolution runs undamped over every panorama.
 
 - `analysis` becomes the composite's own: `from_raw.matched` the union match, `from_raw.noise` and
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn bb_prepare_picture(
 
 - The caller sizes `out` exactly: `width * height * 6 + PREPARE_HEADER_CAP`, both known before the
   call from the level. **No grow-and-retry** - `ffi.rs:23` returns the size needed and
-  `rawshim_job.ts:284` reallocates and *calls again*, which here would prepare the picture twice.
+  `rawshim_job.ts:284` reallocates and _calls again_, which here would prepare the picture twice.
   A short buffer is an error naming the size.
 - `bb_prepare_header_cap()` reports `PREPARE_HEADER_CAP`, checked once on the TS side the way
   `bb_header_size` already is (`rawshim_ops.ts:74-76`).
@@ -174,7 +174,7 @@ row; without read/write plumbing, §1.2's measurements are dropped.
   is the server's: the canvas is the recipe's rather than the row's, so a client asking would be
   asking before it could know, and it would be a second implementation of the arithmetic that
   decides whether the picture fits a texture limit. As planned, the page asked for level 0 always,
-  which routed the *largest* canvases to the arm that fetched them whole.
+  which routed the _largest_ canvases to the arm that fetched them whole.
   `prepare-levels.txt` pins the one copy that remains, which is the size the buffer is allocated
   at.
 - **And `no-store` rather than `immutable`.** The body is tens to a hundred megabytes, so a cache
@@ -194,13 +194,13 @@ row; without read/write plumbing, §1.2's measurements are dropped.
 
 Everything that moves the prepared samples, which is more than the filters:
 
-| In the hash | Because |
-|---|---|
-| denoise luminance and colour, sharpen, defringe, dust | they filter the mosaic and the frame |
-| `grade.white_quantile` | it picks the levels the frame is coded against (`tile.rs:308-310`) |
-| `grade.reference_white_nits` | it is the coding curve's own scale (`base.rs:1464-1479`) |
-| a hash of the recipe | a re-align is a different picture |
-| a hash of each source's analysis blob | the lens the gather uses and the spots the dust corrects come out of it, and an open before the analysis was written prepared without either |
+| In the hash                                           | Because                                                                                                                                      |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| denoise luminance and colour, sharpen, defringe, dust | they filter the mosaic and the frame                                                                                                         |
+| `grade.white_quantile`                                | it picks the levels the frame is coded against (`tile.rs:308-310`)                                                                           |
+| `grade.reference_white_nits`                          | it is the coding curve's own scale (`base.rs:1464-1479`)                                                                                     |
+| a hash of the recipe                                  | a re-align is a different picture                                                                                                            |
+| a hash of each source's analysis blob                 | the lens the gather uses and the spots the dust corrects come out of it, and an open before the analysis was written prepared without either |
 
 The last two prevent stale URL-cache responses after settings changes or first-open measures.
 Share `tileRevision()` (`raw_edit_presenter.ts:771`), which computes this hash one layer up.
@@ -240,7 +240,7 @@ enum Prepare {
 
 - `holdPicture(bytes, request) -> PreparedHeader` is the new entry point: it reads the framing,
   uploads the samples with `Resident::upload`, builds the pyramid with `base::pyramid_of` and the
-  `Drawing` over it, and answers the header. The whole canvas at one level *is* the photograph, so
+  `Drawing` over it, and answers the header. The whole canvas at one level _is_ the photograph, so
   `hold_drawing`'s own peak measurement is the picture's and `draw` takes the `window: None` arm
   it already takes.
 - `bandInto`, `refreshDetail` and `prepare` stay `Frontend`-only and say so: they re-run a held
@@ -260,7 +260,11 @@ enum Prepare {
 `web/src/features/raw_edit/prepare_choice.ts`:
 
 ```ts
-export function preparesOnTheBackend(recipe: StoredRecipe, photo: { width: number; height: number }, client?: Client): boolean
+export function preparesOnTheBackend(
+  recipe: StoredRecipe,
+  photo: { width: number; height: number },
+  client?: Client,
+): boolean;
 ```
 
 True when the recipe is not a single file, or the photograph's area is over `10_000 * 10_000`, or
@@ -361,7 +365,7 @@ No library fixture has a panorama and `web/e2e` has no panorama coverage at all.
 - **Commit the six views** rather than generating them in the e2e setup: a cargo build inside
   Playwright's `beforeAll` is minutes, and six 1280x800 PNGs of a synthetic scene compress small.
 - The spec's own root, with `useLibrary` in `beforeAll`, then `POST /api/panoramas` over the six
-  photo ids. That call aligns *and* builds the composite's grid and full renditions before it
+  photo ids. That call aligns _and_ builds the composite's grid and full renditions before it
   answers (`composites_service.ts:85-125`), and it serialises globally (`:74-83`) - seconds for
   1280x800 PNG sources, and the spec has to await the whole merge rather than just an align.
 - `scripts/dev-panorama.ts` does the same against a dev server and prints the editor URL, which is
@@ -428,7 +432,7 @@ What it took, against §0's findings:
 
 **Still open, and each is a decision rather than an omission.**
 
-- **The gather merge**, which is what a *single file* needs to have levels. Its arm reaches the
+- **The gather merge**, which is what a _single file_ needs to have levels. Its arm reaches the
   sensor through a decode that offers the frame whole or halved and nothing between (§0 finding 1),
   so a window of one is refused by name. `Panorama::of_one` is the route. It brings with it a
   Jacobian out of `composite_gather.slang` - the sharpen's corner variation comes from
@@ -458,6 +462,6 @@ What it took, against §0's findings:
 - Raising `composite_job::MAX_LONG_EDGE` (16384). Above it a panorama has no rendition of that size, so
   a level-0 window of a larger canvas is editor-only and the loupe's "the export's own pixels"
   claim does not hold there. A deliberate decision, not this one.
-- What a temperature slider should *mean* for a blend of differently balanced frames. It is a
+- What a temperature slider should _mean_ for a blend of differently balanced frames. It is a
   grade input (`gpu::Adjust`), so it works at tick speed against the reference's as-shot; whether
   that is the right meaning is a question this does not open.

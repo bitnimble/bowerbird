@@ -48,9 +48,16 @@ self.onmessage = async (event) => {
     // **A composite's is worth as much as a photograph's and costs more to find**: its levels and
     // its colour are measured over every source stacked, so a panorama that filed nothing paid for
     // the whole set again on every render and every open of it.
-    const command = job.kind === 'composite' ? toCompositeCommand(job) : toCommand(job, job.observe
-      ? (analysisCache) => self.postMessage({ kind: 'started', photoId: job.photoId, analysisCache })
-      : undefined);
+    const command =
+      job.kind === 'composite'
+        ? toCompositeCommand(job)
+        : toCommand(
+            job,
+            job.observe
+              ? (analysisCache) =>
+                  self.postMessage({ kind: 'started', photoId: job.photoId, analysisCache })
+              : undefined,
+          );
     const { descriptor, photoAnalysis, composite } =
       job.kind === 'composite'
         ? runJob(command)
@@ -60,7 +67,10 @@ self.onmessage = async (event) => {
     if (photoAnalysis != null) writePhotoAnalysis(job.dataPath, job.photoId, photoAnalysis);
     self.postMessage({ photoId: job.photoId, success: true, descriptor, composite });
   } catch (err) {
-    for (const output of outputsOf(job)) await Bun.file(output).delete().catch(() => {});
+    for (const output of outputsOf(job))
+      await Bun.file(output)
+        .delete()
+        .catch(() => {});
     self.postMessage({ photoId: job.photoId, success: false, error: (err as Error).message });
   }
 };

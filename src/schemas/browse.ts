@@ -9,7 +9,10 @@ export const CreateFolderRequestSchema = z.object({
     .trim()
     .min(1)
     .max(255)
-    .refine((name) => !/[/\\]/.test(name) && name !== '.' && name !== '..', 'a folder name cannot be a path'),
+    .refine(
+      (name) => !/[/\\]/.test(name) && name !== '.' && name !== '..',
+      'a folder name cannot be a path',
+    ),
 });
 export type CreateFolderRequest = z.infer<typeof CreateFolderRequestSchema>;
 

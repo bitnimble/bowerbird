@@ -85,7 +85,12 @@ export const LibraryNav = observer(function LibraryNav(): JSX.Element {
             />
             {replication.hasSyncErrors(library.id) && (
               <SidebarRow
-                to={route(PathSegment.settings(), PathSegment.libraries(), library.id, PathSegment.sync())}
+                to={route(
+                  PathSegment.settings(),
+                  PathSegment.libraries(),
+                  library.id,
+                  PathSegment.sync(),
+                )}
                 icon={TriangleAlert}
                 name={syncTroubleName(replication.outdatedPeerOf(library.id))}
                 tone="warning"
@@ -101,8 +106,8 @@ export const LibraryNav = observer(function LibraryNav(): JSX.Element {
 
 function syncTroubleName(outdated: PairedPeer | null): string {
   if (outdated == null) return LibraryNavStrings.syncErrors();
-  return outdated.outdated === 'this_device' ?
-      LibraryNavStrings.updateThisDevice()
+  return outdated.outdated === 'this_device'
+    ? LibraryNavStrings.updateThisDevice()
     : LibraryNavStrings.updateDevice(outdated.name);
 }
 

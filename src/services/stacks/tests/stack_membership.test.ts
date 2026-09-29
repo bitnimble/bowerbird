@@ -21,10 +21,9 @@ function photo(id: string): void {
 }
 
 function stack(id: string): void {
-  db.query("INSERT INTO stacks (id, library_id, origin, date_created) VALUES (?, ?, 'manual', '2026-01-01')").run(
-    id,
-    LIB,
-  );
+  db.query(
+    "INSERT INTO stacks (id, library_id, origin, date_created) VALUES (?, ?, 'manual', '2026-01-01')",
+  ).run(id, LIB);
 }
 
 /** Every disagreement between the view column and the rows behind it. */
@@ -39,8 +38,15 @@ function drift(): string[] {
   return rows.map((row) => `${row.id}: column ${row.view} vs rows ${row.truth}`);
 }
 
-function stateOf(id: string): { stack_id: string | null; stack_state: string; is_representative: number; stamp_stack: string | null } {
-  return db.query('SELECT stack_id, stack_state, is_representative, stamp_stack FROM photos WHERE id = ?').get(id) as never;
+function stateOf(id: string): {
+  stack_id: string | null;
+  stack_state: string;
+  is_representative: number;
+  stamp_stack: string | null;
+} {
+  return db
+    .query('SELECT stack_id, stack_state, is_representative, stamp_stack FROM photos WHERE id = ?')
+    .get(id) as never;
 }
 
 beforeEach(() => {
@@ -70,7 +76,9 @@ describe('StackMembership', () => {
 
     expect(drift()).toEqual([]);
     expect(stateOf('p1').stack_id).toBe('s2');
-    expect(db.query('SELECT COUNT(*) AS n FROM stack_members WHERE photo_id = ?').get('p1')).toEqual({ n: 1 });
+    expect(
+      db.query('SELECT COUNT(*) AS n FROM stack_members WHERE photo_id = ?').get('p1'),
+    ).toEqual({ n: 1 });
   });
 
   // The stack it left has to be re-ranked *after* it has gone, not before: ranked
@@ -83,12 +91,16 @@ describe('StackMembership', () => {
     // adversarial case rather than a lucky one.
     members.add('s2', ['p3']);
 
-    expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1').get('s1')).toEqual(
-      { n: 1 },
-    );
-    expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1').get('s2')).toEqual(
-      { n: 1 },
-    );
+    expect(
+      db
+        .query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1')
+        .get('s1'),
+    ).toEqual({ n: 1 });
+    expect(
+      db
+        .query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1')
+        .get('s2'),
+    ).toEqual({ n: 1 });
   });
 
   it('clears both when a photograph leaves', () => {
@@ -130,15 +142,19 @@ describe('StackMembership', () => {
   // listing while the total went on counting it.
   it('leaves exactly one member standing for the stack, and every loose photograph standing for itself', () => {
     members.add('s1', ['p1', 'p2', 'p3']);
-    expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1').get('s1')).toEqual(
-      { n: 1 },
-    );
+    expect(
+      db
+        .query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1')
+        .get('s1'),
+    ).toEqual({ n: 1 });
 
     members.remove('s1', ['p1'], false);
     expect(stateOf('p1').is_representative).toBe(1);
-    expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1').get('s1')).toEqual(
-      { n: 1 },
-    );
+    expect(
+      db
+        .query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1')
+        .get('s1'),
+    ).toEqual({ n: 1 });
   });
 
   // The human verdict is what replicates; which stack a photograph landed in is
@@ -157,9 +173,11 @@ describe('StackMembership', () => {
   it('stamps one gesture once, however many photographs it moved', () => {
     members.add('s1', ['p1', 'p2', 'p3']);
 
-    const stamps = (db.query('SELECT DISTINCT stamp_stack FROM photos WHERE stack_id = ?').all('s1') as {
-      stamp_stack: string;
-    }[]).map((row) => row.stamp_stack);
+    const stamps = (
+      db.query('SELECT DISTINCT stamp_stack FROM photos WHERE stack_id = ?').all('s1') as {
+        stamp_stack: string;
+      }[]
+    ).map((row) => row.stamp_stack);
     expect(stamps).toHaveLength(1);
   });
 });

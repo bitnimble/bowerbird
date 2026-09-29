@@ -8,7 +8,15 @@ const { menuSection } = await import('../menu_section');
 
 afterEach(cleanup);
 
-function Menu({ label, action, hotkey = true }: { label: string; action: string; hotkey?: boolean }): JSX.Element {
+function Menu({
+  label,
+  action,
+  hotkey = true,
+}: {
+  label: string;
+  action: string;
+  hotkey?: boolean;
+}): JSX.Element {
   return (
     <OverflowMenu
       hotkey={hotkey}

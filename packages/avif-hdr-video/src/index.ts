@@ -133,7 +133,10 @@ export function install(options: InstallOptions = {}): () => void {
  * The caller owns the URL and should `URL.revokeObjectURL` it once the element showing
  * it is gone; until then the MP4 is held in memory.
  */
-export async function hdrVideoUrl(source: string, fetchOptions?: RequestInit): Promise<string | null> {
+export async function hdrVideoUrl(
+  source: string,
+  fetchOptions?: RequestInit,
+): Promise<string | null> {
   const response = await fetch(source, fetchOptions);
   if (!response.ok) throw new Error(`${source}: ${response.status}`);
   const avif = new Uint8Array(await response.arrayBuffer());
@@ -160,7 +163,10 @@ export function orientationOfAvif(avif: Uint8Array): 0 | 90 | 180 | 270 {
   const meta = findBox(view, 0, avif.byteLength, 'meta');
   if (meta == null) throw new Error('not an AVIF: no meta box');
   const children = meta.body + 4;
-  return orientationOfProperties(view, itemProperties(view, children, meta.end, primaryItem(view, children, meta.end)));
+  return orientationOfProperties(
+    view,
+    itemProperties(view, children, meta.end, primaryItem(view, children, meta.end)),
+  );
 }
 
 /**
@@ -172,7 +178,12 @@ export function contentLightOfAvif(avif: Uint8Array): { maxCll: number; maxFall:
   const meta = findBox(view, 0, avif.byteLength, 'meta');
   if (meta == null) throw new Error('not an AVIF: no meta box');
   const children = meta.body + 4;
-  const properties = itemProperties(view, children, meta.end, primaryItem(view, children, meta.end));
+  const properties = itemProperties(
+    view,
+    children,
+    meta.end,
+    primaryItem(view, children, meta.end),
+  );
   const clli = properties.find((property) => property.type === 'clli');
   if (clli == null || clli.end - clli.body < 4) return null;
   const maxCll = view.getUint16(clli.body);
@@ -199,7 +210,10 @@ export function needsHdrVideo(): boolean {
  * not an HDR AVIF - or a URL that fails, or a frame this cannot carry - is left exactly
  * as the page wrote it.
  */
-async function replace(image: HTMLImageElement, fetchOptions?: RequestInit): Promise<HTMLVideoElement | null> {
+async function replace(
+  image: HTMLImageElement,
+  fetchOptions?: RequestInit,
+): Promise<HTMLVideoElement | null> {
   const source = image.currentSrc || image.src;
   let url: string | null;
   try {
@@ -275,24 +289,38 @@ function describe(avif: Uint8Array): Still {
     height: view.getUint32(ispe.body + 8),
     orientation: orientationOfProperties(view, properties),
     // The nclx payload is 'nclx', primaries, transfer, matrix, then the range bit.
-    transfer: colour == null || fourcc(view, colour.body) !== 'nclx' ? 0 : view.getUint16(colour.body + 6),
+    transfer:
+      colour == null || fourcc(view, colour.body) !== 'nclx' ? 0 : view.getUint16(colour.body + 6),
     // Temporal delimiters are not allowed in an MP4 sample, and AVIF item data opens
     // with one.
     sample: concat(
-      units.filter((obu) => obu.type !== TEMPORAL_DELIMITER).map((obu) => frame.subarray(obu.start, obu.end)),
+      units
+        .filter((obu) => obu.type !== TEMPORAL_DELIMITER)
+        .map((obu) => frame.subarray(obu.start, obu.end)),
     ),
     // The sequence header has to be in the configuration record and not merely in the
     // sample. AVIF leaves it in the item data - the file's own av1C is four bytes with
     // no configuration OBUs at all - and a player that reads only the record then starts
     // its decoder with no colour description, which is the difference between this
     // compositing in HDR and showing flat.
-    configuration: concat([avif.subarray(av1c.body, av1c.end), frame.subarray(header.start, header.end)]),
+    configuration: concat([
+      avif.subarray(av1c.body, av1c.end),
+      frame.subarray(header.start, header.end),
+    ]),
     colour: colour == null ? null : avif.subarray(colour.body, colour.end),
   };
 }
 
 function wrap(still: Still): Uint8Array<ArrayBuffer> {
-  const ftyp = box('ftyp', ascii('isom'), u32(0x200), ascii('isom'), ascii('av01'), ascii('iso2'), ascii('mp41'));
+  const ftyp = box(
+    'ftyp',
+    ascii('isom'),
+    u32(0x200),
+    ascii('isom'),
+    ascii('av01'),
+    ascii('iso2'),
+    ascii('mp41'),
+  );
   const description = box(
     'stsd',
     fullHeader(0, 0),
@@ -407,9 +435,15 @@ function visualSampleEntry(width: number, height: number): Uint8Array {
 }
 
 const UNITY_MATRIX = concat([
-  u32(0x00010000), u32(0), u32(0),
-  u32(0), u32(0x00010000), u32(0),
-  u32(0), u32(0), u32(0x40000000),
+  u32(0x00010000),
+  u32(0),
+  u32(0),
+  u32(0),
+  u32(0x00010000),
+  u32(0),
+  u32(0),
+  u32(0),
+  u32(0x40000000),
 ]);
 
 function orientationOfProperties(view: DataView, properties: Box[]): 0 | 90 | 180 | 270 {
@@ -417,10 +451,14 @@ function orientationOfProperties(view: DataView, properties: Box[]): 0 | 90 | 18
   if (irot == null) return 0;
   if (irot.body >= irot.end) throw new Error('empty irot property');
   switch (view.getUint8(irot.body) & 3) {
-    case 1: return 270;
-    case 2: return 180;
-    case 3: return 90;
-    default: return 0;
+    case 1:
+      return 270;
+    case 2:
+      return 180;
+    case 3:
+      return 90;
+    default:
+      return 0;
   }
 }
 
@@ -430,11 +468,41 @@ function trackMatrix(still: Still): Uint8Array {
   const w = 0x40000000;
   switch (still.orientation) {
     case 90:
-      return concat([u32(0), u32(one), u32(0), u32(minusOne), u32(0), u32(0), u32(still.height * one), u32(0), u32(w)]);
+      return concat([
+        u32(0),
+        u32(one),
+        u32(0),
+        u32(minusOne),
+        u32(0),
+        u32(0),
+        u32(still.height * one),
+        u32(0),
+        u32(w),
+      ]);
     case 180:
-      return concat([u32(minusOne), u32(0), u32(0), u32(0), u32(minusOne), u32(0), u32(still.width * one), u32(still.height * one), u32(w)]);
+      return concat([
+        u32(minusOne),
+        u32(0),
+        u32(0),
+        u32(0),
+        u32(minusOne),
+        u32(0),
+        u32(still.width * one),
+        u32(still.height * one),
+        u32(w),
+      ]);
     case 270:
-      return concat([u32(0), u32(minusOne), u32(0), u32(one), u32(0), u32(0), u32(0), u32(still.width * one), u32(w)]);
+      return concat([
+        u32(0),
+        u32(minusOne),
+        u32(0),
+        u32(one),
+        u32(0),
+        u32(0),
+        u32(0),
+        u32(still.width * one),
+        u32(w),
+      ]);
     default:
       return UNITY_MATRIX;
   }
@@ -444,7 +512,9 @@ function trackMatrix(still: Still): Uint8Array {
 function primaryItem(view: DataView, start: number, end: number): number {
   const pitm = findBox(view, start, end, 'pitm');
   if (pitm == null) return 1;
-  return view.getUint8(pitm.body) === 0 ? view.getUint16(pitm.body + 4) : view.getUint32(pitm.body + 4);
+  return view.getUint8(pitm.body) === 0
+    ? view.getUint16(pitm.body + 4)
+    : view.getUint32(pitm.body + 4);
 }
 
 /** What one item holds, as its `infe` four-character code. */
@@ -465,7 +535,13 @@ function itemType(view: DataView, start: number, end: number, item: number): str
 }
 
 /** The bytes of one item, out of wherever `iloc` says they are. */
-function itemData(view: DataView, start: number, end: number, item: number, file: Uint8Array): Uint8Array {
+function itemData(
+  view: DataView,
+  start: number,
+  end: number,
+  item: number,
+  file: Uint8Array,
+): Uint8Array {
   const iloc = findBox(view, start, end, 'iloc');
   if (iloc == null) throw new Error('not an AVIF: no iloc box');
   const version = view.getUint8(iloc.body);
@@ -503,7 +579,8 @@ function itemData(view: DataView, start: number, end: number, item: number, file
     if (id !== item) continue;
     // 0 is "somewhere in this file", which is what every AVIF an encoder writes uses; 1
     // is the `idat` box and 2 is another file entirely.
-    if (stored !== 0) throw new Error(`the frame is not stored in the file (construction method ${stored})`);
+    if (stored !== 0)
+      throw new Error(`the frame is not stored in the file (construction method ${stored})`);
     return concat(parts);
   }
   throw new Error(`no location for item ${item}`);
@@ -603,7 +680,8 @@ function* boxes(view: DataView, start: number, end: number): Generator<Box> {
     } else if (size === 0) {
       size = end - at;
     }
-    if (size < body - at || at + size > end) throw new Error(`a box at ${at} is ${size} bytes, which does not fit`);
+    if (size < body - at || at + size > end)
+      throw new Error(`a box at ${at} is ${size} bytes, which does not fit`);
     yield { type: fourcc(view, at + 4), body, end: at + size };
     at += size;
   }
@@ -617,7 +695,12 @@ function findBox(view: DataView, start: number, end: number, type: string): Box 
 }
 
 function fourcc(view: DataView, at: number): string {
-  return String.fromCharCode(view.getUint8(at), view.getUint8(at + 1), view.getUint8(at + 2), view.getUint8(at + 3));
+  return String.fromCharCode(
+    view.getUint8(at),
+    view.getUint8(at + 1),
+    view.getUint8(at + 2),
+    view.getUint8(at + 3),
+  );
 }
 
 /** @param size in bytes; ISOBMFF allows 0, 4 and 8 */
@@ -629,7 +712,11 @@ function integer(view: DataView, at: number, size: number): number {
 }
 
 function box(type: string, ...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
-  return concat([u32(8 + parts.reduce((total, part) => total + part.length, 0)), ascii(type), ...parts]);
+  return concat([
+    u32(8 + parts.reduce((total, part) => total + part.length, 0)),
+    ascii(type),
+    ...parts,
+  ]);
 }
 
 function fullHeader(version: number, flags: number): Uint8Array<ArrayBuffer> {
@@ -637,7 +724,12 @@ function fullHeader(version: number, flags: number): Uint8Array<ArrayBuffer> {
 }
 
 function u32(value: number): Uint8Array<ArrayBuffer> {
-  return new Uint8Array([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+  return new Uint8Array([
+    (value >>> 24) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 8) & 0xff,
+    value & 0xff,
+  ]);
 }
 
 function u16(value: number): Uint8Array<ArrayBuffer> {

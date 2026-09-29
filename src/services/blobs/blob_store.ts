@@ -17,7 +17,10 @@ export function stagingDir(library: Pick<LibraryConfiguration, 'root_path'>): st
   return path.join(library.root_path, '.bowerbird-staging');
 }
 
-export function stagePath(library: Pick<LibraryConfiguration, 'root_path'>, photoId: string): string {
+export function stagePath(
+  library: Pick<LibraryConfiguration, 'root_path'>,
+  photoId: string,
+): string {
   return path.join(stagingDir(library), `${photoId}.partial`);
 }
 
@@ -40,7 +43,10 @@ export async function appendToStage(
   await ensureDir(path.dirname(stageFile));
   const staged = stagedSize(stageFile);
   if (staged !== offset) {
-    throw new AppError('CONFLICT', `${path.basename(stageFile)} holds ${staged} staged bytes, not ${offset}`);
+    throw new AppError(
+      'CONFLICT',
+      `${path.basename(stageFile)} holds ${staged} staged bytes, not ${offset}`,
+    );
   }
   const handle = await open(stageFile, 'a').catch(async (error: unknown) => {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
@@ -109,7 +115,11 @@ export type Placement = { placed: true } | { placed: false; occupiedBy: string }
  * would diverge from the replicated path and then replicate the accident (§7.7).
  * Occupied - by anything, tracked or not - means skip, and the caller flags it.
  */
-export async function materialise(library: LibraryConfiguration, filePath: string, stageFile: string): Promise<Placement> {
+export async function materialise(
+  library: LibraryConfiguration,
+  filePath: string,
+  stageFile: string,
+): Promise<Placement> {
   const target = libraryPath(library, filePath);
   // A replicated path is remote input to a disk write (§11.2).
   if (!containsPath(library.root_path, target)) {
@@ -121,7 +131,10 @@ export async function materialise(library: LibraryConfiguration, filePath: strin
   // file taken from somewhere nobody asked about. Staging is under the root (`stagingDir`), so
   // the one legitimate caller passes this too.
   if (!containsPath(library.root_path, stageFile)) {
-    throw new AppError('VALIDATION_ERROR', `refusing to take ${stageFile}: it is outside the library`);
+    throw new AppError(
+      'VALIDATION_ERROR',
+      `refusing to take ${stageFile}: it is outside the library`,
+    );
   }
   await ensureDir(path.dirname(target));
   const taken = occupant(path.dirname(target), path.basename(target));

@@ -28,7 +28,6 @@ const log = new Logger('scan');
 /** Who asked for a run, so an unexplained scan in the log names its own cause. */
 export type ScanTrigger = 'api' | 'watcher' | 'daily' | 'created';
 
-
 export class ScanRunner {
   constructor(
     private readonly photoScan: PhotoScanRepository,
@@ -42,7 +41,9 @@ export class ScanRunner {
     private readonly processing: ProcessingTrigger,
     private readonly sidecars: SidecarImporter,
     private readonly materialise: (libraryId: string) => Promise<number>,
-    private readonly pendingMoves: (libraryId: string) => readonly { photoId: string; wasAt: string }[],
+    private readonly pendingMoves: (
+      libraryId: string,
+    ) => readonly { photoId: string; wasAt: string }[],
     private readonly reconciler: ScanReconciler,
     private readonly fileReader: ScanFileReader,
     private readonly leases: ScanLeases,
@@ -53,7 +54,6 @@ export class ScanRunner {
   private scopeFor(library: Library): LibraryScope {
     return libraryScope(library, this.folderRules.pathsWithRule(library.id, 'excluded'));
   }
-
 
   // A full scan (`changedScope` omitted) walks the whole tree. A scoped scan (from the
   // watcher) reconciles only what changed against its DB rows plus the
@@ -110,7 +110,16 @@ export class ScanRunner {
       const scanned = await libraryMutex.run(libraryId, async () => {
         stopHolding();
         stopHolding = () => {};
-        return this.scanLocked(libraryId, changedScope, scopePaths, owner, token, startedAt, keepLease, tiles);
+        return this.scanLocked(
+          libraryId,
+          changedScope,
+          scopePaths,
+          owner,
+          token,
+          startedAt,
+          keepLease,
+          tiles,
+        );
       });
       scannedStatus = scanned.status;
       processingIds = scanned.processingIds;
@@ -119,7 +128,8 @@ export class ScanRunner {
       // Scan/apply threw (e.g. root unmounted, DB error): reset status so the API
       // doesn't report 'processing' forever. Still our generation here (the lease,
       // released in finally, blocks a newer one), but guard for consistency.
-      if (this.leases.isCurrent(libraryId, token)) this.status.set(libraryId, idleScanStatus(libraryId));
+      if (this.leases.isCurrent(libraryId, token))
+        this.status.set(libraryId, idleScanStatus(libraryId));
       // Stopped mid-scan on a populated library, where the writes are one closing
       // transaction: nothing was applied and the library is simply idle again.
       // Not an error - the caller asked for it. scannedStatus stays null, so no
@@ -129,7 +139,8 @@ export class ScanRunner {
         return idleScanStatus(libraryId);
       }
       // A library deleted mid-scan is a normal end for this run, not a fault.
-      if (err instanceof AppError && err.code === 'NOT_FOUND') log.info('scan abandoned: library deleted', { library: libraryId });
+      if (err instanceof AppError && err.code === 'NOT_FOUND')
+        log.info('scan abandoned: library deleted', { library: libraryId });
       else log.error('scan failed', { library: libraryId, ms: Date.now() - startedAt, err });
       throw err;
     } finally {
@@ -147,7 +158,6 @@ export class ScanRunner {
       }
     }
   }
-
 
   private async scanLocked(
     libraryId: string,
@@ -219,5 +229,4 @@ export class ScanRunner {
       { libraryId, scopePaths, startedAt, tiles, batch, evidence, classified, counts },
     );
   }
-
 }

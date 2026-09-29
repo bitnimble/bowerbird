@@ -28,7 +28,10 @@ fn main() {
     let whole_ms = started.elapsed().as_millis();
     let (width, height) = (cmp1.f_width as usize, cmp1.f_height as usize);
     println!("{width}x{height}, whole decode {whole_ms}ms");
-    println!("{:>10}  {:>8}  {:>8}  {:>7}  {}", "last row", "of frame", "decode", "saved", "matches whole");
+    println!(
+        "{:>10}  {:>8}  {:>8}  {:>7}  {}",
+        "last row", "of frame", "decode", "saved", "matches whole"
+    );
 
     for (num, den) in [(1, 16), (1, 4), (1, 2), (3, 4), (1, 1)] {
         // Inclusive and 0-based, as `decompress_crx_image_rows` takes it, so the whole frame is
@@ -67,7 +70,11 @@ fn mdat_and_cmp1(path: &str) -> Option<(Vec<u8>, Cmp1Box)> {
         .iter()
         .filter_map(|trak| {
             let cmp1 = trak.mdia.minf.stbl.stsd.craw.as_ref()?.cmp1.clone()?;
-            Some((trak.mdia.minf.stbl.co64.as_ref()?.entries[0], trak.mdia.minf.stbl.stsz.sample_sizes[0], cmp1))
+            Some((
+                trak.mdia.minf.stbl.co64.as_ref()?.entries[0],
+                trak.mdia.minf.stbl.stsz.sample_sizes[0],
+                cmp1,
+            ))
         })
         .max_by_key(|(_, _, cmp1)| cmp1.f_width as u64 * cmp1.f_height as u64)?;
     let (offset, size, cmp1) = cr3;

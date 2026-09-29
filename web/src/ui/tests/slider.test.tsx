@@ -9,8 +9,16 @@ const { SliderIsolationContext } = await import('../slider_isolation');
 
 afterEach(cleanup);
 
-function pointer(element: HTMLElement, type: string, options: { id?: number; primary?: boolean; button?: number } = {}): void {
-  const event = new MouseEvent(type, { bubbles: true, button: options.button ?? 0, buttons: type === 'pointerdown' ? 1 : 0 });
+function pointer(
+  element: HTMLElement,
+  type: string,
+  options: { id?: number; primary?: boolean; button?: number } = {},
+): void {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    button: options.button ?? 0,
+    buttons: type === 'pointerdown' ? 1 : 0,
+  });
   Object.defineProperties(event, {
     pointerId: { value: options.id ?? 7 },
     isPrimary: { value: options.primary ?? true },
@@ -44,8 +52,16 @@ function fixture(): {
     ends,
     content: (value = 50, disabled = false) => (
       <SliderIsolationContext.Provider value={{ ...isolation }}>
-        <Slider label="Exposure" value={value} min={0} max={100} step={1} onChange={() => {}}
-          valueText={(at) => `${at}%`} disabled={disabled} />
+        <Slider
+          label="Exposure"
+          value={value}
+          min={0}
+          max={100}
+          step={1}
+          onChange={() => {}}
+          valueText={(at) => `${at}%`}
+          disabled={disabled}
+        />
       </SliderIsolationContext.Provider>
     ),
   };

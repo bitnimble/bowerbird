@@ -28,11 +28,25 @@ describe('FrameArt', () => {
   test('receives every thumbnail in a list, keyed by file', async () => {
     tv.answer = (request, fake) => {
       if (request.request !== 'get_thumbnail_list') return;
-      fake.emit({ event: 'ready_to_use', request_id: request.request_id, conn_info: fake.connInfo() });
+      fake.emit({
+        event: 'ready_to_use',
+        request_id: request.request_id,
+        conn_info: fake.connInfo(),
+      });
     };
     tv.onTransfer = (socket) => {
-      socket.write(frame({ num: 0, total: 2, fileLength: 3, fileID: 'MY_F0001', fileType: 'jpg' }, Buffer.from('abc')));
-      socket.end(frame({ num: 1, total: 2, fileLength: 2, fileID: 'MY_F0002', fileType: 'png' }, Buffer.from('de')));
+      socket.write(
+        frame(
+          { num: 0, total: 2, fileLength: 3, fileID: 'MY_F0001', fileType: 'jpg' },
+          Buffer.from('abc'),
+        ),
+      );
+      socket.end(
+        frame(
+          { num: 1, total: 2, fileLength: 2, fileID: 'MY_F0002', fileType: 'png' },
+          Buffer.from('de'),
+        ),
+      );
     };
 
     const thumbnails = await connect().getThumbnailList(['MY_F0001', 'MY_F0002']);
@@ -46,10 +60,19 @@ describe('FrameArt', () => {
   test('receives a single thumbnail', async () => {
     tv.answer = (request, fake) => {
       if (request.request !== 'get_thumbnail') return;
-      fake.emit({ event: 'ready_to_use', request_id: request.request_id, conn_info: fake.connInfo() });
+      fake.emit({
+        event: 'ready_to_use',
+        request_id: request.request_id,
+        conn_info: fake.connInfo(),
+      });
     };
     tv.onTransfer = (socket) => {
-      socket.end(frame({ num: 0, total: 1, fileLength: 3, fileID: 'MY_F0001', fileType: 'jpg' }, Buffer.from('xyz')));
+      socket.end(
+        frame(
+          { num: 0, total: 1, fileLength: 3, fileID: 'MY_F0001', fileType: 'jpg' },
+          Buffer.from('xyz'),
+        ),
+      );
     };
 
     expect(Buffer.from(await connect().getThumbnail('MY_F0001')).toString()).toBe('xyz');
@@ -58,7 +81,11 @@ describe('FrameArt', () => {
   test('rejects an upload the TV never confirms', async () => {
     tv.answer = (request, fake) => {
       if (request.request !== 'send_image') return;
-      fake.emit({ event: 'ready_to_use', request_id: request.request_id, conn_info: fake.connInfo() });
+      fake.emit({
+        event: 'ready_to_use',
+        request_id: request.request_id,
+        conn_info: fake.connInfo(),
+      });
     };
     tv.onTransfer = (socket) => socket.on('end', () => socket.end());
 
@@ -95,7 +122,8 @@ describe('FrameArt', () => {
 
   test('falls back to the old request name when the new one goes unanswered', async () => {
     tv.answer = (request, fake) => {
-      if (request.request === 'api_version') fake.emit({ request_id: request.request_id, version: '2.03' });
+      if (request.request === 'api_version')
+        fake.emit({ request_id: request.request_id, version: '2.03' });
     };
 
     expect(await connect().getApiVersion()).toBe('2.03');
@@ -106,7 +134,10 @@ describe('FrameArt', () => {
     try {
       await expect(connect().open()).rejects.toBeInstanceOf(UnauthorizedError);
     } finally {
-      tv.handshake = [{ event: 'ms.channel.connect', data: {} }, { event: 'ms.channel.ready', data: {} }];
+      tv.handshake = [
+        { event: 'ms.channel.connect', data: {} },
+        { event: 'ms.channel.ready', data: {} },
+      ];
     }
   });
 });

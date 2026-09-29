@@ -51,7 +51,9 @@ export class AlbumsRepository {
   constructor(private readonly db: Database) {}
 
   insert(album: NewAlbum): void {
-    this.db.query('INSERT INTO albums (id, name, ordering) VALUES (?, ?, ?)').run(album.id, album.name, album.ordering);
+    this.db
+      .query('INSERT INTO albums (id, name, ordering) VALUES (?, ?, ?)')
+      .run(album.id, album.name, album.ordering);
   }
 
   getById(id: string): Album | null {
@@ -101,7 +103,9 @@ export class AlbumsRepository {
 
   // Album IDs a photo belongs to (used by sync move-detection bias, DESIGN §9.3).
   getAlbumIdsForPhoto(photoId: string): string[] {
-    const rows = this.db.query('SELECT album_id FROM album_photos WHERE photo_id = ?').all(photoId) as {
+    const rows = this.db
+      .query('SELECT album_id FROM album_photos WHERE photo_id = ?')
+      .all(photoId) as {
       album_id: string;
     }[];
     return rows.map((r) => r.album_id);

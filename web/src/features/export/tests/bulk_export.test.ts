@@ -6,7 +6,11 @@ import { exportsApi } from '../../../api/exports';
 import { photosApi } from '../../../api/photos';
 import { restoreApiAfterTests } from '../../../test_api';
 import type { ExportOptions } from '../../../../../src/schemas/export';
-import type { QueuedExportsRequest, QueuedPhoto, RecordExportRequest } from '../../../../../src/schemas/exports';
+import type {
+  QueuedExportsRequest,
+  QueuedPhoto,
+  RecordExportRequest,
+} from '../../../../../src/schemas/exports';
 import type { PhotoTarget } from '../../../../../src/schemas/photos';
 import { ExportPresenter } from '../export_presenter';
 import { ExportStore } from '../export_store';
@@ -52,7 +56,10 @@ function queuedPhoto(id: string): QueuedPhoto {
   };
 }
 
-function open(target: PhotoTarget, count: number): { store: ExportStore; presenter: ExportPresenter } {
+function open(
+  target: PhotoTarget,
+  count: number,
+): { store: ExportStore; presenter: ExportPresenter } {
   const store = new ExportStore();
   const presenter = new ExportPresenter(store, sidebar, toasts, () => Promise.resolve(sink));
   presenter.openFor(target, count, { width: 6000, height: 4000 });
@@ -262,7 +269,12 @@ test('a selection is resolved to its photographs before the loop', async () => {
     return Promise.resolve({ photo_ids: ['x', 'y'] });
   };
   const target: PhotoTarget = {
-    selection: { scope: { kind: 'library', id: 'lib' }, filters: {}, ranges: [{ start: 0, end: 1 }], members: [] },
+    selection: {
+      scope: { kind: 'library', id: 'lib' },
+      filters: {},
+      ranges: [{ start: 0, end: 1 }],
+      members: [],
+    },
   };
 
   const counted: number[] = [];
@@ -387,7 +399,8 @@ test('a hidden sidebar shows the run as a progress toast, which stays dismissed 
   const realToasts = new ToastsPresenter(toastsStore);
   const release: (() => void)[] = [];
   const held: ExportSink = {
-    save: (photoId) => new Promise((resolve) => release.push(() => resolve(`/exports/${photoId}.jpg`))),
+    save: (photoId) =>
+      new Promise((resolve) => release.push(() => resolve(`/exports/${photoId}.jpg`))),
   };
   const store = new ExportStore();
   globalThis.localStorage = new MemoryStorage();
@@ -396,7 +409,8 @@ test('a hidden sidebar shows the run as a progress toast, which stays dismissed 
   const presenter = new ExportPresenter(store, hideable, realToasts, () => Promise.resolve(held));
   const messages = (): string[] => toastsStore.toasts.map((toast) => toast.message);
   const progress = (): (number | undefined)[] => toastsStore.toasts.map((toast) => toast.progress);
-  const dismissAll = (): void => toastsStore.toasts.forEach((toast) => realToasts.dismiss(toast.id));
+  const dismissAll = (): void =>
+    toastsStore.toasts.forEach((toast) => realToasts.dismiss(toast.id));
   const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
   sidebarPresenter.toggleOpen();

@@ -11,9 +11,9 @@
 //! silently hands back what it was given is worse than no scrubber, since the reader has been
 //! told the file was cleaned.
 
-use std::collections::HashSet;
 use rawler::formats::bmff::ext_cr3::cr3desc::Cr3DescBox;
 use rawler::formats::bmff::ext_cr3::cr3xpacket::Cr3XpacketBox;
+use std::collections::HashSet;
 
 /// Tags whose values name somebody, somewhere, or one particular camera.
 ///
@@ -80,12 +80,20 @@ struct Block<'a> {
 impl Block<'_> {
     fn short(&self, at: usize) -> Option<u16> {
         let bytes = self.bytes.get(at..at.checked_add(2)?)?.try_into().ok()?;
-        Some(if self.big_endian { u16::from_be_bytes(bytes) } else { u16::from_le_bytes(bytes) })
+        Some(if self.big_endian {
+            u16::from_be_bytes(bytes)
+        } else {
+            u16::from_le_bytes(bytes)
+        })
     }
 
     fn long(&self, at: usize) -> Option<u32> {
         let bytes = self.bytes.get(at..at.checked_add(4)?)?.try_into().ok()?;
-        Some(if self.big_endian { u32::from_be_bytes(bytes) } else { u32::from_le_bytes(bytes) })
+        Some(if self.big_endian {
+            u32::from_be_bytes(bytes)
+        } else {
+            u32::from_le_bytes(bytes)
+        })
     }
 
     fn blank(&mut self, at: usize, len: usize) -> Option<()> {
@@ -131,7 +139,9 @@ fn scrub_block(bytes: &mut [u8], gps_first: bool) -> Option<()> {
         return None;
     }
     let first = block.long(4)? as usize;
-    if first < 8 { return None; }
+    if first < 8 {
+        return None;
+    }
 
     let mut seen = HashSet::new();
     let mut pending = vec![(first, gps_first)];
@@ -155,11 +165,19 @@ fn scrub_block(bytes: &mut [u8], gps_first: bool) -> Option<()> {
             let kind = block.short(at + 2)?;
             let count = block.long(at + 4)? as usize;
             let size = type_size(kind);
-            if size == 0 { return None; }
+            if size == 0 {
+                return None;
+            }
             let len = size.checked_mul(count)?;
             // Four bytes or fewer live in the entry; anything longer is addressed from here.
-            let value_at = if len <= 4 { at + 8 } else { block.long(at + 8)? as usize };
-            if value_at < 8 { return None; }
+            let value_at = if len <= 4 {
+                at + 8
+            } else {
+                block.long(at + 8)? as usize
+            };
+            if value_at < 8 {
+                return None;
+            }
             block.bytes.get(value_at..value_at.checked_add(len)?)?;
 
             if is_gps || IDENTIFYING.contains(&tag) {
@@ -168,11 +186,15 @@ fn scrub_block(bytes: &mut [u8], gps_first: bool) -> Option<()> {
             }
             match tag {
                 EXIF_IFD | INTEROP_IFD | GPS_IFD => {
-                    if !matches!(kind, 4 | 13) || count != 1 { return None; }
+                    if !matches!(kind, 4 | 13) || count != 1 {
+                        return None;
+                    }
                     queue(&mut pending, block.long(value_at)?, tag == GPS_IFD)?;
                 }
                 SUBIFDS => {
-                    if !matches!(kind, 4 | 13) || count > IFD_CEILING { return None; }
+                    if !matches!(kind, 4 | 13) || count > IFD_CEILING {
+                        return None;
+                    }
                     for slot in 0..count {
                         queue(&mut pending, block.long(value_at + slot * 4)?, false)?;
                     }
@@ -224,7 +246,9 @@ fn scrub_app1(bytes: &mut [u8]) -> Result<usize, ()> {
             _ => 0,
         };
         if length < metadata_length + 2 || end > bytes.len() {
-            if metadata_length > 0 { return Err(()); }
+            if metadata_length > 0 {
+                return Err(());
+            }
             at += 2;
             continue;
         }
@@ -269,13 +293,18 @@ fn scrub_bmff(bytes: &mut [u8], from: usize, to: usize, depth: usize) -> Result<
     let mut found = false;
     let mut at = from;
     while at < to {
-        if to - at < 8 { return Err(()); }
-        let declared = u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize;
+        if to - at < 8 {
+            return Err(());
+        }
+        let declared =
+            u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize;
         let kind: [u8; 4] = [bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]];
         let (header, size) = match declared {
             0 => (8, to - at),
             1 => {
-                if to - at < 16 { return Err(()); }
+                if to - at < 16 {
+                    return Err(());
+                }
                 let large = u64::from_be_bytes(bytes[at + 8..at + 16].try_into().map_err(|_| ())?);
                 (16, usize::try_from(large).map_err(|_| ())?)
             }
@@ -298,10 +327,14 @@ fn scrub_bmff(bytes: &mut [u8], from: usize, to: usize, depth: usize) -> Result<
                 found |= scrub_bmff(bytes, at + header, at + size, depth + 1)?;
             }
             b"uuid" => {
-                if size - header < 16 { return Err(()); }
+                if size - header < 16 {
+                    return Err(());
+                }
                 let uuid = &bytes[at + header..at + header + 16];
                 let inner = at + header + 16;
-                if uuid == Cr3XpacketBox::UUID.as_slice() || bytes[inner..at + size].starts_with(b"<?xpacket") {
+                if uuid == Cr3XpacketBox::UUID.as_slice()
+                    || bytes[inner..at + size].starts_with(b"<?xpacket")
+                {
                     bytes[inner..at + size].fill(0);
                 } else if uuid == Cr3DescBox::UUID.as_slice() {
                     found |= scrub_bmff(bytes, inner, at + size, depth + 1)?;
@@ -331,7 +364,9 @@ pub fn scrub_in_place(bytes: &mut [u8]) -> bool {
         }
         Container::Jpeg | Container::Fuji => false,
     };
-    let Ok(previews) = scrub_app1(bytes) else { return false };
+    let Ok(previews) = scrub_app1(bytes) else {
+        return false;
+    };
 
     match kind {
         // Everything a preview has to lose is in an APP1, so one with none is already in the
@@ -387,15 +422,30 @@ mod fixtures {
     fn a_scrubbed_raw_still_says_what_took_it() {
         for path in all() {
             let before = std::fs::read(&path).expect("the fixture reads");
-            let after =
-                scrubbed(&before).unwrap_or_else(|| panic!("{} is a container this reads", path.display()));
+            let after = scrubbed(&before)
+                .unwrap_or_else(|| panic!("{} is a container this reads", path.display()));
             assert_eq!(before.len(), after.len(), "{}", path.display());
 
             let was = read_bytes(&before).expect("the fixture parses");
             let now = read_bytes(&after).expect("and still parses once scrubbed");
-            assert_eq!(name(&was.camera_make), name(&now.camera_make), "{}", path.display());
-            assert_eq!(name(&was.camera_model), name(&now.camera_model), "{}", path.display());
-            assert_eq!(name(&was.lens_model), name(&now.lens_model), "{}", path.display());
+            assert_eq!(
+                name(&was.camera_make),
+                name(&now.camera_make),
+                "{}",
+                path.display()
+            );
+            assert_eq!(
+                name(&was.camera_model),
+                name(&now.camera_model),
+                "{}",
+                path.display()
+            );
+            assert_eq!(
+                name(&was.lens_model),
+                name(&now.lens_model),
+                "{}",
+                path.display()
+            );
             assert_eq!(was.iso, now.iso, "{}", path.display());
             assert_eq!(was.aperture, now.aperture, "{}", path.display());
             assert_eq!(was.timestamp, now.timestamp, "{}", path.display());
@@ -433,7 +483,11 @@ mod fixtures {
                 .unwrap_or_else(|| panic!("{} embeds a container this reads", path.display()));
             assert_eq!(preview.len(), scrubbed.len(), "{}", path.display());
             for (at, (old, new)) in preview.iter().zip(scrubbed.iter()).enumerate() {
-                assert!(old == new || *new == 0, "{} rewrote byte {at}", path.display());
+                assert!(
+                    old == new || *new == 0,
+                    "{} rewrote byte {at}",
+                    path.display()
+                );
             }
         }
     }
@@ -452,8 +506,14 @@ mod fixtures {
     /// which is where an editor writes a creator and a place.
     #[test]
     fn what_each_fixture_has_to_lose() {
-        assert!(blanked(&sony()) > 0, "the Sony carries standard tags worth removing");
-        assert!(blanked(&fuji()) > 0, "and so does the Fuji, in the preview it keeps its EXIF in");
+        assert!(
+            blanked(&sony()) > 0,
+            "the Sony carries standard tags worth removing"
+        );
+        assert!(
+            blanked(&fuji()) > 0,
+            "and so does the Fuji, in the preview it keeps its EXIF in"
+        );
 
         let before = std::fs::read(canon()).expect("the fixture reads");
         let after = scrubbed(&before).expect("a container this reads");
@@ -462,17 +522,33 @@ mod fixtures {
             .position(|window| window == b"<?xpacket")
             .expect("the Canon carries an XMP packet to begin with");
         assert_eq!(&after[at..at + 9], &[0u8; 9], "which goes");
-        let gps = before.windows(4).position(|window| window == b"CMT4").expect("a GPS box");
-        let gps_end = gps - 4 + u32::from_be_bytes(before[gps - 4..gps].try_into().unwrap()) as usize;
+        let gps = before
+            .windows(4)
+            .position(|window| window == b"CMT4")
+            .expect("a GPS box");
+        let gps_end =
+            gps - 4 + u32::from_be_bytes(before[gps - 4..gps].try_into().unwrap()) as usize;
         assert!(gps_end <= at);
-        assert_eq!(before[..gps], after[..gps], "and nothing before the GPS box moves");
-        assert_eq!(before[gps_end..at], after[gps_end..at], "nor between it and the packet");
+        assert_eq!(
+            before[..gps],
+            after[..gps],
+            "and nothing before the GPS box moves"
+        );
+        assert_eq!(
+            before[gps_end..at],
+            after[gps_end..at],
+            "nor between it and the packet"
+        );
     }
 
     fn blanked(path: &std::path::Path) -> usize {
         let before = std::fs::read(path).expect("the fixture reads");
         let after = scrubbed(&before).expect("a container this reads");
-        before.iter().zip(after.iter()).filter(|(old, new)| old != new).count()
+        before
+            .iter()
+            .zip(after.iter())
+            .filter(|(old, new)| old != new)
+            .count()
     }
 }
 
@@ -492,12 +568,13 @@ mod tests {
         bytes[2..4].copy_from_slice(&42u16.to_le_bytes());
         bytes[4..8].copy_from_slice(&8u32.to_le_bytes());
 
-        let entry = |bytes: &mut Vec<u8>, at: usize, tag: u16, kind: u16, count: u32, value: u32| {
-            bytes[at..at + 2].copy_from_slice(&tag.to_le_bytes());
-            bytes[at + 2..at + 4].copy_from_slice(&kind.to_le_bytes());
-            bytes[at + 4..at + 8].copy_from_slice(&count.to_le_bytes());
-            bytes[at + 8..at + 12].copy_from_slice(&value.to_le_bytes());
-        };
+        let entry =
+            |bytes: &mut Vec<u8>, at: usize, tag: u16, kind: u16, count: u32, value: u32| {
+                bytes[at..at + 2].copy_from_slice(&tag.to_le_bytes());
+                bytes[at + 2..at + 4].copy_from_slice(&kind.to_le_bytes());
+                bytes[at + 4..at + 8].copy_from_slice(&count.to_le_bytes());
+                bytes[at + 8..at + 12].copy_from_slice(&value.to_le_bytes());
+            };
 
         bytes[8..10].copy_from_slice(&3u16.to_le_bytes());
         entry(&mut bytes, 10, 0x0110, TYPE_ASCII, 6, 200); // Model
@@ -522,7 +599,11 @@ mod tests {
         let mut bytes = synthetic();
         assert!(scrub_tiff(&mut bytes));
 
-        assert_eq!(&bytes[200..206], b"A7 IV\0", "the model is what a bug report is read for");
+        assert_eq!(
+            &bytes[200..206],
+            b"A7 IV\0",
+            "the model is what a bug report is read for"
+        );
         assert_eq!(&bytes[220..228], &[0u8; 8], "the artist is a name");
     }
 
@@ -531,8 +612,16 @@ mod tests {
         let mut bytes = synthetic();
         assert!(scrub_tiff(&mut bytes));
 
-        assert_eq!(&bytes[400..424], &[0u8; 24], "the coordinates are gone from the file");
-        assert_eq!(u16::from_le_bytes([bytes[300], bytes[301]]), 0, "and the directory is empty");
+        assert_eq!(
+            &bytes[400..424],
+            &[0u8; 24],
+            "the coordinates are gone from the file"
+        );
+        assert_eq!(
+            u16::from_le_bytes([bytes[300], bytes[301]]),
+            0,
+            "and the directory is empty"
+        );
     }
 
     #[test]
@@ -604,9 +693,16 @@ mod tests {
         let cmt4 = file.len() - gps.len();
 
         assert!(scrub_in_place(&mut file));
-        assert_eq!(&file[cmt4 + 400..cmt4 + 424], &[0u8; 24], "the coordinates are gone");
+        assert_eq!(
+            &file[cmt4 + 400..cmt4 + 424],
+            &[0u8; 24],
+            "the coordinates are gone"
+        );
         let entries = u16::from_le_bytes([file[cmt4 + 300], file[cmt4 + 301]]);
-        assert_eq!(entries, 1, "and the root keeps its entry, without which the CR3 will not open");
+        assert_eq!(
+            entries, 1,
+            "and the root keeps its entry, without which the CR3 will not open"
+        );
         assert_eq!(file.len(), 16 + 8 + 2 * 8 + 2 * 512);
     }
 
@@ -623,13 +719,20 @@ mod tests {
             let malformed = boxed(kind, b"unreadable metadata");
             let mut uuid = Cr3DescBox::UUID.to_vec();
             uuid.extend_from_slice(&malformed);
-            for container in [malformed.clone(), boxed(b"moov", &malformed), boxed(b"uuid", &uuid)] {
+            for container in [
+                malformed.clone(),
+                boxed(b"moov", &malformed),
+                boxed(b"uuid", &uuid),
+            ] {
                 let mut file = boxed(b"ftyp", b"crx isom");
                 file.extend(boxed(b"CMT1", &synthetic()));
                 file.extend(container);
                 file.extend(boxed(b"CMT1", &synthetic()));
-                assert!(scrubbed(&file).is_none(),
-                    "malformed {} was returned as clean", String::from_utf8_lossy(kind));
+                assert!(
+                    scrubbed(&file).is_none(),
+                    "malformed {} was returned as clean",
+                    String::from_utf8_lossy(kind)
+                );
             }
         }
     }
@@ -641,11 +744,18 @@ mod tests {
             malformed.extend_from_slice(b"CMT4");
             let mut uuid = Cr3DescBox::UUID.to_vec();
             uuid.extend_from_slice(&malformed);
-            for container in [malformed.clone(), boxed(b"moov", &malformed), boxed(b"uuid", &uuid)] {
+            for container in [
+                malformed.clone(),
+                boxed(b"moov", &malformed),
+                boxed(b"uuid", &uuid),
+            ] {
                 let mut file = boxed(b"ftyp", b"crx isom");
                 file.extend(boxed(b"CMT1", &synthetic()));
                 file.extend(container);
-                assert!(scrubbed(&file).is_none(), "a box length of {declared} was accepted");
+                assert!(
+                    scrubbed(&file).is_none(),
+                    "a box length of {declared} was accepted"
+                );
             }
         }
     }
@@ -667,11 +777,17 @@ mod tests {
         for (at, value) in malformed {
             let mut bytes = synthetic();
             bytes[at..at + value.len()].copy_from_slice(&value);
-            assert!(!scrub_tiff(&mut bytes.clone()), "accepted malformed TIFF field at {at}");
+            assert!(
+                !scrub_tiff(&mut bytes.clone()),
+                "accepted malformed TIFF field at {at}"
+            );
             let mut file = boxed(b"ftyp", b"crx isom");
             file.extend(boxed(b"CMT1", &synthetic()));
             file.extend(boxed(b"CMT2", &bytes));
-            assert!(scrubbed(&file).is_none(), "accepted nested malformed TIFF field at {at}");
+            assert!(
+                scrubbed(&file).is_none(),
+                "accepted nested malformed TIFF field at {at}"
+            );
         }
     }
 
@@ -727,8 +843,16 @@ mod tests {
 
         let scrubbed = scrubbed(&jpeg).expect("a JPEG is a container this reads");
 
-        assert_eq!(&scrubbed[APP1_AT + 220..APP1_AT + 228], &[0u8; 8], "the artist goes");
-        assert_eq!(&scrubbed[APP1_AT + 200..APP1_AT + 206], b"A7 IV\0", "the camera stays");
+        assert_eq!(
+            &scrubbed[APP1_AT + 220..APP1_AT + 228],
+            &[0u8; 8],
+            "the artist goes"
+        );
+        assert_eq!(
+            &scrubbed[APP1_AT + 200..APP1_AT + 206],
+            b"A7 IV\0",
+            "the camera stays"
+        );
     }
 
     /// Where the TIFF block lands in whatever `with_exif` wrapped it in: two bytes of marker,
@@ -761,9 +885,19 @@ mod tests {
 
         let scrubbed = scrubbed(&jpeg).expect("a JPEG is a container this reads");
 
-        assert_eq!(&scrubbed[xmp_at..xmp_at + packet.len()], &vec![0u8; packet.len()][..]);
-        assert_eq!(&scrubbed[iptc_at..iptc_at + block.len()], &vec![0u8; block.len()][..]);
-        assert_eq!(&scrubbed[APP1_AT + 200..APP1_AT + 206], b"A7 IV\0", "the camera still stays");
+        assert_eq!(
+            &scrubbed[xmp_at..xmp_at + packet.len()],
+            &vec![0u8; packet.len()][..]
+        );
+        assert_eq!(
+            &scrubbed[iptc_at..iptc_at + block.len()],
+            &vec![0u8; block.len()][..]
+        );
+        assert_eq!(
+            &scrubbed[APP1_AT + 200..APP1_AT + 206],
+            b"A7 IV\0",
+            "the camera still stays"
+        );
     }
 
     fn segment(marker: u8, signature: &[u8], payload: &[u8]) -> Vec<u8> {
@@ -783,6 +917,10 @@ mod tests {
         file.extend_from_slice(&with_exif(&synthetic())[2..]);
 
         let scrubbed = scrubbed(&file).expect("a TIFF is a container this reads");
-        assert_eq!(&scrubbed[at + 220..at + 228], &[0u8; 8], "the preview's own artist goes too");
+        assert_eq!(
+            &scrubbed[at + 220..at + 228],
+            &[0u8; 8],
+            "the preview's own artist goes too"
+        );
     }
 }

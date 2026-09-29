@@ -5,7 +5,11 @@ import { runInAction } from 'mobx';
 import { useEffect } from 'react';
 import { type Album } from '../../../../../../src/schemas/albums';
 import { type Library } from '../../../../../../src/schemas/libraries';
-import { type PhotoListResponse, type PhotoSummary, type PhotoTarget } from '../../../../../../src/schemas/photos';
+import {
+  type PhotoListResponse,
+  type PhotoSummary,
+  type PhotoTarget,
+} from '../../../../../../src/schemas/photos';
 import { type Shoot } from '../../../../../../src/schemas/shoots';
 import { albumsApi } from '../../../../api/albums';
 import { librariesApi } from '../../../../api/libraries';
@@ -71,7 +75,9 @@ function Seed({ onAlbum }: { onAlbum: boolean }): null {
       libraries.libraries = [{ id: 'lib', name: 'Reef', read_only: false } as Library];
       shoots.libraryId = 'lib';
       shoots.shoots = [DAWN];
-      listing.source = onAlbum ? { kind: 'album', albumId: REEF_WALK.id } : { kind: 'library', libraryId: 'lib' };
+      listing.source = onAlbum
+        ? { kind: 'album', albumId: REEF_WALK.id }
+        : { kind: 'library', libraryId: 'lib' };
       listing.total = 1;
       listing.rows = new Map([[0, { id: 'p1', shoot_id: null, stack_size: 1 } as PhotoSummary]]);
       marks.selection = SelectionRanges.of(0, 0);
@@ -103,7 +109,12 @@ async function openSubmenu(submenu: string, onAlbum = false): Promise<void> {
   }
 }
 
-async function createFrom(submenu: string, row: string, name: string, submit: string): Promise<void> {
+async function createFrom(
+  submenu: string,
+  row: string,
+  name: string,
+  submit: string,
+): Promise<void> {
   await openSubmenu(submenu);
   await act(async () => {
     fireEvent.click(screen.getByRole('menuitem', { name: row }));
@@ -124,7 +135,9 @@ test('a new album is made and the selection added to it, without leaving the gri
 
 test('a new shoot is made at the library root and the selection filed into it', async () => {
   await createFrom('Add to shoot', 'Add to new shoot…', 'Low tide', 'Create shoot');
-  expect(created).toEqual([{ library_id: 'lib', parent_path: '', name: 'Low tide', ordering: 'taken_asc' }]);
+  expect(created).toEqual([
+    { library_id: 'lib', parent_path: '', name: 'Low tide', ordering: 'taken_asc' },
+  ]);
   expect(added.map(({ kind, id }) => ({ kind, id }))).toEqual([{ kind: 'shoot', id: 'new-shoot' }]);
   expect(pathname).toBe('/libraries/lib');
 });

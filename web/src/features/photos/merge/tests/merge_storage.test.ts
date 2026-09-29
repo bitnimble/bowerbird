@@ -1,6 +1,11 @@
 import { beforeEach, expect, test } from 'bun:test';
 import { MemoryStorage } from '../../../../test_storage';
-import { clearMergeSession, loadMergeSession, saveMergeSession, type StoredMergeSession } from '../merge_storage';
+import {
+  clearMergeSession,
+  loadMergeSession,
+  saveMergeSession,
+  type StoredMergeSession,
+} from '../merge_storage';
 
 const key = 'job1';
 
@@ -20,7 +25,10 @@ test('round-trips', () => {
 test('round-trips a feather, and reads one that is not a number as none', () => {
   saveMergeSession(key, { ...session(), feather: 0.02 });
   expect(loadMergeSession(key)?.feather).toBe(0.02);
-  sessionStorage.setItem(`bowerbird.merge.${key}`, JSON.stringify({ ...session(), feather: 'wide' }));
+  sessionStorage.setItem(
+    `bowerbird.merge.${key}`,
+    JSON.stringify({ ...session(), feather: 'wide' }),
+  );
   expect(loadMergeSession(key)).toEqual(session());
 });
 
@@ -30,7 +38,10 @@ test('a session with no seeds reads as none seeded', () => {
 });
 
 test('a seed that is not a rectangle discards the session', () => {
-  sessionStorage.setItem(`bowerbird.merge.${key}`, JSON.stringify({ picks: [0], base: 0, seeds: [{ x0: 1 }] }));
+  sessionStorage.setItem(
+    `bowerbird.merge.${key}`,
+    JSON.stringify({ picks: [0], base: 0, seeds: [{ x0: 1 }] }),
+  );
   expect(loadMergeSession(key)).toBeNull();
 });
 

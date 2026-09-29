@@ -99,7 +99,9 @@ test('a run of one is the file itself, and a run of several is a line that holds
   await findByText(document.body, 'raw/alone.arw');
   expect(screen.getByText('Exported 3 photos.')).toBeTruthy();
   // Inside the summary rather than beside it, so the run is one row until it is opened.
-  expect(screen.getByText('Exported 3 photos.').closest('details')?.textContent).toContain('/exports/p2.jpg');
+  expect(screen.getByText('Exported 3 photos.').closest('details')?.textContent).toContain(
+    '/exports/p2.jpg',
+  );
   // One disclosure, not two: a single file is a row of its own rather than a run of one to
   // open, which every assertion above still holds for if it were wrapped.
   expect(document.querySelectorAll('details')).toHaveLength(1);
@@ -109,7 +111,12 @@ test('a run of one is the file itself, and a run of several is a line that holds
 // A closed run has to say what is in it without opening: a pile of the first few, capped so a
 // run of four hundred is not four hundred requests for tiles nobody has asked to see.
 test('a closed run piles up its first three tiles, and no more', async () => {
-  open([run('r1', [{}, {}, {}, {}, {}].map((each) => ({ ...each, has_thumbnail: true })))]);
+  open([
+    run(
+      'r1',
+      [{}, {}, {}, {}, {}].map((each) => ({ ...each, has_thumbnail: true })),
+    ),
+  ]);
 
   await findByText(document.body, 'Exported 5 photos.');
   const stacked = document.querySelectorAll('summary img');
@@ -155,8 +162,12 @@ test('a thumbnail is the way to the photograph it is of, with a picture or witho
   ]);
 
   await findByText(document.body, 'raw/drawn.arw');
-  expect(screen.getByRole('link', { name: 'Go to raw/drawn.arw' }).getAttribute('href')).toBe(photoPath('drawn', null));
-  expect(screen.getByRole('link', { name: 'Go to raw/blank.arw' }).getAttribute('href')).toBe(photoPath('blank', null));
+  expect(screen.getByRole('link', { name: 'Go to raw/drawn.arw' }).getAttribute('href')).toBe(
+    photoPath('drawn', null),
+  );
+  expect(screen.getByRole('link', { name: 'Go to raw/blank.arw' }).getAttribute('href')).toBe(
+    photoPath('blank', null),
+  );
 });
 
 test('an export whose settings moved nothing does not say it was edited', async () => {
@@ -245,7 +256,11 @@ test('a queue and a history are headed against each other', async () => {
 // The settings the file was written with, not the photograph's current ones - which is the
 // whole reason they are stored per export.
 test('the edits an export carried are listed under its own badge', async () => {
-  open([run('r1', [{ edits: { ...neutralEdits(), contrast: 40, whites: 10, blacks: -10, cropRight: 0.5 } }])]);
+  open([
+    run('r1', [
+      { edits: { ...neutralEdits(), contrast: 40, whites: 10, blacks: -10, cropRight: 0.5 } },
+    ]),
+  ]);
 
   const badge = await findByText(document.body, 'Edits');
   badge.click();

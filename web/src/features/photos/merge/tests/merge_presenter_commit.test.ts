@@ -30,7 +30,11 @@ async function build(): Promise<{ store: MergeStore; presenter: MergePresenter }
   compositesApi.getAssemblyJob = () => Promise.resolve(readyJobFixture());
   saveSeededSession(jobId);
   const store = new MergeStore();
-  const presenter = new MergePresenter(store, new ToastsPresenter(new ToastsStore()), NO_COMPOSITOR);
+  const presenter = new MergePresenter(
+    store,
+    new ToastsPresenter(new ToastsStore()),
+    NO_COMPOSITOR,
+  );
   await presenter.openJob(jobId);
   return { store, presenter };
 }
@@ -89,6 +93,10 @@ test('committing a reopened assembly updates it in place rather than inserting a
 
 test('nothing loaded is nothing to commit', async () => {
   const store = new MergeStore();
-  const presenter = new MergePresenter(store, new ToastsPresenter(new ToastsStore()), NO_COMPOSITOR);
+  const presenter = new MergePresenter(
+    store,
+    new ToastsPresenter(new ToastsStore()),
+    NO_COMPOSITOR,
+  );
   await expect(presenter.commit()).rejects.toThrow('nothing to commit');
 });

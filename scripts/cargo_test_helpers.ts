@@ -14,7 +14,12 @@ export function file(path: string, bytes: number, seconds?: number): string {
   return path;
 }
 
-export function fingerprint(profile: string, hash: string, seconds?: number, asked?: unknown): void {
+export function fingerprint(
+  profile: string,
+  hash: string,
+  seconds?: number,
+  asked?: unknown,
+): void {
   const dir = join(profile, '.fingerprint', `rawshim-${hash}`);
   mkdirSync(dir, { recursive: true });
   if (asked != null) writeFileSync(join(dir, 'lib-rawshim.json'), JSON.stringify(asked));

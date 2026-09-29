@@ -121,11 +121,9 @@ function collapseOverlappingStacks(db: Database, libraryId: string): void {
              ON CONFLICT DO NOTHING`,
           ).run(libraryId, winner.id, row.photo_id, at);
         }
-        db.query('DELETE FROM stack_members WHERE library_id = ? AND stack_id = ? AND photo_id = ?').run(
-          libraryId,
-          stack.id,
-          row.photo_id,
-        );
+        db.query(
+          'DELETE FROM stack_members WHERE library_id = ? AND stack_id = ? AND photo_id = ?',
+        ).run(libraryId, stack.id, row.photo_id);
         tombstone(db, libraryId, 'stack_member', `${stack.id}/${row.photo_id}`, at);
       }
       db.query('DELETE FROM stacks WHERE id = ?').run(stack.id);
@@ -172,7 +170,8 @@ export function mergeLabelsNamedAlike(db: Database, libraryId: string): void {
 
 /** The label another of the same name folds into, if one is here (see `mergeLabelsNamedAlike`). */
 export function labelNamedAlike(db: Database, libraryId: string, labelId: string): string | null {
-  const group = [...labelsByName(db, libraryId).values()].find((ids) => ids.includes(labelId)) ?? [];
+  const group =
+    [...labelsByName(db, libraryId).values()].find((ids) => ids.includes(labelId)) ?? [];
   return group.find((id) => id !== labelId) ?? null;
 }
 
@@ -196,7 +195,13 @@ function labelsByName(db: Database, libraryId: string): Map<string, string[]> {
 }
 
 /** Moves a label's photos onto another, leaving the first on none. */
-export function foldLabel(db: Database, libraryId: string, fromId: string, intoId: string, at: string): void {
+export function foldLabel(
+  db: Database,
+  libraryId: string,
+  fromId: string,
+  intoId: string,
+  at: string,
+): void {
   const rows = db
     .query('SELECT photo_id, stamp FROM photo_labels WHERE library_id = ? AND label_id = ?')
     .all(libraryId, fromId) as { photo_id: string; stamp: string | null }[];
@@ -258,11 +263,13 @@ export function repair(db: Database, libraryId: string): void {
   // Out of a stack a photograph stands for itself, and the listing shows it on
   // that flag alone: left at 0 it would vanish from every listing while the total
   // went on counting it.
-  db.query('UPDATE photos SET is_representative = 1 WHERE library_id = ? AND stack_id IS NULL AND is_representative = 0').run(
-    libraryId,
-  );
+  db.query(
+    'UPDATE photos SET is_representative = 1 WHERE library_id = ? AND stack_id IS NULL AND is_representative = 0',
+  ).run(libraryId);
   const stacks = db
-    .query('SELECT DISTINCT stack_id AS id FROM photos WHERE library_id = ? AND stack_id IS NOT NULL')
+    .query(
+      'SELECT DISTINCT stack_id AS id FROM photos WHERE library_id = ? AND stack_id IS NOT NULL',
+    )
     .all(libraryId) as { id: string }[];
   const members = new StackMembership(db);
   for (const stack of stacks) members.refreshRepresentative(stack.id);

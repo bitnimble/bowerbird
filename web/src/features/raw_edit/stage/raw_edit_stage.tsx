@@ -189,7 +189,11 @@ export const RawEditStage = observer(function RawEditStage({
   // themselves want. Nothing here needs zoom: both tools open fitted, which is the view a crop
   // and a perspective are judged from.
   const tools = still ? null : (
-    <ZoomControl zoom={zoom} variant={toolsInto == null ? 'ghost' : 'default'} stepper={toolsInto == null} />
+    <ZoomControl
+      zoom={zoom}
+      variant={toolsInto == null ? 'ghost' : 'default'}
+      stepper={toolsInto == null}
+    />
   );
 
   useEffect(() => {
@@ -352,75 +356,103 @@ export const RawEditStage = observer(function RawEditStage({
       }
     : {};
 
-  const printHandlers = scenePrint ? {
-    onPointerEnter: measure,
-    onPointerDown: (event: React.PointerEvent<HTMLDivElement>): void => {
-      measure(event);
-      // `live`, not `editable`: the mockup holds no document, and turning a print writes none.
-      if (!event.isPrimary || !stageStore.live) return;
-      if (event.button === MIDDLE_BUTTON) {
-        event.currentTarget.setPointerCapture(event.pointerId);
-        panning.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
-        event.preventDefault();
-        return;
+  const printHandlers = scenePrint
+    ? {
+        onPointerEnter: measure,
+        onPointerDown: (event: React.PointerEvent<HTMLDivElement>): void => {
+          measure(event);
+          // `live`, not `editable`: the mockup holds no document, and turning a print writes none.
+          if (!event.isPrimary || !stageStore.live) return;
+          if (event.button === MIDDLE_BUTTON) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            panning.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+            event.preventDefault();
+            return;
+          }
+          if (event.button !== 0) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          event.currentTarget.focus();
+          presenter.print.beginDrag(
+            event.pointerId,
+            event.clientX,
+            event.clientY,
+            Math.min(box.width, box.height),
+          );
+          event.preventDefault();
+        },
+        onPointerMove: (event: React.PointerEvent<HTMLDivElement>): void => {
+          const pan = panning.current;
+          if (pan != null && pan.pointerId === event.pointerId) {
+            const span = Math.min(box.width, box.height);
+            presenter.print.panBy((event.clientX - pan.x) / span, (event.clientY - pan.y) / span);
+            panning.current = { ...pan, x: event.clientX, y: event.clientY };
+            return;
+          }
+          presenter.print.moveDrag(event.pointerId, event.clientX, event.clientY);
+        },
+        onPointerUp: (event: React.PointerEvent<HTMLDivElement>): void => {
+          if (panning.current?.pointerId === event.pointerId) panning.current = null;
+          presenter.print.endDrag(event.pointerId);
+          if (event.currentTarget.hasPointerCapture(event.pointerId))
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        },
+        onPointerCancel: (event: React.PointerEvent<HTMLDivElement>): void => {
+          if (panning.current?.pointerId === event.pointerId) panning.current = null;
+          presenter.print.endDrag(event.pointerId);
+        },
+        onLostPointerCapture: (event: React.PointerEvent<HTMLDivElement>): void => {
+          if (panning.current?.pointerId === event.pointerId) panning.current = null;
+          presenter.print.endDrag(event.pointerId);
+        },
+        // Middle-click pastes on X11 and scrolls on Windows; neither belongs over a print.
+        onAuxClick: (event: React.MouseEvent<HTMLDivElement>): void => {
+          if (event.button === MIDDLE_BUTTON) event.preventDefault();
+        },
+        onDoubleClick: (): void => presenter.print.resetView(),
+        onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>): void => {
+          if (!stageStore.live || event.altKey || event.ctrlKey || event.metaKey) return;
+          const step = event.shiftKey ? 15 : 5;
+          switch (event.key) {
+            case 'ArrowLeft':
+              presenter.print.rotateBy(-step, 0);
+              break;
+            case 'ArrowRight':
+              presenter.print.rotateBy(step, 0);
+              break;
+            case 'ArrowUp':
+              presenter.print.rotateBy(0, -step);
+              break;
+            case 'ArrowDown':
+              presenter.print.rotateBy(0, step);
+              break;
+            case 'Home':
+              presenter.print.resetView();
+              break;
+            default:
+              return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+        },
       }
-      if (event.button !== 0) return;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      event.currentTarget.focus();
-      presenter.print.beginDrag(event.pointerId, event.clientX, event.clientY, Math.min(box.width, box.height));
-      event.preventDefault();
-    },
-    onPointerMove: (event: React.PointerEvent<HTMLDivElement>): void => {
-      const pan = panning.current;
-      if (pan != null && pan.pointerId === event.pointerId) {
-        const span = Math.min(box.width, box.height);
-        presenter.print.panBy((event.clientX - pan.x) / span, (event.clientY - pan.y) / span);
-        panning.current = { ...pan, x: event.clientX, y: event.clientY };
-        return;
-      }
-      presenter.print.moveDrag(event.pointerId, event.clientX, event.clientY);
-    },
-    onPointerUp: (event: React.PointerEvent<HTMLDivElement>): void => {
-      if (panning.current?.pointerId === event.pointerId) panning.current = null;
-      presenter.print.endDrag(event.pointerId);
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    },
-    onPointerCancel: (event: React.PointerEvent<HTMLDivElement>): void => {
-      if (panning.current?.pointerId === event.pointerId) panning.current = null;
-      presenter.print.endDrag(event.pointerId);
-    },
-    onLostPointerCapture: (event: React.PointerEvent<HTMLDivElement>): void => {
-      if (panning.current?.pointerId === event.pointerId) panning.current = null;
-      presenter.print.endDrag(event.pointerId);
-    },
-    // Middle-click pastes on X11 and scrolls on Windows; neither belongs over a print.
-    onAuxClick: (event: React.MouseEvent<HTMLDivElement>): void => {
-      if (event.button === MIDDLE_BUTTON) event.preventDefault();
-    },
-    onDoubleClick: (): void => presenter.print.resetView(),
-    onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>): void => {
-      if (!stageStore.live || event.altKey || event.ctrlKey || event.metaKey) return;
-      const step = event.shiftKey ? 15 : 5;
-      switch (event.key) {
-        case 'ArrowLeft': presenter.print.rotateBy(-step, 0); break;
-        case 'ArrowRight': presenter.print.rotateBy(step, 0); break;
-        case 'ArrowUp': presenter.print.rotateBy(0, -step); break;
-        case 'ArrowDown': presenter.print.rotateBy(0, step); break;
-        case 'Home': presenter.print.resetView(); break;
-        default: return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-    },
-  } : {};
+    : {};
 
   return (
     <div ref={captureStage} {...stylex.props(stageStyles.stage, styles.stage)}>
-      {toolsInto == null ? <div {...stylex.props(stageStyles.tools)}>{tools}</div> : createPortal(tools, toolsInto)}
+      {toolsInto == null ? (
+        <div {...stylex.props(stageStyles.tools)}>{tools}</div>
+      ) : (
+        createPortal(tools, toolsInto)
+      )}
       {zoomInto != null && !still && createPortal(<ZoomSlider zoom={zoom} />, zoomInto)}
       <div
         ref={viewport}
-        {...stylex.props(stageStyles.viewport, loupe.loupeOpen && styles.loupe, scenePrint && focusRing.ring, stylex.defaultMarker())}
+        {...stylex.props(
+          stageStyles.viewport,
+          loupe.loupeOpen && styles.loupe,
+          scenePrint && focusRing.ring,
+          stylex.defaultMarker(),
+        )}
         role="region"
         aria-label={scenePrint ? PrintPanelStrings.rotatePrint() : PhotoStageStrings.stage()}
         tabIndex={scenePrint ? 0 : undefined}
@@ -453,7 +485,13 @@ export const RawEditStage = observer(function RawEditStage({
         )}
         <CropOverlay crop={crop} keystone={keystone} presenter={presenter} viewport={box} />
         <KeystoneOverlay store={keystone} presenter={presenter} viewport={box} />
-        <RepairOverlay store={repair} presenter={presenter.repair} view={view} box={box} natural={natural} />
+        <RepairOverlay
+          store={repair}
+          presenter={presenter.repair}
+          view={view}
+          box={box}
+          natural={natural}
+        />
         <LoupeOverlay store={loupe} presenter={presenter} />
       </div>
       {/* Read by e2e: none of these has a visible readout, and the canvas is the worker's once
@@ -463,7 +501,11 @@ export const RawEditStage = observer(function RawEditStage({
         data-testid="raw-edit-diagnostics"
         data-adapter={stageStore.adapter}
         data-size={`${stageStore.width}x${stageStore.height}`}
-        data-stage={stageStore.stage == null ? undefined : `${stageStore.stage.width}x${stageStore.stage.height}`}
+        data-stage={
+          stageStore.stage == null
+            ? undefined
+            : `${stageStore.stage.width}x${stageStore.stage.height}`
+        }
         data-matched={stageStore.matched}
         data-rendered-mode={stageStore.renderedMode ?? undefined}
       />
@@ -472,12 +514,18 @@ export const RawEditStage = observer(function RawEditStage({
   );
 });
 
-export const OpenStatus = observer(function OpenStatus({ stage }: { stage: StageStore }): JSX.Element | null {
+export const OpenStatus = observer(function OpenStatus({
+  stage,
+}: {
+  stage: StageStore;
+}): JSX.Element | null {
   if (stage.status === 'failed') {
     return (
       <div {...stylex.props(stageStyles.busy, stageStyles.failed)} role="alert">
         <Text>{RawEditStageStrings.couldNotShow()}</Text>
-        <Text variant="mono" tone="error" style={styles.reason}>{stage.message}</Text>
+        <Text variant="mono" tone="error" style={styles.reason}>
+          {stage.message}
+        </Text>
       </div>
     );
   }

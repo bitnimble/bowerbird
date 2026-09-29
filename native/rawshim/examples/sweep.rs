@@ -38,14 +38,20 @@ const VIEWED_EDGE: f64 = 3840.0;
 
 fn main() {
     let dir = env::args().nth(1).expect("a directory of RAWs");
-    let limit: usize = env::args().nth(2).and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
+    let limit: usize = env::args()
+        .nth(2)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(usize::MAX);
 
     let mut paths: Vec<_> = std::fs::read_dir(&dir)
         .expect("the directory reads")
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
             p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                matches!(e.to_ascii_uppercase().as_str(), "CR3" | "CR2" | "ARW" | "NEF" | "RAF")
+                matches!(
+                    e.to_ascii_uppercase().as_str(),
+                    "CR3" | "CR2" | "ARW" | "NEF" | "RAF"
+                )
             })
         })
         .collect();
@@ -54,7 +60,16 @@ fn main() {
 
     println!(
         "{:<18} {:>7} {:>8} {:>8} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
-        "frame", "deltaE", "percept", "plain", "classed", "relative", "map", "neutrals", "drift g-r", "drift b-r"
+        "frame",
+        "deltaE",
+        "percept",
+        "plain",
+        "classed",
+        "relative",
+        "map",
+        "neutrals",
+        "drift g-r",
+        "drift b-r"
     );
     let mut worst: Vec<(f64, String)> = Vec::new();
     let mut rendered: Vec<f64> = Vec::new();
@@ -63,9 +78,16 @@ fn main() {
     let mut rendered_relative: Vec<f64> = Vec::new();
     let mut curve_errors: Vec<f64> = Vec::new();
     for path in &paths {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
         match measure(path.to_str().expect("a utf-8 path")) {
-            None => println!("{name:<18} {:>7} {:>8} {:>8} {:>4}", "declined", "-", "-", "-"),
+            None => println!(
+                "{name:<18} {:>7} {:>8} {:>8} {:>4}",
+                "declined", "-", "-", "-"
+            ),
             Some(r) => {
                 println!(
                     "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
@@ -114,7 +136,10 @@ fn main() {
         rendered_relative.iter().sum::<f64>() / scored,
         rendered.len(),
     );
-    println!("camera curve max u error over set: {:.6}", curve_errors.into_iter().fold(0.0f64, f64::max));
+    println!(
+        "camera curve max u error over set: {:.6}",
+        curve_errors.into_iter().fold(0.0f64, f64::max)
+    );
 
     worst.sort_by(|a, b| b.0.total_cmp(&a.0));
     println!("\nworst neutral drift:");
@@ -122,7 +147,11 @@ fn main() {
         println!("  {name:<18} {size:.1} counts");
     }
     let n = worst.len().max(1) as f64;
-    println!("  {:<18} {:.2} counts", "mean over set", worst.iter().map(|w| w.0).sum::<f64>() / n);
+    println!(
+        "  {:<18} {:.2} counts",
+        "mean over set",
+        worst.iter().map(|w| w.0).sum::<f64>() / n
+    );
 }
 
 struct Report {
@@ -150,7 +179,11 @@ struct Report {
 fn measure(path: &str) -> Option<Report> {
     let frame = rawshim::decode_frame(path, 0)?;
     let samples = frame.samples16()?;
-    let source = Source { samples, width: frame.width, height: frame.height };
+    let source = Source {
+        samples,
+        width: frame.width,
+        height: frame.height,
+    };
 
     let gpu = rawshim::gpu::device()?;
     let resident = frame.on_device(gpu)?;
@@ -171,8 +204,22 @@ fn measure(path: &str) -> Option<Report> {
         content_light: None,
     };
     let camera = rawshim::decode_embedded_rgb(path, 0)?;
-    let relative = against_camera(gpu, &source, &options, &matched, &camera, Intent::RelativeColorimetric)?;
-    let perceptual = against_camera(gpu, &source, &options, &matched, &camera, Intent::Perceptual)?;
+    let relative = against_camera(
+        gpu,
+        &source,
+        &options,
+        &matched,
+        &camera,
+        Intent::RelativeColorimetric,
+    )?;
+    let perceptual = against_camera(
+        gpu,
+        &source,
+        &options,
+        &matched,
+        &camera,
+        Intent::Perceptual,
+    )?;
     Some(Report {
         delta_e: matched.colour.as_ref()?.delta_e,
         rendered: perceptual.rendered,
@@ -186,7 +233,11 @@ fn measure(path: &str) -> Option<Report> {
         drift_br: perceptual.drift_br,
         exposure: matched.colour.as_ref()?.exposure,
         curve: matched.colour.as_ref()?.curve.clone(),
-        curve_error: pollster::block_on(rawshim::hdr_fit::camera_curve_error(gpu, matched.colour.as_ref()?)).unwrap_or(0.0),
+        curve_error: pollster::block_on(rawshim::hdr_fit::camera_curve_error(
+            gpu,
+            matched.colour.as_ref()?,
+        ))
+        .unwrap_or(0.0),
     })
 }
 
@@ -210,7 +261,13 @@ fn against_camera(
 ) -> Option<Rendered> {
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
-    let (coded, width, height) = hdr::graded_under(source, options, Some(matched), rawshim::gpu::Output::Srgb, intent);
+    let (coded, width, height) = hdr::graded_under(
+        source,
+        options,
+        Some(matched),
+        rawshim::gpu::Output::Srgb,
+        intent,
+    );
     let ours: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
 
     // Sampled on a stride rather than every pixel: a 24MP frame has millions of neutrals and
@@ -260,11 +317,20 @@ fn against_camera(
                 f64::from(camera.data[c + 2]),
             ];
             let o = (y * width + x) * 3;
-            let v = [f64::from(ours[o]), f64::from(ours[o + 1]), f64::from(ours[o + 2])];
+            let v = [
+                f64::from(ours[o]),
+                f64::from(ours[o + 1]),
+                f64::from(ours[o + 2]),
+            ];
             let cols = [x, (x + 7).min(width)];
             let camera_cols = [cx, on_camera(cols[1], camera.width).max(cx + 1)];
             ours_linear.push((cell_mean(&ours, width, cols, rows), 0.0));
-            camera_linear.push(cell_mean(&camera.data, camera.width, camera_cols, camera_rows));
+            camera_linear.push(cell_mean(
+                &camera.data,
+                camera.width,
+                camera_cols,
+                camera_rows,
+            ));
 
             let high = t[0].max(t[1]).max(t[2]);
             let low = t[0].min(t[1]).min(t[2]);
@@ -292,8 +358,9 @@ fn against_camera(
         1,
     );
     let neutral = [rawshim::fit_score::Probe::neutral()];
-    let blocks = pollster::block_on(scoring.partials(&rawshim::fit_score::Shape::Saturation, &neutral))?
-        .remove(0);
+    let blocks =
+        pollster::block_on(scoring.partials(&rawshim::fit_score::Shape::Saturation, &neutral))?
+            .remove(0);
     let rendered = blocks.iter().map(|b| b.flat).sum::<f64>() / shown.max(1) as f64;
     let plain = blocks.iter().map(|b| b.plain).sum::<f64>() / shown.max(1) as f64;
     let classes: Vec<Option<f64>> = (0..blocks.first().map_or(0, |b| b.class_seen.len()))
@@ -307,5 +374,13 @@ fn against_camera(
     let classed = present.iter().sum::<f64>() / present.len().max(1) as f64;
 
     let n = count.max(1) as f64;
-    Some(Rendered { rendered, plain, classed, classes, neutrals: count, drift_gr: gr / n, drift_br: br / n })
+    Some(Rendered {
+        rendered,
+        plain,
+        classed,
+        classes,
+        neutrals: count,
+        drift_gr: gr / n,
+        drift_br: br / n,
+    })
 }

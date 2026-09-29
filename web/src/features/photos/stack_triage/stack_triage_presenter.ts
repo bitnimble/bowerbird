@@ -5,8 +5,24 @@ import { type PhotoSummary, type Triage } from '../../../../../src/schemas/photo
 import type { PhotosPresenter } from '../photos_presenter';
 import type { StackTriageStore } from './stack_triage_store';
 import { StackTriageStrings } from './stack_triage_page.strings';
-import { type Verdict, applyVerdict, keepers, losersOf, nextRound, openSession, stop } from './stack_triage';
-import { type HistoryEntry, type TriageMode, clearSession, loadMode, loadSession, saveMode, saveSession } from './triage_storage';
+import {
+  type Verdict,
+  applyVerdict,
+  keepers,
+  losersOf,
+  nextRound,
+  openSession,
+  stop,
+} from './stack_triage';
+import {
+  type HistoryEntry,
+  type TriageMode,
+  clearSession,
+  loadMode,
+  loadSession,
+  saveMode,
+  saveSession,
+} from './triage_storage';
 
 // The only writer of StackTriageStore (DESIGN §20).
 //
@@ -77,7 +93,8 @@ export class StackTriagePresenter {
     // discarding the history in memory. A session with no round left is not
     // running - it is one the reader has already finished, and opening the stack
     // again is asking to judge it again.
-    if (this.store.stackId === stackId && this.store.session != null && this.store.round != null) return;
+    if (this.store.stackId === stackId && this.store.session != null && this.store.round != null)
+      return;
 
     runInAction(() => {
       this.store.stackId = stackId;
@@ -126,12 +143,19 @@ export class StackTriagePresenter {
     // is deliberately left alone: a pair naming a photo that has gone can never
     // be offered again, and dropping it would demote a considered keeper out of
     // the closing `picked` write.
-    const resumed = stored == null ? null : { ...stored.session, alive: stored.session.alive.filter((id) => live.has(id)) };
+    const resumed =
+      stored == null
+        ? null
+        : { ...stored.session, alive: stored.session.alive.filter((id) => live.has(id)) };
 
     runInAction(() => {
       this.store.members = new Map(usable.map((photo) => [photo.id, photo]));
       this.store.entryPhotoId = entryPhotoId ?? stored?.entryPhotoId ?? null;
-      if (stored?.bounds != null && this.store.bounds.from == null && this.store.bounds.to == null) {
+      if (
+        stored?.bounds != null &&
+        this.store.bounds.from == null &&
+        this.store.bounds.to == null
+      ) {
         this.store.bounds = stored.bounds;
       }
 
@@ -213,7 +237,12 @@ export class StackTriagePresenter {
     if (session == null || round == null || drawn == null || this.store.busy) return;
 
     const chose = this.slotOf(verdict);
-    const before: HistoryEntry = { session, showing: this.store.showing, choice: chose, changed: [] };
+    const before: HistoryEntry = {
+      session,
+      showing: this.store.showing,
+      choice: chose,
+      changed: [],
+    };
     const next = applyVerdict(session, round, chose);
 
     runInAction(() => {
@@ -267,7 +296,12 @@ export class StackTriagePresenter {
   async keepTheRest(): Promise<void> {
     const session = this.store.session;
     if (session == null || session.stopped || this.store.busy) return;
-    const before: HistoryEntry = { session, showing: this.store.showing, choice: 'stopped', changed: [] };
+    const before: HistoryEntry = {
+      session,
+      showing: this.store.showing,
+      choice: 'stopped',
+      changed: [],
+    };
 
     runInAction(() => {
       this.store.busy = true;
@@ -402,7 +436,11 @@ export class StackTriagePresenter {
     for (const photoId of this.store.failed) {
       // What the session says this photo should be, which is what the write that
       // failed was trying to say.
-      const target: Triage = !alive.has(photoId) ? 'rejected' : kept.has(photoId) ? 'picked' : (baseline.get(photoId) ?? 'untriaged');
+      const target: Triage = !alive.has(photoId)
+        ? 'rejected'
+        : kept.has(photoId)
+          ? 'picked'
+          : (baseline.get(photoId) ?? 'untriaged');
       await this.writeOne(photoId, target);
     }
     this.finish(stackId);

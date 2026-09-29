@@ -42,7 +42,13 @@ function refuseMissing(walk: string): void {
 function resolvedPaths(walk: string): string[] {
   return walk
     .split('\n')
-    .map((line) => line.split('=>')[1]?.replace(/\(0x[0-9a-f]+\)\s*$/i, '').trim() ?? '')
+    .map(
+      (line) =>
+        line
+          .split('=>')[1]
+          ?.replace(/\(0x[0-9a-f]+\)\s*$/i, '')
+          .trim() ?? '',
+    )
     .filter((path) => path.startsWith('/'));
 }
 
@@ -62,4 +68,3 @@ export function machNames(listing: string, self: string): string[] {
     .filter((path) => path !== '' && path.slice(path.lastIndexOf('/') + 1) !== self)
     .filter((path) => !path.startsWith('/usr/lib/') && !path.startsWith('/System/'));
 }
-

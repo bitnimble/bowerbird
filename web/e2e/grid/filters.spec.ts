@@ -7,7 +7,8 @@ import { cursorTile, gallery, gotoLibrary, sidebarSection, tiles, useLibrary } f
 
 // Every filter but the five presets lives behind one button, so a test that asks
 // about one opens it first.
-const openFilters = (page: Page): Promise<void> => page.getByRole('button', { name: /^Filters/ }).click();
+const openFilters = (page: Page): Promise<void> =>
+  page.getByRole('button', { name: /^Filters/ }).click();
 const filterPanel = (page: Page) => page.getByRole('textbox', { name: 'Find by filename' });
 const bodyList = (page: Page) => page.getByRole('dialog', { name: 'Camera body' });
 
@@ -24,7 +25,9 @@ test.beforeAll(async ({ browser }) => {
   await expect(cursorTile(page)).toHaveCount(1);
   await page.keyboard.press('4');
   await page.keyboard.press('c');
-  await expect(tiles(page).first().getByRole('button', { name: 'Clear Pick', pressed: true })).toBeVisible();
+  await expect(
+    tiles(page).first().getByRole('button', { name: 'Clear Pick', pressed: true }),
+  ).toBeVisible();
   await page.close();
 });
 
@@ -92,7 +95,9 @@ test('the filter set unions its options instead of intersecting them', async ({ 
   await expect(page.getByRole('button', { name: 'Filters (2)' })).toBeVisible();
 });
 
-test('the bodies a collection was shot on open beside the panel rather than in it', async ({ page }) => {
+test('the bodies a collection was shot on open beside the panel rather than in it', async ({
+  page,
+}) => {
   await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   await openFilters(page);
@@ -137,7 +142,9 @@ test('a list left open does not open itself the next time the panel is', async (
   await expect(bodyList(page)).toHaveCount(0);
 });
 
-test('a preset filter arrives with its options already ticked, and wears no badge', async ({ page }) => {
+test('a preset filter arrives with its options already ticked, and wears no badge', async ({
+  page,
+}) => {
   await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 

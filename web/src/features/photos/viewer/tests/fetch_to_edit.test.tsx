@@ -20,7 +20,16 @@ const VIEWER = route(PathSegment.photos(), 'p1');
 const EDITOR = editPath(VIEWER);
 
 const pull = (state: Transfer['state']): Transfer =>
-  ({ id: 't1', library_id: 'lib', photo_id: 'p1', peer_id: 'peer000000000001', direction: 'pull', state, bytes_done: 0, bytes_total: 100 }) as Transfer;
+  ({
+    id: 't1',
+    library_id: 'lib',
+    photo_id: 'p1',
+    peer_id: 'peer000000000001',
+    direction: 'pull',
+    state,
+    bytes_done: 0,
+    bytes_total: 100,
+  }) as Transfer;
 
 // A photo of a synced library whose original is on another device.
 function Seed(): null {
@@ -88,7 +97,8 @@ async function openMenuAndFetch(): Promise<void> {
   });
 }
 
-const pending = (): string | null => screen.getByRole('menuitem', { name: 'Fetching original…' }).getAttribute('aria-disabled');
+const pending = (): string | null =>
+  screen.getByRole('menuitem', { name: 'Fetching original…' }).getAttribute('aria-disabled');
 
 test('the menu stays pending from the click until the original lands, and closes when the editor opens', async () => {
   const asks: ((transfer: Transfer) => void)[] = [];
@@ -109,7 +119,9 @@ test('the menu stays pending from the click until the original lands, and closes
     for (const read of reads) read([pull('done')]);
   });
 
-  await waitFor(() => expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(EDITOR));
+  await waitFor(() =>
+    expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(EDITOR),
+  );
   expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
 });
 
@@ -124,6 +136,8 @@ test('the row returns to what it was when the fetch cannot be asked for', async 
     for (const refuse of refusals) refuse(new Error('no peer is recorded as holding p1'));
   });
 
-  expect(screen.getByRole('menuitem', { name: 'Fetch original and edit' }).getAttribute('aria-disabled')).not.toBe('true');
+  expect(
+    screen.getByRole('menuitem', { name: 'Fetch original and edit' }).getAttribute('aria-disabled'),
+  ).not.toBe('true');
   expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(VIEWER);
 });

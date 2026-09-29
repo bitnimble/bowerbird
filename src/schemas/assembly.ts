@@ -23,7 +23,14 @@ export const TakesSchema = z.enum(['subject', 'ground']);
 export type Takes = z.infer<typeof TakesSchema>;
 
 /** `[a, b, c, d, tx, ty]` of `[a b; c d] * p + t` over the canvas: where a source is read for `p`. */
-const WarpSchema = z.tuple([z.number(), z.number(), z.number(), z.number(), z.number(), z.number()]);
+const WarpSchema = z.tuple([
+  z.number(),
+  z.number(),
+  z.number(),
+  z.number(),
+  z.number(),
+  z.number(),
+]);
 export type Warp = z.infer<typeof WarpSchema>;
 
 export const SeamsSchema = z.object({
@@ -64,25 +71,39 @@ export const AssemblyRecipeSchema = CompositionSchema.extend({
   // (`assembly_seams`). Absent, the tiles are the seams.
   seams: SeamsSchema.optional(),
   // The layer key the carve's seam volume was written under, which a re-solve reads.
-  seamVolume: z.string().regex(/^[A-Za-z0-9_-]+$/).optional(),
+  seamVolume: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .optional(),
 }).superRefine((recipe, ctx) => {
   const bad = (message: string): void => void ctx.addIssue({ code: 'custom', message });
   const tiles = recipe.tiles.length;
-  if (recipe.sources.length > MOST_SOURCES) bad(`an assembly is made of at most ${MOST_SOURCES} photographs`);
+  if (recipe.sources.length > MOST_SOURCES)
+    bad(`an assembly is made of at most ${MOST_SOURCES} photographs`);
   if (recipe.pick.length !== tiles) bad('pick has to have one entry a tile');
   if (recipe.base >= recipe.sources.length) bad('the base names no source');
   if (recipe.pick.some((source) => source >= recipe.sources.length)) bad('a pick names no source');
-  if (recipe.takes != null && recipe.takes.length !== tiles) bad('takes has to have one entry a tile');
-  if (recipe.tiles.some((loop) => loop.some((at) => at >= recipe.vertices.length))) bad('a tile names no vertex');
+  if (recipe.takes != null && recipe.takes.length !== tiles)
+    bad('takes has to have one entry a tile');
+  if (recipe.tiles.some((loop) => loop.some((at) => at >= recipe.vertices.length)))
+    bad('a tile names no vertex');
   const seams = recipe.seams;
   if (seams != null) {
     const pieces = seams.tiles.length;
-    for (const [name, field] of [['source', seams.source], ['zone', seams.zone], ['corridor', seams.corridor], ['warp', seams.warp], ['exposure', seams.exposure]] as const) {
+    for (const [name, field] of [
+      ['source', seams.source],
+      ['zone', seams.zone],
+      ['corridor', seams.corridor],
+      ['warp', seams.warp],
+      ['exposure', seams.exposure],
+    ] as const) {
       if (field.length !== pieces) bad(`the seams have to have one ${name} a piece`);
     }
-    if (seams.source.some((source) => source >= recipe.sources.length)) bad('a piece names no source');
+    if (seams.source.some((source) => source >= recipe.sources.length))
+      bad('a piece names no source');
     if (seams.zone.some((zone) => zone >= tiles)) bad('a piece names no tile');
-    if (seams.tiles.some((loop) => loop.some((at) => at >= seams.vertices.length))) bad('a piece names no vertex');
+    if (seams.tiles.some((loop) => loop.some((at) => at >= seams.vertices.length)))
+      bad('a piece names no vertex');
   }
 });
 export type AssemblyRecipe = z.infer<typeof AssemblyRecipeSchema>;
@@ -91,7 +112,10 @@ export type AssemblyRecipe = z.infer<typeof AssemblyRecipeSchema>;
 export const SeamsRequestSchema = z
   .object({
     recipe: AssemblyRecipeSchema,
-    picks: z.array(z.array(z.number().int().nonnegative()).max(MOST_TILES)).min(1).max(MOST_SOURCES + 2),
+    picks: z
+      .array(z.array(z.number().int().nonnegative()).max(MOST_TILES))
+      .min(1)
+      .max(MOST_SOURCES + 2),
   })
   .superRefine(({ recipe, picks }, ctx) => {
     if (picks.some((pick) => pick.length !== recipe.tiles.length)) {

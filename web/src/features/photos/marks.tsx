@@ -95,7 +95,12 @@ export function Verdict({
   const picked = triage === 'picked';
   const icon = large ? 16 : 12;
   const button = (on: boolean, onStyle: stylex.StyleXStyles): ReturnType<typeof stylex.props> =>
-    stylex.props(styles.verdictButton, large && styles.verdictButtonLarge, on && onStyle, focusRing.ring);
+    stylex.props(
+      styles.verdictButton,
+      large && styles.verdictButtonLarge,
+      on && onStyle,
+      focusRing.ring,
+    );
   return (
     <span {...stylex.props(styles.verdict, large && styles.verdictLarge)}>
       <button

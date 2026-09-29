@@ -19,7 +19,8 @@ restoreApiAfterTests();
 const PHOTO = 'p0';
 
 const calls: string[] = [];
-let answer: () => Promise<Awaited<ReturnType<typeof renditionsApi.job>>> = () => Promise.resolve({ job: null });
+let answer: () => Promise<Awaited<ReturnType<typeof renditionsApi.job>>> = () =>
+  Promise.resolve({ job: null });
 
 renditionsApi.build = (_photoId: string, rendition: Rendition, force = false): Promise<void> => {
   calls.push(`build ${rendition} ${force}`);
@@ -41,7 +42,19 @@ function open(renderOnThisDevice: boolean): { store: ViewerStore; presenter: Pho
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, settings, absent, device);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    absent,
+    settings,
+    absent,
+    device,
+  );
   runInAction(() => {
     store.open = { id: PHOTO, status: 'ready' };
     store.rendition = 'max';
@@ -51,7 +64,10 @@ function open(renderOnThisDevice: boolean): { store: ViewerStore; presenter: Pho
         {
           id: PHOTO,
           renditions: Object.fromEntries(
-            (['embedded', 'full', 'max'] as ViewerRendition[]).map((each) => [each, { built: true }]),
+            (['embedded', 'full', 'max'] as ViewerRendition[]).map((each) => [
+              each,
+              { built: true },
+            ]),
           ),
         } as unknown as PhotoDetail,
       ],

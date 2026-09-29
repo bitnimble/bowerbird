@@ -15,20 +15,45 @@ const row = (id: string, stack: { id: string; size: number } | null = null): Pho
   ({ id, stack_id: stack?.id ?? null, stack_size: stack?.size ?? 1 }) as unknown as PhotoSummary;
 
 const positions = (store: MarksStore): number[] =>
-  store.selection.ranges.flatMap((range) => Array.from({ length: range.end - range.start + 1 }, (_, i) => range.start + i));
+  store.selection.ranges.flatMap((range) =>
+    Array.from({ length: range.end - range.start + 1 }, (_, i) => range.start + i),
+  );
 
 // Ten rows, a stack of three at position 4, and its band open under it.
-function build(): { listing: ListingStore; store: MarksStore; stacks: StacksStore; presenter: PhotosPresenter } {
+function build(): {
+  listing: ListingStore;
+  store: MarksStore;
+  stacks: StacksStore;
+  presenter: PhotosPresenter;
+} {
   const stacks = new StacksStore();
   const listing = new ListingStore(stacks);
   const store = new MarksStore(listing, stacks);
   const viewer = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, store, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
-  const members = [row('m0', { id: 'st', size: 3 }), row('m1', { id: 'st', size: 3 }), row('m2', { id: 'st', size: 3 })];
+  const presenter = new PhotosPresenter(
+    listing,
+    store,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
+  const members = [
+    row('m0', { id: 'st', size: 3 }),
+    row('m1', { id: 'st', size: 3 }),
+    row('m2', { id: 'st', size: 3 }),
+  ];
   runInAction(() => {
     listing.total = 10;
     listing.rows = new Map(
-      Array.from({ length: 10 }, (_, i) => [i, i === 4 ? row('s', { id: 'st', size: 3 }) : row(`p${i}`)] as const),
+      Array.from(
+        { length: 10 },
+        (_, i) => [i, i === 4 ? row('s', { id: 'st', size: 3 }) : row(`p${i}`)] as const,
+      ),
     );
     stacks.expansions = new Map([['st', { stackId: 'st', position: 4, photos: members }]]);
   });
@@ -132,7 +157,8 @@ test('a span crossing a stack stands for every photograph in it', () => {
   presenter.extendTo(5);
   expect(positions(store)).toEqual([3, 4, 5]);
   expect(store.selectionCount).toBe(5);
-  for (const member of stacks.expansions.get('st')!.photos) expect(store.memberSelected(member)).toBe(true);
+  for (const member of stacks.expansions.get('st')!.photos)
+    expect(store.memberSelected(member)).toBe(true);
 });
 
 // Uncollapsed, a row is the photograph it shows and stands for nothing else

@@ -83,7 +83,10 @@ describe('the replication log', () => {
     replicate(LIB);
     const newer = stamp(db);
     insertPhoto('p1', { stamp_triage: newer });
-    db.query('UPDATE photos SET stamp_triage = ? WHERE id = ?').run('000000000000000000000000aaaaaaaa', 'p1');
+    db.query('UPDATE photos SET stamp_triage = ? WHERE id = ?').run(
+      '000000000000000000000000aaaaaaaa',
+      'p1',
+    );
 
     expect(log()[0]!.stamp).toBe(newer);
   });
@@ -109,23 +112,23 @@ describe('the replication log', () => {
 
   it('follows a shoot, a stack and a library to the library they belong to', () => {
     replicate(LIB);
-    db.query('INSERT INTO shoots (id, library_id, folder_path, name, stamp) VALUES (?, ?, ?, ?, ?)').run(
-      's1',
-      LIB,
-      'Trip',
-      'Trip',
-      stamp(db),
-    );
+    db.query(
+      'INSERT INTO shoots (id, library_id, folder_path, name, stamp) VALUES (?, ?, ?, ?, ?)',
+    ).run('s1', LIB, 'Trip', 'Trip', stamp(db));
     db.query(
       "INSERT INTO stacks (id, library_id, origin, date_created, stamp) VALUES (?, ?, 'auto', '2026-01-01', ?)",
     ).run('st1', LIB, stamp(db));
-    db.query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?').run('Renamed', stamp(db), LIB);
+    db.query('UPDATE libraries SET name = ?, stamp = ? WHERE id = ?').run(
+      'Renamed',
+      stamp(db),
+      LIB,
+    );
 
-    expect(log().map((row) => `${row.entity}:${row.row_id}`).sort()).toEqual([
-      `library:${LIB}`,
-      'shoot:s1',
-      'stack:st1',
-    ]);
+    expect(
+      log()
+        .map((row) => `${row.entity}:${row.row_id}`)
+        .sort(),
+    ).toEqual([`library:${LIB}`, 'shoot:s1', 'stack:st1']);
   });
 
   // photo_edits and shoot_banners hold no library of their own, so their triggers
@@ -137,7 +140,9 @@ describe('the replication log', () => {
       "INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp) VALUES (?, '{}', 0, 1, '2026-01-01', ?)",
     ).run('p1', stamp(db));
 
-    expect(log()).toEqual([{ entity: 'photo_edits', row_id: 'p1', stamp: expect.any(String), deleted: 0 }]);
+    expect(log()).toEqual([
+      { entity: 'photo_edits', row_id: 'p1', stamp: expect.any(String), deleted: 0 },
+    ]);
   });
 
   it('names a stack membership by the pair, so one photograph can sit in two', () => {
@@ -149,22 +154,17 @@ describe('the replication log', () => {
     db.query(
       "INSERT INTO stacks (id, library_id, origin, date_created) VALUES ('st2', ?, 'auto', '2026-01-01')",
     ).run(LIB);
-    db.query('INSERT INTO stack_members (library_id, stack_id, photo_id, stamp) VALUES (?, ?, ?, ?)').run(
-      LIB,
-      'st1',
-      'p1',
-      stamp(db),
-    );
-    db.query('INSERT INTO stack_members (library_id, stack_id, photo_id, stamp) VALUES (?, ?, ?, ?)').run(
-      LIB,
-      'st2',
-      'p1',
-      stamp(db),
-    );
+    db.query(
+      'INSERT INTO stack_members (library_id, stack_id, photo_id, stamp) VALUES (?, ?, ?, ?)',
+    ).run(LIB, 'st1', 'p1', stamp(db));
+    db.query(
+      'INSERT INTO stack_members (library_id, stack_id, photo_id, stamp) VALUES (?, ?, ?, ?)',
+    ).run(LIB, 'st2', 'p1', stamp(db));
 
-    expect(log().filter((row) => row.entity === 'stack_member').map((row) => row.row_id)).toEqual([
-      'st1/p1',
-      'st2/p1',
-    ]);
+    expect(
+      log()
+        .filter((row) => row.entity === 'stack_member')
+        .map((row) => row.row_id),
+    ).toEqual(['st1/p1', 'st2/p1']);
   });
 });

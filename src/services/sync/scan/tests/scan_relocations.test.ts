@@ -1,14 +1,23 @@
 import { describe, it, expect } from 'bun:test';
 import type { ScannedDir } from '../../../../utils/scan';
 import type { MoveEntry } from '../scan_diff';
-import { detectRelocationsByIdentity, detectShootRelocations, findBinByIdentity } from '../scan_relocations';
+import {
+  detectRelocationsByIdentity,
+  detectShootRelocations,
+  findBinByIdentity,
+} from '../scan_relocations';
 
 // The half of following a renamed bin that needs no filesystem. A bind mount of
 // the bin elsewhere under the root and a hardlinked directory both arrive here as
 // nothing but two ScannedDirs sharing a dev:ino - which is why this is worth
 // having apart from the IO, since neither can be staged without root.
 describe('findBinByIdentity', () => {
-  const dir = (relPath: string, ino: number, dev = 1): ScannedDir => ({ relPath, dev, ino, birthtimeMs: 0 });
+  const dir = (relPath: string, ino: number, dev = 1): ScannedDir => ({
+    relPath,
+    dev,
+    ino,
+    birthtimeMs: 0,
+  });
   const bin = { dev: 1, ino: 42 };
 
   it('finds the one directory carrying the identity, under whatever name', () => {
@@ -26,7 +35,10 @@ describe('findBinByIdentity', () => {
   // `getBinPath` joins a single name, so a bin one folder deep cannot even be
   // expressed - a constraint inherited from `BinNameSchema`.
   it('refuses a nested candidate', () => {
-    expect(findBinByIdentity([dir('Trip/Rubbish', 42)], bin)).toEqual({ kind: 'ambiguous', candidates: ['Trip/Rubbish'] });
+    expect(findBinByIdentity([dir('Trip/Rubbish', 42)], bin)).toEqual({
+      kind: 'ambiguous',
+      candidates: ['Trip/Rubbish'],
+    });
   });
 
   // The device is half the key: inode numbers repeat across filesystems, so a
@@ -37,7 +49,9 @@ describe('findBinByIdentity', () => {
 
   it('answers nothing when there is nothing recorded to match', () => {
     expect(findBinByIdentity([dir('Rubbish', 42)], null)).toEqual({ kind: 'none' });
-    expect(findBinByIdentity([dir('Rubbish', 42)], { dev: 1, ino: null })).toEqual({ kind: 'none' });
+    expect(findBinByIdentity([dir('Rubbish', 42)], { dev: 1, ino: null })).toEqual({
+      kind: 'none',
+    });
     // Some filesystems report 0, and treating that as a key would match anything
     // else that reports it.
     expect(findBinByIdentity([dir('Rubbish', 0)], { dev: 1, ino: 0 })).toEqual({ kind: 'none' });
@@ -68,7 +82,9 @@ describe('detectShootRelocations', () => {
       [move('NYC/a.arw', 'NewYork/a.arw'), move('NYC/b.arw', 'NewYork/b.arw')],
       photos('NYC/a.arw', 'NYC/b.arw'),
     );
-    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork' }]);
+    expect(relocations).toEqual([
+      { shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork' },
+    ]);
   });
 
   it('infers a move to a different depth, not just a rename in place', () => {
@@ -77,7 +93,9 @@ describe('detectShootRelocations', () => {
       [move('NYC/a.arw', 'Archive/2024/NYC/a.arw')],
       photos('NYC/a.arw'),
     );
-    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'Archive/2024/NYC' }]);
+    expect(relocations).toEqual([
+      { shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'Archive/2024/NYC' },
+    ]);
   });
 
   // The whole point of the all-or-nothing rule: a partial move is ambiguous, so
@@ -108,7 +126,9 @@ describe('detectShootRelocations', () => {
       [move('NYC/a.arw', 'NewYork/sub/a.arw'), move('NYC/b.arw', 'NewYork/sub/b.arw')],
       photos('NYC/a.arw', 'NYC/b.arw'),
     );
-    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork/sub' }]);
+    expect(relocations).toEqual([
+      { shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork/sub' },
+    ]);
   });
 
   it('declines when the photos landed at different depths, which is a reshuffle', () => {
@@ -190,7 +210,12 @@ describe('detectRelocationsByIdentity', () => {
     folder_birthtime: number | null = 100,
     folder_dev: number | null = 1,
   ) => ({ id, folder_path, folder_dev, folder_ino, folder_birthtime });
-  const dir = (relPath: string, ino: number, birthtimeMs = 100, dev = 1): ScannedDir => ({ relPath, dev, ino, birthtimeMs });
+  const dir = (relPath: string, ino: number, birthtimeMs = 100, dev = 1): ScannedDir => ({
+    relPath,
+    dev,
+    ino,
+    birthtimeMs,
+  });
   const detect = (
     shoots: Parameters<typeof detectRelocationsByIdentity>[0],
     dirs: Parameters<typeof detectRelocationsByIdentity>[1],
@@ -232,7 +257,9 @@ describe('detectRelocationsByIdentity', () => {
   });
 
   it('refuses a folder another shoot already holds', () => {
-    expect(detect([shoot('s1', 'NYC', 7), shoot('s2', 'NewYork', 8)], [dir('NewYork', 7)])).toEqual([]);
+    expect(detect([shoot('s1', 'NYC', 7), shoot('s2', 'NewYork', 8)], [dir('NewYork', 7)])).toEqual(
+      [],
+    );
   });
 
   // Hardlinked directories, or a filesystem recycling numbers within one scan:
@@ -254,8 +281,13 @@ describe('detectRelocationsByIdentity', () => {
   });
 
   it('matches within the device it recorded, alongside a twin inode elsewhere', () => {
-    const relocations = detect([shoot('s1', 'NYC', 7, 100, 1)], [dir('Import/Card', 7, 100, 2), dir('NewYork', 7, 100, 1)]);
-    expect(relocations).toEqual([{ shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork' }]);
+    const relocations = detect(
+      [shoot('s1', 'NYC', 7, 100, 1)],
+      [dir('Import/Card', 7, 100, 2), dir('NewYork', 7, 100, 1)],
+    );
+    expect(relocations).toEqual([
+      { shootId: 's1', oldFolderPath: 'NYC', newFolderPath: 'NewYork' },
+    ]);
   });
 
   // Recorded before the device was half the key, so the only safe reading is that

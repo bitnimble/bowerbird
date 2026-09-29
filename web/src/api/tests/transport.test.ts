@@ -1,6 +1,13 @@
 // The two transports have to agree, and the places they quietly did not.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { appDataDir, assetUrl, canRevealFile, openAppDataDir, subscribeEvents, type EventHandlers } from '../transport';
+import {
+  appDataDir,
+  assetUrl,
+  canRevealFile,
+  openAppDataDir,
+  subscribeEvents,
+  type EventHandlers,
+} from '../transport';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { BUNDLED, SERVED, loadedFrom, unload } from './page';
 
@@ -11,10 +18,16 @@ type Internals = {
   convertFileSrc?: (file: string, protocol: string) => string;
   invoke?: (command: string, args: unknown) => Promise<unknown>;
 };
-type Listen = (event: string, handler: (message: { payload: unknown }) => void) => Promise<() => void>;
+type Listen = (
+  event: string,
+  handler: (message: { payload: unknown }) => void,
+) => Promise<() => void>;
 const global = globalThis as {
   __TAURI_INTERNALS__?: Internals;
-  __TAURI__?: { core?: { invoke?: (command: string, args: unknown) => Promise<unknown> }; event?: { listen?: Listen } };
+  __TAURI__?: {
+    core?: { invoke?: (command: string, args: unknown) => Promise<unknown> };
+    event?: { listen?: Listen };
+  };
 };
 
 afterEach(() => {
@@ -235,7 +248,12 @@ describe('subscribeEvents', () => {
     // A kind the page does not know is ignored rather than thrown on, so a newer shell
     // emitting a second event type does not break an older page.
     shell.deliver({ kind: 'something-later', data: 'x' });
-    expect(seen).toEqual(['open', 'rendition:{"id":"a"}', 'replication:{"library_id":"lib"}', 'backup:{"library_id":"lib"}']);
+    expect(seen).toEqual([
+      'open',
+      'rendition:{"id":"a"}',
+      'replication:{"library_id":"lib"}',
+      'backup:{"library_id":"lib"}',
+    ]);
   });
 
   test('stops listening once closed', async () => {

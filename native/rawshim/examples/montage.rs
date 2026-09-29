@@ -11,7 +11,9 @@
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let out = args.next().expect("montage <out.jpg> <height> <image>,l,t,r,b ...");
+    let out = args
+        .next()
+        .expect("montage <out.jpg> <height> <image>,l,t,r,b ...");
     let height: usize = args.next().expect("a height").parse().expect("a height");
 
     const GAP: usize = 12;
@@ -41,31 +43,44 @@ fn main() {
         at += panel.width + GAP;
     }
 
-    let sheet = rawshim::rgb::RgbRef { data: &data, width: wide, height };
+    let sheet = rawshim::rgb::RgbRef {
+        data: &data,
+        width: wide,
+        height,
+    };
     let jpeg = rawshim::jpeg::encode(sheet, 94).expect("a jpeg");
     std::fs::write(&out, jpeg).expect("a writable path");
     println!("wrote {out} ({wide}x{height}, {} panels)", panels.len());
 }
 
 /// That region of `picture`, scaled to `height` and keeping its shape.
-fn cropped(
-    picture: &rawshim::rgb::Rgb,
-    region: [f64; 4],
-    height: usize,
-) -> rawshim::rgb::Rgb {
+fn cropped(picture: &rawshim::rgb::Rgb, region: [f64; 4], height: usize) -> rawshim::rgb::Rgb {
     let left = (region[0] * picture.width as f64) as usize;
     let top = (region[1] * picture.height as f64) as usize;
-    let right = ((region[2] * picture.width as f64) as usize).min(picture.width).max(left + 1);
-    let bottom = ((region[3] * picture.height as f64) as usize).min(picture.height).max(top + 1);
+    let right = ((region[2] * picture.width as f64) as usize)
+        .min(picture.width)
+        .max(left + 1);
+    let bottom = ((region[3] * picture.height as f64) as usize)
+        .min(picture.height)
+        .max(top + 1);
     let (span, deep) = (right - left, bottom - top);
     let wide = (span * height / deep).max(1);
 
     let mut patch = vec![0u8; span * deep * 3];
     for y in 0..deep {
         let from = ((top + y) * picture.width + left) * 3;
-        patch[y * span * 3..(y + 1) * span * 3].copy_from_slice(&picture.data[from..from + span * 3]);
+        patch[y * span * 3..(y + 1) * span * 3]
+            .copy_from_slice(&picture.data[from..from + span * 3]);
     }
     // A panel is a few thousand pixels down to a few hundred, which two taps an axis alias badly
     // enough to look like the rendering fault the comparison is meant to find.
-    rawshim::image::resize(rawshim::rgb::RgbRef { data: &patch, width: span, height: deep }, wide, height)
+    rawshim::image::resize(
+        rawshim::rgb::RgbRef {
+            data: &patch,
+            width: span,
+            height: deep,
+        },
+        wide,
+        height,
+    )
 }

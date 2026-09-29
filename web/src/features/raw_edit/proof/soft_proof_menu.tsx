@@ -27,7 +27,9 @@ export function softProofOptions(value: SoftProof, hdrOffered: boolean): Option<
     value: proof,
     label: OPTIONS[proof](),
     active: proof === value,
-    ...(proof === 'hdr' && !hdrOffered ? { disabled: true, tooltip: strings.hdrNeedsHdrRendition() } : {}),
+    ...(proof === 'hdr' && !hdrOffered
+      ? { disabled: true, tooltip: strings.hdrNeedsHdrRendition() }
+      : {}),
   }));
 }
 

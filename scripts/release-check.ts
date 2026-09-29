@@ -62,7 +62,9 @@ function parseTargets(args: string[]): Target[] {
     targets.push(arg);
   }
   if (targets.includes('macos') && macosSdk == null) {
-    console.error('[release-check] macos needs BOWERBIRD_MACOS_SDK naming a MacOSX<version>.sdk.tar.xz packaged for osxcross');
+    console.error(
+      '[release-check] macos needs BOWERBIRD_MACOS_SDK naming a MacOSX<version>.sdk.tar.xz packaged for osxcross',
+    );
     process.exit(2);
   }
   return targets;
@@ -106,7 +108,20 @@ function build(target: Target, tree: string, work: string): void {
     case 'macos': {
       if (macosSdk == null) throw new Error('macos needs BOWERBIRD_MACOS_SDK');
       const context = sdkContext(work, macosSdk);
-      run('docker', ['build', '--target', 'macos-dist', '--build-context', `macos-sdk=${context}`, '--output', dist, '.'], tree);
+      run(
+        'docker',
+        [
+          'build',
+          '--target',
+          'macos-dist',
+          '--build-context',
+          `macos-sdk=${context}`,
+          '--output',
+          dist,
+          '.',
+        ],
+        tree,
+      );
       return;
     }
   }

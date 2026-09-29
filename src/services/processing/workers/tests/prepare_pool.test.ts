@@ -211,9 +211,17 @@ describe('pictureLevel', () => {
   });
 
   test('a named level outside the ladder is clamped to it', () => {
-    const deepest = pictureLevel(PAN, ROW, undefined, { level: 99, rect: [0, 0, TILE, TILE], tiles: [] });
+    const deepest = pictureLevel(PAN, ROW, undefined, {
+      level: 99,
+      rect: [0, 0, TILE, TILE],
+      tiles: [],
+    });
     expect(deepest?.level).toBe(coarsestLevel(Math.max(ROW.width, ROW.height)));
-    const finest = pictureLevel(PAN, ROW, undefined, { level: -3, rect: [0, 0, TILE, TILE], tiles: [] });
+    const finest = pictureLevel(PAN, ROW, undefined, {
+      level: -3,
+      rect: [0, 0, TILE, TILE],
+      tiles: [],
+    });
     expect(finest?.level).toBe(0);
   });
 

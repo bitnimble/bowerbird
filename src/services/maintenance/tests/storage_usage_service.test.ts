@@ -61,14 +61,19 @@ test('excludes catalogue staging when the database lives inside generated data',
   expect(await new StorageUsageService({ dataDir, dbPath }).measure()).toEqual({ bytes: 30 });
 });
 
-test.each(['updates', ''])('excludes staged updates inside DATA_DIR/%s without excluding persistent data', async (directory) => {
-  const dataDir = path.join(root, 'data');
-  const dbPath = put('data/catalogue.db', 10);
-  put('data/library/renditions/full-hdr/photo.avif', 20);
-  put(path.join('data', directory, 'download/payload.tar'), 10_000);
-  put(path.join('data', directory, 'staged/bowerbird'), 10_000);
-  put(path.join('data', directory, 'staged.version'), 10_000);
-  const updatesDir = path.join(dataDir, directory);
+test.each(['updates', ''])(
+  'excludes staged updates inside DATA_DIR/%s without excluding persistent data',
+  async (directory) => {
+    const dataDir = path.join(root, 'data');
+    const dbPath = put('data/catalogue.db', 10);
+    put('data/library/renditions/full-hdr/photo.avif', 20);
+    put(path.join('data', directory, 'download/payload.tar'), 10_000);
+    put(path.join('data', directory, 'staged/bowerbird'), 10_000);
+    put(path.join('data', directory, 'staged.version'), 10_000);
+    const updatesDir = path.join(dataDir, directory);
 
-  expect(await new StorageUsageService({ dataDir, dbPath, updatesDir }).measure()).toEqual({ bytes: 30 });
-});
+    expect(await new StorageUsageService({ dataDir, dbPath, updatesDir }).measure()).toEqual({
+      bytes: 30,
+    });
+  },
+);

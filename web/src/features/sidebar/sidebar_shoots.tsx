@@ -6,7 +6,13 @@ import type { ShootNode } from '../../app/sidebar_store';
 import { usePresenters, useSidebarStore } from '../../app/stores_context';
 import { SidebarRow } from './sidebar_row';
 
-const SidebarShoot = observer(function SidebarShoot({ node, depth }: { node: ShootNode; depth: number }): JSX.Element {
+const SidebarShoot = observer(function SidebarShoot({
+  node,
+  depth,
+}: {
+  node: ShootNode;
+  depth: number;
+}): JSX.Element {
   return (
     <SidebarRow
       to={route(PathSegment.shoots(), node.shoot.id)}
@@ -25,7 +31,11 @@ const SidebarShoot = observer(function SidebarShoot({ node, depth }: { node: Sho
 
 // Mounted only while the section is open, which is what makes the read lazy: a
 // library whose shoots nobody asks for costs no request.
-export const SidebarShoots = observer(function SidebarShoots({ libraryId }: { libraryId: string }): JSX.Element {
+export const SidebarShoots = observer(function SidebarShoots({
+  libraryId,
+}: {
+  libraryId: string;
+}): JSX.Element {
   const store = useSidebarStore();
   const { sidebar } = usePresenters();
   useEffect(() => void sidebar.loadShoots(libraryId), [sidebar, libraryId]);

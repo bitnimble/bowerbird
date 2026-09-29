@@ -1,5 +1,9 @@
 import { action } from 'mobx';
-import { type EditDoc, type EditState, type ToneCurve } from '../../../../../src/schemas/photo_edits';
+import {
+  type EditDoc,
+  type EditState,
+  type ToneCurve,
+} from '../../../../../src/schemas/photo_edits';
 import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import { adapterName } from '../../../adapter_name';
 import { photoEditsApi } from '../../../api/photo_edits';
@@ -53,9 +57,7 @@ export const REWINDOW_QUIET_MS = 220;
 const TILE_REACH = 0.25;
 
 /** The box a set of tiles spans, which is the buffer one request comes back in. */
-function spanning(
-  tiles: [number, number, number, number][],
-): [number, number, number, number] {
+function spanning(tiles: [number, number, number, number][]): [number, number, number, number] {
   const left = Math.min(...tiles.map(([x]) => x));
   const top = Math.min(...tiles.map(([, y]) => y));
   const right = Math.max(...tiles.map(([x, , w]) => x + w));
@@ -107,7 +109,9 @@ export class RawEditPresenter {
    */
   private readonly handedOver = new WeakSet<HTMLCanvasElement>();
   /** The canvases kept on the page (`readback_canvas.ts`), at the backing store the worker draws. */
-  private readonly onPage: Partial<Record<'stage' | 'loupe', { canvas: HTMLCanvasElement; width: number; height: number }>> = {};
+  private readonly onPage: Partial<
+    Record<'stage' | 'loupe', { canvas: HTMLCanvasElement; width: number; height: number }>
+  > = {};
   /** Whether an open has a frame to draw, which a tick before one would draw nothing of. */
   private drawable = false;
   /** The reader's sliders, as the module's `Adjust`. Sent with the tick that has to show them. */
@@ -148,7 +152,12 @@ export class RawEditPresenter {
     private readonly device: DeviceSettingsStore,
     printerProfiles?: PrinterProfileSource,
   ) {
-    this.print = new PrintPresenter(printStore, () => this.showGeometry(), undefined, printerProfiles);
+    this.print = new PrintPresenter(
+      printStore,
+      () => this.showGeometry(),
+      undefined,
+      printerProfiles,
+    );
     this.crop = new CropPresenter(stage, editStore, cropStore, {
       preview: (patch) => this.preview(patch),
       write: (patch) => this.write(patch),
@@ -204,10 +213,7 @@ export class RawEditPresenter {
    *
    * Unless it is one the page draws itself, which is settled here for as long as the element lives.
    */
-  private async handOver(
-    canvas: HTMLCanvasElement,
-    which: 'stage' | 'loupe',
-  ): Promise<void> {
+  private async handOver(canvas: HTMLCanvasElement, which: 'stage' | 'loupe'): Promise<void> {
     const local = this.local;
     if (local == null || this.handedOver.has(canvas)) return;
     this.handedOver.add(canvas);
@@ -263,7 +269,8 @@ export class RawEditPresenter {
    */
   private watchPixelRatio(): void {
     this.density?.removeEventListener('change', this.onDensity);
-    this.density = globalThis.matchMedia?.(`(resolution: ${globalThis.devicePixelRatio || 1}dppx)`) ?? null;
+    this.density =
+      globalThis.matchMedia?.(`(resolution: ${globalThis.devicePixelRatio || 1}dppx)`) ?? null;
     this.density?.addEventListener('change', this.onDensity);
   }
 
@@ -370,7 +377,9 @@ export class RawEditPresenter {
     // Awaited before the decode rather than alongside it: the open denoises the mosaic at this
     // document's Detail, so the document is an input to the decode rather than something applied
     // to a frame that is already prepared. One small row ahead of seconds of LibRaw.
-    const edits = fromRendition ? Promise.resolve(null) : photoEditsApi.checkpoint(photoId).catch(() => null);
+    const edits = fromRendition
+      ? Promise.resolve(null)
+      : photoEditsApi.checkpoint(photoId).catch(() => null);
     // The recipe, for the one decision that cannot be made without it. Alongside the document
     // rather than after it: both are small rows and both are wanted before the decode.
     const described = photosApi.get(photoId).catch(() => null);
@@ -404,9 +413,10 @@ export class RawEditPresenter {
       // photograph.
       const photo = await described;
       const onTheBackend = photo != null && preparesOnTheBackend(photo.recipe, photo);
-      const { header, local } = typeof longEdge === 'string'
-        ? await fetchPrepared(photoId, 0, mosaic, false, this.reached, longEdge)
-        : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend, this.reached);
+      const { header, local } =
+        typeof longEdge === 'string'
+          ? await fetchPrepared(photoId, 0, mosaic, false, this.reached, longEdge)
+          : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend, this.reached);
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
         // to take: leaving it would hold this photograph's RAW and frames for the life of the page.
@@ -517,7 +527,12 @@ export class RawEditPresenter {
     this.crop.setCropping(open);
   }
 
-  dragCrop(from: CropRect, grip: CropGrip | null, by: { x: number; y: number }, settle: boolean): void {
+  dragCrop(
+    from: CropRect,
+    grip: CropGrip | null,
+    by: { x: number; y: number },
+    settle: boolean,
+  ): void {
     this.crop.dragCrop(from, grip, by, settle);
   }
 
@@ -777,7 +792,9 @@ export class RawEditPresenter {
       // origin, a turn swaps the axes and a straighten rotates, so a fraction of the output is not
       // a fraction of the picture - and a panorama framed off-centre by its own align is enough to
       // see the difference.
-      const [x = 0, y = 0, width = 1, height = 1] = await source.decoder.picturePart(this.atTheLevel(region));
+      const [x = 0, y = 0, width = 1, height = 1] = await source.decoder.picturePart(
+        this.atTheLevel(region),
+      );
       if (!mine() || width <= 0 || height <= 0) return;
       const part = { x, y, width, height };
       const shown = { region: part, stage: Math.max(stage.width, stage.height) };
@@ -788,7 +805,11 @@ export class RawEditPresenter {
       // the tiles of that window seed the grid. Every pan after that asks the module what it is
       // short of and fetches only that.
       if (!this.enough(shown)) {
-        const framed = await preparedPicture(photoId, { ...shown, signal: attempt.signal }, this.prepare.developing);
+        const framed = await preparedPicture(
+          photoId,
+          { ...shown, signal: attempt.signal },
+          this.prepare.developing,
+        );
         if (!mine()) return;
         // Every square the window covers, which is what an empty list means: a whole level's
         // window is the whole of what was wanted, so there is no corner to discard.
@@ -1032,7 +1053,11 @@ export class RawEditPresenter {
       const shown = this.onPage[which];
       if (bytes == null || shown == null) continue;
       const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
-      await readbackCanvases.show(shown.canvas, { words, width: shown.width, height: shown.height });
+      await readbackCanvases.show(shown.canvas, {
+        words,
+        width: shown.width,
+        height: shown.height,
+      });
     }
   }
 
@@ -1140,9 +1165,7 @@ export class RawEditPresenter {
     // All three or none: a tile handed a white and a peak without a floor is refused whole
     // (`tone::Levels::usable`), so there is nothing to hold.
     this.stage.levels =
-      header.floor == null
-        ? null
-        : { white: header.white, peak: header.peak, floor: header.floor };
+      header.floor == null ? null : { white: header.white, peak: header.peak, floor: header.floor };
   }
 
   @action.bound

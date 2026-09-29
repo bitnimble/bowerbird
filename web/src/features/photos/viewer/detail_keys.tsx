@@ -56,8 +56,7 @@ export const DetailKeys = observer(function DetailKeys({
         if (store.photoFor(photoId)?.has_embedded !== false) {
           void photos.chooseRendition(photoId, 'embedded');
         }
-      }
-      else if (e.key === 'o') void photos.chooseRendition(photoId, 'full');
+      } else if (e.key === 'o') void photos.chooseRendition(photoId, 'full');
       else if (e.key === 'p') void photos.chooseRendition(photoId, 'max');
       else if (e.key === '[' && onToggleStrip != null) onToggleStrip();
       else if (e.key === ']' && onTogglePanels != null) onTogglePanels();
@@ -72,7 +71,18 @@ export const DetailKeys = observer(function DetailKeys({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [step, judge, navigate, back, photoId, photos, mode, onExitPreview, onToggleStrip, onTogglePanels]);
+  }, [
+    step,
+    judge,
+    navigate,
+    back,
+    photoId,
+    photos,
+    mode,
+    onExitPreview,
+    onToggleStrip,
+    onTogglePanels,
+  ]);
 
   return null;
 });

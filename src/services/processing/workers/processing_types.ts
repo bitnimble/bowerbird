@@ -1,4 +1,8 @@
-import { type ProcessingStage, RENDITION_SOURCES, type RenditionSource } from '../../../schemas/common';
+import {
+  type ProcessingStage,
+  RENDITION_SOURCES,
+  type RenditionSource,
+} from '../../../schemas/common';
 import type { DustSettings } from '../../../schemas/dust_settings';
 import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/jobs';
 import type { Denoiser, Repair } from '../../../schemas/photo_edits';

@@ -26,27 +26,27 @@ Every string states a fact or names an action.
   funny. Describe the failure.
 - **Reassure with a fact.** "Your edits are in the catalogue." tells the reader something.
   "Don't worry" tells them there was something to worry about.
-- **Use only words the reader knows, plus the glossary.** A photographer knows *exposure*,
-  *white balance*, *RAW*, *crop*, *HDR*. The [glossary](#glossary) holds the few Bowerbird
-  words they learn from the app. They don't know *replication*, *peer*, *prepared frame*,
-  *assembly*, or *collapse stamp*. Internal names stay in the code. Write so a child or a
+- **Use only words the reader knows, plus the glossary.** A photographer knows _exposure_,
+  _white balance_, _RAW_, _crop_, _HDR_. The [glossary](#glossary) holds the few Bowerbird
+  words they learn from the app. They don't know _replication_, _peer_, _prepared frame_,
+  _assembly_, or _collapse stamp_. Internal names stay in the code. Write so a child or a
   grandparent could follow it.
 
 ## Length by type
 
-| Copy | Length | Example |
-|---|---|---|
-| Button or link | 1 to 3 words, verb and object | "Add library", "Merge photos", "Show less" |
-| Navigation link to a page | the page's name | "Home", "Features", "Settings" |
-| Page subtitle or meta description | 1 phrase, no full stop | "A free, fast tool for triaging RAW photos" |
-| Item in a "coming soon" list | the feature's name, no full stop | "Exposure and focus bracket merging" |
-| Menu item, tab, label | 1 to 3 words | "Keyboard shortcuts", "Hide sidebar", "White balance" |
-| Heading | 1 to 4 words | "Dust removal", "Synced devices" |
-| Tooltip or helper text | 1 clause | "Rating from 0 to 5" |
-| Toast or status | 1 sentence | "All changes saved." |
-| Error or validation | 1 or 2 sentences, what happened then what to do | "This folder has moved. Choose where it is now." |
-| Empty state | a headline, 1 or 2 sentences, 1 button | "No photos yet" / "Add a folder of photos to start." / "Add library" |
-| Step in instructions | 1 imperative clause | "From the toolbar, select **Crop**." |
+| Copy                              | Length                                          | Example                                                              |
+| --------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
+| Button or link                    | 1 to 3 words, verb and object                   | "Add library", "Merge photos", "Show less"                           |
+| Navigation link to a page         | the page's name                                 | "Home", "Features", "Settings"                                       |
+| Page subtitle or meta description | 1 phrase, no full stop                          | "A free, fast tool for triaging RAW photos"                          |
+| Item in a "coming soon" list      | the feature's name, no full stop                | "Exposure and focus bracket merging"                                 |
+| Menu item, tab, label             | 1 to 3 words                                    | "Keyboard shortcuts", "Hide sidebar", "White balance"                |
+| Heading                           | 1 to 4 words                                    | "Dust removal", "Synced devices"                                     |
+| Tooltip or helper text            | 1 clause                                        | "Rating from 0 to 5"                                                 |
+| Toast or status                   | 1 sentence                                      | "All changes saved."                                                 |
+| Error or validation               | 1 or 2 sentences, what happened then what to do | "This folder has moved. Choose where it is now."                     |
+| Empty state                       | a headline, 1 or 2 sentences, 1 button          | "No photos yet" / "Add a folder of photos to start." / "Add library" |
+| Step in instructions              | 1 imperative clause                             | "From the toolbar, select **Crop**."                                 |
 
 In the app, aim for 10 words or fewer per string. An obvious label gets no sublabel. Ranges
 and units go on the field as its min, max, and suffix, and stay out of the label.
@@ -56,11 +56,11 @@ and units go on the field as its min, max, and suffix, and stay out of the label
 **Sublabels need a reason.** Write the label first. Add a sublabel only to prevent a specific
 misunderstanding; explanations under every control bury labels and actions. Examples to cut:
 
-| Cut | Why it went |
-|---|---|
-| **Your email** / "We'll reply here if we need more detail." | Everybody knows what an email field in a form is for. |
+| Cut                                                                                                                  | Why it went                                                            |
+| -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Your email** / "We'll reply here if we need more detail."                                                          | Everybody knows what an email field in a form is for.                  |
 | **Strip identifying EXIF data** / "We remove your name and where the photo was taken, and keep the camera settings." | The label says it. The sentence restates it at three times the length. |
-| **Include current photo in report** / "The photo, its renders, and what we measured about it." | Nobody ticking this wants the manifest. |
+| **Include current photo in report** / "The photo, its renders, and what we measured about it."                       | Nobody ticking this wants the manifest.                                |
 
 Use one line for an otherwise hidden consequence: deletion, cost, or unexpected data transfer.
 If two controls on a screen have sublabels, at least one is unnecessary.
@@ -132,7 +132,7 @@ State the limit as a fact about the feature, then say what the reader can do ins
   you want to edit."
 - **Say where to look before what to do.** "From the toolbar, select **Crop**."
 - **Write UI names in bold, exactly as they appear in the UI,** with no quotes around them.
-  Text the reader types goes in italics, as in *Holiday 2026*.
+  Text the reader types goes in italics, as in _Holiday 2026_.
 - **Use "select" as the verb.** It works on every device. Use "click" and "hover" only in
   desktop-only text, and "tap" only in touch-only text.
 - **Name the key, then the platform in parentheses.** "Command + Z (Mac) or Ctrl + Z
@@ -222,80 +222,80 @@ stack) stay lower case, as do other terms except at the start of a string.
 
 ### The library
 
-| Term | What it is | Avoid |
-|---|---|---|
-| photo | 1 entry in the library, with its RAW, edits, rating, and notes | photograph, picture, image, shot, item |
-| library | A folder of photos that Bowerbird catalogues | collection, project, workspace |
-| library root | The folder on disk a library starts at | root path, base folder |
-| catalogue | Everything Bowerbird records about a library's photos, apart from the files themselves | database, index |
-| shoot | A folder inside a library, holding the photos from 1 outing | folder (in the app), event, session, roll |
-| album | A set of photos you choose, from any shoots and libraries | collection, set, gallery |
-| stack | Similar photos grouped so they show as 1 | group, burst, cluster |
-| unstack | Split a stack back into single photos | ungroup |
-| original | The RAW file as the camera wrote it | source, master, negative |
-| local copy | An original stored on this device | cached copy, download |
-| embedded JPEG | The JPEG the camera stored inside the RAW | camera JPEG, preview JPEG |
-| Bin | Where deleted photos go before their files leave the disk | trash, recycle bin, deleted |
-| hide | Take a shoot out of view without deleting it | archive, collapse |
-| read-only | A library Bowerbird never changes on disk | locked, protected |
+| Term          | What it is                                                                             | Avoid                                     |
+| ------------- | -------------------------------------------------------------------------------------- | ----------------------------------------- |
+| photo         | 1 entry in the library, with its RAW, edits, rating, and notes                         | photograph, picture, image, shot, item    |
+| library       | A folder of photos that Bowerbird catalogues                                           | collection, project, workspace            |
+| library root  | The folder on disk a library starts at                                                 | root path, base folder                    |
+| catalogue     | Everything Bowerbird records about a library's photos, apart from the files themselves | database, index                           |
+| shoot         | A folder inside a library, holding the photos from 1 outing                            | folder (in the app), event, session, roll |
+| album         | A set of photos you choose, from any shoots and libraries                              | collection, set, gallery                  |
+| stack         | Similar photos grouped so they show as 1                                               | group, burst, cluster                     |
+| unstack       | Split a stack back into single photos                                                  | ungroup                                   |
+| original      | The RAW file as the camera wrote it                                                    | source, master, negative                  |
+| local copy    | An original stored on this device                                                      | cached copy, download                     |
+| embedded JPEG | The JPEG the camera stored inside the RAW                                              | camera JPEG, preview JPEG                 |
+| Bin           | Where deleted photos go before their files leave the disk                              | trash, recycle bin, deleted               |
+| hide          | Take a shoot out of view without deleting it                                           | archive, collapse                         |
+| read-only     | A library Bowerbird never changes on disk                                              | locked, protected                         |
 
 ### Judging photos
 
-| Term | What it is | Avoid |
-|---|---|---|
-| rating | 0 to 5 stars | score, stars (as the name) |
-| unrated | A rating of 0 | no rating, 0 stars |
-| triage | Deciding which photos to keep | culling, review, sorting |
-| Pick | The verdict to keep a photo | keep, select, favourite, flag |
-| Reject | The verdict to drop a photo | discard, cull, dislike |
-| Undecided | Neither a Pick nor a Reject | untriaged, unjudged |
-| verdict | Pick, Reject, or Undecided | decision, status |
+| Term         | What it is                                                         | Avoid                         |
+| ------------ | ------------------------------------------------------------------ | ----------------------------- |
+| rating       | 0 to 5 stars                                                       | score, stars (as the name)    |
+| unrated      | A rating of 0                                                      | no rating, 0 stars            |
+| triage       | Deciding which photos to keep                                      | culling, review, sorting      |
+| Pick         | The verdict to keep a photo                                        | keep, select, favourite, flag |
+| Reject       | The verdict to drop a photo                                        | discard, cull, dislike        |
+| Undecided    | Neither a Pick nor a Reject                                        | untriaged, unjudged           |
+| verdict      | Pick, Reject, or Undecided                                         | decision, status              |
 | Triage stack | Going through a stack 2 photos at a time and choosing between them | compare, battle, head to head |
-| round | 1 choice between 2 photos in a Triage stack | step, match |
+| round        | 1 choice between 2 photos in a Triage stack                        | step, match                   |
 
 ### Viewing
 
-| Term | What it is | Avoid |
-|---|---|---|
-| grid | The page of thumbnails | gallery, browser, contact sheet |
-| thumbnail | A photo's small picture in the grid, or the one chosen to represent a shoot or album | grid tile, tile, cover, preview |
-| photo viewer | The full-screen view of 1 photo | photo view, lightbox, detail view |
-| filmstrip | The row of thumbnails along the photo viewer | strip, carousel |
-| rendition | A photo drawn from its RAW at a set size and quality, for the grid or the photo viewer | render (as a noun), preview, derivative |
-| loupe | The magnifier over part of the photo in the editor | magnifier, zoom lens |
-| sidebar | The panel of libraries, shoots, and albums down the side | rail, drawer, nav |
+| Term         | What it is                                                                             | Avoid                                   |
+| ------------ | -------------------------------------------------------------------------------------- | --------------------------------------- |
+| grid         | The page of thumbnails                                                                 | gallery, browser, contact sheet         |
+| thumbnail    | A photo's small picture in the grid, or the one chosen to represent a shoot or album   | grid tile, tile, cover, preview         |
+| photo viewer | The full-screen view of 1 photo                                                        | photo view, lightbox, detail view       |
+| filmstrip    | The row of thumbnails along the photo viewer                                           | strip, carousel                         |
+| rendition    | A photo drawn from its RAW at a set size and quality, for the grid or the photo viewer | render (as a noun), preview, derivative |
+| loupe        | The magnifier over part of the photo in the editor                                     | magnifier, zoom lens                    |
+| sidebar      | The panel of libraries, shoots, and albums down the side                               | rail, drawer, nav                       |
 
 ### Editing and making photos
 
-| Term | What it is | Avoid |
-|---|---|---|
-| edit | A change to how a photo looks, made in the editor | adjustment, develop, tweak |
-| Light, White balance, Colour, Effects, Detail, Dust removal, Geometry | The sections of the edit panel, written as the UI shows them when named as a section | tabs, groups, panels |
-| crop, straighten, perspective | Geometry tools | trim, level, keystone |
-| guide | A line drawn to straighten or correct perspective against | helper line |
-| dust removal | Removing spots left by sensor dust | spot healing, clean up |
-| colour fringe removal | Removing purple and green rims along hard edges | defringe, chromatic aberration, CA |
-| soft proof | Showing the photo as it looks in HDR, in sRGB or printed | preview, simulate, mockup |
-| merge | Combining several photos into 1 | composite, stitch, combine, assembly |
-| panorama | A merge of frames side by side into 1 wider photo | pano, stitch |
-| Take best parts | A merge that builds 1 photo from the best part of each frame | composite, blend, best take |
-| frame | 1 of the photos going into a merge | source, input, layer |
-| export | Writing photos out as files in a chosen format | render, save as, output |
-| HDR, SDR | High and standard dynamic range. Write the abbreviation | high dynamic range (in labels) |
+| Term                                                                  | What it is                                                                           | Avoid                                |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
+| edit                                                                  | A change to how a photo looks, made in the editor                                    | adjustment, develop, tweak           |
+| Light, White balance, Colour, Effects, Detail, Dust removal, Geometry | The sections of the edit panel, written as the UI shows them when named as a section | tabs, groups, panels                 |
+| crop, straighten, perspective                                         | Geometry tools                                                                       | trim, level, keystone                |
+| guide                                                                 | A line drawn to straighten or correct perspective against                            | helper line                          |
+| dust removal                                                          | Removing spots left by sensor dust                                                   | spot healing, clean up               |
+| colour fringe removal                                                 | Removing purple and green rims along hard edges                                      | defringe, chromatic aberration, CA   |
+| soft proof                                                            | Showing the photo as it looks in HDR, in sRGB or printed                             | preview, simulate, mockup            |
+| merge                                                                 | Combining several photos into 1                                                      | composite, stitch, combine, assembly |
+| panorama                                                              | A merge of frames side by side into 1 wider photo                                    | pano, stitch                         |
+| Take best parts                                                       | A merge that builds 1 photo from the best part of each frame                         | composite, blend, best take          |
+| frame                                                                 | 1 of the photos going into a merge                                                   | source, input, layer                 |
+| export                                                                | Writing photos out as files in a chosen format                                       | render, save as, output              |
+| HDR, SDR                                                              | High and standard dynamic range. Write the abbreviation                              | high dynamic range (in labels)       |
 
 ### Devices
 
-| Term | What it is | Avoid |
-|---|---|---|
-| device | A computer or phone running Bowerbird | peer, node, host, the other Bowerbird |
-| sync | Keeping a library's catalogue, and optionally its originals, the same on 2 devices | replicate, mirror |
-| synced devices | The devices a library syncs with | peers, replicas |
-| pair | Connecting a new device so a library can sync to it | link, join |
-| fetch | Copying an original from another device to this one | pull, download (for device transfers) |
-| send | Copying an original from this device to another | push, upload |
-| scan | Bowerbird reading a library's folders for added, moved, changed, or removed files | sync, index, refresh, reconcile |
-| backup | A folder, drive, or share every original is copied to | mirror, vault, archive, passive peer |
-| storage limit | What a library's originals may take up on this device before the oldest local copies go | quota, budget, cap |
+| Term           | What it is                                                                              | Avoid                                 |
+| -------------- | --------------------------------------------------------------------------------------- | ------------------------------------- |
+| device         | A computer or phone running Bowerbird                                                   | peer, node, host, the other Bowerbird |
+| sync           | Keeping a library's catalogue, and optionally its originals, the same on 2 devices      | replicate, mirror                     |
+| synced devices | The devices a library syncs with                                                        | peers, replicas                       |
+| pair           | Connecting a new device so a library can sync to it                                     | link, join                            |
+| fetch          | Copying an original from another device to this one                                     | pull, download (for device transfers) |
+| send           | Copying an original from this device to another                                         | push, upload                          |
+| scan           | Bowerbird reading a library's folders for added, moved, changed, or removed files       | sync, index, refresh, reconcile       |
+| backup         | A folder, drive, or share every original is copied to                                   | mirror, vault, archive, passive peer  |
+| storage limit  | What a library's originals may take up on this device before the oldest local copies go | quota, budget, cap                    |
 
 ## Checklist
 

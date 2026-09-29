@@ -119,7 +119,11 @@ export const LoupeOverlay = observer(function LoupeOverlay({
       <span {...stylex.props(styles.scale)}>
         {formatMagnification(store.loupeMagnification)}
         {store.loupeRendering && (
-          <span {...stylex.props(styles.spinner)} role="status" aria-label={LoupeOverlayStrings.rendering()} />
+          <span
+            {...stylex.props(styles.spinner)}
+            role="status"
+            aria-label={LoupeOverlayStrings.rendering()}
+          />
         )}
       </span>
     </div>
@@ -133,5 +137,7 @@ export const LoupeOverlay = observer(function LoupeOverlay({
  * one anybody acts on, where the one between 1.5x and 2x is the reason they turned the wheel.
  */
 function formatMagnification(magnification: number): string {
-  return LoupeOverlayStrings.magnification(magnification < 10 ? magnification.toFixed(1) : String(Math.round(magnification)));
+  return LoupeOverlayStrings.magnification(
+    magnification < 10 ? magnification.toFixed(1) : String(Math.round(magnification)),
+  );
 }

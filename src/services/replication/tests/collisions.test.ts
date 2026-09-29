@@ -27,8 +27,11 @@ function photo(peer: Peer, id: string): void {
 }
 
 function folderOf(peer: Peer, shootId: string): string {
-  return (peer.db.query('SELECT folder_path FROM shoots WHERE id = ?').get(shootId) as { folder_path: string })
-    .folder_path;
+  return (
+    peer.db.query('SELECT folder_path FROM shoots WHERE id = ?').get(shootId) as {
+      folder_path: string;
+    }
+  ).folder_path;
 }
 
 /**
@@ -38,7 +41,10 @@ function folderOf(peer: Peer, shootId: string): string {
  * machines whose trees have genuinely diverged rather than a request anybody made twice. `first` is the
  * peer whose rename happens earlier, which is the whole of what decides the outcome.
  */
-function bothRenamedOnto(folder: string, first: 'server' | 'laptop' = 'server'): { server: Peer; laptop: Peer } {
+function bothRenamedOnto(
+  folder: string,
+  first: 'server' | 'laptop' = 'server',
+): { server: Peer; laptop: Peer } {
   const server = makePeer('server');
   const laptop = makePeer('laptop');
   for (const peer of [server, laptop]) {
@@ -52,15 +58,15 @@ function bothRenamedOnto(folder: string, first: 'server' | 'laptop' = 'server'):
   // is lower. Only the later renamer is advanced, which is what puts its rename after the other's
   // rather than alongside it, where nothing but the peer id would separate them.
   const [early, late] =
-    first === 'server' ?
-      ([
-        { peer: server, id: 's1', from: 'One' },
-        { peer: laptop, id: 's2', from: 'Two' },
-      ] as const)
-    : ([
-        { peer: laptop, id: 's2', from: 'Two' },
-        { peer: server, id: 's1', from: 'One' },
-      ] as const);
+    first === 'server'
+      ? ([
+          { peer: server, id: 's1', from: 'One' },
+          { peer: laptop, id: 's2', from: 'Two' },
+        ] as const)
+      : ([
+          { peer: laptop, id: 's2', from: 'Two' },
+          { peer: server, id: 's1', from: 'One' },
+        ] as const);
   new ShootsRepository(early.peer.db).relocate(early.id, early.from, folder);
   late.peer.advance(1000);
   new ShootsRepository(late.peer.db).relocate(late.id, late.from, folder);
@@ -97,7 +103,9 @@ describe('two peers renaming different folders onto one name', () => {
 
     expect(() => pull(laptop, server, 50)).not.toThrow();
 
-    expect(laptop.db.query('SELECT COUNT(*) AS n FROM photos WHERE id = ?').get('p1')).toEqual({ n: 1 });
+    expect(laptop.db.query('SELECT COUNT(*) AS n FROM photos WHERE id = ?').get('p1')).toEqual({
+      n: 1,
+    });
   });
 
   /**
@@ -223,7 +231,9 @@ describe('two peers renaming different folders onto one name', () => {
     // Only now does the label arrive.
     pull(laptop, tablet, 50);
 
-    expect(laptop.db.query('SELECT name FROM shoots WHERE id = ?').get('s2')).toEqual({ name: 'Harbour' });
+    expect(laptop.db.query('SELECT name FROM shoots WHERE id = ?').get('s2')).toEqual({
+      name: 'Harbour',
+    });
   });
 
   // A name changed in the same breath as the folder is not what was contested, so refusing the rename
@@ -236,6 +246,8 @@ describe('two peers renaming different folders onto one name', () => {
 
     // The server refuses the arriving rename, so its own `s2` stays where it is - and the name lands.
     expect(folderOf(server, 's2')).toBe('Two');
-    expect(server.db.query('SELECT name FROM shoots WHERE id = ?').get('s2')).toEqual({ name: 'Harbour' });
+    expect(server.db.query('SELECT name FROM shoots WHERE id = ?').get('s2')).toEqual({
+      name: 'Harbour',
+    });
   });
 });

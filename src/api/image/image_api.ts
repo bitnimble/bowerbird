@@ -17,7 +17,10 @@ import {
 } from '../../services/processing/analysis/photo_analysis_store';
 import { transcodeJpeg } from '../../services/processing/rawshim/rawshim_job';
 import type { RenditionFetchService } from '../../services/blobs/rendition_fetch_service';
-import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions/renditions';
+import {
+  RENDITION_CONTENT_TYPE,
+  isRendition,
+} from '../../services/processing/renditions/renditions';
 import type { ShareService } from '../../services/processing/exports/share_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
 import type { BasicPhoto } from '../../services/photos/paths/photo_paths_repository';
@@ -36,7 +39,10 @@ import { fileResponse } from '../file_response';
 // rendition on every rendition in the grid (§8.2 `locate`).
 // Awaited, because one of them is "the RAW, wherever it is" and that may be a fetch off a backup
 // drive before there is a path to read (docs/replication.md §14.4).
-type PathFor = (library: LibraryConfiguration, photo: BasicPhoto) => string | null | Promise<string | null>;
+type PathFor = (
+  library: LibraryConfiguration,
+  photo: BasicPhoto,
+) => string | null | Promise<string | null>;
 
 type PreparesPictures = {
   preparePicture: (
@@ -214,75 +220,105 @@ export class ImageApi {
     // `max`, `embedded`. Dynamic range is not in the URL - the library decides it, and a client
     // guessing would ask for a file that was never built. There is no video form either, though
     // Firefox watches one: it makes that itself out of these bytes (§10.7).
-    app.get(route(PathSegment.param('photoId'), PathSegment.renditions(), PathSegment.param('rendition')), async (c) => {
-      const rendition = c.req.param('rendition') ?? '';
-      if (!isRendition(rendition)) throw new AppError('NOT_FOUND', `unknown rendition: ${rendition}`);
-      const photoId = c.req.param('photoId');
-      if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-      // **Which copy is asked for is one question; how a row answers it is its recipe's.** The
-      // cameras' own picture of a row that names one file is inside that file, and is handed
-      // over unchanged - no resize, no transcode, nothing on disk (§10.2). The same picture of a
-      // row composed out of others is composited from its frames' and filed like any other copy,
-      // there being no file to lift one out of. Every other rendition is ours either way.
-      const { photo, library } = this.photoRenditions.locate(photoId);
-      const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
-      if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true) return this.serveEmbedded(photo, library, c);
-      // A photo with no local original, or a composite on a library that keeps none, is not built
-      // here; a peer's copy is fetched and cached first, so the read below is an ordinary local
-      // one (docs/replication.md §7.9). The peer may render it first, which can take minutes.
-      takeAsLongAsItTakes(c);
-      await this.fetchThrough?.ensureCurrent(photoId, rendition);
-      // Looking at a photograph is wanting it, and the cull works in that order (§14.5). The two
-      // the viewer draws and not the grid tile: scrolling past a thumbnail is not using the photo,
-      // and a page of a hundred would be a hundred writes.
-      if (rendition === 'full' || rendition === 'max') this.originals.touch(photoId);
-      this.photoRenditions.rebuildIfStale(photoId);
-      // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
-      // the camera view has.
-      return this.serve(c, lifted ? 'image/jpeg' : RENDITION_CONTENT_TYPE, (lib, each) =>
-        getRenditionPath(lib, each.id, rendition, lib.rendition_hdr),
-      );
-    });
+    app.get(
+      route(PathSegment.param('photoId'), PathSegment.renditions(), PathSegment.param('rendition')),
+      async (c) => {
+        const rendition = c.req.param('rendition') ?? '';
+        if (!isRendition(rendition))
+          throw new AppError('NOT_FOUND', `unknown rendition: ${rendition}`);
+        const photoId = c.req.param('photoId');
+        if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+        // **Which copy is asked for is one question; how a row answers it is its recipe's.** The
+        // cameras' own picture of a row that names one file is inside that file, and is handed
+        // over unchanged - no resize, no transcode, nothing on disk (§10.2). The same picture of a
+        // row composed out of others is composited from its frames' and filed like any other copy,
+        // there being no file to lift one out of. Every other rendition is ours either way.
+        const { photo, library } = this.photoRenditions.locate(photoId);
+        const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
+        if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true)
+          return this.serveEmbedded(photo, library, c);
+        // A photo with no local original, or a composite on a library that keeps none, is not built
+        // here; a peer's copy is fetched and cached first, so the read below is an ordinary local
+        // one (docs/replication.md §7.9). The peer may render it first, which can take minutes.
+        takeAsLongAsItTakes(c);
+        await this.fetchThrough?.ensureCurrent(photoId, rendition);
+        // Looking at a photograph is wanting it, and the cull works in that order (§14.5). The two
+        // the viewer draws and not the grid tile: scrolling past a thumbnail is not using the photo,
+        // and a page of a hundred would be a hundred writes.
+        if (rendition === 'full' || rendition === 'max') this.originals.touch(photoId);
+        this.photoRenditions.rebuildIfStale(photoId);
+        // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
+        // the camera view has.
+        return this.serve(c, lifted ? 'image/jpeg' : RENDITION_CONTENT_TYPE, (lib, each) =>
+          getRenditionPath(lib, each.id, rendition, lib.rendition_hdr),
+        );
+      },
+    );
     // A rendition a client rendered on its own GPU, from the job `GET /api/photos/:id/renditions/:r/job`
     // handed it: gzipped `job::render_bytes` frames, which this side encodes and files.
-    app.put(route(PathSegment.param('photoId'), PathSegment.renditions(), PathSegment.param('rendition')), async (c) => {
-      const rendition = c.req.param('rendition') ?? '';
-      if (!isRendition(rendition) || rendition === 'grid') {
-        throw new AppError('NOT_FOUND', `not a rendition a client renders: ${rendition}`);
-      }
-      const photoId = c.req.param('photoId');
-      if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-      const rendered = gunzipSync(new Uint8Array(await c.req.arrayBuffer()), { maxOutputLength: 512 * 1024 * 1024 });
-      await this.photoRenditions.keepRendition(photoId, rendition, c.req.query('builtFrom') ?? null, rendered);
-      return new Response(null, { status: 204, headers: TIMING_ALLOW_ORIGIN });
-    });
+    app.put(
+      route(PathSegment.param('photoId'), PathSegment.renditions(), PathSegment.param('rendition')),
+      async (c) => {
+        const rendition = c.req.param('rendition') ?? '';
+        if (!isRendition(rendition) || rendition === 'grid') {
+          throw new AppError('NOT_FOUND', `not a rendition a client renders: ${rendition}`);
+        }
+        const photoId = c.req.param('photoId');
+        if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+        const rendered = gunzipSync(new Uint8Array(await c.req.arrayBuffer()), {
+          maxOutputLength: 512 * 1024 * 1024,
+        });
+        await this.photoRenditions.keepRendition(
+          photoId,
+          rendition,
+          c.req.query('builtFrom') ?? null,
+          rendered,
+        );
+        return new Response(null, { status: 204, headers: TIMING_ALLOW_ORIGIN });
+      },
+    );
     // Every form the viewer offers to take away, as an attachment: the RAW, the
     // camera's JPEG, and either rendered rendition. One route because the menu
     // offering them is one list and only the bytes differ.
-    app.get(route(PathSegment.param('photoId'), PathSegment.download(), PathSegment.param('form')), (c) => this.serveDownload(c));
+    app.get(
+      route(PathSegment.param('photoId'), PathSegment.download(), PathSegment.param('form')),
+      (c) => this.serveDownload(c),
+    );
     // Where the RAW is on this server's disk, for the desktop app to hand to another application.
     app.get(route(PathSegment.param('photoId'), PathSegment.original()), async (c) => {
       const photoId = c.req.param('photoId');
       const { photo, library } = this.photoRenditions.locate(photoId);
       const path = await this.originals.open(library, photo);
-      if (path == null) throw new AppError('NOT_FOUND', `this photo has no RAW on this device: ${photoId}`);
+      if (path == null)
+        throw new AppError('NOT_FOUND', `this photo has no RAW on this device: ${photoId}`);
       return c.json({ path });
     });
     // The same picture the viewer is showing, as the one format a share sheet can hand to
     // anything (§10.5). Which rendition is in the URL where a download names a form: this is
     // what is on screen, and the client is the only side that knows which that is.
-    app.get(route(PathSegment.param('photoId'), PathSegment.share(), PathSegment.param('rendition')), (c) => this.serveShare(c));
+    app.get(
+      route(PathSegment.param('photoId'), PathSegment.share(), PathSegment.param('rendition')),
+      (c) => this.serveShare(c),
+    );
     // A link preview's picture. JPEG because most unfurlers refuse AVIF.
-    app.get(route(PathSegment.param('photoId'), PathSegment.preview()), (c) => this.servePreview(c));
+    app.get(route(PathSegment.param('photoId'), PathSegment.preview()), (c) =>
+      this.servePreview(c),
+    );
     // What has been measured about this photograph, for a client that is going to open the RAW
     // itself. Most of a second of fitting that depends on nothing but the file, so a client
     // holding it skips the slowest part of an open it did not have to do at all.
-    app.get(route(PathSegment.param('photoId'), PathSegment.analysis()), (c) => this.servePhotoAnalysis(c));
-    app.put(route(PathSegment.param('photoId'), PathSegment.analysis()), (c) => this.keepPhotoAnalysis(c));
+    app.get(route(PathSegment.param('photoId'), PathSegment.analysis()), (c) =>
+      this.servePhotoAnalysis(c),
+    );
+    app.put(route(PathSegment.param('photoId'), PathSegment.analysis()), (c) =>
+      this.keepPhotoAnalysis(c),
+    );
     // One picture of this photograph, coded, for a client that will grade it itself. What makes a
     // composite openable at all: the editor holds one frame and a panorama is several, so what
     // crosses is the canvas rather than the sources behind it.
-    app.get(route(PathSegment.param('photoId'), PathSegment.prepare()), (c) => this.servePrepared(c));
+    app.get(route(PathSegment.param('photoId'), PathSegment.prepare()), (c) =>
+      this.servePrepared(c),
+    );
     this.routes = app;
   }
 
@@ -405,10 +441,18 @@ export class ImageApi {
   // The camera's own JPEG, lifted out of the RAW and tagged for display. No
   // demosaic and nothing cached on disk: extraction is a header read plus a copy,
   // which is cheaper than the disk a fourth derivative per photo would cost.
-  private async serveEmbedded(photo: BasicPhoto, library: LibraryConfiguration, c: Context): Promise<Response> {
+  private async serveEmbedded(
+    photo: BasicPhoto,
+    library: LibraryConfiguration,
+    c: Context,
+  ): Promise<Response> {
     const photoId = photo.id;
     const originalPath = await this.originals.open(library, photo);
-    if (originalPath == null) throw new AppError('NOT_FOUND', `this photograph has no file to lift a JPEG out of: ${photoId}`);
+    if (originalPath == null)
+      throw new AppError(
+        'NOT_FOUND',
+        `this photograph has no file to lift a JPEG out of: ${photoId}`,
+      );
     // The RAW, not the JPEG inside it: these bytes are part of that file, so its
     // stat moves exactly when they do.
     const rotate = this.photoRead.editOrientation(photoId);
@@ -442,7 +486,11 @@ export class ImageApi {
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const bytes = await this.shares.jpeg(photoId, rendition);
     return new Response(bytes, {
-      headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', ...TIMING_ALLOW_ORIGIN },
+      headers: {
+        'Content-Type': 'image/jpeg',
+        'Cache-Control': 'no-store',
+        ...TIMING_ALLOW_ORIGIN,
+      },
     });
   }
 
@@ -452,7 +500,8 @@ export class ImageApi {
     const { photo, library } = this.photoRenditions.locate(photoId);
     const tilePath = getRenditionPath(library, photo.id, 'grid', false);
     const tile = Bun.file(tilePath);
-    if (!(await tile.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+    if (!(await tile.exists()))
+      throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
     const etag = etagOf(tile);
     const headers = { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache', ETag: etag };
     if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
@@ -495,19 +544,25 @@ export class ImageApi {
 
     if (form === 'embedded') {
       const lifted = await this.photoRenditions.embeddedJpeg(photoId);
-      if (lifted == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
+      if (lifted == null)
+        throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
       const jpeg = Buffer.from(lifted.buffer, lifted.byteOffset, lifted.byteLength);
       // Refused rather than sent as it is, for `serveScrubbedOriginal`'s reason: a preview
       // carries the same coordinates the original does.
       if (scrub && !scrubIdentifying(jpeg)) {
-        throw new AppError('VALIDATION_ERROR', `identifying data cannot be removed from the preview of ${stem}`);
+        throw new AppError(
+          'VALIDATION_ERROR',
+          `identifying data cannot be removed from the preview of ${stem}`,
+        );
       }
       return download(lifted, 'image/jpeg', `${stem}-embedded.jpg`);
     }
 
-    if (form !== 'full' && form !== 'max') throw new AppError('NOT_FOUND', `unknown download: ${form}`);
+    if (form !== 'full' && form !== 'max')
+      throw new AppError('NOT_FOUND', `unknown download: ${form}`);
     const renditionPath = getRenditionPath(library, photo.id, form, library.rendition_hdr);
-    if (!(await Bun.file(renditionPath).exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+    if (!(await Bun.file(renditionPath).exists()))
+      throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
     // Suffixed, because a reader comparing the two renders wants both in the same
     // folder and one name twice is one file and a copy.
     const name = `${stem}-${form === 'max' ? 'rendered-max' : 'rendered'}`;
@@ -548,13 +603,20 @@ export class ImageApi {
     // route alone that holds a whole RAW in memory, and a request per photograph in a library
     // of 60MB files is the server out of memory rather than a slow response.
     if (file.size > SCRUBBED_ORIGINAL_CEILING) {
-      throw new AppError('VALIDATION_ERROR', `${name} is too large to have its identifying data removed`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `${name} is too large to have its identifying data removed`,
+      );
     }
     const bytes = Buffer.from(await file.arrayBuffer());
     if (!scrubIdentifying(bytes)) {
       throw new AppError('VALIDATION_ERROR', `identifying data cannot be removed from ${name}`);
     }
-    const response = download(new Uint8Array(bytes), originalMediaType(soleInputOf(photo.recipe) ?? ''), name);
+    const response = download(
+      new Uint8Array(bytes),
+      originalMediaType(soleInputOf(photo.recipe) ?? ''),
+      name,
+    );
     response.headers.set('Content-Length', String(bytes.byteLength));
     if (c.req.method === 'HEAD') return response;
     return this.activity.response(library.id, 'sending', photoId, response);
@@ -581,7 +643,8 @@ export class ImageApi {
     // file that has gone missing and no rebuild will produce one.
     if (target == null) throw new AppError('NOT_FOUND', `${photoId} has no file of its own`);
     const file = Bun.file(target);
-    if (!(await file.exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
+    if (!(await file.exists()))
+      throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
 
     const etag = etagOf(file);
     const headers = {
@@ -597,8 +660,14 @@ export class ImageApi {
     if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
 
     if (downloadAs != null) {
-      const response = fileResponse(file, headers, c.req.method === 'GET' ? c.req.header('range') : undefined);
-      return c.req.method === 'HEAD' ? response : this.activity.response(library.id, 'sending', photo.id, response);
+      const response = fileResponse(
+        file,
+        headers,
+        c.req.method === 'GET' ? c.req.header('range') : undefined,
+      );
+      return c.req.method === 'HEAD'
+        ? response
+        : this.activity.response(library.id, 'sending', photo.id, response);
     }
     return new Response(file, { headers });
   }

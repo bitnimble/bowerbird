@@ -75,7 +75,10 @@ describe('PUT /image/:photoId/analysis', () => {
   it('keeps a body with nothing in it at all', async () => {
     const app = serving('lib-keeps-nothing');
 
-    const kept = await app.request(route(PathSegment.image(), 'p1', PathSegment.analysis()), { method: 'PUT', body: new Uint8Array() });
+    const kept = await app.request(route(PathSegment.image(), 'p1', PathSegment.analysis()), {
+      method: 'PUT',
+      body: new Uint8Array(),
+    });
     expect(kept.status).toBe(204);
   });
 
@@ -85,12 +88,14 @@ describe('PUT /image/:photoId/analysis', () => {
   it('keeps an analysis that says only that nothing was found', async () => {
     const app = serving('lib-keeps-empty');
 
-    const kept = await app.request(route(PathSegment.image(), 'p1', PathSegment.analysis()), { method: 'PUT', body: analysisOf(13, 1) });
+    const kept = await app.request(route(PathSegment.image(), 'p1', PathSegment.analysis()), {
+      method: 'PUT',
+      body: analysisOf(13, 1),
+    });
     expect(kept.status).toBe(204);
 
     const got = await app.request(route(PathSegment.image(), 'p1', PathSegment.analysis()));
     expect(got.status).toBe(200);
     expect((await got.arrayBuffer()).byteLength).toBe(13);
   });
-
 });

@@ -25,7 +25,8 @@ const IDLE: LibraryScanStatus = {
 
 // `api` is a module singleton, so this is the seam.
 function reporting(status: LibraryScanStatus['status']): void {
-  librariesApi.scanStatus = (library_id: string): Promise<LibraryScanStatus> => Promise.resolve({ ...IDLE, library_id, status });
+  librariesApi.scanStatus = (library_id: string): Promise<LibraryScanStatus> =>
+    Promise.resolve({ ...IDLE, library_id, status });
 }
 
 async function loadsWhile(status: LibraryScanStatus['status']): Promise<number> {
@@ -55,7 +56,9 @@ test('scan polling marks grid reloads as background work', async () => {
     reporting('idle');
     await presenter.watch('lib');
     expect(reload.mock.calls).toEqual([['background'], ['background']]);
-  } finally { presenter.stop(); }
+  } finally {
+    presenter.stop();
+  }
 });
 
 test('scan polling marks library refreshes as background work', async () => {
@@ -65,7 +68,9 @@ test('scan polling marks library refreshes as background work', async () => {
     reporting('processing');
     await presenter.watch('lib');
     expect(load).toHaveBeenCalledWith('background');
-  } finally { presenter.stop(); }
+  } finally {
+    presenter.stop();
+  }
 });
 
 // The long half, where the row set is settled and nothing the sidebar shows moves.
@@ -92,7 +97,9 @@ test('a stop reads as stopping until the run reports idle, and a refused stop do
     librariesApi.cancelScan = (): Promise<void> => Promise.reject(new Error('gone'));
     await presenter.cancel('lib');
     expect(store.isStopping('lib')).toBe(false);
-  } finally { presenter.stop(); }
+  } finally {
+    presenter.stop();
+  }
 });
 
 test('stops remain on their own libraries until each scan reports idle', async () => {
@@ -111,7 +118,9 @@ test('stops remain on their own libraries until each scan reports idle', async (
     expect(store.isStopping('two')).toBe(true);
     presenter.observeStatuses([{ ...IDLE, library_id: 'two' }]);
     expect(store.isStopping('two')).toBe(false);
-  } finally { presenter.stop(); }
+  } finally {
+    presenter.stop();
+  }
 });
 
 function watching(): { store: ScanStore; presenter: ScanPresenter } {
@@ -128,7 +137,13 @@ const at = (seconds: number): void => jest.setSystemTime(new Date(2026, 0, 1, 0,
 
 function scanning(scanned: number, perSecond: number | null = null): void {
   librariesApi.scanStatus = (): Promise<LibraryScanStatus> =>
-    Promise.resolve({ ...IDLE, status: 'processing', photos_to_scan: 100, photos_scanned: scanned, photos_per_second: perSecond });
+    Promise.resolve({
+      ...IDLE,
+      status: 'processing',
+      photos_to_scan: 100,
+      photos_scanned: scanned,
+      photos_per_second: perSecond,
+    });
 }
 
 test("the scan's own rate is preferred, and counting polls covers the phase that has none", async () => {

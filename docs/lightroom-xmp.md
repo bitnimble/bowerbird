@@ -62,29 +62,29 @@ In-scope claims must be **assertable from an input string alone**.
 
 ```ts
 interface XmpSettings {
-  processVersion: ProcessVersion;   // §4, resolved, never the raw string
-  crsVersion: string | null;        // §4.2, writer build, feature hints only
-  legacy: boolean;                  // §4.3, pre-2012 source
-  hasSettings: boolean;             // §9.3
-  alreadyApplied: boolean;          // §9.3
+  processVersion: ProcessVersion; // §4, resolved, never the raw string
+  crsVersion: string | null; // §4.2, writer build, feature hints only
+  legacy: boolean; // §4.3, pre-2012 source
+  hasSettings: boolean; // §9.3
+  alreadyApplied: boolean; // §9.3
 
-  whiteBalance: WhiteBalance;       // §5.1
-  tone: Tone;                       // §5.2, §5.4
-  presence: Presence;               // §5.3
-  hsl: Hsl;                         // §5.5
-  detail: Detail;                   // §5.6
-  colorGrading: ColorGrading;       // §5.7
-  lens: Lens;                       // §5.8
-  effects: Effects;                 // §5.9
-  calibration: Calibration;         // §5.10
-  geometry: Geometry;               // §6
-  profile: CameraProfile;           // §7
-  look: Look | null;                // §8
-  metadata: Metadata;               // §11
+  whiteBalance: WhiteBalance; // §5.1
+  tone: Tone; // §5.2, §5.4
+  presence: Presence; // §5.3
+  hsl: Hsl; // §5.5
+  detail: Detail; // §5.6
+  colorGrading: ColorGrading; // §5.7
+  lens: Lens; // §5.8
+  effects: Effects; // §5.9
+  calibration: Calibration; // §5.10
+  geometry: Geometry; // §6
+  profile: CameraProfile; // §7
+  look: Look | null; // §8
+  metadata: Metadata; // §11
 
-  legacyTone: LegacyTone | null;    // §4.3, never merged into `tone`
-  unsupported: string[];            // §10
-  issues: Issue[];                  // §9.2
+  legacyTone: LegacyTone | null; // §4.3, never merged into `tone`
+  unsupported: string[]; // §10
+  issues: Issue[]; // §9.2
 }
 ```
 
@@ -118,13 +118,13 @@ it replaces:
   living under `tone`. Spelled out rather than derived, since the rule alone gives
   `tone.toneCurveRed`:
 
-  | Tag | Field |
-  |---|---|
-  | `crs:ToneCurvePV2012` | `tone.curve` |
-  | `crs:ToneCurvePV2012Red` | `tone.curveRed` |
-  | `crs:ToneCurvePV2012Green` | `tone.curveGreen` |
-  | `crs:ToneCurvePV2012Blue` | `tone.curveBlue` |
-  | `crs:ToneCurveName2012` | `tone.curveName` |
+  | Tag                                             | Field                                          |
+  | ----------------------------------------------- | ---------------------------------------------- |
+  | `crs:ToneCurvePV2012`                           | `tone.curve`                                   |
+  | `crs:ToneCurvePV2012Red`                        | `tone.curveRed`                                |
+  | `crs:ToneCurvePV2012Green`                      | `tone.curveGreen`                              |
+  | `crs:ToneCurvePV2012Blue`                       | `tone.curveBlue`                               |
+  | `crs:ToneCurveName2012`                         | `tone.curveName`                               |
   | `crs:ToneCurve`, `crs:ToneCurveRed` etc. (§4.3) | `legacyTone.curve`, `legacyTone.curveRed` etc. |
 
 - §5.7's `Sat` / `Lum` abbreviations expand to `saturation` / `luminance`. The
@@ -199,17 +199,17 @@ check `photoshop:SidecarForExtension` (§11) rather than guessing.
 
 ### 3.2 Namespaces
 
-| Prefix | URI |
-|---|---|
-| `rdf` | `http://www.w3.org/1999/02/22-rdf-syntax-ns#` |
-| `x` | `adobe:ns:meta/` |
-| `crs` | `http://ns.adobe.com/camera-raw-settings/1.0/` |
-| `xmp` | `http://ns.adobe.com/xap/1.0/` |
-| `dc` | `http://purl.org/dc/elements/1.1/` |
-| `tiff` | `http://ns.adobe.com/tiff/1.0/` |
-| `exif` | `http://ns.adobe.com/exif/1.0/` |
-| `photoshop` | `http://ns.adobe.com/photoshop/1.0/` |
-| `lr` | `http://ns.adobe.com/lightroom/1.0/` |
+| Prefix      | URI                                            |
+| ----------- | ---------------------------------------------- |
+| `rdf`       | `http://www.w3.org/1999/02/22-rdf-syntax-ns#`  |
+| `x`         | `adobe:ns:meta/`                               |
+| `crs`       | `http://ns.adobe.com/camera-raw-settings/1.0/` |
+| `xmp`       | `http://ns.adobe.com/xap/1.0/`                 |
+| `dc`        | `http://purl.org/dc/elements/1.1/`             |
+| `tiff`      | `http://ns.adobe.com/tiff/1.0/`                |
+| `exif`      | `http://ns.adobe.com/exif/1.0/`                |
+| `photoshop` | `http://ns.adobe.com/photoshop/1.0/`           |
+| `lr`        | `http://ns.adobe.com/lightroom/1.0/`           |
 
 Bind by **URI, not prefix.** The prefix is conventional, not guaranteed: a file may
 declare `xmlns:foo="http://ns.adobe.com/camera-raw-settings/1.0/"` and write
@@ -328,14 +328,14 @@ Two independent tags: rendering generation and writer build. Confusing them sile
 
 Determines which parameter set is authoritative.
 
-| Value | Generation | Parameter set |
-|---|---|---|
-| `"5.0"` | 1 | Legacy, suffix-less tags |
-| `"5.7"` | 2 | Legacy, suffix-less tags |
-| `"6.6"`, `"6.7"` | 3 | **Current set.** `*2012` tags. |
-| `"10.0"` | 4 | Current set |
-| `"11.0"` | 5 | Current set |
-| `"15.4"` and later | 6 | Current set |
+| Value              | Generation | Parameter set                  |
+| ------------------ | ---------- | ------------------------------ |
+| `"5.0"`            | 1          | Legacy, suffix-less tags       |
+| `"5.7"`            | 2          | Legacy, suffix-less tags       |
+| `"6.6"`, `"6.7"`   | 3          | **Current set.** `*2012` tags. |
+| `"10.0"`           | 4          | Current set                    |
+| `"11.0"`           | 5          | Current set                    |
+| `"15.4"` and later | 6          | Current set                    |
 
 **`*2012` begins at `6.6`, not `11.0`.** Generation 3 introduced `crs:Exposure2012`;
 files from 2012 through generation-5 switch carry `6.6` or `6.7`. Gating at `11.0` discards
@@ -353,13 +353,13 @@ never re-parses it:
 
 ```ts
 type ProcessVersion =
-  | { generation: number; raw: string }   // >= 6.6
-  | { generation: null; raw: string | null };  // legacy or absent
+  | { generation: number; raw: string } // >= 6.6
+  | { generation: null; raw: string | null }; // legacy or absent
 ```
 
 ### 4.2 `crs:Version`, the writer build
 
-The Camera Raw build that wrote the file. It tells you which tags *might* be
+The Camera Raw build that wrote the file. It tells you which tags _might_ be
 present and never how to interpret them.
 
 **Feature availability tracks `crs:Version`, not `crs:ProcessVersion`.** Colour
@@ -385,18 +385,18 @@ pretending otherwise produces a worse result than declining to.
 Leave legacy approximation to edit mapping. Never back-fill `tone`; consumers must distinguish
 legacy data from current tones.
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:Exposure` | real | −4.0..+4.0 | 0 |
-| `crs:Brightness` | int | 0..150 | 50 **[V]** |
-| `crs:Contrast` | int | −50..+100 | 25 **[V]** |
-| `crs:Shadows` | int | 0..100 | 5 **[V]** |
-| `crs:HighlightRecovery` | int | 0..100 | 0 |
-| `crs:FillLight` | int | 0..100 | 0 |
-| `crs:Clarity` | int | −100..+100 | 0 |
-| `crs:ToneCurve` | Seq of point | | identity |
-| `crs:ToneCurveName` | open enum | | `Medium Contrast` **[V]** |
-| `crs:ToneCurveRed` / `Green` / `Blue` | Seq of point | | identity |
+| Tag                                   | Type         | Range      | Default                   |
+| ------------------------------------- | ------------ | ---------- | ------------------------- |
+| `crs:Exposure`                        | real         | −4.0..+4.0 | 0                         |
+| `crs:Brightness`                      | int          | 0..150     | 50 **[V]**                |
+| `crs:Contrast`                        | int          | −50..+100  | 25 **[V]**                |
+| `crs:Shadows`                         | int          | 0..100     | 5 **[V]**                 |
+| `crs:HighlightRecovery`               | int          | 0..100     | 0                         |
+| `crs:FillLight`                       | int          | 0..100     | 0                         |
+| `crs:Clarity`                         | int          | −100..+100 | 0                         |
+| `crs:ToneCurve`                       | Seq of point |            | identity                  |
+| `crs:ToneCurveName`                   | open enum    |            | `Medium Contrast` **[V]** |
+| `crs:ToneCurveRed` / `Green` / `Blue` | Seq of point |            | identity                  |
 
 Note the non-zero legacy defaults, which differ from their current-generation
 namesakes: an absent `crs:Contrast` on a legacy file does not mean neutral. Where a
@@ -426,13 +426,13 @@ never reject**, see §9.
 
 ### 5.1 White balance
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:WhiteBalance` | open enum | `As Shot`, `Auto`, `Daylight`, `Cloudy`, `Shade`, `Tungsten`, `Fluorescent`, `Flash`, `Custom` | `As Shot` |
-| `crs:Temperature` | int | 2000..50000 **[V]** | **null** |
-| `crs:Tint` | int | −150..+150 **[V]** | **null** |
-| `crs:IncrementalTemperature` | int | −100..+100 | 0 |
-| `crs:IncrementalTint` | int | −100..+100 | 0 |
+| Tag                          | Type      | Range                                                                                          | Default   |
+| ---------------------------- | --------- | ---------------------------------------------------------------------------------------------- | --------- |
+| `crs:WhiteBalance`           | open enum | `As Shot`, `Auto`, `Daylight`, `Cloudy`, `Shade`, `Tungsten`, `Fluorescent`, `Flash`, `Custom` | `As Shot` |
+| `crs:Temperature`            | int       | 2000..50000 **[V]**                                                                            | **null**  |
+| `crs:Tint`                   | int       | −150..+150 **[V]**                                                                             | **null**  |
+| `crs:IncrementalTemperature` | int       | −100..+100                                                                                     | 0         |
+| `crs:IncrementalTint`        | int       | −100..+100                                                                                     | 0         |
 
 Temperature/Tint default to null. With `crs:WhiteBalance = "As Shot"`, missing values mean
 camera-recorded neutral, unavailable here (§1). Mapping resolves null; fixed defaults would
@@ -451,14 +451,14 @@ reference. Store it as given.
 
 ### 5.2 Basic tone
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:Exposure2012` | real | −5.00..+5.00 | 0 |
-| `crs:Contrast2012` | int | −100..+100 | 0 |
-| `crs:Highlights2012` | int | −100..+100 | 0 |
-| `crs:Shadows2012` | int | −100..+100 | 0 |
-| `crs:Whites2012` | int | −100..+100 | 0 |
-| `crs:Blacks2012` | int | −100..+100 | 0 |
+| Tag                  | Type | Range        | Default |
+| -------------------- | ---- | ------------ | ------- |
+| `crs:Exposure2012`   | real | −5.00..+5.00 | 0       |
+| `crs:Contrast2012`   | int  | −100..+100   | 0       |
+| `crs:Highlights2012` | int  | −100..+100   | 0       |
+| `crs:Shadows2012`    | int  | −100..+100   | 0       |
+| `crs:Whites2012`     | int  | −100..+100   | 0       |
+| `crs:Blacks2012`     | int  | −100..+100   | 0       |
 
 `crs:Exposure2012` is in **EV**, a linear stop multiplier, unlike every other value
 on this list. The rest are unitless slider positions on an arbitrary scale; their
@@ -466,13 +466,13 @@ mapping to any physical quantity is not derivable from the file.
 
 ### 5.3 Presence and colour
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:Texture` | int | −100..+100 | 0 |
-| `crs:Clarity2012` | int | −100..+100 | 0 |
-| `crs:Dehaze` | **real** | −100..+100 | 0 |
-| `crs:Vibrance` | int | −100..+100 | 0 |
-| `crs:Saturation` | int | −100..+100 | 0 |
+| Tag               | Type     | Range      | Default |
+| ----------------- | -------- | ---------- | ------- |
+| `crs:Texture`     | int      | −100..+100 | 0       |
+| `crs:Clarity2012` | int      | −100..+100 | 0       |
+| `crs:Dehaze`      | **real** | −100..+100 | 0       |
+| `crs:Vibrance`    | int      | −100..+100 | 0       |
+| `crs:Saturation`  | int      | −100..+100 | 0       |
 
 `crs:Dehaze` is a real, not an integer, unlike its neighbours. It also did not
 exist before generation 3.
@@ -484,13 +484,13 @@ protection for hues near skin tones. Saturation is uniform.
 
 ### 5.4 Tone curve
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:ToneCurveName2012` | open enum | `Linear`, `Medium Contrast`, `Strong Contrast`, `Custom`, or a user preset name | `Linear` |
-| `crs:ToneCurvePV2012` | Seq of point | | identity |
-| `crs:ToneCurvePV2012Red` | Seq of point | | identity |
-| `crs:ToneCurvePV2012Green` | Seq of point | | identity |
-| `crs:ToneCurvePV2012Blue` | Seq of point | | identity |
+| Tag                        | Type         | Range                                                                           | Default  |
+| -------------------------- | ------------ | ------------------------------------------------------------------------------- | -------- |
+| `crs:ToneCurveName2012`    | open enum    | `Linear`, `Medium Contrast`, `Strong Contrast`, `Custom`, or a user preset name | `Linear` |
+| `crs:ToneCurvePV2012`      | Seq of point |                                                                                 | identity |
+| `crs:ToneCurvePV2012Red`   | Seq of point |                                                                                 | identity |
+| `crs:ToneCurvePV2012Green` | Seq of point |                                                                                 | identity |
+| `crs:ToneCurvePV2012Blue`  | Seq of point |                                                                                 | identity |
 
 `crs:ToneCurveName2012` is an **open** choice: a user-defined preset name is legal
 and must not be rejected or coerced (§3.6).
@@ -512,15 +512,15 @@ not recoverable from the file. This is a known fidelity gap, not a bug to chase.
 **Parametric curve**, a second, independent curve that composes with the point
 curve. Both may be active at once, and it exists in every generation.
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:ParametricShadows` | int | −100..+100 | 0 |
-| `crs:ParametricDarks` | int | −100..+100 | 0 |
-| `crs:ParametricLights` | int | −100..+100 | 0 |
-| `crs:ParametricHighlights` | int | −100..+100 | 0 |
-| `crs:ParametricShadowSplit` | int | 0..100 | 25 |
-| `crs:ParametricMidtoneSplit` | int | 0..100 | 50 |
-| `crs:ParametricHighlightSplit` | int | 0..100 | 75 |
+| Tag                            | Type | Range      | Default |
+| ------------------------------ | ---- | ---------- | ------- |
+| `crs:ParametricShadows`        | int  | −100..+100 | 0       |
+| `crs:ParametricDarks`          | int  | −100..+100 | 0       |
+| `crs:ParametricLights`         | int  | −100..+100 | 0       |
+| `crs:ParametricHighlights`     | int  | −100..+100 | 0       |
+| `crs:ParametricShadowSplit`    | int  | 0..100     | 25      |
+| `crs:ParametricMidtoneSplit`   | int  | 0..100     | 50      |
+| `crs:ParametricHighlightSplit` | int  | 0..100     | 75      |
 
 The three split values are the tone-range boundaries the four region sliders act
 within. Their defaults are **not zero**, and a file that omits them means the
@@ -531,13 +531,13 @@ defaults, not "no split".
 Eight fixed colour bands, always in this order: `Red`, `Orange`, `Yellow`, `Green`,
 `Aqua`, `Blue`, `Purple`, `Magenta`.
 
-| Tag pattern | Type | Range | Default |
-|---|---|---|---|
-| `crs:HueAdjustment<Band>` | int | −100..+100 | 0 |
-| `crs:SaturationAdjustment<Band>` | int | −100..+100 | 0 |
-| `crs:LuminanceAdjustment<Band>` | int | −100..+100 | 0 |
-| `crs:GrayMixer<Band>` | int | −100..+100 | 0 |
-| `crs:ConvertToGrayscale` | flag | | False |
+| Tag pattern                      | Type | Range      | Default |
+| -------------------------------- | ---- | ---------- | ------- |
+| `crs:HueAdjustment<Band>`        | int  | −100..+100 | 0       |
+| `crs:SaturationAdjustment<Band>` | int  | −100..+100 | 0       |
+| `crs:LuminanceAdjustment<Band>`  | int  | −100..+100 | 0       |
+| `crs:GrayMixer<Band>`            | int  | −100..+100 | 0       |
+| `crs:ConvertToGrayscale`         | flag |            | False   |
 
 32 band tags. Generate them from the band list, don't enumerate them by hand.
 
@@ -549,18 +549,18 @@ a user toggling the conversion back expects their HSL values intact.
 
 ### 5.6 Detail
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:Sharpness` | int | 0..150 | **see below** |
-| `crs:SharpenRadius` | real | 0.5..3.0 | 1.0 |
-| `crs:SharpenDetail` | int | 0..100 | 25 |
-| `crs:SharpenEdgeMasking` | int | 0..100 | 0 |
-| `crs:LuminanceSmoothing` | int | 0..100 | 0 |
-| `crs:LuminanceNoiseReductionDetail` | int | 0..100 | 50 **[V]** |
-| `crs:LuminanceNoiseReductionContrast` | int | 0..100 | 0 |
-| `crs:ColorNoiseReduction` | int | 0..100 | **25** |
-| `crs:ColorNoiseReductionDetail` | int | 0..100 | 50 |
-| `crs:ColorNoiseReductionSmoothness` | int | 0..100 | 50 |
+| Tag                                   | Type | Range    | Default       |
+| ------------------------------------- | ---- | -------- | ------------- |
+| `crs:Sharpness`                       | int  | 0..150   | **see below** |
+| `crs:SharpenRadius`                   | real | 0.5..3.0 | 1.0           |
+| `crs:SharpenDetail`                   | int  | 0..100   | 25            |
+| `crs:SharpenEdgeMasking`              | int  | 0..100   | 0             |
+| `crs:LuminanceSmoothing`              | int  | 0..100   | 0             |
+| `crs:LuminanceNoiseReductionDetail`   | int  | 0..100   | 50 **[V]**    |
+| `crs:LuminanceNoiseReductionContrast` | int  | 0..100   | 0             |
+| `crs:ColorNoiseReduction`             | int  | 0..100   | **25**        |
+| `crs:ColorNoiseReductionDetail`       | int  | 0..100   | 50            |
+| `crs:ColorNoiseReductionSmoothness`   | int  | 0..100   | 50            |
 
 Non-zero defaults matter: absent detail still means `crs:ColorNoiseReduction` 25, not 0.
 Using zero silently produces speckled output.
@@ -579,22 +579,22 @@ caller knows it is handling a rendered file, that is theirs to override.
 
 One block: colour grading adds midtone/global controls and reuses split-toning shadow/highlight tags.
 
-| Tag | Type | Range | Default | Role |
-|---|---|---|---|---|
-| `crs:SplitToningShadowHue` | int | 0..360 | 0 | shadow hue |
-| `crs:SplitToningShadowSaturation` | int | 0..100 | 0 | shadow saturation |
-| `crs:SplitToningHighlightHue` | int | 0..360 | 0 | highlight hue |
-| `crs:SplitToningHighlightSaturation` | int | 0..100 | 0 | highlight saturation |
-| `crs:SplitToningBalance` | int | −100..+100 | 0 | balance |
-| `crs:ColorGradeShadowLum` | int | −100..+100 | 0 | shadow luminance |
-| `crs:ColorGradeMidtoneHue` | int | 0..360 | 0 | |
-| `crs:ColorGradeMidtoneSat` | int | 0..100 | 0 | |
-| `crs:ColorGradeMidtoneLum` | int | −100..+100 | 0 | |
-| `crs:ColorGradeHighlightLum` | int | −100..+100 | 0 | |
-| `crs:ColorGradeGlobalHue` | int | 0..360 | 0 | |
-| `crs:ColorGradeGlobalSat` | int | 0..100 | 0 | |
-| `crs:ColorGradeGlobalLum` | int | −100..+100 | 0 | |
-| `crs:ColorGradeBlending` | int | 0..100 | 50 | |
+| Tag                                  | Type | Range      | Default | Role                 |
+| ------------------------------------ | ---- | ---------- | ------- | -------------------- |
+| `crs:SplitToningShadowHue`           | int  | 0..360     | 0       | shadow hue           |
+| `crs:SplitToningShadowSaturation`    | int  | 0..100     | 0       | shadow saturation    |
+| `crs:SplitToningHighlightHue`        | int  | 0..360     | 0       | highlight hue        |
+| `crs:SplitToningHighlightSaturation` | int  | 0..100     | 0       | highlight saturation |
+| `crs:SplitToningBalance`             | int  | −100..+100 | 0       | balance              |
+| `crs:ColorGradeShadowLum`            | int  | −100..+100 | 0       | shadow luminance     |
+| `crs:ColorGradeMidtoneHue`           | int  | 0..360     | 0       |                      |
+| `crs:ColorGradeMidtoneSat`           | int  | 0..100     | 0       |                      |
+| `crs:ColorGradeMidtoneLum`           | int  | −100..+100 | 0       |                      |
+| `crs:ColorGradeHighlightLum`         | int  | −100..+100 | 0       |                      |
+| `crs:ColorGradeGlobalHue`            | int  | 0..360     | 0       |                      |
+| `crs:ColorGradeGlobalSat`            | int  | 0..100     | 0       |                      |
+| `crs:ColorGradeGlobalLum`            | int  | −100..+100 | 0       |                      |
+| `crs:ColorGradeBlending`             | int  | 0..100     | 50      |                      |
 
 **There is no `ColorGradeShadowHue`, `ColorGradeShadowSat`, `ColorGradeHighlightHue`,
 `ColorGradeHighlightSat` or `ColorGradeBalance`.** Those five names are the obvious
@@ -615,27 +615,27 @@ Expand them in our struct (§1.3).
 
 ### 5.8 Lens corrections and defringe
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:LensProfileEnable` | flag | | False |
-| `crs:LensProfileSetup` | open enum | `LensDefaults`, `Auto`, `Custom` | `LensDefaults` |
-| `crs:LensProfileName` | string | | null |
-| `crs:LensProfileFilename` | string | | null |
-| `crs:LensProfileDigest` | string | | null |
-| `crs:LensProfileIsEmbedded` | flag | | False |
-| `crs:LensProfileDistortionScale` | int | 0..200 | 100 |
-| `crs:LensProfileChromaticAberrationScale` | int | 0..200 | 100 |
-| `crs:LensProfileVignettingScale` | int | 0..200 | 100 |
-| `crs:LensManualDistortionAmount` | int | −100..+100 | 0 |
-| `crs:AutoLateralCA` | flag | | False |
-| `crs:ChromaticAberrationR` | int | −100..+100 | 0 |
-| `crs:ChromaticAberrationB` | int | −100..+100 | 0 |
-| `crs:DefringePurpleAmount` | int | 0..20 | 0 |
-| `crs:DefringePurpleHueLo` | int | 0..100 | 30 **[V]** |
-| `crs:DefringePurpleHueHi` | int | 0..100 | 70 **[V]** |
-| `crs:DefringeGreenAmount` | int | 0..20 | 0 |
-| `crs:DefringeGreenHueLo` | int | 0..100 | 40 **[V]** |
-| `crs:DefringeGreenHueHi` | int | 0..100 | 60 **[V]** |
+| Tag                                       | Type      | Range                            | Default        |
+| ----------------------------------------- | --------- | -------------------------------- | -------------- |
+| `crs:LensProfileEnable`                   | flag      |                                  | False          |
+| `crs:LensProfileSetup`                    | open enum | `LensDefaults`, `Auto`, `Custom` | `LensDefaults` |
+| `crs:LensProfileName`                     | string    |                                  | null           |
+| `crs:LensProfileFilename`                 | string    |                                  | null           |
+| `crs:LensProfileDigest`                   | string    |                                  | null           |
+| `crs:LensProfileIsEmbedded`               | flag      |                                  | False          |
+| `crs:LensProfileDistortionScale`          | int       | 0..200                           | 100            |
+| `crs:LensProfileChromaticAberrationScale` | int       | 0..200                           | 100            |
+| `crs:LensProfileVignettingScale`          | int       | 0..200                           | 100            |
+| `crs:LensManualDistortionAmount`          | int       | −100..+100                       | 0              |
+| `crs:AutoLateralCA`                       | flag      |                                  | False          |
+| `crs:ChromaticAberrationR`                | int       | −100..+100                       | 0              |
+| `crs:ChromaticAberrationB`                | int       | −100..+100                       | 0              |
+| `crs:DefringePurpleAmount`                | int       | 0..20                            | 0              |
+| `crs:DefringePurpleHueLo`                 | int       | 0..100                           | 30 **[V]**     |
+| `crs:DefringePurpleHueHi`                 | int       | 0..100                           | 70 **[V]**     |
+| `crs:DefringeGreenAmount`                 | int       | 0..20                            | 0              |
+| `crs:DefringeGreenHueLo`                  | int       | 0..100                           | 40 **[V]**     |
+| `crs:DefringeGreenHueHi`                  | int       | 0..100                           | 60 **[V]**     |
 
 Note the defringe amounts are 0..20, not 0..100 like almost everything else.
 
@@ -648,20 +648,20 @@ distortion spline the camera recorded in the raw, which is independent of this.
 Two distinct vignettes, applied at different points in the pipeline (§6.4). They
 are not alternatives and both can be non-zero.
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:VignetteAmount` | int | −100..+100 | 0 |
-| `crs:VignetteMidpoint` | int | 0..100 | 50 **[V]** |
-| `crs:PostCropVignetteAmount` | int | −100..+100 | 0 |
-| `crs:PostCropVignetteMidpoint` | int | 0..100 | 50 **[V]** |
-| `crs:PostCropVignetteFeather` | int | 0..100 | 50 **[V]** |
-| `crs:PostCropVignetteRoundness` | int | −100..+100 | 0 |
-| `crs:PostCropVignetteStyle` | enum-int | 1 = Highlight Priority, 2 = Color Priority, 3 = Paint Overlay | 1 |
-| `crs:PostCropVignetteHighlightContrast` | int | 0..100 | 0 |
-| `crs:GrainAmount` | int | 0..100 | 0 |
-| `crs:GrainSize` | int | 0..100 | 25 **[V]** |
-| `crs:GrainFrequency` | int | 0..100 | 50 **[V]** |
-| `crs:GrainSeed` | int | | 0 **[V]** |
+| Tag                                     | Type     | Range                                                         | Default    |
+| --------------------------------------- | -------- | ------------------------------------------------------------- | ---------- |
+| `crs:VignetteAmount`                    | int      | −100..+100                                                    | 0          |
+| `crs:VignetteMidpoint`                  | int      | 0..100                                                        | 50 **[V]** |
+| `crs:PostCropVignetteAmount`            | int      | −100..+100                                                    | 0          |
+| `crs:PostCropVignetteMidpoint`          | int      | 0..100                                                        | 50 **[V]** |
+| `crs:PostCropVignetteFeather`           | int      | 0..100                                                        | 50 **[V]** |
+| `crs:PostCropVignetteRoundness`         | int      | −100..+100                                                    | 0          |
+| `crs:PostCropVignetteStyle`             | enum-int | 1 = Highlight Priority, 2 = Color Priority, 3 = Paint Overlay | 1          |
+| `crs:PostCropVignetteHighlightContrast` | int      | 0..100                                                        | 0          |
+| `crs:GrainAmount`                       | int      | 0..100                                                        | 0          |
+| `crs:GrainSize`                         | int      | 0..100                                                        | 25 **[V]** |
+| `crs:GrainFrequency`                    | int      | 0..100                                                        | 50 **[V]** |
+| `crs:GrainSeed`                         | int      |                                                               | 0 **[V]**  |
 
 `crs:VignetteAmount` is **manual lens vignetting**, corrected against the sensor
 frame. "Post-crop" is literal: that vignette is applied relative to the cropped
@@ -672,15 +672,15 @@ three values behave differently with respect to exposure, they are not intensiti
 
 ### 5.10 Camera calibration
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:ShadowTint` | int | −100..+100 | 0 |
-| `crs:RedHue` | int | −100..+100 | 0 |
-| `crs:RedSaturation` | int | −100..+100 | 0 |
-| `crs:GreenHue` | int | −100..+100 | 0 |
-| `crs:GreenSaturation` | int | −100..+100 | 0 |
-| `crs:BlueHue` | int | −100..+100 | 0 |
-| `crs:BlueSaturation` | int | −100..+100 | 0 |
+| Tag                   | Type | Range      | Default |
+| --------------------- | ---- | ---------- | ------- |
+| `crs:ShadowTint`      | int  | −100..+100 | 0       |
+| `crs:RedHue`          | int  | −100..+100 | 0       |
+| `crs:RedSaturation`   | int  | −100..+100 | 0       |
+| `crs:GreenHue`        | int  | −100..+100 | 0       |
+| `crs:GreenSaturation` | int  | −100..+100 | 0       |
+| `crs:BlueHue`         | int  | −100..+100 | 0       |
+| `crs:BlueSaturation`  | int  | −100..+100 | 0       |
 
 Applied before the colour matrix, on primaries rather than on rendered colour.
 Cheap to read, and old presets lean on it heavily, so it matters most for exactly
@@ -695,9 +695,9 @@ Carry geometry values losslessly; downstream applies transforms (§1.1).
 
 ### 6.1 Orientation
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `tiff:Orientation` | int | 1..8 | null |
+| Tag                | Type | Range | Default |
+| ------------------ | ---- | ----- | ------- |
+| `tiff:Orientation` | int  | 1..8  | null    |
 
 Standard EXIF orientation codes. Record as given, or null when absent.
 
@@ -709,18 +709,18 @@ must never be assigned to each other.
 
 ### 6.2 Crop
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:HasCrop` | flag | | False |
-| `crs:CropTop` | real | 0..1 | 0 |
-| `crs:CropLeft` | real | 0..1 | 0 |
-| `crs:CropBottom` | real | 0..1 | 1 |
-| `crs:CropRight` | real | 0..1 | 1 |
-| `crs:CropAngle` | real | −45..+45 **[V]** | 0 |
-| `crs:CropWidth` | real | | null |
-| `crs:CropHeight` | real | | null |
-| `crs:CropUnits` | enum-int | 0 = pixels, 1 = inches, 2 = cm **[V]** | 0 |
-| `crs:CropConstrainToWarp` | flag | | False |
+| Tag                       | Type     | Range                                  | Default |
+| ------------------------- | -------- | -------------------------------------- | ------- |
+| `crs:HasCrop`             | flag     |                                        | False   |
+| `crs:CropTop`             | real     | 0..1                                   | 0       |
+| `crs:CropLeft`            | real     | 0..1                                   | 0       |
+| `crs:CropBottom`          | real     | 0..1                                   | 1       |
+| `crs:CropRight`           | real     | 0..1                                   | 1       |
+| `crs:CropAngle`           | real     | −45..+45 **[V]**                       | 0       |
+| `crs:CropWidth`           | real     |                                        | null    |
+| `crs:CropHeight`          | real     |                                        | null    |
+| `crs:CropUnits`           | enum-int | 0 = pixels, 1 = inches, 2 = cm **[V]** | 0       |
+| `crs:CropConstrainToWarp` | flag     |                                        | False   |
 
 Rules that matter:
 
@@ -750,15 +750,15 @@ Yes, this is in the sidecar. Two layers, and both may be present.
 
 **Manual sliders:**
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:PerspectiveVertical` | int | −100..+100 | 0 |
-| `crs:PerspectiveHorizontal` | int | −100..+100 | 0 |
-| `crs:PerspectiveRotate` | real | −10..+10 **[V]** | 0 |
-| `crs:PerspectiveScale` | int | 50..150 | **100** |
-| `crs:PerspectiveAspect` | int | −100..+100 | 0 |
-| `crs:PerspectiveX` | **real** | −100..+100 | 0 |
-| `crs:PerspectiveY` | **real** | −100..+100 | 0 |
+| Tag                         | Type     | Range            | Default |
+| --------------------------- | -------- | ---------------- | ------- |
+| `crs:PerspectiveVertical`   | int      | −100..+100       | 0       |
+| `crs:PerspectiveHorizontal` | int      | −100..+100       | 0       |
+| `crs:PerspectiveRotate`     | real     | −10..+10 **[V]** | 0       |
+| `crs:PerspectiveScale`      | int      | 50..150          | **100** |
+| `crs:PerspectiveAspect`     | int      | −100..+100       | 0       |
+| `crs:PerspectiveX`          | **real** | −100..+100       | 0       |
+| `crs:PerspectiveY`          | **real** | −100..+100       | 0       |
 
 `crs:PerspectiveScale` defaults to **100, not 0**; a missing value means unity
 scale, and treating it as 0 collapses the image.
@@ -771,18 +771,18 @@ it rather than replacing it; a file can carry both. `PerspectiveX` and
 **Automatic correction.** Grouped by what they do, not by the order they appear in
 a file:
 
-| Tag | Type | Range | Default |
-|---|---|---|---|
-| `crs:PerspectiveUpright` | enum-int | 0 = Off, 1 = Auto, 2 = Full, 3 = Level, 4 = Vertical, 5 = Guided | 0 |
-| `crs:UprightVersion` | int | | null |
-| `crs:UprightCenterMode` | int | | null |
-| `crs:UprightCenterNormX` | real | 0..1 | null |
-| `crs:UprightCenterNormY` | real | 0..1 | null |
-| `crs:UprightFocalMode` | int | | null |
-| `crs:UprightFocalLength35mm` | real | mm | null |
-| `crs:UprightPreview` | flag | | False |
-| `crs:UprightTransformCount` | int | | null |
-| `crs:UprightFourSegmentsCount` | int | | null |
+| Tag                            | Type     | Range                                                            | Default |
+| ------------------------------ | -------- | ---------------------------------------------------------------- | ------- |
+| `crs:PerspectiveUpright`       | enum-int | 0 = Off, 1 = Auto, 2 = Full, 3 = Level, 4 = Vertical, 5 = Guided | 0       |
+| `crs:UprightVersion`           | int      |                                                                  | null    |
+| `crs:UprightCenterMode`        | int      |                                                                  | null    |
+| `crs:UprightCenterNormX`       | real     | 0..1                                                             | null    |
+| `crs:UprightCenterNormY`       | real     | 0..1                                                             | null    |
+| `crs:UprightFocalMode`         | int      |                                                                  | null    |
+| `crs:UprightFocalLength35mm`   | real     | mm                                                               | null    |
+| `crs:UprightPreview`           | flag     |                                                                  | False   |
+| `crs:UprightTransformCount`    | int      |                                                                  | null    |
+| `crs:UprightFourSegmentsCount` | int      |                                                                  | null    |
 
 Plus the opaque payloads: `crs:UprightTransform_0` through `_5`, and
 `crs:UprightFourSegments_0` through `_3`, both observed with those cardinalities
@@ -820,10 +820,10 @@ to a distorted one puts the edges in the wrong place.
 
 ## 7. Camera profile
 
-| Tag | Type | Default |
-|---|---|---|
-| `crs:CameraProfile` | string | null |
-| `crs:CameraProfileDigest` | string | null |
+| Tag                       | Type   | Default |
+| ------------------------- | ------ | ------- |
+| `crs:CameraProfile`       | string | null    |
+| `crs:CameraProfileDigest` | string | null    |
 
 The profile is a **reference, not a payload**: the file names a profile that lives
 elsewhere and carries none of its data. The digest is a fingerprint of the
@@ -843,18 +843,18 @@ of** the camera profile in §7. The two compose; a file naming both means both
 apply. `look` is null when the structure is absent, which is different from a Look
 with default fields.
 
-| Field | Type | Notes |
-|---|---|---|
-| `crs:Name` | string | Display name |
-| `crs:Amount` | real | Strength, typically 0..1 |
-| `crs:UUID` | string | Stable identifier |
-| `crs:Group` | lang-alt | Category |
-| `crs:Cluster` | string | |
-| `crs:Copyright` | string | |
-| `crs:SupportsAmount` | flag | |
-| `crs:SupportsMonochrome` | flag | |
-| `crs:SupportsOutputReferred` | flag | |
-| `crs:Parameters` | struct | See below |
+| Field                        | Type     | Notes                    |
+| ---------------------------- | -------- | ------------------------ |
+| `crs:Name`                   | string   | Display name             |
+| `crs:Amount`                 | real     | Strength, typically 0..1 |
+| `crs:UUID`                   | string   | Stable identifier        |
+| `crs:Group`                  | lang-alt | Category                 |
+| `crs:Cluster`                | string   |                          |
+| `crs:Copyright`              | string   |                          |
+| `crs:SupportsAmount`         | flag     |                          |
+| `crs:SupportsMonochrome`     | flag     |                          |
+| `crs:SupportsOutputReferred` | flag     |                          |
+| `crs:Parameters`             | struct   | See below                |
 
 Field list is **[V]**: several are optional and it is unlikely to be exhaustive.
 Unknown fields inside the structure go to `unsupported` as `crs:Look/<Name>`.
@@ -898,9 +898,9 @@ Routinely conflated:
 
 ```ts
 interface Issue {
-  tag: string;      // URI-qualified, as §3.2
+  tag: string; // URI-qualified, as §3.2
   reason: 'clamped' | 'unparseable' | 'duplicate' | 'malformed' | 'unconvertible';
-  value: string;    // the offending value, verbatim
+  value: string; // the offending value, verbatim
 }
 ```
 
@@ -986,22 +986,22 @@ mistake keeping a copy for progress toward supporting it.
 
 Cheap, and the import path is already open.
 
-| Tag | Type | Default | Notes |
-|---|---|---|---|
-| `xmp:Rating` | real | null | −1..5. **−1 means rejected**, not "one below zero". Real, not int: `3.5` is spec-legal even though editors write integers. |
-| `xmp:Label` | string | null | Colour label, free text, localised |
-| `xmp:CreateDate` | date | null | |
-| `xmp:ModifyDate` | date | null | |
-| `xmp:MetadataDate` | date | null | |
-| `dc:subject` | Bag of string | `[]` | Flat keywords |
-| `lr:hierarchicalSubject` | Bag of string | `[]` | Keyword paths, `Animals\|Birds\|Owl` |
-| `dc:title` | lang-alt | null | |
-| `dc:description` | lang-alt | null | |
-| `dc:creator` | Seq of string | `[]` | |
-| `dc:rights` | lang-alt | null | |
-| `photoshop:DateCreated` | date | null | |
-| `photoshop:SidecarForExtension` | string | null | The raw extension this sidecar belongs to, e.g. `CR2` |
-| `crs:RawFileName` | string | null | Original raw filename |
+| Tag                             | Type          | Default | Notes                                                                                                                      |
+| ------------------------------- | ------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `xmp:Rating`                    | real          | null    | −1..5. **−1 means rejected**, not "one below zero". Real, not int: `3.5` is spec-legal even though editors write integers. |
+| `xmp:Label`                     | string        | null    | Colour label, free text, localised                                                                                         |
+| `xmp:CreateDate`                | date          | null    |                                                                                                                            |
+| `xmp:ModifyDate`                | date          | null    |                                                                                                                            |
+| `xmp:MetadataDate`              | date          | null    |                                                                                                                            |
+| `dc:subject`                    | Bag of string | `[]`    | Flat keywords                                                                                                              |
+| `lr:hierarchicalSubject`        | Bag of string | `[]`    | Keyword paths, `Animals\|Birds\|Owl`                                                                                       |
+| `dc:title`                      | lang-alt      | null    |                                                                                                                            |
+| `dc:description`                | lang-alt      | null    |                                                                                                                            |
+| `dc:creator`                    | Seq of string | `[]`    |                                                                                                                            |
+| `dc:rights`                     | lang-alt      | null    |                                                                                                                            |
+| `photoshop:DateCreated`         | date          | null    |                                                                                                                            |
+| `photoshop:SidecarForExtension` | string        | null    | The raw extension this sidecar belongs to, e.g. `CR2`                                                                      |
+| `crs:RawFileName`               | string        | null    | Original raw filename                                                                                                      |
 
 Read **both** keyword tags. `dc:subject` is flat, `lr:hierarchicalSubject` carries
 the tree; reading only the former silently flattens a hierarchy the user built.
@@ -1017,7 +1017,10 @@ zoneless date is local time in an unknown zone. Constructing a JS `Date` coerces
 to UTC by definition and loses that. Carry:
 
 ```ts
-interface XmpDate { value: string; offset: string | null }
+interface XmpDate {
+  value: string;
+  offset: string | null;
+}
 ```
 
 matching the existing capture-time handling, which keeps the wall clock and the

@@ -16,22 +16,55 @@ export const SetBackupRequestSchema = z.object({
 });
 export type SetBackupRequest = z.infer<typeof SetBackupRequestSchema>;
 export const RemoveBackupQuerySchema = z.object({ fetch_first: z.enum(['1']).optional() });
-export const SetLocalBudgetRequestSchema = z.object({ local_budget_bytes: z.number().int().positive().nullable() });
+export const SetLocalBudgetRequestSchema = z.object({
+  local_budget_bytes: z.number().int().positive().nullable(),
+});
 
 export const BackupIssueCodeSchema = z.enum([
-  'folder_missing', 'marker_missing', 'marker_invalid', 'wrong_library', 'wrong_backup', 'unreadable',
-  'path_conflict', 'backup_missing', 'backup_changed', 'local_missing', 'local_changed',
-  'read_only', 'no_space', 'permission_denied', 'io_error', 'transfer_failed', 'paused', 'cancelled', 'budget_unmet',
+  'folder_missing',
+  'marker_missing',
+  'marker_invalid',
+  'wrong_library',
+  'wrong_backup',
+  'unreadable',
+  'path_conflict',
+  'backup_missing',
+  'backup_changed',
+  'local_missing',
+  'local_changed',
+  'read_only',
+  'no_space',
+  'permission_denied',
+  'io_error',
+  'transfer_failed',
+  'paused',
+  'cancelled',
+  'budget_unmet',
 ]);
 export type BackupIssueCode = z.infer<typeof BackupIssueCodeSchema>;
 export const BackupAccessSchema = z.enum([
-  'ready', 'folder_missing', 'marker_missing', 'marker_invalid', 'wrong_library', 'wrong_backup', 'unreadable',
+  'ready',
+  'folder_missing',
+  'marker_missing',
+  'marker_invalid',
+  'wrong_library',
+  'wrong_backup',
+  'unreadable',
 ]);
 export type BackupAccess = z.infer<typeof BackupAccessSchema>;
-export const BackupPhaseSchema = z.enum(['checking', 'moving', 'copying', 'offloading', 'restoring', 'configuring']);
+export const BackupPhaseSchema = z.enum([
+  'checking',
+  'moving',
+  'copying',
+  'offloading',
+  'restoring',
+  'configuring',
+]);
 export type BackupPhase = z.infer<typeof BackupPhaseSchema>;
 const CurrentTransferSchema = z.object({
-  path: z.string(), bytes_done: z.number().int().nonnegative(), bytes_total: z.number().int().nonnegative().nullable(),
+  path: z.string(),
+  bytes_done: z.number().int().nonnegative(),
+  bytes_total: z.number().int().nonnegative().nullable(),
 });
 export const BackupActivitySchema = z.object({
   phase: BackupPhaseSchema,
@@ -88,8 +121,11 @@ export const ConfiguredBackupStatusSchema = z.object({
   coverage: BackupCoverageSchema,
   issues: BackupIssuesSchema,
   transfers: z.object({
-    queued: z.number().int().nonnegative(), active: z.number().int().nonnegative(), paused: z.number().int().nonnegative(),
-    failed: z.number().int().nonnegative(), cancelled: z.number().int().nonnegative(),
+    queued: z.number().int().nonnegative(),
+    active: z.number().int().nonnegative(),
+    paused: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    cancelled: z.number().int().nonnegative(),
   }),
   local_bytes: z.number().int().nonnegative(),
   local_budget_bytes: z.number().int().nullable(),
@@ -104,12 +140,18 @@ export const BackupStatusSchema = z.discriminatedUnion('configured', [
 ]);
 export type BackupStatus = z.infer<typeof BackupStatusSchema>;
 export const BackupStatusesSchema = z.object({ backups: z.array(BackupStatusSchema) });
-export const BackupRunResponseSchema = z.object({ status: BackupStatusSchema, report: BackupReportSchema });
+export const BackupRunResponseSchema = z.object({
+  status: BackupStatusSchema,
+  report: BackupReportSchema,
+});
 export type BackupRunResponse = z.infer<typeof BackupRunResponseSchema>;
 
 export const FetchBackProgressSchema = z.object({
-  done: z.number().int().nonnegative(), total: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(), paused: z.number().int().nonnegative(), cancelled: z.number().int().nonnegative(),
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  paused: z.number().int().nonnegative(),
+  cancelled: z.number().int().nonnegative(),
   current: CurrentTransferSchema.nullable(),
 });
 export type FetchBackProgress = z.infer<typeof FetchBackProgressSchema>;

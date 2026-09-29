@@ -52,7 +52,15 @@ fn main() {
 
     println!(
         "{:<16} {:>8} {:>8} {:>7} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7}",
-        "frame", "whiteQ", "whiteB", "stops", "deltaEQ", "deltaEB", "better", "toe", "peak/w",
+        "frame",
+        "whiteQ",
+        "whiteB",
+        "stops",
+        "deltaEQ",
+        "deltaEB",
+        "better",
+        "toe",
+        "peak/w",
         "noise/bin",
     );
     let mut deltas: Vec<f64> = Vec::new();
@@ -74,7 +82,13 @@ fn main() {
 
         let fitted = |body: bool| {
             rawshim::tone::use_body_anchor(body);
-            rawshim::fit_hdr_measured(&resident, path, 0.9, rawshim::hdr_fit::CameraMatch::LensAndColour).map(|(matched, levels)| {
+            rawshim::fit_hdr_measured(
+                &resident,
+                path,
+                0.9,
+                rawshim::hdr_fit::CameraMatch::LensAndColour,
+            )
+            .map(|(matched, levels)| {
                 (
                     matched.colour.as_ref().expect("colour").delta_e,
                     levels.white.raw(),
@@ -98,7 +112,9 @@ fn main() {
         // was conditioned into - and where the read noise is wider, which bin a dark pixel lands in
         // is decided by the noise rather than by the light. Every bin under that then returns the
         // same population mean, which is a flat toe and a lifted black.
-        let noise = frame.noise.map(|fit| f64::from(fit.sigma_sq).max(0.0).sqrt());
+        let noise = frame
+            .noise
+            .map(|fit| f64::from(fit.sigma_sq).max(0.0).sqrt());
         let bin = ceiling * (white_q / f64::from(u16::MAX)) / 256.0;
         let ratio = noise.map_or(f64::NAN, |sigma| sigma / bin.max(1e-12));
 
@@ -136,7 +152,10 @@ fn main() {
     };
     println!();
     let wins = deltas.iter().filter(|d| **d < 0.0).count();
-    println!("the body's anchor lowers the residual on {wins} of {} frames", deltas.len());
+    println!(
+        "the body's anchor lowers the residual on {wins} of {} frames",
+        deltas.len()
+    );
     summarise("deltaE, body minus quantile", deltas);
     summarise("anchor moved, in stops", moved);
     summarise("the curve's pedestal, at the configured anchor", toes);

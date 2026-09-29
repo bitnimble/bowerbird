@@ -4,7 +4,13 @@ import { MobileEditPanelsPresenter } from '../mobile_edit_panels_presenter';
 import { MobileEditPanelsStore } from '../mobile_edit_panels_store';
 
 registerDom();
-const { act, cleanup, fireEvent, render: renderBare, screen } = await import('@testing-library/react');
+const {
+  act,
+  cleanup,
+  fireEvent,
+  render: renderBare,
+  screen,
+} = await import('@testing-library/react');
 const { MemoryRouter, useLocation, useNavigate } = await import('react-router-dom');
 const { MobileEditPanels, useReplacePastSheet } = await import('../mobile_edit_panels');
 
@@ -84,7 +90,11 @@ describe('mobile edit panels', () => {
     expect(screen.queryByRole('button', { name: 'Close edit panel' })).toBeNull();
     expect(screen.queryByRole('tabpanel')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Colour' }));
-    expect(screen.getByRole('tabpanel', { name: 'Colour' }).contains(screen.getByRole('textbox', { name: 'Saturation' }))).toBe(true);
+    expect(
+      screen
+        .getByRole('tabpanel', { name: 'Colour' })
+        .contains(screen.getByRole('textbox', { name: 'Saturation' })),
+    ).toBe(true);
   });
 
   test('back closes an open panel and stays in the editor', () => {
@@ -129,7 +139,10 @@ describe('mobile edit panels', () => {
 
   test('a sheet entry left behind by a reload is cleared rather than stepped back through', () => {
     renderBare(
-      <MemoryRouter initialEntries={['/grid', { pathname: '/photo', state: { editSheet: true } }]} initialIndex={1}>
+      <MemoryRouter
+        initialEntries={['/grid', { pathname: '/photo', state: { editSheet: true } }]}
+        initialIndex={1}
+      >
         <MobileEditPanels scope="photo" panels={panels} />
         <Browser />
       </MemoryRouter>,
@@ -149,14 +162,20 @@ describe('mobile edit panels', () => {
   });
 
   test('save failures remain visible and actionable when panels are collapsed', () => {
-    render(<MobileEditPanels scope="photo" panels={panels} notice={<button>Retry saving</button>} />);
-    expect(screen.getByRole('status').contains(screen.getByRole('button', { name: 'Retry saving' }))).toBe(true);
+    render(
+      <MobileEditPanels scope="photo" panels={panels} notice={<button>Retry saving</button>} />,
+    );
+    expect(
+      screen.getByRole('status').contains(screen.getByRole('button', { name: 'Retry saving' })),
+    ).toBe(true);
     const light = screen.getByRole('tab', { name: 'Light' });
     fireEvent.click(light);
     expect(screen.queryByRole('status')).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Retry saving' })).toHaveLength(1);
     fireEvent.click(light);
-    expect(screen.getByRole('status').contains(screen.getByRole('button', { name: 'Retry saving' }))).toBe(true);
+    expect(
+      screen.getByRole('status').contains(screen.getByRole('button', { name: 'Retry saving' })),
+    ).toBe(true);
     expect(screen.getAllByRole('button', { name: 'Retry saving' })).toHaveLength(1);
   });
 

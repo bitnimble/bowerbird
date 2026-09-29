@@ -153,8 +153,12 @@ export const MergePage = observer(function MergePage(): JSX.Element {
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    const size = (): CanvasSize => ({ width: store.layerSize?.width ?? 0, height: store.layerSize?.height ?? 0 });
-    session.stage.current = canvas == null ? null : new MergeStage(canvas, size, layers, () => device.displayPeakNits);
+    const size = (): CanvasSize => ({
+      width: store.layerSize?.width ?? 0,
+      height: store.layerSize?.height ?? 0,
+    });
+    session.stage.current =
+      canvas == null ? null : new MergeStage(canvas, size, layers, () => device.displayPeakNits);
     // The analysis lands before this canvas exists, so without a draw from here the picture stays
     // black until the reader happens to press something.
     if (canvas != null) session.presenter.redraw();
@@ -239,7 +243,8 @@ export const MergePage = observer(function MergePage(): JSX.Element {
     zoom.handlers.onPointerUp(event);
     const started = pressedAt.current;
     if (started == null) return;
-    dragged.current = travelOf(event.clientX - started.x, event.clientY - started.y) > CLICK_SLOP_PX;
+    dragged.current =
+      travelOf(event.clientX - started.x, event.clientY - started.y) > CLICK_SLOP_PX;
   };
   const onStageCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
     zoom.handlers.onPointerCancel(event);
@@ -258,7 +263,8 @@ export const MergePage = observer(function MergePage(): JSX.Element {
     if (store.recipe == null || committing) return;
     setCommitting(true);
     try {
-      const saved = photoId != null ? await presenter.commitExisting(photoId) : await presenter.commit();
+      const saved =
+        photoId != null ? await presenter.commitExisting(photoId) : await presenter.commit();
       navigate(photoPath(saved.photoId, source));
     } catch (err) {
       toasts.showError(err instanceof Error ? err.message : String(err));
@@ -282,7 +288,11 @@ export const MergePage = observer(function MergePage(): JSX.Element {
       <Row {...DRAGS_WINDOW} style={styles.nav}>
         <ShowSidebarButton />
         <Button onClick={cancel}>{MergePageStrings.cancel()}</Button>
-        <Button variant="primary" disabled={committing || store.readOnly} onClick={() => void save()}>
+        <Button
+          variant="primary"
+          disabled={committing || store.readOnly}
+          onClick={() => void save()}
+        >
           {MergePageStrings.save()}
         </Button>
         <Button
@@ -335,13 +345,19 @@ export const MergePage = observer(function MergePage(): JSX.Element {
           />
         </div>
         {store.readOnly && (
-          <Text variant="muted">{MergePageStrings.readOnlyMissingSources(store.missingSources)}</Text>
+          <Text variant="muted">
+            {MergePageStrings.readOnlyMissingSources(store.missingSources)}
+          </Text>
         )}
         <Spacer />
         <div {...stylex.props(styles.tools)}>
           {store.unaligned && (
             <Tooltip label={MergePageStrings.unaligned()}>
-              <span {...stylex.props(styles.unaligned)} role="img" aria-label={MergePageStrings.unaligned()}>
+              <span
+                {...stylex.props(styles.unaligned)}
+                role="img"
+                aria-label={MergePageStrings.unaligned()}
+              >
                 <TriangleAlert size={ICON} />
               </span>
             </Tooltip>
@@ -367,19 +383,26 @@ export const MergePage = observer(function MergePage(): JSX.Element {
               so an outline lands on the pixels it is about at every scale. */}
           <div
             {...stylex.props(styles.view)}
-            style={{ transform: `translate(${zoom.view.x}px, ${zoom.view.y}px) scale(${zoom.view.scale})` }}
+            style={{
+              transform: `translate(${zoom.view.x}px, ${zoom.view.y}px) scale(${zoom.view.scale})`,
+            }}
           >
             <canvas ref={handCanvas} {...stylex.props(styles.layer, styles.canvas)} />
             <svg {...stylex.props(styles.layer)} viewBox={`0 0 ${width} ${height}`}>
               {store.pieces.map(({ tile, d }, piece) =>
-                tile == null ?
+                tile == null ? (
                   <path
                     key={piece}
                     d={d}
                     vectorEffect={NON_SCALING}
-                    {...stylex.props(styles.piece, !store.showingLines && styles.quiet, styles.inert)}
+                    {...stylex.props(
+                      styles.piece,
+                      !store.showingLines && styles.quiet,
+                      styles.inert,
+                    )}
                   />
-                : <path
+                ) : (
+                  <path
                     key={piece}
                     d={d}
                     vectorEffect={NON_SCALING}
@@ -397,7 +420,8 @@ export const MergePage = observer(function MergePage(): JSX.Element {
                       if (dragged.current || dismissing.current) return;
                       presenter.openTile(tile);
                     }}
-                  />,
+                  />
+                ),
               )}
             </svg>
           </div>

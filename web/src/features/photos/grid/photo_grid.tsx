@@ -2,7 +2,12 @@ import * as stylex from '@stylexjs/stylex';
 import { comparer, reaction, when } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { useListingStore, useMarksStore, usePresenters, useStacksStore } from '../../../app/stores_context';
+import {
+  useListingStore,
+  useMarksStore,
+  usePresenters,
+  useStacksStore,
+} from '../../../app/stores_context';
 import { EmptyState } from '../../../ui/empty_state';
 import { focusRing } from '../../../ui/focus_ring';
 import { Text } from '../../../ui/text';
@@ -62,7 +67,11 @@ export function onScreenSpan(): Span | null {
   return from > to ? null : { from, to: to + 1 };
 }
 
-export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint: string }): JSX.Element {
+export const PhotoGrid = observer(function PhotoGrid({
+  emptyHint,
+}: {
+  emptyHint: string;
+}): JSX.Element {
   const store = useListingStore();
   const { photos } = usePresenters();
 
@@ -84,7 +93,10 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
   // position there is, so it can only go back once the filter has.
   useEffect(() => {
     const disposers = [
-      reaction(() => gridUrlState(store), writeGridUrl, { delay: URL_SETTLE_MS, equals: comparer.structural }),
+      reaction(() => gridUrlState(store), writeGridUrl, {
+        delay: URL_SETTLE_MS,
+        equals: comparer.structural,
+      }),
     ];
     if (store.source == null) {
       const asked = readGridUrl(window.location.search);
@@ -92,7 +104,8 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
         when(
           () => store.source != null,
           () => {
-            if (asksAnything(asked.filters)) void photos.setFilters({ ...store.filters, ...asked.filters });
+            if (asksAnything(asked.filters))
+              void photos.setFilters({ ...store.filters, ...asked.filters });
             if (asked.at > 0) {
               disposers.push(
                 when(
@@ -115,7 +128,8 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
 
   // Count first: short-circuiting leaves a populated grid unsubscribed from
   // `loading`, which toggles for every block a scroll asks for.
-  if (store.total === 0 && store.loading) return <Text variant="muted">{PhotoGridStrings.loadingPhotos()}</Text>;
+  if (store.total === 0 && store.loading)
+    return <Text variant="muted">{PhotoGridStrings.loadingPhotos()}</Text>;
 
   // A failed fetch also leaves nothing to show, and "Nothing here yet" would be a
   // lie about a library that is merely unreachable.
@@ -132,7 +146,11 @@ export const PhotoGrid = observer(function PhotoGrid({ emptyHint }: { emptyHint:
   if (store.isEmpty) {
     return (
       <EmptyState
-        title={store.hasActiveFilters ? PhotoGridStrings.noPhotosMatchFilter() : PhotoGridStrings.nothingHereYet()}
+        title={
+          store.hasActiveFilters
+            ? PhotoGridStrings.noPhotosMatchFilter()
+            : PhotoGridStrings.nothingHereYet()
+        }
       >
         <Text as="p" variant="muted">
           {store.hasActiveFilters ? PhotoGridStrings.tryADifferentFilter() : emptyHint}
@@ -278,7 +296,8 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
   };
 
   const blocks: number[] = [];
-  if (store.mode === 'masonry') for (let b = store.mountedBlocks.from; b < store.mountedBlocks.to; b++) blocks.push(b);
+  if (store.mode === 'masonry')
+    for (let b = store.mountedBlocks.from; b < store.mountedBlocks.to; b++) blocks.push(b);
 
   return (
     // The scrollbar comes first in the DOM and is floated to the right edge from
@@ -316,46 +335,47 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
       >
         {/* The rail and the window are scaffolding for the scroll, not structure:
             announced, they would sit between the list and its items. */}
-        <div {...stylex.props(viewport.content, viewport.railHeight(store.rail.length))} role="presentation">
-          {store.mode === 'masonry' ? (
-            blocks.map((block) => (
-              <MasonryBlock
-                key={block}
-                block={block}
-                top={store.rail.positionOf(store.blockTops[block] ?? 0)}
-                onMeasured={photos.measuredBlock}
-                onPacked={photos.packedBlock}
-              />
-            ))
-          ) : (
-            // One element per section rather than one window over a contiguous
-            // run: an open stack's band sits between rows of the collection, and a
-            // band several rows tall has to be one bordered box rather than one
-            // per row (§19.6).
-            store.sections.map((section) =>
-              section.kind === 'grid' ? (
-                <div
-                  key={section.key}
-                  {...stylex.props(
-                    sectionStyle(store.mode, store.columns),
-                    cells.window,
-                    cells.down(store.rail.positionOf(section.top)),
-                    cells.rows(store.rowHeight - GRID_GAP),
-                  )}
-                  role="presentation"
-                >
-                  {tilesFor(store, marks, stacks, section.from, section.to, store.mode)}
-                </div>
-              ) : (
-                <BandTiles
-                  key={section.key}
-                  expansion={section}
-                  top={section.top}
-                  fused={store.fusedStacks.has(section.stackId)}
+        <div
+          {...stylex.props(viewport.content, viewport.railHeight(store.rail.length))}
+          role="presentation"
+        >
+          {store.mode === 'masonry'
+            ? blocks.map((block) => (
+                <MasonryBlock
+                  key={block}
+                  block={block}
+                  top={store.rail.positionOf(store.blockTops[block] ?? 0)}
+                  onMeasured={photos.measuredBlock}
+                  onPacked={photos.packedBlock}
                 />
-              ),
-            )
-          )}
+              ))
+            : // One element per section rather than one window over a contiguous
+              // run: an open stack's band sits between rows of the collection, and a
+              // band several rows tall has to be one bordered box rather than one
+              // per row (§19.6).
+              store.sections.map((section) =>
+                section.kind === 'grid' ? (
+                  <div
+                    key={section.key}
+                    {...stylex.props(
+                      sectionStyle(store.mode, store.columns),
+                      cells.window,
+                      cells.down(store.rail.positionOf(section.top)),
+                      cells.rows(store.rowHeight - GRID_GAP),
+                    )}
+                    role="presentation"
+                  >
+                    {tilesFor(store, marks, stacks, section.from, section.to, store.mode)}
+                  </div>
+                ) : (
+                  <BandTiles
+                    key={section.key}
+                    expansion={section}
+                    top={section.top}
+                    fused={store.fusedStacks.has(section.stackId)}
+                  />
+                ),
+              )}
         </div>
       </div>
     </div>

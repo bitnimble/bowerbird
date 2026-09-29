@@ -26,7 +26,8 @@ function quad(bounds: Bounds): { x: number; y: number }[] {
     { x: 1, y: 1 },
     { x: 0, y: 1 },
   ].map((corner) => {
-    const moved = bounds.keystone == null ? corner : keystoneShows(bounds.keystone, corner.x, corner.y)!;
+    const moved =
+      bounds.keystone == null ? corner : keystoneShows(bounds.keystone, corner.x, corner.y)!;
     const fx = moved.x * bounds.width - bounds.width / 2;
     const fy = moved.y * bounds.height - bounds.height / 2;
     return {
@@ -84,7 +85,8 @@ describe('the crop that fits inside a corrected picture', () => {
     const radians = (angle * Math.PI) / 180;
     const c = Math.cos(radians);
     const s = Math.sin(radians);
-    const [long, short] = FRAME.width >= FRAME.height ? [FRAME.width, FRAME.height] : [FRAME.height, FRAME.width];
+    const [long, short] =
+      FRAME.width >= FRAME.height ? [FRAME.width, FRAME.height] : [FRAME.height, FRAME.width];
     const inner =
       short <= 2 * s * c * long
         ? { w: (0.5 * short) / s, h: (0.5 * short) / c }
@@ -167,7 +169,9 @@ describe('the crop that fits inside a corrected picture', () => {
         // Past about 21 degrees the largest rectangle is a whole family of identical ones
         // sliding along the diagonal, and picking freely among them moved an edge by a fifth
         // of the frame for a hundredth of a degree.
-        expect(moved, `${frame.width}x${frame.height} at ${angle.toFixed(2)} degrees`).toBeLessThan(0.005);
+        expect(moved, `${frame.width}x${frame.height} at ${angle.toFixed(2)} degrees`).toBeLessThan(
+          0.005,
+        );
         previous = rect;
       }
     }

@@ -15,12 +15,24 @@ describe('LibrariesService.create', () => {
       mkdirSync(path.join(root, 'Bin'));
       const existing = statSync(path.join(root, 'Bin'));
       const service = build(mockRepo({ insert }));
-      const library = await service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, include_non_raw: false, rendition_source: 'render', auto_stack: true });
+      const library = await service.create({
+        root_path: root,
+        bin_name: 'Bin',
+        read_only: false,
+        ordering: 'added_asc',
+        include_subfolders: true,
+        include_non_raw: false,
+        rendition_source: 'render',
+        auto_stack: true,
+      });
 
       expect(library.bin_name).toBe('Bin');
       // The folder that was there, not a second one made beside it: the identity
       // written at the insert is what a later rename is followed by (§9.1.1).
-      expect(insert).toHaveBeenCalledWith({ ...library, identity: expect.objectContaining({ ino: existing.ino }) });
+      expect(insert).toHaveBeenCalledWith({
+        ...library,
+        identity: expect.objectContaining({ ino: existing.ino }),
+      });
       rmSync(getDataPath(library), { recursive: true, force: true });
     } finally {
       rmSync(root, { recursive: true, force: true });

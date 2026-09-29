@@ -37,7 +37,12 @@ test('the rendition settings live on the library and round-trip', () => {
   const libraries = new LibrariesRepository(db);
   const id = 'lib000c1';
   try {
-    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(id, '/tmp/x', 'lib', 'added_desc');
+    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+      id,
+      '/tmp/x',
+      'lib',
+      'added_desc',
+    );
 
     // The default is a render, in HDR: the picture the RAW holds rather than the
     // 8-bit SDR one the camera baked.

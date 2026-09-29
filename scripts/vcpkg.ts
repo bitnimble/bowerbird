@@ -31,7 +31,12 @@ export function vcpkgRecipe(feature: string, getter: string): string {
  * `cached` is whether vcpkg keeps an archive of each port it installs - worth it for a port it
  * compiles, and nothing but disk for one it only downloads.
  */
-export function vcpkgInstall(installed: string, feature: string, tools: readonly string[], cached: boolean): void {
+export function vcpkgInstall(
+  installed: string,
+  feature: string,
+  tools: readonly string[],
+  cached: boolean,
+): void {
   refuseMissingTools(tools);
   // vcpkg's own root and its build trees, somewhere short: the trees nest deep enough to pass
   // Windows' 260-character path limit under a cache directory, and run to gigabytes. Thrown away
@@ -39,27 +44,40 @@ export function vcpkgInstall(installed: string, feature: string, tools: readonly
   const work = mkdtempSync(join(tmpdir(), 'bb-vcpkg-'));
   try {
     const name = `${VCPKG}.tar.gz`;
-    run('curl', ['--proto', '=https', '--tlsv1.2', '-fsSL', '-o', join(work, name), `https://github.com/microsoft/vcpkg/archive/${name}`]);
+    run('curl', [
+      '--proto',
+      '=https',
+      '--tlsv1.2',
+      '-fsSL',
+      '-o',
+      join(work, name),
+      `https://github.com/microsoft/vcpkg/archive/${name}`,
+    ]);
     unpack(work, name);
     const root = join(work, `vcpkg-${VCPKG}`);
     if (WINDOWS) run('cmd', ['/c', 'bootstrap-vcpkg.bat', '-disableMetrics'], root);
     else run('sh', ['bootstrap-vcpkg.sh', '-disableMetrics'], root);
 
     const binaryCache: Record<string, string> = cached ? {} : { VCPKG_BINARY_SOURCES: 'clear' };
-    run(join(root, WINDOWS ? 'vcpkg.exe' : 'vcpkg'), [
-      'install',
-      // Named rather than found, because the CI runners set `VCPKG_ROOT` to the vcpkg they carry,
-      // and the tool would build that one's ports instead.
-      `--vcpkg-root=${root}`,
-      `--x-manifest-root=${MANIFEST}`,
-      `--x-install-root=${installed}`,
-      `--x-feature=${feature}`,
-      `--x-buildtrees-root=${join(work, 'b')}`,
-      `--x-packages-root=${join(work, 'p')}`,
-      `--downloads-root=${join(work, 'd')}`,
-      `--triplet=${TRIPLET}`,
-      '--clean-after-build',
-    ], root, binaryCache);
+    run(
+      join(root, WINDOWS ? 'vcpkg.exe' : 'vcpkg'),
+      [
+        'install',
+        // Named rather than found, because the CI runners set `VCPKG_ROOT` to the vcpkg they carry,
+        // and the tool would build that one's ports instead.
+        `--vcpkg-root=${root}`,
+        `--x-manifest-root=${MANIFEST}`,
+        `--x-install-root=${installed}`,
+        `--x-feature=${feature}`,
+        `--x-buildtrees-root=${join(work, 'b')}`,
+        `--x-packages-root=${join(work, 'p')}`,
+        `--downloads-root=${join(work, 'd')}`,
+        `--triplet=${TRIPLET}`,
+        '--clean-after-build',
+      ],
+      root,
+      binaryCache,
+    );
   } catch (failed) {
     console.error(`vcpkg's build trees and logs are kept at ${work}`);
     throw failed;
@@ -88,7 +106,9 @@ function triplet(): string {
   const machine = `${process.platform}-${process.arch}`;
   const found = known[machine];
   if (found == null) {
-    throw new Error(`no vcpkg triplet for ${machine}: name one here and in native/rawshim/vcpkg/triplets`);
+    throw new Error(
+      `no vcpkg triplet for ${machine}: name one here and in native/rawshim/vcpkg/triplets`,
+    );
   }
   return found;
 }
@@ -120,17 +140,25 @@ function refuseMissingTools(tools: readonly string[]): void {
   if (WINDOWS) return;
   // A compiler even for a port that only downloads: vcpkg hashes it into every package's ABI.
   const wanted = ['cc', 'c++', 'curl', 'git', 'tar', 'zip', 'unzip', ...tools];
-  const missing = wanted.filter((tool) => spawnSync('sh', ['-c', `command -v ${tool}`]).status !== 0);
+  const missing = wanted.filter(
+    (tool) => spawnSync('sh', ['-c', `command -v ${tool}`]).status !== 0,
+  );
   if (missing.length > 0) {
     throw new Error(
       `vcpkg needs ${missing.join(', ')}. ` +
-        (process.platform === 'darwin' ? `brew install ${missing.join(' ')}` : `sudo apt-get install ${missing.join(' ')}`),
+        (process.platform === 'darwin'
+          ? `brew install ${missing.join(' ')}`
+          : `sudo apt-get install ${missing.join(' ')}`),
     );
   }
 }
 
 function run(command: string, args: string[], cwd = ROOT, env: Record<string, string> = {}): void {
-  const done = spawnSync(command, args, { cwd, stdio: 'inherit', env: { ...process.env, VCPKG_DISABLE_METRICS: '1', ...env } });
+  const done = spawnSync(command, args, {
+    cwd,
+    stdio: 'inherit',
+    env: { ...process.env, VCPKG_DISABLE_METRICS: '1', ...env },
+  });
   if (done.status !== 0) {
     throw new Error(`${command} ${args.join(' ')} exited ${done.status}`);
   }

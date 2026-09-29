@@ -51,7 +51,11 @@ export class RenditionsPresenter {
   // time after. The camera's JPEG is never built: it is the RAW's own bytes
   // (§10.2). False when the build failed, so a caller does not go on to ask for a
   // file that is not there.
-  private async ensureBuilt(photoId: string, rendition: ViewerRendition, force = false): Promise<boolean> {
+  private async ensureBuilt(
+    photoId: string,
+    rendition: ViewerRendition,
+    force = false,
+  ): Promise<boolean> {
     // The detail on hand is the previous photo's until this one's fetch lands, so
     // "already built" has to be read from *this* photo's entry or not at all:
     // trusting the neighbour's said a file existed that was never built here, and

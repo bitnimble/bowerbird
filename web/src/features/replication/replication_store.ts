@@ -78,7 +78,13 @@ export class ReplicationStore {
   pullFor(photoId: string): Transfer | null {
     const pulls = this.transfers.filter((t) => t.photo_id === photoId && t.direction === 'pull');
     return (
-      pulls.find((t) => t.state === 'active' || t.state === 'queued' || t.state === 'paused' || t.state === 'failed') ??
+      pulls.find(
+        (t) =>
+          t.state === 'active' ||
+          t.state === 'queued' ||
+          t.state === 'paused' ||
+          t.state === 'failed',
+      ) ??
       pulls[0] ??
       null
     );

@@ -68,7 +68,10 @@ export class KeystonePresenter {
     this.host.preview(
       this.crop.fitted({
         keystoneGuides: stored,
-        keystone: keystoneFromGuides(stored, { width: this.stage.width, height: this.stage.height }),
+        keystone: keystoneFromGuides(stored, {
+          width: this.stage.width,
+          height: this.stage.height,
+        }),
       }),
     );
     if (settle) this.host.commit();

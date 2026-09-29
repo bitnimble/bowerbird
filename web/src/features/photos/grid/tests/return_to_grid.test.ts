@@ -42,7 +42,10 @@ function row(id: string): PhotoSummary {
   } as unknown as PhotoSummary;
 }
 
-photosApi.listLibrary = (_libraryId: string, params: PhotoListParams): Promise<PhotoListResponse> => {
+photosApi.listLibrary = (
+  _libraryId: string,
+  params: PhotoListParams,
+): Promise<PhotoListResponse> => {
   const offset = params.offset ?? 0;
   const limit = params.limit ?? 100;
   return Promise.resolve({
@@ -61,12 +64,28 @@ renditionsApi.build = () => Promise.resolve();
 const absent = new Proxy({}, { get: () => () => undefined }) as never;
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-function build(): { store: ListingStore; marks: MarksStore; viewer: ViewerStore; presenter: PhotosPresenter } {
+function build(): {
+  store: ListingStore;
+  marks: MarksStore;
+  viewer: ViewerStore;
+  presenter: PhotosPresenter;
+} {
   const stacks = new StacksStore();
   const store = new ListingStore(stacks);
   const marks = new MarksStore(store, stacks);
   const viewer = new ViewerStore(store, stacks);
-  const presenter = new PhotosPresenter(store, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    store,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   return { store, marks, viewer, presenter };
 }
 
@@ -173,7 +192,10 @@ test('the way out of the viewer is the collection the photo was opened from', ()
   expect(viewer.openedFrom).toEqual({ path: route(PathSegment.albums(), 'a1'), label: 'Album' });
 
   store.source = { kind: 'bin', libraryId: LIB };
-  expect(viewer.openedFrom).toEqual({ path: route(PathSegment.libraries(), LIB, PathSegment.bin()), label: 'Bin' });
+  expect(viewer.openedFrom).toEqual({
+    path: route(PathSegment.libraries(), LIB, PathSegment.bin()),
+    label: 'Bin',
+  });
 
   store.source = { kind: 'no_shoot', libraryId: LIB };
   expect(viewer.openedFrom).toEqual({
@@ -182,7 +204,10 @@ test('the way out of the viewer is the collection the photo was opened from', ()
   });
 
   store.source = { kind: 'library', libraryId: LIB };
-  expect(viewer.openedFrom).toEqual({ path: route(PathSegment.libraries(), LIB), label: 'Library' });
+  expect(viewer.openedFrom).toEqual({
+    path: route(PathSegment.libraries(), LIB),
+    label: 'Library',
+  });
 });
 
 test('the viewer and triage URLs a grid produces name the collection they were opened from', () => {
@@ -200,10 +225,15 @@ test('the viewer and triage URLs a grid produces name the collection they were o
   }
 
   // The missing view has no grid of its own, so it is read back as the library's.
-  expect(sourceOfPath(photoPath('p1', { kind: 'missing', libraryId: LIB }))).toEqual({ kind: 'library', libraryId: LIB });
+  expect(sourceOfPath(photoPath('p1', { kind: 'missing', libraryId: LIB }))).toEqual({
+    kind: 'library',
+    libraryId: LIB,
+  });
 
   expect(photoPath('p1', null)).toBe(route(PathSegment.photos(), 'p1'));
-  expect(triagePath('stack-1', null)).toBe(route(PathSegment.stacks(), 'stack-1', PathSegment.triage()));
+  expect(triagePath('stack-1', null)).toBe(
+    route(PathSegment.stacks(), 'stack-1', PathSegment.triage()),
+  );
   expect(sourceOfPath(route(PathSegment.photos(), 'p1'))).toBeNull();
   expect(sourceOfPath(route(PathSegment.stacks(), 'stack-1', PathSegment.triage()))).toBeNull();
 });
@@ -216,7 +246,10 @@ test('a reload inside the viewer returns to the collection the URL names, not th
   const { store, viewer, presenter } = build();
   presenter.setViewport(1000, 400);
   // No collection loaded, which is what landing straight on the URL leaves.
-  await presenter.openDetail('p1', sourceOfPath(route(PathSegment.shoots(), 's1', PathSegment.photos(), 'p1')));
+  await presenter.openDetail(
+    'p1',
+    sourceOfPath(route(PathSegment.shoots(), 's1', PathSegment.photos(), 'p1')),
+  );
   await tick();
 
   expect(store.source).toEqual({ kind: 'shoot', shootId: 's1' });
@@ -225,7 +258,10 @@ test('a reload inside the viewer returns to the collection the URL names, not th
   // Stepping on is the same call with the same collection, which must not
   // re-open it: that resets the rows and the scroll on every frame.
   const held = store.source;
-  await presenter.openDetail('p0', sourceOfPath(route(PathSegment.shoots(), 's1', PathSegment.photos(), 'p0')));
+  await presenter.openDetail(
+    'p0',
+    sourceOfPath(route(PathSegment.shoots(), 's1', PathSegment.photos(), 'p0')),
+  );
   await tick();
   expect(store.source).toBe(held);
 });

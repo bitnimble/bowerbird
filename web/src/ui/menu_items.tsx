@@ -47,7 +47,9 @@ export function MenuItems<T extends string>({
   options: Option<T>[];
   onSelect: (value: T) => void;
 }): JSX.Element {
-  const item = (option: Option<T>): JSX.Element => <MenuAction key={option.value} option={option} onSelect={onSelect} />;
+  const item = (option: Option<T>): JSX.Element => (
+    <MenuAction key={option.value} option={option} onSelect={onSelect} />
+  );
   const destructive = options.filter((o) => o.destructive === true);
 
   return (

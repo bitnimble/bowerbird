@@ -19,5 +19,6 @@ fn main() {
         "app_data_dir",
         "open_app_data_dir",
     ]);
-    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(commands)).expect("tauri-build failed");
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(commands))
+        .expect("tauri-build failed");
 }

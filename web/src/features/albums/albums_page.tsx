@@ -29,10 +29,21 @@ export const AlbumsPage = observer(function AlbumsPage(): JSX.Element {
 
   const actionsFor = useCallback(
     (row: CollectionRow): Option<string>[] => [
-      ...(store.renamingKey === row.key ?
-        []
-      : [{ value: 'rename', label: CollectionListStrings.rename(), icon: <Pencil size={ICON} /> }]),
-      { value: 'delete', label: CollectionListStrings.delete(), icon: <Trash2 size={ICON} />, destructive: true },
+      ...(store.renamingKey === row.key
+        ? []
+        : [
+            {
+              value: 'rename',
+              label: CollectionListStrings.rename(),
+              icon: <Pencil size={ICON} />,
+            },
+          ]),
+      {
+        value: 'delete',
+        label: CollectionListStrings.delete(),
+        icon: <Trash2 size={ICON} />,
+        destructive: true,
+      },
     ],
     [store],
   );
@@ -83,7 +94,12 @@ export const AlbumsPage = observer(function AlbumsPage(): JSX.Element {
           </Text>
         </EmptyState>
       ) : (
-        <CollectionList store={store} presenter={albums} actionsFor={actionsFor} onAction={onAction} />
+        <CollectionList
+          store={store}
+          presenter={albums}
+          actionsFor={actionsFor}
+          onAction={onAction}
+        />
       )}
     </Page>
   );

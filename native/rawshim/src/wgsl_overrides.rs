@@ -7,13 +7,25 @@
 
 /// Per emitted shader, the entry points that read every override the module declares.
 pub const READS_OVERRIDES: &[(&str, &[&str])] = &[
-    ("assemble.wgsl", &["assemble_rec2020", "assemble_halved", "assemble_thirded"]),
+    (
+        "assemble.wgsl",
+        &["assemble_rec2020", "assemble_halved", "assemble_thirded"],
+    ),
     ("correspond.wgsl", &["correspond"]),
     ("frame.wgsl", &["fs"]),
     ("galosh/lpixel_lh_den_fused.wgsl", &["lpixel_lh_den_fused"]),
     ("galosh/pass12.wgsl", &["pass12"]),
     ("lslcd.wgsl", &["modulate_h", "assemble"]),
-    ("rcd.wgsl", &["seed", "green_at_chroma", "chroma_at_chroma", "chroma_at_greens", "assemble"]),
+    (
+        "rcd.wgsl",
+        &[
+            "seed",
+            "green_at_chroma",
+            "chroma_at_chroma",
+            "chroma_at_greens",
+            "assemble",
+        ],
+    ),
 ];
 
 pub fn reads_overrides(shader: &str, entry: &str) -> bool {
@@ -23,6 +35,14 @@ pub fn reads_overrides(shader: &str, entry: &str) -> bool {
 }
 
 /// `constants` where `entry` reads them, and none where it does not.
-pub fn for_entry<'a>(shader: &str, entry: &str, constants: &'a [(&'a str, f64)]) -> &'a [(&'a str, f64)] {
-    if reads_overrides(shader, entry) { constants } else { &[] }
+pub fn for_entry<'a>(
+    shader: &str,
+    entry: &str,
+    constants: &'a [(&'a str, f64)],
+) -> &'a [(&'a str, f64)] {
+    if reads_overrides(shader, entry) {
+        constants
+    } else {
+        &[]
+    }
 }

@@ -24,11 +24,51 @@ import { RenderingIntentSchema } from './rendering_intent';
 // exists. They are in the table rather than in the dialog so that the control a reader sees and
 // the route that would refuse them cannot disagree - the same rule the rest of this file follows.
 export const EXPORT_FORMATS = {
-  jpeg: { extension: 'jpg', mediaType: 'image/jpeg', hdr: false, gainMap: true, lossless: false, encoder: true, gainMapEncoder: true },
-  avif: { extension: 'avif', mediaType: 'image/avif', hdr: true, gainMap: true, lossless: false, encoder: true, gainMapEncoder: true },
-  jxl: { extension: 'jxl', mediaType: 'image/jxl', hdr: true, gainMap: true, lossless: false, encoder: true, gainMapEncoder: false },
-  png: { extension: 'png', mediaType: 'image/png', hdr: true, gainMap: false, lossless: true, encoder: true, gainMapEncoder: false },
-  tiff: { extension: 'tif', mediaType: 'image/tiff', hdr: false, gainMap: false, lossless: true, encoder: true, gainMapEncoder: false },
+  jpeg: {
+    extension: 'jpg',
+    mediaType: 'image/jpeg',
+    hdr: false,
+    gainMap: true,
+    lossless: false,
+    encoder: true,
+    gainMapEncoder: true,
+  },
+  avif: {
+    extension: 'avif',
+    mediaType: 'image/avif',
+    hdr: true,
+    gainMap: true,
+    lossless: false,
+    encoder: true,
+    gainMapEncoder: true,
+  },
+  jxl: {
+    extension: 'jxl',
+    mediaType: 'image/jxl',
+    hdr: true,
+    gainMap: true,
+    lossless: false,
+    encoder: true,
+    gainMapEncoder: false,
+  },
+  png: {
+    extension: 'png',
+    mediaType: 'image/png',
+    hdr: true,
+    gainMap: false,
+    lossless: true,
+    encoder: true,
+    gainMapEncoder: false,
+  },
+  tiff: {
+    extension: 'tif',
+    mediaType: 'image/tiff',
+    hdr: false,
+    gainMap: false,
+    lossless: true,
+    encoder: true,
+    gainMapEncoder: false,
+  },
 } as const;
 
 export type ExportFormat = keyof typeof EXPORT_FORMATS;

@@ -103,7 +103,8 @@ export class FrameArt {
 
   async getApiVersion(): Promise<string> {
     const data =
-      (await this.request({ request: 'get_api_version' })) ?? (await this.query({ request: 'api_version' }));
+      (await this.request({ request: 'get_api_version' })) ??
+      (await this.query({ request: 'api_version' }));
     return stringField(data, 'version');
   }
 
@@ -112,7 +113,10 @@ export class FrameArt {
   }
 
   async available(category?: ArtCategory): Promise<Json[]> {
-    const data = await this.query({ request: 'get_content_list', category: category ?? null }, { timeoutMs: 4000 });
+    const data = await this.query(
+      { request: 'get_content_list', category: category ?? null },
+      { timeoutMs: 4000 },
+    );
     const content = jsonListField(data, 'content_list');
     return category == null ? content : content.filter((item) => item.category_id === category);
   }
@@ -138,8 +142,15 @@ export class FrameArt {
   }
 
   /** `minutes` of 0 turns rotation off. */
-  setAutoRotationStatus(minutes: number, shuffle = true, category: ArtCategory = ArtCategory.MyPictures): Promise<Json> {
-    return this.query({ request: 'set_auto_rotation_status', ...rotation(minutes, shuffle, category) });
+  setAutoRotationStatus(
+    minutes: number,
+    shuffle = true,
+    category: ArtCategory = ArtCategory.MyPictures,
+  ): Promise<Json> {
+    return this.query({
+      request: 'set_auto_rotation_status',
+      ...rotation(minutes, shuffle, category),
+    });
   }
 
   getSlideshowStatus(): Promise<Json> {
@@ -147,7 +158,11 @@ export class FrameArt {
   }
 
   /** `minutes` of 0 turns the slideshow off. */
-  setSlideshowStatus(minutes: number, shuffle = true, category: ArtCategory = ArtCategory.MyPictures): Promise<Json> {
+  setSlideshowStatus(
+    minutes: number,
+    shuffle = true,
+    category: ArtCategory = ArtCategory.MyPictures,
+  ): Promise<Json> {
     return this.query({ request: 'set_slideshow_status', ...rotation(minutes, shuffle, category) });
   }
 
@@ -245,7 +260,10 @@ export class FrameArt {
     });
   }
 
-  async selectImage(contentId: string, options: { category?: ArtCategory; show?: boolean } = {}): Promise<void> {
+  async selectImage(
+    contentId: string,
+    options: { category?: ArtCategory; show?: boolean } = {},
+  ): Promise<void> {
     await this.request({
       request: 'select_image',
       category_id: options.category ?? null,
@@ -263,7 +281,9 @@ export class FrameArt {
   }
 
   async getRotation(): Promise<number> {
-    return Number((await this.query({ request: 'get_current_rotation' })).current_rotation_status ?? 0);
+    return Number(
+      (await this.query({ request: 'get_current_rotation' })).current_rotation_status ?? 0,
+    );
   }
 
   async getPhotoFilterList(): Promise<Json[]> {
@@ -300,7 +320,10 @@ export class FrameArt {
     return item;
   }
 
-  private async query(request: Json, options?: { waitForEvent?: string; timeoutMs?: number }): Promise<Json> {
+  private async query(
+    request: Json,
+    options?: { waitForEvent?: string; timeoutMs?: number },
+  ): Promise<Json> {
     const data = await this.request(request, options);
     if (data == null) throw new ResponseError(`TV did not answer ${String(request.request)}`);
     return data;
@@ -313,7 +336,10 @@ export class FrameArt {
   ): Promise<Json | undefined> {
     const id = typeof request.id === 'string' ? request.id : randomUUID();
     const socket = await this.connection();
-    const response = this.waitFor(options.waitForEvent ?? id, options.timeoutMs ?? this.responseTimeoutMs);
+    const response = this.waitFor(
+      options.waitForEvent ?? id,
+      options.timeoutMs ?? this.responseTimeoutMs,
+    );
     socket.send(
       JSON.stringify({
         method: 'ms.channel.emit',
@@ -374,7 +400,9 @@ export class FrameArt {
 
   private handshake(endpoint: string, awaitReady: boolean): Promise<WebSocket> {
     const url = this.url(endpoint);
-    const socket = this.secure ? new WebSocket(url, { tls: { rejectUnauthorized: false } }) : new WebSocket(url);
+    const socket = this.secure
+      ? new WebSocket(url, { tls: { rejectUnauthorized: false } })
+      : new WebSocket(url);
     return new Promise((resolve, reject) => {
       let connected = false;
       const fail = (error: Error): void => {
@@ -382,21 +410,26 @@ export class FrameArt {
         reject(error);
         socket.close();
       };
-      socket.onerror = () => fail(new ConnectionFailure(`Could not connect to ${this.host}:${this.port}`));
-      socket.onclose = () => reject(new ConnectionFailure(`${this.host} closed ${endpoint} during the handshake`));
+      socket.onerror = () =>
+        fail(new ConnectionFailure(`Could not connect to ${this.host}:${this.port}`));
+      socket.onclose = () =>
+        reject(new ConnectionFailure(`${this.host} closed ${endpoint} during the handshake`));
       socket.onmessage = (message) => {
         const response = parseObject(message.data);
         const event = typeof response?.event === 'string' ? response.event : '*';
         if (!connected) {
           if (IGNORED_AT_STARTUP.has(event)) return;
-          if (event === 'ms.channel.unauthorized') return fail(new UnauthorizedError(JSON.stringify(response)));
-          if (event !== 'ms.channel.connect') return fail(new ConnectionFailure(JSON.stringify(response)));
+          if (event === 'ms.channel.unauthorized')
+            return fail(new UnauthorizedError(JSON.stringify(response)));
+          if (event !== 'ms.channel.connect')
+            return fail(new ConnectionFailure(JSON.stringify(response)));
           this.acceptToken(asJson(response?.data)?.token);
           connected = true;
           if (!awaitReady) resolve(socket);
           return;
         }
-        if (event !== 'ms.channel.ready') return fail(new ConnectionFailure(JSON.stringify(response)));
+        if (event !== 'ms.channel.ready')
+          return fail(new ConnectionFailure(JSON.stringify(response)));
         resolve(socket);
       };
     });
@@ -410,7 +443,8 @@ export class FrameArt {
 
   private url(endpoint: string): string {
     const name = Buffer.from(this.name).toString('base64');
-    if (!this.secure) return `ws://${this.host}:${this.port}/api/v2/channels/${endpoint}?name=${name}`;
+    if (!this.secure)
+      return `ws://${this.host}:${this.port}/api/v2/channels/${endpoint}?name=${name}`;
     const token = this.token == null ? '' : `&token=${this.token}`;
     return `wss://${this.host}:${this.port}/api/v2/channels/${endpoint}?name=${name}${token}`;
   }
@@ -444,7 +478,9 @@ function parseObject(text: unknown): Json | undefined {
 
 function requestError(data: Json): ResponseError {
   const request = String(parseObject(data.request_data)?.request ?? 'Art');
-  return new ResponseError(`${request} request failed with error number ${String(data.error_code)}`);
+  return new ResponseError(
+    `${request} request failed with error number ${String(data.error_code)}`,
+  );
 }
 
 function rotation(minutes: number, shuffle: boolean, category: ArtCategory): Json {

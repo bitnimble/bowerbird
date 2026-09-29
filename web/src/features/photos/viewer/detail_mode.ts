@@ -26,9 +26,14 @@ export function editPath(pathname: string): string {
 export type PrintRequest = { proof: 'print' | 'print3d'; rendition: ViewerRendition };
 
 export function isPrintRequest(state: unknown): state is PrintRequest {
-  return typeof state === 'object' && state != null && 'proof' in state && 'rendition' in state
-    && (state.proof === 'print' || state.proof === 'print3d')
-    && VIEWER_RENDITIONS.some((rendition) => rendition === state.rendition);
+  return (
+    typeof state === 'object' &&
+    state != null &&
+    'proof' in state &&
+    'rendition' in state &&
+    (state.proof === 'print' || state.proof === 'print3d') &&
+    VIEWER_RENDITIONS.some((rendition) => rendition === state.rendition)
+  );
 }
 
 export function detailMode(pathname: string): DetailMode {

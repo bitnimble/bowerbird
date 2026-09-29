@@ -68,7 +68,11 @@ export function anchorLimit(contentHeight: number): number {
 // Whether the reader has come close enough to an end of the rail that it has to
 // be moved under them. A rail that *is* the collection has no walls: its ends
 // are the collection's ends, and the reader is meant to reach them.
-export function atRailWall(railTop: number, contentHeight: number, viewportHeight: number): boolean {
+export function atRailWall(
+  railTop: number,
+  contentHeight: number,
+  viewportHeight: number,
+): boolean {
   if (anchorLimit(contentHeight) === 0) return false;
   const margin = viewportHeight * RAIL_MARGIN_VIEWPORTS;
   return railTop < margin || railTop > railHeight(contentHeight) - viewportHeight - margin;
@@ -173,7 +177,11 @@ export function stripCellWidth(height: number): number {
  * its free space to the tiles left on it - a stack opened at the start of a line
  * was stretched across the whole grid, and its neighbours pushed below the band.
  */
-export function masonryLineStarts(ratios: readonly number[], width: number, tileSize: number): Set<number> {
+export function masonryLineStarts(
+  ratios: readonly number[],
+  width: number,
+  tileSize: number,
+): Set<number> {
   return new Set(lineStarts((i) => ratios[i]!, ratios.length, width, tileSize));
 }
 
@@ -217,16 +225,25 @@ export function masonryBlockEnd(
 // lines from each photo's own shape, so a block's height is only known once it
 // has been laid out; the rest are estimated. That estimate is what lets the
 // scrollbar describe a collection the client has never held all of.
-export function blockTops(count: number, heights: ReadonlyMap<number, number>, estimate: number): number[] {
+export function blockTops(
+  count: number,
+  heights: ReadonlyMap<number, number>,
+  estimate: number,
+): number[] {
   const tops = [0];
-  for (let block = 0; block < count; block++) tops.push(tops[block]! + (heights.get(block) ?? estimate) + GRID_GAP);
+  for (let block = 0; block < count; block++)
+    tops.push(tops[block]! + (heights.get(block) ?? estimate) + GRID_GAP);
   return tops;
 }
 
 // ponytail: linear from the top rather than a binary search. A hundred thousand
 // photos is a thousand blocks, walked at most once per scroll frame; bisect if a
 // library ever makes that show up in a profile.
-export function visibleBlocks(tops: readonly number[], scrollTop: number, viewportHeight: number): Span {
+export function visibleBlocks(
+  tops: readonly number[],
+  scrollTop: number,
+  viewportHeight: number,
+): Span {
   const count = Math.max(0, tops.length - 1);
   if (count === 0) return { from: 0, to: 0 };
   let from = 0;

@@ -32,10 +32,19 @@ export function CopyButton({ text }: { text: string }): JSX.Element {
           settle('failed');
           return;
         }
-        void copying.then(() => settle('copied'), () => settle('failed'));
+        void copying.then(
+          () => settle('copied'),
+          () => settle('failed'),
+        );
       }}
     >
-      {result === 'copied' ? <Check size={12} /> : result === 'failed' ? <X size={12} /> : <Copy size={12} />}
+      {result === 'copied' ? (
+        <Check size={12} />
+      ) : result === 'failed' ? (
+        <X size={12} />
+      ) : (
+        <Copy size={12} />
+      )}
     </InlineIconButton>
   );
 }

@@ -1,6 +1,11 @@
 import { action, runInAction } from 'mobx';
 import { type Ordering } from '../../../../../src/schemas/common';
-import { type CompositeKind, type PhotoSelection, type PhotoSummary, type PhotoTarget } from '../../../../../src/schemas/photos';
+import {
+  type CompositeKind,
+  type PhotoSelection,
+  type PhotoSummary,
+  type PhotoTarget,
+} from '../../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { compositesApi } from '../../../api/composites';
 import { photosApi } from '../../../api/photos';
@@ -81,7 +86,8 @@ export class StackActionsPresenter {
   measuredStackTile(stackId: string, x: number, width: number, height: number): void {
     const held = this.store.stackTileBoxes.get(stackId);
     const same = (a: number, b: number): boolean => Math.abs(a - b) < 0.5;
-    if (held != null && same(held.x, x) && same(held.width, width) && same(held.height, height)) return;
+    if (held != null && same(held.x, x) && same(held.width, width) && same(held.height, height))
+      return;
     const next = new Map(this.store.stackTileBoxes);
     next.set(stackId, { x, width, height });
     this.store.stackTileBoxes = next;
@@ -98,7 +104,9 @@ export class StackActionsPresenter {
   @action
   private forgetStackTiles(open: ReadonlyMap<string, Expansion>): void {
     if (this.store.stackTileBoxes.size === 0) return;
-    this.store.stackTileBoxes = new Map([...this.store.stackTileBoxes].filter(([stackId]) => open.has(stackId)));
+    this.store.stackTileBoxes = new Map(
+      [...this.store.stackTileBoxes].filter(([stackId]) => open.has(stackId)),
+    );
   }
 
   // --- stacks (§19.6) ---
@@ -117,7 +125,11 @@ export class StackActionsPresenter {
    * arithmetic rather than a measurement.
    */
   @action.bound
-  async toggleBand(stackId: string, position: number, frames: CompositeKind | null = null): Promise<void> {
+  async toggleBand(
+    stackId: string,
+    position: number,
+    frames: CompositeKind | null = null,
+  ): Promise<void> {
     if (this.store.expansions.has(stackId)) {
       this.closeBand(stackId);
       return;
@@ -133,7 +145,10 @@ export class StackActionsPresenter {
     const source = this.listing.source;
     const generation = this.generation();
     try {
-      const photos = frames != null ? await compositesApi.listFrames(stackId) : await stacksApi.listPhotos(stackId, scope);
+      const photos =
+        frames != null
+          ? await compositesApi.listFrames(stackId)
+          : await stacksApi.listPhotos(stackId, scope);
       runInAction(() => {
         // The collection this was opened against may have been replaced while
         // the members were on the wire, and those positions describe a listing
@@ -141,7 +156,13 @@ export class StackActionsPresenter {
         if (this.generation() !== generation || this.listing.source !== source) return;
         const was = this.anchoredPosition();
         const next = new Map(this.store.expansions);
-        next.set(stackId, { stackId, composite: frames, position, photos, keepOpen: this.isLoneRow(position) });
+        next.set(stackId, {
+          stackId,
+          composite: frames,
+          position,
+          photos,
+          keepOpen: this.isLoneRow(position),
+        });
         this.store.expansions = next;
         // Not `frames`: a panorama's frames are a different set from the stack's members, and what
         // a selected stack tile stands for is the members.
@@ -250,9 +271,14 @@ export class StackActionsPresenter {
   // where it is drawn: one band opening or closing, or an arbitrary set of them
   // re-placed at once. Off how far the row itself moved, which is the one form that
   // describes all of it - a band at or below the reader's row moves it not at all.
-  private holdRowThroughBands(was: { anchorTop: number; gridRow: number; displayRow: number }): void {
+  private holdRowThroughBands(was: {
+    anchorTop: number;
+    gridRow: number;
+    displayRow: number;
+  }): void {
     if (this.listing.mode === 'masonry') return;
-    const moved = displayRowOf(was.gridRow, this.listing.bands, this.listing.columns) - was.displayRow;
+    const moved =
+      displayRowOf(was.gridRow, this.listing.bands, this.listing.columns) - was.displayRow;
     this.rail.shift(moved * this.listing.rowHeight, was.anchorTop);
   }
 
@@ -280,7 +306,8 @@ export class StackActionsPresenter {
           keys.map((key) =>
             (this.store.expansions.get(key)?.composite != null
               ? compositesApi.listFrames(key, undefined, activity)
-              : stacksApi.listPhotos(key, scope, undefined, activity))
+              : stacksApi.listPhotos(key, scope, undefined, activity)
+            )
               .then((photos) => [key, photos] as const)
               .catch(() => [key, null] as const),
           ),
@@ -319,7 +346,9 @@ export class StackActionsPresenter {
         // the row it was on - the same correction one band's own toggle makes.
         this.holdRowThroughBands(was);
         // Members that have left every open band cannot be acted on any more.
-        const live = new Set([...kept.values()].flatMap((band) => band.photos.map((photo) => photo.id)));
+        const live = new Set(
+          [...kept.values()].flatMap((band) => band.photos.map((photo) => photo.id)),
+        );
         this.selection.retainMembers(live);
       });
     } catch (err) {
@@ -347,7 +376,12 @@ export class StackActionsPresenter {
   //
   // Null until the collection's first page has stated its sort, which is before
   // there is a row to open a band from.
-  bandScope(): { ordering: Ordering; albumId?: string; shootId?: string; deleted?: boolean } | null {
+  bandScope(): {
+    ordering: Ordering;
+    albumId?: string;
+    shootId?: string;
+    deleted?: boolean;
+  } | null {
     const source = this.listing.source;
     const ordering = this.listing.ordering;
     if (ordering == null) return null;
@@ -359,13 +393,13 @@ export class StackActionsPresenter {
     };
   }
 
-
   /** Makes a stack of whatever is selected. */
   async stackSelection(): Promise<void> {
     const target = this.selectionTarget();
     if (target == null) return;
     const taken = [...this.store.expansions.values()].filter(
-      (open) => open.composite == null && open.photos.every((photo) => this.marks.memberSelected(photo)),
+      (open) =>
+        open.composite == null && open.photos.every((photo) => this.marks.memberSelected(photo)),
     );
     try {
       const stack = await stacksApi.create(target);
@@ -411,7 +445,9 @@ export class StackActionsPresenter {
    * selection stays put until it answers - a cleared selection with nothing new in
    * the grid reads as an action that did nothing.
    */
-  private async mergeSelection(merge: (target: PhotoTarget) => Promise<CompositePhoto>): Promise<void> {
+  private async mergeSelection(
+    merge: (target: PhotoTarget) => Promise<CompositePhoto>,
+  ): Promise<void> {
     const target = this.selectionTarget();
     // One at a time: the merge holds the device for minutes, and the selection is still on screen
     // while it runs, so the entry stays clickable.
@@ -463,10 +499,16 @@ export class StackActionsPresenter {
     // Named once, at the start of the merge, and the same set every event after: replaced only
     // when they are new, so a tile is not re-rendered by a bar it does not draw.
     if (rows == null || rows.photoIds.size !== progress.photoIds.length) {
-      this.store.mergingRows = { positions: rows?.positions ?? new Set(), photoIds: new Set(progress.photoIds) };
+      this.store.mergingRows = {
+        positions: rows?.positions ?? new Set(),
+        photoIds: new Set(progress.photoIds),
+      };
     }
     if (this.mergeToast == null) {
-      this.mergeToast = this.toasts.showProgress(PhotosPresenterStrings.merging(progress.phase), progress.fraction);
+      this.mergeToast = this.toasts.showProgress(
+        PhotosPresenterStrings.merging(progress.phase),
+        progress.fraction,
+      );
       return;
     }
     this.toasts.progressed(
@@ -526,7 +568,9 @@ export class StackActionsPresenter {
   async removeSelectedFromStacks(): Promise<void> {
     const byStack = new Map<string, string[]>();
     for (const open of this.store.expansions.values()) {
-      const chosen = open.photos.filter((photo) => this.marks.selectedMembers.has(photo.id)).map((photo) => photo.id);
+      const chosen = open.photos
+        .filter((photo) => this.marks.selectedMembers.has(photo.id))
+        .map((photo) => photo.id);
       if (chosen.length > 0) byStack.set(open.stackId, chosen);
     }
     if (byStack.size === 0) return;
@@ -538,5 +582,4 @@ export class StackActionsPresenter {
       this.fail(err);
     }
   }
-
 }

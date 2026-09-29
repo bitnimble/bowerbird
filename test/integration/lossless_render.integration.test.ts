@@ -9,7 +9,10 @@ import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/pipeline/processing_service';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { readRawHeader } from '../../src/services/processing/rawshim/raw_decoder';
-import { _for_testing_decodeSummary, _for_testing_deltaEToPreview } from '../../src/services/processing/rawshim/rawshim_for_testing';
+import {
+  _for_testing_decodeSummary,
+  _for_testing_deltaEToPreview,
+} from '../../src/services/processing/rawshim/rawshim_for_testing';
 import { getDataPath, getRenditionPath } from '../../src/utils/paths';
 
 // The output path is the library's business now, so the test asks for it the
@@ -46,7 +49,11 @@ const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 
 // A one-off render stamps the row it wrote and announces it (§18.6), so the
 // service needs a repository even here, where the subject is the pixels.
-const stamps = { markTileBuilt: () => {}, markRenditionsBuilt: () => {}, markCopyBuilt: () => {} } as never;
+const stamps = {
+  markTileBuilt: () => {},
+  markRenditionsBuilt: () => {},
+  markCopyBuilt: () => {},
+} as never;
 
 // Matching on, because the camera's own JPEG is the only oracle a render has. There is
 // one rendering pipeline now and SDR is its output stage, so an SDR rendition is a
@@ -55,7 +62,11 @@ const stamps = { markTileBuilt: () => {}, markRenditionsBuilt: () => {}, markCop
 // a plain `decodeRaw` the two differ by a whole tone curve, which says nothing about
 // whether the pixels are right.
 function service(): ProcessingService {
-  const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1, match_embedded_jpeg: true };
+  const settings: Settings = {
+    ...DEFAULT_SETTINGS,
+    processing_concurrency: 1,
+    match_embedded_jpeg: true,
+  };
   return new ProcessingService(
     stamps,
     {} as ConstructorParameters<typeof ProcessingService>[1],
@@ -93,8 +104,15 @@ test('the SDR render the service produces decodes back to the image that went in
     // quietly changed chroma would still decode, still be the right size, and still
     // pass every other assertion in this file.
     const probe = Bun.spawnSync([
-      'ffprobe', '-hide_banner', '-loglevel', 'error',
-      '-show_entries', 'stream=pix_fmt', '-of', 'default=noprint_wrappers=1', output,
+      'ffprobe',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-show_entries',
+      'stream=pix_fmt',
+      '-of',
+      'default=noprint_wrappers=1',
+      output,
     ]);
     expect(probe.stdout.toString()).toContain('pix_fmt=yuv420p');
 
@@ -117,9 +135,15 @@ test('the HDR render is 12-bit PQ at full resolution', async () => {
     await service().renderOne(FIXTURE, 'test-photo', lib, 'max', true);
 
     const proc = Bun.spawnSync([
-      'ffprobe', '-hide_banner', '-loglevel', 'error',
-      '-show_entries', 'stream=width,height,pix_fmt,color_transfer,color_primaries',
-      '-of', 'default=noprint_wrappers=1', output,
+      'ffprobe',
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-show_entries',
+      'stream=width,height,pix_fmt,color_transfer,color_primaries',
+      '-of',
+      'default=noprint_wrappers=1',
+      output,
     ]);
     const info = proc.stdout.toString();
     // The header's dimensions, not a decode's: raw_header pins that the two agree.

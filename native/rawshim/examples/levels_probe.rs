@@ -64,7 +64,9 @@ impl Ranked {
 
     /// The code this body would have to call white for the rule to land on `want`.
     fn code_for(&self, want: f64) -> Option<u8> {
-        CODES.clone().find(|code| self.body_white(*code).is_some_and(|at| at >= want))
+        CODES
+            .clone()
+            .find(|code| self.body_white(*code).is_some_and(|at| at >= want))
     }
 
     /// The coded level at a rank of the body's own rendering.
@@ -75,7 +77,9 @@ impl Ranked {
     /// at the body's door or taken away from it.
     fn code_at(&self, share: f64) -> u8 {
         let want = (self.counted as f64 * share) as usize;
-        (0..256u16).find(|code| self.below[usize::from(*code)] > want).map_or(255, |code| code as u8)
+        (0..256u16)
+            .find(|code| self.below[usize::from(*code)] > want)
+            .map_or(255, |code| code as u8)
     }
 }
 
@@ -98,7 +102,11 @@ fn ranked(path: &str, samples: &[u16]) -> Option<Ranked> {
         below[code] = running;
         running += counts[code];
     }
-    (counted > 0).then_some(Ranked { levels, below, counted })
+    (counted > 0).then_some(Ranked {
+        levels,
+        below,
+        counted,
+    })
 }
 
 fn main() {
@@ -108,7 +116,10 @@ fn main() {
     let stops = |ratio: f64| ratio.log2();
 
     println!("ISO 12232 puts a metered 100% reflector at {photometric:.3} of saturation");
-    println!("{:<16} {:>6} {:>8} {:>8} {:>8} {:>6}", "frame", "iso", "white", "body", "stops", "code");
+    println!(
+        "{:<16} {:>6} {:>8} {:>8} {:>8} {:>6}",
+        "frame", "iso", "white", "body", "stops", "code"
+    );
 
     let mut apart: Vec<f64> = Vec::new();
     let mut implied: Vec<f64> = Vec::new();
@@ -138,7 +149,10 @@ fn main() {
         let white = levels.white.raw() / f64::from(u16::MAX);
 
         let Some(ranked) = ranked(path, samples) else {
-            println!("{name:<16} {:>6.0} {white:>8.4} {:>8} {:>8} {:>6}", header.iso, "-", "-", "-");
+            println!(
+                "{name:<16} {:>6.0} {white:>8.4} {:>8} {:>8} {:>6}",
+                header.iso, "-", "-", "-"
+            );
             continue;
         };
         let body = ranked.body_white(WHITE_CODE);
@@ -147,7 +161,10 @@ fn main() {
             "{name:<16} {:>6.0} {white:>8.4} {:>8} {:>8} {:>6}",
             header.iso,
             body.map_or_else(|| "-".to_string(), |at| format!("{at:.4}")),
-            body.map_or_else(|| "-".to_string(), |at| format!("{:+.2}", stops(at / white))),
+            body.map_or_else(
+                || "-".to_string(),
+                |at| format!("{:+.2}", stops(at / white))
+            ),
             code.map_or_else(|| "-".to_string(), |c| c.to_string()),
         );
         println!(

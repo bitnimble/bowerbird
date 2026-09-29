@@ -50,7 +50,12 @@ test.each([
 });
 
 test('rotated HDR rendition keeps planar path and reads corresponding stored region', () => {
-  const portrait = frame({ codedWidth: 100, codedHeight: 80, displayWidth: 80, displayHeight: 100 });
+  const portrait = frame({
+    codedWidth: 100,
+    codedHeight: 80,
+    displayWidth: 80,
+    displayHeight: 100,
+  });
   expect(planarLayout(portrait, 90)).toEqual({ depth: 4, chroma: 0.5 });
   expect(planarLayout(portrait, 0)).toBeNull();
 

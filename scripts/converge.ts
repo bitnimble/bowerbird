@@ -16,7 +16,8 @@ const SPEC = join('src', 'services', 'replication', 'tests', 'converge.test.ts')
 const CHUNK = 250;
 
 const total = Number(process.argv[2] ?? process.env.BOWERBIRD_CONVERGE_SEEDS ?? 3000);
-if (!Number.isInteger(total) || total < 1) throw new Error(`seeds must be a positive integer, not ${process.argv[2]}`);
+if (!Number.isInteger(total) || total < 1)
+  throw new Error(`seeds must be a positive integer, not ${process.argv[2]}`);
 
 for (let first = 1; first <= total; first += CHUNK) {
   const count = Math.min(CHUNK, total - first + 1);

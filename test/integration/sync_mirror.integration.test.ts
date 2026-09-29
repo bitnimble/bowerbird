@@ -9,7 +9,13 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan, photoState } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+  photoState,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ShootsService } from '../../src/services/shoots/shoots_service';
@@ -26,10 +32,17 @@ let rules: FolderRulesRepository;
 let shoots: ShootsRepository;
 
 const abs = (rel: string) => path.join(root, rel);
-const shootPaths = () => shoots.listByLibrary(LIB).map((s) => s.folder_path).sort();
+const shootPaths = () =>
+  shoots
+    .listByLibrary(LIB)
+    .map((s) => s.folder_path)
+    .sort();
 const shootOf = (filePath: string) =>
-  (db.query(`SELECT shoot_id FROM photos WHERE json_extract(recipe, '$.path') = ?`).get(filePath) as { shoot_id: string | null } | null)
-    ?.shoot_id ?? null;
+  (
+    db
+      .query(`SELECT shoot_id FROM photos WHERE json_extract(recipe, '$.path') = ?`)
+      .get(filePath) as { shoot_id: string | null } | null
+  )?.shoot_id ?? null;
 const photoCount = () => (db.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number }).n;
 
 function put(rel: string): void {
@@ -38,17 +51,19 @@ function put(rel: string): void {
 }
 
 function shootsService(folderRules: FolderRulesRepository): ShootsService {
-  return new ShootsService(shoots, photoPaths(db), photoState(db), new LibrariesRepository(db), folderRules);
+  return new ShootsService(
+    shoots,
+    photoPaths(db),
+    photoState(db),
+    new LibrariesRepository(db),
+    folderRules,
+  );
 }
 
 function makeLibrary(over: { include_subfolders?: number } = {}): void {
-  db.query('INSERT INTO libraries (id, root_path, name, ordering, include_subfolders) VALUES (?, ?, ?, ?, ?)').run(
-    LIB,
-    root,
-    'lib',
-    'taken_desc',
-    over.include_subfolders ?? 1,
-  );
+  db.query(
+    'INSERT INTO libraries (id, root_path, name, ordering, include_subfolders) VALUES (?, ?, ?, ?, ?)',
+  ).run(LIB, root, 'lib', 'taken_desc', over.include_subfolders ?? 1);
 }
 
 beforeEach(() => {
@@ -205,8 +220,18 @@ test('a folder with an underscore does not adopt an unrelated shoot', async () =
   mkdirSync(abs('Old'));
   mkdirSync(abs('2024xJapan/Day1'), { recursive: true });
   const service = shootsService(rules);
-  const old = await service.create({ library_id: LIB, parent_path: '', name: 'Old', ordering: 'taken_desc' });
-  const unrelated = await service.create({ library_id: LIB, parent_path: '2024xJapan', name: 'Day1', ordering: 'taken_desc' });
+  const old = await service.create({
+    library_id: LIB,
+    parent_path: '',
+    name: 'Old',
+    ordering: 'taken_desc',
+  });
+  const unrelated = await service.create({
+    library_id: LIB,
+    parent_path: '2024xJapan',
+    name: 'Day1',
+    ordering: 'taken_desc',
+  });
 
   renameSync(abs('Old'), abs('2024_Japan'));
   await scan.scanLibrary(LIB); // relocates Old -> 2024_Japan and re-derives parents
@@ -228,7 +253,12 @@ test('never drops a shoot that still holds a shoot, however empty it is itself',
   shoots.updateFields(day1.id, { name: 'Day One, Reykjavik' });
   // Trip holds no photographs of its own, so it is a pass-through folder with a
   // shoot only because the user made one.
-  await shootsService(rules).create({ library_id: LIB, parent_path: '', name: 'Trip', ordering: 'taken_desc' });
+  await shootsService(rules).create({
+    library_id: LIB,
+    parent_path: '',
+    name: 'Trip',
+    ordering: 'taken_desc',
+  });
 
   renameSync(abs('Trip'), abs('Elsewhere'));
   rmSync(abs('Elsewhere'), { recursive: true });
@@ -327,8 +357,19 @@ test('follows a renamed folder by its inode, keeping the shoot and its photos', 
 test('follows a renamed folder that holds no photos', async () => {
   makeLibrary();
   mkdirSync(abs('Planned'));
-  const shootsService = new ShootsService(shoots, photoPaths(db), photoState(db), new LibrariesRepository(db), rules);
-  const { id } = await shootsService.create({ library_id: LIB, parent_path: '', name: 'Planned', ordering: 'taken_desc' });
+  const shootsService = new ShootsService(
+    shoots,
+    photoPaths(db),
+    photoState(db),
+    new LibrariesRepository(db),
+    rules,
+  );
+  const { id } = await shootsService.create({
+    library_id: LIB,
+    parent_path: '',
+    name: 'Planned',
+    ordering: 'taken_desc',
+  });
 
   renameSync(abs('Planned'), abs('Booked'));
   await scan.scanLibrary(LIB);

@@ -2,7 +2,11 @@ import { beforeEach, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInAction } from 'mobx';
-import { MOST_FEATHER, type AssemblyRecipe, type Seams } from '../../../../../../src/schemas/assembly';
+import {
+  MOST_FEATHER,
+  type AssemblyRecipe,
+  type Seams,
+} from '../../../../../../src/schemas/assembly';
 import { MemoryStorage } from '../../../../test_storage';
 import { ToastsPresenter } from '../../../toasts/toasts_presenter';
 import { ToastsStore } from '../../../toasts/toasts_store';
@@ -48,7 +52,11 @@ beforeEach(() => {
   globalThis.sessionStorage = new MemoryStorage();
 });
 
-function build(): { store: MergeStore; presenter: MergePresenter; draws: { base: number; layers: DrawnLayer[] }[] } {
+function build(): {
+  store: MergeStore;
+  presenter: MergePresenter;
+  draws: { base: number; layers: DrawnLayer[] }[];
+} {
   const store = new MergeStore();
   runInAction(() => {
     store.recipe = recipe;
@@ -120,7 +128,19 @@ test('a layer is feathered over its corridor, capped at the feather the reader s
 
 test('the least ramp is twice the render least half-width', () => {
   const weight = readFileSync(
-    join(import.meta.dir, '..', '..', '..', '..', '..', '..', 'native', 'rawshim', 'src', 'assembly_weight.rs'),
+    join(
+      import.meta.dir,
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'native',
+      'rawshim',
+      'src',
+      'assembly_weight.rs',
+    ),
     'utf8',
   );
   const least = Number(weight.match(/pub const W_HIGH_PX: f32 = ([\d.]+);/)?.[1]);

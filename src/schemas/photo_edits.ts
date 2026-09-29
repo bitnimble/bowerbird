@@ -40,16 +40,23 @@ export const TONE_CURVE_KIND = 'pchipCbrt3' as const;
 export const TONE_CURVE_MAX_POINTS = 16;
 export const DIFFUSE_WHITE_CODE = 0.5;
 
-export const ToneCurvePointsSchema = z.array(z.tuple([
-  z.number().min(0).max(1),
-  z.number().min(0).max(1),
-])).min(2).max(TONE_CURVE_MAX_POINTS).refine((points) => points.every((point, index) =>
-  index === 0 || (point[0] > points[index - 1]![0] && point[1] >= points[index - 1]![1])));
+export const ToneCurvePointsSchema = z
+  .array(z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]))
+  .min(2)
+  .max(TONE_CURVE_MAX_POINTS)
+  .refine((points) =>
+    points.every(
+      (point, index) =>
+        index === 0 || (point[0] > points[index - 1]![0] && point[1] >= points[index - 1]![1]),
+    ),
+  );
 export type ToneCurvePoints = z.infer<typeof ToneCurvePointsSchema>;
-export const ToneCurveSchema = z.discriminatedUnion('kind', [z.object({
-  kind: z.literal(TONE_CURVE_KIND),
-  points: ToneCurvePointsSchema,
-})]);
+export const ToneCurveSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal(TONE_CURVE_KIND),
+    points: ToneCurvePointsSchema,
+  }),
+]);
 export type ToneCurve = z.infer<typeof ToneCurveSchema>;
 
 // The document is one replicated cell re-parsed on every write, so a repair is bounded: the most
@@ -82,7 +89,10 @@ export const RepairSchema: z.ZodType<Repair> = z.object({
     z.number().int().min(-STORED_LONG).max(STORED_LONG),
   ]),
   /** What the fill's light is multiplied by to meet the light around it: four stops either way. */
-  gain: z.number().min(1 / 16).max(16),
+  gain: z
+    .number()
+    .min(1 / 16)
+    .max(16),
   /**
    * How far either side of the seam the fill fades across, on the same grid, as the merge's feather
    * does; absent is a cell of `drawn`, never over `MOST_OFFERED_FEATHER`.
@@ -181,7 +191,13 @@ export const EditDocSchema = z
     // White balance. The mode is an open enum in the file - `As Shot`, `Auto`,
     // `Daylight`, `Custom` and a user preset name are all legal - so it is a string.
     whiteBalanceMode: WhiteBalanceModeSchema,
-    temperature: z.number().int().min(TEMPERATURE_KELVIN.min).max(TEMPERATURE_KELVIN.max).nullable().default(null),
+    temperature: z
+      .number()
+      .int()
+      .min(TEMPERATURE_KELVIN.min)
+      .max(TEMPERATURE_KELVIN.max)
+      .nullable()
+      .default(null),
     tint: z.number().int().min(TINT.min).max(TINT.max).nullable().default(null),
 
     // Geometry. Fractions of the frame rather than pixels, because one document grades an
@@ -397,7 +413,10 @@ export const RestoreEditsRequestSchema = z
     cursor: z.number().int().min(0),
     history: EditHistorySchema,
   })
-  .refine((request) => request.cursor <= request.history.length, 'the cursor must be inside the history');
+  .refine(
+    (request) => request.cursor <= request.history.length,
+    'the cursor must be inside the history',
+  );
 export type RestoreEditsRequest = z.infer<typeof RestoreEditsRequestSchema>;
 
 export const FinishEditsRequestSchema = z.object({
@@ -424,9 +443,12 @@ export function sameEditValue(was: unknown, now: unknown): boolean {
   // array's keys are its indices, so a list and a record of the same numbers compare equal.
   if (Array.isArray(was) !== Array.isArray(now)) return false;
   if (Array.isArray(was) && Array.isArray(now)) {
-    return was.length === now.length && was.every((element, index) => sameEditValue(element, now[index]));
+    return (
+      was.length === now.length && was.every((element, index) => sameEditValue(element, now[index]))
+    );
   }
-  if (was == null || now == null || typeof was !== 'object' || typeof now !== 'object') return false;
+  if (was == null || now == null || typeof was !== 'object' || typeof now !== 'object')
+    return false;
   const keys = Object.keys(was);
   return (
     keys.length === Object.keys(now).length &&
@@ -453,7 +475,11 @@ export function diffEdits(from: EditDoc, to: EditDoc): EditDelta | null {
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
   let moved = false;
-  const named = new Set([...Object.keys(EditDocSchema.shape), ...Object.keys(from), ...Object.keys(to)]);
+  const named = new Set([
+    ...Object.keys(EditDocSchema.shape),
+    ...Object.keys(from),
+    ...Object.keys(to),
+  ]);
   for (const key of named) {
     if (key === 'version') continue;
     const was = (from as Record<string, unknown>)[key];

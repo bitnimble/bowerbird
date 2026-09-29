@@ -18,13 +18,29 @@ const absent = new Proxy({}, { get: () => () => undefined }) as never;
 
 function build(): { store: ViewerStore; presenter: PhotosPresenter } {
   photosApi.get = (photoId: string): Promise<PhotoDetail> =>
-    Promise.resolve({ id: photoId, library_id: LIB, renditions: {}, shown_rendition: 'embedded' } as unknown as PhotoDetail);
+    Promise.resolve({
+      id: photoId,
+      library_id: LIB,
+      renditions: {},
+      shown_rendition: 'embedded',
+    } as unknown as PhotoDetail);
   const stacks = new StacksStore();
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
   listing.source = { kind: 'library', libraryId: LIB };
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   return { store, presenter };
 }
 

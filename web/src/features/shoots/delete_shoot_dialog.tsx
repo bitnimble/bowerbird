@@ -51,7 +51,8 @@ export function DeleteShootDialog({
     };
   }, [shoot]);
 
-  const photographs = count == null ? DeleteShootStrings.thePhotographs() : ShootsPageStrings.photoCount(count);
+  const photographs =
+    count == null ? DeleteShootStrings.thePhotographs() : ShootsPageStrings.photoCount(count);
 
   return (
     <Modal
@@ -104,8 +105,14 @@ export function DeleteShootDialog({
           <Button onClick={() => onOpenChange(false)}>{ModalStrings.cancel()}</Button>
           {/* The irreversible half waits for the count, so it can never be taken
               against a number the reader was not shown. */}
-          <Button variant="danger" disabled={photos === 'remove' && count == null} onClick={() => onConfirm(photos)}>
-            {photos === 'keep' ? DeleteShootStrings.deleteShoot() : DeleteShootStrings.deleteShootAndPhotos(photographs)}
+          <Button
+            variant="danger"
+            disabled={photos === 'remove' && count == null}
+            onClick={() => onConfirm(photos)}
+          >
+            {photos === 'keep'
+              ? DeleteShootStrings.deleteShoot()
+              : DeleteShootStrings.deleteShootAndPhotos(photographs)}
           </Button>
         </DialogActions>
       </DialogBody>

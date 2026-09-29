@@ -108,7 +108,11 @@ function install(): void {
   };
 
   for (const [name, value] of Object.entries(capture)) {
-    Object.defineProperty(globalThis.Element.prototype, name, { value, configurable: true, writable: true });
+    Object.defineProperty(globalThis.Element.prototype, name, {
+      value,
+      configurable: true,
+      writable: true,
+    });
   }
 
   // A browser drops the capture of its own accord once the pointer is lifted, and a

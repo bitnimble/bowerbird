@@ -33,7 +33,6 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-
 test('flipping to the camera JPEG and back rewraps once', async () => {
   const { result, rerender } = renderHook(
     ({ source, hdr }: { source: string; hdr: boolean }) => useHdrVideo('p1', source, hdr),
@@ -44,7 +43,10 @@ test('flipping to the camera JPEG and back rewraps once', async () => {
 
   // Pressing I: the render is not what is on screen, so there is nothing to show through a
   // video - but the twin is not thrown away, because pressing O is what comes next.
-  rerender({ source: route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'), hdr: false });
+  rerender({
+    source: route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'),
+    hdr: false,
+  });
   await act(async () => {});
   expect(result.current).toBeNull();
 

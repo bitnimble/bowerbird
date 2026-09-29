@@ -18,7 +18,8 @@ for (const project of PROJECTS) {
     join(ROOT, project),
   );
   const files = checker.getRootFileNames().filter((file) => file.endsWith('.mdx'));
-  if (files.length === 0) throw new Error(`${project} includes no MDX, so this checks nothing there`);
+  if (files.length === 0)
+    throw new Error(`${project} includes no MDX, so this checks nothing there`);
   for (const file of files) {
     const diagnostics = await checker.check(file);
     if (diagnostics.length === 0) continue;

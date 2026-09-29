@@ -14,7 +14,11 @@ test('the fixed reference frame is found without using the process working direc
 });
 
 test('a missing frame is downloaded where it was asked for', async () => {
-  const served = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(Bun.file(REFERENCE_FRAME.path)) });
+  const served = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch: () => new Response(Bun.file(REFERENCE_FRAME.path)),
+  });
   const into = join(scratch, 'downloaded', 'reference_frame.ARW');
   try {
     await fetchReferenceFrame(into, `http://127.0.0.1:${served.port}/frame`);

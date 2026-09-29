@@ -14,7 +14,11 @@ const styles = stylex.create({
       default: 'underline',
       [FINE]: { default: 'none', ':hover': 'underline', ':focus-visible': 'underline' },
     },
-    textDecorationColor: { default: color.boneDim, ':hover': color.satin, ':focus-visible': color.satin },
+    textDecorationColor: {
+      default: color.boneDim,
+      ':hover': color.satin,
+      ':focus-visible': color.satin,
+    },
     textUnderlineOffset: '2px',
   },
 });

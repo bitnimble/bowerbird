@@ -12,7 +12,9 @@ const LIB = path.join(import.meta.dir, 'native/rawshim/target/quick/librawshim.s
 const log = new Logger('dev');
 
 function start(): Bun.Subprocess {
-  return Bun.spawn(['bun', '--watch', 'run', 'src/index.ts'], { stdio: ['inherit', 'inherit', 'inherit'] });
+  return Bun.spawn(['bun', '--watch', 'run', 'src/index.ts'], {
+    stdio: ['inherit', 'inherit', 'inherit'],
+  });
 }
 
 let child = start();

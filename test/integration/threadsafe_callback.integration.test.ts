@@ -34,7 +34,8 @@ describe('a callback into this runtime', () => {
           .forEach((line, index) => {
             // A comment may name the hazard - this file's own does - without being it.
             if (/^\s*(\/\/|\*)/.test(line)) return;
-            if (/threadsafe\s*:\s*true/.test(line)) armed.push(`${relative(ROOT, path)}:${index + 1}`);
+            if (/threadsafe\s*:\s*true/.test(line))
+              armed.push(`${relative(ROOT, path)}:${index + 1}`);
           });
       }
     }

@@ -27,7 +27,10 @@ import {
   toggleExpandStacks,
 } from '../helpers';
 
-const FIXTURES = path.join(path.dirname(new URL(import.meta.url).pathname), '../../../test/fixtures');
+const FIXTURES = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  '../../../test/fixtures',
+);
 const SEAM_ARW = path.join(FIXTURES, 'DSC02981.ARW');
 const SEAM_CR3 = path.join(FIXTURES, 'IMG_5360.CR3');
 
@@ -55,7 +58,10 @@ const slidFrom = (page: Page): Promise<string | null> =>
   photoStage(page).evaluate((stage) => {
     const picture = stage.querySelector('[role="img"]:not([aria-hidden="true"])')?.parentElement;
     const [move] = picture?.getAnimations() ?? [];
-    return ((move?.effect as KeyframeEffect | undefined)?.getKeyframes()[0]?.translate as string | undefined) ?? null;
+    return (
+      ((move?.effect as KeyframeEffect | undefined)?.getKeyframes()[0]?.translate as
+        string | undefined) ?? null
+    );
   });
 
 // Stacks, driven through the real grid (DESIGN §19).
@@ -69,7 +75,9 @@ const slidFrom = (page: Page): Promise<string | null> =>
 // from, and they share one catalogue.
 test.describe.configure({ mode: 'serial' });
 
-test('identical frames collapse into one tile that says how many it stands for', async ({ page }) => {
+test('identical frames collapse into one tile that says how many it stands for', async ({
+  page,
+}) => {
   // The one library that keeps stacking on: its frames are the ones meant to be
   // found alike.
   // Detection runs as part of settling, so the grid has to be opened after it
@@ -78,7 +86,9 @@ test('identical frames collapse into one tile that says how many it stands for',
   await gotoLibrary(page, STACK_PHOTOS_DIR);
 
   await expect(tiles(page)).toHaveCount(1, { timeout: 45_000 });
-  await expect(stackFrames(page)).toHaveAccessibleName(new RegExp(`stack of ${STACK_PHOTO_NAMES.length},`));
+  await expect(stackFrames(page)).toHaveAccessibleName(
+    new RegExp(`stack of ${STACK_PHOTO_NAMES.length},`),
+  );
 });
 
 // Where the members sit inside the band is `bands.spec.ts`.
@@ -136,7 +146,9 @@ test.describe('a joined stack at a fractional device ratio', () => {
    * the tile, and a column costs one screenshot.
    */
   async function seamColours(page: Page): Promise<string[]> {
-    const open = rowTiles(page).filter({ has: page.getByRole('button', { name: /stack of \d+/, expanded: true }) });
+    const open = rowTiles(page).filter({
+      has: page.getByRole('button', { name: /stack of \d+/, expanded: true }),
+    });
     const tile = (await open.boundingBox())!;
     // From inside the tile's own cell edge to inside the band's: the pad either
     // side of the seam is the bed the grid sits on, so it is all meant to be grey.
@@ -145,7 +157,9 @@ test.describe('a joined stack at a fractional device ratio', () => {
       scale: 'device',
     });
     return page.evaluate(async (encoded: string) => {
-      const image = await createImageBitmap(await (await fetch(`data:image/png;base64,${encoded}`)).blob());
+      const image = await createImageBitmap(
+        await (await fetch(`data:image/png;base64,${encoded}`)).blob(),
+      );
       const canvas = document.createElement('canvas');
       canvas.width = image.width;
       canvas.height = image.height;
@@ -172,9 +186,10 @@ test.describe('a joined stack at a fractional device ratio', () => {
       for (const width of widths) {
         await page.setViewportSize({ width, height: 720 });
         await expect.poll(() => fusedBands(page)).toBe(1);
-        expect(await seamColours(page), `the band colour in ${view} at ${width}px, on the edge neither draws`).toEqual(
-          [],
-        );
+        expect(
+          await seamColours(page),
+          `the band colour in ${view} at ${width}px, on the edge neither draws`,
+        ).toEqual([]);
       }
     }
     await setViewMode(page, 'Grid');
@@ -228,7 +243,9 @@ test.describe('a joined stack at a fractional device ratio', () => {
   });
 });
 
-test('a list row opens its stack from anywhere along it, not just the thumbnail', async ({ page }) => {
+test('a list row opens its stack from anywhere along it, not just the thumbnail', async ({
+  page,
+}) => {
   await gotoLibrary(page, STACK_PHOTOS_DIR);
   await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
   await setViewMode(page, 'List');
@@ -271,7 +288,9 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
   // Cmd-clicking one of them takes that frame out and leaves the rest. The row
   // cannot say that - it is the whole stack or none of it - so it stops standing
   // for the stack and the members it named carry the selection instead.
-  await frames(bands(page)).first().click({ modifiers: ['ControlOrMeta'] });
+  await frames(bands(page))
+    .first()
+    .click({ modifiers: ['ControlOrMeta'] });
   await expect(selectionCount(page)).toHaveText(`${STACK_PHOTO_NAMES.length - 1} selected`);
   await expect(selectedTiles(page)).toHaveCount(STACK_PHOTO_NAMES.length - 1);
 
@@ -287,7 +306,9 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
   // photograph in it, and the server takes each once.
   await stack.click({ modifiers: ['ControlOrMeta'] });
   await bulkAction(page, 'Rebuild thumbnails');
-  await expect(page.getByText(`Queued ${STACK_PHOTO_NAMES.length} thumbnails to rebuild.`)).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByText(`Queued ${STACK_PHOTO_NAMES.length} thumbnails to rebuild.`),
+  ).toBeVisible({ timeout: 30_000 });
   // The action consumed what it acted on, so the bar goes with it (§18.3.1).
   await expect(selectedTiles(page)).toHaveCount(0);
   await expect(selectionBar(page)).toBeHidden();
@@ -327,7 +348,9 @@ test('shift-click spans the members of an open band, and back out of it', async 
 
 // The collapse taken off the listing itself (§19.5.4), which is a different thing
 // from opening every band: there is no stack in the grid to open.
-test('expanding all stacks puts every frame in the grid, and keeps what was selected', async ({ page }) => {
+test('expanding all stacks puts every frame in the grid, and keeps what was selected', async ({
+  page,
+}) => {
   await gotoLibrary(page, STACK_PHOTOS_DIR);
   await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
 
@@ -396,7 +419,9 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
   await previous.click();
   const before = openPhotoId(page);
 
-  const stacked = (await (await page.request.get(stackPhotosUrl(await stackIdOfLibrary(page)))).json()) as {
+  const stacked = (await (
+    await page.request.get(stackPhotosUrl(await stackIdOfLibrary(page)))
+  ).json()) as {
     id: string;
   }[];
   const ids = stacked.map((member) => member.id);
@@ -413,7 +438,9 @@ test('a member picked out of the band can be removed from the stack', async ({ p
   // Two of the three, so one member is left and the stack dissolves: a stack of
   // one is a photograph, and that is the half of this worth asserting.
   await picks(bands(page)).nth(0).click();
-  await frames(bands(page)).nth(1).click({ modifiers: ['ControlOrMeta'] });
+  await frames(bands(page))
+    .nth(1)
+    .click({ modifiers: ['ControlOrMeta'] });
   const remove = page.getByRole('button', { name: 'Remove from stack' });
   await expect(remove).toBeVisible();
   await remove.click();
@@ -426,21 +453,29 @@ test('a member picked out of the band can be removed from the stack', async ({ p
 
 // A stack made by hand, in a selection beside a loose frame: the stack comes apart
 // and the loose frame is left alone.
-test('a stack made by hand is taken apart by Unstack, beside a photo that is not one', async ({ page }) => {
+test('a stack made by hand is taken apart by Unstack, beside a photo that is not one', async ({
+  page,
+}) => {
   await gotoLibrary(page, STACK_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length, { timeout: 45_000 });
 
   // Two of the three fused, so the collection is one stack row and one loose
   // photograph - which is the mixed selection this is about.
   for (let index = 0; index < 2; index++) {
-    await frames(page).nth(index).click({ modifiers: ['ControlOrMeta'] });
+    await frames(page)
+      .nth(index)
+      .click({ modifiers: ['ControlOrMeta'] });
     await expect(selectedTiles(page)).toHaveCount(index + 1);
   }
   await bulkAction(page, 'Stack');
   await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length - 1);
 
-  await frames(page).first().click({ modifiers: ['ControlOrMeta'] });
-  await frames(page).last().click({ modifiers: ['ControlOrMeta'] });
+  await frames(page)
+    .first()
+    .click({ modifiers: ['ControlOrMeta'] });
+  await frames(page)
+    .last()
+    .click({ modifiers: ['ControlOrMeta'] });
   await expect(selectedTiles(page)).toHaveCount(2);
   await bulkAction(page, 'Unstack');
   await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length);

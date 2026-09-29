@@ -109,7 +109,8 @@ export class ScanStatus {
   }
 
   getScanStatus(libraryId: string): LibraryScanStatus {
-    if (!this.libraries.has(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (!this.libraries.has(libraryId))
+      throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     const status = this.statuses.get(libraryId);
     const active = this.processing?.getProcessingCount?.(libraryId);
     if (active != null) {
@@ -118,17 +119,28 @@ export class ScanStatus {
       return {
         ...current,
         photos_processing: active,
-        photos_processed: current.status === 'rendition' ? Math.max(0, queued - active) : current.photos_processed,
+        photos_processed:
+          current.status === 'rendition' ? Math.max(0, queued - active) : current.photos_processed,
       };
     }
     if (status == null) {
-      return { ...idleScanStatus(libraryId), photos_processing: this.photoProcessing.countPendingProcessing(libraryId) };
+      return {
+        ...idleScanStatus(libraryId),
+        photos_processing: this.photoProcessing.countPendingProcessing(libraryId),
+      };
     }
     if (status.status !== 'rendition') return status;
 
     const batch = this.processingBatches.get(libraryId);
-    const stillPending = this.photoProcessing.countPendingProcessing(libraryId, batch?.photoIds ?? undefined);
+    const stillPending = this.photoProcessing.countPendingProcessing(
+      libraryId,
+      batch?.photoIds ?? undefined,
+    );
     const queued = batch?.queued ?? stillPending;
-    return { ...status, photos_processing: stillPending, photos_processed: Math.max(0, queued - stillPending) };
+    return {
+      ...status,
+      photos_processing: stillPending,
+      photos_processed: Math.max(0, queued - stillPending),
+    };
   }
 }

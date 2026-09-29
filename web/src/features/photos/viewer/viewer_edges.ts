@@ -30,8 +30,16 @@ function fitArea(a: number, w: number, h: number): number {
   return w / h >= a ? a * h * h : (w * w) / a;
 }
 
-function betterEdge(aspect: number, width: number, height: number, beside: number, below: number): Edge {
-  return fitArea(aspect, width - beside, height) >= fitArea(aspect, width, height - below) ? 'beside' : 'below';
+function betterEdge(
+  aspect: number,
+  width: number,
+  height: number,
+  beside: number,
+  below: number,
+): Edge {
+  return fitArea(aspect, width - beside, height) >= fitArea(aspect, width, height - below)
+    ? 'beside'
+    : 'below';
 }
 
 /**
@@ -61,7 +69,12 @@ export function stripEdge(aspect: number, width: number, height: number, thickne
  * layout ends up oscillating. The two areas are far enough apart either way
  * except on boxes that are close to square, where the choice hardly matters.
  */
-export function panelEdge(aspect: number, width: number, height: number, strip: { edge: Edge; thickness: number } | null): Edge {
+export function panelEdge(
+  aspect: number,
+  width: number,
+  height: number,
+  strip: { edge: Edge; thickness: number } | null,
+): Edge {
   // 34vh is the window's height, so the strip's slice does not come off it.
   const fold = height * PANEL_FOLD + GAP;
   const taken = strip == null ? 0 : stripCost(strip.thickness);

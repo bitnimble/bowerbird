@@ -33,7 +33,10 @@ function play(ids: string[], verdicts: Verdict[]): { session: Session; rounds: R
 }
 
 // Every round to exhaustion, choosing each verdict from a supplied function.
-function playOut(ids: string[], choose: (round: Round, n: number) => Verdict): { session: Session; rounds: Round[] } {
+function playOut(
+  ids: string[],
+  choose: (round: Round, n: number) => Verdict,
+): { session: Session; rounds: Round[] } {
   let session = openSession(ids);
   const rounds: Round[] = [];
   for (;;) {
@@ -175,7 +178,12 @@ describe('the guarantee', () => {
       session = applyVerdict(session, round, verdict);
     }
 
-    expect(asked).toEqual([pairKey('p', 'q'), pairKey('r', 't'), pairKey('r', 'p'), pairKey('q', 'r')]);
+    expect(asked).toEqual([
+      pairKey('p', 'q'),
+      pairKey('r', 't'),
+      pairKey('r', 'p'),
+      pairKey('q', 'r'),
+    ]);
     expect(nextRound(session)).toBeNull();
     expect(keepers(session).sort()).toEqual(['p', 'q', 'r']);
   });
@@ -265,15 +273,22 @@ describe('upcomingRounds', () => {
 describe('arrangement', () => {
   const W = 1600;
   const H = 900;
-  const near = (value: number, expected: number): void => expect(Math.abs(value - expected)).toBeLessThan(0.01);
+  const near = (value: number, expected: number): void =>
+    expect(Math.abs(value - expected)).toBeLessThan(0.01);
 
   // The gutter is spent along the layout axis only, so which constraint applies
   // depends on the arrangement that won.
   function fitsInside(placed: Placed, w: number, h: number): void {
     const used =
       placed.direction === 'row'
-        ? { width: placed.a.width + placed.b.width + SPLIT_GAP, height: Math.max(placed.a.height, placed.b.height) }
-        : { width: Math.max(placed.a.width, placed.b.width), height: placed.a.height + placed.b.height + SPLIT_GAP };
+        ? {
+            width: placed.a.width + placed.b.width + SPLIT_GAP,
+            height: Math.max(placed.a.height, placed.b.height),
+          }
+        : {
+            width: Math.max(placed.a.width, placed.b.width),
+            height: placed.a.height + placed.b.height + SPLIT_GAP,
+          };
     expect(used.width).toBeLessThanOrEqual(w + 0.01);
     expect(used.height).toBeLessThanOrEqual(h + 0.01);
   }
@@ -309,8 +324,14 @@ describe('arrangement', () => {
       // to be spent to the last pixel, or the photos could have been bigger.
       const used =
         placed.direction === 'row'
-          ? { width: placed.a.width + placed.b.width + SPLIT_GAP, height: Math.max(placed.a.height, placed.b.height) }
-          : { width: Math.max(placed.a.width, placed.b.width), height: placed.a.height + placed.b.height + SPLIT_GAP };
+          ? {
+              width: placed.a.width + placed.b.width + SPLIT_GAP,
+              height: Math.max(placed.a.height, placed.b.height),
+            }
+          : {
+              width: Math.max(placed.a.width, placed.b.width),
+              height: placed.a.height + placed.b.height + SPLIT_GAP,
+            };
       near(Math.max(used.width / W, used.height / H), 1);
     });
   }

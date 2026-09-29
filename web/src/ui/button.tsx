@@ -7,7 +7,11 @@ import { Tooltip } from './tooltip';
 
 type ButtonVariant = 'default' | 'primary' | 'danger' | 'ghost';
 type StyleArg = stylex.StyleXArray<
-  null | undefined | boolean | stylex.CompiledStyles | Readonly<[stylex.CompiledStyles, stylex.InlineStyles]>
+  | null
+  | undefined
+  | boolean
+  | stylex.CompiledStyles
+  | Readonly<[stylex.CompiledStyles, stylex.InlineStyles]>
 >;
 type StyleProps = ReturnType<typeof stylex.props>;
 
@@ -95,8 +99,18 @@ export const buttonStyles = stylex.create({
 });
 
 /** The trigger styles of a button of `variant`, for a Base UI part that renders the `<button>` itself. */
-export function buttonProps(variant: ButtonVariant, iconOnly: boolean, ...more: StyleArg[]): StyleProps {
-  return stylex.props(buttonStyles.base, buttonStyles[variant], iconOnly && buttonStyles.icon, focusRing.ring, ...more);
+export function buttonProps(
+  variant: ButtonVariant,
+  iconOnly: boolean,
+  ...more: StyleArg[]
+): StyleProps {
+  return stylex.props(
+    buttonStyles.base,
+    buttonStyles[variant],
+    iconOnly && buttonStyles.icon,
+    focusRing.ring,
+    ...more,
+  );
 }
 
 interface ButtonProps {
@@ -138,12 +152,22 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     <Tooltip label={tooltip ?? (iconOnly ? props['aria-label'] : undefined)}>
       {/* A link that looks like a button is still a link. Handing it to base-ui would
           relabel it role="button", costing the link role and open-in-new-tab. */}
-      {render != null ? cloneElement(render, { ...styled, ...props, ref }) : <BaseButton ref={ref} {...styled} {...props} />}
+      {render != null ? (
+        cloneElement(render, { ...styled, ...props, ref })
+      ) : (
+        <BaseButton ref={ref} {...styled} {...props} />
+      )}
     </Tooltip>
   );
 });
 
 /** A keyboard shortcut, dimmed after a control's label. */
-export function ButtonHint({ children, style }: { children: ReactNode; style?: stylex.StyleXStyles }): JSX.Element {
+export function ButtonHint({
+  children,
+  style,
+}: {
+  children: ReactNode;
+  style?: stylex.StyleXStyles;
+}): JSX.Element {
   return <span {...stylex.props(buttonStyles.hint, style)}>{children}</span>;
 }

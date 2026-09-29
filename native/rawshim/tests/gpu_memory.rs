@@ -43,7 +43,8 @@ fn gives_it_back(what: &str, mut once: impl FnMut()) {
     }
     let after = rawshim::gpu::live_bytes();
     assert_eq!(
-        after, before,
+        after,
+        before,
         "three runs of the {what} left {} bytes behind, which in a browser is memory nothing frees",
         after.saturating_sub(before),
     );
@@ -90,7 +91,9 @@ fn every_stage_hands_its_working_planes_back() {
 
     // The defringe's luma plane and the sharpen's four, which the tiled render path pays per tile
     // rather than once.
-    let frame: Vec<u16> = (0..WIDTH * HEIGHT * 3).map(|at| (at % 4096) as u16).collect();
+    let frame: Vec<u16> = (0..WIDTH * HEIGHT * 3)
+        .map(|at| (at % 4096) as u16)
+        .collect();
     match rawshim::base::device(gpu) {
         None => eprintln!("SKIPPED: this adapter would not build the base pipelines."),
         Some(base) => {
@@ -100,7 +103,10 @@ fn every_stage_hands_its_working_planes_back() {
                     gpu,
                     base,
                     &resident,
-                    rawshim::image::Strengths { sharpen: 0.0, defringe: 0.5 },
+                    rawshim::image::Strengths {
+                        sharpen: 0.0,
+                        defringe: 0.5,
+                    },
                     // Given rather than measured, so the readback that measuring would do is not
                     // what this is timing the memory of.
                     Some((0.4, 0.3)),
@@ -112,7 +118,13 @@ fn every_stage_hands_its_working_planes_back() {
             gives_it_back("sharpen", || {
                 let mut samples = frame.clone();
                 pollster::block_on(rawshim::base::sharpen_base(
-                    gpu, base, &mut samples, WIDTH, HEIGHT, 0.5, 1.0,
+                    gpu,
+                    base,
+                    &mut samples,
+                    WIDTH,
+                    HEIGHT,
+                    0.5,
+                    1.0,
                 ));
             });
         }
@@ -122,8 +134,12 @@ fn every_stage_hands_its_working_planes_back() {
     // it holds is the blur, the chroma smoothing, the lattice, the curves and - once anything
     // encodes - a frame each of counts and readback.
     let level = rawshim::light::Light::measured;
-    let levels =
-        rawshim::tone::Levels { white: level(4095.0), peak: level(4095.0), floor: None }.anchored();
+    let levels = rawshim::tone::Levels {
+        white: level(4095.0),
+        peak: level(4095.0),
+        floor: None,
+    }
+    .anchored();
     let grade = rawshim::gpu::Grade::new(
         WIDTH,
         HEIGHT,

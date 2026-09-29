@@ -79,8 +79,16 @@ export function SidebarIcon({ icon: Icon }: { icon: LucideIcon }): JSX.Element {
 }
 
 /** An entry's name, where it can be long enough to need cutting short. */
-export function SidebarText({ fit = false, children }: { fit?: boolean; children: ReactNode }): JSX.Element {
-  return <span {...stylex.props(sidebarStyles.text, fit && sidebarStyles.textFit)}>{children}</span>;
+export function SidebarText({
+  fit = false,
+  children,
+}: {
+  fit?: boolean;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <span {...stylex.props(sidebarStyles.text, fit && sidebarStyles.textFit)}>{children}</span>
+  );
 }
 
 /** An entry of the sidebar that goes somewhere. */
@@ -127,7 +135,12 @@ export function SidebarButton({
   return (
     <button
       type="button"
-      {...stylex.props(sidebarStyles.link, sidebarStyles.button, tone === 'update' && sidebarStyles.update, focusRing.ring)}
+      {...stylex.props(
+        sidebarStyles.link,
+        sidebarStyles.button,
+        tone === 'update' && sidebarStyles.update,
+        focusRing.ring,
+      )}
       onClick={onClick}
     >
       <SidebarIcon icon={icon} />

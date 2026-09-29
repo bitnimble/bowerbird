@@ -92,7 +92,9 @@ export class ShootsStore extends CollectionListStore<FolderRow> {
     if (this.showHidden) return this.folders;
     const away = new Set(this.shoots.filter(hiddenShoot).map((s) => s.folder_path));
     if (away.size === 0) return this.folders;
-    return this.folders.filter((folder) => !away.has(folder) && !ancestorsOf(folder).some((p) => away.has(p)));
+    return this.folders.filter(
+      (folder) => !away.has(folder) && !ancestorsOf(folder).some((p) => away.has(p)),
+    );
   }
 
   override get nests(): boolean {
@@ -149,7 +151,10 @@ export class ShootsStore extends CollectionListStore<FolderRow> {
       .map((shoot) => {
         const ancestors = flat ? [] : ancestorsOf(shoot.folder_path).filter((p) => paths.has(p));
         const nearest = ancestors.length === 0 ? null : ancestors[ancestors.length - 1]!;
-        const between = nearest == null ? parentOf(shoot.folder_path) : parentOf(shoot.folder_path).slice(nearest.length + 1);
+        const between =
+          nearest == null
+            ? parentOf(shoot.folder_path)
+            : parentOf(shoot.folder_path).slice(nearest.length + 1);
         const skipped = flat ? shoot.folder_path : between === '' ? '' : `${between}/`;
         return {
           key: shoot.folder_path,
@@ -194,10 +199,7 @@ export class ShootsStore extends CollectionListStore<FolderRow> {
         rows.push({
           key: folder,
           shoot,
-          tone:
-            shoot == null ? 'untracked'
-            : hiddenShoot(shoot) ? 'hidden'
-            : undefined,
+          tone: shoot == null ? 'untracked' : hiddenShoot(shoot) ? 'hidden' : undefined,
           name,
           // An untracked folder is drawn dimmed and italic already, and has no
           // count to state.

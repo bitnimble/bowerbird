@@ -9,7 +9,13 @@ import { RawEditPresenter } from '../../stage/raw_edit_presenter';
 import { StageStore } from '../../stage/stage_store';
 import type { Repair } from '../../../../../../src/schemas/stored_grid';
 import { RawEditPanelStrings } from '../../raw_edit_panel.strings';
-import { FakeDecoder, GRADE, openEditor, openedWith, type Editor } from '../../stage/tests/raw_edit_harness';
+import {
+  FakeDecoder,
+  GRADE,
+  openEditor,
+  openedWith,
+  type Editor,
+} from '../../stage/tests/raw_edit_harness';
 import { MOVED_SOLVE_QUIET_MS } from '../repair_presenter';
 import { RepairStore } from '../repair_store';
 import { PrintStore } from '../../print/print_store';
@@ -71,7 +77,16 @@ function rememberedRepair(): RepairStore {
   const nextKeystone = new KeystoneStore(nextStage, nextEdit, nextCrop);
   const nextRepair = new RepairStore(nextEdit, nextKeystone);
   const nextLoupe = new LoupeStore(nextCrop, nextKeystone, nextRepair);
-  new RawEditPresenter(nextEdit, nextStage, nextCrop, nextKeystone, nextRepair, nextLoupe, new PrintStore(), new DeviceSettingsStore());
+  new RawEditPresenter(
+    nextEdit,
+    nextStage,
+    nextCrop,
+    nextKeystone,
+    nextRepair,
+    nextLoupe,
+    new PrintStore(),
+    new DeviceSettingsStore(),
+  );
   return nextRepair;
 }
 
@@ -157,7 +172,9 @@ describe('the repair tool', () => {
   });
 
   test('draws its repairs over a picture prepared elsewhere, with no mosaic to re-run', async () => {
-    openedWith(editor, { local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true } });
+    openedWith(editor, {
+      local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
+    });
     stage.preparedElsewhere = true;
 
     await presenter.repair.draw(SQUARE);
@@ -275,7 +292,13 @@ describe('the repair tool', () => {
 
     // Searched off a picture without the repair, from the loop it was drawn with, while the stage
     // went on showing it: nothing was prepared again.
-    expect(decoder.solved.at(-1)).toEqual({ drawn, others: [], framed: [kept], without: kept, donor: null });
+    expect(decoder.solved.at(-1)).toEqual({
+      drawn,
+      others: [],
+      framed: [kept],
+      without: kept,
+      donor: null,
+    });
     expect(decoder.bands).toHaveLength(bands);
     expect(repair.repairOptions).toEqual([kept, { ...SECOND, feather: 328 }]);
     expect(repair.repairChoice).toBe(0);
@@ -404,13 +427,22 @@ describe('the repair tool', () => {
     expect(decoder.solved.at(-1)?.drawn).toEqual(drawn.map(([x, y]) => [x, y + by]));
 
     // Let go, it is searched around where it now is and offered first beside what that finds.
-    const shown: Repair = { drawn: drawn.map(([x, y]) => [x, y + by]), seam: moved!.seam, donor: [3000, -by], gain: 1 };
+    const shown: Repair = {
+      drawn: drawn.map(([x, y]) => [x, y + by]),
+      seam: moved!.seam,
+      donor: [3000, -by],
+      gain: 1,
+    };
     const found: Repair = { drawn: shown.drawn, seam, donor: [0, 5000], gain: 1 };
     decoder.offer = [found];
     await presenter.repair.settleMove();
     await settled();
     const searched = decoder.solved.at(-1);
-    expect([searched?.drawn, searched?.donor, searched?.without]).toEqual([shown.drawn, null, shown]);
+    expect([searched?.drawn, searched?.donor, searched?.without]).toEqual([
+      shown.drawn,
+      null,
+      shown,
+    ]);
     expect(repair.repairOptions).toEqual([shown, found]);
     expect(repair.repairChoice).toBe(0);
     presenter.repair.cancel();

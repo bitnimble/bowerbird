@@ -70,10 +70,16 @@ mod tests {
         assert_eq!(free(&folder, "DSC02981.jpg"), folder.join("DSC02981.jpg"));
 
         std::fs::write(folder.join("DSC02981.jpg"), b"first").unwrap();
-        assert_eq!(free(&folder, "DSC02981.jpg"), folder.join("DSC02981 (2).jpg"));
+        assert_eq!(
+            free(&folder, "DSC02981.jpg"),
+            folder.join("DSC02981 (2).jpg")
+        );
 
         std::fs::write(folder.join("DSC02981 (2).jpg"), b"second").unwrap();
-        assert_eq!(free(&folder, "DSC02981.jpg"), folder.join("DSC02981 (3).jpg"));
+        assert_eq!(
+            free(&folder, "DSC02981.jpg"),
+            folder.join("DSC02981 (3).jpg")
+        );
     }
 
     #[test]

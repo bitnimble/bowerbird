@@ -13,8 +13,7 @@ describe('encoderQuality', () => {
 
   it('is monotonic in perceived quality, whichever way the encoder counts', () => {
     for (const target of TARGETS) {
-      const better = (a: number, b: number): boolean =>
-        target === 'jpeg' ? a <= b : a >= b;
+      const better = (a: number, b: number): boolean => (target === 'jpeg' ? a <= b : a >= b);
       for (let quality = 1; quality <= 100; quality++) {
         const worse = encoderQuality(target, quality - 1);
         const now = encoderQuality(target, quality);

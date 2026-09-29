@@ -30,7 +30,12 @@ export class PairedPeers implements PeerTransport {
     return anyAddress(this.db, peerId) != null;
   }
 
-  async request(peerId: string, path: string, init?: RequestInit, responseMs = PEER_RESPONSE_TIMEOUT_MS): Promise<Response> {
+  async request(
+    peerId: string,
+    path: string,
+    init?: RequestInit,
+    responseMs = PEER_RESPONSE_TIMEOUT_MS,
+  ): Promise<Response> {
     // By peer rather than by library: a machine is at one address whichever of
     // its libraries is being asked about, and the caller here has a peer in hand
     // rather than a pairing.
@@ -45,7 +50,10 @@ export class PairedPeers implements PeerTransport {
     // uses; the timeout is in addition to it rather than instead.
     const deadline = AbortSignal.timeout(responseMs);
     const signal = init?.signal == null ? deadline : AbortSignal.any([init.signal, deadline]);
-    return fetch(`${address.replace(/\/+$/, '')}${route(PathSegment.api(), PathSegment.blobs())}${path}`, { ...init, signal });
+    return fetch(
+      `${address.replace(/\/+$/, '')}${route(PathSegment.api(), PathSegment.blobs())}${path}`,
+      { ...init, signal },
+    );
   }
 }
 
@@ -63,10 +71,17 @@ export class Peers implements PeerTransport {
   ) {}
 
   canReach(peerId: string): boolean {
-    return this.passive.handles(peerId) ? this.passive.canReach(peerId) : this.active.canReach(peerId);
+    return this.passive.handles(peerId)
+      ? this.passive.canReach(peerId)
+      : this.active.canReach(peerId);
   }
 
-  request(peerId: string, path: string, init?: RequestInit, responseMs?: number): Promise<Response> {
+  request(
+    peerId: string,
+    path: string,
+    init?: RequestInit,
+    responseMs?: number,
+  ): Promise<Response> {
     const transport = this.passive.handles(peerId) ? this.passive : this.active;
     return transport.request(peerId, path, init, responseMs);
   }
@@ -74,7 +89,9 @@ export class Peers implements PeerTransport {
 
 function anyAddress(db: Database, peerId: string): string | null {
   const row = db
-    .query('SELECT address FROM replication_peers WHERE peer_id = ? AND address IS NOT NULL LIMIT 1')
+    .query(
+      'SELECT address FROM replication_peers WHERE peer_id = ? AND address IS NOT NULL LIMIT 1',
+    )
     .get(peerId) as { address: string } | null;
   return row?.address ?? null;
 }

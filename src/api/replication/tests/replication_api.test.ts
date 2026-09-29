@@ -25,7 +25,12 @@ import {
   setSyncsOriginals,
   syncsOriginals,
 } from '../../../services/replication/pairing';
-import { addReplica, browseRemote, openRemote, pullFromRemote } from '../../../services/replication/remote';
+import {
+  addReplica,
+  browseRemote,
+  openRemote,
+  pullFromRemote,
+} from '../../../services/replication/remote';
 import { ReplicationRunner } from '../../../services/replication/replication_runner';
 import { ReplicationService } from '../../../services/replication/replication_service';
 import { SyncLocksRepository } from '../../../services/sync/coordination/sync_locks_repository';
@@ -64,9 +69,14 @@ it('shows inbound catalogue work while it waits and clears it after success or r
   const release = Promise.withResolvers<void>();
   const held = libraryMutex.run(LIB, () => release.promise);
   const request = { library_id: LIB, peer_id: peer, page: { changes: [], cursor: '', done: true } };
-  const sending = (): Promise<Response> => Promise.resolve(api.routes.request(route(PathSegment.push()), {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request),
-  }));
+  const sending = (): Promise<Response> =>
+    Promise.resolve(
+      api.routes.request(route(PathSegment.push()), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(request),
+      }),
+    );
   const incoming = sending();
   try {
     await Bun.sleep(0);
@@ -90,7 +100,9 @@ describe('clone (§9)', () => {
     seedLibrary(origin.db, 3);
     const clone = serve(catalogue());
 
-    const browsed = await post(clone.url, route(PathSegment.replicas(), PathSegment.browse()), { address: `${origin.url}/` });
+    const browsed = await post(clone.url, route(PathSegment.replicas(), PathSegment.browse()), {
+      address: `${origin.url}/`,
+    });
     expect(browsed.status).toBe(200);
     expect(await browsed.json()).toMatchObject({
       libraries: [{ id: LIB, name: 'Trip', photo_count: 3, read_only: false }],
@@ -109,7 +121,11 @@ describe('clone (§9)', () => {
     // The address pairing recorded is what a later session dials, so "sync now"
     // needs nothing but the library.
     new PhotoStateRepository(origin.db, new StackMembership(origin.db)).update('p2', { rating: 5 });
-    const again = await post(clone.url, route(PathSegment.libraries(), LIB, PathSegment.replicate()), {});
+    const again = await post(
+      clone.url,
+      route(PathSegment.libraries(), LIB, PathSegment.replicate()),
+      {},
+    );
     expect(await again.json()).toMatchObject({ peers: 1 });
     expect(replicatedState(clone.db)).toBe(replicatedState(origin.db));
   });
@@ -120,11 +136,15 @@ describe('clone (§9)', () => {
     const origin = serve(catalogue());
     seedLibrary(origin.db, 1);
     origin.db
-      .query("INSERT INTO libraries (id, root_path, name, read_only) VALUES ('rolib000', '/ro', 'RO', 1)")
+      .query(
+        "INSERT INTO libraries (id, root_path, name, read_only) VALUES ('rolib000', '/ro', 'RO', 1)",
+      )
       .run();
 
     const offered = (await (
-      await fetch(`${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries())}`)
+      await fetch(
+        `${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries())}`,
+      )
     ).json()) as {
       libraries: { id: string; read_only: boolean; replicating: boolean }[];
     };
@@ -145,7 +165,9 @@ describe('clone (§9)', () => {
     const { origin } = await pairedClone(1);
 
     const offered = (await (
-      await fetch(`${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries())}`)
+      await fetch(
+        `${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries())}`,
+      )
     ).json()) as {
       libraries: { id: string; replicating: boolean }[];
     };
@@ -159,7 +181,9 @@ describe('sessions over HTTP (§6.2)', () => {
     await pullFromRemote(clone.replica, origin.url);
 
     new PhotoStateRepository(origin.db, new StackMembership(origin.db)).update('p1', { rating: 5 });
-    new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', { notes: 'keep this one' });
+    new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', {
+      notes: 'keep this one',
+    });
 
     await pullFromRemote(clone.replica, origin.url);
     await pullFromRemote(origin.replica, clone.url);
@@ -168,7 +192,9 @@ describe('sessions over HTTP (§6.2)', () => {
     expect(origin.db.query('SELECT notes FROM photos WHERE id = ?').get('p2')).toEqual({
       notes: 'keep this one',
     });
-    expect(clone.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({ rating: 5 });
+    expect(clone.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({
+      rating: 5,
+    });
 
     // The ack told the origin what the clone now holds (§8.3), so its tombstone
     // GC is bounded by a real vector rather than an absent one.
@@ -195,7 +221,9 @@ describe('sessions over HTTP (§6.2)', () => {
 
     const applied = clone.db.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number };
     expect(applied.n).toBeGreaterThan(0);
-    const vector = clone.db.query('SELECT COUNT(*) AS n FROM replication_vectors').get() as { n: number };
+    const vector = clone.db.query('SELECT COUNT(*) AS n FROM replication_vectors').get() as {
+      n: number;
+    };
     expect(vector.n).toBe(0);
 
     await pullFromRemote(clone.replica, origin.url);
@@ -211,12 +239,42 @@ describe('refused handshakes (§6.2, §2.2)', () => {
   // A schema gap closes one direction only: the newer catalogue merges what an older one sends, and
   // never the reverse (§8.5). A protocol gap closes both.
   it.each([
-    ['a downlevel protocol pulling', { protocol: 0, schema: latestMigrationMillis() }, 'pull', 'on this device'],
-    ['a downlevel protocol pushing', { protocol: 0, schema: latestMigrationMillis() }, 'push', 'on this device'],
-    ['an uplevel protocol pulling', { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() }, 'pull', 'on the other device'],
-    ['an uplevel protocol pushing', { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() }, 'push', 'on the other device'],
-    ['a downlevel schema pulling', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() - 1 }, 'pull', 'on this device'],
-    ['an uplevel schema pushing', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() + 1 }, 'push', 'on the other device'],
+    [
+      'a downlevel protocol pulling',
+      { protocol: 0, schema: latestMigrationMillis() },
+      'pull',
+      'on this device',
+    ],
+    [
+      'a downlevel protocol pushing',
+      { protocol: 0, schema: latestMigrationMillis() },
+      'push',
+      'on this device',
+    ],
+    [
+      'an uplevel protocol pulling',
+      { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() },
+      'pull',
+      'on the other device',
+    ],
+    [
+      'an uplevel protocol pushing',
+      { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() },
+      'push',
+      'on the other device',
+    ],
+    [
+      'a downlevel schema pulling',
+      { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() - 1 },
+      'pull',
+      'on this device',
+    ],
+    [
+      'an uplevel schema pushing',
+      { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() + 1 },
+      'push',
+      'on the other device',
+    ],
   ])('refuses %s, naming the device to update', async (_what, versions, direction, update) => {
     const { origin, clone } = await pairedClone();
     const response = await post(origin.url, route(PathSegment.handshake()), {
@@ -225,7 +283,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
       name: 'Laptop',
-      clock_ms:Date.now(),
+      clock_ms: Date.now(),
       coverage: {},
     });
     expect(response.status).toBe(426);
@@ -237,20 +295,23 @@ describe('refused handshakes (§6.2, §2.2)', () => {
   it.each([
     ['a downlevel schema pushing', latestMigrationMillis() - 1, 'push'],
     ['an uplevel schema pulling', latestMigrationMillis() + 1, 'pull'],
-  ])('takes %s, the rows going from the older catalogue to the newer', async (_what, schema, direction) => {
-    const { origin, clone } = await pairedClone();
-    const response = await post(origin.url, route(PathSegment.handshake()), {
-      protocol: REPLICATION_PROTOCOL,
-      schema,
-      direction,
-      library_id: LIB,
-      peer_id: peerIdOf(clone.db),
-      name: 'Laptop',
-      clock_ms:Date.now(),
-      coverage: {},
-    });
-    expect(response.status).toBe(200);
-  });
+  ])(
+    'takes %s, the rows going from the older catalogue to the newer',
+    async (_what, schema, direction) => {
+      const { origin, clone } = await pairedClone();
+      const response = await post(origin.url, route(PathSegment.handshake()), {
+        protocol: REPLICATION_PROTOCOL,
+        schema,
+        direction,
+        library_id: LIB,
+        peer_id: peerIdOf(clone.db),
+        name: 'Laptop',
+        clock_ms: Date.now(),
+        coverage: {},
+      });
+      expect(response.status).toBe(200);
+    },
+  );
 
   it('still sends this device’s work when the other runs a newer build and will not send back', async () => {
     const { origin, clone } = await pairedClone();
@@ -262,7 +323,10 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       fetch: async (request) => {
         const url = new URL(request.url);
         const body = request.method === 'POST' ? await request.text() : undefined;
-        if (url.pathname.endsWith('/handshake') && (JSON.parse(body ?? '{}') as { direction?: string }).direction === 'pull') {
+        if (
+          url.pathname.endsWith('/handshake') &&
+          (JSON.parse(body ?? '{}') as { direction?: string }).direction === 'pull'
+        ) {
           return Response.json(
             {
               error: {
@@ -280,17 +344,24 @@ describe('refused handshakes (§6.2, §2.2)', () => {
           body,
         });
         if (!url.pathname.endsWith('/handshake')) return answer;
-        return Response.json({ ...((await answer.json()) as object), schema: latestMigrationMillis() + 1 });
+        return Response.json({
+          ...((await answer.json()) as object),
+          schema: latestMigrationMillis() + 1,
+        });
       },
     });
     try {
       const address = `http://localhost:${newer.port}`;
-      clone.db.query('UPDATE replication_peers SET address = ? WHERE library_id = ?').run(address, LIB);
+      clone.db
+        .query('UPDATE replication_peers SET address = ? WHERE library_id = ?')
+        .run(address, LIB);
       new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', { rating: 2 });
 
       await runnerFor(clone.db).replicate(LIB);
 
-      expect(origin.db.query('SELECT rating FROM photos WHERE id = ?').get('p2')).toEqual({ rating: 2 });
+      expect(origin.db.query('SELECT rating FROM photos WHERE id = ?').get('p2')).toEqual({
+        rating: 2,
+      });
       const [peer] = pairedPeers(clone.db, LIB);
       expect(peer?.outdated).toBe('this_device');
       expect(peer?.last_error).toContain('older');
@@ -302,25 +373,28 @@ describe('refused handshakes (§6.2, §2.2)', () => {
   it.each<[string, number, Outdated]>([
     ['older', latestMigrationMillis() - 1, 'peer'],
     ['newer', latestMigrationMillis() + 1, 'this_device'],
-  ])('remembers that the caller runs an %s build, so this side can say which device to update', async (_what, schema, outdated) => {
-    const { origin, clone } = await pairedClone();
-    await post(origin.url, route(PathSegment.handshake()), {
-      protocol: REPLICATION_PROTOCOL,
-      schema,
-      direction: 'pull',
-      library_id: LIB,
-      peer_id: peerIdOf(clone.db),
-      name: 'Laptop',
-      clock_ms:Date.now(),
-      coverage: {},
-    });
-    expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([outdated]);
+  ])(
+    'remembers that the caller runs an %s build, so this side can say which device to update',
+    async (_what, schema, outdated) => {
+      const { origin, clone } = await pairedClone();
+      await post(origin.url, route(PathSegment.handshake()), {
+        protocol: REPLICATION_PROTOCOL,
+        schema,
+        direction: 'pull',
+        library_id: LIB,
+        peer_id: peerIdOf(clone.db),
+        name: 'Laptop',
+        clock_ms: Date.now(),
+        coverage: {},
+      });
+      expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([outdated]);
 
-    // And forgets it once the caller arrives on this build.
-    await pullFromRemote(clone.replica, origin.url);
-    expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([null]);
-    expect(pairedPeers(clone.db, LIB).map((peer) => peer.outdated)).toEqual([null]);
-  });
+      // And forgets it once the caller arrives on this build.
+      await pullFromRemote(clone.replica, origin.url);
+      expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([null]);
+      expect(pairedPeers(clone.db, LIB).map((peer) => peer.outdated)).toEqual([null]);
+    },
+  );
 
   it('remembers the build a refusal names, so the device that dialled can say which one to update', async () => {
     const { origin, clone } = await pairedClone();
@@ -328,13 +402,21 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       port: 0,
       fetch: () =>
         Response.json(
-          { error: { code: 'OUTDATED', message: 'refused', details: [{ protocol: REPLICATION_PROTOCOL, schema: 1 }] } },
+          {
+            error: {
+              code: 'OUTDATED',
+              message: 'refused',
+              details: [{ protocol: REPLICATION_PROTOCOL, schema: 1 }],
+            },
+          },
           { status: 426 },
         ),
     });
     try {
       const address = `http://localhost:${refusing.port}`;
-      clone.db.query('UPDATE replication_peers SET address = ? WHERE library_id = ?').run(address, LIB);
+      clone.db
+        .query('UPDATE replication_peers SET address = ? WHERE library_id = ?')
+        .run(address, LIB);
       await expect(pullFromRemote(clone.replica, address)).rejects.toThrow('refused');
       expect(pairedPeers(clone.db, LIB).map((peer) => [peer.peer_id, peer.outdated])).toEqual([
         [peerIdOf(origin.db), 'peer'],
@@ -353,7 +435,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
       name: 'Laptop',
-      clock_ms:Date.now() + 2 * DEFAULT_SKEW_MS,
+      clock_ms: Date.now() + 2 * DEFAULT_SKEW_MS,
       coverage: {},
     });
     expect(await response.json()).toMatchObject({ error: { code: 'CLOCK_SKEW' } });
@@ -399,7 +481,11 @@ describe("this device's name", () => {
     expect(await (await fetch(at)).json()).toEqual({ name: 'Studio iMac' });
     expect((await browseRemote(origin.url)).name).toBe('Studio iMac');
 
-    const blank = await fetch(at, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{"name":" "}' });
+    const blank = await fetch(at, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: '{"name":" "}',
+    });
     expect(blank.status).toBe(400);
   });
 
@@ -440,7 +526,9 @@ describe('browse, then add (§9.1)', () => {
     const occupied = cloneRoot();
     writeFileSync(path.join(occupied, 'holiday.arw'), 'not ours');
 
-    await expect(addReplica(clone.db, origin.url, LIB, occupied, true)).rejects.toThrow('not empty');
+    await expect(addReplica(clone.db, origin.url, LIB, occupied, true)).rejects.toThrow(
+      'not empty',
+    );
     // The usual failure costs the other device nothing, which is why the local
     // half is checked first.
     expect(pairedPeers(origin.db, LIB)).toHaveLength(0);
@@ -482,7 +570,9 @@ describe('browse, then add (§9.1)', () => {
     // catalogue, and `libraries.root_path` is UNIQUE, so the insert inside the
     // transaction is what fails.
     const root = cloneRoot();
-    clone.db.query("INSERT INTO libraries (id, root_path, name) VALUES ('otherlib', ?, 'Squatter')").run(root);
+    clone.db
+      .query("INSERT INTO libraries (id, root_path, name) VALUES ('otherlib', ?, 'Squatter')")
+      .run(root);
 
     await expect(addReplica(clone.db, origin.url, LIB, root, true)).rejects.toThrow();
 
@@ -499,7 +589,9 @@ describe('browse, then add (§9.1)', () => {
     seedLibrary(origin.db, 2);
     const clone = serve(catalogue());
 
-    const browsed = await post(clone.url, route(PathSegment.replicas(), PathSegment.browse()), { address: origin.url });
+    const browsed = await post(clone.url, route(PathSegment.replicas(), PathSegment.browse()), {
+      address: origin.url,
+    });
     expect(browsed.status).toBe(200);
     expect(await browsed.json()).toMatchObject({ libraries: [{ id: LIB, photo_count: 2 }] });
 
@@ -581,7 +673,9 @@ describe('browse, then add (§9.1)', () => {
 
     await addReplica(clone.db, origin.url, LIB, cloneRoot(), true);
 
-    const row = clone.db.query('SELECT read_only, bin_name FROM libraries WHERE id = ?').get(LIB) as {
+    const row = clone.db
+      .query('SELECT read_only, bin_name FROM libraries WHERE id = ?')
+      .get(LIB) as {
       read_only: number;
       bin_name: string | null;
     };
@@ -622,8 +716,11 @@ describe('browse, then add (§9.1)', () => {
     );
 
     const summary = await runner.add({
-      address: origin.url, library_id: LIB, root_path: cloneRoot(),
-      sync_originals: true, auto_transfer_originals: false,
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: true,
+      auto_transfer_originals: false,
     });
 
     expect(announced).toEqual([LIB]);
@@ -658,10 +755,15 @@ describe('browse, then add (§9.1)', () => {
       () => Promise.resolve(0),
     );
 
-    await expect(runner.add({
-      address: origin.url, library_id: LIB, root_path: cloneRoot(),
-      sync_originals: true, auto_transfer_originals: true,
-    })).rejects.toThrow('already running');
+    await expect(
+      runner.add({
+        address: origin.url,
+        library_id: LIB,
+        root_path: cloneRoot(),
+        sync_originals: true,
+        auto_transfer_originals: true,
+      }),
+    ).rejects.toThrow('already running');
 
     expect(announced).toEqual([LIB]);
     expect(autoTransfersOriginals(clone.db, LIB)).toBe(true);
@@ -688,8 +790,11 @@ describe('browse, then add (§9.1)', () => {
     );
 
     const summary = await runner.add({
-      address: origin.url, library_id: LIB, root_path: cloneRoot(),
-      sync_originals: true, auto_transfer_originals: false,
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: true,
+      auto_transfer_originals: false,
     });
 
     expect(summary.library_id).toBe(LIB);
@@ -757,10 +862,16 @@ describe('pairing (§6.5)', () => {
   // be told no.
   it('answers for the whole install at once, leaving out libraries that replicate with nobody', async () => {
     const { origin, clone } = await pairedClone(1);
-    origin.db.query("INSERT INTO libraries (id, root_path, name) VALUES ('solo', '/libraries/solo', 'Solo')").run();
+    origin.db
+      .query(
+        "INSERT INTO libraries (id, root_path, name) VALUES ('solo', '/libraries/solo', 'Solo')",
+      )
+      .run();
 
     const all = (await (
-      await fetch(`${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.peers())}`)
+      await fetch(
+        `${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.peers())}`,
+      )
     ).json()) as {
       libraries: { library_id: string; peers: { peer_id: string }[]; sync_originals: boolean }[];
     };
@@ -775,7 +886,7 @@ describe('pairing (§6.5)', () => {
 // is the clone's alone - nothing about it replicates - but the origin has to
 // learn it, or it goes on offering to send bytes that would be refused.
 describe('sync RAWs to this device (§7.10)', () => {
-  it('keeps the clone\'s answer local and tells the origin at the handshake', async () => {
+  it("keeps the clone's answer local and tells the origin at the handshake", async () => {
     const { origin, clone } = await pairedClone(1, false);
 
     expect(syncsOriginals(clone.db, LIB)).toBe(false);
@@ -820,7 +931,30 @@ describe('originals moved by a session', () => {
     );
   }
 
-  it.each([true, false])('exchanges originals once during setup with keep originals %s', async (keepOriginals) => {
+  it.each([true, false])(
+    'exchanges originals once during setup with keep originals %s',
+    async (keepOriginals) => {
+      const origin = serve(catalogue());
+      seedLibrary(origin.db, 1);
+      const clone = serve(catalogue());
+      const asked: string[] = [];
+
+      await recordingRunner(clone.db, asked).add({
+        address: origin.url,
+        library_id: LIB,
+        root_path: cloneRoot(),
+        sync_originals: keepOriginals,
+        auto_transfer_originals: true,
+      });
+
+      expect(asked).toEqual([
+        ...(keepOriginals ? [`pull ${LIB} ${peerIdOf(origin.db)}`] : []),
+        `push ${LIB} ${peerIdOf(origin.db)}`,
+      ]);
+    },
+  );
+
+  it('fetches the originals of a replica that keeps them, from the device it joined', async () => {
     const origin = serve(catalogue());
     seedLibrary(origin.db, 1);
     const clone = serve(catalogue());
@@ -830,25 +964,8 @@ describe('originals moved by a session', () => {
       address: origin.url,
       library_id: LIB,
       root_path: cloneRoot(),
-      sync_originals: keepOriginals,
-      auto_transfer_originals: true,
-    });
-
-    expect(asked).toEqual([
-      ...(keepOriginals ? [`pull ${LIB} ${peerIdOf(origin.db)}`] : []),
-      `push ${LIB} ${peerIdOf(origin.db)}`,
-    ]);
-  });
-
-  it('fetches the originals of a replica that keeps them, from the device it joined', async () => {
-    const origin = serve(catalogue());
-    seedLibrary(origin.db, 1);
-    const clone = serve(catalogue());
-    const asked: string[] = [];
-
-    await recordingRunner(clone.db, asked).add({
-      address: origin.url, library_id: LIB, root_path: cloneRoot(),
-      sync_originals: true, auto_transfer_originals: false,
+      sync_originals: true,
+      auto_transfer_originals: false,
     });
 
     expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`]);
@@ -861,8 +978,11 @@ describe('originals moved by a session', () => {
     const asked: string[] = [];
 
     await recordingRunner(clone.db, asked).add({
-      address: origin.url, library_id: LIB, root_path: cloneRoot(),
-      sync_originals: false, auto_transfer_originals: false,
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: false,
+      auto_transfer_originals: false,
     });
 
     expect(asked).toEqual([]);
@@ -875,8 +995,11 @@ describe('originals moved by a session', () => {
     const asked: string[] = [];
     const runner = recordingRunner(clone.db, asked);
     await runner.add({
-      address: origin.url, library_id: LIB, root_path: cloneRoot(),
-      sync_originals: true, auto_transfer_originals: false,
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: true,
+      auto_transfer_originals: false,
     });
 
     asked.length = 0;
@@ -885,7 +1008,10 @@ describe('originals moved by a session', () => {
 
     setAutoTransfersOriginals(clone.db, LIB, true);
     await runner.replicate(LIB);
-    expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`, `push ${LIB} ${peerIdOf(origin.db)}`]);
+    expect(asked).toEqual([
+      `pull ${LIB} ${peerIdOf(origin.db)}`,
+      `push ${LIB} ${peerIdOf(origin.db)}`,
+    ]);
   });
 
   // A page reads the transfer queue when it hears a session ended, and polls only while it finds one moving.
@@ -894,7 +1020,11 @@ describe('originals moved by a session', () => {
     const patch = (body: unknown): Promise<Response> =>
       fetch(
         `${clone.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), LIB, PathSegment.originals())}`,
-        { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        },
       );
 
     expect((await patch({})).ok).toBe(false);
@@ -924,8 +1054,11 @@ describe('originals moved by a session', () => {
       },
     );
     await runner.add({
-      address: origin.url, library_id: LIB, root_path: cloneRoot(),
-      sync_originals: false, auto_transfer_originals: false,
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: false,
+      auto_transfer_originals: false,
     });
     setAutoTransfersOriginals(clone.db, LIB, true);
 
@@ -944,9 +1077,15 @@ describe('apply is a trust boundary (§11.2)', () => {
       'a photograph recipe path',
       (db) =>
         db
-          .query(`UPDATE photos SET recipe = json_set(recipe, '$.path', ?), stamp_placement = ? WHERE id = ?`)
+          .query(
+            `UPDATE photos SET recipe = json_set(recipe, '$.path', ?), stamp_placement = ? WHERE id = ?`,
+          )
           .run('../../etc/passwd', stamp(db), 'p1'),
-      (db) => count(db, `SELECT COUNT(*) AS n FROM photos WHERE json_extract(recipe, '$.path') LIKE '%..%'`),
+      (db) =>
+        count(
+          db,
+          `SELECT COUNT(*) AS n FROM photos WHERE json_extract(recipe, '$.path') LIKE '%..%'`,
+        ),
     ],
     [
       // A path smuggled on a kind the guard relays unread. Nothing composes this kind, but the
@@ -957,34 +1096,46 @@ describe('apply is a trust boundary (§11.2)', () => {
         db
           .query(`UPDATE photos SET recipe = ?, stamp_placement = ? WHERE id = ?`)
           .run('{"kind":"kaleidoscope","path":"../../etc/passwd"}', stamp(db), 'p1'),
-      (db) => count(db, `SELECT COUNT(*) AS n FROM photos WHERE json_extract(recipe, '$.path') LIKE '%..%'`),
+      (db) =>
+        count(
+          db,
+          `SELECT COUNT(*) AS n FROM photos WHERE json_extract(recipe, '$.path') LIKE '%..%'`,
+        ),
     ],
     [
       'photo deleted_from_path',
       (db) =>
         db
-          .query('UPDATE photos SET is_deleted = 1, deleted_from_path = ?, stamp_bin = ? WHERE id = ?')
+          .query(
+            'UPDATE photos SET is_deleted = 1, deleted_from_path = ?, stamp_bin = ? WHERE id = ?',
+          )
           .run('/etc/passwd', stamp(db), 'p1'),
       (db) => count(db, "SELECT COUNT(*) AS n FROM photos WHERE deleted_from_path LIKE '/%'"),
     ],
     [
       'shoot folder_path',
       (db) =>
-        db.query('UPDATE shoots SET folder_path = ?, stamp = ? WHERE id = ?').run('a/../../b', stamp(db), SHOOT),
+        db
+          .query('UPDATE shoots SET folder_path = ?, stamp = ? WHERE id = ?')
+          .run('a/../../b', stamp(db), SHOOT),
       (db) => count(db, "SELECT COUNT(*) AS n FROM shoots WHERE folder_path LIKE '%..%'"),
     ],
     [
       'folder_rule folder_path',
       (db) =>
         db
-          .query("INSERT INTO folder_rules (library_id, folder_path, rule, stamp) VALUES (?, ?, 'excluded', ?)")
+          .query(
+            "INSERT INTO folder_rules (library_id, folder_path, rule, stamp) VALUES (?, ?, 'excluded', ?)",
+          )
           .run(LIB, 'rules\\..\\up', stamp(db)),
       (db) => count(db, "SELECT COUNT(*) AS n FROM folder_rules WHERE folder_path LIKE '%..%'"),
     ],
     [
       'library bin_name',
       (db) =>
-        db.query('UPDATE libraries SET bin_name = ?, stamp = ? WHERE id = ?').run('../outside', stamp(db), LIB),
+        db
+          .query('UPDATE libraries SET bin_name = ?, stamp = ? WHERE id = ?')
+          .run('../outside', stamp(db), LIB),
       (db) => count(db, "SELECT COUNT(*) AS n FROM libraries WHERE bin_name LIKE '%..%'"),
     ],
   ];
@@ -993,15 +1144,20 @@ describe('apply is a trust boundary (§11.2)', () => {
     return (db.query(sql).get() as { n: number }).n;
   }
 
-  it.each(POISONS)('rejects traversal in %s before it can land', async (_column, poison, poisoned) => {
-    const { origin, clone } = await pairedClone(2);
-    poison(origin.db);
+  it.each(POISONS)(
+    'rejects traversal in %s before it can land',
+    async (_column, poison, poisoned) => {
+      const { origin, clone } = await pairedClone(2);
+      poison(origin.db);
 
-    await expect(pullFromRemote(clone.replica, origin.url)).rejects.toThrow();
-    expect(poisoned(clone.db)).toBe(0);
-    // The refused page claimed nothing, so fixing the row on the origin heals
-    // the replica on the next ordinary session.
-    const vector = clone.db.query('SELECT COUNT(*) AS n FROM replication_vectors').get() as { n: number };
-    expect(vector.n).toBe(0);
-  });
+      await expect(pullFromRemote(clone.replica, origin.url)).rejects.toThrow();
+      expect(poisoned(clone.db)).toBe(0);
+      // The refused page claimed nothing, so fixing the row on the origin heals
+      // the replica on the next ordinary session.
+      const vector = clone.db.query('SELECT COUNT(*) AS n FROM replication_vectors').get() as {
+        n: number;
+      };
+      expect(vector.n).toBe(0);
+    },
+  );
 });

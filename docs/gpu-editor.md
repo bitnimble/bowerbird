@@ -79,12 +79,12 @@ build finishes, loupe uses editor frame.
 
 Fixtures pin duplicated page/module rules:
 
-| Pin | Holds |
-|---|---|
-| `test/fixtures/tables/module-json.json` | The three shapes a tick crosses as. `module_json.rs` deserialises into `gpu::Region`, `gpu::Adjust` and `image::Geometry`; `module_json.test.ts` rebuilds them from annotated TypeScript literals. A field renamed on one side is `missing field` at the first tick, which is a black stage. |
-| `test/fixtures/tables/display-size.txt` | What a geometry does to a frame's shape: `hdr::cropped_size` against `schemas/display_size.ts`, which the grid lays tiles out with. |
-| `the_draw_places_a_pixel_where_the_gather_does` | The geometry mapping, over every output pixel of a set of geometries: `image::Plan::at` against `geometry.slang`. |
-| `gpu_fixture.rs`, `edit-words.txt`, `detail-passes.txt`, `reduction-words.txt` | The graded frame's snapshots and the tables behind it. `detail-passes.txt` is the guided filter's entry-point order, which no graded fixture can see because those are pinned at every slider zero. |
+| Pin                                                                            | Holds                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/fixtures/tables/module-json.json`                                        | The three shapes a tick crosses as. `module_json.rs` deserialises into `gpu::Region`, `gpu::Adjust` and `image::Geometry`; `module_json.test.ts` rebuilds them from annotated TypeScript literals. A field renamed on one side is `missing field` at the first tick, which is a black stage. |
+| `test/fixtures/tables/display-size.txt`                                        | What a geometry does to a frame's shape: `hdr::cropped_size` against `schemas/display_size.ts`, which the grid lays tiles out with.                                                                                                                                                          |
+| `the_draw_places_a_pixel_where_the_gather_does`                                | The geometry mapping, over every output pixel of a set of geometries: `image::Plan::at` against `geometry.slang`.                                                                                                                                                                            |
+| `gpu_fixture.rs`, `edit-words.txt`, `detail-passes.txt`, `reduction-words.txt` | The graded frame's snapshots and the tables behind it. `detail-passes.txt` is the guided filter's entry-point order, which no graded fixture can see because those are pinned at every slider zero.                                                                                          |
 
 Pin new duplicated rules in the same commit.
 

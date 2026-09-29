@@ -36,4 +36,6 @@ export const LibraryEventSchemas = {
   export: ExportProgressSchema,
 };
 export type LibraryEventKind = keyof typeof LibraryEventSchemas;
-export type LibraryEventPayload<K extends LibraryEventKind> = z.input<(typeof LibraryEventSchemas)[K]>;
+export type LibraryEventPayload<K extends LibraryEventKind> = z.input<
+  (typeof LibraryEventSchemas)[K]
+>;

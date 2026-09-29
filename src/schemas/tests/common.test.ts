@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'bun:test';
-import { SoftDeleteFilterSchema, PaginationSchema, OrderingSchema, PhotoIdListSchema } from '../common';
+import {
+  SoftDeleteFilterSchema,
+  PaginationSchema,
+  OrderingSchema,
+  PhotoIdListSchema,
+} from '../common';
 import { newId } from '../id';
 
 const id = 'photo001';
@@ -15,7 +20,10 @@ describe('SoftDeleteFilterSchema', () => {
 describe('PaginationSchema', () => {
   it('coerces string query values and applies defaults/bounds', () => {
     expect(PaginationSchema.parse({})).toEqual({ offset: 0, limit: 100 });
-    expect(PaginationSchema.parse({ offset: '20', limit: '50' })).toEqual({ offset: 20, limit: 50 });
+    expect(PaginationSchema.parse({ offset: '20', limit: '50' })).toEqual({
+      offset: 20,
+      limit: 50,
+    });
     expect(() => PaginationSchema.parse({ limit: '501' })).toThrow();
     expect(() => PaginationSchema.parse({ limit: '0' })).toThrow();
   });

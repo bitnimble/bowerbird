@@ -13,8 +13,8 @@
 //! sources ([`Fitting`]), and a job brings its own strengths. Everything else - which stages run,
 //! what is measured, what is skipped because it was handed over - is the same code for both.
 
-use crate::resident::Resident;
 use crate::hdr_fit::CameraMatch;
+use crate::resident::Resident;
 
 /// Where a camera match comes from, and whether one is wanted.
 ///
@@ -102,7 +102,8 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
 
     // Only where a match is actually going to be fitted: a photograph that has one stored skips
     // this and lets the chain's own `prepare` correct, which costs no transfer at all.
-    let needs_fit = how.fitting.wanted() && how.camera_match.needs_fit(stored.from_raw.matched.as_ref());
+    let needs_fit =
+        how.fitting.wanted() && how.camera_match.needs_fit(stored.from_raw.matched.as_ref());
     let defocus = match needs_fit {
         false => None,
         true => {
@@ -154,18 +155,36 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     };
     lap("edge spread");
 
-    let known_levels =
-        stored.from_render.levels.and_then(|m| m.levels_at(how.grade.white_quantile));
+    let known_levels = stored
+        .from_render
+        .levels
+        .and_then(|m| m.levels_at(how.grade.white_quantile));
 
     let (matched, fitted_levels) = match (&how.fitting, &stored.from_raw.matched) {
         (Fitting::None, _) => (None, None),
-        _ if !needs_fit => (how.camera_match.apply(stored.from_raw.matched.clone()), None),
+        _ if !needs_fit => (
+            how.camera_match.apply(stored.from_raw.matched.clone()),
+            None,
+        ),
         (fitting, Some(matched)) => {
-            complete_colour(fitting, frame, how.grade.white_quantile, matched).await
-                .map_or_else(|| (Some(matched.clone()), None), |(matched, levels)| (Some(matched), Some(levels)))
+            complete_colour(fitting, frame, how.grade.white_quantile, matched)
+                .await
+                .map_or_else(
+                    || (Some(matched.clone()), None),
+                    |(matched, levels)| (Some(matched), Some(levels)),
+                )
         }
         (Fitting::Preview(bytes), None) => match crate::gpu::device() {
-            Some(gpu) => fit_from_preview(gpu, bytes, frame, how.grade.white_quantile, how.camera_match).await,
+            Some(gpu) => {
+                fit_from_preview(
+                    gpu,
+                    bytes,
+                    frame,
+                    how.grade.white_quantile,
+                    how.camera_match,
+                )
+                .await
+            }
             None => None,
         }
         .unzip(),
@@ -191,7 +210,12 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
         }
     };
     lap("levels");
-    Ok(Measured { matched, levels, defringe, blur })
+    Ok(Measured {
+        matched,
+        levels,
+        defringe,
+        blur,
+    })
 }
 
 async fn complete_colour(
@@ -238,7 +262,15 @@ async fn fit_from_preview(
         (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
         (_, None) => crate::fit::Geometry::Unstated,
     };
-    crate::hdr::fit_all_from_preview(gpu, frame, quantile, geometry, &preview, recorded.lateral, camera_match)
-        .await
-        .map(|(_, matched, levels)| (matched, levels))
+    crate::hdr::fit_all_from_preview(
+        gpu,
+        frame,
+        quantile,
+        geometry,
+        &preview,
+        recorded.lateral,
+        camera_match,
+    )
+    .await
+    .map(|(_, matched, levels)| (matched, levels))
 }

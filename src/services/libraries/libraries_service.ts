@@ -5,7 +5,12 @@ import { AppError } from '../../errors';
 import { config } from '../../config';
 import { isUniqueViolation, unusedId } from '../../db/constraints';
 import { Logger } from '../../logger';
-import { DEFAULT_LIBRARY_SETTINGS, type CreateLibraryRequest, type Library, type UpdateLibraryRequest } from '../../schemas/libraries';
+import {
+  DEFAULT_LIBRARY_SETTINGS,
+  type CreateLibraryRequest,
+  type Library,
+  type UpdateLibraryRequest,
+} from '../../schemas/libraries';
 import { deleteDataDirectory, deleteEmptyBinFolder } from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { inferredLibraryName } from '../../utils/library_name';
@@ -48,10 +53,14 @@ async function removeDataDirectory(library: Library): Promise<void> {
 // change under a catalogue that was already valid.
 export function assertNoDataDirectoryOverlap(rootPath: string): void {
   if (containsPath(config.dataDir, rootPath)) {
-    throw new Error(`library root ${rootPath} is inside DATA_DIR (${config.dataDir}); removing that library would delete it`);
+    throw new Error(
+      `library root ${rootPath} is inside DATA_DIR (${config.dataDir}); removing that library would delete it`,
+    );
   }
   if (containsPath(rootPath, config.dataDir)) {
-    throw new Error(`DATA_DIR (${config.dataDir}) is inside library root ${rootPath}; generated files must live outside it`);
+    throw new Error(
+      `DATA_DIR (${config.dataDir}) is inside library root ${rootPath}; generated files must live outside it`,
+    );
   }
 }
 
@@ -107,7 +116,10 @@ export class LibrariesService {
 
   async create(request: CreateLibraryRequest): Promise<Library> {
     if (!existsSync(request.root_path) || !statSync(request.root_path).isDirectory()) {
-      throw new AppError('VALIDATION_ERROR', `root_path does not exist or is not a directory: ${request.root_path}`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `root_path does not exist or is not a directory: ${request.root_path}`,
+      );
     }
     if (this.repo.getByRootPath(request.root_path)) {
       throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
@@ -121,7 +133,10 @@ export class LibrariesService {
     // assuming the root was writable, so it asked for something this root cannot
     // do (§4.1).
     if (!request.read_only && !isWritable(request.root_path)) {
-      throw new AppError('READ_ONLY', `${request.root_path} is not writable; add it as a read-only library`);
+      throw new AppError(
+        'READ_ONLY',
+        `${request.root_path} is not writable; add it as a read-only library`,
+      );
     }
     // A bin is a folder the app makes under the root, which is exactly what the
     // flag forbids.
@@ -131,7 +146,10 @@ export class LibrariesService {
     // shown a bin-name field. Refused here rather than defaulted, because a
     // client that sent null meant something by it.
     if (!request.read_only && binName == null) {
-      throw new AppError('VALIDATION_ERROR', 'a writable library needs a bin_name; send read_only to have no bin folder');
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'a writable library needs a bin_name; send read_only to have no bin folder',
+      );
     }
     // A folder already sitting at that name is adopted rather than refused
     // (§12.3): the bin channel walks it on the first sync and imports what it
@@ -144,10 +162,17 @@ export class LibrariesService {
     const binPath = binName == null ? null : path.join(request.root_path, binName);
     const occupant = binPath == null ? null : statSync(binPath, { throwIfNoEntry: false });
     if (occupant != null && !occupant.isDirectory()) {
-      throw new AppError('VALIDATION_ERROR', `${binPath} is a file, not a folder: choose another bin folder name`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `${binPath} is a file, not a folder: choose another bin folder name`,
+      );
     }
     const adopted = occupant != null;
-    if (adopted) log.info('the bin folder was already there and is adopted', { root: request.root_path, bin: binName });
+    if (adopted)
+      log.info('the bin folder was already there and is adopted', {
+        root: request.root_path,
+        bin: binName,
+      });
 
     const library: Library = {
       // Settled here rather than redrawn at the insert: the rendition directories
@@ -156,7 +181,10 @@ export class LibrariesService {
       root_path: request.root_path,
       bin_name: binName,
       read_only: request.read_only,
-      name: request.name == null || request.name === '' ? inferredLibraryName(request.root_path) : request.name,
+      name:
+        request.name == null || request.name === ''
+          ? inferredLibraryName(request.root_path)
+          : request.name,
       ordering: request.ordering,
       ...DEFAULT_LIBRARY_SETTINGS,
       rendition_source: request.rendition_source,
@@ -177,7 +205,8 @@ export class LibrariesService {
     // before every job, because a rendition added later would otherwise need
     // remembering in two places.
     const dataPath = getDataPath(library);
-    for (const variant of renditionVariants()) await ensureDir(path.join(dataPath, 'renditions', variant));
+    for (const variant of renditionVariants())
+      await ensureDir(path.join(dataPath, 'renditions', variant));
 
     // The bin exists from the moment the library does (§12.3), in the order
     // `ShootsService.create` uses: made, stat'ed, then the row inserted.
@@ -190,15 +219,24 @@ export class LibrariesService {
       // and a failed insert is no reason to take an empty one of theirs away.
       if (bin != null && !adopted) {
         await deleteEmptyBinFolder(library, bin.path).catch((e: unknown) =>
-          log.error('could not remove the bin folder a failed create left behind', { path: bin.path, err: e }),
+          log.error('could not remove the bin folder a failed create left behind', {
+            path: bin.path,
+            err: e,
+          }),
         );
       }
       // getByRootPath above catches the common case; a concurrent create with the
       // same root_path can still pass it before either commits and hit UNIQUE here.
-      if (isUniqueViolation(err)) throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
+      if (isUniqueViolation(err))
+        throw new AppError('CONFLICT', `library root already registered: ${request.root_path}`);
       throw err;
     }
-    log.info('library created', { library: library.id, root: library.root_path, data: dataPath, readOnly: library.read_only });
+    log.info('library created', {
+      library: library.id,
+      root: library.root_path,
+      data: dataPath,
+      readOnly: library.read_only,
+    });
     this.announceCreated(library);
     return library;
   }
@@ -206,13 +244,22 @@ export class LibrariesService {
   // Creation's own bin step, which cannot go through `ensureBinFolder`: the row
   // does not exist yet, so there is nothing to write the identity to. The
   // identity rides into the INSERT instead.
-  private async makeBinFolder(library: Library): Promise<{ path: string; identity: { dev: number | null; ino: number | null; birthtime: number | null } }> {
+  private async makeBinFolder(
+    library: Library,
+  ): Promise<{
+    path: string;
+    identity: { dev: number | null; ino: number | null; birthtime: number | null };
+  }> {
     const bin = getBinPath(library)!;
     await ensureDir(bin);
     const stats = statSync(bin, { throwIfNoEntry: false });
     return {
       path: bin,
-      identity: { dev: stats?.dev ?? null, ino: stats?.ino ?? null, birthtime: stats?.birthtimeMs ?? null },
+      identity: {
+        dev: stats?.dev ?? null,
+        ino: stats?.ino ?? null,
+        birthtime: stats?.birthtimeMs ?? null,
+      },
     };
   }
 
@@ -238,7 +285,10 @@ export class LibrariesService {
     // flag and then refuse the rename against it - a 403 saying nothing happened,
     // over a library that is now read-only.
     if (updates.read_only === true && updates.bin_name != null && !current.read_only) {
-      throw new AppError('VALIDATION_ERROR', 'a library cannot be made read-only and have its bin renamed in one request');
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'a library cannot be made read-only and have its bin renamed in one request',
+      );
     }
     // Both of these touch the tree, so both go first and under the mutex, before
     // anything that only writes a column.
@@ -248,19 +298,27 @@ export class LibrariesService {
     // Skipped when clearing the flag just made a bin of that name: `setReadOnly`
     // has already written it, so this would be a no-op rename at best.
     const renamed = this.get(libraryId);
-    if (updates.bin_name != null && updates.bin_name !== renamed.bin_name) await this.renameBin(renamed, updates.bin_name);
+    if (updates.bin_name != null && updates.bin_name !== renamed.bin_name)
+      await this.renameBin(renamed, updates.bin_name);
     if (updates.name != null) this.repo.setName(libraryId, updates.name);
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
-    if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
+    if (updates.rendition_source != null)
+      this.repo.setRenditionSource(libraryId, updates.rendition_source);
     if (updates.rendition_hdr != null) this.repo.setRenditionHdr(libraryId, updates.rendition_hdr);
-    if (updates.render_skip_full != null) this.repo.setRenderSkip(libraryId, 'full', updates.render_skip_full);
-    if (updates.render_skip_max != null) this.repo.setRenderSkip(libraryId, 'max', updates.render_skip_max);
+    if (updates.render_skip_full != null)
+      this.repo.setRenderSkip(libraryId, 'full', updates.render_skip_full);
+    if (updates.render_skip_max != null)
+      this.repo.setRenderSkip(libraryId, 'max', updates.render_skip_max);
     if (updates.denoiser != null) this.repo.setDenoiser(libraryId, updates.denoiser);
-    if (updates.include_subfolders != null) this.repo.setIncludeSubfolders(libraryId, updates.include_subfolders);
-    if (updates.include_non_raw != null) this.repo.setIncludeNonRaw(libraryId, updates.include_non_raw);
+    if (updates.include_subfolders != null)
+      this.repo.setIncludeSubfolders(libraryId, updates.include_subfolders);
+    if (updates.include_non_raw != null)
+      this.repo.setIncludeNonRaw(libraryId, updates.include_non_raw);
     if (updates.auto_stack != null) this.repo.setAutoStack(libraryId, updates.auto_stack);
-    if (updates.auto_stack_similarity != null) this.repo.setAutoStackSimilarity(libraryId, updates.auto_stack_similarity);
-    if (updates.auto_stack_window_seconds != null) this.repo.setAutoStackWindow(libraryId, updates.auto_stack_window_seconds);
+    if (updates.auto_stack_similarity != null)
+      this.repo.setAutoStackSimilarity(libraryId, updates.auto_stack_similarity);
+    if (updates.auto_stack_window_seconds != null)
+      this.repo.setAutoStackWindow(libraryId, updates.auto_stack_window_seconds);
     const updated = this.get(libraryId);
     // The watcher holds a scope built from these, so an excluded folder - or a
     // renamed bin, which it would otherwise keep in its ignore list under the old
@@ -279,7 +337,11 @@ export class LibrariesService {
   // both, so clearing its flag creates nothing and re-stats nothing - and the
   // "a folder of that name already exists" refusal does not apply to it, since a
   // library that already owns that folder is not colliding with anything.
-  private async setReadOnly(library: Library, readOnly: boolean, binName: string | undefined): Promise<void> {
+  private async setReadOnly(
+    library: Library,
+    readOnly: boolean,
+    binName: string | undefined,
+  ): Promise<void> {
     if (readOnly) {
       this.repo.setReadOnly(library.id, true);
       return;
@@ -292,10 +354,16 @@ export class LibrariesService {
       return;
     }
     if (binName == null) {
-      throw new AppError('VALIDATION_ERROR', 'clearing read_only needs a bin_name: the library has no bin folder yet');
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'clearing read_only needs a bin_name: the library has no bin folder yet',
+      );
     }
     if (existsSync(path.join(library.root_path, binName))) {
-      throw new AppError('CONFLICT', `a folder named "${binName}" already exists at ${library.root_path}`);
+      throw new AppError(
+        'CONFLICT',
+        `a folder named "${binName}" already exists at ${library.root_path}`,
+      );
     }
 
     await libraryMutex.run(library.id, async () => {
@@ -319,10 +387,16 @@ export class LibrariesService {
     if (library.bin_name === binName) return; // a no-op, not a rename
     if (library.read_only) {
       // First, so a read-only library never sees CONFLICT.
-      throw new AppError('READ_ONLY', `${library.name} is read-only; clear the flag before renaming its bin folder`);
+      throw new AppError(
+        'READ_ONLY',
+        `${library.name} is read-only; clear the flag before renaming its bin folder`,
+      );
     }
     if (library.bin_name == null) {
-      throw new AppError('VALIDATION_ERROR', 'this library has no bin folder; clear read_only in the same request to make one');
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'this library has no bin folder; clear read_only in the same request to make one',
+      );
     }
 
     const from = getBinPath(library)!;
@@ -335,7 +409,10 @@ export class LibrariesService {
     // by `libraryMutex` on our own side.
     const occupant = statSync(to, { throwIfNoEntry: false });
     if (occupant != null && !(occupant.dev === identity?.dev && occupant.ino === identity?.ino)) {
-      throw new AppError('CONFLICT', `a folder named "${binName}" already exists at ${library.root_path}`);
+      throw new AppError(
+        'CONFLICT',
+        `a folder named "${binName}" already exists at ${library.root_path}`,
+      );
     }
 
     await libraryMutex.run(library.id, async () => {
@@ -354,10 +431,16 @@ export class LibrariesService {
           // Recreating is right for a deleted folder and wrong for a moved one,
           // where it would orphan the real bin and leave §9.1.1 to adopt the orphan
           // and revert the name just set. A full sync distinguishes them (§12.3).
-          throw new AppError('IO_ERROR', `the bin folder is not at ${from}: run a full sync, then retry`);
+          throw new AppError(
+            'IO_ERROR',
+            `the bin folder is not at ${from}: run a full sync, then retry`,
+          );
         }
         if (code === 'EBUSY' || code === 'EPERM') {
-          throw new AppError('IO_ERROR', `could not move ${from}: it may be a mount point, or open elsewhere`);
+          throw new AppError(
+            'IO_ERROR',
+            `could not move ${from}: it may be a mount point, or open elsewhere`,
+          );
         }
         throw err;
       }

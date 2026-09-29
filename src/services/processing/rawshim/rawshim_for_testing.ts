@@ -41,7 +41,10 @@ const DebugReplySchema = z.object({
   ok: z.boolean(),
   error: z.string().optional(),
   reply: z
-    .object({ summary: DecodeSummarySchema.optional(), againstPreview: AgainstPreviewSchema.optional() })
+    .object({
+      summary: DecodeSummarySchema.optional(),
+      againstPreview: AgainstPreviewSchema.optional(),
+    })
     .optional(),
 });
 type DebugReply = z.infer<typeof DebugReplySchema>;
@@ -52,13 +55,19 @@ const CAPACITY = 64 * 1024;
 function ask(command: Record<string, unknown>): DebugReply['reply'] {
   const bytes = Buffer.from(JSON.stringify(command), 'utf8');
   let out = new Uint8Array(CAPACITY);
-  let written = Number(shim().bb_for_testing_debug(bytes, bytes.byteLength, ptr(out), out.byteLength));
+  let written = Number(
+    shim().bb_for_testing_debug(bytes, bytes.byteLength, ptr(out), out.byteLength),
+  );
   if (written > out.byteLength) {
     out = new Uint8Array(written);
-    written = Number(shim().bb_for_testing_debug(bytes, bytes.byteLength, ptr(out), out.byteLength));
+    written = Number(
+      shim().bb_for_testing_debug(bytes, bytes.byteLength, ptr(out), out.byteLength),
+    );
   }
   if (written < 0) throw new Error('rawshim could not answer the debug command');
-  const parsed = DebugReplySchema.parse(JSON.parse(new TextDecoder().decode(out.subarray(0, written))));
+  const parsed = DebugReplySchema.parse(
+    JSON.parse(new TextDecoder().decode(out.subarray(0, written))),
+  );
   if (!parsed.ok) throw new Error(parsed.error ?? 'rawshim could not answer the debug command');
   return parsed.reply;
 }
@@ -123,7 +132,10 @@ export function _for_testing_previewSummary(path: string, size = 0): DecodeSumma
 }
 
 /** Written images against the preview of the RAW they were built from. */
-export function _for_testing_deltaEToPreview(imagePaths: string[], rawPath: string): AgainstPreview {
+export function _for_testing_deltaEToPreview(
+  imagePaths: string[],
+  rawPath: string,
+): AgainstPreview {
   const reply = ask({ kind: 'deltaEToPreview', imagePaths, rawPath });
   if (reply?.againstPreview == null) throw new Error(`no comparison for ${rawPath}`);
   return reply.againstPreview;
@@ -138,4 +150,3 @@ export function _for_testing_tileCrops(
 ): void {
   ask({ kind: 'tileCrops', imagePaths, outputPath, window, scale });
 }
-

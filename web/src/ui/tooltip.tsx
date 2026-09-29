@@ -48,7 +48,11 @@ export function Tooltip({
       {/* The popup is only in the tree while open, so the description has to be on the trigger. */}
       <BaseTooltip.Trigger render={children} aria-description={isName ? undefined : label} />
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner {...stylex.props(styles.positioner)} sideOffset={6} collisionPadding={8}>
+        <BaseTooltip.Positioner
+          {...stylex.props(styles.positioner)}
+          sideOffset={6}
+          collisionPadding={8}
+        >
           <BaseTooltip.Popup {...stylex.props(styles.popup)} role="tooltip">
             {label}
           </BaseTooltip.Popup>

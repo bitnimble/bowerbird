@@ -18,8 +18,22 @@ afterEach(cleanup);
 
 const LIB = 'library1';
 const HELD: Label[] = [
-  { id: 'label001', library_id: LIB, name: 'Keeper', colour: '#e5484d', position: 0, photo_count: 3 },
-  { id: 'label002', library_id: LIB, name: 'Print', colour: '#46a758', position: 1, photo_count: 0 },
+  {
+    id: 'label001',
+    library_id: LIB,
+    name: 'Keeper',
+    colour: '#e5484d',
+    position: 0,
+    photo_count: 3,
+  },
+  {
+    id: 'label002',
+    library_id: LIB,
+    name: 'Print',
+    colour: '#46a758',
+    position: 1,
+    photo_count: 0,
+  },
 ];
 
 function Open(): null {
@@ -47,7 +61,9 @@ async function openDialog(): Promise<SaveLabelsRequest[]> {
 }
 
 function names(): string[] {
-  return screen.queryAllByRole('textbox', { name: 'Label name' }).map((field) => (field as HTMLInputElement).value);
+  return screen
+    .queryAllByRole('textbox', { name: 'Label name' })
+    .map((field) => (field as HTMLInputElement).value);
 }
 
 test('asks before deleting a label that is on photos, quoting how many', async () => {

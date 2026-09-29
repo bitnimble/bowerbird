@@ -20,8 +20,11 @@ function build() {
   return {
     api,
     app,
-    processed: (photoId: string, stage: ProcessingStage = 'tile', version = '2026-07-28T00:00:00.000Z') =>
-      notify(photoId, { stage, version }),
+    processed: (
+      photoId: string,
+      stage: ProcessingStage = 'tile',
+      version = '2026-07-28T00:00:00.000Z',
+    ) => notify(photoId, { stage, version }),
   };
 }
 
@@ -81,7 +84,9 @@ describe('EventsApi', () => {
 
     api.announce('replication', { library_id: 'lib' });
 
-    expect(await readChunk(reader)).toBe('event: replication\ndata: {"library_id":"lib"}\nid: 1\n\n');
+    expect(await readChunk(reader)).toBe(
+      'event: replication\ndata: {"library_id":"lib"}\nid: 1\n\n',
+    );
     await reader.cancel();
   });
 
@@ -97,7 +102,9 @@ describe('EventsApi', () => {
     ]);
     expect(api.since('3')).toEqual([]);
 
-    const res = await app.request(route(PathSegment.api(), PathSegment.events()), { headers: { 'Last-Event-ID': '2' } });
+    const res = await app.request(route(PathSegment.api(), PathSegment.events()), {
+      headers: { 'Last-Event-ID': '2' },
+    });
     const reader = res.body!.getReader();
     expect(await readChunk(reader)).toContain('"id":"photo-c"');
     await reader.cancel();

@@ -10,7 +10,13 @@ afterEach(cleanup);
 
 async function opened(value: SoftProof, hdrOffered = true): Promise<SoftProof[]> {
   const chosen: SoftProof[] = [];
-  render(<SoftProofMenu value={value} hdrOffered={hdrOffered} onChange={(proof) => chosen.push(proof)} />);
+  render(
+    <SoftProofMenu
+      value={value}
+      hdrOffered={hdrOffered}
+      onChange={(proof) => chosen.push(proof)}
+    />,
+  );
   await act(async () => {
     fireEvent.click(screen.getByRole('button'));
   });
@@ -20,7 +26,9 @@ async function opened(value: SoftProof, hdrOffered = true): Promise<SoftProof[]>
 test('names the proof in force, and offers each by its colour space', async () => {
   await opened('hdr');
   expect(screen.getByRole('button', { name: 'Soft proof: HDR' }).textContent).toBe('HDR');
-  expect(screen.getByRole('menuitem', { name: 'HDR (Rec.2020 PQ)' }).getAttribute('aria-current')).toBe('true');
+  expect(
+    screen.getByRole('menuitem', { name: 'HDR (Rec.2020 PQ)' }).getAttribute('aria-current'),
+  ).toBe('true');
   expect(screen.getByRole('menuitem', { name: 'SDR (sRGB)' })).toBeTruthy();
   expect(screen.getByRole('menuitem', { name: 'Printed media' })).toBeTruthy();
   expect(screen.getByRole('menuitem', { name: 'Printed media (3D)' })).toBeTruthy();
@@ -31,7 +39,9 @@ test('names the proof in force, and offers each by its colour space', async () =
   cleanup();
 
   await opened('print3d');
-  expect(screen.getByRole('button', { name: 'Soft proof: Printed media (3D)' }).textContent).toBe('Printed media (3D)');
+  expect(screen.getByRole('button', { name: 'Soft proof: Printed media (3D)' }).textContent).toBe(
+    'Printed media (3D)',
+  );
 });
 
 test('hands the choice to its owner', async () => {
@@ -44,7 +54,13 @@ test('hands the choice to its owner', async () => {
 
 test('withholds an HDR proof from an SDR frame', async () => {
   await opened('srgb', false);
-  expect(screen.getByRole('menuitem', { name: 'HDR (Rec.2020 PQ)' }).getAttribute('aria-disabled')).toBe('true');
-  expect(screen.getByRole('menuitem', { name: 'Printed media' }).getAttribute('aria-disabled')).not.toBe('true');
-  expect(screen.getByRole('menuitem', { name: 'SDR (sRGB)' }).getAttribute('aria-disabled')).not.toBe('true');
+  expect(
+    screen.getByRole('menuitem', { name: 'HDR (Rec.2020 PQ)' }).getAttribute('aria-disabled'),
+  ).toBe('true');
+  expect(
+    screen.getByRole('menuitem', { name: 'Printed media' }).getAttribute('aria-disabled'),
+  ).not.toBe('true');
+  expect(
+    screen.getByRole('menuitem', { name: 'SDR (sRGB)' }).getAttribute('aria-disabled'),
+  ).not.toBe('true');
 });

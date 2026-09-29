@@ -1,6 +1,13 @@
 import { action, comparer, computed, reaction, runInAction } from 'mobx';
 import { type Ordering, type ProcessingStage } from '../../../../src/schemas/common';
-import { type CompositeKind, type PhotoMarks, type PhotoSelection, type PhotoSummary, type PhotoTarget, type Triage } from '../../../../src/schemas/photos';
+import {
+  type CompositeKind,
+  type PhotoMarks,
+  type PhotoSelection,
+  type PhotoSummary,
+  type PhotoTarget,
+  type Triage,
+} from '../../../../src/schemas/photos';
 import { type RenditionFetchPhase } from '../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../src/schemas/settings';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
@@ -20,11 +27,7 @@ import { displayRowOf } from './grid/bands';
 import { ScrollRailPresenter } from './grid/scroll_rail_presenter';
 import { SelectionPresenter } from './grid/selection_presenter';
 import { PhotosPresenterStrings } from './photos_presenter.strings';
-import {
-  sourceKey,
-  type PhotoSource,
-  type ViewMode,
-} from './photos_store';
+import { sourceKey, type PhotoSource, type ViewMode } from './photos_store';
 import { openingFilters, reachableModels, type PhotoFilters } from './grid/photo_filters';
 import { SelectionRanges } from './selection';
 import type { Span } from '../../ui/virtual_rows';
@@ -87,7 +90,8 @@ function message(err: unknown): string {
 // The code and status the message alone cannot carry. A bare "Unexpected error"
 // leaves nothing to search the server log for; the code and status do.
 function detail(err: unknown): string | undefined {
-  if (err instanceof ApiError) return err.status === 0 ? err.code : `${err.code} · HTTP ${err.status}`;
+  if (err instanceof ApiError)
+    return err.status === 0 ? err.code : `${err.code} · HTTP ${err.status}`;
   return err instanceof Error ? err.name : undefined;
 }
 
@@ -207,7 +211,8 @@ export class PhotosPresenter {
       (photoId) => this.isCurrent(photoId),
       (photoId) => {
         const libraryId = this.viewer.photoFor(photoId)?.library_id;
-        return () => libraryId == null ? () => {} : this.libraries.startLocalRender(libraryId, photoId);
+        return () =>
+          libraryId == null ? () => {} : this.libraries.startLocalRender(libraryId, photoId);
       },
     );
     // Never stopped: this presenter is the app's, and so is the gallery's rail.
@@ -216,10 +221,14 @@ export class PhotosPresenter {
     // (or open a photo near the edge of what is loaded) and the blocks that
     // answers for are requested, and the ones nothing needs any more are
     // dropped. Lives for the life of the app, like the presenter itself.
-    reaction(() => this.viewer.neededBlocks, (blocks) => void this.listingPresenter.ensureBlocks(blocks), {
-      equals: comparer.structural,
-      fireImmediately: true,
-    });
+    reaction(
+      () => this.viewer.neededBlocks,
+      (blocks) => void this.listingPresenter.ensureBlocks(blocks),
+      {
+        equals: comparer.structural,
+        fireImmediately: true,
+      },
+    );
     // The run the viewer's arrows step through, re-centred when the reader gets
     // near an end of it (§19.5.3). Its own reaction rather than part of opening a
     // photo, because it is also what answers for a photo opened with no
@@ -232,7 +241,10 @@ export class PhotosPresenter {
     // as that photo is open, which for a collection of twenty or fewer is every
     // photo in it.
     reaction(
-      () => (this.viewer.neighbourAnchor === this.listingPresenter.neighboursFor ? null : this.viewer.neighbourAnchor),
+      () =>
+        this.viewer.neighbourAnchor === this.listingPresenter.neighboursFor
+          ? null
+          : this.viewer.neighbourAnchor,
       (photoId) => void this.loadNeighbours(photoId),
       { fireImmediately: true },
     );
@@ -255,7 +267,10 @@ export class PhotosPresenter {
   /** Selected stack rows whose members this client does not hold yet. */
   @computed private get unresolvedSelectedStacks(): string[] {
     return this.marks.selectedLoadedRows
-      .filter((row) => row.stack_size > 1 && row.stack_id != null && !this.stacks.stackMembers.has(row.stack_id))
+      .filter(
+        (row) =>
+          row.stack_size > 1 && row.stack_id != null && !this.stacks.stackMembers.has(row.stack_id),
+      )
       .map((row) => row.stack_id!);
   }
 
@@ -305,7 +320,10 @@ export class PhotosPresenter {
   private async loadFilterFacets(source: PhotoSource): Promise<void> {
     try {
       const selection = { scope: scopeOf(source), filters: viewFilters(source) };
-      const [{ pairs }, { days }] = await Promise.all([photosApi.models(selection), photosApi.days(selection)]);
+      const [{ pairs }, { days }] = await Promise.all([
+        photosApi.models(selection),
+        photosApi.days(selection),
+      ]);
       // By key, not by identity: the store's copy is a mobx proxy of what was
       // handed in, so `!==` is true of the collection this was asked for.
       const current = this.listing.source;
@@ -356,7 +374,8 @@ export class PhotosPresenter {
       // seen - so ask here, inside the `finally`, because the stale-response
       // branch above returns straight past anything after the try.
       const again = this.viewer.neighbourAnchor;
-      if (again != null && again !== this.listingPresenter.neighboursFor) void this.loadNeighbours(again);
+      if (again != null && again !== this.listingPresenter.neighboursFor)
+        void this.loadNeighbours(again);
     }
   }
 
@@ -415,7 +434,11 @@ export class PhotosPresenter {
     const next = checked ? [...ticked, model] : ticked.filter((m) => m !== model);
     const otherKey = which === 'camera' ? 'lensModels' : 'cameraModels';
     const other = f[otherKey] ?? [];
-    const reachable = reachableModels(this.listing.modelPairs, which === 'camera' ? 'lens_model' : 'camera_model', next);
+    const reachable = reachableModels(
+      this.listing.modelPairs,
+      which === 'camera' ? 'lens_model' : 'camera_model',
+      next,
+    );
     const meets = other.length === 0 || other.some((m) => reachable.has(m));
     await this.setFilters({
       ...f,
@@ -426,7 +449,9 @@ export class PhotosPresenter {
 
   async toggleLabelFilter(labelId: string, checked: boolean): Promise<void> {
     const f = this.listing.filters;
-    const next = checked ? [...(f.labels ?? []), labelId] : (f.labels ?? []).filter((id) => id !== labelId);
+    const next = checked
+      ? [...(f.labels ?? []), labelId]
+      : (f.labels ?? []).filter((id) => id !== labelId);
     await this.setFilters({ ...f, labels: next.length === 0 ? undefined : next });
   }
 
@@ -619,7 +644,11 @@ export class PhotosPresenter {
     const chosen = whole ? [] : this.selectionKeys();
     const cursor = this.listing.rows.get(this.marks.focusIndex) ?? null;
     const keys = [
-      ...new Set([...(anchor == null ? [] : [anchor.key]), ...chosen, ...(cursor == null ? [] : [rowKey(cursor)])]),
+      ...new Set([
+        ...(anchor == null ? [] : [anchor.key]),
+        ...chosen,
+        ...(cursor == null ? [] : [rowKey(cursor)]),
+      ]),
     ];
 
     // Both reads describe the listing being switched *to*, which is stated rather
@@ -634,7 +663,11 @@ export class PhotosPresenter {
       const [positions, page] = await Promise.all([
         keys.length === 0
           ? Promise.resolve<Record<string, number[]>>({})
-          : photosApi.positions({ scope: scopeOf(source), filters: this.selectionFilters(expand), keys }),
+          : photosApi.positions({
+              scope: scopeOf(source),
+              filters: this.selectionFilters(expand),
+              keys,
+            }),
         // The count alone. Read before the switch rather than after it so the
         // collection is the right height the moment the reader's row is put back
         // at the pixel it was on, instead of springing there once a block lands.
@@ -667,7 +700,10 @@ export class PhotosPresenter {
         ? SelectionRanges.of(0, total - 1)
         : SelectionRanges.fromPositions(chosen.flatMap((key) => found[key] ?? [])),
       focusIndex: (cursor == null ? undefined : found[rowKey(cursor)]?.[0]) ?? -1,
-      scrollTo: anchor == null || anchoredAt == null ? null : { position: anchoredAt, offset: anchor.offset },
+      scrollTo:
+        anchor == null || anchoredAt == null
+          ? null
+          : { position: anchoredAt, offset: anchor.offset },
     });
     await this.ensureBlocks(this.viewer.neededBlocks);
   }
@@ -676,7 +712,11 @@ export class PhotosPresenter {
   // filtered and sorted, and whether it collapses. Deliberately *not* the
   // generation, which a re-read of the same listing bumps as well.
   private listingKey(source: PhotoSource, expandStacks: boolean): string {
-    return JSON.stringify([sourceKey(source), this.listing.ordering, this.selectionFilters(expandStacks)]);
+    return JSON.stringify([
+      sourceKey(source),
+      this.listing.ordering,
+      this.selectionFilters(expandStacks),
+    ]);
   }
 
   // The switch itself, in one action so the grid never renders a listing halfway
@@ -709,7 +749,11 @@ export class PhotosPresenter {
     this.listingPresenter.needsCount = false;
     this.selectionPresenter.replace(put.selection, put.focusIndex);
     this.remember();
-    this.rail.scrollTo(put.scrollTo == null ? wasAt : this.listing.contentTopOf(put.scrollTo.position) + put.scrollTo.offset);
+    this.rail.scrollTo(
+      put.scrollTo == null
+        ? wasAt
+        : this.listing.contentTopOf(put.scrollTo.position) + put.scrollTo.offset,
+    );
   }
 
   // The row at the top of the viewport and how far into it the reader is, named
@@ -960,7 +1004,11 @@ export class PhotosPresenter {
    * into a toast, so a session would finish believing frames were rejected that
    * the server never took (§20.2).
    */
-  async setTriage(photoId: string, triage: Triage, options: { quiet?: boolean } = {}): Promise<boolean> {
+  async setTriage(
+    photoId: string,
+    triage: Triage,
+    options: { quiet?: boolean } = {},
+  ): Promise<boolean> {
     return this.marksPresenter.setTriage(photoId, triage, options);
   }
 
@@ -1187,7 +1235,11 @@ export class PhotosPresenter {
   // Null when there is nothing selected, or when the view is a slice the server
   // has no scope for - which cannot happen, since the bin and the missing view
   // are the library plus a filter.
-  async toggleBand(stackId: string, position: number, frames: CompositeKind | null = null): Promise<void> {
+  async toggleBand(
+    stackId: string,
+    position: number,
+    frames: CompositeKind | null = null,
+  ): Promise<void> {
     await this.stackActionsPresenter.toggleBand(stackId, position, frames);
   }
 
@@ -1328,7 +1380,12 @@ export class PhotosPresenter {
       // change, which arrive as fresh objects every time and would look like a
       // change to whoever reads them - the frame and the rendition panel, for a
       // star. What does move them says so itself (§18.6).
-      const { renditions: _renditions, album_ids: _albums, label_ids: _labels, ...changed } = updated;
+      const {
+        renditions: _renditions,
+        album_ids: _albums,
+        label_ids: _labels,
+        ...changed
+      } = updated;
       this.viewerPresenter.patchPhoto(photoId, changed);
       // Written into the row the grid is already rendering rather than over
       // it: replacing the object invalidates that tile's observable, and a
@@ -1363,7 +1420,8 @@ export class PhotosPresenter {
       // the server's filter logic to drift out of step.
       const f = this.listing.filters;
       const mayLeaveView =
-        (fields.triage !== undefined && f.triage != null) || (fields.rating !== undefined && f.rated != null);
+        (fields.triage !== undefined && f.triage != null) ||
+        (fields.rating !== undefined && f.rated != null);
       // Not awaited, and deliberately outside the write chain. The chain orders
       // the *writes*; a re-read is a view concern nobody waits on, and awaiting it
       // here holds the next write behind a whole collection pass - which is
@@ -1412,7 +1470,8 @@ export class PhotosPresenter {
     // not an arrival, and clearing it there would drop the direction of the step
     // that got here before the frame it belongs to has painted.
     const previous = this.viewer.open?.id;
-    const lastStep = previous === photoId ? this.viewer.lastStep : this.stepTaken(previous, photoId);
+    const lastStep =
+      previous === photoId ? this.viewer.lastStep : this.stepTaken(previous, photoId);
     // Whatever was on screen when the rendition setting moved has been answering from a
     // detail read before it, which only `store.rendition` was covering; opening a photograph
     // is when that stops being true (`renditionPolicyMoved`).
@@ -1435,7 +1494,10 @@ export class PhotosPresenter {
   // stack and the frames never learn which way to slide. Read now, while both
   // photographs are still in the same window of the run - it is re-fetched around
   // whichever photo is open, so an index kept from an earlier one means nothing.
-  private stepTaken(previous: string | undefined, photoId: string): { to: string; direction: 'next' | 'prev' } | null {
+  private stepTaken(
+    previous: string | undefined,
+    photoId: string,
+  ): { to: string; direction: 'next' | 'prev' } | null {
     if (previous == null) return null;
     const run = this.viewer.neighbourhood;
     const from = run.findIndex((photo) => photo.id === previous);

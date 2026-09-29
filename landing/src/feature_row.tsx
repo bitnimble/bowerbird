@@ -57,7 +57,13 @@ const styles = stylex.create({
   },
 });
 
-export function FeatureRow({ id, flipped = false }: { id: string; flipped?: boolean }): JSX.Element {
+export function FeatureRow({
+  id,
+  flipped = false,
+}: {
+  id: string;
+  flipped?: boolean;
+}): JSX.Element {
   const feature = featureById(id);
   return (
     <section id={feature.id} {...stylex.props(styles.row, flipped && styles.flipped)}>
@@ -87,7 +93,11 @@ export function FeatureIndex({ skip }: { skip?: string }): JSX.Element {
   return (
     <div {...stylex.props(styles.index)}>
       {FEATURES.filter((feature) => feature.id !== skip).map((feature) => (
-        <a key={feature.id} {...stylex.props(styles.entry, focusRing.ring)} href={`${FEATURES_URL}#${feature.id}`}>
+        <a
+          key={feature.id}
+          {...stylex.props(styles.entry, focusRing.ring)}
+          href={`${FEATURES_URL}#${feature.id}`}
+        >
           <span {...stylex.props(styles.entryTitle)}>{feature.title}</span>
           <Text variant="muted">{feature.summary}</Text>
         </a>

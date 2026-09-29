@@ -11,7 +11,13 @@ export function backupPresentation(status: ConfiguredBackupStatus): {
     label: BackupStatusStrings.label(status),
     tone: status.status === 'unavailable' || status.status === 'attention' ? 'error' : undefined,
     state: status.status === 'working' ? 'working' : 'idle',
-    action: status.status === 'working' ? null : status.status === 'paused' ? 'resume'
-      : status.status === 'unavailable' || status.status === 'attention' ? 'retry' : 'backUp',
+    action:
+      status.status === 'working'
+        ? null
+        : status.status === 'paused'
+          ? 'resume'
+          : status.status === 'unavailable' || status.status === 'attention'
+            ? 'retry'
+            : 'backUp',
   };
 }

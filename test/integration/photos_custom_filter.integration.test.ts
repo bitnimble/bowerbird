@@ -24,11 +24,17 @@ function insert({ id, taken, rating = 0, triage = null, missing = false }: Row):
   ).run(id, LIB, `${id}.arw`, taken, rating, triage, missing ? 1 : 0);
 }
 
-const id = (n: number) => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`;
+const id = (n: number) =>
+  `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`;
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-custom', 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    '/tmp/bb-custom',
+    'lib',
+    'taken_desc',
+  );
   photos = new PhotoListingRepository(db);
   insert({ id: id(1), taken: '2024-05-01T09:00:00.000Z', rating: 4, triage: 'picked' });
   insert({ id: id(2), taken: '2024-05-03T23:30:00.000Z', rating: 0 });
@@ -54,7 +60,13 @@ test('match any unions the chips', () => {
 });
 
 test('match any still intersects with scope filters like search', () => {
-  const res = list({ includeDeleted: false, rated: false, isMissing: true, match: 'any', search: `${id(3)}.arw` });
+  const res = list({
+    includeDeleted: false,
+    rated: false,
+    isMissing: true,
+    match: 'any',
+    search: `${id(3)}.arw`,
+  });
   expect(res.total).toBe(1);
   expect(res.photos[0]?.id).toBe(id(3));
 });
@@ -67,6 +79,12 @@ test('the date range is inclusive of the closing day', () => {
 });
 
 test('a photo the camera never dated is filtered by the date it fell back to', () => {
-  expect(list({ includeDeleted: false, takenFrom: '2020-01-01', takenTo: '2020-01-01' }).photos.map((p) => p.id)).toEqual([id(4)]);
-  expect(list({ includeDeleted: false, takenFrom: '2024-01-01' }).photos.map((p) => p.id)).not.toContain(id(4));
+  expect(
+    list({ includeDeleted: false, takenFrom: '2020-01-01', takenTo: '2020-01-01' }).photos.map(
+      (p) => p.id,
+    ),
+  ).toEqual([id(4)]);
+  expect(
+    list({ includeDeleted: false, takenFrom: '2024-01-01' }).photos.map((p) => p.id),
+  ).not.toContain(id(4));
 });

@@ -13,7 +13,12 @@ import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { PhotoEditsRepository } from '../../src/services/photo_edits/photo_edits_repository';
 import { SidecarImportService } from '../../src/services/photo_edits/sidecar_import';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -40,7 +45,12 @@ let edits: PhotoEditsRepository;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-sidecar-scan-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   const processing = photoProcessing(db);
   edits = new PhotoEditsRepository(db);
   scan = new ScanService(
@@ -69,7 +79,9 @@ afterAll(() => {
 test('a scan imports the sidecar beside a photo, once', async () => {
   await scan.scanLibrary(LIB);
 
-  const photo = db.query(`SELECT id FROM photos WHERE json_extract(recipe, '$.path') = ?`).get('edited.arw') as { id: string };
+  const photo = db
+    .query(`SELECT id FROM photos WHERE json_extract(recipe, '$.path') = ?`)
+    .get('edited.arw') as { id: string };
   expect(photo).not.toBeNull();
 
   const imported = edits.get(photo.id);

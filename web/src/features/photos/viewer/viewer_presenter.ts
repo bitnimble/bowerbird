@@ -1,6 +1,10 @@
 import { action } from 'mobx';
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
-import { type PhotoDetail, type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
+import {
+  type PhotoDetail,
+  type PhotoSummary,
+  type Triage,
+} from '../../../../../src/schemas/photos';
 import { type RenditionFetchPhase } from '../../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { type Rendition } from '../../../../../src/services/processing/renditions/renditions';
@@ -100,15 +104,26 @@ export class ViewerPresenter {
     // The camera's JPEG carries none of the edits just made.
     if (this.store.overrideFor(photoId) === 'embedded') this.store.rendition = null;
     if (orientationChanged) {
-      this.store.orientationVersions.set(photoId, (this.store.orientationVersions.get(photoId) ?? 0) + 1);
+      this.store.orientationVersions.set(
+        photoId,
+        (this.store.orientationVersions.get(photoId) ?? 0) + 1,
+      );
     }
     this.store.details.delete(photoId);
   }
 
   @action.bound
-  turned(photoId: string, doc: EditDoc, rendition: ViewerRendition, chooseRendition: boolean): void {
+  turned(
+    photoId: string,
+    doc: EditDoc,
+    rendition: ViewerRendition,
+    chooseRendition: boolean,
+  ): void {
     keep(this.store.editDocs, photoId, doc);
-    this.store.orientationVersions.set(photoId, (this.store.orientationVersions.get(photoId) ?? 0) + 1);
+    this.store.orientationVersions.set(
+      photoId,
+      (this.store.orientationVersions.get(photoId) ?? 0) + 1,
+    );
     if (chooseRendition && this.store.rendition == null) this.store.rendition = rendition;
   }
 

@@ -24,7 +24,12 @@ function detail(id: string): PhotoDetail {
   return { id, library_id: LIB, renditions: {} } as unknown as PhotoDetail;
 }
 
-function build(): { store: ViewerStore; presenter: PhotosPresenter; reads: string[]; docs: string[] } {
+function build(): {
+  store: ViewerStore;
+  presenter: PhotosPresenter;
+  reads: string[];
+  docs: string[];
+} {
   const reads: string[] = [];
   const docs: string[] = [];
   photosApi.get = (photoId: string): Promise<PhotoDetail> => {
@@ -33,7 +38,12 @@ function build(): { store: ViewerStore; presenter: PhotosPresenter; reads: strin
   };
   photoEditsApi.get = (photoId: string): Promise<EditState> => {
     docs.push(photoId);
-    return Promise.resolve({ doc: { exposure: 0 }, rev: 1, canUndo: false, canRedo: false } as unknown as EditState);
+    return Promise.resolve({
+      doc: { exposure: 0 },
+      rev: 1,
+      canUndo: false,
+      canRedo: false,
+    } as unknown as EditState);
   };
   const stacks = new StacksStore();
   const listing = new ListingStore(stacks);
@@ -41,7 +51,18 @@ function build(): { store: ViewerStore; presenter: PhotosPresenter; reads: strin
   const store = new ViewerStore(listing, stacks);
   // A source already in hand, so opening a photo does not go and read a collection as well.
   listing.source = { kind: 'library', libraryId: LIB };
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   return { store, presenter, reads, docs };
 }
 

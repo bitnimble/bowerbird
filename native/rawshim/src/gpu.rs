@@ -39,8 +39,11 @@ const DETAIL_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/detail.wg
 const READBACK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/readback.wgsl"));
 
 /// `readback.slang`'s `pack`.
-const PACK_BINDINGS: [(u32, Binding); 3] =
-    [(0, Binding::Drawn), (1, Binding::Storage { read_only: false }), (2, Binding::Uniform)];
+const PACK_BINDINGS: [(u32, Binding); 3] = [
+    (0, Binding::Drawn),
+    (1, Binding::Storage { read_only: false }),
+    (2, Binding::Uniform),
+];
 
 /// `DETAIL_LONG` in `detail.slang`, which is the long edge of that blur's working texture.
 ///
@@ -136,8 +139,7 @@ pub struct DetailSize {
 const DECODE_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/decode.wgsl"));
 
 const MEAN_FRAME_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/mean_frame.wgsl"));
-const CHROMA_SMOOTH_WGSL: &str =
-    include_str!(concat!(env!("OUT_DIR"), "/wgsl/chroma_smooth.wgsl"));
+const CHROMA_SMOOTH_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/chroma_smooth.wgsl"));
 
 /// How many texels the chroma-smoothing pass's blur reaches, held against `chroma_smooth.slang`.
 const CHROMA_BLUR_REACH: u32 = 4;
@@ -161,7 +163,9 @@ const CHROMA_BLUR_REACH: u32 = 4;
 const CHROMA_GRID: crate::px::Share = crate::px::Share::of(1, 960);
 
 /// This frame's pixels to a texel of `chroma_smoothed`, given the photograph it is part of.
-pub fn chroma_shrink(photograph_long: crate::px::Span<crate::px::Output>) -> crate::px::Span<crate::px::Output> {
+pub fn chroma_shrink(
+    photograph_long: crate::px::Span<crate::px::Output>,
+) -> crate::px::Span<crate::px::Output> {
     CHROMA_GRID.over(photograph_long)
 }
 
@@ -215,8 +219,7 @@ impl ScenePeak {
 /// frame to read a tenth of it.
 pub fn sampled_rows(width: usize, height: usize) -> (u32, u32) {
     let pixels = width * height;
-    let stride =
-        (((pixels as f64) / (crate::tone::QUANTILE_SAMPLES as f64)).round() as u32).max(1);
+    let stride = (((pixels as f64) / (crate::tone::QUANTILE_SAMPLES as f64)).round() as u32).max(1);
     (stride, (height as u32).div_ceil(stride))
 }
 
@@ -453,7 +456,10 @@ pub async fn page_device() -> Option<&'static Gpu> {
         backends: wgpu::Backends::BROWSER_WEBGPU,
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
-    let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await.ok()?;
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions::default())
+        .await
+        .ok()?;
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("rawshim"),
@@ -486,8 +492,12 @@ pub async fn page_device() -> Option<&'static Gpu> {
 
     // Leaked because wgpu's WebGPU handles are `Rc`s, so a `Gpu` cannot sit in a `static` the way
     // the native one does, and a tab's device is alive until the tab is not.
-    let open: &'static Gpu =
-        Box::leak(Box::new(Gpu::build(&adapter.get_info(), instance, device, queue)));
+    let open: &'static Gpu = Box::leak(Box::new(Gpu::build(
+        &adapter.get_info(),
+        instance,
+        device,
+        queue,
+    )));
     PAGE.with(|held| held.set(Some(open)));
     Some(open)
 }
@@ -523,7 +533,9 @@ pub async fn read_back<T>(
     take: impl FnOnce(&[u8]) -> T,
 ) -> Option<T> {
     let Some(()) = mapped(gpu, buffer).await else {
-        eprintln!("rawshim: the device did not map a buffer for reading; the stage that asked declines");
+        eprintln!(
+            "rawshim: the device did not map a buffer for reading; the stage that asked declines"
+        );
         return None;
     };
     let out = take(&buffer.slice(..).get_mapped_range().ok()?);
@@ -684,10 +696,7 @@ impl Describing<'_> {
         self.0.create_render_pipeline(descriptor)
     }
 
-    pub fn create_bind_group(
-        &self,
-        descriptor: &wgpu::BindGroupDescriptor<'_>,
-    ) -> wgpu::BindGroup {
+    pub fn create_bind_group(&self, descriptor: &wgpu::BindGroupDescriptor<'_>) -> wgpu::BindGroup {
         self.0.create_bind_group(descriptor)
     }
 
@@ -803,7 +812,9 @@ async fn mapped(gpu: &Gpu, buffer: &wgpu::Buffer) -> Option<()> {
 #[cfg(target_arch = "wasm32")]
 async fn mapped(gpu: &Gpu, buffer: &wgpu::Buffer) -> Option<()> {
     let (state, signal) = Signal::pair();
-    buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| signal(result.is_ok()));
+    buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| signal(result.is_ok()));
     // The queue still has to be told to make progress; here that returns at once and the browser
     // resolves the callback from its own event loop, which is what the await below yields to.
     gpu.nudge();
@@ -823,19 +834,28 @@ struct Signal {
 
 #[cfg(target_arch = "wasm32")]
 impl Signal {
-    fn pair() -> (impl std::future::Future<Output = bool>, impl FnOnce(bool) + Send + 'static) {
-        let state =
-            std::sync::Arc::new(std::sync::Mutex::new(Signal { answer: None, waker: None }));
+    fn pair() -> (
+        impl std::future::Future<Output = bool>,
+        impl FnOnce(bool) + Send + 'static,
+    ) {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(Signal {
+            answer: None,
+            waker: None,
+        }));
         let wrote = state.clone();
         let signal = move |answer: bool| {
-            let mut wrote = wrote.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut wrote = wrote
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             wrote.answer = Some(answer);
             if let Some(waker) = wrote.waker.take() {
                 waker.wake();
             }
         };
         let waited = std::future::poll_fn(move |context| {
-            let mut state = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             match state.answer {
                 Some(answer) => std::task::Poll::Ready(answer),
                 None => {
@@ -849,37 +869,71 @@ impl Signal {
 }
 
 impl Gpu {
-    pub(crate) fn print_light_calibration(&self, parameters: [f32; 4], temperature: f32, environment: &Texture) -> Buffer {
+    pub(crate) fn print_light_calibration(
+        &self,
+        parameters: [f32; 4],
+        temperature: f32,
+        environment: &Texture,
+    ) -> Buffer {
         self.calibrate_print_light(parameters, temperature, environment, None)
     }
 
     /// Another lamp in the room `calibrated` was made for, which must be `environment`.
-    pub(crate) fn print_lamp_calibration(&self, calibrated: &Buffer, parameters: [f32; 4], temperature: f32, environment: &Texture) -> Buffer {
+    pub(crate) fn print_lamp_calibration(
+        &self,
+        calibrated: &Buffer,
+        parameters: [f32; 4],
+        temperature: f32,
+        environment: &Texture,
+    ) -> Buffer {
         self.calibrate_print_light(parameters, temperature, environment, Some(calibrated))
     }
 
-    fn calibrate_print_light(&self, parameters: [f32; 4], temperature: f32, environment: &Texture, room: Option<&Buffer>) -> Buffer {
+    fn calibrate_print_light(
+        &self,
+        parameters: [f32; 4],
+        temperature: f32,
+        environment: &Texture,
+        room: Option<&Buffer>,
+    ) -> Buffer {
         let mut recording = self.record();
         recording.holding_texture(environment);
         let buffer = self.own_buffer(&wgpu::BufferDescriptor {
-            label: Some("print light calibration"), size: crate::print::CALIBRATION_BYTES,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            label: Some("print light calibration"),
+            size: crate::print::CALIBRATION_BYTES,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         recording.holding(&buffer);
         if let Some(room) = room {
             recording.holding(room);
-            recording.encoder().copy_buffer_to_buffer(room, 0, &buffer, 0, crate::print::CALIBRATION_BYTES);
+            recording.encoder().copy_buffer_to_buffer(
+                room,
+                0,
+                &buffer,
+                0,
+                crate::print::CALIBRATION_BYTES,
+            );
         }
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print lamp"), contents: &crate::print::light_uniform(parameters, temperature),
+            label: Some("print lamp"),
+            contents: &crate::print::light_uniform(parameters, temperature),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("print light calibration"), layout: &self.print_material().layout,
+            label: Some("print light calibration"),
+            layout: &self.print_material().layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer.as_entire_binding(),
+                },
             ],
         });
         let map = self.print_environment_group(environment);
@@ -907,22 +961,38 @@ impl Gpu {
             mapped_at_creation: false,
         });
         recording.holding(&buffer);
-        let values = [eta, 0.0, 0.0, 0.0].into_iter().flat_map(f32::to_le_bytes).collect::<Vec<_>>();
+        let values = [eta, 0.0, 0.0, 0.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print material"), contents: &values, usage: wgpu::BufferUsages::UNIFORM,
+            label: Some("print material"),
+            contents: &values,
+            usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("print albedo"), layout: &self.print_material().layout,
+            label: Some("print albedo"),
+            layout: &self.print_material().layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffer.as_entire_binding(),
+                },
             ],
         });
         {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
             pass.set_bind_group(0, &group, &[]);
             pass.set_pipeline(&self.print_material().tabulate);
-            pass.dispatch_workgroups(crate::print::ALBEDO_VIEWS.div_ceil(64), crate::print::ALBEDO_ROUGHNESSES, 1);
+            pass.dispatch_workgroups(
+                crate::print::ALBEDO_VIEWS.div_ceil(64),
+                crate::print::ALBEDO_ROUGHNESSES,
+                1,
+            );
             pass.set_pipeline(&self.print_material().average);
             pass.dispatch_workgroups(crate::print::ALBEDO_ROUGHNESSES.div_ceil(64), 1, 1);
         }
@@ -935,45 +1005,75 @@ impl Gpu {
             let device = &self.device;
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("print albedo"),
-                source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_albedo.wgsl")).into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_albedo.wgsl")).into(),
+                ),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("print albedo"),
-                entries: &[Binding::Uniform.entry(0), Binding::Storage { read_only: false }.entry(1)],
+                entries: &[
+                    Binding::Uniform.entry(0),
+                    Binding::Storage { read_only: false }.entry(1),
+                ],
             });
             let albedo_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("print albedo"), bind_group_layouts: &[Some(&layout)],
+                label: Some("print albedo"),
+                bind_group_layouts: &[Some(&layout)],
                 ..Default::default()
             });
-            let compute = |label, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry| {
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(label), layout: Some(layout), module, entry_point: Some(entry),
-                    compilation_options: Default::default(), cache: None,
-                })
-            };
+            let compute =
+                |label, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some(label),
+                        layout: Some(layout),
+                        module,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    })
+                };
             let tabulate = compute("print albedo", &module, &albedo_layout, "tabulate");
             let average = compute("print average albedo", &module, &albedo_layout, "average");
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("print lamp"),
-                source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl"))
+                        .into(),
+                ),
             });
             let light_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("print light calibration"),
-                bind_group_layouts: &[Some(&layout), Some(&self.print_environment_pipelines().map_layout)],
+                bind_group_layouts: &[
+                    Some(&layout),
+                    Some(&self.print_environment_pipelines().map_layout),
+                ],
                 ..Default::default()
             });
-            let light = compute("print light calibration", &module, &light_layout, "calibrate");
+            let light = compute(
+                "print light calibration",
+                &module,
+                &light_layout,
+                "calibrate",
+            );
             let room = compute("print light calibration", &module, &light_layout, "room");
-            PrintMaterial { layout, tabulate, average, light, room }
+            PrintMaterial {
+                layout,
+                tabulate,
+                average,
+                light,
+                room,
+            }
         })
     }
 
     fn print_environment_pipelines(&self) -> &print_environment::Pipelines {
-        self.print_environment.get_or_init(|| print_environment::Pipelines::new(&self.device))
+        self.print_environment
+            .get_or_init(|| print_environment::Pipelines::new(&self.device))
     }
 
     fn print_surface(&self) -> &print_surface::Pipelines {
-        self.print_surface.get_or_init(|| print_surface::Pipelines::new(&self.device))
+        self.print_surface
+            .get_or_init(|| print_surface::Pipelines::new(&self.device))
     }
 
     fn drawing(&self, from_frame: bool, entry: &str) -> &wgpu::RenderPipeline {
@@ -987,44 +1087,59 @@ impl Gpu {
             _ => unreachable!("a frame drawing entry point"),
         };
         held.get_or_init(|| {
-            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("draw"),
-                layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            self.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("draw"),
-                    bind_group_layouts: &if entry != "fs" && entry != "fs_print_pigment" {
-                        vec![Some(&self.draw_layout), Some(&self.print_layout)]
-                    } else {
-                        vec![Some(&self.draw_layout)]
+                    layout: Some(&self.device.create_pipeline_layout(
+                        &wgpu::PipelineLayoutDescriptor {
+                            label: Some("draw"),
+                            bind_group_layouts: &if entry != "fs" && entry != "fs_print_pigment" {
+                                vec![Some(&self.draw_layout), Some(&self.print_layout)]
+                            } else {
+                                vec![Some(&self.draw_layout)]
+                            },
+                            ..Default::default()
+                        },
+                    )),
+                    vertex: wgpu::VertexState {
+                        module: &self.frame_module,
+                        entry_point: Some("vs"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
                     },
-                    ..Default::default()
-                })),
-                vertex: wgpu::VertexState {
-                    module: &self.frame_module, entry_point: Some("vs"),
-                    compilation_options: Default::default(), buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.frame_module, entry_point: Some(entry),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: crate::wgsl_overrides::for_entry(
-                            "frame.wgsl", entry, &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
-                        ),
-                        ..Default::default()
-                    },
-                    targets: &[Some(if entry == "fs_print_pq" {
-                        wgpu::TextureFormat::Rgba16Uint.into()
-                    } else {
-                        CANVAS_FORMAT.into()
-                    })],
-                }),
-                primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
-                multiview_mask: Default::default(), cache: None,
-            })
+                    fragment: Some(wgpu::FragmentState {
+                        module: &self.frame_module,
+                        entry_point: Some(entry),
+                        compilation_options: wgpu::PipelineCompilationOptions {
+                            constants: crate::wgsl_overrides::for_entry(
+                                "frame.wgsl",
+                                entry,
+                                &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
+                            ),
+                            ..Default::default()
+                        },
+                        targets: &[Some(if entry == "fs_print_pq" {
+                            wgpu::TextureFormat::Rgba16Uint.into()
+                        } else {
+                            CANVAS_FORMAT.into()
+                        })],
+                    }),
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    multiview_mask: Default::default(),
+                    cache: None,
+                })
         })
     }
 
     /// One submission, and the pool everything it reads is allocated from.
     pub fn record(&self) -> Recording<'_> {
-        Recording { gpu: self, encoder: None, held: Vec::new() }
+        Recording {
+            gpu: self,
+            encoder: None,
+            held: Vec::new(),
+        }
     }
 
     /// `drawn` as RGB9E5 words, four little-endian bytes a pixel, a row after another: what a
@@ -1046,7 +1161,10 @@ impl Gpu {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let size: Vec<u8> = [width, height, 0, 0].into_iter().flat_map(u32::to_le_bytes).collect();
+        let size: Vec<u8> = [width, height, 0, 0]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
         let size = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("rgb9e5 size"),
             contents: &size,
@@ -1057,9 +1175,18 @@ impl Gpu {
             label: Some("rgb9e5"),
             layout: &self.pack_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: words.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: size.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: words.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: size.as_entire_binding(),
+                },
             ],
         });
         {
@@ -1068,20 +1195,22 @@ impl Gpu {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
         }
-        recording.encoder().copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
         recording.submit();
         read_back(self, &read, <[u8]>::to_vec).await
     }
 
     /// A buffer whose life is its own rather than a submission's: a frame, a mosaic, a pyramid.
     pub fn own_buffer(&self, descriptor: &wgpu::BufferDescriptor<'_>) -> Buffer {
-        Buffer(counted(self.device.create_buffer(descriptor), descriptor.size))
+        Buffer(counted(
+            self.device.create_buffer(descriptor),
+            descriptor.size,
+        ))
     }
 
-    pub fn own_buffer_init(
-        &self,
-        descriptor: &wgpu::util::BufferInitDescriptor<'_>,
-    ) -> Buffer {
+    pub fn own_buffer_init(&self, descriptor: &wgpu::util::BufferInitDescriptor<'_>) -> Buffer {
         use wgpu::util::DeviceExt;
         let buffer = self.device.create_buffer_init(descriptor);
         let bytes = buffer.size();
@@ -1089,7 +1218,10 @@ impl Gpu {
     }
 
     pub fn own_texture(&self, descriptor: &wgpu::TextureDescriptor<'_>) -> Texture {
-        Texture(counted(self.device.create_texture(descriptor), texture_bytes(descriptor)))
+        Texture(counted(
+            self.device.create_texture(descriptor),
+            texture_bytes(descriptor),
+        ))
     }
 
     pub fn own_texture_with_data(
@@ -1100,7 +1232,8 @@ impl Gpu {
     ) -> Texture {
         use wgpu::util::DeviceExt;
         Texture(counted(
-            self.device.create_texture_with_data(&self.queue, descriptor, order, data),
+            self.device
+                .create_texture_with_data(&self.queue, descriptor, order, data),
             texture_bytes(descriptor),
         ))
     }
@@ -1130,7 +1263,9 @@ impl Gpu {
     /// Native only in practice: a browser cannot block for a map, which is why [`read_back`] exists
     /// in the shape it does.
     pub fn block_until_done(&self) {
-        self.device.poll(wgpu::PollType::wait_indefinitely()).expect("the dispatch finished");
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("the dispatch finished");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1153,9 +1288,14 @@ impl Gpu {
             let offered = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
             let described = |a: &wgpu::Adapter| {
                 let i = a.get_info();
-                format!("{} ({:?}, {:?}) via {}", i.name, i.device_type, i.backend, i.driver)
+                format!(
+                    "{} ({:?}, {:?}) via {}",
+                    i.name, i.device_type, i.backend, i.driver
+                )
             };
-            if let Some(found) = offered.iter().find(|a| described(a).to_lowercase().contains(&want))
+            if let Some(found) = offered
+                .iter()
+                .find(|a| described(a).to_lowercase().contains(&want))
             {
                 return Some(found.clone());
             }
@@ -1174,7 +1314,9 @@ impl Gpu {
         /// rather than at startup.
         fn software(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
             let offered = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
-            let found = offered.into_iter().find(|a| a.get_info().name.contains("SwiftShader"));
+            let found = offered
+                .into_iter()
+                .find(|a| a.get_info().name.contains("SwiftShader"));
             if found.is_none() {
                 eprintln!(
                     "rawshim gpu: no hardware adapter and no SwiftShader; `bun run get:swiftshader` \
@@ -1230,8 +1372,7 @@ impl Gpu {
         // 366MB at 61MP. The browser lives with that floor because it has to; a native
         // process has no reason to ask for less than the hardware offers, and asking for
         // less turns every full-size rendition into a validation failure.
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("rawshim"),
                 required_limits: limits_of(&adapter),
                 required_features: asked_features(&adapter),
@@ -1245,8 +1386,8 @@ impl Gpu {
                 experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
                 ..Default::default()
             }))
-            .inspect_err(|refused| eprintln!("rawshim gpu: no device: {refused}"))
-            .ok()?;
+        .inspect_err(|refused| eprintln!("rawshim gpu: no device: {refused}"))
+        .ok()?;
         // A validation error here is a bug in the shader or in what is bound to it, and
         // both are ours. Left to the default handler it would print and continue, and the
         // frame would come back wrong rather than not at all.
@@ -1281,8 +1422,10 @@ impl Gpu {
             source: wgpu::ShaderSource::Wgsl(PEAK_WGSL.into()),
         });
         let group_layout = |label: &str, bindings: &[(u32, Binding)]| {
-            let entries: Vec<_> =
-                bindings.iter().map(|(binding, kind)| kind.entry(*binding)).collect();
+            let entries: Vec<_> = bindings
+                .iter()
+                .map(|(binding, kind)| kind.entry(*binding))
+                .collect();
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some(label),
                 entries: &entries,
@@ -1291,8 +1434,10 @@ impl Gpu {
         let layout = group_layout("encode", &ENCODE_BINDINGS);
         let peak_layout = group_layout("peak", &PEAK_BINDINGS);
         let draw_layout = {
-            let entries: Vec<_> =
-                DRAW_BINDINGS.iter().map(|(binding, kind)| kind.drawn(*binding)).collect();
+            let entries: Vec<_> = DRAW_BINDINGS
+                .iter()
+                .map(|(binding, kind)| kind.drawn(*binding))
+                .collect();
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("draw"),
                 entries: &entries,
@@ -1326,22 +1471,37 @@ impl Gpu {
             source: wgpu::ShaderSource::Wgsl(DETAIL_WGSL.into()),
         });
         let detail_shrink = compute("shrink", &detail_module, &detail_shrink_layout, "shrink");
-        let detail_moments =
-            compute("moments_of", &detail_module, &detail_moments_layout, "moments_of");
-        let detail_coefficients =
-            compute("coefficients", &detail_module, &detail_box_layout, "coefficients");
-        let detail_window_mean =
-            compute("window_mean", &detail_module, &detail_mean_layout, "window_mean");
-        let detail_apply =
-            compute("apply_guided", &detail_module, &detail_apply_layout, "apply_guided");
+        let detail_moments = compute(
+            "moments_of",
+            &detail_module,
+            &detail_moments_layout,
+            "moments_of",
+        );
+        let detail_coefficients = compute(
+            "coefficients",
+            &detail_module,
+            &detail_box_layout,
+            "coefficients",
+        );
+        let detail_window_mean = compute(
+            "window_mean",
+            &detail_module,
+            &detail_mean_layout,
+            "window_mean",
+        );
+        let detail_apply = compute(
+            "apply_guided",
+            &detail_module,
+            &detail_apply_layout,
+            "apply_guided",
+        );
 
         let balance_layout = group_layout("balance", &BALANCE_BINDINGS);
         let balance_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("balance"),
             source: wgpu::ShaderSource::Wgsl(BALANCE_WGSL.into()),
         });
-        let balance_pipeline =
-            compute("balance", &balance_module, &balance_layout, "balance");
+        let balance_pipeline = compute("balance", &balance_module, &balance_layout, "balance");
 
         let mean_layout = group_layout(
             "mean_frame",
@@ -1361,22 +1521,34 @@ impl Gpu {
         let chroma_model_layout = group_layout("chroma model", &CHROMA_MODEL_BINDINGS);
         let chroma_blur_layout = group_layout(
             "chroma blur",
-            &[(20, Binding::Uniform), (22, Binding::Written), (23, Binding::Detail)],
+            &[
+                (20, Binding::Uniform),
+                (22, Binding::Written),
+                (23, Binding::Detail),
+            ],
         );
         let chroma_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("chroma_smooth"),
             source: wgpu::ShaderSource::Wgsl(CHROMA_SMOOTH_WGSL.into()),
         });
-        let chroma_model = compute("chroma model", &chroma_module, &chroma_model_layout, "model");
+        let chroma_model = compute(
+            "chroma model",
+            &chroma_module,
+            &chroma_model_layout,
+            "model",
+        );
         let chroma_blur = compute("chroma blur", &chroma_module, &chroma_blur_layout, "blur");
 
         let pipeline = compute("encode", &module, &layout, "encode");
         let print_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("print"),
             entries: &[
-                Binding::Uniform.drawn(0), Binding::Storage { read_only: true }.drawn(1),
-                Binding::Storage { read_only: true }.drawn(2), Binding::Storage { read_only: true }.drawn(3),
-                Binding::Detail.drawn(4), Binding::Sampler.drawn(5),
+                Binding::Uniform.drawn(0),
+                Binding::Storage { read_only: true }.drawn(1),
+                Binding::Storage { read_only: true }.drawn(2),
+                Binding::Storage { read_only: true }.drawn(3),
+                Binding::Detail.drawn(4),
+                Binding::Sampler.drawn(5),
             ],
         });
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
@@ -1421,12 +1593,20 @@ impl Gpu {
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("decode"),
             layout: &decode_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 12, resource: nits_of_code.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 12,
+                resource: nits_of_code.as_entire_binding(),
+            }],
         });
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&compute("pq_table", &decode_module, &decode_layout, "pq_table"));
+            pass.set_pipeline(&compute(
+                "pq_table",
+                &decode_module,
+                &decode_layout,
+                "pq_table",
+            ));
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups((PQ_CODES / 64) as u32, 1, 1);
         }
@@ -1490,17 +1670,17 @@ impl Gpu {
     }
 
     /// Drain the queue, so that a lap taken next times what the GPU did rather than what was recorded.
-///
-/// **Only where something is reading the laps**, which is a profile run or the benchmark: this is a
-/// stall on the render path and buys a reader nothing the total does not already say. The stages it
-/// separates are sequential anyway - each reads what the one before it wrote - so waiting between
-/// them gives up little beyond the driver's own pipelining of submissions.
-///
-/// Without it a stage that only *records* passes reports the recording. On a 61MP rendition the
-/// coding, the defringe and the warp reported 3.4ms between them while the grade reported 421,
-/// because the grade's readback was the first thing in the job to wait on the queue - so three
-/// hundred milliseconds of real work sat under the wrong name and every attempt to find it went
-/// looking inside the grade's shader.
+    ///
+    /// **Only where something is reading the laps**, which is a profile run or the benchmark: this is a
+    /// stall on the render path and buys a reader nothing the total does not already say. The stages it
+    /// separates are sequential anyway - each reads what the one before it wrote - so waiting between
+    /// them gives up little beyond the driver's own pipelining of submissions.
+    ///
+    /// Without it a stage that only *records* passes reports the recording. On a 61MP rendition the
+    /// coding, the defringe and the warp reported 3.4ms between them while the grade reported 421,
+    /// because the grade's readback was the first thing in the job to wait on the queue - so three
+    /// hundred milliseconds of real work sat under the wrong name and every attempt to find it went
+    /// looking inside the grade's shader.
     pub fn settle(&self) {
         if !crate::clock::watched() {
             return;
@@ -1508,7 +1688,7 @@ impl Gpu {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 
-/// The workgroups `encode` wants for a frame of this many pixels, as a 2D grid.
+    /// The workgroups `encode` wants for a frame of this many pixels, as a 2D grid.
     ///
     /// Two dimensions because one is not enough: an invocation covers two pixels and a
     /// workgroup 64 of them, so a 61MP frame wants 476k of them against the 65535 a single
@@ -1641,14 +1821,22 @@ impl Stage {
             .instance
             .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas))
             .ok()?;
-        let mut held = Stage { target: StageTarget::Surface(surface), width: 0, height: 0 };
+        let mut held = Stage {
+            target: StageTarget::Surface(surface),
+            width: 0,
+            height: 0,
+        };
         held.resize(gpu, width, height);
         Some(held)
     }
 
     /// A stage drawn into a texture rather than a canvas, for the page to be sent ([`Stage::drawn`]).
     pub fn held(gpu: &Gpu, width: u32, height: u32) -> Stage {
-        let mut held = Stage { target: StageTarget::Held(None), width: 0, height: 0 };
+        let mut held = Stage {
+            target: StageTarget::Held(None),
+            width: 0,
+            height: 0,
+        };
         held.resize(gpu, width, height);
         held
     }
@@ -1680,12 +1868,17 @@ impl Stage {
             StageTarget::Held(texture) => {
                 *texture = Some(gpu.own_texture(&wgpu::TextureDescriptor {
                     label: Some("held stage"),
-                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: CANVAS_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 }));
             }
@@ -1719,14 +1912,21 @@ pub fn present(
     pyramid: &crate::base::Pyramid,
     print: Option<&crate::print::Scene>,
 ) {
-    use wgpu::CurrentSurfaceTexture::{Success, Suboptimal};
+    use wgpu::CurrentSurfaceTexture::{Suboptimal, Success};
     let surface = match &stage.target {
         StageTarget::Surface(surface) => surface,
         StageTarget::Held(texture) => {
             let Some(texture) = texture else { return };
             let mut recording = uploaded.gpu.record();
             recording.holding_texture(texture);
-            uploaded.draw_into(&mut recording, grade, pyramid, &texture.view(), print, false);
+            uploaded.draw_into(
+                &mut recording,
+                grade,
+                pyramid,
+                &texture.view(),
+                print,
+                false,
+            );
             recording.submit();
             return;
         }
@@ -1745,8 +1945,10 @@ pub fn present(
 }
 
 /// `white_balance.slang`, which writes the matrix everything above reads.
-const BALANCE_BINDINGS: [(u32, Binding); 2] =
-    [(0, Binding::Uniform), (14, Binding::Storage { read_only: false })];
+const BALANCE_BINDINGS: [(u32, Binding); 2] = [
+    (0, Binding::Uniform),
+    (14, Binding::Storage { read_only: false }),
+];
 
 /// `detail.slang`'s four entry-point shapes, on layouts of their own: the downscale reads the
 /// frame and the decode table, the moments read the working texture, the box means and the fit
@@ -1785,14 +1987,22 @@ const DETAIL_BOX_BINDINGS: [(u32, Binding); 2] = [(15, Binding::Read32), (16, Bi
 
 /// The uniform as well, for `detail_long`: the fine reference's sigma is a fraction of the
 /// *photograph's* working texture and this pass may be writing a piece of one.
-const DETAIL_APPLY_BINDINGS: [(u32, Binding); 4] =
-    [(0, Binding::Uniform), (2, Binding::Detail), (15, Binding::Read32), (3, Binding::Written)];
+const DETAIL_APPLY_BINDINGS: [(u32, Binding); 4] = [
+    (0, Binding::Uniform),
+    (2, Binding::Detail),
+    (15, Binding::Read32),
+    (3, Binding::Written),
+];
 
 /// The mean, which needs the guide as well as what it is averaging: it has to know which taps
 /// describe the same surface as the texel it is writing. And the uniform, for the window's own
 /// width, which is `detail_long`'s to say for the same reason.
-const DETAIL_MEAN_BINDINGS: [(u32, Binding); 4] =
-    [(0, Binding::Uniform), (2, Binding::Detail), (15, Binding::Read32), (16, Binding::Wrote32)];
+const DETAIL_MEAN_BINDINGS: [(u32, Binding); 4] = [
+    (0, Binding::Uniform),
+    (2, Binding::Detail),
+    (15, Binding::Read32),
+    (16, Binding::Wrote32),
+];
 
 /// The same colour bindings the encode takes, and the histogram, the peak and the candidates all
 /// writable where the encode reads the peak and writes only the frame.
@@ -1857,7 +2067,9 @@ const PEAK_CANDIDATES: u64 = 16384;
 #[derive(Clone, Copy)]
 enum Binding {
     Uniform,
-    Storage { read_only: bool },
+    Storage {
+        read_only: bool,
+    },
     /// `r32float`, which without `float32-filterable` is unfilterable - and is only ever
     /// loaded, never sampled.
     Curves,
@@ -1945,7 +2157,12 @@ impl Binding {
                 view_dimension: wgpu::TextureViewDimension::D2,
             },
         };
-        wgpu::BindGroupLayoutEntry { binding, visibility, ty, count: None }
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty,
+            count: None,
+        }
     }
 }
 
@@ -2108,7 +2325,10 @@ impl<'a> Grade<'a> {
 
     /// The same grade, writing only `band` of its output.
     pub fn banded(self, band: Band) -> Grade<'a> {
-        Grade { band: Some(band), ..self }
+        Grade {
+            band: Some(band),
+            ..self
+        }
     }
 
     /// The same grade showing the reader's crop, straighten and turn.
@@ -2132,7 +2352,10 @@ impl<'a> Grade<'a> {
 
     /// The same grade, drawn onto a canvas: what a tick is, against what an encode is.
     pub fn onto(self, canvas: Canvas) -> Grade<'a> {
-        Grade { canvas: Some(canvas), ..self }
+        Grade {
+            canvas: Some(canvas),
+            ..self
+        }
     }
 
     /// The same grade over a window on a larger photograph, which the geometry reads across.
@@ -2159,7 +2382,8 @@ impl<'a> Grade<'a> {
 
     /// The photograph this frame is of, which is its own unless a crop cut the decode down.
     pub fn photograph(&self) -> (usize, usize) {
-        self.window.map_or((self.width, self.height), |w| w.photograph.raw())
+        self.window
+            .map_or((self.width, self.height), |w| w.photograph.raw())
     }
 
     /// The same grade with the surround thumb read at this frame's place in the
@@ -2170,7 +2394,10 @@ impl<'a> Grade<'a> {
         photograph: crate::px::Size<crate::px::Drawn>,
         origin: crate::px::At<crate::px::Drawn>,
     ) -> Grade<'a> {
-        Grade { surround_window: Some(Window { photograph, origin }), ..self }
+        Grade {
+            surround_window: Some(Window { photograph, origin }),
+            ..self
+        }
     }
 
     /// What this grade writes: the photograph, through the geometry.
@@ -2348,7 +2575,10 @@ impl Output {
     /// An HDR file is graded scene-referred, to PQ's own ceiling, and fitted to a display by
     /// whatever shows it (`stage.slang`), against the brightest pixel its `clli` names. An SDR one
     /// has nothing above diffuse white to put a highlight in.
-    pub fn mastered(self, reference: crate::light::Light<crate::light::SceneNits>) -> crate::light::Light<crate::light::DisplayNits> {
+    pub fn mastered(
+        self,
+        reference: crate::light::Light<crate::light::SceneNits>,
+    ) -> crate::light::Light<crate::light::DisplayNits> {
         match self {
             Output::Pq | Output::Rolled => crate::light::Light::PQ_CEILING,
             Output::Srgb => crate::light::Light::at_diffuse_white(reference),
@@ -2375,7 +2605,10 @@ struct Illuminant {
 
 impl Illuminant {
     fn of(grade: &Grade<'_>) -> Self {
-        Self { temperature: grade.adjust.temperature, tint: grade.adjust.tint }
+        Self {
+            temperature: grade.adjust.temperature,
+            tint: grade.adjust.tint,
+        }
     }
 }
 
@@ -2503,7 +2736,9 @@ impl Gpu {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        recording.encoder().copy_buffer_to_buffer(&peak.buffer, 0, &staging, 0, 4);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&peak.buffer, 0, &staging, 0, 4);
         recording.submit();
         read_back(self, &staging, |mapped| {
             f32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]])
@@ -2529,15 +2764,20 @@ impl Gpu {
             mapped_at_creation: true,
         });
         {
-            let mut view =
-                buffer.slice(..).get_mapped_range_mut().expect("a buffer mapped at creation");
+            let mut view = buffer
+                .slice(..)
+                .get_mapped_range_mut()
+                .expect("a buffer mapped at creation");
             view.slice(..4).write_iter(nits.to_le_bytes());
         }
         buffer.unmap();
         // Claimed, so `upload` leaves it alone. The words above zero are the measurement's own
         // scratch and nothing but `peak.slang` reads them.
-        ScenePeak { buffer, measured: std::cell::Cell::new(true),
-            revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)) }
+        ScenePeak {
+            buffer,
+            measured: std::cell::Cell::new(true),
+            revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
     }
 
     /// The frame itself, written straight into the buffer the GPU will read.
@@ -2558,9 +2798,12 @@ impl Gpu {
             mapped_at_creation: true,
         });
         {
-            let mut view =
-                buffer.slice(..).get_mapped_range_mut().expect("a buffer mapped at creation");
-            view.slice(..frame.len() * 2).write_iter(frame.iter().flat_map(|v| v.to_le_bytes()));
+            let mut view = buffer
+                .slice(..)
+                .get_mapped_range_mut()
+                .expect("a buffer mapped at creation");
+            view.slice(..frame.len() * 2)
+                .write_iter(frame.iter().flat_map(|v| v.to_le_bytes()));
         }
         buffer.unmap();
         buffer
@@ -2647,8 +2890,12 @@ impl Gpu {
 
         let identity = HdrColour::identity();
         let described = grade.matched().unwrap_or(&identity);
-        let matrix: Vec<u8> =
-            described.matrix.iter().flatten().flat_map(|v| (*v as f32).to_le_bytes()).collect();
+        let matrix: Vec<u8> = described
+            .matrix
+            .iter()
+            .flatten()
+            .flat_map(|v| (*v as f32).to_le_bytes())
+            .collect();
         let matrix = buffer(&matrix, wgpu::BufferUsages::STORAGE);
 
         let (chroma, chroma_luma, chroma_tint) = self.lattice(described);
@@ -2657,7 +2904,11 @@ impl Gpu {
         let curves = self.curves(described);
         let pyramid = self.own_texture(&wgpu::TextureDescriptor {
             label: Some("pyramid"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -2671,7 +2922,10 @@ impl Gpu {
         let (absent_texture, detail_absent) = self.build_detail(
             &samples,
             &uniform(grade, described),
-            DetailSize { width: 1, height: 1 },
+            DetailSize {
+                width: 1,
+                height: 1,
+            },
             false,
         );
 
@@ -2813,18 +3067,30 @@ impl Gpu {
             return self.black_texel("mean_frame");
         }
         let (block, phase, cells) = mean_grid(grade);
-        let size = wgpu::Extent3d { width: cells.0, height: cells.1, depth_or_array_layers: 1 };
+        let size = wgpu::Extent3d {
+            width: cells.0,
+            height: cells.1,
+            depth_or_array_layers: 1,
+        };
         let texture = self.written_texture("mean_frame", size);
         let mut recording = self.record();
         recording.holding(samples);
         recording.holding_texture(&texture);
         // Padded to 16: WGSL binds a uniform struct at its size rounded up, same as
         // `gpu::uniform`.
-        let push: Vec<u8> =
-            [grade.width as u32, grade.height as u32, block, phase.0, phase.1, 0, 0, 0]
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
+        let push: Vec<u8> = [
+            grade.width as u32,
+            grade.height as u32,
+            block,
+            phase.0,
+            phase.1,
+            0,
+            0,
+            0,
+        ]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
         let push = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("mean_frame push"),
             contents: &push,
@@ -2835,7 +3101,10 @@ impl Gpu {
             label: Some("mean_frame"),
             layout: &self.mean_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 1, resource: samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: samples.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: self.nits_of_code.as_entire_binding(),
@@ -2844,7 +3113,10 @@ impl Gpu {
                     binding: 19,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         });
         {
@@ -2872,7 +3144,11 @@ impl Gpu {
             return self.black_texel("chroma smoothed");
         }
         let (_, cells) = grid_for(grade, chroma_shrink(grade.photograph_long).raw() as u32);
-        let size = wgpu::Extent3d { width: cells.0, height: cells.1, depth_or_array_layers: 1 };
+        let size = wgpu::Extent3d {
+            width: cells.0,
+            height: cells.1,
+            depth_or_array_layers: 1,
+        };
         let mut recording = self.record();
         recording.holding(samples);
         let modelled = self.written_texture("chroma modelled", size);
@@ -2906,8 +3182,14 @@ impl Gpu {
             label: Some("chroma model"),
             layout: &self.chroma_model_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: edits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: samples.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(bound.curves),
@@ -2916,7 +3198,10 @@ impl Gpu {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(bound.chroma),
                 },
-                wgpu::BindGroupEntry { binding: 4, resource: bound.matrix.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: bound.matrix.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
@@ -2937,7 +3222,10 @@ impl Gpu {
                     binding: 13,
                     resource: wgpu::BindingResource::TextureView(bound.detail),
                 },
-                wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: balance.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 17,
                     resource: wgpu::BindingResource::TextureView(bound.surround),
@@ -2956,36 +3244,46 @@ impl Gpu {
                 },
             ],
         });
-        let blur = |recording: &mut Recording<'_>, from: &Texture, to: &Texture, horizontal: u32| {
-            let push: Vec<u8> = [size.width, size.height, horizontal, 0]
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
-            let push = recording.init(&wgpu::util::BufferInitDescriptor {
-                label: Some("chroma blur push"),
-                contents: &push,
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            self.bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("chroma blur"),
-                layout: &self.chroma_blur_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
-                    wgpu::BindGroupEntry {
-                        binding: 22,
-                        resource: wgpu::BindingResource::TextureView(&to.view()),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 23,
-                        resource: wgpu::BindingResource::TextureView(&from.view()),
-                    },
-                ],
-            })
-        };
+        let blur =
+            |recording: &mut Recording<'_>, from: &Texture, to: &Texture, horizontal: u32| {
+                let push: Vec<u8> = [size.width, size.height, horizontal, 0]
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect();
+                let push = recording.init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("chroma blur push"),
+                    contents: &push,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                self.bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("chroma blur"),
+                    layout: &self.chroma_blur_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 20,
+                            resource: push.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 22,
+                            resource: wgpu::BindingResource::TextureView(&to.view()),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 23,
+                            resource: wgpu::BindingResource::TextureView(&from.view()),
+                        },
+                    ],
+                })
+            };
         let passes = [
             (&self.chroma_model, model),
-            (&self.chroma_blur, blur(&mut recording, &modelled, &across, 1)),
-            (&self.chroma_blur, blur(&mut recording, &across, &smoothed, 0)),
+            (
+                &self.chroma_blur,
+                blur(&mut recording, &modelled, &across, 1),
+            ),
+            (
+                &self.chroma_blur,
+                blur(&mut recording, &across, &smoothed, 0),
+            ),
         ];
         // A pass each: every one reads the texture the one before it wrote, and a pass is
         // where wgpu puts the barrier for that.
@@ -3003,7 +3301,11 @@ impl Gpu {
         self.own_texture_with_data(
             &wgpu::TextureDescriptor {
                 label: Some(label),
-                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -3123,8 +3425,14 @@ impl Gpu {
             label: Some("balance"),
             layout: &self.balance_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: edits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: balance.as_entire_binding(),
+                },
             ],
         });
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
@@ -3180,8 +3488,7 @@ impl Gpu {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::STORAGE_BINDING,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
                 view_formats: &[],
             })
         };
@@ -3209,8 +3516,14 @@ impl Gpu {
             label: Some("detail shrink"),
             layout: &self.detail_shrink_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: edits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: samples.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&base),
@@ -3262,7 +3575,10 @@ impl Gpu {
                         label: Some("detail mean"),
                         layout: &self.detail_mean_layout,
                         entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: edits.as_entire_binding(),
+                            },
                             wgpu::BindGroupEntry {
                                 binding: 2,
                                 resource: wgpu::BindingResource::TextureView(&base),
@@ -3286,7 +3602,10 @@ impl Gpu {
                         label: Some("detail apply"),
                         layout: &self.detail_apply_layout,
                         entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: edits.as_entire_binding(),
+                            },
                             wgpu::BindGroupEntry {
                                 binding: 2,
                                 resource: wgpu::BindingResource::TextureView(&base),
@@ -3304,8 +3623,12 @@ impl Gpu {
                 ),
                 // The fit itself, which is pointwise over the moments and so needs no guide.
                 _ => {
-                    let group =
-                        pair("detail fit", &self.detail_box_layout, (15, held), (16, spare));
+                    let group = pair(
+                        "detail fit",
+                        &self.detail_box_layout,
+                        (15, held),
+                        (16, spare),
+                    );
                     std::mem::swap(&mut held, &mut spare);
                     (&self.detail_coefficients, group)
                 }
@@ -3389,13 +3712,30 @@ impl Uploaded<'_> {
     ///
     /// Nothing on the rendition path calls this: one exposure, measured once.
     pub fn peak_from_candidates(&self, grade: &Grade<'_>) {
-        let words = uniform_words(&Grade { canvas: None, ..grade.clone() }, grade.matched().unwrap_or(&self.identity));
-        let revision = self.peak_revision.load(std::sync::atomic::Ordering::Relaxed);
-        if self.peak_cached.borrow().as_ref().is_some_and(|cached| cached.0 == revision && cached.1 == words) {
+        let words = uniform_words(
+            &Grade {
+                canvas: None,
+                ..grade.clone()
+            },
+            grade.matched().unwrap_or(&self.identity),
+        );
+        let revision = self
+            .peak_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if self
+            .peak_cached
+            .borrow()
+            .as_ref()
+            .is_some_and(|cached| cached.0 == revision && cached.1 == words)
+        {
             return;
         }
         self.peak_passes(grade, PeakRoute::KeptCandidates);
-        *self.peak_cached.borrow_mut() = Some((self.peak_revision.load(std::sync::atomic::Ordering::Relaxed), words));
+        *self.peak_cached.borrow_mut() = Some((
+            self.peak_revision
+                .load(std::sync::atomic::Ordering::Relaxed),
+            words,
+        ));
     }
 
     /// The printer a print is laid down by, or none for the scene's own paper white and black.
@@ -3474,13 +3814,16 @@ impl Uploaded<'_> {
     /// `write_buffer` rather than a fresh buffer: the write is ordered on the queue, so it lands
     /// after whatever submission read the last set rather than changing it underneath.
     fn written(&self, grade: &Grade<'_>, described: &HdrColour) -> (&Buffer, &Buffer) {
-        self.gpu.queue.write_buffer(&self.words, 0, &uniform(grade, described));
+        self.gpu
+            .queue
+            .write_buffer(&self.words, 0, &uniform(grade, described));
         (&self.words, &self.balance)
     }
 
     fn peak_passes(&self, grade: &Grade<'_>, route: PeakRoute) {
         if route.reaches_the_quantile() {
-            self.peak_revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.peak_revision
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         let described = grade.matched().unwrap_or(&self.identity);
         let mut recording = self.gpu.record();
@@ -3493,8 +3836,14 @@ impl Uploaded<'_> {
             label: Some("peak"),
             layout: &self.gpu.peak_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: edits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.samples.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&self.curves),
@@ -3503,14 +3852,26 @@ impl Uploaded<'_> {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&self.chroma),
                 },
-                wgpu::BindGroupEntry { binding: 4, resource: self.matrix.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: self.histogram.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: self.peak_out.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.matrix.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.histogram.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: self.peak_out.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(&self.gpu.sampler),
                 },
-                wgpu::BindGroupEntry { binding: 8, resource: self.candidates.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.candidates.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 10,
                     resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
@@ -3527,7 +3888,10 @@ impl Uploaded<'_> {
                     binding: 13,
                     resource: wgpu::BindingResource::TextureView(self.detail_for(grade)),
                 },
-                wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: balance.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 17,
                     resource: wgpu::BindingResource::TextureView(&self.surround),
@@ -3546,8 +3910,11 @@ impl Uploaded<'_> {
         let (_, rows) = sampled_rows(self.width, self.height);
         let over_the_sample = ((self.width as u32).div_ceil(64), rows);
         let cleared = route.cleared();
-        let counted =
-            if route == PeakRoute::Collect { &self.candidates } else { &self.histogram };
+        let counted = if route == PeakRoute::Collect {
+            &self.candidates
+        } else {
+            &self.histogram
+        };
         let encoder = recording.encoder();
         encoder.clear_buffer(counted, cleared.start, Some(cleared.end - cleared.start));
         {
@@ -3599,8 +3966,10 @@ impl Uploaded<'_> {
 
     /// [`Self::encode`], awaited, which is the only spelling a browser can take.
     pub async fn coded(&self, grade: &Grade<'_>) -> Option<Vec<u16>> {
-        self.encoded_as(grade, |mapped, samples| crate::resident::samples_of(mapped)[..samples].to_vec())
-            .await
+        self.encoded_as(grade, |mapped, samples| {
+            crate::resident::samples_of(mapped)[..samples].to_vec()
+        })
+        .await
     }
 
     /// The same picture, read back as the eight bits an SDR output actually holds.
@@ -3687,8 +4056,14 @@ impl Uploaded<'_> {
             label: Some("encode"),
             layout: &self.gpu.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: edits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.samples.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&self.curves),
@@ -3697,9 +4072,18 @@ impl Uploaded<'_> {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&self.chroma),
                 },
-                wgpu::BindGroupEntry { binding: 4, resource: self.matrix.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: self.peak_out.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: counts.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.matrix.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.peak_out.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: counts.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(&self.gpu.sampler),
@@ -3724,7 +4108,10 @@ impl Uploaded<'_> {
                     binding: 13,
                     resource: wgpu::BindingResource::TextureView(self.detail_for(grade)),
                 },
-                wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: balance.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 17,
                     resource: wgpu::BindingResource::TextureView(&self.surround),
@@ -3751,7 +4138,9 @@ impl Uploaded<'_> {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(x, y, 1);
         }
-        recording.encoder().copy_buffer_to_buffer(counts, 0, readback, 0, out_bytes);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(counts, 0, readback, 0, out_bytes);
         recording.submit();
 
         // Unmapped by `read_back` before the next rendition maps it again; a second `map_async` on
@@ -3779,8 +4168,10 @@ impl Uploaded<'_> {
     /// Comes back as `f32` per channel, the target being `rgba16float`, which is what the canvas
     /// itself holds: these are display nits over an SDR white and go past one.
     pub fn draw(&self, grade: &Grade<'_>, pyramid: &crate::base::Pyramid) -> Vec<f32> {
-        self.draw_with_print(grade, pyramid, None, false).into_iter()
-            .map(|word| half::f16::from_bits(word).to_f32()).collect()
+        self.draw_with_print(grade, pyramid, None, false)
+            .into_iter()
+            .map(|word| half::f16::from_bits(word).to_f32())
+            .collect()
     }
 
     pub fn draw_print(
@@ -3789,8 +4180,10 @@ impl Uploaded<'_> {
         pyramid: &crate::base::Pyramid,
         scene: &crate::print::Scene,
     ) -> Vec<f32> {
-        self.draw_with_print(grade, pyramid, Some(scene), false).into_iter()
-            .map(|word| half::f16::from_bits(word).to_f32()).collect()
+        self.draw_with_print(grade, pyramid, Some(scene), false)
+            .into_iter()
+            .map(|word| half::f16::from_bits(word).to_f32())
+            .collect()
     }
 
     pub fn print_pq(
@@ -3825,7 +4218,11 @@ impl Uploaded<'_> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: if pq { wgpu::TextureFormat::Rgba16Uint } else { CANVAS_FORMAT },
+            format: if pq {
+                wgpu::TextureFormat::Rgba16Uint
+            } else {
+                CANVAS_FORMAT
+            },
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
@@ -3900,7 +4297,9 @@ impl Uploaded<'_> {
         print: Option<&crate::print::Scene>,
         pq: bool,
     ) {
-        if let Some(scene) = print.filter(|scene| matches!(scene.presentation, crate::print::Presentation::Surface)) {
+        if let Some(scene) =
+            print.filter(|scene| matches!(scene.presentation, crate::print::Presentation::Surface))
+        {
             self.draw_print_surface(recording, grade, pyramid, target, scene, pq);
             return;
         }
@@ -3923,7 +4322,9 @@ impl Uploaded<'_> {
             print_grade = Grade {
                 peak_nits: crate::light::Light::at_diffuse_white(grade.reference_nits),
                 intent: print.map_or(grade.intent, |scene| scene.rendering_intent),
-                print_blur: print.map_or(grade.print_blur, |scene| scene.ink_blur(grade.output().long())),
+                print_blur: print.map_or(grade.print_blur, |scene| {
+                    scene.ink_blur(grade.output().long())
+                }),
                 ..grade.clone()
             };
             &print_grade
@@ -3931,10 +4332,15 @@ impl Uploaded<'_> {
             grade
         };
         let canvas = grade.canvas.map(|mut canvas| {
-            if let Some(scene) = print { canvas.region = scene.photo_region(grade.output_size(), canvas.region); }
+            if let Some(scene) = print {
+                canvas.region = scene.photo_region(grade.output_size(), canvas.region);
+            }
             canvas
         });
-        let view_grade = Grade { canvas, ..grade.clone() };
+        let view_grade = Grade {
+            canvas,
+            ..grade.clone()
+        };
         let grade = &view_grade;
         let shown = grade.canvas.expect("a draw needs a canvas to draw onto");
         let described = grade.matched().unwrap_or(&self.identity);
@@ -3954,8 +4360,14 @@ impl Uploaded<'_> {
             label: Some("draw"),
             layout: &self.gpu.draw_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.samples.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: edits.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.samples.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&self.curves),
@@ -3964,8 +4376,14 @@ impl Uploaded<'_> {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&self.chroma),
                 },
-                wgpu::BindGroupEntry { binding: 4, resource: self.matrix.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: self.peak_out.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.matrix.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.peak_out.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(&self.gpu.sampler),
@@ -3990,7 +4408,10 @@ impl Uploaded<'_> {
                     binding: 13,
                     resource: wgpu::BindingResource::TextureView(self.detail_for(grade)),
                 },
-                wgpu::BindGroupEntry { binding: 14, resource: balance.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: balance.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 17,
                     resource: wgpu::BindingResource::TextureView(&self.surround),
@@ -4024,32 +4445,53 @@ impl Uploaded<'_> {
                 label: Some("print"),
                 layout: &self.gpu.print_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: albedo.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: calibration.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: proof.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&environment.view()) },
                     wgpu::BindGroupEntry {
-                        binding: 5, resource: wgpu::BindingResource::Sampler(&self.gpu.print_environment_pipelines().sampler),
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: albedo.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: calibration.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: proof.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&environment.view()),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(
+                            &self.gpu.print_environment_pipelines().sampler,
+                        ),
                     },
                 ],
             })
         });
 
-        let mut pass = recording.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("draw"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        let flat = print.is_some_and(|scene| matches!(scene.presentation, crate::print::Presentation::Flat));
+        let mut pass = recording
+            .encoder()
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("draw"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+        let flat = print
+            .is_some_and(|scene| matches!(scene.presentation, crate::print::Presentation::Flat));
         pass.set_pipeline(if pigment {
             self.gpu.drawing(true, "fs_print_pigment")
         } else if flat && !pq {
@@ -4073,7 +4515,9 @@ impl Uploaded<'_> {
 
     fn print_albedo_for(&self, eta: f32) -> Buffer {
         if let Some((cached_eta, buffer)) = self.print_albedo.borrow().as_ref() {
-            if *cached_eta == eta { return buffer.clone(); }
+            if *cached_eta == eta {
+                return buffer.clone();
+            }
         }
         let buffer = self.gpu.print_albedo_table(eta);
         *self.print_albedo.borrow_mut() = Some((eta, buffer.clone()));
@@ -4082,16 +4526,24 @@ impl Uploaded<'_> {
 
     /// The print's uniform and the target it is laid down within.
     pub(super) fn print_scene_binding(
-        &self, recording: &mut Recording<'_>, scene: &crate::print::Scene, display_peak: crate::light::Light<crate::light::DisplayNits>,
+        &self,
+        recording: &mut Recording<'_>,
+        scene: &crate::print::Scene,
+        display_peak: crate::light::Light<crate::light::DisplayNits>,
     ) -> (Buffer, Buffer) {
         let target = crate::printer_gamut::target(scene, self.printer.borrow().as_deref());
         let target = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print target"),
-            contents: &target.iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>(),
+            contents: &target
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>(),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let parameters = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print"), contents: &scene.uniform(display_peak), usage: wgpu::BufferUsages::UNIFORM,
+            label: Some("print"),
+            contents: &scene.uniform(display_peak),
+            usage: wgpu::BufferUsages::UNIFORM,
         });
         (parameters, target)
     }
@@ -4099,15 +4551,30 @@ impl Uploaded<'_> {
     fn print_light_for(&self, scene: &crate::print::Scene, environment: &Texture) -> Buffer {
         let parameters = scene.light_parameters();
         let temperature = scene.light_temperature_kelvin as f32;
-        let cached = self.print_light.borrow().as_ref()
+        let cached = self
+            .print_light
+            .borrow()
+            .as_ref()
             .filter(|(_, _, cached_environment, _)| *cached_environment == scene.environment)
-            .map(|(cached_parameters, cached_temperature, _, buffer)| (*cached_parameters, *cached_temperature, buffer.clone()));
+            .map(|(cached_parameters, cached_temperature, _, buffer)| {
+                (*cached_parameters, *cached_temperature, buffer.clone())
+            });
         let buffer = match cached {
-            Some((cached_parameters, cached_temperature, buffer)) if cached_parameters == parameters && cached_temperature == temperature => return buffer,
-            Some((_, _, buffer)) => self.gpu.print_lamp_calibration(&buffer, parameters, temperature, environment),
-            None => self.gpu.print_light_calibration(parameters, temperature, environment),
+            Some((cached_parameters, cached_temperature, buffer))
+                if cached_parameters == parameters && cached_temperature == temperature =>
+            {
+                return buffer;
+            }
+            Some((_, _, buffer)) => {
+                self.gpu
+                    .print_lamp_calibration(&buffer, parameters, temperature, environment)
+            }
+            None => self
+                .gpu
+                .print_light_calibration(parameters, temperature, environment),
         };
-        *self.print_light.borrow_mut() = Some((parameters, temperature, scene.environment, buffer.clone()));
+        *self.print_light.borrow_mut() =
+            Some((parameters, temperature, scene.environment, buffer.clone()));
         buffer
     }
 
@@ -4115,9 +4582,13 @@ impl Uploaded<'_> {
     /// refused the scene naming it.
     fn print_environment_for(&self, environment: crate::print::Environment) -> Texture {
         if let Some((cached, texture)) = self.print_environment.borrow().as_ref() {
-            if *cached == environment { return texture.clone(); }
+            if *cached == environment {
+                return texture.clone();
+            }
         }
-        let texture = self.gpu.print_environment(environment)
+        let texture = self
+            .gpu
+            .print_environment(environment)
             .unwrap_or_else(|error| panic!("the print's environment: {error}"));
         *self.print_environment.borrow_mut() = Some((environment, texture.clone()));
         texture
@@ -4233,7 +4704,10 @@ const EDIT_FIELDS: &[&str] = &[
 /// the scalars end on 92, so without it every field after lands short and the binding is
 /// rejected four bytes small.
 fn uniform(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u8> {
-    uniform_words(grade, colour).iter().flat_map(|v| v.to_le_bytes()).collect()
+    uniform_words(grade, colour)
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect()
 }
 
 /// The same words, before they are bytes, so the editor can be handed them.
@@ -4258,8 +4732,15 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     let shape = colour.chroma.as_ref().map(|m| m.shape());
     let shape = shape.as_ref();
     let identity = crate::light::IDENTITY_CURVE;
-    let camera = grade.colour.map_or(identity.as_slice(), |c| c.curve.as_slice());
-    let reader = grade.adjust.tone_curve.as_ref().map(ToneCurve::points).unwrap_or(camera);
+    let camera = grade
+        .colour
+        .map_or(identity.as_slice(), |c| c.curve.as_slice());
+    let reader = grade
+        .adjust
+        .tone_curve
+        .as_ref()
+        .map(ToneCurve::points)
+        .unwrap_or(camera);
     let mut w: Vec<u32> = Vec::new();
     let f = |w: &mut Vec<u32>, v: f64| w.push((v as f32).to_bits());
     w.push(grade.width as u32);
@@ -4268,7 +4749,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.source_level.raw());
     f(&mut w, grade.reference_nits.raw());
     f(&mut w, grade.peak_nits.raw());
-    let camera_exposure = grade.colour.map_or(crate::light::Stops::ZERO, |c| c.exposure);
+    let camera_exposure = grade
+        .colour
+        .map_or(crate::light::Stops::ZERO, |c| c.exposure);
     f(&mut w, grade.exposure.unwrap_or(camera_exposure).raw());
     w.push(match grade.output {
         Output::Pq => 0,
@@ -4326,7 +4809,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.adjust.whites);
     f(&mut w, grade.adjust.blacks);
     f(&mut w, grade.adjust.vibrance);
-    let camera_saturation = grade.colour.map_or(0.0, |c| saturation_slider(c.camera_saturation));
+    let camera_saturation = grade
+        .colour
+        .map_or(0.0, |c| saturation_slider(c.camera_saturation));
     f(&mut w, grade.adjust.saturation.unwrap_or(camera_saturation));
     f(&mut w, grade.adjust.texture);
     f(&mut w, grade.adjust.clarity);
@@ -4376,7 +4861,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     // the thumb is still the photograph's and has to be read in its UV.
     w.push(shape.map_or(2, |s| s.surround_count as u32));
     f(&mut w, shape.map_or(1.0, |s| s.surround_scale));
-    w.push(u32::from(matched && colour.chroma.is_some() && !colour.surround.data.is_empty()));
+    w.push(u32::from(
+        matched && colour.chroma.is_some() && !colour.surround.data.is_empty(),
+    ));
     let surround_window = grade.surround_window.or(grade.window);
     let s_origin = surround_window.map_or((0, 0), |s| s.origin.raw());
     let (s_width, s_height) =
@@ -4398,19 +4885,30 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(u32::from(smoothed && matched));
     w.push(chroma_shrink(grade.photograph_long).raw() as u32);
     f(&mut w, colour.anchor);
-    f(&mut w, crate::tone::floor_share(grade.floor, grade.white).raw());
+    f(
+        &mut w,
+        crate::tone::floor_share(grade.floor, grade.white).raw(),
+    );
     f(&mut w, grade.print_blur.raw());
     for points in [reader, camera] {
-        assert!(crate::light::curve_is_valid(points), "not a tone curve: {points:?}");
+        assert!(
+            crate::light::curve_is_valid(points),
+            "not a tone curve: {points:?}"
+        );
         w.push(points.len() as u32);
     }
     w.push(u32::from(grade.adjust.tone_curve.is_none()));
     for points in [reader, camera] {
         let tangents = crate::light::curve_tangents(points);
         for (point, tangent) in points.iter().zip(tangents) {
-            for value in [point[0], point[1], tangent, 0.0] { f(&mut w, value); }
+            for value in [point[0], point[1], tangent, 0.0] {
+                f(&mut w, value);
+            }
         }
-        w.resize(w.len() + (crate::light::CURVE_MAX_POINTS - points.len()) * 4, 0);
+        w.resize(
+            w.len() + (crate::light::CURVE_MAX_POINTS - points.len()) * 4,
+            0,
+        );
     }
     f(&mut w, camera_exposure.raw());
     f(&mut w, camera_saturation);
@@ -4461,7 +4959,10 @@ fn mean_grid(grade: &Grade<'_>) -> (u32, (u32, u32), (u32, u32)) {
 /// A grid of `block`-pixel cells partitioning the photograph, as this frame meets it: the
 /// frame's offset inside its first cell, and how many cells cover it.
 fn grid_for(grade: &Grade<'_>, block: u32) -> ((u32, u32), (u32, u32)) {
-    let origin = grade.surround_window.or(grade.window).map_or((0, 0), |w| w.origin.raw());
+    let origin = grade
+        .surround_window
+        .or(grade.window)
+        .map_or((0, 0), |w| w.origin.raw());
     let phase = (origin.0 as u32 % block, origin.1 as u32 % block);
     let cells = (
         (grade.width as u32 + phase.0).div_ceil(block),
@@ -4485,9 +4986,15 @@ mod tests {
         super::device().expect("a GPU adapter");
         let gpu = super::Gpu::new().expect("a GPU adapter");
         let grade = super::Grade::new(
-            2, 2,
-            crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
-            Light::exactly(203.0), Light::exactly(1000.0),
+            2,
+            2,
+            crate::tone::Levels {
+                white: Light::measured(1.0),
+                peak: Light::measured(1.0),
+                floor: None,
+            },
+            Light::exactly(203.0),
+            Light::exactly(1000.0),
         );
         let frame = [4096u16; 12];
         let encoded = gpu.encode(&frame, &grade);
@@ -4495,8 +5002,12 @@ mod tests {
         assert!(encoded.iter().any(|&code| code > 0));
         assert_eq!(gpu.encode(&frame, &grade), encoded);
         let drawings = [
-            &gpu.draw_from_frame, &gpu.draw_from_pyramid, &gpu.print_pipeline,
-            &gpu.print_pq_pipeline, &gpu.print_pigment_pipeline, &gpu.print_flat_pipeline,
+            &gpu.draw_from_frame,
+            &gpu.draw_from_pyramid,
+            &gpu.print_pipeline,
+            &gpu.print_pq_pipeline,
+            &gpu.print_pigment_pipeline,
+            &gpu.print_flat_pipeline,
         ];
         assert!(drawings.iter().all(|cell| cell.get().is_none()));
         assert!(gpu.print_material.get().is_none());
@@ -4504,14 +5015,24 @@ mod tests {
         assert!(gpu.print_environment.get().is_none());
 
         for (from_frame, entry) in [
-            (true, "fs"), (false, "fs"), (true, "fs_print"), (true, "fs_print_pq"),
-            (true, "fs_print_pigment"), (true, "fs_print_flat"),
+            (true, "fs"),
+            (false, "fs"),
+            (true, "fs_print"),
+            (true, "fs_print_pq"),
+            (true, "fs_print_pigment"),
+            (true, "fs_print_flat"),
         ] {
-            assert!(std::ptr::eq(gpu.drawing(from_frame, entry), gpu.drawing(from_frame, entry)));
+            assert!(std::ptr::eq(
+                gpu.drawing(from_frame, entry),
+                gpu.drawing(from_frame, entry)
+            ));
         }
         assert!(std::ptr::eq(gpu.print_material(), gpu.print_material()));
         assert!(std::ptr::eq(gpu.print_surface(), gpu.print_surface()));
-        assert!(std::ptr::eq(gpu.print_environment_pipelines(), gpu.print_environment_pipelines()));
+        assert!(std::ptr::eq(
+            gpu.print_environment_pipelines(),
+            gpu.print_environment_pipelines()
+        ));
     }
 
     /// A drawn frame packed to RGB9E5 unpacks to what was drawn, within the format's 9 bits,
@@ -4519,13 +5040,27 @@ mod tests {
     #[test]
     fn a_packed_frame_is_the_frame_it_was_drawn_as() {
         let gpu = super::device().expect("a Vulkan adapter");
-        let drawn: [[f32; 3]; 6] =
-            [[0.0, 0.0, 0.0], [0.5, 0.25, 0.125], [1.0, 1.0, 1.0], [4.9, 2.0, 0.3], [12.0, 0.01, 7.5], [-0.2, 0.7, 1.4]];
-        let data: Vec<u8> = drawn.iter().flat_map(|&[r, g, b]| [r, g, b, 1.0]).flat_map(super::half).collect();
+        let drawn: [[f32; 3]; 6] = [
+            [0.0, 0.0, 0.0],
+            [0.5, 0.25, 0.125],
+            [1.0, 1.0, 1.0],
+            [4.9, 2.0, 0.3],
+            [12.0, 0.01, 7.5],
+            [-0.2, 0.7, 1.4],
+        ];
+        let data: Vec<u8> = drawn
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 1.0])
+            .flat_map(super::half)
+            .collect();
         let texture = gpu.own_texture_with_data(
             &wgpu::TextureDescriptor {
                 label: Some("drawn"),
-                size: wgpu::Extent3d { width: 3, height: 2, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: 3,
+                    height: 2,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -4540,7 +5075,8 @@ mod tests {
         for (at, (word, want)) in words.chunks_exact(4).zip(drawn).enumerate() {
             let word = u32::from_le_bytes(word.try_into().expect("a word"));
             let scale = 2f32.powi((word >> 27) as i32 - 15 - 9);
-            let got = [word & 0x1ff, (word >> 9) & 0x1ff, (word >> 18) & 0x1ff].map(|m| m as f32 * scale);
+            let got =
+                [word & 0x1ff, (word >> 9) & 0x1ff, (word >> 18) & 0x1ff].map(|m| m as f32 * scale);
             // One exponent for the three, so a channel is as fine as the pixel's brightest allows.
             let step = want.into_iter().fold(1e-3f32, f32::max) / 256.0;
             for (got, want) in got.into_iter().zip(want) {
@@ -4557,7 +5093,12 @@ mod tests {
         rotate: u16,
         keystone: Option<[f64; 8]>,
     ) -> crate::image::Geometry {
-        crate::image::Geometry { crop, angle_degrees, rotate, keystone }
+        crate::image::Geometry {
+            crop,
+            angle_degrees,
+            rotate,
+            keystone,
+        }
     }
 
     /// An encode written a band of rows at a time is the whole encode, through a geometry that
@@ -4613,13 +5154,17 @@ mod tests {
     #[test]
     fn the_device_is_opened_at_the_adapters_texture_limit() {
         let instance = wgpu::Instance::default();
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         else {
             eprintln!("SKIPPED: no adapter answered, so no limits were asked for.");
             return;
         };
         let asked = super::limits_of(&adapter);
-        assert_eq!(asked.max_texture_dimension_2d, adapter.limits().max_texture_dimension_2d);
+        assert_eq!(
+            asked.max_texture_dimension_2d,
+            adapter.limits().max_texture_dimension_2d
+        );
         assert!(asked.max_storage_buffers_per_shader_stage <= super::MOST_STORAGE_BUFFERS);
     }
 
@@ -4671,7 +5216,10 @@ mod tests {
         for set in others {
             let mut adjust = super::Adjust::none();
             set(&mut adjust);
-            assert!(!adjust.reads_the_neighbourhood(), "a slider that reads no neighbourhood");
+            assert!(
+                !adjust.reads_the_neighbourhood(),
+                "a slider that reads no neighbourhood"
+            );
         }
         assert!(!super::Adjust::none().reads_the_neighbourhood());
     }
@@ -4694,9 +5242,15 @@ mod tests {
                 .find(&format!("static const uint {name} ="))
                 .unwrap_or_else(|| panic!("{name} is declared"));
             let line = &source[at..][..source[at..].find(';').expect("it is terminated")];
-            let digits: String =
-                line.rsplit('=').next().expect("it is assigned").matches(char::is_numeric).collect();
-            digits.parse().unwrap_or_else(|_| panic!("{name} reads `{line}`"))
+            let digits: String = line
+                .rsplit('=')
+                .next()
+                .expect("it is assigned")
+                .matches(char::is_numeric)
+                .collect();
+            digits
+                .parse()
+                .unwrap_or_else(|_| panic!("{name} reads `{line}`"))
         };
         assert_eq!(
             declared(PEAK_SLANG, "BINS"),
@@ -4790,7 +5344,9 @@ mod tests {
         ];
         for (name, wgsl) in each {
             for block in wgsl.split("struct ").skip(1).filter(|b| {
-                b.split('{').next().is_some_and(|head| head.contains("_std140_"))
+                b.split('{')
+                    .next()
+                    .is_some_and(|head| head.contains("_std140_"))
             }) {
                 let body = block.split('}').next().unwrap_or_default();
                 assert!(
@@ -4817,7 +5373,9 @@ mod tests {
             ("chroma_smooth", super::CHROMA_SMOOTH_WGSL),
         ] {
             for block in wgsl.split("struct ").skip(1).filter(|b| {
-                b.split('{').next().is_some_and(|head| head.contains("_std140_"))
+                b.split('{')
+                    .next()
+                    .is_some_and(|head| head.contains("_std140_"))
             }) {
                 let body = block.split('}').next().unwrap_or_default();
                 for wrapper in ["Light", "Colour", "Gain", "Stops"] {
@@ -4851,12 +5409,25 @@ mod tests {
                 .next()
                 .and_then(|value| value.split_once('/'))
                 .unwrap_or_else(|| panic!("{name} reads `{line}`"));
-            let number =
-                |text: &str| text.trim().trim_matches(['{', '}']).trim().parse::<f64>().expect("a number");
+            let number = |text: &str| {
+                text.trim()
+                    .trim_matches(['{', '}'])
+                    .trim()
+                    .parse::<f64>()
+                    .expect("a number")
+            };
             number(numerator) / number(denominator)
         };
-        assert_eq!(fraction("GUIDE_RADIUS"), super::GUIDE_RADIUS, "the window has moved");
-        assert_eq!(fraction("FINE_SIGMA"), super::FINE_SIGMA, "the fine reference has moved");
+        assert_eq!(
+            fraction("GUIDE_RADIUS"),
+            super::GUIDE_RADIUS,
+            "the window has moved"
+        );
+        assert_eq!(
+            fraction("FINE_SIGMA"),
+            super::FINE_SIGMA,
+            "the fine reference has moved"
+        );
         // And what those come to at the size every photograph larger than the working texture
         // gets, which is the number a tile is grown by.
         assert_eq!(super::detail_reach(super::DETAIL_LONG), 2 * 8 + 2);
@@ -4891,7 +5462,8 @@ mod tests {
             .collect();
 
         assert_eq!(
-            declared, super::EDIT_FIELDS,
+            declared,
+            super::EDIT_FIELDS,
             "struct Edit and gpu.rs's EDIT_FIELDS have drifted",
         );
 
@@ -4903,19 +5475,40 @@ mod tests {
         // appended made this expect one word fewer than the writer emits.
         let words: usize = super::EDIT_FIELDS
             .iter()
-            .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else if name.ends_with("[CURVE_POINTS]") { crate::light::CURVE_MAX_POINTS * 4 } else { 1 })
+            .map(|name| {
+                if name.starts_with("region_") || *name == "canvas_size" {
+                    2
+                } else if name.ends_with("[CURVE_POINTS]") {
+                    crate::light::CURVE_MAX_POINTS * 4
+                } else {
+                    1
+                }
+            })
             .sum::<usize>()
             + 1;
-        let before_curve = super::EDIT_FIELDS.iter().take_while(|name| **name != "reader_curve[CURVE_POINTS]")
-            .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else { 1 })
-            .sum::<usize>() + 1;
+        let before_curve = super::EDIT_FIELDS
+            .iter()
+            .take_while(|name| **name != "reader_curve[CURVE_POINTS]")
+            .map(|name| {
+                if name.starts_with("region_") || *name == "canvas_size" {
+                    2
+                } else {
+                    1
+                }
+            })
+            .sum::<usize>()
+            + 1;
         assert_eq!(before_curve % 4, 0, "curve array needs 16-byte alignment");
         let expected = words.div_ceil(4) * 4 * 4;
         let colour = crate::hdr_fit::HdrColour::identity();
         let grade = super::Grade::new(
             1,
             1,
-            crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+            crate::tone::Levels {
+                white: Light::measured(1.0),
+                peak: Light::measured(1.0),
+                floor: None,
+            },
             Light::exactly(203.0),
             Light::exactly(1000.0),
         );
@@ -4941,7 +5534,11 @@ mod tests {
                 ..super::Grade::new(
                     1,
                     1,
-                    crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                    crate::tone::Levels {
+                        white: Light::measured(1.0),
+                        peak: Light::measured(1.0),
+                        floor: None,
+                    },
                     Light::exactly(203.0),
                     Light::exactly(1000.0),
                 )
@@ -4956,7 +5553,10 @@ mod tests {
         let frame = vec![0u16; 16 * 16 * 3];
         let render = |curve| {
             let grade = super::Grade {
-                adjust: super::Adjust { tone_curve: curve, ..super::Adjust::none() },
+                adjust: super::Adjust {
+                    tone_curve: curve,
+                    ..super::Adjust::none()
+                },
                 output: super::Output::Rolled,
                 ..super::Grade::new(
                     16,
@@ -4976,7 +5576,11 @@ mod tests {
         let lifted = render(Some(super::ToneCurve::PchipCbrt3 {
             points: vec![[0.0, 0.1], [1.0, 1.0]],
         }));
-        assert!(lifted[0] > plain[0], "curve origin left black at {}", plain[0]);
+        assert!(
+            lifted[0] > plain[0],
+            "curve origin left black at {}",
+            plain[0]
+        );
     }
 
     /// The canvas the reader looks at against the frame the file gets, pixel for pixel.
@@ -5003,7 +5607,9 @@ mod tests {
     #[test]
     fn the_draw_shows_what_the_rendition_ships() {
         let Some(gpu) = super::device() else { return };
-        let Some(base) = crate::base::device(gpu) else { return };
+        let Some(base) = crate::base::device(gpu) else {
+            return;
+        };
 
         // Wide enough that a block has an interior beyond the chroma smoothing's reach from
         // its edges: the match reads a pixel's chroma from its neighbourhood, so only there
@@ -5050,7 +5656,11 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                crate::tone::Levels {
+                    white: Light::measured(1.0),
+                    peak: Light::measured(1.0),
+                    floor: None,
+                },
                 Light::exactly(203.0),
                 Light::exactly(1000.0),
             )
@@ -5093,10 +5703,23 @@ mod tests {
 
         // Thousands of pixels onto sixteen values, so the equality above is a comparison between
         // scattered blocks rather than a key that is only ever written once.
-        assert!(compared > 10_000, "only {compared} pixels were inside a block");
-        assert_eq!(mapping.len(), SHADES, "the frame did not reach the shades it was built with");
-        let lit = mapping.values().filter(|shows| shows.iter().any(|v| *v > 0.01)).count();
-        assert!(lit > SHADES / 2, "only {lit} of {SHADES} drawn values were above black");
+        assert!(
+            compared > 10_000,
+            "only {compared} pixels were inside a block"
+        );
+        assert_eq!(
+            mapping.len(),
+            SHADES,
+            "the frame did not reach the shades it was built with"
+        );
+        let lit = mapping
+            .values()
+            .filter(|shows| shows.iter().any(|v| *v > 0.01))
+            .count();
+        assert!(
+            lit > SHADES / 2,
+            "only {lit} of {SHADES} drawn values were above black"
+        );
 
         // **And the two agree about *where*.** Everything above holds for a canvas offset by a
         // pixel, every tap of both routes being inside one flat block; the spike is one pixel wide,
@@ -5111,8 +5734,14 @@ mod tests {
         for row in [3usize, 40, 71, 125] {
             let ships = brightest(row, &|at| f32::from(shipped[at * 3]));
             let shows = brightest(row, &|at| drawn[at * 4]);
-            assert_eq!(ships, SPIKE, "the rendition put row {row}'s spike at {ships}");
-            assert_eq!(shows, ships, "the draw put row {row}'s spike at {shows}, not {ships}");
+            assert_eq!(
+                ships, SPIKE,
+                "the rendition put row {row}'s spike at {ships}"
+            );
+            assert_eq!(
+                shows, ships,
+                "the draw put row {row}'s spike at {shows}, not {ships}"
+            );
         }
     }
 
@@ -5136,7 +5765,9 @@ mod tests {
     #[test]
     fn the_zoomed_out_draw_reads_the_level_the_frame_would() {
         let Some(gpu) = super::device() else { return };
-        let Some(base) = crate::base::device(gpu) else { return };
+        let Some(base) = crate::base::device(gpu) else {
+            return;
+        };
 
         // Wide enough that a block has an interior beyond the chroma smoothing's reach from
         // its edges, on the halved canvas too (`the_draw_shows_what_the_rendition_ships`).
@@ -5164,14 +5795,21 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                crate::tone::Levels {
+                    white: Light::measured(1.0),
+                    peak: Light::measured(1.0),
+                    floor: None,
+                },
                 Light::exactly(203.0),
                 Light::exactly(1000.0),
             )
         };
 
         let pyramid = crate::base::pyramid(gpu, base, &frame, (width, height)).expect("a pyramid");
-        assert!(pyramid.levels > 0, "the frame was too small to build a level to read");
+        assert!(
+            pyramid.levels > 0,
+            "the frame was too small to build a level to read"
+        );
 
         // The frame's own buffer, at 1:1: `max_lod` of zero is what makes it so whatever the ratio.
         let at_one = grade(super::Canvas {
@@ -5196,8 +5834,10 @@ mod tests {
         // The smoothing's reach and two canvas pixels more in from every block edge, so all four
         // taps, the cubic's own reach and the neighbourhood the chroma is read from stay inside
         // one value at both scales.
-        let margin =
-            super::chroma_smooth_reach(crate::px::Span::measured(width)).raw().div_ceil(2) + 2;
+        let margin = super::chroma_smooth_reach(crate::px::Span::measured(width))
+            .raw()
+            .div_ceil(2)
+            + 2;
         let block_on_canvas = BLOCK / 2;
         let mut compared = 0usize;
         for cy in 0..canvas_h {
@@ -5225,7 +5865,10 @@ mod tests {
                 compared += 1;
             }
         }
-        assert!(compared > 1_000, "only {compared} canvas pixels were inside a block");
+        assert!(
+            compared > 1_000,
+            "only {compared} canvas pixels were inside a block"
+        );
 
         // And the shades genuinely differ, so the equality above is not every block drawing black.
         let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
@@ -5235,7 +5878,11 @@ mod tests {
                 seen.insert(close[centre * 4].to_bits());
             }
         }
-        assert!(seen.len() > 8, "the frame drew only {} distinct values", seen.len());
+        assert!(
+            seen.len() > 8,
+            "the frame drew only {} distinct values",
+            seen.len()
+        );
     }
 
     /// The editor's peak against the rendition's, across the exposure slider's whole range.
@@ -5293,7 +5940,11 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                crate::tone::Levels {
+                    white: Light::measured(1.0),
+                    peak: Light::measured(1.0),
+                    floor: None,
+                },
                 Light::exactly(203.0),
                 Light::exactly(1000.0),
             )
@@ -5311,7 +5962,10 @@ mod tests {
             let kept = f64::from(gpu.read_peak(&peak));
             uploaded.measure_peak(&at(Stops::measured(exposure)));
             let whole = f64::from(gpu.read_peak(&peak));
-            assert!(whole > 0.0, "the whole sample read no peak at all at {exposure} stops");
+            assert!(
+                whole > 0.0,
+                "the whole sample read no peak at all at {exposure} stops"
+            );
             worst = worst.max((kept - whole).abs() / whole);
             sampled.push((exposure, whole));
         }
@@ -5373,7 +6027,11 @@ mod tests {
             2f64.powf(top),
             worst * 100.0,
         );
-        assert!(worst < 0.005, "the two peak routes differ by {:.3}%", worst * 100.0);
+        assert!(
+            worst < 0.005,
+            "the two peak routes differ by {:.3}%",
+            worst * 100.0
+        );
     }
 
     /// The exposure does not drag the picture onto the lattice's outermost level.
@@ -5399,12 +6057,12 @@ mod tests {
         let tints_blue = [1.0, 0.0, 0.0, 1.0, 0.0, 0.4, 1.0, 0.0, 0.0];
         let leaves_it = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
         let top = crate::hdr_fit::ChromaMap::identity().shape().level_count - 1;
-        colour.chroma = Some(crate::hdr_fit::ChromaMap::from_nodes(|_, _, level| {
-            match level == top {
+        colour.chroma = Some(crate::hdr_fit::ChromaMap::from_nodes(
+            |_, _, level| match level == top {
                 true => tints_blue,
                 false => leaves_it,
-            }
-        }));
+            },
+        ));
         let grade = |exposure| super::Grade {
             colour: Some(&colour),
             exposure: Some(exposure),
@@ -5412,7 +6070,11 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                crate::tone::Levels {
+                    white: Light::measured(1.0),
+                    peak: Light::measured(1.0),
+                    floor: None,
+                },
                 Light::exactly(203.0),
                 Light::exactly(1000.0),
             )
@@ -5421,9 +6083,15 @@ mod tests {
         let cast = |exposure: f64| {
             let exposure = Stops::measured(exposure);
             let peak = gpu.scene_peak();
-            let out = gpu.upload(&frame, &grade(exposure), &peak).encode(&grade(exposure));
+            let out = gpu
+                .upload(&frame, &grade(exposure), &peak)
+                .encode(&grade(exposure));
             let (r, g, b) = (f64::from(out[0]), f64::from(out[1]), f64::from(out[2]));
-            assert!(g > 1000.0, "the grey came out at {r}, {g}, {b} at {} stops", exposure.raw());
+            assert!(
+                g > 1000.0,
+                "the grey came out at {r}, {g}, {b} at {} stops",
+                exposure.raw()
+            );
             (b - g) / g
         };
 
@@ -5431,7 +6099,11 @@ mod tests {
         // rather than assumed: a grey bright enough to sit on the top plane already would make the
         // comparison below pass on a frame that is tinted at both exposures.
         let rest = cast(0.0);
-        assert!(rest.abs() < 0.01, "the unexposed grey is already {:.1}% blue", rest * 100.0);
+        assert!(
+            rest.abs() < 0.01,
+            "the unexposed grey is already {:.1}% blue",
+            rest * 100.0
+        );
         let lifted = cast(4.0);
         assert!(
             lifted.abs() < 0.01,
@@ -5447,8 +6119,9 @@ mod tests {
         let (width, height) = (64usize, 64usize);
         // Every level from black past diffuse white, so each zone and the contrast's pivot are
         // crossed somewhere in the frame.
-        let frame: Vec<u16> =
-            (0..width * height * 3).map(|i| ((i / 3) * 16 + (i % 3) * 700).min(65535) as u16).collect();
+        let frame: Vec<u16> = (0..width * height * 3)
+            .map(|i| ((i / 3) * 16 + (i % 3) * 700).min(65535) as u16)
+            .collect();
         let fitted = crate::hdr_fit::HdrColour::identity();
         let told = crate::hdr_fit::HdrColour {
             exposure: Stops::measured(0.7),
@@ -5456,7 +6129,9 @@ mod tests {
             camera_saturation: crate::light::Gain::of_ratio(1.2),
             ..fitted.clone()
         };
-        let graded_as = |colour: Option<&crate::hdr_fit::HdrColour>, exposure: Option<Stops>, adjust: super::Adjust| {
+        let graded_as = |colour: Option<&crate::hdr_fit::HdrColour>,
+                         exposure: Option<Stops>,
+                         adjust: super::Adjust| {
             let grade = super::Grade {
                 colour,
                 exposure,
@@ -5482,32 +6157,66 @@ mod tests {
         let graded = |colour: &crate::hdr_fit::HdrColour,
                       exposure: Option<Stops>,
                       tone_curve: Option<super::ToneCurve>| {
-            graded_as(Some(colour), exposure, super::Adjust { tone_curve, ..super::Adjust::none() })
+            graded_as(
+                Some(colour),
+                exposure,
+                super::Adjust {
+                    tone_curve,
+                    ..super::Adjust::none()
+                },
+            )
         };
         let written_out = super::Adjust {
-            tone_curve: Some(super::ToneCurve::PchipCbrt3 { points: told.curve.clone() }),
+            tone_curve: Some(super::ToneCurve::PchipCbrt3 {
+                points: told.curve.clone(),
+            }),
             saturation: Some(super::saturation_slider(told.camera_saturation)),
             ..super::Adjust::none()
         };
-        let worst = |a: &[u16], b: &[u16]| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        let worst = |a: &[u16], b: &[u16]| {
+            a.iter()
+                .zip(b)
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0)
+        };
 
         let plain = graded(&fitted, None, None);
         let untouched = graded(&told, None, None);
-        assert!(plain == untouched, "an unedited photo's curve moved the match");
+        assert!(
+            plain == untouched,
+            "an unedited photo's curve moved the match"
+        );
         let undone = graded_as(Some(&told), Some(told.exposure), written_out.clone());
         let moved = worst(&plain, &undone);
-        assert!(moved <= 2, "the camera's own sliders, written out, moved the match by {moved} codes");
+        assert!(
+            moved <= 2,
+            "the camera's own sliders, written out, moved the match by {moved} codes"
+        );
 
         // A None profile drops the match and keeps where its sliders start: the neutral arm at the
         // camera's exposure, curve and saturation, with nothing matched at all.
-        let none = super::Adjust { colour_profile: super::ColourProfile::None, ..super::Adjust::none() };
-        let unmatched = graded_as(Some(&told), None, none);
-        let neutral_at_camera = graded_as(None, Some(told.exposure), super::Adjust {
+        let none = super::Adjust {
             colour_profile: super::ColourProfile::None,
-            ..written_out
-        });
-        assert!(unmatched == neutral_at_camera, "a None profile moved a slider off the camera's");
-        assert!(worst(&unmatched, &graded_as(None, None, super::Adjust::none())) > 100, "the camera's sliders did nothing");
+            ..super::Adjust::none()
+        };
+        let unmatched = graded_as(Some(&told), None, none);
+        let neutral_at_camera = graded_as(
+            None,
+            Some(told.exposure),
+            super::Adjust {
+                colour_profile: super::ColourProfile::None,
+                ..written_out
+            },
+        );
+        assert!(
+            unmatched == neutral_at_camera,
+            "a None profile moved a slider off the camera's"
+        );
+        assert!(
+            worst(&unmatched, &graded_as(None, None, super::Adjust::none())) > 100,
+            "the camera's sliders did nothing"
+        );
 
         let one_stop = crate::hdr_fit::HdrColour {
             exposure: Stops::measured(1.0),
@@ -5515,10 +6224,15 @@ mod tests {
         };
         assert_eq!(plain, graded(&one_stop, None, None));
         let zero = graded(&one_stop, Some(Stops::ZERO), None);
-        let middle = plain.iter().position(|&code| (1000..30000).contains(&code))
+        let middle = plain
+            .iter()
+            .position(|&code| (1000..30000).contains(&code))
             .expect("a midtone");
         let ratio = f64::from(zero[middle]) / f64::from(plain[middle]);
-        assert!((ratio - 0.5).abs() < 0.01, "zero exposure left midtone at {ratio:.3} of match");
+        assert!(
+            (ratio - 0.5).abs() < 0.01,
+            "zero exposure left midtone at {ratio:.3} of match"
+        );
     }
 
     /// The temperature reaches a frame that is already up.
@@ -5530,10 +6244,14 @@ mod tests {
     #[test]
     fn the_balance_follows_the_slider_after_the_frame_is_up() {
         let Some(gpu) = super::device() else { return };
-        let Some(base) = crate::base::device(gpu) else { return };
+        let Some(base) = crate::base::device(gpu) else {
+            return;
+        };
 
         let (width, height) = (64usize, 64usize);
-        let frame: Vec<u16> = (0..width * height * 3).map(|i| ((i * 37) % 30000) as u16).collect();
+        let frame: Vec<u16> = (0..width * height * 3)
+            .map(|i| ((i * 37) % 30000) as u16)
+            .collect();
         let colour = crate::hdr_fit::HdrColour::identity();
         let shown = super::Canvas {
             region: (0.0, 0.0, width as f64, height as f64),
@@ -5545,13 +6263,20 @@ mod tests {
             adjust,
             // Without one there is no illuminant to move away from and the shader is right to
             // leave the frame alone, which would make this test pass on a broken balance.
-            as_shot: Some(crate::white_balance::AsShot { temperature: 5500.0, tint: 0.0 }),
+            as_shot: Some(crate::white_balance::AsShot {
+                temperature: 5500.0,
+                tint: 0.0,
+            }),
             output: super::Output::Rolled,
             canvas: Some(shown),
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                crate::tone::Levels {
+                    white: Light::measured(1.0),
+                    peak: Light::measured(1.0),
+                    floor: None,
+                },
                 Light::exactly(203.0),
                 Light::exactly(1000.0),
             )
@@ -5562,7 +6287,10 @@ mod tests {
         let pyramid = crate::base::pyramid(gpu, base, &frame, (width, height)).expect("a pyramid");
 
         let unmoved = uploaded.draw(&grade(super::Adjust::none()), &pyramid);
-        let warmed = super::Adjust { temperature: Some(3000.0), ..super::Adjust::none() };
+        let warmed = super::Adjust {
+            temperature: Some(3000.0),
+            ..super::Adjust::none()
+        };
         let moved = uploaded.draw(&grade(warmed), &pyramid);
 
         let apart = unmoved
@@ -5591,7 +6319,9 @@ mod tests {
     #[test]
     fn a_neighbourhood_slider_reaches_a_frame_that_is_already_up() {
         let Some(gpu) = super::device() else { return };
-        let Some(base) = crate::base::device(gpu) else { return };
+        let Some(base) = crate::base::device(gpu) else {
+            return;
+        };
 
         let (width, height) = (64usize, 64usize);
         // Structured rather than flat: the neighbourhood only differs from the pixel where there
@@ -5620,7 +6350,13 @@ mod tests {
             adjust,
             output: super::Output::Rolled,
             canvas,
-            ..super::Grade::new(width, height, levels, Light::exactly(203.0), Light::exactly(1000.0))
+            ..super::Grade::new(
+                width,
+                height,
+                levels,
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
         let rest = super::Adjust::none();
 
@@ -5648,10 +6384,34 @@ mod tests {
         };
 
         for (name, adjust) in [
-            ("shadows", super::Adjust { shadows: 100.0, ..rest.clone() }),
-            ("highlights", super::Adjust { highlights: -100.0, ..rest.clone() }),
-            ("clarity", super::Adjust { clarity: 100.0, ..rest.clone() }),
-            ("dehaze", super::Adjust { dehaze: 100.0, ..rest.clone() }),
+            (
+                "shadows",
+                super::Adjust {
+                    shadows: 100.0,
+                    ..rest.clone()
+                },
+            ),
+            (
+                "highlights",
+                super::Adjust {
+                    highlights: -100.0,
+                    ..rest.clone()
+                },
+            ),
+            (
+                "clarity",
+                super::Adjust {
+                    clarity: 100.0,
+                    ..rest.clone()
+                },
+            ),
+            (
+                "dehaze",
+                super::Adjust {
+                    dehaze: 100.0,
+                    ..rest.clone()
+                },
+            ),
         ] {
             held.peak_from_candidates(&grade(adjust.clone(), None));
             let ticked = held.encode(&grade(adjust.clone(), None));
@@ -5673,8 +6433,11 @@ mod tests {
 
             if name == "shadows" {
                 let (was, now) = (dark_mean(&at_rest), dark_mean(&ticked));
-                assert!(was > 1.0, "the checker's dark squares grade to {was:.0}, so a lift of \
-                     them would be unmeasurable and this fixture proves nothing");
+                assert!(
+                    was > 1.0,
+                    "the checker's dark squares grade to {was:.0}, so a lift of \
+                     them would be unmeasurable and this fixture proves nothing"
+                );
                 assert!(
                     now > was * 1.2,
                     "shadows at +100 took the checker's dark squares from {was:.0} to {now:.0}: \
@@ -5687,7 +6450,11 @@ mod tests {
             // (`wasm.rs` calls `present`, which calls `draw_into`) and a different bind group
             // from the readback above. Against an upload made *with* the slider already set,
             // which is the same photograph opened with the edit already on it.
-            let opened = gpu.upload(&frame, &grade(adjust.clone(), Some(shown)), &gpu.scene_peak());
+            let opened = gpu.upload(
+                &frame,
+                &grade(adjust.clone(), Some(shown)),
+                &gpu.scene_peak(),
+            );
             opened.collect_candidates(&grade(adjust.clone(), Some(shown)));
             opened.peak_from_candidates(&grade(adjust.clone(), Some(shown)));
             let dragged = held.draw(&grade(adjust.clone(), Some(shown)), &pyramid);
@@ -5744,9 +6511,18 @@ mod tests {
             adjust,
             // Without one the balance has no illuminant to move away from and every temperature
             // below is the identity, which would make this pass on a host that ignores the pair.
-            as_shot: Some(crate::white_balance::AsShot { temperature: 5500.0, tint: 12.0 }),
+            as_shot: Some(crate::white_balance::AsShot {
+                temperature: 5500.0,
+                tint: 12.0,
+            }),
             output: super::Output::Rolled,
-            ..super::Grade::new(width, height, levels, Light::exactly(203.0), Light::exactly(1000.0))
+            ..super::Grade::new(
+                width,
+                height,
+                levels,
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
 
         let rest = super::Adjust::none();
@@ -5788,7 +6564,9 @@ mod tests {
     #[test]
     fn a_neutral_draw_over_a_matched_upload_is_the_neutral_picture() {
         let Some(gpu) = super::device() else { return };
-        let Some(base) = crate::base::device(gpu) else { return };
+        let Some(base) = crate::base::device(gpu) else {
+            return;
+        };
 
         let (width, height) = (64usize, 64usize);
         let frame: Vec<u16> = (0..width * height * 3)
@@ -5818,14 +6596,20 @@ mod tests {
             ..super::Grade::new(
                 width,
                 height,
-                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                crate::tone::Levels {
+                    white: Light::measured(1.0),
+                    peak: Light::measured(1.0),
+                    floor: None,
+                },
                 Light::exactly(203.0),
                 Light::exactly(1000.0),
             )
         };
         let matched = super::Adjust::none();
-        let neutral =
-            super::Adjust { colour_profile: super::ColourProfile::None, ..super::Adjust::none() };
+        let neutral = super::Adjust {
+            colour_profile: super::ColourProfile::None,
+            ..super::Adjust::none()
+        };
         let pyramid = crate::base::pyramid(gpu, base, &frame, (width, height)).expect("a pyramid");
 
         let editor = gpu.upload(&frame, &grade(matched.clone()), &gpu.scene_peak());
@@ -5833,7 +6617,11 @@ mod tests {
 
         let shown = editor.draw(&grade(neutral.clone()), &pyramid);
         assert_eq!(shown, rendition.draw(&grade(neutral), &pyramid));
-        assert_ne!(shown, editor.draw(&grade(matched), &pyramid), "the match moved nothing");
+        assert_ne!(
+            shown,
+            editor.draw(&grade(matched), &pyramid),
+            "the match moved nothing"
+        );
     }
 
     /// How far a tick may sit from a rendition of the same balance, as a share of its level.
@@ -5879,11 +6667,13 @@ mod tests {
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("probe_xy"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("probe_xy"),
-                bind_group_layouts: &[Some(&layout)],
-                ..Default::default()
-            })),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("probe_xy"),
+                    bind_group_layouts: &[Some(&layout)],
+                    ..Default::default()
+                }),
+            ),
             module: &module,
             entry_point: Some("probe_xy"),
             compilation_options: Default::default(),
@@ -5907,7 +6697,9 @@ mod tests {
         let mut worst_tint = 0.0f64;
         // The document's whole range, and the tint's, including the ends where the locus table
         // is coarsest and a transcription slip would show first.
-        for temperature in [2000.0, 2700.0, 3200.0, 5000.0, 5500.0, 6500.0, 10000.0, 20000.0, 50000.0] {
+        for temperature in [
+            2000.0, 2700.0, 3200.0, 5000.0, 5500.0, 6500.0, 10000.0, 20000.0, 50000.0,
+        ] {
             for tint in [-150.0, -50.0, 0.0, 25.0, 150.0] {
                 let asked = crate::white_balance::AsShot { temperature, tint };
                 let grade = super::Grade {
@@ -5920,7 +6712,11 @@ mod tests {
                     ..super::Grade::new(
                         1,
                         1,
-                        crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                        crate::tone::Levels {
+                            white: Light::measured(1.0),
+                            peak: Light::measured(1.0),
+                            floor: None,
+                        },
                         Light::exactly(203.0),
                         Light::exactly(1000.0),
                     )
@@ -5934,8 +6730,14 @@ mod tests {
                     label: Some("probe_xy"),
                     layout: &layout,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                        wgpu::BindGroupEntry { binding: 14, resource: out.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: edits.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 14,
+                            resource: out.as_entire_binding(),
+                        },
                     ],
                 });
                 let mut encoder = device.create_command_encoder(&Default::default());
@@ -5949,7 +6751,9 @@ mod tests {
                 gpu.queue.submit([encoder.finish()]);
                 let slice = readback.slice(..);
                 slice.map_async(wgpu::MapMode::Read, |_| {});
-                device.poll(wgpu::PollType::wait_indefinitely()).expect("the probe finished");
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("the probe finished");
                 let (x, y) = {
                     let mapped = slice.get_mapped_range().expect("the readback mapped");
                     let read = |at: usize| {
@@ -5980,8 +6784,8 @@ mod tests {
                     ],
                 ))
                 .expect("an invertible matrix");
-                worst_temperature = worst_temperature
-                    .max((back.temperature - temperature).abs() / temperature);
+                worst_temperature =
+                    worst_temperature.max((back.temperature - temperature).abs() / temperature);
                 worst_tint = worst_tint.max((back.tint - tint).abs());
                 // Measured at 0.011% and 0.00, which is `f32` in the shader against `f64`
                 // here rather than any disagreement about the locus. Bounded well inside what
@@ -6040,11 +6844,13 @@ mod tests {
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("probe_geometry"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("probe_geometry"),
-                bind_group_layouts: &[Some(&layout)],
-                ..Default::default()
-            })),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("probe_geometry"),
+                    bind_group_layouts: &[Some(&layout)],
+                    ..Default::default()
+                }),
+            ),
             module: &module,
             entry_point: Some("probe_geometry"),
             compilation_options: Default::default(),
@@ -6088,8 +6894,9 @@ mod tests {
         // photograph's either way and the origin comes off the answer, so the windowed run has to
         // land exactly the unwindowed one shifted, and that is what is asserted below.
         let mut worst = 0.0f64;
-        for (geometry, origin) in
-            cases.iter().flat_map(|g| [(*g, (0usize, 0usize)), (*g, (37, 23))])
+        for (geometry, origin) in cases
+            .iter()
+            .flat_map(|g| [(*g, (0usize, 0usize)), (*g, (37, 23))])
         {
             let out = crate::hdr::cropped_size(full.0, full.1, geometry);
             let pixels = out.0 * out.1;
@@ -6124,25 +6931,42 @@ mod tests {
                 ..super::Grade::new(
                     full.0 - origin.0,
                     full.1 - origin.1,
-                    crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                    crate::tone::Levels {
+                        white: Light::measured(1.0),
+                        peak: Light::measured(1.0),
+                        floor: None,
+                    },
                     Light::exactly(203.0),
                     Light::exactly(1000.0),
                 )
             };
-            assert_eq!(grade.output_size(), out, "the probe's grid is not what the grade writes");
+            assert_eq!(
+                grade.output_size(),
+                out,
+                "the probe's grid is not what the grade writes"
+            );
             let words = super::uniform_words(&grade, &colour);
 
             let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("probe_geometry"),
-                contents: &words.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>(),
+                contents: &words
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect::<Vec<u8>>(),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("probe_geometry"),
                 layout: &layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 6, resource: probe.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: edits.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: probe.as_entire_binding(),
+                    },
                 ],
             });
 
@@ -6157,7 +6981,9 @@ mod tests {
             gpu.queue.submit([encoder.finish()]);
             let slice = readback.slice(..);
             slice.map_async(wgpu::MapMode::Read, |_| {});
-            device.poll(wgpu::PollType::wait_indefinitely()).expect("the probe finished");
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("the probe finished");
             let got: Vec<f32> = {
                 let mapped = slice.get_mapped_range().expect("the readback mapped");
                 mapped
@@ -6169,8 +6995,13 @@ mod tests {
 
             for y in 0..out.1 {
                 for x in 0..out.0 {
-                    let whole =
-                        crate::image::geometry_at(full, out, geometry, x as f64 + 0.5, y as f64 + 0.5);
+                    let whole = crate::image::geometry_at(
+                        full,
+                        out,
+                        geometry,
+                        x as f64 + 0.5,
+                        y as f64 + 0.5,
+                    );
                     // The photograph's answer, moved into the buffer. A window changes where the
                     // pixel is *read*, never where the mapping sent it.
                     let want = (whole.0 - origin.0 as f64, whole.1 - origin.1 as f64);
@@ -6188,7 +7019,10 @@ mod tests {
         // In frame pixels, and generous only against `f32` against `f64` over coordinates in
         // the hundreds - a real disagreement about the mapping is a pixel or far more, not a
         // thousandth of one.
-        assert!(worst < 0.01, "the draw is {worst:.5} pixels from the gather at worst");
+        assert!(
+            worst < 0.01,
+            "the draw is {worst:.5} pixels from the gather at worst"
+        );
     }
 
     /// The gamut rotations in `primaries.slang` against the matrices this crate derives.
@@ -6202,15 +7036,19 @@ mod tests {
     fn the_primaries_match_the_host() {
         pinned("R2020_TO_SRGB", crate::hdr_fit::rec2020_to_srgb());
         pinned("SRGB_TO_R2020", crate::hdr_fit::srgb_to_rec2020());
-        pinned("R2020_TO_P3", crate::transfer::Primaries::DISPLAY_P3.from_rec2020());
+        pinned(
+            "R2020_TO_P3",
+            crate::transfer::Primaries::DISPLAY_P3.from_rec2020(),
+        );
     }
 
     fn pinned(name: &str, want: [[f64; 3]; 3]) {
         let found = crate::hdr_fit::in_the_shader(name);
         let rows: Vec<String> = (0..3)
             .map(|row| {
-                let v: Vec<String> =
-                    (0..3).map(|col| format!("{:>10.6}", want[row][col])).collect();
+                let v: Vec<String> = (0..3)
+                    .map(|col| format!("{:>10.6}", want[row][col]))
+                    .collect();
                 format!("    {},", v.join(", "))
             })
             .collect();

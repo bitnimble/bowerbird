@@ -4,14 +4,21 @@ import { runMigrations } from '../migrate';
 import { DEFAULT_SETTINGS } from '../../schemas/settings';
 
 function settingsFor(db: Database, keys: string[]): Record<string, string> {
-  const rows = db.query('SELECT key, value FROM settings').all() as { key: string; value: string }[];
-  return Object.fromEntries(rows.filter((row) => keys.includes(row.key)).map((row) => [row.key, row.value]));
+  const rows = db.query('SELECT key, value FROM settings').all() as {
+    key: string;
+    value: string;
+  }[];
+  return Object.fromEntries(
+    rows.filter((row) => keys.includes(row.key)).map((row) => [row.key, row.value]),
+  );
 }
 
 function objectsOfType(db: Database, type: 'table' | 'index' | 'trigger'): string[] {
   return (
     db
-      .query(`SELECT name FROM sqlite_schema WHERE type = ? AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+      .query(
+        `SELECT name FROM sqlite_schema WHERE type = ? AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+      )
       .all(type) as { name: string }[]
   ).map((row) => row.name);
 }
@@ -21,18 +28,28 @@ describe('opening a catalogue', () => {
     const db = new Database(':memory:');
     runMigrations(db);
     db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0007_camera_match_stages'");
-    db.query('INSERT INTO libraries (id, root_path, name, render_skip_full, render_skip_max) VALUES (?, ?, ?, ?, ?)')
-      .run('stages', '/stages', 'Stages', 'dust,match,sharpen', 'denoise,match');
-    db.query('INSERT INTO libraries (id, root_path, name, render_skip_full) VALUES (?, ?, ?, ?)')
-      .run('exact', '/exact', 'Exact', 'mismatch');
+    db.query(
+      'INSERT INTO libraries (id, root_path, name, render_skip_full, render_skip_max) VALUES (?, ?, ?, ?, ?)',
+    ).run('stages', '/stages', 'Stages', 'dust,match,sharpen', 'denoise,match');
+    db.query(
+      'INSERT INTO libraries (id, root_path, name, render_skip_full) VALUES (?, ?, ?, ?)',
+    ).run('exact', '/exact', 'Exact', 'mismatch');
 
     runMigrations(db);
 
-    expect(db.query('SELECT render_skip_full, render_skip_max FROM libraries WHERE id = ?').get('stages')).toEqual({
-      render_skip_full: 'dust,lens,colour,sharpen', render_skip_max: 'denoise,lens,colour',
+    expect(
+      db
+        .query('SELECT render_skip_full, render_skip_max FROM libraries WHERE id = ?')
+        .get('stages'),
+    ).toEqual({
+      render_skip_full: 'dust,lens,colour,sharpen',
+      render_skip_max: 'denoise,lens,colour',
     });
-    expect(db.query('SELECT render_skip_full, render_skip_max FROM libraries WHERE id = ?').get('exact')).toEqual({
-      render_skip_full: 'mismatch', render_skip_max: '',
+    expect(
+      db.query('SELECT render_skip_full, render_skip_max FROM libraries WHERE id = ?').get('exact'),
+    ).toEqual({
+      render_skip_full: 'mismatch',
+      render_skip_max: '',
     });
     db.close();
   });
@@ -70,7 +87,10 @@ describe('opening a catalogue', () => {
     const db = new Database(':memory:');
     runMigrations(db);
 
-    const seeded = db.query('SELECT key, value FROM settings').all() as { key: string; value: string }[];
+    const seeded = db.query('SELECT key, value FROM settings').all() as {
+      key: string;
+      value: string;
+    }[];
     const keys = new Set(seeded.map((row) => row.key));
     // Every key but the ones whose default is null: an absent row is already "nothing chosen",
     // which is what `last_viewer_rendition` is until something is.
@@ -86,7 +106,9 @@ describe('opening a catalogue', () => {
     // restart rather than an edge case.
     db.exec("UPDATE settings SET value = '250' WHERE key = 'hdr_reference_white_nits'");
     runMigrations(db);
-    expect(settingsFor(db, ['hdr_reference_white_nits'])).toEqual({ hdr_reference_white_nits: '250' });
+    expect(settingsFor(db, ['hdr_reference_white_nits'])).toEqual({
+      hdr_reference_white_nits: '250',
+    });
   });
 
   it('mints one replication identity and keeps it across restarts', () => {
@@ -97,8 +119,8 @@ describe('opening a catalogue', () => {
     runMigrations(db);
 
     expect(db.query('SELECT COUNT(*) AS n FROM replication_identity').get()).toEqual({ n: 1 });
-    expect((db.query('SELECT peer_id FROM replication_identity').get() as { peer_id: string }).peer_id).toBe(
-      first.peer_id,
-    );
+    expect(
+      (db.query('SELECT peer_id FROM replication_identity').get() as { peer_id: string }).peer_id,
+    ).toBe(first.peer_id);
   });
 });

@@ -18,7 +18,10 @@ function serving(): { app: Hono; sent: SendToFrameTvRequest[] } {
     },
   };
   const app = new Hono();
-  app.route(route(PathSegment.api(), PathSegment.frameTvs()), new FrameTvApi(frameTvs as unknown as FrameTvService).routes);
+  app.route(
+    route(PathSegment.api(), PathSegment.frameTvs()),
+    new FrameTvApi(frameTvs as unknown as FrameTvService).routes,
+  );
   applyErrorHandler(app);
   return { app, sent };
 }
@@ -32,12 +35,20 @@ it('lists the TVs the search found', async () => {
 
 it('sends one photo and answers with nothing', async () => {
   const { app, sent } = serving();
-  const body: SendToFrameTvRequest = { tv_id: LIVING_ROOM.id, photo_id: 'aaaaaaaa', rendition: null, show: true };
+  const body: SendToFrameTvRequest = {
+    tv_id: LIVING_ROOM.id,
+    photo_id: 'aaaaaaaa',
+    rendition: null,
+    show: true,
+  };
 
-  const answer = await app.request(route(PathSegment.api(), PathSegment.frameTvs(), PathSegment.send()), {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  const answer = await app.request(
+    route(PathSegment.api(), PathSegment.frameTvs(), PathSegment.send()),
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
 
   expect(answer.status).toBe(204);
   expect(sent).toEqual([body]);
@@ -46,10 +57,13 @@ it('sends one photo and answers with nothing', async () => {
 it('refuses a send that names no photo', async () => {
   const { app, sent } = serving();
 
-  const answer = await app.request(route(PathSegment.api(), PathSegment.frameTvs(), PathSegment.send()), {
-    method: 'POST',
-    body: JSON.stringify({ tv_id: LIVING_ROOM.id, rendition: null, show: true }),
-  });
+  const answer = await app.request(
+    route(PathSegment.api(), PathSegment.frameTvs(), PathSegment.send()),
+    {
+      method: 'POST',
+      body: JSON.stringify({ tv_id: LIVING_ROOM.id, rendition: null, show: true }),
+    },
+  );
 
   expect(answer.status).toBe(400);
   expect(sent).toEqual([]);

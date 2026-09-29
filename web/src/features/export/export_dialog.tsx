@@ -1,7 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { EXPORT_FORMATS, writesSdr, type ExportFormat } from '../../../../src/schemas/export';
-import { RenderingIntentSchema, type RenderingIntent } from '../../../../src/schemas/rendering_intent';
+import {
+  RenderingIntentSchema,
+  type RenderingIntent,
+} from '../../../../src/schemas/rendering_intent';
 import { IntentChoiceStrings } from '../raw_edit/proof/intent_choice.strings';
 import type { ReactNode } from 'react';
 import { useExportStore, usePresenters } from '../../app/stores_context';
@@ -100,19 +103,34 @@ const FORMATS: Option<ExportFormat>[] = (Object.keys(FORMAT_LABELS) as ExportFor
 // dimensions, since a portrait and a landscape frame want the same longest side.
 const LONG_EDGES: Option<string>[] = [
   { value: '0', label: ExportStrings.resolutionFull() },
-  ...[4096, 3840, 2560, 1920, 1280].map((px) => ({ value: String(px), label: ExportStrings.resolutionLongEdge(px) })),
+  ...[4096, 3840, 2560, 1920, 1280].map((px) => ({
+    value: String(px),
+    label: ExportStrings.resolutionLongEdge(px),
+  })),
 ];
 
-const INTENTS: Option<RenderingIntent>[] = RenderingIntentSchema.options
-  .map((intent) => ({ value: intent, label: IntentChoiceStrings[intent]() }));
+const INTENTS: Option<RenderingIntent>[] = RenderingIntentSchema.options.map((intent) => ({
+  value: intent,
+  label: IntentChoiceStrings[intent](),
+}));
 
 function hdrHint(unavailable: boolean, gainMappable: boolean, format: ExportFormat): string {
   if (!unavailable) return ExportStrings.exportHdrHint();
   const named = FORMAT_LABELS[format];
-  return gainMappable ? ExportStrings.exportHdrNeedsGainMap(named) : ExportStrings.exportHdrUnavailable(named);
+  return gainMappable
+    ? ExportStrings.exportHdrNeedsGainMap(named)
+    : ExportStrings.exportHdrUnavailable(named);
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }): JSX.Element {
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}): JSX.Element {
   return (
     <div {...stylex.props(styles.row)}>
       <div {...stylex.props(styles.label)}>
@@ -164,10 +182,19 @@ export const ExportDialog = observer(function ExportDialog(): JSX.Element | null
   const estimate = store.estimateBytes;
 
   return (
-    <Modal open={store.open} onOpenChange={(open) => (open ? undefined : presenter.close())} title={count > 1 ? ExportStrings.titleMany(count) : ExportStrings.title()}>
+    <Modal
+      open={store.open}
+      onOpenChange={(open) => (open ? undefined : presenter.close())}
+      title={count > 1 ? ExportStrings.titleMany(count) : ExportStrings.title()}
+    >
       <div {...stylex.props(styles.dialog)}>
         <Row label={ExportStrings.format()}>
-          <Select options={FORMATS} value={options.format} onChange={(value) => presenter.set('format', value)} label={ExportStrings.format()} />
+          <Select
+            options={FORMATS}
+            value={options.format}
+            onChange={(value) => presenter.set('format', value)}
+            label={ExportStrings.format()}
+          />
         </Row>
 
         <Row label={ExportStrings.resolution()}>
@@ -183,7 +210,9 @@ export const ExportDialog = observer(function ExportDialog(): JSX.Element | null
           <Row label={ExportStrings.quality()}>
             {/* The number as well as the track: `Slider`'s `valueText` is announced and not drawn,
                 and a quality nobody can read is one nobody can come back to. */}
-            <span {...stylex.props(styles.reading)}>{ExportStrings.qualityValue(options.quality)}</span>
+            <span {...stylex.props(styles.reading)}>
+              {ExportStrings.qualityValue(options.quality)}
+            </span>
             <Slider
               value={options.quality}
               onChange={(value) => presenter.set('quality', value)}
@@ -245,7 +274,11 @@ export const ExportDialog = observer(function ExportDialog(): JSX.Element | null
 
         <div {...stylex.props(styles.foot)}>
           <div {...stylex.props(styles.estimate)}>
-            <span>{estimate == null ? ExportStrings.estimateUnknown() : ExportStrings.estimate(fileSizeLabel(estimate))}</span>
+            <span>
+              {estimate == null
+                ? ExportStrings.estimateUnknown()
+                : ExportStrings.estimate(fileSizeLabel(estimate))}
+            </span>
           </div>
           {store.error == null ? null : <p {...stylex.props(styles.error)}>{store.error}</p>}
           <div {...stylex.props(styles.actions)}>

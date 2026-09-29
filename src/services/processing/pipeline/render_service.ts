@@ -26,7 +26,12 @@ import type {
   RenditionSource,
   RenditionWritten,
 } from '../workers/processing_types';
-import { cameraMatchWithStages, type CameraMatch, type RenderTiming, type RenderedRendition } from '../../../schemas/render_stages';
+import {
+  cameraMatchWithStages,
+  type CameraMatch,
+  type RenderTiming,
+  type RenderedRendition,
+} from '../../../schemas/render_stages';
 import type { RenderTimingsFile } from '../renditions/render_timings_file';
 import { RenderTargets } from './render_targets';
 import { RenderBenchmark } from './render_benchmark';
@@ -59,10 +64,24 @@ export abstract class RenderService {
     protected readonly activity: LibraryActivity = new LibraryActivity(),
   ) {
     this.targets = new RenderTargets(settings);
-    this.composites = new CompositeRenderer(photoProcessing, editsFor, compositeOf, this.targets, settings, (photoId, written) =>
-      this.announce(photoId, written),
+    this.composites = new CompositeRenderer(
+      photoProcessing,
+      editsFor,
+      compositeOf,
+      this.targets,
+      settings,
+      (photoId, written) => this.announce(photoId, written),
     );
-    this.prepareRenderer = new PrepareRenderer(photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf, this.targets, activity);
+    this.prepareRenderer = new PrepareRenderer(
+      photoPaths,
+      photoListing,
+      settings,
+      editsFor,
+      libraryOf,
+      compositeOf,
+      this.targets,
+      activity,
+    );
     this.singlePhoto = new SinglePhotoRenderer(
       photoProcessing,
       settings,
@@ -73,13 +92,25 @@ export abstract class RenderService {
         for (const listener of this.described) listener(photoId, descriptor);
       },
     );
-    this.exports = new ExportRenderer(settings, editsFor, this.targets, this.singlePhoto, this.composites);
+    this.exports = new ExportRenderer(
+      settings,
+      editsFor,
+      this.targets,
+      this.singlePhoto,
+      this.composites,
+    );
     this.benchmark = new RenderBenchmark(this.singlePhoto);
   }
 
   /** What a render's stages cost on this machine, measured now and filed in `into`. */
-  async benchmarkRender(rendition: RenderedRendition, denoiser: Denoiser, into: RenderTimingsFile): Promise<RenderTiming> {
-    return this.activity.track(null, 'measuring', `${rendition}:${denoiser}`, () => this.benchmark.run(rendition, denoiser, into));
+  async benchmarkRender(
+    rendition: RenderedRendition,
+    denoiser: Denoiser,
+    into: RenderTimingsFile,
+  ): Promise<RenderTiming> {
+    return this.activity.track(null, 'measuring', `${rendition}:${denoiser}`, () =>
+      this.benchmark.run(rendition, denoiser, into),
+    );
   }
 
   cameraMatchFor(library: Library, rendition: Rendition): CameraMatch {
@@ -93,7 +124,6 @@ export abstract class RenderService {
     stage: ProcessingStage,
     descriptor?: Uint8Array,
   ): void;
-
 
   /**
    * How a grid tile is encoded, for the scan to build one while it holds the RAW open (§10.4).
@@ -109,7 +139,6 @@ export abstract class RenderService {
       speed: settings.avif_speed,
     };
   }
-
 
   /**
    * Takes on a grid tile the scan built, now that the photo it belongs to has an id (§10.4).
@@ -128,32 +157,41 @@ export abstract class RenderService {
     try {
       // Read before the rename, because the descriptor is only meaningful while it still
       // describes a file that is there to be adopted.
-      const descriptor = await Bun.file(descriptorPath).bytes().catch(() => undefined);
+      const descriptor = await Bun.file(descriptorPath)
+        .bytes()
+        .catch(() => undefined);
       await rename(staged, renditionPathFor(dataPath, photoId, 'grid', false));
-      await Bun.file(descriptorPath).delete().catch(() => {});
+      await Bun.file(descriptorPath)
+        .delete()
+        .catch(() => {});
       this.stageDone(null, photoId, 'tile', descriptor);
       return true;
     } catch {
       // Both halves, or the sweep would carry a descriptor for a tile that never landed.
-      await Bun.file(staged).delete().catch(() => {});
-      await Bun.file(descriptorPath).delete().catch(() => {});
+      await Bun.file(staged)
+        .delete()
+        .catch(() => {});
+      await Bun.file(descriptorPath)
+        .delete()
+        .catch(() => {});
       return false;
     }
   }
 
-
   /** Drops a scanned tile no photo took on: the file turned out to be a move, or the run stopped. */
   async discardScannedTile(staged: string): Promise<void> {
-    await Bun.file(staged).delete().catch(() => {});
-    await Bun.file(stagedDescriptorPath(staged)).delete().catch(() => {});
+    await Bun.file(staged)
+      .delete()
+      .catch(() => {});
+    await Bun.file(stagedDescriptorPath(staged))
+      .delete()
+      .catch(() => {});
   }
-
 
   /** Called with each derived file written: which photo, which stage, and when. */
   onProcessed(listener: (photoId: string, written: RenditionWritten) => void): void {
     this.processed.add(listener);
   }
-
 
   /**
    * Called with the stacking descriptor a grid tile produced, as it lands.
@@ -167,7 +205,6 @@ export abstract class RenderService {
   onDescribed(listener: (photoId: string, descriptor: Uint8Array) => void): void {
     this.described.add(listener);
   }
-
 
   // Announced from the two places that write a rendition - the queue's result
   // handler and the one-off run - rather than from the queue alone: an on-demand
@@ -196,7 +233,12 @@ export abstract class RenderService {
     return this.composites.analyseAssembly(libraryId, sources, library, on, volumePath);
   }
 
-  async solveSeams(recipe: AssemblyRecipe, picks: number[][], volumePath: string, library: Library): Promise<string> {
+  async solveSeams(
+    recipe: AssemblyRecipe,
+    picks: number[][],
+    volumePath: string,
+    library: Library,
+  ): Promise<string> {
     return this.composites.solveSeams(recipe, picks, volumePath, library);
   }
 
@@ -221,8 +263,15 @@ export abstract class RenderService {
     return this.composites.buildAssemblyPreview(sources, recipe, library, outputPath, on);
   }
 
-  async buildComposite(photoId: string, library: Library, rendition: Rendition, hdr: boolean): Promise<boolean> {
-    return this.activity.track(library.id, 'rendering', photoId, () => this.composites.buildComposite(photoId, library, rendition, hdr));
+  async buildComposite(
+    photoId: string,
+    library: Library,
+    rendition: Rendition,
+    hdr: boolean,
+  ): Promise<boolean> {
+    return this.activity.track(library.id, 'rendering', photoId, () =>
+      this.composites.buildComposite(photoId, library, rendition, hdr),
+    );
   }
 
   async buildCompositeRendition(
@@ -238,7 +287,18 @@ export abstract class RenderService {
     /** Whether a merge is watching this render's progress. */
     watched = false,
   ): Promise<void> {
-    return this.composites.buildCompositeRendition(photoId, sources, recipe, kind, library, rendition, hdr, source, on, watched);
+    return this.composites.buildCompositeRendition(
+      photoId,
+      sources,
+      recipe,
+      kind,
+      library,
+      rendition,
+      hdr,
+      source,
+      on,
+      watched,
+    );
   }
 
   openComposite(): CompositeWorker {
@@ -335,10 +395,23 @@ export abstract class RenderService {
      */
     thumbnailPath?: string,
   ): Promise<void> {
-    return this.exports.renderExport(rawFilePath, photoId, library, outputPath, options, thumbnailPath);
+    return this.exports.renderExport(
+      rawFilePath,
+      photoId,
+      library,
+      outputPath,
+      options,
+      thumbnailPath,
+    );
   }
 
-  async renderSdrRoll(rendered: string, photoId: string, scratch: string, outputPath: string, quality: number): Promise<void> {
+  async renderSdrRoll(
+    rendered: string,
+    photoId: string,
+    scratch: string,
+    outputPath: string,
+    quality: number,
+  ): Promise<void> {
     return this.exports.renderSdrRoll(rendered, photoId, scratch, outputPath, quality);
   }
 
@@ -352,7 +425,14 @@ export abstract class RenderService {
     /** A second size off the same composite, for the history's tile - `renderExport`'s reason. */
     thumbnailPath?: string,
   ): Promise<void> {
-    return this.exports.renderCompositeExport(photoId, sources, recipe, library, outputPath, options, thumbnailPath);
+    return this.exports.renderCompositeExport(
+      photoId,
+      sources,
+      recipe,
+      library,
+      outputPath,
+      options,
+      thumbnailPath,
+    );
   }
-
 }

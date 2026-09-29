@@ -21,13 +21,13 @@ services:
     # native build, which cannot carry a USER of its own. Without it
     # a dev container writes root-owned files into the live-mounted repo and photo
     # library, same as production did.
-    user: "1000:1000"
+    user: '1000:1000'
     working_dir: /app
     command: sh -c "bun install --frozen-lockfile && bun run dev"
     # The web service shares this network namespace, so its published port lives
     # here too.
     ports:
-      - "${WEB_PORT:-5173}:${WEB_PORT:-5173}"
+      - '${WEB_PORT:-5173}:${WEB_PORT:-5173}'
     # As production, and for the same reason: without these the container falls back to
     # SwiftShader and everything merely gets slow. `docker-compose.yml` says what RENDER_GID
     # is and how to find it. `bun test test/integration` wants it too - those decode real
@@ -35,7 +35,7 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - "${RENDER_GID:-106}"
+      - '${RENDER_GID:-106}'
     # An NVIDIA card, where the host has one and the container toolkit to inject it.
     #
     # **`graphics` is the one that matters and the one everybody leaves out.** `compute` alone
@@ -47,7 +47,7 @@ services:
     #
     # Harmless on a host with no NVIDIA card and no toolkit: `NVIDIA_VISIBLE_DEVICES` is read by
     # a runtime hook that is not there, and the AMD path above is untouched.
-    runtime: "${NVIDIA_RUNTIME:-runc}"
+    runtime: '${NVIDIA_RUNTIME:-runc}'
     # Uncomment to profile the native side with `perf`, and comment it back out afterwards.
     #
     # **The blocker is seccomp, not `perf_event_paranoid` and not capabilities.** Docker's default
@@ -74,7 +74,7 @@ services:
       # outside, including the host.
       HOST: 127.0.0.1
       PORT: 3000
-      TZ: "${TZ:-UTC}"
+      TZ: '${TZ:-UTC}'
       DB_PATH: /config/bowerbird.db
       DATA_DIR: /data
       # Read by the NVIDIA container runtime's hook, and ignored where there is no such hook.
@@ -91,7 +91,7 @@ services:
       # root dep (zod) resolves the same tree Vite sees from /app/web.
       - bowerbird-node-modules:/app/node_modules
       - bowerbird-web-node-modules:/app/web/node_modules
-      - "${PHOTOS_DIR:-./photos}:/photos"
+      - '${PHOTOS_DIR:-./photos}:/photos'
       - "${CONFIG_DIR_HOST:?set CONFIG_DIR_HOST in .env to the config directory's absolute path on the docker host}:/config"
       - "${DATA_DIR_HOST:?set DATA_DIR_HOST in .env to the data directory's absolute path on the docker host}:/data"
 
@@ -102,19 +102,19 @@ services:
     depends_on:
       - bowerbird-dev
     container_name: bowerbird-web-dev
-    user: "1000:1000"
+    user: '1000:1000'
     working_dir: /app/web
     command: sh -c "bun install --frozen-lockfile && bun run ../scripts/vite.ts --port ${WEB_PORT:-5173}"
     # Shares the API container's network stack rather than linking to it, so the
     # proxy target is plain 127.0.0.1:3000 with no container-only hostname
     # anywhere - and the API can stay on loopback, unreachable from outside.
-    network_mode: "service:bowerbird-dev"
+    network_mode: 'service:bowerbird-dev'
     environment:
-      TZ: "${TZ:-UTC}"
+      TZ: '${TZ:-UTC}'
       # Where this server proxies /api and /image to; the browser only ever talks
       # to this one. Reached over the shared network namespace below.
       VITE_API_PORT: 3000
-      VITE_ALLOWED_HOSTS: "${VITE_ALLOWED_HOSTS:-}"
+      VITE_ALLOWED_HOSTS: '${VITE_ALLOWED_HOSTS:-}'
     volumes:
       - "${REPO_DIR:?set REPO_DIR in .env to this repo's absolute path on the docker host}:/app"
       - bowerbird-node-modules:/app/node_modules

@@ -1,8 +1,25 @@
 import { action } from 'mobx';
 import { printerProfilesApi } from '../../../api/printer_profiles';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
-import { DEFAULT_PRINT_SCENE, litBy, paperAndInk, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Environment, type Ink, type Paper, type Presentation, type PrintControl } from './print_scene';
-import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment, type PrintTilt } from './print_motion';
+import {
+  DEFAULT_PRINT_SCENE,
+  litBy,
+  paperAndInk,
+  PRINT_ZOOM_RANGE,
+  PrintSceneSchema,
+  restingValue,
+  type Environment,
+  type Ink,
+  type Paper,
+  type Presentation,
+  type PrintControl,
+} from './print_scene';
+import {
+  browserPrintMotion,
+  PrintMotion,
+  type PrintMotionEnvironment,
+  type PrintTilt,
+} from './print_motion';
 import type { PrinterProfile, PrintStore } from './print_store';
 
 export type PrinterProfileSource = {
@@ -28,7 +45,10 @@ function clamp(value: number, low: number, high: number): number {
 export class PrintPresenter {
   private drag: Drag | null = null;
   private touch = false;
-  private desktopRotation = { yawDegrees: DEFAULT_PRINT_SCENE.yawDegrees, pitchDegrees: DEFAULT_PRINT_SCENE.pitchDegrees };
+  private desktopRotation = {
+    yawDegrees: DEFAULT_PRINT_SCENE.yawDegrees,
+    pitchDegrees: DEFAULT_PRINT_SCENE.pitchDegrees,
+  };
   private readonly tilt = new PrintMotion();
   private tiltTarget: PrintTilt | null = null;
   private tiltFrame: number | null = null;
@@ -59,7 +79,8 @@ export class PrintPresenter {
     this.store.open = view != null;
     this.present(view === 'flat' ? 'flat' : this.touch ? 'surface' : 'scene');
     this.syncTilt();
-    if (this.store.open && this.store.surface && this.permission === 'unknown') void this.enableTilt();
+    if (this.store.open && this.store.surface && this.permission === 'unknown')
+      void this.enableTilt();
     if (this.store.open && !this.listedProfiles) void this.listPrinterProfiles();
     this.redraw();
   };
@@ -125,7 +146,10 @@ export class PrintPresenter {
     if (presentation === was) return;
     this.stopTilt();
     if (was === 'scene') {
-      this.desktopRotation = { yawDegrees: this.store.scene.yawDegrees, pitchDegrees: this.store.scene.pitchDegrees };
+      this.desktopRotation = {
+        yawDegrees: this.store.scene.yawDegrees,
+        pitchDegrees: this.store.scene.pitchDegrees,
+      };
     }
     this.store.scene = {
       ...this.store.scene,
@@ -136,7 +160,14 @@ export class PrintPresenter {
 
   @action.bound
   enableTilt = async (): Promise<void> => {
-    if (!this.store.open || !this.store.surface || this.motion == null || this.motion.visibility.hidden || this.awaitingPermission) return;
+    if (
+      !this.store.open ||
+      !this.store.surface ||
+      this.motion == null ||
+      this.motion.visibility.hidden ||
+      this.awaitingPermission
+    )
+      return;
     if (this.motion.requestPermission == null || this.permission === 'granted') {
       this.startListening();
       return;
@@ -155,7 +186,8 @@ export class PrintPresenter {
   private permissionResult = (epoch: number, permission: unknown): void => {
     if (epoch !== this.permissionEpoch) return;
     this.awaitingPermission = false;
-    this.permission = permission === 'granted' ? 'granted' : permission === 'denied' ? 'denied' : 'unknown';
+    this.permission =
+      permission === 'granted' ? 'granted' : permission === 'denied' ? 'denied' : 'unknown';
     this.syncTilt();
   };
 
@@ -216,7 +248,8 @@ export class PrintPresenter {
   @action.bound
   private tiltUnavailable = (): void => {
     this.waitingTimer = null;
-    if (this.listening && this.store.tiltStatus === 'waiting') this.store.tiltStatus = 'unavailable';
+    if (this.listening && this.store.tiltStatus === 'waiting')
+      this.store.tiltStatus = 'unavailable';
   };
 
   @action.bound
@@ -228,10 +261,14 @@ export class PrintPresenter {
     this.store.tiltStatus = 'active';
     if (tilt === 'recentre') {
       this.stopTiltAnimation();
-      if (this.store.scene.yawDegrees !== 0 || this.store.scene.pitchDegrees !== 0) this.rotate(0, 0);
+      if (this.store.scene.yawDegrees !== 0 || this.store.scene.pitchDegrees !== 0)
+        this.rotate(0, 0);
       return;
     }
-    if (Math.abs(tilt.yaw - this.store.scene.yawDegrees) < 0.08 && Math.abs(tilt.pitch - this.store.scene.pitchDegrees) < 0.08) {
+    if (
+      Math.abs(tilt.yaw - this.store.scene.yawDegrees) < 0.08 &&
+      Math.abs(tilt.pitch - this.store.scene.pitchDegrees) < 0.08
+    ) {
       this.stopTiltAnimation();
       return;
     }
@@ -245,7 +282,8 @@ export class PrintPresenter {
   private animateTilt = (time: number): void => {
     this.tiltFrame = null;
     const target = this.tiltTarget;
-    if (target == null || !this.listening || this.motion == null || this.motion.visibility.hidden) return;
+    if (target == null || !this.listening || this.motion == null || this.motion.visibility.hidden)
+      return;
     const yaw = this.store.scene.yawDegrees;
     const pitch = this.store.scene.pitchDegrees;
     const remaining = Math.max(Math.abs(target.yaw - yaw), Math.abs(target.pitch - pitch));
@@ -288,7 +326,8 @@ export class PrintPresenter {
     this.listening = false;
     this.tilt.reset();
     this.clearWaitingTimer();
-    if (this.store.tiltStatus === 'active' || this.store.tiltStatus === 'waiting') this.store.tiltStatus = 'waiting';
+    if (this.store.tiltStatus === 'active' || this.store.tiltStatus === 'waiting')
+      this.store.tiltStatus = 'waiting';
   }
 
   private clearWaitingTimer(): void {
@@ -351,7 +390,11 @@ export class PrintPresenter {
   zoomAt = (notches: number, at: { x: number; y: number }): void => {
     if (this.store.surface) return;
     const { zoom, panX, panY } = this.store.scene;
-    const zoomed = clamp(zoom * ZOOM_PER_NOTCH ** notches, PRINT_ZOOM_RANGE.min, PRINT_ZOOM_RANGE.max);
+    const zoomed = clamp(
+      zoom * ZOOM_PER_NOTCH ** notches,
+      PRINT_ZOOM_RANGE.min,
+      PRINT_ZOOM_RANGE.max,
+    );
     const held = zoomed / zoom;
     this.store.scene = {
       ...this.store.scene,
@@ -376,7 +419,14 @@ export class PrintPresenter {
   @action.bound
   beginDrag = (pointerId: number, x: number, y: number, span: number): void => {
     if (!this.store.hanging || this.drag != null || span <= 0) return;
-    this.drag = { pointerId, x, y, span, yaw: this.store.scene.yawDegrees, pitch: this.store.scene.pitchDegrees };
+    this.drag = {
+      pointerId,
+      x,
+      y,
+      span,
+      yaw: this.store.scene.yawDegrees,
+      pitch: this.store.scene.pitchDegrees,
+    };
     this.store.dragging = true;
   };
 
@@ -384,7 +434,10 @@ export class PrintPresenter {
   moveDrag = (pointerId: number, x: number, y: number): void => {
     const drag = this.drag;
     if (drag == null || drag.pointerId !== pointerId) return;
-    this.rotate(drag.yaw + ((x - drag.x) / drag.span) * 180, drag.pitch + ((y - drag.y) / drag.span) * 180);
+    this.rotate(
+      drag.yaw + ((x - drag.x) / drag.span) * 180,
+      drag.pitch + ((y - drag.y) / drag.span) * 180,
+    );
   };
 
   @action.bound
@@ -403,7 +456,7 @@ export class PrintPresenter {
   private rotate(yaw: number, pitch: number): void {
     this.store.scene = {
       ...this.store.scene,
-      yawDegrees: ((yaw + 180) % 360 + 360) % 360 - 180,
+      yawDegrees: ((((yaw + 180) % 360) + 360) % 360) - 180,
       pitchDegrees: Math.max(-85, Math.min(85, pitch)),
     };
     this.redraw();

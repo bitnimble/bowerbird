@@ -77,4 +77,3 @@ export const styles = stylex.create({
     pointerEvents: 'auto',
   },
 });
-

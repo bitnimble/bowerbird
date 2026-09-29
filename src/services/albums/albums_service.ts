@@ -14,7 +14,13 @@ export class AlbumsService {
     const id = withNewId((candidate) =>
       this.repo.insert({ id: candidate, name: request.name, ordering: request.ordering }),
     );
-    return { id, name: request.name, ordering: request.ordering, banner_photo_id: null, photo_count: 0 };
+    return {
+      id,
+      name: request.name,
+      ordering: request.ordering,
+      banner_photo_id: null,
+      photo_count: 0,
+    };
   }
 
   get(albumId: string): Album {
@@ -33,7 +39,8 @@ export class AlbumsService {
     // NOT suppress FK violations, so a bad id would otherwise surface as a raw 500.
     const found = new Set(this.photoPaths.getBasicByIds(photoIds).map((p) => p.id));
     const missing = photoIds.filter((id) => !found.has(id));
-    if (missing.length > 0) throw new AppError('VALIDATION_ERROR', `photos not found: ${missing.join(', ')}`);
+    if (missing.length > 0)
+      throw new AppError('VALIDATION_ERROR', `photos not found: ${missing.join(', ')}`);
     this.repo.addPhotos(albumId, photoIds, new Date().toISOString());
   }
 

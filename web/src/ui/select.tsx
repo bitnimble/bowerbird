@@ -61,7 +61,11 @@ export function Select<T extends string>({
         >
           <BaseSelect.Popup {...stylex.props(menuStyles.popup)}>
             {options.map((option) => (
-              <BaseSelect.Item key={option.value} value={option.value} {...stylex.props(menuStyles.item)}>
+              <BaseSelect.Item
+                key={option.value}
+                value={option.value}
+                {...stylex.props(menuStyles.item)}
+              >
                 <BaseSelect.ItemText>{option.label}</BaseSelect.ItemText>
                 <BaseSelect.ItemIndicator {...stylex.props(menuStyles.check)}>
                   <Check size={ICON} />

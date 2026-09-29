@@ -22,7 +22,13 @@ const styles = stylex.create({
 });
 
 /** Names down the left and what they hold down the right: a `MetaTerm` then a `MetaValue`, repeated. */
-export function MetaList({ style, children }: { style?: stylex.StyleXStyles; children: ReactNode }): JSX.Element {
+export function MetaList({
+  style,
+  children,
+}: {
+  style?: stylex.StyleXStyles;
+  children: ReactNode;
+}): JSX.Element {
   return <dl {...stylex.props(styles.list, style)}>{children}</dl>;
 }
 

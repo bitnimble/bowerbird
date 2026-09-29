@@ -2,10 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import {
-  GalleryThumbnails,
-  Info,
-} from 'lucide-react';
+import { GalleryThumbnails, Info } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import {
@@ -47,15 +44,17 @@ import { DetailNav } from './detail_nav';
 import { DetailFrame } from './detail_frame';
 import { DetailInfo } from './detail_info';
 import { DetailFilmstrip, type StripView } from './detail_filmstrip';
-import {
-  CameraPanel,
-  PhotoEdits,
-  PhotoRating,
-  RawPanel,
-  RenditionPanel,
-} from './detail_panels';
+import { CameraPanel, PhotoEdits, PhotoRating, RawPanel, RenditionPanel } from './detail_panels';
 import { DetailKeys } from './detail_keys';
-import { detailMode, detailPath, editPath, isPrintRequest, mockupPath, type DetailMode, type PrintRequest } from './detail_mode';
+import {
+  detailMode,
+  detailPath,
+  editPath,
+  isPrintRequest,
+  mockupPath,
+  type DetailMode,
+  type PrintRequest,
+} from './detail_mode';
 import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
 import { IntentChoice } from '../../raw_edit/proof/intent_choice';
 import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
@@ -146,7 +145,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     print: PrintStore;
     presenter: RawEditPresenter;
   } | null>(null);
-  const session = heldSession?.photoId === photoId && heldSession.mode === mode ? heldSession : null;
+  const session =
+    heldSession?.photoId === photoId && heldSession.mode === mode ? heldSession : null;
 
   useEffect(() => {
     void photos.openDetail(photoId, sourceOfPath(pathname));
@@ -185,22 +185,49 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     const repair = new RepairStore(edit, keystone);
     const loupe = new LoupeStore(crop, keystone, repair);
     const print = new PrintStore();
-    const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print, device);
+    const presenter = new RawEditPresenter(
+      edit,
+      stage,
+      crop,
+      keystone,
+      repair,
+      loupe,
+      print,
+      device,
+    );
     // Before the proof, so a sheet opens as this device's rather than as the desktop's and then turns into it.
     presenter.print.setTouch(touch);
     if (mode === 'print') presenter.setSoftProof(requestedPrint.current.proof);
     else presenter.restoreSoftProof();
-    setSession({ photoId, mode, touch, edit, stage, crop, keystone, repair, loupe, print, presenter });
-    let startingRotation: number | null = null;
-    void presenter.open(photoId, mode === 'print' ? requestedPrint.current.rendition : EDIT_LONG_EDGE).then(() => {
-      startingRotation = edit.doc?.rotate ?? 0;
+    setSession({
+      photoId,
+      mode,
+      touch,
+      edit,
+      stage,
+      crop,
+      keystone,
+      repair,
+      loupe,
+      print,
+      presenter,
     });
+    let startingRotation: number | null = null;
+    void presenter
+      .open(photoId, mode === 'print' ? requestedPrint.current.rendition : EDIT_LONG_EDGE)
+      .then(() => {
+        startingRotation = edit.doc?.rotate ?? 0;
+      });
     return () => {
       presenter.close();
       setSession(null);
       // The editor saves through its own store, so the copy the Edits panel holds is behind
       // by however much was changed here.
-      if (mode === 'edit') photos.forgetEdits(photoId, startingRotation != null && startingRotation !== edit.doc?.rotate);
+      if (mode === 'edit')
+        photos.forgetEdits(
+          photoId,
+          startingRotation != null && startingRotation !== edit.doc?.rotate,
+        );
     };
   }, [mode, photoId, photos, touch, device]);
 
@@ -212,7 +239,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // press: the entry the way out replaces is then identical to the one already behind it, so
   // the first Back after Done or Escape does nothing at all.
   const replacePastSheet = useReplacePastSheet();
-  const stopPreview = useCallback(() => replacePastSheet(photoPathname), [replacePastSheet, photoPathname]);
+  const stopPreview = useCallback(
+    () => replacePastSheet(photoPathname),
+    [replacePastSheet, photoPathname],
+  );
   const showsHdr = store.showsHdr(photoId);
   const proof: SoftProof = session != null ? session.stage.softProof : store.proofOf(photoId);
   const proofAs = (next: SoftProof): void => {
@@ -283,11 +313,20 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // panels lay out inside what it leaves. So opening the panels never moves it -
   // which is the point, since a strip costs a third of what their column does and
   // the edge that is wrong for them is routinely the right one for it.
-  const stripAxis = aspect == null ? 'below' : stripEdge(aspect, store.detailWidth, store.detailHeight, strip.view.thickness);
+  const stripAxis =
+    aspect == null
+      ? 'below'
+      : stripEdge(aspect, store.detailWidth, store.detailHeight, strip.view.thickness);
   // The phone's strip is inside the detail grid rather than around it, and its panels
   // are a sheet: neither takes a slice off the other there.
-  const stripTaken = !mobile && stripOpen && !previewing ? { edge: stripAxis, thickness: strip.view.thickness } : null;
-  const edge = aspect == null ? 'beside' : panelEdge(aspect, store.detailWidth, store.detailHeight, stripTaken);
+  const stripTaken =
+    !mobile && stripOpen && !previewing
+      ? { edge: stripAxis, thickness: strip.view.thickness }
+      : null;
+  const edge =
+    aspect == null
+      ? 'beside'
+      : panelEdge(aspect, store.detailWidth, store.detailHeight, stripTaken);
   // Beside, the column runs the full height of the page, so every row fits
   // without scrolling; below, it is a 34vh strip and does not, and neither does
   // a phone's sheet.
@@ -298,44 +337,45 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
 
-  const metaPanels = mode === 'print' ? (
-    session != null && (
-      <PrintControls
-        proof={session.stage.softProof}
-        store={session.print}
-        presenter={session.presenter.print}
-        disabled={!session.stage.live}
-        mobile={mobile || touch}
-      />
-    )
-  ) : editing ? (
-    session != null && (
-      <RawEditPanel
-        key={photoId}
-        edit={session.edit}
-        stage={session.stage}
-        crop={session.crop}
-        keystone={session.keystone}
-        repair={session.repair}
-        print={session.print}
-        presenter={session.presenter}
-        mobile={mobile || touch}
-      />
-    )
-  ) : (
-    <>
-      {showsHdr && proof === 'srgb' && (
-        <Panel title={PrintPanelStrings.toneMapping()} style={panelStyle}>
-          <IntentChoice value={store.proofIntent} onChange={photos.chooseProofIntent} />
-        </Panel>
-      )}
-      <DetailInfo photoId={photoId} style={panelStyle} />
-      <PhotoEdits photoId={photoId} defaultOpen={expanded} style={panelStyle} />
-      <CameraPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
-      <RenditionPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
-      <RawPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
-    </>
-  );
+  const metaPanels =
+    mode === 'print' ? (
+      session != null && (
+        <PrintControls
+          proof={session.stage.softProof}
+          store={session.print}
+          presenter={session.presenter.print}
+          disabled={!session.stage.live}
+          mobile={mobile || touch}
+        />
+      )
+    ) : editing ? (
+      session != null && (
+        <RawEditPanel
+          key={photoId}
+          edit={session.edit}
+          stage={session.stage}
+          crop={session.crop}
+          keystone={session.keystone}
+          repair={session.repair}
+          print={session.print}
+          presenter={session.presenter}
+          mobile={mobile || touch}
+        />
+      )
+    ) : (
+      <>
+        {showsHdr && proof === 'srgb' && (
+          <Panel title={PrintPanelStrings.toneMapping()} style={panelStyle}>
+            <IntentChoice value={store.proofIntent} onChange={photos.chooseProofIntent} />
+          </Panel>
+        )}
+        <DetailInfo photoId={photoId} style={panelStyle} />
+        <PhotoEdits photoId={photoId} defaultOpen={expanded} style={panelStyle} />
+        <CameraPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
+        <RenditionPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
+        <RawPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
+      </>
+    );
 
   // On a phone the photograph is the page. Everything the cull needs on every
   // frame is one bar pinned to the window - the verdict, and the way to the
@@ -343,12 +383,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // and the metadata is a fold above it rather than a column stealing the
   // screen. Desktop keeps the verdict in the header instead, so hiding the
   // panels never takes the cull controls with them.
-  const panels = mobilePreview ? metaPanels : mobile ? (
-    <div
-      {...stylex.props(styles.sheetBar)}
-      role="region"
-      aria-label={PhotoDetailStrings.details()}
-    >
+  const panels = mobilePreview ? (
+    metaPanels
+  ) : mobile ? (
+    <div {...stylex.props(styles.sheetBar)} role="region" aria-label={PhotoDetailStrings.details()}>
       {sheetOpen && (
         <div {...stylex.props(styles.panels, styles.panelsInSheet)}>
           {!editing && (
@@ -367,7 +405,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           </div>
           <Button
             iconOnly
-            aria-label={stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()}
+            aria-label={
+              stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()
+            }
             aria-expanded={stripOpen}
             onClick={toggleStrip}
           >
@@ -375,7 +415,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           </Button>
           <Button
             iconOnly
-            aria-label={sheetOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
+            aria-label={
+              sheetOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()
+            }
             aria-expanded={sheetOpen}
             onClick={() => setSheetOpen(!sheetOpen)}
           >
@@ -426,7 +468,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
       <div
         ref={setBox}
-        {...stylex.props(styles.frame, stripAxis === 'below' ? styles.frameBelow : styles.frameBeside)}
+        {...stylex.props(
+          styles.frame,
+          stripAxis === 'below' ? styles.frameBelow : styles.frameBeside,
+        )}
       >
         <div
           {...stylex.props(
@@ -464,7 +509,12 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
               />
             )
           ) : (
-            <DetailFrame photoId={photoId} toolsInto={toolsSlot} zoomInto={zoomSlot} fullscreenRef={setStage} />
+            <DetailFrame
+              photoId={photoId}
+              toolsInto={toolsSlot}
+              zoomInto={zoomSlot}
+              fullscreenRef={setStage}
+            />
           )}
           {/* Along the foot whatever shape the phone is in: the sheet is the bottom of
               the window, so a strip down the side of it would be a column an inch wide.
@@ -476,7 +526,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
         {/* Outside the panels, so it spans them: whichever axis still has room
             once they have taken theirs is the one to spend on the strip. */}
-        {stripOpen && !mobile && !previewing && <DetailFilmstrip photoId={photoId} strip={strip} edge={stripAxis} />}
+        {stripOpen && !mobile && !previewing && (
+          <DetailFilmstrip photoId={photoId} strip={strip} edge={stripAxis} />
+        )}
       </div>
     </Page>
   );

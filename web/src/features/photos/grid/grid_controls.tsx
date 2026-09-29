@@ -25,9 +25,9 @@ import { styles } from './grid_controls.stylex';
 import { GridFilterMenu } from './grid_filter_menu';
 import { GridOverflow } from './grid_overflow';
 import { activeFilters, type PhotoFilters } from './photo_filters';
-export const ORDERINGS: Option<Ordering>[] = (['taken_desc', 'taken_asc', 'added_desc', 'added_asc'] as const).map(
-  (value) => ({ value, label: GridControlsStrings.ordering(value) }),
-);
+export const ORDERINGS: Option<Ordering>[] = (
+  ['taken_desc', 'taken_asc', 'added_desc', 'added_asc'] as const
+).map((value) => ({ value, label: GridControlsStrings.ordering(value) }));
 
 // Which way the sort runs, drawn: bars growing down the icon for an ascending order and
 // shrinking for a descending one. Exhaustive over `Ordering`, so a new one has to choose.
@@ -44,21 +44,36 @@ type ViewKey = 'active' | 'untriaged' | 'picked' | 'rejected' | 'all';
 // "Active" leads because a reject is a decision to stop seeing something, so it
 // should leave the working set immediately.
 const VIEWS: (Option<ViewKey> & { filters: PhotoFilters })[] = [
-  { value: 'active', label: GridControlsStrings.viewActive(), icon: <Layers size={ICON} />, filters: activeFilters() },
+  {
+    value: 'active',
+    label: GridControlsStrings.viewActive(),
+    icon: <Layers size={ICON} />,
+    filters: activeFilters(),
+  },
   {
     value: 'untriaged',
     label: GridControlsStrings.viewUntriaged(),
     icon: <CircleDashed size={ICON} />,
     filters: { triage: ['untriaged'] },
   },
-  { value: 'picked', label: GridControlsStrings.viewPicks(), icon: <ThumbsUp size={ICON} />, filters: { triage: ['picked'] } },
+  {
+    value: 'picked',
+    label: GridControlsStrings.viewPicks(),
+    icon: <ThumbsUp size={ICON} />,
+    filters: { triage: ['picked'] },
+  },
   {
     value: 'rejected',
     label: GridControlsStrings.viewRejects(),
     icon: <ThumbsDown size={ICON} />,
     filters: { triage: ['rejected'] },
   },
-  { value: 'all', label: GridControlsStrings.viewAll(), icon: <SquareCheck size={ICON} />, filters: {} },
+  {
+    value: 'all',
+    label: GridControlsStrings.viewAll(),
+    icon: <SquareCheck size={ICON} />,
+    filters: {},
+  },
 ];
 
 // Everything else, behind one button. These union rather than intersect, so
@@ -91,11 +106,14 @@ export const GridControls = observer(function GridControls({
           wants Rejects on a phone already is. */}
       <SegmentedControl
         label={GridControlsStrings.filterPhotos()}
-        options={mobile ? VIEWS.filter((v) => v.value === 'active' || v.value === 'untriaged') : VIEWS}
+        options={
+          mobile ? VIEWS.filter((v) => v.value === 'active' || v.value === 'untriaged') : VIEWS
+        }
         value={activeView(store.filters)}
         onChange={(key) => {
           const view = VIEWS.find((v) => v.value === key);
-          if (view != null) void photos.setFilters({ ...view.filters, search: store.filters.search });
+          if (view != null)
+            void photos.setFilters({ ...view.filters, search: store.filters.search });
         }}
       />
 
@@ -105,7 +123,9 @@ export const GridControls = observer(function GridControls({
           inventing one, and it would jump when the real answer landed. */}
       {store.ordering != null && (
         <Select
-          label={GridControlsStrings.sortedBy(ORDERINGS.find((o) => o.value === store.ordering)?.label ?? '')}
+          label={GridControlsStrings.sortedBy(
+            ORDERINGS.find((o) => o.value === store.ordering)?.label ?? '',
+          )}
           icon={SORT_ICONS[store.ordering]}
           options={ORDERINGS}
           value={store.ordering}

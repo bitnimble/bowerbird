@@ -136,54 +136,56 @@ export const CropOverlay = observer(function CropOverlay({
    * Pointer capture rather than window listeners: a drag that leaves the element still belongs
    * to it, and capture is what keeps the moves coming without a teardown to forget.
    */
-  const drag = (grip: CropGrip | null) => (event: ReactPointerEvent<HTMLDivElement>): void => {
-    // One drag at a time. A second finger landing on another grip would otherwise run this
-    // again, and the two would fight over the document a move at a time.
-    if (!event.isPrimary || held.current != null) return;
-    if (box.width === 0 || box.height === 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const target = event.currentTarget;
-    // The pointer can already be gone by the time this runs, and capturing a dead one throws.
-    try {
-      target.setPointerCapture(event.pointerId);
-    } catch {
-      /* Not captured, so a drag that leaves the grip ends early. Better than no drag at all. */
-    }
+  const drag =
+    (grip: CropGrip | null) =>
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      // One drag at a time. A second finger landing on another grip would otherwise run this
+      // again, and the two would fight over the document a move at a time.
+      if (!event.isPrimary || held.current != null) return;
+      if (box.width === 0 || box.height === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const target = event.currentTarget;
+      // The pointer can already be gone by the time this runs, and capturing a dead one throws.
+      try {
+        target.setPointerCapture(event.pointerId);
+      } catch {
+        /* Not captured, so a drag that leaves the grip ends early. Better than no drag at all. */
+      }
 
-    const from = { x: event.clientX, y: event.clientY };
-    const start = { ...rect };
-    const by = (at: { clientX: number; clientY: number }): { x: number; y: number } => ({
-      x: (at.clientX - from.x) / box.width,
-      y: (at.clientY - from.y) / box.height,
-    });
+      const from = { x: event.clientX, y: event.clientY };
+      const start = { ...rect };
+      const by = (at: { clientX: number; clientY: number }): { x: number; y: number } => ({
+        x: (at.clientX - from.x) / box.width,
+        y: (at.clientY - from.y) / box.height,
+      });
 
-    const onMove = (at: PointerEvent): void => presenter.dragCrop(start, grip, by(at), false);
-    const release = (): void => {
-      target.removeEventListener('pointermove', onMove);
-      target.removeEventListener('pointerup', onUp);
-      target.removeEventListener('pointercancel', onCancel);
-      target.removeEventListener('lostpointercapture', onCancel);
-      held.current = null;
+      const onMove = (at: PointerEvent): void => presenter.dragCrop(start, grip, by(at), false);
+      const release = (): void => {
+        target.removeEventListener('pointermove', onMove);
+        target.removeEventListener('pointerup', onUp);
+        target.removeEventListener('pointercancel', onCancel);
+        target.removeEventListener('lostpointercapture', onCancel);
+        held.current = null;
+      };
+      const onUp = (at: PointerEvent): void => {
+        release();
+        presenter.dragCrop(start, grip, by(at), true);
+      };
+      // A cancel is the system taking the gesture away, not the reader finishing one, so it
+      // settles nothing: the rectangle stays where the last move put it and the next drag or
+      // slider commits it.
+      const onCancel = (): void => release();
+      held.current = release;
+      target.addEventListener('pointermove', onMove);
+      target.addEventListener('pointerup', onUp);
+      target.addEventListener('pointercancel', onCancel);
+      // **The one that covers a grip taken away mid-drag.** Closing the tool with a second finger
+      // removes this element while it holds the capture, which releases it *implicitly* - no
+      // `pointerup`, no `pointercancel`, so the two above never fire and `held` would stay set for
+      // the life of the session, refusing every later drag. `lostpointercapture` fires either way.
+      target.addEventListener('lostpointercapture', onCancel);
     };
-    const onUp = (at: PointerEvent): void => {
-      release();
-      presenter.dragCrop(start, grip, by(at), true);
-    };
-    // A cancel is the system taking the gesture away, not the reader finishing one, so it
-    // settles nothing: the rectangle stays where the last move put it and the next drag or
-    // slider commits it.
-    const onCancel = (): void => release();
-    held.current = release;
-    target.addEventListener('pointermove', onMove);
-    target.addEventListener('pointerup', onUp);
-    target.addEventListener('pointercancel', onCancel);
-    // **The one that covers a grip taken away mid-drag.** Closing the tool with a second finger
-    // removes this element while it holds the capture, which releases it *implicitly* - no
-    // `pointerup`, no `pointercancel`, so the two above never fire and `held` would stay set for
-    // the life of the session, refusing every later drag. `lostpointercapture` fires either way.
-    target.addEventListener('lostpointercapture', onCancel);
-  };
 
   const percent = (value: number): string => `${value * 100}%`;
   const inside = {
@@ -203,15 +205,26 @@ export const CropOverlay = observer(function CropOverlay({
     >
       {/* Four bands rather than one box with a giant shadow: a shadow spreads outwards from
           the element and would darken the page around the stage as well as the frame. */}
-      <div {...stylex.props(styles.shade)} style={{ left: 0, top: 0, right: 0, height: inside.top }} />
+      <div
+        {...stylex.props(styles.shade)}
+        style={{ left: 0, top: 0, right: 0, height: inside.top }}
+      />
       <div
         {...stylex.props(styles.shade)}
         style={{ left: 0, top: inside.top, width: inside.left, bottom: percent(1 - rect.bottom) }}
       />
-      <div {...stylex.props(styles.shade)} style={{ left: 0, bottom: 0, right: 0, height: percent(1 - rect.bottom) }} />
       <div
         {...stylex.props(styles.shade)}
-        style={{ right: 0, top: inside.top, width: percent(1 - rect.right), bottom: percent(1 - rect.bottom) }}
+        style={{ left: 0, bottom: 0, right: 0, height: percent(1 - rect.bottom) }}
+      />
+      <div
+        {...stylex.props(styles.shade)}
+        style={{
+          right: 0,
+          top: inside.top,
+          width: percent(1 - rect.right),
+          bottom: percent(1 - rect.bottom),
+        }}
       />
 
       <div {...stylex.props(styles.rect)} style={inside} onPointerDown={drag(null)}>

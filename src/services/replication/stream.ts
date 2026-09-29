@@ -17,7 +17,13 @@ const log = new Logger('replication');
  * some rows from before a concurrent write and some from after could honestly
  * claim neither.
  */
-export function page(db: Database, libraryId: string, held: Vector, after: string, limit = PAGE_ROWS): Page {
+export function page(
+  db: Database,
+  libraryId: string,
+  held: Vector,
+  after: string,
+  limit = PAGE_ROWS,
+): Page {
   // The scan starts at the lowest coverage of any origin, because an origin the
   // holder has never heard of is one it needs from the beginning. Rows above that
   // floor are then filtered per origin, which is the comparison that decides.
@@ -57,7 +63,10 @@ export function page(db: Database, libraryId: string, held: Vector, after: strin
     // as well as the row: a tombstone names the same id and lands in the same
     // `whereKey`, so sending one is asking the far side to fail on it instead.
     if (!parseable(entity, row.row_id)) {
-      log.warn('skipping a log row whose id cannot be read', { entity: row.entity, row: row.row_id });
+      log.warn('skipping a log row whose id cannot be read', {
+        entity: row.entity,
+        row: row.row_id,
+      });
       continue;
     }
     if (row.deleted === 1) {
@@ -102,12 +111,19 @@ function originsInLog(db: Database, libraryId: string): Set<string> {
   return new Set(rows.map((row) => row.origin));
 }
 
-function load(db: Database, libraryId: string, entity: ReplicatedEntity, rowId: string): Change | null {
+function load(
+  db: Database,
+  libraryId: string,
+  entity: ReplicatedEntity,
+  rowId: string,
+): Change | null {
   const columns = payloadColumns(entity);
   const stampColumns = entity.units.map((unit) => unit.stamp);
   const where = whereKey(entity, rowId, libraryId);
   const row = db
-    .query(`SELECT ${[...columns, ...stampColumns].join(', ')} FROM ${entity.table} WHERE ${where.sql}`)
+    .query(
+      `SELECT ${[...columns, ...stampColumns].join(', ')} FROM ${entity.table} WHERE ${where.sql}`,
+    )
     .get(...where.params) as Record<string, Cell> | null;
   if (row == null) return null;
 
@@ -118,15 +134,28 @@ function load(db: Database, libraryId: string, entity: ReplicatedEntity, rowId: 
     if (typeof stamp === 'string') stamps[unit.entity] = stamp;
   }
 
-  return { kind: entity.kind, rowId, deleted: false, row, stamps, sidecar: sidecarOf(db, entity, rowId) };
+  return {
+    kind: entity.kind,
+    rowId,
+    deleted: false,
+    row,
+    stamps,
+    sidecar: sidecarOf(db, entity, rowId),
+  };
 }
 
-function sidecarOf(db: Database, entity: ReplicatedEntity, rowId: string): Record<string, Cell> | null {
+function sidecarOf(
+  db: Database,
+  entity: ReplicatedEntity,
+  rowId: string,
+): Record<string, Cell> | null {
   if (entity.sidecar == null) return null;
   const side = whereSidecar(entity, rowId);
   return (
     (db
-      .query(`SELECT ${entity.sidecar.columns.join(', ')} FROM ${entity.sidecar.table} WHERE ${side.sql}`)
+      .query(
+        `SELECT ${entity.sidecar.columns.join(', ')} FROM ${entity.sidecar.table} WHERE ${side.sql}`,
+      )
       .get(...side.params) as Record<string, Cell> | null) ?? null
   );
 }
@@ -158,15 +187,25 @@ export function parseable(entity: ReplicatedEntity, rowId: string): boolean {
  * here: the alphabet ids are drawn from holds no slash, so the pair cannot be
  * ambiguous about where one id ends.
  */
-export function whereKey(entity: ReplicatedEntity, rowId: string, libraryId: string): { sql: string; params: string[] } {
+export function whereKey(
+  entity: ReplicatedEntity,
+  rowId: string,
+  libraryId: string,
+): { sql: string; params: string[] } {
   const clause = keyClause(entity, rowId);
   if (entity.libraryColumn == null) return clause;
-  return { sql: [`${entity.libraryColumn} = ?`, clause.sql].join(' AND '), params: [libraryId, ...clause.params] };
+  return {
+    sql: [`${entity.libraryColumn} = ?`, clause.sql].join(' AND '),
+    params: [libraryId, ...clause.params],
+  };
 }
 
 // Not `whereKey`: a sidecar table holds nothing but sidecars, so it has no library
 // column to scope by, and the row id it is keyed on is its owner's.
-export function whereSidecar(entity: ReplicatedEntity, rowId: string): { sql: string; params: string[] } {
+export function whereSidecar(
+  entity: ReplicatedEntity,
+  rowId: string,
+): { sql: string; params: string[] } {
   return keyClause(entity, rowId);
 }
 
@@ -179,7 +218,10 @@ function keyClause(entity: ReplicatedEntity, rowId: string): { sql: string; para
   // peer that sent it is the one recorded as failing (§8.6).
   const parts = keyPartsOf(rowId, entity.key);
   if (parts == null) {
-    throw new AppError('VALIDATION_ERROR', `a ${entity.kind} id must have ${entity.key.length} part(s): ${rowId}`);
+    throw new AppError(
+      'VALIDATION_ERROR',
+      `a ${entity.kind} id must have ${entity.key.length} part(s): ${rowId}`,
+    );
   }
   return { sql: entity.key.map((column) => `${column} = ?`).join(' AND '), params: [...parts] };
 }

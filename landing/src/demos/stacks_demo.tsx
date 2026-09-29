@@ -36,7 +36,10 @@ const bandOpen = stylex.keyframes({ from: { opacity: 0 } });
 const styles = stylex.create({
   grid: {
     display: 'grid',
-    gridTemplateColumns: { default: 'repeat(4, minmax(0, 1fr))', '@media (max-width: 600px)': 'repeat(3, minmax(0, 1fr))' },
+    gridTemplateColumns: {
+      default: 'repeat(4, minmax(0, 1fr))',
+      '@media (max-width: 600px)': 'repeat(3, minmax(0, 1fr))',
+    },
     gridAutoFlow: 'row dense',
     gap: size.gridGap,
   },
@@ -212,7 +215,17 @@ function Tile({ frame }: { frame: Frame }): JSX.Element {
 
 function Icon({ path }: { path: string }): JSX.Element {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
       <path d={path} />
     </svg>
   );

@@ -14,10 +14,6 @@ import type { ScanTiles } from './scan_tiles';
 const log = new Logger('scan');
 const SCAN_PROGRESS_EVERY = 500;
 
-
-
-
-
 /**
  * Lightroom's develop settings for the photos a run just inserted.
  *
@@ -27,8 +23,6 @@ const SCAN_PROGRESS_EVERY = 500;
 export interface SidecarImporter {
   importFor(rootPath: string, photos: readonly { id: string; filePath: string }[]): number;
 }
-
-
 
 export class ScanBatch {
   readonly shoots: ReturnType<ShootsRepository['listFolders']>;
@@ -85,12 +79,22 @@ export class ScanBatch {
       photos_per_second: this.rate,
     });
     if (scanned > 0 && scanned % SCAN_PROGRESS_EVERY === 0) {
-      log.info('scanning', { library: this.libraryId, scanned, of: toScan, ms: Date.now() - this.startedAt });
+      log.info('scanning', {
+        library: this.libraryId,
+        scanned,
+        of: toScan,
+        ms: Date.now() - this.startedAt,
+      });
     }
   }
 
   insertPhoto(entry: AddedEntry, addedAt: string): string {
-    const id = this.reconciler.insertAdded(this.libraryId, entry, this.shootFor(entry.filePath), addedAt);
+    const id = this.reconciler.insertAdded(
+      this.libraryId,
+      entry,
+      this.shootFor(entry.filePath),
+      addedAt,
+    );
     this.touched?.push(id);
     this.awaitingSidecars.push({ id, filePath: entry.filePath });
     // Row now has id scan could not know, which is all its staged tile was waiting for.
@@ -141,9 +145,11 @@ export class ScanBatch {
   relocateShoots(relocations: readonly ShootRelocation[]): void {
     for (const relocation of relocations) {
       for (const shoot of this.shoots) {
-        if (shoot.folder_path === relocation.oldFolderPath) shoot.folder_path = relocation.newFolderPath;
+        if (shoot.folder_path === relocation.oldFolderPath)
+          shoot.folder_path = relocation.newFolderPath;
         else if (shootContains(relocation.oldFolderPath, shoot.folder_path)) {
-          shoot.folder_path = relocation.newFolderPath + shoot.folder_path.slice(relocation.oldFolderPath.length);
+          shoot.folder_path =
+            relocation.newFolderPath + shoot.folder_path.slice(relocation.oldFolderPath.length);
         }
       }
     }

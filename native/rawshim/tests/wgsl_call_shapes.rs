@@ -81,7 +81,9 @@ fn calls(block: &naga::Block, in_loop: bool, out: &mut Vec<(naga::Handle<naga::F
                     calls(&case.body, in_loop, out);
                 }
             }
-            Statement::Loop { body, continuing, .. } => {
+            Statement::Loop {
+                body, continuing, ..
+            } => {
                 calls(body, true, out);
                 calls(continuing, true, out);
             }
@@ -98,11 +100,19 @@ fn violations(label: &str, module: &Module, out: &mut Vec<String>) {
             .then(|| ty.name.clone().unwrap_or_else(|| "struct".to_string()))
     };
     let name_of = |handle: naga::Handle<naga::Function>| -> String {
-        module.functions[handle].name.clone().unwrap_or_else(|| "<unnamed>".to_string())
+        module.functions[handle]
+            .name
+            .clone()
+            .unwrap_or_else(|| "<unnamed>".to_string())
     };
 
     // Every call edge: from arena functions, and from entry points (which cannot be callees).
-    let mut edges: Vec<(String, Option<naga::Handle<naga::Function>>, naga::Handle<naga::Function>, bool)> = Vec::new();
+    let mut edges: Vec<(
+        String,
+        Option<naga::Handle<naga::Function>>,
+        naga::Handle<naga::Function>,
+        bool,
+    )> = Vec::new();
     for (handle, function) in module.functions.iter() {
         let mut found = Vec::new();
         calls(&function.body, false, &mut found);
@@ -136,12 +146,18 @@ fn violations(label: &str, module: &Module, out: &mut Vec<String>) {
     let mut seen: HashSet<String> = HashSet::new();
     for (caller_name, caller, callee, in_loop) in &edges {
         let function = &module.functions[*callee];
-        let Some(returned) = struct_name(function) else { continue };
+        let Some(returned) = struct_name(function) else {
+            continue;
+        };
         let under_loop = *in_loop || caller.is_some_and(|c| loop_reached.contains(&c));
         if !under_loop {
             continue;
         }
-        let how = if *in_loop { "inside a loop in" } else { "from the loop-reached" };
+        let how = if *in_loop {
+            "inside a loop in"
+        } else {
+            "from the loop-reached"
+        };
         seen.insert(format!(
             "  {label}: `{}` returns `{returned}` by value and is called {how} `{caller_name}`",
             name_of(*callee),

@@ -3,15 +3,29 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
 import type { TransferDirection } from '../../schemas/blobs';
-import type { AddReplicaRequest, BrowsedRemote, ReplicaSummary, ReplicateResult } from '../../schemas/replication';
+import type {
+  AddReplicaRequest,
+  BrowsedRemote,
+  ReplicaSummary,
+  ReplicateResult,
+} from '../../schemas/replication';
 import type { BlobLocations } from '../blobs/blob_locations';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { Library } from '../../schemas/libraries';
-import { LEASE_REFRESH_MS, type SyncLocksRepository } from '../sync/coordination/sync_locks_repository';
+import {
+  LEASE_REFRESH_MS,
+  type SyncLocksRepository,
+} from '../sync/coordination/sync_locks_repository';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import { collectTombstones } from './gc';
 import { drainMaterialisations, unsettled } from './materialise';
-import { autoTransfersOriginals, pairedPeers, reachablePeers, recordPeerOutcome, syncsOriginals } from './pairing';
+import {
+  autoTransfersOriginals,
+  pairedPeers,
+  reachablePeers,
+  recordPeerOutcome,
+  syncsOriginals,
+} from './pairing';
 import { addReplica, browseRemote, pullFromRemote, pushToRemote } from './remote';
 import type { PullResult } from './session';
 import { LibraryActivity } from '../activity/library_activity';
@@ -55,7 +69,11 @@ export class ReplicationRunner {
      */
     private readonly replicated: (libraryId: string) => void,
     /** Queues the originals one side holds that the other lacks, answering how many. */
-    private readonly transferOriginals: (libraryId: string, peerId: string, direction: TransferDirection) => Promise<number>,
+    private readonly transferOriginals: (
+      libraryId: string,
+      peerId: string,
+      direction: TransferDirection,
+    ) => Promise<number>,
     private readonly activity = new LibraryActivity(),
   ) {}
 
@@ -103,7 +121,10 @@ export class ReplicationRunner {
     try {
       this.born(library);
     } catch (error) {
-      log.warn('a listener refused a replica that was already added', { library: libraryId, err: String(error) });
+      log.warn('a listener refused a replica that was already added', {
+        library: libraryId,
+        err: String(error),
+      });
     }
   }
 
@@ -128,19 +149,34 @@ export class ReplicationRunner {
   private async exchangeOriginals(libraryId: string, peerId: string): Promise<void> {
     const library = this.libraries.getById(libraryId);
     if (library == null) return;
-    if (!library.read_only && syncsOriginals(this.db, libraryId)) await this.queueOriginals(libraryId, peerId, 'pull');
-    if (pairedPeers(this.db, libraryId).some((peer) => peer.peer_id === peerId && peer.wants_originals)) {
+    if (!library.read_only && syncsOriginals(this.db, libraryId))
+      await this.queueOriginals(libraryId, peerId, 'pull');
+    if (
+      pairedPeers(this.db, libraryId).some(
+        (peer) => peer.peer_id === peerId && peer.wants_originals,
+      )
+    ) {
       await this.queueOriginals(libraryId, peerId, 'push');
     }
   }
 
   // The catalogue has already landed, so a queue that refuses is a transfer to retry, not a failed sync.
-  private async queueOriginals(libraryId: string, peerId: string, direction: TransferDirection): Promise<void> {
+  private async queueOriginals(
+    libraryId: string,
+    peerId: string,
+    direction: TransferDirection,
+  ): Promise<void> {
     try {
       const queued = await this.transferOriginals(libraryId, peerId, direction);
-      if (queued > 0) log.info('queued originals', { library: libraryId, peer: peerId, direction, queued });
+      if (queued > 0)
+        log.info('queued originals', { library: libraryId, peer: peerId, direction, queued });
     } catch (error) {
-      log.warn('could not queue originals', { library: libraryId, peer: peerId, direction, err: String(error) });
+      log.warn('could not queue originals', {
+        library: libraryId,
+        peer: peerId,
+        direction,
+        err: String(error),
+      });
     }
   }
 
@@ -175,7 +211,8 @@ export class ReplicationRunner {
     // network: held across a peer that has stopped answering rather than failing,
     // this would freeze every binning, rename, scan and incoming push on the
     // library until the connection gave up on itself.
-    const guard = <T,>(fn: () => T): Promise<T> => libraryMutex.run(libraryId, () => Promise.resolve(fn()));
+    const guard = <T>(fn: () => T): Promise<T> =>
+      libraryMutex.run(libraryId, () => Promise.resolve(fn()));
     try {
       {
         let applied = 0;
@@ -213,9 +250,15 @@ export class ReplicationRunner {
           // things to say, and this one is retried on the next run. Recorded
           // rather than only logged, because a replica quietly out of touch for
           // a fortnight is the failure this is for (§8.6).
-          const reason = refused == null ? null : refused instanceof Error ? refused.message : String(refused);
+          const reason =
+            refused == null ? null : refused instanceof Error ? refused.message : String(refused);
           recordPeerOutcome(this.db, libraryId, peer.peerId, reason);
-          if (reason != null) log.warn('could not replicate with a peer', { library: libraryId, peer: peer.peerId, err: reason });
+          if (reason != null)
+            log.warn('could not replicate with a peer', {
+              library: libraryId,
+              peer: peer.peerId,
+              err: reason,
+            });
           if (taken == null && given == null) continue;
           log.info('replicated', {
             library: libraryId,
@@ -257,7 +300,9 @@ export class ReplicationRunner {
   async materialise(libraryId: string): Promise<number> {
     const library = this.libraries.getById(libraryId);
     if (library == null) return 0;
-    return this.activity.track(libraryId, 'syncing', 'materialise', () => drainMaterialisations(this.db, library, this.locations));
+    return this.activity.track(libraryId, 'syncing', 'materialise', () =>
+      drainMaterialisations(this.db, library, this.locations),
+    );
   }
 
   /** What the drain could not make, which a scan has to leave alone (§7.4). */
@@ -277,12 +322,17 @@ export class ReplicationRunner {
   }
 
   private async replicateAll(): Promise<void> {
-    const rows = this.db.query('SELECT library_id FROM replication_libraries').all() as { library_id: string }[];
+    const rows = this.db.query('SELECT library_id FROM replication_libraries').all() as {
+      library_id: string;
+    }[];
     for (const row of rows) {
       try {
         await this.replicate(row.library_id);
       } catch (error) {
-        log.warn('scheduled replication did not run', { library: row.library_id, err: String(error) });
+        log.warn('scheduled replication did not run', {
+          library: row.library_id,
+          err: String(error),
+        });
       }
     }
   }

@@ -50,7 +50,10 @@ fn main() {
         return;
     };
 
-    println!("{:>28}  {:>11}  {:>7}  {:>7}  {:>7}  {:>7}", "image", "pixels", "R dB", "G dB", "B dB", "all dB");
+    println!(
+        "{:>28}  {:>11}  {:>7}  {:>7}  {:>7}  {:>7}",
+        "image", "pixels", "R dB", "G dB", "B dB", "all dB"
+    );
 
     let mut totals = Vec::new();
     for path in &files {
@@ -156,13 +159,23 @@ fn main() {
         // collapsed - every pixel can be close and the distinct colours still have run together -
         // so this is written out to be looked at.
         if let Ok(into) = std::env::var("BOWERBIRD_DEMOSAIC_OUT") {
-            let bytes: Vec<u8> =
-                out.iter().map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8).collect();
-            let image = rawshim::rgb::RgbRef { width: w, height: h, data: &bytes };
+            let bytes: Vec<u8> = out
+                .iter()
+                .map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                .collect();
+            let image = rawshim::rgb::RgbRef {
+                width: w,
+                height: h,
+                data: &bytes,
+            };
             let jpeg = rawshim::jpeg::encode(image, 95).expect("the reconstruction encodes");
             std::fs::write(format!("{into}-{name}.jpg"), jpeg).expect("it writes");
             let flat: Vec<u8> = truth.data.clone();
-            let image = rawshim::rgb::RgbRef { width: truth.width, height: truth.height, data: &flat };
+            let image = rawshim::rgb::RgbRef {
+                width: truth.width,
+                height: truth.height,
+                data: &flat,
+            };
             let jpeg = rawshim::jpeg::encode(image, 95).expect("the truth encodes");
             std::fs::write(format!("{into}-{name}-truth.jpg"), jpeg).expect("it writes");
         }
@@ -175,7 +188,14 @@ fn main() {
         println!(
             "{name:>28}  {:>8.2}MP  {:>7.2}  {:>7.2}  {:>7.2}  {:>7.2}   {ms}ms   (bilinear R {:>5.2} G {:>5.2} B {:>5.2} all {:>5.2})",
             (w * h) as f64 / 1e6,
-            db[0], db[1], db[2], db[3], floor[0], floor[1], floor[2], floor[3],
+            db[0],
+            db[1],
+            db[2],
+            db[3],
+            floor[0],
+            floor[1],
+            floor[2],
+            floor[3],
         );
         totals.push(db);
     }
@@ -184,7 +204,12 @@ fn main() {
         let mean = |i: usize| totals.iter().map(|d| d[i]).sum::<f64>() / totals.len() as f64;
         println!(
             "{:>28}  {:>11}  {:>7.2}  {:>7.2}  {:>7.2}  {:>7.2}",
-            "mean", "", mean(0), mean(1), mean(2), mean(3)
+            "mean",
+            "",
+            mean(0),
+            mean(1),
+            mean(2),
+            mean(3)
         );
     }
 }
@@ -209,7 +234,11 @@ fn chirp(side: usize) -> rawshim::rgb::Rgb {
             }
         }
     }
-    rawshim::rgb::Rgb { width: side, height: side, data }
+    rawshim::rgb::Rgb {
+        width: side,
+        height: side,
+        data,
+    }
 }
 
 /// Box-downsamples by two. See the call site for why the measurement depends on it.
@@ -222,14 +251,20 @@ fn halve(image: &rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
                 let mut total = 0u32;
                 for dr in 0..2 {
                     for dc in 0..2 {
-                        total += u32::from(image.data[((r * 2 + dr) * image.width + c * 2 + dc) * 3 + ch]);
+                        total += u32::from(
+                            image.data[((r * 2 + dr) * image.width + c * 2 + dc) * 3 + ch],
+                        );
                     }
                 }
                 data[(r * w + c) * 3 + ch] = (total / 4) as u8;
             }
         }
     }
-    rawshim::rgb::Rgb { width: w, height: h, data }
+    rawshim::rgb::Rgb {
+        width: w,
+        height: h,
+        data,
+    }
 }
 
 /// The simplest thing that works: each missing sample is the mean of its neighbours of that
@@ -290,7 +325,11 @@ fn psnr(truth: &rawshim::rgb::Rgb, got: &[f32], w: usize, h: usize) -> [f64; 4] 
     }
     let db = |sum: f64, n: f64| {
         let mse = sum / n;
-        if mse <= 0.0 { 99.0 } else { 10.0 * (255.0f64 * 255.0 / mse).log10() }
+        if mse <= 0.0 {
+            99.0
+        } else {
+            10.0 * (255.0f64 * 255.0 / mse).log10()
+        }
     };
     let n = count as f64;
     [

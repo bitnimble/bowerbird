@@ -48,7 +48,11 @@ afterEach(() => {
 
 function build(): { store: MergeStore; presenter: MergePresenter } {
   const store = new MergeStore();
-  const presenter = new MergePresenter(store, new ToastsPresenter(new ToastsStore()), NO_COMPOSITOR);
+  const presenter = new MergePresenter(
+    store,
+    new ToastsPresenter(new ToastsStore()),
+    NO_COMPOSITOR,
+  );
   return { store, presenter };
 }
 
@@ -125,7 +129,8 @@ test('leaving a page posts no cancel, even mid-carve', async () => {
 });
 
 test('a failed carve names why', async () => {
-  compositesApi.getAssemblyJob = () => Promise.resolve({ ...analysing(1), status: 'failed', error: 'no adapter' });
+  compositesApi.getAssemblyJob = () =>
+    Promise.resolve({ ...analysing(1), status: 'failed', error: 'no adapter' });
   const { store, presenter } = build();
   await presenter.openJob(jobId);
   expect(store.status).toBe('error');

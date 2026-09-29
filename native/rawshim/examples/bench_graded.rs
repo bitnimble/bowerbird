@@ -13,7 +13,11 @@ fn main() {
 
     let frame = rawshim::decode_frame(&path, 0).expect("decode");
     let samples = frame.samples16().expect("16-bit");
-    let source = Source { samples, width: frame.width, height: frame.height };
+    let source = Source {
+        samples,
+        width: frame.width,
+        height: frame.height,
+    };
 
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
     let resident = frame.on_device(gpu).expect("the frame reaches the device");

@@ -24,19 +24,42 @@ function sample() {
     crop: [0.013, 0.077, 0.988, 0.945],
     reference: 1,
     seamRmsPx: 1.75,
-    vertices: [[100, 100], [400, 100], [400, 400], [100, 400], [700, 100], [700, 400]],
-    tiles: [[0, 1, 2, 3], [1, 4, 5, 2]],
+    vertices: [
+      [100, 100],
+      [400, 100],
+      [400, 400],
+      [100, 400],
+      [700, 100],
+      [700, 400],
+    ],
+    tiles: [
+      [0, 1, 2, 3],
+      [1, 4, 5, 2],
+    ],
     pick: [1, 0],
     base: 0,
     seams: {
       pick: [1, 0],
       base: 0,
-      vertices: [[100, 100], [400, 100], [400, 400], [100, 400], [700, 100], [700, 400]],
-      tiles: [[0, 1, 2, 3], [1, 4, 5]],
+      vertices: [
+        [100, 100],
+        [400, 100],
+        [400, 400],
+        [100, 400],
+        [700, 100],
+        [700, 400],
+      ],
+      tiles: [
+        [0, 1, 2, 3],
+        [1, 4, 5],
+      ],
       source: [1, 1],
       zone: [0, 1],
       corridor: [0.031, 0.0125],
-      warp: [[1.002, 0.013, -0.004, 0.998, 2.5, -1.25], [1, 0, 0, 1, 0, 0]],
+      warp: [
+        [1.002, 0.013, -0.004, 0.998, 2.5, -1.25],
+        [1, 0, 0, 1, 0, 0],
+      ],
       exposure: [1.043, 0.972],
     },
   };
@@ -51,22 +74,49 @@ describe('the assembly recipe', () => {
   test('round-trips, and its sources are what sourcesOf answers', () => {
     const recipe = AssemblyRecipeSchema.parse(sample());
     expect(recipe.tiles).toHaveLength(2);
-    expect(sourcesOf({ ...recipe, kind: 'assembly' })).toEqual(['photo00000000001', 'photo00000000002']);
+    expect(sourcesOf({ ...recipe, kind: 'assembly' })).toEqual([
+      'photo00000000001',
+      'photo00000000002',
+    ]);
   });
 
   test('a tile naming a vertex that does not exist is refused', () => {
-    expect(() => AssemblyRecipeSchema.parse({ ...sample(), tiles: [[0, 1, 99], [1, 4, 5, 2]] })).toThrow();
+    expect(() =>
+      AssemblyRecipeSchema.parse({
+        ...sample(),
+        tiles: [
+          [0, 1, 99],
+          [1, 4, 5, 2],
+        ],
+      }),
+    ).toThrow();
   });
 
   // Each case is otherwise whole, and asserts its own refusal: a bare throw passes on any other.
   test.each([
-    ['too many tiles', { tiles: loops(MOST_TILES + 1), pick: Array(MOST_TILES + 1).fill(0) }, 'tiles'],
+    [
+      'too many tiles',
+      { tiles: loops(MOST_TILES + 1), pick: Array(MOST_TILES + 1).fill(0) },
+      'tiles',
+    ],
     ['too many vertices', { vertices: points(MOST_VERTICES + 1) }, 'vertices'],
-    ['too many sources', { sources: Array(MOST_SOURCES + 1).fill(sample().sources[0]) }, `an assembly is made of at most ${MOST_SOURCES} photographs`],
+    [
+      'too many sources',
+      { sources: Array(MOST_SOURCES + 1).fill(sample().sources[0]) },
+      `an assembly is made of at most ${MOST_SOURCES} photographs`,
+    ],
     ['a base past the sources', { base: 2 }, 'the base names no source'],
     ['a short pick', { pick: [1] }, 'pick has to have one entry a tile'],
-    ['a piece short of an exposure', seamsWith({ exposure: [1.043] }), 'the seams have to have one exposure a piece'],
-    ['a piece short of a warp', seamsWith({ warp: [[1, 0, 0, 1, 0, 0]] }), 'the seams have to have one warp a piece'],
+    [
+      'a piece short of an exposure',
+      seamsWith({ exposure: [1.043] }),
+      'the seams have to have one exposure a piece',
+    ],
+    [
+      'a piece short of a warp',
+      seamsWith({ warp: [[1, 0, 0, 1, 0, 0]] }),
+      'the seams have to have one warp a piece',
+    ],
     ['a piece under no tile', seamsWith({ zone: [0, 2] }), 'a piece names no tile'],
     ['a piece of no source', seamsWith({ source: [1, 2] }), 'a piece names no source'],
     ['a negative feather', { feather: -0.01 }, 'feather'],
@@ -74,7 +124,8 @@ describe('the assembly recipe', () => {
     ['a volume key that is a path', { seamVolume: '../x' }, 'seamVolume'],
   ])('refuses %s', (_, change, refusal) => {
     const parsed = AssemblyRecipeSchema.safeParse({ ...sample(), ...change });
-    const said = parsed.error?.issues.flatMap((issue) => [issue.path.join('.'), issue.message]) ?? [];
+    const said =
+      parsed.error?.issues.flatMap((issue) => [issue.path.join('.'), issue.message]) ?? [];
     expect(said).toContain(refusal);
   });
 

@@ -13,7 +13,10 @@ export default defineConfig({
   plugins: [
     {
       enforce: 'pre',
-      ...mdx({ providerImportSource: '@mdx-js/react', remarkPlugins: [remarkFrontmatter, remarkMdxFrontmatter] }),
+      ...mdx({
+        providerImportSource: '@mdx-js/react',
+        remarkPlugins: [remarkFrontmatter, remarkMdxFrontmatter],
+      }),
     },
     stylex.vite(),
     react({ include: /\.(mdx|tsx?)$/ }),

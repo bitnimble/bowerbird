@@ -3,9 +3,7 @@ function originals(count: number): string {
 }
 
 export const ScanStripStrings = {
-  scanning: (counted: boolean) =>
-    counted ? 'reading files for changes'
-    : 'looking for files',
+  scanning: (counted: boolean) => (counted ? 'reading files for changes' : 'looking for files'),
   stopping: () => 'stopping after the current batch',
   cellsLabel: (done: number, total: number) => `${done} of ${total} files`,
   count: (done: number, total: number) => ` · ${done}/${total} files`,

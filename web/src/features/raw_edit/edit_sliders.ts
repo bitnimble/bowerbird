@@ -101,9 +101,30 @@ export const EFFECTS: readonly SliderSpec[] = [
  * grain left in the frame is a thing it will invert as readily.
  */
 export const DETAIL: readonly SliderSpec[] = [
-  { key: 'luminanceNoise', label: RawEditPanelStrings.luminance(), min: 0, max: 100, step: 1, measured: true },
-  { key: 'colourNoise', label: RawEditPanelStrings.colour(), min: 0, max: 100, step: 1, measured: true },
-  { key: 'sharpening', label: RawEditPanelStrings.sharpening(), min: 0, max: 100, step: 1, neutral: 50 },
+  {
+    key: 'luminanceNoise',
+    label: RawEditPanelStrings.luminance(),
+    min: 0,
+    max: 100,
+    step: 1,
+    measured: true,
+  },
+  {
+    key: 'colourNoise',
+    label: RawEditPanelStrings.colour(),
+    min: 0,
+    max: 100,
+    step: 1,
+    measured: true,
+  },
+  {
+    key: 'sharpening',
+    label: RawEditPanelStrings.sharpening(),
+    min: 0,
+    max: 100,
+    step: 1,
+    neutral: 50,
+  },
 ];
 
 /**
@@ -120,8 +141,22 @@ export const DETAIL: readonly SliderSpec[] = [
  * report. Full is the default: the measurement is usually right.
  */
 export const DUST: readonly SliderSpec[] = [
-  { key: 'dustSensitivity', label: RawEditPanelStrings.sensitivity(), min: 0, max: 100, step: 1, neutral: 25 },
-  { key: 'dustIntensity', label: RawEditPanelStrings.intensity(), min: 0, max: 100, step: 1, neutral: 100 },
+  {
+    key: 'dustSensitivity',
+    label: RawEditPanelStrings.sensitivity(),
+    min: 0,
+    max: 100,
+    step: 1,
+    neutral: 25,
+  },
+  {
+    key: 'dustIntensity',
+    label: RawEditPanelStrings.intensity(),
+    min: 0,
+    max: 100,
+    step: 1,
+    neutral: 100,
+  },
 ];
 
 /** Every slider whose value is a plain number, in the order the panel shows them. */
@@ -135,7 +170,10 @@ export const EDIT_SLIDERS: readonly SliderSpec[] = [...LIGHT, ...COLOUR, ...EFFE
 export function reading(value: number, { min, step }: Pick<SliderSpec, 'min' | 'step'>): string {
   const sign = min < 0 && value > 0 ? '+' : '';
   const places = (String(Number(value.toFixed(TYPED_PLACES))).split('.')[1] ?? '').length;
-  return RawEditPanelStrings.reading(sign, step < 1 ? value.toFixed(Math.max(places, 2)) : String(value));
+  return RawEditPanelStrings.reading(
+    sign,
+    step < 1 ? value.toFixed(Math.max(places, 2)) : String(value),
+  );
 }
 
 const TYPED_PLACES = 4;
@@ -153,7 +191,10 @@ export interface TypedRange extends Pick<SliderSpec, 'min' | 'max' | 'step'> {
 export function typedValue(text: string, { min, max, step, scale = 1 }: TypedRange): number | null {
   const number = /[-+]?\d*\.?\d+/.exec(text.replace('−', '-').replaceAll(',', ''));
   if (number == null) return null;
-  const held = Math.min(Math.max(Number(Number(number[0]).toFixed(TYPED_PLACES)) / scale, min), max);
+  const held = Math.min(
+    Math.max(Number(Number(number[0]).toFixed(TYPED_PLACES)) / scale, min),
+    max,
+  );
   // A whole step is a field `EditDoc` stores as an integer.
   return step >= 1 ? Math.round(held) : held;
 }
@@ -162,6 +203,10 @@ export function snapped(value: number, { step }: Pick<SliderSpec, 'step'>): numb
   return Number((Math.round(value / step) * step).toFixed(TYPED_PLACES));
 }
 
-export function sliderValue(value: number, spec: Pick<SliderSpec, 'measured'>, neutral: number): number | null {
+export function sliderValue(
+  value: number,
+  spec: Pick<SliderSpec, 'measured'>,
+  neutral: number,
+): number | null {
   return spec.measured === true && value === neutral ? null : value;
 }

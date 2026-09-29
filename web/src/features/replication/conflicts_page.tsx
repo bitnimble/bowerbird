@@ -104,7 +104,12 @@ const Candidate = observer(function Candidate({
 }): JSX.Element {
   return (
     <div {...stylex.props(styles.card)}>
-      <img {...stylex.props(styles.thumb)} src={renditionsApi.url(candidate.photo_id, 'grid')} alt="" loading="lazy" />
+      <img
+        {...stylex.props(styles.thumb)}
+        src={renditionsApi.url(candidate.photo_id, 'grid')}
+        alt=""
+        loading="lazy"
+      />
       <Text variant="label" as="div">
         {candidate.device}
       </Text>

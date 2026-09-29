@@ -9,7 +9,10 @@ fn main() {
     let amounts = rawshim::galosh::Amounts::from_sliders(40.0, 40.0);
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
 
-    println!("{:>7}  {:>9}  {:>9}  {:>9}", "side", "pixels", "first", "steady");
+    println!(
+        "{:>7}  {:>9}  {:>9}  {:>9}",
+        "side", "pixels", "first", "steady"
+    );
     for side in [256usize, 512, 768, 1024, 1536, 2048, 3072] {
         // A mosaic of plausible level with a little noise on it, which is all the timing needs.
         let mut state = 12345u64;
@@ -24,7 +27,9 @@ fn main() {
         let mosaic = rawshim::condition::Mosaic::upload(gpu, &mosaic, side, side);
 
         let started = std::time::Instant::now();
-        pollster::block_on(rawshim::galosh::denoise(gpu, galosh, &mosaic, &cfa, amounts));
+        pollster::block_on(rawshim::galosh::denoise(
+            gpu, galosh, &mosaic, &cfa, amounts,
+        ));
         let first = started.elapsed();
 
         // Again, with the pipelines and the allocator warm - which is the state a loupe would
@@ -32,7 +37,9 @@ fn main() {
         let mut best = std::time::Duration::from_secs(9999);
         for _ in 0..3 {
             let round = std::time::Instant::now();
-            pollster::block_on(rawshim::galosh::denoise(gpu, galosh, &mosaic, &cfa, amounts));
+            pollster::block_on(rawshim::galosh::denoise(
+                gpu, galosh, &mosaic, &cfa, amounts,
+            ));
             best = best.min(round.elapsed());
         }
 

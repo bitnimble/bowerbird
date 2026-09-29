@@ -5,7 +5,10 @@ const ESUCCESS = 0;
 const CLOCK_REALTIME = 0;
 const MAX_RANDOM_BYTES = 65536;
 
-export function wasiImports(memory: WebAssembly.Memory, spawn: (arg: number) => number): WebAssembly.Imports {
+export function wasiImports(
+  memory: WebAssembly.Memory,
+  spawn: (arg: number) => number,
+): WebAssembly.Imports {
   // Re-read on every call: a grown memory hands out a new buffer object.
   const view = (): DataView => new DataView(memory.buffer);
   const console = new ConsoleLines();
@@ -20,14 +23,17 @@ export function wasiImports(memory: WebAssembly.Memory, spawn: (arg: number) => 
       },
       environ_get: (): number => ESUCCESS,
       clock_time_get(id: number, _precision: bigint, out: number): number {
-        const millis = id === CLOCK_REALTIME ? Date.now() : performance.timeOrigin + performance.now();
+        const millis =
+          id === CLOCK_REALTIME ? Date.now() : performance.timeOrigin + performance.now();
         view().setBigUint64(out, BigInt(Math.round(millis * 1e6)), true);
         return ESUCCESS;
       },
       random_get(at: number, length: number): number {
         // `getRandomValues` refuses a view of shared memory, so the bytes go through one of its own.
         for (let done = 0; done < length; done += MAX_RANDOM_BYTES) {
-          const chunk = crypto.getRandomValues(new Uint8Array(Math.min(MAX_RANDOM_BYTES, length - done)));
+          const chunk = crypto.getRandomValues(
+            new Uint8Array(Math.min(MAX_RANDOM_BYTES, length - done)),
+          );
           new Uint8Array(memory.buffer, at + done, chunk.length).set(chunk);
         }
         return ESUCCESS;

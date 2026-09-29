@@ -120,7 +120,10 @@ function withNamespaces(ns: NsMap, attrs: Attrs): NsMap {
   for (const [name, value] of Object.entries(attrs)) {
     if (!isNamespaceDeclaration(name)) continue;
     extended ??= new Map(ns);
-    extended.set(name === '@_xmlns' ? '' : name.slice('@_xmlns:'.length), normaliseUri(String(value)));
+    extended.set(
+      name === '@_xmlns' ? '' : name.slice('@_xmlns:'.length),
+      normaliseUri(String(value)),
+    );
   }
   return extended ?? ns;
 }
@@ -183,7 +186,10 @@ function deepText(node: XmlNode): string {
 }
 
 function identityCurve(): { x: number; y: number }[] {
-  return [{ x: 0, y: 0 }, { x: CURVE_MAX, y: CURVE_MAX }];
+  return [
+    { x: 0, y: 0 },
+    { x: CURVE_MAX, y: CURVE_MAX },
+  ];
 }
 
 /**
@@ -328,12 +334,21 @@ export class Properties {
       const parts = item.text.split(',').map((part) => part.trim());
       const x = Number(parts[0]);
       const y = Number(parts[1]);
-      if (parts.length !== 2 || parts.some((part) => part === '') || !Number.isFinite(x) || !Number.isFinite(y)) {
+      if (
+        parts.length !== 2 ||
+        parts.some((part) => part === '') ||
+        !Number.isFinite(x) ||
+        !Number.isFinite(y)
+      ) {
         this.record(tag, 'malformed', item.text);
         continue;
       }
-      const point = { x: clamp(Math.round(x), 0, CURVE_MAX), y: clamp(Math.round(y), 0, CURVE_MAX) };
-      if (point.x !== Math.round(x) || point.y !== Math.round(y)) this.record(tag, 'clamped', item.text);
+      const point = {
+        x: clamp(Math.round(x), 0, CURVE_MAX),
+        y: clamp(Math.round(y), 0, CURVE_MAX),
+      };
+      if (point.x !== Math.round(x) || point.y !== Math.round(y))
+        this.record(tag, 'clamped', item.text);
       points.push(point);
     }
     return points.length >= 2 ? points : identityCurve();
@@ -356,9 +371,12 @@ export class Properties {
   struct(tag: string): Properties | null {
     const prop = this.props.get(tag);
     if (prop == null || 'text' in prop) return null;
-    const nested = attributes(prop.node, prop.ns).get('rdf:parseType') === 'Resource'
-      ? prop
-      : elements(childrenOf(prop.node), prop.ns).find((child) => child.name === 'rdf:Description');
+    const nested =
+      attributes(prop.node, prop.ns).get('rdf:parseType') === 'Resource'
+        ? prop
+        : elements(childrenOf(prop.node), prop.ns).find(
+            (child) => child.name === 'rdf:Description',
+          );
     if (nested == null) return null;
     this.consumed.add(tag);
     const fields = new Properties(this.issues, `${this.prefix}${tag}/`);
@@ -411,7 +429,9 @@ export class Properties {
     if ('text' in prop) return prop.text === '' ? [] : [{ text: prop.text, lang: null }];
 
     const children = elements(childrenOf(prop.node), prop.ns);
-    const container = children.find((child) => child.name === 'rdf:Seq' || child.name === 'rdf:Bag' || child.name === 'rdf:Alt');
+    const container = children.find(
+      (child) => child.name === 'rdf:Seq' || child.name === 'rdf:Bag' || child.name === 'rdf:Alt',
+    );
     if (container == null) {
       const text = textOf(prop.node);
       return text === '' ? [] : [{ text, lang: null }];
@@ -421,7 +441,10 @@ export class Properties {
     // two-keyword one.
     return elements(childrenOf(container.node), container.ns)
       .filter((child) => child.name === 'rdf:li')
-      .map((child) => ({ text: textOf(child.node), lang: attributes(child.node, child.ns).get('xml:lang') ?? null }));
+      .map((child) => ({
+        text: textOf(child.node),
+        lang: attributes(child.node, child.ns).get('xml:lang') ?? null,
+      }));
   }
 }
 
@@ -429,11 +452,18 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-const DATE = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(Z|[+-]\d{2}:\d{2})?$/;
+const DATE =
+  /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(Z|[+-]\d{2}:\d{2})?$/;
 
 // Digit counts alone would accept 2024-13-45T99:99, which is not a date any
 // consumer can use and is better reported than passed on typed as one.
-const DATE_BOUNDS: [number, number][] = [[1, 12], [1, 31], [0, 23], [0, 59], [0, 60]];
+const DATE_BOUNDS: [number, number][] = [
+  [1, 12],
+  [1, 31],
+  [0, 23],
+  [0, 59],
+  [0, 60],
+];
 
 function parseDate(value: string): XmpDate | null {
   const match = DATE.exec(value.trim());
@@ -475,7 +505,8 @@ export function parseXmpProperties(xml: string): ParsedXmpProperties | null {
     if (rdf == null) return null;
 
     for (const description of elements(childrenOf(rdf.node), rdf.ns)) {
-      if (description.name === 'rdf:Description') properties.collect(description.node, description.ns);
+      if (description.name === 'rdf:Description')
+        properties.collect(description.node, description.ns);
     }
     return { properties, issues };
   } catch {

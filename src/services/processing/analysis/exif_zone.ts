@@ -81,7 +81,13 @@ const BOX_HEADER = 8;
 const UUID_BYTES = 16;
 const MAX_BOX_DEPTH = 4;
 
-function findExifBlock(bytes: Uint8Array, view: DataView, from: number, to: number, depth: number): Uint8Array | null {
+function findExifBlock(
+  bytes: Uint8Array,
+  view: DataView,
+  from: number,
+  to: number,
+  depth: number,
+): Uint8Array | null {
   let at = from;
   while (at + BOX_HEADER <= to) {
     let size = view.getUint32(at, false);
@@ -100,7 +106,13 @@ function findExifBlock(bytes: Uint8Array, view: DataView, from: number, to: numb
     const type = ascii(view, at + 4, 4);
     if (type === 'CMT2') return bytes.subarray(body, end);
     if ((type === 'moov' || type === 'uuid') && depth < MAX_BOX_DEPTH) {
-      const found = findExifBlock(bytes, view, type === 'uuid' ? body + UUID_BYTES : body, end, depth + 1);
+      const found = findExifBlock(
+        bytes,
+        view,
+        type === 'uuid' ? body + UUID_BYTES : body,
+        end,
+        depth + 1,
+      );
       if (found != null) return found;
     }
     at += size;

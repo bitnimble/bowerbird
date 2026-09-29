@@ -73,7 +73,7 @@ export async function browseRemote(base: string): Promise<BrowsedRemote> {
   // logged, so the dialog can say it where somebody is reading.
   const skew = Math.abs(Date.now() - offered.clock_ms);
   if (skew > BROWSE_SKEW_NOTE_MS) {
-    log.warn('the remote\'s clock disagrees with this machine; consider fixing NTP', {
+    log.warn("the remote's clock disagrees with this machine; consider fixing NTP", {
       seconds: Math.round(skew / 1000),
     });
   }
@@ -136,7 +136,10 @@ export function addReplica(
     assertEmptyRoot(rootPath);
     mkdirSync(rootPath, { recursive: true });
     if (!isWritable(rootPath)) {
-      throw new AppError('READ_ONLY', `${rootPath} is not writable, and a replica has to be written to`);
+      throw new AppError(
+        'READ_ONLY',
+        `${rootPath} is not writable, and a replica has to be written to`,
+      );
     }
 
     // Inside the rollback, not before it: `post` resolving means the remote has
@@ -148,7 +151,11 @@ export function addReplica(
         await post(
           base,
           route(PathSegment.pair()),
-          PairRequestSchema.parse({ library_id: libraryId, peer_id: peerId(db), name: deviceName(db) }),
+          PairRequestSchema.parse({
+            library_id: libraryId,
+            peer_id: peerId(db),
+            name: deviceName(db),
+          }),
         ),
       );
       if (paired.library_id !== libraryId) {
@@ -176,11 +183,9 @@ export function addReplica(
         // Linked bare, without the genesis walk the server ran when it paired: a
         // clone is born holding nothing, and genesis-stamping its default-valued
         // library row would let those defaults beat the server's real settings.
-        db.query('INSERT INTO replication_libraries (library_id, sync_originals, auto_transfer_originals) VALUES (?, ?, ?)').run(
-          libraryId,
-          syncOriginals ? 1 : 0,
-          autoTransferOriginals ? 1 : 0,
-        );
+        db.query(
+          'INSERT INTO replication_libraries (library_id, sync_originals, auto_transfer_originals) VALUES (?, ?, ?)',
+        ).run(libraryId, syncOriginals ? 1 : 0, autoTransferOriginals ? 1 : 0);
         // With the address, because this is the side that dials: everything this
         // replica ever wants from the server - a session, a photograph's original, a
         // rendition it cannot build - goes back to where it paired.
@@ -201,14 +206,21 @@ export function addReplica(
  */
 async function unpairFrom(base: string, libraryId: string, self: string): Promise<void> {
   try {
-    await post(base, route(PathSegment.unpair()), UnpairRequestSchema.parse({ library_id: libraryId, peer_id: self }));
+    await post(
+      base,
+      route(PathSegment.unpair()),
+      UnpairRequestSchema.parse({ library_id: libraryId, peer_id: self }),
+    );
   } catch (error) {
     // Retracted broadly rather than only where the pairing is known to have
     // landed, because the case worth covering is exactly the one this side
     // cannot tell apart: a reply that never arrived over a pairing that did. So
     // "there was nothing to forget" is an ordinary answer, not a problem.
     if (error instanceof AppError && error.code === 'NOT_FOUND') return;
-    log.warn('could not undo a pairing whose local half failed', { library: libraryId, err: String(error) });
+    log.warn('could not undo a pairing whose local half failed', {
+      library: libraryId,
+      err: String(error),
+    });
   }
 }
 
@@ -231,7 +243,11 @@ function assertEmptyRoot(rootPath: string): void {
  * The exchange both directions of a session open with (§6.2), which is also
  * where each side learns whether the other keeps RAW files (§7.10).
  */
-async function handshake(replica: Replica, base: string, direction: 'pull' | 'push'): Promise<HandshakeResponse> {
+async function handshake(
+  replica: Replica,
+  base: string,
+  direction: 'pull' | 'push',
+): Promise<HandshakeResponse> {
   let answer: unknown;
   try {
     answer = await post(
@@ -249,9 +265,11 @@ async function handshake(replica: Replica, base: string, direction: 'pull' | 'pu
       }),
     );
   } catch (error) {
-    const refusedBy = error instanceof AppError ? BuildVersionSchema.safeParse(error.details?.[0]) : null;
+    const refusedBy =
+      error instanceof AppError ? BuildVersionSchema.safeParse(error.details?.[0]) : null;
     const peer = peerAt(replica.db, replica.libraryId, base);
-    if (refusedBy?.success === true && peer != null) recordPeerVersion(replica.db, replica.libraryId, peer, refusedBy.data);
+    if (refusedBy?.success === true && peer != null)
+      recordPeerVersion(replica.db, replica.libraryId, peer, refusedBy.data);
     throw error;
   }
   const shaken = HandshakeResponseSchema.parse(answer);
@@ -270,11 +288,14 @@ function peerAt(db: Database, libraryId: string, address: string): string | null
 
 /** Handshakes (§6.2) and returns the remote as a source `pullFrom` can drain. */
 export async function openRemote(into: Replica, base: string): Promise<ChangeSource> {
-  const library = into.db.query('SELECT read_only FROM libraries WHERE id = ?').get(into.libraryId) as {
+  const library = into.db
+    .query('SELECT read_only FROM libraries WHERE id = ?')
+    .get(into.libraryId) as {
     read_only: number;
   } | null;
   if (library == null) throw new AppError('NOT_FOUND', `library not found: ${into.libraryId}`);
-  if (library.read_only !== 0) throw new AppError('READ_ONLY', 'replication requires a writable library');
+  if (library.read_only !== 0)
+    throw new AppError('READ_ONLY', 'replication requires a writable library');
 
   const self = peerId(into.db);
   const shaken = await handshake(into, base, 'pull');
@@ -286,7 +307,13 @@ export async function openRemote(into: Replica, base: string): Promise<ChangeSou
         await post(
           base,
           route(PathSegment.changes()),
-          ChangesRequestSchema.parse({ library_id: into.libraryId, peer_id: self, held: packVector(held), cursor, limit }),
+          ChangesRequestSchema.parse({
+            library_id: into.libraryId,
+            peer_id: self,
+            held: packVector(held),
+            cursor,
+            limit,
+          }),
         ),
       ),
   };
@@ -301,7 +328,11 @@ export async function openRemote(into: Replica, base: string): Promise<ChangeSou
  * be able to offer its own work as well as ask for theirs. Without this a trip's
  * ratings, edits and verdicts stay on the laptop for good.
  */
-export async function pushToRemote(from: Replica, base: string, limit = PAGE_ROWS): Promise<PullResult> {
+export async function pushToRemote(
+  from: Replica,
+  base: string,
+  limit = PAGE_ROWS,
+): Promise<PullResult> {
   const self = peerId(from.db);
   const shaken = await handshake(from, base, 'push');
   const sink: ChangeSink = {
@@ -321,7 +352,11 @@ export async function pushToRemote(from: Replica, base: string, limit = PAGE_ROW
       await post(
         base,
         route(PathSegment.push(), PathSegment.done()),
-        PushDoneRequestSchema.parse({ library_id: from.libraryId, peer_id: self, delivered: packVector(delivered) }),
+        PushDoneRequestSchema.parse({
+          library_id: from.libraryId,
+          peer_id: self,
+          delivered: packVector(delivered),
+        }),
       );
     },
   };
@@ -391,10 +426,13 @@ function get(base: string, path: string): Promise<unknown> {
 }
 
 async function send(base: string, path: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(`${base}${route(PathSegment.api(), PathSegment.replication())}${path}`, {
-    ...init,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  const response = await fetch(
+    `${base}${route(PathSegment.api(), PathSegment.replication())}${path}`,
+    {
+      ...init,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
   if (response.status === 204) return null;
   const parsed: unknown = await response.json().catch(() => null);
   if (response.ok) return parsed;
@@ -404,6 +442,8 @@ async function send(base: string, path: string, init: RequestInit): Promise<unkn
   const envelope = ErrorEnvelopeSchema.safeParse(parsed);
   const code = envelope.success ? envelope.data.error.code : undefined;
   const known = REMOTE_CODES.find((candidate) => candidate === code) ?? 'INTERNAL_ERROR';
-  const message = envelope.success ? envelope.data.error.message : `replication request failed (${response.status})`;
+  const message = envelope.success
+    ? envelope.data.error.message
+    : `replication request failed (${response.status})`;
   throw new AppError(known, message, envelope.success ? envelope.data.error.details : undefined);
 }

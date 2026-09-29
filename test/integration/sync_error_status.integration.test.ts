@@ -27,7 +27,12 @@ let db: ReturnType<typeof createDatabase>;
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-errst-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
 });
 afterEach(() => {
   db.close();
@@ -61,7 +66,9 @@ test('an apply-phase throw resets status to idle (not stuck scanning)', async ()
       throw new Error('apply failed');
     }
   }
-  const scan = build(new FailingPhotos(db, photoProcessingRepo), photoProcessingRepo, { processUnprocessed() {} });
+  const scan = build(new FailingPhotos(db, photoProcessingRepo), photoProcessingRepo, {
+    processUnprocessed() {},
+  });
 
   await expect(scan.scanLibrary(LIB)).rejects.toThrow('apply failed');
   expect(scan.getScanStatus(LIB).status).toBe('idle');

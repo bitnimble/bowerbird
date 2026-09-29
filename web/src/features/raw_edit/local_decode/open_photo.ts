@@ -39,11 +39,12 @@ export async function fetchPrepared(
   /** What the loupe's tiles are built from. */
   local: LocalSource;
 }> {
-  const local = fromRendition != null
-    ? await renditionHere(photoId, fromRendition, onStep)
-    : onTheBackend
-      ? await preparedThere(photoId, onStep)
-      : await preparedHere(photoId, longEdge, mosaic, onStep);
+  const local =
+    fromRendition != null
+      ? await renditionHere(photoId, fromRendition, onStep)
+      : onTheBackend
+        ? await preparedThere(photoId, onStep)
+        : await preparedHere(photoId, longEdge, mosaic, onStep);
   const header = readPreparedHeader(local.prepared);
   // What this open had to measure, where nothing had kept it: a tile cannot fit its own match, and
   // an unmatched tile is a magnifier showing a different picture from the stage it sits over.
@@ -113,7 +114,10 @@ async function preparedThere(
       },
       defringe: settings.raw_defringe,
     };
-    const prepared = await decoder.holdPicture(await preparedPicture(photoId, undefined, undefined, onStep), open);
+    const prepared = await decoder.holdPicture(
+      await preparedPicture(photoId, undefined, undefined, onStep),
+      open,
+    );
     return { decoder, open, onTheBackend: true, prepared };
   } catch (error) {
     // Closed on the way out, for `preparedHere`'s reason: nothing else can reach a decoder the
@@ -135,7 +139,10 @@ async function renditionHere(
   const { LocalDecoder } = await import('./local_decoder');
   const decoder = new LocalDecoder();
   try {
-    const [settings, file] = await Promise.all([settingsApi.get(), renditionFile(photoId, rendition, onStep)]);
+    const [settings, file] = await Promise.all([
+      settingsApi.get(),
+      renditionFile(photoId, rendition, onStep),
+    ]);
     const open: LocalOpen = {
       longEdge: 0,
       grade: {
@@ -146,7 +153,12 @@ async function renditionHere(
       defringe: 0,
       statedWhite: true,
     };
-    return { decoder, open, onTheBackend: false, prepared: await decoder.holdRendition(file, open, onStep) };
+    return {
+      decoder,
+      open,
+      onTheBackend: false,
+      prepared: await decoder.holdRendition(file, open, onStep),
+    };
   } catch (error) {
     decoder.close();
     throw error;
@@ -204,7 +216,10 @@ type Shown = { signal?: AbortSignal } & (
  */
 async function refusal(reply: Response): Promise<string> {
   const text = await reply.text();
-  return envelopeOf(text)?.error.message ?? `the picture could not be prepared: ${reply.status} ${text.slice(0, 400)}`;
+  return (
+    envelopeOf(text)?.error.message ??
+    `the picture could not be prepared: ${reply.status} ${text.slice(0, 400)}`
+  );
 }
 
 async function preparedHere(
@@ -321,8 +336,7 @@ export function sameDevelop(at: LocalPrepare | null, next: LocalPrepare): boolea
     // Only where the switch is on: with it off the pair cannot move a photosite, so re-preparing
     // for them would be seconds of work that cannot change the picture.
     (!next.dust.enabled ||
-      (at.dust.sensitivity === next.dust.sensitivity &&
-        at.dust.intensity === next.dust.intensity))
+      (at.dust.sensitivity === next.dust.sensitivity && at.dust.intensity === next.dust.intensity))
   );
 }
 
@@ -333,7 +347,9 @@ export function sameDevelop(at: LocalPrepare | null, next: LocalPrepare): boolea
  * for a photograph nothing has measured yet, and then the open measures its own.
  */
 async function storedPhotoAnalysis(photoId: string): Promise<number[] | undefined> {
-  const reply = await fetch(photosApi.analysisUrl(photoId), { headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' } });
+  const reply = await fetch(photosApi.analysisUrl(photoId), {
+    headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
+  });
   if (!reply.ok) return undefined;
   return Array.from(new Uint8Array(await reply.arrayBuffer()));
 }

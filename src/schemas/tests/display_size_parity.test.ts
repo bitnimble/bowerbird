@@ -22,28 +22,40 @@ import { join } from 'node:path';
 import { displaySize } from '../display_size';
 import type { EditDoc } from '../photo_edits';
 
-const TABLE = join(import.meta.dir, '..', '..', '..', 'test', 'fixtures', 'tables', 'display-size.txt');
+const TABLE = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  'test',
+  'fixtures',
+  'tables',
+  'display-size.txt',
+);
 
-test.each(['\n', '\r\n'])('the page shapes a geometry the way the native host does with %j line endings', (lineEnding) => {
-  const rows = readFileSync(TABLE, 'utf8').replace(/\r?\n/g, lineEnding).trim().split(/\r?\n/);
-  expect(rows.length).toBeGreaterThan(0);
+test.each(['\n', '\r\n'])(
+  'the page shapes a geometry the way the native host does with %j line endings',
+  (lineEnding) => {
+    const rows = readFileSync(TABLE, 'utf8').replace(/\r?\n/g, lineEnding).trim().split(/\r?\n/);
+    expect(rows.length).toBeGreaterThan(0);
 
-  for (const row of rows) {
-    const [frame = '', crop = '', angle = '', rotate = '', want = ''] = row.split(' ');
-    const [width = 0, height = 0] = frame.split('x').map(Number);
-    const [left = 0, top = 0, right = 0, bottom = 0] = crop.split(',').map(Number);
+    for (const row of rows) {
+      const [frame = '', crop = '', angle = '', rotate = '', want = ''] = row.split(' ');
+      const [width = 0, height = 0] = frame.split('x').map(Number);
+      const [left = 0, top = 0, right = 0, bottom = 0] = crop.split(',').map(Number);
 
-    // Only the fields displaySize reads; the rest of an EditDoc does not reach the shape.
-    const doc = {
-      cropLeft: left,
-      cropTop: top,
-      cropRight: right,
-      cropBottom: bottom,
-      cropAngle: Number(angle),
-      rotate: Number(rotate),
-    } as EditDoc;
+      // Only the fields displaySize reads; the rest of an EditDoc does not reach the shape.
+      const doc = {
+        cropLeft: left,
+        cropTop: top,
+        cropRight: right,
+        cropBottom: bottom,
+        cropAngle: Number(angle),
+        rotate: Number(rotate),
+      } as EditDoc;
 
-    const mine = displaySize(width, height, doc);
-    expect(`${mine.width}x${mine.height}`).toBe(want);
-  }
-});
+      const mine = displaySize(width, height, doc);
+      expect(`${mine.width}x${mine.height}`).toBe(want);
+    }
+  },
+);

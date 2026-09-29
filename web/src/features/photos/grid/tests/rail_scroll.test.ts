@@ -29,19 +29,39 @@ const ALIGNED_ANCHOR = 76_000 * ROW_H;
 const ALIGNED_RAIL = 150 * ROW_H + 1;
 
 function photo(id: string): PhotoSummary {
-  return { id, width: 3000, height: 2000, stack_id: null, stack_size: 1 } as unknown as PhotoSummary;
+  return {
+    id,
+    width: 3000,
+    height: 2000,
+    stack_id: null,
+    stack_size: 1,
+  } as unknown as PhotoSummary;
 }
 
 // `source` is left null deliberately: it is the guard `ensureBlocks` returns on,
 // so the presenter's block reaction never reaches the network and none of this
 // needs a scripted list endpoint.
-function build(total: number, viewportHeight = V): { store: ListingStore; stacks: StacksStore; presenter: PhotosPresenter } {
+function build(
+  total: number,
+  viewportHeight = V,
+): { store: ListingStore; stacks: StacksStore; presenter: PhotosPresenter } {
   const absent = new Proxy({}, { get: () => () => undefined }) as never;
   const stacks = new StacksStore();
   const store = new ListingStore(stacks);
   const marks = new MarksStore(store, stacks);
   const viewer = new ViewerStore(store, stacks);
-  const presenter = new PhotosPresenter(store, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    store,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => {
     store.mode = 'list'; // one column, a fixed row height, so the arithmetic is legible
     store.total = total;
@@ -53,7 +73,11 @@ function build(total: number, viewportHeight = V): { store: ListingStore; stacks
 // A masonry store, for the block-measurement path: `mode` is the only difference
 // that matters, but the block heights and the estimate they average to are what
 // the arithmetic is over.
-function masonry(total: number): { store: ListingStore; stacks: StacksStore; presenter: PhotosPresenter } {
+function masonry(total: number): {
+  store: ListingStore;
+  stacks: StacksStore;
+  presenter: PhotosPresenter;
+} {
   const built = build(total);
   runInAction(() => (built.store.mode = 'masonry'));
   return built;
@@ -162,7 +186,11 @@ describe('a scroll re-renders per row crossed, not per frame', () => {
   // is an exact multiple of the row pitch, so the honest figure is *two*
   // invalidations per row at a real window height, not one - and at fling speed,
   // where a frame covers more than a row, it degrades to one per frame.
-  function countSectionRuns(store: ListingStore, scroll: (to: number) => void, tops: number[]): number {
+  function countSectionRuns(
+    store: ListingStore,
+    scroll: (to: number) => void,
+    tops: number[],
+  ): number {
     let runs = 0;
     const stop = autorun(() => {
       void store.sections;
@@ -174,7 +202,13 @@ describe('a scroll re-renders per row crossed, not per frame', () => {
     return runs;
   }
 
-  function scrolled(total: number, viewportHeight: number, from: number, step: number, frames: number): number {
+  function scrolled(
+    total: number,
+    viewportHeight: number,
+    from: number,
+    step: number,
+    frames: number,
+  ): number {
     const { store, presenter } = build(total, viewportHeight);
     runInAction(() => (store.rail.rawAnchor = ALIGNED_ANCHOR));
     presenter.rail.setTop(from);
@@ -240,7 +274,10 @@ describe('a scroll re-renders per row crossed, not per frame', () => {
 
     // The section keeps its place on screen: it moved down the rail by exactly what
     // the anchor moved up the collection.
-    expect(store.rail.positionOf(section.top) - before).toBeCloseTo(anchorBefore - store.rail.anchor, 6);
+    expect(store.rail.positionOf(section.top) - before).toBeCloseTo(
+      anchorBefore - store.rail.anchor,
+      6,
+    );
   });
 });
 
@@ -248,7 +285,10 @@ describe('what displaced the reader goes to the anchor, not the rail', () => {
   test('closing a band above the viewport leaves the rail where it was', async () => {
     const { store, stacks, presenter } = build(LONG);
     const members = Array.from({ length: 10 }, (_, i) => photo(`m${i}`));
-    runInAction(() => (stacks.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]])));
+    runInAction(
+      () =>
+        (stacks.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]])),
+    );
     runInAction(() => (store.rail.rawAnchor = 5_000_000));
     presenter.rail.setTop(RAIL_HEIGHT / 2);
     const anchor = store.rail.anchor;
@@ -266,7 +306,10 @@ describe('what displaced the reader goes to the anchor, not the rail', () => {
   test('a collection with no anchor travel moves the rail instead', async () => {
     const { store, stacks, presenter } = build(200);
     const members = Array.from({ length: 10 }, (_, i) => photo(`m${i}`));
-    runInAction(() => (stacks.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]])));
+    runInAction(
+      () =>
+        (stacks.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]])),
+    );
     presenter.rail.setTop(30 * ROW_H);
 
     // No room for the anchor to absorb anything, so the whole shift lands on the
@@ -286,7 +329,12 @@ describe('what displaced the reader goes to the anchor, not the rail', () => {
     // A stack far below the fold: everything it inserts is below everything the
     // reader can see, so correcting for it would jerk the view by a band's height.
     const below = Math.floor((store.rail.at + store.viewportHeight * 4) / ROW_H) * store.columns;
-    runInAction(() => (stacks.expansions = new Map([['s1', { stackId: 's1', position: below, photos: members }]])));
+    runInAction(
+      () =>
+        (stacks.expansions = new Map([
+          ['s1', { stackId: 's1', position: below, photos: members }],
+        ])),
+    );
     await presenter.toggleBand('s1', below);
 
     expect(store.rail.at).toBe(before);
@@ -351,7 +399,13 @@ describe('a part-block height never sizes the blocks around it', () => {
 
     // An import moves the end past it, through the read that reports the new count.
     photosApi.listLibrary = () =>
-      Promise.resolve({ photos: [], total: 2430, offset: 0, limit: BLOCK, ordering: 'taken_asc' } as never);
+      Promise.resolve({
+        photos: [],
+        total: 2430,
+        offset: 0,
+        limit: BLOCK,
+        ordering: 'taken_asc',
+      } as never);
     runInAction(() => (store.source = { kind: 'library', libraryId: 'lib' }));
     await presenter.reload();
 
@@ -392,11 +446,17 @@ describe('a masonry band is corrected by measurement, not by row arithmetic', ()
     const before = offsetIntoBlock(store);
 
     runInAction(() => {
-      stacks.expansions = new Map([['s1', { stackId: 's1', position: first * BLOCK + 5, photos: [photo('m0'), photo('m1')] }]]);
+      stacks.expansions = new Map([
+        ['s1', { stackId: 's1', position: first * BLOCK + 5, photos: [photo('m0'), photo('m1')] }],
+      ]);
     });
     expect(offsetIntoBlock(store)).toBeCloseTo(before, 6);
 
-    presenter.measuredBlock(first, (store.blockHeights.get(first) ?? store.estimatedBlockHeight) + 500, store.viewportWidth);
+    presenter.measuredBlock(
+      first,
+      (store.blockHeights.get(first) ?? store.estimatedBlockHeight) + 500,
+      store.viewportWidth,
+    );
     expect(store.visibleBlocks.from).toBe(first);
     expect(offsetIntoBlock(store)).toBeCloseTo(before, 0);
   });
@@ -411,7 +471,9 @@ describe('a masonry band is corrected by measurement, not by row arithmetic', ()
     for (const block of [0, 1, 2, store.blockCount - 1, store.visibleBlocks.from]) {
       presenter.measuredBlock(block, 60, store.viewportWidth);
       expect(store.rail.at).toBeGreaterThanOrEqual(0);
-      expect(store.rail.at).toBeLessThanOrEqual(Math.max(0, store.contentHeight - store.viewportHeight) + 1);
+      expect(store.rail.at).toBeLessThanOrEqual(
+        Math.max(0, store.contentHeight - store.viewportHeight) + 1,
+      );
     }
   });
 
@@ -453,7 +515,13 @@ describe('a re-read that re-places every band holds the reader on their row', ()
     photosApi.positions = () => Promise.resolve({});
     stacksApi.listPhotos = () => Promise.resolve([]);
     photosApi.listLibrary = () =>
-      Promise.resolve({ photos: [], total: LONG, offset: 0, limit: 100, ordering: 'taken_asc' } as never);
+      Promise.resolve({
+        photos: [],
+        total: LONG,
+        offset: 0,
+        limit: 100,
+        ordering: 'taken_asc',
+      } as never);
 
     runInAction(() => {
       store.source = { kind: 'library', libraryId: 'lib' };
@@ -483,7 +551,10 @@ describe('a correction that also shrinks the collection is not double-counted', 
   test('closing a band with the anchor at its limit moves the view by the band, no more', async () => {
     const { store, stacks, presenter } = build(LONG);
     const members = Array.from({ length: 10 }, (_, i) => photo(`m${i}`));
-    runInAction(() => (stacks.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]])));
+    runInAction(
+      () =>
+        (stacks.expansions = new Map([['s1', { stackId: 's1', position: 0, photos: members }]])),
+    );
     // Pinned at the limit, so closing the band lowers the limit under the anchor.
     runInAction(() => (store.rail.rawAnchor = store.rail.limit));
     presenter.rail.setTop(RAIL_HEIGHT / 2);

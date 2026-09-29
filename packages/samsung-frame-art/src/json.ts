@@ -16,7 +16,9 @@ export function parseJson(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new ResponseError('Failed to parse response from TV. Maybe feature not supported on this model');
+    throw new ResponseError(
+      'Failed to parse response from TV. Maybe feature not supported on this model',
+    );
   }
 }
 

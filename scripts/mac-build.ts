@@ -13,7 +13,16 @@ import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
 import { MAC_MIN_VERSION, MAC_TARGET as TARGET, osxcrossEnv } from './osxcross.ts';
 import { VERSION } from '../src/version.ts';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const APP_NAME = 'Bowerbird.app';
@@ -31,7 +40,15 @@ try {
 ensureIcons();
 
 const config = JSON.stringify({ version: VERSION });
-const args = ['build', '--target', TARGET, '--no-bundle', '--config', config, ...process.argv.slice(2)];
+const args = [
+  'build',
+  '--target',
+  TARGET,
+  '--no-bundle',
+  '--config',
+  config,
+  ...process.argv.slice(2),
+];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 

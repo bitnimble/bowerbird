@@ -9,7 +9,12 @@ import { createDatabase } from '../../src/db/connection';
 import type { FileMetadata } from '../../src/services/processing/analysis/metadata';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -47,7 +52,12 @@ function blank(size: number): FileMetadata {
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-order-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   for (const name of NAMES) writeFileSync(path.join(root, name), name);
 });
 
@@ -79,6 +89,8 @@ test('the files are opened in inode order', async () => {
     () => 1,
   ).scanLibrary(LIB);
 
-  const byInode = [...NAMES].sort((a, b) => statSync(path.join(root, a)).ino - statSync(path.join(root, b)).ino);
+  const byInode = [...NAMES].sort(
+    (a, b) => statSync(path.join(root, a)).ino - statSync(path.join(root, b)).ino,
+  );
   expect(opened).toEqual(byInode);
 });

@@ -107,7 +107,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -234,14 +238,38 @@ pub(crate) async fn select(
             label: Some("fit_pairs"),
             layout: &built.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: render.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: jpeg.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: bits_words.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: histogram.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: marks.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: counts.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: pairs.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: render.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: jpeg.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bits_words.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: histogram.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: marks.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: counts.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: pairs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         })
     };
@@ -272,19 +300,20 @@ pub(crate) async fn select(
         pass.set_bind_group(0, &selecting, &[]);
         pass.dispatch_workgroups(x, y, z);
     }
-    let staging = |recording: &mut crate::gpu::Recording<'_>,
-                   from: &crate::gpu::Buffer,
-                   words: usize| {
-        let bytes = (words * 4).max(4) as u64;
-        let out = recording.buffer(&wgpu::BufferDescriptor {
-            label: Some("fit pairs out"),
-            size: bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        recording.encoder().copy_buffer_to_buffer(from, 0, &out, 0, bytes);
-        out
-    };
+    let staging =
+        |recording: &mut crate::gpu::Recording<'_>, from: &crate::gpu::Buffer, words: usize| {
+            let bytes = (words * 4).max(4) as u64;
+            let out = recording.buffer(&wgpu::BufferDescriptor {
+                label: Some("fit pairs out"),
+                size: bytes,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            recording
+                .encoder()
+                .copy_buffer_to_buffer(from, 0, &out, 0, bytes);
+            out
+        };
     let bits_out = staging(&mut recording, &bits_words, pixels);
     let marks_out = staging(&mut recording, &marks, marks_words);
     recording.submit();
@@ -297,8 +326,13 @@ pub(crate) async fn select(
     let total_pairs = read[TOTAL] as usize;
     #[cfg(test)]
     let bits: Vec<u8> = words.par_iter().map(|w| *w as u8).collect();
-    let hues: Vec<u8> = words.par_iter().map(|w| (*w >> crate::hdr_fit::HUE_SHIFT) as u8).collect();
-    let counted: Vec<usize> = (0..hue_slots).map(|bucket| read[HUES + bucket] as usize).collect();
+    let hues: Vec<u8> = words
+        .par_iter()
+        .map(|w| (*w >> crate::hdr_fit::HUE_SHIFT) as u8)
+        .collect();
+    let counted: Vec<usize> = (0..hue_slots)
+        .map(|bucket| read[HUES + bucket] as usize)
+        .collect();
     let total = counted.iter().sum();
 
     let mut recording = gpu.record();
@@ -401,7 +435,10 @@ mod tests {
             ("HALF_BINS", super::HALF_BINS),
         ] {
             let line = format!("static const uint {name} = {value};");
-            assert!(SOURCE.contains(&line), "fit_pairs.slang does not say `{line}`");
+            assert!(
+                SOURCE.contains(&line),
+                "fit_pairs.slang does not say `{line}`"
+            );
         }
     }
 
@@ -415,15 +452,27 @@ mod tests {
             ("PAIR_WORDS", super::PAIR_WORDS as u32),
         ] {
             let line = format!("static const uint {name} = {value};");
-            assert!(SOURCE.contains(&line), "fit_pairs.slang does not say `{line}`");
+            assert!(
+                SOURCE.contains(&line),
+                "fit_pairs.slang does not say `{line}`"
+            );
         }
         for name in ["ALL", "COLOUR", "FRAME"] {
             let line = format!("static const uint {name} = ");
             let Some((_, tail)) = SOURCE.split_once(&line) else {
                 panic!("fit_pairs.slang does not declare {name}");
             };
-            let bit: u32 = tail.split(';').next().expect("a value").trim().parse().expect("a bit");
-            assert!(bit < 1 << crate::hdr_fit::HUE_SHIFT, "{name} collides with the hue");
+            let bit: u32 = tail
+                .split(';')
+                .next()
+                .expect("a value")
+                .trim()
+                .parse()
+                .expect("a bit");
+            assert!(
+                bit < 1 << crate::hdr_fit::HUE_SHIFT,
+                "{name} collides with the hue"
+            );
         }
     }
 }

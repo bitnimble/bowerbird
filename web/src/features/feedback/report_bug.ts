@@ -73,7 +73,6 @@ class BugReporter {
   private dsn(): string {
     return import.meta.env.VITE_SENTRY_DSN ?? '';
   }
-
 }
 
 export const bugReporter = new BugReporter();

@@ -15,7 +15,18 @@ function build(): { store: ViewerStore; presenter: PhotosPresenter } {
   const store = new ViewerStore(listing, stacks);
   return {
     store,
-    presenter: new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, absent, {} as never, absent),
+    presenter: new PhotosPresenter(
+      listing,
+      marks,
+      stacks,
+      store,
+      absent,
+      absent,
+      absent,
+      absent,
+      {} as never,
+      absent,
+    ),
   };
 }
 

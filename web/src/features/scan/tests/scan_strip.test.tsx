@@ -55,12 +55,20 @@ const PULL: Transfer = {
 function Transfers({ transfers }: { transfers: Transfer[] }): null {
   const store = useReplicationStore();
   useEffect(() => {
-    runInAction(() => { store.transfers = transfers; });
+    runInAction(() => {
+      store.transfers = transfers;
+    });
   }, [store, transfers]);
   return null;
 }
 
-function Status({ transfers, status }: { transfers: Transfer[]; status: LibraryScanStatus }): JSX.Element {
+function Status({
+  transfers,
+  status,
+}: {
+  transfers: Transfer[];
+  status: LibraryScanStatus;
+}): JSX.Element {
   return (
     <StoresProvider>
       <Transfers transfers={transfers} />
@@ -88,7 +96,9 @@ test('fetch and render queues have separate messages and rendering outlasts the 
   expect(screen.getByText('rendering 1 photo')).toBeTruthy();
 
   await act(async () => {
-    view.rerender(<Status transfers={[]} status={{ ...STATUS, status: 'idle', photos_processing: 0 }} />);
+    view.rerender(
+      <Status transfers={[]} status={{ ...STATUS, status: 'idle', photos_processing: 0 }} />,
+    );
   });
   expect(screen.queryByText(/rendering/)).toBeNull();
 });

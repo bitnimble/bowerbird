@@ -146,14 +146,25 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   // settings that decide what is watched actually moved. Every other library
   // setting (a name, an ordering, what renditions to build) leaves it alone.
   onLibraryUpdated(library: Library): void {
-    if (!this.watchers.has(library.id) && !this.ready.has(library.id) && !this.polled.has(library.id)) return;
+    if (
+      !this.watchers.has(library.id) &&
+      !this.ready.has(library.id) &&
+      !this.polled.has(library.id)
+    )
+      return;
     if (this.watchedScopes.get(library.id) === scopeKey(this.scan.scopeFor(library))) return;
     this.dropWatcher(library.id);
     this.watchLibrary(library);
   }
 
   private watchLibrary(asked: Library): void {
-    if (this.stopped || this.watchers.has(asked.id) || this.ready.has(asked.id) || this.polled.has(asked.id)) return;
+    if (
+      this.stopped ||
+      this.watchers.has(asked.id) ||
+      this.ready.has(asked.id) ||
+      this.polled.has(asked.id)
+    )
+      return;
     // A queued watch-error retry can land after the library was deleted; without
     // this, watchLibrary would re-create a live watcher (leaked inotify handles +
     // spurious syncs) that onLibraryDeleted can never tear down again.
@@ -174,49 +185,58 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       return;
     }
 
-    const establishing = this.activity.track(library.id, 'checking_files', 'watch', () => subscribe(
-      library.root_path,
-      (err, events) => {
-        if (err != null) {
-          // A watch error (e.g. inotify ENOSPC) kills this watch; drop it and
-          // try to re-establish after a delay, else auto-scan stops for good.
-          log.error('watch dropped; will re-attempt', { library: library.id, err });
-          this.scheduleRetry(library);
-          return;
-        }
-        let recorded = 0;
-        for (const event of events) {
-          const relPath = path.relative(library.root_path, event.path).split(path.sep).join('/');
-          if (relPath === '' || relPath.startsWith('..')) continue;
-          if (!this.inScope(scope, relPath)) continue;
-          if (this.isIgnorableFile(scope, event.path, relPath)) continue;
-          this.record(library.id, relPath);
-          recorded++;
-        }
-        // Nothing the library contains moved, so nothing is owed a scan. Scheduling
-        // regardless is what made a scan's own lock file at the root wake the very
-        // watcher that wrote it, every debounce window, forever.
-        if (recorded === 0) {
-          log.debug('fs events, none in scope', { library: library.id, events: describe(events, library.root_path) });
-          return;
-        }
-        log.info('fs events', {
-          library: library.id,
-          recorded,
-          ignored: events.length - recorded,
-          events: describe(events, library.root_path),
-        });
-        this.schedule(library.id);
-      },
-      {
-        // Excluded subtrees are never watched rather than filtered afterwards,
-        // which is the difference between a folder costing nothing and costing
-        // an inotify watch per directory inside it. The callback still applies
-        // the scan's rules (§9.1), so this is an optimisation and not the
-        // correctness boundary.
-        ignore: this.ignoredPaths(library, scope),
-      },
-    ))
+    const establishing = this.activity
+      .track(library.id, 'checking_files', 'watch', () =>
+        subscribe(
+          library.root_path,
+          (err, events) => {
+            if (err != null) {
+              // A watch error (e.g. inotify ENOSPC) kills this watch; drop it and
+              // try to re-establish after a delay, else auto-scan stops for good.
+              log.error('watch dropped; will re-attempt', { library: library.id, err });
+              this.scheduleRetry(library);
+              return;
+            }
+            let recorded = 0;
+            for (const event of events) {
+              const relPath = path
+                .relative(library.root_path, event.path)
+                .split(path.sep)
+                .join('/');
+              if (relPath === '' || relPath.startsWith('..')) continue;
+              if (!this.inScope(scope, relPath)) continue;
+              if (this.isIgnorableFile(scope, event.path, relPath)) continue;
+              this.record(library.id, relPath);
+              recorded++;
+            }
+            // Nothing the library contains moved, so nothing is owed a scan. Scheduling
+            // regardless is what made a scan's own lock file at the root wake the very
+            // watcher that wrote it, every debounce window, forever.
+            if (recorded === 0) {
+              log.debug('fs events, none in scope', {
+                library: library.id,
+                events: describe(events, library.root_path),
+              });
+              return;
+            }
+            log.info('fs events', {
+              library: library.id,
+              recorded,
+              ignored: events.length - recorded,
+              events: describe(events, library.root_path),
+            });
+            this.schedule(library.id);
+          },
+          {
+            // Excluded subtrees are never watched rather than filtered afterwards,
+            // which is the difference between a folder costing nothing and costing
+            // an inotify watch per directory inside it. The callback still applies
+            // the scan's rules (§9.1), so this is an optimisation and not the
+            // correctness boundary.
+            ignore: this.ignoredPaths(library, scope),
+          },
+        ),
+      )
       .then((sub: AsyncSubscription) => {
         // Torn down while the walk was in flight: nothing is holding this
         // subscription any more, so it would leak its watches.
@@ -231,7 +251,11 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       .catch((err: unknown) => {
         // Includes a root that is not there at all, which is an unmounted drive
         // rather than a permanent condition.
-        log.error('could not watch; will re-attempt', { library: library.id, root: library.root_path, err });
+        log.error('could not watch; will re-attempt', {
+          library: library.id,
+          root: library.root_path,
+          err,
+        });
         this.scheduleRetry(library);
       })
       .finally(() => {
@@ -283,7 +307,9 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   private async poll(libraryId: string, scope: LibraryScope): Promise<void> {
     this.pollTimers.delete(libraryId);
     try {
-      const seen = await this.activity.track(libraryId, 'checking_files', 'folders', () => this.folderMtimes(scope));
+      const seen = await this.activity.track(libraryId, 'checking_files', 'folders', () =>
+        this.folderMtimes(scope),
+      );
       if (this.stopped || this.polled.get(libraryId) !== scope) return;
       const previous = this.dirMtimes.get(libraryId);
       this.dirMtimes.set(libraryId, seen);
@@ -301,7 +327,8 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     } catch (err) {
       log.error('a poll pass failed', { library: libraryId, err });
     } finally {
-      if (!this.stopped && this.polled.get(libraryId) === scope) this.schedulePoll(libraryId, scope);
+      if (!this.stopped && this.polled.get(libraryId) === scope)
+        this.schedulePoll(libraryId, scope);
     }
   }
 
@@ -445,7 +472,8 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     this.pending.delete(libraryId);
     this.pendingDirs.delete(libraryId);
     const changed = paths.size + dirs.size;
-    const scope = changed > 0 && changed <= MAX_SCOPE ? { paths: [...paths], dirs: [...dirs] } : undefined;
+    const scope =
+      changed > 0 && changed <= MAX_SCOPE ? { paths: [...paths], dirs: [...dirs] } : undefined;
 
     this.scanning.add(libraryId);
     log.info('changes on disk; starting scan', {
@@ -491,7 +519,10 @@ function add(pending: Map<string, Set<string>>, libraryId: string, value: string
 // A folder is changed if its mtime moved, if it was not there last time, or if it
 // is not there now - the last being the only trace a deleted folder leaves, and
 // what the scan needs in order to read its photographs as removed.
-function changedFolders(previous: ReadonlyMap<string, number> | undefined, seen: ReadonlyMap<string, number>): string[] {
+function changedFolders(
+  previous: ReadonlyMap<string, number> | undefined,
+  seen: ReadonlyMap<string, number>,
+): string[] {
   if (previous == null) return [];
   const changed: string[] = [];
   for (const [relDir, mtime] of seen) if (previous.get(relDir) !== mtime) changed.push(relDir);

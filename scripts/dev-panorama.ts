@@ -35,7 +35,8 @@ async function ask<T>(method: string, route: string, body?: unknown): Promise<T>
     headers: body == null ? {} : { 'Content-Type': 'application/json' },
     body: body == null ? undefined : JSON.stringify(body),
   });
-  if (!reply.ok) throw new Error(`${method} ${route}: ${reply.status} ${(await reply.text()).slice(0, 300)}`);
+  if (!reply.ok)
+    throw new Error(`${method} ${route}: ${reply.status} ${(await reply.text()).slice(0, 300)}`);
   return (await reply.json()) as T;
 }
 
@@ -69,7 +70,10 @@ async function library(): Promise<Library> {
 /** Returns once the scan has filed every view, or gives up saying how many it saw. */
 async function scanned(id: string, want: number): Promise<Photo[]> {
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    const { photos } = await ask<{ photos: Photo[] }>('GET', `/api/libraries/${id}/photos?limit=100`);
+    const { photos } = await ask<{ photos: Photo[] }>(
+      'GET',
+      `/api/libraries/${id}/photos?limit=100`,
+    );
     const frames = photos.filter((photo) => photo.composite_kind == null);
     if (frames.length >= want) return frames;
     await new Promise((wake) => setTimeout(wake, 1000));

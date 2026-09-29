@@ -48,11 +48,11 @@ CREATE INDEX idx_photos_stack ON photos(stack_id);
 
 `stack_state` is the three answers to "is this photo in a stack?":
 
-| value | meaning | detection may claim it |
-|---|---|---|
-| `none` | never been in one | yes |
-| `stacked` | currently in one | yes, if the stack is `auto` |
-| `unstacked` | a human pulled it out | **never** |
+| value       | meaning               | detection may claim it      |
+| ----------- | --------------------- | --------------------------- |
+| `none`      | never been in one     | yes                         |
+| `stacked`   | currently in one      | yes, if the stack is `auto` |
+| `unstacked` | a human pulled it out | **never**                   |
 
 `stack_state = 'stacked'` iff `stack_id IS NOT NULL`. The invariant is written
 by the repository in one transaction rather than by a `CHECK`, because a
@@ -85,15 +85,15 @@ It must survive, for the same scene:
 - a different white balance or colour profile
 - moderately different zoom / framing / direction
 
-A 64-bit hash fails: dHash and DCT pHash score labelled pairs *below* verified
+A 64-bit hash fails: dHash and DCT pHash score labelled pairs _below_ verified
 different-scene pairs (§9), leaving no separating threshold. Use a larger,
 deliberately blurry descriptor:
 
-| part | size | what it buys |
-|---|---|---|
-| luma grid | 20×20, box-averaged, **rank-normalized** | rank-normalizing is the exposure and white-balance invariance: any monotonic tone curve leaves the cell ordering alone, so it leaves the descriptor alone |
-| chroma grid | 20×20 of chromaticity after grey-world normalization, each channel rank-normalized | "the warm part is along the top", which is what separates a sunset from the white plaza beside it |
-| coarse luma grid | 10×10, rank-normalized | alignment search only (below) |
+| part             | size                                                                               | what it buys                                                                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| luma grid        | 20×20, box-averaged, **rank-normalized**                                           | rank-normalizing is the exposure and white-balance invariance: any monotonic tone curve leaves the cell ordering alone, so it leaves the descriptor alone |
+| chroma grid      | 20×20 of chromaticity after grey-world normalization, each channel rank-normalized | "the warm part is along the top", which is what separates a sunset from the white plaza beside it                                                         |
+| coarse luma grid | 10×10, rank-normalized                                                             | alignment search only (below)                                                                                                                             |
 
 Aspect is **squashed**, not fitted: a crop or a second body gives one scene two
 aspect ratios, and that must not read as a difference.
@@ -176,7 +176,7 @@ growing one stack at a time. The next photo joins the stack being built when
 both hold:
 
 - **it is adjacent in time**, no more than `auto_stack_window_seconds` after the
-  photo before it, *not* after the stack's first photo, so a stack may chain
+  photo before it, _not_ after the stack's first photo, so a stack may chain
   arbitrarily far in time; and
 - **it clears `auto_stack_similarity` against every photo already in the stack**,
   not merely against its neighbour.
@@ -327,20 +327,20 @@ every bulk action still applies to the whole stack.
 
 **Band members have no listing position**, so cannot use `SelectionRanges` runs.
 Select them **by id** in a separate set. This respects the grid invariant: ids
-must never substitute for *unloaded* positions; band members are few and loaded.
+must never substitute for _unloaded_ positions; band members are few and loaded.
 
 Selections are separate; the bulk bar acts on the non-empty one. Selecting band
 members clears collection-wide position selection: distinct user intentions.
 
-Count *entries*, one per stack, and label accordingly. "3 selected (7 photos)"
+Count _entries_, one per stack, and label accordingly. "3 selected (7 photos)"
 requires unavailable counts for unloaded positions; actions still cover whole stacks.
 
 **Bulk bar actions.**
 
-| action | shown when |
-|---|---|
-| Stack | two or more entries selected |
-| Unstack | the selection is a single position that is a stack |
+| action            | shown when                                             |
+| ----------------- | ------------------------------------------------------ |
+| Stack             | two or more entries selected                           |
+| Unstack           | the selection is a single position that is a stack     |
 | Remove from Stack | the selection is band members, of one stack or several |
 
 Stacking a selection that already contains stacked photos moves those photos
@@ -381,13 +381,13 @@ the toggle, minimum similarity, and stack window in seconds.
 
 ## 7. API
 
-| method | path | purpose |
-|---|---|---|
-| `GET` | `/api/stacks/:id/photos` | members; `?album_id=` filters strictly |
-| `POST` | `/api/photos/positions` | positions of a set of row keys in a scoped, ordered, filtered listing, numbered once (§6.1) |
-| `POST` | `/api/stacks` | create from `photo_ids`; returns the stack |
-| `DELETE` | `/api/stacks/:id` | unstack: release every member, delete the row |
-| `POST` | `/api/stacks/:id/remove` | remove `photo_ids` from the stack |
+| method   | path                     | purpose                                                                                     |
+| -------- | ------------------------ | ------------------------------------------------------------------------------------------- |
+| `GET`    | `/api/stacks/:id/photos` | members; `?album_id=` filters strictly                                                      |
+| `POST`   | `/api/photos/positions`  | positions of a set of row keys in a scoped, ordered, filtered listing, numbered once (§6.1) |
+| `POST`   | `/api/stacks`            | create from `photo_ids`; returns the stack                                                  |
+| `DELETE` | `/api/stacks/:id`        | unstack: release every member, delete the row                                               |
+| `POST`   | `/api/stacks/:id/remove` | remove `photo_ids` from the stack                                                           |
 
 All four are `manual` operations per §4.4.
 
@@ -421,16 +421,16 @@ library: one afternoon's shooting, 1122 frames, supplying both the positives and
 a large negative set. Eight groups were labelled by the photographer as stacks
 they would expect:
 
-| group | note |
-|---|---|
-| sunset A | the first frame is a different exposure |
-| sunset B | |
-| boat | different aspect ratios, zoom levels, directions; one subject (a boat). Splitting into several stacks inside this range is acceptable |
-| temple | |
-| statue | |
-| plaza | |
-| seascape A | |
-| seascape B | |
+| group      | note                                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| sunset A   | the first frame is a different exposure                                                                                               |
+| sunset B   |                                                                                                                                       |
+| boat       | different aspect ratios, zoom levels, directions; one subject (a boat). Splitting into several stacks inside this range is acceptable |
+| temple     |                                                                                                                                       |
+| statue     |                                                                                                                                       |
+| plaza      |                                                                                                                                       |
+| seascape A |                                                                                                                                       |
+| seascape B |                                                                                                                                       |
 
 **Result.** 231 consecutive frames extracted, 78 labelled positive pairs.
 
@@ -438,15 +438,15 @@ Unlabelled did not mean negative: most in-window pairs shared viewpoints, and
 all six highest-scoring "false positives" proved same-scene. Verify negatives by
 contact sheet; roughly 60 inspected pairs located the same-scene boundary.
 
-| descriptor | worst labelled pair | best verified negative | margin |
-|---|---|---|---|
-| dHash 64-bit | 0.531 | 0.641 | **−0.109** |
-| DCT pHash 64-bit | 0.406 | 0.594 | **−0.188** |
-| 4×4 tile statistics | 0.754 | 0.715 | 0.039 |
-| rank-normalized luma, no shift | 0.613 | 0.500 | 0.113 |
-| + trim, + shift search | 0.860 | 0.740 | 0.121 |
-| + chroma (§3, full 25-offset search) | 0.838 | 0.675 | **0.162** |
-| + chroma, coarse alignment (chosen) | 0.787 | 0.640 | **0.148** |
+| descriptor                           | worst labelled pair | best verified negative | margin     |
+| ------------------------------------ | ------------------- | ---------------------- | ---------- |
+| dHash 64-bit                         | 0.531               | 0.641                  | **−0.109** |
+| DCT pHash 64-bit                     | 0.406               | 0.594                  | **−0.188** |
+| 4×4 tile statistics                  | 0.754               | 0.715                  | 0.039      |
+| rank-normalized luma, no shift       | 0.613               | 0.500                  | 0.113      |
+| + trim, + shift search               | 0.860               | 0.740                  | 0.121      |
+| + chroma (§3, full 25-offset search) | 0.838               | 0.675                  | **0.162**  |
+| + chroma, coarse alignment (chosen)  | 0.787               | 0.640                  | **0.148**  |
 
 Both 64-bit hashes have a **negative** margin: the different-scene pairs score
 above the same-scene pairs, so no threshold separates them. This is the finding
@@ -460,36 +460,36 @@ below 0.74.
 **Grouping.** The §4.3 rule was then run over the same folder. At
 `auto_stack_similarity = 0.78` and a 60s window it reproduces the labelled set:
 
-| labelled group | produced |
-|---|---|
-| sunset A | exact, including the different-exposure frame |
-| sunset B | one extra frame, confirmed as belonging |
-| boat | two stacks, which was allowed up front |
-| temple | exact |
-| statue | exact |
-| plaza | exact |
-| seascape A | exact |
-| seascape B | exact |
+| labelled group | produced                                      |
+| -------------- | --------------------------------------------- |
+| sunset A       | exact, including the different-exposure frame |
+| sunset B       | one extra frame, confirmed as belonging       |
+| boat           | two stacks, which was allowed up front        |
+| temple         | exact                                         |
+| statue         | exact                                         |
+| plaza          | exact                                         |
+| seascape A     | exact                                         |
+| seascape B     | exact                                         |
 
 45 stacks over 140 of the 231 frames, the largest seven photos: one obelisk shot
 from seven distances, checked by eye and correct. The threshold slope is smooth
 either side, so there is no cliff for the setting to fall off. 0.78 is the
 default because it is where the plaza group completes; 0.80 drops its last frame.
 
-**Near-misses motivated scale search.** Every arguable rejection was a *distance*
+**Near-misses motivated scale search.** Every arguable rejection was a _distance_
 change, not exposure, motion, subject or colour. Crops lifted those pairs and
 left verified negatives unchanged:
 
-| pair | no crops | with crops |
-|---|---|---|
-| obelisk, stepped closer | 0.777 | **0.834** |
-| plaza, reframed | 0.741 | **0.773** |
-| steps, reframed | 0.776 | **0.797** |
-| steps, pulled wide | 0.757 | **0.779** |
-| verified negative: sunset vs walkway | 0.630 | 0.630 |
-| verified negative: road vs stairway | 0.640 | 0.640 |
-| verified negative: plaza vs sculptures | 0.516 | 0.516 |
-| verified negative: rocks vs building | 0.525 | 0.525 |
+| pair                                   | no crops | with crops |
+| -------------------------------------- | -------- | ---------- |
+| obelisk, stepped closer                | 0.777    | **0.834**  |
+| plaza, reframed                        | 0.741    | **0.773**  |
+| steps, reframed                        | 0.776    | **0.797**  |
+| steps, pulled wide                     | 0.757    | **0.779**  |
+| verified negative: sunset vs walkway   | 0.630    | 0.630      |
+| verified negative: road vs stairway    | 0.640    | 0.640      |
+| verified negative: plaza vs sculptures | 0.516    | 0.516      |
+| verified negative: rocks vs building   | 0.525    | 0.525      |
 
 Margin is unchanged, eight more frames stack, and the boat range goes from three
 stacks to two. Widening the threshold instead would have bought these back along
@@ -498,14 +498,14 @@ with everything else at that level, against a negative floor of 0.74.
 **The crop must be centred, and one crop is enough.** Anchoring the crop window
 off centre was measured as its own axis, at a single 78% fraction:
 
-| crop set | worst labelled | best verified negative | margin | pairings |
-|---|---|---|---|---|
-| centre 85% + 72% | 0.787 | 0.640 | 0.148 | 5 |
-| **centre 78%** | 0.787 | 0.641 | **0.146** | **3** |
-| 78% left/right | 0.787 | 0.643 | 0.145 | 7 |
-| 78% up/down | 0.788 | 0.739 | 0.049 | 7 |
-| 78% four diagonals | 0.787 | 0.751 | 0.037 | 11 |
-| 78% all nine anchors | 0.788 | 0.751 | 0.037 | 19 |
+| crop set             | worst labelled | best verified negative | margin    | pairings |
+| -------------------- | -------------- | ---------------------- | --------- | -------- |
+| centre 85% + 72%     | 0.787          | 0.640                  | 0.148     | 5        |
+| **centre 78%**       | 0.787          | 0.641                  | **0.146** | **3**    |
+| 78% left/right       | 0.787          | 0.643                  | 0.145     | 7        |
+| 78% up/down          | 0.788          | 0.739                  | 0.049     | 7        |
+| 78% four diagonals   | 0.787          | 0.751                  | 0.037     | 11       |
+| 78% all nine anchors | 0.788          | 0.751                  | 0.037     | 19       |
 
 Off-centre anchors barely move the true pairs (0.787 → 0.788) and lift the
 different-scene pairs hard (0.640 → 0.751): more freedom to slide the window is

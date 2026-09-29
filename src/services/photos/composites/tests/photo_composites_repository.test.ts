@@ -19,7 +19,17 @@ import { PhotoCompositesRepository } from '../photo_composites_repository';
 // which one that is depends on whether the row is deleted.
 const LIB = 'lib';
 
-const ASSEMBLY_SAMPLE = join(import.meta.dir, '..', '..', '..', '..', '..', 'test', 'fixtures', 'assembly-recipe.json');
+const ASSEMBLY_SAMPLE = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'test',
+  'fixtures',
+  'assembly-recipe.json',
+);
 
 let db: Database;
 let repo: PhotoCompositesRepository;
@@ -107,7 +117,10 @@ beforeEach(() => {
  */
 describe('a panorama and the frames it stands for', () => {
   const LIVE_IDS = (): string[] =>
-    listing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false }).photos.map((p) => p.id).sort();
+    listing
+      .listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false })
+      .photos.map((p) => p.id)
+      .sort();
 
   it('stands for its frames while it is there', () => {
     const panorama = mergeTwoFrames();
@@ -123,9 +136,9 @@ describe('a panorama and the frames it stands for', () => {
   it('a listing reads an assembly as composed of other photographs, and says which kind', () => {
     const assembly = assembleTwoFrames();
 
-    const row = listing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false }).photos.find(
-      (photo) => photo.id === assembly,
-    );
+    const row = listing
+      .listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false })
+      .photos.find((photo) => photo.id === assembly);
     expect(row?.composite_kind).toBe('assembly');
     expect(row?.frame_count).toBe(2);
   });
@@ -135,7 +148,9 @@ describe('a panorama and the frames it stands for', () => {
     const rows = listing.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false }).photos;
 
     expect(rows.find((photo) => photo.id === panorama)?.composite_kind).toBe('panorama');
-    expect(rows.filter((photo) => photo.id !== panorama).every((photo) => photo.composite_kind == null)).toBe(true);
+    expect(
+      rows.filter((photo) => photo.id !== panorama).every((photo) => photo.composite_kind == null),
+    ).toBe(true);
   });
 
   /**
@@ -164,9 +179,13 @@ describe('a panorama and the frames it stands for', () => {
    */
   it('stands for them in a shoot as well', () => {
     const panorama = mergeTwoFrames();
-    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(panorama);
+    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(
+      panorama,
+    );
 
-    const inShoot = listing.listByShoot('s1', 'added_asc', 0, 10, { includeDeleted: false }).photos.map((p) => p.id);
+    const inShoot = listing
+      .listByShoot('s1', 'added_asc', 0, 10, { includeDeleted: false })
+      .photos.map((p) => p.id);
 
     expect(inShoot).toEqual([panorama]);
   });
@@ -181,14 +200,20 @@ describe('a panorama and the frames it stands for', () => {
    */
   it('stands for them with stacks expanded, which is a rule about stacks and not about it', () => {
     const panorama = mergeTwoFrames();
-    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(panorama);
+    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(
+      panorama,
+    );
 
     const expanded = { includeDeleted: false, expandStacks: true };
-    expect(listing.listByShoot('s1', 'added_asc', 0, 10, expanded).photos.map((p) => p.id)).toEqual([panorama]);
-    expect(listing.listByLibrary(LIB, 'added_asc', 0, 10, expanded).photos.map((p) => p.id).sort()).toEqual([
-      'live',
-      panorama,
-    ].sort());
+    expect(listing.listByShoot('s1', 'added_asc', 0, 10, expanded).photos.map((p) => p.id)).toEqual(
+      [panorama],
+    );
+    expect(
+      listing
+        .listByLibrary(LIB, 'added_asc', 0, 10, expanded)
+        .photos.map((p) => p.id)
+        .sort(),
+    ).toEqual(['live', panorama].sort());
   });
 
   /**
@@ -204,9 +229,14 @@ describe('a panorama and the frames it stands for', () => {
    */
   it('counts itself as one entry, not as one plus every frame', () => {
     const panorama = mergeTwoFrames();
-    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(panorama);
+    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(
+      panorama,
+    );
 
-    for (const filters of [{ includeDeleted: false }, { includeDeleted: false, expandStacks: true }]) {
+    for (const filters of [
+      { includeDeleted: false },
+      { includeDeleted: false, expandStacks: true },
+    ]) {
       const listed = listing.listByShoot('s1', 'added_asc', 0, 10, filters);
       expect(listed.total).toBe(listed.photos.length);
       expect(listed.total).toBe(1);
@@ -225,7 +255,9 @@ describe('a panorama and the frames it stands for', () => {
   it('stands for its frames in the run the viewer steps through', () => {
     const panorama = mergeTwoFrames();
 
-    const run = navigation.neighboursInLibrary(LIB, 'added_asc', panorama, 10, { includeDeleted: false }).map((p) => p.id);
+    const run = navigation
+      .neighboursInLibrary(LIB, 'added_asc', panorama, 10, { includeDeleted: false })
+      .map((p) => p.id);
 
     expect(run).toContain(panorama);
     expect(run).not.toContain('frame001');
@@ -238,7 +270,9 @@ describe('a panorama and the frames it stands for', () => {
     db.query("INSERT INTO libraries (id, root_path, name) VALUES (?, '/r', 'lib')").run(LIB);
     const panorama = mergeTwoFrames();
 
-    const run = navigation.neighboursInLibrary(LIB, 'added_asc', panorama, 10, { includeDeleted: false });
+    const run = navigation.neighboursInLibrary(LIB, 'added_asc', panorama, 10, {
+      includeDeleted: false,
+    });
 
     expect(run.find((p) => p.id === panorama)?.composite_kind).toBe('panorama');
     expect(run.find((p) => p.id === 'live')?.composite_kind).toBeNull();
@@ -249,18 +283,27 @@ describe('a panorama and the frames it stands for', () => {
   it('stands for them in a range read between two photographs', () => {
     const panorama = mergeTwoFrames();
 
-    const between = navigation.rangeInLibrary(LIB, 'added_asc', { from: null, to: null }, { includeDeleted: false });
+    const between = navigation.rangeInLibrary(
+      LIB,
+      'added_asc',
+      { from: null, to: null },
+      { includeDeleted: false },
+    );
 
     expect(between.map((p) => p.id).sort()).toEqual(['live', panorama].sort());
   });
 
   it('gives the frames back to the readout when it is binned', () => {
     const panorama = mergeTwoFrames();
-    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(panorama);
+    db.query("UPDATE photos SET shoot_id = 's1' WHERE id IN ('frame001', 'frame002', ?)").run(
+      panorama,
+    );
 
     paths.markDeleted(panorama, null);
 
-    expect(listing.listByShoot('s1', 'added_asc', 0, 10, { includeDeleted: false }).photoTotal).toBe(2);
+    expect(
+      listing.listByShoot('s1', 'added_asc', 0, 10, { includeDeleted: false }).photoTotal,
+    ).toBe(2);
   });
 
   it('gives the frames back to the library when it is binned', () => {
@@ -322,12 +365,17 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
     return { inputs_edited: row.inputs_edited, built_from: row.built_from };
   };
   const placedAt = (id: string): string =>
-    (db.query('SELECT stamp_placement AS at FROM photos WHERE id = ?').get(id) as { at: string }).at;
+    (db.query('SELECT stamp_placement AS at FROM photos WHERE id = ?').get(id) as { at: string })
+      .at;
 
   /** A composite of two frames, owing its tile: the pending row is what the queue reads. */
   function composite(): string {
     // A library row, which the pending query joins, and which nothing else in this file needs.
-    db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(LIB, '/tmp/lib', 'Trip');
+    db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(
+      LIB,
+      '/tmp/lib',
+      'Trip',
+    );
     const id = mergeTwoFrames();
     // `insertComposite` queues the composite's own; 'live' is inserted here as raw SQL and has
     // none, and both have to be pending for the query below to answer about them.
@@ -346,14 +394,19 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
     expect(pendingRow(panorama)).toEqual({ inputs_edited: 0, built_from: placed });
 
     develop('frame002', STAMP);
-    expect(pendingRow(panorama)).toEqual({ inputs_edited: 1, built_from: placed > STAMP ? placed : STAMP });
+    expect(pendingRow(panorama)).toEqual({
+      inputs_edited: 1,
+      built_from: placed > STAMP ? placed : STAMP,
+    });
 
     const later = `${placed}z`;
     develop('frame001', later);
     expect(pendingRow(panorama)).toEqual({ inputs_edited: 1, built_from: later });
     expect(processing.builtFromOf(panorama)).toBe(later);
     // The composite's own row is unedited either way: this is what the canvas is *composed* of.
-    expect(processing.listPendingProcessing(LIB).find((row) => row.photo_id === panorama)?.edits).toBeNull();
+    expect(
+      processing.listPendingProcessing(LIB).find((row) => row.photo_id === panorama)?.edits,
+    ).toBeNull();
   });
 
   it('builds a photograph from its own document alone, whatever its placement', () => {
@@ -368,7 +421,12 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
   it('owes a composite its copies again once its recipe changes', () => {
     const panorama = composite();
     for (const variant of ['grid', 'full', 'full-hdr', 'max'] as const) {
-      processing.markCopyBuilt(panorama, '2026-06-01T00:00:00.000Z', processing.builtFromOf(panorama), variant);
+      processing.markCopyBuilt(
+        panorama,
+        '2026-06-01T00:00:00.000Z',
+        processing.builtFromOf(panorama),
+        variant,
+      );
     }
     const current = (): boolean => {
       const stamps = processing.renditionStamps(panorama, 'max');
@@ -377,7 +435,10 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
     expect(current()).toBe(true);
     expect(processing.queueEditedSince([panorama])).toBe(0);
 
-    db.query('UPDATE photos SET stamp_placement = ? WHERE id = ?').run(`${placedAt(panorama)}z`, panorama);
+    db.query('UPDATE photos SET stamp_placement = ? WHERE id = ?').run(
+      `${placedAt(panorama)}z`,
+      panorama,
+    );
 
     expect(current()).toBe(false);
     expect(processing.queueEditedSince([panorama])).toBe(1);

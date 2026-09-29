@@ -7,7 +7,11 @@ import { BlobCommitRequestSchema } from '../../schemas/blobs';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { soleInputOf } from '../../schemas/recipes';
 import { PathSegment } from '../../schemas/route';
-import { deleteEmptyStagingDirectory, deleteStagedBlob, unlinkMovedFile } from '../../utils/deletions';
+import {
+  deleteEmptyStagingDirectory,
+  deleteStagedBlob,
+  unlinkMovedFile,
+} from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { contentHash } from '../../utils/hash';
 import { originalPathOf } from '../../utils/paths';
@@ -18,7 +22,13 @@ import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
 import type { BackupLocations } from './backup_locations';
 import { BackupError } from './backup_error';
-import { assertMirrorOf, backupPath, backupStagePath, backupStagingDir, mirrorReady } from './backup_root';
+import {
+  assertMirrorOf,
+  backupPath,
+  backupStagePath,
+  backupStagingDir,
+  mirrorReady,
+} from './backup_root';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 
 // A directory answering for itself as a peer (docs/replication.md §14.2).
@@ -38,8 +48,15 @@ export interface PassivePeer {
 
 export function passivePeerOf(db: Database, peerId: string): PassivePeer | null {
   const row = db
-    .query("SELECT library_id, peer_id, name, address FROM replication_peers WHERE peer_id = ? AND kind = 'passive'")
-    .get(peerId) as { library_id: string; peer_id: string; name: string; address: string | null } | null;
+    .query(
+      "SELECT library_id, peer_id, name, address FROM replication_peers WHERE peer_id = ? AND kind = 'passive'",
+    )
+    .get(peerId) as {
+    library_id: string;
+    peer_id: string;
+    name: string;
+    address: string | null;
+  } | null;
   if (row?.address == null) return null;
   return { libraryId: row.library_id, peerId: row.peer_id, name: row.name, root: row.address };
 }
@@ -52,14 +69,27 @@ export function passivePeersOf(db: Database, libraryId: string): PassivePeer[] {
           WHERE library_id = ? AND kind = 'passive' AND address IS NOT NULL ORDER BY paired_at`,
       )
       .all(libraryId) as { library_id: string; peer_id: string; name: string; address: string }[]
-  ).map((row) => ({ libraryId: row.library_id, peerId: row.peer_id, name: row.name, root: row.address }));
+  ).map((row) => ({
+    libraryId: row.library_id,
+    peerId: row.peer_id,
+    name: row.name,
+    root: row.address,
+  }));
 }
 
 /** Moves a file on the mount to `to`, refusing an occupied name rather than overwriting it (§7.7). */
-export async function placeInMirror(from: string, to: string, relPath: string, signal?: AbortSignal | null): Promise<void> {
+export async function placeInMirror(
+  from: string,
+  to: string,
+  relPath: string,
+  signal?: AbortSignal | null,
+): Promise<void> {
   await ensureDir(path.dirname(to));
   if (occupant(path.dirname(to), path.basename(to)) != null) {
-    throw new BackupError('path_conflict', `A different file is already at ${relPath} in the backup. Move it before trying again.`);
+    throw new BackupError(
+      'path_conflict',
+      `A different file is already at ${relPath} in the backup. Move it before trying again.`,
+    );
   }
   signal?.throwIfAborted();
   // Claiming the name is the move: both paths are under the mirror's root, so this is one
@@ -68,7 +98,10 @@ export async function placeInMirror(from: string, to: string, relPath: string, s
     await link(from, to);
   } catch (err) {
     if (err instanceof Error && 'code' in err && err.code === 'EEXIST') {
-      throw new BackupError('path_conflict', `A file is already at ${relPath} in the backup. Check it before trying again.`);
+      throw new BackupError(
+        'path_conflict',
+        `A file is already at ${relPath} in the backup. Check it before trying again.`,
+      );
     }
     throw err;
   }
@@ -103,34 +136,49 @@ export class PassivePeers implements PeerTransport {
     return await libraryMutex.run(peer.libraryId, async () => {
       init?.signal?.throwIfAborted();
       const current = passivePeerOf(this.db, peerId);
-      if (current == null) throw new BackupError('wrong_backup', 'The backup folder changed during this transfer. Run the backup again.');
+      if (current == null)
+        throw new BackupError(
+          'wrong_backup',
+          'The backup folder changed during this transfer. Run the backup again.',
+        );
       return await this.requestAt(current, target, init);
     });
   }
 
-  private async requestAt(peer: PassivePeer, target: string, init?: RequestInit): Promise<Response> {
+  private async requestAt(
+    peer: PassivePeer,
+    target: string,
+    init?: RequestInit,
+  ): Promise<Response> {
     const library = this.library(peer.libraryId);
     assertMirrorOf(peer.root, library.id, library.name, peer.peerId);
 
     const url = new URL(target, 'http://backup');
     const [photoId, action] = url.pathname.split('/').filter((part) => part !== '');
-    if (photoId == null || action == null) throw new AppError('INTERNAL_ERROR', `a backup cannot answer ${target}`);
+    if (photoId == null || action == null)
+      throw new AppError('INTERNAL_ERROR', `a backup cannot answer ${target}`);
     const photo = this.photo(photoId);
     // A folder mirrors one library's tree, and what is written into it is a path out of a
     // catalogue row. Another library's row would resolve against this one's mirror and put a file
     // where a photograph of this library belongs.
     if (photo.library_id !== peer.libraryId) {
-      throw new AppError('VALIDATION_ERROR', `${photoId} is not in the library "${library.name}" is the backup of`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `${photoId} is not in the library "${library.name}" is the backup of`,
+      );
     }
     const relPath = soleInputOf(photo.recipe);
     if (relPath == null) {
-      throw new AppError('VALIDATION_ERROR', `${photoId} is composed rather than imported, so it has no original`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `${photoId} is composed rather than imported, so it has no original`,
+      );
     }
 
     switch (action) {
       case PathSegment.stage():
-        return init?.method === 'PUT' ?
-            await this.receive(peer, photoId, Number(url.searchParams.get('offset') ?? 0), init)
+        return init?.method === 'PUT'
+          ? await this.receive(peer, photoId, Number(url.searchParams.get('offset') ?? 0), init)
           : await this.stageStatus(peer, library, photo, relPath);
       case PathSegment.commit():
         return await this.commit(peer, photo, relPath, init);
@@ -152,7 +200,12 @@ export class PassivePeers implements PeerTransport {
    * happened to be sitting there - which the cull later reads as permission to delete the only
    * other copy.
    */
-  private async stageStatus(peer: PassivePeer, library: Library, photo: BasicPhoto, relPath: string): Promise<Response> {
+  private async stageStatus(
+    peer: PassivePeer,
+    library: Library,
+    photo: BasicPhoto,
+    relPath: string,
+  ): Promise<Response> {
     const stage = backupStagePath(peer.root, photo.id);
     const staged = stagedSize(stage);
     const copy = backupPath(peer.root, relPath);
@@ -162,10 +215,15 @@ export class PassivePeers implements PeerTransport {
     // on the drive by hand is not that moment: it says what is on the mount, not what the
     // photograph is. So a library that has never transferred this one reads its own file to find
     // out, and the two have to agree before the copy counts.
-    const recorded = this.photoMetadata.contentHashOf(photo.id) ?? (await this.hereIs(library, photo));
+    const recorded =
+      this.photoMetadata.contentHashOf(photo.id) ?? (await this.hereIs(library, photo));
     if (found !== recorded) {
-      if (this.backups.entry(peer.libraryId, peer.peerId, photo.id) != null) this.backups.mark(peer.libraryId, peer.peerId, photo.id, 'changed');
-      throw new BackupError('path_conflict', `A different file is already at ${relPath} in the backup. Move it before trying again.`);
+      if (this.backups.entry(peer.libraryId, peer.peerId, photo.id) != null)
+        this.backups.mark(peer.libraryId, peer.peerId, photo.id, 'changed');
+      throw new BackupError(
+        'path_conflict',
+        `A different file is already at ${relPath} in the backup. Move it before trying again.`,
+      );
     }
     // Recorded here rather than left to the caller: the queue's "already held" arm ends the
     // transfer without a commit, so this is the only moment anything knows the mount holds it, and
@@ -185,7 +243,12 @@ export class PassivePeers implements PeerTransport {
     return here;
   }
 
-  private async receive(peer: PassivePeer, photoId: string, offset: number, init: RequestInit): Promise<Response> {
+  private async receive(
+    peer: PassivePeer,
+    photoId: string,
+    offset: number,
+    init: RequestInit,
+  ): Promise<Response> {
     if (init.body == null) throw new AppError('VALIDATION_ERROR', 'no bytes in the request');
     const body = init.body instanceof ReadableStream ? init.body : new Response(init.body).body;
     if (body == null) throw new AppError('VALIDATION_ERROR', 'no bytes in the request');
@@ -200,14 +263,23 @@ export class PassivePeers implements PeerTransport {
    * Never over an occupied name, for the reason §7.7 gives: a backup that overwrites is a backup
    * that can lose a file to a bug in the thing it is protecting the files from.
    */
-  private async commit(peer: PassivePeer, photo: BasicPhoto, relPath: string, init?: RequestInit): Promise<Response> {
+  private async commit(
+    peer: PassivePeer,
+    photo: BasicPhoto,
+    relPath: string,
+    init?: RequestInit,
+  ): Promise<Response> {
     const asked = BlobCommitRequestSchema.parse(await new Response(init?.body ?? '{}').json());
     const stage = backupStagePath(peer.root, photo.id);
-    if (!existsSync(stage)) throw new AppError('VALIDATION_ERROR', `nothing staged for ${photo.id}`);
+    if (!existsSync(stage))
+      throw new AppError('VALIDATION_ERROR', `nothing staged for ${photo.id}`);
     const found = await contentHash(stage);
     if (found !== asked.content_hash) {
       await deleteStagedBlob(backupStagingDir(peer.root), stage);
-      throw new BackupError('backup_changed', `The staged copy of ${relPath} has changed. Run the backup again.`);
+      throw new BackupError(
+        'backup_changed',
+        `The staged copy of ${relPath} has changed. Run the backup again.`,
+      );
     }
     const size = Bun.file(stage).size;
     await placeInMirror(stage, backupPath(peer.root, relPath), relPath, init?.signal);
@@ -226,16 +298,24 @@ export class PassivePeers implements PeerTransport {
    */
   private serve(peer: PassivePeer, photoId: string, init?: RequestInit): Response {
     const entry = this.backups.entry(peer.libraryId, peer.peerId, photoId);
-    if (entry == null) throw new BackupError('backup_missing', `The backup copy of ${photoId} is missing. Restore it from another copy.`);
+    if (entry == null)
+      throw new BackupError(
+        'backup_missing',
+        `The backup copy of ${photoId} is missing. Restore it from another copy.`,
+      );
     const copy = backupPath(peer.root, entry.rel_path);
     if (!isOnDisk(copy)) {
       this.backups.mark(peer.libraryId, peer.peerId, photoId, 'missing');
-      throw new BackupError('backup_missing', `The backup copy of ${entry.rel_path} is missing. Restore it from another copy.`);
+      throw new BackupError(
+        'backup_missing',
+        `The backup copy of ${entry.rel_path} is missing. Restore it from another copy.`,
+      );
     }
     const file = Bun.file(copy);
     const offset = rangeOffset(new Headers(init?.headers).get('range'));
     const size = file.size;
-    if (offset > size) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
+    if (offset > size)
+      throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
     return new Response(offset > 0 ? file.slice(offset) : file, {
       status: offset > 0 ? 206 : 200,
       headers: { 'Content-Length': String(size - offset) },
@@ -244,10 +324,16 @@ export class PassivePeers implements PeerTransport {
 
   private async hash(peer: PassivePeer, photoId: string): Promise<Response> {
     const entry = this.backups.entry(peer.libraryId, peer.peerId, photoId);
-    if (entry == null) throw new BackupError('backup_missing', `The backup copy of ${photoId} is missing. Restore it from another copy.`);
+    if (entry == null)
+      throw new BackupError(
+        'backup_missing',
+        `The backup copy of ${photoId} is missing. Restore it from another copy.`,
+      );
     // Read back rather than answered out of the row: what this is for is a download the caller is
     // about to accept as an original, and a row cannot notice a copy that has rotted.
-    return Response.json({ content_hash: await contentHash(backupPath(peer.root, entry.rel_path)) });
+    return Response.json({
+      content_hash: await contentHash(backupPath(peer.root, entry.rel_path)),
+    });
   }
 
   private photo(photoId: string): BasicPhoto {

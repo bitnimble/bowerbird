@@ -45,7 +45,11 @@ export class RenderBenchmark {
    * `into` is a parameter rather than a field because the renderers are built without one: what
    * owns the file is the caller, and a benchmark is the only thing here that writes it.
    */
-  async run(rendition: RenderedRendition, denoiser: Denoiser, into: RenderTimingsFile): Promise<RenderTiming> {
+  async run(
+    rendition: RenderedRendition,
+    denoiser: Denoiser,
+    into: RenderTimingsFile,
+  ): Promise<RenderTiming> {
     // Shared, so a second rendition's Measure does not write the same file while the first reads it.
     this.fetching ??= fetchReferenceFrame(this.frame).finally(() => (this.fetching = null));
     await this.fetching;
@@ -90,7 +94,7 @@ export class RenderBenchmark {
       for (const stage of OPTIONAL_STAGES) {
         // Floored at zero: a stage that cost less than the spread across rounds can come out
         // negative, and a row reading "-3 ms" is worse than one reading nothing.
-        const baseline = stage === 'lens' ? fastest.get('colour') ?? total : total;
+        const baseline = stage === 'lens' ? (fastest.get('colour') ?? total) : total;
         stages[stage] = Math.max(0, baseline - (fastest.get(stage) ?? baseline));
       }
       const timing = scaledToReference(

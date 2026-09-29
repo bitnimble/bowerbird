@@ -8,9 +8,12 @@ import { OrderingSchema, IdSchema } from './common';
 export const ShootNameSchema = z
   .string()
   .min(1)
-  .refine((n) => !/[/\\]/.test(n) && n !== '.' && n !== '..' && !n.startsWith('.') && !n.includes('\0'), {
-    message: 'name must be a single folder segment (no "/", "\\", leading ".", or path tokens)',
-  });
+  .refine(
+    (n) => !/[/\\]/.test(n) && n !== '.' && n !== '..' && !n.startsWith('.') && !n.includes('\0'),
+    {
+      message: 'name must be a single folder segment (no "/", "\\", leading ".", or path tokens)',
+    },
+  );
 
 // Whether a listing includes the shoots put away (§12.4). Off by default, which is the point: a
 // consumer that has not thought about hiding gets the shoots a reader is working with, rather than

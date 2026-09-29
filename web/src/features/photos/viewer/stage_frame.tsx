@@ -114,28 +114,30 @@ export function StageFrame({
       if (!live || frame.closed) return;
       // Reported after the draw, not beside it: the picture is up once the frame is in the
       // canvas, and everything that waits on a picture being up waits on this.
-      void stageCanvases.paint(element, fittedCanvasSize(frame), frame, { devicePeakNits, proof }).then(
-        () => {
-          if (!live) return;
-          // The file's own shape, not the decoded one's: what is decoded is capped at what this
-          // display can show, and a reader asking a photograph's dimensions is asking about the
-          // photograph.
-          report(frame.naturalWidth, frame.naturalHeight);
-        },
-        (err: unknown) => {
-          if (!live) return;
-          // The element is spent rather than the picture unreadable, so what it needs is a
-          // new element and not a report that the photograph is gone.
-          if (err instanceof CanvasLost) {
-            setAttempt((was) => was + 1);
-            return;
-          }
-          // A frame that decoded and then could not be drawn is as blank as one that never
-          // arrived, so it is reported the same way rather than left as an empty canvas the
-          // stage believes in.
-          missing.current(source);
-        },
-      );
+      void stageCanvases
+        .paint(element, fittedCanvasSize(frame), frame, { devicePeakNits, proof })
+        .then(
+          () => {
+            if (!live) return;
+            // The file's own shape, not the decoded one's: what is decoded is capped at what this
+            // display can show, and a reader asking a photograph's dimensions is asking about the
+            // photograph.
+            report(frame.naturalWidth, frame.naturalHeight);
+          },
+          (err: unknown) => {
+            if (!live) return;
+            // The element is spent rather than the picture unreadable, so what it needs is a
+            // new element and not a report that the photograph is gone.
+            if (err instanceof CanvasLost) {
+              setAttempt((was) => was + 1);
+              return;
+            }
+            // A frame that decoded and then could not be drawn is as blank as one that never
+            // arrived, so it is reported the same way rather than left as an empty canvas the
+            // stage believes in.
+            missing.current(source);
+          },
+        );
     };
 
     const already = decodedFrame(source);
@@ -146,7 +148,11 @@ export function StageFrame({
       };
     }
 
-    void decodeFrame(source, wholeRef.current, requestedRef.current ? 'interactive' : 'background').then(draw, (err: unknown) => {
+    void decodeFrame(
+      source,
+      wholeRef.current,
+      requestedRef.current ? 'interactive' : 'background',
+    ).then(draw, (err: unknown) => {
       // Abandoned rather than absent: the reader stepped past this photograph while it was
       // being fetched, which is not a photograph the server is missing.
       if (!live || (err instanceof Error && err.message === 'superseded')) return;

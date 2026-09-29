@@ -20,7 +20,15 @@
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { alreadyPinned, fetchPinned, linkPinned, makeOnce, pin, pinnedHome, pinnedLink } from './pinned';
+import {
+  alreadyPinned,
+  fetchPinned,
+  linkPinned,
+  makeOnce,
+  pin,
+  pinnedHome,
+  pinnedLink,
+} from './pinned';
 
 const NAME = 'swiftshader';
 const COMMIT = 'bbe98768a47ce9166f768e791768ae5f066c04df';

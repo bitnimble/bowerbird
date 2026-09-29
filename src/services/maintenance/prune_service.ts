@@ -4,7 +4,11 @@ import { Logger } from '../../logger';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { deleteDraft, deleteGeneratedDirectory, deleteGeneratedFile } from '../../utils/deletions';
 import { getDataPath } from '../../utils/paths';
-import { RENDITION_EXTENSION, renditionVariants, retiredRenditionDirs } from '../processing/renditions/renditions';
+import {
+  RENDITION_EXTENSION,
+  renditionVariants,
+  retiredRenditionDirs,
+} from '../processing/renditions/renditions';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
 import { LibraryActivity } from '../activity/library_activity';
@@ -15,7 +19,9 @@ import { LibraryActivity } from '../activity/library_activity';
 // stray the user left, a directory a later feature adds - is keyed by something
 // other than a photo id and must not be touched.
 function generatedDirs(library: Library): string[] {
-  return renditionVariants().map((variant) => path.join(getDataPath(library), 'renditions', variant));
+  return renditionVariants().map((variant) =>
+    path.join(getDataPath(library), 'renditions', variant),
+  );
 }
 
 const log = new Logger('prune');
@@ -23,7 +29,10 @@ const log = new Logger('prune');
 // The eager half of the sweep below, for photos whose rows are going right now
 // rather than ones whose rows went at some point (§8.5). Same directories and the
 // same rule about which files a photo id owns, so a change to either is made once.
-export async function deleteGeneratedFilesFor(library: Library, photoIds: readonly string[]): Promise<void> {
+export async function deleteGeneratedFilesFor(
+  library: Library,
+  photoIds: readonly string[],
+): Promise<void> {
   if (photoIds.length === 0) return;
   const dataPath = getDataPath(library);
   // Named rather than searched for. The sweep reads whole directories because it
@@ -34,9 +43,11 @@ export async function deleteGeneratedFilesFor(library: Library, photoIds: readon
     for (const id of photoIds) {
       // A rendition that was never built is not an error (`rm` is forced), and
       // one that will not go now is not either: the sweep is the backstop.
-      await deleteGeneratedFile(dataPath, path.join(dir, `${id}${RENDITION_EXTENSION}`)).catch((err: unknown) => {
-        log.warn('could not remove a rendition; the sweep will', { id, dir, err });
-      });
+      await deleteGeneratedFile(dataPath, path.join(dir, `${id}${RENDITION_EXTENSION}`)).catch(
+        (err: unknown) => {
+          log.warn('could not remove a rendition; the sweep will', { id, dir, err });
+        },
+      );
     }
   }
 }
@@ -45,7 +56,6 @@ export interface PruneResult {
   removed: number;
   bytes: number;
 }
-
 
 // Deletes generated files whose photo no longer exists. Nothing else in the
 // system does: renditions are written by processing and rewritten in place, so
@@ -179,7 +189,8 @@ async function treeBytes(target: string): Promise<number> {
   if (info == null) return 0;
   if (!info.isDirectory()) return info.size;
   let total = 0;
-  for (const entry of await readdir(target).catch(() => [])) total += await treeBytes(path.join(target, entry));
+  for (const entry of await readdir(target).catch(() => []))
+    total += await treeBytes(path.join(target, entry));
   return total;
 }
 
@@ -227,7 +238,11 @@ export class ScheduledPrune {
       const drafts = await this.prune.pruneDrafts();
       const removed = swept.removed + drafts.removed;
       const bytes = swept.bytes + drafts.bytes;
-      log.info('sweep done', { removed, mb: (bytes / 1024 / 1024).toFixed(1), ms: Date.now() - startedAt });
+      log.info('sweep done', {
+        removed,
+        mb: (bytes / 1024 / 1024).toFixed(1),
+        ms: Date.now() - startedAt,
+      });
     } catch (err) {
       log.error('sweep failed', { err });
     } finally {

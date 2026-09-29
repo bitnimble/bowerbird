@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
-import { RenderTimingSchema, RenderTimingsSchema, RenderedRenditionSchema, type RenderTiming, type RenderedRendition } from '../../schemas/render_stages';
+import {
+  RenderTimingSchema,
+  RenderTimingsSchema,
+  RenderedRenditionSchema,
+  type RenderTiming,
+  type RenderedRendition,
+} from '../../schemas/render_stages';
 import { DenoiserSchema, type Denoiser } from '../../schemas/photo_edits';
 import { PathSegment, route } from '../../schemas/route';
-import { DEFAULT_SETTINGS, SettingsSchema, UpdateSettingsRequestSchema } from '../../schemas/settings';
+import {
+  DEFAULT_SETTINGS,
+  SettingsSchema,
+  UpdateSettingsRequestSchema,
+} from '../../schemas/settings';
 import { StorageUsageSchema } from '../../schemas/storage_usage';
 import type { StorageUsageService } from '../../services/maintenance/storage_usage_service';
 import type { RenderTimingsFile } from '../../services/processing/renditions/render_timings_file';
@@ -17,7 +27,10 @@ export class SettingsApi {
     private readonly settings: SettingsRepository,
     // What a render costs here, which belongs to the machine rather than to any library (§10.1).
     private readonly timings: RenderTimingsFile,
-    private readonly benchmarkRender: (rendition: RenderedRendition, denoiser: Denoiser) => Promise<RenderTiming>,
+    private readonly benchmarkRender: (
+      rendition: RenderedRendition,
+      denoiser: Denoiser,
+    ) => Promise<RenderTiming>,
     private readonly storageUsage: StorageUsageService,
   ) {
     const app = new Hono();
@@ -27,9 +40,13 @@ export class SettingsApi {
     // What the app ships with, so a client can offer "put this back" without
     // carrying a copy of the schema's defaults. Before `/` in no sense that
     // matters here - there is no `/:key` route to shadow it.
-    app.get(route(PathSegment.defaults()), (c) => c.json(respond(SettingsSchema, DEFAULT_SETTINGS)));
+    app.get(route(PathSegment.defaults()), (c) =>
+      c.json(respond(SettingsSchema, DEFAULT_SETTINGS)),
+    );
 
-    app.get(route(PathSegment.renderTimings()), (c) => c.json(respond(RenderTimingsSchema, this.timings.read())));
+    app.get(route(PathSegment.renderTimings()), (c) =>
+      c.json(respond(RenderTimingsSchema, this.timings.read())),
+    );
 
     app.get(route(PathSegment.storageUsage()), async (c) => {
       takeAsLongAsItTakes(c);

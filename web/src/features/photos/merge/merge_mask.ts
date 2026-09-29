@@ -80,7 +80,12 @@ export function swatchRegion(
   loop: readonly (readonly [number, number])[],
   frame: { width: number; height: number },
   box: number,
-): { region: { x: number; y: number; width: number; height: number }; width: number; height: number; clipPath: string } {
+): {
+  region: { x: number; y: number; width: number; height: number };
+  width: number;
+  height: number;
+  clipPath: string;
+} {
   const xs = loop.map(([x]) => x);
   const ys = loop.map(([, y]) => y);
   const x = Math.max(0, Math.floor(Math.min(...xs)));

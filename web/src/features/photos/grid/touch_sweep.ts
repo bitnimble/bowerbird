@@ -21,7 +21,8 @@ function markOf(cell: Element): Mark | null {
   return id == null ? null : { kind: 'member', id };
 }
 
-const keyOf = (mark: Mark): string => (mark.kind === 'row' ? `row ${mark.index}` : `member ${mark.id}`);
+const keyOf = (mark: Mark): string =>
+  mark.kind === 'row' ? `row ${mark.index}` : `member ${mark.id}`;
 
 /**
  * A long press on a tile picks it, and dragging on from there picks the run between, scrolling
@@ -61,7 +62,8 @@ export class TouchSweep {
   private readonly onStart = (e: TouchEvent): void => {
     this.release();
     const touch = e.touches[0];
-    const cell = e.target instanceof Element ? e.target.closest<HTMLElement>('[role="listitem"]') : null;
+    const cell =
+      e.target instanceof Element ? e.target.closest<HTMLElement>('[role="listitem"]') : null;
     const mark = cell == null ? null : markOf(cell);
     if (e.touches.length !== 1 || touch == null || cell == null || mark == null) return;
     this.x = touch.clientX;

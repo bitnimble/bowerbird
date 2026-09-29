@@ -39,7 +39,10 @@ beforeEach(async () => {
     ordering: 'taken_desc',
     include_subfolders: true,
   } as Library;
-  const libraries = { list: () => [library], getById: () => library } as unknown as LibrariesRepository;
+  const libraries = {
+    list: () => [library],
+    getById: () => library,
+  } as unknown as LibrariesRepository;
   const scan = {
     scanLibrary: async (_id: string, scope?: ScanScope) => {
       calls.push(scope ? [...(scope.paths ?? [])].sort() : undefined);

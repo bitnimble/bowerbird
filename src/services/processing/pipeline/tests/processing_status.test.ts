@@ -36,12 +36,16 @@ class HeldWorker extends MockWorker {
   }
 
   static finish(photoId: string, rendition: string, success = true): void {
-    const index = this.jobs.findIndex(({ job }) => job.photoId === photoId && job.targets[0]?.rendition === rendition);
+    const index = this.jobs.findIndex(
+      ({ job }) => job.photoId === photoId && job.targets[0]?.rendition === rendition,
+    );
     if (index < 0) throw new Error(`no held ${rendition} for ${photoId}`);
     const held = this.jobs.splice(index, 1)[0];
     if (held == null) throw new Error(`no held ${rendition} for ${photoId}`);
     held.worker.onmessage?.({
-      data: success ? { photoId, success: true } : { photoId, success: false, error: 'render failed' },
+      data: success
+        ? { photoId, success: true }
+        : { photoId, success: false, error: 'render failed' },
     });
   }
 }
@@ -73,7 +77,11 @@ describe('live library processing status', () => {
     for (const libraryId of [LIB, OTHER]) {
       const libraryRoot = path.join(root, libraryId);
       mkdirSync(libraryRoot);
-      db.query(`INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)`).run(libraryId, libraryRoot, libraryId);
+      db.query(`INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)`).run(
+        libraryId,
+        libraryRoot,
+        libraryId,
+      );
     }
     photos = new PhotoProcessingRepository(db, new RenditionsRepository(db));
     activity = new LibraryActivity();
@@ -99,14 +107,16 @@ describe('live library processing status', () => {
     globalThis.Worker = REAL_WORKER;
     db.close();
     rmSync(root, { recursive: true, force: true });
-    for (const libraryId of [LIB, OTHER]) rmSync(dataPathForLibraryId(libraryId), { recursive: true, force: true });
+    for (const libraryId of [LIB, OTHER])
+      rmSync(dataPathForLibraryId(libraryId), { recursive: true, force: true });
   });
 
   function add(photoId: string, libraryId = LIB): void {
     writeFileSync(path.join(root, libraryId, `${photoId}.arw`), 'RAW');
-    db.query(`INSERT INTO photos (id, library_id, recipe, width, height, date_added)
-      VALUES (?, ?, json_object('kind', 'file', 'path', ?), 100, 100, '2026-01-01T00:00:00.000Z')`)
-      .run(photoId, libraryId, `${photoId}.arw`);
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
+      VALUES (?, ?, json_object('kind', 'file', 'path', ?), 100, 100, '2026-01-01T00:00:00.000Z')`,
+    ).run(photoId, libraryId, `${photoId}.arw`);
     photos.queueBothPasses(photoId);
   }
 
@@ -217,7 +227,10 @@ describe('live library processing status', () => {
     const original = path.join(root, LIB, 'a.arw');
     const full = processing.renderOne(original, 'a', library, 'full', false);
     const max = processing.renderOne(original, 'a', library, 'max', false);
-    const refused = max.then(() => null, (error: unknown) => error instanceof Error ? error.message : String(error));
+    const refused = max.then(
+      () => null,
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
     expect(status.getScanStatus(LIB).photos_processing).toBe(1);
     expect(status.getScanStatus(OTHER).photos_processing).toBe(0);
 
@@ -243,7 +256,10 @@ describe('live library processing status', () => {
     Reflect.set(globalThis, 'Worker', HeldPrepareWorker);
     const first = processing.preparePicture('a');
     const second = processing.preparePicture('a');
-    const refused = second.then(() => null, (error: unknown) => error instanceof Error ? error.message : String(error));
+    const refused = second.then(
+      () => null,
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
     expect(activity.current(LIB)).toEqual([{ kind: 'preparing', count: 1 }]);
     expect(activity.current(OTHER)).toEqual([]);
     expect(status.getScanStatus(LIB).photos_processing).toBe(0);
@@ -285,9 +301,15 @@ describe('live library processing status', () => {
   it('reports stage measurements as device-wide work and clears successful measurements', async () => {
     const timing: RenderTiming = { total: 1, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' };
     const measured = Promise.withResolvers<RenderTiming>();
-    const benchmark = jest.spyOn(RenderBenchmark.prototype, 'run').mockImplementation(() => measured.promise);
+    const benchmark = jest
+      .spyOn(RenderBenchmark.prototype, 'run')
+      .mockImplementation(() => measured.promise);
     try {
-      const run = processing.benchmarkRender('full', 'galosh', new RenderTimingsFile(path.join(root, 'timings.json')));
+      const run = processing.benchmarkRender(
+        'full',
+        'galosh',
+        new RenderTimingsFile(path.join(root, 'timings.json')),
+      );
       expect(activity.current(null)).toEqual([{ kind: 'measuring', count: 1 }]);
       expect(activity.current(LIB)).toEqual([]);
       measured.resolve(timing);

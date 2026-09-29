@@ -43,10 +43,13 @@ export const renditionsApi = {
     rendered: Uint8Array<ArrayBuffer>,
   ): Promise<void> => {
     const url = renditionUrl(photoId, rendition);
-    const reply = await fetch(builtFrom == null ? url : `${url}?builtFrom=${encodeURIComponent(builtFrom)}`, {
-      method: 'PUT',
-      body: rendered,
-    });
+    const reply = await fetch(
+      builtFrom == null ? url : `${url}?builtFrom=${encodeURIComponent(builtFrom)}`,
+      {
+        method: 'PUT',
+        body: rendered,
+      },
+    );
     if (!reply.ok) throw errorFrom(reply.status, await reply.text());
   },
 };

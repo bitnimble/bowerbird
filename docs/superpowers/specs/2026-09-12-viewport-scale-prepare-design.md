@@ -16,7 +16,7 @@ with their imposing code.
 denoise, demosaic, code, defringe, gather, sharpen. Its output is a `Resident` (u16 x 3, normalised
 PQ Rec.2020, two samples a word) plus the numbers the grade needs beside it - `tile::Prepared`'s
 `keep`, `origin`, `photograph`, `levels`, `matched`, `as_shot`, `defocus` and `reference_nits`.
-Serve a *wire* struct naming caller-visible fields, test-pinned against `Prepared`: `Prepared` derives
+Serve a _wire_ struct naming caller-visible fields, test-pinned against `Prepared`: `Prepared` derives
 no `Serialize`, includes samples, and keeps `reference_nits` crate-private.
 
 **Grade** remains one client pass per canvas pixel over the prepared frame. Exposure, tone,
@@ -28,7 +28,7 @@ no round trip. Only Detail, sharpen, defringe and dust change prepare.
 WGSL; what differs is `tile::Source` (a path on the server, bytes or a held mosaic in the tab) and
 the transport.
 
-**Level** L is the canvas at `1 / 2^L`. Dynamically prepared mipmaps: each level is *prepared* at
+**Level** L is the canvas at `1 / 2^L`. Dynamically prepared mipmaps: each level is _prepared_ at
 scale `2^L` - a `Scale::Half` decode where the ratio allows, then the resize a rendition of that
 size makes - never averaged down from level 0. That is what makes a level equal to the rendition of
 its size.
@@ -45,20 +45,20 @@ and `Through::Lens` applies the same ratio table `warp.slang` does. Both gathers
 Measured before this design: one-source `composite_tile::prepared` against `tile::prepared`, same
 rectangle, both fixtures' shadow and brightest block:
 
-| Fixture | Lens | Worst difference | Samples differing |
-|---|---|---|---|
-| DSC02981.ARW (Sony) | identity | 1 / 65535 | 0.5% |
-| IMG_5360.CR3 (Canon) | distortion fitted | 1 / 65535 | 0.6% |
+| Fixture              | Lens              | Worst difference | Samples differing |
+| -------------------- | ----------------- | ---------------- | ----------------- |
+| DSC02981.ARW (Sony)  | identity          | 1 / 65535        | 0.5%              |
+| IMG_5360.CR3 (Canon) | distortion fitted | 1 / 65535        | 0.6%              |
 
 Differences are f32 rounding. Merge single-file and panorama paths at every layer:
 
-| Today | After |
-|---|---|
-| `tile::prepared_on_device` (one file) and `composite_tile::prepared` (N sources) | one `tile::prepared`, N >= 1 |
-| `TileRequest` and `CompositeRequest` | one `PrepareRequest` |
-| `job::Base::build` decodes a file; `composite_job::base` composites a recipe | `Base::build` dispatches on the recipe, and `composite_job::base`'s four extra arguments fold into `Job` |
-| `composition::Composition` | `Recipe`, with a one-source constructor. The Rust type only: `schemas/recipes.ts` already exports a `Recipe`, and its sources are `.min(2)`, which a one-source recipe never has to satisfy because it is built in process and never stored on a row |
-| `edit.rs`'s private `open`, reached through `prepare_bytes` and `from_frame` | a prepare over the whole canvas, `Source::Frame` - the open holds a frame rather than bytes, and deliberately: the camera match is fitted against scene-linear samples before any coding |
+| Today                                                                            | After                                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tile::prepared_on_device` (one file) and `composite_tile::prepared` (N sources) | one `tile::prepared`, N >= 1                                                                                                                                                                                                                         |
+| `TileRequest` and `CompositeRequest`                                             | one `PrepareRequest`                                                                                                                                                                                                                                 |
+| `job::Base::build` decodes a file; `composite_job::base` composites a recipe     | `Base::build` dispatches on the recipe, and `composite_job::base`'s four extra arguments fold into `Job`                                                                                                                                             |
+| `composition::Composition`                                                       | `Recipe`, with a one-source constructor. The Rust type only: `schemas/recipes.ts` already exports a `Recipe`, and its sources are `.min(2)`, which a one-source recipe never has to satisfy because it is built in process and never stored on a row |
+| `edit.rs`'s private `open`, reached through `prepare_bytes` and `from_frame`     | a prepare over the whole canvas, `Source::Frame` - the open holds a frame rather than bytes, and deliberately: the camera match is fitted against scene-linear samples before any coding                                                             |
 
 Unify per-source stage placement. **Three positions today:** renditions sharpen at
 `hdr::Cut::from_base` after resize and lens warp, using its Jacobian; loupe tiles and editor opens
@@ -79,19 +79,19 @@ composite.
 
 Measure whole-frame quantities once per recipe and pass to every prepare. `TileRequest` already
 requires this for five - `levels`, `noise_fit`, `capture_sigma`, `sensor_long`, `defocus` - and
-`CompositeRequest.levels` for the sixth. Composites now get *their own* answers:
+`CompositeRequest.levels` for the sixth. Composites now get _their own_ answers:
 
-| Number | A composite's answer |
-|---|---|
-| levels (diffuse white, scene peak in input levels) | `union_levels`, over every source stacked |
-| colour match | `union_match`, fitted over every source at once, `Lens::none()` |
-| scene peak (display nits) | measured on the canvas at one level, handed to every tick |
-| defocus pair | the reference's |
-| noise fit | the reference's |
-| capture sigma | the reference's, with `sensor_long` the canvas at scale 1 rather than that sensor |
-| white balance gains | the reference's |
-| as-shot | the reference's |
-| the decode scale | the level's, per source: each is asked for its own long edge over `2^L` |
+| Number                                             | A composite's answer                                                              |
+| -------------------------------------------------- | --------------------------------------------------------------------------------- |
+| levels (diffuse white, scene peak in input levels) | `union_levels`, over every source stacked                                         |
+| colour match                                       | `union_match`, fitted over every source at once, `Lens::none()`                   |
+| scene peak (display nits)                          | measured on the canvas at one level, handed to every tick                         |
+| defocus pair                                       | the reference's                                                                   |
+| noise fit                                          | the reference's                                                                   |
+| capture sigma                                      | the reference's, with `sensor_long` the canvas at scale 1 rather than that sensor |
+| white balance gains                                | the reference's                                                                   |
+| as-shot                                            | the reference's                                                                   |
+| the decode scale                                   | the level's, per source: each is asked for its own long edge over `2^L`           |
 
 The per-camera rows follow the rule `composition::Composition::reference` already states, and the two
 union rows follow `union_match`'s own reasoning: carrying the reference's match forward "grades a
@@ -151,7 +151,7 @@ Three consequences for the code that writes it:
   `MeasuredLevels.levels` is the pre-anchor value.
 - **No panorama has ever had an analysis row**, past or future: the worker returns from its
   panorama branch above the only `writePhotoAnalysis` call, and the command it builds reads
-  analysis per *source* and never the composite's own. So the write is new work, both directions,
+  analysis per _source_ and never the composite's own. So the write is new work, both directions,
   and without it the numbers above are computed and dropped.
 
 `wb_gains` and `as_shot` need no slot of their own. The open prepares the whole canvas at the
@@ -179,9 +179,9 @@ the recipe, and each source's analysis blob - the lens the gather uses and the s
 corrects come out of that blob, so a window fetched before a first-open measure landed was
 prepared with neither and nothing else in the key would say so.
 
-The unit of *request* is the viewport window, because every source reaching it is region-decoded
+The unit of _request_ is the viewport window, because every source reaching it is region-decoded
 once and a region decode costs what the whole photograph costs (60ms against the 2ms its pixels
-then take to gather). The unit of *cache* is a 1024 x 1024 tile cut from the window's `keep`
+then take to gather). The unit of _cache_ is a 1024 x 1024 tile cut from the window's `keep`
 rectangle - even, so a copy lands on a word - held page-side, bounded in bytes.
 
 The coarsest level is the whole canvas at 4096 or under on its long edge; the open prepares it and
@@ -190,10 +190,10 @@ miss draws from it until the finer level lands.
 
 Rough sizes for a 26 x 61MP pan, canvas about 30000 x 8000:
 
-| Level | Window | Bytes | Sources decoded | Native cost |
-|---|---|---|---|---|
-| 3, the fit | 3750 x 1000 | 23MB | 26, halved | ~2s |
-| 0, 1:1 under a 4K stage | 5760 x 3240 | 110MB | 2 to 3 | ~300ms |
+| Level                   | Window      | Bytes | Sources decoded | Native cost |
+| ----------------------- | ----------- | ----- | --------------- | ----------- |
+| 3, the fit              | 3750 x 1000 | 23MB  | 26, halved      | ~2s         |
+| 0, 1:1 under a 4K stage | 5760 x 3240 | 110MB | 2 to 3          | ~300ms      |
 
 ## 6. Module
 
@@ -234,7 +234,7 @@ bytes a pixel standing on a word boundary only for an even count.
 **Three things above `prepared` must change for windows:**
 
 - The stage's draw is a whole-frame grade today (`window: None`). A windowed frame needs the
-  `within`/`surrounded` plumbing the loupe arm uses *and* the reader's geometry, which
+  `within`/`surrounded` plumbing the loupe arm uses _and_ the reader's geometry, which
   `Prepared::grade` deliberately does not apply. That combination - a window, a canvas region and
   a geometry at once - is exercised nowhere in the tree and needs a test of its own.
 - The pyramid is not optional: `gpu::present` and `draw_into` take a `&Pyramid`, so a window

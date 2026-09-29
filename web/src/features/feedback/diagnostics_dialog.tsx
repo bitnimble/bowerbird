@@ -54,7 +54,8 @@ export function DiagnosticsDialog({
 }
 
 function described(read: Diagnostics): [string, string][] {
-  const answer = (yes: boolean): string => (yes ? DiagnosticsStrings.yes() : DiagnosticsStrings.no());
+  const answer = (yes: boolean): string =>
+    yes ? DiagnosticsStrings.yes() : DiagnosticsStrings.no();
   return [
     [DiagnosticsStrings.display(), read.display],
     [DiagnosticsStrings.browser(), read.browser],

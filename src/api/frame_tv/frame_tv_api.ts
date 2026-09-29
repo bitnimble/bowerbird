@@ -11,7 +11,9 @@ export class FrameTvApi {
   constructor(private readonly frameTvs: FrameTvService) {
     const app = new Hono();
 
-    app.get(route(), async (c) => c.json(respond(FrameTvListSchema, { tvs: await this.frameTvs.list() })));
+    app.get(route(), async (c) =>
+      c.json(respond(FrameTvListSchema, { tvs: await this.frameTvs.list() })),
+    );
 
     app.post(route(PathSegment.send()), async (c) => {
       await this.frameTvs.send(SendToFrameTvRequestSchema.parse(await c.req.json()));

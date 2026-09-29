@@ -44,4 +44,3 @@ export const DetailFilmstrip = observer(function DetailFilmstrip({
 
   return <PhotoStrip view={strip.view} presenter={strip.presenter} />;
 });
-

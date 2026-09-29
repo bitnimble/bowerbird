@@ -1,5 +1,9 @@
 import { CompositeProgressSchema } from '../../../../src/schemas/composition';
-import { RenditionEventSchema, RenditionFetchEventSchema, ReplicationEventSchema } from '../../../../src/schemas/events';
+import {
+  RenditionEventSchema,
+  RenditionFetchEventSchema,
+  ReplicationEventSchema,
+} from '../../../../src/schemas/events';
 import { ExportProgressSchema } from '../../../../src/schemas/exports';
 import { type EventStream, subscribeEvents } from '../../api/transport';
 import type { ExportPresenter } from '../export/export_presenter';
@@ -13,7 +17,10 @@ export class EventsPresenter {
   private stream: EventStream | null = null;
 
   constructor(
-    private readonly photos: Pick<PhotosPresenter, 'serverReachable' | 'renditionsRebuilt' | 'renditionFetch' | 'compositeProgressed'>,
+    private readonly photos: Pick<
+      PhotosPresenter,
+      'serverReachable' | 'renditionsRebuilt' | 'renditionFetch' | 'compositeProgressed'
+    >,
     private readonly replication: Pick<ReplicationPresenter, 'libraryChanged' | 'reload'>,
     private readonly stackTriage: Pick<StackTriagePresenter, 'renditionsRebuilt'>,
     private readonly exports: Pick<ExportPresenter, 'progressed'>,

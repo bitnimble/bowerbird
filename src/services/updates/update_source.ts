@@ -54,9 +54,13 @@ export function updateSource(env: Record<string, string | undefined> = process.e
   const repo = (env.BOWERBIRD_UPDATE_REPO ?? GITHUB_REPO).trim();
   const named = env.BOWERBIRD_UPDATE_URL?.trim();
   const releases =
-    named != null ? (named === '' ? null : named)
-    : repo === '' ? null
-    : `https://api.github.com/repos/${repo}/releases?per_page=30`;
+    named != null
+      ? named === ''
+        ? null
+        : named
+      : repo === ''
+        ? null
+        : `https://api.github.com/repos/${repo}/releases?per_page=30`;
 
   // **Only where github.com is where the list came from.** An endpoint somewhere else has
   // no relationship to any repository - so guessing a github.com URL for a release of its
@@ -67,6 +71,8 @@ export function updateSource(env: Record<string, string | undefined> = process.e
   return {
     releases,
     assetUrl: (tag, file) =>
-      custom ? null : `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(file)}`,
+      custom
+        ? null
+        : `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(file)}`,
   };
 }

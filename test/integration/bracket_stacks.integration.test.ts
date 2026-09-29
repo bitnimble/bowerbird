@@ -4,7 +4,10 @@ import { runMigrations } from '../../src/db/migrate';
 import type { CaptureSequence } from '../../src/schemas/capture_sequence';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { PhotoListingRepository } from '../../src/services/photos/listing/photo_listing_repository';
-import { descriptorFormat, descriptorSize } from '../../src/services/processing/rawshim/rawshim_ops';
+import {
+  descriptorFormat,
+  descriptorSize,
+} from '../../src/services/processing/rawshim/rawshim_ops';
 import { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { StacksRepository } from '../../src/services/stacks/stacks_repository';
 import { StacksService } from '../../src/services/stacks/stacks_service';
@@ -20,9 +23,19 @@ beforeEach(() => {
   db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIBRARY, '/tmp/lib', 'lib', ORDERING);
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIBRARY,
+    '/tmp/lib',
+    'lib',
+    ORDERING,
+  );
   repo = new StacksRepository(db);
-  stacks = new StacksService(repo, new PhotoListingRepository(db), new LibrariesRepository(db), new SettingsRepository(db));
+  stacks = new StacksService(
+    repo,
+    new PhotoListingRepository(db),
+    new LibrariesRepository(db),
+    new SettingsRepository(db),
+  );
 });
 
 /** A photograph `second` seconds into the day, identical in likeness to every other one here. */
@@ -34,7 +47,15 @@ function insertPhoto(n: number, second: number, sequence: CaptureSequence | null
   db.query(
     `INSERT INTO photos (id, library_id, recipe, width, height, date_taken, date_added, descriptor, capture_sequence)
      VALUES (?, ?, json_object('kind', 'file', 'path', ?), 3000, 2000, ?, ?, ?, ?)`,
-  ).run(id, LIBRARY, `DSC${n}.ARW`, taken, taken, descriptor, sequence == null ? null : JSON.stringify(sequence));
+  ).run(
+    id,
+    LIBRARY,
+    `DSC${n}.ARW`,
+    taken,
+    taken,
+    descriptor,
+    sequence == null ? null : JSON.stringify(sequence),
+  );
   return id;
 }
 
@@ -43,7 +64,11 @@ function pixelShift(n: number, second: number, index: number): string {
 }
 
 function stackOf(photoId: string): { id: string; origin: string } | null {
-  return db.query('SELECT stacks.id, stacks.origin FROM photos JOIN stacks ON stacks.id = photos.stack_id WHERE photos.id = ?').get(photoId) as {
+  return db
+    .query(
+      'SELECT stacks.id, stacks.origin FROM photos JOIN stacks ON stacks.id = photos.stack_id WHERE photos.id = ?',
+    )
+    .get(photoId) as {
     id: string;
     origin: string;
   } | null;

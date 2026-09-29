@@ -26,17 +26,23 @@ fn main() {
     let frame = rawshim::decode_frame(&path, 0).expect("decode");
     let gpu = rawshim::gpu::device().expect("an adapter");
     let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let lens = rawshim::fit_hdr_for(&resident, &path, 0.9).expect("a fit").lens;
+    let lens = rawshim::fit_hdr_for(&resident, &path, 0.9)
+        .expect("a fit")
+        .lens;
 
     let preview = rawshim::hdr::match_preview(&path).expect("a preview");
     let (plane_width, _) = rawshim::hdr_fit::fitted_preview_size(preview.width, preview.height);
-    let prepared =
-        pollster::block_on(rawshim::fit_source::prepared(gpu, &resident, plane_width, 0.9))
-            .expect("a plane");
+    let prepared = pollster::block_on(rawshim::fit_source::prepared(
+        gpu,
+        &resident,
+        plane_width,
+        0.9,
+    ))
+    .expect("a plane");
     let render = pollster::block_on(rawshim::fit_source::read_render(gpu, &prepared.rendered))
         .expect("the render");
-    let (_, preview) =
-        pollster::block_on(rawshim::hdr_fit::preview_planes(gpu, &preview)).expect("preview planes");
+    let (_, preview) = pollster::block_on(rawshim::hdr_fit::preview_planes(gpu, &preview))
+        .expect("preview planes");
     let sampled = resize(render.as_ref(), preview.width, preview.height);
 
     // Scattered rather than random: a seeded walk over the plane, so the same call shows the
@@ -45,24 +51,25 @@ fn main() {
     eprintln!("wide plane {wide}x{tall}");
     let asked: Vec<(usize, usize)> = args
         .map(|spec| {
-            let n: Vec<usize> = spec.split(',').map(|v| v.parse().expect("a number")).collect();
+            let n: Vec<usize> = spec
+                .split(',')
+                .map(|v| v.parse().expect("a number"))
+                .collect();
             (n[0], n[1])
         })
         .collect();
     let mut points = asked.clone();
     let mut at = 7_919usize;
     while points.len() < count * 40 && asked.is_empty() {
-        at = at.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        at = at
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         let p = (at >> 33) % (wide * tall);
         points.push((p % wide, p / wide));
     }
 
     let (ours, theirs, found) = pollster::block_on(rawshim::hdr_fit::correspondence_at(
-        gpu,
-        &sampled,
-        &preview,
-        &lens,
-        &points,
+        gpu, &sampled, &preview, &lens, &points,
     ))
     .expect("the device builds the fit's planes");
 
@@ -161,11 +168,19 @@ fn tile(
     // +-4 the search may move within.
     for panel in 0..3 {
         let left = panel * (side + gap);
-        for (half, ink) in [(1usize, [255, 32, 32]), (3, [255, 220, 0]), (4 + 3, [0, 200, 255])] {
+        for (half, ink) in [
+            (1usize, [255, 32, 32]),
+            (3, [255, 220, 0]),
+            (4 + 3, [0, 200, 255]),
+        ] {
             outline(&mut data, width, left, half, ink);
         }
     }
-    rawshim::rgb::Rgb { width, height: side, data }
+    rawshim::rgb::Rgb {
+        width,
+        height: side,
+        data,
+    }
 }
 
 /// A box of half-width `half` wide-plane pixels, centred on the tile's centre.

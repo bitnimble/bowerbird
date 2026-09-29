@@ -17,7 +17,13 @@ import { ViewerStore } from '../viewer_store';
 const AT = 3;
 
 function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoSummary {
-  return { id, width: 3000, height: 2000, stack_id: stackId, stack_size: stackSize } as unknown as PhotoSummary;
+  return {
+    id,
+    width: 3000,
+    height: 2000,
+    stack_id: stackId,
+    stack_size: stackSize,
+  } as unknown as PhotoSummary;
 }
 
 // The run the viewer steps along is uncollapsed (§19.5.3), so the stack is three
@@ -37,7 +43,18 @@ function build(): {
   const listing = new ListingStore(store);
   const marks = new MarksStore(listing, store);
   const viewer = new ViewerStore(listing, store);
-  const photos = new PhotosPresenter(listing, marks, store, viewer, absent, absent, absent, absent, {} as never, absent);
+  const photos = new PhotosPresenter(
+    listing,
+    marks,
+    store,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   const view = new StripViewStore(listing, store, viewer);
   const strip = new StripViewPresenter(view, photos);
   runInAction(() => {

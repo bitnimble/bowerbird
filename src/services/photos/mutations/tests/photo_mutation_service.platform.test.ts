@@ -19,12 +19,29 @@ describe('PhotoMutationService.delete', () => {
       writeFileSync(path.join(root, 'D', 'foo.arw'), 'shallow');
       writeFileSync(path.join(root, 'foo.arw'), 'root');
 
-      const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
-  rendition_source: 'embedded' as const,
-  rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
-  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
+      const lib: Library = {
+        id: 'lib',
+        root_path: root,
+        bin_name: 'Bin',
+        read_only: false,
+        name: 'lib',
+        ordering: 'added_asc',
+        rendition_source: 'embedded' as const,
+        rendition_hdr: false,
+        render_skip_full: [],
+        render_skip_max: [],
+        denoiser: 'galosh',
+        include_subfolders: true,
+        include_non_raw: false,
+        auto_stack: true,
+        auto_stack_similarity: 0.78,
+        auto_stack_window_seconds: 60,
+        last_synced_at: null,
+        photo_count: 0,
+        missing_photo_count: 0,
+        unavailable_photo_count: 0,
+        rendered_photo_count: 0,
+      };
       const markDeleted = jest.fn();
       const setFilePath = jest.fn();
       const rows = [

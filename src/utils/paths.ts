@@ -5,7 +5,11 @@ import { config } from '../config';
 import { newId } from '../schemas/id';
 import type { LibraryConfiguration } from '../schemas/libraries';
 import { soleInputOf, type StoredRecipe } from '../schemas/recipes';
-import { RENDITION_EXTENSION, renditionVariant, type Rendition } from '../services/processing/renditions/renditions';
+import {
+  RENDITION_EXTENSION,
+  renditionVariant,
+  type Rendition,
+} from '../services/processing/renditions/renditions';
 
 // Whether `child` is `parent` or sits beneath it. Resolved first, so a relative
 // path or a `..` cannot slip past by spelling.
@@ -34,11 +38,26 @@ export function getDataPath(library: Pick<LibraryConfiguration, 'id'>): string {
 // id. Range is in the directory rather than the filename because the file is the
 // cache: a rendition built before HDR was turned on would otherwise be served
 // forever under the same name.
-export function renditionPathFor(dataPath: string, photoId: string, rendition: Rendition, hdr: boolean): string {
-  return path.join(dataPath, 'renditions', renditionVariant(rendition, hdr), `${photoId}${RENDITION_EXTENSION}`);
+export function renditionPathFor(
+  dataPath: string,
+  photoId: string,
+  rendition: Rendition,
+  hdr: boolean,
+): string {
+  return path.join(
+    dataPath,
+    'renditions',
+    renditionVariant(rendition, hdr),
+    `${photoId}${RENDITION_EXTENSION}`,
+  );
 }
 
-export function getRenditionPath(library: LibraryConfiguration, photoId: string, rendition: Rendition, hdr: boolean): string {
+export function getRenditionPath(
+  library: LibraryConfiguration,
+  photoId: string,
+  rendition: Rendition,
+  hdr: boolean,
+): string {
   return renditionPathFor(getDataPath(library), photoId, rendition, hdr);
 }
 
@@ -121,8 +140,13 @@ export function photoAnalysisPathFor(dataPath: string, photoId: string): string 
 // The only place the bin's folder name is spelled: it is per library (§12.3) and
 // the scan skips it by name, so a second spelling anywhere is a bin the scan
 // walks straight back into. That is also what makes renaming it tractable (§4.1).
-export function getBinPath(library: Pick<LibraryConfiguration, 'root_path' | 'bin_name'>, relFolder = ''): string | null {
-  return library.bin_name == null ? null : path.join(library.root_path, library.bin_name, relFolder);
+export function getBinPath(
+  library: Pick<LibraryConfiguration, 'root_path' | 'bin_name'>,
+  relFolder = '',
+): string | null {
+  return library.bin_name == null
+    ? null
+    : path.join(library.root_path, library.bin_name, relFolder);
 }
 
 // Rolling catalogue snapshots (§4.9), beside the database rather than under
@@ -191,7 +215,10 @@ export function libraryPath(library: LibraryConfiguration, relPath: string): str
  * row composed from several files has no single one, and there is no answer here that would not
  * be a guess at which of them the caller meant.
  */
-export function originalPathOf(library: LibraryConfiguration, photo: { recipe: StoredRecipe }): string | null {
+export function originalPathOf(
+  library: LibraryConfiguration,
+  photo: { recipe: StoredRecipe },
+): string | null {
   const relPath = soleInputOf(photo.recipe);
   return relPath == null ? null : libraryPath(library, relPath);
 }

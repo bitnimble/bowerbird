@@ -12,7 +12,10 @@
  * bits is what a rendition is written at (`avif.rs`); ten is still taken because a library
  * carries files written before it changed.
  */
-export function planarLayout(frame: VideoFrame, rotation: 0 | 90 | 180 | 270 = 0): { depth: number; chroma: number } | null {
+export function planarLayout(
+  frame: VideoFrame,
+  rotation: 0 | 90 | 180 | 270 = 0,
+): { depth: number; chroma: number } | null {
   const space = frame.colorSpace;
   const layout = {
     I420P10: { depth: 1, chroma: 0.5 },

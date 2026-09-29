@@ -3,8 +3,20 @@ import { requestLogLevel } from '../request_logging';
 
 test.each([
   { method: 'GET', path: '/api/photos/photo', ms: 2, activity: 'interactive', expected: 'info' },
-  { method: 'POST', path: '/api/photos/neighbours', ms: 2000, activity: 'background', expected: 'debug' },
-  { method: 'GET', path: '/api/libraries/library/photos', ms: 2000, activity: 'background', expected: 'debug' },
+  {
+    method: 'POST',
+    path: '/api/photos/neighbours',
+    ms: 2000,
+    activity: 'background',
+    expected: 'debug',
+  },
+  {
+    method: 'GET',
+    path: '/api/libraries/library/photos',
+    ms: 2000,
+    activity: 'background',
+    expected: 'debug',
+  },
   { method: 'GET', path: '/image/photo/renditions/grid', ms: 2000, expected: 'debug' },
   { method: 'GET', path: '/image/exports/export-id', ms: 2000, expected: 'debug' },
   { method: 'GET', path: '/api/events', ms: 2000, expected: 'debug' },

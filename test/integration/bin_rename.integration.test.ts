@@ -23,21 +23,18 @@ let service: LibrariesService;
 const abs = (rel: string) => path.join(root, rel);
 const photoRow = () =>
   db
-    .query(`SELECT json_extract(recipe, '$.path') AS file_path, deleted_from_path FROM photos WHERE id = ?`)
+    .query(
+      `SELECT json_extract(recipe, '$.path') AS file_path, deleted_from_path FROM photos WHERE id = ?`,
+    )
     .get(PHOTO) as {
     file_path: string;
     deleted_from_path: string;
   };
 
 function makeLibrary(binName: string | null, readOnly = false): void {
-  db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name, read_only) VALUES (?, ?, ?, ?, ?, ?)').run(
-    LIB,
-    root,
-    'lib',
-    'taken_desc',
-    binName,
-    readOnly ? 1 : 0,
-  );
+  db.query(
+    'INSERT INTO libraries (id, root_path, name, ordering, bin_name, read_only) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(LIB, root, 'lib', 'taken_desc', binName, readOnly ? 1 : 0);
   if (binName == null) return;
   mkdirSync(abs(`${binName}/Trip`), { recursive: true });
   writeFileSync(abs(`${binName}/Trip/a.arw`), 'RAW');
@@ -79,10 +76,14 @@ test('renaming the bin moves the folder and re-prefixes every binned row', async
 
 test('renaming to the stored name is a no-op, and onto an occupied name is a CONFLICT', async () => {
   makeLibrary('Bin');
-  await expect(service.update(LIB, { bin_name: 'Bin' })).resolves.toMatchObject({ bin_name: 'Bin' });
+  await expect(service.update(LIB, { bin_name: 'Bin' })).resolves.toMatchObject({
+    bin_name: 'Bin',
+  });
 
   mkdirSync(abs('Rubbish'));
-  await expect(service.update(LIB, { bin_name: 'Rubbish' })).rejects.toMatchObject({ code: 'CONFLICT' });
+  await expect(service.update(LIB, { bin_name: 'Rubbish' })).rejects.toMatchObject({
+    code: 'CONFLICT',
+  });
   expect(existsSync(abs('Bin/Trip/a.arw'))).toBe(true);
 });
 
@@ -90,12 +91,16 @@ test('renaming to the stored name is a no-op, and onto an occupied name is a CON
 test('a read-only library refuses the rename rather than reporting a collision', async () => {
   makeLibrary(null, true);
   mkdirSync(abs('Rubbish'));
-  await expect(service.update(LIB, { bin_name: 'Rubbish' })).rejects.toMatchObject({ code: 'READ_ONLY' });
+  await expect(service.update(LIB, { bin_name: 'Rubbish' })).rejects.toMatchObject({
+    code: 'READ_ONLY',
+  });
 });
 
 test('clearing read_only needs a bin name, and then makes the folder and records it', async () => {
   makeLibrary(null, true);
-  await expect(service.update(LIB, { read_only: false })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  await expect(service.update(LIB, { read_only: false })).rejects.toMatchObject({
+    code: 'VALIDATION_ERROR',
+  });
 
   const updated = await service.update(LIB, { read_only: false, bin_name: 'Bin' });
 
@@ -109,9 +114,11 @@ test('clearing read_only needs a bin name, and then makes the folder and records
 // happened, over a library that is now read-only.
 test('a request that both sets read_only and renames the bin is refused before either lands', async () => {
   makeLibrary('Bin');
-  await expect(service.update(LIB, { read_only: true, bin_name: 'Rubbish' })).rejects.toMatchObject({
-    code: 'VALIDATION_ERROR',
-  });
+  await expect(service.update(LIB, { read_only: true, bin_name: 'Rubbish' })).rejects.toMatchObject(
+    {
+      code: 'VALIDATION_ERROR',
+    },
+  );
   expect(libraries.getById(LIB)).toMatchObject({ read_only: false, bin_name: 'Bin' });
   expect(existsSync(abs('Bin'))).toBe(true);
 });
@@ -119,7 +126,7 @@ test('a request that both sets read_only and renames the bin is refused before e
 // A library flipped to read-only and back holds both kinds of binned row. The
 // prefix rewrite is scoped to the ones actually under the bin, so the in-place
 // ones - whose files are out among the photographs - must not be dragged into it.
-test('renaming the bin leaves a formerly-read-only library\'s in-place rows alone', async () => {
+test("renaming the bin leaves a formerly-read-only library's in-place rows alone", async () => {
   makeLibrary('Bin');
   const IN_PLACE = 'pht000e3';
   mkdirSync(abs('Trip'), { recursive: true });
@@ -135,7 +142,9 @@ test('renaming the bin leaves a formerly-read-only library\'s in-place rows alon
   // all, and its file is still where the photographer left it.
   expect(photoRow()).toEqual({ file_path: 'Rubbish/Trip/a.arw', deleted_from_path: 'Trip/a.arw' });
   const inPlace = db
-    .query(`SELECT json_extract(recipe, '$.path') AS file_path, deleted_from_path FROM photos WHERE id = ?`)
+    .query(
+      `SELECT json_extract(recipe, '$.path') AS file_path, deleted_from_path FROM photos WHERE id = ?`,
+    )
     .get(IN_PLACE);
   expect(inPlace).toEqual({ file_path: 'Trip/b.arw', deleted_from_path: 'Trip/b.arw' });
   expect(existsSync(abs('Trip/b.arw'))).toBe(true);

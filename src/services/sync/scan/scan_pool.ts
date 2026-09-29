@@ -1,5 +1,9 @@
 import { Logger } from '../../../logger';
-import { extractMetadata, type FileMetadata, type TileStage } from '../../processing/analysis/metadata';
+import {
+  extractMetadata,
+  type FileMetadata,
+  type TileStage,
+} from '../../processing/analysis/metadata';
 import type { MetadataExtractor } from './scan_file_reader';
 import type { ScanReply, ScanRequest } from './scan_worker';
 import { workerEntry } from '../../worker_entry';
@@ -39,7 +43,8 @@ export class ScanPool {
       this.queue.push({
         absPath,
         stage,
-        settle: (reply) => ('error' in reply ? reject(new Error(reply.error)) : resolve(reply.metadata)),
+        settle: (reply) =>
+          'error' in reply ? reject(new Error(reply.error)) : resolve(reply.metadata),
       });
       this.pump();
     });

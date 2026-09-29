@@ -3,7 +3,12 @@ import { type PhotoSummary } from '../../../../../../src/schemas/photos';
 import { GRID_GAP } from '../../grid/grid_layout';
 import { ListingStore } from '../../grid/listing_store';
 import { StacksStore } from '../../grid/stacks_store';
-import { STRIP_MAX_THICKNESS, STRIP_MIN_THICKNESS, STRIP_SPINE, StripViewStore } from '../strip_view_store';
+import {
+  STRIP_MAX_THICKNESS,
+  STRIP_MIN_THICKNESS,
+  STRIP_SPINE,
+  StripViewStore,
+} from '../strip_view_store';
 import { ViewerStore } from '../viewer_store';
 
 // The viewer's filmstrip as arithmetic: one row of the collection, the members an
@@ -48,7 +53,8 @@ function stripOver(total: number): { stacks: StacksStore; strip: StripViewStore 
   const viewer = new ViewerStore(listing, stacks);
   listing.source = { kind: 'library', libraryId: 'lib' };
   listing.total = total;
-  for (let i = 0; i < total; i++) listing.rows.set(i, photo(`p${i}`, i === 4 ? 'stack' : null, i === 4 ? 3 : 1));
+  for (let i = 0; i < total; i++)
+    listing.rows.set(i, photo(`p${i}`, i === 4 ? 'stack' : null, i === 4 ? 3 : 1));
   const strip = new StripViewStore(listing, stacks, viewer);
   // A round cell: 100px tall leaves a 3:2 picture inside the tile's own pad, and
   // every position below is a multiple of the pitch that comes out of it.

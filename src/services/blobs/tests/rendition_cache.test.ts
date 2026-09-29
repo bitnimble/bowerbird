@@ -39,7 +39,13 @@ function catalogue(): Database {
 }
 
 /** A fetched rendition of `bytes` bytes, on disk where the cache will look for it. */
-function fetched(db: Database, lib: Library, photoId: string, rendition: Rendition, bytes: number): string {
+function fetched(
+  db: Database,
+  lib: Library,
+  photoId: string,
+  rendition: Rendition,
+  bytes: number,
+): string {
   db.query(
     `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
        VALUES (?, ?, json_object('kind', 'file', 'path', ?), 100, 100, '2026-01-01T00:00:00.000Z')`,
@@ -47,7 +53,13 @@ function fetched(db: Database, lib: Library, photoId: string, rendition: Renditi
   const file = getRenditionPath(lib, photoId, rendition, false);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, 'x'.repeat(bytes));
-  new RenditionsRepository(db).markBuilt(photoId, renditionVariant(rendition, false), '2026-01-01T00:00:00.000Z', null, null);
+  new RenditionsRepository(db).markBuilt(
+    photoId,
+    renditionVariant(rendition, false),
+    '2026-01-01T00:00:00.000Z',
+    null,
+    null,
+  );
   return file;
 }
 
@@ -58,7 +70,9 @@ describe('the fetched-rendition cache', () => {
     // A clock the test drives: real opens are seconds apart, and these are not.
     let tick = 0;
     // Room for three of these, so the fourth is what forces a choice.
-    const cache = new RenditionCache(db, 350, () => new Date(1_700_000_000_000 + ++tick * 1000).toISOString());
+    const cache = new RenditionCache(db, 350, () =>
+      new Date(1_700_000_000_000 + ++tick * 1000).toISOString(),
+    );
     const files = new Map<string, string>();
     for (const id of ['p1', 'p2', 'p3']) {
       files.set(id, fetched(db, lib, id, 'grid', 100));
@@ -77,7 +91,10 @@ describe('the fetched-rendition cache', () => {
     expect(existsSync(p4)).toBe(true);
     expect(cache.bytesHeld(lib.id)).toBe(300);
     expect(new LibrariesRepository(db).getById(lib.id)?.rendered_photo_count).toBe(0);
-    expect(new RenditionsRepository(db).stamps('p2', 'grid')).toEqual({ built_at: null, built_from: null });
+    expect(new RenditionsRepository(db).stamps('p2', 'grid')).toEqual({
+      built_at: null,
+      built_from: null,
+    });
   });
 
   it('counts nothing for a library still under its cap', async () => {
@@ -125,7 +142,10 @@ describe('the fetched-rendition cache', () => {
     cache.forget(lib.id, 'p1', 'grid', false);
 
     expect(
-      db.query('SELECT needs_build, built_at, built_from, source, matched FROM renditions WHERE photo_id = ? AND variant = ?')
+      db
+        .query(
+          'SELECT needs_build, built_at, built_from, source, matched FROM renditions WHERE photo_id = ? AND variant = ?',
+        )
         .get('p1', 'grid'),
     ).toEqual({ needs_build: 1, built_at: null, built_from: null, source: null, matched: null });
     expect(existsSync(full)).toBe(true);

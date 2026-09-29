@@ -123,15 +123,24 @@ export class RenditionsRepository {
            DO UPDATE SET needs_build = 0, built_at = excluded.built_at, built_from = excluded.built_from,
              source = excluded.source, matched = excluded.matched`,
       )
-      .run(photoId, variant, builtAtIso, builtFrom, made?.from ?? null, made?.matched === true ? 1 : null);
+      .run(
+        photoId,
+        variant,
+        builtAtIso,
+        builtFrom,
+        made?.from ?? null,
+        made?.matched === true ? 1 : null,
+      );
   }
 
   forgetBuilt(photoId: string, variants: readonly RenditionVariant[]): void {
     for (const variant of variants) {
-      this.db.query(
-        `UPDATE renditions SET built_at = NULL, built_from = NULL, source = NULL, matched = NULL
+      this.db
+        .query(
+          `UPDATE renditions SET built_at = NULL, built_from = NULL, source = NULL, matched = NULL
           WHERE photo_id = ? AND variant = ?`,
-      ).run(photoId, variant);
+        )
+        .run(photoId, variant);
     }
   }
 
@@ -283,7 +292,9 @@ export class RenditionsRepository {
     // the last attempt failed on is not what it would be asked to render now.
     for (const batch of inChunks([...queued])) {
       const placeholders = batch.map(() => '?').join(', ');
-      this.db.query(`UPDATE photos SET processing_error = NULL WHERE id IN (${placeholders})`).run(...batch);
+      this.db
+        .query(`UPDATE photos SET processing_error = NULL WHERE id IN (${placeholders})`)
+        .run(...batch);
     }
     return queued.size;
   }

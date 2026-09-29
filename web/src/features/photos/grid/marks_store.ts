@@ -1,7 +1,12 @@
 import { computed, observable } from 'mobx';
 import type { CaptureSequenceKind } from '../../../../../src/schemas/capture_sequence';
 import { type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
-import { isComposite, MERGE_MAX_FRAMES, type MergeCandidate, type StackSelection } from '../photos_store';
+import {
+  isComposite,
+  MERGE_MAX_FRAMES,
+  type MergeCandidate,
+  type StackSelection,
+} from '../photos_store';
 import { SelectionRanges } from '../selection';
 import { displayRowOf, type Expansion } from './bands';
 import { GRID_GAP } from './grid_layout';
@@ -60,7 +65,10 @@ export class MarksStore {
    * (§19.5.4), which is what `stack_size` reports there.
    */
   bandRowSelected(open: Expansion): boolean {
-    return this.selection.has(open.position) && (this.listing.rows.get(open.position)?.stack_size ?? 0) > 1;
+    return (
+      this.selection.has(open.position) &&
+      (this.listing.rows.get(open.position)?.stack_size ?? 0) > 1
+    );
   }
 
   /**
@@ -121,7 +129,11 @@ export class MarksStore {
 
   /** Whether every photo in the collection is selected, which is what "Select all" leaves behind. */
   @computed get allSelected(): boolean {
-    return this.listing.total > 0 && this.selection.size === this.listing.total && this.selectedMembers.size === 0;
+    return (
+      this.listing.total > 0 &&
+      this.selection.size === this.listing.total &&
+      this.selectedMembers.size === 0
+    );
   }
 
   // Count first, so a populated grid's dependency on `loading` short-circuits
@@ -317,7 +329,8 @@ export class MarksStore {
     }
     for (const open of this.stacks.expansions.values()) {
       open.photos.forEach((photo, member) => {
-        if (this.selectedMembers.has(photo.id)) picks.push({ position: open.position, member, id: photo.id });
+        if (this.selectedMembers.has(photo.id))
+          picks.push({ position: open.position, member, id: photo.id });
       });
     }
     picks.sort((a, b) => a.position - b.position || a.member - b.member);
@@ -396,7 +409,11 @@ export class MarksStore {
     // above the cursor, the row the photo is drawn on is further down than its
     // row in the collection, and scrolling to the latter lands a whole band's
     // height short of the tile every time.
-    const row = displayRowOf(Math.floor(this.focusIndex / this.listing.columns), this.listing.bands, this.listing.columns);
+    const row = displayRowOf(
+      Math.floor(this.focusIndex / this.listing.columns),
+      this.listing.bands,
+      this.listing.columns,
+    );
     const top = row * this.listing.rowHeight;
     // The cell, not the row pitch: the gap under it is not part of the tile, and
     // scrolling to clear it would overshoot by one gap every time.

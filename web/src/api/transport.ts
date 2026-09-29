@@ -16,7 +16,10 @@
 
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../src/schemas/request_activity';
+import {
+  REQUEST_ACTIVITY_HEADER,
+  type RequestActivity,
+} from '../../../src/schemas/request_activity';
 
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -33,7 +36,7 @@ export type Invoke = (command: string, args: unknown) => Promise<unknown>;
 
 // Android's postMessage IPC carries a binary reply as a JSON number array.
 const IpcBytesSchema = z.union([z.instanceof(ArrayBuffer), z.array(z.number())]);
-const ReplyHeadSchema =z.object({ status: z.number(), headers: z.record(z.string(), z.string()) });
+const ReplyHeadSchema = z.object({ status: z.number(), headers: z.record(z.string(), z.string()) });
 const NullableStringSchema = z.string().nullable();
 
 /**
@@ -56,7 +59,8 @@ export function shellInvoke(): Invoke | null {
  */
 function proxy(): Invoke | null {
   const page = globalThis.location as Location | undefined;
-  const bundled = page != null && (page.protocol === 'tauri:' || page.hostname === 'tauri.localhost');
+  const bundled =
+    page != null && (page.protocol === 'tauri:' || page.hostname === 'tauri.localhost');
   return bundled ? shellInvoke() : null;
 }
 
@@ -109,7 +113,10 @@ async function overHttp(
 ): Promise<Reply> {
   const response = await fetch(path, {
     method,
-    headers: { [REQUEST_ACTIVITY_HEADER]: activity, ...(body == null ? {} : { 'Content-Type': 'application/json' }) },
+    headers: {
+      [REQUEST_ACTIVITY_HEADER]: activity,
+      ...(body == null ? {} : { 'Content-Type': 'application/json' }),
+    },
     body: body == null ? undefined : JSON.stringify(body),
     ...(signal != null && { signal }),
   });
@@ -132,11 +139,15 @@ async function overHttp(
  */
 async function overIpc(invoke: Invoke, request: unknown, signal?: AbortSignal): Promise<Reply> {
   const framed = new Uint8Array(
-    IpcBytesSchema.parse(await abortable(invoke('api', { request: JSON.stringify(request) }), signal)),
+    IpcBytesSchema.parse(
+      await abortable(invoke('api', { request: JSON.stringify(request) }), signal),
+    ),
   );
   const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength);
   const length = view.getUint32(0, true);
-  const head = ReplyHeadSchema.parse(JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length))));
+  const head = ReplyHeadSchema.parse(
+    JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length))),
+  );
   return { status: head.status, headers: head.headers, bytes: framed.subarray(4 + length) };
 }
 

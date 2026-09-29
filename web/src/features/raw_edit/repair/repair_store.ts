@@ -32,7 +32,9 @@ export class RepairStore {
 
   /** What a repair's thumbnail is drawn from: the repair, and the geometry the stage shows it through. */
   @computed get repairKeys(): string[] {
-    return (this.edit.doc?.repairs ?? []).map((repair) => JSON.stringify([this.keystone.geometry, repair]));
+    return (this.edit.doc?.repairs ?? []).map((repair) =>
+      JSON.stringify([this.keystone.geometry, repair]),
+    );
   }
 
   /** Whether the stage draws those seams. */

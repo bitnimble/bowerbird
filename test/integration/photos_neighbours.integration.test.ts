@@ -24,17 +24,37 @@ function photoId(n: number): string {
   return `photo${String(n).padStart(3, '0')}`;
 }
 
-function setUp(): { db: Database; photos: PhotoNavigationRepository; listing: PhotoListingRepository; stacks: StacksService } {
+function setUp(): {
+  db: Database;
+  photos: PhotoNavigationRepository;
+  listing: PhotoListingRepository;
+  stacks: StacksService;
+} {
   const db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
   for (const id of [LIBRARY, OTHER]) {
-    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(id, `/tmp/${id}`, 'lib', 'taken_asc');
+    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+      id,
+      `/tmp/${id}`,
+      'lib',
+      'taken_asc',
+    );
   }
-  db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(SHOOT, LIBRARY, 'Day1', 'Day1');
+  db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(
+    SHOOT,
+    LIBRARY,
+    'Day1',
+    'Day1',
+  );
   const photos = new PhotoNavigationRepository(db);
   const listing = new PhotoListingRepository(db);
-  const stacks = new StacksService(new StacksRepository(db), listing, new LibrariesRepository(db), new SettingsRepository(db));
+  const stacks = new StacksService(
+    new StacksRepository(db),
+    listing,
+    new LibrariesRepository(db),
+    new SettingsRepository(db),
+  );
   return { db, photos, listing, stacks };
 }
 
@@ -49,7 +69,15 @@ function insert(
   db.query(
     `INSERT INTO photos (id, library_id, shoot_id, recipe, width, height, date_taken, date_added, triage)
      VALUES (?, ?, ?, json_object('kind', 'file', 'path', ?), 3000, 2000, ?, ?, ?)`,
-  ).run(id, options.libraryId ?? LIBRARY, options.shootId ?? null, `IMG_${n}.ARW`, taken, added, options.triage ?? null);
+  ).run(
+    id,
+    options.libraryId ?? LIBRARY,
+    options.shootId ?? null,
+    `IMG_${n}.ARW`,
+    taken,
+    added,
+    options.triage ?? null,
+  );
   return id;
 }
 
@@ -128,8 +156,17 @@ describe('stepping through a collection', () => {
 
       expect(walk(photos, ordering, expected[0]!), ordering).toEqual(expected);
       // And backwards from the far end, which exercises the other seek direction.
-      const run = photos.neighboursInLibrary(LIBRARY, ordering, expected[expected.length - 1]!, 50, NO_FILTERS);
-      expect(run.map((photo) => photo.id), ordering).toEqual(expected);
+      const run = photos.neighboursInLibrary(
+        LIBRARY,
+        ordering,
+        expected[expected.length - 1]!,
+        50,
+        NO_FILTERS,
+      );
+      expect(
+        run.map((photo) => photo.id),
+        ordering,
+      ).toEqual(expected);
     }
   });
 
@@ -145,8 +182,16 @@ describe('stepping through a collection', () => {
     // Each end of the boundary sees the other side.
     const lastDated = photos.neighboursInLibrary(LIBRARY, 'taken_asc', dated[1]!, 50, NO_FILTERS);
     expect(lastDated[lastDated.findIndex((p) => p.id === dated[1]!) + 1]?.id).toBe(undated[0]!);
-    const firstUndated = photos.neighboursInLibrary(LIBRARY, 'taken_asc', undated[0]!, 50, NO_FILTERS);
-    expect(firstUndated[firstUndated.findIndex((p) => p.id === undated[0]!) - 1]?.id).toBe(dated[1]!);
+    const firstUndated = photos.neighboursInLibrary(
+      LIBRARY,
+      'taken_asc',
+      undated[0]!,
+      50,
+      NO_FILTERS,
+    );
+    expect(firstUndated[firstUndated.findIndex((p) => p.id === undated[0]!) - 1]?.id).toBe(
+      dated[1]!,
+    );
   });
 
   // The commonest case in a cull: the verdict just set on this photo took it out
@@ -163,7 +208,9 @@ describe('stepping through a collection', () => {
     expect(run[at + 1]?.id).toBe(ids[2]!);
     // The rejected photo is not in the listing itself, so stepping on from it
     // lands where the two survivors meet.
-    expect(listing.listByLibrary(LIBRARY, 'taken_asc', 0, 100, active).photos.map((p) => p.id)).toEqual([ids[0]!, ids[2]!]);
+    expect(
+      listing.listByLibrary(LIBRARY, 'taken_asc', 0, 100, active).photos.map((p) => p.id),
+    ).toEqual([ids[0]!, ids[2]!]);
   });
 
   test('a photo outside the collection is a dead end rather than a walk through it', () => {
@@ -197,7 +244,9 @@ describe('stepping through a collection', () => {
       const ids = [1, 2, 3, 4, 5].map((n) => insert(db, n));
 
       for (const ordering of ORDERINGS) {
-        const whole = photos.rangeInLibrary(LIBRARY, ordering, { from: null, to: null }, NO_FILTERS).map((p) => p.id);
+        const whole = photos
+          .rangeInLibrary(LIBRARY, ordering, { from: null, to: null }, NO_FILTERS)
+          .map((p) => p.id);
         expect(whole, ordering).toHaveLength(5);
 
         // Bounded by the two photographs either side of the middle three, given in
@@ -207,7 +256,9 @@ describe('stepping through a collection', () => {
           .map((p) => p.id);
         expect(inner, ordering).toEqual(whole);
 
-        const middle = photos.rangeInLibrary(LIBRARY, ordering, { from: whole[1]!, to: whole[3]! }, NO_FILTERS).map((p) => p.id);
+        const middle = photos
+          .rangeInLibrary(LIBRARY, ordering, { from: whole[1]!, to: whole[3]! }, NO_FILTERS)
+          .map((p) => p.id);
         expect(middle, ordering).toEqual(whole.slice(1, 4));
       }
       void ids;
@@ -222,13 +273,23 @@ describe('stepping through a collection', () => {
       stacks.create(members);
       const after = insert(db, 5);
 
-      const run = photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: before, to: after }, NO_FILTERS);
+      const run = photos.rangeInLibrary(
+        LIBRARY,
+        'taken_asc',
+        { from: before, to: after },
+        NO_FILTERS,
+      );
       expect(run.map((p) => p.id)).toEqual([before, ...members, after]);
       expect(run[run.length - 2]?.id).toBe(members[2]!);
 
       // And under the opposite ordering the bounds swap round, so the caller does
       // not have to know which is which: the last member is still N-1.
-      const reversed = photos.rangeInLibrary(LIBRARY, 'taken_desc', { from: after, to: before }, NO_FILTERS);
+      const reversed = photos.rangeInLibrary(
+        LIBRARY,
+        'taken_desc',
+        { from: after, to: before },
+        NO_FILTERS,
+      );
       expect(reversed.map((p) => p.id)).toEqual([after, ...[...members].reverse(), before]);
       expect(reversed[reversed.length - 2]?.id).toBe(members[0]!);
     });
@@ -252,29 +313,35 @@ describe('stepping through a collection', () => {
       const dated = [1, 2].map((n) => insert(db, n));
       const undated = [3, 4].map((n) => insert(db, n, { undated: true }));
 
-      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: dated[0]!, to: undated[1]! }, NO_FILTERS).map((p) => p.id)).toEqual([
-        ...dated,
-        ...undated,
-      ]);
-      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: dated[1]!, to: undated[0]! }, NO_FILTERS).map((p) => p.id)).toEqual([
-        dated[1]!,
-        undated[0]!,
-      ]);
+      expect(
+        photos
+          .rangeInLibrary(LIBRARY, 'taken_asc', { from: dated[0]!, to: undated[1]! }, NO_FILTERS)
+          .map((p) => p.id),
+      ).toEqual([...dated, ...undated]);
+      expect(
+        photos
+          .rangeInLibrary(LIBRARY, 'taken_asc', { from: dated[1]!, to: undated[0]! }, NO_FILTERS)
+          .map((p) => p.id),
+      ).toEqual([dated[1]!, undated[0]!]);
       // An open end runs to the end of the collection, undated tail included.
-      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: undated[0]!, to: null }, NO_FILTERS).map((p) => p.id)).toEqual(undated);
+      expect(
+        photos
+          .rangeInLibrary(LIBRARY, 'taken_asc', { from: undated[0]!, to: null }, NO_FILTERS)
+          .map((p) => p.id),
+      ).toEqual(undated);
       // The tail sorts last under `taken_desc` too - the flag leads the ORDER BY
       // and is always ascending - so bounding at the earliest dated photograph
       // stops before it rather than sweeping it in.
-      expect(photos.rangeInLibrary(LIBRARY, 'taken_desc', { from: null, to: dated[0]! }, NO_FILTERS).map((p) => p.id)).toEqual([
-        dated[1]!,
-        dated[0]!,
-      ]);
-      expect(photos.rangeInLibrary(LIBRARY, 'taken_desc', { from: null, to: undated[0]! }, NO_FILTERS).map((p) => p.id)).toEqual([
-        dated[1]!,
-        dated[0]!,
-        undated[1]!,
-        undated[0]!,
-      ]);
+      expect(
+        photos
+          .rangeInLibrary(LIBRARY, 'taken_desc', { from: null, to: dated[0]! }, NO_FILTERS)
+          .map((p) => p.id),
+      ).toEqual([dated[1]!, dated[0]!]);
+      expect(
+        photos
+          .rangeInLibrary(LIBRARY, 'taken_desc', { from: null, to: undated[0]! }, NO_FILTERS)
+          .map((p) => p.id),
+      ).toEqual([dated[1]!, dated[0]!, undated[1]!, undated[0]!]);
     });
 
     // An open bound means "that end of the collection", so the cap has to be read
@@ -292,7 +359,12 @@ describe('stepping through a collection', () => {
 
       // Bounded only at the far end: the answer has to reach the stack, which sits
       // at the end, rather than returning the first rows of the library.
-      const trailing = photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: null, to: members[1]! }, NO_FILTERS);
+      const trailing = photos.rangeInLibrary(
+        LIBRARY,
+        'taken_asc',
+        { from: null, to: members[1]! },
+        NO_FILTERS,
+      );
       expect(trailing[trailing.length - 1]?.id).toBe(members[1]!);
       expect(trailing.filter((photo) => photo.stack_id != null)).toHaveLength(2);
     });
@@ -302,7 +374,11 @@ describe('stepping through a collection', () => {
       const ids = [1, 2].map((n) => insert(db, n));
       const elsewhere = insert(db, 3, { libraryId: OTHER });
 
-      expect(photos.rangeInLibrary(LIBRARY, 'taken_asc', { from: elsewhere, to: null }, NO_FILTERS).map((p) => p.id)).toEqual(ids);
+      expect(
+        photos
+          .rangeInLibrary(LIBRARY, 'taken_asc', { from: elsewhere, to: null }, NO_FILTERS)
+          .map((p) => p.id),
+      ).toEqual(ids);
     });
   });
 

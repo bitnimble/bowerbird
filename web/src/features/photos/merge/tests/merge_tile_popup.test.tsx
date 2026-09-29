@@ -70,7 +70,9 @@ test('one swatch button per source, clicking one picks it and closes', () => {
 test('a swatch is labelled by its file, with no badge over the picture', () => {
   show();
   expect(screen.queryByText(/^[0-9]$/)).toBeNull();
-  const names = screen.getAllByRole('button', { name: /choose frame/i }).map((it) => it.textContent);
+  const names = screen
+    .getAllByRole('button', { name: /choose frame/i })
+    .map((it) => it.textContent);
   expect(names).toEqual(['frame001', 'frame002']);
 });
 
@@ -92,8 +94,22 @@ test('hovering a swatch previews it, and only leaving the row clears the preview
 test('each swatch is drawn from its own decoded layer, clipped to the tile', () => {
   const { store } = build();
   const frame = (width: number): never =>
-    ({ picture: {}, close: () => undefined, closed: false, width, height: 500, naturalWidth: width, naturalHeight: 500 }) as never;
-  runInAction(() => (store.layers = new Map([[0, frame(500)], [1, frame(500)]])));
+    ({
+      picture: {},
+      close: () => undefined,
+      closed: false,
+      width,
+      height: 500,
+      naturalWidth: width,
+      naturalHeight: 500,
+    }) as never;
+  runInAction(
+    () =>
+      (store.layers = new Map([
+        [0, frame(500)],
+        [1, frame(500)],
+      ])),
+  );
   render(
     React.createElement(MergeTilePopup, {
       store,
@@ -115,11 +131,23 @@ test('each swatch is drawn from its own decoded layer, clipped to the tile', () 
 test('a swatch is clipped to its frame grown, once that is solved', () => {
   const clipOf = (solved: boolean): string => {
     const { store, presenter } = build();
-    const frame = { picture: {}, close: () => undefined, closed: false, width: 500, height: 500 } as never;
+    const frame = {
+      picture: {},
+      close: () => undefined,
+      closed: false,
+      width: 500,
+      height: 500,
+    } as never;
     runInAction(() => {
-      store.layers = new Map([[0, frame], [1, frame]]);
+      store.layers = new Map([
+        [0, frame],
+        [1, frame],
+      ]);
       if (!solved) return;
-      store.solved.set(store.keyOf([1, 0]), { seams: triangleSeams([1, 0], 0, 900), geometry: store.geometry });
+      store.solved.set(store.keyOf([1, 0]), {
+        seams: triangleSeams([1, 0], 0, 900),
+        geometry: store.geometry,
+      });
     });
     render(
       React.createElement(MergeTilePopup, {
@@ -191,7 +219,12 @@ describe('flyoutAt', () => {
   const STAGE = { width: 1000, height: 800 };
   const POPUP = { width: 300, height: 140 };
 
-  const loop = (left: number, top: number, right: number, bottom: number): { x: number; y: number }[] => [
+  const loop = (
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+  ): { x: number; y: number }[] => [
     { x: left, y: top },
     { x: right, y: top },
     { x: right, y: bottom },
@@ -242,7 +275,10 @@ describe('flyoutAt', () => {
   });
 
   test('holds the near edge when the flyout is wider or taller than the stage', () => {
-    expect(flyoutAt(loop(100, 100, 200, 200), POPUP, { width: 200, height: 100 })).toEqual({ left: 0, top: 0 });
+    expect(flyoutAt(loop(100, 100, 200, 200), POPUP, { width: 200, height: 100 })).toEqual({
+      left: 0,
+      top: 0,
+    });
   });
 
   // The claim the whole placement exists for, over every tile a burst plausibly produces rather
@@ -263,7 +299,10 @@ describe('flyoutAt', () => {
       { width: 900, height: 620 },
       { width: 1600, height: 300 },
     ];
-    const clearOfTile = (at: { left: number; top: number }, tile: { x: number; y: number }[]): boolean =>
+    const clearOfTile = (
+      at: { left: number; top: number },
+      tile: { x: number; y: number }[],
+    ): boolean =>
       at.left + popup.width <= tile[0]!.x ||
       at.left >= tile[1]!.x ||
       at.top + popup.height <= tile[0]!.y ||

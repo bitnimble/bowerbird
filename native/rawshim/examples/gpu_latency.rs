@@ -77,7 +77,9 @@ fn main() {
             .map(|_| {
                 let began = std::time::Instant::now();
                 let mut round = gpu.record();
-                round.encoder().copy_buffer_to_buffer(&scratch, 0, &staging, 0, 256);
+                round
+                    .encoder()
+                    .copy_buffer_to_buffer(&scratch, 0, &staging, 0, 256);
                 round.submit();
                 pollster::block_on(rawshim::gpu::read_back(gpu, &staging, |bytes| bytes.len()));
                 began.elapsed().as_secs_f64() * 1000.0
@@ -97,7 +99,9 @@ fn main() {
 
     let step = round_trip.0;
     println!();
-    println!("  a sequential search of N steps therefore pays N x {step:.3}ms before any shader runs:");
+    println!(
+        "  a sequential search of N steps therefore pays N x {step:.3}ms before any shader runs:"
+    );
     for steps in [11, 24, 35] {
         println!("    {steps:>3} steps   {:>7.2}ms", steps as f64 * step);
     }

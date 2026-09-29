@@ -32,9 +32,22 @@ const styles = stylex.create({
 
 // Keeps a panel to a few lines: the rest is one click away, at the same type
 // size, so nothing reads as a different level of importance than it is.
-export function MoreLess({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }): JSX.Element {
+export function MoreLess({
+  count,
+  open,
+  onToggle,
+}: {
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+}): JSX.Element {
   return (
-    <button type="button" {...stylex.props(styles.button, focusRing.ring)} aria-expanded={open} onClick={onToggle}>
+    <button
+      type="button"
+      {...stylex.props(styles.button, focusRing.ring)}
+      aria-expanded={open}
+      onClick={onToggle}
+    >
       <ChevronDown size={12} {...stylex.props(styles.chevron, open && styles.open)} />
       {open ? MoreLessStrings.showLess() : MoreLessStrings.showMore(count)}
     </button>

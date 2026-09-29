@@ -24,7 +24,8 @@ test('a region of 4:2:0 planes uploads exactly its own samples, luma and chroma 
   const values: number[] = [];
   const layout = planes.map((plane, at) => {
     const offset = values.length * 2;
-    for (let y = 0; y < plane.height; y++) for (let x = 0; x < plane.width; x++) values.push(sample(at, x, y));
+    for (let y = 0; y < plane.height; y++)
+      for (let x = 0; x < plane.width; x++) values.push(sample(at, x, y));
     return { offset, stride: plane.width * 2 };
   });
   const buffer = new ArrayBuffer(lead + values.length * 2);
@@ -39,8 +40,12 @@ test('a region of 4:2:0 planes uploads exactly its own samples, luma and chroma 
   const device = {
     createTexture: () => ({}),
     queue: {
-      writeTexture: (_: unknown, data: ArrayBufferLike, dataLayout: GPUTexelCopyBufferLayout, size: Size) =>
-        written.push({ data, layout: dataLayout, size }),
+      writeTexture: (
+        _: unknown,
+        data: ArrayBufferLike,
+        dataLayout: GPUTexelCopyBufferLayout,
+        size: Size,
+      ) => written.push({ data, layout: dataLayout, size }),
     },
   } as unknown as GPUDevice;
 
@@ -59,7 +64,9 @@ test('a region of 4:2:0 planes uploads exactly its own samples, luma and chroma 
     for (let row = 0; row < rows; row++) {
       for (let column = 0; column < columns; column++) {
         const at = (copy.offset ?? 0) + row * (copy.bytesPerRow ?? 0) + column * 2;
-        expect(view.getUint16(at, true)).toBe(sample(plane, region.x * scale + column, region.y * scale + row));
+        expect(view.getUint16(at, true)).toBe(
+          sample(plane, region.x * scale + column, region.y * scale + row),
+        );
       }
     }
   });

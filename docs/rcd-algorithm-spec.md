@@ -16,10 +16,10 @@ RCD is a directional, colour-difference demosaicer in the Hamilton–Adams famil
 substitutions that define it:
 
 1. **The direction decision** is made from a high-pass statistic whose kernel sums to zero
-   *separately over each of the two interleaved CFA phases*. It therefore cannot be biased by a
+   _separately over each of the two interleaved CFA phases_. It therefore cannot be biased by a
    constant offset or gain difference between the two channels sampled along that line, which is
    exactly the perturbation lateral chromatic aberration produces locally. The decision is also
-   *soft*: a continuous blend weight, not a hard choice of axis.
+   _soft_: a continuous blend weight, not a hard choice of axis.
 2. **The green estimate** corrects each neighbouring green sample by a **ratio** taken in a
    low-pass (achromatic) domain, rather than by adding half a **difference** of raw same-colour
    samples as Hamilton–Adams does. On a hard edge a difference correction can push the estimate
@@ -31,18 +31,18 @@ same soft directional blending applied on the diagonals as well as the axes.
 
 Six stages, in dependency order:
 
-| Stage | Computes | Defined on | Depends on |
-|---|---|---|---|
-| A | axis-direction blend field | every pixel | mosaic |
-| B | low-pass luminance | red/blue sites | mosaic |
-| C | green at red and blue sites | red/blue sites | A, B |
-| D | diagonal-direction blend field | red/blue sites | mosaic |
-| E | the missing chroma at red and blue sites | red/blue sites | C, D |
-| F | red and blue at green sites | green sites | C, E, A |
+| Stage | Computes                                 | Defined on     | Depends on |
+| ----- | ---------------------------------------- | -------------- | ---------- |
+| A     | axis-direction blend field               | every pixel    | mosaic     |
+| B     | low-pass luminance                       | red/blue sites | mosaic     |
+| C     | green at red and blue sites              | red/blue sites | A, B       |
+| D     | diagonal-direction blend field           | red/blue sites | mosaic     |
+| E     | the missing chroma at red and blue sites | red/blue sites | C, D       |
+| F     | red and blue at green sites              | green sites    | C, E, A    |
 
 A, B and D read only the mosaic and are mutually independent. C needs A and B. E needs C and D.
 F needs C, E and A. F reading E is a real dependency, not an artefact: at a green site the chroma
-samples lying to the left and right are of the colour that F is *not* reading directly from the
+samples lying to the left and right are of the colour that F is _not_ reading directly from the
 sensor, so they must already have been filled in by E.
 
 ---
@@ -58,10 +58,10 @@ sensor, so they must already have been filled in by E.
 
 ### 2.1 Constants
 
-| Symbol | Value | Where used |
-|---|---|---|
-| `ε` | 1×10⁻⁵ | added to every gradient; added to every ratio denominator |
-| `ε²` | 1×10⁻¹⁰ | floor applied to each directional energy before the ratio |
+| Symbol | Value   | Where used                                                |
+| ------ | ------- | --------------------------------------------------------- |
+| `ε`    | 1×10⁻⁵  | added to every gradient; added to every ratio denominator |
+| `ε²`   | 1×10⁻¹⁰ | floor applied to each directional energy before the ratio |
 
 `ε²` is exactly the square of `ε`, but the two are used independently; do not fold one into the
 other. They are chosen for input scaled to roughly the unit interval, which is why §2.2 is
@@ -130,8 +130,8 @@ odd  offsets: −1 − 1 + 1 + 1       = 0
 
 Consequences, all of which are the point of the design:
 
-- Adding an arbitrary constant to *either* channel alone leaves the response unchanged.
-- Multiplying *either* channel alone by a constant scales only that channel's contribution, and
+- Adding an arbitrary constant to _either_ channel alone leaves the response unchanged.
+- Multiplying _either_ channel alone by a constant scales only that channel's contribution, and
   since the contribution of a locally-constant channel is zero, a pure gain difference between the
   channels is also invisible.
 - Each half of the kernel additionally annihilates a linear ramp: `Σ offset·weight = 0` holds over
@@ -150,15 +150,15 @@ directly on the mosaic without demosaicing anything first.
 For a direction `d` and a pixel `p`, write `h_d(p)` for the kernel response of §3.1 applied along
 `d` centred at `p`, where the step vector for each direction is:
 
-| Direction | Step per unit offset |
-|---|---|
-| vertical (V) | `(+1, 0)` |
-| horizontal (H) | `(0, +1)` |
-| main diagonal (P) | `(+1, +1)` |
-| anti-diagonal (Q) | `(+1, −1)` |
+| Direction         | Step per unit offset |
+| ----------------- | -------------------- |
+| vertical (V)      | `(+1, 0)`            |
+| horizontal (H)    | `(0, +1)`            |
+| main diagonal (P) | `(+1, +1)`           |
+| anti-diagonal (Q) | `(+1, −1)`           |
 
 The **energy** in direction `d` at `p` is the sum of three squared responses, taken at `p` and at
-the two neighbours of `p` *along that same direction*, then floored:
+the two neighbours of `p` _along that same direction_, then floored:
 
 ```
 E_d(p) = max( ε² ,  h_d(p − s_d)² + h_d(p)² + h_d(p + s_d)² )
@@ -198,7 +198,7 @@ cross-check; there is no reason to implement it, as it costs about ten times the
 
 ### 3.4 The blend fields
 
-Two scalar fields, each the share of the energy attributable to the *first* named direction:
+Two scalar fields, each the share of the energy attributable to the _first_ named direction:
 
 ```
 tH(r, c) = E_V(r, c) / ( E_V(r, c) + E_H(r, c) )        the axis field
@@ -207,7 +207,7 @@ tQ(r, c) = E_P(r, c) / ( E_P(r, c) + E_Q(r, c) )        the diagonal field
 
 Both lie in `[0, 1]`. The naming reflects how they are consumed: **high energy in a direction means
 that direction is a bad one to interpolate along**, so `tH` (large when vertical energy dominates)
-is used as the weight of the *horizontal* estimate. Likewise `tQ` weights the *anti-diagonal*
+is used as the weight of the _horizontal_ estimate. Likewise `tQ` weights the _anti-diagonal_
 estimate. Every consumer of these fields blends as
 
 ```
@@ -339,7 +339,7 @@ numerator, which is the exact algebraic expansion of the ratio form; the differe
 ### 5.3 Axis estimates and the result
 
 Combine each opposing pair by **inverse-gradient weighting**; each estimate is weighted by the
-gradient of the *opposite* direction, so the side that is locally smoother contributes more:
+gradient of the _opposite_ direction, so the side that is locally smoother contributes more:
 
 ```
 e_V = ( g_S·e_N + g_N·e_S ) / ( g_N + g_S )
@@ -488,14 +488,14 @@ one checkerboard sub-lattice and the greens are the other; the row-to-row parity
 Beyond these two facts the algorithm is phase-agnostic:
 
 - Stages A and B are pure convolutions of the mosaic and know nothing about phase (§3.2 and §4 hold
-  at every site). B is merely *evaluated* only on the red/blue lattice because only that is read.
+  at every site). B is merely _evaluated_ only on the red/blue lattice because only that is read.
 - Stage C applies unchanged at red and blue sites alike; nothing in §5 distinguishes them, because
   the ratio is taken on the achromatic `L`, which is the same combination at both (§4).
 - Stage E applies unchanged at red and blue sites; only the identity of `C₀` differs.
 - Stage F applies unchanged at all green sites and for both channels; §7 explains why no branch on
   which chroma lies vertically is needed.
 
-There is no code path anywhere that depends on *which* of the four patterns the sensor uses, only on
+There is no code path anywhere that depends on _which_ of the four patterns the sensor uses, only on
 the two parities above.
 
 ---
@@ -504,15 +504,15 @@ the two parities above.
 
 Every stage reads outside its output pixel, and the reaches compose. Working outward:
 
-| Quantity at `p` | Reads | Cumulative reach from `p` |
-|---|---|---|
-| `L` | mosaic ±1 | 1 |
-| `h_d` | mosaic ±3 along `d` | 3 |
-| `E_d` (hence `tH`, `tQ`) | `h_d` at ±1 along `d` | 4 |
-| refined `t*` | field at the 4 diagonal neighbours | 5 |
-| stage C green | mosaic ±4; `L` at ±2; `t*` | 5 |
-| stage E chroma | mosaic ±3 diag; green at ±2 diag; `t*` from `tQ` | 7 |
-| stage F chroma | green at ±2; stage-E chroma at ±3 | 10 |
+| Quantity at `p`          | Reads                                            | Cumulative reach from `p` |
+| ------------------------ | ------------------------------------------------ | ------------------------- |
+| `L`                      | mosaic ±1                                        | 1                         |
+| `h_d`                    | mosaic ±3 along `d`                              | 3                         |
+| `E_d` (hence `tH`, `tQ`) | `h_d` at ±1 along `d`                            | 4                         |
+| refined `t*`             | field at the 4 diagonal neighbours               | 5                         |
+| stage C green            | mosaic ±4; `L` at ±2; `t*`                       | 5                         |
+| stage E chroma           | mosaic ±3 diag; green at ±2 diag; `t*` from `tQ` | 7                         |
+| stage F chroma           | green at ±2; stage-E chroma at ±3                | 10                        |
 
 So a pixel's output is fully determined only if it is at least **10 pixels** from the edge of the
 available data. That is the number to use for tile overlap if the image is processed in tiles.
@@ -525,7 +525,7 @@ way. Established practice:
 - **9 pixels** is the margin usually replaced at the image edge, one less than the tile overlap. The
   slack exists because the outermost dependency, the neighbourhood mean in §3.5 reaching one pixel
   beyond where the energy field is defined; degrades gracefully rather than producing garbage,
-  *provided the field is zero-filled outside its valid region* rather than left uninitialised. Zero
+  _provided the field is zero-filled outside its valid region_ rather than left uninitialised. Zero
   there means "all energy is horizontal/anti-diagonal", which is wrong but bounded; uninitialised
   memory is not.
 - For the fill itself, anything reasonable will do at 9 pixels: a gradient-corrected bilinear method,
@@ -540,15 +540,15 @@ biases the direction decision exactly where there is least evidence.
 
 ## 11. Guards and numerical protection, complete list
 
-| Location | Guard | Value |
-|---|---|---|
-| Input (§2.2) | clamp below | 0 |
-| Directional energy (§3.3) | floor before forming the ratio | `ε² = 1e-10` |
-| Refined blend weight (§3.5) | clamp to `[0, 1]` | n/a |
-| Every gradient (§5.1, §6.1, §7.1) | additive term, making each ≥ `ε` and each denominator ≥ `2ε` | `ε = 1e-5` |
-| Low-pass ratio denominator (§5.2) | additive term | `ε = 1e-5` |
-| Stage outputs (§5.3, §6.2, §7.2) | clamp to `[0, 1]` | optional, see notes |
-| Final output (§8) | clamp below | 0 |
+| Location                          | Guard                                                        | Value               |
+| --------------------------------- | ------------------------------------------------------------ | ------------------- |
+| Input (§2.2)                      | clamp below                                                  | 0                   |
+| Directional energy (§3.3)         | floor before forming the ratio                               | `ε² = 1e-10`        |
+| Refined blend weight (§3.5)       | clamp to `[0, 1]`                                            | n/a                 |
+| Every gradient (§5.1, §6.1, §7.1) | additive term, making each ≥ `ε` and each denominator ≥ `2ε` | `ε = 1e-5`          |
+| Low-pass ratio denominator (§5.2) | additive term                                                | `ε = 1e-5`          |
+| Stage outputs (§5.3, §6.2, §7.2)  | clamp to `[0, 1]`                                            | optional, see notes |
+| Final output (§8)                 | clamp below                                                  | 0                   |
 
 All denominators are positive: two gradients (each ≥ `ε`, sum ≥ `2ε`), two floored energies
 (≥ `2ε²`), or low-pass sum (≥ `ε` with non-negative input). Never add zero-denominator branches.
@@ -604,9 +604,9 @@ These are this repository's answers, recorded here so the shader and its caller 
 - **Black level, white level and white balance are all applied before RCD**, in one conditioning
   pass: `M` is `min((raw − black) / (white − black), 1) · gain`, per-position black (Bayer sensors
   report four, and the two greens differ). §4 is untouched by the gain,
-  because the kernel's colour weights are ¼·R + ½·G + ¼·B at *every* phase whatever fixed
+  because the kernel's colour weights are ¼·R + ½·G + ¼·B at _every_ phase whatever fixed
   per-channel scale the samples carry - a gain is per colour, not per phase, so it cannot put a CFA
-  modulation back into `L`. The upper clip is not §2.2's either: it sits *ahead* of the gain,
+  modulation back into `L`. The upper clip is not §2.2's either: it sits _ahead_ of the gain,
   because that is where the photosite's own information stops, and the gains are scaled so the
   largest is one so that `M` still lands in the unit interval §2.2 asks for. A channel's ceiling is
   then its own gain, and a pixel sitting on all three is what `assemble.slang` renders neutral.

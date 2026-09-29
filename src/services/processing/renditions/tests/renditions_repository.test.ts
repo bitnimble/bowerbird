@@ -14,7 +14,9 @@ beforeEach(() => {
   db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON;');
   runMigrations(db);
-  db.query(`INSERT INTO libraries (id, root_path, name, rendition_hdr) VALUES (?, '/photos', 'Library', 0)`).run(LIB);
+  db.query(
+    `INSERT INTO libraries (id, root_path, name, rendition_hdr) VALUES (?, '/photos', 'Library', 0)`,
+  ).run(LIB);
   db.query(
     `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
        VALUES (?, ?, '{"kind":"file","path":"a.arw"}', 100, 100, '2026-01-01T00:00:00.000Z')`,
@@ -22,7 +24,8 @@ beforeEach(() => {
   renditions = new RenditionsRepository(db);
 });
 
-const owed = (): number => new PhotoProcessingRepository(db, new RenditionsRepository(db)).countPendingProcessing(LIB);
+const owed = (): number =>
+  new PhotoProcessingRepository(db, new RenditionsRepository(db)).countPendingProcessing(LIB);
 
 describe('RenditionsRepository', () => {
   // The whole reason an import writes no rendition rows: a photograph that has just
@@ -33,11 +36,17 @@ describe('RenditionsRepository', () => {
   });
 
   it('stops owing a pass once that pass has landed', () => {
-    renditions.markBuilt(PHOTO, 'grid', '2026-02-01T00:00:00.000Z', 'edits-1', { from: 'render', matched: false });
+    renditions.markBuilt(PHOTO, 'grid', '2026-02-01T00:00:00.000Z', 'edits-1', {
+      from: 'render',
+      matched: false,
+    });
     // Still the renditions pass, which is a different file written at a different moment.
     expect(owed()).toBe(1);
 
-    renditions.markBuilt(PHOTO, 'full', '2026-02-01T00:00:01.000Z', 'edits-1', { from: 'render', matched: false });
+    renditions.markBuilt(PHOTO, 'full', '2026-02-01T00:00:01.000Z', 'edits-1', {
+      from: 'render',
+      matched: false,
+    });
     expect(owed()).toBe(0);
     expect(renditions.versions(PHOTO)).toEqual({
       grid: '2026-02-01T00:00:00.000Z',
@@ -93,7 +102,10 @@ describe('RenditionsRepository', () => {
   });
 
   it('queues a variant again without disowning what is on disk', () => {
-    renditions.markBuilt(PHOTO, 'grid', '2026-02-01T00:00:00.000Z', 'edits-1', { from: 'render', matched: false });
+    renditions.markBuilt(PHOTO, 'grid', '2026-02-01T00:00:00.000Z', 'edits-1', {
+      from: 'render',
+      matched: false,
+    });
     renditions.queue(PHOTO, ['grid']);
 
     // The stamp is what a rebuilt copy is measured against, and the file it describes

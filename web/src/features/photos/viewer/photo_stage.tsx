@@ -250,7 +250,10 @@ export function PhotoStage({
   // they arrived. The picture and not just the frame, because a frame nobody is
   // asking for any more is still drawn inside the picture it arrived in, and by
   // then that picture is gone from the props.
-  const [painted, setPainted] = useState<{ of: ReadonlyMap<string, string>; photoKey: string } | null>(null);
+  const [painted, setPainted] = useState<{
+    of: ReadonlyMap<string, string>;
+    photoKey: string;
+  } | null>(null);
   // The decoded size of each painted source. Per source, because a stage holds
   // frames that may differ in shape, and `clampPan` is computed from whichever of
   // them is on screen.
@@ -279,7 +282,9 @@ export function PhotoStage({
   });
 
   const sources = pictures.flatMap((picture) => [...picture.sources]);
-  const asking = new Map(pictures.flatMap((picture) => picture.sources.map((source) => [source, picture.key] as const)));
+  const asking = new Map(
+    pictures.flatMap((picture) => picture.sources.map((source) => [source, picture.key] as const)),
+  );
   // Which picture draws a frame: the one asking for it, or - for a frame on its
   // way off the stage - the one it arrived in.
   const pictureOf = (source: string): string =>
@@ -309,7 +314,10 @@ export function PhotoStage({
   // frames in slot order first, then any it has painted that are no longer asked for. Same
   // set as `paintedSources` either way - only `[0]` below reads the ordering.
   const preferred = isThisPhoto
-    ? [...sources.filter((source) => paintedSources.includes(source)), ...paintedSources.filter((source) => !sources.includes(source))]
+    ? [
+        ...sources.filter((source) => paintedSources.includes(source)),
+        ...paintedSources.filter((source) => !sources.includes(source)),
+      ]
     : paintedSources;
   // The chosen picture's frame once it has decoded, else whatever else is up: a
   // pair whose second frame is still decoding shows the first rather than nothing.
@@ -324,12 +332,19 @@ export function PhotoStage({
   // Whichever frame was last on screen, falling back to the preferred one: a neighbour
   // finishing its decode while the stepped-to picture is still arriving would otherwise
   // capture the stage - a photograph two away, that the reader never asked for.
-  const held = standing.current != null && paintedSources.includes(standing.current) ? standing.current : preferred[0];
+  const held =
+    standing.current != null && paintedSources.includes(standing.current)
+      ? standing.current
+      : preferred[0];
   const arrived = chosen != null && paintedSources.includes(chosen) ? chosen : undefined;
   // A rendition replacing another of the same picture waits for its detail layer: zoomed in,
   // its fitted frame magnified would otherwise show before it sharpens.
   const swapping =
-    arrived != null && held != null && held !== arrived && pictureOf(held) === shownKey && !isVideo(arrived);
+    arrived != null &&
+    held != null &&
+    held !== arrived &&
+    pictureOf(held) === shownKey &&
+    !isVideo(arrived);
   const ready = arrived != null && (!swapping || sharp.has(arrived));
   // Something else on screen while the picture asked for has nothing to show: the beat
   // after a step to a photograph this stage was not holding. Not a rendition swapping
@@ -410,7 +425,10 @@ export function PhotoStage({
   const key = sources.join(' ');
   // Clearing this remounts the frames' elements, which is what makes them ask
   // again: a source that never moves is otherwise requested exactly once.
-  useEffect(() => setFailed((previous) => (previous.size === 0 ? previous : new Set())), [key, retryEpoch]);
+  useEffect(
+    () => setFailed((previous) => (previous.size === 0 ? previous : new Set())),
+    [key, retryEpoch],
+  );
 
   // Which picture is up, and what it replaced. **The exchange, not the decode**: a run
   // mounts its neighbours, so the picture stepped to usually has its raster already and
@@ -418,14 +436,18 @@ export function PhotoStage({
   // axis is also what tells a step from the three things that are not one, all of which
   // leave the shown picture where it was: a rendition swapped underneath it, a stage
   // painting its first picture, and a photograph held over into the next round.
-  const shownBefore = useRef<{ picture: string; photo: string; source: string | undefined } | undefined>(undefined);
+  const shownBefore = useRef<
+    { picture: string; photo: string; source: string | undefined } | undefined
+  >(undefined);
   const [exchange, setExchange] = useState<{ to: string; from: string; step: Step } | null>(null);
   // The direction is not settled when the exchange happens: the route moves first and
   // `lastStep` a render later, so it is filled in on the exchange it belongs to rather than
   // read loose at render.
   useEffect(() => {
     if (arrivedBy == null) return;
-    setExchange((was) => (was == null || was.step === arrivedBy ? was : { ...was, step: arrivedBy }));
+    setExchange((was) =>
+      was == null || was.step === arrivedBy ? was : { ...was, step: arrivedBy },
+    );
   }, [arrivedBy]);
 
   // The elements the pictures are drawn in, so the one arriving can be told to move.
@@ -474,12 +496,14 @@ export function PhotoStage({
     // styles either way, so a host without this - jsdom, where the components are tested -
     // shows the step without the movement rather than failing to render it.
     if (typeof element.animate !== 'function') return;
-    const from = step === 'fade' ? { opacity: 0 } : { translate: step === 'next' ? '22px' : '-22px' };
+    const from =
+      step === 'fade' ? { opacity: 0 } : { translate: step === 'next' ? '22px' : '-22px' };
     // Whatever this picture was last told to do, it is not doing it any more. A move still
     // waiting out its delay holds the offset it starts from, so a reader stepping back and
     // forth over one pair would otherwise leave the earlier one to surface behind the newer
     // and shunt the photograph sideways once the newer had finished.
-    if (typeof element.getAnimations === 'function') for (const spent of element.getAnimations()) spent.cancel();
+    if (typeof element.getAnimations === 'function')
+      for (const spent of element.getAnimations()) spent.cancel();
     const move = element.animate([from, {}], {
       duration: STEP_MS,
       easing: 'ease-out',
@@ -607,7 +631,6 @@ export function PhotoStage({
 
   const incoming = [...asked, ...nextUp()];
 
-
   // Read inside the promote below, which runs off a decode: the values captured in
   // that closure would be whatever was asked for when the decode started.
   const sourcesRef = useRef(sources);
@@ -667,7 +690,10 @@ export function PhotoStage({
       // is a few frames of overlap and no animation at all.
       const leaving = covered.some((frame) => pictureRef.current(frame) !== shownRef.current);
       if (covered.length > 0) {
-        setRetiring({ of: new Map(covered.map((frame) => [frame, pictureRef.current(frame)])), animated: leaving });
+        setRetiring({
+          of: new Map(covered.map((frame) => [frame, pictureRef.current(frame)])),
+          animated: leaving,
+        });
       }
 
       const into = pictureRef.current(source);
@@ -756,7 +782,6 @@ export function PhotoStage({
     return () => window.removeEventListener('keydown', onKey);
   }, [keyboard, toggleFullscreen, zoom, reset]);
 
-
   const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
   // Still opaque under whatever replaced them. Not the frame on screen, which the
   // hold may name when a promotion left it where it was; and not one being asked
@@ -771,7 +796,9 @@ export function PhotoStage({
   const notice =
     status ?? (unreadable ? { label: PhotoStageStrings.frameUnreadable(), busy: false } : null);
 
-  const covering = [...retiring.of.keys()].filter((source) => source !== visible && !incoming.includes(source));
+  const covering = [...retiring.of.keys()].filter(
+    (source) => source !== visible && !incoming.includes(source),
+  );
   // Of those, the ones nothing else mounts: a frame held under its replacement is
   // usually still painted, and keeps the slot it already had.
   const retired = covering.filter((source) => !paintedSources.includes(source));
@@ -779,7 +806,11 @@ export function PhotoStage({
   // prepared. Nothing here moves on promotion - a promoted source keeps the slot
   // it already had, and a promotion appends - so no element is reinserted into the
   // DOM mid-swap, and the frame being covered is always under the one covering it.
-  const mounted = [...retired, ...paintedSources, ...incoming.filter((source) => !paintedSources.includes(source))];
+  const mounted = [
+    ...retired,
+    ...paintedSources,
+    ...incoming.filter((source) => !paintedSources.includes(source)),
+  ];
   const allFailed = sources.length > 0 && wanted.length === 0;
 
   // Sizes for frames nothing draws any more, off the same list that draws them. Kept by
@@ -851,17 +882,29 @@ export function PhotoStage({
     <div
       ref={captureStage}
       {...stylex.props(stageStyles.stage, fullscreen && styles.fullscreen, style)}
-      style={frameColor == null ? undefined : { outline: `1px solid ${frameColor}`, outlineOffset: '1px' }}
+      style={
+        frameColor == null
+          ? undefined
+          : { outline: `1px solid ${frameColor}`, outlineOffset: '1px' }
+      }
       onMouseMove={() => fullscreen && setToolbarVisible(true)}
       onMouseLeave={() => setToolbarVisible(false)}
     >
       {!fullscreen &&
-        (toolsInto == null ? <div {...stylex.props(stageStyles.tools)}>{tools}</div> : createPortal(tools, toolsInto))}
+        (toolsInto == null ? (
+          <div {...stylex.props(stageStyles.tools)}>{tools}</div>
+        ) : (
+          createPortal(tools, toolsInto)
+        ))}
       {zoomInto != null && createPortal(<ZoomSlider zoom={zoom} />, zoomInto)}
 
       <div
         ref={viewportRef}
-        {...stylex.props(stageStyles.viewport, fullscreen && styles.viewportFullscreen, stylex.defaultMarker())}
+        {...stylex.props(
+          stageStyles.viewport,
+          fullscreen && styles.viewportFullscreen,
+          stylex.defaultMarker(),
+        )}
         role="region"
         aria-label={PhotoStageStrings.stage()}
         aria-busy={!ready && !unreadable}
@@ -892,7 +935,12 @@ export function PhotoStage({
                   photoKey={photoKey}
                   hold={hold === true}
                   video={isVideo(source)}
-                  alt={altOf(pictures.find((each) => each.key === group.key), source) ?? alt}
+                  alt={
+                    altOf(
+                      pictures.find((each) => each.key === group.key),
+                      source,
+                    ) ?? alt
+                  }
                   state={stateOf(source)}
                   zoomed={zoomed}
                   shown={source === visible}

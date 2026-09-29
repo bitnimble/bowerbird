@@ -67,9 +67,9 @@ export class FeedbackPresenter {
     const photo = this.store.photo;
     try {
       const attachments =
-        photo != null && report.includePhoto ?
-          await attachmentsFor({ photo, raw: report.raw && rawFits(photo), strip: report.strip })
-        : [];
+        photo != null && report.includePhoto
+          ? await attachmentsFor({ photo, raw: report.raw && rawFits(photo), strip: report.strip })
+          : [];
       // The pictures alone, since `attachmentsFor` already weighed the original against them.
       const carried = attachments.reduce((total, part) => total + part.data.byteLength, 0);
       if (carried > REQUEST_CEILING) return 'too-large';

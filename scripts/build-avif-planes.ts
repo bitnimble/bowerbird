@@ -30,17 +30,32 @@ const RUSTFLAGS = [
 
 function run(command: string, args: string[], env: NodeJS.ProcessEnv = process.env): void {
   const ran = spawnSync(command, args, { cwd: ROOT, stdio: 'inherit', env });
-  if (ran.status !== 0) throw new Error(`${command} ${args.join(' ')} exited ${ran.status ?? 'on a signal'}`);
+  if (ran.status !== 0)
+    throw new Error(`${command} ${args.join(' ')} exited ${ran.status ?? 'on a signal'}`);
 }
 
 const installed = spawnSync('rustup', ['target', 'list', '--installed'], { encoding: 'utf8' });
-if (installed.status !== 0) throw new Error('rustup is needed to add the wasm32-wasip1-threads target');
+if (installed.status !== 0)
+  throw new Error('rustup is needed to add the wasm32-wasip1-threads target');
 if (!installed.stdout.split('\n').includes(TARGET)) run('rustup', ['target', 'add', TARGET]);
 
-run('bun', ['run', 'scripts/cargo.ts', 'build', '--release', '--target', TARGET, '--manifest-path', manifest], {
-  ...process.env,
-  RUSTFLAGS,
-});
+run(
+  'bun',
+  [
+    'run',
+    'scripts/cargo.ts',
+    'build',
+    '--release',
+    '--target',
+    TARGET,
+    '--manifest-path',
+    manifest,
+  ],
+  {
+    ...process.env,
+    RUSTFLAGS,
+  },
+);
 
 const wasm = await readFile(built);
 const wasmHashed = `avif_planes.${createHash('sha256').update(wasm).digest('hex').slice(0, 12)}.wasm`;
@@ -50,9 +65,13 @@ await writeFile(
   join(pkg, 'avif_planes.js'),
   `${forwards}\nexport const avifPlanesUrl = new URL('./${wasmHashed}', import.meta.url).href;\n`,
 );
-await writeFile(join(pkg, 'avif_planes.d.ts'), `${forwards}\nexport const avifPlanesUrl: string;\n`);
+await writeFile(
+  join(pkg, 'avif_planes.d.ts'),
+  `${forwards}\nexport const avifPlanesUrl: string;\n`,
+);
 for (const entry of await readdir(pkg)) {
-  if (/^avif_planes\.[0-9a-f]{12}\.wasm$/.test(entry) && entry !== wasmHashed) await rm(join(pkg, entry));
+  if (/^avif_planes\.[0-9a-f]{12}\.wasm$/.test(entry) && entry !== wasmHashed)
+    await rm(join(pkg, entry));
 }
 
 console.log(`pkg: ${wasmHashed}`);

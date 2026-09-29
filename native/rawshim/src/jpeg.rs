@@ -72,7 +72,9 @@ use crate::rgb::{Rgb, RgbRef};
 /// way the sensor read it.
 pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
-    decoder.read_info().map_err(|e| format!("not a readable JPEG: {e}"))?;
+    decoder
+        .read_info()
+        .map_err(|e| format!("not a readable JPEG: {e}"))?;
 
     if long_edge > 0 {
         // The bound on **both** axes, not a proportional pair. `scale` takes the smallest
@@ -86,10 +88,15 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
             .map_err(|e| format!("the JPEG would not scale during the decode: {e}"))?;
     }
 
-    let pixels = decoder.decode().map_err(|e| format!("the JPEG would not decode: {e}"))?;
+    let pixels = decoder
+        .decode()
+        .map_err(|e| format!("the JPEG would not decode: {e}"))?;
     let scaled = decoder.info().ok_or("the JPEG has no frame header")?;
     // Read before the pixels are moved: the decoder holds the APP1 payload, not the frame.
-    let turn = decoder.exif_data().map(orientation).unwrap_or(Orientation::AsStored);
+    let turn = decoder
+        .exif_data()
+        .map(orientation)
+        .unwrap_or(Orientation::AsStored);
 
     // Renditions and fits are all 3-band, and an embedded preview is occasionally
     // greyscale, so normalise rather than trusting the source. CMYK is refused rather
@@ -104,7 +111,11 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
         jpeg_decoder::PixelFormat::CMYK32 => return Err("CMYK JPEG is not supported".to_string()),
     };
 
-    let decoded = Rgb { width: usize::from(scaled.width), height: usize::from(scaled.height), data };
+    let decoded = Rgb {
+        width: usize::from(scaled.width),
+        height: usize::from(scaled.height),
+        data,
+    };
     // The DCT gets within a factor of two; a proper reduce finishes the job. Reduced
     // before the rotation rather than after, so the transpose moves the smaller image - on
     // a 60MP portrait preview that ordering is most of the cost of the call. Both stages
@@ -239,10 +250,14 @@ fn retagged(
             false => u32::from_le_bytes(bytes),
         })
     };
-    let short_bytes =
-        |value: u16| match big_endian { true => value.to_be_bytes(), false => value.to_le_bytes() };
-    let long_bytes =
-        |value: u32| match big_endian { true => value.to_be_bytes(), false => value.to_le_bytes() };
+    let short_bytes = |value: u16| match big_endian {
+        true => value.to_be_bytes(),
+        false => value.to_le_bytes(),
+    };
+    let long_bytes = |value: u32| match big_endian {
+        true => value.to_be_bytes(),
+        false => value.to_le_bytes(),
+    };
 
     let ifd = usize::try_from(long(4)?).ok()?;
     if ifd > block.len() {
@@ -296,7 +311,10 @@ fn retagged(
 
     out[tiff.start + 4..tiff.start + 8].copy_from_slice(&long_bytes(placed_at));
     out[length_at..length_at + 2].copy_from_slice(&grown.to_be_bytes());
-    out.splice(tiff.end..tiff.end, std::iter::repeat(0).take(pad).chain(rebuilt));
+    out.splice(
+        tiff.end..tiff.end,
+        std::iter::repeat(0).take(pad).chain(rebuilt),
+    );
     Some(out)
 }
 
@@ -304,11 +322,32 @@ fn retagged(
 fn spliced(jpeg: &[u8], orientation: u16) -> Option<Vec<u8>> {
     // One little-endian TIFF header, one IFD holding one SHORT, and no next IFD.
     let tiff: [u8; 26] = [
-        b'I', b'I', 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
-        0x01, 0x00,
-        0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,
-        orientation.to_le_bytes()[0], orientation.to_le_bytes()[1], 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
+        b'I',
+        b'I',
+        0x2a,
+        0x00,
+        0x08,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x12,
+        0x01,
+        0x03,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        orientation.to_le_bytes()[0],
+        orientation.to_le_bytes()[1],
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
     ];
     with_exif(jpeg, &tiff)
 }
@@ -354,17 +393,28 @@ pub fn dimensions(bytes: &[u8]) -> Option<(usize, usize)> {
 pub fn encode(image: RgbRef<'_>, quality: i32) -> Result<Vec<u8>, String> {
     let expected = image.width * image.height * 3;
     if image.data.len() < expected {
-        return Err(format!("buffer is {} bytes, expected {expected}", image.data.len()));
+        return Err(format!(
+            "buffer is {} bytes, expected {expected}",
+            image.data.len()
+        ));
     }
     let (Ok(width), Ok(height)) = (u16::try_from(image.width), u16::try_from(image.height)) else {
-        return Err(format!("JPEG cannot hold a {}x{} image", image.width, image.height));
+        return Err(format!(
+            "JPEG cannot hold a {}x{} image",
+            image.width, image.height
+        ));
     };
 
     let mut out = Vec::new();
     let mut encoder = jpeg_encoder::Encoder::new(&mut out, quality.clamp(1, 100) as u8);
     encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_1_1);
     encoder
-        .encode(&image.data[..expected], width, height, jpeg_encoder::ColorType::Rgb)
+        .encode(
+            &image.data[..expected],
+            width,
+            height,
+            jpeg_encoder::ColorType::Rgb,
+        )
         .map_err(|e| format!("the JPEG would not encode: {e}"))?;
     Ok(out)
 }
@@ -398,7 +448,10 @@ impl Orientation {
 
     /// Whether the picture's width and height are the stored frame's the other way round.
     fn swaps_axes(self) -> bool {
-        matches!(self, Self::Transpose | Self::Rotate90 | Self::Transverse | Self::Rotate270)
+        matches!(
+            self,
+            Self::Transpose | Self::Rotate90 | Self::Transverse | Self::Rotate270
+        )
     }
 
     fn applied(self, frame: Rgb) -> Rgb {
@@ -428,7 +481,11 @@ impl Orientation {
                 out[to..to + 3].copy_from_slice(&image.data[from..from + 3]);
             }
         }
-        Rgb { width, height, data: out }
+        Rgb {
+            width,
+            height,
+            data: out,
+        }
     }
 }
 
@@ -467,8 +524,12 @@ fn orientation(exif: &[u8]) -> Orientation {
         })
     };
 
-    let Some(ifd) = long(4).map(u64::from) else { return Orientation::AsStored };
-    let Some(entries) = short(ifd) else { return Orientation::AsStored };
+    let Some(ifd) = long(4).map(u64::from) else {
+        return Orientation::AsStored;
+    };
+    let Some(entries) = short(ifd) else {
+        return Orientation::AsStored;
+    };
     (0..u64::from(entries))
         .map(|i| ifd + 2 + i * 12)
         .find(|entry| short(*entry) == Some(0x0112))
@@ -499,7 +560,11 @@ mod tests {
                 data[i + 2] = 128;
             }
         }
-        Rgb { width, height, data }
+        Rgb {
+            width,
+            height,
+            data,
+        }
     }
 
     /// A frame with no symmetry in either axis, so every one of the eight transforms
@@ -530,8 +595,11 @@ mod tests {
                 let edited = with_added_rotation(&camera, degrees).expect("edit orientation");
                 let actual = decode(&edited, 0).expect("edited JPEG");
                 let expected = turn.applied(camera_pixels.clone());
-                assert_eq!((actual.width, actual.height, actual.data),
-                    (expected.width, expected.height, expected.data), "EXIF {tag}, edit {degrees}");
+                assert_eq!(
+                    (actual.width, actual.height, actual.data),
+                    (expected.width, expected.height, expected.data),
+                    "EXIF {tag}, edit {degrees}"
+                );
                 assert_eq!(&edited[edited.len() - 32..], &camera[camera.len() - 32..]);
             }
         }
@@ -546,14 +614,24 @@ mod tests {
         let tagged = with_orientation(&stored, 6).expect("a JFIF preview takes the tag");
 
         let turned = decode(&tagged, 0).unwrap();
-        assert_eq!((turned.width, turned.height), (3, 4), "Rotate90 swaps the axes");
+        assert_eq!(
+            (turned.width, turned.height),
+            (3, 4),
+            "Rotate90 swaps the axes"
+        );
 
         // The corner marks travel: (0,0) to the top right, and (3,0) to the bottom right.
         // Which channel dominates, not the exact triple - it has been through a lossy encode.
         let [red, green, _] = pixel(&turned, 2, 0);
-        assert!(red > 200 && green < 60, "the red corner is top right, got {red},{green}");
+        assert!(
+            red > 200 && green < 60,
+            "the red corner is top right, got {red},{green}"
+        );
         let [red, green, _] = pixel(&turned, 2, 3);
-        assert!(green > 200 && red < 60, "the green corner is bottom right, got {red},{green}");
+        assert!(
+            green > 200 && red < 60,
+            "the green corner is bottom right, got {red},{green}"
+        );
 
         // And the pixels themselves are untouched - the same entropy-coded scan, moved.
         assert_eq!(&tagged[tagged.len() - 64..], &stored[stored.len() - 64..]);
@@ -569,17 +647,23 @@ mod tests {
         // Written once, then written again: the second call finds the entry and replaces it.
         let once = with_orientation(&stored, 3).expect("a JFIF preview takes the tag");
         let twice = with_orientation(&once, 6).expect("its own EXIF takes the tag again");
-        assert_eq!(twice.len(), once.len(), "an entry that is there is overwritten in place");
-        assert_eq!(decode(&twice, 0).unwrap().width, 3, "Rotate90 swaps the axes");
+        assert_eq!(
+            twice.len(),
+            once.len(),
+            "an entry that is there is overwritten in place"
+        );
+        assert_eq!(
+            decode(&twice, 0).unwrap().width,
+            3,
+            "Rotate90 swaps the axes"
+        );
 
         // EXIF holding another tag and no orientation, whose value sits past the IFD - which is
         // what the rebuilt IFD0 must not disturb.
         let tiff: [u8; 34] = [
-            b'I', b'I', 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
-            0x01, 0x00,
-            0x1a, 0x01, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x1a, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x48, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+            b'I', b'I', 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x1a, 0x01, 0x05, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x1a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x00,
+            0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
         ];
         let length = (2 + 6 + tiff.len()) as u16;
         let mut carrying = Vec::new();
@@ -592,7 +676,11 @@ mod tests {
 
         let tagged = with_orientation(&carrying, 6).expect("EXIF without the tag takes one");
         let turned = decode(&tagged, 0).unwrap();
-        assert_eq!((turned.width, turned.height), (3, 4), "Rotate90 swaps the axes");
+        assert_eq!(
+            (turned.width, turned.height),
+            (3, 4),
+            "Rotate90 swaps the axes"
+        );
         // The resolution the other entry points at is still 72/1, and the scan is untouched.
         let exif = tagged.windows(6).position(|w| w == b"Exif\0\0").unwrap() + 6;
         assert_eq!(&tagged[exif + 26..exif + 34], &[0x48, 0, 0, 0, 1, 0, 0, 0]);
@@ -616,7 +704,12 @@ mod tests {
         // which side of it the reduce lands on is not this module's business.
         let small = decode(&jpeg, 200).unwrap();
         assert_eq!(small.width.max(small.height), 200);
-        assert!((small.height as i32 - 113).abs() <= 1, "got {}x{}", small.width, small.height);
+        assert!(
+            (small.height as i32 - 113).abs() <= 1,
+            "got {}x{}",
+            small.width,
+            small.height
+        );
 
         // Bigger than the source: inventing detail here would mean a grid tile upscaled
         // from a small embedded preview.
@@ -665,17 +758,28 @@ mod tests {
         ] {
             let turned = Orientation::from_tag(tag).applied(corners());
             assert_eq!((turned.width, turned.height), size, "orientation {tag}");
-            assert_eq!(pixel(&turned, red.0, red.1), [255, 0, 0], "orientation {tag} red");
-            assert_eq!(pixel(&turned, green.0, green.1), [0, 255, 0], "orientation {tag} green");
+            assert_eq!(
+                pixel(&turned, red.0, red.1),
+                [255, 0, 0],
+                "orientation {tag} red"
+            );
+            assert_eq!(
+                pixel(&turned, green.0, green.1),
+                [0, 255, 0],
+                "orientation {tag} green"
+            );
         }
     }
 
     #[test]
     fn reads_the_orientation_tag_out_of_either_byte_order() {
         // TIFF header, one IFD entry: tag 0x0112, type SHORT, count 1, value 6.
-        let little =
-            [b'I', b'I', 0x2A, 0x00, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0];
-        let big = [b'M', b'M', 0x00, 0x2A, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0];
+        let little = [
+            b'I', b'I', 0x2A, 0x00, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0,
+        ];
+        let big = [
+            b'M', b'M', 0x00, 0x2A, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0,
+        ];
         assert_eq!(orientation(&little), Orientation::Rotate90);
         assert_eq!(orientation(&big), Orientation::Rotate90);
 
@@ -694,7 +798,11 @@ mod tests {
 
     #[test]
     fn a_short_buffer_is_refused_rather_than_read_past() {
-        let short = RgbRef { width: 64, height: 64, data: &[0u8; 64 * 3] };
+        let short = RgbRef {
+            width: 64,
+            height: 64,
+            data: &[0u8; 64 * 3],
+        };
         assert!(encode(short, 92).is_err());
     }
 
@@ -703,7 +811,9 @@ mod tests {
         // jpeg-encoder writes greyscale from a luma-only buffer.
         let mut out = Vec::new();
         let encoder = jpeg_encoder::Encoder::new(&mut out, 92);
-        encoder.encode(&[0u8, 64, 128, 255], 2, 2, jpeg_encoder::ColorType::Luma).unwrap();
+        encoder
+            .encode(&[0u8, 64, 128, 255], 2, 2, jpeg_encoder::ColorType::Luma)
+            .unwrap();
         let decoded = decode(&out, 0).unwrap();
         assert_eq!((decoded.width, decoded.height), (2, 2));
         assert_eq!(decoded.data.len(), 2 * 2 * 3);

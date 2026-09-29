@@ -8,16 +8,27 @@ registerDom();
 const { act, cleanup, render, screen } = await import('@testing-library/react');
 const { PrintPanel } = await import('../print_panel');
 let presenter: PrintPresenter | null = null;
-afterEach(() => { cleanup(); presenter?.close(); presenter = null; });
+afterEach(() => {
+  cleanup();
+  presenter?.close();
+  presenter = null;
+});
 
 test('mobile print requests motion access on opening and offers recentring', async () => {
   let requests = 0;
   const events = new window.EventTarget();
   const motion: PrintMotionEnvironment = {
-    events, visibility: Object.assign(new window.EventTarget(), { hidden: false }),
-    screenEvents: null, screenAngle: () => 0,
-    requestPermission: async () => { requests += 1; return 'granted'; },
-    requestFrame: () => 0, cancelFrame: () => {}, now: () => 0,
+    events,
+    visibility: Object.assign(new window.EventTarget(), { hidden: false }),
+    screenEvents: null,
+    screenAngle: () => 0,
+    requestPermission: async () => {
+      requests += 1;
+      return 'granted';
+    },
+    requestFrame: () => 0,
+    cancelFrame: () => {},
+    now: () => 0,
   };
   const store = new PrintStore();
   presenter = new PrintPresenter(store, () => {}, motion);
@@ -28,7 +39,11 @@ test('mobile print requests motion access on opening and offers recentring', asy
   expect(screen.queryByRole('slider', { name: 'Vertical rotation' })).toBeNull();
   expect(requests).toBe(1);
   expect(screen.queryByRole('button', { name: 'Enable tilt' })).toBeNull();
-  act(() => events.dispatchEvent(Object.assign(new window.Event('deviceorientation'), { alpha: 0, beta: 90, gamma: 0 })));
+  act(() =>
+    events.dispatchEvent(
+      Object.assign(new window.Event('deviceorientation'), { alpha: 0, beta: 90, gamma: 0 }),
+    ),
+  );
   expect(screen.getByText('Tilt your phone to move the reflections.')).toBeTruthy();
   act(() => screen.getByRole('button', { name: 'Recentre tilt' }).click());
   expect(store.tiltStatus).toBe('waiting');
@@ -57,7 +72,9 @@ test('light size slides in decades, so a pinpoint lamp gets as much track as a b
   // Halfway along the track is the geometric middle of the range, not 45°.
   act(() => presenter?.setControl('lightAngularDegrees', 10 ** ((-1 + Math.log10(90)) / 2)));
   expect(store.scene.lightAngularDegrees).toBeCloseTo(3, 5);
-  expect(screen.getByRole('slider', { name: 'Light size' }).getAttribute('aria-valuetext')).toBe('3.0°');
+  expect(screen.getByRole('slider', { name: 'Light size' }).getAttribute('aria-valuetext')).toBe(
+    '3.0°',
+  );
 });
 
 test('a moved slider offers its way back, and a slider at rest does not', () => {
@@ -88,13 +105,21 @@ test('the environment names the room the print hangs in, and its light moves wit
 test('the rendering intent names the intent the print is drawn with', () => {
   const store = new PrintStore();
   let redraws = 0;
-  presenter = new PrintPresenter(store, () => { redraws += 1; }, null);
+  presenter = new PrintPresenter(
+    store,
+    () => {
+      redraws += 1;
+    },
+    null,
+  );
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="printer" />);
   expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Perceptual');
   act(() => presenter?.setRenderingIntent('relativeColorimetric'));
   expect(store.scene.renderingIntent).toBe('relativeColorimetric');
   expect(redraws).toBe(1);
-  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Relative colorimetric');
+  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe(
+    'Relative colorimetric',
+  );
 });
 
 test('an sRGB proof offers the rendering intent', () => {
@@ -124,16 +149,24 @@ test('a printer profile takes over the paper white and black', async () => {
     bytes: () => Promise.resolve(new Uint8Array(4)),
   });
   presenter = printer;
-  render(<>
-    <PrintPanel store={store} presenter={printer} disabled={false} section="printer" />
-    <PrintPanel store={store} presenter={printer} disabled={false} section="paper" />
-  </>);
-  expect(screen.getByRole('combobox', { name: 'Printer profile' }).textContent).toBe('Generic paper');
-  expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Paper reflectance' }).disabled).toBe(false);
+  render(
+    <>
+      <PrintPanel store={store} presenter={printer} disabled={false} section="printer" />
+      <PrintPanel store={store} presenter={printer} disabled={false} section="paper" />
+    </>,
+  );
+  expect(screen.getByRole('combobox', { name: 'Printer profile' }).textContent).toBe(
+    'Generic paper',
+  );
+  expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Paper reflectance' }).disabled).toBe(
+    false,
+  );
 
   await act(() => printer.setPrinterProfile('Satin.icc'));
   expect(screen.getByRole('combobox', { name: 'Printer profile' }).textContent).toBe('Satin.icc');
-  expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Paper reflectance' }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Paper reflectance' }).disabled).toBe(
+    true,
+  );
   expect(screen.getByText('The printer profile sets paper white and black.')).toBeTruthy();
 });
 
@@ -143,7 +176,9 @@ test('black point compensation is offered only where relative colorimetric would
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="printer" />);
   expect(screen.queryByRole('checkbox', { name: 'Black point compensation' })).toBeNull();
   act(() => presenter?.setRenderingIntent('relativeColorimetric'));
-  expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Black point compensation' }).checked).toBe(true);
+  expect(
+    screen.getByRole<HTMLInputElement>('checkbox', { name: 'Black point compensation' }).checked,
+  ).toBe(true);
   act(() => presenter?.setRenderingIntent('perceptual'));
   expect(screen.queryByRole('checkbox', { name: 'Black point compensation' })).toBeNull();
 });
@@ -151,8 +186,16 @@ test('black point compensation is offered only where relative colorimetric would
 test('paper settings toggle framing and disable it with the other controls', () => {
   const store = new PrintStore();
   let redraws = 0;
-  presenter = new PrintPresenter(store, () => { redraws += 1; }, null);
-  const { rerender } = render(<PrintPanel store={store} presenter={presenter} disabled={false} section="paper" />);
+  presenter = new PrintPresenter(
+    store,
+    () => {
+      redraws += 1;
+    },
+    null,
+  );
+  const { rerender } = render(
+    <PrintPanel store={store} presenter={presenter} disabled={false} section="paper" />,
+  );
   const frame = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Add frame' });
   expect(frame.checked).toBe(false);
   act(() => frame.click());

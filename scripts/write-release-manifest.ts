@@ -66,7 +66,8 @@ for (const entry of readdirSync(dist, { withFileTypes: true })) {
 const imageRepo = flag('image-repo');
 if (imageRepo != null) assets['docker-x86_64'] = { image: `${imageRepo}:${version}` };
 
-if (Object.keys(assets).length === 0) throw new Error(`${dist} holds no platform directories, so there is nothing to release`);
+if (Object.keys(assets).length === 0)
+  throw new Error(`${dist} holds no platform directories, so there is nothing to release`);
 
 const manifest: ReleaseManifest = { version, tag, assets };
 const path = join(dist, 'release.yml');

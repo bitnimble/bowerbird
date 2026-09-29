@@ -107,7 +107,11 @@ fn measure(path: &str, output: &str) {
         let across: Vec<f64> = rounds
             .iter()
             .map(|round| {
-                round.iter().filter(|(at, _)| at == key).map(|(_, ms)| ms).sum::<f64>()
+                round
+                    .iter()
+                    .filter(|(at, _)| at == key)
+                    .map(|(_, ms)| ms)
+                    .sum::<f64>()
             })
             .collect();
         println!("{}\t{key}\t{:.1}", name(path), fastest(across));

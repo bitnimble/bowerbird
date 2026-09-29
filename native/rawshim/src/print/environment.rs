@@ -15,7 +15,8 @@ pub enum Environment {
     Hotel,
 }
 
-pub const ENVIRONMENTS: [Environment; 3] = [Environment::Studio, Environment::Meadow, Environment::Hotel];
+pub const ENVIRONMENTS: [Environment; 3] =
+    [Environment::Studio, Environment::Meadow, Environment::Hotel];
 
 /// What the lamp stands in for, measured off the map it is taken out of: its lux against the room's
 /// on an upright sheet facing the reader, its colour, and the direction the map turned puts it in.
@@ -43,12 +44,17 @@ pub(crate) struct Source {
 impl Source {
     /// Where the lamp is on the source map, as the build shader's `environment_direction` reads it.
     pub fn lamp_uv(&self) -> [f32; 2] {
-        [(0.5 + self.lamp_degrees.0 / 360.0) as f32, ((90.0 - self.lamp_degrees.1) / 180.0) as f32]
+        [
+            (0.5 + self.lamp_degrees.0 / 360.0) as f32,
+            ((90.0 - self.lamp_degrees.1) / 180.0) as f32,
+        ]
     }
 
     /// The turn in whole texels of a map `width` across.
     pub fn turn(&self, width: u32) -> u32 {
-        (self.turn_degrees / 360.0 * f64::from(width)).round().rem_euclid(f64::from(width)) as u32
+        (self.turn_degrees / 360.0 * f64::from(width))
+            .round()
+            .rem_euclid(f64::from(width)) as u32
     }
 }
 
@@ -81,24 +87,49 @@ impl Environment {
 
     pub(crate) fn source(self) -> Source {
         match self {
-            Environment::Studio => Source { lamp_degrees: (36.65, 70.58), lamp_radius_degrees: 2.0, threshold: 50.0, turn_degrees: -128.85 },
-            Environment::Meadow => Source { lamp_degrees: (36.12, 26.98), lamp_radius_degrees: 5.0, threshold: 100.0, turn_degrees: -113.91 },
-            Environment::Hotel => Source { lamp_degrees: (-88.15, 57.04), lamp_radius_degrees: 2.5, threshold: 100.0, turn_degrees: -253.3 },
+            Environment::Studio => Source {
+                lamp_degrees: (36.65, 70.58),
+                lamp_radius_degrees: 2.0,
+                threshold: 50.0,
+                turn_degrees: -128.85,
+            },
+            Environment::Meadow => Source {
+                lamp_degrees: (36.12, 26.98),
+                lamp_radius_degrees: 5.0,
+                threshold: 100.0,
+                turn_degrees: -113.91,
+            },
+            Environment::Hotel => Source {
+                lamp_degrees: (-88.15, 57.04),
+                lamp_radius_degrees: 2.5,
+                threshold: 100.0,
+                turn_degrees: -253.3,
+            },
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn bytes(self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
-        let path = format!("{}/.environments/{}.hdr", env!("CARGO_MANIFEST_DIR"), self.name());
-        std::fs::read(&path).map(std::borrow::Cow::Owned)
+        let path = format!(
+            "{}/.environments/{}.hdr",
+            env!("CARGO_MANIFEST_DIR"),
+            self.name()
+        );
+        std::fs::read(&path)
+            .map(std::borrow::Cow::Owned)
             .map_err(|error| format!("{path}: {error}. `bun run get:environments` fetches it"))
     }
 
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn bytes(self) -> Result<std::borrow::Cow<'static, [u8]>, String> {
-        HELD.with(|held| held.borrow().iter().find(|(environment, _)| *environment == self).map(|(_, bytes)| *bytes))
-            .map(std::borrow::Cow::Borrowed)
-            .ok_or_else(|| format!("the {} environment has not been fetched", self.name()))
+        HELD.with(|held| {
+            held.borrow()
+                .iter()
+                .find(|(environment, _)| *environment == self)
+                .map(|(_, bytes)| *bytes)
+        })
+        .map(std::borrow::Cow::Borrowed)
+        .ok_or_else(|| format!("the {} environment has not been fetched", self.name()))
     }
 }
 
@@ -136,12 +167,18 @@ const MOST_TEXELS: u64 = 8192 * 4096;
 pub(crate) fn decode(bytes: &[u8]) -> Result<Rgbe, String> {
     let mut at = 0;
     let mut line = || -> Result<&[u8], String> {
-        let end = bytes[at..].iter().position(|&byte| byte == b'\n').ok_or("a truncated header")? + at;
+        let end = bytes[at..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .ok_or("a truncated header")?
+            + at;
         let text = &bytes[at..end];
         at = end + 1;
         Ok(text)
     };
-    if !line()?.starts_with(b"#?") { return Err("not a Radiance file".to_owned()); }
+    if !line()?.starts_with(b"#?") {
+        return Err("not a Radiance file".to_owned());
+    }
     while !line()?.is_empty() {}
     let size = std::str::from_utf8(line()?).map_err(|error| error.to_string())?;
     let fields: Vec<&str> = size.split_whitespace().collect();
@@ -149,7 +186,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Rgbe, String> {
         ["-Y", height, "+X", width] => (height.parse::<u32>(), width.parse::<u32>()),
         _ => return Err(format!("an orientation other than -Y +X: {size}")),
     };
-    let (height, width) = (height.map_err(|error| error.to_string())?, width.map_err(|error| error.to_string())?);
+    let (height, width) = (
+        height.map_err(|error| error.to_string())?,
+        width.map_err(|error| error.to_string())?,
+    );
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > MOST_TEXELS {
         return Err(format!("a {width}x{height} map"));
     }
@@ -166,17 +206,34 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Rgbe, String> {
             let mut x = 0;
             while x < width as usize {
                 let count = next()?;
-                let (count, repeated) = if count > 128 { (usize::from(count - 128), Some(next()?)) } else { (usize::from(count), None) };
-                if count == 0 || x + count > width as usize { return Err("a run past the scanline".to_owned()); }
+                let (count, repeated) = if count > 128 {
+                    (usize::from(count - 128), Some(next()?))
+                } else {
+                    (usize::from(count), None)
+                };
+                if count == 0 || x + count > width as usize {
+                    return Err("a run past the scanline".to_owned());
+                }
                 for _ in 0..count {
-                    scanline[x * 4 + channel] = match repeated { Some(value) => value, None => next()? };
+                    scanline[x * 4 + channel] = match repeated {
+                        Some(value) => value,
+                        None => next()?,
+                    };
                     x += 1;
                 }
             }
         }
-        texels.extend(scanline.chunks_exact(4).map(|texel| u32::from_le_bytes([texel[0], texel[1], texel[2], texel[3]])));
+        texels.extend(
+            scanline
+                .chunks_exact(4)
+                .map(|texel| u32::from_le_bytes([texel[0], texel[1], texel[2], texel[3]])),
+        );
     }
-    Ok(Rgbe { width, height, texels })
+    Ok(Rgbe {
+        width,
+        height,
+        texels,
+    })
 }
 
 #[cfg(test)]
@@ -185,8 +242,10 @@ mod tests {
 
     #[test]
     fn the_lighting_is_what_the_browser_offers() {
-        let table: serde_json::Value = serde_json::from_str(include_str!("../../../../test/fixtures/tables/print-environments.json"))
-            .expect("the table");
+        let table: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/tables/print-environments.json"
+        ))
+        .expect("the table");
         for environment in ENVIRONMENTS {
             let lighting = environment.lighting();
             let row = &table[environment.name()];
@@ -209,7 +268,9 @@ mod tests {
     fn file(size: &str) -> Vec<u8> {
         let mut bytes = format!("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n{size}\n").into_bytes();
         for _ in 0..2 {
-            bytes.extend([2, 2, 0, 8, 136, 128, 8, 1, 2, 3, 4, 5, 6, 7, 8, 136, 0, 136, 129]);
+            bytes.extend([
+                2, 2, 0, 8, 136, 128, 8, 1, 2, 3, 4, 5, 6, 7, 8, 136, 0, 136, 129,
+            ]);
         }
         bytes
     }
@@ -226,11 +287,20 @@ mod tests {
     #[test]
     fn a_map_the_file_does_not_hold_is_refused() {
         let whole = file("-Y 2 +X 8");
-        assert!(decode(&whole[..whole.len() - 1]).is_err(), "a truncated scanline");
+        assert!(
+            decode(&whole[..whole.len() - 1]).is_err(),
+            "a truncated scanline"
+        );
         assert!(decode(&file("+Y 2 +X 8")).is_err(), "another orientation");
-        assert!(decode(&file("-Y 99999 +X 99999")).is_err(), "a header past any map");
+        assert!(
+            decode(&file("-Y 99999 +X 99999")).is_err(),
+            "a header past any map"
+        );
         let mut overrun = file("-Y 2 +X 8");
-        let run = overrun.iter().position(|&byte| byte == 136).expect("the first run");
+        let run = overrun
+            .iter()
+            .position(|&byte| byte == 136)
+            .expect("the first run");
         overrun[run] = 137;
         assert!(decode(&overrun).is_err(), "a run past the scanline");
     }

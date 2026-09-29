@@ -41,8 +41,12 @@ test('masonry lays photos out across a row, not down a column', async ({ page })
   // A ring at the cell edge runs a pad outside the photograph, so its corner curves
   // a pad wider than the picture's - at one radius for both it read tighter than the
   // picture it was drawn around.
-  const cell = await tiles(page).first().evaluate((el) => parseFloat(getComputedStyle(el).borderTopLeftRadius));
-  const picture = await frames(tiles(page).first()).evaluate((el) => parseFloat(getComputedStyle(el).borderTopLeftRadius));
+  const cell = await tiles(page)
+    .first()
+    .evaluate((el) => parseFloat(getComputedStyle(el).borderTopLeftRadius));
+  const picture = await frames(tiles(page).first()).evaluate((el) =>
+    parseFloat(getComputedStyle(el).borderTopLeftRadius),
+  );
   expect(cell).toBeCloseTo(picture + pad, 1);
 
   await setViewMode(page, 'Grid');
@@ -58,15 +62,17 @@ test('a list row draws its name and date over the frame, not under it', async ({
   // follows paint order, so asking what is on top at the name says which one won -
   // with the foot's clicks handed back to the frame only for the length of the ask.
   const name = await tileName(tiles(page).first());
-  const onTop = await gallery(page).getByText(name, { exact: true }).evaluate((el) => {
-    const foot = el.parentElement!;
-    const handedBack = foot.style.pointerEvents;
-    foot.style.pointerEvents = 'auto';
-    const rect = el.getBoundingClientRect();
-    const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-    foot.style.pointerEvents = handedBack;
-    return top === el;
-  });
+  const onTop = await gallery(page)
+    .getByText(name, { exact: true })
+    .evaluate((el) => {
+      const foot = el.parentElement!;
+      const handedBack = foot.style.pointerEvents;
+      foot.style.pointerEvents = 'auto';
+      const rect = el.getBoundingClientRect();
+      const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      foot.style.pointerEvents = handedBack;
+      return top === el;
+    });
   expect(onTop).toBe(true);
 
   await setViewMode(page, 'Grid');

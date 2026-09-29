@@ -17,7 +17,13 @@ function doc(over: Partial<EditDoc> = {}): EditDoc {
 describe('tone curve document', () => {
   it('defaults exposure, the curve and saturation to the camera while other sliders start at zero', () => {
     expect(neutralEdits()).toMatchObject({
-      exposure: null, contrast: 0, whites: 0, blacks: 0, toneCurve: null, saturation: null, vibrance: 0,
+      exposure: null,
+      contrast: 0,
+      whites: 0,
+      blacks: 0,
+      toneCurve: null,
+      saturation: null,
+      vibrance: 0,
     });
     expect(EditDocSchema.parse({ exposure: 0 }).exposure).toBe(0);
     expect(EditDocSchema.parse({ saturation: 0 }).saturation).toBe(0);
@@ -25,16 +31,57 @@ describe('tone curve document', () => {
 
   it('keeps ordered points within the curve axes', () => {
     const curve = (points: [number, number][]) => ({ kind: TONE_CURVE_KIND, points });
-    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0], [0.5, 0.6], [1, 1]]) }).success).toBe(true);
-    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0], [0, 0.4]]) }).success).toBe(false);
-    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0.6], [1, 0.4]]) }).success).toBe(false);
-    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0], [0.5, 1.1]]) }).success).toBe(false);
-    expect(EditDocSchema.safeParse({ toneCurve: { kind: 'someOtherCurve', points: [[0, 0], [1, 1]] } }).success).toBe(false);
+    expect(
+      EditDocSchema.safeParse({
+        toneCurve: curve([
+          [0, 0],
+          [0.5, 0.6],
+          [1, 1],
+        ]),
+      }).success,
+    ).toBe(true);
+    expect(
+      EditDocSchema.safeParse({
+        toneCurve: curve([
+          [0, 0],
+          [0, 0.4],
+        ]),
+      }).success,
+    ).toBe(false);
+    expect(
+      EditDocSchema.safeParse({
+        toneCurve: curve([
+          [0, 0.6],
+          [1, 0.4],
+        ]),
+      }).success,
+    ).toBe(false);
+    expect(
+      EditDocSchema.safeParse({
+        toneCurve: curve([
+          [0, 0],
+          [0.5, 1.1],
+        ]),
+      }).success,
+    ).toBe(false);
+    expect(
+      EditDocSchema.safeParse({
+        toneCurve: {
+          kind: 'someOtherCurve',
+          points: [
+            [0, 0],
+            [1, 1],
+          ],
+        },
+      }).success,
+    ).toBe(false);
   });
 
   it('rejects 17 strictly rising points', () => {
     const points = Array.from({ length: 17 }, (_, index) => [index / 16, index / 16]);
-    expect(EditDocSchema.safeParse({ toneCurve: { kind: TONE_CURVE_KIND, points } }).success).toBe(false);
+    expect(EditDocSchema.safeParse({ toneCurve: { kind: TONE_CURVE_KIND, points } }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -101,7 +148,14 @@ describe('EditDocSchema geometry', () => {
     // No `hasCrop` flag: the sidecar needs one because an undone crop leaves stale edges,
     // but this document is ours and a flag beside the rect would be free to disagree with
     // it.
-    expect(neutral).toMatchObject({ cropLeft: 0, cropTop: 0, cropRight: 1, cropBottom: 1, cropAngle: 0, rotate: 0 });
+    expect(neutral).toMatchObject({
+      cropLeft: 0,
+      cropTop: 0,
+      cropRight: 1,
+      cropBottom: 1,
+      cropAngle: 0,
+      rotate: 0,
+    });
     expect(displaySize(6000, 4000, neutral)).toEqual({ width: 6000, height: 4000 });
   });
 
@@ -141,7 +195,9 @@ describe('EditDocSchema geometry', () => {
 
   it('takes no more guides than the geometry has axes for', () => {
     const guide = { x1: 0.2, y1: 0.05, x2: 0.3, y2: 0.95 };
-    expect(EditDocSchema.safeParse({ keystoneGuides: [guide, guide, guide, guide] }).success).toBe(true);
+    expect(EditDocSchema.safeParse({ keystoneGuides: [guide, guide, guide, guide] }).success).toBe(
+      true,
+    );
     expect(EditDocSchema.safeParse({ keystoneGuides: Array(5).fill(guide) }).success).toBe(false);
     expect(neutralEdits().keystoneGuides).toEqual([]);
   });

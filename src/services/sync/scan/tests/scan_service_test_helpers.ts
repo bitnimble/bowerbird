@@ -62,11 +62,13 @@ export const meta = (absPath: string): Promise<FileMetadata> =>
     fileSize: statSync(absPath).size,
   });
 
-export function makeLibrary(over: {
-  include_subfolders?: number;
-  bin_name?: string | null;
-  pendingMoves?: ConstructorParameters<typeof ScanService>[14];
-} = {}): Peer {
+export function makeLibrary(
+  over: {
+    include_subfolders?: number;
+    bin_name?: string | null;
+    pendingMoves?: ConstructorParameters<typeof ScanService>[14];
+  } = {},
+): Peer {
   const db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
@@ -77,7 +79,12 @@ export function makeLibrary(over: {
   db.query(
     `INSERT INTO libraries (id, root_path, name, ordering, bin_name, include_subfolders)
        VALUES (?, ?, 'Trip', 'taken_desc', ?, ?)`,
-  ).run(LIB, root, over.bin_name === undefined ? 'Bin' : over.bin_name, over.include_subfolders ?? 1);
+  ).run(
+    LIB,
+    root,
+    over.bin_name === undefined ? 'Bin' : over.bin_name,
+    over.include_subfolders ?? 1,
+  );
 
   const photoProcessing = new PhotoProcessingRepository(db, new RenditionsRepository(db));
   const photoPaths = new PhotoPathsRepository(db, new StackMembership(db));

@@ -86,7 +86,10 @@ export class SidecarImportService {
       // Not a failure. Most of these are a sidecar holding a rating and no develop
       // settings at all, which is the common case in a library that rates before it
       // edits.
-      log.debug('a sidecar carried no edit to import', { photo: photo.id, reasons: imported.reasons });
+      log.debug('a sidecar carried no edit to import', {
+        photo: photo.id,
+        reasons: imported.reasons,
+      });
       return false;
     }
 
@@ -119,7 +122,10 @@ export class SidecarImportService {
  * miss there looks exactly like a photo nobody edited.
  */
 export function sidecarFor(absolutePath: string): string | null {
-  const withoutExtension = absolutePath.slice(0, absolutePath.length - path.extname(absolutePath).length);
+  const withoutExtension = absolutePath.slice(
+    0,
+    absolutePath.length - path.extname(absolutePath).length,
+  );
   for (const candidate of [
     `${withoutExtension}.xmp`,
     `${withoutExtension}.XMP`,

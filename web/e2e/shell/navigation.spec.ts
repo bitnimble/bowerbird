@@ -5,7 +5,15 @@ import { expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, SHELL_PHOTOS_DIR } from '../fixture_library';
-import { gallery, gotoLibrary, openLibrary, setViewMode, setViewerRendition, tiles, useLibrary } from '../helpers';
+import {
+  gallery,
+  gotoLibrary,
+  openLibrary,
+  setViewMode,
+  setViewerRendition,
+  tiles,
+  useLibrary,
+} from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, SHELL_PHOTOS_DIR);
@@ -27,7 +35,9 @@ test('disk usage failure stays in the status region and can be retried', async (
     else await request.continue();
   });
   await page.goto(route(PathSegment.settings(), 'system'));
-  await expect(page.getByText("We couldn't measure disk usage. Try again.", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("We couldn't measure disk usage. Try again.", { exact: true }),
+  ).toBeVisible();
   const usage = page.getByRole('status', { name: 'Bowerbird disk usage' });
   await expect(usage).toHaveText("We couldn't measure disk usage. Try again.");
   await expect(usage).toHaveAttribute('aria-busy', 'false');
@@ -70,17 +80,28 @@ test('dropdowns show every option whenever the menu fits in the viewport', async
 
       const popup = page.getByRole('listbox');
       await expect(popup.getByRole('option')).toHaveCount(6);
-      await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
-      await expect(popup.getByRole('option', { name: 'Embedded JPEG', exact: true })).toBeInViewport({ ratio: 1 });
-      await expect(popup.getByRole('option', { name: 'Best available', exact: true })).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight))
+        .toBe(0);
+      await expect(
+        popup.getByRole('option', { name: 'Embedded JPEG', exact: true }),
+      ).toBeInViewport({ ratio: 1 });
+      await expect(
+        popup.getByRole('option', { name: 'Best available', exact: true }),
+      ).toBeInViewport({ ratio: 1 });
       await page.keyboard.press('Escape');
     }
   }
 });
 
-test('dropdowns align the selected row with the trigger when the whole menu fits', async ({ page }) => {
+test('dropdowns align the selected row with the trigger when the whole menu fits', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  for (const [mode, label] of [['embedded', 'Embedded JPEG'], ['remember', 'Last used']] as const) {
+  for (const [mode, label] of [
+    ['embedded', 'Embedded JPEG'],
+    ['remember', 'Last used'],
+  ] as const) {
     await setViewerRendition(page.request, mode);
     await page.goto(route(PathSegment.settings(), 'general'));
     const trigger = page.getByRole('combobox', { name: 'Default rendition to show' });
@@ -92,11 +113,17 @@ test('dropdowns align the selected row with the trigger when the whole menu fits
       return top + height / 2;
     });
 
-    await expect.poll(() => selected.evaluate((element) => {
-      const { top, height } = element.getBoundingClientRect();
-      return top + height / 2;
-    })).toBeCloseTo(triggerCentre, 0);
-    await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
+    await expect
+      .poll(() =>
+        selected.evaluate((element) => {
+          const { top, height } = element.getBoundingClientRect();
+          return top + height / 2;
+        }),
+      )
+      .toBeCloseTo(triggerCentre, 0);
+    await expect
+      .poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight))
+      .toBe(0);
     await expect(popup).toBeInViewport({ ratio: 1 });
     await page.keyboard.press('Escape');
   }
@@ -114,9 +141,15 @@ test('action menus use the whole viewport before scrolling', async ({ page }) =>
 
   await page.setViewportSize({ width: 1280, height });
   await trigger.click();
-  await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
-  await expect(popup.getByRole('menuitem', { name: 'Select all', exact: true })).toBeInViewport({ ratio: 1 });
-  await expect(popup.getByRole('menuitemcheckbox', { name: 'Expand all stacks', exact: true })).toBeInViewport({ ratio: 1 });
+  await expect
+    .poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight))
+    .toBe(0);
+  await expect(popup.getByRole('menuitem', { name: 'Select all', exact: true })).toBeInViewport({
+    ratio: 1,
+  });
+  await expect(
+    popup.getByRole('menuitemcheckbox', { name: 'Expand all stacks', exact: true }),
+  ).toBeInViewport({ ratio: 1 });
 });
 
 test('filter dropdown panels use the whole viewport before scrolling', async ({ page }) => {
@@ -135,7 +168,9 @@ test('filter dropdown panels use the whole viewport before scrolling', async ({ 
 
   await page.setViewportSize(viewport);
   await trigger.click();
-  await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
+  await expect
+    .poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight))
+    .toBe(0);
   await expect(popup).toBeInViewport({ ratio: 1 });
 });
 
@@ -146,7 +181,9 @@ test('dropdowns taller than the viewport still scroll and allow selection', asyn
   const trigger = page.getByRole('combobox', { name: 'Default rendition to show' });
   await trigger.click();
   const popup = page.getByRole('listbox');
-  await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
+  await expect
+    .poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight))
+    .toBeGreaterThan(0);
   await expect(popup).toBeInViewport({ ratio: 1 });
 
   await page.keyboard.press('Home');
@@ -155,7 +192,9 @@ test('dropdowns taller than the viewport still scroll and allow selection', asyn
   await expect(trigger).toHaveText('Embedded JPEG');
 });
 
-test('the home page lands in a library, and a narrow screen gets the sidebar as a drawer', async ({ page }) => {
+test('the home page lands in a library, and a narrow screen gets the sidebar as a drawer', async ({
+  page,
+}) => {
   await page.goto(route());
   await expect(page).toHaveURL(new RegExp(`${route(PathSegment.libraries())}/`));
 

@@ -4,7 +4,10 @@ import { OVERSCAN_ROWS, visibleRows } from '../virtual_rows';
 describe('visibleRows', () => {
   test('covers the viewport with overscan either side', () => {
     // Rows are 100 tall; the viewport shows rows 5 through 9.
-    expect(visibleRows(500, 500, 100, 1000)).toEqual({ from: 5 - OVERSCAN_ROWS, to: 10 + OVERSCAN_ROWS });
+    expect(visibleRows(500, 500, 100, 1000)).toEqual({
+      from: 5 - OVERSCAN_ROWS,
+      to: 10 + OVERSCAN_ROWS,
+    });
   });
 
   test('clamps to the collection at both ends', () => {

@@ -37,9 +37,17 @@ test.beforeAll(async ({ browser }) => {
 // however the context is configured, so a real finger is driven through CDP:
 // what the stage answers to is pointer events, and only this produces them with
 // the gesture handling a browser really applies to a touch.
-async function swipe(page: Page, from: { x: number; y: number }, dx: number, dy = 0): Promise<void> {
+async function swipe(
+  page: Page,
+  from: { x: number; y: number },
+  dx: number,
+  dy = 0,
+): Promise<void> {
   const cdp = await page.context().newCDPSession(page);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: from.x, y: from.y }] });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: from.x, y: from.y }],
+  });
   for (const step of [0.3, 0.6, 1]) {
     await cdp.send('Input.dispatchTouchEvent', {
       type: 'touchMove',
@@ -52,7 +60,12 @@ async function swipe(page: Page, from: { x: number; y: number }, dx: number, dy 
 
 // Two fingers, moved apart or together. The same CDP path as `swipe` and for the
 // same reason: only a real touch produces the pointer events the gesture reads.
-async function pinch(page: Page, centre: { x: number; y: number }, from: number, to: number): Promise<void> {
+async function pinch(
+  page: Page,
+  centre: { x: number; y: number },
+  from: number,
+  to: number,
+): Promise<void> {
   const cdp = await page.context().newCDPSession(page);
   const points = (spread: number): { x: number; y: number; id: number }[] => [
     { x: centre.x - spread / 2, y: centre.y, id: 1 },
@@ -60,7 +73,10 @@ async function pinch(page: Page, centre: { x: number; y: number }, from: number,
   ];
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(from) });
   for (const step of [0.25, 0.5, 0.75, 1]) {
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(from + (to - from) * step) });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: points(from + (to - from) * step),
+    });
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
@@ -68,7 +84,11 @@ async function pinch(page: Page, centre: { x: number; y: number }, from: number,
 
 // A finger held still until the long press picks or unpicks the photo under it, then dragged along
 // `path` before letting go.
-async function longPress(page: Page, from: { x: number; y: number }, ...path: { x: number; y: number }[]): Promise<void> {
+async function longPress(
+  page: Page,
+  from: { x: number; y: number },
+  ...path: { x: number; y: number }[]
+): Promise<void> {
   const before = await selectedTiles(page).count();
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
@@ -119,7 +139,9 @@ async function onTheGrid(page: Page): Promise<{ x: number; y: number }> {
 // otherwise given over to photographs. Over the grid, whose scroller claims the touch as soon
 // as it reads it as a scroll, which cancels the pointer stream and left the first version of
 // this working everywhere except the photographs.
-test('a swipe rightwards opens the sidebar over the grid, and one back leftwards closes it', async ({ page }) => {
+test('a swipe rightwards opens the sidebar over the grid, and one back leftwards closes it', async ({
+  page,
+}) => {
   const at = await onTheGrid(page);
   const sidebar = drawer(page);
   await expect(sidebar).not.toBeVisible();
@@ -145,7 +167,10 @@ test('the drawer follows the finger rather than snapping open at the end', async
   const cdp = await page.context().newCDPSession(page);
 
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [at] });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: at.x + 80, y: at.y }] });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: at.x + 80, y: at.y }],
+  });
 
   // Held 80px in, against a 280px drawer: part way out, and the rest of it still off the
   // left edge. Both halves of that matter - a snap would have it fully in or fully out.
@@ -169,7 +194,10 @@ test('a long press picks a photo, and dragging on from it picks the run', async 
   // phone's grid is photographs alone.
   await expect(picks(page).first()).toHaveCSS('opacity', '0');
 
-  const [first, second] = [await centreOf(frames(page).nth(0)), await centreOf(frames(page).nth(1))];
+  const [first, second] = [
+    await centreOf(frames(page).nth(0)),
+    await centreOf(frames(page).nth(1)),
+  ];
   await longPress(page, first);
   await expect(selectedTiles(page)).toHaveCount(1);
   await expect(picks(page).nth(0)).toBeChecked();
@@ -182,14 +210,21 @@ test('a long press picks a photo, and dragging on from it picks the run', async 
   await expect(selectedTiles(page)).toHaveCount(0);
   await expect(picks(page).first()).toHaveCSS('opacity', '0');
 
-  await longPress(page, first, { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }, second);
+  await longPress(
+    page,
+    first,
+    { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 },
+    second,
+  );
   await expect(selectedTiles(page)).toHaveCount(2);
   expect(page.url()).toBe(grid);
   // A drag across the grid is otherwise the drawer's, and this one was taken by the pick.
   await expect(drawer(page)).not.toBeVisible();
 });
 
-test('a drag held at the foot of the grid scrolls it, picking what comes into view', async ({ page }) => {
+test('a drag held at the foot of the grid scrolls it, picking what comes into view', async ({
+  page,
+}) => {
   await gotoLibrary(page, PHONE_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   await page.getByRole('button', { name: 'Grid options' }).click();
@@ -253,7 +288,9 @@ test('swiping the frame steps to the next photo and back', async ({ page }) => {
 // The system back gesture is history.back, so a run of swipes would otherwise be
 // a run of presses to get out of. Two photographs is enough to ask it: with an
 // entry per swipe, Back lands on the first one rather than on the grid.
-test('a back press leaves the viewer rather than walking back through the swipes', async ({ page }) => {
+test('a back press leaves the viewer rather than walking back through the swipes', async ({
+  page,
+}) => {
   await gotoLibrary(page, PHONE_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   const grid = page.url();
@@ -298,12 +335,15 @@ test('the crop rectangle takes a finger, and the stage does not pan under it', a
   const was = await cropRect(page);
   if (was == null) throw new Error('the crop has no rectangle');
   // The corner grip hangs inside the rectangle's bottom right, and says so with its cursor.
-  const box = await page.evaluate(({ x, y }) => {
-    const hit = document.elementFromPoint(x, y);
-    if (hit == null || getComputedStyle(hit).cursor !== 'nwse-resize') return null;
-    const { left, top, width, height } = hit.getBoundingClientRect();
-    return { x: left, y: top, width, height };
-  }, { x: was.x + was.width - 8, y: was.y + was.height - 8 });
+  const box = await page.evaluate(
+    ({ x, y }) => {
+      const hit = document.elementFromPoint(x, y);
+      if (hit == null || getComputedStyle(hit).cursor !== 'nwse-resize') return null;
+      const { left, top, width, height } = hit.getBoundingClientRect();
+      return { x: left, y: top, width, height };
+    },
+    { x: was.x + was.width - 8, y: was.y + was.height - 8 },
+  );
   if (box == null) throw new Error('the crop has no grip');
   // The target, not the mark: 44px is the smallest thing a finger reliably lands on.
   expect(box.width).toBeGreaterThanOrEqual(44);
@@ -322,10 +362,13 @@ test('the crop rectangle takes a finger, and the stage does not pan under it', a
   // The rectangle moved, which is only true if the touch reached the grip rather than being
   // swallowed as a scroll.
   await expect
-    .poll(async () => {
-      const now = await cropRect(page);
-      return now == null ? false : Math.abs(now.width - was.width) > 20;
-    }, { timeout: 15_000 })
+    .poll(
+      async () => {
+        const now = await cropRect(page);
+        return now == null ? false : Math.abs(now.width - was.width) > 20;
+      },
+      { timeout: 15_000 },
+    )
     .toBe(true);
 
   // And the photograph did not move under it. A drag outside the rectangle is the stage's own
@@ -342,15 +385,20 @@ test('the crop rectangle takes a finger, and the stage does not pan under it', a
 });
 
 /** The crop rectangle as a finger finds it: what offers to move the picture's middle, if anything. */
-async function cropRect(page: Page): Promise<{ x: number; y: number; width: number; height: number } | null> {
+async function cropRect(
+  page: Page,
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
   const stage = await photoStage(page).boundingBox();
   if (stage == null) return null;
-  return page.evaluate(({ x, y }) => {
-    const hit = document.elementFromPoint(x, y);
-    if (hit == null || getComputedStyle(hit).cursor !== 'move') return null;
-    const { left, top, width, height } = hit.getBoundingClientRect();
-    return { x: left, y: top, width, height };
-  }, { x: stage.x + stage.width / 2, y: stage.y + stage.height / 2 });
+  return page.evaluate(
+    ({ x, y }) => {
+      const hit = document.elementFromPoint(x, y);
+      if (hit == null || getComputedStyle(hit).cursor !== 'move') return null;
+      const { left, top, width, height } = hit.getBoundingClientRect();
+      return { x: left, y: top, width, height };
+    },
+    { x: stage.x + stage.width / 2, y: stage.y + stage.height / 2 },
+  );
 }
 
 // The editor's picture once it has stopped changing: a redraw lands a frame or two after
@@ -378,7 +426,9 @@ function pictureAlone(page: Page): Promise<Buffer> {
 // Every control a gesture replaces is out of the bar: the frame is dragged aside to
 // step, tapped to step the zoom and pinched for the scales between. What is left keeps
 // to one line, its menus folded into an overflow button.
-test('the bar keeps to one line, without the controls a finger makes redundant', async ({ page }) => {
+test('the bar keeps to one line, without the controls a finger makes redundant', async ({
+  page,
+}) => {
   await openFirstPhoto(page);
 
   const nav = photoControls(page);
@@ -423,7 +473,9 @@ test('the bar keeps to one line, without the controls a finger makes redundant',
   await expect(drawer(page)).toBeVisible();
 });
 
-test('the verdict is on a bar at the foot of the window, with the rest under it', async ({ page }) => {
+test('the verdict is on a bar at the foot of the window, with the rest under it', async ({
+  page,
+}) => {
   await openFirstPhoto(page);
 
   const details = sheet(page);
@@ -447,7 +499,9 @@ test('the verdict is on a bar at the foot of the window, with the rest under it'
 
 // The one way to reach a photograph that is not the next one: swiping is a frame
 // at a time, so without this a phone cannot cross a collection at all.
-test('the filmstrip opens from the sheet, along the foot and above the verdict', async ({ page }) => {
+test('the filmstrip opens from the sheet, along the foot and above the verdict', async ({
+  page,
+}) => {
   await openFirstPhoto(page);
   const details = sheet(page);
   await expect(gallery(page)).toHaveCount(0);
@@ -462,7 +516,8 @@ test('the filmstrip opens from the sheet, along the foot and above the verdict',
   const box = await strip.boundingBox();
   const verdict = await details.getByLabel('Triage').boundingBox();
   const after = await stage.boundingBox();
-  if (box == null || verdict == null || before == null || after == null) throw new Error('the sheet has no box');
+  if (box == null || verdict == null || before == null || after == null)
+    throw new Error('the sheet has no box');
   expect(box.y + box.height).toBeLessThanOrEqual(Math.round(verdict.y) + 1);
   // Layout, not an overlay: the photograph gives up exactly the height the strip took.
   expect(after.height).toBeLessThanOrEqual(before.height - box.height);

@@ -12,7 +12,10 @@ export const CompositionSourceSchema = z.object({
     distortion: z.array(z.number()).nullable().optional(),
     crop: z.number(),
     falloff: z.tuple([z.number(), z.number()]).nullable().optional(),
-    tca: z.tuple([z.array(z.number()), z.array(z.number())]).nullable().optional(),
+    tca: z
+      .tuple([z.array(z.number()), z.array(z.number())])
+      .nullable()
+      .optional(),
   }),
   gain: z.number().positive(),
 });
@@ -71,7 +74,10 @@ export type CompositeProgress = z.infer<typeof CompositeProgressSchema>;
  * `sized` clamps to the canvas's own long edge, so a crop can never be asked for more resolution
  * than the frames behind it hold.
  */
-export function canvasLongEdgeFor(composition: Pick<Composition, 'canvas' | 'crop'>, want: number): number {
+export function canvasLongEdgeFor(
+  composition: Pick<Composition, 'canvas' | 'crop'>,
+  want: number,
+): number {
   const [width, height] = composition.canvas;
   const [left, top, right, bottom] = composition.crop;
   const crop = Math.max((right - left) * width, (bottom - top) * height);

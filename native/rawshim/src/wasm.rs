@@ -306,25 +306,49 @@ pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<
 /// decoder for: `avif` is the file, for its colour and its turn, and `planes` what `copyTo` wrote
 /// as `layout` ([`crate::planes::Layout`] as JSON) describes it.
 #[wasm_bindgen(js_name = holdPlanes)]
-pub async fn hold_planes(avif: &[u8], planes: &[u8], layout: &str, request: &str) -> Result<HeldRaw, JsValue> {
+pub async fn hold_planes(
+    avif: &[u8],
+    planes: &[u8],
+    layout: &str,
+    request: &str,
+) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
     let request = request_of(request)?;
-    let layout: crate::planes::Layout = serde_json::from_str(layout)
-        .map_err(|e| JsValue::from_str(&format!("rawshim: these planes are described wrongly: {e}")))?;
+    let layout: crate::planes::Layout = serde_json::from_str(layout).map_err(|e| {
+        JsValue::from_str(&format!("rawshim: these planes are described wrongly: {e}"))
+    })?;
     let held = crate::decode_rendered::hold_planes(avif, planes, &layout)
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
-    Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
+    Ok(HeldRaw::new(
+        Some(crate::decode::Held::Rendered(held)),
+        Vec::new(),
+        false,
+        None,
+        request,
+    ))
 }
 
 /// Opens an SDR AVIF rendition the page decoded to upright RGBA, which is what a browser hands back
 /// for one: `avif` is the file, for its colour.
 #[wasm_bindgen(js_name = holdPixels)]
-pub async fn hold_pixels(avif: &[u8], rgba: &[u8], width: usize, height: usize, request: &str) -> Result<HeldRaw, JsValue> {
+pub async fn hold_pixels(
+    avif: &[u8],
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    request: &str,
+) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
     let request = request_of(request)?;
     let held = crate::decode_rendered::hold_pixels(avif, rgba, width, height)
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
-    Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
+    Ok(HeldRaw::new(
+        Some(crate::decode::Held::Rendered(held)),
+        Vec::new(),
+        false,
+        None,
+        request,
+    ))
 }
 
 #[wasm_bindgen]
@@ -424,7 +448,8 @@ pub async fn render_rendition(bytes: &[u8], job: &str) -> Result<Vec<u8>, JsValu
 pub async fn finish_draw() -> Result<(), JsValue> {
     let gpu = crate::gpu::device()
         .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
-    crate::gpu::finished(gpu).await
+    crate::gpu::finished(gpu)
+        .await
         .ok_or_else(|| JsValue::from_str("rawshim: the GPU did not finish the draw"))?;
     refused()
 }
@@ -464,8 +489,10 @@ pub fn hold_pmrid_weights(bytes: Vec<u8>) {
 /// A print environment's map, which the page fetches before the first scene that names it.
 #[wasm_bindgen(js_name = holdPrintEnvironment)]
 pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
-    let environment: crate::print::Environment = serde_json::from_value(serde_json::Value::from(name))
-        .map_err(|_| JsValue::from_str(&format!("rawshim: {name} is not a print environment")))?;
+    let environment: crate::print::Environment =
+        serde_json::from_value(serde_json::Value::from(name)).map_err(|_| {
+            JsValue::from_str(&format!("rawshim: {name} is not a print environment"))
+        })?;
     crate::print::environment::hold(environment, bytes);
     Ok(())
 }
@@ -556,8 +583,8 @@ impl HeldRaw {
             if let Some(drawing) = held.as_ref() {
                 let picture = drawing.picture();
                 let shape = crate::hdr::cropped_size(picture.0, picture.1, self.geometry.get());
-                (region.x, region.y, region.width, region.height) = scene.photo_region(
-                    shape, (region.x, region.y, region.width, region.height));
+                (region.x, region.y, region.width, region.height) =
+                    scene.photo_region(shape, (region.x, region.y, region.width, region.height));
             }
         }
         let [x, y, wide, deep] = self.part_of(&region)?;
@@ -854,7 +881,11 @@ impl HeldRaw {
         let repairs = repairs_of(repairs)?;
         // Undefined either side is the document not having said, which the decode answers with this
         // frame's own fit rather than with a number (`galosh::Detail`).
-        let detail = crate::galosh::Detail { luminance, colour, denoiser: denoiser_of(denoiser)? };
+        let detail = crate::galosh::Detail {
+            luminance,
+            colour,
+            denoiser: denoiser_of(denoiser)?,
+        };
         // The photograph's own fit where one was measured, which is what a region would be
         // denoised at too - never a fit of whatever this amount happens to produce.
         let fit = self
@@ -885,9 +916,10 @@ impl HeldRaw {
             )
             .await
             .ok_or_else(|| JsValue::from_str("rawshim: the held mosaic would not finish"))?;
-        let opened = crate::edit::from_frame(frame, &self.bytes, self.mosaic, &request, sharpen, &report)
-            .await
-            .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
+        let opened =
+            crate::edit::from_frame(frame, &self.bytes, self.mosaic, &request, sharpen, &report)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
         // Kept for the bands, which must not measure their own.
         self.levels.set(Some(crate::tone::Levels {
             white: opened.header.white,
@@ -1663,22 +1695,30 @@ impl HeldRaw {
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         let stage = match canvas {
-            Some(canvas) => crate::gpu::Stage::attach(gpu, canvas, width, height)
-                .ok_or_else(|| JsValue::from_str("rawshim: this canvas would not take a surface"))?,
+            Some(canvas) => {
+                crate::gpu::Stage::attach(gpu, canvas, width, height).ok_or_else(|| {
+                    JsValue::from_str("rawshim: this canvas would not take a surface")
+                })?
+            }
             None => crate::gpu::Stage::held(gpu, width, height),
         };
         into.replace(Some(stage));
         Ok(())
     }
 
-    async fn read_held(&self, stage: &std::cell::RefCell<Option<crate::gpu::Stage>>) -> Result<Option<Vec<u8>>, JsValue> {
+    async fn read_held(
+        &self,
+        stage: &std::cell::RefCell<Option<crate::gpu::Stage>>,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
         // Taken out of the borrow before the await: a `RefCell` may not be held across one.
         let Some(drawn) = stage.borrow().as_ref().and_then(crate::gpu::Stage::drawn) else {
             return Ok(None);
         };
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
-        let words = gpu.rgb9e5(&drawn).await
+        let words = gpu
+            .rgb9e5(&drawn)
+            .await
             .ok_or_else(|| JsValue::from_str("rawshim: the stage could not be read back"))?;
         Ok(Some(words))
     }
@@ -1852,16 +1892,28 @@ impl HeldRaw {
     /// perceptual is the rendition's. `display_peak` is the brightest the display shows, in nits,
     /// and none rolls every draw onto SDR white, as the viewer's does.
     #[wasm_bindgen(js_name = setProof)]
-    pub fn set_proof(&self, proof: &str, intent: &str, display_peak: Option<f64>) -> Result<(), JsValue> {
+    pub fn set_proof(
+        &self,
+        proof: &str,
+        intent: &str,
+        display_peak: Option<f64>,
+    ) -> Result<(), JsValue> {
         let display_peak = match display_peak {
             Some(nits) if !(nits.is_finite() && nits >= 1.0) => {
-                return Err(JsValue::from_str(&format!("rawshim: {nits} nits is not a display's peak")));
+                return Err(JsValue::from_str(&format!(
+                    "rawshim: {nits} nits is not a display's peak"
+                )));
             }
             peak => peak.map(crate::light::Light::exactly),
         };
         self.display_peak.set(display_peak);
-        self.proof_intent.set(serde_json::from_value(serde_json::Value::from(intent))
-            .map_err(|e| JsValue::from_str(&format!("rawshim: no rendering intent is named {intent}: {e}")))?);
+        self.proof_intent.set(
+            serde_json::from_value(serde_json::Value::from(intent)).map_err(|e| {
+                JsValue::from_str(&format!(
+                    "rawshim: no rendering intent is named {intent}: {e}"
+                ))
+            })?,
+        );
         self.proof.set(match proof {
             "hdr" => crate::gpu::Output::Pq,
             "srgb" => crate::gpu::Output::Srgb,
@@ -1877,18 +1929,36 @@ impl HeldRaw {
     /// The ICC output profile a print is laid down through, or none for the paper's own white and black.
     #[wasm_bindgen(js_name = setPrinterProfile)]
     pub fn set_printer_profile(&self, icc: Option<Vec<u8>>) -> Result<(), JsValue> {
-        let printer = icc.as_deref().map(crate::printer_gamut::PrinterGamut::new).transpose()
-            .map_err(|error| JsValue::from_str(&format!("rawshim: this printer profile cannot be used: {error}")))?;
+        let printer = icc
+            .as_deref()
+            .map(crate::printer_gamut::PrinterGamut::new)
+            .transpose()
+            .map_err(|error| {
+                JsValue::from_str(&format!(
+                    "rawshim: this printer profile cannot be used: {error}"
+                ))
+            })?;
         *self.printer.borrow_mut() = printer.map(std::sync::Arc::new);
         Ok(())
     }
 
     #[wasm_bindgen(js_name = setPrint)]
     pub fn set_print(&self, scene: Option<String>) -> Result<(), JsValue> {
-        let parsed = scene.as_deref().map(crate::print::Scene::parse).transpose()
-            .map_err(|error| JsValue::from_str(&format!("rawshim: invalid print scene: {error}")))?;
-        if let Some(environment) = parsed.map(|scene| scene.environment).filter(|environment| !crate::print::environment::held(*environment)) {
-            return Err(JsValue::from_str(&format!("rawshim: the {} environment has not been fetched", environment.name())));
+        let parsed = scene
+            .as_deref()
+            .map(crate::print::Scene::parse)
+            .transpose()
+            .map_err(|error| {
+                JsValue::from_str(&format!("rawshim: invalid print scene: {error}"))
+            })?;
+        if let Some(environment) = parsed
+            .map(|scene| scene.environment)
+            .filter(|environment| !crate::print::environment::held(*environment))
+        {
+            return Err(JsValue::from_str(&format!(
+                "rawshim: the {} environment has not been fetched",
+                environment.name()
+            )));
         }
         self.print.set(parsed);
         Ok(())
@@ -1958,7 +2028,9 @@ impl HeldRaw {
         // A display that shows nothing past SDR white is the same target: aimed higher, the compositor
         // clips what is left over per channel and moves the hue.
         let proofed = match (proof, self.display_peak.get()) {
-            (crate::gpu::Output::Srgb, _) | (_, None) => crate::light::Light::at_diffuse_white(drawing.reference_nits),
+            (crate::gpu::Output::Srgb, _) | (_, None) => {
+                crate::light::Light::at_diffuse_white(drawing.reference_nits)
+            }
             (_, Some(peak)) => peak,
         };
         let proofed_intent = self.proof_intent.get();
@@ -1988,7 +2060,11 @@ impl HeldRaw {
         };
         let (picture_w, picture_h) = drawing.picture();
         let adjust = self.adjust.borrow().clone();
-        let print = if std::ptr::eq(onto, &self.stage) { self.print.get() } else { None };
+        let print = if std::ptr::eq(onto, &self.stage) {
+            self.print.get()
+        } else {
+            None
+        };
         let grade = crate::gpu::Grade {
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
@@ -2002,7 +2078,13 @@ impl HeldRaw {
             // An sRGB proof's. A print scene's own reaches the draw through `draw_with_print`,
             // which overrides this for the pigment it grades.
             intent: proofed_intent,
-            ..crate::gpu::Grade::new(width, height, drawing.levels, drawing.reference_nits, proofed)
+            ..crate::gpu::Grade::new(
+                width,
+                height,
+                drawing.levels,
+                drawing.reference_nits,
+                proofed,
+            )
         };
         // **Before the draw, and every tick.** The peak is measured *after* the exposure
         // (`peak.slang`), so it is not a property of the photograph the way the levels are: read
@@ -2049,7 +2131,11 @@ impl HeldRaw {
     /// Into the analysis rather than a field of its own: that is already what carries the noise fit
     /// and the camera match to every band and every loupe tile, and a second channel for the same
     /// kind of fact is a second thing to keep in step.
-    async fn look_for_dust(&self, settings: crate::dust::Settings, report: crate::open_stage::Report<'_>) {
+    async fn look_for_dust(
+        &self,
+        settings: crate::dust::Settings,
+        report: crate::open_stage::Report<'_>,
+    ) {
         // `does_anything`, not the switch alone: with the switch on and Intensity at nothing, the
         // correction will not run, and a whole-frame readback for a list nobody will divide out is
         // the one cost this is written to avoid.

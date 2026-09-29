@@ -17,7 +17,6 @@ import { resolveCatalogue } from '../../utils/paths';
 // and a stale one beside the restored file would be replayed the same way.
 const SIDECARS = ['-wal', '-shm', '-journal'];
 
-
 export interface RestoreResult {
   /** Where the previous catalogue was parked, or null if there was none to park. */
   movedAside: string | null;
@@ -138,7 +137,9 @@ export function holdAgainstUse(dbPath: string): Database | null {
     // there is nothing to stop. The upstream issue names this the workaround; the probe above is
     // already the exec-only half of it, being the one kind of connection that does release.
     if (!isWalMode(dbPath)) return null;
-    throw new Error(`${dbPath} is open in another process. Stop Bowerbird first, or the work it is holding will be lost.`);
+    throw new Error(
+      `${dbPath} is open in another process. Stop Bowerbird first, or the work it is holding will be lost.`,
+    );
   }
 }
 
@@ -213,7 +214,8 @@ function prepareStaged(staged: string, held: Database | null, version: number): 
 export async function restoreBackup(rawDbPath: string, backupPath: string): Promise<RestoreResult> {
   if (!existsSync(backupPath)) throw new Error(`no such backup: ${backupPath}`);
   const dbPath = resolveCatalogue(rawDbPath);
-  if (path.resolve(backupPath) === dbPath) throw new Error('the backup and the catalogue are the same file');
+  if (path.resolve(backupPath) === dbPath)
+    throw new Error('the backup and the catalogue are the same file');
   await sweepAbandonedStaging(dbPath);
 
   const staged = `${dbPath}.restoring-${new Date().toISOString().replace(/[:.]/g, '-')}`;
@@ -275,7 +277,9 @@ export async function restoreBackup(rawDbPath: string, backupPath: string): Prom
     // one at the next start. Put back what was moved before giving up.
     const stranded: string[] = [];
     for (const suffix of moved.reverse()) {
-      await rename(`${aside}${suffix}`, `${dbPath}${suffix}`).catch(() => stranded.push(`${aside}${suffix}`));
+      await rename(`${aside}${suffix}`, `${dbPath}${suffix}`).catch(() =>
+        stranded.push(`${aside}${suffix}`),
+      );
     }
     await deleteRestoreStaging(dbPath, staged).catch(() => {});
     held?.close();

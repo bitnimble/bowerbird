@@ -82,7 +82,9 @@ export function isOriginal(filename: string): boolean {
  */
 export function importsFormat(scope: LibraryScope, filename: string): boolean {
   const extension = extensionOf(filename);
-  return RAW_MEDIA_TYPES.has(extension) || (scope.includeNonRaw && RENDERED_MEDIA_TYPES.has(extension));
+  return (
+    RAW_MEDIA_TYPES.has(extension) || (scope.includeNonRaw && RENDERED_MEDIA_TYPES.has(extension))
+  );
 }
 
 /**
@@ -129,7 +131,9 @@ export function isStrayOriginal(filename: string): boolean {
 export function originalMediaType(filename: string): string {
   const extension = extensionOf(filename);
   return (
-    RAW_MEDIA_TYPES.get(extension) ?? RENDERED_MEDIA_TYPES.get(extension) ?? 'application/octet-stream'
+    RAW_MEDIA_TYPES.get(extension) ??
+    RENDERED_MEDIA_TYPES.get(extension) ??
+    'application/octet-stream'
   );
 }
 
@@ -183,14 +187,17 @@ export async function scanLibraryTree(
   const dirs: ScannedDir[] = [];
   const visitedDirs = new Set<string>(); // real paths, to stop symlink cycles
 
-  const relative = (abs: string): string => path.relative(scope.rootPath, abs).split(path.sep).join('/');
+  const relative = (abs: string): string =>
+    path.relative(scope.rootPath, abs).split(path.sep).join('/');
 
   async function walk(absDir: string): Promise<boolean> {
     onDir?.();
-    const entries = await readdir(absDir, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
-      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
-      throw err;
-    });
+    const entries = await readdir(absDir, { withFileTypes: true }).catch(
+      (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
+        throw err;
+      },
+    );
     if (entries == null) return false;
     let complete = true;
     for (const entry of entries) {
@@ -221,7 +228,13 @@ export async function scanLibraryTree(
         // the whole cost - 22us a call against 2us, which is 400ms of a 20k-folder
         // walk spent on nothing.
         const stats = statSync(abs, { throwIfNoEntry: false });
-        if (stats != null) dirs.push({ relPath: rel, dev: stats.dev, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
+        if (stats != null)
+          dirs.push({
+            relPath: rel,
+            dev: stats.dev,
+            ino: stats.ino,
+            birthtimeMs: stats.birthtimeMs,
+          });
         else complete = false;
         if (!(await walk(abs))) complete = false;
       } else if (isFile && importsFormat(scope, entry.name)) {

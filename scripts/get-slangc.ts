@@ -41,7 +41,8 @@ function main(): void {
     // Run from where it landed, so a shared library it cannot find beside it fails here rather
     // than in the middle of a crate build.
     const check = spawnSync(resolve(tools(), BINARY), ['-v'], { encoding: 'utf8' });
-    if (check.status !== 0) throw new Error(`slangc does not start: ${check.stderr || check.error?.message}`);
+    if (check.status !== 0)
+      throw new Error(`slangc does not start: ${check.stderr || check.error?.message}`);
   });
   // The tools directory itself, which holds the compiler, the libraries it loads and the standard
   // modules it reads, all beside each other.

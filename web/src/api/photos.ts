@@ -1,6 +1,11 @@
 // Types come straight from the server's Zod schemas as type-only imports, so the
 // client can never drift from the API and nothing is added to the bundle.
-import { DeletedCountSchema, type Ordering, QueuedCountSchema, UpdatedCountSchema } from '../../../src/schemas/common';
+import {
+  DeletedCountSchema,
+  type Ordering,
+  QueuedCountSchema,
+  UpdatedCountSchema,
+} from '../../../src/schemas/common';
 import {
   DeletePhotosRequestSchema,
   HidePhotosRequestSchema,
@@ -36,7 +41,10 @@ import {
 } from '../../../src/schemas/photos';
 import type { PrepareDevelop } from '../../../src/schemas/prepare_develop';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../src/schemas/request_activity';
+import {
+  REQUEST_ACTIVITY_HEADER,
+  type RequestActivity,
+} from '../../../src/schemas/request_activity';
 import type { ViewerRendition } from '../../../src/schemas/settings';
 import { assetUrl } from './transport';
 import { NothingSchema, request, requestFile } from './request';
@@ -123,7 +131,12 @@ export const photosApi = {
   // The list calls take a signal because a scroll abandons blocks faster than
   // they answer: without it every request a flick started stays on the wire,
   // competing with the ones the reader is actually waiting for.
-  listLibrary: (libraryId: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
+  listLibrary: (
+    libraryId: string,
+    params: PhotoListParams,
+    signal?: AbortSignal,
+    activity?: RequestActivity,
+  ): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',
@@ -131,7 +144,12 @@ export const photosApi = {
       undefined,
       { signal, activity: activity ?? (params.count === false ? 'background' : 'interactive') },
     ),
-  listMissing: (libraryId: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
+  listMissing: (
+    libraryId: string,
+    params: PhotoListParams,
+    signal?: AbortSignal,
+    activity?: RequestActivity,
+  ): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',
@@ -140,7 +158,13 @@ export const photosApi = {
       { signal, activity: activity ?? (params.count === false ? 'background' : 'interactive') },
     ),
   get: (id: string, activity: RequestActivity = 'interactive'): Promise<PhotoDetail> =>
-    request(PhotoDetailSchema, 'GET', route(PathSegment.api(), PathSegment.photos(), id), undefined, { activity }),
+    request(
+      PhotoDetailSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.photos(), id),
+      undefined,
+      { activity },
+    ),
   // What a selection stands for, spelled out. Only the export asks: every other bulk
   // action names its target and lets the server resolve it privately.
   ids: (target: PhotoTarget): Promise<{ photo_ids: string[] }> =>
@@ -151,7 +175,12 @@ export const photosApi = {
       PhotoTargetSchema.parse(target),
     ),
   update: (id: string, body: UpdatePhotoRequest): Promise<PhotoDetail> =>
-    request(PhotoDetailSchema, 'PATCH', route(PathSegment.api(), PathSegment.photos(), id), UpdatePhotoRequestSchema.parse(body)),
+    request(
+      PhotoDetailSchema,
+      'PATCH',
+      route(PathSegment.api(), PathSegment.photos(), id),
+      UpdatePhotoRequestSchema.parse(body),
+    ),
   // Every bulk call names its photos either by id or by position in a filtered
   // collection (§18.3.3), so a selection of a hundred thousand is one small
   // request rather than a client reading back every id first.
@@ -206,7 +235,10 @@ export const photosApi = {
   // be re-placed after an import or a re-order instead of being thrown away
   // (§19.6.1). A key is a stack id or a photo id, and it names every position it
   // stands for: one collapsed row, or one per member uncollapsed (§19.5.4).
-  positions: (body: PhotoPositionsRequest, signal?: AbortSignal): Promise<Record<string, number[]>> =>
+  positions: (
+    body: PhotoPositionsRequest,
+    signal?: AbortSignal,
+  ): Promise<Record<string, number[]>> =>
     request(
       PhotoPositionsResponseSchema,
       'POST',
@@ -295,7 +327,9 @@ export const photosApi = {
    * measuring for having them. 404 until something has measured this photograph.
    */
   downloadRaw: async (photoId: string): Promise<Uint8Array<ArrayBuffer>> => {
-    const reply = await fetch(downloadUrl(photoId, 'original'), { headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' } });
+    const reply = await fetch(downloadUrl(photoId, 'original'), {
+      headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
+    });
     if (!reply.ok) {
       // Named and quoted: this is the first request an open makes, so it is where a photograph
       // that is not there is found out, and "404" alone leaves a reader with nothing to act on.
@@ -305,7 +339,8 @@ export const photosApi = {
     return new Uint8Array(await reply.arrayBuffer());
   },
 
-  analysisUrl: (photoId: string): string => assetUrl(route(PathSegment.image(), photoId, PathSegment.analysis())),
+  analysisUrl: (photoId: string): string =>
+    assetUrl(route(PathSegment.image(), photoId, PathSegment.analysis())),
 
   /**
    * One picture of this photograph, coded, for a client that will grade it itself.

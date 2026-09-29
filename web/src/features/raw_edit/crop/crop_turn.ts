@@ -52,7 +52,10 @@ export function turnedForDocument(shown: CropRect, rotate: number): CropRect {
  * The keystone guides are lines, and a line's two ends are just points: turning each and
  * letting the line follow is right where turning a rectangle's edges by name would not be.
  */
-export function turnedPointForDisplay(point: { x: number; y: number }, rotate: number): { x: number; y: number } {
+export function turnedPointForDisplay(
+  point: { x: number; y: number },
+  rotate: number,
+): { x: number; y: number } {
   switch (rotate) {
     case 90:
       return { x: 1 - point.y, y: point.x };
@@ -65,7 +68,10 @@ export function turnedPointForDisplay(point: { x: number; y: number }, rotate: n
   }
 }
 
-export function turnedPointForDocument(point: { x: number; y: number }, rotate: number): { x: number; y: number } {
+export function turnedPointForDocument(
+  point: { x: number; y: number },
+  rotate: number,
+): { x: number; y: number } {
   switch (rotate) {
     case 90:
       return { x: point.y, y: 1 - point.x };

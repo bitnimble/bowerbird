@@ -5,7 +5,8 @@ import { fillLoops, swatchRegion, type MaskContext, type MaskStep } from '../mer
 // Playwright's. What is answerable here is the order of the fills: every run of outlines is traced
 // into one path and filled once, white where the layer takes it and black where it is covered.
 
-const taken = (...loops: MaskStep['loop'][]): MaskStep[] => loops.map((loop) => ({ loop, taken: true }));
+const taken = (...loops: MaskStep['loop'][]): MaskStep[] =>
+  loops.map((loop) => ({ loop, taken: true }));
 function recording(): { ctx: MaskContext; calls: string[] } {
   const calls: string[] = [];
   const ctx: MaskContext = {
@@ -14,7 +15,8 @@ function recording(): { ctx: MaskContext; calls: string[] } {
     clearRect: (x, y, w, h) => calls.push(`clear ${x},${y},${w},${h}`),
     // The style and the filter as they stand when each fill happens, which is what the two of them
     // are for: a background painted through the blur, or white painted without it, is no mask.
-    fillRect: (x, y, w, h) => calls.push(`rect ${x},${y},${w},${h} ${String(ctx.fillStyle)} ${ctx.filter}`),
+    fillRect: (x, y, w, h) =>
+      calls.push(`rect ${x},${y},${w},${h} ${String(ctx.fillStyle)} ${ctx.filter}`),
     beginPath: () => calls.push('begin'),
     moveTo: (x, y) => calls.push(`move ${x},${y}`),
     lineTo: (x, y) => calls.push(`line ${x},${y}`),

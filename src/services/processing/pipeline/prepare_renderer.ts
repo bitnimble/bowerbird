@@ -7,7 +7,13 @@ import { getDataPath, originalPathOf } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
-import { openPrepareWorker, pictureLevel, type Missing, type PrepareWorker, type Shown } from '../workers/prepare_pool';
+import {
+  openPrepareWorker,
+  pictureLevel,
+  type Missing,
+  type PrepareWorker,
+  type Shown,
+} from '../workers/prepare_pool';
 import type { CompositeJobSource, WorkerJob } from '../workers/processing_types';
 import { developed } from './developed';
 import type { RenderTargets } from './render_targets';
@@ -73,7 +79,10 @@ export class PrepareRenderer {
     // the other is an ordinary photograph.
     const composite = this.compositeOf(photoId);
     if (composite == null && isComposite(photo.recipe)) {
-      throw new AppError('NOT_FOUND', `${photoId} is composed from frames this device does not hold`);
+      throw new AppError(
+        'NOT_FOUND',
+        `${photoId} is composed from frames this device does not hold`,
+      );
     }
     const original = composite == null ? originalPathOf(library, photo) : null;
     if (composite == null && original == null) {
@@ -96,21 +105,22 @@ export class PrepareRenderer {
       ...developed(this.editsFor(photoId)?.doc ?? null, library.denoiser, develop),
       ...this.targets.render(),
     };
-    const job: WorkerJob = composite == null
-      ? {
-          kind: 'rendition',
-          rawFilePath: original ?? '',
-          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-          ...shared,
-        }
-      : {
-          kind: 'composite',
-          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-          want: 'render',
-          sources: composite.sources,
-          recipe: composite.recipe,
-          ...shared,
-        };
+    const job: WorkerJob =
+      composite == null
+        ? {
+            kind: 'rendition',
+            rawFilePath: original ?? '',
+            cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
+            ...shared,
+          }
+        : {
+            kind: 'composite',
+            cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
+            want: 'render',
+            sources: composite.sources,
+            recipe: composite.recipe,
+            ...shared,
+          };
 
     return this.activity.track(library.id, 'preparing', photoId, () =>
       this.prepares().run({ job, level, width: size.width, height: size.height, window, parts }),

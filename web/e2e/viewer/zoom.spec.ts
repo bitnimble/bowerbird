@@ -35,7 +35,9 @@ test.beforeEach(async ({ request }) => {
 // The stage draws this into a slot inside a popup that exists only while the menu is
 // open, which is the part no unit test can stand in for: the track's ends and what Fit
 // does are `zoom_slider.test.tsx`, and Base UI's slider takes no drag headlessly anyway.
-test('the photo fits the stage, clicks step fit, double, own pixels, and the menu range follows', async ({ page }) => {
+test('the photo fits the stage, clicks step fit, double, own pixels, and the menu range follows', async ({
+  page,
+}) => {
   await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
 
@@ -111,7 +113,9 @@ test('clicking zooms into the point clicked, not the centre', async ({ page }) =
     // A canvas's own width and height are its intrinsic size, which is what the layout fits.
     const fit = Math.min(box.width / frame.width, box.height / frame.height);
     const read = (): { x: number; y: number; s: number } => {
-      const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(drawn.style.transform);
+      const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(
+        drawn.style.transform,
+      );
       return m == null ? { x: 0, y: 0, s: 1 } : { x: +m[1]!, y: +m[2]!, s: +m[3]! };
     };
     // Which point of the photo sits under a screen coordinate, 0..1.
@@ -131,7 +135,11 @@ test('clicking zooms into the point clicked, not the centre', async ({ page }) =
     frame.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: px, clientY: py }));
     await new Promise((r) => setTimeout(r, 200));
     const after = fraction(px, py);
-    return { zoomed: read().s > 1, dx: Math.abs(after.x - before.x), dy: Math.abs(after.y - before.y) };
+    return {
+      zoomed: read().s > 1,
+      dx: Math.abs(after.x - before.x),
+      dy: Math.abs(after.y - before.y),
+    };
   });
 
   expect(drift?.zoomed).toBe(true);
@@ -168,11 +176,15 @@ test('panning a zoomed photo cannot drag it off the stage', async ({ page }) => 
   expect(gap).toBeLessThanOrEqual(1);
   // And it moved at all: the clamp above is satisfied just as well by a drag
   // that did nothing, which is what the regression below actually was.
-  const moved = await shownFrame(page).evaluate((frame) => (frame.parentElement as HTMLElement).style.transform);
+  const moved = await shownFrame(page).evaluate(
+    (frame) => (frame.parentElement as HTMLElement).style.transform,
+  );
   expect(moved).not.toContain('translate(0px, 0px)');
 });
 
-test('zoom resets on a step to the next photo, which is a different photograph', async ({ page }) => {
+test('zoom resets on a step to the next photo, which is a different photograph', async ({
+  page,
+}) => {
   await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   const opened = await shownFilename(page);
@@ -183,7 +195,9 @@ test('zoom resets on a step to the next photo, which is a different photograph',
   // Carrying the offset across would open the next frame scrolled into a corner.
   await page.getByRole('button', { name: 'Next photo' }).click();
   const next = PHOTO_NAMES.find((name) => name !== opened);
-  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${next}, `), { timeout: 60_000 });
+  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${next}, `), {
+    timeout: 60_000,
+  });
   await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
 });
 
@@ -206,7 +220,9 @@ test('holds a zoomed photo inside a stage that changed shape', async ({ page }) 
     return shownFrame(page).evaluate((frame: HTMLCanvasElement) => {
       const viewport = frame.closest('[role="region"]') as HTMLElement;
       // The zoom is on the picture the frame is drawn in, not on the frame.
-      const transform = new DOMMatrixReadOnly(getComputedStyle(frame.parentElement as HTMLElement).transform);
+      const transform = new DOMMatrixReadOnly(
+        getComputedStyle(frame.parentElement as HTMLElement).transform,
+      );
       const box = viewport.getBoundingClientRect();
       const fit = Math.min(box.width / frame.width, box.height / frame.height);
       const content = frame.width * fit * transform.a;
@@ -254,7 +270,9 @@ test('holds a zoomed photo inside a stage that changed shape', async ({ page }) 
 // camera's JPEG" a comparison rather than a reset.
 //
 // Last with the one after it, because they are the tests here that need the library to render.
-test('zoom survives a rendition change, so two files can be compared at the same magnification', async ({ page }) => {
+test('zoom survives a rendition change, so two files can be compared at the same magnification', async ({
+  page,
+}) => {
   await setRenditionSource(page, ZOOM_PHOTOS_DIR, 'render');
   await setViewerRendition(page.request, 'full');
   await gotoPhoto(page, ZOOM_PHOTOS_DIR);
@@ -279,7 +297,9 @@ test('zoom survives a rendition change, so two files can be compared at the same
 
 // The browser's AVIF decoder ignores the size it is asked for, so the frame the stage holds for
 // a native-resolution render is already every pixel of it - which only a real decoder can say.
-test('at its own pixels, a render flipped back to is drawn sharp from the frame already held', async ({ page }) => {
+test('at its own pixels, a render flipped back to is drawn sharp from the frame already held', async ({
+  page,
+}) => {
   // The max-quality render is built on the way in, and the 60s default expires mid-build.
   test.setTimeout(240_000);
   await setViewerRendition(page.request, 'max');
@@ -310,14 +330,17 @@ test('at its own pixels, a render flipped back to is drawn sharp from the frame 
         const tick = (): void => {
           const stage = document.querySelector('[role="region"][aria-label="Photo"]');
           const shown = [...(stage?.querySelectorAll('[role="img"]') ?? [])].find(
-            (frame) => frame.closest('[aria-hidden="true"]') == null && frame.getAttribute('aria-label')?.endsWith('(max quality)'),
+            (frame) =>
+              frame.closest('[aria-hidden="true"]') == null &&
+              frame.getAttribute('aria-label')?.endsWith('(max quality)'),
           );
-          const detailed = [...(stage?.querySelectorAll<HTMLElement>('canvas:not([role])') ?? [])].some(
-            (detail) => detail.style.opacity === '1',
-          );
+          const detailed = [
+            ...(stage?.querySelectorAll<HTMLElement>('canvas:not([role])') ?? []),
+          ].some((detail) => detail.style.opacity === '1');
           if (shown != null && detailed) return resolve(frames);
           if (shown != null) frames++;
-          if (performance.now() - started > 30_000) return reject(new Error('the render never sharpened'));
+          if (performance.now() - started > 30_000)
+            return reject(new Error('the render never sharpened'));
           requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);

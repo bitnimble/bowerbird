@@ -26,7 +26,11 @@ fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -117,11 +121,26 @@ pub(crate) async fn partials(
         label: Some("fit_moments"),
         layout: &kernel(gpu).layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: below.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: target.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: partial.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: matrices_on.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: below.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: target.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: partial.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: matrices_on.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     {
@@ -136,7 +155,9 @@ pub(crate) async fn partials(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&partial, 0, &staging, 0, (words * 4) as u64);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&partial, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &staging, |mapped| {
@@ -150,7 +171,10 @@ pub(crate) async fn partials(
         read.chunks_exact(blocks * MOMENT_WORDS)
             .take(matrices.len())
             .map(|probe| {
-                probe.chunks_exact(MOMENT_WORDS).map(|block| std::array::from_fn(|i| block[i])).collect()
+                probe
+                    .chunks_exact(MOMENT_WORDS)
+                    .map(|block| std::array::from_fn(|i| block[i]))
+                    .collect()
             })
             .collect(),
     )
@@ -163,6 +187,9 @@ mod tests {
     fn the_host_folds_the_words_the_shader_writes() {
         const SOURCE: &str = include_str!("../../../slang/fit_moments.slang");
         let line = format!("static const int MOMENT_WORDS = {};", super::MOMENT_WORDS);
-        assert!(SOURCE.contains(&line), "fit_moments.slang does not say `{line}`");
+        assert!(
+            SOURCE.contains(&line),
+            "fit_moments.slang does not say `{line}`"
+        );
     }
 }

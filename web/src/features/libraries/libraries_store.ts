@@ -1,6 +1,11 @@
 import { computed, observable } from 'mobx';
 import type { Activity } from '../../../../src/schemas/activity';
-import { type FolderRule, type Library, type LibraryScanStatus, type LibrarySettings } from '../../../../src/schemas/libraries';
+import {
+  type FolderRule,
+  type Library,
+  type LibraryScanStatus,
+  type LibrarySettings,
+} from '../../../../src/schemas/libraries';
 
 // Data only: observables + computeds. Every mutation lives on LibrariesPresenter.
 export class LibrariesStore {

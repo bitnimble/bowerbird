@@ -112,7 +112,13 @@ function CalendarNav(): JSX.Element {
 const DOT_FAINTEST = 0.45;
 const DOT_SMALLEST = 0.5;
 
-const DayDot = observer(function DayDot({ date, picked }: { date: Date; picked: boolean }): JSX.Element | null {
+const DayDot = observer(function DayDot({
+  date,
+  picked,
+}: {
+  date: Date;
+  picked: boolean;
+}): JSX.Element | null {
   const store = useListingStore();
   const density = store.dayDensity.get(isoDay(date));
   if (density == null) return null;
@@ -138,7 +144,12 @@ const DayDot = observer(function DayDot({ date, picked }: { date: Date; picked: 
  * replaces rather than wraps - without it the arrow keys move the highlight and not the
  * caret.
  */
-function CalendarDayButton({ day, modifiers, children, ...buttonProps }: DayButtonProps): JSX.Element {
+function CalendarDayButton({
+  day,
+  modifiers,
+  children,
+  ...buttonProps
+}: DayButtonProps): JSX.Element {
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (modifiers.focused) ref.current?.focus();
@@ -146,7 +157,10 @@ function CalendarDayButton({ day, modifiers, children, ...buttonProps }: DayButt
   return (
     <button ref={ref} {...buttonProps}>
       {children}
-      <DayDot date={day.date} picked={modifiers.selected === true || modifiers.range_middle === true} />
+      <DayDot
+        date={day.date}
+        picked={modifiers.selected === true || modifiers.range_middle === true}
+      />
     </button>
   );
 }
@@ -178,17 +192,23 @@ const CaptionSelects = observer(function CaptionSelects({ month }: { month: Date
         style={styles.month}
         label={GridControlsStrings.calendarMonth()}
         value={String(month.getMonth())}
-        options={MONTH_NAMES.slice(from, to + 1).map((name, index) => ({ value: String(from + index), label: name }))}
+        options={MONTH_NAMES.slice(from, to + 1).map((name, index) => ({
+          value: String(from + index),
+          label: name,
+        }))}
         onChange={(picked) => goToMonth(new Date(year, Number(picked), 1))}
       />
       <Select
         style={styles.year}
         label={GridControlsStrings.calendarYear()}
         value={String(year)}
-        options={Array.from({ length: last.getFullYear() - first.getFullYear() + 1 }, (_, index) => {
-          const value = String(first.getFullYear() + index);
-          return { value, label: value };
-        })}
+        options={Array.from(
+          { length: last.getFullYear() - first.getFullYear() + 1 },
+          (_, index) => {
+            const value = String(first.getFullYear() + index);
+            return { value, label: value };
+          },
+        )}
         onChange={(picked) => goToMonth(new Date(Number(picked), month.getMonth(), 1))}
       />
     </div>
@@ -199,7 +219,11 @@ const CaptionSelects = observer(function CaptionSelects({ month }: { month: Date
  * Not an `observer`: react-day-picker types a caption as returning an element, where an
  * observer returns the wider ReactNode.
  */
-function CalendarCaption({ calendarMonth, displayIndex: _displayIndex, ...captionProps }: MonthCaptionProps): JSX.Element {
+function CalendarCaption({
+  calendarMonth,
+  displayIndex: _displayIndex,
+  ...captionProps
+}: MonthCaptionProps): JSX.Element {
   return (
     <div {...captionProps}>
       <CalendarNav />
@@ -213,7 +237,8 @@ export const GridDateRangeFilter = observer(function GridDateRangeFilter(): JSX.
   const { photos } = usePresenters();
   const from = store.filters.takenFrom;
   const to = store.filters.takenTo;
-  const selected: DateRange | undefined = from == null && to == null ? undefined : { from: parseDay(from), to: parseDay(to) };
+  const selected: DateRange | undefined =
+    from == null && to == null ? undefined : { from: parseDay(from), to: parseDay(to) };
   // The month a picked range starts in, else the last one the collection holds anything
   // in. Keyed on it because react-day-picker reads an opening month once: a collection
   // whose days land after the panel is open would otherwise stay on this month.

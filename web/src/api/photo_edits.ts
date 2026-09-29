@@ -21,7 +21,11 @@ export const photoEditsApi = {
   // the revision the next write has to carry: a client that saved without it
   // would have the server diff a stale document and record a change nobody made.
   get: (photoId: string): Promise<EditState> =>
-    request(EditStateSchema, 'GET', route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits())),
+    request(
+      EditStateSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()),
+    ),
   // `session` is which editor open this belongs to (docs/replication.md §5.3):
   // it is the unit a merge takes whole, so an afternoon's work is never half
   // replaced by one slider moved on another device.
@@ -36,27 +40,56 @@ export const photoEditsApi = {
     request(
       EditStateSchema,
       'POST',
-      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.undo()),
+      route(
+        PathSegment.api(),
+        PathSegment.photos(),
+        photoId,
+        PathSegment.edits(),
+        PathSegment.undo(),
+      ),
       StepEditsRequestSchema.parse({ rev }),
     ),
   redo: (photoId: string, rev: number): Promise<EditState> =>
     request(
       EditStateSchema,
       'POST',
-      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.redo()),
+      route(
+        PathSegment.api(),
+        PathSegment.photos(),
+        photoId,
+        PathSegment.edits(),
+        PathSegment.redo(),
+      ),
       StepEditsRequestSchema.parse({ rev }),
     ),
   checkpoint: (photoId: string): Promise<EditOpening> =>
     request(
       EditOpeningSchema,
       'GET',
-      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.checkpoint()),
+      route(
+        PathSegment.api(),
+        PathSegment.photos(),
+        photoId,
+        PathSegment.edits(),
+        PathSegment.checkpoint(),
+      ),
     ),
-  restore: (photoId: string, rev: number, checkpoint: EditCheckpoint, session: string): Promise<EditState> =>
+  restore: (
+    photoId: string,
+    rev: number,
+    checkpoint: EditCheckpoint,
+    session: string,
+  ): Promise<EditState> =>
     request(
       EditStateSchema,
       'POST',
-      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.restore()),
+      route(
+        PathSegment.api(),
+        PathSegment.photos(),
+        photoId,
+        PathSegment.edits(),
+        PathSegment.restore(),
+      ),
       RestoreEditsRequestSchema.parse({
         rev,
         session,
@@ -72,12 +105,23 @@ export const photoEditsApi = {
     request(
       NothingSchema,
       'POST',
-      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.done()),
-      FinishEditsRequestSchema.parse({ opened: opened == null ? undefined : { doc: opened.doc, stamp: opened.stamp } }),
+      route(
+        PathSegment.api(),
+        PathSegment.photos(),
+        photoId,
+        PathSegment.edits(),
+        PathSegment.done(),
+      ),
+      FinishEditsRequestSchema.parse({
+        opened: opened == null ? undefined : { doc: opened.doc, stamp: opened.stamp },
+      }),
     ),
 
   // The divergences waiting on a person (§5.3), and the choice that ends one.
-  listConflicts: (libraryId?: string, activity: RequestActivity = 'interactive'): Promise<EditConflict[]> =>
+  listConflicts: (
+    libraryId?: string,
+    activity: RequestActivity = 'interactive',
+  ): Promise<EditConflict[]> =>
     request(
       EditConflictsSchema,
       'GET',

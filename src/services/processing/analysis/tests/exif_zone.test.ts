@@ -13,7 +13,13 @@ function tiff({
   value = '+11:00',
   type = 2,
   nested = true,
-}: { little?: boolean; tag?: number; value?: string; type?: number; nested?: boolean } = {}): Uint8Array {
+}: {
+  little?: boolean;
+  tag?: number;
+  value?: string;
+  type?: number;
+  nested?: boolean;
+} = {}): Uint8Array {
   const bytes = new Uint8Array(256);
   const view = new DataView(bytes.buffer);
   view.setUint16(0, little ? 0x4949 : 0x4d4d, false);
@@ -23,7 +29,13 @@ function tiff({
   const valueAt = 200;
   for (let i = 0; i < value.length; i++) bytes[valueAt + i] = value.charCodeAt(i);
 
-  const entry = (at: number, id: number, entryType: number, count: number, payload: number): void => {
+  const entry = (
+    at: number,
+    id: number,
+    entryType: number,
+    count: number,
+    payload: number,
+  ): void => {
     view.setUint16(at, id, little);
     view.setUint16(at + 2, entryType, little);
     view.setUint32(at + 4, count, little);

@@ -121,7 +121,12 @@ pub struct Lens {
 impl Lens {
     /// A lens that did nothing, for a caller with no fit to hand.
     pub fn none() -> Self {
-        Lens { distortion: None, crop: 1.0, falloff: None, tca: None }
+        Lens {
+            distortion: None,
+            crop: 1.0,
+            falloff: None,
+            tca: None,
+        }
     }
 
     /// The radius each channel is read at, relative to green's.
@@ -206,14 +211,18 @@ impl Grid {
 
     /// Room for one candidate's pairs, made once and asked about many times.
     fn alone(&self, gpu: &'static crate::gpu::Gpu) -> &crate::fit_objective::Paired {
-        self.alone.get_or_init(|| {
-            crate::fit_objective::paired(gpu, 1, &self.jpeg.buffer, self.size())
-        })
+        self.alone
+            .get_or_init(|| crate::fit_objective::paired(gpu, 1, &self.jpeg.buffer, self.size()))
     }
 }
 
 fn candidate(knots: &[f64], crop: f64) -> Lens {
-    Lens { distortion: Some(knots.to_vec()), crop, falloff: None, tca: None }
+    Lens {
+        distortion: Some(knots.to_vec()),
+        crop,
+        falloff: None,
+        tca: None,
+    }
 }
 
 /// Both resolutions the geometry search works at - cheap for scanning, full for refining -
@@ -249,7 +258,11 @@ fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -356,10 +369,22 @@ pub(crate) fn pass(
         label: Some("fit grids"),
         layout: &resamplers(gpu).layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: floats.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: out.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: bytes.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: floats.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: out.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: bytes.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
     {
@@ -368,7 +393,12 @@ pub(crate) fn pass(
         compute.set_bind_group(0, &group, &[]);
         compute.dispatch_workgroups((width as u32).div_ceil(16), (height as u32).div_ceil(16), 1);
     }
-    Sampled { buffer: out, width, height, packed: false }
+    Sampled {
+        buffer: out,
+        width,
+        height,
+        packed: false,
+    }
 }
 
 /// `source` reduced onto `(width, height)`, an axis a pass.
@@ -382,7 +412,15 @@ fn reduced(
     (width, height): (usize, usize),
 ) -> Sampled {
     let lanczos = &resamplers(gpu).lanczos;
-    let down = pass(gpu, recording, lanczos, source, (source.width, height), 1, 0);
+    let down = pass(
+        gpu,
+        recording,
+        lanczos,
+        source,
+        (source.width, height),
+        1,
+        0,
+    );
     pass(gpu, recording, lanczos, &down, (width, height), 0, 0)
 }
 
@@ -436,11 +474,7 @@ pub(crate) fn box_blurred(
 /// Only the tests that look at a resampled grid want either: the fit uploads its preview once,
 /// through `hdr_fit::preview_planes`, and reads no grid back at all.
 #[cfg(test)]
-fn uploaded(
-    recording: &mut crate::gpu::Recording<'_>,
-    label: &str,
-    plane: RgbRef<'_>,
-) -> Sampled {
+fn uploaded(recording: &mut crate::gpu::Recording<'_>, label: &str, plane: RgbRef<'_>) -> Sampled {
     Sampled {
         buffer: recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some(label),
@@ -462,7 +496,9 @@ fn staged(recording: &mut crate::gpu::Recording<'_>, plane: &Sampled) -> crate::
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&plane.buffer, 0, &staging, 0, bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&plane.buffer, 0, &staging, 0, bytes);
     staging
 }
 
@@ -482,7 +518,11 @@ async fn read_rgb(
             .collect()
     })
     .await?;
-    Some(crate::rgb::Rgb { width: plane.width, height: plane.height, data })
+    Some(crate::rgb::Rgb {
+        width: plane.width,
+        height: plane.height,
+        data,
+    })
 }
 
 // ------------------------------------------------------------------ colour model
@@ -580,7 +620,10 @@ impl Gain {
                 lut[radius * 256 + level] = to_srgb8(linear[level] * Gain::at(a, b, radius as u8));
             }
         }
-        Gain { lut, coefficients: (a, b) }
+        Gain {
+            lut,
+            coefficients: (a, b),
+        }
     }
 
     /// The multiplier itself, in linear light, at a quantised radius.
@@ -617,7 +660,6 @@ impl Gain {
         let linear = linear_table();
         linear[self.of(255, 128) as usize] / linear[128]
     }
-
 }
 
 fn to_srgb8(linear: f64) -> u8 {
@@ -749,7 +791,6 @@ fn invert_curve(curve: &[u8; 256]) -> [u8; 256] {
     back
 }
 
-
 /// How much the first falloff has to buy before it is believed at all.
 ///
 /// Two free parameters fitted to one frame will always find something, and a plain
@@ -790,7 +831,9 @@ async fn fit_gain(
     // and so partly absorbs it - measured on an injected 0.65 corner, one round
     // recovers 0.78 and the next two land it.
     for _ in 0..3 {
-        let Some((a, b)) = refit_gain(paired, admitted, phase, &curve).await else { break };
+        let Some((a, b)) = refit_gain(paired, admitted, phase, &curve).await else {
+            break;
+        };
         let candidate = Gain::from_poly(a, b);
         let delta = score_of(Some(&candidate)).await?;
         let bar = match gain {
@@ -846,7 +889,11 @@ async fn fit_gain(
 
 fn to_linear(value: f64) -> f64 {
     let s = value / 255.0;
-    if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 /// The scoring loop only ever linearises 8-bit levels, and the transfer's pow() is
@@ -906,7 +953,10 @@ async fn residual_for(
     crop: f64,
 ) -> Option<f64> {
     let warped = grid.warped(gpu, &[candidate(knots, crop)]);
-    let delta = residuals(grid.alone(gpu), &warped).await?.first().copied()?;
+    let delta = residuals(grid.alone(gpu), &warped)
+        .await?
+        .first()
+        .copied()?;
     delta.is_finite().then_some(delta)
 }
 
@@ -950,8 +1000,10 @@ async fn scan<T: Send + Sync + Copy>(
     knots_of: impl Fn(T) -> Vec<f64>,
     crop_of: impl Fn(T) -> f64,
 ) -> Option<(T, f64)> {
-    let lenses: Vec<Lens> =
-        candidates.iter().map(|c| candidate(&knots_of(*c), crop_of(*c))).collect();
+    let lenses: Vec<Lens> = candidates
+        .iter()
+        .map(|c| candidate(&knots_of(*c), crop_of(*c)))
+        .collect();
     let warped = grid.warped(gpu, &lenses);
     let paired = crate::fit_objective::paired(gpu, lenses.len(), &grid.jpeg.buffer, grid.size());
     let scored = residuals(&paired, &warped).await?;
@@ -996,8 +1048,13 @@ async fn fit_family(
         |(parameter, slack)| fill(parameter) + slack,
     )
     .await?;
-    let mut delta =
-        residual_for(gpu, &grids.full, &family(parameter), fill(parameter) + slack).await?;
+    let mut delta = residual_for(
+        gpu,
+        &grids.full,
+        &family(parameter),
+        fill(parameter) + slack,
+    )
+    .await?;
 
     let mut step_slack = SLACK_STEP;
     while step_slack > REFINE_FLOOR {
@@ -1009,9 +1066,17 @@ async fn fit_family(
                 continue;
             }
             for sign in [1.0, -1.0] {
-                let trial_parameter = if axis == 0 { parameter + sign * step } else { parameter };
+                let trial_parameter = if axis == 0 {
+                    parameter + sign * step
+                } else {
+                    parameter
+                };
                 // Slack above zero is a crop that does not fill, which no camera ships.
-                let trial_slack = if axis == 1 { slack + sign * step_slack } else { slack };
+                let trial_slack = if axis == 1 {
+                    slack + sign * step_slack
+                } else {
+                    slack
+                };
                 if trial_slack > 0.0 {
                     continue;
                 }
@@ -1079,7 +1144,8 @@ async fn settled_on_registration(
         falloff: None,
         tca: None,
     };
-    let stride = (((render.width * render.height) as f64 / SETTLE_POINTS as f64).sqrt() as usize).max(1);
+    let stride =
+        (((render.width * render.height) as f64 / SETTLE_POINTS as f64).sqrt() as usize).max(1);
     // **Everything the rounds share, uploaded once.** Only the lens moves between them; the plane
     // it warps, the plane it is matched against, and the grid it is asked about do not.
     let settling = crate::hdr_fit::Settling::new(gpu, render, preview, stride);
@@ -1087,9 +1153,14 @@ async fn settled_on_registration(
         crate::hdr_fit::registration(gpu, &settling, &lens_of(knots), SETTLE_BINS).await
     };
 
-    let half = ((preview.width as f64 / 2.0).powi(2) + (preview.height as f64 / 2.0).powi(2)).sqrt();
+    let half =
+        ((preview.width as f64 / 2.0).powi(2) + (preview.height as f64 / 2.0).powi(2)).sqrt();
     let resolved = |measured: &crate::hdr_fit::Registration| {
-        measured.radial.iter().flatten().all(|shift| shift.abs() * half < SETTLE_FLOOR)
+        measured
+            .radial
+            .iter()
+            .flatten()
+            .all(|shift| shift.abs() * half < SETTLE_FLOOR)
     };
 
     let mut current = on_knot_grid(knots);
@@ -1100,7 +1171,9 @@ async fn settled_on_registration(
             break;
         }
         let trial = nudged(&current, &best, feedback);
-        let Some(measured) = measure(&trial).await else { break };
+        let Some(measured) = measure(&trial).await else {
+            break;
+        };
         if measured.misfit >= best.misfit {
             feedback /= 2.0;
             continue;
@@ -1108,7 +1181,11 @@ async fn settled_on_registration(
         (current, best) = (trial, measured);
     }
     // A crop the settled curve no longer fills is black in the corners.
-    let crop = crop.min(crate::image::fill_crop(&current, preview.width, preview.height));
+    let crop = crop.min(crate::image::fill_crop(
+        &current,
+        preview.width,
+        preview.height,
+    ));
     Some((current, crop))
 }
 
@@ -1138,7 +1215,11 @@ fn nudged(knots: &[f64], measured: &crate::hdr_fit::Registration, feedback: f64)
         .sum();
     let mut normal = vec![0.0; n * n];
     let mut rhs = vec![0.0; n];
-    let bins = measured.radial.iter().zip(&measured.counts).zip(&measured.radii);
+    let bins = measured
+        .radial
+        .iter()
+        .zip(&measured.counts)
+        .zip(&measured.radii);
     for ((shift, count), radius) in bins {
         let Some(shift) = shift else { continue };
         let weight = count / total;
@@ -1201,7 +1282,11 @@ async fn with_curve(
     source: u32,
 ) -> (Option<Vec<f64>>, f64, u32) {
     let scaled = |gain: f64| knots.iter().map(|knot| knot * gain).collect::<Vec<f64>>();
-    chosen(fit_family(gpu, grids, scaled, &GAIN_SCAN, GAIN_STEP).await, baseline, source)
+    chosen(
+        fit_family(gpu, grids, scaled, &GAIN_SCAN, GAIN_STEP).await,
+        baseline,
+        source,
+    )
 }
 
 /// What a search settled on, as the cascade reports it.
@@ -1211,12 +1296,18 @@ async fn with_curve(
 /// and its crop has to survive, but the tier did not supply a curve for it and must not
 /// be credited with one: reporting it as a fitted or database geometry is how a tier's
 /// own numbers come to disagree with what it actually did.
-fn chosen(found: Option<(Vec<f64>, f64, f64)>, baseline: f64, source: u32) -> (Option<Vec<f64>>, f64, u32) {
+fn chosen(
+    found: Option<(Vec<f64>, f64, f64)>,
+    baseline: f64,
+    source: u32,
+) -> (Option<Vec<f64>>, f64, u32) {
     match found {
-        Some((knots, crop, delta)) if delta < baseline => match knots.iter().any(|knot| *knot != 0.0) {
-            true => (Some(knots), crop, source),
-            false => (None, crop, 0),
-        },
+        Some((knots, crop, delta)) if delta < baseline => {
+            match knots.iter().any(|knot| *knot != 0.0) {
+                true => (Some(knots), crop, source),
+                false => (None, crop, 0),
+            }
+        }
         _ => (None, 1.0, 0),
     }
 }
@@ -1281,14 +1372,25 @@ async fn grids_from_preview(
         height: preview.height,
         packed: false,
     };
-    let jpeg_full = reduced(gpu, &mut recording, &preview_bytes, fit_size(preview.width, preview.height));
+    let jpeg_full = reduced(
+        gpu,
+        &mut recording,
+        &preview_bytes,
+        fit_size(preview.width, preview.height),
+    );
 
     // Twice the fit grid, so the warp resamples from prefiltered pixels: warping
     // straight from 60MP with bilinear taps would alias, and resizing after the
     // warp would blur the geometry being measured.
     let source_width = jpeg_full.width * 2;
-    let source_height = ((render.height as f64 / render.width as f64) * source_width as f64).round() as usize;
-    let source = reduced(gpu, &mut recording, &render, (source_width, source_height.max(1)));
+    let source_height =
+        ((render.height as f64 / render.width as f64) * source_width as f64).round() as usize;
+    let source = reduced(
+        gpu,
+        &mut recording,
+        &render,
+        (source_width, source_height.max(1)),
+    );
 
     let search_source = reduced(gpu, &mut recording, &source, halved(&source));
     let search_jpeg = reduced(gpu, &mut recording, &jpeg_full, halved(&jpeg_full));
@@ -1303,7 +1405,12 @@ async fn grids_from_preview(
     let falloff_jpeg = blurred(gpu, &mut recording, &jpeg_full, FIT_BLUR_SIGMA);
 
     // 1:1 with the preview, which the full grid's render is not - it is held at twice it.
-    let sampled = reduced(gpu, &mut recording, &render, (preview.width, preview.height));
+    let sampled = reduced(
+        gpu,
+        &mut recording,
+        &render,
+        (preview.width, preview.height),
+    );
 
     // Nothing comes back. The three grids the search compares against stay where they were
     // reduced, and so does the 1:1 plane the settle warps.
@@ -1373,7 +1480,14 @@ async fn fit_grids(
         // expensive way there: fitting the same frames both ways is 1643ms against
         // 360ms on an RX100M3 and 1216ms against 589ms on an ILCE-7CR.
         Geometry::Unstated => chosen(
-            fit_family(gpu, &grids, |k1| polynomial_knots(k1, 0.0, 16), &K1_SCAN, K1_STEP).await,
+            fit_family(
+                gpu,
+                &grids,
+                |k1| polynomial_knots(k1, 0.0, 16),
+                &K1_SCAN,
+                K1_STEP,
+            )
+            .await,
             baseline_delta,
             SOURCE_FITTED,
         ),
@@ -1383,21 +1497,26 @@ async fn fit_grids(
     // Ahead of the falloff below, whose pairs correspond through whatever geometry is in
     // hand when it runs - so it has to be this one, not the one the settle replaced.
     let (curve, crop, source) = settled;
-    let (curve, crop, source) =
-        match settled_on_registration(gpu, render, preview, curve.as_deref().unwrap_or_default(), crop)
-            .await
-        {
-            Some((knots, crop)) => match (knots.iter().any(|knot| *knot != 0.0), source) {
-                // A curve where the tier supplied none is the measurement's alone, and
-                // reporting it as the tier's is how a tier's numbers come to disagree with
-                // what it did.
-                (true, 0) => (Some(knots), crop, SOURCE_MEASURED),
-                (true, tier) => (Some(knots), crop, tier),
-                // Settled onto nothing, which is a geometry of crop alone.
-                (false, _) => (None, crop, 0),
-            },
-            None => (curve, crop, source),
-        };
+    let (curve, crop, source) = match settled_on_registration(
+        gpu,
+        render,
+        preview,
+        curve.as_deref().unwrap_or_default(),
+        crop,
+    )
+    .await
+    {
+        Some((knots, crop)) => match (knots.iter().any(|knot| *knot != 0.0), source) {
+            // A curve where the tier supplied none is the measurement's alone, and
+            // reporting it as the tier's is how a tier's numbers come to disagree with
+            // what it did.
+            (true, 0) => (Some(knots), crop, SOURCE_MEASURED),
+            (true, tier) => (Some(knots), crop, tier),
+            // Settled onto nothing, which is a geometry of crop alone.
+            (false, _) => (None, crop, 0),
+        },
+        None => (curve, crop, source),
+    };
     lap("settle");
 
     let knots = curve.clone().unwrap_or_default();
@@ -1453,7 +1572,9 @@ pub async fn with_lateral(
     render: &crate::fit_source::Rendered,
     recorded: Option<[Vec<f64>; 2]>,
 ) {
-    let Some(frame) = crate::tca_device::frame(gpu, render).await else { return };
+    let Some(frame) = crate::tca_device::frame(gpu, render).await else {
+        return;
+    };
     profile.tca = match recorded {
         Some(curve) => crate::tca::supplied_curve(&frame, curve).await,
         None => match crate::tca::measure(&frame).await {
@@ -1475,7 +1596,8 @@ pub(crate) fn gaussian(matrix: &[f64], rhs: &[f64], n: usize) -> Option<Vec<f64>
     let mut a = matrix.to_vec();
     let mut b = rhs.to_vec();
     for col in 0..n {
-        let pivot = (col..n).max_by(|p, q| a[p * n + col].abs().total_cmp(&a[q * n + col].abs()))?;
+        let pivot =
+            (col..n).max_by(|p, q| a[p * n + col].abs().total_cmp(&a[q * n + col].abs()))?;
         if a[pivot * n + col].abs() < 1e-14 {
             return None;
         }
@@ -1520,7 +1642,11 @@ mod tests {
                 data[i + 2] = (90.0 + 60.0 * ((x + y) as f64 / (width + height) as f64)) as u8;
             }
         }
-        Rgb { width, height, data }
+        Rgb {
+            width,
+            height,
+            data,
+        }
     }
 
     /// Noise, hard edges and a gradient: content a blur has something to flatten.
@@ -1533,7 +1659,11 @@ mod tests {
                 seed ^= seed >> 7;
                 seed ^= seed << 17;
                 let noise = ((seed >> 40) & 0x3F) as f64 - 32.0;
-                let edge = if (x / 37 + y / 41) % 2 == 0 { 45.0 } else { 0.0 };
+                let edge = if (x / 37 + y / 41) % 2 == 0 {
+                    45.0
+                } else {
+                    0.0
+                };
                 let i = (y * width + x) * 3;
                 for (c, base) in [70.0, 110.0, 150.0].into_iter().enumerate() {
                     let v = base + edge + noise + 40.0 * ((x + c * 37) as f64 / width as f64);
@@ -1541,10 +1671,18 @@ mod tests {
                 }
             }
         }
-        Rgb { width, height, data }
+        Rgb {
+            width,
+            height,
+            data,
+        }
     }
 
-    fn blurred_on_device(gpu: &'static crate::gpu::Gpu, source: RgbRef<'_>, sigma: f64) -> Option<Rgb> {
+    fn blurred_on_device(
+        gpu: &'static crate::gpu::Gpu,
+        source: RgbRef<'_>,
+        sigma: f64,
+    ) -> Option<Rgb> {
         let mut recording = gpu.record();
         let held = uploaded(&mut recording, "test source", source);
         let out = blurred(gpu, &mut recording, &held, sigma);
@@ -1568,7 +1706,9 @@ mod tests {
 
     #[test]
     fn blur_flattens_detail_without_shifting_the_average() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = textured(64, 64);
         let out = blurred_on_device(gpu, source.as_ref(), 3.0).expect("the device blurs");
         assert_eq!((out.width, out.height), (64, 64));
@@ -1578,10 +1718,15 @@ mod tests {
             "a blur should not move the overall level"
         );
         let spread = |d: &[u8]| {
-            let (lo, hi) = d.iter().fold((255u8, 0u8), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+            let (lo, hi) = d
+                .iter()
+                .fold((255u8, 0u8), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
             hi - lo
         };
-        assert!(spread(&out.data) < spread(&source.data), "a blur should flatten detail");
+        assert!(
+            spread(&out.data) < spread(&source.data),
+            "a blur should flatten detail"
+        );
     }
 
     /// The blur's kernel, against the window it says it is.
@@ -1594,7 +1739,9 @@ mod tests {
     /// move a fitted falloff with nothing else reporting it.
     #[test]
     fn the_blur_is_the_triangular_window_it_claims() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         // A single lit column on black: what comes back is the kernel itself, one row of it.
         let (width, height) = (33usize, 3usize);
         let sigma = 3.0f64;
@@ -1611,7 +1758,11 @@ mod tests {
             for y in 0..height {
                 data[(y * width + lit) * 3..(y * width + lit) * 3 + 3].fill(255);
             }
-            let source = Rgb { width, height, data };
+            let source = Rgb {
+                width,
+                height,
+                data,
+            };
             let out = blurred_on_device(gpu, source.as_ref(), sigma).expect("the device blurs");
 
             let middle = (height / 2) * width;
@@ -1637,7 +1788,9 @@ mod tests {
     /// hundred source pixels at this ratio, which is not a reduce at all.
     #[test]
     fn a_reduce_averages_the_pixels_it_skips() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         // Alternating columns: any filter with support averages them to the midpoint, while a
         // point sample lands on one column or the other.
         let (width, height) = (640usize, 8usize);
@@ -1648,11 +1801,24 @@ mod tests {
                 data[(y * width + x) * 3..(y * width + x) * 3 + 3].fill(level);
             }
         }
-        let source = Rgb { width, height, data };
+        let source = Rgb {
+            width,
+            height,
+            data,
+        };
 
-        let out = reduced_on_device(gpu, source.as_ref(), (80, height)).expect("the device reduces");
-        let worst = out.data.iter().map(|v| (i32::from(*v) - 120).abs()).max().unwrap();
-        assert!(worst <= 8, "a reduce should average the columns it drops, worst was {worst} off");
+        let out =
+            reduced_on_device(gpu, source.as_ref(), (80, height)).expect("the device reduces");
+        let worst = out
+            .data
+            .iter()
+            .map(|v| (i32::from(*v) - 120).abs())
+            .max()
+            .unwrap();
+        assert!(
+            worst <= 8,
+            "a reduce should average the columns it drops, worst was {worst} off"
+        );
     }
 
     /// The device reduce against `image::resize`, which is the convention it was written to.
@@ -1664,7 +1830,9 @@ mod tests {
     /// carries its taps as fixed point where this works in floats throughout.
     #[test]
     fn the_device_reduce_lands_where_the_host_resize_does() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = textured(300, 200);
         let ours = reduced_on_device(gpu, source.as_ref(), (97, 65)).expect("the device reduces");
         let theirs = crate::image::resize(source.as_ref(), 97, 65);
@@ -1689,7 +1857,9 @@ mod tests {
     /// that the difference stays under the byte.
     #[test]
     fn a_reduce_onto_its_own_size_gives_the_plane_back() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let source = textured(61, 43);
         let out = reduced_on_device(gpu, source.as_ref(), (61, 43)).expect("the device reduces");
         let worst = out
@@ -1708,9 +1878,17 @@ mod tests {
         // of `with_lateral` to `profile.tca = None` left the whole suite green, and so did
         // deleting the crop division - so neither the curve reaching the profile nor the
         // room the widest channel needs was pinned anywhere.
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let render = scene(96, 72);
-        let mut profile = Profile { knots: None, gain: None, tca: None, crop: 1.0, source: 0 };
+        let mut profile = Profile {
+            knots: None,
+            gain: None,
+            tca: None,
+            crop: 1.0,
+            source: 0,
+        };
         // 0.6% outward on red: over `MIN_SHIFT`'s quarter-pixel floor at this frame size
         // and well under `MAX_SCALE`, so `plausible` accepts it, and `improves` cannot
         // refuse it on a frame with no point sources to check against.
@@ -1718,9 +1896,15 @@ mod tests {
         let render = crate::fit_source::uploaded_render(gpu, render.as_ref());
         pollster::block_on(with_lateral(gpu, &mut profile, &render, Some(recorded)));
 
-        let tca = profile.tca.as_ref().expect("a recorded curve reaches the profile");
+        let tca = profile
+            .tca
+            .as_ref()
+            .expect("a recorded curve reaches the profile");
         let widest = crate::tca::widest(Some(tca));
-        assert!(widest > 1.0, "red reads past green, so the widest reach is over 1: {widest}");
+        assert!(
+            widest > 1.0,
+            "red reads past green, so the widest reach is over 1: {widest}"
+        );
         // The crop has to tighten by exactly that reach, or the channel read furthest out
         // samples past the edge of the frame it was cropped to.
         assert!(
@@ -1792,7 +1976,11 @@ mod tests {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             })
         };
-        (upload("objective ours", &ours), upload("objective theirs", &theirs), (width, height))
+        (
+            upload("objective ours", &ours),
+            upload("objective theirs", &theirs),
+            (width, height),
+        )
     }
 
     /// Held-out pairs the curve maps exactly must score at the floor, or every candidate
@@ -1803,12 +1991,18 @@ mod tests {
     /// a mapping stated outright.
     #[test]
     fn a_luma_score_bottoms_out_when_the_curve_maps_every_pair() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let (ours, theirs, size) = mapped_grids(gpu, tone_mapped);
         let paired = crate::fit_objective::paired(gpu, 1, &theirs, size);
         let scored = pollster::block_on(paired.scored(&[ours], Phase::Train, None))
             .expect("the device scored");
-        assert!(scored[0].pairs > 1000, "the gate admitted {}", scored[0].pairs);
+        assert!(
+            scored[0].pairs > 1000,
+            "the gate admitted {}",
+            scored[0].pairs
+        );
         // One level of rounding is 100/255 of a unit, so anything under that is exact.
         assert!(
             scored[0].delta < 100.0 / 255.0,
@@ -1866,13 +2060,25 @@ mod tests {
     /// invented ones.
     #[test]
     fn a_falloff_that_dips_before_it_climbs_is_not_a_falloff() {
-        assert!(!keeps_its_direction(-4.6781, 6.4322), "a measured solve, dipping to the clamp");
-        assert!(!keeps_its_direction(1.0, -1.5), "a lift that turns over well before the corner");
+        assert!(
+            !keeps_its_direction(-4.6781, 6.4322),
+            "a measured solve, dipping to the clamp"
+        );
+        assert!(
+            !keeps_its_direction(1.0, -1.5),
+            "a lift that turns over well before the corner"
+        );
 
         assert!(keeps_its_direction(0.6, 0.2), "a plain corner lift");
         assert!(keeps_its_direction(-0.4, -0.1), "the same shape darkening");
-        assert!(keeps_its_direction(0.1074, -0.3198), "a 0.9% rise before a 21% fall");
-        assert!(keeps_its_direction(0.8, -0.4), "a lift flattening at the corner without falling");
+        assert!(
+            keeps_its_direction(0.1074, -0.3198),
+            "a 0.9% rise before a 21% fall"
+        );
+        assert!(
+            keeps_its_direction(0.8, -0.4),
+            "a lift flattening at the corner without falling"
+        );
         assert!(keeps_its_direction(0.0, 0.0), "no falloff at all");
     }
 
@@ -1881,8 +2087,14 @@ mod tests {
         // Slack is measured down from the tightest fill, so a positive entry here would
         // put a black margin back in the search - which the residual cannot see, the
         // pair gate skipping black, and so would score as well as the crop that fills.
-        assert!(SLACK_SCAN.iter().all(|slack| *slack <= 0.0), "{SLACK_SCAN:?}");
-        assert!(SLACK_SCAN.contains(&0.0), "the tightest fill has to be a candidate");
+        assert!(
+            SLACK_SCAN.iter().all(|slack| *slack <= 0.0),
+            "{SLACK_SCAN:?}"
+        );
+        assert!(
+            SLACK_SCAN.contains(&0.0),
+            "the tightest fill has to be a candidate"
+        );
     }
 
     /// The claim the settle exists for: a curve is recovered from where the camera put the
@@ -1919,14 +2131,20 @@ mod tests {
             (width, height),
         );
         let preview = crate::hdr_fit::Source {
-            buffer: warped.into_iter().next().expect("the device warps the truth in"),
+            buffer: warped
+                .into_iter()
+                .next()
+                .expect("the device warps the truth in"),
             width,
             height,
         };
         let (settled, crop) =
             pollster::block_on(settled_on_registration(gpu, &source, &preview, &start, 1.0))
-        .expect("a frame this textured has something to register on");
-        assert_eq!(crop, 1.0, "a curve that only magnifies still fills the frame");
+                .expect("a frame this textured has something to register on");
+        assert_eq!(
+            crop, 1.0,
+            "a curve that only magnifies still fills the frame"
+        );
         for radius in [0.4, 0.5, 0.6] {
             let want = crate::image::spline_at(&truth, radius);
             let got = crate::image::spline_at(&settled, radius);

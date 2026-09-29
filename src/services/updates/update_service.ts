@@ -133,7 +133,8 @@ export class UpdateService {
    */
   async apply(): Promise<void> {
     const home = updatesHome();
-    if (home == null) throw new Error('this install cannot replace itself, so it cannot update in place');
+    if (home == null)
+      throw new Error('this install cannot replace itself, so it cannot update in place');
     const release = this.newerReleases()[0];
     if (release == null) throw new Error('there is nothing newer than this version to install');
     if (this.downloading) throw new Error('an update is already being downloaded');
@@ -161,7 +162,9 @@ export class UpdateService {
       throw err;
     }
 
-    log.info('an update is staged; exiting for the updater to install it', { version: release.version });
+    log.info('an update is staged; exiting for the updater to install it', {
+      version: release.version,
+    });
     // After the response has gone out. The caller is a route handler, and a process that
     // exits inside one answers nothing at all.
     setTimeout(() => process.exit(STAGED_EXIT_CODE), 250);
@@ -187,7 +190,8 @@ export class UpdateService {
     // The nullable one, because this runs inside `status()` and so on every `GET
     // /api/updates`: an endpoint that named no assets would otherwise turn the route that
     // reports there is an update into a 500. The release page is the honest hint there.
-    if (asset?.installer != null) return this.maybeAssetUrl(newest.tag, asset.installer) ?? newest.url;
+    if (asset?.installer != null)
+      return this.maybeAssetUrl(newest.tag, asset.installer) ?? newest.url;
     return newest.url;
   }
 
@@ -217,7 +221,10 @@ export class UpdateService {
     const response = await fetch(this.assetUrl(tag, MANIFEST_ASSET), {
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
     });
-    if (!response.ok) throw new Error(`release ${tag} publishes no ${MANIFEST_ASSET} (the server answered ${response.status})`);
+    if (!response.ok)
+      throw new Error(
+        `release ${tag} publishes no ${MANIFEST_ASSET} (the server answered ${response.status})`,
+      );
     const manifest = parseReleaseManifest(await response.text());
     this.manifests.set(tag, manifest);
     return manifest;
@@ -285,7 +292,9 @@ export async function stagePayload(home: string, payload: Payload): Promise<void
   try {
     const response = await fetch(payload.url, { signal: stalled.signal });
     if (!response.ok || response.body == null) {
-      throw new Error(`could not download ${payload.filename}: the server answered ${response.status}`);
+      throw new Error(
+        `could not download ${payload.filename}: the server answered ${response.status}`,
+      );
     }
     // Streamed to disk and hashed on the way past, rather than held: a payload is hundreds
     // of megabytes, and this runs on machines whose whole job is to have room for photographs.
@@ -333,5 +342,8 @@ export async function stagePayload(home: string, payload: Payload): Promise<void
 async function untar(tarball: string, into: string): Promise<void> {
   const proc = Bun.spawn(['tar', '-xzf', tarball, '-C', into], { stdout: 'pipe', stderr: 'pipe' });
   const [status, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-  if (status !== 0) throw new Error(`could not unpack ${path.basename(tarball)}: ${stderr.trim() || `tar exited ${status}`}`);
+  if (status !== 0)
+    throw new Error(
+      `could not unpack ${path.basename(tarball)}: ${stderr.trim() || `tar exited ${status}`}`,
+    );
 }

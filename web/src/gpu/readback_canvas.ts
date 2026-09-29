@@ -42,7 +42,8 @@ class ReadbackCanvases {
   /** `frame` onto `canvas`, at the frame's own size. */
   async show(canvas: HTMLCanvasElement, frame: ReadFrame): Promise<void> {
     const drawing = await this.opened();
-    if (drawing == null) throw new Error('this page has no WebGPU device to draw a read-back frame with');
+    if (drawing == null)
+      throw new Error('this page has no WebGPU device to draw a read-back frame with');
     const { device } = drawing;
     const texture = device.createTexture({
       size: [frame.width, frame.height],
@@ -53,7 +54,11 @@ class ReadbackCanvases {
       device.queue.writeTexture(
         { texture },
         frame.words.buffer as ArrayBuffer,
-        { offset: frame.words.byteOffset, bytesPerRow: frame.width * 4, rowsPerImage: frame.height },
+        {
+          offset: frame.words.byteOffset,
+          bytesPerRow: frame.width * 4,
+          rowsPerImage: frame.height,
+        },
         [frame.width, frame.height],
       );
       this.blit(canvas, drawing, texture);
@@ -71,7 +76,10 @@ class ReadbackCanvases {
       size: [bitmap.width, bitmap.height],
       format: 'rgba16float',
       // RENDER_ATTACHMENT because `copyExternalImageToTexture` demands it of its destination.
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
     });
     try {
       device.queue.copyExternalImageToTexture(
@@ -103,13 +111,21 @@ class ReadbackCanvases {
     const commands = device.createCommandEncoder();
     const pass = commands.beginRenderPass({
       colorAttachments: [
-        { view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } },
+        {
+          view: context.getCurrentTexture().createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
       ],
     });
     pass.setPipeline(blit);
     pass.setBindGroup(
       0,
-      device.createBindGroup({ layout: blit.getBindGroupLayout(0), entries: [{ binding: 3, resource: texture.createView() }] }),
+      device.createBindGroup({
+        layout: blit.getBindGroupLayout(0),
+        entries: [{ binding: 3, resource: texture.createView() }],
+      }),
     );
     pass.draw(3);
     pass.end();

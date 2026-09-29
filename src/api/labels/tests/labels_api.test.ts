@@ -8,7 +8,14 @@ import type { PhotoReadService } from '../../../services/photos/listing/photo_re
 import { LabelsApi } from '../labels_api';
 
 const LIB = 'library1';
-const label: Label = { id: 'label001', library_id: LIB, name: 'Keeper', colour: '#ff0000', position: 0, photo_count: 0 };
+const label: Label = {
+  id: 'label001',
+  library_id: LIB,
+  name: 'Keeper',
+  colour: '#ff0000',
+  position: 0,
+  photo_count: 0,
+};
 
 function buildApp(): { app: Hono; labels: LabelsService } {
   const labels = {
@@ -39,7 +46,11 @@ describe('LabelsApi', () => {
   it('creates a label of one line up to 20 characters, trimmed', async () => {
     const { app, labels } = buildApp();
     expect((await create(app, '  Best of 2026 & more ')).status).toBe(201);
-    expect(labels.create).toHaveBeenCalledWith({ library_id: LIB, name: 'Best of 2026 & more', colour: '#00ff00' });
+    expect(labels.create).toHaveBeenCalledWith({
+      library_id: LIB,
+      name: 'Best of 2026 & more',
+      colour: '#00ff00',
+    });
   });
 
   it('refuses a name too long, blank or over two lines, and a colour that is not hex', async () => {
@@ -53,11 +64,14 @@ describe('LabelsApi', () => {
 
   it('labels the photos a target names', async () => {
     const { app, labels } = buildApp();
-    const res = await app.request(route(PathSegment.api(), PathSegment.labels(), 'label001', PathSegment.photos()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ photo_ids: ['photo001'] }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.labels(), 'label001', PathSegment.photos()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ photo_ids: ['photo001'] }),
+      },
+    );
     expect(res.status).toBe(204);
     expect(labels.addPhotos).toHaveBeenCalledWith('label001', ['photo001']);
   });

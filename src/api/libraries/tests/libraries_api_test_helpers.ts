@@ -11,12 +11,29 @@ import { LibrariesApi } from '../libraries_api';
 import type { Activity } from '../../../schemas/activity';
 
 export const LIBRARY_ID = 'lib00001';
-export const library: Library = { id: LIBRARY_ID, root_path: '/r', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
+export const library: Library = {
+  id: LIBRARY_ID,
+  root_path: '/r',
+  bin_name: 'Bin',
+  read_only: false,
+  name: 'lib',
+  ordering: 'taken_desc',
   rendition_source: 'embedded',
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
-  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
+  render_skip_full: [],
+  render_skip_max: [],
+  denoiser: 'galosh',
+  include_subfolders: true,
+  include_non_raw: false,
+  auto_stack: true,
+  auto_stack_similarity: 0.78,
+  auto_stack_window_seconds: 60,
+  last_synced_at: null,
+  photo_count: 0,
+  missing_photo_count: 0,
+  unavailable_photo_count: 0,
+  rendered_photo_count: 0,
+};
 export const status: LibraryScanStatus = {
   library_id: LIBRARY_ID,
   status: 'processing',
@@ -67,11 +84,22 @@ export function buildApp(
     clear: jest.fn(() => true),
     ...rules,
   } as unknown as FolderRulesRepository;
-  const shoots = { hiddenFolders: jest.fn(() => [] as string[]), ...shootsOver } as unknown as ShootsService;
+  const shoots = {
+    hiddenFolders: jest.fn(() => [] as string[]),
+    ...shootsOver,
+  } as unknown as ShootsService;
   const app = new Hono();
   app.route(
     route(PathSegment.api(), PathSegment.libraries()),
-    new LibrariesApi(libraries, syncSvc, folderRules, shoots, detectStacks, activityFor, globalActivity).routes,
+    new LibrariesApi(
+      libraries,
+      syncSvc,
+      folderRules,
+      shoots,
+      detectStacks,
+      activityFor,
+      globalActivity,
+    ).routes,
   );
   applyErrorHandler(app);
   return { app, libraries, scan: syncSvc, folderRules, shoots, detectStacks };

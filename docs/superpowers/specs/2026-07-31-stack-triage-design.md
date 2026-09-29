@@ -10,17 +10,17 @@ one, several, all or none.
 
 Terms, used exactly and only this way throughout:
 
-| term | meaning |
-|---|---|
-| **round** | one pair, put to the photographer and judged |
-| **the pool** | the photos still in contention, the `alive` field |
-| **survivor** | a photo currently in the pool |
-| **the keep set** | the survivors at the moment the session ends |
-| **decisive** | the verdict *A better* or *B better*: exactly one photo leaves. `Neither` removes two and is **not** decisive |
-| **a draw** | the verdict `Both` |
-| **held over** | the winner of a decisive verdict, kept on screen for the next round rather than replaced (§2.2). It has no field of its own: it is whatever sits at the front of the pool |
-| **the stage** | the area the photos are drawn in, one `PhotoStage` in flip and two in split (§3) |
-| **A** and **B** | the two **slots** on screen, never photo names. Worked examples name photos `p`, `q`, `r` |
+| term             | meaning                                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **round**        | one pair, put to the photographer and judged                                                                                                                              |
+| **the pool**     | the photos still in contention, the `alive` field                                                                                                                         |
+| **survivor**     | a photo currently in the pool                                                                                                                                             |
+| **the keep set** | the survivors at the moment the session ends                                                                                                                              |
+| **decisive**     | the verdict _A better_ or _B better_: exactly one photo leaves. `Neither` removes two and is **not** decisive                                                             |
+| **a draw**       | the verdict `Both`                                                                                                                                                        |
+| **held over**    | the winner of a decisive verdict, kept on screen for the next round rather than replaced (§2.2). It has no field of its own: it is whatever sits at the front of the pool |
+| **the stage**    | the area the photos are drawn in, one `PhotoStage` in flip and two in split (§3)                                                                                          |
+| **A** and **B**  | the two **slots** on screen, never photo names. Worked examples name photos `p`, `q`, `r`                                                                                 |
 
 ## 1. Scope
 
@@ -45,12 +45,15 @@ comparing across stacks.
 ```ts
 type Verdict = 'a' | 'b' | 'both' | 'neither';
 
-interface Round { a: string; b: string }
+interface Round {
+  a: string;
+  b: string;
+}
 
 interface Session {
-  alive: string[];            // the pool, in queue order
-  seen: ReadonlySet<string>;  // every pair already judged, keyed by its two ids sorted and joined
-  stopped: boolean;           // Keep the rest was pressed
+  alive: string[]; // the pool, in queue order
+  seen: ReadonlySet<string>; // every pair already judged, keyed by its two ids sorted and joined
+  stopped: boolean; // Keep the rest was pressed
 }
 ```
 
@@ -88,12 +91,12 @@ schedule with one list. §3.1 needs only `round.a === previousRound.a`.
 
 ### 2.3 Verdicts
 
-| verdict | the pool |
-|---|---|
-| A better | B removed, A moved to the front |
-| B better | A removed, B moved to the front |
-| Both | A then B moved to the back, in that order |
-| Neither | both removed |
+| verdict  | the pool                                  |
+| -------- | ----------------------------------------- |
+| A better | B removed, A moved to the front           |
+| B better | A removed, B moved to the front           |
+| Both     | A then B moved to the back, in that order |
+| Neither  | both removed                              |
 
 All four add the pair to `seen`.
 
@@ -159,7 +162,7 @@ during the session.
   `PATCH`ed to `triage: 'picked'`.** A survivor in no pair has never been on
   screen, and is left exactly as it was.
 
-Without that clause, *A better* then `Neither` over `[p, q, r, t]` would mark
+Without that clause, _A better_ then `Neither` over `[p, q, r, t]` would mark
 unseen survivor `t` as `picked`. Keep the rest preserves all survivors but
 claims consideration only for those shown.
 
@@ -169,7 +172,7 @@ open band member in place, so the gallery behind the viewer stays correct.
 **Every triage value a session writes is one of three: `rejected`, `picked`, or
 the photo's value when the session opened.** That last set is captured once, as a
 `baseline: Record<photoId, Triage>` stored beside the session (§5), and it is
-what every restore targets. Undo therefore needs to record only *which* photos an
+what every restore targets. Undo therefore needs to record only _which_ photos an
 action wrote, never what it overwrote, which is what makes §2.7's `changed` a
 list of ids.
 
@@ -188,7 +191,7 @@ toasts and resolves, so a caller cannot tell a rejection that landed from one
 that did not, and the session would advance believing frames were rejected that
 the server never took. `setTriage` therefore reports success, and the page keeps
 a list of photos whose writes failed, shown in the bottom bar and again on the
-summary as *n could not be saved · Retry*.
+summary as _n could not be saved · Retry_.
 
 Do **not** rewind. Failed `rejected` destroys nothing; failed restore heals when
 the photo is later `picked` or eliminated again. Compensation would discard
@@ -211,21 +214,21 @@ three lines and no signature.
 
 ### 2.7 History, undo, and the queue
 
-Every action pushes an entry: the session as it stood *before* the action, the
+Every action pushes an entry: the session as it stood _before_ the action, the
 showing slot, what the photographer chose, and every photo the action wrote.
 
 ```ts
 interface HistoryEntry {
-  session: Session;                 // as it was BEFORE this action
+  session: Session; // as it was BEFORE this action
   showing: 'a' | 'b';
-  choice: Verdict | 'stopped';      // 'stopped' is Keep the rest
-  changed: string[];                // photo ids this action wrote, in issue order
+  choice: Verdict | 'stopped'; // 'stopped' is Keep the rest
+  changed: string[]; // photo ids this action wrote, in issue order
 }
 ```
 
 `showing` is in the entry because §3.1 makes the slot part of what the
 photographer sees; restoring the pairing without it would leave the pinned slot
-and the frame disagreeing. `choice` is in it because Completed has to *show* the
+and the frame disagreeing. `choice` is in it because Completed has to _show_ the
 verdict, and it is not otherwise recoverable: it exists only as a diff against
 the following entry's session, which the newest entry does not have. `changed`
 is a list of ids rather than of previous values because every restore targets the
@@ -273,7 +276,7 @@ that had just resumed underneath it.
 **The queue.** A button in the header opens a list in two parts:
 
 - **Completed**, most recent first: each round's two thumbnails, in slot order,
-  and the `choice` that was made, worded as the button was (*A better*, *Both*).
+  and the `choice` that was made, worded as the button was (_A better_, _Both_).
   Selecting one rewinds to it, so it can be judged again. This is the same
   operation undo performs, offered by name rather than by depth. The Keep the
   rest entry has no round to draw and is listed as the ending itself.
@@ -286,7 +289,7 @@ an icon, and a Completed row is two thumbnails. Opening it suppresses the verdic
 keys for as long as it is open, for the reason a peek does (§3.1). Selecting a
 Completed round does not confirm first; the house stance is report-with-an-undo,
 and the rewind is itself the undo; but it is worth knowing that the rounds after
-it are *discarded*, not merely stepped over, so this is the one place in the
+it are _discarded_, not merely stepped over, so this is the one place in the
 screen where forward history is lost.
 
 Upcoming has to assume verdicts it does not have, so it assumes the one that
@@ -327,8 +330,8 @@ would therefore remount and **re-decode** a full-size AVIF on every flip, on bot
 press and release.
 
 Mounting both and toggling `opacity` is not enough either, and the component
-already says why: its own `RETIRED_FRAMES` comment records that *an element
-hidden with `opacity: 0` is never rasterised*, which is the reason a retiring
+already says why: its own `RETIRED_FRAMES` comment records that _an element
+hidden with `opacity: 0` is never rasterised_, which is the reason a retiring
 frame is held under its replacement for three frames. A naive alternate would
 reintroduce that stall in the one gesture this mode exists for. **Both frames are
 therefore promoted to their own compositor layer**, so each keeps a raster while
@@ -384,7 +387,7 @@ put a thumb on the scale.
 
 Equal area is not even reliably the smaller picture. Where width is the binding
 constraint, which is the usual case for a landscape pair in a wide viewport, it
-uses *more* of the screen than a common height by `2(aA+aB)/(√aA+√aB)²`; across
+uses _more_ of the screen than a common height by `2(aA+aB)/(√aA+√aB)²`; across
 the common camera aspects it matches or beats the common-extent rule more often
 than not, and wins by 22% on the panorama pair. It gives up screen only where one
 photo's aspect makes height the binding constraint, worst measured case a
@@ -445,22 +448,22 @@ a misclick rejects a photograph.
   **Queue** menu (§2.7), and the flip/split switch.
 - **Top**, flip only: the `A` · `↔` · `B` switch.
 - **Bottom**, both modes: `A better` · `Both` · `B better` · `Neither`, then
-  `Undo`, `Keep the rest`, and the count: *n photos left, up to k rounds*. k is
+  `Undo`, `Keep the rest`, and the count: _n photos left, up to k rounds_. k is
   the number of pairs among the pool that are not in `seen`, counted by
   enumeration rather than as `C(n,2) − |seen|`, which understates it once
   eliminations have left pairs in `seen` naming photos that are gone.
 
 k is an upper bound and only ever falls, for the reason the projected queue only
-ever shrinks (§2.7); it is labelled *up to* so that a draw, which lowers it by
+ever shrinks (§2.7); it is labelled _up to_ so that a draw, which lowers it by
 one while the pool stays the same size, does not read as a stalled counter.
 
-Keys: `←` *A better*, `→` *B better*, `↓` or `Space` `Both`, hold `Shift` to peek
+Keys: `←` _A better_, `→` _B better_, `↓` or `Space` `Both`, hold `Shift` to peek
 in flip mode, `Ctrl/Cmd+Z` or `Backspace` undo. Arrows because they point at the
 slot they choose, which is literal in split and positional in flip, where the top
 bar puts A and B on the same axis. The handler ignores events from `INPUT`,
 `TEXTAREA` and `SELECT`, and takes `Ctrl/Cmd+Z` as the **only** modified chord,
 ignoring every other modifier: `Cmd+←` and `Alt+←` are the browser's Back, and
-without the guard navigating away would cast *A better* on the way out.
+without the guard navigating away would cast _A better_ on the way out.
 `Backspace` is offered beside `Ctrl/Cmd+Z` because it is what a photographer's
 hand reaches for, and it is safe here in a way it is not elsewhere: the browsers
 that mapped it to Back dropped that years ago. The keys go in `SHORTCUTS`
@@ -470,7 +473,7 @@ that mapped it to Back dropped that years ago. The keys go in `SHORTCUTS`
 `↓`, a verdict that destroys nothing: the wrong neighbour for the one verdict
 that destroys two photographs at once. It is a `variant="danger"` button, the
 `destructive` flag the Bin uses is an `ActionMenu` option field, not a button
-variant, and it reports *2 rejected* through `toasts.showUndoable`, the same
+variant, and it reports _2 rejected_ through `toasts.showUndoable`, the same
 report-with-an-undo the bin uses, rather than asking first. The house stance on
 destructive-but-reversible is that a confirmation on a repeated action is worse
 than an undo.
@@ -490,8 +493,8 @@ none` on it so a long press does not raise the context menu.
 **The verdict bar is disabled until both frames have decoded**, so a verdict
 cannot be cast on a stage that is still building a rendition, and
 `onImageMissing` is wired to `buildMissingRendition` exactly as the viewer wires
-it. A stack whose members were never processed is otherwise a screen of *no
-rendition yet* with live buttons under it.
+it. A stack whose members were never processed is otherwise a screen of _no
+rendition yet_ with live buttons under it.
 
 The `A` · `↔` · `B` switch is a labelled group whose pressed state is announced,
 and each new round is announced to a live region. The screen replaces its entire
@@ -503,7 +506,7 @@ default gallery filtering silently removes rejected members.
 It replaces the stage, keeping the header, and holds up to three labelled rows of
 thumbnails: **Kept**, **Rejected**, and **Not saved** when any write failed, with
 a Retry. A survivor that was never on screen; the Keep the rest case, is drawn
-in Kept and marked *not compared*, because §2.6 goes to real trouble to keep that
+in Kept and marked _not compared_, because §2.6 goes to real trouble to keep that
 distinction in the data and the screen would otherwise hide it. When `Neither`
 has emptied the pool the summary says the stack was rejected entirely rather than
 drawing an empty Kept row. Counts are of photos, not rounds.
@@ -524,7 +527,7 @@ on that stage having a frame up and would therefore unmount and re-warm the whol
 set on every round. Keyed by src so that a survivor keeps its element and only
 the eliminated photo's drops.
 
-**Only the frames that can appear in the *next* round are drawn at stage size**;
+**Only the frames that can appear in the _next_ round are drawn at stage size**;
 the rest are warmed at any size. A decode is for the size an element is drawn at,
 so a stage-sized warm is what makes the next round instant; but it is also a
 full-resolution bitmap held live, and ten of those is hundreds of megabytes. At
@@ -694,35 +697,49 @@ component split, and the existing precedent of a pure module with its own tests
 beside the presenter that drives it (`bands.ts`, `grid_layout.ts`,
 `selection.ts`).
 
-| file | holds |
-|---|---|
-| `stack_triage.ts` | the tournament and the layout, pure (below) |
-| `triage_storage.ts` | the stored session under `bowerbird.triage.<stackId>`, its array-shaped `seen`, the done marker, and the mode |
-| `stack_triage_store.ts` | observables and computeds only (below) |
+| file                        | holds                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stack_triage.ts`           | the tournament and the layout, pure (below)                                                                                                       |
+| `triage_storage.ts`         | the stored session under `bowerbird.triage.<stackId>`, its array-shaped `seen`, the done marker, and the mode                                     |
+| `stack_triage_store.ts`     | observables and computeds only (below)                                                                                                            |
 | `stack_triage_presenter.ts` | every mutation: `open`, verdicts, `keepTheRest`, `rewindTo`, `setMode`, `setShowing`, the triage writes, the storage writes, the `ResizeObserver` |
-| `stack_triage_page.tsx` | the route `/stacks/:stackId/triage`, registered in `app.tsx`, the two layouts, the queue popover, the summary, the keyboard layer |
+| `stack_triage_page.tsx`     | the route `/stacks/:stackId/triage`, registered in `app.tsx`, the two layouts, the queue popover, the summary, the keyboard layer                 |
 
 The pure module, stated to the signature so that the page, the presenter and the
 tests cannot each invent a different one:
 
 ```ts
 export type Verdict = 'a' | 'b' | 'both' | 'neither';
-export interface Round { a: string; b: string }
-export interface Session { alive: string[]; seen: ReadonlySet<string>; stopped: boolean }
-export interface Shape { width: number; height: number }
-export interface Placed { direction: 'row' | 'column'; a: Shape; b: Shape }
+export interface Round {
+  a: string;
+  b: string;
+}
+export interface Session {
+  alive: string[];
+  seen: ReadonlySet<string>;
+  stopped: boolean;
+}
+export interface Shape {
+  width: number;
+  height: number;
+}
+export interface Placed {
+  direction: 'row' | 'column';
+  a: Shape;
+  b: Shape;
+}
 
 export const UPCOMING_SHOWN = 20;
-export const SPLIT_GAP = 16;                       // px, the gutter in §3.2
+export const SPLIT_GAP = 16; // px, the gutter in §3.2
 
-export function pairKey(x: string, y: string): string;        // sorted, joined with '|'
+export function pairKey(x: string, y: string): string; // sorted, joined with '|'
 export function pairHas(key: string, id: string): boolean;
 export function openSession(ids: string[]): Session;
 export function nextRound(session: Session): Round | null;
 export function applyVerdict(session: Session, round: Round, verdict: Verdict): Session;
 export function losersOf(round: Round, verdict: Verdict): string[];
 export function stop(session: Session): Session;
-export function keepers(session: Session): string[];           // survivors seen in some pair
+export function keepers(session: Session): string[]; // survivors seen in some pair
 export function remainingPairs(session: Session): number;
 export function upcomingRounds(session: Session, limit?: number): Round[];
 export function arrangement(aA: number, aB: number, w: number, h: number): Placed;

@@ -5,7 +5,10 @@ import type { ServerWebSocket } from 'bun';
 import type { Json } from '../src/json.ts';
 
 export class FakeTv {
-  handshake: Json[] = [{ event: 'ms.channel.connect', data: {} }, { event: 'ms.channel.ready', data: {} }];
+  handshake: Json[] = [
+    { event: 'ms.channel.connect', data: {} },
+    { event: 'ms.channel.ready', data: {} },
+  ];
   answer: (request: Json, tv: FakeTv) => void = () => {};
   onTransfer: (socket: Socket) => void = () => {};
   readonly requests: Json[] = [];
@@ -15,7 +18,8 @@ export class FakeTv {
 
   readonly server = Bun.serve({
     port: 0,
-    fetch: (request, server) => (server.upgrade(request) ? undefined : new Response(null, { status: 400 })),
+    fetch: (request, server) =>
+      server.upgrade(request) ? undefined : new Response(null, { status: 400 }),
     websocket: {
       open: (ws) => {
         this.client = ws;
@@ -39,7 +43,8 @@ export class FakeTv {
 
   get transferPort(): number {
     const address = this.transfers.address();
-    if (address == null || typeof address === 'string') throw new Error('transfer server is not listening');
+    if (address == null || typeof address === 'string')
+      throw new Error('transfer server is not listening');
     return address.port;
   }
 
@@ -48,7 +53,12 @@ export class FakeTv {
   }
 
   connInfo(): string {
-    return JSON.stringify({ ip: '127.0.0.1', port: String(this.transferPort), key: 'sec-key', secured: false });
+    return JSON.stringify({
+      ip: '127.0.0.1',
+      port: String(this.transferPort),
+      key: 'sec-key',
+      secured: false,
+    });
   }
 
   stop(): void {

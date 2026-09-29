@@ -27,7 +27,6 @@ export interface JobOutcome {
   composite?: string;
 }
 
-
 // Big enough for any reply the job produces. Two things in one are variable-length and both
 // are bytes rendered as a JSON array, which costs up to four characters each: the stacking
 // descriptor at 2.6kB (~16kB rendered) and the photo analysis at 5kB (~20kB). Sized generously
@@ -45,7 +44,9 @@ const REPLY_CAPACITY = 128 * 1024;
  */
 export function runJob(job: Job): JobOutcome {
   const command = Buffer.from(JSON.stringify(job), 'utf8');
-  return replied((reply) => Number(shim().bb_run_job(command, command.byteLength, ptr(reply), reply.byteLength)));
+  return replied((reply) =>
+    Number(shim().bb_run_job(command, command.byteLength, ptr(reply), reply.byteLength)),
+  );
 }
 
 /**
@@ -56,7 +57,14 @@ export function writeRendered(job: Job, framed: Uint8Array): JobOutcome {
   const command = Buffer.from(JSON.stringify(job), 'utf8');
   return replied((reply) =>
     Number(
-      shim().bb_write_rendered(command, command.byteLength, ptr(framed), framed.byteLength, ptr(reply), reply.byteLength),
+      shim().bb_write_rendered(
+        command,
+        command.byteLength,
+        ptr(framed),
+        framed.byteLength,
+        ptr(reply),
+        reply.byteLength,
+      ),
     ),
   );
 }
@@ -75,7 +83,9 @@ function replied(call: (reply: Uint8Array) => number): JobOutcome {
   }
   if (written < 0) throw new Error('rawshim could not run the job');
 
-  const parsed = JobReplySchema.parse(JSON.parse(new TextDecoder().decode(reply.subarray(0, written))));
+  const parsed = JobReplySchema.parse(
+    JSON.parse(new TextDecoder().decode(reply.subarray(0, written))),
+  );
   if (!parsed.ok) throw new Error(parsed.error ?? 'rawshim could not run the job');
   const descriptor = parsed.outcome?.descriptor;
   const photoAnalysis = parsed.outcome?.photoAnalysis;
@@ -206,7 +216,17 @@ export function writeGainMap(
   const alternate = Buffer.from(`${alternatePath}\0`);
   const container = Buffer.from(`${format}\0`);
   const call = (out: Uint8Array): number =>
-    Number(shim().bb_write_gain_map(base, alternate, container, quality, speed, ptr(out), out.byteLength));
+    Number(
+      shim().bb_write_gain_map(
+        base,
+        alternate,
+        container,
+        quality,
+        speed,
+        ptr(out),
+        out.byteLength,
+      ),
+    );
   let out = new Uint8Array(TRANSCODE_CAPACITY);
   let written = call(out);
   if (written > out.byteLength) {
@@ -240,4 +260,3 @@ export function exportStill(
   if (written < 0) throw new Error(`rawshim could not write ${filePath} as ${format}`);
   return Buffer.from(out.subarray(0, written));
 }
-

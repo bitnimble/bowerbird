@@ -1,7 +1,10 @@
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { readCaptureOffset } from '../src/services/processing/analysis/exif_zone';
-import { readPhotoAnalysis, writePhotoAnalysis } from '../src/services/processing/analysis/photo_analysis_store';
+import {
+  readPhotoAnalysis,
+  writePhotoAnalysis,
+} from '../src/services/processing/analysis/photo_analysis_store';
 import { runJob } from '../src/services/processing/rawshim/rawshim_job';
 import { wallClockIso } from '../src/services/processing/rawshim/raw_decoder';
 import type { FileMetadata } from '../src/services/processing/analysis/metadata';

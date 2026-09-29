@@ -36,7 +36,9 @@ const DAWN: Shoot = {
 
 async function openPage(readOnly: boolean): Promise<void> {
   librariesApi.list = (): Promise<Library[]> =>
-    Promise.resolve([{ id: 'lib', name: 'Reef', root_path: '/photos/reef', read_only: readOnly } as Library]);
+    Promise.resolve([
+      { id: 'lib', name: 'Reef', root_path: '/photos/reef', read_only: readOnly } as Library,
+    ]);
   librariesApi.getDefaults = (): Promise<LibrarySettings> => Promise.resolve({} as LibrarySettings);
   shootsApi.list = (): Promise<Shoot[]> => Promise.resolve([DAWN]);
   librariesApi.folders = (): Promise<string[]> => Promise.resolve(['Dawn']);
@@ -47,7 +49,14 @@ async function openPage(readOnly: boolean): Promise<void> {
     <MemoryRouter initialEntries={[route(PathSegment.libraries(), 'lib', PathSegment.shoots())]}>
       <StoresProvider>
         <Routes>
-          <Route path={route(PathSegment.libraries(), PathSegment.param('libraryId'), PathSegment.shoots())} element={<ShootsPage />} />
+          <Route
+            path={route(
+              PathSegment.libraries(),
+              PathSegment.param('libraryId'),
+              PathSegment.shoots(),
+            )}
+            element={<ShootsPage />}
+          />
         </Routes>
       </StoresProvider>
     </MemoryRouter>,
@@ -63,7 +72,9 @@ async function press(name: string): Promise<void> {
 
 function refusal(name: string): string | null {
   const item = screen.getByRole('menuitem', { name });
-  return item.getAttribute('aria-disabled') === 'true' ? item.getAttribute('aria-description') : null;
+  return item.getAttribute('aria-disabled') === 'true'
+    ? item.getAttribute('aria-description')
+    : null;
 }
 
 test('a read-only library greys making a folder at the root', async () => {
@@ -74,7 +85,9 @@ test('a read-only library greys making a folder at the root', async () => {
 test('a writable library creates a shoot at the root from the header', async () => {
   await openPage(false);
   await press('Create shoot');
-  expect(screen.getByRole('dialog', { name: 'New shoot' }).textContent).toContain('Creates the folder name.');
+  expect(screen.getByRole('dialog', { name: 'New shoot' }).textContent).toContain(
+    'Creates the folder name.',
+  );
 });
 
 test("a read-only library greys a shoot's rename and its new subfolder", async () => {

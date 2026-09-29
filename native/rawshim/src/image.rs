@@ -520,9 +520,17 @@ pub fn geometry_footprint(
     out: (usize, usize),
     geometry: Geometry,
 ) -> (usize, usize, usize, usize) {
-    let band = crate::gpu::Band { top: crate::px::Place::measured(0), rows: crate::px::Span::measured(out.1) };
-    rows_footprint(crate::px::Size::exact(full.0, full.1), crate::px::Size::measured(out.0, out.1), geometry, band)
-        .raw()
+    let band = crate::gpu::Band {
+        top: crate::px::Place::measured(0),
+        rows: crate::px::Span::measured(out.1),
+    };
+    rows_footprint(
+        crate::px::Size::exact(full.0, full.1),
+        crate::px::Size::measured(out.0, out.1),
+        geometry,
+        band,
+    )
+    .raw()
 }
 
 /// [`geometry_footprint`] for some of the output's rows alone, which is what a band of a render
@@ -561,7 +569,12 @@ pub fn rows_footprint(
     let end = |v: f64, limit: usize| (((v + REACH).ceil().max(0.0) as usize) + 1).min(limit);
     let (x0, y0) = (start(left, full.0), start(top, full.1));
     let (x1, y1) = (end(right, full.0), end(bottom, full.1));
-    crate::px::Rect::exact(x0, y0, x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1))
+    crate::px::Rect::exact(
+        x0,
+        y0,
+        x1.saturating_sub(x0).max(1),
+        y1.saturating_sub(y0).max(1),
+    )
 }
 
 /// The part of the frame a window of the corrected picture reads, as a whole-pixel rectangle in
@@ -1559,7 +1572,10 @@ mod tests {
             },
         );
 
-        let halved = SharpenNoise { reduction: 2, ..noise };
+        let halved = SharpenNoise {
+            reduction: 2,
+            ..noise
+        };
         assert_eq!(
             halved.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(3000)),
             SharpenNoise {
@@ -1577,7 +1593,10 @@ mod tests {
             },
         );
 
-        let third = SharpenNoise { reduction: 3, ..noise };
+        let third = SharpenNoise {
+            reduction: 3,
+            ..noise
+        };
         let cfa = crate::cfa::tests::parse(crate::cfa::tests::XTRANS, 6, 6);
         let mut least = [usize::MAX; 3];
         for row in 0..6 {

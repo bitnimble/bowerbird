@@ -27,7 +27,10 @@ fn grade() -> Grade {
 }
 
 fn strengths() -> Strengths {
-    Strengths { sharpen: 1.0, defringe: 1.0 }
+    Strengths {
+        sharpen: 1.0,
+        defringe: 1.0,
+    }
 }
 
 fn options() -> EncodeOptions {
@@ -53,24 +56,31 @@ fn options() -> EncodeOptions {
 /// This example is the one caller that wants the opposite.
 fn rendered(path: &str, glass: rawshim::dust::Wanted<'_>) -> (Vec<u8>, usize, usize) {
     let detail = rawshim::galosh::Detail::at(40.0, 40.0);
-    let frame =
-        rawshim::decode_rawler::decode_fitted(
-            path,
-            detail,
-            0,
-            Default::default(),
-            Default::default(),
-            glass,
-        )
-            .expect("decode");
+    let frame = rawshim::decode_rawler::decode_fitted(
+        path,
+        detail,
+        0,
+        Default::default(),
+        Default::default(),
+        glass,
+    )
+    .expect("decode");
     let frame = pollster::block_on(frame.to_host()).expect("the frame reads back");
     let samples = frame.samples16().expect("16-bit").to_vec();
-    let source = Source { samples: &samples, width: frame.width, height: frame.height };
+    let source = Source {
+        samples: &samples,
+        width: frame.width,
+        height: frame.height,
+    };
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
     let resident = frame.on_device(gpu).expect("the frame reaches the device");
     let matched = rawshim::fit_hdr_for(&resident, path, 0.995);
-    let (coded, width, height) =
-        hdr::graded_as(&source, &options(), matched.as_ref(), rawshim::gpu::Output::Srgb);
+    let (coded, width, height) = hdr::graded_as(
+        &source,
+        &options(),
+        matched.as_ref(),
+        rawshim::gpu::Output::Srgb,
+    );
     (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 
@@ -80,7 +90,10 @@ fn candidates(path: &str) -> Vec<rawshim::dust::Spot> {
     let bytes = std::fs::read(path).expect("the file");
     let held = pollster::block_on(rawshim::decode_rawler::hold_bytes(&bytes)).expect("a decoder");
     let sensor = held.glass();
-    eprintln!("  f/{}  {}x{}", sensor.aperture, sensor.width, sensor.height);
+    eprintln!(
+        "  f/{}  {}x{}",
+        sensor.aperture, sensor.width, sensor.height
+    );
     pollster::block_on(rawshim::dust::detect(gpu, held.device_mosaic(), &sensor))
         .unwrap_or_default()
 }
@@ -109,7 +122,12 @@ fn main() {
             // At least one, because zero is a request for an image with no pixels in it, and every
             // encoder below would rather be told than be handed one.
             "--zoom" => {
-                zoom = args.next().expect("a number").parse::<usize>().expect("a number").max(1);
+                zoom = args
+                    .next()
+                    .expect("a number")
+                    .parse::<usize>()
+                    .expect("a number")
+                    .max(1);
             }
             other => panic!("unknown flag {other}"),
         }
@@ -153,7 +171,11 @@ fn main() {
     if whole {
         let (frame, width, height) = rendered(&path, rawshim::dust::Wanted::Off);
         let small = rawshim::image::resize_to_fit(
-            rawshim::rgb::RgbRef { width, height, data: &frame },
+            rawshim::rgb::RgbRef {
+                width,
+                height,
+                data: &frame,
+            },
             1400,
         );
         let mut data = small.data.clone();
@@ -167,7 +189,14 @@ fn main() {
             );
         }
         let name = format!("{out}/dust-whole.avif");
-        write(&name, rawshim::rgb::RgbRef { width: small.width, height: small.height, data: &data });
+        write(
+            &name,
+            rawshim::rgb::RgbRef {
+                width: small.width,
+                height: small.height,
+                data: &data,
+            },
+        );
         eprintln!("  wrote {name}");
         return;
     }
@@ -179,7 +208,10 @@ fn main() {
         spot.y * 2.0,
         spot.snr,
     );
-    let removal = rawshim::dust::Removal { sensitivity, intensity: 1.0 };
+    let removal = rawshim::dust::Removal {
+        sensitivity,
+        intensity: 1.0,
+    };
     assert!(
         spot.snr >= removal.min_snr(),
         "sensitivity {sensitivity} asks for {:.2} and this spot is {:.2} - it would not be touched",
@@ -199,8 +231,12 @@ fn main() {
     // narrower than the one asked for would otherwise read off the end of the last row.
     let side = side.clamp(1, width.min(height));
     let cut = |image: &[u8], mark: bool| {
-        let left = (at.0 as usize).saturating_sub(side / 2).min(width.saturating_sub(side));
-        let top = (at.1 as usize).saturating_sub(side / 2).min(height.saturating_sub(side));
+        let left = (at.0 as usize)
+            .saturating_sub(side / 2)
+            .min(width.saturating_sub(side));
+        let top = (at.1 as usize)
+            .saturating_sub(side / 2)
+            .min(height.saturating_sub(side));
         let mut data = vec![0u8; side * side * 3];
         for row in 0..side {
             let from = ((top + row) * width + left) * 3;
@@ -208,15 +244,31 @@ fn main() {
                 .copy_from_slice(&image[from..from + side * 3]);
         }
         if mark {
-            circle(&mut data, side, (at.0 - left as f32, at.1 - top as f32), ring);
+            circle(
+                &mut data,
+                side,
+                (at.0 - left as f32, at.1 - top as f32),
+                ring,
+            );
         }
         data
     };
 
-    let pair = beside(&magnified(&cut(&before, true), side, zoom), &magnified(&cut(&after, false), side, zoom), side * zoom);
+    let pair = beside(
+        &magnified(&cut(&before, true), side, zoom),
+        &magnified(&cut(&after, false), side, zoom),
+        side * zoom,
+    );
     let side = side * zoom;
     let name = format!("{out}/dust-{}-{}.avif", at.0 as usize, at.1 as usize);
-    write(&name, rawshim::rgb::RgbRef { width: side * 2 + GAP, height: side, data: &pair });
+    write(
+        &name,
+        rawshim::rgb::RgbRef {
+            width: side * 2 + GAP,
+            height: side,
+            data: &pair,
+        },
+    );
     eprintln!("  wrote {name}");
 }
 

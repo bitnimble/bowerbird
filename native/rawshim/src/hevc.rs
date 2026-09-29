@@ -52,16 +52,25 @@ pub fn decode(picture: &Picture) -> Result<Coded, String> {
         if across == 0 || down == 0 {
             continue;
         }
-        to_rgb(&frame, picture.nclx, &mut Placed {
-            samples: &mut samples,
-            stride: picture.width,
-            left: column * tile_w,
-            top: row * tile_h,
-            width: across,
-            height: down,
-        })?;
+        to_rgb(
+            &frame,
+            picture.nclx,
+            &mut Placed {
+                samples: &mut samples,
+                stride: picture.width,
+                left: column * tile_w,
+                top: row * tile_h,
+                width: across,
+                height: down,
+            },
+        )?;
     }
-    Ok(Coded { samples, width: picture.width, height: picture.height, depth })
+    Ok(Coded {
+        samples,
+        width: picture.width,
+        height: picture.height,
+        depth,
+    })
 }
 
 fn decode_one(
@@ -76,7 +85,9 @@ fn decode_one(
             .iter()
             .fold(0usize, |value, byte| (value << 8) | usize::from(*byte));
         at += length_size;
-        let Some(unit) = tile.get(at..at.saturating_add(length)) else { break };
+        let Some(unit) = tile.get(at..at.saturating_add(length)) else {
+            break;
+        };
         at += length;
         stream.extend_from_slice(&[0, 0, 0, 1]);
         stream.extend_from_slice(unit);
@@ -87,27 +98,41 @@ fn decode_one(
         match decoder.decode_nal(&nal) {
             Ok(Some(frame)) => return Ok(frame),
             Ok(None) => {}
-            Err(why) => return Err(format!("this HEIC's HEVC bitstream would not decode: {why}")),
+            Err(why) => {
+                return Err(format!(
+                    "this HEIC's HEVC bitstream would not decode: {why}"
+                ));
+            }
         }
     }
-    decoder.flush().ok_or_else(|| "this HEIC's HEVC bitstream decoded to no picture".to_string())
+    decoder
+        .flush()
+        .ok_or_else(|| "this HEIC's HEVC bitstream decoded to no picture".to_string())
 }
 
 /// The `hvcC` record's parameter set arrays, as one Annex B prelude.
 fn annex_b_parameter_sets(config: &[u8]) -> Result<Vec<u8>, String> {
     // The fixed part of the record is 22 bytes; `numOfArrays` is the byte after it.
-    let arrays = *config.get(22).ok_or("this HEIC's hvcC record is truncated")?;
+    let arrays = *config
+        .get(22)
+        .ok_or("this HEIC's hvcC record is truncated")?;
     let mut out = Vec::new();
     let mut at = 23usize;
     for _ in 0..arrays {
-        let Some(count) = config.get(at + 1..at + 3) else { break };
+        let Some(count) = config.get(at + 1..at + 3) else {
+            break;
+        };
         let count = u16::from_be_bytes([count[0], count[1]]);
         at += 3;
         for _ in 0..count {
-            let Some(length) = config.get(at..at + 2) else { break };
+            let Some(length) = config.get(at..at + 2) else {
+                break;
+            };
             let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
             at += 2;
-            let Some(unit) = config.get(at..at + length) else { break };
+            let Some(unit) = config.get(at..at + length) else {
+                break;
+            };
             at += length;
             out.extend_from_slice(&[0, 0, 0, 1]);
             out.extend_from_slice(unit);
@@ -121,7 +146,9 @@ fn annex_b_parameter_sets(config: &[u8]) -> Result<Vec<u8>, String> {
 
 /// How many bytes each NAL unit's length prefix takes, which the record states rather than fixes.
 fn length_size(config: &[u8]) -> Result<usize, String> {
-    let byte = config.get(21).ok_or("this HEIC's hvcC record is truncated")?;
+    let byte = config
+        .get(21)
+        .ok_or("this HEIC's hvcC record is truncated")?;
     Ok(usize::from(byte & 3) + 1)
 }
 
@@ -140,7 +167,11 @@ struct Placed<'a> {
 /// **The matrix is the file's, not a constant.** A phone writes BT.709 and a camera shooting HDR
 /// writes BT.2020, and reading one as the other tilts every colour a little - which is exactly the
 /// class of error nothing reports and everything shows.
-fn to_rgb(frame: &rust_h265::Frame, nclx: Option<Nclx>, into: &mut Placed<'_>) -> Result<(), String> {
+fn to_rgb(
+    frame: &rust_h265::Frame,
+    nclx: Option<Nclx>,
+    into: &mut Placed<'_>,
+) -> Result<(), String> {
     let depth = u32::from(frame.bit_depth);
     let max = f32::from(u16::MAX >> (16 - depth.clamp(8, 16)));
     let luma = plane(&frame.y);
@@ -294,7 +325,12 @@ mod tests {
     #[test]
     fn the_luma_coefficients_come_off_the_files_own_matrix_code() {
         assert_eq!(coefficients(None), (0.2126, 0.0722));
-        let bt2020 = Nclx { primaries: 9, transfer: 16, matrix: 9, full_range: false };
+        let bt2020 = Nclx {
+            primaries: 9,
+            transfer: 16,
+            matrix: 9,
+            full_range: false,
+        };
         assert_eq!(coefficients(Some(bt2020)), (0.2627, 0.0593));
     }
 
@@ -320,14 +356,18 @@ mod tests {
     fn converted(frame: &rust_h265::Frame, nclx: Option<Nclx>) -> Vec<u16> {
         let (width, height) = (frame.width as usize, frame.height as usize);
         let mut samples = vec![0u16; width * height * 3];
-        to_rgb(frame, nclx, &mut Placed {
-            samples: &mut samples,
-            stride: width,
-            left: 0,
-            top: 0,
-            width,
-            height,
-        })
+        to_rgb(
+            frame,
+            nclx,
+            &mut Placed {
+                samples: &mut samples,
+                stride: width,
+                left: 0,
+                top: 0,
+                width,
+                height,
+            },
+        )
         .expect("the conversion runs");
         samples
     }
@@ -337,7 +377,12 @@ mod tests {
     /// back at 4% and the photograph has no black point at all.
     #[test]
     fn a_limited_range_signal_reaches_black_and_white() {
-        let limited = Nclx { primaries: 1, transfer: 13, matrix: 1, full_range: false };
+        let limited = Nclx {
+            primaries: 1,
+            transfer: 13,
+            matrix: 1,
+            full_range: false,
+        };
         let black = converted(&frame(16, 128, 128, 8, (2, 2)), Some(limited));
         assert_eq!(&black[..3], &[0, 0, 0], "code 16 is black");
         let white = converted(&frame(235, 128, 128, 8, (2, 2)), Some(limited));
@@ -348,15 +393,27 @@ mod tests {
         let silent = converted(&frame(16, 128, 128, 8, (2, 2)), None);
         assert_eq!(&silent[..3], &[0, 0, 0]);
 
-        let full = Nclx { full_range: true, ..limited };
+        let full = Nclx {
+            full_range: true,
+            ..limited
+        };
         let raised = converted(&frame(16, 128, 128, 8, (2, 2)), Some(full));
-        assert_eq!(&raised[..3], &[16, 16, 16], "and a file that said full means full");
+        assert_eq!(
+            &raised[..3],
+            &[16, 16, 16],
+            "and a file that said full means full"
+        );
     }
 
     /// Ten-bit, where the same rule is scaled by the depth rather than restated.
     #[test]
     fn a_ten_bit_signal_scales_its_own_range() {
-        let limited = Nclx { primaries: 9, transfer: 16, matrix: 9, full_range: false };
+        let limited = Nclx {
+            primaries: 9,
+            transfer: 16,
+            matrix: 9,
+            full_range: false,
+        };
         let black = converted(&frame(64, 512, 512, 10, (2, 2)), Some(limited));
         assert_eq!(&black[..3], &[0, 0, 0], "10-bit black is code 64");
         let white = converted(&frame(940, 512, 512, 10, (2, 2)), Some(limited));
@@ -368,7 +425,12 @@ mod tests {
     #[test]
     fn the_chroma_midpoint_is_grey_under_every_matrix() {
         for matrix in [1u16, 5, 9] {
-            let nclx = Nclx { primaries: 1, transfer: 13, matrix, full_range: false };
+            let nclx = Nclx {
+                primaries: 1,
+                transfer: 13,
+                matrix,
+                full_range: false,
+            };
             let grey = converted(&frame(126, 128, 128, 8, (2, 2)), Some(nclx));
             assert_eq!(grey[0], grey[1], "matrix {matrix}");
             assert_eq!(grey[1], grey[2], "matrix {matrix}");
@@ -384,19 +446,32 @@ mod tests {
         let width = 2usize;
         let mut frame = frame(126, 128, 128, 8, (2, 4));
         // Two chroma rows that differ: the top one neutral, the one below it strongly blue.
-        let rust_h265::PixelData::U16(cb) = &mut frame.u else { panic!("u16 planes") };
+        let rust_h265::PixelData::U16(cb) = &mut frame.u else {
+            panic!("u16 planes")
+        };
         for at in width.div_ceil(2)..cb.len() {
             cb[at] = 200;
         }
 
-        let nclx = Nclx { primaries: 1, transfer: 13, matrix: 1, full_range: false };
+        let nclx = Nclx {
+            primaries: 1,
+            transfer: 13,
+            matrix: 1,
+            full_range: false,
+        };
         let samples = converted(&frame, Some(nclx));
         // Row 0 is above the first chroma sample, so it is that sample exactly - which is
         // neutral, so its blue equals its red.
-        assert_eq!(samples[0], samples[2], "row 0 borrowed chroma from the row below");
+        assert_eq!(
+            samples[0], samples[2],
+            "row 0 borrowed chroma from the row below"
+        );
         // Row 2 sits between the two chroma rows and genuinely is a blend, so it must not be
         // neutral - or the test above would pass on a conversion that ignored chroma entirely.
         let row2 = 2 * width * 3;
-        assert!(samples[row2 + 2] > samples[row2], "row 2 blends toward the blue row");
+        assert!(
+            samples[row2 + 2] > samples[row2],
+            "row 2 blends toward the blue row"
+        );
     }
 }

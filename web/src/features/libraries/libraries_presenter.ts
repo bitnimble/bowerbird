@@ -1,10 +1,21 @@
 import { action } from 'mobx';
 import type { ActivitySnapshot } from '../../../../src/schemas/activity';
 import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
-import { type CreateLibraryRequest, type FolderRule, type Library, type LibraryScanStatus, type LibrarySettings, type UpdateLibraryRequest } from '../../../../src/schemas/libraries';
+import {
+  type CreateLibraryRequest,
+  type FolderRule,
+  type Library,
+  type LibraryScanStatus,
+  type LibrarySettings,
+  type UpdateLibraryRequest,
+} from '../../../../src/schemas/libraries';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
-import { setStage, type OptionalStage, type RenderedRendition } from '../../../../src/schemas/render_stages';
+import {
+  setStage,
+  type OptionalStage,
+  type RenderedRendition,
+} from '../../../../src/schemas/render_stages';
 import { folderRulesApi } from '../../api/folder_rules';
 import { librariesApi } from '../../api/libraries';
 import { ApiError } from '../../api/request';
@@ -30,7 +41,10 @@ export class LibrariesPresenter {
       // Alongside the list rather than once at startup: it is one small immutable
       // record, and pairing them means the settings page never has a library in
       // hand with nothing to compare it against.
-      const [libraries, defaults] = await Promise.all([librariesApi.list(activity), librariesApi.getDefaults(activity)]);
+      const [libraries, defaults] = await Promise.all([
+        librariesApi.list(activity),
+        librariesApi.getDefaults(activity),
+      ]);
       this.loaded(libraries, defaults, revision);
     } catch (err) {
       if (revision === this.readRevision) this.fail(describe(err));
@@ -81,7 +95,9 @@ export class LibrariesPresenter {
     }
     this.store.statuses = new Map(snapshot.libraries.map((library) => [library.id, library.scan]));
     this.statusesChanged(snapshot.libraries.map((library) => library.scan));
-    this.store.activities = new Map(snapshot.libraries.map((library) => [library.id, library.activities]));
+    this.store.activities = new Map(
+      snapshot.libraries.map((library) => [library.id, library.activities]),
+    );
     this.store.globalActivity = snapshot.global;
     this.store.loading = false;
     if (error != null && this.store.error === error) this.store.error = null;
@@ -115,7 +131,9 @@ export class LibrariesPresenter {
    * volume remounted between the listing and the create - so this is reachable
    * even when the picker said the folder was writable.
    */
-  async create(request: CreateLibraryRequest): Promise<{ created: Library | null; readOnlyRoot: boolean }> {
+  async create(
+    request: CreateLibraryRequest,
+  ): Promise<{ created: Library | null; readOnlyRoot: boolean }> {
     this.beginLoad();
     let created: Library;
     try {
@@ -177,7 +195,10 @@ export class LibrariesPresenter {
     if (library == null) return;
     const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
     const next = setStage(skipped, stage, runs);
-    await this.update(libraryId, rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next });
+    await this.update(
+      libraryId,
+      rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next },
+    );
   }
 
   // Automatic photo stacking (§19.4). None of the three is retroactive: they
@@ -189,12 +210,16 @@ export class LibrariesPresenter {
 
   async setAutoStackSimilarity(libraryId: string, auto_stack_similarity: number): Promise<void> {
     if (!Number.isFinite(auto_stack_similarity)) return;
-    await this.update(libraryId, { auto_stack_similarity: Math.min(1, Math.max(0, auto_stack_similarity)) });
+    await this.update(libraryId, {
+      auto_stack_similarity: Math.min(1, Math.max(0, auto_stack_similarity)),
+    });
   }
 
   async setAutoStackWindow(libraryId: string, auto_stack_window_seconds: number): Promise<void> {
     if (!Number.isFinite(auto_stack_window_seconds)) return;
-    await this.update(libraryId, { auto_stack_window_seconds: Math.max(1, Math.round(auto_stack_window_seconds)) });
+    await this.update(libraryId, {
+      auto_stack_window_seconds: Math.max(1, Math.round(auto_stack_window_seconds)),
+    });
   }
 
   // The pass the three settings above decide, run now instead of at the next sync.

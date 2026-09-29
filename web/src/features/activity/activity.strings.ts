@@ -10,7 +10,8 @@ const labels: Record<ActivityKind, (count: number) => string> = {
   backing_up: () => 'backing up originals',
   restoring_backup: () => 'fetching originals from backup',
   rendering: (count) => `rendering ${count} ${count === 1 ? 'photo' : 'photos'}`,
-  local_rendering: (count) => `rendering ${count} ${count === 1 ? 'photo' : 'photos'} on this device`,
+  local_rendering: (count) =>
+    `rendering ${count} ${count === 1 ? 'photo' : 'photos'} on this device`,
   preparing: (count) => `preparing ${count} ${count === 1 ? 'photo' : 'photos'}`,
   merging: () => 'merging photos',
   exporting: (count) => `exporting ${count} ${count === 1 ? 'photo' : 'photos'}`,

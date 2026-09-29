@@ -13,7 +13,14 @@ import type { WorkerJob } from '../../workers/processing_types';
 import { Logger } from '../../../../logger';
 import { toCommand } from '../../rawshim/worker_command';
 import { writePhotoAnalysis } from '../../analysis/photo_analysis_store';
-import { DESCRIPTOR, LIB, MockWorker, REAL_WORKER, posted, settingsWith } from './processing_test_helpers';
+import {
+  DESCRIPTOR,
+  LIB,
+  MockWorker,
+  REAL_WORKER,
+  posted,
+  settingsWith,
+} from './processing_test_helpers';
 
 describe('single-photo rendering', () => {
   let root: string;
@@ -33,7 +40,9 @@ describe('single-photo rendering', () => {
     let finish = (): void => {};
     class ObservedWorker extends MockWorker {
       override postMessage(job: WorkerJob): void {
-        this.onmessage?.({ data: { kind: 'started', photoId: job.photoId, analysisCache: 'supplied' } });
+        this.onmessage?.({
+          data: { kind: 'started', photoId: job.photoId, analysisCache: 'supplied' },
+        });
         finish = () => this.onmessage?.({ data: { photoId: job.photoId, success: true } });
       }
     }
@@ -42,15 +51,31 @@ describe('single-photo rendering', () => {
     try {
       const repo = { markRenditionsBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
       const service = makeService(repo);
-      const library = { id: 'lib', root_path: root, render_skip_full: [], render_skip_max: [] } as never;
+      const library = {
+        id: 'lib',
+        root_path: root,
+        render_skip_full: [],
+        render_skip_max: [],
+      } as never;
       let settled = false;
       const running = service.renderOne('/lib/a.arw', 'p1', library, 'full', true).then(
-        () => { settled = true; },
-        () => { settled = true; },
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(settled).toBe(false);
-      expect(logged.mock.calls.some(([message, fields]) => message === 'render inputs' && fields?.analysisCache === 'supplied' && fields?.file === 'a.arw')).toBe(true);
+      expect(
+        logged.mock.calls.some(
+          ([message, fields]) =>
+            message === 'render inputs' &&
+            fields?.analysisCache === 'supplied' &&
+            fields?.file === 'a.arw',
+        ),
+      ).toBe(true);
       finish();
       await running;
       expect(repo.markRenditionsBuilt).toHaveBeenCalledTimes(1);
@@ -60,39 +85,76 @@ describe('single-photo rendering', () => {
     }
   });
 
-  it.each(['supplied', 'missing', 'refresh'] as const)('reports the analysis actually supplied to the native command: %s', async (expected) => {
-    let analysis: string | undefined;
-    let supplied: number[] | undefined;
-    class CommandWorker extends MockWorker {
-      override postMessage(job: WorkerJob): void {
-        if (job.kind !== 'rendition') throw new Error('expected one photo');
-        supplied = toCommand(job, (cache) => { analysis = cache; }).photoAnalysis;
-        super.postMessage(job);
+  it.each(['supplied', 'missing', 'refresh'] as const)(
+    'reports the analysis actually supplied to the native command: %s',
+    async (expected) => {
+      let analysis: string | undefined;
+      let supplied: number[] | undefined;
+      class CommandWorker extends MockWorker {
+        override postMessage(job: WorkerJob): void {
+          if (job.kind !== 'rendition') throw new Error('expected one photo');
+          supplied = toCommand(job, (cache) => {
+            analysis = cache;
+          }).photoAnalysis;
+          super.postMessage(job);
+        }
       }
-    }
-    Object.assign(globalThis, { Worker: CommandWorker });
-    if (expected !== 'missing') writePhotoAnalysis(dataPathForLibraryId(LIB), 'p1', new Uint8Array([1, 2, 3]));
-    const repo = { markRenditionsBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
-    const library = { id: LIB, root_path: root, render_skip_full: [], render_skip_max: [] } as never;
-    await makeService(repo).renderOne('/lib/a.arw', 'p1', library, 'full', true, 'render', expected === 'refresh');
-    expect(analysis).toBe(expected);
-    expect(supplied).toEqual(expected === 'supplied' ? [1, 2, 3] : undefined);
-  });
+      Object.assign(globalThis, { Worker: CommandWorker });
+      if (expected !== 'missing')
+        writePhotoAnalysis(dataPathForLibraryId(LIB), 'p1', new Uint8Array([1, 2, 3]));
+      const repo = { markRenditionsBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
+      const library = {
+        id: LIB,
+        root_path: root,
+        render_skip_full: [],
+        render_skip_max: [],
+      } as never;
+      await makeService(repo).renderOne(
+        '/lib/a.arw',
+        'p1',
+        library,
+        'full',
+        true,
+        'render',
+        expected === 'refresh',
+      );
+      expect(analysis).toBe(expected);
+      expect(supplied).toEqual(expected === 'supplied' ? [1, 2, 3] : undefined);
+    },
+  );
 
   it('leaves a worker spawn failure to the workflow that owns the render', async () => {
     class RefusedWorker extends MockWorker {
-      constructor(url: string) { super(url); throw new Error('no worker slots'); }
+      constructor(url: string) {
+        super(url);
+        throw new Error('no worker slots');
+      }
     }
     Object.assign(globalThis, { Worker: RefusedWorker });
     const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     try {
-      const library = { id: LIB, root_path: root, render_skip_full: [], render_skip_max: [] } as never;
-      await expect(makeService({} as PhotoProcessingRepository).renderOne('/lib/a.arw', 'p1', library, 'full', true))
-        .rejects.toThrow('no worker slots');
+      const library = {
+        id: LIB,
+        root_path: root,
+        render_skip_full: [],
+        render_skip_max: [],
+      } as never;
+      await expect(
+        makeService({} as PhotoProcessingRepository).renderOne(
+          '/lib/a.arw',
+          'p1',
+          library,
+          'full',
+          true,
+        ),
+      ).rejects.toThrow('no worker slots');
       expect(warning).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
-    } finally { warning.mockRestore(); error.mockRestore(); }
+    } finally {
+      warning.mockRestore();
+      error.mockRestore();
+    }
   });
 
   it('benchmarks forced stage amounts and prices lens against the colour-free render', async () => {
@@ -107,16 +169,29 @@ describe('single-photo rendering', () => {
     const now = jest.spyOn(performance, 'now').mockImplementation(() => clock);
     try {
       const service = new ProcessingService(
-        {} as PhotoProcessingRepository, {} as PhotoPathsRepository, {} as PhotoListingRepository,
+        {} as PhotoProcessingRepository,
+        {} as PhotoPathsRepository,
+        {} as PhotoListingRepository,
         settingsWith({ match_embedded_jpeg: false, raw_defringe: 0 }),
       );
-      const timing = await service.benchmarkRender('full', 'pmrid', new RenderTimingsFile(path.join(root, 'timings.json')));
+      const timing = await service.benchmarkRender(
+        'full',
+        'pmrid',
+        new RenderTimingsFile(path.join(root, 'timings.json')),
+      );
       const scale = REFERENCE_PIXELS / (6336 * 9504);
       expect(timing.stages.lens).toBe(Math.round(100 * scale));
       expect(timing.stages.colour).toBe(Math.round(800 * scale));
-      expect(posted[0]).toMatchObject({ cameraMatch: 'lensAndColour', denoiseLuminance: 20, denoiseColour: 30, defringe: 1 });
+      expect(posted[0]).toMatchObject({
+        cameraMatch: 'lensAndColour',
+        denoiseLuminance: 20,
+        denoiseColour: 30,
+        defringe: 1,
+      });
       expect(posted.every((job) => job.denoiser === 'pmrid')).toBe(true);
-      expect(posted.some((job) => job.denoiseLuminance === 0 && job.denoiseColour === 0)).toBe(true);
+      expect(posted.some((job) => job.denoiseLuminance === 0 && job.denoiseColour === 0)).toBe(
+        true,
+      );
       expect(posted.some((job) => job.defringe === 0)).toBe(true);
     } finally {
       now.mockRestore();
@@ -128,12 +203,20 @@ describe('single-photo rendering', () => {
     // descriptor exactly as an import does. Dropping it leaves a photo whose tile has
     // been rebuilt permanently unstackable: nothing revisits a tile that is on disk, so
     // there is no second chance at it.
-    const repo = { markTileBuilt: jest.fn(), markRenditionsBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
+    const repo = {
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
     const service = makeService(repo);
     const seen: { photoId: string; descriptor: Uint8Array }[] = [];
     service.onDescribed((photoId, descriptor) => seen.push({ photoId, descriptor }));
 
-    const library = { id: 'lib', root_path: root, render_skip_full: [], render_skip_max: [] } as never;
+    const library = {
+      id: 'lib',
+      root_path: root,
+      render_skip_full: [],
+      render_skip_max: [],
+    } as never;
     await service.renderOne('/lib/a.arw', 'p1', library, 'grid', false, 'embedded');
 
     expect(seen).toEqual([{ photoId: 'p1', descriptor: DESCRIPTOR }]);
@@ -145,7 +228,6 @@ describe('single-photo rendering', () => {
     expect(seen).toEqual([]);
   });
 
-
   it('moves the stamp belonging to what a one-off job actually wrote', async () => {
     // The queue splits a photo into a tile job and a renditions job, so which stamp to
     // move is never in question there. A one-off job carries its own targets, and
@@ -154,9 +236,19 @@ describe('single-photo rendering', () => {
     const markTileBuilt = jest.fn();
     const markRenditionsBuilt = jest.fn();
     const markCopyBuilt = jest.fn();
-    const repo = { markTileBuilt, markRenditionsBuilt, markCopyBuilt } as unknown as PhotoProcessingRepository;
+    const repo = {
+      markTileBuilt,
+      markRenditionsBuilt,
+      markCopyBuilt,
+    } as unknown as PhotoProcessingRepository;
     const service = makeService(repo);
-    const library = { id: 'lib', root_path: root, data_path: null, render_skip_full: [], render_skip_max: [] } as never;
+    const library = {
+      id: 'lib',
+      root_path: root,
+      data_path: null,
+      render_skip_full: [],
+      render_skip_max: [],
+    } as never;
     const announced: { stage: string; version: string }[] = [];
     service.onProcessed((_photoId, each) => announced.push(each));
 
@@ -195,13 +287,16 @@ describe('single-photo rendering', () => {
     expect(markCopyBuilt.mock.calls[0]?.[1]).toBe(announced[0]!.version);
   });
 
-
   it('reads the rendition it is building its own stage list, not the other one', async () => {
     // The two lists differ on purpose - `full` is what the viewer opens, `max` is what gets
     // pixel-peeped - so a wiring that read `render_skip_full` for both, or that only ever applied
     // `full`'s, would still build a rendition of the right size from the right file and show up
     // only as a picture that has quietly lost a stage it was meant to keep.
-    const repo = { markTileBuilt: jest.fn(), markRenditionsBuilt: jest.fn(), markCopyBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
+    const repo = {
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markCopyBuilt: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
     const service = makeService(repo);
     const library = {
       id: 'lib',
@@ -224,7 +319,6 @@ describe('single-photo rendering', () => {
     expect(full.kind === 'rendition' && full.denoiseLuminance).not.toBe(0);
   });
 
-
   it('refuses an HDR grid tile rather than quietly building an SDR one', async () => {
     // `hdr` is the caller's, unlike the chroma setting above, so a caller that asks
     // for something that cannot exist is told. Coercing instead put the mistake
@@ -239,9 +333,9 @@ describe('single-photo rendering', () => {
     const service = makeService({} as unknown as PhotoProcessingRepository);
     const library = { id: 'lib', root_path: '/lib' } as never;
 
-    await expect(service.renderOne('/lib/a.arw', 'p1', library, 'grid', true, 'embedded')).rejects.toThrow(
-      /grid tile is always SDR/,
-    );
+    await expect(
+      service.renderOne('/lib/a.arw', 'p1', library, 'grid', true, 'embedded'),
+    ).rejects.toThrow(/grid tile is always SDR/);
   });
 });
 function makeService(photoProcessing: PhotoProcessingRepository): ProcessingService {

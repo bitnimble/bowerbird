@@ -11,7 +11,16 @@ import { z } from 'zod';
 // generation marker is the wire discriminator, not part of the meaning.
 
 // The eight fixed HSL bands, in the order Camera Raw writes them.
-export const BANDS = ['red', 'orange', 'yellow', 'green', 'aqua', 'blue', 'purple', 'magenta'] as const;
+export const BANDS = [
+  'red',
+  'orange',
+  'yellow',
+  'green',
+  'aqua',
+  'blue',
+  'purple',
+  'magenta',
+] as const;
 const BandsSchema = z.record(z.enum(BANDS), z.number());
 
 const PointSchema = z.object({ x: z.number(), y: z.number() });

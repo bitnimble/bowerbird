@@ -5,11 +5,22 @@ import path from 'node:path';
 import { fileRecipe } from '../../../../schemas/recipes';
 import type { PhotoListingRepository } from '../../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../../photos/paths/photo_paths_repository';
-import type { PendingPhoto, PhotoProcessingRepository } from '../../../photos/renditions/photo_processing_repository';
+import type {
+  PendingPhoto,
+  PhotoProcessingRepository,
+} from '../../../photos/renditions/photo_processing_repository';
 import { dataPathForLibraryId } from '../../../../utils/paths';
 import { ProcessingService } from '../processing_service';
 import type { CompositeJob, RenditionJob, RenditionSource } from '../../workers/processing_types';
-import { CRASH, LIB, MockWorker, REAL_WORKER, posted, settings, settingsWith } from './processing_test_helpers';
+import {
+  CRASH,
+  LIB,
+  MockWorker,
+  REAL_WORKER,
+  posted,
+  settings,
+  settingsWith,
+} from './processing_test_helpers';
 
 function photoStage(job: RenditionJob | CompositeJob): string {
   return job.photoId + ':' + (job.targets[0]?.rendition ?? 'none');
@@ -42,7 +53,8 @@ describe('ProcessingService.processUnprocessed', () => {
   });
 
   // Generated files live outside the library root, keyed by library id (§6).
-  const renditions = (dir: string): string => path.join(dataPathForLibraryId(LIB), 'renditions', dir);
+  const renditions = (dir: string): string =>
+    path.join(dataPathForLibraryId(LIB), 'renditions', dir);
 
   function pending(photoId: string): PendingPhoto {
     return {
@@ -76,7 +88,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
     const holds: { postedBefore: number; postedAfter: number | null }[] = [];
-    const holding = async <T,>(run: () => Promise<T>): Promise<T> => {
+    const holding = async <T>(run: () => Promise<T>): Promise<T> => {
       const hold = { postedBefore: posted.length, postedAfter: null as number | null };
       holds.push(hold);
       try {
@@ -294,12 +306,24 @@ describe('ProcessingService.processUnprocessed', () => {
 
     // Two jobs per photo now - the grid tile, then the renditions - and the flag has
     // to reach both, since the tile can fall back to a render and needs the match too.
-    await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: true })).processUnprocessed({ libraryId: 'lib' });
-    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual(['lensAndColour', 'lensAndColour']);
+    await makeProcessingService(
+      repo,
+      settingsWith({ match_embedded_jpeg: true }),
+    ).processUnprocessed({ libraryId: 'lib' });
+    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual([
+      'lensAndColour',
+      'lensAndColour',
+    ]);
 
     posted.length = 0;
-    await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: false })).processUnprocessed({ libraryId: 'lib' });
-    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual(['none', 'none']);
+    await makeProcessingService(
+      repo,
+      settingsWith({ match_embedded_jpeg: false }),
+    ).processUnprocessed({ libraryId: 'lib' });
+    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual([
+      'none',
+      'none',
+    ]);
   });
 
   it('leaves out the stages the library has turned off, whatever the photograph asked for', async () => {
@@ -308,14 +332,21 @@ describe('ProcessingService.processUnprocessed', () => {
     // Silent otherwise - the rendition still builds, at the right size, and only looks different.
     const repo = {
       listPendingProcessing: jest.fn(() => [
-        { ...pending('a'), render_skip_full: 'denoise,lens,colour,sharpen', edits: JSON.stringify({ sharpening: 70 }) },
+        {
+          ...pending('a'),
+          render_skip_full: 'denoise,lens,colour,sharpen',
+          edits: JSON.stringify({ sharpening: 70 }),
+        },
       ]),
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: true })).processUnprocessed({ libraryId: 'lib' });
+    await makeProcessingService(
+      repo,
+      settingsWith({ match_embedded_jpeg: true }),
+    ).processUnprocessed({ libraryId: 'lib' });
 
     for (const job of posted) {
       expect(job.kind === 'rendition' && job.cameraMatch).toBe('none');
@@ -383,7 +414,9 @@ describe('ProcessingService.processUnprocessed', () => {
 
     // Must resolve (not hang): applyResult swallows the throw so the pool's
     // assignNext/terminate bookkeeping still runs for every job.
-    await expect(makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' })).resolves.toBeUndefined();
+    await expect(
+      makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' }),
+    ).resolves.toBeUndefined();
     expect(markRenditionsBuilt).toHaveBeenCalledTimes(2);
   });
 
@@ -423,7 +456,12 @@ describe('ProcessingService.processUnprocessed', () => {
     const markRenditionsBuilt = jest.fn();
     const repo = {
       listPendingProcessing: jest.fn(() => [
-        { ...pending('a'), needs_tile: 0, rendition_source: 'embedded' as RenditionSource, library_rendition_source: 'embedded' as RenditionSource },
+        {
+          ...pending('a'),
+          needs_tile: 0,
+          rendition_source: 'embedded' as RenditionSource,
+          library_rendition_source: 'embedded' as RenditionSource,
+        },
       ]),
       markTileBuilt: jest.fn(),
       markRenditionsBuilt,
@@ -537,8 +575,17 @@ describe('ProcessingService.processUnprocessed', () => {
       from: 'embedded',
       matched: false,
     });
-    expect(markRenditionsBuilt).toHaveBeenCalledWith('a', announced[1]?.version, 'render', null, 'full');
-    expect(markTileBuilt).toHaveBeenCalledWith('a', announced[2]?.version, null, { from: 'render', matched: true });
+    expect(markRenditionsBuilt).toHaveBeenCalledWith(
+      'a',
+      announced[1]?.version,
+      'render',
+      null,
+      'full',
+    );
+    expect(markTileBuilt).toHaveBeenCalledWith('a', announced[2]?.version, null, {
+      from: 'render',
+      matched: true,
+    });
   });
 
   it('records what the viewer gets, so a second import still rebuilds the renditions', async () => {
@@ -637,8 +684,20 @@ describe('ProcessingService.processUnprocessed', () => {
     // 'render', because that is what the viewer gets on this library. Not the tile's
     // own source, which is always the embedded JPEG and would say 'embedded' here for
     // every photo on every library.
-    expect(markRenditionsBuilt).toHaveBeenCalledWith('a', expect.any(String), 'render', null, 'full');
-    expect(markRenditionsBuilt).toHaveBeenCalledWith('b', expect.any(String), 'render', null, 'full');
+    expect(markRenditionsBuilt).toHaveBeenCalledWith(
+      'a',
+      expect.any(String),
+      'render',
+      null,
+      'full',
+    );
+    expect(markRenditionsBuilt).toHaveBeenCalledWith(
+      'b',
+      expect.any(String),
+      'render',
+      null,
+      'full',
+    );
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {
@@ -656,7 +715,9 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await expect(makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' })).resolves.toBeUndefined();
+    await expect(
+      makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' }),
+    ).resolves.toBeUndefined();
     expect(markRenditionsBuilt).not.toHaveBeenCalled(); // untouched -> both flags still set
   });
 
@@ -670,13 +731,21 @@ describe('ProcessingService.processUnprocessed', () => {
       stopped = true;
     });
     const repo = {
-      listPendingProcessing: jest.fn(() => [pending('a'), pending('b'), pending('c'), pending('d')]),
+      listPendingProcessing: jest.fn(() => [
+        pending('a'),
+        pending('b'),
+        pending('c'),
+        pending('d'),
+      ]),
       markTileBuilt,
       markRenditionsBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    await makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' }, () => stopped);
+    await makeProcessingService(repo, settings).processUnprocessed(
+      { libraryId: 'lib' },
+      () => stopped,
+    );
 
     // Two workers, so two tiles were already posted when the first came back. Not
     // c or d, and no ':full' at all: the rendition pass never starts.
@@ -684,7 +753,11 @@ describe('ProcessingService.processUnprocessed', () => {
   });
 
   it('does nothing when there is no pending work', async () => {
-    const repo = { listPendingProcessing: jest.fn(() => []) } as unknown as PhotoProcessingRepository;
-    await expect(makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' })).resolves.toBeUndefined();
+    const repo = {
+      listPendingProcessing: jest.fn(() => []),
+    } as unknown as PhotoProcessingRepository;
+    await expect(
+      makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' }),
+    ).resolves.toBeUndefined();
   });
 });

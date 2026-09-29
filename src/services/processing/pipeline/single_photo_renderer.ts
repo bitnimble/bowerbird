@@ -15,7 +15,13 @@ import type { OptionalStage } from '../../../schemas/render_stages';
 import { toCommand } from '../rawshim/worker_command';
 import { workerEntry } from '../../worker_entry';
 import type { CompositeWorker } from '../workers/composite_worker';
-import type { ProcessingMessage, RenditionJob, RenditionSource, RenditionTarget, RenditionWritten } from '../workers/processing_types';
+import type {
+  ProcessingMessage,
+  RenditionJob,
+  RenditionSource,
+  RenditionTarget,
+  RenditionWritten,
+} from '../workers/processing_types';
 import { developed } from './developed';
 import type { RenderTargets } from './render_targets';
 
@@ -30,8 +36,6 @@ export class SinglePhotoRenderer {
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
     private readonly describe: (photoId: string, descriptor: Uint8Array) => void,
   ) {}
-
-
 
   // One rendition, on demand: the detail view asking for a size or a range it
   // does not have yet. The photo view's own renditions are always renders, never
@@ -52,11 +56,17 @@ export class SinglePhotoRenderer {
     source: RenditionSource = 'render',
     remeasure = false,
   ): Promise<void> {
-    const { job, builtFrom } = this.oneRendition(rawFilePath, photoId, library, rendition, hdr, source, remeasure);
+    const { job, builtFrom } = this.oneRendition(
+      rawFilePath,
+      photoId,
+      library,
+      rendition,
+      hdr,
+      source,
+      remeasure,
+    );
     return this.runOneOff(job, builtFrom);
   }
-
-
 
   /**
    * The job `renderOne` would run, as the native side reads it, for a client that renders it
@@ -72,13 +82,22 @@ export class SinglePhotoRenderer {
     hdr: boolean,
     remeasure: boolean,
   ): { command: Job; builtFrom: string | null } {
-    const { job, builtFrom } = this.oneRendition('', photoId, library, rendition, hdr, 'render', remeasure);
+    const { job, builtFrom } = this.oneRendition(
+      '',
+      photoId,
+      library,
+      rendition,
+      hdr,
+      'render',
+      remeasure,
+    );
     const command = toCommand(job);
     // Where the server writes it, which a client has no use for.
-    return { command: { ...command, targets: command.targets.map((t) => ({ ...t, outputPath: '' })) }, builtFrom };
+    return {
+      command: { ...command, targets: command.targets.map((t) => ({ ...t, outputPath: '' })) },
+      builtFrom,
+    };
   }
-
-
 
   /** Encodes and files what a client rendered of {@link renditionCommand}'s job. */
   async keepRendered(
@@ -92,8 +111,6 @@ export class SinglePhotoRenderer {
     const { job } = this.oneRendition('', photoId, library, rendition, hdr, 'render', false);
     return this.runOneOff({ ...job, rendered }, builtFrom);
   }
-
-
 
   benchmarkJob({
     rawFilePath,
@@ -118,7 +135,16 @@ export class SinglePhotoRenderer {
       dataPath,
       denoiser,
     });
-    return withStagesOff({ ...job, cameraMatch: 'lensAndColour', denoiseLuminance: 20, denoiseColour: 30, defringe: 1 }, skip);
+    return withStagesOff(
+      {
+        ...job,
+        cameraMatch: 'lensAndColour',
+        denoiseLuminance: 20,
+        denoiseColour: 30,
+        defringe: 1,
+      },
+      skip,
+    );
   }
 
   private oneRendition(
@@ -188,8 +214,6 @@ export class SinglePhotoRenderer {
     };
   }
 
-
-
   /**
    * Fits this photograph's lens and colour against the camera's own JPEG, and keeps the answer.
    *
@@ -237,8 +261,6 @@ export class SinglePhotoRenderer {
     else await this.runOneOff(job, null);
   }
 
-
-
   // One photo, on demand, outside the pending queue: a single explicit request
   // the user is waiting on, not background work to batch. Its own worker, so a
   // render that takes seconds cannot occupy a pool slot the rendition queue
@@ -259,7 +281,10 @@ export class SinglePhotoRenderer {
       if (target == null) throw new Error('a client rendition needs one target');
       const temporary = target.outputPath + '.' + newId() + '.tmp';
       try {
-        descriptor = await this.runDetached({ ...job, targets: [{ ...target, outputPath: temporary }] });
+        descriptor = await this.runDetached({
+          ...job,
+          targets: [{ ...target, outputPath: temporary }],
+        });
         await rename(temporary, target.outputPath);
       } finally {
         await deleteGeneratedFile(job.dataPath, temporary).catch(() => undefined);
@@ -296,17 +321,26 @@ export class SinglePhotoRenderer {
     const max = wrote('max');
     if (full != null || max != null) {
       if (full != null) {
-        this.photoProcessing.markRenditionsBuilt(job.photoId, version, 'render', builtFrom, renditionVariant('full', full.hdr));
+        this.photoProcessing.markRenditionsBuilt(
+          job.photoId,
+          version,
+          'render',
+          builtFrom,
+          renditionVariant('full', full.hdr),
+        );
       } else if (max != null) {
-        this.photoProcessing.markCopyBuilt(job.photoId, version, builtFrom, renditionVariant('max', max.hdr));
+        this.photoProcessing.markCopyBuilt(
+          job.photoId,
+          version,
+          builtFrom,
+          renditionVariant('max', max.hdr),
+        );
       }
       this.announce(job.photoId, { stage: 'renditions', version });
     }
     // After the writes, and best-effort, for the reasons `stageDone` gives.
     if (descriptor != null) this.describe(job.photoId, descriptor);
   }
-
-
 
   /**
    * One job on a worker of its own, with nothing recorded about it afterwards.
@@ -317,17 +351,31 @@ export class SinglePhotoRenderer {
    */
   async runDetached(job: RenditionJob): Promise<Uint8Array | undefined> {
     const fields = { photo: job.photoId, file: path.basename(job.rawFilePath) };
-    const worker = new Worker(workerEntry('processing_worker', new URL('../workers/processing_worker.ts', import.meta.url)));
+    const worker = new Worker(
+      workerEntry('processing_worker', new URL('../workers/processing_worker.ts', import.meta.url)),
+    );
     return await new Promise<Uint8Array | undefined>((resolve, reject) => {
       worker.onmessage = (event: MessageEvent<ProcessingMessage>) => {
         if ('kind' in event.data) {
           log.info('render inputs', {
-            ...fields, analysisCache: event.data.analysisCache, cameraMatch: job.cameraMatch,
-            targets: job.targets.map(({ rendition, hdr, size, source }) => ({ rendition, hdr, size, source })),
-            halfSize: job.halfSize ?? false, denoiser: job.denoiser,
-            denoiseLuminance: job.denoiseLuminance ?? 'auto', denoiseColour: job.denoiseColour ?? 'auto',
-            sharpen: job.sharpen, defringe: job.defringe, dust: job.dust.enabled,
-            repairs: job.repairs.length, input: job.rendered == null ? 'original' : 'client-rendered',
+            ...fields,
+            analysisCache: event.data.analysisCache,
+            cameraMatch: job.cameraMatch,
+            targets: job.targets.map(({ rendition, hdr, size, source }) => ({
+              rendition,
+              hdr,
+              size,
+              source,
+            })),
+            halfSize: job.halfSize ?? false,
+            denoiser: job.denoiser,
+            denoiseLuminance: job.denoiseLuminance ?? 'auto',
+            denoiseColour: job.denoiseColour ?? 'auto',
+            sharpen: job.sharpen,
+            defringe: job.defringe,
+            dust: job.dust.enabled,
+            repairs: job.repairs.length,
+            input: job.rendered == null ? 'original' : 'client-rendered',
           });
           return;
         }
@@ -336,7 +384,10 @@ export class SinglePhotoRenderer {
       };
       worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
       // Moved rather than copied: a client's `max` is hundreds of megabytes.
-      worker.postMessage({ ...job, observe: true }, job.rendered != null ? [job.rendered.buffer] : []);
+      worker.postMessage(
+        { ...job, observe: true },
+        job.rendered != null ? [job.rendered.buffer] : [],
+      );
     }).finally(() => worker.terminate());
   }
 }

@@ -108,7 +108,9 @@ export function isMissingCatalogue(dbPath: string): boolean {
   try {
     const db = new Database(dbPath, { readonly: true });
     try {
-      const { n } = db.query("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get() as { n: number };
+      const { n } = db
+        .query("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'")
+        .get() as { n: number };
       return n === 0;
     } finally {
       db.close();
@@ -122,7 +124,9 @@ function refuseToReplaceAMissingCatalogue(dbPath: string): void {
   if (dbPath === ':memory:' || !isMissingCatalogue(dbPath)) return;
   const dir = backupsDir(dbPath);
   const prefix = `${path.basename(dbPath)}-`;
-  const snapshots = existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith(prefix) && name.endsWith('.db')) : [];
+  const snapshots = existsSync(dir)
+    ? readdirSync(dir).filter((name) => name.startsWith(prefix) && name.endsWith('.db'))
+    : [];
   if (snapshots.length === 0) return;
   throw new Error(
     `${dbPath} is missing, but ${snapshots.length} backup(s) of it sit in ${dir}. ` +

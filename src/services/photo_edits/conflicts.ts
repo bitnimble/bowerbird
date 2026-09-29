@@ -32,13 +32,16 @@ export function listConflicts(db: Database, libraryId?: string): EditConflict[] 
   const rows = (
     libraryId == null
       ? db.query(`${SELECT} ORDER BY c.photo_id, c.stamp DESC`).all()
-      : db.query(`${SELECT} WHERE p.library_id = ? ORDER BY c.photo_id, c.stamp DESC`).all(libraryId)
+      : db
+          .query(`${SELECT} WHERE p.library_id = ? ORDER BY c.photo_id, c.stamp DESC`)
+          .all(libraryId)
   ) as Row[];
   const self = peerId(db);
   const names = new Map<string, string>();
   return rows.map((row) => {
     const origin = stampPeer(row.stamp);
-    if (!names.has(origin)) names.set(origin, origin === self ? deviceName(db) : peerNameOf(db, row.library_id, origin));
+    if (!names.has(origin))
+      names.set(origin, origin === self ? deviceName(db) : peerNameOf(db, row.library_id, origin));
     return {
       photo_id: row.photo_id,
       library_id: row.library_id,
@@ -74,11 +77,12 @@ export function resolveConflict(
   const chosen = db
     .query('SELECT doc FROM edit_conflicts WHERE photo_id = ? AND session_id = ?')
     .get(photoId, sessionId) as { doc: string } | null;
-  if (chosen == null) throw new AppError('NOT_FOUND', `no parked edit ${sessionId} for photo ${photoId}`);
+  if (chosen == null)
+    throw new AppError('NOT_FOUND', `no parked edit ${sessionId} for photo ${photoId}`);
 
-  const library = db.query('SELECT library_id FROM photos WHERE id = ?').get(photoId) as
-    | { library_id: string }
-    | null;
+  const library = db.query('SELECT library_id FROM photos WHERE id = ?').get(photoId) as {
+    library_id: string;
+  } | null;
   if (library == null) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
 
   edits.save(photoId, parseDoc(chosen.doc), edits.get(photoId).rev, session);

@@ -18,9 +18,11 @@ function insertPhoto(db: Database, id: string, recipe: string): void {
 }
 
 function sourcesOfRow(db: Database, id: string): string[] {
-  return (db.query('SELECT photo_id FROM photo_sources WHERE composed_id = ? ORDER BY at').all(id) as {
-    photo_id: string;
-  }[]).map((row) => row.photo_id);
+  return (
+    db.query('SELECT photo_id FROM photo_sources WHERE composed_id = ? ORDER BY at').all(id) as {
+      photo_id: string;
+    }[]
+  ).map((row) => row.photo_id);
 }
 
 describe('photoInputTriggers', () => {
@@ -30,14 +32,20 @@ describe('photoInputTriggers', () => {
     expect(sourcesOfRow(db, 'p1')).toEqual([]);
   });
 
-  it('indexes an assembly recipe\'s sources', () => {
+  it("indexes an assembly recipe's sources", () => {
     const db = openMigrated();
-    insertPhoto(db, 'p1', JSON.stringify({ kind: 'assembly', sources: [{ photoId: 'f1' }, { photoId: 'f2' }] }));
+    insertPhoto(
+      db,
+      'p1',
+      JSON.stringify({ kind: 'assembly', sources: [{ photoId: 'f1' }, { photoId: 'f2' }] }),
+    );
     expect(sourcesOfRow(db, 'p1')).toEqual(['f1', 'f2']);
   });
 
   it('lists every composite kind in the union', () => {
-    const kinds = RecipeSchema.options.map((option) => option.shape.kind.value).filter((kind) => kind !== 'file');
+    const kinds = RecipeSchema.options
+      .map((option) => option.shape.kind.value)
+      .filter((kind) => kind !== 'file');
     expect(kinds.length).toBeGreaterThan(1);
     for (const kind of kinds) expect(photoInputTriggers()).toContain(`'${kind}'`);
   });
@@ -48,7 +56,9 @@ describe('photoInputTriggers', () => {
     db.exec('DROP TRIGGER photos_index_inputs_ins');
     db.exec(photoInputTriggers().replace("IN ('panorama', 'assembly')", "= 'panorama'"));
     // Only the migration, then only what migrate.ts does after one.
-    db.exec(readFileSync(new URL('../migrations/0004_composite_sources.sql', import.meta.url), 'utf8'));
+    db.exec(
+      readFileSync(new URL('../migrations/0004_composite_sources.sql', import.meta.url), 'utf8'),
+    );
     db.exec(triggers());
     insertPhoto(db, 'p1', JSON.stringify({ kind: 'assembly', sources: [{ photoId: 'f1' }] }));
     expect(sourcesOfRow(db, 'p1')).toEqual(['f1']);

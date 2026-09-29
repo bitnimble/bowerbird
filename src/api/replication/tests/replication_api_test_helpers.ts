@@ -64,7 +64,10 @@ export function serve(db: Database, now: () => number = Date.now): Server {
   const app = new Hono();
   app.route(
     route(PathSegment.api(), PathSegment.replication()),
-    new ReplicationApi(new ReplicationService(db, new BlobLocations(db), now, () => {}), runnerFor(db)).routes,
+    new ReplicationApi(
+      new ReplicationService(db, new BlobLocations(db), now, () => {}),
+      runnerFor(db),
+    ).routes,
   );
   applyErrorHandler(app);
   const server = Bun.serve({ port: 0, fetch: app.fetch });
@@ -79,14 +82,20 @@ export function serve(db: Database, now: () => number = Date.now): Server {
 }
 
 export function seedLibrary(db: Database, photos: number): void {
-  db.query("INSERT INTO libraries (id, root_path, name) VALUES (?, ?, 'Trip')").run(LIB, `/libraries/${newId()}`);
+  db.query("INSERT INTO libraries (id, root_path, name) VALUES (?, ?, 'Trip')").run(
+    LIB,
+    `/libraries/${newId()}`,
+  );
   db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(
     SHOOT,
     LIB,
     'trip',
     'Trip',
   );
-  const scan = new PhotoScanRepository(db, new PhotoProcessingRepository(db, new RenditionsRepository(db)));
+  const scan = new PhotoScanRepository(
+    db,
+    new PhotoProcessingRepository(db, new RenditionsRepository(db)),
+  );
   const state = new PhotoStateRepository(db, new StackMembership(db));
   for (let i = 1; i <= photos; i++) {
     scan.insertFromScan({
@@ -127,7 +136,10 @@ export async function post(url: string, path: string, body: unknown): Promise<Re
 }
 
 /** The whole §9 dance: an origin server with a seeded library, and a fresh replica paired to it. */
-export async function pairedClone(photos = 3, syncOriginals = true): Promise<{ origin: Server; clone: Server }> {
+export async function pairedClone(
+  photos = 3,
+  syncOriginals = true,
+): Promise<{ origin: Server; clone: Server }> {
   const origin = serve(catalogue());
   seedLibrary(origin.db, photos);
   const clone = serve(catalogue());
@@ -144,6 +156,8 @@ export function cloneRoot(): string {
 }
 
 export function peerIdOf(db: Database): string {
-  const identity = db.query('SELECT peer_id FROM replication_identity').get() as { peer_id: string };
+  const identity = db.query('SELECT peer_id FROM replication_identity').get() as {
+    peer_id: string;
+  };
   return identity.peer_id;
 }

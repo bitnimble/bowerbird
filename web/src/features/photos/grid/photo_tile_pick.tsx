@@ -81,13 +81,23 @@ export function PhotoTilePick({
   return (
     <button
       type="button"
-      {...stylex.props(styles.pick, selecting && styles.selecting, checked && styles.picked, focusRing.ring)}
+      {...stylex.props(
+        styles.pick,
+        selecting && styles.selecting,
+        checked && styles.picked,
+        focusRing.ring,
+      )}
       role="checkbox"
       aria-checked={checked}
       aria-label={PhotoGridStrings.pick(name)}
       onClick={onToggle}
     >
-      <Check {...stylex.props(checked ? styles.ticked : styles.tick)} size={14} strokeWidth={3} aria-hidden="true" />
+      <Check
+        {...stylex.props(checked ? styles.ticked : styles.tick)}
+        size={14}
+        strokeWidth={3}
+        aria-hidden="true"
+      />
     </button>
   );
 }

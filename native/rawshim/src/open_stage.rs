@@ -47,8 +47,9 @@ mod tests {
 
     #[test]
     fn the_stages_are_the_ones_the_page_names() {
-        let table: Vec<&str> =
-            include_str!("../../../test/fixtures/tables/open-stages.txt").lines().collect();
+        let table: Vec<&str> = include_str!("../../../test/fixtures/tables/open-stages.txt")
+            .lines()
+            .collect();
         assert_eq!(Stage::ALL.map(Stage::name).to_vec(), table);
     }
 }

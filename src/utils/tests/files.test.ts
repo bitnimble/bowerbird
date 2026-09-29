@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { importsFormat, isOriginal, isStrayOriginal, originalMediaType, scanLibraryTree } from '../scan';
+import {
+  importsFormat,
+  isOriginal,
+  isStrayOriginal,
+  originalMediaType,
+  scanLibraryTree,
+} from '../scan';
 import { scope, withRoot } from './library_tree_test_helpers';
 
 describe('importsFormat', () => {
@@ -63,35 +69,44 @@ describe('originalMediaType', () => {
 });
 
 describe('scanLibraryTree', () => {
-  it('skips excluded dirs (dotfolders, Bin)', withRoot(async (root) => {
-    mkdirSync(path.join(root, '.cache'));
-    writeFileSync(path.join(root, '.cache', 'hidden.arw'), '');
-    mkdirSync(path.join(root, 'Bin'));
-    writeFileSync(path.join(root, 'Bin', 'deleted.arw'), '');
-    writeFileSync(path.join(root, 'keep.arw'), '');
+  it(
+    'skips excluded dirs (dotfolders, Bin)',
+    withRoot(async (root) => {
+      mkdirSync(path.join(root, '.cache'));
+      writeFileSync(path.join(root, '.cache', 'hidden.arw'), '');
+      mkdirSync(path.join(root, 'Bin'));
+      writeFileSync(path.join(root, 'Bin', 'deleted.arw'), '');
+      writeFileSync(path.join(root, 'keep.arw'), '');
 
-    const { files } = await scanLibraryTree(scope(root));
-    expect(files.map((f) => f.relPath)).toEqual(['keep.arw']);
-  }));
+      const { files } = await scanLibraryTree(scope(root));
+      expect(files.map((f) => f.relPath)).toEqual(['keep.arw']);
+    }),
+  );
 
-  it('stays at the root when the library does not include subfolders', withRoot(async (root) => {
-    writeFileSync(path.join(root, 'top.arw'), '');
-    mkdirSync(path.join(root, 'Day1'));
-    writeFileSync(path.join(root, 'Day1', 'deep.arw'), '');
+  it(
+    'stays at the root when the library does not include subfolders',
+    withRoot(async (root) => {
+      writeFileSync(path.join(root, 'top.arw'), '');
+      mkdirSync(path.join(root, 'Day1'));
+      writeFileSync(path.join(root, 'Day1', 'deep.arw'), '');
 
-    const { files, dirs } = await scanLibraryTree(scope(root, { includeSubfolders: false }));
-    expect(files.map((f) => f.relPath)).toEqual(['top.arw']);
-    expect(dirs).toEqual([]);
-  }));
+      const { files, dirs } = await scanLibraryTree(scope(root, { includeSubfolders: false }));
+      expect(files.map((f) => f.relPath)).toEqual(['top.arw']);
+      expect(dirs).toEqual([]);
+    }),
+  );
 
   // Subtree-wide by construction: an unwalked folder has no children to consider.
-  it('skips an excluded folder and everything under it', withRoot(async (root) => {
-    writeFileSync(path.join(root, 'keep.arw'), '');
-    mkdirSync(path.join(root, 'Rejects', 'Deeper'), { recursive: true });
-    writeFileSync(path.join(root, 'Rejects', 'a.arw'), '');
-    writeFileSync(path.join(root, 'Rejects', 'Deeper', 'b.arw'), '');
+  it(
+    'skips an excluded folder and everything under it',
+    withRoot(async (root) => {
+      writeFileSync(path.join(root, 'keep.arw'), '');
+      mkdirSync(path.join(root, 'Rejects', 'Deeper'), { recursive: true });
+      writeFileSync(path.join(root, 'Rejects', 'a.arw'), '');
+      writeFileSync(path.join(root, 'Rejects', 'Deeper', 'b.arw'), '');
 
-    const { files } = await scanLibraryTree(scope(root, { excluded: new Set(['Rejects']) }));
-    expect(files.map((f) => f.relPath)).toEqual(['keep.arw']);
-  }));
+      const { files } = await scanLibraryTree(scope(root, { excluded: new Set(['Rejects']) }));
+      expect(files.map((f) => f.relPath)).toEqual(['keep.arw']);
+    }),
+  );
 });

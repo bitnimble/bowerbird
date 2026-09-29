@@ -10,12 +10,12 @@
 //!
 //! Skipped loudly where no adapter answers, for `gpu_dust.rs`'s reason.
 
+use rawler::decoders::Orientation;
 use rawshim::light::{Light, SceneNits};
 use rawshim::linearise::{GainMap, Picture, Reconstruction};
 use rawshim::px::{At, Photograph, Rect, Size};
 use rawshim::transfer::{Coding, Curve, Primaries};
 use rawshim::view::Scale;
-use rawler::decoders::Orientation;
 
 /// The samples a window comes back as, on the host.
 fn linearised(
@@ -32,7 +32,14 @@ fn linearised(
 
 fn whole(picture: &Picture) -> Option<(Vec<u16>, usize, usize)> {
     let size = picture.upright_size();
-    linearised(picture, Rect { at: At::ORIGIN, size }, Scale::Full)
+    linearised(
+        picture,
+        Rect {
+            at: At::ORIGIN,
+            size,
+        },
+        Scale::Full,
+    )
 }
 
 /// A picture whose every pixel is a different code, so a reader that indexed the table or the
@@ -42,7 +49,11 @@ fn ramp(width: usize, height: usize, depth: u32) -> Vec<u16> {
     (0..width * height)
         .flat_map(|at| {
             let base = (at as u32 * 7) % (last + 1);
-            [base as u16, ((base + last / 3) % (last + 1)) as u16, ((base + 2 * last / 3) % (last + 1)) as u16]
+            [
+                base as u16,
+                ((base + last / 3) % (last + 1)) as u16,
+                ((base + 2 * last / 3) % (last + 1)) as u16,
+            ]
         })
         .collect()
 }
@@ -58,8 +69,16 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
     let coding = Coding::of(Primaries::REC2020, Curve::Srgb, 8);
     let (width, height) = (16usize, 9);
     let codes = ramp(width, height, 8);
-    let picture =
-        Picture::upload(gpu, codes.clone(), width, height, coding, Orientation::Normal, None).unwrap();
+    let picture = Picture::upload(
+        gpu,
+        codes.clone(),
+        width,
+        height,
+        coding,
+        Orientation::Normal,
+        None,
+    )
+    .unwrap();
     let (samples, out_w, out_h) = whole(&picture).expect("the pass runs");
     assert_eq!((out_w, out_h), (width, height));
 
@@ -95,16 +114,27 @@ fn a_pq_picture_keeps_its_headroom() {
     };
     let white_code = coded(203.0);
     let bright_code = coded(1000.0);
-    let codes: Vec<u16> = [white_code, bright_code].iter().flat_map(|c| [*c, *c, *c]).collect();
-    let picture = Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, None).unwrap();
+    let codes: Vec<u16> = [white_code, bright_code]
+        .iter()
+        .flat_map(|c| [*c, *c, *c])
+        .collect();
+    let picture =
+        Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     let white = 65535.0 / rawshim::transfer::HDR_HEADROOM;
-    assert!((f64::from(samples[0]) - white).abs() < 60.0, "white landed at {}", samples[0]);
+    assert!(
+        (f64::from(samples[0]) - white).abs() < 60.0,
+        "white landed at {}",
+        samples[0]
+    );
     // 1000 nits is a little under five times 203, and the headroom is eight, so it is carried
     // rather than clipped.
     let ratio = f64::from(samples[3]) / f64::from(samples[0]);
-    assert!((ratio - 1000.0 / 203.0).abs() < 0.05, "1000 nits came back at {ratio}x white");
+    assert!(
+        (ratio - 1000.0 / 203.0).abs() < 0.05,
+        "1000 nits came back at {ratio}x white"
+    );
     assert!(samples[3] < 65535, "and it did not reach the ceiling");
 }
 
@@ -119,7 +149,8 @@ fn the_primaries_conversion_is_the_hosts() {
     let coding = Coding::of(Primaries::REC709, Curve::Linear, 8);
     // Pure red, green, blue and white, which is where a swapped row shows most.
     let codes: Vec<u16> = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-    let picture = Picture::upload(gpu, codes.clone(), 4, 1, coding, Orientation::Normal, None).unwrap();
+    let picture =
+        Picture::upload(gpu, codes.clone(), 4, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     let matrix = Primaries::REC709.to_rec2020();
@@ -137,12 +168,19 @@ fn the_primaries_conversion_is_the_hosts() {
                 .clamp(0.0, 1.0)
                 * 65535.0;
             let got = f64::from(samples[pixel * 3 + channel]);
-            assert!((got - want).abs() <= 2.0, "pixel {pixel} channel {channel}: {got} vs {want}");
+            assert!(
+                (got - want).abs() <= 2.0,
+                "pixel {pixel} channel {channel}: {got} vs {want}"
+            );
         }
     }
     // Rec.709 white is Rec.2020 white, which is the identity a primaries conversion has to hold.
     for channel in 0..3 {
-        assert!(samples[9 + channel] > 65000, "white came back at {}", samples[9 + channel]);
+        assert!(
+            samples[9 + channel] > 65000,
+            "white came back at {}",
+            samples[9 + channel]
+        );
     }
 }
 
@@ -157,8 +195,9 @@ fn a_turned_picture_is_windowed_in_the_readers_coordinates() {
     let coding = Coding::of(Primaries::REC2020, Curve::Linear, 16);
     let (width, height) = (7usize, 4);
     // Every pixel names where it is in the stored raster.
-    let codes: Vec<u16> =
-        (0..width * height).flat_map(|at| [at as u16 * 100, 0, 0]).collect();
+    let codes: Vec<u16> = (0..width * height)
+        .flat_map(|at| [at as u16 * 100, 0, 0])
+        .collect();
 
     for turn in [
         Orientation::Normal,
@@ -170,15 +209,23 @@ fn a_turned_picture_is_windowed_in_the_readers_coordinates() {
         Orientation::Transverse,
         Orientation::Rotate270,
     ] {
-        let picture = Picture::upload(gpu, codes.clone(), width, height, coding, turn, None).unwrap();
+        let picture =
+            Picture::upload(gpu, codes.clone(), width, height, coding, turn, None).unwrap();
         let upright = picture.upright_size();
         let (whole_samples, out_w, out_h) = whole(&picture).expect("the pass runs");
-        assert_eq!((out_w, out_h), upright.raw(), "{turn:?} answered the wrong shape");
+        assert_eq!(
+            (out_w, out_h),
+            upright.raw(),
+            "{turn:?} answered the wrong shape"
+        );
 
         // One pixel of the upright picture, asked for on its own: a window has to land on the
         // same sample the whole frame put there.
         let (x, y) = (2usize, 1);
-        let one = Rect { at: At::exact(x, y), size: Size::exact(1, 1) };
+        let one = Rect {
+            at: At::exact(x, y),
+            size: Size::exact(1, 1),
+        };
         let (windowed, _, _) = linearised(&picture, one, Scale::Full).expect("the window runs");
         assert_eq!(
             windowed[0],
@@ -200,10 +247,17 @@ fn halving_averages_light_rather_than_code_values() {
     let coding = Coding::of(Primaries::REC2020, Curve::Srgb, 8);
     // One 2x2 site: black, white, black, white.
     let codes: Vec<u16> = vec![0, 0, 0, 255, 255, 255, 0, 0, 0, 255, 255, 255];
-    let picture = Picture::upload(gpu, codes.clone(), 2, 2, coding, Orientation::Normal, None).unwrap();
-    let (samples, out_w, out_h) =
-        linearised(&picture, Rect { at: At::ORIGIN, size: Size::exact(2, 2) }, Scale::Half)
-            .expect("the pass runs");
+    let picture =
+        Picture::upload(gpu, codes.clone(), 2, 2, coding, Orientation::Normal, None).unwrap();
+    let (samples, out_w, out_h) = linearised(
+        &picture,
+        Rect {
+            at: At::ORIGIN,
+            size: Size::exact(2, 2),
+        },
+        Scale::Half,
+    )
+    .expect("the pass runs");
     assert_eq!((out_w, out_h), (1, 1));
 
     let want = 0.5 * 65535.0;
@@ -232,10 +286,15 @@ fn a_halved_picture_drops_the_same_edge_whichever_way_up_it_is() {
     // Five columns of distinct values, so a one-pixel shift is visible; an odd width is what
     // makes the truncation happen at all.
     let (width, height) = (5usize, 2);
-    let codes: Vec<u16> =
-        (0..width * height).flat_map(|at| [(at % width) as u16 * 1000, 0, 0]).collect();
+    let codes: Vec<u16> = (0..width * height)
+        .flat_map(|at| [(at % width) as u16 * 1000, 0, 0])
+        .collect();
 
-    for turn in [Orientation::Normal, Orientation::HorizontalFlip, Orientation::Rotate180] {
+    for turn in [
+        Orientation::Normal,
+        Orientation::HorizontalFlip,
+        Orientation::Rotate180,
+    ] {
         let picture =
             Picture::upload(gpu, codes.clone(), width, height, coding, turn, None).unwrap();
         let upright = picture.upright_size();
@@ -256,7 +315,10 @@ fn a_halved_picture_drops_the_same_edge_whichever_way_up_it_is() {
 }
 
 fn picture_window(size: Size<Photograph>) -> Rect<Photograph> {
-    Rect { at: At::ORIGIN, size }
+    Rect {
+        at: At::ORIGIN,
+        size,
+    }
 }
 
 /// ISO's terms for two stops at full recovery, which is the shape most of these tests want.
@@ -289,16 +351,31 @@ fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
         last: 65535.0,
         terms: two_stops(),
     };
-    let picture =
-        Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, Some(map)).unwrap();
+    let picture = Picture::upload(
+        gpu,
+        codes.clone(),
+        2,
+        1,
+        coding,
+        Orientation::Normal,
+        Some(map),
+    )
+    .unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     // A gain-mapped base is put on the HDR scale, so the unlifted pixel sits at its own light
     // times that scale rather than at 65535.
     let base = 128.0 / 255.0 * (65535.0 / rawshim::transfer::HDR_HEADROOM);
-    assert!((f64::from(samples[0]) - base).abs() < 60.0, "the unlifted pixel is {}", samples[0]);
+    assert!(
+        (f64::from(samples[0]) - base).abs() < 60.0,
+        "the unlifted pixel is {}",
+        samples[0]
+    );
     let ratio = f64::from(samples[3]) / f64::from(samples[0]);
-    assert!((ratio - 4.0).abs() < 0.05, "two stops of gain came back as {ratio}x");
+    assert!(
+        (ratio - 4.0).abs() < 0.05,
+        "two stops of gain came back as {ratio}x"
+    );
 }
 
 /// A map coded at eight bits says what the same map coded at sixteen says.
@@ -322,16 +399,30 @@ fn a_gain_map_is_read_at_its_own_depth_rather_than_the_pictures() {
             last,
             terms: two_stops(),
         };
-        let picture =
-            Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, Some(map)).unwrap();
+        let picture = Picture::upload(
+            gpu,
+            codes.clone(),
+            2,
+            1,
+            coding,
+            Orientation::Normal,
+            Some(map),
+        )
+        .unwrap();
         whole(&picture).expect("the pass runs").0
     };
 
     let wide = at_depth(vec![0, 0, 0, 65535, 65535, 65535], 65535.0);
     let narrow = at_depth(vec![0, 0, 0, 255, 255, 255], 255.0);
-    assert_eq!(wide[3], narrow[3], "the lifted pixel differs by the map's depth alone");
+    assert_eq!(
+        wide[3], narrow[3],
+        "the lifted pixel differs by the map's depth alone"
+    );
     let ratio = f64::from(narrow[3]) / f64::from(narrow[0]);
-    assert!((ratio - 4.0).abs() < 0.05, "two stops off an 8-bit map came back as {ratio}x");
+    assert!(
+        (ratio - 4.0).abs() < 0.05,
+        "two stops off an 8-bit map came back as {ratio}x"
+    );
 }
 
 /// Apple's reconstruction is a straight line to its headroom, which ISO's curve is not.
@@ -350,10 +441,23 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
     // One pixel, and a map reading exactly half way up.
     let codes: Vec<u16> = vec![64; 3];
     let lifted = |terms: Reconstruction| {
-        let map =
-            GainMap { samples: vec![32768; 3], width: 1, height: 1, last: 65535.0, terms };
-        let picture =
-            Picture::upload(gpu, codes.clone(), 1, 1, coding, Orientation::Normal, Some(map)).unwrap();
+        let map = GainMap {
+            samples: vec![32768; 3],
+            width: 1,
+            height: 1,
+            last: 65535.0,
+            terms,
+        };
+        let picture = Picture::upload(
+            gpu,
+            codes.clone(),
+            1,
+            1,
+            coding,
+            Orientation::Normal,
+            Some(map),
+        )
+        .unwrap();
         f64::from(whole(&picture).expect("the pass runs").0[0])
     };
 
@@ -368,9 +472,16 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
     });
 
     // `1 + (4 - 1) * 0.5` against `2^(0 + 2 * 0.5)`.
-    assert!((apple / iso - 2.5 / 2.0).abs() < 0.01, "Apple {apple} against ISO {iso}");
+    assert!(
+        (apple / iso - 2.5 / 2.0).abs() < 0.01,
+        "Apple {apple} against ISO {iso}"
+    );
     let base = 64.0 / 255.0 * (65535.0 / rawshim::transfer::HDR_HEADROOM);
-    assert!((apple / base - 2.5).abs() < 0.02, "Apple's half recovery came back at {}x", apple / base);
+    assert!(
+        (apple / base - 2.5).abs() < 0.02,
+        "Apple's half recovery came back at {}x",
+        apple / base
+    );
 }
 
 /// **The terms that the test above cannot see.** With `gamma` at 1 and recovery at exactly 0 or
@@ -403,15 +514,23 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
             offset_alternate: [offset_alternate; 3],
         },
     };
-    let picture =
-        Picture::upload(gpu, codes.clone(), 1, 1, coding, Orientation::Normal, Some(map)).unwrap();
+    let picture = Picture::upload(
+        gpu,
+        codes.clone(),
+        1,
+        1,
+        coding,
+        Orientation::Normal,
+        Some(map),
+    )
+    .unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     // ISO 21496-1, evaluated here: the recovery through 1/gamma, lerped between min and max in
     // log2, then the base lifted through it with the two offsets on their own sides.
     let recovery = 32768.0f64 / 65535.0;
-    let log_gain = f64::from(min)
-        + (f64::from(max) - f64::from(min)) * recovery.powf(1.0 / f64::from(gamma));
+    let log_gain =
+        f64::from(min) + (f64::from(max) - f64::from(min)) * recovery.powf(1.0 / f64::from(gamma));
     let base = f64::from(base_code) / 65535.0;
     let want = ((base + f64::from(offset_base)) * log_gain.exp2() - f64::from(offset_alternate))
         * (65535.0 / rawshim::transfer::HDR_HEADROOM);
@@ -422,13 +541,18 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
     );
     // And the two failures this is guarding against, named so the tolerance cannot swallow them:
     // an inverted gamma, and the offsets swapped.
-    let inverted = f64::from(min)
-        + (f64::from(max) - f64::from(min)) * recovery.powf(f64::from(gamma));
+    let inverted =
+        f64::from(min) + (f64::from(max) - f64::from(min)) * recovery.powf(f64::from(gamma));
     let wrong = ((base + f64::from(offset_base)) * inverted.exp2() - f64::from(offset_alternate))
         * (65535.0 / rawshim::transfer::HDR_HEADROOM);
-    assert!((want - wrong).abs() > 400.0, "the test cannot tell an inverted gamma apart");
-    let swapped = ((base + f64::from(offset_alternate)) * log_gain.exp2()
-        - f64::from(offset_base))
+    assert!(
+        (want - wrong).abs() > 400.0,
+        "the test cannot tell an inverted gamma apart"
+    );
+    let swapped = ((base + f64::from(offset_alternate)) * log_gain.exp2() - f64::from(offset_base))
         * (65535.0 / rawshim::transfer::HDR_HEADROOM);
-    assert!((want - swapped).abs() > 100.0, "the test cannot tell swapped offsets apart");
+    assert!(
+        (want - swapped).abs() > 100.0,
+        "the test cannot tell swapped offsets apart"
+    );
 }

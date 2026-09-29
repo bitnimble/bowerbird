@@ -93,12 +93,22 @@ export const Toasts = observer(function Toasts(): JSX.Element | null {
                 // that announced every step would talk over everything else on the page.
                 aria-live="off"
               >
-                <span {...stylex.props(styles.fill)} style={{ width: `${toast.progress * 100}%` }} />
+                <span
+                  {...stylex.props(styles.fill)}
+                  style={{ width: `${toast.progress * 100}%` }}
+                />
               </span>
             )}
           </span>
-          {toast.undo != null && <Button onClick={() => void toasts.runUndo(toast.id)}>{toast.undoLabel}</Button>}
-          <Button variant="ghost" iconOnly aria-label={ToastsStrings.dismiss()} onClick={() => toasts.dismiss(toast.id)}>
+          {toast.undo != null && (
+            <Button onClick={() => void toasts.runUndo(toast.id)}>{toast.undoLabel}</Button>
+          )}
+          <Button
+            variant="ghost"
+            iconOnly
+            aria-label={ToastsStrings.dismiss()}
+            onClick={() => toasts.dismiss(toast.id)}
+          >
             <X size={ICON} />
           </Button>
         </div>

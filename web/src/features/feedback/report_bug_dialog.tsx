@@ -173,7 +173,11 @@ export const ReportBugDialog = observer(function ReportBugDialog(): JSX.Element 
 
         <DialogActions>
           <Button onClick={feedback.close}>{ModalStrings.cancel()}</Button>
-          <Button variant="primary" disabled={message.trim() === '' || sending} onClick={() => void send()}>
+          <Button
+            variant="primary"
+            disabled={message.trim() === '' || sending}
+            onClick={() => void send()}
+          >
             {sending ? ReportBugStrings.sending() : ReportBugStrings.send()}
           </Button>
         </DialogActions>

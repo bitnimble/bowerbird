@@ -75,7 +75,11 @@ struct Reader<'a> {
 impl<'a> Reader<'a> {
     fn u16(&self, at: usize) -> Option<u16> {
         let raw = self.bytes.get(at..at + 2)?.try_into().ok()?;
-        Some(if self.little { u16::from_le_bytes(raw) } else { u16::from_be_bytes(raw) })
+        Some(if self.little {
+            u16::from_le_bytes(raw)
+        } else {
+            u16::from_be_bytes(raw)
+        })
     }
 
     fn i16(&self, at: usize) -> Option<i16> {
@@ -84,7 +88,11 @@ impl<'a> Reader<'a> {
 
     fn u32(&self, at: usize) -> Option<u32> {
         let raw = self.bytes.get(at..at + 4)?.try_into().ok()?;
-        Some(if self.little { u32::from_le_bytes(raw) } else { u32::from_be_bytes(raw) })
+        Some(if self.little {
+            u32::from_le_bytes(raw)
+        } else {
+            u32::from_be_bytes(raw)
+        })
     }
 }
 
@@ -129,10 +137,14 @@ fn read_ifd(reader: &Reader<'_>, offset: usize, needed: &mut Option<usize>) -> V
     let mut entries = Vec::with_capacity(count as usize);
     for i in 0..count as usize {
         let at = offset + 2 + i * 12;
-        let (Some(tag), Some(kind), Some(n)) = (reader.u16(at), reader.u16(at + 2), reader.u32(at + 4)) else {
+        let (Some(tag), Some(kind), Some(n)) =
+            (reader.u16(at), reader.u16(at + 2), reader.u32(at + 4))
+        else {
             continue;
         };
-        let Some(unit) = type_size(kind) else { continue };
+        let Some(unit) = type_size(kind) else {
+            continue;
+        };
         // A value of four bytes or fewer is stored in the entry, not pointed at.
         let start = match unit.saturating_mul(n) <= 4 {
             true => at + 8,
@@ -141,12 +153,21 @@ fn read_ifd(reader: &Reader<'_>, offset: usize, needed: &mut Option<usize>) -> V
                 None => continue,
             },
         };
-        entries.push(Entry { tag, kind, count: n, start });
+        entries.push(Entry {
+            tag,
+            kind,
+            count: n,
+            start,
+        });
     }
     entries
 }
 
-fn find_spline(reader: &Reader<'_>, entries: &[Entry], needed: &mut Option<usize>) -> Option<Vec<f64>> {
+fn find_spline(
+    reader: &Reader<'_>,
+    entries: &[Entry],
+    needed: &mut Option<usize>,
+) -> Option<Vec<f64>> {
     for entry in entries {
         if entry.tag != DISTORTION_TAG || (entry.kind != TYPE_SSHORT && entry.kind != TYPE_SHORT) {
             continue;
@@ -164,7 +185,9 @@ fn find_spline(reader: &Reader<'_>, entries: &[Entry], needed: &mut Option<usize
         // knots and the ILCE-6300 writes 11, and within one RX100M3 file the
         // vignetting tag uses a different count from this one. Trust the prefix only
         // when it fits the tag it came from.
-        let Some(declared) = reader.i16(entry.start) else { continue };
+        let Some(declared) = reader.i16(entry.start) else {
+            continue;
+        };
         if declared < 2 || declared as u32 > entry.count - 1 {
             continue;
         }
@@ -189,7 +212,11 @@ fn find_spline(reader: &Reader<'_>, entries: &[Entry], needed: &mut Option<usize
 /// except the count is 32 because both channels are stored back to back - red first,
 /// then blue. The two blocks routinely carry opposite signs, which is what a lateral
 /// aberration does.
-fn find_lateral(reader: &Reader<'_>, entries: &[Entry], needed: &mut Option<usize>) -> Option<[Vec<f64>; 2]> {
+fn find_lateral(
+    reader: &Reader<'_>,
+    entries: &[Entry],
+    needed: &mut Option<usize>,
+) -> Option<[Vec<f64>; 2]> {
     for entry in entries {
         if entry.tag != LATERAL_TAG || (entry.kind != TYPE_SSHORT && entry.kind != TYPE_SHORT) {
             continue;
@@ -216,7 +243,9 @@ fn find_lateral(reader: &Reader<'_>, entries: &[Entry], needed: &mut Option<usiz
         let read = |from: usize| -> Option<Vec<f64>> {
             (0..LATERAL_KNOTS)
                 .map(|i| {
-                    reader.i16(entry.start + (from + i) * 2).map(|v| f64::from(v) / LATERAL_UNIT)
+                    reader
+                        .i16(entry.start + (from + i) * 2)
+                        .map(|v| f64::from(v) / LATERAL_UNIT)
                 })
                 .collect()
         };
@@ -227,7 +256,9 @@ fn find_lateral(reader: &Reader<'_>, entries: &[Entry], needed: &mut Option<usiz
         // would also reject it, but a reader that hands back garbage is worse than one
         // that admits it found none.
         let sane = |knots: &Vec<f64>| {
-            knots.iter().all(|knot| (knot / crate::image::SPLINE_UNIT).abs() < 0.01)
+            knots
+                .iter()
+                .all(|knot| (knot / crate::image::SPLINE_UNIT).abs() < 0.01)
         };
         if !sane(&red) || !sane(&blue) {
             continue;
@@ -268,7 +299,12 @@ pub struct Distortion {
 
 impl Distortion {
     fn nothing() -> Distortion {
-        Distortion { applied: None, spline: None, lateral: None, needed: None }
+        Distortion {
+            applied: None,
+            spline: None,
+            lateral: None,
+            needed: None,
+        }
     }
 }
 
@@ -287,7 +323,9 @@ pub fn byte_order(bytes: &[u8]) -> Option<bool> {
 /// Both tags, in one walk of the SubIFDs, since they sit side by side.
 pub fn read_distortion(bytes: &[u8]) -> Distortion {
     let mut out = Distortion::nothing();
-    let Some(little) = byte_order(bytes) else { return out };
+    let Some(little) = byte_order(bytes) else {
+        return out;
+    };
     let reader = Reader { bytes, little };
     let mut needed = None;
     let Some(ifd0) = reader.u32(4) else {
@@ -336,7 +374,10 @@ pub fn read_distortion(bytes: &[u8]) -> Distortion {
 /// undocumented tag actually holds.
 #[cfg(all(test, feature = "fixtures"))]
 pub fn _for_testing_subifd(bytes: &[u8], wanted: u16) -> Option<(u16, u32, Vec<i32>)> {
-    let reader = Reader { bytes, little: byte_order(bytes)? };
+    let reader = Reader {
+        bytes,
+        little: byte_order(bytes)?,
+    };
     let ifd0 = reader.u32(4)?;
     // This one is handed whole files, so how far a pointer reached is nobody's question.
     let reach = &mut None;
@@ -346,7 +387,9 @@ pub fn _for_testing_subifd(bytes: &[u8], wanted: u16) -> Option<(u16, u32, Vec<i
             continue;
         }
         for k in 0..entry.count as usize {
-            let Some(offset) = reader.u32(entry.start + k * 4) else { break };
+            let Some(offset) = reader.u32(entry.start + k * 4) else {
+                break;
+            };
             for found in read_ifd(&reader, offset as usize, reach) {
                 if found.tag != wanted {
                     continue;
@@ -504,17 +547,34 @@ mod tests {
         // Distinct blocks growing opposite ways, which is both what the files carry and
         // what would go unnoticed if the split were off by one.
         let (red, blue) = (ramp(1152, -64), ramp(-256, 32));
-        let [found_red, found_blue] =
-            read_distortion(&with_lateral(&red, &blue)).lateral.expect("a lateral pair");
+        let [found_red, found_blue] = read_distortion(&with_lateral(&red, &blue))
+            .lateral
+            .expect("a lateral pair");
 
         assert_eq!(found_red.len(), 16);
         assert_eq!(found_blue.len(), 16);
         // Absolute, so the centre knot survives: 1152 and -256 over a unit of 128.
-        assert!((found_red[0] - 9.0).abs() < 1e-9, "red centre {}", found_red[0]);
-        assert!((found_blue[0] + 2.0).abs() < 1e-9, "blue centre {}", found_blue[0]);
+        assert!(
+            (found_red[0] - 9.0).abs() < 1e-9,
+            "red centre {}",
+            found_red[0]
+        );
+        assert!(
+            (found_blue[0] + 2.0).abs() < 1e-9,
+            "blue centre {}",
+            found_blue[0]
+        );
         // And 15 steps of -64 and +32 from there.
-        assert!((found_red[15] - 1.5).abs() < 1e-9, "red corner {}", found_red[15]);
-        assert!((found_blue[15] - 1.75).abs() < 1e-9, "blue corner {}", found_blue[15]);
+        assert!(
+            (found_red[15] - 1.5).abs() < 1e-9,
+            "red corner {}",
+            found_red[15]
+        );
+        assert!(
+            (found_blue[15] - 1.75).abs() < 1e-9,
+            "blue corner {}",
+            found_blue[15]
+        );
     }
 
     #[test]
@@ -524,9 +584,17 @@ mod tests {
         // amount everywhere - which is a real aberration and a correctable one. An
         // earlier version rebased each block against its own first knot and turned
         // exactly this case into nothing at all.
-        let [red, blue] = read_distortion(&with_lateral(&[1152; 16], &[-256; 16])).lateral.expect("a pair");
-        assert!(red.iter().all(|knot| (knot - 9.0).abs() < 1e-9), "constant red became {red:?}");
-        assert!(blue.iter().all(|knot| (knot + 2.0).abs() < 1e-9), "constant blue became {blue:?}");
+        let [red, blue] = read_distortion(&with_lateral(&[1152; 16], &[-256; 16]))
+            .lateral
+            .expect("a pair");
+        assert!(
+            red.iter().all(|knot| (knot - 9.0).abs() < 1e-9),
+            "constant red became {red:?}"
+        );
+        assert!(
+            blue.iter().all(|knot| (knot + 2.0).abs() < 1e-9),
+            "constant blue became {blue:?}"
+        );
     }
 
     #[test]
@@ -535,16 +603,28 @@ mod tests {
         // the guard is reachable and worth having: a misread layout is the case it exists
         // for. Checked with a value the tag really can hold rather than a synthetic one.
         let absurd = [i16::MAX; 16];
-        assert!(read_distortion(&with_lateral(&absurd, &[0; 16])).lateral.is_none());
+        assert!(
+            read_distortion(&with_lateral(&absurd, &[0; 16]))
+                .lateral
+                .is_none()
+        );
         // And an ordinary block still reads, so the bound is not simply refusing
         // everything.
-        assert!(read_distortion(&with_lateral(&[1152; 16], &[-256; 16])).lateral.is_some());
+        assert!(
+            read_distortion(&with_lateral(&[1152; 16], &[-256; 16]))
+                .lateral
+                .is_some()
+        );
     }
 
     #[test]
     fn reads_no_lateral_pair_where_the_file_records_none() {
         // The distortion-only synthetic: its SubIFD carries a spline and no pair.
-        assert!(read_distortion(&synthetic(&[0, -120, -400])).lateral.is_none());
+        assert!(
+            read_distortion(&synthetic(&[0, -120, -400]))
+                .lateral
+                .is_none()
+        );
     }
 
     #[test]
@@ -578,9 +658,18 @@ mod tests {
     fn reads_whether_the_body_corrected_its_own_preview() {
         // 0 is off. The on value is not one constant - 1 and 17 both appear across
         // bodies - so anything non-zero has to read as on.
-        assert_eq!(read_distortion(&with_correction(&[0, -120], Some(0))).applied, Some(false));
-        assert_eq!(read_distortion(&with_correction(&[0, -120], Some(1))).applied, Some(true));
-        assert_eq!(read_distortion(&with_correction(&[0, -120], Some(17))).applied, Some(true));
+        assert_eq!(
+            read_distortion(&with_correction(&[0, -120], Some(0))).applied,
+            Some(false)
+        );
+        assert_eq!(
+            read_distortion(&with_correction(&[0, -120], Some(1))).applied,
+            Some(true)
+        );
+        assert_eq!(
+            read_distortion(&with_correction(&[0, -120], Some(17))).applied,
+            Some(true)
+        );
     }
 
     #[test]
@@ -594,7 +683,11 @@ mod tests {
     fn the_flag_does_not_disturb_the_spline_beside_it() {
         let found = read_distortion(&with_correction(&[0, -120, -400], Some(0)));
         assert_eq!(found.applied, Some(false));
-        assert_eq!(found.spline, Some(vec![0.0, -120.0, -400.0]), "the knots are still read when the flag says off");
+        assert_eq!(
+            found.spline,
+            Some(vec![0.0, -120.0, -400.0]),
+            "the knots are still read when the flag says off"
+        );
     }
 
     // What a caller reading the file a window at a time decides on: `needed` says whether a
@@ -620,7 +713,11 @@ mod tests {
     fn a_subifd_past_the_buffer_reports_where_it_ends() {
         let found = read_distortion(&synthetic(&[0, -120, -400])[..70]);
         assert_eq!(found.spline, None);
-        assert_eq!(found.needed, Some(82), "one entry and the next-IFD pointer, from 64");
+        assert_eq!(
+            found.needed,
+            Some(82),
+            "one entry and the next-IFD pointer, from 64"
+        );
     }
 
     // The reader stops widening the moment a walk asks for nothing further, so a walk that
@@ -629,12 +726,20 @@ mod tests {
     #[test]
     fn subifd_offsets_past_the_buffer_report_where_they_end() {
         let whole = two_subifds(200);
-        assert_eq!(read_distortion(&whole).spline, Some(vec![0.0, -120.0, -400.0]), "whole, it reads");
+        assert_eq!(
+            read_distortion(&whole).spline,
+            Some(vec![0.0, -120.0, -400.0]),
+            "whole, it reads"
+        );
 
         // Cut between the tag that names the SubIFDs and the offsets it points at.
         let found = read_distortion(&whole[..180]);
         assert_eq!(found.spline, None, "the offsets are out of reach");
-        assert_eq!(found.needed, Some(204), "so it asks for the block holding them");
+        assert_eq!(
+            found.needed,
+            Some(204),
+            "so it asks for the block holding them"
+        );
     }
 
     #[test]
@@ -645,7 +750,11 @@ mod tests {
         let found = read_distortion(&two_subifds(200)[..204]);
         assert_eq!(found.applied, Some(false), "the first SubIFD did read");
         assert_eq!(found.spline, None);
-        assert_eq!(found.needed, Some(208), "the second offset is four bytes past the cut");
+        assert_eq!(
+            found.needed,
+            Some(208),
+            "the second offset is four bytes past the cut"
+        );
     }
 
     #[test]

@@ -15,12 +15,19 @@ pub(crate) const STAGED: i32 = 75;
 /// The shell's name in a payload, as `scripts/build-payload.ts` writes it.
 const MACOS_PAYLOAD_SHELL: &str = "Bowerbird.app";
 const WINDOWS_PAYLOAD_SHELL: &str = "bowerbird-app.exe";
-const PAYLOAD_SHELL: &str = if cfg!(target_os = "macos") { MACOS_PAYLOAD_SHELL } else { WINDOWS_PAYLOAD_SHELL };
+const PAYLOAD_SHELL: &str = if cfg!(target_os = "macos") {
+    MACOS_PAYLOAD_SHELL
+} else {
+    WINDOWS_PAYLOAD_SHELL
+};
 
 /// Where an update is staged, where this install can replace itself at all.
 pub(crate) fn home(app: &tauri::AppHandle<crate::Runtime>) -> Option<PathBuf> {
     Installed::here()?;
-    app.path().app_data_dir().ok().map(|dir| dir.join("updates"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("updates"))
 }
 
 /// Starts the helper on what the server staged, for this process to exit into.
@@ -39,7 +46,9 @@ pub(crate) fn hand_over(app: &tauri::AppHandle<crate::Runtime>) -> Result<(), St
         install: installed.install,
         renames: vec![(PAYLOAD_SHELL.into(), installed.shell)],
     };
-    let relaunch: Vec<OsString> = std::iter::once(installed.exe.into_os_string()).chain(std::env::args_os().skip(1)).collect();
+    let relaunch: Vec<OsString> = std::iter::once(installed.exe.into_os_string())
+        .chain(std::env::args_os().skip(1))
+        .collect();
     Command::new(&running)
         .args(updater::update_args(&plan, std::process::id(), &relaunch))
         .stdin(Stdio::null())
@@ -74,7 +83,11 @@ impl Installed {
         if !updater::writable(install) {
             return None;
         }
-        Some(Self { install: install.to_path_buf(), shell: bundle.file_name()?.to_owned(), exe })
+        Some(Self {
+            install: install.to_path_buf(),
+            shell: bundle.file_name()?.to_owned(),
+            exe,
+        })
     }
 
     /// The installer's directory, writable or not: the helper asks for an administrator where it
@@ -83,7 +96,11 @@ impl Installed {
     fn here() -> Option<Self> {
         let exe = std::env::current_exe().ok()?;
         let install = exe.parent()?.to_path_buf();
-        Some(Self { install, shell: exe.file_name()?.to_owned(), exe })
+        Some(Self {
+            install,
+            shell: exe.file_name()?.to_owned(),
+            exe,
+        })
     }
 
     #[cfg(not(any(target_os = "macos", windows)))]
@@ -96,15 +113,22 @@ impl Installed {
 mod tests {
     #[test]
     fn the_shell_is_named_as_the_payload_names_it() {
-        let script = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/build-payload.ts")).unwrap();
+        let script = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/build-payload.ts"),
+        )
+        .unwrap();
         for shell in [super::MACOS_PAYLOAD_SHELL, super::WINDOWS_PAYLOAD_SHELL] {
-            assert!(script.contains(&format!("'{shell}'")), "build-payload.ts no longer writes {shell}");
+            assert!(
+                script.contains(&format!("'{shell}'")),
+                "build-payload.ts no longer writes {shell}"
+            );
         }
     }
 
     #[test]
     fn the_server_exits_with_the_code_the_shell_hands_over_on() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/services/updates/update_service.ts");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../src/services/updates/update_service.ts");
         let service = std::fs::read_to_string(path).unwrap();
         assert!(service.contains(&format!("STAGED_EXIT_CODE = {};", super::STAGED)));
     }

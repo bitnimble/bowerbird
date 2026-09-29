@@ -27,7 +27,8 @@ const shared: File[] = [];
 const shown: string[] = [];
 const waiting: string[] = [];
 const dismissed: number[] = [];
-let answer: () => Response = () => new Response(new Uint8Array([0xff, 0xd8, 0xff]), { status: 200 });
+let answer: () => Response = () =>
+  new Response(new Uint8Array([0xff, 0xd8, 0xff]), { status: 200 });
 let sheet: () => Promise<void> = () => Promise.resolve();
 // Set where a test needs the encode to still be running when it presses again.
 let gate: Promise<void> | null = null;
@@ -53,7 +54,10 @@ afterAll(() => {
 
 // `builtAt` is the stamp that moves when a rendition is rebuilt, which is what the viewer
 // versions its own URLs by.
-function open(showing: ViewerRendition, builtAt?: string): { store: ViewerStore; presenter: PhotosPresenter } {
+function open(
+  showing: ViewerRendition,
+  builtAt?: string,
+): { store: ViewerStore; presenter: PhotosPresenter } {
   const settings = { viewerRenditionMode: 'remember', lastViewerRendition: null } as never;
   const toasts = {
     show: (message: string) => shown.push(message),
@@ -67,7 +71,18 @@ function open(showing: ViewerRendition, builtAt?: string): { store: ViewerStore;
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const store = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, marks, stacks, store, absent, absent, absent, toasts, settings, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    store,
+    absent,
+    absent,
+    absent,
+    toasts,
+    settings,
+    absent,
+  );
   runInAction(() => {
     store.open = { id: PHOTO, status: 'ready' };
     store.rendition = showing;
@@ -96,7 +111,9 @@ test('the rendition on screen is the one shared', async () => {
 
   await presenter.share(PHOTO);
 
-  expect(asked).toEqual([expect.stringContaining(route(PathSegment.image(), PHOTO, PathSegment.share(), 'max'))]);
+  expect(asked).toEqual([
+    expect.stringContaining(route(PathSegment.image(), PHOTO, PathSegment.share(), 'max')),
+  ]);
   expect(shared).toHaveLength(1);
   expect(shared[0]?.type).toBe('image/jpeg');
   expect(shared[0]?.name).toEndWith('.jpg');

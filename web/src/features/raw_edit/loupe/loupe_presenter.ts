@@ -4,10 +4,7 @@ import { dustSettings } from '../../../../../src/schemas/dust_settings';
 import { describe } from '../../../errors';
 import type { Region } from '../edits';
 import type { EditStore } from '../edit/edit_store';
-import type {
-  LocalOpen,
-  TileKeep,
-} from '../local_decode/local_open';
+import type { LocalOpen, TileKeep } from '../local_decode/local_open';
 import type { LocalDecoder } from '../local_decode/local_decoder';
 import {
   LOUPE_MAX_MAGNIFICATION,
@@ -160,7 +157,13 @@ export class LoupePresenter {
   private drawLoupe(box: { width: number; height: number }): void {
     const at = this.store.loupeAt;
     const region = this.stage.region;
-    if (at == null || region == null || !this.host.drawable() || box.width === 0 || box.height === 0) {
+    if (
+      at == null ||
+      region == null ||
+      !this.host.drawable() ||
+      box.width === 0 ||
+      box.height === 0
+    ) {
       return;
     }
     // Where the pointer is in the frame's own pixels, then a window of the frame around it. The
@@ -226,7 +229,11 @@ export class LoupePresenter {
     if (held == null) {
       // Swallowed: the decoder refuses what is in flight as it closes, and letting the glass go is
       // exactly what a reader does on the way out.
-      if (this.tileOnGpu != null) void this.host.source()?.decoder.releaseTile().catch(() => {});
+      if (this.tileOnGpu != null)
+        void this.host
+          .source()
+          ?.decoder.releaseTile()
+          .catch(() => {});
       this.tileOnGpu = null;
       return null;
     }
@@ -315,7 +322,10 @@ export class LoupePresenter {
   @action.bound
   attachLoupe(canvas: HTMLCanvasElement | null): void {
     if (canvas == null) {
-      void this.host.source()?.decoder.releaseLoupe().catch(() => {});
+      void this.host
+        .source()
+        ?.decoder.releaseLoupe()
+        .catch(() => {});
       return;
     }
     void this.host.handOver(canvas).catch((error: unknown) => {

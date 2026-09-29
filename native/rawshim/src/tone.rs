@@ -173,8 +173,11 @@ pub fn body_white_quantile(preview: crate::rgb::RgbRef<'_>) -> Option<f64> {
     // other side. A rank only carries a level across if both sides rank the same quantity: read as
     // luma here and as a maximum there, the same rank lands on a higher level, and the anchor comes
     // back further above white the more saturated the picture is.
-    let mut coded: Vec<u8> =
-        preview.data.chunks_exact(3).map(|rgb| rgb[0].max(rgb[1]).max(rgb[2])).collect();
+    let mut coded: Vec<u8> = preview
+        .data
+        .chunks_exact(3)
+        .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
+        .collect();
     if coded.is_empty() {
         return None;
     }
@@ -233,7 +236,9 @@ impl Levels {
             && self.peak.is_finite()
             && self.white >= Light::COUNT
             && self.peak >= self.white
-            && self.floor.is_some_and(|floor| floor.is_finite() && floor <= self.white)
+            && self
+                .floor
+                .is_some_and(|floor| floor.is_finite() && floor <= self.white)
     }
 
     /// The floor as a share of white, which is what `adjust.slang` places the low pair against
@@ -245,7 +250,11 @@ impl Levels {
     /// These levels with diffuse white where the file says it is, for a picture shown as it was
     /// encoded rather than graded again.
     pub fn at_stated_white(self, white: Light<Level>) -> Levels {
-        Levels { white, peak: self.peak.max(white), ..self }
+        Levels {
+            white,
+            peak: self.peak.max(white),
+            ..self
+        }
     }
 
     /// The same levels with a white the pipeline can divide by.
@@ -352,14 +361,25 @@ impl<'a> SceneGrade<'a> {
     /// No scene peak: the matched arm's is measured on the GPU off the uploaded frame, and
     /// the neutral arm's is `source_level / white` scaled by the reference, which the shader
     /// does for itself from the two fields below.
-    pub fn gpu_grade(&'a self, width: usize, height: usize, output: crate::gpu::Output) -> crate::gpu::Grade<'a> {
+    pub fn gpu_grade(
+        &'a self,
+        width: usize,
+        height: usize,
+        output: crate::gpu::Output,
+    ) -> crate::gpu::Grade<'a> {
         crate::gpu::Grade {
             colour: self.colour,
             exposure: self.exposure,
             adjust: self.adjust.clone(),
             as_shot: self.as_shot,
             output,
-            ..crate::gpu::Grade::new(width, height, self.levels, self.reference, output.mastered(self.reference))
+            ..crate::gpu::Grade::new(
+                width,
+                height,
+                self.levels,
+                self.reference,
+                output.mastered(self.reference),
+            )
         }
     }
 }
@@ -408,7 +428,10 @@ mod tests {
     /// count and this is shorter than that count, so every pixel is read exactly once and the
     /// histogram it counts is these levels themselves.
     fn frame(levels: impl IntoIterator<Item = usize>) -> Vec<u16> {
-        levels.into_iter().flat_map(|level| [level as u16; 3]).collect()
+        levels
+            .into_iter()
+            .flat_map(|level| [level as u16; 3])
+            .collect()
     }
 
     fn scanned(gpu: &'static crate::gpu::Gpu, samples: &[u16], quantile: f64) -> Levels {
@@ -419,9 +442,14 @@ mod tests {
 
     #[test]
     fn the_peak_is_read_above_diffuse_white() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let out = scanned(gpu, &frame((0..3000).map(|i| i * 20)), 0.9);
-        assert!(out.peak > out.white, "the peak must sit above diffuse white");
+        assert!(
+            out.peak > out.white,
+            "the peak must sit above diffuse white"
+        );
         assert!(out.white > Light::ZERO);
     }
 
@@ -429,7 +457,9 @@ mod tests {
     /// dark ground and the anchor is held to three stops under the lights instead.
     #[test]
     fn diffuse_white_is_read_no_lower_than_three_stops_under_the_peak() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let night = frame((0..10_000).map(|i| if i % 10 == 0 { 40_000 } else { 400 }));
         let out = scanned(gpu, &night, 0.9);
         let lit = Light::<Level>::measured(40_000.0);
@@ -440,7 +470,11 @@ mod tests {
         let out = scanned(gpu, &frame((0..10_000).map(|i| i * 4)), 0.9);
         assert!(out.white > out.peak / WHITE_FLOOR_UNDER_PEAK);
         let apart = (out.white - Light::measured(36_000.0)).raw();
-        assert!(apart.abs() < 100.0, "the quantile itself, got {:?}", out.white);
+        assert!(
+            apart.abs() < 100.0,
+            "the quantile itself, got {:?}",
+            out.white
+        );
     }
 
     /// The bin count is on both sides - the host sizes the buffer with it, the walk bounds itself
@@ -450,6 +484,9 @@ mod tests {
     fn the_shader_walks_the_bins_the_host_allocates() {
         const SOURCE: &str = include_str!("../../../slang/fit_source.slang");
         let line = format!("static const uint LEVEL_BINS = {LEVEL_BINS};");
-        assert!(SOURCE.contains(&line), "slang/fit_source.slang does not say `{line}`");
+        assert!(
+            SOURCE.contains(&line),
+            "slang/fit_source.slang does not say `{line}`"
+        );
     }
 }

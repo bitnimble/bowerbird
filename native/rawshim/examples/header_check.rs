@@ -16,15 +16,24 @@ fn main() {
             continue;
         };
         println!("== {name}");
-        println!("   {}x{}  orientation {}", header.width, header.height, header.orientation);
+        println!(
+            "   {}x{}  orientation {}",
+            header.width, header.height, header.orientation
+        );
         println!(
             "   iso {}  shutter {}  f/{}  {}mm",
             header.iso, header.shutter, header.aperture, header.focal
         );
-        println!("   timestamp {}  gps {},{}", header.timestamp, header.latitude, header.longitude);
+        println!(
+            "   timestamp {}  gps {},{}",
+            header.timestamp, header.latitude, header.longitude
+        );
         println!(
             "   sequence kind {}  group {}  shot {} of {}",
-            header.sequence_kind, header.sequence_group, header.sequence_index, header.sequence_count
+            header.sequence_kind,
+            header.sequence_group,
+            header.sequence_index,
+            header.sequence_count
         );
         println!(
             "   {} {} / {}",

@@ -22,7 +22,9 @@ export function coverage(db: Database, libraryId: string): Vector {
   const vector = remoteCoverage(db, libraryId);
   const self = peerId(db);
   const own = db
-    .query('SELECT MAX(stamp) AS newest FROM replication_log WHERE library_id = ? AND substr(stamp, 17) = ?')
+    .query(
+      'SELECT MAX(stamp) AS newest FROM replication_log WHERE library_id = ? AND substr(stamp, 17) = ?',
+    )
     .get(libraryId, self) as { newest: string | null } | undefined;
   if (own?.newest != null) vector.set(self, own.newest);
   return vector;

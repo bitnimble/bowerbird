@@ -7,7 +7,10 @@ import { PhotoListingRepository } from '../../src/services/photos/listing/photo_
 import { photoNavigation, photoPaths, photoState } from './helpers/photo_repositories';
 import { StacksRepository } from '../../src/services/stacks/stacks_repository';
 import { StacksService } from '../../src/services/stacks/stacks_service';
-import { descriptorFormat, descriptorSize } from '../../src/services/processing/rawshim/rawshim_ops';
+import {
+  descriptorFormat,
+  descriptorSize,
+} from '../../src/services/processing/rawshim/rawshim_ops';
 
 /**
  * A descriptor the comparison will accept, identical for every photo given it.
@@ -34,19 +37,39 @@ function photoId(n: number): string {
   return `photo${String(n).padStart(3, '0')}`;
 }
 
-function setUp(): { db: Database; stacks: StacksService; photos: PhotoListingRepository; repo: StacksRepository } {
+function setUp(): {
+  db: Database;
+  stacks: StacksService;
+  photos: PhotoListingRepository;
+  repo: StacksRepository;
+} {
   const db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
   for (const id of [LIBRARY, OTHER_LIBRARY]) {
-    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(id, `/tmp/${id}`, 'lib', 'taken_desc');
+    db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+      id,
+      `/tmp/${id}`,
+      'lib',
+      'taken_desc',
+    );
   }
-  db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(SHOOT, LIBRARY, 'Day1', 'Day1');
+  db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(
+    SHOOT,
+    LIBRARY,
+    'Day1',
+    'Day1',
+  );
   db.query('INSERT INTO albums (id, name) VALUES (?, ?)').run(ALBUM, 'Picks');
 
   const photos = new PhotoListingRepository(db);
   const repo = new StacksRepository(db);
-  const stacks = new StacksService(repo, photos, new LibrariesRepository(db), new SettingsRepository(db));
+  const stacks = new StacksService(
+    repo,
+    photos,
+    new LibrariesRepository(db),
+    new SettingsRepository(db),
+  );
   return { db, stacks, photos, repo };
 }
 
@@ -109,7 +132,11 @@ describe('stacks', () => {
     stacks.create(ids);
     // Two of the three are in the album; the third is in the stack but not here.
     for (const id of [ids[0]!, ids[1]!]) {
-      db.query('INSERT INTO album_photos (album_id, photo_id, date_added) VALUES (?, ?, ?)').run(ALBUM, id, 'x');
+      db.query('INSERT INTO album_photos (album_id, photo_id, date_added) VALUES (?, ?, ?)').run(
+        ALBUM,
+        id,
+        'x',
+      );
     }
 
     const resolved = photos.idsInAlbum(ALBUM, 'taken_desc', [{ start: 0, end: 0 }], NO_FILTERS);
@@ -127,7 +154,9 @@ describe('stacks', () => {
     // that assumed undeleted rows would resolve this to nothing and a restore
     // would quietly do nothing.
     const binFilters = { includeDeleted: true, isDeleted: true };
-    expect(photos.idsInLibrary(LIBRARY, 'taken_desc', [{ start: 0, end: 0 }], binFilters)).toEqual([id]);
+    expect(photos.idsInLibrary(LIBRARY, 'taken_desc', [{ start: 0, end: 0 }], binFilters)).toEqual([
+      id,
+    ]);
   });
 
   test('selecting a stack never resolves to its binned members', () => {
@@ -147,7 +176,11 @@ describe('stacks', () => {
     const inShoot = [1, 2].map((n) => insertPhoto(db, n, { minute: n, shootId: SHOOT }));
     const outside = insertPhoto(db, 3, { minute: 3 });
     stacks.create([...inShoot, outside]);
-    db.query('INSERT INTO album_photos (album_id, photo_id, date_added) VALUES (?, ?, ?)').run(ALBUM, inShoot[0]!, 'x');
+    db.query('INSERT INTO album_photos (album_id, photo_id, date_added) VALUES (?, ?, ?)').run(
+      ALBUM,
+      inShoot[0]!,
+      'x',
+    );
 
     const shootListing = photos.listByShoot(SHOOT, 'taken_desc', 0, 100, NO_FILTERS);
     expect(shootListing.photos).toHaveLength(1);
@@ -169,7 +202,10 @@ describe('stacks', () => {
     // Reject the newest, which is the representative.
     db.query("UPDATE photos SET triage = 'rejected' WHERE id = ?").run(ids[2]!);
 
-    const listed = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, { includeDeleted: false, triage: ['untriaged'] });
+    const listed = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, {
+      includeDeleted: false,
+      triage: ['untriaged'],
+    });
     expect(listed.photos).toHaveLength(1);
     expect(listed.photos[0]!.id).toBe(ids[1]!);
   });
@@ -273,8 +309,11 @@ describe('stacks', () => {
     const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
     stacks.create(ids);
     const flagged = (): string | null =>
-      (db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').get() as { id: string } | null)?.id ??
-      null;
+      (
+        db
+          .query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1')
+          .get() as { id: string } | null
+      )?.id ?? null;
     expect(flagged()).toBe(ids[2]!);
 
     photoState(db).update(ids[2]!, { triage: 'rejected' });
@@ -294,7 +333,9 @@ describe('stacks', () => {
 
     // Deprioritised, never excluded: leaving a stack with no flagged member at
     // all would put every listing on the slow arm for good.
-    const flagged = db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').all() as { id: string }[];
+    const flagged = db
+      .query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1')
+      .all() as { id: string }[];
     expect(flagged).toHaveLength(1);
     expect(flagged[0]!.id).toBe(ids[2]!);
   });
@@ -310,8 +351,11 @@ describe('stacks', () => {
     // untriaged frame outranks the keeper on nothing but its NULL.
     photoState(db).update(ids[2]!, { triage: 'picked' });
 
-    const flagged = (db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').get() as { id: string })
-      .id;
+    const flagged = (
+      db
+        .query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1')
+        .get() as { id: string }
+    ).id;
     expect(flagged).toBe(ids[2]!);
   });
 
@@ -320,8 +364,11 @@ describe('stacks', () => {
     const ids = [1, 2, 3].map((n) => insertPhoto(db, n, { minute: n }));
     stacks.create(ids);
     const flagged = (): string | null =>
-      (db.query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1').get() as { id: string } | null)?.id ??
-      null;
+      (
+        db
+          .query('SELECT id FROM photos WHERE stack_id IS NOT NULL AND is_representative = 1')
+          .get() as { id: string } | null
+      )?.id ?? null;
 
     photoPaths(db).markDeleted(ids[2]!, '/bin/IMG_3.ARW');
     expect(flagged()).toBe(ids[1]!);
@@ -347,7 +394,10 @@ describe('stacks', () => {
 
     // And it is all there again when the filter is the one that asks for it,
     // still as one tile standing for three.
-    const rejected = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, { includeDeleted: false, triage: ['rejected'] });
+    const rejected = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, {
+      includeDeleted: false,
+      triage: ['rejected'],
+    });
     expect(rejected.photos).toHaveLength(1);
     expect(rejected.photos[0]!.stack_size).toBe(3);
   });
@@ -361,7 +411,10 @@ describe('stacks', () => {
 
     expect(photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, NO_FILTERS).photos).toHaveLength(0);
     // The Bin is a listing like any other, so it collapses them the same way.
-    const bin = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, { includeDeleted: true, isDeleted: true });
+    const bin = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 100, {
+      includeDeleted: true,
+      isDeleted: true,
+    });
     expect(bin.photos).toHaveLength(1);
     expect(bin.photos[0]!.stack_size).toBe(3);
   });
@@ -390,7 +443,11 @@ describe('stacks', () => {
     const ids = [1, 2, 3, 4].map((n) => insertPhoto(db, n, { minute: n }));
     const source = stacks.create(ids);
     const flagged = (stackId: string): string[] =>
-      (db.query('SELECT id FROM photos WHERE stack_id = ? AND is_representative = 1').all(stackId) as { id: string }[]).map((r) => r.id);
+      (
+        db
+          .query('SELECT id FROM photos WHERE stack_id = ? AND is_representative = 1')
+          .all(stackId) as { id: string }[]
+      ).map((r) => r.id);
     // The newest, which is the one standing for it.
     expect(flagged(source.id)).toEqual([ids[3]!]);
 
@@ -486,10 +543,15 @@ describe('stacks', () => {
     // tile stands for the binned frame, so returning the live members would show
     // photographs that are not in the Bin under a tile that counts the ones that
     // are.
-    expect(stacks.photosOf(stack.id, { ordering: ORDERING, deleted: true }).map((photo) => photo.id)).toEqual([ids[0]!]);
-    expect(stacks.photosOf(stack.id, { ordering: ORDERING }).map((photo) => photo.id).sort()).toEqual(
-      [ids[1]!, ids[2]!].sort(),
-    );
+    expect(
+      stacks.photosOf(stack.id, { ordering: ORDERING, deleted: true }).map((photo) => photo.id),
+    ).toEqual([ids[0]!]);
+    expect(
+      stacks
+        .photosOf(stack.id, { ordering: ORDERING })
+        .map((photo) => photo.id)
+        .sort(),
+    ).toEqual([ids[1]!, ids[2]!].sort());
   });
 
   test('a band reads in the order the viewer steps through it', () => {
@@ -516,9 +578,13 @@ describe('stacks', () => {
     const stack = stacks.create(ids);
 
     const flagged = () =>
-      (db.query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1').get(stack.id) as {
-        n: number;
-      }).n;
+      (
+        db
+          .query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_representative = 1')
+          .get(stack.id) as {
+          n: number;
+        }
+      ).n;
     // The listing shows one row per flagged member, so two would show the stack
     // twice. A unique index makes that an error rather than a duplicate tile, and
     // this is the invariant it guards.
@@ -643,7 +709,12 @@ describe('stacks', () => {
     const newest = insertPhoto(db, 4, { minute: 40 });
     const stack = stacks.create(stacked);
 
-    const positions = photoNavigation(db).positionsInLibrary(LIBRARY, 'taken_desc', [newest, stack.id, older], NO_FILTERS);
+    const positions = photoNavigation(db).positionsInLibrary(
+      LIBRARY,
+      'taken_desc',
+      [newest, stack.id, older],
+      NO_FILTERS,
+    );
     expect(positions.get(newest)).toEqual([0]);
     // The stack occupies one position, keyed by the stack rather than by any
     // photograph in it.
@@ -658,10 +729,15 @@ describe('stacks', () => {
     const newest = insertPhoto(db, 4, { minute: 40 });
     const stack = stacks.create(stacked);
 
-    const positions = photoNavigation(db).positionsInLibrary(LIBRARY, 'taken_desc', [newest, stack.id, older], {
-      ...NO_FILTERS,
-      expandStacks: true,
-    });
+    const positions = photoNavigation(db).positionsInLibrary(
+      LIBRARY,
+      'taken_desc',
+      [newest, stack.id, older],
+      {
+        ...NO_FILTERS,
+        expandStacks: true,
+      },
+    );
     expect(positions.get(newest)).toEqual([0]);
     expect(positions.get(stack.id)).toEqual([1, 2]);
     expect(positions.get(older)).toEqual([3]);
@@ -676,18 +752,31 @@ describe('stacks', () => {
     const stack = stacks.create(members);
     const younger = members[1]!;
 
-    expect(photoNavigation(db).positionsInLibrary(LIBRARY, 'taken_desc', [younger], { ...NO_FILTERS, expandStacks: true })).toEqual(
-      new Map([[younger, [0]]]),
-    );
+    expect(
+      photoNavigation(db).positionsInLibrary(LIBRARY, 'taken_desc', [younger], {
+        ...NO_FILTERS,
+        expandStacks: true,
+      }),
+    ).toEqual(new Map([[younger, [0]]]));
     // Both at once: naming the member must not take it out of what its stack names.
-    const both = photoNavigation(db).positionsInLibrary(LIBRARY, 'taken_desc', [younger, stack.id], {
-      ...NO_FILTERS,
-      expandStacks: true,
-    });
+    const both = photoNavigation(db).positionsInLibrary(
+      LIBRARY,
+      'taken_desc',
+      [younger, stack.id],
+      {
+        ...NO_FILTERS,
+        expandStacks: true,
+      },
+    );
     expect(both.get(younger)).toEqual([0]);
     expect(both.get(stack.id)).toEqual([0, 1]);
     // Collapsed, the member is not a row at all, and the stack is exactly one.
-    const collapsed = photoNavigation(db).positionsInLibrary(LIBRARY, 'taken_desc', [younger, stack.id], NO_FILTERS);
+    const collapsed = photoNavigation(db).positionsInLibrary(
+      LIBRARY,
+      'taken_desc',
+      [younger, stack.id],
+      NO_FILTERS,
+    );
     expect(collapsed.get(stack.id)).toEqual([0]);
   });
 
@@ -700,7 +789,10 @@ describe('stacks', () => {
     expect(collapsed.total).toBe(4);
     expect(collapsed.photos.some((photo) => photo.stack_size === 2)).toBe(true);
 
-    const expanded = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 50, { ...NO_FILTERS, expandStacks: true });
+    const expanded = photos.listByLibrary(LIBRARY, 'taken_desc', 0, 50, {
+      ...NO_FILTERS,
+      expandStacks: true,
+    });
     expect(expanded.total).toBe(5);
     expect(expanded.photos).toHaveLength(5);
     expect(expanded.photos.every((photo) => photo.stack_size === 1)).toBe(true);
@@ -718,13 +810,20 @@ describe('stacks', () => {
     });
     expect(expanded).toHaveLength(1);
     // Collapsed, that same position is the stack, which is both of them.
-    expect(photos.idsInLibrary(LIBRARY, 'taken_desc', [{ start: 0, end: 0 }], NO_FILTERS)).toHaveLength(2);
+    expect(
+      photos.idsInLibrary(LIBRARY, 'taken_desc', [{ start: 0, end: 0 }], NO_FILTERS),
+    ).toHaveLength(2);
   });
 
   test('a key that has left the collection is simply absent', () => {
     const { db } = context;
     const id = insertPhoto(db, 1, { minute: 1 });
-    const positions = photoNavigation(db).positionsInLibrary(LIBRARY, 'taken_desc', [id, 'gone'], NO_FILTERS);
+    const positions = photoNavigation(db).positionsInLibrary(
+      LIBRARY,
+      'taken_desc',
+      [id, 'gone'],
+      NO_FILTERS,
+    );
     expect(positions.has('gone')).toBe(false);
   });
 });

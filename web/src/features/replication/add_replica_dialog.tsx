@@ -107,7 +107,11 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
   }
 
   return (
-    <Modal open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())} title={AddReplicaStrings.title()}>
+    <Modal
+      open={open}
+      onOpenChange={(next) => (next ? onOpenChange(true) : close())}
+      title={AddReplicaStrings.title()}
+    >
       <DialogBody height="capped">
         {step === 'address' && (
           <>
@@ -131,7 +135,11 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
             <DialogActions>
               <Button onClick={close}>{ModalStrings.cancel()}</Button>
-              <Button variant="primary" disabled={address.trim() === '' || busy} onClick={() => void connect()}>
+              <Button
+                variant="primary"
+                disabled={address.trim() === '' || busy}
+                onClick={() => void connect()}
+              >
                 {busy ? AddReplicaStrings.connecting() : AddReplicaStrings.next()}
               </Button>
             </DialogActions>
@@ -149,7 +157,9 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                   {AddReplicaStrings.clockSkew(Math.round(remote.clock_skew_ms / 60000))}
                 </Text>
               )}
-              {remote.libraries.length === 0 && <Text as="p">{AddReplicaStrings.noLibraries()}</Text>}
+              {remote.libraries.length === 0 && (
+                <Text as="p">{AddReplicaStrings.noLibraries()}</Text>
+              )}
               {remote.libraries.map((candidate) => (
                 <Row as="label" key={candidate.id}>
                   <input
@@ -165,7 +175,10 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                   />
                   <Text as="span">{candidate.name}</Text>
                   <Text variant="muted" as="span">
-                    {AddReplicaStrings.photoCount(candidate.photo_count.toLocaleString(), candidate.photo_count === 1)}
+                    {AddReplicaStrings.photoCount(
+                      candidate.photo_count.toLocaleString(),
+                      candidate.photo_count === 1,
+                    )}
                     {candidate.read_only && AddReplicaStrings.readOnly()}
                   </Text>
                 </Row>
@@ -217,7 +230,9 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                 <Text as="span">{SyncedDevicesStrings.keepOriginalsOnThisDevice()}</Text>
               </Row>
               <Text variant="mono" as="p">
-                {keepOriginals ? SyncedDevicesStrings.keepsOriginals() : SyncedDevicesStrings.catalogueOnly()}
+                {keepOriginals
+                  ? SyncedDevicesStrings.keepsOriginals()
+                  : SyncedDevicesStrings.catalogueOnly()}
               </Text>
               <Row as="label">
                 <input
@@ -235,7 +250,11 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
             <DialogActions>
               <Button onClick={() => setStep('pick')}>{AddReplicaStrings.back()}</Button>
-              <Button variant="primary" disabled={root.trim() === '' || busy} onClick={() => void add()}>
+              <Button
+                variant="primary"
+                disabled={root.trim() === '' || busy}
+                onClick={() => void add()}
+              >
                 {busy ? AddReplicaStrings.settingUp() : AddReplicaStrings.add(picked.name)}
               </Button>
             </DialogActions>

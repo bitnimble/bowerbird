@@ -46,7 +46,8 @@ export const PrintPanelStrings = {
   tiltWaiting: () => 'Waiting for device motion…',
   tiltActive: () => 'Tilt your phone to move the reflections.',
   tiltDenied: () => 'Motion access was denied. You can still adjust lighting here.',
-  tiltUnavailable: () => 'Tilt needs motion sensors and a secure connection. Lighting controls still work.',
+  tiltUnavailable: () =>
+    'Tilt needs motion sensors and a secure connection. Lighting controls still work.',
   dragHint: () => 'Drag the print or use arrow keys to rotate.',
   degrees: (value: number) => `${Math.round(value)}°`,
   lightSize: (value: number) => `${value < 10 ? value.toFixed(1) : Math.round(value)}°`,

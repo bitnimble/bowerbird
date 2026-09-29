@@ -104,7 +104,10 @@ export function MobileEditPanels({ scope, ...props }: Props): JSX.Element {
   return <MobileEditPanelsView key={scope} {...props} />;
 }
 
-const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, notice }: Omit<Props, 'scope'>): JSX.Element {
+const MobileEditPanelsView = observer(function MobileEditPanelsView({
+  panels,
+  notice,
+}: Omit<Props, 'scope'>): JSX.Element {
   const store = useMemo(() => new MobileEditPanelsStore(), []);
   const presenter = useMemo(() => new MobileEditPanelsPresenter(store), [store]);
   const buttons = useRef(new Map<string, HTMLButtonElement>());
@@ -117,20 +120,25 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, no
   useBackCloses(expanded, presenter.close);
   return (
     <SliderIsolationContext.Provider value={{ active, begin: presenter.begin, end: presenter.end }}>
-      <div {...stylex.props(styles.root)} onKeyDown={(event) => {
-        if (event.key !== 'Escape' || !expanded || active != null) return;
-        event.preventDefault();
-        event.stopPropagation();
-        presenter.close();
-        if (selected != null) buttons.current.get(selected.id)?.focus();
-      }}>
-        {expanded && <button
-          type="button"
-          aria-label={S.close()}
-          tabIndex={-1}
-          onClick={presenter.close}
-          {...stylex.props(styles.backdrop, focusRing.ring)}
-        />}
+      <div
+        {...stylex.props(styles.root)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || !expanded || active != null) return;
+          event.preventDefault();
+          event.stopPropagation();
+          presenter.close();
+          if (selected != null) buttons.current.get(selected.id)?.focus();
+        }}
+      >
+        {expanded && (
+          <button
+            type="button"
+            aria-label={S.close()}
+            tabIndex={-1}
+            onClick={presenter.close}
+            {...stylex.props(styles.backdrop, focusRing.ring)}
+          />
+        )}
         <div {...stylex.props(styles.footer)}>
           <div role="tablist" aria-label={S.tabs()} {...stylex.props(styles.tabs)}>
             {panels.map((panel) => (
@@ -150,13 +158,22 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, no
                 disabled={active != null}
                 onClick={() => presenter.toggle(panel.id)}
                 onKeyDown={(event) => {
-                  const next = presenter.navigate(panel.id, panels.map((entry) => entry.id), event.key);
+                  const next = presenter.navigate(
+                    panel.id,
+                    panels.map((entry) => entry.id),
+                    event.key,
+                  );
                   if (next == null) return;
                   event.preventDefault();
                   event.stopPropagation();
                   buttons.current.get(next)?.focus();
                 }}
-                {...stylex.props(buttonStyles.base, focusRing.ring, styles.tab, expanded && selected?.id === panel.id && styles.selected)}
+                {...stylex.props(
+                  buttonStyles.base,
+                  focusRing.ring,
+                  styles.tab,
+                  expanded && selected?.id === panel.id && styles.selected,
+                )}
               >
                 {panel.title}
               </button>
@@ -169,13 +186,19 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, no
           aria-labelledby={selected == null ? undefined : `${id}-${selected.id}`}
           aria-hidden={!expanded}
           {...(expanded ? {} : { inert: '' })}
-          {...stylex.props(styles.overlay, expanded && styles.open, active != null && styles.adjusting)}
+          {...stylex.props(
+            styles.overlay,
+            expanded && styles.open,
+            active != null && styles.adjusting,
+          )}
         >
           {expanded && notice}
           {selected?.content}
         </div>
         {!expanded && notice && (
-          <div role="status" {...stylex.props(styles.overlay, styles.open)}>{notice}</div>
+          <div role="status" {...stylex.props(styles.overlay, styles.open)}>
+            {notice}
+          </div>
         )}
       </div>
     </SliderIsolationContext.Provider>
@@ -184,7 +207,8 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, no
 
 const SHEET_STATE = 'editSheet';
 
-const holdsSheet = (state: unknown): boolean => (state as Record<string, unknown> | null)?.[SHEET_STATE] === true;
+const holdsSheet = (state: unknown): boolean =>
+  (state as Record<string, unknown> | null)?.[SHEET_STATE] === true;
 
 /**
  * Replaces the current history entry, popping an open sheet's entry first. A plain replace would

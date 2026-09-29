@@ -10,11 +10,26 @@ import type { StageStore } from './stage/stage_store';
 import type { LoupeStore } from './loupe/loupe_store';
 
 const TOOLS: Option<EditTool>[] = [
-  { value: 'cursor', label: EditToolsStrings.cursor(), icon: <MousePointer2 size={ICON} />, iconOnly: true },
+  {
+    value: 'cursor',
+    label: EditToolsStrings.cursor(),
+    icon: <MousePointer2 size={ICON} />,
+    iconOnly: true,
+  },
   { value: 'loupe', label: EditToolsStrings.loupe(), icon: <Search size={ICON} />, iconOnly: true },
   { value: 'crop', label: EditToolsStrings.crop(), icon: <Crop size={ICON} />, iconOnly: true },
-  { value: 'perspective', label: EditToolsStrings.perspective(), icon: <Move3d size={ICON} />, iconOnly: true },
-  { value: 'repair', label: EditToolsStrings.repair(), icon: <Eraser size={ICON} />, iconOnly: true },
+  {
+    value: 'perspective',
+    label: EditToolsStrings.perspective(),
+    icon: <Move3d size={ICON} />,
+    iconOnly: true,
+  },
+  {
+    value: 'repair',
+    label: EditToolsStrings.repair(),
+    icon: <Eraser size={ICON} />,
+    iconOnly: true,
+  },
 ];
 
 export const EditToolbar = observer(function EditToolbar({

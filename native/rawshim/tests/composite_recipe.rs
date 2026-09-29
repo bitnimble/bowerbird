@@ -39,7 +39,8 @@ fn an_assembly_recipe_is_read_as_the_assembly_arm_with_its_tiles_intact() {
 #[test]
 fn a_bracket_recipe_is_read_as_its_own_arm() {
     let recipe: CompositeRecipe =
-        serde_json::from_value(tagged("panorama-recipe.json", "exposureBracket")).expect("it parses");
+        serde_json::from_value(tagged("panorama-recipe.json", "exposureBracket"))
+            .expect("it parses");
     assert!(matches!(recipe, CompositeRecipe::ExposureBracket(_)));
     let recipe: CompositeRecipe =
         serde_json::from_value(tagged("panorama-recipe.json", "focusBracket")).expect("it parses");

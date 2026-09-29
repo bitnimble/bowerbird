@@ -107,8 +107,10 @@ export class ScanPresenter {
   @action.bound
   observeStatuses(statuses: readonly LibraryScanStatus[]): void {
     const libraries = new Set(this.store.stoppingLibraryIds);
-    for (const status of statuses) if (status.status === 'idle') libraries.delete(status.library_id);
-    if (libraries.size !== this.store.stoppingLibraryIds.size) this.store.stoppingLibraryIds = libraries;
+    for (const status of statuses)
+      if (status.status === 'idle') libraries.delete(status.library_id);
+    if (libraries.size !== this.store.stoppingLibraryIds.size)
+      this.store.stoppingLibraryIds = libraries;
   }
 
   @action.bound
@@ -182,7 +184,8 @@ export class ScanPresenter {
     const now = Date.now();
     const first = this.samples[0];
     // A count that went backwards is a new run reusing the phase name.
-    if (first != null && (first.status !== status.status || progress.done < first.done)) this.samples.length = 0;
+    if (first != null && (first.status !== status.status || progress.done < first.done))
+      this.samples.length = 0;
     this.samples.push({ status: status.status, at: now, done: progress.done });
     // Strictly the window, even where that leaves one sample and nothing to measure
     // over: polls are a second apart while a run is in flight, so the only way to

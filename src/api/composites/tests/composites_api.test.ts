@@ -12,7 +12,16 @@ import { CompositesApi } from '../composites_api';
 const RECIPE = AssemblyRecipeSchema.parse(
   JSON.parse(
     readFileSync(
-      path.join(import.meta.dir, '..', '..', '..', '..', 'test', 'fixtures', 'assembly-recipe.json'),
+      path.join(
+        import.meta.dir,
+        '..',
+        '..',
+        '..',
+        '..',
+        'test',
+        'fixtures',
+        'assembly-recipe.json',
+      ),
       'utf8',
     ),
   ),
@@ -26,7 +35,11 @@ function buildApp(composites: Partial<CompositesService> = {}) {
       id === 'job1' ? { id, photoIds: ['photo001'], status: 'analysing', fraction: 0.4 } : null,
     ),
     cancelAssembly: jest.fn(),
-    reopenAssembly: jest.fn(async () => ({ recipe: RECIPE, layers: ['/image/drafts/lib/key/0'], missingSources: [] })),
+    reopenAssembly: jest.fn(async () => ({
+      recipe: RECIPE,
+      layers: ['/image/drafts/lib/key/0'],
+      missingSources: [],
+    })),
     commitAssembly: jest.fn(async () => ({ photoId: 'made' })),
     updateAssembly: jest.fn(async () => ({ photoId: 'made' })),
     ...composites,
@@ -43,7 +56,9 @@ function buildApp(composites: Partial<CompositesService> = {}) {
 async function post(app: Hono, at: string, body?: unknown): Promise<Response> {
   return await app.request(at, {
     method: 'POST',
-    ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
+    ...(body === undefined
+      ? {}
+      : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
   });
 }
 
@@ -51,7 +66,9 @@ describe('CompositesApi, the assembly half', () => {
   it('starts a carve and answers its job', async () => {
     const { app, service } = buildApp();
 
-    const res = await post(app, '/api/composites/assembly', { photo_ids: ['photo001', 'photo002'] });
+    const res = await post(app, '/api/composites/assembly', {
+      photo_ids: ['photo001', 'photo002'],
+    });
 
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ jobId: 'job1' });
@@ -112,7 +129,9 @@ describe('CompositesApi, the assembly half', () => {
   it('refuses a commit whose picks disagree with its tiles', async () => {
     const { app, service } = buildApp();
 
-    const res = await post(app, '/api/composites/assembly/commit', { recipe: { ...RECIPE, pick: [0] } });
+    const res = await post(app, '/api/composites/assembly/commit', {
+      recipe: { ...RECIPE, pick: [0] },
+    });
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(service.commitAssembly).not.toHaveBeenCalled();
@@ -126,7 +145,10 @@ describe('CompositesApi, the assembly half', () => {
     const res = await app.request('/api/composites/assembly/photo000000000001');
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ layers: ['/image/drafts/lib/key/0'], missingSources: [] });
+    expect(await res.json()).toMatchObject({
+      layers: ['/image/drafts/lib/key/0'],
+      missingSources: [],
+    });
     expect(service.reopenAssembly).toHaveBeenCalledWith('photo000000000001');
   });
 

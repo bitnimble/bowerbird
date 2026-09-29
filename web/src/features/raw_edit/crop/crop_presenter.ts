@@ -1,19 +1,9 @@
 import { action } from 'mobx';
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { readSetting, writeSetting } from '../../../app/local_setting';
-import {
-  aspectCrop,
-  aspectDraggedCrop,
-  aspectRatioFor,
-  type AspectKey,
-} from './crop_aspect';
+import { aspectCrop, aspectDraggedCrop, aspectRatioFor, type AspectKey } from './crop_aspect';
 import { insetCrop } from './crop_to_bounds';
-import {
-  draggedCrop,
-  turnedForDocument,
-  type CropGrip,
-  type CropRect,
-} from './crop_turn';
+import { draggedCrop, turnedForDocument, type CropGrip, type CropRect } from './crop_turn';
 import type { CropStore } from './crop_store';
 import type { EditStore } from '../edit/edit_store';
 import type { StageStore } from '../stage/stage_store';
@@ -94,10 +84,17 @@ export class CropPresenter {
    * slider commits on.
    */
   @action.bound
-  dragCrop(from: CropRect, grip: CropGrip | null, by: { x: number; y: number }, settle: boolean): void {
+  dragCrop(
+    from: CropRect,
+    grip: CropGrip | null,
+    by: { x: number; y: number },
+    settle: boolean,
+  ): void {
     const ratio = aspectRatioFor(this.store.cropLock, this.store.originalAspect);
     this.previewCrop(
-      ratio == null ? draggedCrop(from, grip, by) : aspectDraggedCrop(from, grip, by, ratio, this.store.cropFrame),
+      ratio == null
+        ? draggedCrop(from, grip, by)
+        : aspectDraggedCrop(from, grip, by, ratio, this.store.cropFrame),
     );
     if (settle) this.host.commit();
   }

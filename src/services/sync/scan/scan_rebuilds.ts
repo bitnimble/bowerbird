@@ -54,7 +54,7 @@ export class ScanRebuilds {
     if (library.rendition_source !== 'render') {
       throw new AppError(
         'VALIDATION_ERROR',
-        'this library serves the camera\'s JPEG in the viewer; there are no renders to rebuild',
+        "this library serves the camera's JPEG in the viewer; there are no renders to rebuild",
       );
     }
     return this.rebuildStage(libraryId, 'renditions');
@@ -129,7 +129,12 @@ export class ScanRebuilds {
         photos_processed: processed,
       });
       if (finalStatus.photos_processing > 0) {
-        log.info('processing settled', { library: libraryId, processed, stillPending, ms: Date.now() - startedAt });
+        log.info('processing settled', {
+          library: libraryId,
+          processed,
+          stillPending,
+          ms: Date.now() - startedAt,
+        });
       }
     };
     // Ask whichever generation is current: processing can outlive the scan that started it.

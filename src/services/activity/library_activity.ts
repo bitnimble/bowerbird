@@ -21,7 +21,12 @@ export class LibraryActivity {
     };
   }
 
-  async track<T>(libraryId: string | null, kind: ActivityKind, subject: string, run: () => T | Promise<T>): Promise<T> {
+  async track<T>(
+    libraryId: string | null,
+    kind: ActivityKind,
+    subject: string,
+    run: () => T | Promise<T>,
+  ): Promise<T> {
     const finish = this.begin(libraryId, kind, subject);
     try {
       return await run();
@@ -35,10 +40,18 @@ export class LibraryActivity {
   }
 
   current(libraryId: string | null): Activity[] {
-    return [...(this.work.get(libraryId) ?? [])].map(([kind, subjects]) => ({ kind, count: subjects.size }));
+    return [...(this.work.get(libraryId) ?? [])].map(([kind, subjects]) => ({
+      kind,
+      count: subjects.size,
+    }));
   }
 
-  stream(libraryId: string | null, kind: ActivityKind, subject: string, stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  stream(
+    libraryId: string | null,
+    kind: ActivityKind,
+    subject: string,
+    stream: ReadableStream<Uint8Array>,
+  ): ReadableStream<Uint8Array> {
     const finish = this.begin(libraryId, kind, subject);
     const reader = stream.getReader();
     return new ReadableStream<Uint8Array>({
@@ -69,7 +82,12 @@ export class LibraryActivity {
     });
   }
 
-  response(libraryId: string | null, kind: ActivityKind, subject: string, response: Response): Response {
+  response(
+    libraryId: string | null,
+    kind: ActivityKind,
+    subject: string,
+    response: Response,
+  ): Response {
     if (response.body == null) return response;
     return new Response(this.stream(libraryId, kind, subject, response.body), {
       status: response.status,

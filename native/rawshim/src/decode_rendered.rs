@@ -48,7 +48,10 @@ pub fn is_rendered(path: &str) -> bool {
         .extension()
         .map(|it| it.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
-    matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "heic" | "heif" | "hif" | "avif")
+    matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "heic" | "heif" | "hif" | "avif"
+    )
 }
 
 /// The same question of bytes in hand, which is what the editor has: the file's own magic.
@@ -80,7 +83,10 @@ pub struct Camera {
 
 impl Held {
     pub fn camera(picture: crate::linearise::Picture, camera: Camera) -> Held {
-        Held { picture, camera: Some(camera) }
+        Held {
+            picture,
+            camera: Some(camera),
+        }
     }
 }
 
@@ -105,21 +111,32 @@ pub fn holding(read: Read) -> Result<Held, String> {
         read.gain,
     )
     .ok_or("this picture decoded to nothing")?;
-    Ok(Held { picture, camera: None })
+    Ok(Held {
+        picture,
+        camera: None,
+    })
 }
 
 /// An AVIF the page decoded itself: `avif` for what the container says around the pixels, and the
 /// planes its `ImageDecoder` handed back.
 ///
 /// No gain map: a rendition's base is the HDR picture, so the map would only lead away from it.
-pub fn hold_planes(avif: &[u8], planes: &[u8], layout: &crate::planes::Layout) -> Result<Held, String> {
+pub fn hold_planes(
+    avif: &[u8],
+    planes: &[u8],
+    layout: &crate::planes::Layout,
+) -> Result<Held, String> {
     let gpu = crate::gpu::device()
         .ok_or_else(|| crate::base::without_a_device("reading a decoded rendition"))?;
     let primary = read_heif(avif)?.primary;
     let codes = crate::planes::codes(gpu, planes, layout)?;
     let turn = crate::orientation::of_heif(primary.turn);
-    let picture = crate::linearise::Picture::on_device(gpu, codes, coding_of(&primary, 16), turn, None);
-    Ok(Held { picture, camera: None })
+    let picture =
+        crate::linearise::Picture::on_device(gpu, codes, coding_of(&primary, 16), turn, None);
+    Ok(Held {
+        picture,
+        camera: None,
+    })
 }
 
 /// An SDR AVIF the page decoded to RGBA itself, upright: `avif` for what the container says its
@@ -131,10 +148,20 @@ pub fn hold_pixels(avif: &[u8], rgba: &[u8], width: usize, height: usize) -> Res
 fn pixels_read(avif: &[u8], rgba: &[u8], width: usize, height: usize) -> Result<Read, String> {
     let coding = coding_of(&read_heif(avif)?.primary, 8);
     if matches!(coding.curve, Curve::Pq | Curve::Hlg) {
-        return Err("this AVIF is HDR, which eight bits of RGBA would clip: it has to arrive as its planes".to_string());
+        return Err(
+            "this AVIF is HDR, which eight bits of RGBA would clip: it has to arrive as its planes"
+                .to_string(),
+        );
     }
-    if width.checked_mul(height).and_then(|pixels| pixels.checked_mul(4)) != Some(rgba.len()) {
-        return Err(format!("{} bytes are not a {width}x{height} RGBA picture", rgba.len()));
+    if width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        != Some(rgba.len())
+    {
+        return Err(format!(
+            "{} bytes are not a {width}x{height} RGBA picture",
+            rgba.len()
+        ));
     }
     Ok(Read {
         codes: interleave(rgba, width * height, 4, false),
@@ -170,7 +197,9 @@ impl Held {
         scale: crate::view::Scale,
     ) -> Option<crate::frame::Frame> {
         let gpu = crate::gpu::device()?;
-        let resident = self.picture.window(gpu, crate::linearise::device(gpu), window, scale)?;
+        let resident = self
+            .picture
+            .window(gpu, crate::linearise::device(gpu), window, scale)?;
         Some(crate::frame::Frame {
             width: resident.width,
             height: resident.height,
@@ -198,11 +227,13 @@ impl Held {
             // One, which is what the field means for a frame whose white balance was applied by
             // somebody else's camera: all three channels clip at full scale together. A linear
             // DNG's balance is the table's, so its channels keep a RAW's separate ceilings.
-            neutral_ceiling: self
+            neutral_ceiling: self.camera.as_ref().map_or(1.0, |camera| {
+                camera.ceiling.iter().copied().fold(f32::INFINITY, f32::min)
+            }),
+            wb_gains: self
                 .camera
                 .as_ref()
-                .map_or(1.0, |camera| camera.ceiling.iter().copied().fold(f32::INFINITY, f32::min)),
-            wb_gains: self.camera.as_ref().map_or([1.0; 3], |camera| camera.ceiling),
+                .map_or([1.0; 3], |camera| camera.ceiling),
             // A linear DNG's white is a quantile of its scene, as a RAW's is.
             stated_white: match self.camera {
                 Some(_) => None,
@@ -283,7 +314,14 @@ pub fn probe(bytes: &[u8]) -> Option<Probe> {
     } else {
         return None;
     };
-    Some(Probe { width, height, turn, orientation: exif_tag(turn), exif, deferred })
+    Some(Probe {
+        width,
+        height,
+        turn,
+        orientation: exif_tag(turn),
+        exif,
+        deferred,
+    })
 }
 
 /// A PNG's `eXIf` chunk, walked for rather than decoded to.
@@ -334,9 +372,13 @@ fn png(bytes: &[u8]) -> Result<Read, String> {
     // Palettes expanded and low-bit-depth greys widened, so what comes out is 8- or 16-bit
     // channels and the only cases left below are how many of them there are.
     decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder.read_info().map_err(|e| format!("not a readable PNG: {e}"))?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("not a readable PNG: {e}"))?;
     let mut buffer = vec![0u8; reader.output_buffer_size().unwrap_or(0)];
-    let frame = reader.next_frame(&mut buffer).map_err(|e| format!("this PNG would not decode: {e}"))?;
+    let frame = reader
+        .next_frame(&mut buffer)
+        .map_err(|e| format!("this PNG would not decode: {e}"))?;
     // **What the buffer holds, not what the file says.** `EXPAND` above turns a palette into RGB
     // and widens a sub-byte grey, and `Reader::info` still describes the *file* - so reading the
     // channel count off it renders an indexed PNG one third of the way across and in the wrong
@@ -349,7 +391,12 @@ fn png(bytes: &[u8]) -> Result<Read, String> {
         _ => 8,
     };
     let channels = colour.samples();
-    let codes = interleave(&buffer[..frame.buffer_size()], width * height, channels, depth == 16);
+    let codes = interleave(
+        &buffer[..frame.buffer_size()],
+        width * height,
+        channels,
+        depth == 16,
+    );
 
     // The colour, in the order a PNG's own chunks take precedence: CICP is exact, `sRGB` is a
     // declaration, an embedded profile is a measurement, and the primitives are what a file that
@@ -357,22 +404,46 @@ fn png(bytes: &[u8]) -> Result<Read, String> {
     let coding = info
         .coding_independent_code_points
         .map(|cicp| {
-            Coding::from_cicp(u16::from(cicp.color_primaries), u16::from(cicp.transfer_function), depth)
+            Coding::from_cicp(
+                u16::from(cicp.color_primaries),
+                u16::from(cicp.transfer_function),
+                depth,
+            )
         })
         .or_else(|| info.srgb.map(|_| Coding::srgb(depth)))
-        .or_else(|| info.icc_profile.as_ref().and_then(|icc| Coding::from_icc(icc, depth)))
+        .or_else(|| {
+            info.icc_profile
+                .as_ref()
+                .and_then(|icc| Coding::from_icc(icc, depth))
+        })
         .unwrap_or_else(|| {
-            let primaries = info.chromaticities().map_or(Primaries::REC709, |it| Primaries {
-                red: (f64::from(it.red.0.into_value()), f64::from(it.red.1.into_value())),
-                green: (f64::from(it.green.0.into_value()), f64::from(it.green.1.into_value())),
-                blue: (f64::from(it.blue.0.into_value()), f64::from(it.blue.1.into_value())),
-                white: (f64::from(it.white.0.into_value()), f64::from(it.white.1.into_value())),
-            });
+            let primaries = info
+                .chromaticities()
+                .map_or(Primaries::REC709, |it| Primaries {
+                    red: (
+                        f64::from(it.red.0.into_value()),
+                        f64::from(it.red.1.into_value()),
+                    ),
+                    green: (
+                        f64::from(it.green.0.into_value()),
+                        f64::from(it.green.1.into_value()),
+                    ),
+                    blue: (
+                        f64::from(it.blue.0.into_value()),
+                        f64::from(it.blue.1.into_value()),
+                    ),
+                    white: (
+                        f64::from(it.white.0.into_value()),
+                        f64::from(it.white.1.into_value()),
+                    ),
+                });
             // `gAMA` records the *encoding* exponent, so the decode is its reciprocal.
-            let curve = info.gamma().map_or(Curve::Srgb, |gamma| match gamma.into_value() {
-                encoded if encoded > 0.0 => Curve::Gamma(1.0 / encoded),
-                _ => Curve::Srgb,
-            });
+            let curve = info
+                .gamma()
+                .map_or(Curve::Srgb, |gamma| match gamma.into_value() {
+                    encoded if encoded > 0.0 => Curve::Gamma(1.0 / encoded),
+                    _ => Curve::Srgb,
+                });
             Coding::of(primaries, curve, depth)
         });
 
@@ -390,8 +461,12 @@ fn png(bytes: &[u8]) -> Result<Read, String> {
 
 fn jpeg(bytes: &[u8]) -> Result<Read, String> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
-    let pixels = decoder.decode().map_err(|e| format!("this JPEG would not decode: {e}"))?;
-    let info = decoder.info().ok_or("this JPEG says nothing about itself")?;
+    let pixels = decoder
+        .decode()
+        .map_err(|e| format!("this JPEG would not decode: {e}"))?;
+    let info = decoder
+        .info()
+        .ok_or("this JPEG says nothing about itself")?;
     let (width, height) = (usize::from(info.width), usize::from(info.height));
     let channels = match info.pixel_format {
         jpeg_decoder::PixelFormat::L8 => 1,
@@ -405,8 +480,9 @@ fn jpeg(bytes: &[u8]) -> Result<Read, String> {
         // scale to put them on and no order to read them in. A wide lossless greyscale JPEG is
         // rare enough that declining one by name beats a picture four stops dark, byte-swapped.
         jpeg_decoder::PixelFormat::L16 => {
-            return Err("this JPEG is more than eight bits, which this build does not read"
-                .to_string());
+            return Err(
+                "this JPEG is more than eight bits, which this build does not read".to_string(),
+            );
         }
     };
     let depth = 8;
@@ -419,7 +495,15 @@ fn jpeg(bytes: &[u8]) -> Result<Read, String> {
         .unwrap_or_else(|| Coding::srgb(depth));
     let gain = crate::jpeg_gain::read(bytes, exif.as_deref());
 
-    Ok(Read { codes, width, height, coding, turn: exif_turn(exif.as_deref()), gain, exif })
+    Ok(Read {
+        codes,
+        width,
+        height,
+        coding,
+        turn: exif_turn(exif.as_deref()),
+        gain,
+        exif,
+    })
 }
 
 fn heif(bytes: &[u8]) -> Result<Read, String> {
@@ -427,12 +511,15 @@ fn heif(bytes: &[u8]) -> Result<Read, String> {
     let picture = file.primary;
     let coded = decode_picture(bytes, &picture)?;
     let coding = coding_of(&picture, coded.depth);
-    let gain = file
-        .gain
-        .as_ref()
-        .and_then(|map| {
-            gain_map_of(bytes, map, file.exif.as_deref(), picture.width, picture.height)
-        });
+    let gain = file.gain.as_ref().and_then(|map| {
+        gain_map_of(
+            bytes,
+            map,
+            file.exif.as_deref(),
+            picture.width,
+            picture.height,
+        )
+    });
 
     Ok(Read {
         codes: coded.samples,
@@ -472,14 +559,21 @@ fn av1(file: &[u8], _picture: &heif::Picture) -> Result<crate::hevc::Coded, Stri
     // the only way to keep a 10-bit PQ one - where `avif.rs` measures one 8-bit step against four
     // of the ten the file has. A file that states no `pixi` would otherwise be read at eight.
     let (samples, width, height) = crate::avif::decode_at_unturned(file, 16)?;
-    Ok(crate::hevc::Coded { samples, width, height, depth: 16 })
+    Ok(crate::hevc::Coded {
+        samples,
+        width,
+        height,
+        depth: 16,
+    })
 }
 
 #[cfg(not(feature = "renditions"))]
 fn av1(_: &[u8], _: &heif::Picture) -> Result<crate::hevc::Coded, String> {
-    Err("this build reads no AVIF: the AV1 decoder is libavif, which a browser links no C to \
+    Err(
+        "this build reads no AVIF: the AV1 decoder is libavif, which a browser links no C to \
          reach. Open this photograph's rendition instead."
-        .to_string())
+            .to_string(),
+    )
 }
 
 /// What a HEIF picture's samples mean, from its `colr` box or its profile.
@@ -518,7 +612,9 @@ fn gain_map_of(
         Some(metadata) => iso_21496_terms(metadata)?,
         // Apple's, whose terms are not in the file beside the map.
         None => {
-            let headroom = exif.and_then(crate::apple_gain::headroom).filter(|it| *it > 1.0);
+            let headroom = exif
+                .and_then(crate::apple_gain::headroom)
+                .filter(|it| *it > 1.0);
             match headroom {
                 Some(headroom) => crate::linearise::Reconstruction::Apple { headroom },
                 None => {
@@ -708,7 +804,10 @@ mod tests {
         // 16-bit samples are big-endian in a PNG, which is the one place this can go wrong
         // silently: read the other way round, every pixel is a different colour and nothing
         // reports it.
-        assert_eq!(interleave(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], 1, 3, true), vec![0x1234, 0x5678, 0x9ABC]);
+        assert_eq!(
+            interleave(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], 1, 3, true),
+            vec![0x1234, 0x5678, 0x9ABC]
+        );
     }
 
     /// The format is decided by the file's own magic, not by what a caller called it.
@@ -725,7 +824,9 @@ mod tests {
 
     #[test]
     fn the_scan_and_the_decode_agree_about_which_names_are_rendered() {
-        for name in ["a.png", "a.JPG", "a.jpeg", "a.heic", "a.HEIF", "a.hif", "a.avif"] {
+        for name in [
+            "a.png", "a.JPG", "a.jpeg", "a.heic", "a.HEIF", "a.hif", "a.avif",
+        ] {
             assert!(is_rendered(name), "{name}");
         }
         for name in ["a.arw", "a.cr3", "a.tiff", "a"] {
@@ -742,8 +843,13 @@ mod tests {
             body.extend_from_slice(&numerator.to_be_bytes());
             body.extend_from_slice(&denominator.to_be_bytes());
         }
-        let crate::linearise::Reconstruction::Iso { min, max, gamma, offset_base, .. } =
-            iso_21496_terms(&body).expect("well-formed metadata")
+        let crate::linearise::Reconstruction::Iso {
+            min,
+            max,
+            gamma,
+            offset_base,
+            ..
+        } = iso_21496_terms(&body).expect("well-formed metadata")
         else {
             panic!("the standard's payload is the standard's arm");
         };
@@ -764,22 +870,44 @@ mod tests {
     fn an_sdr_avif_decoded_by_the_page_is_held_at_its_own_colour_and_an_hdr_one_is_refused() {
         let (width, height) = (4, 2);
         let rgb: Vec<u8> = (0..width * height * 3).map(|at| (at * 9) as u8).collect();
-        let sdr = crate::avif::encode_rgb8(rgb.as_slice().into(), width, height, 0, 10, true).expect("the SDR still encodes");
-        let rgba: Vec<u8> = rgb.chunks_exact(3).flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255]).collect();
+        let sdr = crate::avif::encode_rgb8(rgb.as_slice().into(), width, height, 0, 10, true)
+            .expect("the SDR still encodes");
+        let rgba: Vec<u8> = rgb
+            .chunks_exact(3)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
+            .collect();
         let read = pixels_read(&sdr, &rgba, width, height).expect("an SDR AVIF is read");
         assert!(matches!(read.coding.curve, Curve::Srgb));
-        assert_eq!(read.codes, rgb.iter().map(|&code| u16::from(code)).collect::<Vec<_>>());
-        assert!(pixels_read(&sdr, &rgba[4..], width, height).is_err(), "a short buffer is refused");
+        assert_eq!(
+            read.codes,
+            rgb.iter().map(|&code| u16::from(code)).collect::<Vec<_>>()
+        );
+        assert!(
+            pixels_read(&sdr, &rgba[4..], width, height).is_err(),
+            "a short buffer is refused"
+        );
 
         let options = crate::avif::StillOptions {
-            cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
+            cicp: crate::avif::Cicp {
+                primaries: 9,
+                transfer: 16,
+                matrix: 9,
+            },
             format: crate::raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
             quantizer: 0,
             speed: 10,
             light: None,
         };
-        let pq = crate::avif::encode_still(vec![30_000u16; width * height * 3].into(), width, height, &options)
-            .expect("the PQ still encodes");
-        assert!(pixels_read(&pq, &rgba, width, height).is_err(), "a PQ AVIF flattened to RGBA is refused");
+        let pq = crate::avif::encode_still(
+            vec![30_000u16; width * height * 3].into(),
+            width,
+            height,
+            &options,
+        )
+        .expect("the PQ still encodes");
+        assert!(
+            pixels_read(&pq, &rgba, width, height).is_err(),
+            "a PQ AVIF flattened to RGBA is refused"
+        );
     }
 }

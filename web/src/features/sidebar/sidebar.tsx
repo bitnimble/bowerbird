@@ -134,7 +134,8 @@ const styles = stylex.create({
   },
 });
 
-export const sidebarWidth = (width: number | null): string => (width == null ? size.sidebar : `${width}px`);
+export const sidebarWidth = (width: number | null): string =>
+  width == null ? size.sidebar : `${width}px`;
 
 export function Sidebar({
   onCollapse,
@@ -152,9 +153,17 @@ export function Sidebar({
       {...stylex.props(styles.sidebar, shown && styles.sidebarShown, following && styles.following)}
       aria-label={SidebarStrings.sidebar()}
     >
-      <div {...DRAGS_WINDOW} {...stylex.props(styles.head, !HAS_TRAFFIC_LIGHTS && styles.headWithBrand)}>
+      <div
+        {...DRAGS_WINDOW}
+        {...stylex.props(styles.head, !HAS_TRAFFIC_LIGHTS && styles.headWithBrand)}
+      >
         {!HAS_TRAFFIC_LIGHTS && <Brand />}
-        <Button iconOnly aria-label={SidebarStrings.hideSidebar()} aria-expanded onClick={onCollapse}>
+        <Button
+          iconOnly
+          aria-label={SidebarStrings.hideSidebar()}
+          aria-expanded
+          onClick={onCollapse}
+        >
           <PanelLeftClose size={ICON} />
         </Button>
       </div>
@@ -224,14 +233,19 @@ const ExportsLink = observer(function ExportsLink(): JSX.Element {
 
   return (
     <SidebarLink to={route(PathSegment.exports())} icon={FolderOutput}>
-      {queued === 0 ?
+      {queued === 0 ? (
         ExportsPageStrings.exports()
+      ) : (
         // Label over bar, so the bar spans the entry rather than competing with the words for width.
-      : <span {...stylex.props(styles.running)}>
+        <span {...stylex.props(styles.running)}>
           <SidebarText>{ExportsPageStrings.exporting(queued)}</SidebarText>
-          <ProgressBar label={ExportsPageStrings.exporting(queued)} value={store.written} max={queued} />
+          <ProgressBar
+            label={ExportsPageStrings.exporting(queued)}
+            value={store.written}
+            max={queued}
+          />
         </span>
-      }
+      )}
     </SidebarLink>
   );
 });

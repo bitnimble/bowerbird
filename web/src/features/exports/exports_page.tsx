@@ -199,11 +199,7 @@ export const ExportsPage = observer(function ExportsPage(): JSX.Element {
         <List>
           {store.runs.map((run) => (
             <Fragment key={run.id}>
-              {run.photos.length === 1 ? (
-                <PhotoRow photo={run.photos[0]!} />
-              ) : (
-                <Run run={run} />
-              )}
+              {run.photos.length === 1 ? <PhotoRow photo={run.photos[0]!} /> : <Run run={run} />}
             </Fragment>
           ))}
         </List>
@@ -304,9 +300,9 @@ const QueueRun = observer(function QueueRun({ job }: { job: ExportJob }): JSX.El
 
 // How far through, in the same place on a run's line and on a single photograph's row.
 const Progress = observer(function Progress({ job }: { job: ExportJob }): JSX.Element {
-  const said =
-    job.running ?
-      job.stopping ? ExportsPageStrings.stoppingExport()
+  const said = job.running
+    ? job.stopping
+      ? ExportsPageStrings.stoppingExport()
       : ExportsPageStrings.exportingCount(job.settled, job.total)
     : ExportsPageStrings.waitingToExport(job.total);
 
@@ -334,7 +330,11 @@ function Run({ run }: { run: ExportRun }): JSX.Element {
             it is a list-item, and this row is a flex line with a time anchored to its end. */}
         <summary {...stylex.props(styles.summary, focusRing.ring)}>
           <ChevronRight size={ICON} {...stylex.props(styles.chevron)} />
-          <Stack tiles={run.photos.map((photo) => (photo.has_thumbnail ? exportsApi.thumbnailUrl(photo.id) : null))} />
+          <Stack
+            tiles={run.photos.map((photo) =>
+              photo.has_thumbnail ? exportsApi.thumbnailUrl(photo.id) : null,
+            )}
+          />
           <ListName>{ExportsPageStrings.exportedPhotos(run.photos.length)}</ListName>
           <When at={run.exported_at} />
           {/* Holds the width the menu is drawn over, so the time lands in the same column as
@@ -353,7 +353,13 @@ function Run({ run }: { run: ExportRun }): JSX.Element {
           label={ExportsPageStrings.exportActions()}
           sections={[
             menuSection({
-              options: [{ value: 'forget', label: ExportsPageStrings.removeFromHistory(), destructive: true }],
+              options: [
+                {
+                  value: 'forget',
+                  label: ExportsPageStrings.removeFromHistory(),
+                  destructive: true,
+                },
+              ],
               onSelect: () => void exportHistory.forgetRun(run.id),
             }),
           ]}
@@ -380,7 +386,10 @@ function Stack({ tiles }: { tiles: (string | null)[] }): JSX.Element | null {
         <img
           key={tile}
           {...stylex.props(styles.thumb, styles.stacked)}
-          style={{ zIndex: drawn.length - depth, transform: `translate(${depth * 5}px, ${depth * -3}px)` }}
+          style={{
+            zIndex: drawn.length - depth,
+            transform: `translate(${depth * 5}px, ${depth * -3}px)`,
+          }}
           src={tile}
           alt=""
           loading="lazy"
@@ -438,11 +447,15 @@ function ExportRow({
               ExportsPageStrings.photographGone()
             ) : (
               <>
-                <TextLink to={route(PathSegment.libraries(), photo.libraryId)}>{photo.libraryName}</TextLink>
+                <TextLink to={route(PathSegment.libraries(), photo.libraryId)}>
+                  {photo.libraryName}
+                </TextLink>
                 {photo.shootId != null && photo.shootName != null && (
                   <>
                     {' · '}
-                    <TextLink to={route(PathSegment.shoots(), photo.shootId)}>{photo.shootName}</TextLink>
+                    <TextLink to={route(PathSegment.shoots(), photo.shootId)}>
+                      {photo.shootName}
+                    </TextLink>
                   </>
                 )}
               </>
@@ -467,11 +480,15 @@ function ExportRow({
 // than the paths do on their own.
 function Thumb({ photo }: { photo: RowPhoto }): JSX.Element | null {
   const picture =
-    photo.tile == null ?
+    photo.tile == null ? (
       <span {...stylex.props(listStyles.bannerNone)} />
-    : <img {...stylex.props(listStyles.bannerImage)} src={photo.tile} alt="" loading="lazy" />;
+    ) : (
+      <img {...stylex.props(listStyles.bannerImage)} src={photo.tile} alt="" loading="lazy" />
+    );
   if (photo.libraryId == null) {
-    return photo.tile == null ? null : <span {...stylex.props(listStyles.banner, styles.thumb)}>{picture}</span>;
+    return photo.tile == null ? null : (
+      <span {...stylex.props(listStyles.banner, styles.thumb)}>{picture}</span>
+    );
   }
   return (
     <Link
@@ -515,7 +532,9 @@ function waiting(photo: QueuedPhoto): RowPhoto {
 }
 
 function frameOf(photo: { width: number | null; height: number | null }): Size | null {
-  return photo.width == null || photo.height == null ? null : { width: photo.width, height: photo.height };
+  return photo.width == null || photo.height == null
+    ? null
+    : { width: photo.width, height: photo.height };
 }
 
 // The grid's own tile: nothing has been rendered for this export yet, and the photograph as the
@@ -526,7 +545,13 @@ function tileOf(photo: QueuedPhoto): string | null {
   return renditionsApi.url(photo.photo_id, 'grid', renditionVersion(stamps, 'grid'));
 }
 
-function PhotoRow({ photo, inRun = false }: { photo: ExportedPhoto; inRun?: boolean }): JSX.Element {
+function PhotoRow({
+  photo,
+  inRun = false,
+}: {
+  photo: ExportedPhoto;
+  inRun?: boolean;
+}): JSX.Element {
   const { exportHistory } = usePresenters();
 
   return (
@@ -545,7 +570,9 @@ function PhotoRow({ photo, inRun = false }: { photo: ExportedPhoto; inRun?: bool
         label={ExportsPageStrings.exportActions()}
         sections={[
           menuSection({
-            options: [{ value: 'forget', label: ExportsPageStrings.removeFromHistory(), destructive: true }],
+            options: [
+              { value: 'forget', label: ExportsPageStrings.removeFromHistory(), destructive: true },
+            ],
             onSelect: () => void exportHistory.forget(photo.id),
           }),
         ]}
@@ -567,7 +594,13 @@ function When({ at }: { at: string }): JSX.Element {
 
 // A press rather than a hover: the same badge is read with a thumb, where there is no hover
 // to have, and a popover is the one disclosure both a pointer and a touch can open.
-function Edits({ edits, frame }: { edits: EditDoc | null; frame: Size | null }): JSX.Element | null {
+function Edits({
+  edits,
+  frame,
+}: {
+  edits: EditDoc | null;
+  frame: Size | null;
+}): JSX.Element | null {
   if (edits == null || editRows(edits, frame).length === 0) return null;
 
   return (
@@ -580,7 +613,12 @@ function Edits({ edits, frame }: { edits: EditDoc | null; frame: Size | null }):
         </>
       }
     >
-      <EditsPanel title={ExportsPageStrings.editsInThisExport()} doc={edits} frame={frame} defaultOpen />
+      <EditsPanel
+        title={ExportsPageStrings.editsInThisExport()}
+        doc={edits}
+        frame={frame}
+        defaultOpen
+      />
     </PopoverButton>
   );
 }

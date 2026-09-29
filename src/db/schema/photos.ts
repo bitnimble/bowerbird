@@ -140,9 +140,15 @@ export const photos = sqliteTable(
       desc(t.id),
     ),
     index('idx_photos_file_hash').on(t.libraryId, t.fileHash),
-    index('idx_photos_is_missing').on(t.libraryId, t.isMissing).where(sql`${t.isMissing} = 1`),
-    index('idx_photos_is_deleted').on(t.libraryId, t.isDeleted).where(sql`${t.isDeleted} = 1`),
-    index('idx_photos_is_hidden').on(t.libraryId, t.isHidden).where(sql`${t.isHidden} = 1`),
+    index('idx_photos_is_missing')
+      .on(t.libraryId, t.isMissing)
+      .where(sql`${t.isMissing} = 1`),
+    index('idx_photos_is_deleted')
+      .on(t.libraryId, t.isDeleted)
+      .where(sql`${t.isDeleted} = 1`),
+    index('idx_photos_is_hidden')
+      .on(t.libraryId, t.isHidden)
+      .where(sql`${t.isHidden} = 1`),
     index('idx_photos_deleted_batch')
       .on(t.deletedBatch)
       .where(sql`${t.deletedBatch} IS NOT NULL`),

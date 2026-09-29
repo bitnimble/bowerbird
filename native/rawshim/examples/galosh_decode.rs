@@ -18,16 +18,15 @@ fn main() {
     let plain_ms = started.elapsed().as_millis();
 
     let started = std::time::Instant::now();
-    let denoised = rawshim::decode_frame_denoised(
-        &path,
-        0,
-        Detail::at(33.0, 33.0),
-        Default::default(),
-    )
-    .expect("decoded");
+    let denoised =
+        rawshim::decode_frame_denoised(&path, 0, Detail::at(33.0, 33.0), Default::default())
+            .expect("decoded");
     let denoised_ms = started.elapsed().as_millis();
 
-    assert_eq!((plain.width, plain.height), (denoised.width, denoised.height));
+    assert_eq!(
+        (plain.width, plain.height),
+        (denoised.width, denoised.height)
+    );
     let before = plain.samples16().expect("16-bit");
     let after = denoised.samples16().expect("16-bit");
 
@@ -38,11 +37,20 @@ fn main() {
         .map(|(a, b)| f64::from(a.abs_diff(*b)))
         .sum::<f64>()
         / before.len() as f64;
-    let worst = before.iter().zip(after).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+    let worst = before
+        .iter()
+        .zip(after)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0);
     // How many samples move by a lot, which separates "it removed speckle" from "it is
     // wrong": an isolated hot pixel is exactly what a denoise should flatten, and there
     // should be very few of them.
-    let large = before.iter().zip(after).filter(|(a, b)| a.abs_diff(**b) > 6553).count();
+    let large = before
+        .iter()
+        .zip(after)
+        .filter(|(a, b)| a.abs_diff(**b) > 6553)
+        .count();
 
     // The noise in a flat patch, as the mean absolute difference from a 3x3 box mean. What
     // the denoise is for is this number falling.

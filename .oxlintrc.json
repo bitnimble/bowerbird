@@ -1,12 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": [
-    "node_modules",
-    "web/dist",
-    "landing/dist",
-    "native",
-    ".scratch-*.ts"
-  ],
+  "ignorePatterns": ["node_modules", "web/dist", "landing/dist", "native", ".scratch-*.ts"],
   "jsPlugins": ["./scripts/oxlint-plugin-strings.ts", "./scripts/oxlint-plugin-ids.ts"],
   "rules": {
     "no-console": "error",
@@ -17,53 +11,28 @@
         "paths": [
           {
             "name": "node:fs",
-            "importNames": [
-              "rm",
-              "rmSync",
-              "rmdir",
-              "rmdirSync",
-              "unlink",
-              "unlinkSync"
-            ],
+            "importNames": ["rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           },
           {
             "name": "node:fs/promises",
-            "importNames": [
-              "rm",
-              "rmdir",
-              "unlink"
-            ],
+            "importNames": ["rm", "rmdir", "unlink"],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           },
           {
             "name": "fs",
-            "importNames": [
-              "rm",
-              "rmSync",
-              "rmdir",
-              "rmdirSync",
-              "unlink",
-              "unlinkSync"
-            ],
+            "importNames": ["rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           },
           {
             "name": "fs/promises",
-            "importNames": [
-              "rm",
-              "rmdir",
-              "unlink"
-            ],
+            "importNames": ["rm", "rmdir", "unlink"],
             "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
           }
         ],
         "patterns": [
           {
-            "group": [
-              "**/rawshim_for_testing",
-              "./rawshim_for_testing"
-            ],
+            "group": ["**/rawshim_for_testing", "./rawshim_for_testing"],
             "message": "Pixel work belongs in native/rawshim. Only commands and encoded files cross into TypeScript; rawshim_for_testing asks questions about samples on behalf of the tests that still live here; the rest of them are Rust fixture tests now. Nothing in src/ may reach it."
           }
         ]
@@ -72,56 +41,39 @@
   },
   "overrides": [
     {
-      "files": [
-        "src/utils/deletions.ts"
-      ],
+      "files": ["src/utils/deletions.ts"],
       "rules": {
         "no-restricted-imports": "off"
       }
     },
     {
-      "files": [
-        "packages/samsung-frame-art/**"
-      ],
+      "files": ["packages/samsung-frame-art/**"],
       "rules": {
         "ids/no-uuid": "off"
       }
     },
     {
-      "files": [
-        "src/logger.ts"
-      ],
+      "files": ["src/logger.ts"],
       "rules": {
         "no-console": "off"
       }
     },
     {
-      "files": [
-        "**/tests/**",
-        "**/*.test.ts",
-        "**/*.spec.ts",
-        "test/**",
-        "web/**"
-      ],
+      "files": ["**/tests/**", "**/*.test.ts", "**/*.spec.ts", "test/**", "web/**"],
       "rules": {
         "no-restricted-imports": "off",
         "no-console": "off"
       }
     },
     {
-      "files": [
-        "scripts/**",
-        "landing/scripts/**"
-      ],
+      "files": ["scripts/**", "landing/scripts/**"],
       "rules": {
         "no-restricted-imports": "off",
         "no-console": "off"
       }
     },
     {
-      "files": [
-        "web/src/**"
-      ],
+      "files": ["web/src/**"],
       "rules": {
         "strings/no-jsx-text": "error",
         "strings/no-literal-props": [
@@ -153,12 +105,7 @@
               "deleteWarning",
               "disabledReason"
             ],
-            "calls": [
-              "confirm",
-              "show",
-              "showError",
-              "showUndoable"
-            ]
+            "calls": ["confirm", "show", "showError", "showUndoable"]
           }
         ]
       }

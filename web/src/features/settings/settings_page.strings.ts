@@ -11,9 +11,16 @@ export const SettingsStrings = {
   removeLibraryQuestion: (libraryName: string) => `Remove "${libraryName}" from Bowerbird?`,
   removeLibraryWarning: (photoCount: number) =>
     `Your ${photoCount} ${photoCount === 1 ? 'photo stays' : 'photos stay'} on disk. Ratings, notes, Picks, albums, and shoots can't be recovered.`,
-  libraryPhotoCount: ({ photo_count, missing_photo_count, unavailable_photo_count, rendered_photo_count }: Pick<
-    Library, 'photo_count' | 'missing_photo_count' | 'unavailable_photo_count' | 'rendered_photo_count'
-  >) => `${photo_count} ${photo_count === 1 ? 'photo' : 'photos'} (${missing_photo_count} missing, ${unavailable_photo_count} unavailable, ${rendered_photo_count} rendered)`,
+  libraryPhotoCount: ({
+    photo_count,
+    missing_photo_count,
+    unavailable_photo_count,
+    rendered_photo_count,
+  }: Pick<
+    Library,
+    'photo_count' | 'missing_photo_count' | 'unavailable_photo_count' | 'rendered_photo_count'
+  >) =>
+    `${photo_count} ${photo_count === 1 ? 'photo' : 'photos'} (${missing_photo_count} missing, ${unavailable_photo_count} unavailable, ${rendered_photo_count} rendered)`,
   /** Opens one library's settings; `settings` names the whole page. */
   openLibrarySettings: () => 'Settings',
   librarySettingsTitle: (libraryName: string) => `Settings for ${libraryName}`,
@@ -30,7 +37,7 @@ export const SettingsStrings = {
   binFolderName: () => 'Bin folder name',
   binNameHintNoBin: () => 'Bowerbird creates this folder when you turn off read-only mode.',
   binNameHint: () => 'Photos that are Binned will be moved to this subfolder',
-  binNameLocked: () => "Turn off read-only mode to rename the Bin folder.",
+  binNameLocked: () => 'Turn off read-only mode to rename the Bin folder.',
 
   foldersSetAside: () => 'Folders set aside',
   ruleExcluded: () => 'Excluded from this library',
@@ -52,7 +59,7 @@ export const SettingsStrings = {
   cameraMatchingOff: () => 'Camera matching is off in Advanced settings',
   colourNeedsLens: () => 'Turn on Match lens first',
   stageEncode: () => 'Encode',
-  stageCost: (ms: number) => ms === 0 ? 'No measurable saving' : `~${ms} ms`,
+  stageCost: (ms: number) => (ms === 0 ? 'No measurable saving' : `~${ms} ms`),
   stagesTotal: () => 'Total',
   totalCost: (ms: number) => `~${ms} ms`,
   stagesEstimated: () => 'Estimated',
@@ -92,11 +99,13 @@ export const SettingsStrings = {
   defaultRendition: () => 'Default rendition to show',
   hideSidebarInViewer: () => 'Hide sidebar automatically in photo viewer',
   frameTvEnabled: () => 'Enable Samsung Frame TV integration',
-  frameTvEnabledHint: () => 'When enabled, shows menu options to send photos to a Samsung Frame TV on your local network.',
+  frameTvEnabledHint: () =>
+    'When enabled, shows menu options to send photos to a Samsung Frame TV on your local network.',
 
   couldNotSaveSetting: () => "We couldn't save that setting. Try again.",
   couldNotUseServerAddress: () => "We couldn't use that server address. Check it and try again.",
-  couldNotOpenAppDataFolder: () => "We couldn't open the app data folder. Try opening it in your file manager.",
+  couldNotOpenAppDataFolder: () =>
+    "We couldn't open the app data folder. Try opening it in your file manager.",
 
   logLevelDebug: () => 'debug',
   logLevelInfo: () => 'info',
@@ -118,7 +127,7 @@ export const SettingsStrings = {
   matchEmbeddedJpeg: () => 'Match lens correction and camera colour profile',
   matchEmbeddedJpegHint: () => 'Matches renditions to embedded JPEGs',
   renderOnThisDevice: () => 'Render on this device',
-  renderOnThisDeviceHint: () => "Builds photo viewer renditions on this device",
+  renderOnThisDeviceHint: () => 'Builds photo viewer renditions on this device',
 
   groupWatching: () => 'File watching',
   groupSchedule: () => 'Schedule',

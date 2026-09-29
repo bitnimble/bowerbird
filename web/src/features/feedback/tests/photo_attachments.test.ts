@@ -22,12 +22,25 @@ function stub(): { asked: string[]; exported: ExportRequest[] } {
   const exported: ExportRequest[] = [];
   photosApi.attachment = (photoId, form, scrub = false) => {
     asked.push(`${photoId}/${form}${scrub ? '?scrub' : ''}`);
-    const mediaType = form === 'full' ? 'image/avif' : form === 'analysis' ? 'application/octet-stream' : 'image/jpeg';
-    return Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), mediaType, filename: 'DSC00853.ARW' });
+    const mediaType =
+      form === 'full'
+        ? 'image/avif'
+        : form === 'analysis'
+          ? 'application/octet-stream'
+          : 'image/jpeg';
+    return Promise.resolve({
+      bytes: new Uint8Array([1, 2, 3]),
+      mediaType,
+      filename: 'DSC00853.ARW',
+    });
   };
   exportsApi.create = (body: ExportRequest) => {
     exported.push(body);
-    return Promise.resolve({ bytes: new Uint8Array([4, 5]), mediaType: 'image/jpeg', filename: 'DSC00853.jpg' });
+    return Promise.resolve({
+      bytes: new Uint8Array([4, 5]),
+      mediaType: 'image/jpeg',
+      filename: 'DSC00853.jpg',
+    });
   };
   return { asked, exported };
 }
@@ -74,13 +87,17 @@ test('a photograph with no camera JPEG is not asked for one', async () => {
 test('a picture that will not build leaves the rest of the report standing', async () => {
   stub();
   photosApi.attachment = (_photoId, form) =>
-    form === 'full' ?
-      Promise.reject(new Error('never rendered'))
-    : Promise.resolve({ bytes: new Uint8Array([1]), mediaType: 'image/jpeg', filename: null });
+    form === 'full'
+      ? Promise.reject(new Error('never rendered'))
+      : Promise.resolve({ bytes: new Uint8Array([1]), mediaType: 'image/jpeg', filename: null });
 
   const attached = await attachmentsFor({ photo: photo(), raw: false, strip: true });
 
-  expect(attached.map((part) => part.filename)).toEqual(['ph-1-embedded.jpg', 'ph-1-analysis.jpg', 'ph-1-sdr.jpg']);
+  expect(attached.map((part) => part.filename)).toEqual([
+    'ph-1-embedded.jpg',
+    'ph-1-analysis.jpg',
+    'ph-1-sdr.jpg',
+  ]);
 });
 
 test('an original that will not fit beside the pictures is refused before it is fetched', async () => {

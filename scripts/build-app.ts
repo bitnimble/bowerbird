@@ -12,21 +12,28 @@ import { hostTriple } from './host-triple.ts';
 const ROOT = join(import.meta.dir, '..');
 const ANDROID = 'aarch64-linux-android';
 
-function run(command: string, args: string[], cwd = ROOT, env: NodeJS.ProcessEnv = process.env): void {
+function run(
+  command: string,
+  args: string[],
+  cwd = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
   const done = spawnSync(command, args, { cwd, env, stdio: 'inherit' });
   if (done.status !== 0) process.exit(done.status ?? 1);
 }
 
 function initSubmodules(): void {
   const status = spawnSync('git', ['submodule', 'status'], { cwd: ROOT, encoding: 'utf8' });
-  if (status.status !== 0) throw new Error(`git submodule status exited ${status.status}:\n${status.stderr}`);
+  if (status.status !== 0)
+    throw new Error(`git submodule status exited ${status.status}:\n${status.stderr}`);
   const missing = status.stdout
     .split('\n')
     .filter((line) => line.startsWith('-'))
     .map((line) => line.trim().split(/\s+/)[1]!);
   // Named, not all: `update` moves an initialised submodule to the recorded commit, off whatever
   // is being worked on in the fork.
-  if (missing.length > 0) run('git', ['submodule', 'update', '--init', '--recursive', '--', ...missing]);
+  if (missing.length > 0)
+    run('git', ['submodule', 'update', '--init', '--recursive', '--', ...missing]);
 }
 
 const passed = process.argv.slice(2);
@@ -35,7 +42,9 @@ const target = at === -1 ? hostTriple() : passed[at + 1];
 if (target == null) throw new Error('--target names no triple');
 const android = target === ANDROID;
 if (!android && target !== hostTriple()) {
-  throw new Error(`${target} is not this machine: build it on one, or cross-build it with \`bun run release:check\``);
+  throw new Error(
+    `${target} is not this machine: build it on one, or cross-build it with \`bun run release:check\``,
+  );
 }
 
 initSubmodules();
@@ -46,7 +55,11 @@ run('bun', ['run', 'build:wasm']);
 
 if (android) {
   // `android-build.ts` names the target the Tauri CLI's own way.
-  run('bun', ['run', 'scripts/android-build.ts', ...passed.filter((_, index) => index !== at && index !== at + 1)]);
+  run('bun', [
+    'run',
+    'scripts/android-build.ts',
+    ...passed.filter((_, index) => index !== at && index !== at + 1),
+  ]);
 } else {
   run('bun', ['run', 'get:codecs']);
   // Here, not in rawshim's release profile: `test:bench` builds that profile too, and a profiler

@@ -141,7 +141,9 @@ export class ShootsRepository {
 
   listIdentities(libraryId: string): ShootIdentity[] {
     return this.db
-      .query('SELECT id, folder_path, folder_dev, folder_ino, folder_birthtime FROM shoots WHERE library_id = ?')
+      .query(
+        'SELECT id, folder_path, folder_dev, folder_ino, folder_birthtime FROM shoots WHERE library_id = ?',
+      )
       .all(libraryId) as ShootIdentity[];
   }
 
@@ -203,7 +205,10 @@ export class ShootsRepository {
 
   // No `folder_path`: where a shoot's folder is follows the disk, and `relocate` is the one writer -
   // which is also what keeps this write off the folder's own stamp (§3.2).
-  updateFields(id: string, fields: { name?: string; description?: string | null; ordering?: Ordering }): void {
+  updateFields(
+    id: string,
+    fields: { name?: string; description?: string | null; ordering?: Ordering },
+  ): void {
     const sets: string[] = [];
     const params: (string | null)[] = [];
     for (const [col, val] of Object.entries(fields)) {
@@ -252,7 +257,14 @@ export class ShootsRepository {
            WHERE library_id = (SELECT library_id FROM shoots WHERE id = ?)
              AND folder_path >= ? AND folder_path < ?`,
       )
-      .run(newFolderPath, oldFolderPath.length + 1, moved, shootId, `${oldFolderPath}/`, `${oldFolderPath}0`);
+      .run(
+        newFolderPath,
+        oldFolderPath.length + 1,
+        moved,
+        shootId,
+        `${oldFolderPath}/`,
+        `${oldFolderPath}0`,
+      );
     this.db
       .query('UPDATE shoots SET folder_path = ?, stamp_folder = ? WHERE id = ?')
       .run(newFolderPath, moved, shootId);
@@ -292,12 +304,16 @@ export class ShootsRepository {
   // losing every label, description, banner and ordering the user had given them.
   reparentChildren(shootId: string): void {
     this.db
-      .query('UPDATE shoots SET parent_id = (SELECT parent_id FROM shoots WHERE id = ?), stamp = ? WHERE parent_id = ?')
+      .query(
+        'UPDATE shoots SET parent_id = (SELECT parent_id FROM shoots WHERE id = ?), stamp = ? WHERE parent_id = ?',
+      )
       .run(shootId, stamp(this.db), shootId);
   }
 
   delete(id: string): boolean {
-    const row = this.db.query('SELECT library_id FROM shoots WHERE id = ?').get(id) as { library_id: string } | null;
+    const row = this.db.query('SELECT library_id FROM shoots WHERE id = ?').get(id) as {
+      library_id: string;
+    } | null;
     if (row == null) return this.db.query('DELETE FROM shoots WHERE id = ?').run(id).changes > 0;
     // The subtree goes with it, because `parent_id` cascades; each of those is a
     // shoot other peers hold and would otherwise send back.
@@ -313,11 +329,13 @@ export class ShootsRepository {
 
   setBanner(shootId: string, photoId: string | null): void {
     if (photoId == null) {
-      const row = this.db.query('SELECT library_id FROM shoots WHERE id = ?').get(shootId) as
-        | { library_id: string }
-        | null;
-      const gone = this.db.query('DELETE FROM shoot_banners WHERE shoot_id = ?').run(shootId).changes > 0;
-      if (gone && row != null) tombstone(this.db, row.library_id, 'shoot_banner', shootId, stamp(this.db));
+      const row = this.db.query('SELECT library_id FROM shoots WHERE id = ?').get(shootId) as {
+        library_id: string;
+      } | null;
+      const gone =
+        this.db.query('DELETE FROM shoot_banners WHERE shoot_id = ?').run(shootId).changes > 0;
+      if (gone && row != null)
+        tombstone(this.db, row.library_id, 'shoot_banner', shootId, stamp(this.db));
       return;
     }
     this.db

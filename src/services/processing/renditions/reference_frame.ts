@@ -14,17 +14,24 @@ const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 
 export function assertReferenceFrame(filePath = REFERENCE_FRAME.path): void {
   if (!isReferenceFrame(readOrNull(filePath))) {
-    throw new Error(`reference frame at ${filePath} is missing or does not match. Run \`git lfs pull\`.`);
+    throw new Error(
+      `reference frame at ${filePath} is missing or does not match. Run \`git lfs pull\`.`,
+    );
   }
 }
 
 /** Downloads the frame to `filePath` unless it is already there. */
-export async function fetchReferenceFrame(filePath: string, url: string = REFERENCE_FRAME.url): Promise<void> {
+export async function fetchReferenceFrame(
+  filePath: string,
+  url: string = REFERENCE_FRAME.url,
+): Promise<void> {
   if (isReferenceFrame(readOrNull(filePath))) return;
   const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-  if (!response.ok) throw new Error(`could not download the reference frame: ${url} answered ${response.status}`);
+  if (!response.ok)
+    throw new Error(`could not download the reference frame: ${url} answered ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!isReferenceFrame(bytes)) throw new Error(`the reference frame downloaded from ${url} does not match`);
+  if (!isReferenceFrame(bytes))
+    throw new Error(`the reference frame downloaded from ${url} does not match`);
   mkdirSync(dirname(filePath), { recursive: true });
   await Bun.write(filePath, bytes);
 }

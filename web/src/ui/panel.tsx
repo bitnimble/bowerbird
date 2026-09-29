@@ -85,12 +85,7 @@ export function PanelTitle({
 }): JSX.Element {
   const bare = useContext(PanelsInPopup);
   return (
-    <Text
-      variant="label"
-      as="div"
-      id={id}
-      style={[styles.title, bare && styles.titleBare, style]}
-    >
+    <Text variant="label" as="div" id={id} style={[styles.title, bare && styles.titleBare, style]}>
       {children}
     </Text>
   );

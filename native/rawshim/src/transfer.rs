@@ -264,7 +264,8 @@ fn invert(matrix: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
             m[0][0] * m[1][1] - m[0][1] * m[1][0],
         ],
     ];
-    let determinant = m[0][0] * cofactor[0][0] + m[0][1] * cofactor[1][0] + m[0][2] * cofactor[2][0];
+    let determinant =
+        m[0][0] * cofactor[0][0] + m[0][1] * cofactor[1][0] + m[0][2] * cofactor[2][0];
     if determinant.abs() < 1e-12 {
         return None;
     }
@@ -298,7 +299,11 @@ impl Coding {
     }
 
     pub fn of(primaries: Primaries, curve: Curve, depth: u32) -> Coding {
-        Coding { matrix: primaries.to_rec2020(), curve, depth }
+        Coding {
+            matrix: primaries.to_rec2020(),
+            curve,
+            depth,
+        }
     }
 
     /// A picture whose container states CICP code points: a HEIF `colr nclx`, or a PNG `cICP`.
@@ -388,7 +393,11 @@ impl Coding {
                 matrix[row][column] = *cell as f32;
             }
         }
-        Some(Coding { matrix, curve: icc_curve(tag(b"rTRC")?), depth })
+        Some(Coding {
+            matrix,
+            curve: icc_curve(tag(b"rTRC")?),
+            depth,
+        })
     }
 
     /// The level reference white lands on, which is full scale unless the picture can go above it.
@@ -435,7 +444,8 @@ fn icc_curve(body: &[u8]) -> Curve {
     // the rendition worker with it - or, in the browser build, the tab.
     let word = |at: usize| -> Option<u32> { body.get(at..at + 4).map(be32) };
     let half = |at: usize| -> Option<u16> {
-        body.get(at..at + 2).map(|it| u16::from_be_bytes([it[0], it[1]]))
+        body.get(at..at + 2)
+            .map(|it| u16::from_be_bytes([it[0], it[1]]))
     };
     match body.get(..4) {
         // `None` is a tag too short to carry a count, which is not the same as a count of zero:
@@ -457,7 +467,9 @@ fn icc_curve(body: &[u8]) -> Curve {
                 // Photoshop, Lightroom and most cameras embed reads 0.45 where the answer is
                 // 2.22, and imports every one of those JPEGs about 1.75 stops over and flat.
                 let at = 12 + (points as usize / 2) * 2;
-                let Some(sample) = half(at) else { return Curve::Srgb };
+                let Some(sample) = half(at) else {
+                    return Curve::Srgb;
+                };
                 let y = f64::from(sample) / 65535.0;
                 // The position that sample sits at, which is only 0.5 when the table has an odd
                 // number of points; for an even one the midpoint index is half a step past it.
@@ -501,17 +513,27 @@ mod tests {
         for curve in [Curve::Srgb, Curve::Rec709, Curve::Gamma(2.2), Curve::Linear] {
             assert!((curve.light(1.0).raw() - 1.0).abs() < 1e-9, "{curve:?}");
         }
-        let white: crate::light::Light<crate::light::SceneNits> = crate::light::Light::exactly(203.0);
+        let white: crate::light::Light<crate::light::SceneNits> =
+            crate::light::Light::exactly(203.0);
         let pq_white = Curve::Pq.light(crate::tone::pq(white).raw()).raw();
-        assert!((pq_white - 1.0).abs() < 1e-3, "PQ's 203 nits is diffuse white, got {pq_white}");
+        assert!(
+            (pq_white - 1.0).abs() < 1e-3,
+            "PQ's 203 nits is diffuse white, got {pq_white}"
+        );
         let hlg_white = Curve::Hlg.light(0.75).raw();
-        assert!((hlg_white - 1.0).abs() < 1e-9, "HLG's 75% signal is diffuse white, got {hlg_white}");
+        assert!(
+            (hlg_white - 1.0).abs() < 1e-9,
+            "HLG's 75% signal is diffuse white, got {hlg_white}"
+        );
     }
 
     #[test]
     fn only_an_hdr_curve_reaches_past_white() {
         assert!(Curve::Srgb.light(1.0).raw() <= 1.0);
-        assert!(Curve::Pq.light(1.0).raw() > 40.0, "PQ's own peak is 10000 nits");
+        assert!(
+            Curve::Pq.light(1.0).raw() > 40.0,
+            "PQ's own peak is 10000 nits"
+        );
     }
 
     /// **HLG through the OOTF, which is what puts it on PQ's scale.** Its signal is scene light
@@ -521,11 +543,17 @@ mod tests {
     #[test]
     fn hlg_lands_on_the_same_scale_as_pq() {
         let peak = Curve::Hlg.light(1.0).raw();
-        assert!((peak - 1000.0 / 203.0).abs() < 0.02, "HLG's peak came back at {peak}x white");
+        assert!(
+            (peak - 1000.0 / 203.0).abs() < 0.02,
+            "HLG's peak came back at {peak}x white"
+        );
         // The half-signal, where the missing system gamma shows as a lifted midtone: 0.2496
         // display-referred against 0.3145 scene-referred.
         let half = Curve::Hlg.light(0.5).raw();
-        assert!((half - 0.2496).abs() < 1e-3, "the 50% signal came back at {half}");
+        assert!(
+            (half - 0.2496).abs() < 1e-3,
+            "the 50% signal came back at {half}"
+        );
     }
 
     /// **The exponent of a sampled tone curve, not its reciprocal.** The stock sRGB profile that
@@ -548,7 +576,10 @@ mod tests {
         let Curve::Gamma(exponent) = icc_curve(&body) else {
             panic!("expected a power law, got {:?}", icc_curve(&body));
         };
-        assert!((exponent - 2.2).abs() < 0.02, "read back as gamma {exponent}");
+        assert!(
+            (exponent - 2.2).abs() < 0.02,
+            "read back as gamma {exponent}"
+        );
         // And the failure it is guarding against, named: the reciprocal is nowhere near.
         assert!(exponent > 1.0, "an inverted exponent would be 0.45");
     }
@@ -559,8 +590,16 @@ mod tests {
     fn a_truncated_tone_curve_falls_back_rather_than_panicking() {
         assert_eq!(icc_curve(b"curv"), Curve::Srgb);
         assert_eq!(icc_curve(b"para"), Curve::Srgb);
-        assert_eq!(icc_curve(b"curv\0\0\0\0\0\0\0\x01"), Curve::Srgb, "a gamma with no value");
-        assert_eq!(icc_curve(b"para\0\0\0\0\0\x00"), Curve::Srgb, "a power law with no exponent");
+        assert_eq!(
+            icc_curve(b"curv\0\0\0\0\0\0\0\x01"),
+            Curve::Srgb,
+            "a gamma with no value"
+        );
+        assert_eq!(
+            icc_curve(b"para\0\0\0\0\0\x00"),
+            Curve::Srgb,
+            "a power law with no exponent"
+        );
         assert_eq!(icc_curve(&[]), Curve::Srgb);
     }
 
@@ -576,7 +615,10 @@ mod tests {
         for (curve, join) in [(Curve::Srgb, 0.040_45), (Curve::Rec709, 0.081)] {
             let below = curve.light(join - 1e-9).raw();
             let above = curve.light(join + 1e-9).raw();
-            assert!((below - above).abs() < 1e-4, "{curve:?} steps at its join: {below} vs {above}");
+            assert!(
+                (below - above).abs() < 1e-4,
+                "{curve:?} steps at its join: {below} vs {above}"
+            );
         }
     }
 
@@ -609,15 +651,23 @@ mod tests {
         let eight = Coding::srgb(8).table();
         assert_eq!(eight.len(), 256 * 3);
         assert_eq!(eight[0], 0.0);
-        assert_eq!(&eight[255 * 3..], &[eight[255 * 3]; 3], "every channel reads one transfer");
+        assert_eq!(
+            &eight[255 * 3..],
+            &[eight[255 * 3]; 3],
+            "every channel reads one transfer"
+        );
         assert!((eight[255 * 3] - 1.0).abs() < 1e-6);
 
         let pq = Coding::of(Primaries::REC2020, Curve::Pq, 10);
         let table = pq.table();
         assert_eq!(table.len(), 1024 * 3);
-        let nits: crate::light::Light<crate::light::SceneNits> = crate::light::Light::exactly(203.0);
+        let nits: crate::light::Light<crate::light::SceneNits> =
+            crate::light::Light::exactly(203.0);
         let white = table[(crate::tone::pq(nits).raw() * 1023.0).round() as usize * 3];
-        assert!((f64::from(white) - 1.0).abs() < 2e-3, "white landed at {white}");
+        assert!(
+            (f64::from(white) - 1.0).abs() < 2e-3,
+            "white landed at {white}"
+        );
         assert!(table[1023 * 3] > 40.0, "and PQ's own peak is far above it");
     }
 

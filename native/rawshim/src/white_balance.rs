@@ -61,7 +61,10 @@ pub async fn as_shot(
     let mut recording = gpu.record();
     let asked = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("as shot"),
-        contents: &words.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<u8>>(),
+        contents: &words
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect::<Vec<u8>>(),
         usage: wgpu::BufferUsages::STORAGE,
     });
     let solved = recording.buffer(&wgpu::BufferDescriptor {
@@ -80,8 +83,14 @@ pub async fn as_shot(
         label: Some("as shot"),
         layout: &solver.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 14, resource: solved.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 18, resource: asked.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 14,
+                resource: solved.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 18,
+                resource: asked.as_entire_binding(),
+            },
         ],
     });
     {
@@ -90,7 +99,9 @@ pub async fn as_shot(
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }
-    recording.encoder().copy_buffer_to_buffer(&solved, 0, &readback, 0, SOLVED * 4);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&solved, 0, &readback, 0, SOLVED * 4);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &readback, |mapped| {
@@ -108,7 +119,10 @@ pub async fn as_shot(
         return None;
     };
     let answer = match read[2] > 0.0 {
-        true => Some(AsShot { temperature: f64::from(read[0]), tint: f64::from(read[1]) }),
+        true => Some(AsShot {
+            temperature: f64::from(read[0]),
+            tint: f64::from(read[1]),
+        }),
         false => None,
     };
     if let Ok(mut last) = LAST.lock() {
@@ -156,11 +170,13 @@ fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("as shot"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("as shot"),
-                bind_group_layouts: &[Some(&layout)],
-                immediate_size: 0,
-            })),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("as shot"),
+                    bind_group_layouts: &[Some(&layout)],
+                    immediate_size: 0,
+                }),
+            ),
             module: &module,
             entry_point: Some("as_shot"),
             compilation_options: Default::default(),
@@ -177,9 +193,19 @@ mod tests {
     /// A chromaticity through the whole path, as the camera that reports XYZ outright would have
     /// recorded it: the multipliers that neutralise the illuminant, and the identity for a matrix.
     fn illuminant(gpu: &'static crate::gpu::Gpu, x: f64, y: f64) -> AsShot {
-        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]];
+        let identity = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+        ];
         let xyz = [x / y, 1.0, (1.0 - x - y) / y];
-        let mul = [(1.0 / xyz[0]) as f32, (1.0 / xyz[1]) as f32, (1.0 / xyz[2]) as f32, 0.0];
+        let mul = [
+            (1.0 / xyz[0]) as f32,
+            (1.0 / xyz[1]) as f32,
+            (1.0 / xyz[2]) as f32,
+            0.0,
+        ];
         pollster::block_on(as_shot(gpu, &mul, &identity)).expect("an invertible matrix")
     }
 
@@ -208,7 +234,11 @@ mod tests {
         );
         // D65 is a daylight illuminant rather than a black body, so it sits a little off the
         // locus. Adobe reads it at about +10; what matters is the sign and the scale.
-        assert!(d65.tint.abs() < 25.0, "D65's tint came out at {:.0}", d65.tint);
+        assert!(
+            d65.tint.abs() < 25.0,
+            "D65's tint came out at {:.0}",
+            d65.tint
+        );
 
         let d50 = illuminant(gpu, 0.34567, 0.35850);
         assert!(
@@ -217,7 +247,11 @@ mod tests {
             d50.temperature,
             d50.tint,
         );
-        assert!(d50.tint.abs() < 25.0, "D50's tint came out at {:.0}", d50.tint);
+        assert!(
+            d50.tint.abs() < 25.0,
+            "D50's tint came out at {:.0}",
+            d50.tint
+        );
     }
 
     /// Warmer light reads as a lower number, which is the direction the whole slider hangs on.
@@ -249,7 +283,12 @@ mod tests {
             );
             return;
         };
-        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]];
+        let identity = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+        ];
         // D65 as XYZ at Y=1, then the multipliers that would neutralise it.
         let (x, y) = (0.3127, 0.3290);
         let xyz = [x / y, 1.0, (1.0 - x - y) / y];
@@ -272,7 +311,12 @@ mod tests {
             );
             return;
         };
-        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]];
+        let identity = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+        ];
         assert!(pollster::block_on(as_shot(gpu, &[0.0, 1.0, 1.0, 0.0], &identity)).is_none());
         assert!(pollster::block_on(as_shot(gpu, &[2.0, 1.0, 1.5, 0.0], &[[0.0; 3]; 4])).is_none());
     }
@@ -298,7 +342,9 @@ mod tests {
             [0.0389, -0.0685, 1.0296],
         ];
         let worst = |a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]| {
-            (0..9).map(|i| (a[i / 3][i % 3] - b[i / 3][i % 3]).abs()).fold(0.0f64, f64::max)
+            (0..9)
+                .map(|i| (a[i / 3][i % 3] - b[i / 3][i % 3]).abs())
+                .fold(0.0f64, f64::max)
         };
 
         let xyz_to_cone = crate::hdr_fit::in_the_shader("XYZ_TO_CONE");
@@ -320,7 +366,10 @@ mod tests {
             (0..3)
                 .map(|row| format!(
                     "    {},",
-                    (0..3).map(|col| format!("{:>10.6}", want[row][col])).collect::<Vec<_>>().join(", ")
+                    (0..3)
+                        .map(|col| format!("{:>10.6}", want[row][col]))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ))
                 .collect::<Vec<_>>()
                 .join("\n"),

@@ -44,7 +44,15 @@ export interface Expansion {
  */
 export type GridSection =
   | { kind: 'grid'; key: string; top: number; from: number; to: number }
-  | { kind: 'band'; key: string; top: number; stackId: string; composite?: CompositeKind | null; position: number; photos: PhotoSummary[] };
+  | {
+      kind: 'band';
+      key: string;
+      top: number;
+      stackId: string;
+      composite?: CompositeKind | null;
+      position: number;
+      photos: PhotoSummary[];
+    };
 
 /** An open stack: where its tile sits in the collection, and how many it holds. */
 export interface Band {
@@ -55,9 +63,7 @@ export interface Band {
 }
 
 /** A display row is either a row of the collection or a row inside one band. */
-export type BandRow =
-  | { kind: 'grid'; row: number }
-  | { kind: 'band'; band: Band; offset: number };
+export type BandRow = { kind: 'grid'; row: number } | { kind: 'band'; band: Band; offset: number };
 
 export function bandRows(members: number, columns: number): number {
   return Math.max(0, Math.ceil(members / Math.max(1, columns)));
@@ -76,7 +82,9 @@ function anchorRow(band: Band, columns: number): number {
  * settled somehow; left to right is what the eye expects.
  */
 export function ordered(bands: readonly Band[], columns: number): Band[] {
-  return [...bands].sort((a, b) => anchorRow(a, columns) - anchorRow(b, columns) || a.position - b.position);
+  return [...bands].sort(
+    (a, b) => anchorRow(a, columns) - anchorRow(b, columns) || a.position - b.position,
+  );
 }
 
 export function totalRows(baseRows: number, bands: readonly Band[], columns: number): number {
@@ -88,7 +96,10 @@ export function totalRows(baseRows: number, bands: readonly Band[], columns: num
 // ponytail: a linear walk per lookup rather than a prefix-sum index. Bands are
 // the stacks a reader has open at once, so this is a handful of entries; build
 // the index if somebody ever opens hundreds.
-function walk(bands: readonly Band[], columns: number): { band: Band; startsAt: number; rows: number }[] {
+function walk(
+  bands: readonly Band[],
+  columns: number,
+): { band: Band; startsAt: number; rows: number }[] {
   const placed: { band: Band; startsAt: number; rows: number }[] = [];
   let inserted = 0;
   for (const band of ordered(bands, columns)) {
@@ -169,7 +180,14 @@ export function sectionsIn(
       const from = at.row * columns;
       const to = Math.min(total, from + columns);
       if (last?.kind === 'grid' && last.to === from) last.to = to;
-      else sections.push({ kind: 'grid', key: `grid-${runStart(at.row, bands, columns)}`, top: display * rowHeight, from, to });
+      else
+        sections.push({
+          kind: 'grid',
+          key: `grid-${runStart(at.row, bands, columns)}`,
+          top: display * rowHeight,
+          from,
+          to,
+        });
       continue;
     }
     const open = layout.expansionAt(at.band.position);
@@ -199,10 +217,15 @@ export function sectionsIn(
  * stack above the viewport displaces everything below it, so the view moves this
  * many rows' worth of pixels down the collection (§19.6.1).
  */
-export function rowsInsertedAbove(position: number, bands: readonly Band[], columns: number): number {
+export function rowsInsertedAbove(
+  position: number,
+  bands: readonly Band[],
+  columns: number,
+): number {
   let rows = 0;
   for (const band of bands) {
-    if (anchorRow(band, columns) <= Math.floor(position / Math.max(1, columns))) rows += bandRows(band.members, columns);
+    if (anchorRow(band, columns) <= Math.floor(position / Math.max(1, columns)))
+      rows += bandRows(band.members, columns);
   }
   return rows;
 }

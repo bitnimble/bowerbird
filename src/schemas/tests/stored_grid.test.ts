@@ -29,7 +29,15 @@ describe('the grid a repair is written on', () => {
   });
 
   test('refuses a loop that encloses nothing', () => {
-    expect(storedLoop([{ x: 0.1, y: 0.1 }, { x: 0.1, y: 0.1 }], { width: 6000, height: 4000 })).toBeNull();
+    expect(
+      storedLoop(
+        [
+          { x: 0.1, y: 0.1 },
+          { x: 0.1, y: 0.1 },
+        ],
+        { width: 6000, height: 4000 },
+      ),
+    ).toBeNull();
     const line = [0.1, 0.2, 0.3].map((x) => ({ x, y: 0.5 }));
     expect(storedLoop(line, { width: 6000, height: 4000 })).toBeNull();
   });
@@ -41,10 +49,23 @@ describe('the grid a repair is written on', () => {
       [10, 10],
     ];
     const repair = { drawn: loop, seam: loop, donor: [0, 0], gain: 1 };
-    expect(EditDocSchema.safeParse({ repairs: Array.from({ length: 64 }, () => repair) }).success).toBe(true);
-    expect(EditDocSchema.safeParse({ repairs: Array.from({ length: 65 }, () => repair) }).success).toBe(false);
+    expect(
+      EditDocSchema.safeParse({ repairs: Array.from({ length: 64 }, () => repair) }).success,
+    ).toBe(true);
+    expect(
+      EditDocSchema.safeParse({ repairs: Array.from({ length: 65 }, () => repair) }).success,
+    ).toBe(false);
     expect(RepairSchema.safeParse({ ...repair, gain: 20 }).success).toBe(false);
-    expect(RepairSchema.safeParse({ ...repair, seam: [[0, 0], [STORED_LONG + 1, 0], [0, 1]] }).success).toBe(false);
+    expect(
+      RepairSchema.safeParse({
+        ...repair,
+        seam: [
+          [0, 0],
+          [STORED_LONG + 1, 0],
+          [0, 1],
+        ],
+      }).success,
+    ).toBe(false);
     expect(EditDocSchema.parse({}).repairs).toEqual([]);
   });
 });

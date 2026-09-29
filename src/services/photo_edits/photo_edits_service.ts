@@ -66,10 +66,18 @@ export class PhotoEditsService {
 
   checkpoint(photoId: string): EditOpening {
     const photo = this.require(photoId);
-    return { ...this.edits.checkpoint(photoId), library_denoiser: this.denoiserOf(photo.library_id) };
+    return {
+      ...this.edits.checkpoint(photoId),
+      library_denoiser: this.denoiserOf(photo.library_id),
+    };
   }
 
-  restore(photoId: string, rev: number, checkpoint: Pick<EditCheckpoint, 'doc' | 'cursor' | 'history'>, session: string): EditState {
+  restore(
+    photoId: string,
+    rev: number,
+    checkpoint: Pick<EditCheckpoint, 'doc' | 'cursor' | 'history'>,
+    session: string,
+  ): EditState {
     this.require(photoId);
     return this.edits.restore(photoId, rev, checkpoint, session);
   }

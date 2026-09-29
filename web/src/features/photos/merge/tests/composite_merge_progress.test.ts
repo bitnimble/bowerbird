@@ -59,7 +59,13 @@ beforeEach(() => {
   compositesApi.createPanorama = () => Promise.resolve({ photoId: 'panorama1' });
   photosApi.positions = () => Promise.resolve({});
   photosApi.listLibrary = () =>
-    Promise.resolve({ photos: [], total: 20, offset: 0, limit: 1, ordering: 'taken_desc' } as PhotoListResponse);
+    Promise.resolve({
+      photos: [],
+      total: 20,
+      offset: 0,
+      limit: 1,
+      ordering: 'taken_desc',
+    } as PhotoListResponse);
 });
 
 afterEach(() => {

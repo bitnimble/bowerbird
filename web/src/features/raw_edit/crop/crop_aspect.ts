@@ -99,24 +99,47 @@ export function aspectDraggedCrop(
   const freeWidth = (free.right - free.left) * picture.width;
   const freeHeight = (free.bottom - free.top) * picture.height;
   const wide =
-    grip.x != null && grip.y != null ? freeWidth >= freeHeight
-    : (start.right - start.left) * picture.width >= (start.bottom - start.top) * picture.height;
+    grip.x != null && grip.y != null
+      ? freeWidth >= freeHeight
+      : (start.right - start.left) * picture.width >= (start.bottom - start.top) * picture.height;
   const ratio = wide === held >= 1 ? held : 1 / held;
 
   const anchor = {
-    x: grip.x === 'left' ? start.right : grip.x === 'right' ? start.left : (start.left + start.right) / 2,
-    y: grip.y === 'top' ? start.bottom : grip.y === 'bottom' ? start.top : (start.top + start.bottom) / 2,
+    x:
+      grip.x === 'left'
+        ? start.right
+        : grip.x === 'right'
+          ? start.left
+          : (start.left + start.right) / 2,
+    y:
+      grip.y === 'top'
+        ? start.bottom
+        : grip.y === 'bottom'
+          ? start.top
+          : (start.top + start.bottom) / 2,
   };
   const room = {
-    x: grip.x === 'left' ? anchor.x : grip.x === 'right' ? 1 - anchor.x : 2 * Math.min(anchor.x, 1 - anchor.x),
-    y: grip.y === 'top' ? anchor.y : grip.y === 'bottom' ? 1 - anchor.y : 2 * Math.min(anchor.y, 1 - anchor.y),
+    x:
+      grip.x === 'left'
+        ? anchor.x
+        : grip.x === 'right'
+          ? 1 - anchor.x
+          : 2 * Math.min(anchor.x, 1 - anchor.x),
+    y:
+      grip.y === 'top'
+        ? anchor.y
+        : grip.y === 'bottom'
+          ? 1 - anchor.y
+          : 2 * Math.min(anchor.y, 1 - anchor.y),
   };
 
   // A corner follows the pointer projected onto the rectangle's diagonal.
   const wanted =
-    grip.x == null ? freeHeight * ratio
-    : grip.y == null ? freeWidth
-    : ((freeWidth * ratio + freeHeight) * ratio) / (ratio * ratio + 1);
+    grip.x == null
+      ? freeHeight * ratio
+      : grip.y == null
+        ? freeWidth
+        : ((freeWidth * ratio + freeHeight) * ratio) / (ratio * ratio + 1);
   const smallest = MINIMUM_CROP * Math.max(picture.width, picture.height * ratio);
   const largest = Math.min(room.x * picture.width, room.y * picture.height * ratio);
   // The minimum wins where the room is smaller, and the slide below keeps that inside the frame.
@@ -126,7 +149,8 @@ export function aspectDraggedCrop(
 
   const at = {
     x: grip.x === 'left' ? anchor.x - width : grip.x === 'right' ? anchor.x : anchor.x - width / 2,
-    y: grip.y === 'top' ? anchor.y - height : grip.y === 'bottom' ? anchor.y : anchor.y - height / 2,
+    y:
+      grip.y === 'top' ? anchor.y - height : grip.y === 'bottom' ? anchor.y : anchor.y - height / 2,
   };
   const left = clamp(at.x, 0, 1 - width);
   const top = clamp(at.y, 0, 1 - height);

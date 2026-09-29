@@ -20,7 +20,8 @@ function sidecar(attrs: string): string {
 </x:xmpmeta>`;
 }
 
-const EDITED = 'crs:ProcessVersion="15.4" crs:Version="18.5" crs:HasSettings="True" crs:Exposure2012="+1.25" crs:Contrast2012="+20"';
+const EDITED =
+  'crs:ProcessVersion="15.4" crs:Version="18.5" crs:HasSettings="True" crs:Exposure2012="+1.25" crs:Contrast2012="+20"';
 
 describe('SidecarImportService', () => {
   let root: string;
@@ -73,7 +74,10 @@ describe('SidecarImportService', () => {
     // The trap in `docs/lightroom-xmp.md` §2: one folder, `IMG_2.CR3` and `IMG_2.JPG`,
     // one `IMG_2.xmp`. Applying it to the wrong file puts somebody else's edit on a
     // photograph, and the file usually says which it is for.
-    writeFileSync(path.join(root, 'IMG_2.xmp'), sidecar(`${EDITED} photoshop:SidecarForExtension="CR3"`));
+    writeFileSync(
+      path.join(root, 'IMG_2.xmp'),
+      sidecar(`${EDITED} photoshop:SidecarForExtension="CR3"`),
+    );
     const raw = addPhoto('raw', 'IMG_2.CR3');
     const jpeg = addPhoto('jpeg', 'IMG_2.JPG');
 
@@ -93,12 +97,17 @@ describe('SidecarImportService', () => {
     writeFileSync(path.join(root, 'IMG_4.xmp'), '<x:xmpmeta><not closed');
     writeFileSync(path.join(root, 'IMG_5.xmp'), sidecar(EDITED));
 
-    expect(service.importFor(root, [addPhoto('p4', 'IMG_4.CR3'), addPhoto('p5', 'IMG_5.CR3')])).toBe(1);
+    expect(
+      service.importFor(root, [addPhoto('p4', 'IMG_4.CR3'), addPhoto('p5', 'IMG_5.CR3')]),
+    ).toBe(1);
     expect(edits.get('p5').doc.exposure).toBe(1.25);
   });
 
   it('takes nothing from a sidecar that holds only a rating', () => {
-    writeFileSync(path.join(root, 'IMG_6.xmp'), sidecar('xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4"'));
+    writeFileSync(
+      path.join(root, 'IMG_6.xmp'),
+      sidecar('xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4"'),
+    );
 
     expect(service.importFor(root, [addPhoto('p6', 'IMG_6.CR3')])).toBe(0);
     expect(edits.get('p6').rev).toBe(0);

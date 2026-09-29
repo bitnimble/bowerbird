@@ -10,8 +10,10 @@ const { act, cleanup, fireEvent, render, screen } = await import('@testing-libra
 const { useEffect, useState } = await import('react');
 const { StripResizer } = await import('../../grid/photo_strip');
 const { StripViewPresenter } = await import('../strip_view_presenter');
-const { STRIP_DEFAULT_THICKNESS, STRIP_MAX_THICKNESS, STRIP_MIN_THICKNESS, StripViewStore } = await import('../strip_view_store');
-const { StoresProvider, useListingStore, usePresenters, useStacksStore, useViewerStore } = await import('../../../../app/stores_context');
+const { STRIP_DEFAULT_THICKNESS, STRIP_MAX_THICKNESS, STRIP_MIN_THICKNESS, StripViewStore } =
+  await import('../strip_view_store');
+const { StoresProvider, useListingStore, usePresenters, useStacksStore, useViewerStore } =
+  await import('../../../../app/stores_context');
 
 afterEach(cleanup);
 // A thickness the last test dragged to is one the next would start from.

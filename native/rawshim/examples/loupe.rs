@@ -19,15 +19,20 @@ fn main() {
     let [raw, x, y, side, out] = &args[..] else {
         panic!("loupe <raw> <x> <y> <side> <out.jpg>");
     };
-    let (x, y, side): (usize, usize, usize) =
-        (x.parse().unwrap(), y.parse().unwrap(), side.parse().unwrap());
+    let (x, y, side): (usize, usize, usize) = (
+        x.parse().unwrap(),
+        y.parse().unwrap(),
+        side.parse().unwrap(),
+    );
 
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let detail = rawshim::galosh::Detail::at(40.0, 40.0);
-    let frame =
-        rawshim::decode_frame_denoised(raw, 0, detail, rawshim::galosh::Fit::Measure)
-            .expect("decode");
-    assert_eq!(frame.reduced, 1, "tile coordinates assume the sensor's own grid");
+    let frame = rawshim::decode_frame_denoised(raw, 0, detail, rawshim::galosh::Fit::Measure)
+        .expect("decode");
+    assert_eq!(
+        frame.reduced, 1,
+        "tile coordinates assume the sensor's own grid"
+    );
     let samples = frame.samples16().expect("16-bit").to_vec();
     let levels =
         rawshim::hdr::levels_of(gpu, &samples, frame.width, frame.height, 0.9).expect("levels");
@@ -64,7 +69,10 @@ fn main() {
             reference_white_nits: rawshim::light::Light::exactly(203.0),
             white_quantile: 0.9,
         },
-        strengths: rawshim::image::Strengths { sharpen: 1.0, defringe: 1.0 },
+        strengths: rawshim::image::Strengths {
+            sharpen: 1.0,
+            defringe: 1.0,
+        },
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
         denoiser: rawshim::galosh::Denoiser::Galosh,
@@ -135,7 +143,11 @@ fn main() {
             stitched[d..d + 3].copy_from_slice(&ours[s..s + 3]);
         }
     }
-    let image = rawshim::rgb::Rgb { width: row, height: edge, data: stitched };
+    let image = rawshim::rgb::Rgb {
+        width: row,
+        height: edge,
+        data: stitched,
+    };
     std::fs::write(out, rawshim::jpeg::encode(image.as_ref(), 95).unwrap()).unwrap();
     // Lossless twin beside it: the comparison tooling reads this one, since a JPEG's
     // subsampled chroma rings at exactly the scale the diffs are amplified to.

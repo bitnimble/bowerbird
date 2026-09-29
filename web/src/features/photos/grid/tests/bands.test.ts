@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { type Band, type Expansion, bandRows, displayRowOf, rowAt, rowsInsertedAbove, sectionsIn, totalRows } from '../bands';
+import {
+  type Band,
+  type Expansion,
+  bandRows,
+  displayRowOf,
+  rowAt,
+  rowsInsertedAbove,
+  sectionsIn,
+  totalRows,
+} from '../bands';
 
 const COLUMNS = 4;
 

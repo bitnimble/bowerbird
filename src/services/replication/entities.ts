@@ -250,7 +250,9 @@ export const REPLICATED_ENTITIES: readonly ReplicatedEntity[] = [
     // a peer keeps showing the picture from before the edit and keeps handing that
     // picture to peers that cannot build their own, and nothing comes to correct
     // it, because nothing is looking at anything that changed.
-    units: unitsOf('photo_edits', { photo_edits: ['doc', 'cursor', 'session_id', 'chain', 'updated_at'] }),
+    units: unitsOf('photo_edits', {
+      photo_edits: ['doc', 'cursor', 'session_id', 'chain', 'updated_at'],
+    }),
     // The undo stack travels with the document rather than as a fact of its own.
     // A history spliced from two peers is a history of a session that never
     // happened, so undo would walk back through states the photograph was never

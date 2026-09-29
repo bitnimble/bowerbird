@@ -7,7 +7,6 @@
 //! the flood fill's mask and its heights in one plane, and the fitted spots, which are twenty-odd
 //! kilobytes. The mosaic itself never leaves the device.
 
-
 /// Log-spaced bins the texture's floor is taken from. `HIST_BINS` in the shader, which is where the
 /// quantile over them is worked out; this side only sizes the buffer.
 const HIST_BINS: usize = 512;
@@ -92,7 +91,9 @@ impl Find {
                     binding: *binding,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: *read_only },
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: *read_only,
+                        },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -131,7 +132,10 @@ impl Find {
         };
         let kernel = |name: &'static str, entries: &[(u32, bool)]| {
             let layout = bindings(entries);
-            Kernel { pipeline: pipeline(name, &layout), layout }
+            Kernel {
+                pipeline: pipeline(name, &layout),
+                layout,
+            }
         };
 
         const R: bool = true;
@@ -185,7 +189,9 @@ impl Shape {
 
 /// The box radius three passes approximate this sigma with.
 fn radius_for(sigma: f32) -> u32 {
-    (((4.0 * sigma * sigma + 1.0).sqrt() - 1.0) / 2.0).round().max(1.0) as u32
+    (((4.0 * sigma * sigma + 1.0).sqrt() - 1.0) / 2.0)
+        .round()
+        .max(1.0) as u32
 }
 
 /// One blob, as `fits` reads it: where its centre is, how large it was, and how far it stood above
@@ -237,7 +243,8 @@ impl Slots {
         ] {
             self.bytes.extend_from_slice(&word.to_ne_bytes());
         }
-        self.bytes.extend_from_slice(&(shape.mask_snr * shape.mask_snr).to_ne_bytes());
+        self.bytes
+            .extend_from_slice(&(shape.mask_snr * shape.mask_snr).to_ne_bytes());
         // The blob count goes in afterwards: it is an answer to a dispatch this buffer is being
         // built for.
         for word in [channel, dilate, 0] {
@@ -343,7 +350,9 @@ pub async fn sweep(
         .collect();
     let erode = slots.add(shape, shape.opening as u32, 0, 0);
     let dilate = slots.add(shape, shape.opening as u32, 0, 1);
-    let folds: Vec<u32> = (0..3).map(|channel| slots.add(shape, 1, channel, 0)).collect();
+    let folds: Vec<u32> = (0..3)
+        .map(|channel| slots.add(shape, 1, channel, 0))
+        .collect();
     let fits_slot = slots.add(shape, 1, 0, 0);
     let uniforms = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("dust find slots"),
@@ -379,31 +388,39 @@ pub async fn sweep(
     let words = count / 2;
     let down = |hw: usize, hh: usize| hw / 2 * hh.div_ceil(SEGMENT);
     let tiles = shape.hw.div_ceil(PATCH) * shape.hh.div_ceil(PATCH) * 64;
-    let blur = |encoder: &mut wgpu::CommandEncoder, plane: &crate::gpu::Buffer, window: (u32, u32)| {
-        let out = bind(&kernels.separable, &[(10, plane), (11, scratch)]);
-        let back = bind(&kernels.separable, &[(10, scratch), (11, plane)]);
-        let laid = [
-            (window.0, down(shape.hw, shape.hh)),
-            (window.1, down(shape.hh, shape.hw)),
-        ];
-        for (slot, items) in laid {
-            for step in 0..3 {
-                let group = match step % 2 {
-                    0 => &out,
-                    _ => &back,
-                };
-                run(encoder, &kernels.box_cols, group, slot, items);
+    let blur =
+        |encoder: &mut wgpu::CommandEncoder, plane: &crate::gpu::Buffer, window: (u32, u32)| {
+            let out = bind(&kernels.separable, &[(10, plane), (11, scratch)]);
+            let back = bind(&kernels.separable, &[(10, scratch), (11, plane)]);
+            let laid = [
+                (window.0, down(shape.hw, shape.hh)),
+                (window.1, down(shape.hh, shape.hw)),
+            ];
+            for (slot, items) in laid {
+                for step in 0..3 {
+                    let group = match step % 2 {
+                        0 => &out,
+                        _ => &back,
+                    };
+                    run(encoder, &kernels.box_cols, group, slot, items);
+                }
+                run(encoder, &kernels.transpose, &back, slot, tiles);
             }
-            run(encoder, &kernels.transpose, &back, slot, tiles);
-        }
-    };
+        };
 
     let encoder = recording.encoder();
     encoder.clear_buffer(&histogram, 0, None);
 
     let quads = bind(
         &kernels.quads.layout,
-        &[(1, &mosaic.buffer), (2, red), (3, green), (4, blue), (5, log_mean), (6, lit)],
+        &[
+            (1, &mosaic.buffer),
+            (2, red),
+            (3, green),
+            (4, blue),
+            (5, log_mean),
+            (6, lit),
+        ],
     );
     run(encoder, &kernels.quads.pipeline, &quads, plain, words);
     blur(encoder, lit, blurs[0]);
@@ -416,7 +433,13 @@ pub async fn sweep(
             &kernels.fold.layout,
             &[(20, sharp), (21, plane), (22, sum), (23, low), (24, high)],
         );
-        run(encoder, &kernels.fold.pipeline, &fold, folds[channel], words);
+        run(
+            encoder,
+            &kernels.fold.pipeline,
+            &fold,
+            folds[channel],
+            words,
+        );
     }
 
     let judge = bind(
@@ -434,7 +457,10 @@ pub async fn sweep(
         run(encoder, &kernels.rank_rows, &out, slot, words);
         run(encoder, &kernels.rank_cols, &back, slot, words);
     }
-    let tophat = bind(&kernels.tophat.layout, &[(40, prominence), (41, score), (42, sum)]);
+    let tophat = bind(
+        &kernels.tophat.layout,
+        &[(40, prominence), (41, score), (42, sum)],
+    );
     run(encoder, &kernels.tophat.pipeline, &tophat, plain, words);
 
     // How busy the neighbourhood is, as the RMS of the band-pass over a window wide enough that one
@@ -454,12 +480,23 @@ pub async fn sweep(
         &kernels.threshold.layout,
         &[(60, sum), (61, texture), (62, score), (63, &histogram)],
     );
-    run(encoder, &kernels.threshold.pipeline, &threshold, plain, words);
+    run(
+        encoder,
+        &kernels.threshold.pipeline,
+        &threshold,
+        plain,
+        words,
+    );
     recording.submit();
 
     // Held from here, so that every way out of this function gives the planes back - including the
     // one where the mask never arrives, which is a `?` on a value this now owns.
-    let mut search = Search { masked: Vec::new(), planes, uniforms, fits_slot };
+    let mut search = Search {
+        masked: Vec::new(),
+        planes,
+        uniforms,
+        fits_slot,
+    };
     let masked = read_halves(gpu, &search.planes[MASKED], count).await;
     search.masked = masked?;
     Some(search)
@@ -525,7 +562,6 @@ impl Search {
 
         read_f32(gpu, &out, blobs.len() * words).await
     }
-
 }
 
 fn bound(
@@ -564,7 +600,9 @@ async fn mapped(gpu: &crate::gpu::Gpu, from: &crate::gpu::Buffer, bytes: u64) ->
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(from, 0, &readback, 0, bytes);
     recording.submit();
     crate::gpu::read_back(gpu, &readback, <[u8]>::to_vec).await
 }
@@ -595,7 +633,12 @@ async fn read_halves(
     count: usize,
 ) -> Option<Vec<u16>> {
     let bytes = mapped(gpu, from, (count * 2) as u64).await?;
-    Some(bytes.chunks_exact(2).map(|half| u16::from_ne_bytes([half[0], half[1]])).collect())
+    Some(
+        bytes
+            .chunks_exact(2)
+            .map(|half| u16::from_ne_bytes([half[0], half[1]]))
+            .collect(),
+    )
 }
 
 async fn read_f32(
@@ -634,12 +677,23 @@ mod tests {
             // land on the same bits - which pins the sign, the bias and both shifts at once.
             let sign = u32::from(bits & 0x8000) << 16;
             let re = value.to_bits();
-            assert_eq!(re & 0x8000_0000, sign, "{bits:#06x} lost its sign as {value}");
-            assert!(value.abs() <= 65504.0, "{bits:#06x} decoded to {value}, past the format");
+            assert_eq!(
+                re & 0x8000_0000,
+                sign,
+                "{bits:#06x} lost its sign as {value}"
+            );
+            assert!(
+                value.abs() <= 65504.0,
+                "{bits:#06x} decoded to {value}, past the format"
+            );
             if exponent != 0 {
                 let back = (((re >> 23) & 0xff) as i32 - 112) as u16;
                 assert_eq!(back, exponent, "{bits:#06x} moved exponent");
-                assert_eq!((re >> 13) & 0x3ff, u32::from(bits & 0x3ff), "{bits:#06x} moved mantissa");
+                assert_eq!(
+                    (re >> 13) & 0x3ff,
+                    u32::from(bits & 0x3ff),
+                    "{bits:#06x} moved mantissa"
+                );
             }
         }
         assert_eq!(decoded(0), 0.0);

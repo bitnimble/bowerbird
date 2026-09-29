@@ -56,7 +56,10 @@ fn pgm(path: &str, values: &[f32], width: usize, height: usize) {
 
 /// The residual against the clean scene, amplified and centred on 0.5.
 fn residual(out: &[f32], clean: &[f32]) -> Vec<f32> {
-    out.iter().zip(clean).map(|(o, c)| 0.5 + (o - c) * 20.0).collect()
+    out.iter()
+        .zip(clean)
+        .map(|(o, c)| 0.5 + (o - c) * 20.0)
+        .collect()
 }
 
 fn main() {
@@ -81,7 +84,11 @@ fn main() {
     let ours = pollster::block_on(uploaded.read(gpu)).expect("the mosaic reads back");
 
     let psnr = |a: &[f32], b: &[f32]| {
-        let mse = a.iter().zip(b).map(|(x, y)| f64::from(x - y).powi(2)).sum::<f64>()
+        let mse = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| f64::from(x - y).powi(2))
+            .sum::<f64>()
             / a.len() as f64;
         10.0 * (1.0 / mse).log10()
     };
@@ -93,7 +100,12 @@ fn main() {
 
     pgm(&format!("{out}/noisy.pgm"), &noisy, WIDTH, HEIGHT);
     pgm(&format!("{out}/denoised.pgm"), &ours, WIDTH, HEIGHT);
-    pgm(&format!("{out}/residual.pgm"), &residual(&ours, &clean), WIDTH, HEIGHT);
+    pgm(
+        &format!("{out}/residual.pgm"),
+        &residual(&ours, &clean),
+        WIDTH,
+        HEIGHT,
+    );
 
     // What the filter changed against its own input, by row and slot, worst rows first.
     let mut rows: Vec<(usize, [f32; 4])> = Vec::new();

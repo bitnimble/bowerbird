@@ -12,7 +12,8 @@ pub const MARGIN: Span<Sensor> = Span::exact(320);
 const SEARCH: [Span<Sensor>; 3] = [Span::exact(6), Span::exact(12), Span::exact(64)];
 const PATCH: [Span<Sensor>; 3] = [Span::exact(10), Span::exact(12), Span::exact(24)];
 const COARSE_STEP: Span<Sensor> = Span::exact(8);
-pub const REFERENCE_MARGIN: Span<Sensor> = Span::exact(TILE.raw() + PATCH[2].raw() + COARSE_STEP.raw() / 2);
+pub const REFERENCE_MARGIN: Span<Sensor> =
+    Span::exact(TILE.raw() + PATCH[2].raw() + COARSE_STEP.raw() / 2);
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -62,28 +63,47 @@ fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fi
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
     static BLOCK: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
     static REDUCE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    let cell = if entry == "block_luma" { &BLOCK } else { &REDUCE };
-    cell.get_or_init(|| crate::hdr_fit::kernel(
-        gpu,
-        entry,
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_luma.wgsl")),
-        &[(0, UNIFORM), (1, READ), (2, WRITE)],
-        &[],
-    ))
+    let cell = if entry == "block_luma" {
+        &BLOCK
+    } else {
+        &REDUCE
+    };
+    cell.get_or_init(|| {
+        crate::hdr_fit::kernel(
+            gpu,
+            entry,
+            include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_luma.wgsl")),
+            &[(0, UNIFORM), (1, READ), (2, WRITE)],
+            &[],
+        )
+    })
 }
 
 fn align_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fit::Kernel {
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
     static ALIGN: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
     static REGULARIZE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    let cell = if entry == "align" { &ALIGN } else { &REGULARIZE };
-    cell.get_or_init(|| crate::hdr_fit::kernel(
-        gpu,
-        entry,
-        include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_align.wgsl")),
-        &[(0, UNIFORM), (1, READ), (2, READ), (3, READ), (4, WRITE), (5, READ)],
-        &[],
-    ))
+    let cell = if entry == "align" {
+        &ALIGN
+    } else {
+        &REGULARIZE
+    };
+    cell.get_or_init(|| {
+        crate::hdr_fit::kernel(
+            gpu,
+            entry,
+            include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_align.wgsl")),
+            &[
+                (0, UNIFORM),
+                (1, READ),
+                (2, READ),
+                (3, READ),
+                (4, WRITE),
+                (5, READ),
+            ],
+            &[],
+        )
+    })
 }
 
 struct Plane {
@@ -128,18 +148,36 @@ fn plane(
         label: Some("pixel shift luma"),
         layout: &kernel.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: source.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: output.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: source.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: output.as_entire_binding(),
+            },
         ],
     });
     {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((output_width as u32).div_ceil(8), (output_height as u32).div_ceil(8), 1);
+        pass.dispatch_workgroups(
+            (output_width as u32).div_ceil(8),
+            (output_height as u32).div_ceil(8),
+            1,
+        );
     }
-    Plane { buffer: output, width: output_width, height: output_height, step }
+    Plane {
+        buffer: output,
+        width: output_width,
+        height: output_height,
+        step,
+    }
 }
 
 pub struct Pyramid {
@@ -154,11 +192,41 @@ impl Pyramid {
         pyramid
     }
 
-    fn record(gpu: &'static Gpu, recording: &mut crate::gpu::Recording<'static>, mosaic: &Mosaic) -> Pyramid {
-        let base = plane(gpu, recording, &mosaic.buffer, mosaic.width, mosaic.height, 2, "block_luma");
-        let middle = plane(gpu, recording, &base.buffer, base.width, base.height, 4, "reduce_luma");
-        let coarse = plane(gpu, recording, &middle.buffer, middle.width, middle.height, COARSE_STEP.raw(), "reduce_luma");
-        Pyramid { planes: [base, middle, coarse] }
+    fn record(
+        gpu: &'static Gpu,
+        recording: &mut crate::gpu::Recording<'static>,
+        mosaic: &Mosaic,
+    ) -> Pyramid {
+        let base = plane(
+            gpu,
+            recording,
+            &mosaic.buffer,
+            mosaic.width,
+            mosaic.height,
+            2,
+            "block_luma",
+        );
+        let middle = plane(
+            gpu,
+            recording,
+            &base.buffer,
+            base.width,
+            base.height,
+            4,
+            "reduce_luma",
+        );
+        let coarse = plane(
+            gpu,
+            recording,
+            &middle.buffer,
+            middle.width,
+            middle.height,
+            COARSE_STEP.raw(),
+            "reduce_luma",
+        );
+        Pyramid {
+            planes: [base, middle, coarse],
+        }
     }
 }
 
@@ -234,7 +302,18 @@ pub fn measure(
             pad1: 0,
             pad2: 0,
         };
-        previous = dispatch(gpu, &mut recording, "align", &params, &ours.buffer, &theirs.buffer, &previous, &priors, width, height);
+        previous = dispatch(
+            gpu,
+            &mut recording,
+            "align",
+            &params,
+            &ours.buffer,
+            &theirs.buffer,
+            &previous,
+            &priors,
+            width,
+            height,
+        );
     }
     let params = AlignParams {
         reference_width: 0,
@@ -258,9 +337,26 @@ pub fn measure(
         pad1: 0,
         pad2: 0,
     };
-    let regular = dispatch(gpu, &mut recording, "regularize", &params, &reference.planes[0].buffer, &frame_planes.planes[0].buffer, &previous, &priors, width, height);
+    let regular = dispatch(
+        gpu,
+        &mut recording,
+        "regularize",
+        &params,
+        &reference.planes[0].buffer,
+        &frame_planes.planes[0].buffer,
+        &previous,
+        &priors,
+        width,
+        height,
+    );
     recording.submit();
-    Field { buffer: regular, left, top, width, height }
+    Field {
+        buffer: regular,
+        left,
+        top,
+        width,
+        height,
+    }
 }
 
 fn dispatch(
@@ -294,12 +390,30 @@ fn dispatch(
         label: Some("pixel shift align"),
         layout: &kernel.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: reference.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: frame.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: previous.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: output.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: priors.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: reference.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: frame.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: previous.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: output.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: priors.as_entire_binding(),
+            },
         ],
     });
     {

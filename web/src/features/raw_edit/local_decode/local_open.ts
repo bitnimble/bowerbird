@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import type { DustSettings } from '../../../../../src/schemas/dust_settings';
-import {
-  type Denoiser,
-  DenoiserSchema,
-  type Repair,
-} from '../../../../../src/schemas/photo_edits';
+import { type Denoiser, DenoiserSchema, type Repair } from '../../../../../src/schemas/photo_edits';
 import {
   DustSettingsSchema,
   type JobAdjust,
@@ -123,7 +119,10 @@ export const NothingSchema = z.null();
 export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() });
 
 /** A tick's draws of the canvases the page draws itself, as RGB9E5 words; null for the rest. */
-export const TickedSchema = z.object({ stage: BytesSchema.nullable(), loupe: BytesSchema.nullable() });
+export const TickedSchema = z.object({
+  stage: BytesSchema.nullable(),
+  loupe: BytesSchema.nullable(),
+});
 export type Ticked = z.infer<typeof TickedSchema>;
 
 /** `open_stage::Stage`, as the module reports each one beginning. */
@@ -139,7 +138,12 @@ export const OpenStageSchema = z.enum([
 export type OpenStage = z.infer<typeof OpenStageSchema>;
 
 /** Where a held tile's window sits, which is what the glass is positioned by. */
-export const TileKeepSchema = z.object({ left: z.number(), top: z.number(), width: z.number(), height: z.number() });
+export const TileKeepSchema = z.object({
+  left: z.number(),
+  top: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
 export type TileKeep = z.infer<typeof TileKeepSchema>;
 
 const PrepareCrossingSchema = z.object({
@@ -154,7 +158,12 @@ const PrepareCrossingSchema = z.object({
 /** What one open on the GPU worker is asked for (`gpu_worker.ts`). */
 export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('hold'), raw: BytesSchema }),
-  z.object({ kind: z.literal('render'), raw: BytesSchema, job: JsonSchema, denoiser: DenoiserSchema }),
+  z.object({
+    kind: z.literal('render'),
+    raw: BytesSchema,
+    job: JsonSchema,
+    denoiser: DenoiserSchema,
+  }),
   z.object({ kind: z.literal('prepare'), request: JsonSchema, mosaic: PrepareCrossingSchema }),
   z.object({ kind: z.literal('holdPicture'), framed: BytesSchema, request: JsonSchema }),
   z.object({ kind: z.literal('holdRendition'), file: BytesSchema, request: JsonSchema }),

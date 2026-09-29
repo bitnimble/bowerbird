@@ -25,9 +25,12 @@ function probe(file: string): Probe {
   const result = Bun.spawnSync([
     'ffprobe',
     '-hide_banner',
-    '-loglevel', 'error',
-    '-show_entries', 'stream=color_primaries,color_transfer,color_space,pix_fmt,width,height',
-    '-of', 'json',
+    '-loglevel',
+    'error',
+    '-show_entries',
+    'stream=color_primaries,color_transfer,color_space,pix_fmt,width,height',
+    '-of',
+    'json',
     file,
   ]);
   if (result.exitCode !== 0) throw new Error(`ffprobe failed: ${result.stderr.toString()}`);
@@ -41,7 +44,19 @@ async function encoded(run: (file: string) => void, fullChroma = false): Promise
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const outputPath = path.join(dir, 'pq.avif');
-    _for_testing_encodeHdr(FIXTURE, { outputPath, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: fullChroma }, { decodeSize: MAX_EDGE });
+    _for_testing_encodeHdr(
+      FIXTURE,
+      {
+        outputPath,
+        referenceWhiteNits: 203,
+        whiteQuantile: 0.99,
+        crf: 40,
+        preset: 12,
+        maxEdge: MAX_EDGE,
+        stillFullChroma: fullChroma,
+      },
+      { decodeSize: MAX_EDGE },
+    );
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -66,7 +81,17 @@ test('the sharpen and the defringe reach the HDR encode', () => {
       const still = path.join(dir, `${name}.avif`);
       _for_testing_encodeHdr(
         FIXTURE,
-        { outputPath: still, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, defringe, sharpen },
+        {
+          outputPath: still,
+          referenceWhiteNits: 203,
+          whiteQuantile: 0.99,
+          crf: 40,
+          preset: 12,
+          maxEdge: MAX_EDGE,
+          stillFullChroma: false,
+          defringe,
+          sharpen,
+        },
         { decodeSize: MAX_EDGE },
       );
       return still;

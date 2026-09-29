@@ -32,7 +32,10 @@ fn main() {
         eprintln!("halo_pattern <out-dir> [side] [halo,halo,...] [luma,colour]");
         std::process::exit(2);
     };
-    let side = args.next().and_then(|s| s.parse().ok()).unwrap_or(1024usize);
+    let side = args
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1024usize);
     let halos: Vec<usize> = args
         .next()
         .map(|s| s.split(',').filter_map(|v| v.parse().ok()).collect())
@@ -72,22 +75,35 @@ fn main() {
     let amounts = Amounts::from_sliders(sliders.0, sliders.1);
     // Fitted off the pattern rather than stated, so the shrinkage is calibrated to the noise that
     // is actually in it - which is what makes the artefact the halo's rather than a mismatch's.
-    let upload = |values: &[f32], w: usize, h: usize| {
-        rawshim::condition::Mosaic::upload(gpu, values, w, h)
-    };
+    let upload =
+        |values: &[f32], w: usize, h: usize| rawshim::condition::Mosaic::upload(gpu, values, w, h);
     let read = |frame: &rawshim::condition::Mosaic| {
         pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
     };
-    let fit =
-        pollster::block_on(rawshim::galosh::fit(gpu, kernels, &upload(&mosaic, side, side), &cfa));
-    eprintln!("pattern {side}x{side}, fitted alpha {:.3e} sigma_sq {:.3e}", fit.alpha, fit.sigma_sq);
+    let fit = pollster::block_on(rawshim::galosh::fit(
+        gpu,
+        kernels,
+        &upload(&mosaic, side, side),
+        &cfa,
+    ));
+    eprintln!(
+        "pattern {side}x{side}, fitted alpha {:.3e} sigma_sq {:.3e}",
+        fit.alpha, fit.sigma_sq
+    );
 
     let reference = upload(&mosaic, side, side);
-    pollster::block_on(rawshim::galosh::denoise_with(gpu, kernels, &reference, &cfa, amounts, fit));
+    pollster::block_on(rawshim::galosh::denoise_with(
+        gpu, kernels, &reference, &cfa, amounts, fit,
+    ));
     let reference = read(&reference);
     let shown = render(gpu, rcd, &reference, side, &cfa);
     write(&format!("{out}/pattern-reference"), &shown, side, side);
-    write(&format!("{out}/pattern-noisy"), &render(gpu, rcd, &mosaic, side, &cfa), side, side);
+    write(
+        &format!("{out}/pattern-noisy"),
+        &render(gpu, rcd, &mosaic, side, &cfa),
+        side,
+        side,
+    );
 
     // **A square on where the two seams cross, and the difference strip is cut the same.** A
     // column carries the vertical seam and only one row of the horizontal one, so a strip made of
@@ -100,7 +116,10 @@ fn main() {
     let mut diffs = vec![vec![0u8; WINDOW * WINDOW * 3]];
 
     let half = side / 2;
-    println!("{:>6}  {:>9} {:>9} {:>9}", "halo", "V excess", "H excess", "baseline");
+    println!(
+        "{:>6}  {:>9} {:>9} {:>9}",
+        "halo", "V excess", "H excess", "baseline"
+    );
     for halo in &halos {
         let mut assembled = mosaic.clone();
         for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
@@ -276,7 +295,13 @@ impl Rng {
 /// The same statistic `halo_seams` reports and one stage earlier, so nothing downstream of the
 /// denoise can add to it or hide it. Rows and columns move in pairs because a CFA row holds two
 /// colours and a single one is not a sample of the frame.
-fn seam_line(mine: &[f32], reference: &[f32], side: usize, half: usize, vertical: bool) -> (f64, f64) {
+fn seam_line(
+    mine: &[f32],
+    reference: &[f32],
+    side: usize,
+    half: usize,
+    vertical: bool,
+) -> (f64, f64) {
     let profile = |at: usize| -> f64 {
         let mut total = 0f64;
         for other in 0..side {
@@ -290,8 +315,10 @@ fn seam_line(mine: &[f32], reference: &[f32], side: usize, half: usize, vertical
         total / side as f64
     };
     let join = (profile(half - 2) + profile(half - 1) + profile(half) + profile(half + 1)) / 4.0;
-    let baseline: f64 =
-        (24..48).map(|d| profile(half - d) + profile(half + d)).sum::<f64>() / 48.0;
+    let baseline: f64 = (24..48)
+        .map(|d| profile(half - d) + profile(half + d))
+        .sum::<f64>()
+        / 48.0;
     (join, baseline)
 }
 
@@ -307,22 +334,35 @@ fn render(
     cfa: &rawshim::cfa::Cfa,
 ) -> Vec<u8> {
     let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, side, side);
-    pollster::block_on(rawshim::demosaic::demosaic_plane(gpu, rcd, &uploaded, cfa, |bytes| {
-        bytes
-            .chunks_exact(4)
-            .map(|w| {
-                let linear = f32::from_ne_bytes([w[0], w[1], w[2], w[3]]).clamp(0.0, 1.0);
-                (linear.powf(1.0 / 2.2) * 255.0).round() as u8
-            })
-            .collect::<Vec<u8>>()
-    }))
+    pollster::block_on(rawshim::demosaic::demosaic_plane(
+        gpu,
+        rcd,
+        &uploaded,
+        cfa,
+        |bytes| {
+            bytes
+                .chunks_exact(4)
+                .map(|w| {
+                    let linear = f32::from_ne_bytes([w[0], w[1], w[2], w[3]]).clamp(0.0, 1.0);
+                    (linear.powf(1.0 / 2.2) * 255.0).round() as u8
+                })
+                .collect::<Vec<u8>>()
+        },
+    ))
     .expect("the pattern demosaics")
 }
 
 fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
-    let image = rawshim::rgb::RgbRef { width, height, data: rgb };
-    std::fs::write(format!("{stem}.jpg"), rawshim::jpeg::encode(image, 100).expect("encodes"))
-        .expect("the JPEG writes");
+    let image = rawshim::rgb::RgbRef {
+        width,
+        height,
+        data: rgb,
+    };
+    std::fs::write(
+        format!("{stem}.jpg"),
+        rawshim::jpeg::encode(image, 100).expect("encodes"),
+    )
+    .expect("the JPEG writes");
 }
 
 /// A `window`-sided square from the middle, which is where the two seams cross.
@@ -331,8 +371,7 @@ fn centred(rgb: &[u8], side: usize, window: usize) -> Vec<u8> {
     let mut out = vec![0u8; window * window * 3];
     for row in 0..window {
         let at = ((from + row) * side + from) * 3;
-        out[row * window * 3..(row + 1) * window * 3]
-            .copy_from_slice(&rgb[at..at + window * 3]);
+        out[row * window * 3..(row + 1) * window * 3].copy_from_slice(&rgb[at..at + window * 3]);
     }
     out
 }

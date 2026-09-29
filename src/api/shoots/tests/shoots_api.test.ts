@@ -11,8 +11,26 @@ import { ShootsApi } from '../shoots_api';
 
 const LIB = 'lib00001';
 const PID = 'photo001';
-const shoot: Shoot = { id: 'shoot001', parent_id: null, library_id: LIB, folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_desc', photo_count: 0, is_hidden: false, hidden_directly: false };
-const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100, ordering: 'taken_asc' };
+const shoot: Shoot = {
+  id: 'shoot001',
+  parent_id: null,
+  library_id: LIB,
+  folder_path: 'Trip',
+  name: 'Trip',
+  description: null,
+  banner_photo_id: null,
+  ordering: 'taken_desc',
+  photo_count: 0,
+  is_hidden: false,
+  hidden_directly: false,
+};
+const emptyList: PhotoListResponse = {
+  photos: [],
+  total: 0,
+  offset: 0,
+  limit: 100,
+  ordering: 'taken_asc',
+};
 
 function buildApp(shoots: Partial<ShootsService> = {}, photos: Partial<PhotoReadService> = {}) {
   const shootsSvc = {
@@ -68,28 +86,41 @@ describe('ShootsApi', () => {
     const { app } = buildApp({ list });
 
     expect(
-      (await app.request(route(PathSegment.api(), PathSegment.libraries(), LIB, PathSegment.shoots()))).status,
+      (
+        await app.request(
+          route(PathSegment.api(), PathSegment.libraries(), LIB, PathSegment.shoots()),
+        )
+      ).status,
     ).toBe(200);
     expect(list).toHaveBeenCalledWith(LIB, false);
 
-    await app.request(`${route(PathSegment.api(), PathSegment.libraries(), LIB, PathSegment.shoots())}?include_hidden=true`);
+    await app.request(
+      `${route(PathSegment.api(), PathSegment.libraries(), LIB, PathSegment.shoots())}?include_hidden=true`,
+    );
     expect(list).toHaveBeenLastCalledWith(LIB, true);
   });
 
   it('adds photos to a shoot (204)', async () => {
     const addPhotos = jest.fn(async () => {});
     const { app } = buildApp({ addPhotos });
-    const res = await app.request(route(PathSegment.api(), PathSegment.shoots(), 's1', PathSegment.photos()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ photo_ids: [PID] }),
-    });
+    const res = await app.request(
+      route(PathSegment.api(), PathSegment.shoots(), 's1', PathSegment.photos()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ photo_ids: [PID] }),
+      },
+    );
     expect(res.status).toBe(204);
     expect(addPhotos).toHaveBeenCalledWith('s1', [PID]);
   });
 
   it('maps NOT_FOUND from get', async () => {
-    const { app } = buildApp({ get: jest.fn(() => { throw new AppError('NOT_FOUND', 'x'); }) });
+    const { app } = buildApp({
+      get: jest.fn(() => {
+        throw new AppError('NOT_FOUND', 'x');
+      }),
+    });
     const res = await app.request(route(PathSegment.api(), PathSegment.shoots(), 'x'));
     expect(res.status).toBe(404);
   });

@@ -148,10 +148,11 @@ const STRIP_BUDGET_BYTES: f64 = 512.0 * 1024.0 * 1024.0;
 const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 4.0 + 6.0;
 
 fn strip_bytes_per_pixel(recipe: &CompositeRecipe) -> f64 {
-    STRIP_BYTES_PER_PIXEL + match recipe {
-        CompositeRecipe::PixelShift(_) => crate::pixel_shift::WORKING_BYTES_PER_PIXEL,
-        _ => 0.0,
-    }
+    STRIP_BYTES_PER_PIXEL
+        + match recipe {
+            CompositeRecipe::PixelShift(_) => crate::pixel_shift::WORKING_BYTES_PER_PIXEL,
+            _ => 0.0,
+        }
 }
 
 /// How many points of a source's border are projected to find the shape it covers.
@@ -223,7 +224,12 @@ fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
 /// A pan is shot in portrait, so this lands on tall narrow tiles - full-height columns once the
 /// canvas is shorter than the shape asks for, which is every single-row pan. A pan of several rows
 /// is squarer and gets squarer tiles, which is the case a fixed axis would have got wrong.
-fn tile_of(spec: &crate::composition::Composition, width: usize, height: usize, bytes_per_pixel: f64) -> (usize, usize) {
+fn tile_of(
+    spec: &crate::composition::Composition,
+    width: usize,
+    height: usize,
+    bytes_per_pixel: f64,
+) -> (usize, usize) {
     let budget = (STRIP_BUDGET_BYTES / bytes_per_pixel).max(1.0);
     let shape = source_shape(spec)
         .filter(|shape| shape.is_finite() && *shape > 0.0)
@@ -310,7 +316,11 @@ pub(crate) fn sources_of<'a>(
 }
 
 /// A set of photographs searched for the recipe that composites them (`Want::Align`).
-pub fn align(gpu: &'static crate::gpu::Gpu, pano: &CompositeJob, shape: Shape) -> Result<String, String> {
+pub fn align(
+    gpu: &'static crate::gpu::Gpu,
+    pano: &CompositeJob,
+    shape: Shape,
+) -> Result<String, String> {
     let (headers, models) = headers_of(pano);
     let sources = sources_of(pano, &headers, &models)?;
 
@@ -359,7 +369,7 @@ pub fn align(gpu: &'static crate::gpu::Gpu, pano: &CompositeJob, shape: Shape) -
             aligned.composition.crop = direct.crop;
             aligned.composition.reference = 0;
             aligned
-        },
+        }
     };
     let named = |indices: &[usize]| -> Vec<String> {
         indices
@@ -752,7 +762,11 @@ pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<
     if header.focal <= 0.0 {
         return None;
     }
-    let crop = lensdb::crop_factor(crate::header::name(&header.camera_make), model, header.crop())?;
+    let crop = lensdb::crop_factor(
+        crate::header::name(&header.camera_make),
+        model,
+        header.crop(),
+    )?;
     // The diagonal, which is what a crop factor is a ratio of: a 4:3 picture's long edge is not
     // 36mm over its crop.
     let diagonal = f64::from(header.width).hypot(f64::from(header.height));
@@ -787,7 +801,9 @@ fn inner_of(
     recording.holding(grown.buffer());
     recording.holding(inner.buffer());
     for (to, from, bytes) in crate::resident::runs(across, at.0, at.1, wide, deep) {
-        recording.encoder().copy_buffer_to_buffer(grown.buffer(), from, inner.buffer(), to, bytes);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(grown.buffer(), from, inner.buffer(), to, bytes);
     }
     recording.submit();
     grown.reclaim();
@@ -905,8 +921,15 @@ pub(crate) fn base(
     // already on file: this is a reduced decode of every source, so it is the expensive half of a
     // composite and the half a pan pays on every render and every open of it.
     let needs_colour = job.camera_match == crate::hdr_fit::CameraMatch::LensAndColour
-        && files.iter().any(|file| !crate::decode_rendered::is_rendered(file.path))
-        && known.from_raw.matched.as_ref().and_then(|m| m.colour.as_ref()).is_none();
+        && files
+            .iter()
+            .any(|file| !crate::decode_rendered::is_rendered(file.path))
+        && known
+            .from_raw
+            .matched
+            .as_ref()
+            .and_then(|m| m.colour.as_ref())
+            .is_none();
     let stacked = match from {
         crate::composite_tile::From::Original if filed.is_none() || needs_colour => {
             crate::base::device(gpu).and_then(|base| stacked_sources(gpu, base, job, &files))
@@ -917,7 +940,9 @@ pub(crate) fn base(
         Some(levels) => {
             crate::progress::advance();
             let matched = if needs_colour {
-                stacked.as_ref().and_then(|stacked| union_match(gpu, job, &files, stacked))
+                stacked
+                    .as_ref()
+                    .and_then(|stacked| union_match(gpu, job, &files, stacked))
             } else {
                 known.from_raw.matched.clone()
             };
@@ -963,9 +988,9 @@ pub(crate) fn base(
     let mut hold: Option<crate::assembly_render::Lowpass> = None;
     let drawn = match wanted {
         CompositeRecipe::Assembly(assembly) => Drawn::Assembly(assembly.rendered()?),
-        CompositeRecipe::Panorama(_) | CompositeRecipe::ExposureBracket(_) | CompositeRecipe::FocusBracket(_) => {
-            Drawn::Blended
-        }
+        CompositeRecipe::Panorama(_)
+        | CompositeRecipe::ExposureBracket(_)
+        | CompositeRecipe::FocusBracket(_) => Drawn::Blended,
         CompositeRecipe::PixelShift(spec) => Drawn::Shifted(spec.clone()),
     };
     let burst: Vec<&str> = files.iter().map(|file| file.path).collect();
@@ -1011,7 +1036,9 @@ pub(crate) fn base(
             // corners - which a full-width strip always crossed a source somewhere in, and a tile
             // does not. Left as the zeros it was allocated with, and the rendition's own crop is
             // what trims them off (§19.4).
-            if !matches!(&drawn, Drawn::Shifted(_)) && !crate::composite_tile::covered(spec, &request) {
+            if !matches!(&drawn, Drawn::Shifted(_))
+                && !crate::composite_tile::covered(spec, &request)
+            {
                 left += wide;
                 crate::progress::advance();
                 continue;
@@ -1020,18 +1047,34 @@ pub(crate) fn base(
                 Drawn::Blended if halo > 0 => {
                     // Past the strip and cut back to it, so a weight reading its neighbours reads the
                     // same ones either side of a strip's edge rather than the edge twice.
-                    let (reach_left, reach_top) = ((window_left + left).min(halo), (window_top + top).min(halo));
+                    let (reach_left, reach_top) =
+                        ((window_left + left).min(halo), (window_top + top).min(halo));
                     let gathered = crate::px::Rect::exact(
                         window_left + left - reach_left,
                         window_top + top - reach_top,
                         wide + reach_left + halo,
                         deep + reach_top + halo,
                     );
-                    let request = crate::composite_tile::CompositeRequest { window: gathered, ..request };
-                    let (grown, prepared) = pollster::block_on(crate::composite_tile::prepared(spec, &request))?;
-                    (inner_of(gpu, grown, wide + reach_left + halo, (reach_left, reach_top), (wide, deep)), prepared)
+                    let request = crate::composite_tile::CompositeRequest {
+                        window: gathered,
+                        ..request
+                    };
+                    let (grown, prepared) =
+                        pollster::block_on(crate::composite_tile::prepared(spec, &request))?;
+                    (
+                        inner_of(
+                            gpu,
+                            grown,
+                            wide + reach_left + halo,
+                            (reach_left, reach_top),
+                            (wide, deep),
+                        ),
+                        prepared,
+                    )
                 }
-                Drawn::Blended => pollster::block_on(crate::composite_tile::prepared(spec, &request))?,
+                Drawn::Blended => {
+                    pollster::block_on(crate::composite_tile::prepared(spec, &request))?
+                }
                 Drawn::Shifted(first) => {
                     pollster::block_on(crate::composite_tile::shifted(first, &request, &burst))?
                 }
@@ -1462,7 +1505,12 @@ mod tests {
     #[test]
     fn a_canvas_is_tiled_by_what_the_device_holds_rather_than_by_a_count() {
         // A `full` rendition of any shape, which is well inside the budget: one tile.
-        let (across, down) = tile_of(&shaped([3840, 2160], [4000, 6000]), 3840, 2160, STRIP_BYTES_PER_PIXEL);
+        let (across, down) = tile_of(
+            &shaped([3840, 2160], [4000, 6000]),
+            3840,
+            2160,
+            STRIP_BYTES_PER_PIXEL,
+        );
         assert_eq!(
             (across, down),
             (3840, 2160),
@@ -1472,7 +1520,12 @@ mod tests {
         // The largest canvas there is, where a tile has to stay a tile - and stay inside the
         // budget, which is the only thing bounding what the device holds.
         let (wide, tall) = (MAX_LONG_EDGE as usize, 4544);
-        let (across, down) = tile_of(&shaped([33804, 9376], [4000, 6000]), wide, tall, STRIP_BYTES_PER_PIXEL);
+        let (across, down) = tile_of(
+            &shaped([33804, 9376], [4000, 6000]),
+            wide,
+            tall,
+            STRIP_BYTES_PER_PIXEL,
+        );
         assert!(
             across * down <= budget(),
             "a tile of {across}x{down} is past the budget"
@@ -1489,7 +1542,9 @@ mod tests {
     fn a_pixel_shift_strip_counts_its_merge_buffers() {
         let spec = shaped([9504, 6336], [9504, 6336]);
         let ordinary = tile_of(
-            &spec, 9504, 6336,
+            &spec,
+            9504,
+            6336,
             strip_bytes_per_pixel(&CompositeRecipe::Panorama(spec.clone())),
         );
         let shifted_bytes = strip_bytes_per_pixel(&CompositeRecipe::PixelShift(spec.clone()));
@@ -1506,7 +1561,12 @@ mod tests {
     #[test]
     fn a_tile_is_the_shape_of_a_source_rather_than_of_the_picture() {
         let (wide, tall) = (MAX_LONG_EDGE as usize, 4544);
-        let portrait = tile_of(&shaped([33804, 9376], [4000, 6000]), wide, tall, STRIP_BYTES_PER_PIXEL);
+        let portrait = tile_of(
+            &shaped([33804, 9376], [4000, 6000]),
+            wide,
+            tall,
+            STRIP_BYTES_PER_PIXEL,
+        );
         assert_eq!(
             portrait.1, tall,
             "a portrait frame fills the height and slices the width"
@@ -1514,7 +1574,12 @@ mod tests {
 
         // The same canvas out of landscape frames wants wider, shorter tiles: fewer columns for the
         // same memory, since a landscape frame straddles fewer of them.
-        let landscape = tile_of(&shaped([33804, 9376], [6000, 4000]), wide, tall, STRIP_BYTES_PER_PIXEL);
+        let landscape = tile_of(
+            &shaped([33804, 9376], [6000, 4000]),
+            wide,
+            tall,
+            STRIP_BYTES_PER_PIXEL,
+        );
         assert!(
             landscape.0 >= portrait.0,
             "landscape frames tile {landscape:?} where portrait ones tile {portrait:?}",
@@ -1563,7 +1628,12 @@ mod tests {
     #[test]
     fn a_tile_is_never_empty() {
         let huge = usize::from(u16::MAX) * 4;
-        let (across, down) = tile_of(&shaped([huge, huge], [6000, 4000]), huge, huge, STRIP_BYTES_PER_PIXEL);
+        let (across, down) = tile_of(
+            &shaped([huge, huge], [6000, 4000]),
+            huge,
+            huge,
+            STRIP_BYTES_PER_PIXEL,
+        );
         assert!(across >= 2 && down >= 1);
     }
 
@@ -1741,21 +1811,36 @@ mod tests {
             second.header.matched == first.header.matched,
             "and the same colour rendering"
         );
-        assert_eq!(second.header.camera_match, crate::hdr_fit::CameraMatch::LensAndColour);
+        assert_eq!(
+            second.header.camera_match,
+            crate::hdr_fit::CameraMatch::LensAndColour
+        );
 
         let mut lens_only = job(&paths, recipe.clone(), "render");
         lens_only.camera_match = crate::hdr_fit::CameraMatch::Lens;
-        let measured = crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
-        let mut richer = crate::photo_analysis::decode(measured.header.photo_analysis.as_deref().expect("analysis"))
-            .expect("stored analysis");
+        let measured =
+            crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
+        let mut richer = crate::photo_analysis::decode(
+            measured.header.photo_analysis.as_deref().expect("analysis"),
+        )
+        .expect("stored analysis");
         richer.from_raw.matched = Some(crate::photo_analysis::tests::a_match());
         lens_only.photo_analysis = Some(crate::photo_analysis::encode(&richer));
-        let prepared = crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
-        assert_eq!(prepared.header.camera_match, crate::hdr_fit::CameraMatch::Lens);
-        assert!(crate::photo_analysis::decode(prepared.header.photo_analysis.as_deref().expect("analysis"))
+        let prepared =
+            crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
+        assert_eq!(
+            prepared.header.camera_match,
+            crate::hdr_fit::CameraMatch::Lens
+        );
+        assert!(
+            crate::photo_analysis::decode(
+                prepared.header.photo_analysis.as_deref().expect("analysis")
+            )
             .and_then(|analysis| analysis.from_raw.matched)
             .and_then(|matched| matched.colour)
-            .is_some(), "the richer persisted analysis survives without becoming the active mode");
+            .is_some(),
+            "the richer persisted analysis survives without becoming the active mode"
+        );
 
         // **And a set it was not measured over is measured again.** One gain doubled is twice the
         // light that frame contributes, so the canvas the filed levels and the filed match describe
@@ -2167,16 +2252,36 @@ mod tests {
             "the sources' own white is measured, and came back {}",
             ours.levels.white.raw(),
         );
-        for mode in [crate::hdr_fit::CameraMatch::Lens, crate::hdr_fit::CameraMatch::None] {
+        for mode in [
+            crate::hdr_fit::CameraMatch::Lens,
+            crate::hdr_fit::CameraMatch::None,
+        ] {
             rendering.camera_match = mode;
             let composite = rendering.composite.as_ref().expect("composite");
-            let Want::Render { recipe } = &composite.want else { panic!("render") };
+            let Want::Render { recipe } = &composite.want else {
+                panic!("render")
+            };
             let selected = base(
-                &rendering, &composite.sources, recipe, 256,
-                crate::composite_tile::From::Original, None, &[],
-            ).expect("selected camera stages");
-            assert_eq!(selected.matched.is_some(), mode == crate::hdr_fit::CameraMatch::Lens);
-            assert!(selected.matched.as_ref().and_then(|m| m.colour.as_ref()).is_none());
+                &rendering,
+                &composite.sources,
+                recipe,
+                256,
+                crate::composite_tile::From::Original,
+                None,
+                &[],
+            )
+            .expect("selected camera stages");
+            assert_eq!(
+                selected.matched.is_some(),
+                mode == crate::hdr_fit::CameraMatch::Lens
+            );
+            assert!(
+                selected
+                    .matched
+                    .as_ref()
+                    .and_then(|m| m.colour.as_ref())
+                    .is_none()
+            );
         }
     }
 

@@ -20,7 +20,10 @@ export class DetailPresenter {
     private readonly settings: AppSettingsPresenter,
     private readonly begin: (photoId: string) => void,
     private readonly openCollection: (source: PhotoSource) => Promise<void>,
-    private readonly showRendition: (photoId: string, rendition: 'embedded' | 'full' | 'max') => Promise<void>,
+    private readonly showRendition: (
+      photoId: string,
+      rendition: 'embedded' | 'full' | 'max',
+    ) => Promise<void>,
     private readonly isCurrent: (photoId: string) => boolean,
     private readonly fail: (error: unknown) => void,
     private readonly enqueue: (run: () => Promise<void>) => Promise<void>,
@@ -37,7 +40,6 @@ export class DetailPresenter {
     this.viewer.forgetRemembered();
   }
 
-
   // --- detail ---
 
   async openDetail(photoId: string, from: PhotoSource | null = null): Promise<void> {
@@ -48,7 +50,8 @@ export class DetailPresenter {
     // it is not already what is loaded: stepping through a collection would
     // otherwise re-read it on every frame.
     const held = this.listing.source;
-    if (from != null && (held == null || sourceKey(held) !== sourceKey(from))) void this.openCollection(from);
+    if (from != null && (held == null || sourceKey(held) !== sourceKey(from)))
+      void this.openCollection(from);
     // Before the fetch, not before the call: the settings decide which rendition
     // this photo opens at, but waiting on them to say the detail is in flight
     // leaves the page unable to tell "loading" from "no such photo".
@@ -69,7 +72,8 @@ export class DetailPresenter {
       // Landing straight on a photo URL leaves no collection loaded, so the
       // neighbours are unknown and prev/next are dead. Open the photo's library
       // so stepping works from a deep link as well as from the grid.
-      if (this.listing.source == null) await this.openCollection({ kind: 'library', libraryId: detail.library_id });
+      if (this.listing.source == null)
+        await this.openCollection({ kind: 'library', libraryId: detail.library_id });
       // A second await, and a slower one - a whole page of the library. The
       // rendition written below is a single shared field, so a reader who has
       // moved on while that was in flight must not have this photo's applied.
@@ -86,7 +90,8 @@ export class DetailPresenter {
       // it opened at, needing neither a build nor a round trip to learn that - the server
       // resolved both on this same read (`shown_rendition`, `rendition_to_build`), so there
       // is nothing left for this client to work out.
-      if (detail.rendition_to_build != null) await this.showRendition(photoId, detail.rendition_to_build);
+      if (detail.rendition_to_build != null)
+        await this.showRendition(photoId, detail.rendition_to_build);
     } catch (err) {
       if (!this.isCurrent(photoId)) return;
       // On the open photo rather than in the store's shared error slot, which a
@@ -135,14 +140,18 @@ export class DetailPresenter {
     // then. Dropped rather than re-read: leaving the editor opens the viewer, which reads it.
   }
 
-
   async turn(photoId: string, by: 90 | -90): Promise<void> {
     const rendition = this.store.frameOf(photoId).rendition;
     await this.enqueue(async () => {
       try {
         const current = await photoEditsApi.get(photoId);
-        const rotate = (((current.doc.rotate + by) % 360) + 360) % 360 as 0 | 90 | 180 | 270;
-        const saved = await photoEditsApi.save(photoId, { ...current.doc, rotate }, current.rev, newId());
+        const rotate = ((((current.doc.rotate + by) % 360) + 360) % 360) as 0 | 90 | 180 | 270;
+        const saved = await photoEditsApi.save(
+          photoId,
+          { ...current.doc, rotate },
+          current.rev,
+          newId(),
+        );
         this.editsGeneration++;
         this.viewer.turned(photoId, saved.doc, rendition, this.isCurrent(photoId));
         await photoEditsApi.finish(photoId);
@@ -153,7 +162,6 @@ export class DetailPresenter {
     });
   }
 
-
   async refresh(activity: RequestActivity = 'interactive'): Promise<void> {
     const open = this.store.open;
     if (open == null) return;
@@ -162,5 +170,4 @@ export class DetailPresenter {
     // the round trip has already replaced.
     if (detail != null && this.isCurrent(detail.id)) this.viewer.rememberDetail(detail);
   }
-
 }

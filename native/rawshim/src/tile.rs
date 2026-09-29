@@ -179,12 +179,15 @@ impl Prepared {
         peak_nits: crate::light::Light<crate::light::DisplayNits>,
         output: crate::gpu::Output,
     ) -> crate::gpu::Grade<'a> {
-        crate::gpu::Grade { peak_nits, ..scene.gpu_grade(self.width, self.height, output) }
-            .within(self.photograph)
-            .surrounded(
-                Size::exact(self.photograph.0, self.photograph.1),
-                At::exact(self.origin.0, self.origin.1),
-            )
+        crate::gpu::Grade {
+            peak_nits,
+            ..scene.gpu_grade(self.width, self.height, output)
+        }
+        .within(self.photograph)
+        .surrounded(
+            Size::exact(self.photograph.0, self.photograph.1),
+            At::exact(self.origin.0, self.origin.1),
+        )
     }
 }
 
@@ -659,9 +662,10 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     }
     let [left, top, width, height] = request.tile;
     let (outside, across) = match request.drawn {
-        Some([drawn_width, drawn_height]) => {
-            (left + width > drawn_width || top + height > drawn_height, [drawn_width, drawn_height])
-        }
+        Some([drawn_width, drawn_height]) => (
+            left + width > drawn_width || top + height > drawn_height,
+            [drawn_width, drawn_height],
+        ),
         None => {
             // Two places compared, not two numbers: the photograph's far corner is where its origin
             // plus its size lands, which is the same shape as the rectangle's own far corner.
@@ -670,7 +674,10 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
                 x: Place::ORIGIN + photograph.width,
                 y: Place::ORIGIN + photograph.height,
             };
-            (asked.past().x > corner.x || asked.past().y > corner.y, request.frame)
+            (
+                asked.past().x > corner.x || asked.past().y > corner.y,
+                request.frame,
+            )
         }
     };
     if outside {
@@ -825,11 +832,19 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     // not promise.
     // A drawing at the decode's own size is not resized, as `base::resize` declines the same.
     let decoded = scale.decoded(photograph);
-    let resizing = request.drawn.filter(|drawn| *drawn != [decoded.width.raw(), decoded.height.raw()]);
+    let resizing = request
+        .drawn
+        .filter(|drawn| *drawn != [decoded.width.raw(), decoded.height.raw()]);
     let (read_at, read_size, resize) = match resizing {
         None => (
-            At { x: scale.read_at(decode.at.x), y: scale.read_at(decode.at.y) },
-            (scale.read_span(decode.size.width), scale.read_span(decode.size.height)),
+            At {
+                x: scale.read_at(decode.at.x),
+                y: scale.read_at(decode.at.y),
+            },
+            (
+                scale.read_span(decode.size.width),
+                scale.read_span(decode.size.height),
+            ),
             None,
         ),
         // Through the resize first: what the gather reads is a rectangle of the resized frame, and
@@ -837,27 +852,46 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
         // reads past those.
         Some(_) => {
             let reads = crate::base::resize_footprint(decoded, decode, frame);
-            let near = |at: Place<crate::px::Decoded>| at.max(Place::ORIGIN + DEFRINGE_REACH) - DEFRINGE_REACH;
+            let near = |at: Place<crate::px::Decoded>| {
+                at.max(Place::ORIGIN + DEFRINGE_REACH) - DEFRINGE_REACH
+            };
             let far = |at: Place<crate::px::Decoded>, whole: Span<crate::px::Decoded>| {
                 (at + DEFRINGE_REACH).min(Place::ORIGIN + whole)
             };
-            let region_at = At { x: near(reads.at.x), y: near(reads.at.y) };
+            let region_at = At {
+                x: near(reads.at.x),
+                y: near(reads.at.y),
+            };
             let size = (
                 far(reads.past().x, decoded.width) - region_at.x,
                 far(reads.past().y, decoded.height) - region_at.y,
             );
             (
-                At { x: scale.read_decoded(region_at.x), y: scale.read_decoded(region_at.y) },
-                (scale.read_decoded_span(size.0), scale.read_decoded_span(size.1)),
-                Some(Resize { decoded, region_at, out: decode }),
+                At {
+                    x: scale.read_decoded(region_at.x),
+                    y: scale.read_decoded(region_at.y),
+                },
+                (
+                    scale.read_decoded_span(size.0),
+                    scale.read_decoded_span(size.1),
+                ),
+                Some(Resize {
+                    decoded,
+                    region_at,
+                    out: decode,
+                }),
             )
         }
     };
     let decode: Rect<Photograph> = Rect {
         at: read_at,
         size: Size {
-            width: read_size.0.min((Place::ORIGIN + photograph.width) - read_at.x),
-            height: read_size.1.min((Place::ORIGIN + photograph.height) - read_at.y),
+            width: read_size
+                .0
+                .min((Place::ORIGIN + photograph.width) - read_at.x),
+            height: read_size
+                .1
+                .min((Place::ORIGIN + photograph.height) - read_at.y),
         },
     };
     let decode = decode.raw();

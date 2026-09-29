@@ -364,29 +364,47 @@ fn at_zero_luma_the_shrinkage_returns_the_frame() {
 
 #[test]
 fn chroma_reconstruction_removes_noise_without_spreading_a_colour_edge() {
-    let Some(harness) = Harness::open("colour-guided reconstruction") else { return };
+    let Some(harness) = Harness::open("colour-guided reconstruction") else {
+        return;
+    };
     let (width, height) = rawshim::px::Size::<rawshim::px::Tap>::exact(9, 5).raw();
     let colours = [[2.0f32, 0.4, -0.3], [-2.0, -0.4, 0.3]];
     let coarse: [Vec<f32>; 3] = std::array::from_fn(|c| {
-        (0..8).map(|at| colours[usize::from(at % 4 >= 2)][c]).collect()
+        (0..8)
+            .map(|at| colours[usize::from(at % 4 >= 2)][c])
+            .collect()
     });
     let guide: [Vec<f32>; 3] = std::array::from_fn(|c| {
-        (0..width * height).map(|at| {
-            let noise = ((at * 37 + c * 17) % 11) as f32 * 0.003 - 0.015;
-            colours[usize::from(at % width >= 3)][c] + noise
-        }).collect()
+        (0..width * height)
+            .map(|at| {
+                let noise = ((at * 37 + c * 17) % 11) as f32 * 0.003 - 0.015;
+                colours[usize::from(at % width >= 3)][c] + noise
+            })
+            .collect()
     });
     let inputs = coarse.each_ref().map(|values| harness.plane(values));
     let guides = guide.each_ref().map(|values| harness.plane(values));
     let output = [(); 3].map(|_| harness.plane(&vec![0.0; width * height]));
-    let bindings: Vec<_> = (0..3).map(|c| (c as u32, true, &inputs[c]))
+    let bindings: Vec<_> = (0..3)
+        .map(|c| (c as u32, true, &inputs[c]))
         .chain((0..3).map(|c| (3 + c as u32, true, &guides[c])))
         .chain((0..3).map(|c| (6 + c as u32, false, &output[c])))
         .collect();
     let push = harness.push(&[
-        width as u32, height as u32, 4, 2, 1.0f32.to_bits(), 1.5f32.to_bits(), (-1.0f32).to_bits(),
+        width as u32,
+        height as u32,
+        4,
+        2,
+        1.0f32.to_bits(),
+        1.5f32.to_bits(),
+        (-1.0f32).to_bits(),
     ]);
-    harness.run("chroma_reconstruct", &read_wgsl("chroma_reconstruct.wgsl"), &bindings, &[(&push, 1, 1)]);
+    harness.run(
+        "chroma_reconstruct",
+        &read_wgsl("chroma_reconstruct.wgsl"),
+        &bindings,
+        &[(&push, 1, 1)],
+    );
     for c in 0..3 {
         let got = harness.read(&output[c], width * height);
         let mut before = 0.0f64;
@@ -394,20 +412,41 @@ fn chroma_reconstruction_removes_noise_without_spreading_a_colour_edge() {
         for (at, &value) in got.iter().enumerate() {
             let x = at % width;
             let expected = colours[usize::from(x >= 3)][c];
-            assert!((value - expected).abs() < 0.02, "plane {c}, pixel {at}: {value} instead of {expected}");
+            assert!(
+                (value - expected).abs() < 0.02,
+                "plane {c}, pixel {at}: {value} instead of {expected}"
+            );
             if x <= 1 || x >= 6 {
                 before += f64::from(guide[c][at] - expected).powi(2);
                 after += f64::from(value - expected).powi(2);
             }
         }
-        assert!(after < before * 0.02, "plane {c}: flat colour noise {before} became {after}");
+        assert!(
+            after < before * 0.02,
+            "plane {c}: flat colour noise {before} became {after}"
+        );
     }
     let empty = harness.push(&[
-        width as u32, height as u32, 0, 0, 1.0f32.to_bits(), 1.5f32.to_bits(), (-1.0f32).to_bits(),
+        width as u32,
+        height as u32,
+        0,
+        0,
+        1.0f32.to_bits(),
+        1.5f32.to_bits(),
+        (-1.0f32).to_bits(),
     ]);
-    harness.run("chroma_reconstruct", &read_wgsl("chroma_reconstruct.wgsl"), &bindings, &[(&empty, 1, 1)]);
+    harness.run(
+        "chroma_reconstruct",
+        &read_wgsl("chroma_reconstruct.wgsl"),
+        &bindings,
+        &[(&empty, 1, 1)],
+    );
     for c in 0..3 {
-        assert_eq!(harness.read(&output[c], width * height), guide[c], "empty coarse level moved plane {c}");
+        assert_eq!(
+            harness.read(&output[c], width * height),
+            guide[c],
+            "empty coarse level moved plane {c}"
+        );
     }
 }
 
@@ -447,7 +486,11 @@ fn at_zero_colour_the_blend_returns_the_chroma_it_was_handed() {
     );
     for c in 0..3 {
         let got = harness.read(&b[c], npix);
-        let worst = got.iter().zip(&anchor[c]).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+        let worst = got
+            .iter()
+            .zip(&anchor[c])
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
         assert!(worst < 1e-5, "zero colour moved plane {c} by {worst}");
     }
 }

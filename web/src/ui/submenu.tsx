@@ -39,7 +39,13 @@ export function Submenu<T extends string>({
       </Tooltip>
       <Menu.Portal>
         {/* Which way "away from the menu it hangs off" is depends on the writing direction. */}
-        <Menu.Positioner {...stylex.props(menuStyles.positioner)} side="inline-end" align="start" sideOffset={4} sticky>
+        <Menu.Positioner
+          {...stylex.props(menuStyles.positioner)}
+          side="inline-end"
+          align="start"
+          sideOffset={4}
+          sticky
+        >
           <Menu.Popup {...stylex.props(menuStyles.popup)}>
             <MenuItems options={options} onSelect={onSelect} />
           </Menu.Popup>

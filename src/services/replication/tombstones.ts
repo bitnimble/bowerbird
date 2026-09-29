@@ -25,7 +25,13 @@ import { stamp } from './stamps';
  * here, because one action deleting many entities has to stamp them all the same:
  * defaulted, a loop reads as though it does and quietly gives each row its own.
  */
-export function tombstone(db: Database, libraryId: string, kind: string, rowId: string, at: string): void {
+export function tombstone(
+  db: Database,
+  libraryId: string,
+  kind: string,
+  rowId: string,
+  at: string,
+): void {
   if (!replicates(db, libraryId)) return;
   const entity = entityOf(kind);
   const units = entity.units.map((unit) => unit.entity);
@@ -58,7 +64,9 @@ export function unbury(db: Database, libraryId: string, kind: string, rowId: str
 
 /** Whether this library is one whose changes are worth recording at all. */
 export function replicates(db: Database, libraryId: string): boolean {
-  return db.query('SELECT 1 FROM replication_libraries WHERE library_id = ?').get(libraryId) != null;
+  return (
+    db.query('SELECT 1 FROM replication_libraries WHERE library_id = ?').get(libraryId) != null
+  );
 }
 
 /**
@@ -95,12 +103,19 @@ export function forgetCascade(
   const placeholders = rowIds.map(() => '?').join(', ');
   const swept: [string, string][] = [];
   const sweep = (sql: string, entity: string): void => {
-    for (const row of db.query(sql).all(...rowIds) as { row_id: string }[]) swept.push([entity, row.row_id]);
+    for (const row of db.query(sql).all(...rowIds) as { row_id: string }[])
+      swept.push([entity, row.row_id]);
   };
 
   if (kind === 'photo') {
-    sweep(`SELECT shoot_id AS row_id FROM shoot_banners WHERE photo_id IN (${placeholders})`, 'shoot_banner');
-    sweep(`SELECT photo_id AS row_id FROM photo_edits WHERE photo_id IN (${placeholders})`, 'photo_edits');
+    sweep(
+      `SELECT shoot_id AS row_id FROM shoot_banners WHERE photo_id IN (${placeholders})`,
+      'shoot_banner',
+    );
+    sweep(
+      `SELECT photo_id AS row_id FROM photo_edits WHERE photo_id IN (${placeholders})`,
+      'photo_edits',
+    );
     // Parked candidates go with the photograph too, and left out of this sweep
     // they went without a word: the foreign key took the rows and the log kept
     // saying they were there, after which a peer asking for them is sent nothing
@@ -131,7 +146,10 @@ export function forgetCascade(
       'photo_label',
     );
   } else if (kind === 'shoot') {
-    sweep(`SELECT shoot_id AS row_id FROM shoot_banners WHERE shoot_id IN (${placeholders})`, 'shoot_banner');
+    sweep(
+      `SELECT shoot_id AS row_id FROM shoot_banners WHERE shoot_id IN (${placeholders})`,
+      'shoot_banner',
+    );
   } else if (kind === 'label') {
     sweep(
       `SELECT label_id || '/' || photo_id AS row_id FROM photo_labels WHERE label_id IN (${placeholders})`,

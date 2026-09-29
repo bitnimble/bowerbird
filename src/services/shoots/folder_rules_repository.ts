@@ -51,7 +51,9 @@ export class FolderRulesRepository {
 
   clear(libraryId: string, folderPath: string): boolean {
     const cleared =
-      this.db.query('DELETE FROM folder_rules WHERE library_id = ? AND folder_path = ?').run(libraryId, folderPath).changes > 0;
+      this.db
+        .query('DELETE FROM folder_rules WHERE library_id = ? AND folder_path = ?')
+        .run(libraryId, folderPath).changes > 0;
     if (cleared) {
       tombstone(this.db, libraryId, 'folder_rule', folderPath, stamp(this.db));
       this.announce(libraryId);

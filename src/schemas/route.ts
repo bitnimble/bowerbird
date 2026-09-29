@@ -127,11 +127,13 @@ export const PathSegment = {
   any: segment('*'),
 };
 
-type Joined<S extends readonly string[]> =
-  S extends readonly [] ? ''
-  : S extends readonly [infer Only extends string] ? Only
-  : S extends readonly [infer First extends string, ...infer Rest extends readonly string[]] ? `${First}/${Joined<Rest>}`
-  : string;
+type Joined<S extends readonly string[]> = S extends readonly []
+  ? ''
+  : S extends readonly [infer Only extends string]
+    ? Only
+    : S extends readonly [infer First extends string, ...infer Rest extends readonly string[]]
+      ? `${First}/${Joined<Rest>}`
+      : string;
 
 /**
  * An absolute path: `route(PathSegment.api(), PathSegment.photos(), id)` is `/api/photos/<id>`,

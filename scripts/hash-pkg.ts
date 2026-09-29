@@ -79,9 +79,13 @@ for (const name of ENVIRONMENTS) {
   environmentsHashed[name] = `print_environment_${name}.${hashOf(bytes)}.hdr`;
   await writeFile(join(pkg, environmentsHashed[name]), bytes);
 }
-const environmentUrls = ENVIRONMENTS.map((name) =>
-  `  ${name}: new URL('./${environmentsHashed[name]}', import.meta.url).href,`).join('\n');
-await writeFile(join(pkg, environmentsPlain), `${forwards}\nexport const printEnvironmentUrls = {\n${environmentUrls}\n};\n`);
+const environmentUrls = ENVIRONMENTS.map(
+  (name) => `  ${name}: new URL('./${environmentsHashed[name]}', import.meta.url).href,`,
+).join('\n');
+await writeFile(
+  join(pkg, environmentsPlain),
+  `${forwards}\nexport const printEnvironmentUrls = {\n${environmentUrls}\n};\n`,
+);
 await writeFile(
   join(pkg, 'print_environments.d.ts'),
   `${forwards}\nexport const printEnvironmentUrls: Record<${ENVIRONMENTS.map((name) => `'${name}'`).join(' | ')}, string>;\n`,
@@ -94,7 +98,8 @@ for (const entry of await readdir(pkg)) {
     (/^rawshim_bg\.[0-9a-f]{12}\.wasm$/.test(entry) && entry !== wasmHashed) ||
     (/^rawshim\.[0-9a-f]{12}\.js$/.test(entry) && entry !== glueHashed) ||
     (/^pmrid_weights\.[0-9a-f]{12}\.bin$/.test(entry) && entry !== weightsHashed) ||
-    (/^print_environment_[a-z]+\.[0-9a-f]{12}\.hdr$/.test(entry) && !Object.values(environmentsHashed).includes(entry));
+    (/^print_environment_[a-z]+\.[0-9a-f]{12}\.hdr$/.test(entry) &&
+      !Object.values(environmentsHashed).includes(entry));
   if (stale) {
     await rm(join(pkg, entry));
   }
@@ -109,8 +114,15 @@ if (!Array.isArray(manifest.files)) {
   throw new Error('pkg/package.json has no files array; wasm-pack has changed shape');
 }
 manifest.files = manifest.files.map((entry) => (entry === wasmPlain ? wasmHashed : entry));
-manifest.files.push(glueHashed, weightsPlain, 'pmrid_weights.d.ts', weightsHashed,
-  environmentsPlain, 'print_environments.d.ts', ...Object.values(environmentsHashed));
+manifest.files.push(
+  glueHashed,
+  weightsPlain,
+  'pmrid_weights.d.ts',
+  weightsHashed,
+  environmentsPlain,
+  'print_environments.d.ts',
+  ...Object.values(environmentsHashed),
+);
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 console.log(`pkg: ${glueHashed}, ${wasmHashed}, ${weightsHashed}`);

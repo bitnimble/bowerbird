@@ -62,14 +62,24 @@ beforeEach(() => {
 
 describe('a panorama and the stacks its frames are in', () => {
   it('indexes the frames a recipe names, in the order it names them', () => {
-    const id = photoComposites.insertComposite({ libraryId: LIB, kind: 'panorama', recipe: recipe(['photo002', 'photo001']), reference: 'photo002' });
+    const id = photoComposites.insertComposite({
+      libraryId: LIB,
+      kind: 'panorama',
+      recipe: recipe(['photo002', 'photo001']),
+      reference: 'photo002',
+    });
 
     expect(photoComposites.framesOf(id)).toEqual(['photo002', 'photo001']);
     expect(photoComposites.composedFrom('photo001')).toEqual([id]);
   });
 
   it('survives its frames being unstacked', () => {
-    const id = photoComposites.insertComposite({ libraryId: LIB, kind: 'panorama', recipe: recipe(['photo001', 'photo002']), reference: 'photo001' });
+    const id = photoComposites.insertComposite({
+      libraryId: LIB,
+      kind: 'panorama',
+      recipe: recipe(['photo001', 'photo002']),
+      reference: 'photo001',
+    });
 
     stacks.dissolve('s1', true);
 
@@ -78,7 +88,12 @@ describe('a panorama and the stacks its frames are in', () => {
   });
 
   it('survives one of its frames leaving a stack', () => {
-    const id = photoComposites.insertComposite({ libraryId: LIB, kind: 'panorama', recipe: recipe(['photo001', 'photo002']), reference: 'photo001' });
+    const id = photoComposites.insertComposite({
+      libraryId: LIB,
+      kind: 'panorama',
+      recipe: recipe(['photo001', 'photo002']),
+      reference: 'photo001',
+    });
 
     stacks.removePhotos('s1', ['photo002'], true);
 
@@ -94,7 +109,12 @@ describe('a panorama and the stacks its frames are in', () => {
          VALUES ('loose', ?, '{"kind":"file","path":"loose.arw"}', 6000, 4000, '2026-01-01T00:00:00.000Z')`,
     ).run(LIB);
 
-    const id = photoComposites.insertComposite({ libraryId: LIB, kind: 'panorama', recipe: recipe(['photo001', 'loose']), reference: 'photo001' });
+    const id = photoComposites.insertComposite({
+      libraryId: LIB,
+      kind: 'panorama',
+      recipe: recipe(['photo001', 'loose']),
+      reference: 'photo001',
+    });
 
     expect(photoComposites.framesOf(id)).toEqual(['photo001', 'loose']);
   });
@@ -103,7 +123,12 @@ describe('a panorama and the stacks its frames are in', () => {
   // one that is still in the listing. Getting this wrong loses the whole stack - every sibling
   // with it - rather than the one frame that was merged.
   it('leaves a stack visible when the member it stood for is merged away', () => {
-    photoComposites.insertComposite({ libraryId: LIB, kind: 'panorama', recipe: recipe(['photo002']), reference: 'photo002' });
+    photoComposites.insertComposite({
+      libraryId: LIB,
+      kind: 'panorama',
+      recipe: recipe(['photo002']),
+      reference: 'photo002',
+    });
 
     const listed = photoListing.listByLibrary(LIB, 'added_desc', 0, 10, { includeDeleted: false });
 
@@ -113,9 +138,17 @@ describe('a panorama and the stacks its frames are in', () => {
   // A composite is composed of rows rather than of files, so it has no filename of its own to be
   // searched by: the frames' names are the only ones it can answer to.
   it('is found by the filename of a frame it holds', () => {
-    const id = photoComposites.insertComposite({ libraryId: LIB, kind: 'panorama', recipe: recipe(['photo001', 'photo002']), reference: 'photo001' });
+    const id = photoComposites.insertComposite({
+      libraryId: LIB,
+      kind: 'panorama',
+      recipe: recipe(['photo001', 'photo002']),
+      reference: 'photo001',
+    });
 
-    const listed = photoListing.listByLibrary(LIB, 'added_desc', 0, 10, { includeDeleted: false, search: 'photo002' });
+    const listed = photoListing.listByLibrary(LIB, 'added_desc', 0, 10, {
+      includeDeleted: false,
+      search: 'photo002',
+    });
 
     expect(listed.photos.map((photo) => photo.id)).toEqual([id]);
   });
@@ -123,7 +156,12 @@ describe('a panorama and the stacks its frames are in', () => {
   // Deleting the composite takes the edges with it and leaves the frames alone: they were
   // photographs before it was made of them and they are photographs after.
   it('gives its frames back when it is deleted', () => {
-    const id = photoComposites.insertComposite({ libraryId: LIB, kind: 'panorama', recipe: recipe(['photo001', 'photo002']), reference: 'photo001' });
+    const id = photoComposites.insertComposite({
+      libraryId: LIB,
+      kind: 'panorama',
+      recipe: recipe(['photo001', 'photo002']),
+      reference: 'photo001',
+    });
 
     db.query('DELETE FROM photos WHERE id = ?').run(id);
 

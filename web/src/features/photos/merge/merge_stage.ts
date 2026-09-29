@@ -43,7 +43,8 @@ export class MergeStage implements Compositor {
       while (this.waiting != null) {
         const asked = this.waiting;
         this.waiting = null;
-        const painting = 'url' in asked ? this.paintSettled(asked.url) : this.paint(asked.base, asked.layers);
+        const painting =
+          'url' in asked ? this.paintSettled(asked.url) : this.paint(asked.base, asked.layers);
         await painting.catch(() => undefined);
       }
     } finally {
@@ -57,14 +58,16 @@ export class MergeStage implements Compositor {
     keepOnly(PREVIEW_HOLDER, [url]);
     const settled = await decodeFrame(url);
     const size = this.size();
-    if (this.waiting != null || settled.closed || !isLayer(settled.picture) || isEmpty(size)) return;
+    if (this.waiting != null || settled.closed || !isLayer(settled.picture) || isEmpty(size))
+      return;
     await stageCanvases.paintMasked(this.canvas, size, settled.picture, [], this.devicePeakNits());
   }
 
   private async paint(base: number, layers: DrawnLayer[]): Promise<void> {
     const baseLayer = this.layers.get(base);
     const size = this.size();
-    if (baseLayer == null || baseLayer.closed || !isLayer(baseLayer.picture) || isEmpty(size)) return;
+    if (baseLayer == null || baseLayer.closed || !isLayer(baseLayer.picture) || isEmpty(size))
+      return;
     const masked = layers.flatMap((layer) => {
       const decoded = this.layers.get(layer.source);
       if (decoded == null || decoded.closed || !isLayer(decoded.picture)) return [];
@@ -77,7 +80,13 @@ export class MergeStage implements Compositor {
         },
       ];
     });
-    await stageCanvases.paintMasked(this.canvas, size, baseLayer.picture, masked, this.devicePeakNits());
+    await stageCanvases.paintMasked(
+      this.canvas,
+      size,
+      baseLayer.picture,
+      masked,
+      this.devicePeakNits(),
+    );
   }
 }
 

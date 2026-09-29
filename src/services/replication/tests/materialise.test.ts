@@ -13,7 +13,12 @@ import { RenditionsRepository } from '../../processing/renditions/renditions_rep
 import { StackMembership } from '../../stacks/stack_membership';
 import { Clock, DEFAULT_SKEW_MS } from '../clock';
 import { pull, type Replica } from '../session';
-import { drainMaterialisations, pendingMaterialisations, recipePathToTouch, unsettled } from '../materialise';
+import {
+  drainMaterialisations,
+  pendingMaterialisations,
+  recipePathToTouch,
+  unsettled,
+} from '../materialise';
 import { linkLibrary } from '../pairing';
 import { useClock } from '../stamps';
 
@@ -47,18 +52,25 @@ function makePeer(name: string): Peer {
   runMigrations(db);
   const root = mkdtempSync(path.join(tmpdir(), `bb-mat-${name}-`));
   roots.push(root);
-  db.query("INSERT INTO libraries (id, root_path, name, bin_name) VALUES (?, ?, 'Trip', 'Bin')").run(LIB, root);
+  db.query(
+    "INSERT INTO libraries (id, root_path, name, bin_name) VALUES (?, ?, 'Trip', 'Bin')",
+  ).run(LIB, root);
   linkLibrary(db, LIB);
   // A clock the test drives: two peers writing inside one millisecond are ordered
   // by their peer ids, which are random, so "the move is newer" would be a coin
   // flip against the system clock.
   let now = EPOCH;
-  const identity = db.query('SELECT peer_id FROM replication_identity').get() as { peer_id: string };
+  const identity = db.query('SELECT peer_id FROM replication_identity').get() as {
+    peer_id: string;
+  };
   useClock(db, new Clock(identity.peer_id, DEFAULT_SKEW_MS, () => now));
   return {
     db,
     root,
-    photoScan: new PhotoScanRepository(db, new PhotoProcessingRepository(db, new RenditionsRepository(db))),
+    photoScan: new PhotoScanRepository(
+      db,
+      new PhotoProcessingRepository(db, new RenditionsRepository(db)),
+    ),
     photoPaths: new PhotoPathsRepository(db, new StackMembership(db)),
     libraries: new LibrariesRepository(db),
     replica: { db, libraryId: LIB },
@@ -221,7 +233,10 @@ describe('a merged move', () => {
    */
   it.each([
     ['a kind this build cannot read', '{"kind":"kaleidoscope","path":"../../escape.arw"}'],
-    ['a duplicated key the validator and SQLite read differently', '{"kind":"file","path":"../../escape.arw","path":"ok.arw"}'],
+    [
+      'a duplicated key the validator and SQLite read differently',
+      '{"kind":"file","path":"../../escape.arw","path":"ok.arw"}',
+    ],
   ])('refuses to touch a path smuggled through %s', (_name, recipe) => {
     const a = makePeer('a');
     addPhoto(a, 'photo1', 'Day1/one.arw', true);

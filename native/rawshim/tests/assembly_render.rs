@@ -444,7 +444,9 @@ fn two_sources_narrower_than_the_canvas(size: (usize, usize)) -> (Composition, V
 
 /// `share` of a canvas `size` long, in its pixels.
 fn wavelength(share: Share, size: (usize, usize)) -> f32 {
-    share.across(Span::<Composite>::exact(size.0.max(size.1))).raw() as f32
+    share
+        .across(Span::<Composite>::exact(size.0.max(size.1)))
+        .raw() as f32
 }
 
 /// One source at `size`, banded across x with a sine four times the split's own wavelength and
@@ -1027,7 +1029,10 @@ fn a_piece_is_drawn_under_its_own_gain() {
         "a gain of two has to land the tile on the ground's own light: {step:.4} stops",
     );
     let moved = stops(lifted_ground, ground);
-    assert!(moved.abs() < 0.001, "the ground outside took {moved:.4} stops of it");
+    assert!(
+        moved.abs() < 0.001,
+        "the ground outside took {moved:.4} stops of it"
+    );
 }
 
 /// §3.10's brightness step, which is the thing this exists for: 0.045 to 0.105 stops between two
@@ -1442,8 +1447,13 @@ fn two_tiles_of_one_frame_take_their_own_warps_out_of_one_gather() {
     let flat = {
         let mut drawing = one_tile(2, SIZE, 1, 0.1);
         drawing.vertices.clear();
-        (drawing.tiles, drawing.pick, drawing.corridor, drawing.warp, drawing.gain) =
-            Default::default();
+        (
+            drawing.tiles,
+            drawing.pick,
+            drawing.corridor,
+            drawing.warp,
+            drawing.gain,
+        ) = Default::default();
         for [left, right] in [[0.0, 0.5], [0.5, 1.0]] {
             let corners = [[left, 0.0], [right, 0.0], [right, 1.0], [left, 1.0]];
             let (w, h) = (SIZE.0 as f32, SIZE.1 as f32);

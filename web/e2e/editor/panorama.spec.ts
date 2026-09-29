@@ -2,7 +2,16 @@ import { type Locator, type Page, expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PANORAMA_PHOTOS_DIR, PANORAMA_PHOTO_NAMES } from '../fixture_library';
-import { editDiagnosticSize, editDiagnostics, editPreview, editTools, photoStage, savedRev, useLibrary, waitForEditorLive } from '../helpers';
+import {
+  editDiagnosticSize,
+  editDiagnostics,
+  editPreview,
+  editTools,
+  photoStage,
+  savedRev,
+  useLibrary,
+  waitForEditorLive,
+} from '../helpers';
 
 // A composite opened in the editor, which is the one claim about it a browser can answer.
 //
@@ -39,16 +48,21 @@ test.beforeAll(async ({ browser }) => {
   const listed = await page.request.get(
     `${route(PathSegment.api(), PathSegment.libraries(), found.id, PathSegment.photos())}?limit=100`,
   );
-  const { photos } = (await listed.json()) as { photos: { id: string; composite_kind?: string | null }[] };
+  const { photos } = (await listed.json()) as {
+    photos: { id: string; composite_kind?: string | null }[];
+  };
   const frames = photos.filter((photo) => photo.composite_kind == null).map((photo) => photo.id);
   expect(frames.length).toBe(PANORAMA_PHOTO_NAMES.length);
 
   // Aligns the set and builds the composite's renditions before it answers, so this is the slow
   // call in the file.
-  const merged = await page.request.post(route(PathSegment.api(), PathSegment.composites(), PathSegment.panorama()), {
-    data: { photo_ids: frames },
-    timeout: 240_000,
-  });
+  const merged = await page.request.post(
+    route(PathSegment.api(), PathSegment.composites(), PathSegment.panorama()),
+    {
+      data: { photo_ids: frames },
+      timeout: 240_000,
+    },
+  );
   expect(merged.ok(), `the merge failed: ${await merged.text()}`).toBe(true);
   panoramaId = ((await merged.json()) as { photoId: string }).photoId;
   await page.close();
@@ -214,12 +228,17 @@ test('moving the sharpening prepares the picture again at it', async ({ page }) 
   await page.keyboard.press('PageUp');
 
   await expect
-    .poll(() => prepares.some((url) => url.searchParams.get('develop') != null), { timeout: 60_000 })
+    .poll(() => prepares.some((url) => url.searchParams.get('develop') != null), {
+      timeout: 60_000,
+    })
     .toBe(true);
   await expect.poll(async () => savedRev(page, panoramaId), { timeout: 30_000 }).not.toBe(wasAt);
   await waitForEditorLive(page, 10_000);
 
-  await page.getByRole('group', { name: 'Photo controls' }).getByRole('button', { name: 'Undo' }).click();
+  await page
+    .getByRole('group', { name: 'Photo controls' })
+    .getByRole('button', { name: 'Undo' })
+    .click();
   await waitForEditorLive(page, 10_000);
 });
 

@@ -385,7 +385,12 @@ fn square_scene(width: usize, height: usize) -> Vec<[f32; 3]> {
     let mut out = vec![[LEVEL, LEVEL, LEVEL]; width * height];
     for y in top..top + side {
         for x in left..left + side {
-            let lit = inside_square((x - left) as f64 / side as f64, (y - top) as f64 / side as f64, x, y);
+            let lit = inside_square(
+                (x - left) as f64 / side as f64,
+                (y - top) as f64 / side as f64,
+                x,
+                y,
+            );
             out[y * width + x] = [LEVEL * 0.3 * lit, LEVEL * 1.8 * lit, LEVEL * 0.3 * lit];
         }
     }
@@ -394,11 +399,23 @@ fn square_scene(width: usize, height: usize) -> Vec<[f32; 3]> {
     // under texture a few sigma deep, which is where the denoise's phases disagree (a crosshatch).
     let radius = width.min(height) as f64 * 0.125;
     let column = width as f64 * 0.175;
-    shade(&mut out, width, (column, height as f64 * 0.175), radius, |_, _| [LEVEL * 3.0; 3]);
-    shade(&mut out, width, (column, height as f64 * 0.825), radius, |lit, (x, y)| {
-        let lit = ((0.35 + 0.65 * lit) * (1.0 + 0.12 * (pores(x, y) - 0.5))) as f32;
-        [LEVEL * 1.3 * lit, LEVEL * 0.95 * lit, LEVEL * 0.75 * lit]
-    });
+    shade(
+        &mut out,
+        width,
+        (column, height as f64 * 0.175),
+        radius,
+        |_, _| [LEVEL * 3.0; 3],
+    );
+    shade(
+        &mut out,
+        width,
+        (column, height as f64 * 0.825),
+        radius,
+        |lit, (x, y)| {
+            let lit = ((0.35 + 0.65 * lit) * (1.0 + 0.12 * (pores(x, y) - 0.5))) as f32;
+            [LEVEL * 1.3 * lit, LEVEL * 0.95 * lit, LEVEL * 0.75 * lit]
+        },
+    );
     out
 }
 
@@ -422,7 +439,9 @@ fn inside_square(u: f64, v: f64, x: usize, y: usize) -> f32 {
             let depth = if v < 0.5 { 0.08 } else { 0.24 };
             1.0 + depth * (texture(x as f64, y as f64) - 0.5)
         }
-        _ if x % 5 == 0 => 1.0 - [0.03, 0.06, 0.12, 0.25][((v - 0.1) / 0.2).clamp(0.0, 3.0) as usize],
+        _ if x % 5 == 0 => {
+            1.0 - [0.03, 0.06, 0.12, 0.25][((v - 0.1) / 0.2).clamp(0.0, 3.0) as usize]
+        }
         _ => 1.0,
     };
     gain as f32
@@ -472,7 +491,10 @@ fn shade(
             if covered == 0 {
                 continue;
             }
-            let (u, v) = ((x as f64 - centre.0) / radius, (y as f64 - centre.1) / radius);
+            let (u, v) = (
+                (x as f64 - centre.0) / radius,
+                (y as f64 - centre.1) / radius,
+            );
             let facing = (1.0 - u * u - v * v).max(0.0).sqrt();
             let lit = (-0.4 * u - 0.4 * v + 0.82 * facing).clamp(0.0, 1.0);
             let share = covered as f32 / taps as f32;

@@ -18,8 +18,6 @@ export class ExportRenderer {
     private readonly composites: CompositeRenderer,
   ) {}
 
-
-
   /**
    * One photograph rendered to a reader's export settings, written at `outputPath` (§10.5).
    *
@@ -73,8 +71,6 @@ export class ExportRenderer {
     );
   }
 
-
-
   /**
    * A picture this app has already rendered, rolled down to SDR and written beside it.
    *
@@ -89,7 +85,13 @@ export class ExportRenderer {
    * under its photo id, and levels read off somebody's finished render must never become the
    * answers every later render of that photograph starts from.
    */
-  async renderSdrRoll(rendered: string, photoId: string, scratch: string, outputPath: string, quality: number): Promise<void> {
+  async renderSdrRoll(
+    rendered: string,
+    photoId: string,
+    scratch: string,
+    outputPath: string,
+    quality: number,
+  ): Promise<void> {
     const settings = this.settings.get();
     await this.singlePhoto.runDetached({
       kind: 'rendition',
@@ -127,8 +129,6 @@ export class ExportRenderer {
       ...this.targets.render(),
     });
   }
-
-
 
   /**
    * The same, for a panorama: the composite rendered to the reader's export settings.

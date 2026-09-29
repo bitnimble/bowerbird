@@ -38,7 +38,10 @@ describe('PhotoListingRepository.listByLibrary', () => {
     db.query('UPDATE photos SET shoot_id = ? WHERE id = ?').run('s1', 'claimed');
 
     const ids = (filters: PhotoListFilters): string[] =>
-      repo.listByLibrary(LIB, 'added_asc', 0, 10, filters).photos.map((p) => p.id).sort();
+      repo
+        .listByLibrary(LIB, 'added_asc', 0, 10, filters)
+        .photos.map((p) => p.id)
+        .sort();
 
     expect(ids({ includeDeleted: false })).toEqual(['claimed', 'live']);
     expect(ids({ includeDeleted: false, noShoot: true })).toEqual(['live']);
@@ -48,7 +51,9 @@ describe('PhotoListingRepository.listByLibrary', () => {
     insert('claimed', 'Trip/d.arw');
     insert('loose-b', 'Trip/e.arw');
     insert('loose-c', 'Trip/f.arw');
-    db.query("UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('claimed', 'loose-b', 'loose-c')").run();
+    db.query(
+      "UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('claimed', 'loose-b', 'loose-c')",
+    ).run();
     db.query("UPDATE photos SET is_representative = 1, shoot_id = 's1' WHERE id = 'claimed'").run();
 
     const stack = (filters: PhotoListFilters): [string, number][] =>
@@ -66,19 +71,27 @@ describe('PhotoListingRepository.listByLibrary', () => {
   it('counts the entries of a collapsed listing and the photographs behind them', () => {
     insert('member-b', 'Trip/e.arw');
     insert('member-c', 'Trip/f.arw');
-    db.query("UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('live', 'member-b', 'member-c')").run();
+    db.query(
+      "UPDATE photos SET stack_id = 'st1', is_representative = 0 WHERE id IN ('live', 'member-b', 'member-c')",
+    ).run();
     db.query("UPDATE photos SET is_representative = 1 WHERE id = 'live'").run();
 
     const collapsed = repo.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false });
     expect([collapsed.total, collapsed.photoTotal]).toEqual([1, 3]);
 
-    const expanded = repo.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false, expandStacks: true });
+    const expanded = repo.listByLibrary(LIB, 'added_asc', 0, 10, {
+      includeDeleted: false,
+      expandStacks: true,
+    });
     expect([expanded.total, expanded.photoTotal]).toEqual([3, 3]);
 
     // A cull that leaves one member in the filter takes the stack down to an
     // ordinary entry, and the count follows it rather than the membership.
     db.query("UPDATE photos SET triage = 'rejected' WHERE id IN ('member-b', 'member-c')").run();
-    const culled = repo.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false, triage: ['untriaged'] });
+    const culled = repo.listByLibrary(LIB, 'added_asc', 0, 10, {
+      includeDeleted: false,
+      triage: ['untriaged'],
+    });
     expect([culled.total, culled.photoTotal]).toEqual([1, 1]);
   });
 });
@@ -93,8 +106,14 @@ describe('PhotoListingRepository summary rows', () => {
     const edited = (rows: { id: string; is_edited: boolean }[]): string[] =>
       rows.filter((row) => row.is_edited).map((row) => row.id);
 
-    expect(edited(repo.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false }).photos)).toEqual(['live']);
-    expect(edited(navigation.neighboursInLibrary(LIB, 'added_asc', 'live', 2, { includeDeleted: false }))).toEqual(['live']);
+    expect(
+      edited(repo.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false }).photos),
+    ).toEqual(['live']);
+    expect(
+      edited(
+        navigation.neighboursInLibrary(LIB, 'added_asc', 'live', 2, { includeDeleted: false }),
+      ),
+    ).toEqual(['live']);
   });
 });
 
@@ -124,7 +143,9 @@ describe('PhotoListingRepository days', () => {
     taken('gone', '2024-03-09T05:12:00.000Z');
     db.query("UPDATE photos SET is_deleted = 1 WHERE id = 'gone'").run();
 
-    expect(repo.daysInLibrary(LIB, { includeDeleted: false }).days.map((d) => d.day)).toEqual(['2026-01-01']);
+    expect(repo.daysInLibrary(LIB, { includeDeleted: false }).days.map((d) => d.day)).toEqual([
+      '2026-01-01',
+    ]);
     expect(repo.daysInLibrary(LIB, { includeDeleted: true, isDeleted: true }).days).toEqual([
       { day: '2024-03-09', count: 1 },
       { day: '2026-01-01', count: 2 },
@@ -135,7 +156,11 @@ describe('PhotoListingRepository days', () => {
 describe('PhotoListingRepository models', () => {
   function shot(id: string, camera: string | null, lens: string | null): void {
     insert(id, `Trip/${id}.arw`);
-    db.query('UPDATE photos SET camera_model = ?, lens_model = ? WHERE id = ?').run(camera, lens, id);
+    db.query('UPDATE photos SET camera_model = ?, lens_model = ? WHERE id = ?').run(
+      camera,
+      lens,
+      id,
+    );
   }
 
   beforeEach(() => {
@@ -158,7 +183,10 @@ describe('PhotoListingRepository models', () => {
   it('offers a body only where the view it is asked for holds one', () => {
     db.query("UPDATE photos SET is_deleted = 1 WHERE id IN ('r5-24')").run();
     const bodies = (filters: PhotoListFilters): (string | null)[] =>
-      repo.modelsInLibrary(LIB, filters).pairs.map((p) => p.camera_model).sort();
+      repo
+        .modelsInLibrary(LIB, filters)
+        .pairs.map((p) => p.camera_model)
+        .sort();
 
     // Binned, so the gallery cannot be narrowed to it - offering it there is a tick
     // that empties the grid.
@@ -169,17 +197,25 @@ describe('PhotoListingRepository models', () => {
 
   it('narrows a listing to the models asked for, unioned within each list and intersected across them', () => {
     const ids = (filters: PhotoListFilters): string[] =>
-      repo.listByLibrary(LIB, 'added_asc', 0, 10, filters).photos.map((p) => p.id).sort();
+      repo
+        .listByLibrary(LIB, 'added_asc', 0, 10, filters)
+        .photos.map((p) => p.id)
+        .sort();
 
     expect(ids({ includeDeleted: false, cameraModels: ['ILCE-7RM5'] })).toEqual(['a7-24', 'a7-85']);
-    expect(ids({ includeDeleted: false, cameraModels: ['ILCE-7RM5', 'Canon EOS R5'] })).toEqual(['a7-24', 'a7-85', 'r5-24']);
-    expect(ids({ includeDeleted: false, lensModels: ['FE 85mm F1.4 GM'] })).toEqual(['a7-85']);
-    expect(ids({ includeDeleted: false, cameraModels: ['ILCE-7RM5'], lensModels: ['FE 85mm F1.4 GM'] })).toEqual(['a7-85']);
-    // Scope rather than a chip: `match: 'any'` unions the chips, and a body still
-    // narrows whatever set they describe.
-    expect(ids({ includeDeleted: false, cameraModels: ['ILCE-7RM5'], rated: false, match: 'any' })).toEqual([
+    expect(ids({ includeDeleted: false, cameraModels: ['ILCE-7RM5', 'Canon EOS R5'] })).toEqual([
       'a7-24',
       'a7-85',
+      'r5-24',
     ]);
+    expect(ids({ includeDeleted: false, lensModels: ['FE 85mm F1.4 GM'] })).toEqual(['a7-85']);
+    expect(
+      ids({ includeDeleted: false, cameraModels: ['ILCE-7RM5'], lensModels: ['FE 85mm F1.4 GM'] }),
+    ).toEqual(['a7-85']);
+    // Scope rather than a chip: `match: 'any'` unions the chips, and a body still
+    // narrows whatever set they describe.
+    expect(
+      ids({ includeDeleted: false, cameraModels: ['ILCE-7RM5'], rated: false, match: 'any' }),
+    ).toEqual(['a7-24', 'a7-85']);
   });
 });

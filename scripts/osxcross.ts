@@ -24,14 +24,18 @@ export function osxcrossEnv(): Record<string, string> {
   const isArm = MAC_TARGET.startsWith('aarch64');
   const clang = isArm ? 'oa64-clang' : 'o64-clang';
   const arch = isArm ? 'aarch64' : 'x86_64';
-  const ar = readdirSync(bin).find((f) => f.startsWith(`${arch}-apple-darwin`) && f.endsWith('-ar'));
+  const ar = readdirSync(bin).find(
+    (f) => f.startsWith(`${arch}-apple-darwin`) && f.endsWith('-ar'),
+  );
   const under = MAC_TARGET.replaceAll('-', '_');
   const upper = under.toUpperCase();
   const sdk =
     process.env.SDKROOT ??
     (() => {
       const sdks = join(root, 'SDK');
-      const found = existsSync(sdks) ? readdirSync(sdks).find((n) => n.startsWith('MacOSX')) : undefined;
+      const found = existsSync(sdks)
+        ? readdirSync(sdks).find((n) => n.startsWith('MacOSX'))
+        : undefined;
       return found ? join(sdks, found) : undefined;
     })();
 

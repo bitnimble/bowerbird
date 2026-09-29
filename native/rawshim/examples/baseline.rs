@@ -39,7 +39,10 @@ fn options() -> EncodeOptions {
         grade: grade(),
         crf: 26,
         preset: 6,
-        strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
+        strengths: Strengths {
+            sharpen: 1.0,
+            defringe: 1.0,
+        },
         sharpen_sigma: None,
         // No reduction: the crop is taken at 1:1 and a resize would hide exactly the differences
         // this harness exists to measure.
@@ -75,16 +78,29 @@ fn main() {
             println!("{{\"file\":\"{name}\",\"error\":\"not a 16-bit decode\"}}");
             continue;
         };
-        let source = Source { samples, width, height };
+        let source = Source {
+            samples,
+            width,
+            height,
+        };
         let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
         let resident = frame.on_device(gpu).expect("the frame reaches the device");
         let matched = rawshim::fit_hdr_for(&resident, &path, grade().white_quantile);
 
         let graded = std::time::Instant::now();
-        let (rgb, out_w, out_h) = hdr::graded_as(&source, &options(), matched.as_ref(), rawshim::gpu::Output::Srgb);
+        let (rgb, out_w, out_h) = hdr::graded_as(
+            &source,
+            &options(),
+            matched.as_ref(),
+            rawshim::gpu::Output::Srgb,
+        );
         let grade_ms = graded.elapsed().as_millis();
         let bytes: Vec<u8> = rgb.iter().map(|v| *v as u8).collect();
-        let whole = rawshim::rgb::RgbRef { width: out_w, height: out_h, data: &bytes };
+        let whole = rawshim::rgb::RgbRef {
+            width: out_w,
+            height: out_h,
+            data: &bytes,
+        };
 
         let small = rawshim::image::resize_to_fit(whole, OVERVIEW);
         write(&format!("{out}/{name}.avif"), small.as_ref());
@@ -124,7 +140,9 @@ fn channel_means(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
 fn roughness(image: rawshim::rgb::RgbRef<'_>) -> f64 {
     let luma = |x: usize, y: usize| -> f64 {
         let at = (y * image.width + x) * 3;
-        0.2126 * f64::from(image.data[at]) + 0.7152 * f64::from(image.data[at + 1]) + 0.0722 * f64::from(image.data[at + 2])
+        0.2126 * f64::from(image.data[at])
+            + 0.7152 * f64::from(image.data[at + 1])
+            + 0.0722 * f64::from(image.data[at + 2])
     };
     let mut total = 0.0;
     let mut count = 0u64;
@@ -136,7 +154,11 @@ fn roughness(image: rawshim::rgb::RgbRef<'_>) -> f64 {
             count += 1;
         }
     }
-    if count == 0 { 0.0 } else { total / count as f64 }
+    if count == 0 {
+        0.0
+    } else {
+        total / count as f64
+    }
 }
 
 fn crop(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> rawshim::rgb::Rgb {
@@ -147,12 +169,24 @@ fn crop(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> raw
         let from = ((y + row) * image.width + x) * 3;
         data[row * w * 3..(row + 1) * w * 3].copy_from_slice(&image.data[from..from + w * 3]);
     }
-    rawshim::rgb::Rgb { width: w, height: h, data }
+    rawshim::rgb::Rgb {
+        width: w,
+        height: h,
+        data,
+    }
 }
 
 fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
-    rawshim::avif::encode_rendition(std::borrow::Cow::Borrowed(image.data), image.width, image.height, 4, 10, true, path)
-        .expect("the record encodes");
+    rawshim::avif::encode_rendition(
+        std::borrow::Cow::Borrowed(image.data),
+        image.width,
+        image.height,
+        4,
+        10,
+        true,
+        path,
+    )
+    .expect("the record encodes");
 }
 
 /// Silences the unused-import warning for the region type, which this harness does not need but

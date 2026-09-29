@@ -38,7 +38,11 @@ fn reveal(file: &Path) -> Result<(), String> {
 // would hold the IPC thread for as long as the reader leaves the window open.
 #[cfg(target_os = "macos")]
 fn select(file: &Path) -> std::io::Result<()> {
-    std::process::Command::new("open").arg("-R").arg(file).spawn().map(|_| ())
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(file)
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(target_os = "windows")]
@@ -57,6 +61,12 @@ fn select(file: &Path) -> std::io::Result<()> {
     //
     // A bare name's parent is `Some("")` rather than `None`, and `xdg-open ""` opens nothing
     // and reports nothing - so the empty one is filtered out rather than spawned.
-    let folder = file.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(file);
-    std::process::Command::new("xdg-open").arg(folder).spawn().map(|_| ())
+    let folder = file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(file);
+    std::process::Command::new("xdg-open")
+        .arg(folder)
+        .spawn()
+        .map(|_| ())
 }

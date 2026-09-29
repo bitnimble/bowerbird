@@ -53,30 +53,56 @@ test('a report carries what was written, the version, and this machine', async (
 
   const [name, diagnostics] = contexts[0]!;
   expect(name).toBe('bowerbird');
-  expect(diagnostics).toMatchObject({ adapter: 'no WebGPU', hdrDisplay: false, crossOriginIsolated: false });
+  expect(diagnostics).toMatchObject({
+    adapter: 'no WebGPU',
+    hdrDisplay: false,
+    crossOriginIsolated: false,
+  });
   expect((diagnostics as { browser: string }).browser).toContain('jsdom');
 
   expect(started).toHaveLength(1);
-  expect(started[0]).toMatchObject({ defaultIntegrations: false, integrations: [], sendClientReports: false });
+  expect(started[0]).toMatchObject({
+    defaultIntegrations: false,
+    integrations: [],
+    sendClientReports: false,
+  });
 });
 
 test('an empty email is left off rather than sent blank', async () => {
-  await bugReporter.send({ message: 'a second report', email: '', version: undefined, attachments: [] });
+  await bugReporter.send({
+    message: 'a second report',
+    email: '',
+    version: undefined,
+    attachments: [],
+  });
 
   expect(sent[1]).toMatchObject({ message: 'a second report', tags: { version: 'unknown' } });
   expect(sent[1]!.email).toBeUndefined();
 });
 
 test('the photograph rides in the envelope beside what was written', async () => {
-  const raw = { filename: 'DSC00853.ARW', data: new Uint8Array([1, 2, 3]), contentType: 'image/x-sony-arw' };
+  const raw = {
+    filename: 'DSC00853.ARW',
+    data: new Uint8Array([1, 2, 3]),
+    contentType: 'image/x-sony-arw',
+  };
 
-  await bugReporter.send({ message: 'this frame', email: '', version: '1.2.3', attachments: [raw] });
+  await bugReporter.send({
+    message: 'this frame',
+    email: '',
+    version: '1.2.3',
+    attachments: [raw],
+  });
 
   expect(carried.at(-1)?.attachments?.map((part) => part.filename)).toEqual(['DSC00853.ARW']);
 });
 
 test('the page a report was filed from carries no search text', async () => {
-  window.history.replaceState(null, '', '/photos?q=a%20name%20she%20searched%20for&from=2026-01-01');
+  window.history.replaceState(
+    null,
+    '',
+    '/photos?q=a%20name%20she%20searched%20for&from=2026-01-01',
+  );
 
   await bugReporter.send({ message: 'here', email: '', version: '1.2.3', attachments: [] });
 
@@ -84,7 +110,11 @@ test('the page a report was filed from carries no search text', async () => {
 });
 
 test('a report larger than Sentry will take is refused rather than posted', async () => {
-  const huge = { filename: 'big.ARW', data: new Uint8Array(41 * 1024 * 1024), contentType: 'image/x-sony-arw' };
+  const huge = {
+    filename: 'big.ARW',
+    data: new Uint8Array(41 * 1024 * 1024),
+    contentType: 'image/x-sony-arw',
+  };
   const before = sent.length;
 
   await expect(

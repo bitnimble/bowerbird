@@ -2,7 +2,11 @@ import * as stylex from '@stylexjs/stylex';
 import { Eye } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef } from 'react';
-import { useDeviceSettingsStore, usePresenters, useStackTriageStore } from '../../../app/stores_context';
+import {
+  useDeviceSettingsStore,
+  usePresenters,
+  useStackTriageStore,
+} from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
 import { ICON } from '../../../ui/icon';
 import { Row } from '../../../ui/row';
@@ -56,7 +60,7 @@ export const Flip = observer(function Flip({
   const nameAt = (id: string): string | undefined => {
     const member = store.members.get(id);
     return member == null ? undefined : nameOf(member);
-  };  // Whichever frame is actually on screen, peek included. Labelled from slot A
+  }; // Whichever frame is actually on screen, peek included. Labelled from slot A
   // regardless, both frames of a round claimed the same filename - on the one
   // screen whose job is telling near-identical photographs apart, and in
   // fullscreen the bar is the only thing left that names them at all.
@@ -70,7 +74,10 @@ export const Flip = observer(function Flip({
 
   return (
     <div ref={boxRef} {...stylex.props(styles.view, styles.flip)}>
-      <div {...stylex.props(styles.frame)} style={{ width: `${box.width}px`, height: `${box.height}px` }}>
+      <div
+        {...stylex.props(styles.frame)}
+        style={{ width: `${box.width}px`, height: `${box.height}px` }}
+      >
         <PhotoStage
           style={styles.stage}
           photoKey={pairKey(sides[0], sides[1])}
@@ -113,7 +120,11 @@ export const ViewSwitch = observer(function ViewSwitch({
 
   return (
     <Row style={styles.switch} role="group" aria-label={StackTriageStrings.whichPhotoToShow()}>
-      <Button style={styles.markA} aria-pressed={!peeking && slot === 0} onClick={() => stackTriage.setShowing('a')}>
+      <Button
+        style={styles.markA}
+        aria-pressed={!peeking && slot === 0}
+        onClick={() => stackTriage.setShowing('a')}
+      >
         {StackTriageStrings.showA()}
       </Button>
       <Button
@@ -137,7 +148,11 @@ export const ViewSwitch = observer(function ViewSwitch({
       >
         <Eye size={ICON} />
       </Button>
-      <Button style={styles.markB} aria-pressed={!peeking && slot === 1} onClick={() => stackTriage.setShowing('b')}>
+      <Button
+        style={styles.markB}
+        aria-pressed={!peeking && slot === 1}
+        onClick={() => stackTriage.setShowing('b')}
+      >
         {StackTriageStrings.showB()}
       </Button>
     </Row>
@@ -146,7 +161,11 @@ export const ViewSwitch = observer(function ViewSwitch({
 
 // Both at once, each given the same displayed area, in whichever of row or column
 // makes that area largest.
-export const Split = observer(function Split({ onDecoded }: { onDecoded: (source: string) => void }): JSX.Element {
+export const Split = observer(function Split({
+  onDecoded,
+}: {
+  onDecoded: (source: string) => void;
+}): JSX.Element {
   const store = useStackTriageStore();
   const device = useDeviceSettingsStore();
   const { stackTriage } = usePresenters();
@@ -176,7 +195,9 @@ export const Split = observer(function Split({ onDecoded }: { onDecoded: (source
           <div
             key={index}
             {...stylex.props(styles.frame)}
-            style={size == null ? undefined : { width: `${size.width}px`, height: `${size.height}px` }}
+            style={
+              size == null ? undefined : { width: `${size.width}px`, height: `${size.height}px` }
+            }
           >
             <PhotoStage
               style={styles.stage}

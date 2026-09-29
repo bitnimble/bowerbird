@@ -52,7 +52,12 @@ export function recipePathToTouch(db: Database, photoId: string): string | null 
 }
 
 /** Records that a photograph's file may no longer be where its row says. */
-export function queueMaterialisation(db: Database, libraryId: string, photoId: string, wasAt: string): void {
+export function queueMaterialisation(
+  db: Database,
+  libraryId: string,
+  photoId: string,
+  wasAt: string,
+): void {
   db.query(
     // The *first* entry's `was_at` is the one that matters: it is where the file
     // actually is. A second merge before the drain moves the target, not the file.
@@ -113,7 +118,9 @@ export async function drainMaterialisations(
   locations: BlobLocations,
 ): Promise<number> {
   const pending = db
-    .query('SELECT photo_id, was_at FROM materialisation_queue WHERE library_id = ? ORDER BY photo_id')
+    .query(
+      'SELECT photo_id, was_at FROM materialisation_queue WHERE library_id = ? ORDER BY photo_id',
+    )
     .all(library.id) as { photo_id: string; was_at: string }[];
   if (pending.length === 0) return 0;
   // An absent root is a drive that is not mounted, not a library with no
@@ -150,7 +157,10 @@ export async function drainMaterialisations(
       // Left queued: a file the editor is holding open, or a disk that filled up,
       // is answered by trying again rather than by forgetting the photograph is
       // in the wrong place.
-      log.warn('could not materialise a merged move', { photo: entry.photo_id, err: String(error) });
+      log.warn('could not materialise a merged move', {
+        photo: entry.photo_id,
+        err: String(error),
+      });
     }
   }
   if (moved > 0) log.info('materialised merged moves', { library: library.id, moved });

@@ -195,7 +195,8 @@ export function Slider({
   /** On the root, whose height the control inside it takes. */
   style?: stylex.StyleXStyles;
 }): JSX.Element {
-  const share = (at: number): number => Math.min(Math.max(((at - min) / (max - min)) * 100, 0), 100);
+  const share = (at: number): number =>
+    Math.min(Math.max(((at - min) / (max - min)) * 100, 0), 100);
   const from = share(origin ?? 0);
   const to = share(value);
   const id = useId();
@@ -205,10 +206,13 @@ export function Slider({
   const isolated = active?.id === id ? active : null;
   const pointer = useRef<number | null>(null);
 
-  useEffect(() => () => {
-    pointer.current = null;
-    endIsolation?.(id);
-  }, [endIsolation, id]);
+  useEffect(
+    () => () => {
+      pointer.current = null;
+      endIsolation?.(id);
+    },
+    [endIsolation, id],
+  );
 
   const finishIsolation = (event: PointerEvent<HTMLDivElement>): void => {
     if (pointer.current !== event.pointerId) return;
@@ -250,8 +254,15 @@ export function Slider({
         step={step}
         disabled={disabled}
         onPointerDownCapture={(event) => {
-          if (isolation == null || disabled || event.button !== 0 || !event.isPrimary || event.defaultPrevented
-            || pointer.current != null) return;
+          if (
+            isolation == null ||
+            disabled ||
+            event.button !== 0 ||
+            !event.isPrimary ||
+            event.defaultPrevented ||
+            pointer.current != null
+          )
+            return;
           const { left, top, width, height } = event.currentTarget.getBoundingClientRect();
           pointer.current = event.pointerId;
           isolation.begin(id, { left, top, width, height });
@@ -280,31 +291,41 @@ export function Slider({
           </BaseSlider.Track>
         </BaseSlider.Control>
       </BaseSlider.Root>
-      {isolated != null && createPortal(
-        <div
-          {...stylex.props(styles.root, styles.isolated)}
-          style={isolated.rectangle}
-          role="region"
-          aria-label={SliderStrings.adjusting(label)}
-        >
-          <div {...stylex.props(styles.readout)}>
-            <span>{label}</span>
-            <span {...stylex.props(styles.readoutValue)}>{valueText?.(value) ?? value}</span>
-          </div>
-          <div {...stylex.props(styles.control)} aria-hidden="true">
-            <div {...stylex.props(styles.track, tone != null && styles[tone])}>
-              <SliderMarks snap={snap} share={share} tone={tone} from={from} to={to} />
-              <span {...stylex.props(styles.thumb, styles.isolatedThumb)} style={{ left: `${to}%` }} />
+      {isolated != null &&
+        createPortal(
+          <div
+            {...stylex.props(styles.root, styles.isolated)}
+            style={isolated.rectangle}
+            role="region"
+            aria-label={SliderStrings.adjusting(label)}
+          >
+            <div {...stylex.props(styles.readout)}>
+              <span>{label}</span>
+              <span {...stylex.props(styles.readoutValue)}>{valueText?.(value) ?? value}</span>
             </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+            <div {...stylex.props(styles.control)} aria-hidden="true">
+              <div {...stylex.props(styles.track, tone != null && styles[tone])}>
+                <SliderMarks snap={snap} share={share} tone={tone} from={from} to={to} />
+                <span
+                  {...stylex.props(styles.thumb, styles.isolatedThumb)}
+                  style={{ left: `${to}%` }}
+                />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }
 
-function SliderMarks({ snap, share, tone, from, to }: {
+function SliderMarks({
+  snap,
+  share,
+  tone,
+  from,
+  to,
+}: {
   snap: readonly number[] | undefined;
   share: (value: number) => number;
   tone: 'temperature' | 'tint' | undefined;

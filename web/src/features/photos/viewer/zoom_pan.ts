@@ -145,7 +145,11 @@ export function zoomAbout(
  * Held inside the frame, because the draw clamps its taps to the frame's edges anyway and a
  * region that hangs over the side would only read the edge pixel repeatedly.
  */
-export function regionOf(view: View, box: Size, natural: Size): {
+export function regionOf(
+  view: View,
+  box: Size,
+  natural: Size,
+): {
   x: number;
   y: number;
   width: number;
@@ -196,7 +200,12 @@ export function letterboxOf(view: View, box: Size, natural: Size): { x: number; 
  * and it is arithmetic over the view and the observed box, so nothing has to be measured to
  * follow a pan or a zoom. `regionOf` is the same mapping the other way.
  */
-export function stagePointOf(point: { x: number; y: number }, view: View, box: Size, natural: Size): Point {
+export function stagePointOf(
+  point: { x: number; y: number },
+  view: View,
+  box: Size,
+  natural: Size,
+): Point {
   if (box.width === 0 || box.height === 0 || natural.width === 0 || natural.height === 0) {
     return { x: 0, y: 0 };
   }
@@ -399,13 +408,20 @@ export function useZoomPan(
       const scale = rect == null || natural.width === 0 ? MIN_SCALE : 1 / fitScale(rect, natural);
       const max = maxScaleFor(scale);
       setView((currentView) =>
-        clampPan(zoomAbout(currentView, nextScale(currentView.scale), max, rect, point), rect, natural),
+        clampPan(
+          zoomAbout(currentView, nextScale(currentView.scale), max, rect, point),
+          rect,
+          natural,
+        ),
       );
     },
     [natural, viewport],
   );
 
-  const stopAfter = useCallback((scale: number): number => nextStopAfter(scale, nativeScale), [nativeScale]);
+  const stopAfter = useCallback(
+    (scale: number): number => nextStopAfter(scale, nativeScale),
+    [nativeScale],
+  );
 
   // Non-passive so preventDefault actually stops the page scrolling underneath.
   useEffect(() => {
@@ -439,7 +455,11 @@ export function useZoomPan(
         // The pan the first finger had started is over: from here the two of them
         // scale the picture, and continuing to follow one would fight the other.
         setDragging(false);
-        pinch.current = { spread: gap(first[1], second[1]), scale: view.scale, ids: [first[0], second[0]] };
+        pinch.current = {
+          spread: gap(first[1], second[1]),
+          scale: view.scale,
+          ids: [first[0], second[0]],
+        };
         // Once, here, for every move the pinch is about to make.
         gestureRect.current = viewport.current?.getBoundingClientRect() ?? null;
       }
@@ -478,7 +498,11 @@ export function useZoomPan(
     const id = e.pointerId;
     const onMove = (moved: PointerEvent): void => {
       if (moved.pointerId !== id) return;
-      if (travelOf(moved.clientX - dragStart.current.x, moved.clientY - dragStart.current.y) <= CLICK_SLOP_PX) return;
+      if (
+        travelOf(moved.clientX - dragStart.current.x, moved.clientY - dragStart.current.y) <=
+        CLICK_SLOP_PX
+      )
+        return;
       release();
       try {
         stage.setPointerCapture(id);
@@ -514,7 +538,8 @@ export function useZoomPan(
       const spread = gap(first, second);
       // About the midpoint, so the picture stays under the fingers and a pinch
       // that slides across the frame pans it as it scales.
-      if (spread > 0 && held.spread > 0) zoomTo(() => (held.scale * spread) / held.spread, midpoint(first, second));
+      if (spread > 0 && held.spread > 0)
+        zoomTo(() => (held.scale * spread) / held.spread, midpoint(first, second));
       return;
     }
 

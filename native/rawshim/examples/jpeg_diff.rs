@@ -49,7 +49,11 @@ fn main() {
         left.height,
         total / left.data.len() as f64,
     );
-    let image = rawshim::rgb::RgbRef { width: left.width, height: left.height, data: &data };
+    let image = rawshim::rgb::RgbRef {
+        width: left.width,
+        height: left.height,
+        data: &data,
+    };
     std::fs::write(&out, rawshim::jpeg::encode(image, 100).expect("encodes"))
         .expect("the difference writes");
     eprintln!("wrote {out}");

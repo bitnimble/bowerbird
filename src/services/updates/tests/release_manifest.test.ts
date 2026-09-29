@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { ReleaseManifest } from '../../../schemas/updates';
-import { compareVersions, isNewer, parseReleaseManifest, writeReleaseManifest } from '../release_manifest';
+import {
+  compareVersions,
+  isNewer,
+  parseReleaseManifest,
+  writeReleaseManifest,
+} from '../release_manifest';
 
 const MANIFEST: ReleaseManifest = {
   version: '0.2.0',
@@ -36,7 +41,11 @@ describe('release.yml', () => {
   });
 
   test('an unknown platform is refused rather than ignored', () => {
-    expect(() => parseReleaseManifest('version: 1.0.0\ntag: v1.0.0\nassets:\n  solaris-sparc:\n    installer: x\n')).toThrow();
+    expect(() =>
+      parseReleaseManifest(
+        'version: 1.0.0\ntag: v1.0.0\nassets:\n  solaris-sparc:\n    installer: x\n',
+      ),
+    ).toThrow();
   });
 });
 

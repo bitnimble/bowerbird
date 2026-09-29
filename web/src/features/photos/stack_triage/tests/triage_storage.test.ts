@@ -30,7 +30,14 @@ describe('the stored session', () => {
 
   test('carries the judged pairs back, so nothing already judged is re-offered', () => {
     const { session, history } = storedSession();
-    saveSession(STACK, { session, history, baseline: { p: 'untriaged', q: 'picked', r: 'untriaged' }, entryPhotoId: 'p', bounds: { from: 'before', to: 'after' }, failed:[] });
+    saveSession(STACK, {
+      session,
+      history,
+      baseline: { p: 'untriaged', q: 'picked', r: 'untriaged' },
+      entryPhotoId: 'p',
+      bounds: { from: 'before', to: 'after' },
+      failed: [],
+    });
 
     const loaded = loadSession(STACK);
     expect(loaded).not.toBeNull();
@@ -43,7 +50,14 @@ describe('the stored session', () => {
 
   test('carries the pool, the history, the baseline and the way back', () => {
     const { session, history } = storedSession();
-    saveSession(STACK, { session, history, baseline: { p: 'untriaged', q: 'picked', r: 'rejected' }, entryPhotoId: 'p', bounds: { from: 'before', to: 'after' }, failed:['q'] });
+    saveSession(STACK, {
+      session,
+      history,
+      baseline: { p: 'untriaged', q: 'picked', r: 'rejected' },
+      entryPhotoId: 'p',
+      bounds: { from: 'before', to: 'after' },
+      failed: ['q'],
+    });
 
     const loaded = loadSession(STACK);
     expect(loaded?.session.alive).toEqual([...session.alive]);
@@ -71,7 +85,10 @@ describe('the stored session', () => {
 
     // The shape a `Set` serialises to on its own, which is what this module exists
     // to avoid writing.
-    sessionStorage.setItem(`bowerbird.triage.${STACK}`, '{"session":{"alive":["p"],"seen":{},"stopped":false}}');
+    sessionStorage.setItem(
+      `bowerbird.triage.${STACK}`,
+      '{"session":{"alive":["p"],"seen":{},"stopped":false}}',
+    );
     expect(loadSession(STACK)).toBeNull();
   });
 

@@ -96,14 +96,19 @@ pub fn crop_of(focal: f32, equivalent: f32) -> Option<f32> {
     let crop = equivalent / focal;
     // Medium format at one end and a phone-sized compact at the other; outside that a body has
     // written one of the two focal lengths in units the other is not in.
-    (focal > 0.0 && equivalent > 0.0 && crop.is_finite() && (0.5..=8.0).contains(&crop)).then_some(crop)
+    (focal > 0.0 && equivalent > 0.0 && crop.is_finite() && (0.5..=8.0).contains(&crop))
+        .then_some(crop)
 }
 
 /// Bounds that mean "no camera reports this", not physical limits: ISO 4 million,
 /// a one-hour exposure, f/256 and a 10m lens are all past anything real, so a
 /// value beyond them is a misread rather than an unusual shot.
 fn plausible(value: f32, max: f32) -> f32 {
-    if value.is_finite() && value > 0.0 && value < max { value } else { UNKNOWN }
+    if value.is_finite() && value > 0.0 && value < max {
+        value
+    } else {
+        UNKNOWN
+    }
 }
 
 /// The header of a file on disk, or None when it cannot be read.
@@ -218,11 +223,15 @@ fn read_exif_into(tiff: &[u8], out: &mut BbHeader) {
     let exif = root.get_sub_ifd(EXIF_IFD);
 
     let rational = |tag: u16| -> f32 {
-        exif.and_then(|ifd| ifd.get_entry(tag)).map_or(0.0, |entry| entry.force_f32(0))
+        exif.and_then(|ifd| ifd.get_entry(tag))
+            .map_or(0.0, |entry| entry.force_f32(0))
     };
     out.iso = plausible(
-        exif.and_then(|ifd| ifd.get_entry(0x8827u16).or_else(|| ifd.get_entry(0x8833u16)))
-            .map_or(0.0, |entry| entry.force_f32(0)),
+        exif.and_then(|ifd| {
+            ifd.get_entry(0x8827u16)
+                .or_else(|| ifd.get_entry(0x8833u16))
+        })
+        .map_or(0.0, |entry| entry.force_f32(0)),
         4_000_000.0,
     );
     out.shutter = plausible(rational(0x829A), 3600.0);
@@ -250,7 +259,11 @@ fn read_exif_into(tiff: &[u8], out: &mut BbHeader) {
             )
         };
         let sign = |tag: u16, negative: &str| -> f64 {
-            match gps.get_entry(tag).and_then(|entry| entry.as_string()).map(String::as_str) {
+            match gps
+                .get_entry(tag)
+                .and_then(|entry| entry.as_string())
+                .map(String::as_str)
+            {
                 Some(it) if it.trim() == negative => -1.0,
                 _ => 1.0,
             }
@@ -284,8 +297,8 @@ fn read_exif_into(tiff: &[u8], out: &mut BbHeader) {
 /// there rather than in a box of their own.
 pub fn exif_orientation(tiff: &[u8]) -> Option<u16> {
     use rawler::formats::tiff::reader::TiffReader;
-    let reader = rawler::formats::tiff::reader::GenericTiffReader::new_with_buffer(tiff, 0, 0, None)
-        .ok()?;
+    let reader =
+        rawler::formats::tiff::reader::GenericTiffReader::new_with_buffer(tiff, 0, 0, None).ok()?;
     let tag = reader.root_ifd().get_entry(0x0112u16)?.force_u16(0);
     match (1..=8).contains(&tag) {
         true => Some(tag),
@@ -306,11 +319,17 @@ pub fn read_with(
     let exif = &metadata.exif;
 
     let orientation = exif.orientation.unwrap_or(1);
-    out.orientation = if (1..=8).contains(&orientation) { i32::from(orientation) } else { 0 };
+    out.orientation = if (1..=8).contains(&orientation) {
+        i32::from(orientation)
+    } else {
+        0
+    };
 
     let (mut width, mut height) = shape
         .crop_area
-        .map_or((shape.width as u32, shape.height as u32), |area| (area.d.w as u32, area.d.h as u32));
+        .map_or((shape.width as u32, shape.height as u32), |area| {
+            (area.d.w as u32, area.d.h as u32)
+        });
     if matches!(orientation, 5 | 6 | 7 | 8) {
         std::mem::swap(&mut width, &mut height);
     }
@@ -322,7 +341,9 @@ pub fn read_with(
         d => r.n as f32 / d as f32,
     };
     out.iso = plausible(
-        exif.iso_speed.or_else(|| exif.iso_speed_ratings.map(u32::from)).unwrap_or(0) as f32,
+        exif.iso_speed
+            .or_else(|| exif.iso_speed_ratings.map(u32::from))
+            .unwrap_or(0) as f32,
         4_000_000.0,
     );
     out.shutter = plausible(exif.exposure_time.as_ref().map_or(0.0, ratio), 3600.0);
@@ -330,7 +351,11 @@ pub fn read_with(
     out.focal = plausible(exif.focal_length.as_ref().map_or(0.0, ratio), 10_000.0);
     out.focal_35mm = plausible(exif.focal_length_in_35mm.unwrap_or(0) as f32, 10_000.0);
 
-    if let Some(taken) = exif.date_time_original.as_deref().and_then(seconds_since_epoch) {
+    if let Some(taken) = exif
+        .date_time_original
+        .as_deref()
+        .and_then(seconds_since_epoch)
+    {
         // 1990 to 2100: a timestamp outside that is a misparse, not a photograph.
         if taken > 631_152_000 && taken < 4_102_444_800 {
             out.timestamp = taken;
@@ -341,9 +366,17 @@ pub fn read_with(
         // An exact 0,0 is a body saying nothing rather than a photograph taken in the Gulf of
         // Guinea, which is why this reads the triples rather than trusting their presence.
         let latitude = gps.gps_latitude.map(|t| degrees_of(&t)).unwrap_or(0.0)
-            * if gps.gps_latitude_ref.as_deref() == Some("S") { -1.0 } else { 1.0 };
+            * if gps.gps_latitude_ref.as_deref() == Some("S") {
+                -1.0
+            } else {
+                1.0
+            };
         let longitude = gps.gps_longitude.map(|t| degrees_of(&t)).unwrap_or(0.0)
-            * if gps.gps_longitude_ref.as_deref() == Some("W") { -1.0 } else { 1.0 };
+            * if gps.gps_longitude_ref.as_deref() == Some("W") {
+                -1.0
+            } else {
+                1.0
+            };
         if latitude != 0.0 || longitude != 0.0 {
             if latitude.is_finite() && latitude.abs() <= 90.0 {
                 out.latitude = latitude;
@@ -471,17 +504,31 @@ mod tests {
     #[test]
     fn a_timestamp_is_read_from_the_exif_spelling() {
         // 2024-06-07 14:58:25 UTC.
-        assert_eq!(seconds_since_epoch("2024:06:07 14:58:25"), Some(1_717_772_305));
+        assert_eq!(
+            seconds_since_epoch("2024:06:07 14:58:25"),
+            Some(1_717_772_305)
+        );
         // A leap day, which is where a hand-rolled calendar goes wrong if it is going to.
-        assert_eq!(seconds_since_epoch("2024:02:29 00:00:00"), Some(1_709_164_800));
+        assert_eq!(
+            seconds_since_epoch("2024:02:29 00:00:00"),
+            Some(1_709_164_800)
+        );
         assert_eq!(seconds_since_epoch("1970:01:01 00:00:00"), Some(0));
     }
 
     #[test]
     fn a_timestamp_that_is_not_one_reports_nothing() {
         assert_eq!(seconds_since_epoch(""), None);
-        assert_eq!(seconds_since_epoch("2024:06:07"), None, "a date with no time is short");
-        assert_eq!(seconds_since_epoch("2024:13:07 00:00:00"), None, "there is no thirteenth month");
+        assert_eq!(
+            seconds_since_epoch("2024:06:07"),
+            None,
+            "a date with no time is short"
+        );
+        assert_eq!(
+            seconds_since_epoch("2024:13:07 00:00:00"),
+            None,
+            "there is no thirteenth month"
+        );
     }
 
     #[test]
@@ -506,7 +553,11 @@ mod tests {
     #[test]
     fn degrees_combines_the_dms_triple() {
         let rational = |n: u32, d: u32| rawler::formats::tiff::Rational::new(n, d);
-        assert!((degrees_of(&[rational(51, 1), rational(30, 1), rational(0, 1)]) - 51.5).abs() < 1e-9);
-        assert!((degrees_of(&[rational(0, 1), rational(0, 1), rational(3600, 1)]) - 1.0).abs() < 1e-9);
+        assert!(
+            (degrees_of(&[rational(51, 1), rational(30, 1), rational(0, 1)]) - 51.5).abs() < 1e-9
+        );
+        assert!(
+            (degrees_of(&[rational(0, 1), rational(0, 1), rational(3600, 1)]) - 1.0).abs() < 1e-9
+        );
     }
 }

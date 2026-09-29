@@ -15,6 +15,8 @@ import type { Context } from 'hono';
  * where there is no timeout to lift.
  */
 export function takeAsLongAsItTakes(c: Context): void {
-  const server = (c.env as { server?: { timeout: (request: Request, seconds: number) => void } } | undefined)?.server;
+  const server = (
+    c.env as { server?: { timeout: (request: Request, seconds: number) => void } } | undefined
+  )?.server;
   server?.timeout(c.req.raw, 0);
 }

@@ -66,7 +66,10 @@ export const shellScreen = new ShellScreen();
  * the one thing it composites in SDR there.
  */
 export function displayIsHdr(): boolean {
-  return shellScreen.isHdr ?? (globalThis.matchMedia != null && globalThis.matchMedia('(dynamic-range: high)').matches);
+  return (
+    shellScreen.isHdr ??
+    (globalThis.matchMedia != null && globalThis.matchMedia('(dynamic-range: high)').matches)
+  );
 }
 
 /** The brightest this display shows, in nits, or null where it shows nothing past SDR white. */

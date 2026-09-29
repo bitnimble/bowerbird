@@ -21,7 +21,10 @@ const CHECKPOINT =
   'https://raw.githubusercontent.com/MegEngine/PMRID/8ebb9e8e96559881dee957f34243933c5beb77dd/models/torch_pretrained.ckp';
 const CHECKPOINT_SHA256 = '9361614f3514d27351d81909f2215c0fdc38619c0288d936b7266485ac106c14';
 // This file's own text too: the unpacking below decides the bytes as much as the checkpoint does.
-const RECIPE = pin(CHECKPOINT, [CHECKPOINT_SHA256, readFileSync(import.meta.path, 'utf8').replaceAll('\r\n', '\n')]);
+const RECIPE = pin(CHECKPOINT, [
+  CHECKPOINT_SHA256,
+  readFileSync(import.meta.path, 'utf8').replaceAll('\r\n', '\n'),
+]);
 const HOME = pinnedHome(NAME, RECIPE);
 const PICKLE = 'archive/data.pkl';
 const STORAGES = 'archive/data/';
@@ -44,7 +47,13 @@ function conv(prefix: string, inC: number, outC: number, k: number, separable: b
   ];
 }
 
-function encoderBlock(prefix: string, inC: number, midC: number, outC: number, stride: number): Tensor[] {
+function encoderBlock(
+  prefix: string,
+  inC: number,
+  midC: number,
+  outC: number,
+  stride: number,
+): Tensor[] {
   const tensors = [
     ...conv(`${prefix}.conv1`, inC, midC, 5, true),
     ...conv(`${prefix}.conv2`, midC, outC, 5, true),
@@ -62,7 +71,10 @@ function encoderStage(prefix: string, inC: number, outC: number, blocks: number)
 }
 
 function decoderBlock(prefix: string, inC: number, outC: number, k: number): Tensor[] {
-  return [...conv(`${prefix}.conv0`, inC, outC, k, true), ...conv(`${prefix}.conv1`, outC, outC, k, true)];
+  return [
+    ...conv(`${prefix}.conv0`, inC, outC, k, true),
+    ...conv(`${prefix}.conv1`, outC, outC, k, true),
+  ];
 }
 
 function decoderStage(prefix: string, inC: number, skipC: number, outC: number): Tensor[] {
@@ -127,7 +139,8 @@ async function main(): Promise<void> {
     const response = await fetchPinned(CHECKPOINT);
     const checkpoint = new Uint8Array(await response.arrayBuffer());
     const got = createHash('sha256').update(checkpoint).digest('hex');
-    if (got !== CHECKPOINT_SHA256) throw new Error(`${CHECKPOINT} hashes ${got}, not the pinned ${CHECKPOINT_SHA256}`);
+    if (got !== CHECKPOINT_SHA256)
+      throw new Error(`${CHECKPOINT} hashes ${got}, not the pinned ${CHECKPOINT_SHA256}`);
     const unpacked = unpack(checkpoint);
     makeOnce(HOME, RECIPE, false, () => {
       for (const [name, bytes] of unpacked) writeFileSync(resolve(HOME, name), bytes);
@@ -139,10 +152,14 @@ async function main(): Promise<void> {
 
 function unpack(checkpoint: Uint8Array): Map<string, Uint8Array | string> {
   // A checkpoint is a zip, and Windows ships no `unzip` for the other getters' `tar` to be.
-  const entries = unzipSync(checkpoint, { filter: ({ name }) => name === PICKLE || name.startsWith(STORAGES) });
+  const entries = unzipSync(checkpoint, {
+    filter: ({ name }) => name === PICKLE || name.startsWith(STORAGES),
+  });
   const named = pairs(entry(entries, PICKLE));
   if (named.length !== ARCHITECTURE.length) {
-    throw new Error(`the checkpoint names ${named.length} tensors, the architecture ${ARCHITECTURE.length}`);
+    throw new Error(
+      `the checkpoint names ${named.length} tensors, the architecture ${ARCHITECTURE.length}`,
+    );
   }
 
   const blob = new Float32Array(ARCHITECTURE.reduce((sum, t) => sum + numel(t.shape), 0));
@@ -150,11 +167,14 @@ function unpack(checkpoint: Uint8Array): Map<string, Uint8Array | string> {
   let at = 0;
   for (const [index, tensor] of ARCHITECTURE.entries()) {
     const { name, storage } = named[index]!;
-    if (name !== tensor.name) throw new Error(`tensor ${index} is ${name}, the architecture says ${tensor.name}`);
+    if (name !== tensor.name)
+      throw new Error(`tensor ${index} is ${name}, the architecture says ${tensor.name}`);
     const raw = entry(entries, `${STORAGES}${storage}`);
     const values = new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4);
     if (values.length !== numel(tensor.shape)) {
-      throw new Error(`${name} holds ${values.length} floats, ${tensor.shape} wants ${numel(tensor.shape)}`);
+      throw new Error(
+        `${name} holds ${values.length} floats, ${tensor.shape} wants ${numel(tensor.shape)}`,
+      );
     }
     blob.set(values, at);
     offsets[name] = at;

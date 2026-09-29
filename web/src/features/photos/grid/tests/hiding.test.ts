@@ -19,7 +19,18 @@ function build(source: PhotoSource): { store: ListingStore; presenter: PhotosPre
   const store = new ListingStore(stacks);
   const marks = new MarksStore(store, stacks);
   const viewer = new ViewerStore(store, stacks);
-  const presenter = new PhotosPresenter(store, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    store,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => (store.source = source));
   presenter.setViewport(1000, 1000);
   return { store, presenter };
@@ -34,9 +45,18 @@ let hidden: { target: PhotoTarget; hidden: boolean }[];
 function serve(): void {
   asked = [];
   hidden = [];
-  photosApi.listLibrary = (_libraryId: string, params: PhotoListParams): Promise<PhotoListResponse> => {
+  photosApi.listLibrary = (
+    _libraryId: string,
+    params: PhotoListParams,
+  ): Promise<PhotoListResponse> => {
     asked.push(params);
-    return Promise.resolve({ photos: [], total: 0, offset: 0, limit: 1, ordering: 'taken_desc' } as PhotoListResponse);
+    return Promise.resolve({
+      photos: [],
+      total: 0,
+      offset: 0,
+      limit: 1,
+      ordering: 'taken_desc',
+    } as PhotoListResponse);
   };
   photosApi.hide = (target: PhotoTarget, on: boolean): Promise<{ updated: number }> => {
     hidden.push({ target, hidden: on });
@@ -87,7 +107,9 @@ describe('what the Hidden tick asks for', () => {
     const target = presenter.selectionTarget();
 
     expect(target).not.toBeNull();
-    expect(target != null && 'selection' in target && target.selection.filters).toMatchObject({ is_hidden: true });
+    expect(target != null && 'selection' in target && target.selection.filters).toMatchObject({
+      is_hidden: true,
+    });
   });
 });
 

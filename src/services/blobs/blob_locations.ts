@@ -28,7 +28,10 @@ export interface MaterialisationFlag {
 }
 
 export class BlobLocations {
-  constructor(private readonly db: Database, private readonly activity = new LibraryActivity()) {}
+  constructor(
+    private readonly db: Database,
+    private readonly activity = new LibraryActivity(),
+  ) {}
 
   selfId(): string {
     return peerId(this.db);
@@ -37,7 +40,9 @@ export class BlobLocations {
   /** Every peer recorded as holding this photograph's original, this one included when it does. */
   holders(libraryId: string, photoId: string): string[] {
     const rows = this.db
-      .query('SELECT peer_id FROM blob_locations WHERE library_id = ? AND photo_id = ? ORDER BY peer_id')
+      .query(
+        'SELECT peer_id FROM blob_locations WHERE library_id = ? AND photo_id = ? ORDER BY peer_id',
+      )
       .all(libraryId, photoId) as { peer_id: string }[];
     return rows.map((row) => row.peer_id);
   }
@@ -55,17 +60,31 @@ export class BlobLocations {
    * for. `photoIds` undefined is the whole library; a list is the photos in it,
    * and an empty one is no photos.
    */
-  heldHereLackedBy(libraryId: string, peer: string, photoIds: readonly string[] | undefined): string[] {
+  heldHereLackedBy(
+    libraryId: string,
+    peer: string,
+    photoIds: readonly string[] | undefined,
+  ): string[] {
     return this.diff(libraryId, this.selfId(), peer, photoIds);
   }
 
   /** The pull diff: photos `peer` holds that this peer has no row for. */
-  heldByLackedHere(libraryId: string, peer: string, photoIds: readonly string[] | undefined): string[] {
+  heldByLackedHere(
+    libraryId: string,
+    peer: string,
+    photoIds: readonly string[] | undefined,
+  ): string[] {
     return this.diff(libraryId, peer, this.selfId(), photoIds);
   }
 
-  private diff(libraryId: string, holder: string, lacker: string, photoIds: readonly string[] | undefined): string[] {
-    const scope = photoIds == null ? '' : ` AND b.photo_id IN (${photoIds.map(() => '?').join(', ')})`;
+  private diff(
+    libraryId: string,
+    holder: string,
+    lacker: string,
+    photoIds: readonly string[] | undefined,
+  ): string[] {
+    const scope =
+      photoIds == null ? '' : ` AND b.photo_id IN (${photoIds.map(() => '?').join(', ')})`;
     const rows = this.db
       .query(
         `SELECT b.photo_id FROM blob_locations b
@@ -88,7 +107,9 @@ export class BlobLocations {
     if (this.heldBy(libraryId, photoId, self)) return;
     const at = stamp(this.db);
     this.db
-      .query('INSERT INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)')
+      .query(
+        'INSERT INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)',
+      )
       .run(libraryId, photoId, self, at);
     this.log(libraryId, photoId, self, at, false);
   }
@@ -125,7 +146,9 @@ export class BlobLocations {
       .all(libraryId, peer) as { photo_id: string }[];
     if (held.length === 0) return;
     const at = stamp(this.db);
-    this.db.query('DELETE FROM blob_locations WHERE library_id = ? AND peer_id = ?').run(libraryId, peer);
+    this.db
+      .query('DELETE FROM blob_locations WHERE library_id = ? AND peer_id = ?')
+      .run(libraryId, peer);
     for (const row of held) this.log(libraryId, row.photo_id, peer, at, true);
   }
 
@@ -143,11 +166,19 @@ export class BlobLocations {
   // The log rows the stamped tables get from their triggers: one live entry per
   // row, a tombstone on retraction, nothing for a library that does not
   // replicate.
-  private log(libraryId: string, photoId: string, peer: string, at: string, deleted: boolean): void {
+  private log(
+    libraryId: string,
+    photoId: string,
+    peer: string,
+    at: string,
+    deleted: boolean,
+  ): void {
     if (!replicates(this.db, libraryId)) return;
     const rowId = `${photoId}/${peer}`;
     this.db
-      .query('DELETE FROM replication_log WHERE library_id = ? AND entity = ? AND row_id = ? AND deleted = ?')
+      .query(
+        'DELETE FROM replication_log WHERE library_id = ? AND entity = ? AND row_id = ? AND deleted = ?',
+      )
       .run(libraryId, 'blob_location', rowId, deleted ? 0 : 1);
     this.db
       .query(
@@ -168,12 +199,16 @@ export class BlobLocations {
   }
 
   clearFlag(libraryId: string, photoId: string): void {
-    this.db.query('DELETE FROM materialisation_flags WHERE library_id = ? AND photo_id = ?').run(libraryId, photoId);
+    this.db
+      .query('DELETE FROM materialisation_flags WHERE library_id = ? AND photo_id = ?')
+      .run(libraryId, photoId);
   }
 
   flags(libraryId: string): MaterialisationFlag[] {
     return this.db
-      .query('SELECT library_id, photo_id, target_path, reason FROM materialisation_flags WHERE library_id = ? ORDER BY photo_id')
+      .query(
+        'SELECT library_id, photo_id, target_path, reason FROM materialisation_flags WHERE library_id = ? ORDER BY photo_id',
+      )
       .all(libraryId) as MaterialisationFlag[];
   }
 
@@ -193,7 +228,9 @@ export class BlobLocations {
     // every other peer believing this device holds nothing in between. The drain
     // refuses on the same evidence and for the same reason (`materialise.ts`).
     if (!existsSync(library.root_path)) {
-      log.warn('skipping the blob reconcile: the library root is not there', { library: library.id });
+      log.warn('skipping the blob reconcile: the library root is not there', {
+        library: library.id,
+      });
       return;
     }
     const finish = this.activity.begin(library.id, 'reconciling');
@@ -210,12 +247,14 @@ export class BlobLocations {
       // Only the rows that are files. A composed photograph has no original anywhere, on this
       // device or on any other, so it is not a holding this peer could assert or retract - and
       // walking it here would mint a grave apiece on every scan, for bytes that never existed.
-      const ids = (this.db
-        .query(
-          `SELECT id FROM photos
+      const ids = (
+        this.db
+          .query(
+            `SELECT id FROM photos
           WHERE library_id = ? AND json_extract(recipe, '$.kind') = 'file'`,
-        )
-        .all(library.id) as { id: string }[]).map((row) => row.id);
+          )
+          .all(library.id) as { id: string }[]
+      ).map((row) => row.id);
       // A photograph whose merged move has not been made yet is not one whose bytes
       // have gone: the file is at the path it was at before, and saying otherwise
       // would retract this peer's claim on an original it is holding - after which
@@ -229,13 +268,17 @@ export class BlobLocations {
       // surface offers - clear it and press send again - answers nothing, for good.
       for (const batch of inChunks(ids, RECONCILE_BATCH_SIZE)) {
         await Bun.sleep(1);
-        const current = this.db.query('SELECT root_path FROM libraries WHERE id = ?').get(library.id) as { root_path: string } | null;
+        const current = this.db
+          .query('SELECT root_path FROM libraries WHERE id = ?')
+          .get(library.id) as { root_path: string } | null;
         if (current?.root_path !== library.root_path || !existsSync(library.root_path)) return;
         const rows = this.db
-          .query(`SELECT p.id, json_extract(p.recipe, '$.path') AS file_path FROM photos p
+          .query(
+            `SELECT p.id, json_extract(p.recipe, '$.path') AS file_path FROM photos p
             WHERE p.library_id = ? AND json_extract(p.recipe, '$.kind') = 'file' AND p.id IN (${batch.map(() => '?').join(', ')})
               AND NOT EXISTS (SELECT 1 FROM materialisation_queue q WHERE q.library_id = p.library_id AND q.photo_id = p.id)
-              AND NOT EXISTS (SELECT 1 FROM materialisation_flags f WHERE f.library_id = p.library_id AND f.photo_id = p.id)`)
+              AND NOT EXISTS (SELECT 1 FROM materialisation_flags f WHERE f.library_id = p.library_id AND f.photo_id = p.id)`,
+          )
           .all(library.id, ...batch) as { id: string; file_path: string }[];
         for (const row of rows) {
           // Checked on the value SQL read, not on the one the wire guard parsed (§11.2). `JSON.parse`
@@ -243,7 +286,9 @@ export class BlobLocations {
           // validate as one path and read out as another - and this is a `path.join` and a stat, which
           // would answer whether an attacker-named file exists anywhere the process can reach.
           if (!ReplicatedPathSchema.safeParse(row.file_path).success) {
-            log.warn('refusing a recipe path that does not stay inside the library', { photo: row.id });
+            log.warn('refusing a recipe path that does not stay inside the library', {
+              photo: row.id,
+            });
             this.retract(library.id, row.id);
             continue;
           }

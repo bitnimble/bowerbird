@@ -57,7 +57,12 @@ beforeEach(() => {
   metadata = photoMetadata(db);
   paths = photoPaths(db);
   scan = photoScan(db);
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'added_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'added_desc',
+  );
 });
 
 afterEach(() => {
@@ -88,7 +93,8 @@ test('prune removes generated files whose photo is gone and keeps the rest', asy
 
   expect(result.removed).toBe(3);
   expect(result.bytes).toBe(3 * 64);
-  for (const file of [orphanSmall, orphanFull, orphanLossless]) expect(existsSync(file)).toBe(false);
+  for (const file of [orphanSmall, orphanFull, orphanLossless])
+    expect(existsSync(file)).toBe(false);
   for (const file of [keptSmall, keptFull, keptBin, raw]) expect(existsSync(file)).toBe(true);
 });
 

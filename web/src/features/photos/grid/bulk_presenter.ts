@@ -67,9 +67,9 @@ export class BulkPresenter {
       return;
     }
     this.toasts.show(
-      collection.kind === 'shoot' ?
-        PhotosPresenterStrings.shootThumbnailSet()
-      : PhotosPresenterStrings.albumThumbnailSet(),
+      collection.kind === 'shoot'
+        ? PhotosPresenterStrings.shootThumbnailSet()
+        : PhotosPresenterStrings.albumThumbnailSet(),
     );
   }
 
@@ -80,10 +80,7 @@ export class BulkPresenter {
   }
 
   async restoreSelected(): Promise<void> {
-    await this.bulk(
-      (target) => photosApi.restore(target),
-      PhotosPresenterStrings.restored,
-    );
+    await this.bulk((target) => photosApi.restore(target), PhotosPresenterStrings.restored);
   }
 
   /**
@@ -110,7 +107,9 @@ export class BulkPresenter {
     this.clearSelectedPositions();
     await Promise.all([this.refresh(), this.refreshDetail()]);
     this.dropConsumedSelection();
-    this.toasts.show((hidden ? PhotosPresenterStrings.hidden : PhotosPresenterStrings.unhidden)(updated));
+    this.toasts.show(
+      (hidden ? PhotosPresenterStrings.hidden : PhotosPresenterStrings.unhidden)(updated),
+    );
   }
 
   async hideSelected(hidden: boolean): Promise<void> {
@@ -143,7 +142,6 @@ export class BulkPresenter {
     this.dropConsumedSelection();
   }
 
-
   // Binning is reversible, so it reports with an undo rather than asking first.
   // The batch is stamped on the rows the bin takes, and the undo names it: the
   // selection this was made from resolves to different photographs now that
@@ -163,14 +161,20 @@ export class BulkPresenter {
     this.clearSelectedPositions();
     await this.refresh();
     this.dropConsumedSelection();
-    this.toasts.showUndoable(PhotosPresenterStrings.movedToBin(deleted), PhotoDetailStrings.undo(), async () => {
-      await photosApi.restore({ batch });
-      await this.refresh();
-    });
+    this.toasts.showUndoable(
+      PhotosPresenterStrings.movedToBin(deleted),
+      PhotoDetailStrings.undo(),
+      async () => {
+        await photosApi.restore({ batch });
+        await this.refresh();
+      },
+    );
   }
 
-
-  private async bulk(run: (target: PhotoTarget) => Promise<void>, success: (count: number) => string): Promise<void> {
+  private async bulk(
+    run: (target: PhotoTarget) => Promise<void>,
+    success: (count: number) => string,
+  ): Promise<void> {
     const target = this.selectionTarget();
     if (target == null) return;
     const count = this.store.selectionCount;
@@ -187,5 +191,4 @@ export class BulkPresenter {
     this.dropConsumedSelection();
     this.toasts.show(success(count));
   }
-
 }

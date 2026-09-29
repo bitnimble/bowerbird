@@ -10,10 +10,21 @@ fn main() {
                 continue;
             }
         };
-        let name = std::path::Path::new(&path).file_name().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        println!("== {name}  {}x{}  cpp {}", image.width, image.height, image.cpp);
-        println!("   camera      {} {}", image.camera.make, image.camera.model);
-        println!("   cfa         {:?} {}", image.camera.cfa.name, image.camera.cfa.width);
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+        println!(
+            "== {name}  {}x{}  cpp {}",
+            image.width, image.height, image.cpp
+        );
+        println!(
+            "   camera      {} {}",
+            image.camera.make, image.camera.model
+        );
+        println!(
+            "   cfa         {:?} {}",
+            image.camera.cfa.name, image.camera.cfa.width
+        );
         println!("   wb_coeffs   {:?}", image.wb_coeffs);
         println!("   blacklevel  {:?}", image.blacklevel);
         println!("   whitelevel  {:?}", image.whitelevel);
@@ -21,19 +32,28 @@ fn main() {
         // `decode_rawler::xyz_to_cam_of` says and works around. Printed anyway, because a reader
         // comparing this against another tool's output needs to see that it is empty rather than
         // wonder whether it was read.
-        println!("   xyz_to_cam  {:?} (deprecated, the live one is below)", image.xyz_to_cam);
+        println!(
+            "   xyz_to_cam  {:?} (deprecated, the live one is below)",
+            image.xyz_to_cam
+        );
         let mut illuminants: Vec<_> = image.color_matrix.keys().collect();
         illuminants.sort_by_key(|i| **i as u16);
         println!("   illuminants {illuminants:?}");
         for illuminant in &illuminants {
-            println!("   colour {illuminant:?} {:?}", image.color_matrix.get(illuminant));
+            println!(
+                "   colour {illuminant:?} {:?}",
+                image.color_matrix.get(illuminant)
+            );
         }
         // What the demosaic actually multiplies by: the camera matrix above, normalised through
         // sRGB as dcraw's `cam_xyz_coeff` does, inverted, and taken to Rec.2020's primaries.
         match rawshim::decode_rawler::camera_to_rec2020(&image) {
             Some(rows) => {
                 for (name, row) in ["R", "G", "B"].iter().zip(rows) {
-                    println!("   to2020 {name}  {:+.4} {:+.4} {:+.4}", row[0], row[1], row[2]);
+                    println!(
+                        "   to2020 {name}  {:+.4} {:+.4} {:+.4}",
+                        row[0], row[1], row[2]
+                    );
                 }
             }
             None => println!("   to2020      singular, so the file cannot be rendered"),
@@ -47,7 +67,11 @@ fn main() {
             let n = samples.len().min(image.width * image.height);
             let total: u64 = samples[..n].iter().map(|s| u64::from(*s)).sum();
             let peak = samples[..n].iter().copied().max().unwrap_or(0);
-            println!("   samples     mean {:.1}  peak {}  sum {total}", total as f64 / n as f64, peak);
+            println!(
+                "   samples     mean {:.1}  peak {}  sum {total}",
+                total as f64 / n as f64,
+                peak
+            );
             // How much of the frame the white level would discard. A handful of samples is hot
             // pixels; a real fraction is highlight the metadata is wrong about.
             //
@@ -59,7 +83,10 @@ fn main() {
             // frame as clipping where the pipeline is about to give it headroom.
             let ceiling = rawshim::decode_rawler::saturation_of(&image) as u16;
             let over = samples[..n].iter().filter(|s| **s > ceiling).count();
-            println!("   above white {over} of {n} ({:.4}%)  whole frame", over as f64 / n as f64 * 100.0);
+            println!(
+                "   above white {over} of {n} ({:.4}%)  whole frame",
+                over as f64 / n as f64 * 100.0
+            );
 
             if let Some(area) = image.crop_area {
                 let mut inside = 0usize;

@@ -11,7 +11,12 @@ import { createDatabase } from '../../src/db/connection';
 import type { FileMetadata } from '../../src/services/processing/analysis/metadata';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -49,7 +54,10 @@ function metadata(mtime: Date, size: number): FileMetadata {
 let root: string;
 let db: ReturnType<typeof createDatabase>;
 
-function build(processing: ProcessingTrigger, extract: (absPath: string) => Promise<FileMetadata>): ScanService {
+function build(
+  processing: ProcessingTrigger,
+  extract: (absPath: string) => Promise<FileMetadata>,
+): ScanService {
   const photoProcessingRepo = photoProcessing(db);
   return new ScanService(
     photoScan(db, photoProcessingRepo),
@@ -69,7 +77,12 @@ function build(processing: ProcessingTrigger, extract: (absPath: string) => Prom
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-cancel-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
 });
 
@@ -147,9 +160,13 @@ test('a stopped first scan keeps the photos it did reach', async () => {
 });
 
 test('stopping a rescan applies nothing, because a half-built scan reads as deletions', async () => {
-  const scan: ScanService = build({ processUnprocessed: () => {} }, async () => metadata(new Date(), 3));
+  const scan: ScanService = build({ processUnprocessed: () => {} }, async () =>
+    metadata(new Date(), 3),
+  );
   await scan.scanLibrary(LIB);
-  const before = db.query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`).all();
+  const before = db
+    .query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`)
+    .all();
   expect(before).toHaveLength(3);
 
   // A fourth file to be found, so there is something for a partial run to apply.
@@ -166,7 +183,9 @@ test('stopping a rescan applies nothing, because a half-built scan reads as dele
   expect(status.photos_scanned).toBe(0);
   // Untouched: no fourth row, and no row marked missing for the files it never
   // reached, which is what applying the truncated scan would have done.
-  expect(db.query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`).all()).toEqual(before);
+  expect(
+    db.query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`).all(),
+  ).toEqual(before);
   expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 1').get()).toEqual({ n: 0 });
 });
 

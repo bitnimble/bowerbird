@@ -52,7 +52,8 @@ export class SharePresenter {
     // The encode behind a press is seconds on a large frame, and a menu that closes onto nothing
     // for that long reads as a press that was swallowed. Nothing to say where the file is
     // already in hand and the sheet is about to open.
-    const waiting = held == null ? this.toasts.showProgress(PhotosPresenterStrings.preparingShare(), 0) : null;
+    const waiting =
+      held == null ? this.toasts.showProgress(PhotosPresenterStrings.preparingShare(), 0) : null;
 
     this.sharing = true;
     try {
@@ -86,9 +87,13 @@ export class SharePresenter {
   }
 
   private async shareableFile(photoId: string, rendition: ViewerRendition): Promise<File> {
-    const response = await fetch(photosApi.shareUrl(photoId, rendition), { headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' } });
+    const response = await fetch(photosApi.shareUrl(photoId, rendition), {
+      headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
+    });
     if (!response.ok) throw new Error(`${response.status}`);
     const name = this.store.photoFor(photoId)?.file_path?.split('/').pop() ?? photoId;
-    return new File([await response.blob()], `${name.replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' });
+    return new File([await response.blob()], `${name.replace(/\.[^.]+$/, '')}.jpg`, {
+      type: 'image/jpeg',
+    });
   }
 }

@@ -34,7 +34,10 @@ const log = new Logger('deletions');
 export async function deleteScratchDirectory(target: string): Promise<void> {
   const scratch = path.resolve(tmpdir());
   if (!containsPath(scratch, target) || path.resolve(target) === scratch) {
-    throw new AppError('IO_ERROR', `refusing to remove ${target}: not a scratch directory under ${scratch}`);
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to remove ${target}: not a scratch directory under ${scratch}`,
+    );
   }
   await rm(target, { recursive: true, force: true });
 }
@@ -44,7 +47,10 @@ export async function deleteScratchDirectory(target: string): Promise<void> {
 // rather than against whatever directory the path happens to sit in.
 export async function deleteGeneratedFile(dataPath: string, target: string): Promise<void> {
   if (!GENERATED_DIRS.some((dir) => containsPath(path.join(dataPath, dir), target))) {
-    throw new AppError('IO_ERROR', `refusing to delete ${target}: not a generated file under ${dataPath}`);
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to delete ${target}: not a generated file under ${dataPath}`,
+    );
   }
   // A RAW under `renditions/` would pass the check above and still be an original:
   // the extension is what decides, everywhere else in the system too.
@@ -60,7 +66,10 @@ export async function deleteGeneratedFile(dataPath: string, target: string): Pro
 // sweep, and no tree can be removed here by mistake.
 export async function deleteGeneratedDirectory(dataPath: string, target: string): Promise<void> {
   if (!GENERATED_DIRS.some((dir) => containsPath(path.join(dataPath, dir), target))) {
-    throw new AppError('IO_ERROR', `refusing to remove ${target}: not a generated directory under ${dataPath}`);
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to remove ${target}: not a generated directory under ${dataPath}`,
+    );
   }
   await rmdir(target);
 }
@@ -86,7 +95,10 @@ export async function deleteDraft(dataPath: string, target: string): Promise<voi
 export async function deleteDataDirectory(dataPath: string): Promise<void> {
   const strays = await findOriginalsAnywhere(dataPath);
   if (strays.length > 0) {
-    throw new AppError('IO_ERROR', `refusing to delete ${dataPath}: it still holds ${strays.length} original file(s)`);
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to delete ${dataPath}: it still holds ${strays.length} original file(s)`,
+    );
   }
   await rm(dataPath, { recursive: true, force: true });
 }
@@ -98,7 +110,10 @@ export async function deleteDataDirectory(dataPath: string): Promise<void> {
 // about to delete is a directory the app believes it just created and might be
 // wrong about: it must be exactly this library's bin, and `rmdir` fails while
 // anything at all is inside it.
-export async function deleteEmptyBinFolder(library: Pick<Library, 'root_path' | 'bin_name'>, target: string): Promise<void> {
+export async function deleteEmptyBinFolder(
+  library: Pick<Library, 'root_path' | 'bin_name'>,
+  target: string,
+): Promise<void> {
   const bin = getBinPath(library);
   if (bin == null || path.resolve(target) !== path.resolve(bin)) {
     throw new AppError('IO_ERROR', `refusing to remove ${target}: not this library's bin folder`);
@@ -111,11 +126,13 @@ export async function deleteEmptyBinFolder(library: Pick<Library, 'root_path' | 
 // destined for, which is the whole guard: nothing else can be spelled that way.
 export async function deleteRestoreStaging(dbPath: string, target: string): Promise<void> {
   if (!path.resolve(target).startsWith(`${path.resolve(dbPath)}.restoring-`)) {
-    throw new AppError('IO_ERROR', `refusing to delete ${target}: not a restore staging file for ${dbPath}`);
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to delete ${target}: not a restore staging file for ${dbPath}`,
+    );
   }
   await rm(target, { force: true });
 }
-
 
 // One of the two scratch directories an update downloads and unpacks into (DESIGN §23.3).
 // Naming which, rather than passing a path, is what keeps anything else in `home` out of
@@ -125,9 +142,15 @@ export async function deleteRestoreStaging(dbPath: string, target: string): Prom
 // `BOWERBIRD_UPDATES`, and `path.resolve` on a relative one silently anchors it to this
 // process's working directory. A leading `/` dropped from an env file would then
 // recursively delete `download` and `staged` out of wherever the server was started from.
-export async function deleteUpdateStaging(home: string, which: 'download' | 'staged'): Promise<void> {
+export async function deleteUpdateStaging(
+  home: string,
+  which: 'download' | 'staged',
+): Promise<void> {
   if (!path.isAbsolute(home)) {
-    throw new AppError('IO_ERROR', `refusing to remove ${which}: BOWERBIRD_UPDATES is not an absolute path (${home})`);
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to remove ${which}: BOWERBIRD_UPDATES is not an absolute path (${home})`,
+    );
   }
   await rm(path.join(home, which), { recursive: true, force: true });
 }
@@ -152,8 +175,14 @@ export async function deleteBackupFile(backupsDir: string, target: string): Prom
 // live directly in the staging directory as `<photoId>.partial`, which no RAW is
 // ever named, so both checks together cannot name an original.
 export async function deleteStagedBlob(stagingDir: string, target: string): Promise<void> {
-  if (path.dirname(path.resolve(target)) !== path.resolve(stagingDir) || !target.endsWith('.partial')) {
-    throw new AppError('IO_ERROR', `refusing to delete ${target}: not a staged blob in ${stagingDir}`);
+  if (
+    path.dirname(path.resolve(target)) !== path.resolve(stagingDir) ||
+    !target.endsWith('.partial')
+  ) {
+    throw new AppError(
+      'IO_ERROR',
+      `refusing to delete ${target}: not a staged blob in ${stagingDir}`,
+    );
   }
   await rm(target, { force: true });
   await deleteEmptyStagingDirectory(stagingDir);
@@ -187,7 +216,10 @@ export async function deleteEvictedOriginal(
     throw new AppError('IO_ERROR', `refusing to evict ${target}: outside the library root`);
   }
   if (recordedHash == null || !confirmation.held || confirmation.content_hash !== recordedHash) {
-    throw new AppError('CONFLICT', `refusing to evict ${target}: no live confirmation of another verified copy`);
+    throw new AppError(
+      'CONFLICT',
+      `refusing to evict ${target}: no live confirmation of another verified copy`,
+    );
   }
   await unlink(target);
 }
@@ -220,15 +252,24 @@ export async function deleteBackedUpOriginal(
     throw new AppError('IO_ERROR', `refusing to give up ${target}: outside the library root`);
   }
   if (!existsSync(backupCopy)) {
-    throw new BackupError('backup_missing', `The backup copy of ${path.basename(target)} is missing. Run the backup again before removing its local copy.`);
+    throw new BackupError(
+      'backup_missing',
+      `The backup copy of ${path.basename(target)} is missing. Run the backup again before removing its local copy.`,
+    );
   }
   const onBackup = await contentHash(backupCopy);
   if (onBackup !== recordedHash) {
-    throw new BackupError('backup_changed', `The backup copy of ${path.basename(target)} has changed. Keep the local copy and check the backup file.`);
+    throw new BackupError(
+      'backup_changed',
+      `The backup copy of ${path.basename(target)} has changed. Keep the local copy and check the backup file.`,
+    );
   }
   const here = await contentHash(target);
   if (here !== recordedHash) {
-    throw new BackupError('local_changed', `The local copy of ${path.basename(target)} has changed. Check the local file before removing it.`);
+    throw new BackupError(
+      'local_changed',
+      `The local copy of ${path.basename(target)} has changed. Check the local file before removing it.`,
+    );
   }
   await unlink(target);
 }

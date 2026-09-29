@@ -4,7 +4,17 @@
 // duplicate on every scan (§9.1.1).
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync, utimesSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -23,7 +33,13 @@ import { ShootsService } from '../../src/services/shoots/shoots_service';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 import { extractMetadata } from '../../src/services/processing/analysis/metadata';
-import { photoMetadata, photoPaths, photoProcessing, photoScan, photoState } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+  photoState,
+} from './helpers/photo_repositories';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const LIB = 'lib000c8';
@@ -59,10 +75,13 @@ const only = (): Row => {
   return all[0]!;
 };
 const shootOf = (id: string): string | null =>
-  (db.query('SELECT shoot_id FROM photos WHERE id = ?').get(id) as { shoot_id: string | null }).shoot_id;
+  (db.query('SELECT shoot_id FROM photos WHERE id = ?').get(id) as { shoot_id: string | null })
+    .shoot_id;
 
 function makeLibrary(over: { read_only?: boolean; bin_name?: string | null } = {}): void {
-  db.query('INSERT INTO libraries (id, root_path, name, ordering, bin_name, read_only) VALUES (?, ?, ?, ?, ?, ?)').run(
+  db.query(
+    'INSERT INTO libraries (id, root_path, name, ordering, bin_name, read_only) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(
     LIB,
     root,
     'lib',
@@ -117,7 +136,11 @@ test('a photograph binned in place is not re-imported as a duplicate', async () 
   await scan.scanLibrary(LIB);
 
   await service.delete([only().id]);
-  expect(only()).toMatchObject({ file_path: 'Trip/a.arw', deleted_from_path: 'Trip/a.arw', is_deleted: 1 });
+  expect(only()).toMatchObject({
+    file_path: 'Trip/a.arw',
+    deleted_from_path: 'Trip/a.arw',
+    is_deleted: 1,
+  });
 
   await scan.scanLibrary(LIB);
   await scan.scanLibrary(LIB);
@@ -161,7 +184,12 @@ test('a file moved into the bin by hand becomes the binned row, not a second one
   renameSync(abs('Trip/a.arw'), abs('Bin/Trip/a.arw'));
   await scan.scanLibrary(LIB);
 
-  expect(only()).toMatchObject({ id, file_path: 'Bin/Trip/a.arw', deleted_from_path: 'Trip/a.arw', is_deleted: 1 });
+  expect(only()).toMatchObject({
+    id,
+    file_path: 'Bin/Trip/a.arw',
+    deleted_from_path: 'Trip/a.arw',
+    is_deleted: 1,
+  });
   expect(shootOf(id)).toBe(shoot);
 });
 
@@ -183,7 +211,12 @@ test('a file copied into the bin with its own mtime is still one row, not two', 
 
   await scan.scanLibrary(LIB);
 
-  expect(only()).toMatchObject({ id, file_path: 'Bin/Trip/a.arw', deleted_from_path: 'Trip/a.arw', is_deleted: 1 });
+  expect(only()).toMatchObject({
+    id,
+    file_path: 'Bin/Trip/a.arw',
+    deleted_from_path: 'Trip/a.arw',
+    is_deleted: 1,
+  });
 });
 
 test('a file taken back out of the bin by hand goes live again, in the shoot it landed in', async () => {
@@ -203,16 +236,25 @@ test('a file taken back out of the bin by hand goes live again, in the shoot it 
   renameSync(abs('Bin/a.arw'), abs('Keepers/a.arw'));
   await scan.scanLibrary(LIB);
 
-  expect(rows().find((r) => r.id === id)).toMatchObject({ file_path: 'Keepers/a.arw', is_deleted: 0, is_missing: 0 });
+  expect(rows().find((r) => r.id === id)).toMatchObject({
+    file_path: 'Keepers/a.arw',
+    is_deleted: 0,
+    is_missing: 0,
+  });
   expect(shootOf(id)).toBe(shootOf(rows().find((r) => r.file_path === 'Keepers/kept.arw')!.id));
   // The renditions it never had while it was binned are owed again: both of the rows the insert
   // trigger gives a photograph, the grid tile and its library's `full`.
   const owed = db
     .query(`SELECT variant FROM renditions WHERE photo_id = ? AND needs_build = 1 ORDER BY variant`)
     .all(id) as { variant: string }[];
-  const hdr = (db.query('SELECT rendition_hdr FROM libraries WHERE id = ?').get(LIB) as { rendition_hdr: number })
-    .rendition_hdr;
-  expect(owed.map((row) => row.variant).sort()).toEqual(['grid', renditionVariant('full', hdr === 1)].sort());
+  const hdr = (
+    db.query('SELECT rendition_hdr FROM libraries WHERE id = ?').get(LIB) as {
+      rendition_hdr: number;
+    }
+  ).rendition_hdr;
+  expect(owed.map((row) => row.variant).sort()).toEqual(
+    ['grid', renditionVariant('full', hdr === 1)].sort(),
+  );
 });
 
 // Undetected this is the worst outcome in the design: the live walk takes the
@@ -229,7 +271,11 @@ test('a hand-renamed bin folder is followed, not read as the whole bin being res
   const status = await scan.scanLibrary(LIB);
 
   expect(libraries.getById(LIB)!.bin_name).toBe('Rubbish');
-  expect(only()).toMatchObject({ file_path: 'Rubbish/Trip/a.arw', deleted_from_path: 'Trip/a.arw', is_deleted: 1 });
+  expect(only()).toMatchObject({
+    file_path: 'Rubbish/Trip/a.arw',
+    deleted_from_path: 'Trip/a.arw',
+    is_deleted: 1,
+  });
   // A folder rename, not a photograph moving.
   expect(status.photos_moved).toBe(0);
   expect(status.photos_added).toBe(0);
@@ -258,14 +304,21 @@ test('a folder carrying the bin identity but not holding its files is not follow
   // the freed inode to a real shoot folder.
   rmSync(abs('Bin'), { recursive: true });
   const innocent = statSync(abs('Keepers'));
-  libraries.setBinIdentity(LIB, { dev: innocent.dev, ino: innocent.ino, birthtime: innocent.birthtimeMs });
+  libraries.setBinIdentity(LIB, {
+    dev: innocent.dev,
+    ino: innocent.ino,
+    birthtime: innocent.birthtimeMs,
+  });
 
   await scan.scanLibrary(LIB);
 
   expect(libraries.getById(LIB)!.bin_name).toBe('Bin');
   // The shoot is still a shoot: its photograph is live, present, and its file was
   // not adopted as a binned one.
-  expect(rows().find((r) => r.file_path === 'Keepers/kept.arw')).toMatchObject({ is_deleted: 0, is_missing: 0 });
+  expect(rows().find((r) => r.file_path === 'Keepers/kept.arw')).toMatchObject({
+    is_deleted: 0,
+    is_missing: 0,
+  });
   expect(rows()).toHaveLength(2);
 });
 
@@ -329,7 +382,11 @@ test('a folder move the inode cannot follow does not restore an in-place binned 
 
   await scan.scanLibrary(LIB);
 
-  expect(only()).toMatchObject({ file_path: 'Trip 2019/a.arw', deleted_from_path: 'Trip 2019/a.arw', is_deleted: 1 });
+  expect(only()).toMatchObject({
+    file_path: 'Trip 2019/a.arw',
+    deleted_from_path: 'Trip 2019/a.arw',
+    is_deleted: 1,
+  });
 });
 
 // A frame deleted out of a folder that was renamed in the same window: the
@@ -362,13 +419,18 @@ test('an unclaimed file under the bin is imported as already-binned', async () =
   await scan.scanLibrary(LIB);
 
   const binned = rows().find((r) => r.is_deleted === 1);
-  expect(binned).toMatchObject({ file_path: 'Bin/Trip/old.arw', deleted_from_path: 'Trip/old.arw' });
+  expect(binned).toMatchObject({
+    file_path: 'Bin/Trip/old.arw',
+    deleted_from_path: 'Trip/old.arw',
+  });
   // No renditions queued: `PENDING_PROCESSING` excludes binned rows anyway, and
   // building them for something already thrown away is work nobody asked for.
   // Asked of the queue rather than of the rows: every photograph is given its rendition rows by the
   // insert trigger, binned or not, and what keeps the work from happening is that the queue passes
   // this one over.
-  expect(photos.listPendingProcessing(LIB).map((pending) => pending.photo_id)).not.toContain(binned!.id);
+  expect(photos.listPendingProcessing(LIB).map((pending) => pending.photo_id)).not.toContain(
+    binned!.id,
+  );
 });
 
 /**
@@ -417,7 +479,11 @@ test('a hand-renamed shoot folder keeps its in-place binned rows reachable', asy
   await scan.scanLibrary(LIB);
 
   // One row, not a live duplicate plus an orphan pointing at nothing.
-  expect(only()).toMatchObject({ file_path: 'Trip 2019/a.arw', deleted_from_path: 'Trip 2019/a.arw', is_deleted: 1 });
+  expect(only()).toMatchObject({
+    file_path: 'Trip 2019/a.arw',
+    deleted_from_path: 'Trip 2019/a.arw',
+    is_deleted: 1,
+  });
 });
 
 // The run that finds the bin gone has no evidence about the files that were in
@@ -485,8 +551,14 @@ test('a followed bin rename that also loses a file does both, not just the renam
   await scan.scanLibrary(LIB);
 
   expect(libraries.getById(LIB)!.bin_name).toBe('Rubbish');
-  expect(rows().find((r) => r.id === kept)).toMatchObject({ file_path: 'Rubbish/a.arw', is_missing: 0 });
-  expect(rows().find((r) => r.id === lost)).toMatchObject({ file_path: 'Rubbish/b.arw', is_missing: 1 });
+  expect(rows().find((r) => r.id === kept)).toMatchObject({
+    file_path: 'Rubbish/a.arw',
+    is_missing: 0,
+  });
+  expect(rows().find((r) => r.id === lost)).toMatchObject({
+    file_path: 'Rubbish/b.arw',
+    is_missing: 1,
+  });
 });
 
 // A Finder rename of a root-level folder *is* delivered by the watcher, so the

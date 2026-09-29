@@ -32,7 +32,11 @@ export const AS_METERED = {
  * rendition of the picture as the camera metered it is a worse rendition than the reader
  * asked for and a far better outcome than a photo that never builds one.
  */
-export function developed(edits: string | null, libraryDenoiser: Denoiser, previewing?: PrepareDevelop): FromDocument {
+export function developed(
+  edits: string | null,
+  libraryDenoiser: Denoiser,
+  previewing?: PrepareDevelop,
+): FromDocument {
   const metered = { ...AS_METERED, denoiser: libraryDenoiser };
   if (edits == null && previewing == null) return metered;
   try {

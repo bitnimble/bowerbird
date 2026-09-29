@@ -44,7 +44,8 @@ export default {
     'no-uuid': {
       create(context: Context) {
         const imported = (node: Source): void => {
-          if (isUuidPackage(node.source.value)) context.report({ node, message: `this ${USE_NEW_ID}` });
+          if (isUuidPackage(node.source.value))
+            context.report({ node, message: `this ${USE_NEW_ID}` });
         };
         return {
           ImportDeclaration(node: ImportDeclaration): void {
@@ -52,17 +53,20 @@ export default {
             if (!isCrypto(node.source.value)) return;
             for (const specifier of node.specifiers) {
               const name = specifier.imported?.name ?? specifier.imported?.value;
-              if (name === 'randomUUID') context.report({ node: specifier, message: `randomUUID ${USE_NEW_ID}` });
+              if (name === 'randomUUID')
+                context.report({ node: specifier, message: `randomUUID ${USE_NEW_ID}` });
             }
           },
           ImportExpression: imported,
           CallExpression(node: Call): void {
             if (node.callee.type !== 'Identifier' || node.callee.name !== 'require') return;
-            if (isUuidPackage(node.arguments[0]?.value)) context.report({ node, message: `this ${USE_NEW_ID}` });
+            if (isUuidPackage(node.arguments[0]?.value))
+              context.report({ node, message: `this ${USE_NEW_ID}` });
           },
           MemberExpression(node: Member): void {
             const name = node.computed ? node.property.value : node.property.name;
-            if (name === 'randomUUID') context.report({ node, message: `randomUUID ${USE_NEW_ID}` });
+            if (name === 'randomUUID')
+              context.report({ node, message: `randomUUID ${USE_NEW_ID}` });
           },
         };
       },

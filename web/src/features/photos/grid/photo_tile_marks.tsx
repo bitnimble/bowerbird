@@ -23,15 +23,28 @@ const styles = stylex.create({
 // Rating and verdict are set straight from the tile: a cull is mostly these two
 // decisions, and making them cost a round trip through the detail view is what
 // turns a ten-minute pass into an hour.
-export const PhotoTileMarks = observer(function PhotoTileMarks({ photo }: { photo: PhotoSummary }): JSX.Element {
+export const PhotoTileMarks = observer(function PhotoTileMarks({
+  photo,
+}: {
+  photo: PhotoSummary;
+}): JSX.Element {
   const listing = useListingStore();
   const marks = useMarksStore();
   const { photos } = usePresenters();
   return (
     <span {...stylex.props(styles.marks, listing.mode === 'list' && styles.list)}>
-      {marks.showTriage && <Verdict triage={photo.triage} onSet={(triage) => void photos.setTriage(photo.id, triage)} />}
+      {marks.showTriage && (
+        <Verdict
+          triage={photo.triage}
+          onSet={(triage) => void photos.setTriage(photo.id, triage)}
+        />
+      )}
       {marks.showRating && (
-        <Rating rating={photo.rating} onSet={(rating) => void photos.setRating(photo.id, rating)} small />
+        <Rating
+          rating={photo.rating}
+          onSet={(rating) => void photos.setRating(photo.id, rating)}
+          small
+        />
       )}
     </span>
   );

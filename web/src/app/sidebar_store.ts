@@ -47,7 +47,9 @@ export class SidebarStore {
   }
 
   @computed get shootTrees(): Map<string, ShootNode[]> {
-    return new Map([...this.shootsByLibrary].map(([libraryId, shoots]) => [libraryId, nest(shoots)]));
+    return new Map(
+      [...this.shootsByLibrary].map(([libraryId, shoots]) => [libraryId, nest(shoots)]),
+    );
   }
 }
 

@@ -234,7 +234,10 @@ export class BackupService {
     const names = await readdir(dir).catch(() => [] as string[]);
     for (const name of names.filter((n) => n.startsWith(`.${base}-`) && n.endsWith('.part'))) {
       const file = path.join(dir, name);
-      const age = await stat(file).then((s) => Date.now() - s.mtimeMs, () => 0);
+      const age = await stat(file).then(
+        (s) => Date.now() - s.mtimeMs,
+        () => 0,
+      );
       if (age < ABANDONED_AFTER_MS) continue;
       await deleteBackupFile(dir, file).catch(() => {});
     }
@@ -243,7 +246,8 @@ export class BackupService {
   private write(outPath: string): Promise<number> {
     return new Promise((resolve, reject) => {
       const worker = new Worker(
-        this.workerUrl ?? workerEntry('backup_worker', new URL('./backup_worker.ts', import.meta.url)),
+        this.workerUrl ??
+          workerEntry('backup_worker', new URL('./backup_worker.ts', import.meta.url)),
       );
       const teardownMs = Math.min(TEARDOWN_MS, this.deadlineMs);
       let state: WorkerState = { kind: 'working' };
@@ -294,7 +298,9 @@ export class BackupService {
         const closed = state;
         if (closed.kind === 'reported') {
           settle(() =>
-            'error' in closed.outcome ? reject(new Error(closed.outcome.error)) : resolve(closed.outcome.bytes),
+            'error' in closed.outcome
+              ? reject(new Error(closed.outcome.error))
+              : resolve(closed.outcome.bytes),
           );
         } else if (closed.kind === 'stopping') {
           settle(() => reject(closed.error));
@@ -330,13 +336,19 @@ export class BackupService {
     const oldestFirst = others
       .map((file) => ({ file, age: age(file, now) }))
       .sort((a, b) => (a.age === b.age ? 0 : b.age - a.age));
-    const stale = oldestFirst.slice(0, Math.min(excess, oldestFirst.length)).map((entry) => entry.file);
+    const stale = oldestFirst
+      .slice(0, Math.min(excess, oldestFirst.length))
+      .map((entry) => entry.file);
 
-    const undatable = oldestFirst.slice(0, stale.length).filter((entry) => entry.age === Number.POSITIVE_INFINITY);
+    const undatable = oldestFirst
+      .slice(0, stale.length)
+      .filter((entry) => entry.age === Number.POSITIVE_INFINITY);
     if (undatable.length > 0) {
       // Otherwise the one case where rotation drops the *newest* work - a clock that
       // ran forward and was corrected - is completely invisible.
-      log.warn('dropping snapshots whose own date cannot be believed', { files: undatable.map((e) => path.basename(e.file)) });
+      log.warn('dropping snapshots whose own date cannot be believed', {
+        files: undatable.map((e) => path.basename(e.file)),
+      });
     }
 
     for (const file of stale) await deleteBackupFile(dir, file);

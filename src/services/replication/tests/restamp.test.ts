@@ -28,7 +28,10 @@ describe('a restored catalogue', () => {
     // The week that is being rolled back: work landed everywhere, and the laptop
     // still holds it after the server is restored to before it.
     server.advance();
-    new PhotoStateRepository(server.db, new StackMembership(server.db)).update('p1', { rating: 1, notes: 'a bulk edit that went wrong' });
+    new PhotoStateRepository(server.db, new StackMembership(server.db)).update('p1', {
+      rating: 1,
+      notes: 'a bulk edit that went wrong',
+    });
     replicate(server, laptop);
     const floor = newestStamp(server.db);
 
@@ -36,7 +39,9 @@ describe('a restored catalogue', () => {
     // the rows are the backup's, and their stamps are the backup's too.
     const restored = makePeer('restored');
     seed(restored);
-    new PhotoStateRepository(restored.db, new StackMembership(restored.db)).update('p1', { rating: 5 });
+    new PhotoStateRepository(restored.db, new StackMembership(restored.db)).update('p1', {
+      rating: 5,
+    });
 
     expect(restampRestored(restored.db, floor)).toBeGreaterThan(0);
     replicate(restored, laptop);
@@ -61,10 +66,14 @@ describe('a restored catalogue', () => {
 
     const restored = makePeer('restored');
     seed(restored);
-    new PhotoStateRepository(restored.db, new StackMembership(restored.db)).update('p1', { rating: 5 });
+    new PhotoStateRepository(restored.db, new StackMembership(restored.db)).update('p1', {
+      rating: 5,
+    });
     replicate(restored, laptop);
 
-    expect(restored.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({ rating: 1 });
+    expect(restored.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({
+      rating: 1,
+    });
   });
 
   it('does not throw away what the peers have imported since the backup', () => {

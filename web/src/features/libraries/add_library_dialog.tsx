@@ -95,7 +95,10 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const root = path;
   const bin = binName.trim();
   const listing = browser.store.listing;
-  const binExists = bin !== '' && listing?.path === root && listing.directories.some((directory) => directory.name === bin);
+  const binExists =
+    bin !== '' &&
+    listing?.path === root &&
+    listing.directories.some((directory) => directory.name === bin);
   // A folder the server cannot write in can only be added read-only, so the box
   // is ticked and locked for it rather than letting the create fail.
   const unwritable = listing?.path === root && listing.writable === false;
@@ -168,7 +171,12 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
               <Text variant="label" as="span">
                 {AddLibraryStrings.sortPhotosBy()}
               </Text>
-              <Select label={AddLibraryStrings.sortPhotosBy()} options={ORDERINGS} value={ordering} onChange={setOrdering} />
+              <Select
+                label={AddLibraryStrings.sortPhotosBy()}
+                options={ORDERINGS}
+                value={ordering}
+                onChange={setOrdering}
+              />
             </Field>
 
             {/* Asked here rather than left to Settings because every one of them
@@ -182,7 +190,9 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
                   {...stylex.props(focusRing.ring)}
                   type="checkbox"
                   checked={renditionSource === 'render'}
-                  onChange={(e) => setRenditionSource(e.currentTarget.checked ? 'render' : 'embedded')}
+                  onChange={(e) =>
+                    setRenditionSource(e.currentTarget.checked ? 'render' : 'embedded')
+                  }
                 />
                 {SettingsStrings.preRenderImported()}
               </CheckLabel>
@@ -251,9 +261,16 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
                 <Text variant="label" as="span">
                   {SettingsStrings.binFolderName()}
                 </Text>
-                <TextField grow label={SettingsStrings.binFolderName()} value={binName} onChange={setBinName} />
+                <TextField
+                  grow
+                  label={SettingsStrings.binFolderName()}
+                  value={binName}
+                  onChange={setBinName}
+                />
                 <Text variant="mono" as="p" tone={binExists ? 'warning' : undefined}>
-                  {binExists ? AddLibraryStrings.binExistsWarning(root, bin) : AddLibraryStrings.binNameHint()}
+                  {binExists
+                    ? AddLibraryStrings.binExistsWarning(root, bin)
+                    : AddLibraryStrings.binNameHint()}
                 </Text>
               </Field>
             )}
@@ -268,7 +285,9 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
             variant="primary"
             // The bin name is not part of the answer for a read-only library, so
             // it must not be part of the guard either - Add would never enable.
-            disabled={root.trim() === '' || name.trim() === '' || (!readOnlyLibrary && bin === '') || saving}
+            disabled={
+              root.trim() === '' || name.trim() === '' || (!readOnlyLibrary && bin === '') || saving
+            }
             onClick={() => void submit()}
           >
             {AddLibraryStrings.title()}

@@ -240,7 +240,10 @@ export function arrangement(aA: number, aB: number, w: number, h: number): Place
   const rootB = Math.sqrt(aB);
 
   const row = Math.min(Math.max(0, w - SPLIT_GAP) / (rootA + rootB), h * Math.min(rootA, rootB));
-  const column = Math.min(Math.max(0, h - SPLIT_GAP) / (1 / rootA + 1 / rootB), w / Math.max(rootA, rootB));
+  const column = Math.min(
+    Math.max(0, h - SPLIT_GAP) / (1 / rootA + 1 / rootB),
+    w / Math.max(rootA, rootB),
+  );
 
   // A tie goes to the row - two squares in a square box produce one exactly, and
   // side by side is the better comparison gesture.

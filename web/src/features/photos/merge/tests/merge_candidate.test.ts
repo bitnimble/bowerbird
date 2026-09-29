@@ -59,7 +59,10 @@ test('more than twelve refuses without needing every row loaded', () => {
 });
 
 test('two libraries refuses', () => {
-  const { marks } = storesWith([photo('a', { library_id: 'lib1' }), photo('b', { library_id: 'lib2' })]);
+  const { marks } = storesWith([
+    photo('a', { library_id: 'lib1' }),
+    photo('b', { library_id: 'lib2' }),
+  ]);
   expect(marks.mergeCandidate).toEqual({ kind: 'mixedLibraries' });
 });
 
@@ -94,7 +97,11 @@ test('one stack tile is its frames, and enough of them to merge', () => {
   runInAction(() => stacks.stackMembers.set('stack-1', members));
   const candidate = marks.mergeCandidate;
   expect(candidate.kind).toBe('ready');
-  expect(candidate.kind === 'ready' && candidate.frames.map((p) => p.id)).toEqual(['m0', 'm1', 'm2']);
+  expect(candidate.kind === 'ready' && candidate.frames.map((p) => p.id)).toEqual([
+    'm0',
+    'm1',
+    'm2',
+  ]);
 });
 
 // The sample rule, through a stack: what a tile stands for is not known until the members are, and

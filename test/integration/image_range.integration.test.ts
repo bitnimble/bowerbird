@@ -55,7 +55,12 @@ beforeAll(() => {
     unavailable_photo_count: 0,
     rendered_photo_count: 0,
   };
-  const basic: BasicPhoto = { id: 'p1', library_id: LIB, shoot_id: null, recipe: fileRecipe('a.arw') };
+  const basic: BasicPhoto = {
+    id: 'p1',
+    library_id: LIB,
+    shoot_id: null,
+    recipe: fileRecipe('a.arw'),
+  };
   // `locate`, not `get`: serving bytes wants three columns, not the detail payload
   // and a stat per rendition (§8.2).
   const photos = {
@@ -99,7 +104,9 @@ test('a full rendition response carries Content-Length and advertises range supp
 });
 
 test('a ranged request on the original returns 206 with just that slice', async () => {
-  const res = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: 'bytes=4-7' } });
+  const res = await fetch(`${origin}/image/p1/download/original`, {
+    headers: { Range: 'bytes=4-7' },
+  });
   expect(res.status).toBe(206);
   expect(res.headers.get('content-range')).toBe(`bytes 4-7/${BODY.length}`);
   expect(res.headers.get('content-length')).toBe('4');
@@ -107,26 +114,36 @@ test('a ranged request on the original returns 206 with just that slice', async 
 });
 
 test('an open-ended range serves through to the end of the file', async () => {
-  const res = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: 'bytes=12-' } });
+  const res = await fetch(`${origin}/image/p1/download/original`, {
+    headers: { Range: 'bytes=12-' },
+  });
   expect(res.status).toBe(206);
   expect(await res.text()).toBe('CDEF');
 });
 
 test('an unsatisfiable range is rejected rather than served as a full body', async () => {
-  const res = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: 'bytes=99-200' } });
+  const res = await fetch(`${origin}/image/p1/download/original`, {
+    headers: { Range: 'bytes=99-200' },
+  });
   expect(res.status).toBe(416);
   expect(res.headers.get('content-range')).toBe(`bytes */${BODY.length}`);
   expect(res.headers.get('content-length')).toBe('0');
   expect(await res.text()).toBe('');
 });
 
-test.each(['bytes=4-7', 'bytes=12-', 'bytes=99-200'])('a HEAD original ignores range %s and describes the whole file', async (range) => {
-  const response = await fetch(`${origin}/image/p1/download/original`, { method: 'HEAD', headers: { Range: range } });
-  expect(response.status).toBe(200);
-  expect(response.headers.get('content-range')).toBeNull();
-  expect(response.headers.get('content-length')).toBe(String(BODY.length));
-  expect(await response.text()).toBe('');
-});
+test.each(['bytes=4-7', 'bytes=12-', 'bytes=99-200'])(
+  'a HEAD original ignores range %s and describes the whole file',
+  async (range) => {
+    const response = await fetch(`${origin}/image/p1/download/original`, {
+      method: 'HEAD',
+      headers: { Range: range },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-range')).toBeNull();
+    expect(response.headers.get('content-length')).toBe(String(BODY.length));
+    expect(await response.text()).toBe('');
+  },
+);
 
 test.each([
   ['bytes=-4', 'CDEF', 'bytes 12-15/16'],
@@ -134,17 +151,24 @@ test.each([
   ['bytes=4-99', '456789ABCDEF', 'bytes 4-15/16'],
   ['bytes = 4-7', '4567', 'bytes 4-7/16'],
 ])('an original download preserves range %s', async (range, expected, contentRange) => {
-  const response = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: range } });
+  const response = await fetch(`${origin}/image/p1/download/original`, {
+    headers: { Range: range },
+  });
   expect(response.status).toBe(206);
   expect(response.headers.get('content-range')).toBe(contentRange);
   expect(response.headers.get('content-length')).toBe(String(expected.length));
   expect(await response.text()).toBe(expected);
 });
 
-test.each(['bytes=5-3', 'bytes=foo', 'items=1-2', 'bytes=0-1,3-4'])('an original download ignores invalid or multiple range %s', async (range) => {
-  const response = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: range } });
-  expect(response.status).toBe(200);
-  expect(response.headers.get('content-range')).toBeNull();
-  expect(response.headers.get('content-length')).toBe(String(BODY.length));
-  expect(await response.text()).toBe(BODY);
-});
+test.each(['bytes=5-3', 'bytes=foo', 'items=1-2', 'bytes=0-1,3-4'])(
+  'an original download ignores invalid or multiple range %s',
+  async (range) => {
+    const response = await fetch(`${origin}/image/p1/download/original`, {
+      headers: { Range: range },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-range')).toBeNull();
+    expect(response.headers.get('content-length')).toBe(String(BODY.length));
+    expect(await response.text()).toBe(BODY);
+  },
+);

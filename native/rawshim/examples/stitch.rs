@@ -23,7 +23,10 @@ fn main() {
         long = paths.remove(0).parse().expect("a number");
     }
     let out = paths.pop().expect("out jpg");
-    assert!(paths.len() >= 2, "stitch [--long N] <first.jpg> <second.jpg> [more.jpg...] <out.jpg>");
+    assert!(
+        paths.len() >= 2,
+        "stitch [--long N] <first.jpg> <second.jpg> [more.jpg...] <out.jpg>"
+    );
 
     let read = |path: &String| {
         let bytes = std::fs::read(path).unwrap_or_else(|why| panic!("{path}: {why}"));
@@ -49,7 +52,11 @@ fn main() {
         }
     }
 
-    let joined = rawshim::rgb::Rgb { data, width, height };
+    let joined = rawshim::rgb::Rgb {
+        data,
+        width,
+        height,
+    };
     let encoded = rawshim::jpeg::encode(joined.as_ref(), 95).expect("the pair encodes");
     std::fs::write(&out, encoded).unwrap_or_else(|why| panic!("{out}: {why}"));
     println!("wrote {out} ({width}x{height})");

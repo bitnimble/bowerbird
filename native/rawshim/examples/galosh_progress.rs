@@ -62,11 +62,15 @@ fn main() {
     for _ in 0..3 {
         let scratch = upload(&mosaic);
         let began = std::time::Instant::now();
-        pollster::block_on(rawshim::galosh::denoise_with(gpu, kernels, &scratch, &cfa, amounts, fit));
+        pollster::block_on(rawshim::galosh::denoise_with(
+            gpu, kernels, &scratch, &cfa, amounts, fit,
+        ));
         one = one.min(began.elapsed());
     }
     let whole = upload(&mosaic);
-    pollster::block_on(rawshim::galosh::denoise_with(gpu, kernels, &whole, &cfa, amounts, fit));
+    pollster::block_on(rawshim::galosh::denoise_with(
+        gpu, kernels, &whole, &cfa, amounts, fit,
+    ));
     let whole = read(&whole);
     // The median gap and not the largest: a run picks up occasional stalls that say more about
     // what else holds the GPU than about what a caller would see between two updates.
@@ -94,7 +98,10 @@ fn main() {
         (read(&out), taken, gaps.len(), gaps[gaps.len() / 2])
     };
     let apart = |a: &[f32], b: &[f32]| {
-        a.iter().zip(b).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max)
+        a.iter()
+            .zip(b)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max)
     };
     // Where the difference sits, which is what says whether tiling costs reach or phase: banded
     // along the seams is a halo too short, spread over the whole frame is not.

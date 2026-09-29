@@ -8,7 +8,12 @@ import type { ToastsPresenter } from '../../toasts/toasts_presenter';
 import type { DrawnLayer } from './merge_layers';
 import { MergePageStrings } from './merge_page.strings';
 import { MergePresenterStrings } from './merge_presenter.strings';
-import { clearMergeSession, loadMergeSession, saveMergeSession, type StoredMergeSession } from './merge_storage';
+import {
+  clearMergeSession,
+  loadMergeSession,
+  saveMergeSession,
+  type StoredMergeSession,
+} from './merge_storage';
 import { boundsOf, seedAround, type Point } from './merge_rect';
 import { seamsKey, takesOf, type MergeStore, type Solved } from './merge_store';
 import { decodeFrame, keepOnly, releaseHolder } from '../viewer/stage_bitmaps';
@@ -116,7 +121,12 @@ export class MergePresenter {
         if (job.carved == null) throw new Error(job.error ?? MergePresenterStrings.carveStopped());
         const unaligned = job.carved.analysed.unaligned;
         runInAction(() => (this.store.unaligned = unaligned));
-        await this.settleRecipe(job.carved.analysed.recipe, job.carved.layers, loadMergeSession(jobId), controller.signal);
+        await this.settleRecipe(
+          job.carved.analysed.recipe,
+          job.carved.layers,
+          loadMergeSession(jobId),
+          controller.signal,
+        );
         return;
       }
     } catch {
@@ -131,7 +141,9 @@ export class MergePresenter {
   private async nameFrames(frameIds: string[]): Promise<void> {
     const found = await Promise.all(frameIds.map((id) => photosApi.get(id).catch(() => null)));
     runInAction(() => {
-      this.store.frames = new Map(found.flatMap((photo) => (photo == null ? [] : [[photo.id, photo] as const])));
+      this.store.frames = new Map(
+        found.flatMap((photo) => (photo == null ? [] : [[photo.id, photo] as const])),
+      );
     });
   }
 
@@ -143,7 +155,10 @@ export class MergePresenter {
     let analysis: Awaited<ReturnType<typeof compositesApi.getAssembly>>;
     let frames: PhotoSummary[];
     try {
-      [analysis, frames] = await Promise.all([compositesApi.getAssembly(photoId), compositesApi.listFrames(photoId)]);
+      [analysis, frames] = await Promise.all([
+        compositesApi.getAssembly(photoId),
+        compositesApi.listFrames(photoId),
+      ]);
     } catch {
       if (controller.signal.aborted) return;
       runInAction(() => {
@@ -193,13 +208,17 @@ export class MergePresenter {
       // Balanced over the feather the recipe was committed with, which a restored session may not hold.
       const committed = recipe.feather ?? DEFAULT_FEATHER;
       this.store.solved = new Map(
-        seams == null ? [] : [[seamsKey(geometry, committed, seams.base, seams.pick), { seams, geometry }]],
+        seams == null
+          ? []
+          : [[seamsKey(geometry, committed, seams.base, seams.pick), { seams, geometry }]],
       );
       this.store.layerUrls = layerUrls;
       this.store.picks = picks ?? [...seeded.pick];
       this.store.base = picks == null ? recipe.base : (restore?.base ?? recipe.base);
       this.store.layers = new Map(
-        decoded.flatMap((result, index) => (result.status === 'fulfilled' ? [[index, result.value] as const] : [])),
+        decoded.flatMap((result, index) =>
+          result.status === 'fulfilled' ? [[index, result.value] as const] : [],
+        ),
       );
       const first = this.store.layers.get(0) ?? [...this.store.layers.values()][0];
       this.store.layerSize = first == null ? null : { width: first.width, height: first.height };
@@ -217,7 +236,10 @@ export class MergePresenter {
     return {
       picks: [...this.store.picks],
       base: this.store.base,
-      seeds: recipe == null ? [] : recipe.tiles.map((loop) => boundsOf(loop.map((v) => recipe.vertices[v]!))),
+      seeds:
+        recipe == null
+          ? []
+          : recipe.tiles.map((loop) => boundsOf(loop.map((v) => recipe.vertices[v]!))),
       takes: recipe == null ? [] : recipe.tiles.map((_, tile) => takesOf(recipe, tile)),
       feather: this.store.balancedFeather,
     };
@@ -225,7 +247,8 @@ export class MergePresenter {
 
   private persist(session: StoredMergeSession): void {
     if (this.store.readOnly) return;
-    if (!saveMergeSession(this.sessionKey, session)) this.toasts.show(MergePresenterStrings.couldNotSaveProgress());
+    if (!saveMergeSession(this.sessionKey, session))
+      this.toasts.show(MergePresenterStrings.couldNotSaveProgress());
   }
 
   @action.bound
@@ -414,7 +437,12 @@ export class MergePresenter {
     const asked = new Map<string, number[]>();
     const trivial: [string, Solved][] = [];
     keys.forEach((key, at) => {
-      if (this.store.solved.has(key) || this.store.unsolvable.has(key) || this.store.unanswered.has(key)) return;
+      if (
+        this.store.solved.has(key) ||
+        this.store.unsolvable.has(key) ||
+        this.store.unanswered.has(key)
+      )
+        return;
       const picks = wanted[at]!;
       if (!picks.every((source) => source === base)) {
         asked.set(key, picks);

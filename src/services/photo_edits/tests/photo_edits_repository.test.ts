@@ -27,7 +27,9 @@ beforeEach(() => {
   // against nothing.
   db.exec('PRAGMA foreign_keys = ON;');
   runMigrations(db);
-  db.query(`INSERT INTO libraries (id, root_path, name) VALUES ('lib', '/photos', 'Library')`).run();
+  db.query(
+    `INSERT INTO libraries (id, root_path, name) VALUES ('lib', '/photos', 'Library')`,
+  ).run();
   db.query(
     `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
        VALUES (?, 'lib', '{"kind":"file","path":"a.arw"}', 100, 100, '2026-01-01T00:00:00.000Z')`,
@@ -177,7 +179,11 @@ describe('PhotoEditsRepository.restore', () => {
 
     expect(restored.doc).toEqual(opened.doc);
     expect(restored.rev).toBe(branched.rev + 1);
-    expect(repo.checkpoint(PHOTO)).toEqual({ ...opened, rev: restored.rev, stamp: expect.any(String) });
+    expect(repo.checkpoint(PHOTO)).toEqual({
+      ...opened,
+      rev: restored.rev,
+      stamp: expect.any(String),
+    });
     expect(repo.redo(PHOTO, restored.rev).doc.contrast).toBe(40);
   });
 
@@ -231,7 +237,8 @@ describe('PhotoEditsRepository durability', () => {
   it('keeps fields a newer build wrote that this one has never heard of', () => {
     save({ exposure: 1.0 });
     const stored = JSON.parse(
-      (db.query('SELECT doc FROM photo_edits WHERE photo_id = ?').get(PHOTO) as { doc: string }).doc,
+      (db.query('SELECT doc FROM photo_edits WHERE photo_id = ?').get(PHOTO) as { doc: string })
+        .doc,
     );
     db.query('UPDATE photo_edits SET doc = ? WHERE photo_id = ?').run(
       JSON.stringify({ ...stored, version: 2, grainAmount: 40 }),

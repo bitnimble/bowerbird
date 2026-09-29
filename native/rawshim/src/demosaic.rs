@@ -115,7 +115,11 @@ impl Rcd {
                     module: &module,
                     entry_point: Some(name),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: crate::wgsl_overrides::for_entry("rcd.wgsl", name, &bayer.constants()),
+                        constants: crate::wgsl_overrides::for_entry(
+                            "rcd.wgsl",
+                            name,
+                            &bayer.constants(),
+                        ),
                         ..Default::default()
                     },
                     cache: None,
@@ -302,7 +306,12 @@ impl Placement {
             return None;
         }
         let first = x0 * 3 / 2;
-        Some(Grid { row: y0, word: first, across: (x1 + 1) * 3 / 2 - first, rows: y1 + 1 - y0 })
+        Some(Grid {
+            row: y0,
+            word: first,
+            across: (x1 + 1) * 3 / 2 - first,
+            rows: y1 + 1 - y0,
+        })
     }
 
     /// The workgroups this tile wants, in the shape [`Grid`] chose for it.
@@ -410,8 +419,9 @@ fn assemble_params(at: &Placement, colour: Colour) -> Assemble {
     let (frame_w, frame_h) = at.frame.raw();
     let grid = at.word_grid();
     let mut rows = [[0.0f32; 4]; 3];
-    for (row, (from, ceiling)) in
-        rows.iter_mut().zip(colour.matrix.iter().zip(colour.ceiling))
+    for (row, (from, ceiling)) in rows
+        .iter_mut()
+        .zip(colour.matrix.iter().zip(colour.ceiling))
     {
         *row = [from[0], from[1], from[2], ceiling];
     }
@@ -472,7 +482,18 @@ pub async fn demosaic_into(
     into: &crate::gpu::Buffer,
     shape_group: &wgpu::BindGroup,
 ) -> Option<()> {
-    demosaic_settled_into(gpu, rcd, mosaic, cfa, at, colour, into, shape_group, |_, _| ()).await
+    demosaic_settled_into(
+        gpu,
+        rcd,
+        mosaic,
+        cfa,
+        at,
+        colour,
+        into,
+        shape_group,
+        |_, _| (),
+    )
+    .await
 }
 
 /// [`demosaic_into`], with `settle` recorded between the demosaic and the colour pass: it is handed
@@ -489,7 +510,9 @@ pub async fn demosaic_settled_into(
     shape_group: &wgpu::BindGroup,
     settle: impl FnOnce(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer),
 ) -> Option<()> {
-    let Recorded { mut recording, rgb, .. } = record(gpu, rcd, mosaic, cfa, shape_group)?;
+    let Recorded {
+        mut recording, rgb, ..
+    } = record(gpu, rcd, mosaic, cfa, shape_group)?;
     settle(&mut recording, &rgb);
     recording.holding(into);
 
@@ -502,8 +525,14 @@ pub async fn demosaic_settled_into(
         label: Some("assemble"),
         layout: &rcd.assemble_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: assemble_params.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: rgb.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: assemble_params.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: rgb.as_entire_binding(),
+            },
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Buffer(at.binding(into)),
@@ -511,10 +540,12 @@ pub async fn demosaic_settled_into(
         ],
     });
     {
-        let mut pass = recording.encoder().begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("assemble"),
-            timestamp_writes: None,
-        });
+        let mut pass = recording
+            .encoder()
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("assemble"),
+                timestamp_writes: None,
+            });
         pass.set_pipeline(match cfa.is_bayer() {
             true => &rcd.assemble,
             false => &rcd.assemble_xtrans,
@@ -564,10 +595,16 @@ pub async fn reduce_into(
         label: Some("reduce"),
         layout: &rcd.assemble_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: params.as_entire_binding(),
+            },
             // This route reads the mosaic as its plane where the demosaiced one reads RCD's;
             // group 0 carries the same buffer again, as the photosites the fills ask about.
-            wgpu::BindGroupEntry { binding: 1, resource: mosaic.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: mosaic.buffer.as_entire_binding(),
+            },
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Buffer(at.binding(into)),
@@ -575,10 +612,12 @@ pub async fn reduce_into(
         ],
     });
     {
-        let mut pass = recording.encoder().begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("reduce"),
-            timestamp_writes: None,
-        });
+        let mut pass = recording
+            .encoder()
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("reduce"),
+                timestamp_writes: None,
+            });
         pass.set_pipeline(match at.reduce {
             3 => &rcd.assemble_thirded,
             _ => &rcd.assemble_halved,
@@ -618,7 +657,9 @@ pub async fn read_frame(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(frame, 0, &readback, 0, bytes);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(frame, 0, &readback, 0, bytes);
     recording.submit();
 
     let mut out = vec![0u16; pixels * 3];
@@ -649,8 +690,12 @@ pub async fn demosaic_plane<T>(
         false => crate::lslcd::MARGIN,
     };
     let (_shape, shape_group) = shape_group(gpu, rcd, cfa, mosaic, margin);
-    let Recorded { mut recording, rgb, width, height } =
-        record(gpu, rcd, mosaic, cfa, &shape_group)?;
+    let Recorded {
+        mut recording,
+        rgb,
+        width,
+        height,
+    } = record(gpu, rcd, mosaic, cfa, &shape_group)?;
     let plane_bytes = (width * height * std::mem::size_of::<f32>()) as u64;
     let readback = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("rcd plane readback"),
@@ -658,7 +703,9 @@ pub async fn demosaic_plane<T>(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    recording.encoder().copy_buffer_to_buffer(&rgb, 0, &readback, 0, plane_bytes * 3);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&rgb, 0, &readback, 0, plane_bytes * 3);
     recording.submit();
     crate::gpu::read_back(gpu, &readback, consume).await
 }
@@ -712,8 +759,14 @@ pub fn shape_group(
         label: Some("mosaic shape"),
         layout: &rcd.frame,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: shape.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: mosaic.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: shape.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: mosaic.buffer.as_entire_binding(),
+            },
         ],
     });
     (shape, group)
@@ -771,21 +824,44 @@ fn record_rcd(
         label: Some("rcd planes"),
         layout: &rcd.planes,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: lowpass.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: field_axis.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: field_diag.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: green.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: red.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: blue.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: rgb.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lowpass.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: field_axis.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: field_diag.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: green.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: red.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: blue.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: rgb.as_entire_binding(),
+            },
         ],
     });
 
     {
-        let mut pass = recording.encoder().begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("rcd"),
-            timestamp_writes: None,
-        });
+        let mut pass = recording
+            .encoder()
+            .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("rcd"),
+                timestamp_writes: None,
+            });
         pass.set_bind_group(0, shape_group, &[]);
         pass.set_bind_group(1, &plane_group, &[]);
         let groups_x = width.div_ceil(8) as u32;
@@ -799,7 +875,12 @@ fn record_rcd(
     }
 
     lap("record");
-    Some(Recorded { recording, rgb, width, height })
+    Some(Recorded {
+        recording,
+        rgb,
+        width,
+        height,
+    })
 }
 
 #[cfg(test)]
@@ -820,7 +901,11 @@ mod tests {
         let rest = &SLANG[start + opener.len()..];
         let literal = &rest[..rest.find(';').expect("the declaration ends")];
         let declared: u32 = literal.trim().parse().expect("PATCH is a number");
-        assert_eq!(declared, super::PATCH, "the shader and this host patch the dispatch differently");
+        assert_eq!(
+            declared,
+            super::PATCH,
+            "the shader and this host patch the dispatch differently"
+        );
     }
 
     /// The seam between what RCD writes and what the border fill writes.
@@ -837,8 +922,12 @@ mod tests {
     /// side, "comfortably more than the algorithm's own margin", which is exactly the band at issue.
     #[test]
     fn the_seam_reconstructs_as_well_as_the_interior() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
 
         let (w, h) = (96usize, 96usize);
         let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
@@ -900,8 +989,12 @@ mod tests {
     /// through the ratio where a low-pass sits at or below it.
     #[test]
     fn noise_about_black_demosaics_to_black() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
 
         let (w, h) = (256usize, 256usize);
         let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
@@ -958,8 +1051,12 @@ mod tests {
     /// count (the tail word a pair-per-invocation kernel leaves half-written).
     #[test]
     fn the_assemble_pass_colours_and_crops_where_it_is_told() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
 
         let (w, h) = (64usize, 48usize);
         let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
@@ -989,16 +1086,23 @@ mod tests {
         let frame = super::frame_buffer(gpu, out_w * out_h);
         // Ceilings nothing in the fixture reaches, so what is measured is the matrix and the crop
         // rather than the highlight reconstruction beside them.
-        let colour = super::Colour { matrix, ceiling: [1.0; 3] };
+        let colour = super::Colour {
+            matrix,
+            ceiling: [1.0; 3],
+        };
         let (_shape, group) = super::shape_group(gpu, rcd, &cfa, &uploaded, super::MARGIN);
         pollster::block_on(super::demosaic_into(
             gpu, rcd, &uploaded, &cfa, &at, colour, &frame, &group,
         ))
-            .expect("the demosaic runs");
+        .expect("the demosaic runs");
         let out = pollster::block_on(super::read_frame(gpu, &frame, out_w * out_h))
             .expect("the frame reads back");
 
-        assert_eq!(out.len(), crop.2 * crop.3 * 3, "the crop's own size comes back");
+        assert_eq!(
+            out.len(),
+            crop.2 * crop.3 * 3,
+            "the crop's own size comes back"
+        );
         let want: Vec<u16> = (0..3)
             .map(|channel| {
                 let value: f32 = (0..3).map(|c| matrix[channel][c] * level(c)).sum();
@@ -1022,7 +1126,10 @@ mod tests {
         }
         // And the channels are not one value three times, which every assertion above would pass
         // if the matrix had been read as zeroes and the frame come back black.
-        assert!(want[0] > want[1] && want[1] > want[2], "the fixture's channels are distinct");
+        assert!(
+            want[0] > want[1] && want[1] > want[2],
+            "the fixture's channels are distinct"
+        );
         assert!(want[2] > 0, "the fixture is not black");
     }
 
@@ -1045,8 +1152,12 @@ mod tests {
     /// camera 3x3 mixes the channels and a neutral would no longer be three equal numbers.
     #[test]
     fn a_pixel_blown_in_every_channel_comes_back_neutral() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
 
         // An R8's gains, scaled as `white_balance_gains` scales them. The identity matrix for the
         // reason above.
@@ -1063,7 +1174,10 @@ mod tests {
             spread <= 2,
             "a pixel on all three ceilings came back {at:?}, which is the illuminant's own ratios"
         );
-        assert!(at[0] > 60000, "the blown pixel is not neutral by being dark: {at:?}");
+        assert!(
+            at[0] > 60000,
+            "the blown pixel is not neutral by being dark: {at:?}"
+        );
 
         // Red and blue on their ceilings, green at a third of its own: a magenta light whose green
         // photosite never came close, which the clip must not walk to white.
@@ -1082,10 +1196,17 @@ mod tests {
     /// its own - which the uncapped estimate rendered deep red where the camera renders orange.
     #[test]
     fn a_deep_orange_light_is_not_raised_past_its_ceilings() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
         let ceiling = [1.0f32, 0.3042, 0.4513];
-        let colour = super::Colour { matrix: IDENTITY_F32, ceiling };
+        let colour = super::Colour {
+            matrix: IDENTITY_F32,
+            ceiling,
+        };
         let level = [ceiling[0], ceiling[1], ceiling[2] * 0.035];
 
         let at = flat_field(gpu, rcd, colour, level);
@@ -1115,11 +1236,18 @@ mod tests {
     /// blue, which is a tungsten lamp's rim on a wall.
     #[test]
     fn a_blown_neutral_is_not_left_at_greens_ceiling() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
         // The A7CR's gains, as `white_balance_gains` scales them.
         let ceiling = [0.6052f32, 0.358, 1.0];
-        let colour = super::Colour { matrix: IDENTITY_F32, ceiling };
+        let colour = super::Colour {
+            matrix: IDENTITY_F32,
+            ceiling,
+        };
         // A neutral at 0.68, which red and green have both run out under.
         let level = [ceiling[0], ceiling[1], 0.68];
 
@@ -1144,17 +1272,33 @@ mod tests {
     /// pixel than the one that scales its chroma toward its own luma until blue reaches the floor.
     #[test]
     fn a_colour_outside_rec2020_is_brought_in_without_turning() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
 
-        let matrix = [[0.899, 0.306, -0.205], [-0.05, 1.473, -0.423], [-0.001, -0.236, 1.237]];
-        let colour = super::Colour { matrix, ceiling: [1.0; 3] };
+        let matrix = [
+            [0.899, 0.306, -0.205],
+            [-0.05, 1.473, -0.423],
+            [-0.001, -0.236, 1.237],
+        ];
+        let colour = super::Colour {
+            matrix,
+            ceiling: [1.0; 3],
+        };
         let level = [0.6f32, 0.15, 0.01];
 
         let m: [f64; 3] = std::array::from_fn(|r| {
-            (0..3).map(|c| f64::from(matrix[r][c]) * f64::from(level[c])).sum()
+            (0..3)
+                .map(|c| f64::from(matrix[r][c]) * f64::from(level[c]))
+                .sum()
         });
-        assert!(m[2] < 0.0, "the case needs a matrix output below zero, got {m:?}");
+        assert!(
+            m[2] < 0.0,
+            "the case needs a matrix output below zero, got {m:?}"
+        );
         // The positive part's, as `in_gamut` takes it: the negative channel is what the rule is for
         // and green's weight is the largest of the three, so the triple's own luma subtracts the
         // out-of-gamut channel from the in-gamut ones. `prelude.slang` carries the measurement.
@@ -1175,9 +1319,16 @@ mod tests {
             );
         }
         let (got_luma, l) = (luma(got.map(f64::from)), luma(m));
-        assert!((got_luma - l * 65535.0).abs() <= 3.0, "luma moved: {got_luma} against {}", l * 65535.0);
+        assert!(
+            (got_luma - l * 65535.0).abs() <= 3.0,
+            "luma moved: {got_luma} against {}",
+            l * 65535.0
+        );
         // And it is not the per-channel clamp, which would have left red at the matrix's own answer.
-        assert!(f64::from(got[0]) < m[0] * 65535.0 - 10.0, "red was not scaled toward luma: {got:?}");
+        assert!(
+            f64::from(got[0]) < m[0] * 65535.0 - 10.0,
+            "red was not scaled toward luma: {got:?}"
+        );
     }
 
     /// The middle pixel of a flat field at `level`, one value per CFA colour, through the demosaic
@@ -1211,7 +1362,7 @@ mod tests {
         pollster::block_on(super::demosaic_into(
             gpu, rcd, &uploaded, &cfa, &at, colour, &frame, &group,
         ))
-            .expect("the demosaic runs");
+        .expect("the demosaic runs");
         let samples = pollster::block_on(super::read_frame(gpu, &frame, crop.2 * crop.3))
             .expect("it reads back");
         let middle = ((crop.3 / 2) * crop.2 + crop.2 / 2) * 3;
@@ -1231,8 +1382,12 @@ mod tests {
     /// way a square of flat blocks would.
     #[test]
     fn every_orientation_lands_where_the_host_permutation_did() {
-        let Some(gpu) = crate::gpu::device() else { return };
-        let Some(rcd) = super::device(gpu) else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
 
         // Not square, so a transposing turn has to change the frame's shape rather than only move
         // its pixels - which a square fixture cannot see.
@@ -1287,20 +1442,23 @@ mod tests {
             let turned = pollster::block_on(super::read_frame(gpu, &frame, out_w * out_h))
                 .expect("it reads back");
 
-            let (want, want_w, want_h) = crate::orientation::orient_for_test(
-                unturned.clone(),
-                crop.2,
-                crop.3,
-                orientation,
+            let (want, want_w, want_h) =
+                crate::orientation::orient_for_test(unturned.clone(), crop.2, crop.3, orientation);
+            assert_eq!(
+                (out_w, out_h),
+                (want_w, want_h),
+                "orientation {orientation} sizes"
             );
-            assert_eq!((out_w, out_h), (want_w, want_h), "orientation {orientation} sizes");
             let worst = turned
                 .iter()
                 .zip(&want)
                 .map(|(a, b)| a.abs_diff(*b))
                 .max()
                 .expect("samples");
-            assert_eq!(worst, 0, "orientation {orientation} differs by {worst} counts");
+            assert_eq!(
+                worst, 0,
+                "orientation {orientation} differs by {worst} counts"
+            );
         }
     }
 }

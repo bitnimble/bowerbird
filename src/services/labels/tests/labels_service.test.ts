@@ -32,7 +32,9 @@ function idOf(name: string): string {
 
 function log(): { entity: string; row_id: string; deleted: number }[] {
   return db
-    .query('SELECT entity, row_id, deleted FROM replication_log WHERE entity IN (?, ?) ORDER BY entity, row_id')
+    .query(
+      'SELECT entity, row_id, deleted FROM replication_log WHERE entity IN (?, ?) ORDER BY entity, row_id',
+    )
     .all('label', 'photo_label') as { entity: string; row_id: string; deleted: number }[];
 }
 
@@ -59,7 +61,9 @@ describe('LabelsService', () => {
 
   it('refuses a name the library already has, whatever its case', () => {
     service.create({ library_id: LIB, name: 'Keeper', colour: '#ff0000' });
-    expect(() => service.create({ library_id: LIB, name: 'keeper', colour: '#ff0000' })).toThrow(/already exists/);
+    expect(() => service.create({ library_id: LIB, name: 'keeper', colour: '#ff0000' })).toThrow(
+      /already exists/,
+    );
     expect(() =>
       service.save({
         library_id: LIB,
@@ -73,7 +77,8 @@ describe('LabelsService', () => {
   });
 
   it('saves the dialog in its order, keeping labels it never mentioned after them', () => {
-    for (const name of ['A', 'B', 'C', 'D']) service.create({ library_id: LIB, name, colour: '#111111' });
+    for (const name of ['A', 'B', 'C', 'D'])
+      service.create({ library_id: LIB, name, colour: '#111111' });
     service.save({
       library_id: LIB,
       labels: [
@@ -125,7 +130,9 @@ describe('LabelsService', () => {
     service.addPhotos(idOf('B'), ['photo002']);
     const listing = new PhotoListingRepository(db);
     const listed = (labels: string[]): string[] =>
-      listing.listByLibrary(LIB, 'taken_asc', 0, 100, { includeDeleted: false, labels }).photos.map((p) => p.id);
+      listing
+        .listByLibrary(LIB, 'taken_asc', 0, 100, { includeDeleted: false, labels })
+        .photos.map((p) => p.id);
     expect(listed([idOf('A')])).toEqual(['photo001', 'photo002']);
     expect(listed([idOf('A'), idOf('B')])).toEqual(['photo002']);
     expect(listing.getById('photo002')?.label_ids).toEqual([idOf('A'), idOf('B')]);

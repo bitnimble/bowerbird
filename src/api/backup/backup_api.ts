@@ -25,7 +25,9 @@ export class BackupApi {
   constructor(private readonly backups: Mirror) {
     const app = new Hono();
 
-    app.get(route(), (c) => c.json(respond(BackupStatusesSchema, { backups: this.backups.list() })));
+    app.get(route(), (c) =>
+      c.json(respond(BackupStatusesSchema, { backups: this.backups.list() })),
+    );
 
     app.get(route(PathSegment.param('libraryId')), (c) =>
       c.json(respond(BackupStatusSchema, this.status(c.req.param('libraryId')))),
@@ -33,14 +35,22 @@ export class BackupApi {
 
     app.put(route(), async (c) => {
       const body = SetBackupRequestSchema.parse(await c.req.json());
-      return c.json(respond(BackupStatusSchema, await this.backups.setTarget(body.library_id, body.path, body.name)));
+      return c.json(
+        respond(
+          BackupStatusSchema,
+          await this.backups.setTarget(body.library_id, body.path, body.name),
+        ),
+      );
     });
 
     // Fetching every offloaded original back first is minutes, like a pass.
     app.delete(route(PathSegment.param('libraryId')), async (c) => {
       const { fetch_first } = RemoveBackupQuerySchema.parse(c.req.query());
       takeAsLongAsItTakes(c);
-      await this.backups.removeTarget(this.libraryId(c.req.param('libraryId')), fetch_first != null);
+      await this.backups.removeTarget(
+        this.libraryId(c.req.param('libraryId')),
+        fetch_first != null,
+      );
       return c.body(null, 204);
     });
 
@@ -63,7 +73,12 @@ export class BackupApi {
     // somebody has just pointed at an empty drive.
     app.post(route(PathSegment.param('libraryId'), PathSegment.run()), async (c) => {
       takeAsLongAsItTakes(c);
-      return c.json(respond(BackupRunResponseSchema, await this.backups.run(this.libraryId(c.req.param('libraryId')))));
+      return c.json(
+        respond(
+          BackupRunResponseSchema,
+          await this.backups.run(this.libraryId(c.req.param('libraryId'))),
+        ),
+      );
     });
 
     this.routes = app;

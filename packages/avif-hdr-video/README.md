@@ -34,11 +34,11 @@ boxes: around a millisecond for 4K, in dependency-free TypeScript.
 Swaps matching images for videos, and watches for ones added later. Returns a function
 that undoes both.
 
-| option | default | |
-| --- | --- | --- |
-| `selector` | `img[data-hdr], img[src$=".avif"]` | which images to consider |
-| `root` | `document` | where to look, and what to watch |
-| `fetchOptions` | – | passed to `fetch`, e.g. for credentials |
+| option         | default                            |                                         |
+| -------------- | ---------------------------------- | --------------------------------------- |
+| `selector`     | `img[data-hdr], img[src$=".avif"]` | which images to consider                |
+| `root`         | `document`                         | where to look, and what to watch        |
+| `fetchOptions` | –                                  | passed to `fetch`, e.g. for credentials |
 
 Fetches before swapping; leaves non-HDR-AVIF images intact. Over-matching costs a cache hit.
 URLs without `.avif` need `data-hdr` or a custom selector.

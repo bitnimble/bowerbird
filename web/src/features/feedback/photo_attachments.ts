@@ -52,14 +52,23 @@ export class ReportTooLarge extends Error {
  * server that cannot scrub it refuses rather than sending it as it is.
  */
 export async function attachmentsFor({ photo, raw, strip }: PhotoChoice): Promise<Attached[]> {
-  const forms: AttachableForm[] = [...(photo.has_embedded ? (['embedded'] as const) : []), 'full', 'analysis'];
+  const forms: AttachableForm[] = [
+    ...(photo.has_embedded ? (['embedded'] as const) : []),
+    'full',
+    'analysis',
+  ];
   // Caught as each is started rather than as each is awaited: they run together, so one that
   // fails while an earlier one is still in flight would otherwise be an unhandled rejection
   // for as long as the loop takes to reach it.
   const optional = [
     // Only the camera's own file is asked for scrubbed: a rendition and a measurement are this
     // pipeline's, and were never written with a tag naming anybody.
-    ...forms.map((form) => named(`${photo.id}-${form}`, photosApi.attachment(photo.id, form, strip && form === 'embedded'))),
+    ...forms.map((form) =>
+      named(
+        `${photo.id}-${form}`,
+        photosApi.attachment(photo.id, form, strip && form === 'embedded'),
+      ),
+    ),
     named(`${photo.id}-sdr`, rolledToSdr(photo.id)),
   ].map((pending) => pending.catch(() => null));
 
@@ -86,7 +95,9 @@ export async function attachmentsFor({ photo, raw, strip }: PhotoChoice): Promis
 }
 
 /** The same frame this pipeline renders, rolled to sRGB, for a reader with no HDR display. */
-function rolledToSdr(photoId: string): Promise<{ bytes: Uint8Array; mediaType: string; filename: string | null }> {
+function rolledToSdr(
+  photoId: string,
+): Promise<{ bytes: Uint8Array; mediaType: string; filename: string | null }> {
   return exportsApi.create({
     photoId,
     options: {
@@ -113,7 +124,11 @@ async function named(
   pending: Promise<{ bytes: Uint8Array; mediaType: string }>,
 ): Promise<Attached> {
   const file = await pending;
-  return { filename: `${stem}${extension(file.mediaType)}`, data: file.bytes, contentType: file.mediaType };
+  return {
+    filename: `${stem}${extension(file.mediaType)}`,
+    data: file.bytes,
+    contentType: file.mediaType,
+  };
 }
 
 function extension(contentType: string): string {

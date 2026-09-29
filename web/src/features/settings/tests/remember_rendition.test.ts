@@ -2,7 +2,12 @@
 // the server re-configure its watcher and its schedulers, so a pick that chose
 // what was already showing is a round trip worth not making.
 import { beforeEach, expect, test } from 'bun:test';
-import { type Settings, type UpdateSettingsRequest, type ViewerRendition, type ViewerRenditionMode } from '../../../../../src/schemas/settings';
+import {
+  type Settings,
+  type UpdateSettingsRequest,
+  type ViewerRendition,
+  type ViewerRenditionMode,
+} from '../../../../../src/schemas/settings';
 import { settingsApi } from '../../../api/settings';
 import { AppSettingsPresenter } from '../app_settings_presenter';
 import { AppSettingsStore } from '../app_settings_store';

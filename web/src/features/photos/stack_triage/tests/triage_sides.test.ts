@@ -15,11 +15,20 @@ const photos = {
 } as never;
 
 function member(id: string): PhotoSummary {
-  return { id, file_path: `${id}.arw`, width: 3, height: 2, triage: 'untriaged' } as unknown as PhotoSummary;
+  return {
+    id,
+    file_path: `${id}.arw`,
+    width: 3,
+    height: 2,
+    triage: 'untriaged',
+  } as unknown as PhotoSummary;
 }
 
 function build(ids: string[]): { store: StackTriageStore; presenter: StackTriagePresenter } {
-  const store = new StackTriageStore({ viewerRenditionMode: 'library' } as never, { byId: new Map() } as never);
+  const store = new StackTriageStore(
+    { viewerRenditionMode: 'library' } as never,
+    { byId: new Map() } as never,
+  );
   const presenter = new StackTriagePresenter(store, photos);
   runInAction(() => {
     store.stackId = 'stack-1';

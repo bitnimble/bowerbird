@@ -1,6 +1,10 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { type LibraryEventKind, type LibraryEventPayload, LibraryEventSchemas } from '../../schemas/events';
+import {
+  type LibraryEventKind,
+  type LibraryEventPayload,
+  LibraryEventSchemas,
+} from '../../schemas/events';
 import { route } from '../../schemas/route';
 import type { ProcessingService } from '../../services/processing/pipeline/processing_service';
 

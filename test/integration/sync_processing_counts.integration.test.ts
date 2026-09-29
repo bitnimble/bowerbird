@@ -10,7 +10,12 @@ import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import type { PhotoProcessingRepository } from '../../src/services/photos/renditions/photo_processing_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import type { RenditionVariant } from '../../src/services/processing/renditions/renditions';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
@@ -37,7 +42,12 @@ let photos: PhotoProcessingRepository;
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-counts-'));
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, root, 'lib', 'taken_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    root,
+    'lib',
+    'taken_desc',
+  );
   photos = photoProcessing(db);
   for (const name of ['a.arw', 'b.arw', 'c.arw']) copyFileSync(FIXTURE, path.join(root, name));
 });
@@ -79,7 +89,13 @@ test('processing counts track rendition progress, then settle when the tail fini
   });
   // The variant this library actually owes, not `full`: HDR is the default, so what the insert
   // queued is `full-hdr`, and marking the other one built leaves the photograph in the queue.
-  photos.markRenditionsBuilt(first!.photo_id, new Date().toISOString(), 'render', first!.edits_stamp, owedFullVariant(first!.photo_id));
+  photos.markRenditionsBuilt(
+    first!.photo_id,
+    new Date().toISOString(),
+    'render',
+    first!.edits_stamp,
+    owedFullVariant(first!.photo_id),
+  );
   expect(scan.getScanStatus(LIB).photos_processing).toBe(2);
   expect(scan.getScanStatus(LIB).photos_processed).toBe(1);
 

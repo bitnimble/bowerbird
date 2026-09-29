@@ -56,7 +56,10 @@ describe('estimateExportBytes', () => {
 
   it('adds for a gain map', () => {
     const plain = estimateExportBytes(options({ format: 'avif', gainMap: false }), FRAME)!;
-    const mapped = estimateExportBytes(options({ format: 'avif', exportHdr: true, gainMap: true }), FRAME)!;
+    const mapped = estimateExportBytes(
+      options({ format: 'avif', exportHdr: true, gainMap: true }),
+      FRAME,
+    )!;
     expect(mapped).toBeGreaterThan(plain);
   });
 });

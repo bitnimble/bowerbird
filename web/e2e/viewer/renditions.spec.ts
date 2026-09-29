@@ -42,8 +42,14 @@ test.beforeAll(async ({ browser }) => {
 // path is asked for rather than built from the root the spec already holds.
 // The large renditions are filed under `<rendition>-hdr` when the library builds
 // them in HDR, so the directory is read off the library rather than assumed.
-async function renditionPath(request: APIRequestContext, rendition: string, photoId: string): Promise<string> {
-  const libraries = (await (await request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)).json()) as {
+async function renditionPath(
+  request: APIRequestContext,
+  rendition: string,
+  photoId: string,
+): Promise<string> {
+  const libraries = (await (
+    await request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)
+  ).json()) as {
     id: string;
     root_path: string;
     rendition_hdr: boolean;
@@ -100,7 +106,8 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   const photoId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
-  const showRendition = (label: string): Promise<void> => photoAction(page, 'Rendition', label, { exact: true });
+  const showRendition = (label: string): Promise<void> =>
+    photoAction(page, 'Rendition', label, { exact: true });
 
   const renditionPanel = renditionDetails(page);
   await showMetadata(page);
@@ -150,7 +157,9 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   await expect(photoStage(page)).not.toContainText('Rendering');
   // Nothing at all: not the build, and not the detail fetch that used to be awaited before
   // the swap was allowed to happen even when there was no build to learn anything about.
-  expect(asked, 'a swap between two renditions already built asks the server for nothing').toEqual([]);
+  expect(asked, 'a swap between two renditions already built asks the server for nothing').toEqual(
+    [],
+  );
 
   // And not the frames either. Both renditions have now decoded, and both stay mounted, so
   // going back to one is an opacity change on an element that never left the page. Marked
@@ -160,9 +169,14 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   // This photograph's own picture, not every frame on the stage: the neighbours either side
   // are pictures of their own, and whether one is up here depends on whether that photo has
   // a render yet - which this test neither arranges nor is about.
-  const mounted = photoStage(page).getByRole('img', { name: `${await shownFilename(page)}, `, includeHidden: true });
+  const mounted = photoStage(page).getByRole('img', {
+    name: `${await shownFilename(page)}, `,
+    includeHidden: true,
+  });
   await expect(mounted, 'both renditions of the photo on screen are mounted').toHaveCount(2);
-  await mounted.evaluateAll((frames) => frames.forEach((frame) => frame.setAttribute('data-held', '1')));
+  await mounted.evaluateAll((frames) =>
+    frames.forEach((frame) => frame.setAttribute('data-held', '1')),
+  );
 
   await showRendition('Embedded JPEG');
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
@@ -170,7 +184,10 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 60_000 });
 
   await expect(shownFrame(page)).toHaveAttribute('data-held', '1');
-  await expect(photoStage(page).locator('canvas[data-held]'), 'both frames survive the swaps').toHaveCount(2);
+  await expect(
+    photoStage(page).locator('canvas[data-held]'),
+    'both frames survive the swaps',
+  ).toHaveCount(2);
 
   // Both are up, so the panel can still say what the one on screen measured. A flip decodes
   // nothing, so nothing reports a size on it: the dimensions have to come from what that
@@ -193,7 +210,9 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
 
 // Switching between the camera's JPEG and a render is the comparison the detail
 // view exists for, so it is a keystroke rather than a trip through the menu.
-test('i and o switch between the camera JPEG and the render, and the cache can be forced past', async ({ page }) => {
+test('i and o switch between the camera JPEG and the render, and the cache can be forced past', async ({
+  page,
+}) => {
   // A forced rebuild is a real render of the RAW, not a cache hit.
   test.setTimeout(240_000);
   // Named here rather than inherited: re-rendering is offered only where the library
@@ -233,7 +252,10 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible();
   // Focus back on the page: the menu's trigger keeps it after the item is picked, and
   // eats letter keys as typeahead.
-  await page.getByRole('group', { name: 'Photo controls' }).getByText(await shownFilename(page)).click();
+  await page
+    .getByRole('group', { name: 'Photo controls' })
+    .getByText(await shownFilename(page))
+    .click();
   await page.keyboard.press('o');
   await expect(renditionPanel.getByText('Rendered RAW')).toBeVisible({ timeout: 120_000 });
 
@@ -243,7 +265,10 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
   // and the version lands on this photo alone.
   await expect(shownFrame(page)).toHaveAccessibleName(/Rendered RAW$/, { timeout: 60_000 });
   await expect
-    .poll(() => fetched.filter((url) => !fetchedBefore.has(url)), { message: 'the rebuilt render is fetched at a URL of its own', timeout: 60_000 })
+    .poll(() => fetched.filter((url) => !fetchedBefore.has(url)), {
+      message: 'the rebuilt render is fetched at a URL of its own',
+      timeout: 60_000,
+    })
     .not.toEqual([]);
 });
 
@@ -263,24 +288,36 @@ test('a reader set to the camera JPEG never loads the render', async ({ page }) 
 
   // Warmed at the rendition on screen rather than the library's, or the step
   // below arrives cold and shows the stage background while it fetches.
-  await expect.poll(() => requested.some((url) => url.includes(route(PathSegment.renditions(), 'embedded')) && !url.includes(openId))).toBe(true);
+  await expect
+    .poll(() =>
+      requested.some(
+        (url) => url.includes(route(PathSegment.renditions(), 'embedded')) && !url.includes(openId),
+      ),
+    )
+    .toBe(true);
   const openName = await shownFilename(page);
 
   requested.length = 0;
   await page.getByRole('button', { name: 'Next photo' }).click();
   const nextId = openPhotoId(page);
   const nextName = PHOTO_NAMES.find((name) => name !== openName);
-  await expect(shownFrame(page)).toHaveAccessibleName(`${nextName}, Embedded JPEG`, { timeout: 60_000 });
+  await expect(shownFrame(page)).toHaveAccessibleName(`${nextName}, Embedded JPEG`, {
+    timeout: 60_000,
+  });
   // Named rather than "any rendition": the camera's JPEG is asked for by the same route as
   // everything else now, and it is the render this reader must never be made to wait for.
-  expect(requested.filter((url) => url.includes(route(nextId, PathSegment.renditions(), 'full')))).toEqual([]);
+  expect(
+    requested.filter((url) => url.includes(route(nextId, PathSegment.renditions(), 'full'))),
+  ).toEqual([]);
 });
 
 // "Last used per photo" is the same question as the setting above, asked per
 // photo rather than once: the answer has to be on the row for the same reason,
 // or reopening a photo paints the library's default while the detail carrying
 // the reader's own choice is still in flight.
-test('a photo reopens at the rendition it was last read in, without the library default first', async ({ page }) => {
+test('a photo reopens at the rendition it was last read in, without the library default first', async ({
+  page,
+}) => {
   const requested: string[] = [];
   page.on('request', (r) => requested.push(r.url()));
 
@@ -291,7 +328,9 @@ test('a photo reopens at the rendition it was last read in, without the library 
 
   // Read it in the camera's JPEG, which this library does not default to.
   // The row learns the choice from the write's answer, after the frame is already showing it.
-  const saved = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes(photoId));
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === 'PATCH' && r.url().includes(photoId),
+  );
   await page.keyboard.press('i');
   await showMetadata(page);
   const renditionPanel = renditionDetails(page);
@@ -304,10 +343,14 @@ test('a photo reopens at the rendition it was last read in, without the library 
   await openPhoto(page);
 
   await expect(shownFrame(page)).toHaveAccessibleName(/Embedded JPEG$/, { timeout: 60_000 });
-  expect(requested.filter((url) => url.includes(route(photoId, PathSegment.renditions(), 'full')))).toEqual([]);
+  expect(
+    requested.filter((url) => url.includes(route(photoId, PathSegment.renditions(), 'full'))),
+  ).toEqual([]);
 });
 
-test('viewer rotation turns embedded display and tags full AVIF without moving coded pixels', async ({ page }) => {
+test('viewer rotation turns embedded display and tags full AVIF without moving coded pixels', async ({
+  page,
+}) => {
   test.setTimeout(180_000);
   const contexts = await recordCanvasContexts(page);
   await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'render');
@@ -315,23 +358,37 @@ test('viewer rotation turns embedded display and tags full AVIF without moving c
   const photoId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
   const embedded = photoStage(page).getByRole('img', { name: /Embedded JPEG$/ });
   await expect(embedded).toBeVisible({ timeout: 60_000 });
-  const before = await embedded.evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height]);
+  const before = await embedded.evaluate((canvas: HTMLCanvasElement) => [
+    canvas.width,
+    canvas.height,
+  ]);
 
   await photoAction(page, 'View', 'Rotate right');
-  await expect.poll(async () => {
-    const response = await page.request.get(route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()));
-    const state = (await response.json()) as { doc: { rotate: number } };
-    return state.doc.rotate;
-  }).toBe(90);
-  await expect.poll(() => embedded.evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height]))
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()),
+      );
+      const state = (await response.json()) as { doc: { rotate: number } };
+      return state.doc.rotate;
+    })
+    .toBe(90);
+  await expect
+    .poll(() => embedded.evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height]))
     .toEqual([before[1], before[0]]);
 
   await photoAction(page, 'Rendition', 'Rendered RAW', { exact: true });
   const full = await renditionPath(page.request, 'full', photoId);
-  await expect.poll(() => existsSync(full) ? orientationOfAvif(new Uint8Array(readFileSync(full))) : null, { timeout: 90_000 }).toBe(90);
+  await expect
+    .poll(() => (existsSync(full) ? orientationOfAvif(new Uint8Array(readFileSync(full))) : null), {
+      timeout: 90_000,
+    })
+    .toBe(90);
   const rendered = photoStage(page).getByRole('img', { name: /Rendered RAW$/ });
   await expect(rendered).toBeVisible({ timeout: 60_000 });
-  const shown = await rendered.evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height);
+  const shown = await rendered.evaluate(
+    (canvas: HTMLCanvasElement) => canvas.width / canvas.height,
+  );
   expect(Math.abs(shown - before[1]! / before[0]!)).toBeLessThan(0.01);
 
   await photoAction(page, 'Rendition', 'Rendered RAW (max quality)', { exact: true });
@@ -340,11 +397,15 @@ test('viewer rotation turns embedded display and tags full AVIF without moving c
   // A full-resolution AVIF, past 3840, which is the rendition this replaced: the canvas is the
   // decode, capped at `DECODE_CAP`, so a native-resolution file lands at 4096 along its long edge
   // where a 3840-edge one lands at exactly 3840.
-  expect(await max.evaluate((frame: HTMLCanvasElement) => Math.max(frame.width, frame.height))).toBeGreaterThan(3840);
+  expect(
+    await max.evaluate((frame: HTMLCanvasElement) => Math.max(frame.width, frame.height)),
+  ).toBeGreaterThan(3840);
   const unzoomed = (await contexts()).length;
   await stepZoom(page);
   await stepZoom(page);
   // The zoom's own canvas, drawn on the GPU like the frame under it.
-  await expect.poll(async () => (await contexts()).slice(unzoomed), { timeout: 30_000 }).toContain('webgpu');
+  await expect
+    .poll(async () => (await contexts()).slice(unzoomed), { timeout: 30_000 })
+    .toContain('webgpu');
   expect(await contexts()).not.toContain('2d');
 });

@@ -9,7 +9,12 @@ let db: Database;
 let repo: ShootsRepository;
 
 function shoot(id: string, folderPath: string): void {
-  db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(id, LIB, folderPath, id);
+  db.query('INSERT INTO shoots (id, library_id, folder_path, name) VALUES (?, ?, ?, ?)').run(
+    id,
+    LIB,
+    folderPath,
+    id,
+  );
 }
 
 function photo(id: string, folderPath: string, shootId: string): void {
@@ -20,7 +25,9 @@ function photo(id: string, folderPath: string, shootId: string): void {
 }
 
 function hiddenIds(): string[] {
-  return (db.query('SELECT id FROM shoots WHERE is_hidden = 1 ORDER BY id').all() as { id: string }[]).map((r) => r.id);
+  return (
+    db.query('SELECT id FROM shoots WHERE is_hidden = 1 ORDER BY id').all() as { id: string }[]
+  ).map((r) => r.id);
 }
 
 beforeEach(() => {
@@ -117,7 +124,9 @@ describe('ShootsRepository.setHidden', () => {
     );
 
     repo.setHidden('trip', true);
-    expect(repo.listByLibrary('other-lib').map((s) => [s.id, s.is_hidden])).toEqual([['elsewhere', false]]);
+    expect(repo.listByLibrary('other-lib').map((s) => [s.id, s.is_hidden])).toEqual([
+      ['elsewhere', false],
+    ]);
   });
 
   it('moves a stamp of its own, so a folder rename cannot carry a stale flag over it', () => {
@@ -197,6 +206,10 @@ describe('what a shoot row says it holds', () => {
 
   it('still counts them when the shoot itself is the thing hidden', () => {
     repo.setHidden('trip', true);
-    expect(repo.getById('trip')).toMatchObject({ photo_count: 2, banner_photo_id: 'first', is_hidden: true });
+    expect(repo.getById('trip')).toMatchObject({
+      photo_count: 2,
+      banner_photo_id: 'first',
+      is_hidden: true,
+    });
   });
 });

@@ -18,6 +18,14 @@ const styles = stylex.create({
 });
 
 /** How far through something the app is doing for the reader. Named, because a page can hold several. */
-export function ProgressBar({ label, value, max }: { label: string; value: number; max: number }): JSX.Element {
+export function ProgressBar({
+  label,
+  value,
+  max,
+}: {
+  label: string;
+  value: number;
+  max: number;
+}): JSX.Element {
   return <progress {...stylex.props(styles.bar)} aria-label={label} value={value} max={max} />;
 }

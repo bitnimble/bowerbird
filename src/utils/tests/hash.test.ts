@@ -33,7 +33,9 @@ describe('computeFileHash', () => {
 
   it('changes when any hashed field changes', () => {
     const base = computeFileHash('/l/a.arw', meta);
-    expect(computeFileHash('/l/a.arw', { ...meta, mtime: '2025-01-01T00:00:00.000Z' })).not.toBe(base);
+    expect(computeFileHash('/l/a.arw', { ...meta, mtime: '2025-01-01T00:00:00.000Z' })).not.toBe(
+      base,
+    );
     expect(computeFileHash('/l/a.arw', { ...meta, orientation: 6 })).not.toBe(base);
     expect(computeFileHash('/l/a.arw', { ...meta, fileSize: 9999 })).not.toBe(base);
     expect(computeFileHash('/l/a.arw', { ...meta, width: 6001 })).not.toBe(base);
@@ -42,7 +44,9 @@ describe('computeFileHash', () => {
   it('does not change when a non-hashed field changes (e.g. GPS)', () => {
     const base = computeFileHash('/l/a.arw', meta);
     expect(computeFileHash('/l/a.arw', { ...meta, latitude: 12.3, longitude: 45.6 })).toBe(base);
-    expect(computeFileHash('/l/a.arw', { ...meta, dateTaken: '2020-01-01T00:00:00.000Z' })).toBe(base);
+    expect(computeFileHash('/l/a.arw', { ...meta, dateTaken: '2020-01-01T00:00:00.000Z' })).toBe(
+      base,
+    );
     // Descriptive metadata stays out: a file is only hashed once mtime or size
     // already differ, and mtime is hashed, so these add no detection.
     expect(computeFileHash('/l/a.arw', { ...meta, dateTakenOffset: '+11:00' })).toBe(base);

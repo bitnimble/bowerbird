@@ -13,7 +13,9 @@ const ROOT_WITH_BIN = path.join(E2E_ROOT, 'has-a-bin ');
 
 // Nothing here is submitted, so the run's shared catalogue is left as it was and
 // the sidebar the other specs read stays theirs.
-test('the add-library dialog warns that a bin name the root already uses will be adopted', async ({ page }) => {
+test('the add-library dialog warns that a bin name the root already uses will be adopted', async ({
+  page,
+}) => {
   mkdirSync(path.join(ROOT_WITH_BIN, 'Bin'), { recursive: true });
 
   await page.goto(route(PathSegment.settings()));
@@ -81,7 +83,9 @@ test('a path closed with a slash walks the picker into it without an Enter', asy
 
   await expect(chooser.getByRole('button', { name: 'Bin', exact: true })).toHaveCount(1);
   await chooser.getByRole('button', { name: 'Choose folder' }).click();
-  await expect(dialog.getByText(`${ROOT_WITH_BIN} already has a folder called "Bin"`)).toBeVisible();
+  await expect(
+    dialog.getByText(`${ROOT_WITH_BIN} already has a folder called "Bin"`),
+  ).toBeVisible();
 
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 });

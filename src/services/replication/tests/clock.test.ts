@@ -7,7 +7,15 @@ import { describe, expect, it } from 'bun:test';
 import { Database } from '../../../db/driver';
 import { runMigrations } from '../../../db/migrate';
 import { AppError } from '../../../errors';
-import { Clock, DEFAULT_SKEW_MS, STAMP_LENGTH, encodeStamp, stampBefore, stampMs, stampPeer } from '../clock';
+import {
+  Clock,
+  DEFAULT_SKEW_MS,
+  STAMP_LENGTH,
+  encodeStamp,
+  stampBefore,
+  stampMs,
+  stampPeer,
+} from '../clock';
 
 const PEER = 'aaaaaaaaaaaaaaaa';
 const OTHER = 'bbbbbbbbbbbbbbbb';

@@ -10,8 +10,20 @@ import type { PhotoReadService } from '../../../services/photos/listing/photo_re
 import { AlbumsApi } from '../albums_api';
 
 const PID = 'photo001';
-const album: Album = { id: 'album001', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
-const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100, ordering: 'taken_asc' };
+const album: Album = {
+  id: 'album001',
+  name: 'Faves',
+  ordering: 'taken_desc',
+  banner_photo_id: null,
+  photo_count: 0,
+};
+const emptyList: PhotoListResponse = {
+  photos: [],
+  total: 0,
+  offset: 0,
+  limit: 100,
+  ordering: 'taken_asc',
+};
 
 function buildApp(albums: Partial<AlbumsService> = {}, photos: Partial<PhotoReadService> = {}) {
   const albumsSvc = {
@@ -31,7 +43,10 @@ function buildApp(albums: Partial<AlbumsService> = {}, photos: Partial<PhotoRead
     ...photos,
   } as unknown as PhotoReadService;
   const app = new Hono();
-  app.route(route(PathSegment.api(), PathSegment.albums()), new AlbumsApi(albumsSvc, photosSvc).routes);
+  app.route(
+    route(PathSegment.api(), PathSegment.albums()),
+    new AlbumsApi(albumsSvc, photosSvc).routes,
+  );
   applyErrorHandler(app);
   return { app, albums: albumsSvc, photos: photosSvc };
 }
@@ -68,20 +83,29 @@ describe('AlbumsApi', () => {
     const addPhotos = jest.fn();
     const listByAlbum = jest.fn(() => emptyList);
     const { app } = buildApp({ addPhotos }, { listByAlbum });
-    const add = await app.request(route(PathSegment.api(), PathSegment.albums(), 'a1', PathSegment.photos()), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ photo_ids: [PID] }),
-    });
+    const add = await app.request(
+      route(PathSegment.api(), PathSegment.albums(), 'a1', PathSegment.photos()),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ photo_ids: [PID] }),
+      },
+    );
     expect(add.status).toBe(204);
     expect(addPhotos).toHaveBeenCalledWith('a1', [PID]);
-    const list = await app.request(route(PathSegment.api(), PathSegment.albums(), 'a1', PathSegment.photos()));
+    const list = await app.request(
+      route(PathSegment.api(), PathSegment.albums(), 'a1', PathSegment.photos()),
+    );
     expect(list.status).toBe(200);
     expect(listByAlbum).toHaveBeenCalled();
   });
 
   it('maps NOT_FOUND from get', async () => {
-    const { app } = buildApp({ get: jest.fn(() => { throw new AppError('NOT_FOUND', 'x'); }) });
+    const { app } = buildApp({
+      get: jest.fn(() => {
+        throw new AppError('NOT_FOUND', 'x');
+      }),
+    });
     const res = await app.request(route(PathSegment.api(), PathSegment.albums(), 'x'));
     expect(res.status).toBe(404);
   });

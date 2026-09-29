@@ -43,7 +43,11 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -131,11 +135,19 @@ pub(crate) async fn moments(
         })
     };
     let landed = buffer("fit lattice landings", pairs * LANDING_WORDS, storage);
-    let counts = buffer("fit lattice counts", 2 * blocks * cells + 2 * cells, storage);
+    let counts = buffer(
+        "fit lattice counts",
+        2 * blocks * cells + 2 * cells,
+        storage,
+    );
     let ordered = buffer("fit lattice order", pairs, storage);
     // Each cell's last slice may be part-filled, so a cell adds at most one past the even share.
     let slices = pairs.div_ceil(SLICE) + cells;
-    let corners = buffer("fit lattice corners", slices * CORNERS * NODE_WORDS, storage);
+    let corners = buffer(
+        "fit lattice corners",
+        slices * CORNERS * NODE_WORDS,
+        storage,
+    );
     let out = buffer(
         "fit lattice moments",
         nodes * NODE_WORDS,
@@ -152,7 +164,14 @@ pub(crate) async fn moments(
         .iter()
         .flat_map(|v| v.to_ne_bytes())
         .collect::<Vec<u8>>();
-    for v in [axes.low[0], axes.scale[0], axes.low[1], axes.scale[1], axes.level, axes.surround] {
+    for v in [
+        axes.low[0],
+        axes.scale[0],
+        axes.low[1],
+        axes.scale[1],
+        axes.level,
+        axes.surround,
+    ] {
         block.extend((v as f32).to_ne_bytes());
     }
     block.resize(48, 0);
@@ -165,16 +184,46 @@ pub(crate) async fn moments(
         label: Some("fit_lattice"),
         layout: &kernels(gpu).layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: through.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: target.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: surround.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: weights.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: landed.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: counts.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 6, resource: ordered.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 7, resource: corners.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 8, resource: out.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: through.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: target.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: surround.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: weights.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: landed.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: counts.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: ordered.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: corners.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: out.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
         ],
     });
 
@@ -195,7 +244,9 @@ pub(crate) async fn moments(
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(groups, 1, 1);
     }
-    recording.encoder().copy_buffer_to_buffer(&out, 0, &staging, 0, (words * 4) as u64);
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&out, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &staging, |mapped| {
@@ -224,11 +275,23 @@ mod tests {
             format!("static const int LANDING_WORDS = {};", super::LANDING_WORDS),
             format!("static const int CORNERS = {};", super::CORNERS),
             format!("static const int SLICE = {};", super::SLICE),
-            format!("static const int MAP_CHROMA = {};", crate::hdr_fit::MAP_CHROMA),
-            format!("static const int MAP_LEVEL = {};", crate::hdr_fit::MAP_LEVEL),
-            format!("static const int MAP_SURROUND = {};", crate::hdr_fit::MAP_SURROUND),
+            format!(
+                "static const int MAP_CHROMA = {};",
+                crate::hdr_fit::MAP_CHROMA
+            ),
+            format!(
+                "static const int MAP_LEVEL = {};",
+                crate::hdr_fit::MAP_LEVEL
+            ),
+            format!(
+                "static const int MAP_SURROUND = {};",
+                crate::hdr_fit::MAP_SURROUND
+            ),
         ] {
-            assert!(SOURCE.contains(&line), "fit_lattice.slang does not say `{line}`");
+            assert!(
+                SOURCE.contains(&line),
+                "fit_lattice.slang does not say `{line}`"
+            );
         }
     }
 }

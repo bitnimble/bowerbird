@@ -33,7 +33,10 @@ export const ConfirmDialog = observer(function ConfirmDialog(): JSX.Element | nu
         {request.body != null && <Text as="p">{request.body}</Text>}
         <DialogActions>
           <Button onClick={() => confirm.answer(false)}>{ModalStrings.cancel()}</Button>
-          <Button variant={request.tone === 'danger' ? 'danger' : 'primary'} onClick={() => confirm.answer(true)}>
+          <Button
+            variant={request.tone === 'danger' ? 'danger' : 'primary'}
+            onClick={() => confirm.answer(true)}
+          >
             {request.action}
           </Button>
         </DialogActions>

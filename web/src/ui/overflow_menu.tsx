@@ -33,7 +33,11 @@ class OverflowMenuKey {
   private readonly onKey = (e: KeyboardEvent): void => {
     if (e.key !== '\\' || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
-    if (target != null && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+    if (
+      target != null &&
+      (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)
+    )
+      return;
     const toggle = this.toggles.at(-1);
     if (toggle == null) return;
     e.preventDefault();
@@ -56,7 +60,10 @@ export function OverflowMenu({
   hotkey?: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
-  useEffect(() => (hotkey ? overflowMenuKey.register(() => setOpen((was) => !was)) : undefined), [hotkey]);
+  useEffect(
+    () => (hotkey ? overflowMenuKey.register(() => setOpen((was) => !was)) : undefined),
+    [hotkey],
+  );
 
   // Lifted out of their sections to the foot of the menu. A rule below its own
   // heading is enough to fence one off in a menu of its own, but here it would
@@ -70,7 +77,10 @@ export function OverflowMenu({
   // A section that had nothing but destructive actions would otherwise be a
   // heading over nothing.
   const headed = sections
-    .map((section) => ({ ...section, options: (section.options ?? []).filter((o) => o.destructive !== true) }))
+    .map((section) => ({
+      ...section,
+      options: (section.options ?? []).filter((o) => o.destructive !== true),
+    }))
     .filter((section) => section.options.length > 0 || section.content != null);
 
   return (
@@ -94,12 +104,17 @@ export function OverflowMenu({
                 {headed.map((section, index) => (
                   <Section key={section.label ?? index} label={section.label}>
                     {section.content}
-                    <MenuItems options={section.options} onSelect={section.onSelect ?? (() => undefined)} />
+                    <MenuItems
+                      options={section.options}
+                      onSelect={section.onSelect ?? (() => undefined)}
+                    />
                   </Section>
                 ))}
               </Sections>
             )}
-            {headed.length > 0 && destructive.length > 0 && <Menu.Separator {...stylex.props(menuStyles.rule)} />}
+            {headed.length > 0 && destructive.length > 0 && (
+              <Menu.Separator {...stylex.props(menuStyles.rule)} />
+            )}
             {destructive.map(({ option, onSelect }) => (
               <MenuAction key={option.value} option={option} onSelect={onSelect} />
             ))}

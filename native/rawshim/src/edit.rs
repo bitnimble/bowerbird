@@ -602,9 +602,15 @@ impl Opened {
 /// [`PreparedHeader`]'s `camera_curve`, `camera_exposure` and `camera_saturation`.
 pub(crate) fn camera_defaults(
     colour: Option<&crate::hdr_fit::HdrColour>,
-) -> (Option<crate::gpu::ToneCurve>, Option<crate::light::Stops>, Option<f64>) {
+) -> (
+    Option<crate::gpu::ToneCurve>,
+    Option<crate::light::Stops>,
+    Option<f64>,
+) {
     (
-        colour.map(|c| crate::gpu::ToneCurve::PchipCbrt3 { points: c.curve.clone() }),
+        colour.map(|c| crate::gpu::ToneCurve::PchipCbrt3 {
+            points: c.curve.clone(),
+        }),
         colour.map(|c| c.exposure),
         colour.map(|c| crate::gpu::saturation_slider(c.camera_saturation)),
     )

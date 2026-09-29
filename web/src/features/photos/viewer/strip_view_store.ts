@@ -85,7 +85,9 @@ export class StripViewStore {
 
   /** One cell plus the gap after it, along the axis the strip scrolls. */
   @computed get pitch(): number {
-    return this.axis === 'x' ? stripCellWidth(this.across) : gridRowHeight(this.across, this.columns);
+    return this.axis === 'x'
+      ? stripCellWidth(this.across)
+      : gridRowHeight(this.across, this.columns);
   }
 
   @computed get bands(): Band[] {
@@ -142,12 +144,17 @@ export class StripViewStore {
     });
     if (this.pitch <= 0) return sections;
     // One row is one cell here, so a section's top names the cell it starts at.
-    return sections.map((section) => ({ ...section, top: this.offsetOfCell(section.top / this.pitch) }));
+    return sections.map((section) => ({
+      ...section,
+      top: this.offsetOfCell(section.top / this.pitch),
+    }));
   }
 
   /** The positions the strip actually renders, which is what its rows are fetched for. */
   @computed get visible(): Span {
-    const runs = this.sections.filter((section): section is Extract<GridSection, { kind: 'grid' }> => section.kind === 'grid');
+    const runs = this.sections.filter(
+      (section): section is Extract<GridSection, { kind: 'grid' }> => section.kind === 'grid',
+    );
     const first = runs[0];
     const last = runs.at(-1);
     if (first == null || last == null) {

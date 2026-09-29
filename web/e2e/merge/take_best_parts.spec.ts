@@ -42,7 +42,9 @@ test('Cancel leaves nothing behind', async ({ page }) => {
 const SEAMS = '/api/assemblies/seams';
 const PREVIEW = '/api/assemblies/preview';
 
-test('seed a tile, pick a frame for it, commit, and the result survives a reload', async ({ page }) => {
+test('seed a tile, pick a frame for it, commit, and the result survives a reload', async ({
+  page,
+}) => {
   // Every pick set the server solved, as it answered.
   const solved: number[][] = [];
   // Where each settled pick set was rendered, which only a real round trip answers.
@@ -55,7 +57,9 @@ test('seed a tile, pick a frame for it, commit, and the result survives a reload
   page.on('response', async (response) => {
     if (!response.url().endsWith(SEAMS) || !response.ok()) return;
     // A solve answering after Save navigated away has no body left to read.
-    const answer = (await response.json().catch(() => null)) as { seams: ({ pick: number[] } | null)[] | null } | null;
+    const answer = (await response.json().catch(() => null)) as {
+      seams: ({ pick: number[] } | null)[] | null;
+    } | null;
     for (const seams of answer?.seams ?? []) if (seams != null) solved.push(seams.pick);
   });
   await gotoLibrary(page, MERGE_PHOTOS_DIR);
@@ -82,7 +86,10 @@ test('seed a tile, pick a frame for it, commit, and the result survives a reload
   await expect(page.getByRole('dialog')).toBeVisible();
 
   // A seed starts on the base, and picking that again moves nothing.
-  const other = page.getByRole('dialog').getByRole('button', { name: /^Choose frame \d+$/, pressed: false }).first();
+  const other = page
+    .getByRole('dialog')
+    .getByRole('button', { name: /^Choose frame \d+$/, pressed: false })
+    .first();
   const source = Number((await other.getAttribute('aria-label'))?.match(/\d+/)?.[0]) - 1;
   await other.click();
   await expect(page.getByRole('dialog')).toBeHidden();
@@ -119,7 +126,13 @@ test('seed a tile, pick a frame for it, commit, and the result survives a reload
   // In the grid the merge goes unnamed, and its badge still opens the frames it was made from.
   await gotoLibrary(page, MERGE_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(1);
-  await expect(tiles(page).getByText(`Merge of ${MERGE_PHOTO_NAMES.length} photos`, { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: `Show the ${MERGE_PHOTO_NAMES.length} frames of this merge` }).click();
-  await expect(page.getByRole('group', { name: `${MERGE_PHOTO_NAMES.length} frames of this merge` })).toBeVisible();
+  await expect(
+    tiles(page).getByText(`Merge of ${MERGE_PHOTO_NAMES.length} photos`, { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: `Show the ${MERGE_PHOTO_NAMES.length} frames of this merge` })
+    .click();
+  await expect(
+    page.getByRole('group', { name: `${MERGE_PHOTO_NAMES.length} frames of this merge` }),
+  ).toBeVisible();
 });

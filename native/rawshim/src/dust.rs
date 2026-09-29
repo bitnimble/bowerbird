@@ -149,8 +149,16 @@ pub struct Spot {
 impl Spot {
     /// The spot as `dust.slang` indexes it, which is also how it is stored.
     pub fn words(&self) -> [f32; SPOT_WORDS] {
-        let head =
-            [self.x, self.y, self.scale, self.axes.0, self.axes.1, self.turn.0, self.turn.1, self.snr];
+        let head = [
+            self.x,
+            self.y,
+            self.scale,
+            self.axes.0,
+            self.axes.1,
+            self.turn.0,
+            self.turn.1,
+            self.snr,
+        ];
         std::array::from_fn(|at| match at < head.len() {
             true => head[at],
             false => self.profile[at - head.len()],
@@ -200,7 +208,10 @@ impl Spot {
             && (spot.axes.0 * spot.axes.1 - 1.0).abs() < 1e-3
             && (unit - 1.0).abs() < 1e-3
             && spot.snr >= 0.0
-            && spot.profile.iter().all(|dip| (0.0..=MOST_DIP).contains(dip));
+            && spot
+                .profile
+                .iter()
+                .all(|dip| (0.0..=MOST_DIP).contains(dip));
         shaped.then_some(spot)
     }
 
@@ -259,7 +270,8 @@ impl Wanted<'_> {
 
     /// Whether anything downstream would look different for it, which is whether to detect at all.
     pub fn does_anything(&self) -> bool {
-        self.removal().is_some_and(|removal| removal.does_anything())
+        self.removal()
+            .is_some_and(|removal| removal.does_anything())
     }
 }
 
@@ -288,7 +300,11 @@ pub const SENSITIVITY_AT_REST: f64 = 0.25;
 impl Default for Settings {
     /// What a request that named no dust settings is asking for, which is what the panel starts at.
     fn default() -> Settings {
-        Settings { enabled: true, sensitivity: SENSITIVITY_AT_REST, intensity: 1.0 }
+        Settings {
+            enabled: true,
+            sensitivity: SENSITIVITY_AT_REST,
+            intensity: 1.0,
+        }
     }
 }
 
@@ -318,7 +334,10 @@ impl Settings {
 
     /// What the reader asked for, or None where they asked for nothing.
     fn removal(&self) -> Option<Removal> {
-        let removal = Removal { sensitivity: self.sensitivity, intensity: self.intensity };
+        let removal = Removal {
+            sensitivity: self.sensitivity,
+            intensity: self.intensity,
+        };
         (self.enabled && removal.does_anything()).then_some(removal)
     }
 }
@@ -775,7 +794,9 @@ pub fn apply(
     known: &Known<'_>,
     origin: (usize, usize),
 ) {
-    let Known::Given(spots, removal) = known else { return };
+    let Known::Given(spots, removal) = known else {
+        return;
+    };
     correct(gpu, device(gpu), mosaic, spots, *removal, origin);
 }
 
@@ -855,9 +876,18 @@ pub fn correct(
         label: Some("dust"),
         layout: &kernels.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: table.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: mosaic.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: table.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: mosaic.buffer.as_entire_binding(),
+            },
         ],
     });
 
@@ -894,7 +924,11 @@ mod tests {
         // Wide enough that the predicted shadow is twice the scale the gates were measured at,
         // which is what buys the shrink: a real 61MP body reaches this at f/10.
         let dense = sized(3200);
-        assert_eq!(dense.shrink(), 2, "this body was meant to be worth reading coarser");
+        assert_eq!(
+            dense.shrink(),
+            2,
+            "this body was meant to be worth reading coarser"
+        );
         assert!(
             dense.dust_half_px(dense.shrink()) >= WORKING_RADIUS,
             "shrinking took the blob under the scale the fits need",
@@ -911,11 +945,21 @@ mod tests {
     #[test]
     fn a_smaller_body_casts_a_larger_shadow_in_its_own_photosites() {
         let full = sized(2200);
-        let cropped = Sensor { diagonal_mm: Extent::exactly(full.diagonal_mm.raw() / 1.5), ..full };
+        let cropped = Sensor {
+            diagonal_mm: Extent::exactly(full.diagonal_mm.raw() / 1.5),
+            ..full
+        };
         let ratio = cropped.dust_half_px(1) / full.dust_half_px(1);
-        assert!((ratio - 1.5).abs() < 1e-3, "the crop factor did not reach the prediction: {ratio}");
+        assert!(
+            (ratio - 1.5).abs() < 1e-3,
+            "the crop factor did not reach the prediction: {ratio}"
+        );
         assert_eq!(full.shrink(), 1);
-        assert_eq!(cropped.shrink(), 2, "a body this dense is worth reading coarser");
+        assert_eq!(
+            cropped.shrink(),
+            2,
+            "a body this dense is worth reading coarser"
+        );
     }
 
     /// A crop factor is a ratio of diagonals, so a 4:3 body's pitch comes off its diagonal: an E-M1's
@@ -931,7 +975,10 @@ mod tests {
         };
         let expected = PARTICLE_HEIGHT_UM / four_thirds.aperture / (17.3 * 1000.0 / 5184.0) / 2.0;
         let predicted = four_thirds.dust_half_px(1);
-        assert!((predicted / expected - 1.0).abs() < 0.005, "{predicted} against {expected}");
+        assert!(
+            (predicted / expected - 1.0).abs() < 0.005,
+            "{predicted} against {expected}"
+        );
     }
 
     /// A frame shot wide open is not looked at, however dirty the glass behind it.
@@ -944,8 +991,14 @@ mod tests {
     fn nothing_is_looked_for_wide_open() {
         assert!(sized(1200).worth_reading());
         for aperture in [1.8, 2.8, 4.0, 5.0, f32::NAN] {
-            let wide = Sensor { aperture, ..sized(1200) };
-            assert!(!wide.worth_reading(), "f/{aperture} would be read for particles it cannot hold");
+            let wide = Sensor {
+                aperture,
+                ..sized(1200)
+            };
+            assert!(
+                !wide.worth_reading(),
+                "f/{aperture} would be read for particles it cannot hold"
+            );
         }
     }
 
@@ -963,7 +1016,10 @@ mod tests {
                 true => "uint",
                 false => "float",
             };
-            format!("static const {ty} {name} = {};", value.trim_end_matches('u'))
+            format!(
+                "static const {ty} {name} = {};",
+                value.trim_end_matches('u')
+            )
         };
 
         const DUST: &str = include_str!("../../../slang/dust.slang");
@@ -978,11 +1034,15 @@ mod tests {
         }
 
         // The two the search writes and `Spot::from_words` refuses a stored spot over.
-        for (name, value) in
-            [("MOST_DIP", format!("{MOST_DIP:?}")), ("MOST_ELONGATION", format!("{MOST_ELONGATION:?}"))]
-        {
+        for (name, value) in [
+            ("MOST_DIP", format!("{MOST_DIP:?}")),
+            ("MOST_ELONGATION", format!("{MOST_ELONGATION:?}")),
+        ] {
             let line = declared(name, &value);
-            assert!(FIND.contains(&line), "slang/dust_find.slang does not say `{line}`");
+            assert!(
+                FIND.contains(&line),
+                "slang/dust_find.slang does not say `{line}`"
+            );
         }
 
         // Derived from `BINS` on both sides, so widening the profile cannot leave one of them
@@ -993,7 +1053,11 @@ mod tests {
                 "{file} writes a spot at a width the other host does not read",
             );
         }
-        assert_eq!(SPOT_WORDS, 8 + BINS, "the host's own spot is a different width");
+        assert_eq!(
+            SPOT_WORDS,
+            8 + BINS,
+            "the host's own spot is a different width"
+        );
     }
 
     /// A stored spot reaches a kernel that dispatches from its centre and exponentiates its profile,
@@ -1015,18 +1079,48 @@ mod tests {
         assert_eq!(Spot::from_words(&sound.words()).as_ref(), Some(&sound));
 
         for broken in [
-            Spot { scale: 0.0, ..sound.clone() },
-            Spot { axes: (f32::NAN, 0.9), ..sound.clone() },
-            Spot { axes: (1.1, 0.0), ..sound.clone() },
+            Spot {
+                scale: 0.0,
+                ..sound.clone()
+            },
+            Spot {
+                axes: (f32::NAN, 0.9),
+                ..sound.clone()
+            },
+            Spot {
+                axes: (1.1, 0.0),
+                ..sound.clone()
+            },
             // Every other bound cleared, and still not an ellipse anything measured.
-            Spot { axes: (1e-30, 10.0), ..sound.clone() },
-            Spot { axes: (2.0, 2.0), ..sound.clone() },
-            Spot { turn: (0.9, 0.9), ..sound.clone() },
-            Spot { snr: -1.0, ..sound.clone() },
-            Spot { profile: [MOST_DIP + 1.0; BINS], ..sound.clone() },
-            Spot { profile: [-0.5; BINS], ..sound.clone() },
+            Spot {
+                axes: (1e-30, 10.0),
+                ..sound.clone()
+            },
+            Spot {
+                axes: (2.0, 2.0),
+                ..sound.clone()
+            },
+            Spot {
+                turn: (0.9, 0.9),
+                ..sound.clone()
+            },
+            Spot {
+                snr: -1.0,
+                ..sound.clone()
+            },
+            Spot {
+                profile: [MOST_DIP + 1.0; BINS],
+                ..sound.clone()
+            },
+            Spot {
+                profile: [-0.5; BINS],
+                ..sound.clone()
+            },
         ] {
-            assert!(Spot::from_words(&broken.words()).is_none(), "{broken:?} reached the kernel");
+            assert!(
+                Spot::from_words(&broken.words()).is_none(),
+                "{broken:?} reached the kernel"
+            );
         }
     }
 
@@ -1034,9 +1128,18 @@ mod tests {
     /// move without re-detecting.
     #[test]
     fn sensitivity_spans_the_range_the_populations_overlap_in() {
-        let at = |sensitivity| Removal { sensitivity, intensity: 1.0 }.min_snr();
+        let at = |sensitivity| {
+            Removal {
+                sensitivity,
+                intensity: 1.0,
+            }
+            .min_snr()
+        };
         assert!(at(0.0) > at(1.0), "more sensitive has to mean a lower bar");
-        assert!(at(1.0) <= MASK_SNR, "the loosest setting cannot ask for more than was stored");
+        assert!(
+            at(1.0) <= MASK_SNR,
+            "the loosest setting cannot ask for more than was stored"
+        );
         // The reference frame's true and false populations overlap between about 3.5 and 4.0, so a
         // slider that could not be put there would not be a control over the thing that matters.
         assert!(at(0.0) > 4.0 && at(1.0) < 3.5);
@@ -1053,11 +1156,20 @@ mod tests {
     /// spelling of a geometric one passes.
     #[test]
     fn the_sensitivity_steps_in_ratios() {
-        let at = |sensitivity| Removal { sensitivity, intensity: 1.0 }.min_snr();
+        let at = |sensitivity| {
+            Removal {
+                sensitivity,
+                intensity: 1.0,
+            }
+            .min_snr()
+        };
         for step in [0.1, 0.25, 0.4] {
             let low = at(0.2 + step) / at(0.2);
             let high = at(0.5 + step) / at(0.5);
-            assert!((low - high).abs() < 1e-5, "a {step} step scales by {low} then {high}");
+            assert!(
+                (low - high).abs() < 1e-5,
+                "a {step} step scales by {low} then {high}"
+            );
         }
 
         // And the decision the slider exists for sits nearer its middle than its end: the band the
@@ -1073,10 +1185,16 @@ mod tests {
     #[test]
     fn the_settings_at_rest_are_the_conservative_ones() {
         let rest = Settings::default();
-        assert!(rest.enabled, "the aperture gate is what decides whether a frame pays, not this");
+        assert!(
+            rest.enabled,
+            "the aperture gate is what decides whether a frame pays, not this"
+        );
         let removal = rest.removal().expect("at rest, this does something");
         assert_eq!(rest.sensitivity, SENSITIVITY_AT_REST);
-        assert!(removal.intensity() == 1.0, "a measured shadow is divided out whole by default");
+        assert!(
+            removal.intensity() == 1.0,
+            "a measured shadow is divided out whole by default"
+        );
         // Clear of the 3.5-to-4.0 band the populations overlap in, with room to spare.
         let bar = removal.min_snr();
         assert!(bar > 5.5 && bar < 6.5, "the resting bar is {bar}");

@@ -75,7 +75,9 @@ describe('PhotoProcessingRepository.built_from, per variant', () => {
            json_array(json_object('photoId', 'live'))), 100, 100, '2026-01-01T00:00:00.000Z')`,
     ).run(LIB);
     repo.markCopyBuilt('canvas', AT, BEFORE, 'max');
-    expect(renditionCurrent(repo.renditionStamps('canvas', 'max')?.built_from ?? null, null)).toBe(true);
+    expect(renditionCurrent(repo.renditionStamps('canvas', 'max')?.built_from ?? null, null)).toBe(
+      true,
+    );
 
     // The frame's own document is `live`'s, which the composite names as a source: the canvas has
     // none of its own here, so a rule reading only that would see nothing at all.
@@ -118,8 +120,18 @@ describe('PhotoProcessingRepository.markCopyBuilt', () => {
         )
         .all('live'),
     ).toEqual([
-      { variant: 'full', needs_build: 1, built_at: '2026-01-01T00:00:00.000Z', built_from: 'edits-1' },
-      { variant: 'max', needs_build: 0, built_at: '2026-06-01T00:00:00.000Z', built_from: 'edits-2' },
+      {
+        variant: 'full',
+        needs_build: 1,
+        built_at: '2026-01-01T00:00:00.000Z',
+        built_from: 'edits-1',
+      },
+      {
+        variant: 'max',
+        needs_build: 0,
+        built_at: '2026-06-01T00:00:00.000Z',
+        built_from: 'edits-2',
+      },
     ]);
     expect(db.query('SELECT rendition_source FROM photos WHERE id = ?').get('live')).toEqual({
       rendition_source: 'embedded',

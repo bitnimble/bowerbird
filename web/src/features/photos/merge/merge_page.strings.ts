@@ -33,9 +33,9 @@ export const MergePageStrings = {
   undo: () => 'Undo',
   redo: () => 'Redo',
   readOnlyMissingSources: (missing: string[]) =>
-    missing.length === 1 ?
-      'A frame is missing. Restore it before merging.'
-    : 'Frames are missing. Restore them before merging.',
+    missing.length === 1
+      ? 'A frame is missing. Restore it before merging.'
+      : 'Frames are missing. Restore them before merging.',
   tileLabel: (tile: number) => `Tile ${tile + 1}`,
 
   pickSwatch: (index: number) => `Choose frame ${index + 1}`,

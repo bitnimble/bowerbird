@@ -47,10 +47,26 @@ export const test = base.extend<{ freshViewer: void }, { instance: string }>({
           // `package.json` says here, and the suite would start depending on what is published.
           BOWERBIRD_UPDATE_REPO: '',
         }),
-        start(['bun', 'run', '../scripts/vite.ts', '--config', 'e2e/vite.config.ts', '--port', String(webPort)], WEB, {
-          VITE_API_URL: api,
-          E2E_VITE_CACHE_DIR: path.join(WEB, 'node_modules', `.vite-e2e-${workerInfo.parallelIndex}`),
-        }),
+        start(
+          [
+            'bun',
+            'run',
+            '../scripts/vite.ts',
+            '--config',
+            'e2e/vite.config.ts',
+            '--port',
+            String(webPort),
+          ],
+          WEB,
+          {
+            VITE_API_URL: api,
+            E2E_VITE_CACHE_DIR: path.join(
+              WEB,
+              'node_modules',
+              `.vite-e2e-${workerInfo.parallelIndex}`,
+            ),
+          },
+        ),
       ];
       try {
         await Promise.all([
@@ -62,7 +78,8 @@ export const test = base.extend<{ freshViewer: void }, { instance: string }>({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ onboarding_complete: true }),
         });
-        if (!onboarded.ok) throw new Error(`could not finish onboarding: ${await onboarded.text()}`);
+        if (!onboarded.ok)
+          throw new Error(`could not finish onboarding: ${await onboarded.text()}`);
         await use(web);
       } finally {
         await Promise.all(servers.map(stop));
@@ -100,13 +117,19 @@ function start(command: string[], cwd: string, env: Record<string, string>): Chi
   const [program = '', ...args] = command;
   // Its own process group, so stopping it takes whatever it spawned too: `scripts/vite.ts`
   // re-executes itself under a flag.
-  return spawn(program, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'ignore', 'inherit'], detached: true });
+  return spawn(program, args, {
+    cwd,
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'ignore', 'inherit'],
+    detached: true,
+  });
 }
 
 async function upAt(url: string, server: ChildProcess): Promise<void> {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    if (server.exitCode != null) throw new Error(`the server for ${url} exited with ${server.exitCode}`);
+    if (server.exitCode != null)
+      throw new Error(`the server for ${url} exited with ${server.exitCode}`);
     const answered = await fetch(url).then(
       (response) => response.ok,
       () => false,

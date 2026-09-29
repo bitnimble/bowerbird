@@ -6,7 +6,10 @@ import { serveStatic } from 'hono/bun';
 import { createDatabase } from './db/connection';
 import { applyErrorHandler } from './api/error_handler';
 import { LibrariesApi } from './api/libraries/libraries_api';
-import { assertNoDataDirectoryOverlap, LibrariesService } from './services/libraries/libraries_service';
+import {
+  assertNoDataDirectoryOverlap,
+  LibrariesService,
+} from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
 import { RenderTimingsFile } from './services/processing/renditions/render_timings_file';
 import { StorageUsageService } from './services/maintenance/storage_usage_service';
@@ -159,7 +162,13 @@ const blobLocations = new BlobLocations(db, activity);
 const backupLocations = new BackupLocations(db);
 // Both kinds of peer behind one transport, so the transfer queue never learns which it is talking
 // to (§14.1): a device over HTTP, a backup folder off its mount.
-const passivePeers = new PassivePeers(db, librariesRepo, photoPathsRepo, photoMetadataRepo, backupLocations);
+const passivePeers = new PassivePeers(
+  db,
+  librariesRepo,
+  photoPathsRepo,
+  photoMetadataRepo,
+  backupLocations,
+);
 const peers = new Peers(passivePeers, new PairedPeers(db));
 // An original that lands is a tile and a rendition owed, and asking for them here
 // is what makes a badged placeholder heal into a picture without anyone rescanning
@@ -204,7 +213,8 @@ const processingService: ProcessingService = new ProcessingService(
   activity,
 );
 const eventsApi = new EventsApi(processingService);
-const replicationChanged = (libraryId: string): void => eventsApi.announce('replication', { library_id: libraryId });
+const replicationChanged = (libraryId: string): void =>
+  eventsApi.announce('replication', { library_id: libraryId });
 
 const librariesService = new LibrariesService(librariesRepo, photoScanRepo, photoPathsRepo);
 const renditionFetch = new RenditionFetchService(
@@ -214,8 +224,14 @@ const renditionFetch = new RenditionFetchService(
   librariesRepo,
   blobLocations,
   peers,
-  (photoId, written) => eventsApi.announce('rendition', { id: photoId, stage: written.stage, version: written.version }),
-  (photoId, rendition, phase) => eventsApi.announce('rendition_fetch', { id: photoId, rendition, phase }),
+  (photoId, written) =>
+    eventsApi.announce('rendition', {
+      id: photoId,
+      stage: written.stage,
+      version: written.version,
+    }),
+  (photoId, rendition, phase) =>
+    eventsApi.announce('rendition_fetch', { id: photoId, rendition, phase }),
   undefined,
   activity,
 );
@@ -243,7 +259,12 @@ const photoReadService = new PhotoReadService(
   processingService,
   photoRenditionService,
 );
-const photoMutationService = new PhotoMutationService(photoStateRepo, photoPathsRepo, librariesRepo, photoReadService);
+const photoMutationService = new PhotoMutationService(
+  photoStateRepo,
+  photoPathsRepo,
+  librariesRepo,
+  photoReadService,
+);
 const albumsService = new AlbumsService(albumsRepo, photoPathsRepo);
 const labelsService = new LabelsService(labelsRepo, librariesRepo);
 const photoEditsService = new PhotoEditsService(
@@ -255,7 +276,13 @@ const photoEditsService = new PhotoEditsService(
   (photoId, stamp) => photoProcessingRepo.vouchCameHome(photoId, stamp),
   (libraryId) => librariesRepo.getConfiguration(libraryId)?.denoiser ?? 'galosh',
 );
-const shootsService = new ShootsService(shootsRepo, photoPathsRepo, photoStateRepo, librariesRepo, folderRulesRepo);
+const shootsService = new ShootsService(
+  shootsRepo,
+  photoPathsRepo,
+  photoStateRepo,
+  librariesRepo,
+  folderRulesRepo,
+);
 const scanConcurrency = (): number => settingsRepo.get().scan_concurrency;
 const scanPool = new ScanPool(scanConcurrency);
 const scanService = new ScanService(
@@ -275,11 +302,18 @@ const scanService = new ScanService(
   (libraryId) => replicationRunner.materialise(libraryId),
   (libraryId) => replicationRunner.stillToMove(libraryId),
 );
-const stacksService = new StacksService(stacksRepo, photoListingRepo, librariesRepo, settingsRepo, activity);
+const stacksService = new StacksService(
+  stacksRepo,
+  photoListingRepo,
+  librariesRepo,
+  settingsRepo,
+  activity,
+);
 // A replica is born by the runner rather than by `LibrariesService.create`, so
 // this is what tells everything that hangs off a library appearing (§9.1).
 const replicaBorn = (library: Library): void => librariesService.announceCreated(library);
-const rebuildEdited = (photoIds: readonly string[]): number => processingService.rebuildEdited(photoIds);
+const rebuildEdited = (photoIds: readonly string[]): number =>
+  processingService.rebuildEdited(photoIds);
 const replicationRunner = new ReplicationRunner(
   db,
   syncLocksRepo,
@@ -291,17 +325,30 @@ const replicationRunner = new ReplicationRunner(
   async (libraryId, peerId, direction) => {
     const scope = { library: true } as const;
     const queued =
-      direction === 'pull' ?
-        await transferService.pullDiff(libraryId, peerId, scope)
-      : await transferService.pushDiff(libraryId, peerId, scope);
+      direction === 'pull'
+        ? await transferService.pullDiff(libraryId, peerId, scope)
+        : await transferService.pushDiff(libraryId, peerId, scope);
     transferService.kick();
     return queued;
   },
   activity,
 );
-const replicationService = new ReplicationService(db, blobLocations, Date.now, rebuildEdited, replicationChanged);
-const mirror = new Mirror(db, librariesRepo, backupLocations, transferService, new Cull(db, transferService), activity,
-  (libraryId) => eventsApi.announce('backup', { library_id: libraryId }));
+const replicationService = new ReplicationService(
+  db,
+  blobLocations,
+  Date.now,
+  rebuildEdited,
+  replicationChanged,
+);
+const mirror = new Mirror(
+  db,
+  librariesRepo,
+  backupLocations,
+  transferService,
+  new Cull(db, transferService),
+  activity,
+  (libraryId) => eventsApi.announce('backup', { library_id: libraryId }),
+);
 // Every import is a scan, so this is what covers "back up what just arrived" as well as what a
 // rename or a bin move owes the mirror (§14.3). The periodic pass is the backstop.
 scanService.onSettled((libraryId, changed) => {
@@ -334,7 +381,9 @@ librariesService.addLifecycleListener(new ReplicationLifecycle(db));
 // back with the result, so this side only stores it. Registered here rather than
 // inside ProcessingService so that building renditions keeps knowing nothing
 // about stacks: it reports what it produced, and this is one more reader of it.
-processingService.onDescribed((photoId, descriptor) => stacksService.storeDescriptor(photoId, descriptor));
+processingService.onDescribed((photoId, descriptor) =>
+  stacksService.storeDescriptor(photoId, descriptor),
+);
 
 // Detection runs when a sync settles, and only if that sync actually brought
 // something in. Not an optimisation: watching is on by default with a two-second
@@ -353,11 +402,17 @@ scanService.onSettled((libraryId, changed) => {
 function workForLibrary(libraryId: string): Activity[] {
   const work = new Map<ActivityKind, Set<string>>();
   for (const current of activity.current(libraryId)) {
-    if (current.kind !== 'rendering') work.set(current.kind, new Set(activity.subjects(libraryId, current.kind)));
+    if (current.kind !== 'rendering')
+      work.set(current.kind, new Set(activity.subjects(libraryId, current.kind)));
   }
   const backups = new Set(passivePeersOf(db, libraryId).map((peer) => peer.peerId));
   for (const transfer of transferService.pending(libraryId)) {
-    const kind = transfer.direction === 'pull' ? 'fetching' : backups.has(transfer.peer_id) ? 'backing_up' : 'sending';
+    const kind =
+      transfer.direction === 'pull'
+        ? 'fetching'
+        : backups.has(transfer.peer_id)
+          ? 'backing_up'
+          : 'sending';
     const subjects = work.get(kind) ?? new Set<string>();
     subjects.add(transfer.photo_id);
     work.set(kind, subjects);
@@ -365,12 +420,21 @@ function workForLibrary(libraryId: string): Activity[] {
   return [...work].map(([kind, subjects]) => ({ kind, count: subjects.size }));
 }
 
-const librariesApi = new LibrariesApi(librariesService, scanService, folderRulesRepo, shootsService,
+const librariesApi = new LibrariesApi(
+  librariesService,
+  scanService,
+  folderRulesRepo,
+  shootsService,
   (libraryId) => stacksService.detectAsync(libraryId),
   workForLibrary,
   () => activity.current(null),
 );
-const photosApi = new PhotosApi(photoReadService, photoMutationService, photoRenditionService, processingService);
+const photosApi = new PhotosApi(
+  photoReadService,
+  photoMutationService,
+  photoRenditionService,
+  processingService,
+);
 const albumsApi = new AlbumsApi(albumsService, photoReadService);
 const shootsApi = new ShootsApi(shootsService, photoReadService);
 const stacksApi = new StacksApi(stacksService, photoReadService);
@@ -450,7 +514,8 @@ function allowedOrigin(origin: string, c: Context): string | null {
   } catch {
     return null;
   }
-  if (originHost === 'localhost' || originHost === '127.0.0.1' || originHost === '::1') return origin;
+  if (originHost === 'localhost' || originHost === '127.0.0.1' || originHost === '::1')
+    return origin;
   const requestHost = (c.req.header('host') ?? '').replace(/:\d+$/, '');
   return originHost === requestHost ? origin : null;
 }
@@ -482,7 +547,13 @@ app.use(route(PathSegment.any()), async (c, next) => {
   await next();
   const status = c.res.status;
   const ms = Math.round(performance.now() - started);
-  const level = requestLogLevel({ status, ms, method: c.req.method, path: c.req.path, activity: c.req.header(REQUEST_ACTIVITY_HEADER) });
+  const level = requestLogLevel({
+    status,
+    ms,
+    method: c.req.method,
+    path: c.req.path,
+    activity: c.req.header(REQUEST_ACTIVITY_HEADER),
+  });
   requestLog[level](`${c.req.method} ${c.req.path}`, { status, ms });
 });
 app.route(route(PathSegment.api(), PathSegment.events()), eventsApi.routes);
@@ -495,7 +566,10 @@ app.route(
     new StorageUsageService(),
   ).routes,
 );
-app.route(route(PathSegment.api(), PathSegment.updates()), new UpdatesApi(new UpdateService()).routes);
+app.route(
+  route(PathSegment.api(), PathSegment.updates()),
+  new UpdatesApi(new UpdateService()).routes,
+);
 app.route(route(PathSegment.api(), PathSegment.browse()), new BrowseApi().routes);
 app.route(
   route(PathSegment.api(), PathSegment.printerProfiles()),
@@ -506,15 +580,22 @@ app.route(route(PathSegment.api()), photosApi.routes);
 app.route(route(PathSegment.api()), new PhotoEditsApi(photoEditsService).routes);
 app.route(route(PathSegment.api()), shootsApi.routes);
 app.route(route(PathSegment.api(), PathSegment.albums()), albumsApi.routes);
-app.route(route(PathSegment.api(), PathSegment.labels()), new LabelsApi(labelsService, photoReadService).routes);
+app.route(
+  route(PathSegment.api(), PathSegment.labels()),
+  new LabelsApi(labelsService, photoReadService).routes,
+);
 app.route(route(PathSegment.api(), PathSegment.stacks()), stacksApi.routes);
 app.route(route(PathSegment.api(), PathSegment.composites()), compositesApi.routes);
 app.route(route(PathSegment.api(), PathSegment.assemblies()), assembliesApi.routes);
 app.route(route(PathSegment.api(), PathSegment.backup()), new BackupApi(mirror).routes);
 app.route(
   route(PathSegment.api(), PathSegment.replication()),
-  new ReplicationApi(replicationService, replicationRunner, (libraryId) => transferService.cancelIncoming(libraryId), activity)
-    .routes,
+  new ReplicationApi(
+    replicationService,
+    replicationRunner,
+    (libraryId) => transferService.cancelIncoming(libraryId),
+    activity,
+  ).routes,
 );
 app.route(route(PathSegment.api(), PathSegment.blobs()), blobsApi.routes);
 app.route(route(PathSegment.api(), PathSegment.frameTvs()), new FrameTvApi(frameTvService).routes);
@@ -527,7 +608,14 @@ app.route(route(PathSegment.image()), imageApi.routes);
 // Which AVIF quality to ship at: a diagnostic, same reasoning as the HDR check.
 app.route(
   route(PathSegment.qualityCheck()),
-  new QualityCheckApi(photoReadService, photoRenditionService, librariesService, settingsRepo, originals, activity).routes,
+  new QualityCheckApi(
+    photoReadService,
+    photoRenditionService,
+    librariesService,
+    settingsRepo,
+    originals,
+    activity,
+  ).routes,
 );
 
 // The web client, where a build of it sits beside this server (the container) or the desktop
@@ -548,7 +636,11 @@ if (existsSync(webRoot)) {
   // has never heard of, so a reload on one has to answer with the shell rather
   // than a 404. Last, so it can only catch what nothing above it claimed.
   app.get(route(PathSegment.any()), async (c) => {
-    if (c.req.path.startsWith(route(PathSegment.api())) || c.req.path.startsWith(route(PathSegment.image()))) return c.notFound();
+    if (
+      c.req.path.startsWith(route(PathSegment.api())) ||
+      c.req.path.startsWith(route(PathSegment.image()))
+    )
+      return c.notFound();
     return c.html(openGraph.inject(await Bun.file(index).text(), c));
   });
   log.info('serving the web client', { root: webRoot });
@@ -609,12 +701,18 @@ scanService.onSettled((libraryId) => {
   if (library != null) void blobLocations.reconcile(library);
 });
 const dailyScan = new DailyScan(scanService);
-const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photoMetadataRepo, activity));
+const scheduledPrune = new ScheduledPrune(
+  new PruneService(librariesRepo, photoMetadataRepo, activity),
+);
 const scheduledBackup = new ScheduledBackup(new BackupService(config.dbPath, {}, activity));
 
 function applySettings(settings: Settings): void {
   setLogLevel(settings.log_level);
-  watcher.configure(settings.watch_enabled, settings.watch_debounce_ms, settings.watch_poll_interval_ms);
+  watcher.configure(
+    settings.watch_enabled,
+    settings.watch_debounce_ms,
+    settings.watch_poll_interval_ms,
+  );
   dailyScan.configure(settings.full_sync_at);
   scheduledPrune.configure(settings.prune_every_days);
   scheduledBackup.configure(settings.backup_every_days, settings.backup_keep);
@@ -629,7 +727,8 @@ applySettings(settingsRepo.get());
 // newer than the render, which is true however the photo came to be that way.
 {
   const stale = processingService.rebuildEdited();
-  if (stale > 0) log.info('queued edited photos whose renders were never rebuilt', { photos: stale });
+  if (stale > 0)
+    log.info('queued edited photos whose renders were never rebuilt', { photos: stale });
 }
 
 // Replication state whose library is gone: the listener that clears it runs after
@@ -638,7 +737,8 @@ applySettings(settingsRepo.get());
 // already holds everything (§8.4).
 {
   const orphaned = forgetOrphanedLibraries(db);
-  if (orphaned > 0) log.info('cleared replication state for libraries that are gone', { libraries: orphaned });
+  if (orphaned > 0)
+    log.info('cleared replication state for libraries that are gone', { libraries: orphaned });
 }
 
 // Catalogues catch up by themselves once a library has peers; the originals stay

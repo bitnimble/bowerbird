@@ -23,7 +23,10 @@ const LIB = 'lib-embedded-route';
 
 function serving(recipe: StoredRecipe): Hono {
   const photos = {
-    locate: () => ({ library: { id: LIB, root_path: dataPathForLibraryId(LIB) }, photo: { id: 'p1', file_path: null, recipe } }),
+    locate: () => ({
+      library: { id: LIB, root_path: dataPathForLibraryId(LIB) },
+      photo: { id: 'p1', file_path: null, recipe },
+    }),
     rebuildIfStale: () => undefined,
   };
   const app = new Hono();
@@ -53,7 +56,9 @@ const PANORAMA = {
 } as unknown as StoredRecipe;
 
 it('serves the composited camera view of a row that names no file of its own', async () => {
-  const answer = await serving(PANORAMA).request(route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'));
+  const answer = await serving(PANORAMA).request(
+    route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'),
+  );
 
   expect(answer.status).toBe(200);
   expect(await answer.text()).toBe('canvas');

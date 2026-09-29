@@ -12,7 +12,12 @@ describe('foldersUnder', () => {
       mkdirSync(path.join(root, 'Trip/Empty'), { recursive: true });
       writeFileSync(path.join(root, 'Trip/Import/IMG_0001.arw'), '');
 
-      expect(await foldersUnder(scope(root))).toEqual(['Trip', 'Trip/Empty', 'Trip/Import', 'Trip/Import/rx100']);
+      expect(await foldersUnder(scope(root))).toEqual([
+        'Trip',
+        'Trip/Empty',
+        'Trip/Import',
+        'Trip/Import/rx100',
+      ]);
     }),
   );
 

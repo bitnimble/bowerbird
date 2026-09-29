@@ -6,7 +6,12 @@ import { useListingStore, useMarksStore, useStacksStore } from '../../../app/sto
 import { focusRing } from '../../../ui/focus_ring';
 import { GRID_GAP } from './grid_layout';
 import { PhotoGridStrings } from './photo_grid.strings';
-import { STRIP_MAX_THICKNESS, STRIP_MIN_THICKNESS, STRIP_SPINE, type StripViewStore } from '../viewer/strip_view_store';
+import {
+  STRIP_MAX_THICKNESS,
+  STRIP_MIN_THICKNESS,
+  STRIP_SPINE,
+  type StripViewStore,
+} from '../viewer/strip_view_store';
 import type { StripViewPresenter } from '../viewer/strip_view_presenter';
 import { band, bandColourOf, cells, strip, viewport } from './photo_grid_styles';
 import { BandMember, InStrip } from './photo_tile';
@@ -97,7 +102,8 @@ export const PhotoStrip = observer(function PhotoStrip({
   const along = view.axis;
   // The element's own offset along whichever way the strip runs. Read and written
   // through these so the rail below is the same code on either axis.
-  const offsetOf = (element: HTMLElement): number => (along === 'x' ? element.scrollLeft : element.scrollTop);
+  const offsetOf = (element: HTMLElement): number =>
+    along === 'x' ? element.scrollLeft : element.scrollTop;
   const putOffset = (element: HTMLElement, at: number): void => {
     if (along === 'x') element.scrollLeft = at;
     else element.scrollTop = at;
@@ -173,10 +179,16 @@ export const PhotoStrip = observer(function PhotoStrip({
             viewport={view.viewportLength}
             wheelStep={view.pitch}
             onDragged={presenter.rail.scrollToProgress}
-            onWheeled={(delta) => scroller.current?.scrollBy(along === 'x' ? { left: delta } : { top: delta })}
+            onWheeled={(delta) =>
+              scroller.current?.scrollBy(along === 'x' ? { left: delta } : { top: delta })
+            }
           />
           <div
-            {...stylex.props(strip.scroller, along === 'x' ? strip.scrollerX : strip.scrollerY, focusRing.ring)}
+            {...stylex.props(
+              strip.scroller,
+              along === 'x' ? strip.scrollerX : strip.scrollerY,
+              focusRing.ring,
+            )}
             id={STRIP_ID}
             ref={scroller}
             // The phone drawer's swipe leaves a drag along a sideways strip to the strip (`drawer_swipe.ts`).
@@ -207,15 +219,20 @@ export const PhotoStrip = observer(function PhotoStrip({
             // that does nothing over the one thing under the pointer that moves.
             onWheel={(e) => {
               const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-              const step = e.deltaMode === 1 ? view.pitch : e.deltaMode === 2 ? view.viewportLength : 1;
-              e.currentTarget.scrollBy(along === 'x' ? { left: delta * step } : { top: delta * step });
+              const step =
+                e.deltaMode === 1 ? view.pitch : e.deltaMode === 2 ? view.viewportLength : 1;
+              e.currentTarget.scrollBy(
+                along === 'x' ? { left: delta * step } : { top: delta * step },
+              );
             }}
           >
             <div
               {...stylex.props(
                 viewport.content,
                 viewport.stripContent,
-                along === 'x' ? viewport.railWidth(view.rail.length) : [viewport.stripContentY, viewport.railHeight(view.rail.length)],
+                along === 'x'
+                  ? viewport.railWidth(view.rail.length)
+                  : [viewport.stripContentY, viewport.railHeight(view.rail.length)],
               )}
               role="presentation"
             >
@@ -228,7 +245,10 @@ export const PhotoStrip = observer(function PhotoStrip({
                     along === 'x' ? cells.windowX : cells.windowY,
                     cells.along(along, view.rail.positionOf(section.top)),
                     cells.stripCells(view.pitch - GRID_GAP, STRIP_SPINE),
-                    section.kind === 'band' && [band.band, bandColourOf(store.bandColours.get(section.stackId))],
+                    section.kind === 'band' && [
+                      band.band,
+                      bandColourOf(store.bandColours.get(section.stackId)),
+                    ],
                   )}
                   // A band is a group with a name, as it is in the gallery: its
                   // members are not cells of the collection, and flattened into the

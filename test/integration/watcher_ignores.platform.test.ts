@@ -29,9 +29,14 @@ async function quiet(): Promise<void> {
   await sleep(DEBOUNCE * 6 + 100);
 }
 
-async function start(over: Partial<Pick<LibraryScope, 'includeSubfolders' | 'binName' | 'excluded'>>): Promise<void> {
+async function start(
+  over: Partial<Pick<LibraryScope, 'includeSubfolders' | 'binName' | 'excluded'>>,
+): Promise<void> {
   const library = { id: LIB, root_path: root, bin_name: 'Bin', ordering: 'taken_desc' } as Library;
-  const libraries = { list: () => [library], getById: () => library } as unknown as LibrariesRepository;
+  const libraries = {
+    list: () => [library],
+    getById: () => library,
+  } as unknown as LibrariesRepository;
   const scan = {
     scanLibrary: async (_id: string, scope?: ScanScope) => {
       calls.push(scope?.paths);

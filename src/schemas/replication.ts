@@ -40,7 +40,8 @@ export function canSend(from: BuildVersion, to: BuildVersion): boolean {
 export function outdatedSide(ours: BuildVersion, theirs: BuildVersion): Outdated {
   if (theirs.protocol === ours.protocol && theirs.schema === ours.schema) return null;
   const theyAreOlder =
-    theirs.protocol < ours.protocol || (theirs.protocol === ours.protocol && theirs.schema < ours.schema);
+    theirs.protocol < ours.protocol ||
+    (theirs.protocol === ours.protocol && theirs.schema < ours.schema);
   return theyAreOlder ? 'peer' : 'this_device';
 }
 
@@ -56,13 +57,18 @@ export const ReplicatedPathSchema = z
   .string()
   .min(1)
   .max(4096)
-  .refine((p) => !p.includes('\\') && !p.includes('\0'), { message: 'path must use forward slashes' })
+  .refine((p) => !p.includes('\\') && !p.includes('\0'), {
+    message: 'path must use forward slashes',
+  })
   .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p), {
     message: 'path must be relative to the library root',
   })
-  .refine((p) => !p.split('/').some((segment) => segment === '' || segment === '.' || segment === '..'), {
-    message: 'path must not contain empty, "." or ".." segments',
-  });
+  .refine(
+    (p) => !p.split('/').some((segment) => segment === '' || segment === '.' || segment === '..'),
+    {
+      message: 'path must not contain empty, "." or ".." segments',
+    },
+  );
 
 const ReplicatedBinNameSchema = z
   .string()
@@ -72,9 +78,16 @@ const ReplicatedBinNameSchema = z
   // string, so a name carrying one reaches the filesystem as its prefix and names
   // a folder other than the one that was checked. Tested rather than matched, so
   // the pattern holds no control character to object to.
-  .refine((name) => !/[/\\]/.test(name) && !name.includes(String.fromCharCode(0)) && name !== '.' && name !== '..', {
-    message: 'bin folder name must be a single folder name',
-  });
+  .refine(
+    (name) =>
+      !/[/\\]/.test(name) &&
+      !name.includes(String.fromCharCode(0)) &&
+      name !== '.' &&
+      name !== '..',
+    {
+      message: 'bin folder name must be a single folder name',
+    },
+  );
 
 const MAX_CELL_CHARS = 4_000_000;
 
@@ -96,28 +109,32 @@ const RowSchema = z.record(z.string().max(128), CellSchema);
  * A kind this build does not know passes - a later peer may compose in ways this one cannot, and
  * relaying its rows is the point - but anything calling itself a file is held to the path rules.
  */
-const RecipeCellSchema = z.string().max(MAX_CELL_CHARS).refine(
-  (raw) => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return false;
-    }
-    if (typeof parsed !== 'object' || parsed == null) return false;
-    const recipe = parsed as { kind?: unknown; path?: unknown };
-    if (typeof recipe.kind !== 'string') return false;
-    // Held to the path rules whenever it carries a path at all, not only when it calls itself a
-    // file. A kind this build does not know is relayed unread - that is the point - and one
-    // carrying a `path` would otherwise reach a reader that asks for `$.path` without asking
-    // what kind it is.
-    if (recipe.path === undefined) return recipe.kind !== 'file';
-    return ReplicatedPathSchema.safeParse(recipe.path).success;
-  },
-  {
-    message: 'recipe must be JSON naming a kind, and any path it carries must be library-relative',
-  },
-);
+const RecipeCellSchema = z
+  .string()
+  .max(MAX_CELL_CHARS)
+  .refine(
+    (raw) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return false;
+      }
+      if (typeof parsed !== 'object' || parsed == null) return false;
+      const recipe = parsed as { kind?: unknown; path?: unknown };
+      if (typeof recipe.kind !== 'string') return false;
+      // Held to the path rules whenever it carries a path at all, not only when it calls itself a
+      // file. A kind this build does not know is relayed unread - that is the point - and one
+      // carrying a `path` would otherwise reach a reader that asks for `$.path` without asking
+      // what kind it is.
+      if (recipe.path === undefined) return recipe.kind !== 'file';
+      return ReplicatedPathSchema.safeParse(recipe.path).success;
+    },
+    {
+      message:
+        'recipe must be JSON naming a kind, and any path it carries must be library-relative',
+    },
+  );
 
 const ROW_GUARDS: Partial<Record<string, z.ZodType>> = {
   photo: z.object({
@@ -320,7 +337,10 @@ export const SyncOriginalsRequestSchema = z
     sync_originals: z.boolean().optional(),
     auto_transfer_originals: z.boolean().optional(),
   })
-  .refine((body) => body.sync_originals != null || body.auto_transfer_originals != null, 'nothing to change');
+  .refine(
+    (body) => body.sync_originals != null || body.auto_transfer_originals != null,
+    'nothing to change',
+  );
 
 export const SyncOriginalsResponseSchema = z.object({ cancelled: z.number().int() });
 export type SyncOriginalsResponse = z.infer<typeof SyncOriginalsResponseSchema>;
@@ -368,7 +388,10 @@ export const ReplicaSummarySchema = z.object({
 });
 export type ReplicaSummary = z.infer<typeof ReplicaSummarySchema>;
 
-export const ReplicateResultSchema = z.object({ applied: z.number().int(), peers: z.number().int() });
+export const ReplicateResultSchema = z.object({
+  applied: z.number().int(),
+  peers: z.number().int(),
+});
 export type ReplicateResult = z.infer<typeof ReplicateResultSchema>;
 
 export const SoleHoldingsResponseSchema = z.object({ photos: z.array(z.string()) });
@@ -383,7 +406,10 @@ export type BrowseRemoteRequest = z.infer<typeof BrowseRemoteRequestSchema>;
 export const AddReplicaRequestSchema = z.object({
   address: z.string().trim().min(1).max(2048),
   library_id: IdSchema,
-  root_path: z.string().min(1).refine((path) => path.trim() !== ''),
+  root_path: z
+    .string()
+    .min(1)
+    .refine((path) => path.trim() !== ''),
   sync_originals: WantsOriginalsSchema,
   auto_transfer_originals: z.boolean().default(true),
 });

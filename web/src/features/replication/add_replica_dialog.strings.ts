@@ -10,7 +10,8 @@ export const AddReplicaStrings = {
   next: () => 'Next',
 
   librariesOn: (deviceName: string) => `Libraries on ${deviceName}`,
-  clockSkew: (minutes: number) => `Your devices' clocks differ by ${minutes} minutes. Correct the time and try again.`,
+  clockSkew: (minutes: number) =>
+    `Your devices' clocks differ by ${minutes} minutes. Correct the time and try again.`,
   noLibraries: () => 'No libraries on that device',
   photoCount: (count: string, isOne: boolean) => `${count} ${isOne ? 'photo' : 'photos'}`,
   readOnly: () => ' · read-only, sync unavailable',

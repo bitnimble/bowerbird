@@ -35,8 +35,14 @@ fn a_third_party_lens_named_loosely_still_resolves() {
     .expect("the database has this lens");
     assert_eq!(knots.len(), 16);
     assert_eq!(knots[0], 0.0);
-    assert!((corner(&knots) - -0.003_502_964_973_449_707).abs() < TOLERANCE, "{knots:?}");
-    assert!((knots[8] - -0.000_996_887_631_876_664).abs() < TOLERANCE, "{knots:?}");
+    assert!(
+        (corner(&knots) - -0.003_502_964_973_449_707).abs() < TOLERANCE,
+        "{knots:?}"
+    );
+    assert!(
+        (knots[8] - -0.000_996_887_631_876_664).abs() < TOLERANCE,
+        "{knots:?}"
+    );
 }
 
 /// The case that decides whether the search is usable at all: lensfun files this lens as
@@ -59,8 +65,14 @@ fn a_lens_filed_under_its_english_name_resolves_from_what_the_body_wrote() {
         4000,
     )
     .expect("the database has this lens under its English name");
-    assert!((corner(&knots) - 0.061_802_029_609_680_176).abs() < TOLERANCE, "{knots:?}");
-    assert_eq!(lensdb::crop_factor("Sony", "ILCE-6300", None), Some(1.534_000_039_100_647));
+    assert!(
+        (corner(&knots) - 0.061_802_029_609_680_176).abs() < TOLERANCE,
+        "{knots:?}"
+    );
+    assert_eq!(
+        lensdb::crop_factor("Sony", "ILCE-6300", None),
+        Some(1.534_000_039_100_647)
+    );
 }
 
 /// A full-frame body in APS-C mode writes an APS-C picture, and says so only through its 35mm
@@ -80,9 +92,15 @@ fn a_full_frame_body_in_apsc_mode_takes_an_apsc_lens() {
         )
     };
     let knots = asked(Some(68.0 / 45.0)).expect("the APS-C picture takes its APS-C lens");
-    assert!((corner(&knots) / 0.061_802_029_609_680_176 - 1.0).abs() < 0.05, "{knots:?}");
+    assert!(
+        (corner(&knots) / 0.061_802_029_609_680_176 - 1.0).abs() < 0.05,
+        "{knots:?}"
+    );
     let stated = 68.0f32 / 45.0;
-    assert_eq!(lensdb::crop_factor("Sony", "ILCE-7CR", Some(stated)), Some(f64::from(stated)));
+    assert_eq!(
+        lensdb::crop_factor("Sony", "ILCE-7CR", Some(stated)),
+        Some(f64::from(stated))
+    );
 }
 
 /// The same full-frame lens reaches only the middle of its own barrel on the smaller picture.
@@ -110,18 +128,35 @@ fn a_zoom_answers_for_the_end_of_its_range_it_was_shot_at() {
         6336,
     )
     .expect("the database has this lens");
-    assert!((corner(&knots) - -0.011_024_296_283_721_924).abs() < TOLERANCE, "{knots:?}");
+    assert!(
+        (corner(&knots) - -0.011_024_296_283_721_924).abs() < TOLERANCE,
+        "{knots:?}"
+    );
 }
 
 /// A body's own lens, and the strongest correction in the set: 16% at the corner, which is the
 /// magnitude a mistake in the normalisation would show up at.
 #[test]
 fn a_kit_zoom_answers_with_the_whole_of_its_barrel() {
-    let knots =
-        lensdb::distortion_knots("Canon", "Canon EOS R8", "Canon RF24-50mm F4.5-6.3 IS STM", 24.0, 4.5, None, 6000, 4000)
-            .expect("the database has this lens");
-    assert!((corner(&knots) - -0.158_402_502_536_773_68).abs() < TOLERANCE, "{knots:?}");
-    assert_eq!(lensdb::crop_factor("Canon", "Canon EOS R8", None), Some(1.0));
+    let knots = lensdb::distortion_knots(
+        "Canon",
+        "Canon EOS R8",
+        "Canon RF24-50mm F4.5-6.3 IS STM",
+        24.0,
+        4.5,
+        None,
+        6000,
+        4000,
+    )
+    .expect("the database has this lens");
+    assert!(
+        (corner(&knots) - -0.158_402_502_536_773_68).abs() < TOLERANCE,
+        "{knots:?}"
+    );
+    assert_eq!(
+        lensdb::crop_factor("Canon", "Canon EOS R8", None),
+        Some(1.0)
+    );
 }
 
 /// Sixty of the database's 1300 lenses state a focal range in the XML and the rest have it read
@@ -142,14 +177,26 @@ fn a_lens_that_states_no_range_still_has_one_read_from_its_name() {
             4480,
         )
     };
-    assert!(asked(70.0).is_some(), "the lens did not answer inside its own range");
-    assert!(asked(600.0).is_none(), "a 70-200 answered for a 600mm frame");
+    assert!(
+        asked(70.0).is_some(),
+        "the lens did not answer inside its own range"
+    );
+    assert!(
+        asked(600.0).is_none(),
+        "a 70-200 answered for a 600mm frame"
+    );
 }
 
 #[test]
 fn a_body_the_database_has_never_heard_of_has_no_crop_factor() {
-    assert_eq!(lensdb::crop_factor("Bowerbird", "Imaginary One", None), None);
-    assert_eq!(lensdb::crop_factor("Bowerbird", "Imaginary One", Some(1.5)), Some(1.5));
+    assert_eq!(
+        lensdb::crop_factor("Bowerbird", "Imaginary One", None),
+        None
+    );
+    assert_eq!(
+        lensdb::crop_factor("Bowerbird", "Imaginary One", Some(1.5)),
+        Some(1.5)
+    );
 }
 
 /// A directory holding no lens data is refused, rather than loaded as a database with nothing in
@@ -169,12 +216,19 @@ fn a_named_directory_with_no_lens_data_is_refused() {
     std::fs::create_dir_all(&at).expect("a scratch directory");
 
     let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
-        .args(["--exact", "a_third_party_lens_named_loosely_still_resolves", "--nocapture"])
+        .args([
+            "--exact",
+            "a_third_party_lens_named_loosely_still_resolves",
+            "--nocapture",
+        ])
         .env("BOWERBIRD_LENSFUN_DATA", &at)
         .output()
         .expect("run this test binary again");
 
-    assert!(!run.status.success(), "an empty directory loaded as a database");
+    assert!(
+        !run.status.success(),
+        "an empty directory loaded as a database"
+    );
     let said = String::from_utf8_lossy(&run.stderr);
     assert!(
         said.contains("BOWERBIRD_LENSFUN_DATA"),

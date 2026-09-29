@@ -152,12 +152,19 @@ async function withTile(filePath: string, stage: TileStage): Promise<RawHeader> 
       sequence: fields.sequence,
     };
   } catch (err) {
-    log.debug('could not build a tile during the scan; the rendition pass will', { file: filePath, err });
+    log.debug('could not build a tile during the scan; the rendition pass will', {
+      file: filePath,
+      err,
+    });
     return readRawHeader(filePath);
   }
 }
 
-function fileMetadata(header: RawHeader, dateTakenOffset: string | null, stats: Stats): FileMetadata {
+function fileMetadata(
+  header: RawHeader,
+  dateTakenOffset: string | null,
+  stats: Stats,
+): FileMetadata {
   return {
     width: header.width,
     height: header.height,

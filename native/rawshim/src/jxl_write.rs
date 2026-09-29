@@ -8,7 +8,8 @@
 use crate::raw;
 
 const JXL_ENC_SUCCESS: raw::JxlEncoderStatus = raw::JxlEncoderStatus::JXL_ENC_SUCCESS;
-const JXL_ENC_NEED_MORE_OUTPUT: raw::JxlEncoderStatus = raw::JxlEncoderStatus::JXL_ENC_NEED_MORE_OUTPUT;
+const JXL_ENC_NEED_MORE_OUTPUT: raw::JxlEncoderStatus =
+    raw::JxlEncoderStatus::JXL_ENC_NEED_MORE_OUTPUT;
 const JXL_TYPE_UINT8: raw::JxlDataType = raw::JxlDataType::JXL_TYPE_UINT8;
 const JXL_TYPE_UINT16: raw::JxlDataType = raw::JxlDataType::JXL_TYPE_UINT16;
 const JXL_NATIVE_ENDIAN: raw::JxlEndianness = raw::JxlEndianness::JXL_NATIVE_ENDIAN;
@@ -16,9 +17,12 @@ const JXL_COLOR_SPACE_RGB: raw::JxlColorSpace = raw::JxlColorSpace::JXL_COLOR_SP
 const JXL_WHITE_POINT_D65: raw::JxlWhitePoint = raw::JxlWhitePoint::JXL_WHITE_POINT_D65;
 const JXL_PRIMARIES_SRGB: raw::JxlPrimaries = raw::JxlPrimaries::JXL_PRIMARIES_SRGB;
 const JXL_PRIMARIES_2100: raw::JxlPrimaries = raw::JxlPrimaries::JXL_PRIMARIES_2100;
-const JXL_TRANSFER_FUNCTION_SRGB: raw::JxlTransferFunction = raw::JxlTransferFunction::JXL_TRANSFER_FUNCTION_SRGB;
-const JXL_TRANSFER_FUNCTION_PQ: raw::JxlTransferFunction = raw::JxlTransferFunction::JXL_TRANSFER_FUNCTION_PQ;
-const JXL_RENDERING_INTENT_RELATIVE: raw::JxlRenderingIntent = raw::JxlRenderingIntent::JXL_RENDERING_INTENT_RELATIVE;
+const JXL_TRANSFER_FUNCTION_SRGB: raw::JxlTransferFunction =
+    raw::JxlTransferFunction::JXL_TRANSFER_FUNCTION_SRGB;
+const JXL_TRANSFER_FUNCTION_PQ: raw::JxlTransferFunction =
+    raw::JxlTransferFunction::JXL_TRANSFER_FUNCTION_PQ;
+const JXL_RENDERING_INTENT_RELATIVE: raw::JxlRenderingIntent =
+    raw::JxlRenderingIntent::JXL_RENDERING_INTENT_RELATIVE;
 
 /// Eight-bit sRGB, which is what the SDR render holds. `exif` is a TIFF block (`crate::exif`).
 pub fn encode_sdr(
@@ -41,7 +45,14 @@ pub fn encode_hdr(
 ) -> Result<Vec<u8>, String> {
     // A reinterpret rather than a conversion: the bytes are the samples in this machine's order,
     // which is what `JXL_NATIVE_ENDIAN` says the buffer is in.
-    encode(bytemuck::cast_slice(samples), width, height, distance, true, exif)
+    encode(
+        bytemuck::cast_slice(samples),
+        width,
+        height,
+        distance,
+        true,
+        exif,
+    )
 }
 
 fn encode(
@@ -58,7 +69,10 @@ fn encode(
     };
     let expected = width * height * 3 * (depth as usize / 8);
     if samples.len() < expected {
-        return Err(format!("buffer is {} bytes, expected {expected}", samples.len()));
+        return Err(format!(
+            "buffer is {} bytes, expected {expected}",
+            samples.len()
+        ));
     }
     if width == 0 || height == 0 {
         return Err("JPEG XL cannot hold an empty frame".to_string());
@@ -72,8 +86,11 @@ fn encode(
     #[expect(unsafe_code)]
     unsafe {
         if !runner.0.is_null()
-            && raw::JxlEncoderSetParallelRunner(encoder.0, Some(raw::JxlThreadParallelRunner), runner.0)
-                != JXL_ENC_SUCCESS
+            && raw::JxlEncoderSetParallelRunner(
+                encoder.0,
+                Some(raw::JxlThreadParallelRunner),
+                runner.0,
+            ) != JXL_ENC_SUCCESS
         {
             return Err("libjxl would not take a parallel runner".to_string());
         }
@@ -83,8 +100,13 @@ fn encode(
             let contents = [&[0u8; 4][..], exif].concat();
             if raw::JxlEncoderUseContainer(encoder.0, 1) != JXL_ENC_SUCCESS
                 || raw::JxlEncoderUseBoxes(encoder.0) != JXL_ENC_SUCCESS
-                || raw::JxlEncoderAddBox(encoder.0, b"Exif".as_ptr().cast(), contents.as_ptr(), contents.len(), 0)
-                    != JXL_ENC_SUCCESS
+                || raw::JxlEncoderAddBox(
+                    encoder.0,
+                    b"Exif".as_ptr().cast(),
+                    contents.as_ptr(),
+                    contents.len(),
+                    0,
+                ) != JXL_ENC_SUCCESS
             {
                 return Err("libjxl would not take the EXIF".to_string());
             }
@@ -103,7 +125,9 @@ fn encode(
         // requires and what makes every lossy file several times larger for nothing.
         info.uses_original_profile = i32::from(distance <= 0.0);
         if raw::JxlEncoderSetBasicInfo(encoder.0, &info) != JXL_ENC_SUCCESS {
-            return Err(format!("libjxl refused a {width}x{height} frame at {depth} bits"));
+            return Err(format!(
+                "libjxl refused a {width}x{height} frame at {depth} bits"
+            ));
         }
 
         let mut colour = std::mem::zeroed::<raw::JxlColorEncoding>();
@@ -199,7 +223,9 @@ struct Runner(*mut std::ffi::c_void);
 
 impl Runner {
     fn threads() -> Runner {
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         #[expect(unsafe_code)]
         let handle = unsafe { raw::JxlThreadParallelRunnerCreate(std::ptr::null(), threads) };
         Runner(handle)
@@ -238,7 +264,11 @@ mod tests {
     #[test]
     fn an_sdr_frame_encodes() {
         let file = encode_sdr(&ramp8(), W, H, 1.0, None).expect("the encode");
-        assert!(is_jxl(&file), "not a codestream: {:02x?}", &file[..8.min(file.len())]);
+        assert!(
+            is_jxl(&file),
+            "not a codestream: {:02x?}",
+            &file[..8.min(file.len())]
+        );
     }
 
     /// Sixteen bits of PQ, which is the arm that would silently truncate if the depth or the
@@ -257,10 +287,17 @@ mod tests {
     /// there lossless is the *smaller* file and the comparison says nothing about which arm ran.
     #[test]
     fn lossless_costs_more_than_the_default_distance() {
-        let noise: Vec<u8> = (0..W * H * 3).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let noise: Vec<u8> = (0..W * H * 3)
+            .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+            .collect();
         let lossy = encode_sdr(&noise, W, H, 1.5, None).expect("the lossy encode");
         let lossless = encode_sdr(&noise, W, H, 0.0, None).expect("the lossless encode");
-        assert!(lossless.len() > lossy.len(), "{} against {}", lossless.len(), lossy.len());
+        assert!(
+            lossless.len() > lossy.len(),
+            "{} against {}",
+            lossless.len(),
+            lossy.len()
+        );
     }
 
     #[test]

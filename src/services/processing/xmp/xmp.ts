@@ -23,7 +23,17 @@ import { parseXmpProperties, Properties } from './xmp_document';
 // whatever renders the geometry rather than treated as settled.
 
 const ANY = Number.POSITIVE_INFINITY;
-const WHITE_BALANCES = ['As Shot', 'Auto', 'Daylight', 'Cloudy', 'Shade', 'Tungsten', 'Fluorescent', 'Flash', 'Custom'];
+const WHITE_BALANCES = [
+  'As Shot',
+  'Auto',
+  'Daylight',
+  'Cloudy',
+  'Shade',
+  'Tungsten',
+  'Fluorescent',
+  'Flash',
+  'Custom',
+];
 const TONE_CURVE_NAMES = ['Linear', 'Medium Contrast', 'Strong Contrast', 'Custom'];
 const LENS_PROFILE_SETUPS = ['LensDefaults', 'Auto', 'Custom'];
 
@@ -94,7 +104,10 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
   // read as absent. This is the most consequential unparseable value in the
   // format - it diverts the whole current-generation parameter set - so it is
   // the last one that should degrade in silence.
-  for (const [tag, value] of [['crs:ProcessVersion', processVersion], ['crs:Version', crsVersion]] as const) {
+  for (const [tag, value] of [
+    ['crs:ProcessVersion', processVersion],
+    ['crs:Version', crsVersion],
+  ] as const) {
     if (value != null && !VERSION.test(value.trim())) p.record(tag, 'unparseable', value);
   }
 
@@ -121,7 +134,8 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
     // Whichever edge of the inverted pair the file actually wrote: the other one
     // is sitting on its default, and naming a tag that is not in the file with
     // an empty value says nothing a consumer can act on.
-    const pair = cropTop >= cropBottom ? ['crs:CropTop', 'crs:CropBottom'] : ['crs:CropLeft', 'crs:CropRight'];
+    const pair =
+      cropTop >= cropBottom ? ['crs:CropTop', 'crs:CropBottom'] : ['crs:CropLeft', 'crs:CropRight'];
     const tag = pair.find((edge) => p.verbatim(edge) !== '') ?? pair[1]!;
     p.record(tag, 'malformed', p.verbatim(tag));
   }
@@ -140,9 +154,10 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
   const lookFields = p.struct('crs:Look');
 
   const settings = {
-    processVersion: generation == null
-      ? { generation: null, raw: processVersion }
-      : { generation, raw: processVersion! },
+    processVersion:
+      generation == null
+        ? { generation: null, raw: processVersion }
+        : { generation, raw: processVersion! },
     crsVersion,
     legacy,
     hasSettings: p.flag('crs:HasSettings', false),
@@ -236,7 +251,12 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
       lensProfileDigest: p.text('crs:LensProfileDigest'),
       lensProfileIsEmbedded: p.flag('crs:LensProfileIsEmbedded', false),
       lensProfileDistortionScale: p.int('crs:LensProfileDistortionScale', 0, 200, 100),
-      lensProfileChromaticAberrationScale: p.int('crs:LensProfileChromaticAberrationScale', 0, 200, 100),
+      lensProfileChromaticAberrationScale: p.int(
+        'crs:LensProfileChromaticAberrationScale',
+        0,
+        200,
+        100,
+      ),
       lensProfileVignettingScale: p.int('crs:LensProfileVignettingScale', 0, 200, 100),
       lensManualDistortionAmount: p.int('crs:LensManualDistortionAmount', -100, 100, 0),
       autoLateralCA: p.flag('crs:AutoLateralCA', false),
@@ -313,20 +333,23 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
     // `crs:LookName`, which some writers emit alongside the structure, is a
     // different property at a different depth and is deliberately not merged
     // into this; it stays unread and is reported in `unsupported`.
-    look: lookFields == null ? null : {
-      name: lookFields.text('crs:Name'),
-      amount: lookFields.realOrNull('crs:Amount', -ANY, ANY),
-      uuid: lookFields.text('crs:UUID'),
-      group: lookFields.langAlt('crs:Group'),
-      cluster: lookFields.text('crs:Cluster'),
-      copyright: lookFields.text('crs:Copyright'),
-      supportsAmount: lookFields.flagOrNull('crs:SupportsAmount'),
-      supportsMonochrome: lookFields.flagOrNull('crs:SupportsMonochrome'),
-      supportsOutputReferred: lookFields.flagOrNull('crs:SupportsOutputReferred'),
-      // `crs:Parameters` and its opaque `crs:LookTable` are left unread, which
-      // names them in `unsupported`: a look's own parameter set is of no use
-      // until looks are rendered, and the sidecar can be re-read then.
-    },
+    look:
+      lookFields == null
+        ? null
+        : {
+            name: lookFields.text('crs:Name'),
+            amount: lookFields.realOrNull('crs:Amount', -ANY, ANY),
+            uuid: lookFields.text('crs:UUID'),
+            group: lookFields.langAlt('crs:Group'),
+            cluster: lookFields.text('crs:Cluster'),
+            copyright: lookFields.text('crs:Copyright'),
+            supportsAmount: lookFields.flagOrNull('crs:SupportsAmount'),
+            supportsMonochrome: lookFields.flagOrNull('crs:SupportsMonochrome'),
+            supportsOutputReferred: lookFields.flagOrNull('crs:SupportsOutputReferred'),
+            // `crs:Parameters` and its opaque `crs:LookTable` are left unread, which
+            // names them in `unsupported`: a look's own parameter set is of no use
+            // until looks are rendered, and the sidecar can be re-read then.
+          },
 
     metadata: {
       rating: p.realOrNull('xmp:Rating', -1, 5),
@@ -345,23 +368,25 @@ function read(p: Properties, issues: Issue[]): XmpSettings {
       rawFileName: p.text('crs:RawFileName'),
     },
 
-    legacyTone: !legacy ? null : {
-      exposure: p.real('crs:Exposure', -4, 4, 0),
-      // Null rather than the tabulated default where that default is
-      // unconfirmed: on these four an absent tag does not mean neutral, so a
-      // wrong non-zero number would be applied as though it had been measured.
-      brightness: p.intOrNull('crs:Brightness', 0, 150),
-      contrast: p.intOrNull('crs:Contrast', -50, 100),
-      shadows: p.intOrNull('crs:Shadows', 0, 100),
-      highlightRecovery: p.int('crs:HighlightRecovery', 0, 100, 0),
-      fillLight: p.int('crs:FillLight', 0, 100, 0),
-      clarity: p.int('crs:Clarity', -100, 100, 0),
-      curve: p.curve('crs:ToneCurve'),
-      curveName: p.enumerationOrNull('crs:ToneCurveName', TONE_CURVE_NAMES),
-      curveRed: p.curve('crs:ToneCurveRed'),
-      curveGreen: p.curve('crs:ToneCurveGreen'),
-      curveBlue: p.curve('crs:ToneCurveBlue'),
-    },
+    legacyTone: !legacy
+      ? null
+      : {
+          exposure: p.real('crs:Exposure', -4, 4, 0),
+          // Null rather than the tabulated default where that default is
+          // unconfirmed: on these four an absent tag does not mean neutral, so a
+          // wrong non-zero number would be applied as though it had been measured.
+          brightness: p.intOrNull('crs:Brightness', 0, 150),
+          contrast: p.intOrNull('crs:Contrast', -50, 100),
+          shadows: p.intOrNull('crs:Shadows', 0, 100),
+          highlightRecovery: p.int('crs:HighlightRecovery', 0, 100, 0),
+          fillLight: p.int('crs:FillLight', 0, 100, 0),
+          clarity: p.int('crs:Clarity', -100, 100, 0),
+          curve: p.curve('crs:ToneCurve'),
+          curveName: p.enumerationOrNull('crs:ToneCurveName', TONE_CURVE_NAMES),
+          curveRed: p.curve('crs:ToneCurveRed'),
+          curveGreen: p.curve('crs:ToneCurveGreen'),
+          curveBlue: p.curve('crs:ToneCurveBlue'),
+        },
 
     unsupported: [...new Set([...p.unsupported(), ...(lookFields?.unsupported() ?? [])])].sort(),
     issues,

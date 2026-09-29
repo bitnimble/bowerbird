@@ -11,8 +11,8 @@
 //! depth that would justify picking it means a 16-bit SDR output in the shader, which is where
 //! the limit actually is; this writes what the pipeline has.
 
-use rawler::formats::tiff::writer::{DirectoryWriter, TiffWriter};
 use rawler::formats::tiff::Rational;
+use rawler::formats::tiff::writer::{DirectoryWriter, TiffWriter};
 use rawler::tags::TiffCommonTag;
 use std::io::Cursor;
 
@@ -24,13 +24,21 @@ const PLANAR_CONFIGURATION: u16 = 0x011c;
 /// Uncompressed rather than LZW: the reader picked an interchange format, LZW on a photograph
 /// saves a few percent for a file some older readers decline, and the one thing this format is
 /// for is being opened by something else.
-pub fn encode(rgb8: &[u8], width: usize, height: usize, exif: Option<&[u8]>) -> Result<Vec<u8>, String> {
+pub fn encode(
+    rgb8: &[u8],
+    width: usize,
+    height: usize,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let samples = width * height * 3;
     if rgb8.len() < samples {
         return Err(format!("frame is {} bytes, expected {samples}", rgb8.len()));
     }
-    let (Ok(width), Ok(height), Ok(bytes)) = (u32::try_from(width), u32::try_from(height), u32::try_from(samples))
-    else {
+    let (Ok(width), Ok(height), Ok(bytes)) = (
+        u32::try_from(width),
+        u32::try_from(height),
+        u32::try_from(samples),
+    ) else {
         return Err(format!("a TIFF cannot hold a {width}x{height} frame"));
     };
     let failed = |e: rawler::formats::tiff::TiffError| format!("could not write the TIFF: {e}");
@@ -69,11 +77,16 @@ mod tests {
     fn a_written_tiff_reads_back_as_the_pixels_it_was_given() {
         let (w, h) = (12usize, 5usize);
         let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i * 61 % 256) as u8).collect();
-        let encoded = encode(&pixels, w, h, Some(&crate::exif::tests::block())).expect("the encode");
+        let encoded =
+            encode(&pixels, w, h, Some(&crate::exif::tests::block())).expect("the encode");
 
         let mut decoder = tiff::decoder::Decoder::new(Cursor::new(&encoded)).expect("the decode");
-        assert_eq!(decoder.dimensions().expect("dimensions"), (w as u32, h as u32));
-        let tiff::decoder::DecodingResult::U8(read) = decoder.read_image().expect("the pixels") else {
+        assert_eq!(
+            decoder.dimensions().expect("dimensions"),
+            (w as u32, h as u32)
+        );
+        let tiff::decoder::DecodingResult::U8(read) = decoder.read_image().expect("the pixels")
+        else {
             panic!("an 8-bit TIFF has to read back as 8-bit");
         };
         assert_eq!(read, pixels);

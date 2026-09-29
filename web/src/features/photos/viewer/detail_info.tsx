@@ -50,20 +50,28 @@ export const DetailInfo = observer(function DetailInfo({
         }}
       />
       <Text variant="mono">
-        {dirty ? PhotoDetailStrings.unsaved()
-        : store.notesSavedAt != null ? PhotoDetailStrings.saved()
-        : ''}
+        {dirty
+          ? PhotoDetailStrings.unsaved()
+          : store.notesSavedAt != null
+            ? PhotoDetailStrings.saved()
+            : ''}
       </Text>
     </Panel>
   );
 });
 
-const DetailLabels = observer(function DetailLabels({ photoId }: { photoId: string }): JSX.Element | null {
+const DetailLabels = observer(function DetailLabels({
+  photoId,
+}: {
+  photoId: string;
+}): JSX.Element | null {
   const detail = useViewerStore().detailFor(photoId);
   const labelsStore = useLabelsStore();
   const { labels } = usePresenters();
   if (detail == null) return null;
-  const applied = labelsStore.labelsOf(detail.library_id).filter((label) => detail.label_ids.includes(label.id));
+  const applied = labelsStore
+    .labelsOf(detail.library_id)
+    .filter((label) => detail.label_ids.includes(label.id));
 
   return (
     <div role="list" aria-label={PhotoDetailStrings.labels()} {...stylex.props(styles.labels)}>

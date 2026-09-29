@@ -18,12 +18,20 @@ const styles = stylex.create({
 });
 
 /** What a proof has to offer: nothing for the library's own rendition, and only what it can show otherwise. */
-export function proofPanels(proof: SoftProof, store: PrintStore, presenter: PrintPresenter, disabled: boolean): MobileEditPanel[] {
+export function proofPanels(
+  proof: SoftProof,
+  store: PrintStore,
+  presenter: PrintPresenter,
+  disabled: boolean,
+): MobileEditPanel[] {
   const sections: PrintSection[] =
-    proof === 'srgb' ? ['srgb']
-    : proof === 'print' ? ['paper', 'printer']
-    : proof === 'print3d' ? ['paper', 'printer', 'lighting', 'orientation']
-    : [];
+    proof === 'srgb'
+      ? ['srgb']
+      : proof === 'print'
+        ? ['paper', 'printer']
+        : proof === 'print3d'
+          ? ['paper', 'printer', 'lighting', 'orientation']
+          : [];
   const titles: Record<PrintSection, string> = {
     srgb: PrintPanelStrings.toneMapping(),
     paper: PrintPanelStrings.paper(),
@@ -34,11 +42,19 @@ export function proofPanels(proof: SoftProof, store: PrintStore, presenter: Prin
   return sections.map((section) => ({
     id: section,
     title: titles[section],
-    content: <PrintPanel store={store} presenter={presenter} disabled={disabled} section={section} />,
+    content: (
+      <PrintPanel store={store} presenter={presenter} disabled={disabled} section={section} />
+    ),
   }));
 }
 
-export const PrintControls = observer(function PrintControls({ proof, store, presenter, disabled, mobile }: {
+export const PrintControls = observer(function PrintControls({
+  proof,
+  store,
+  presenter,
+  disabled,
+  mobile,
+}: {
   proof: SoftProof;
   store: PrintStore;
   presenter: PrintPresenter;
@@ -47,7 +63,11 @@ export const PrintControls = observer(function PrintControls({ proof, store, pre
 }): JSX.Element {
   const panels = proofPanels(proof, store, presenter, disabled);
   if (mobile) return <MobileEditPanels panels={panels} scope="print" />;
-  return <div {...stylex.props(styles.panels)}>
-    {panels.map(({ id, content }) => <Fragment key={id}>{content}</Fragment>)}
-  </div>;
+  return (
+    <div {...stylex.props(styles.panels)}>
+      {panels.map(({ id, content }) => (
+        <Fragment key={id}>{content}</Fragment>
+      ))}
+    </div>
+  );
 });

@@ -102,9 +102,7 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
     )
     .at(
         rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(
-            size.width.max(size.height) as usize,
-        ),
+        rawshim::px::Span::<rawshim::px::Drawn>::exact(size.width.max(size.height) as usize),
     );
     let cut = {
         let resident =
@@ -144,7 +142,11 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
         rawshim::gpu::Adjust::none(),
         frame.as_shot,
     );
-    let coded = hdr::encode_cut(gpu, &cut, &scene.gpu_grade(cut.width, cut.height, rawshim::gpu::Output::Srgb));
+    let coded = hdr::encode_cut(
+        gpu,
+        &cut,
+        &scene.gpu_grade(cut.width, cut.height, rawshim::gpu::Output::Srgb),
+    );
     (
         coded.iter().map(|v| *v as u8).collect(),
         cut.width,

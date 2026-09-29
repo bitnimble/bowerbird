@@ -34,7 +34,10 @@ export function parseChain(raw: unknown): SessionHop[] {
     if (!Array.isArray(parsed)) return [];
     const hops = parsed.filter(
       (hop): hop is SessionHop =>
-        Array.isArray(hop) && hop.length === 2 && typeof hop[0] === 'string' && typeof hop[1] === 'string',
+        Array.isArray(hop) &&
+        hop.length === 2 &&
+        typeof hop[0] === 'string' &&
+        typeof hop[1] === 'string',
     );
     // The cap holds here rather than only where a chain is built, because this is
     // the one funnel both a local row and an arriving one come through (§11.2: a
@@ -104,7 +107,11 @@ export function parkDivergentEdits(db: Database, change: LiveChange): void {
   if (local == null || local.session_id == null || local.stamp == null) return;
 
   const incoming: SessionRow = { session, stamp: arriving, chain: parseChain(row.chain) };
-  const held: SessionRow = { session: local.session_id, stamp: local.stamp, chain: parseChain(local.chain) };
+  const held: SessionRow = {
+    session: local.session_id,
+    stamp: local.stamp,
+    chain: parseChain(local.chain),
+  };
   if (descends(incoming, held) || descends(held, incoming)) return;
   // A conflict's row id is `photo_id/session_id`, so a session id with a `/` in it
   // mints a log row that will not come apart. The stream and the apply both step
@@ -117,11 +124,22 @@ export function parkDivergentEdits(db: Database, change: LiveChange): void {
   // the card describing the divergence.
   for (const candidate of [held.session, incoming.session]) {
     if (EditSessionIdSchema.safeParse(candidate).success) continue;
-    log.warn('refusing to park a divergence under a session id that cannot be streamed', { photo: change.rowId });
+    log.warn('refusing to park a divergence under a session id that cannot be streamed', {
+      photo: change.rowId,
+    });
     return;
   }
 
-  park(db, change.rowId, held.session, local.doc, local.deltas, local.cursor, local.chain ?? '[]', local.stamp);
+  park(
+    db,
+    change.rowId,
+    held.session,
+    local.doc,
+    local.deltas,
+    local.cursor,
+    local.chain ?? '[]',
+    local.stamp,
+  );
   park(
     db,
     change.rowId,

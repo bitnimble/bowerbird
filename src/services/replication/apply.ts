@@ -68,7 +68,10 @@ export function applyChanges(db: Database, libraryId: string, changes: readonly 
       // session and refuses the page it arrives in, which is that library not
       // replicating in either direction for good.
       if (!parseable(entity, change.rowId)) {
-        log.warn('dropping a change whose row id cannot be read', { entity: change.kind, row: change.rowId });
+        log.warn('dropping a change whose row id cannot be read', {
+          entity: change.kind,
+          row: change.rowId,
+        });
         continue;
       }
       if (!belongsHere(db, libraryId, entity, change)) {
@@ -110,7 +113,9 @@ export interface Applied {
  * `queueEditedSince` to ask about, not a claim about any of them.
  */
 export function rebuildCandidates(taken: readonly Change[]): string[] {
-  return taken.filter((change) => change.kind === 'photo_edits' || change.kind === 'photo').map((change) => change.rowId);
+  return taken
+    .filter((change) => change.kind === 'photo_edits' || change.kind === 'photo')
+    .map((change) => change.rowId);
 }
 
 /**
@@ -167,7 +172,6 @@ export function dissolveEmptiedStacks(db: Database, libraryId: string): void {
   for (const stack of spent) stacks.dissolveIfSpent(stack.id, false);
 }
 
-
 /**
  * Whether a change is about the library this session is replicating.
  *
@@ -180,7 +184,12 @@ export function dissolveEmptiedStacks(db: Database, libraryId: string): void {
  * A parent that is simply not here yet is not a refusal: that is the ordinary
  * out-of-order case the foreign key already defers.
  */
-function belongsHere(db: Database, libraryId: string, entity: ReplicatedEntity, change: Change): boolean {
+function belongsHere(
+  db: Database,
+  libraryId: string,
+  entity: ReplicatedEntity,
+  change: Change,
+): boolean {
   if (entity.kind === 'library') return change.rowId === libraryId;
   if (entity.libraryVia == null) return true;
   const parent = change.rowId.split('/')[0] ?? '';
@@ -217,7 +226,9 @@ function keepsTheFolder(
   const arriving = change.stamps['shoot.folder'];
   if (typeof wanted !== 'string' || arriving == null) return null;
   const holder = db
-    .query('SELECT id, stamp_folder AS stamp FROM shoots WHERE library_id = ? AND folder_path = ? AND id <> ?')
+    .query(
+      'SELECT id, stamp_folder AS stamp FROM shoots WHERE library_id = ? AND folder_path = ? AND id <> ?',
+    )
     .get(libraryId, wanted, change.rowId) as { id: string; stamp: string | null } | null;
   if (holder == null) return null;
   // A shoot inserted from a payload that carried no `shoot` unit takes its folder from the identity
@@ -278,7 +289,8 @@ function isUniqueCollision(error: unknown): boolean {
 
 function isMissingReference(error: unknown): boolean {
   return (
-    error instanceof Deferred || (error instanceof Error && error.message.includes('FOREIGN KEY constraint failed'))
+    error instanceof Deferred ||
+    (error instanceof Error && error.message.includes('FOREIGN KEY constraint failed'))
   );
 }
 
@@ -292,7 +304,13 @@ function isMissingReference(error: unknown): boolean {
  * every other photograph in it. Every peer computes the same answer from the same
  * grave, so nothing about it needs to travel.
  */
-function resolve(db: Database, libraryId: string, entity: ReplicatedEntity, column: string, value: Cell): Cell {
+function resolve(
+  db: Database,
+  libraryId: string,
+  entity: ReplicatedEntity,
+  column: string,
+  value: Cell,
+): Cell {
   // A lineage chain is stored as it arrives and relayed onward from there, so a
   // cap applied when reading one bounds this peer's own work and nothing else:
   // the overlong column is still written here and still handed to everyone else,
@@ -303,7 +321,11 @@ function resolve(db: Database, libraryId: string, entity: ReplicatedEntity, colu
   // Scoped, because the foreign key is not: a shoot of *another* library on this
   // server satisfies both, and a photograph written into it is this session
   // reaching outside the library it was paired for (§11.2).
-  if (db.query('SELECT 1 FROM shoots WHERE id = ? AND library_id = ?').get(value as string, libraryId) != null) {
+  if (
+    db
+      .query('SELECT 1 FROM shoots WHERE id = ? AND library_id = ?')
+      .get(value as string, libraryId) != null
+  ) {
     return value;
   }
   // The grave, not the absence. A page is 500 rows in stamp order and only the
@@ -340,7 +362,12 @@ function resolve(db: Database, libraryId: string, entity: ReplicatedEntity, colu
  * to settle the difference. Final tombstones close that off. Ties, and every
  * other race, are then decided by the stamp as before.
  */
-function applyTombstone(db: Database, libraryId: string, entity: ReplicatedEntity, change: Tombstone): void {
+function applyTombstone(
+  db: Database,
+  libraryId: string,
+  entity: ReplicatedEntity,
+  change: Tombstone,
+): void {
   const where = whereKey(entity, change.rowId, libraryId);
   const stamps = entity.units.map((unit) => unit.stamp);
   const local = db
@@ -356,7 +383,12 @@ function applyTombstone(db: Database, libraryId: string, entity: ReplicatedEntit
     if (survives) return;
     // The same fan-out the peer that made this deletion ran: the children go with
     // the row, and this peer stops advertising the ones it was holding.
-    if (entity.kind === 'photo' || entity.kind === 'shoot' || entity.kind === 'stack' || entity.kind === 'label') {
+    if (
+      entity.kind === 'photo' ||
+      entity.kind === 'shoot' ||
+      entity.kind === 'stack' ||
+      entity.kind === 'label'
+    ) {
       if (entity.kind === 'photo') sayWhatTheDeletionCosts(db, change);
       // A label another device folded into its twin (`mergeLabelsNamedAlike`): photos this peer put on
       // it since go with it to the twin rather than losing the label.
@@ -383,11 +415,18 @@ function applyTombstone(db: Database, libraryId: string, entity: ReplicatedEntit
   tombstone(db, libraryId, entity.kind, change.rowId, change.stamp);
 }
 
-function applyRow(db: Database, libraryId: string, entity: ReplicatedEntity, change: LiveChange): void {
+function applyRow(
+  db: Database,
+  libraryId: string,
+  entity: ReplicatedEntity,
+  change: LiveChange,
+): void {
   const { row, stamps } = change;
   const where = whereKey(entity, change.rowId, libraryId);
   const local = db
-    .query(`SELECT ${entity.units.map((unit) => unit.stamp).join(', ')} FROM ${entity.table} WHERE ${where.sql}`)
+    .query(
+      `SELECT ${entity.units.map((unit) => unit.stamp).join(', ')} FROM ${entity.table} WHERE ${where.sql}`,
+    )
     .get(...where.params) as Record<string, string | null> | null;
 
   if (local == null) {
@@ -430,10 +469,9 @@ function applyRow(db: Database, libraryId: string, entity: ReplicatedEntity, cha
   }
   if (writes.length === 0) return;
   const update = (of: readonly { column: string; value: Cell }[]): void => {
-    db.query(`UPDATE ${entity.table} SET ${of.map((w) => `${w.column} = ?`).join(', ')} WHERE ${where.sql}`).run(
-      ...of.map((w) => w.value),
-      ...where.params,
-    );
+    db.query(
+      `UPDATE ${entity.table} SET ${of.map((w) => `${w.column} = ?`).join(', ')} WHERE ${where.sql}`,
+    ).run(...of.map((w) => w.value), ...where.params);
   };
   // Read before the write, because where this peer's copy stands is the one thing the drain
   // cannot work out afterwards (§7.4). Validated on the way out rather than taken from the row:
@@ -495,7 +533,11 @@ function applyRow(db: Database, libraryId: string, entity: ReplicatedEntity, cha
       // that whatever else it holds was rewritten now, which is an edit to its label lost on every peer
       // that had not yet sent it (§5.6).
       const moved = freeFolder(db, libraryId, String(change.row['folder_path']), held.by);
-      db.query('UPDATE shoots SET folder_path = ?, stamp_folder = ? WHERE id = ?').run(moved, stampFor(db), held.by);
+      db.query('UPDATE shoots SET folder_path = ?, stamp_folder = ? WHERE id = ?').run(
+        moved,
+        stampFor(db),
+        held.by,
+      );
       update(writes);
       log.warn('a folder went to an earlier rename, so the shoot holding it took a free name', {
         shoot: held.by,
@@ -546,7 +588,10 @@ function insert(
     const value = row[column] ?? null;
     const expected = keyed.get(column);
     if (expected != null && value !== expected) {
-      throw new AppError('VALIDATION_ERROR', `a ${entity.kind} says it is ${change.rowId} but its ${column} is ${String(value)}`);
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `a ${entity.kind} says it is ${change.rowId} but its ${column} is ${String(value)}`,
+      );
     }
     if (value == null) {
       throw new AppError('VALIDATION_ERROR', `a ${entity.kind} arrived with no ${column}`);
@@ -583,17 +628,22 @@ function insert(
     columns.push(unit.stamp);
     values.push(arriving);
   }
-  const written = db.query(
-    `INSERT INTO ${entity.table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
+  const written = db
+    .query(
+      `INSERT INTO ${entity.table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})
      ON CONFLICT DO NOTHING`,
-  ).run(...values);
+    )
+    .run(...values);
   // Nothing may claim coverage of a change it discarded (§5.1). The row this peer
   // does not have by key can still collide on another unique constraint - two peers
   // that each mirrored the same folder into a shoot of their own, which needs a
   // tree they both scanned - and claiming that change says this peer took a row it
   // refused, while everything referencing it is refused for good afterwards.
   if (written.changes === 0) {
-    log.warn('a row could not be written beside one already here', { entity: entity.kind, row: change.rowId });
+    log.warn('a row could not be written beside one already here', {
+      entity: entity.kind,
+      row: change.rowId,
+    });
     throw new Deferred();
   }
   unbury(db, libraryId, entity.kind, change.rowId);
@@ -652,9 +702,9 @@ function resurrectable(entity: ReplicatedEntity): boolean {
  * photograph, so a backup can still be gone through.
  */
 function sayWhatTheDeletionCosts(db: Database, change: Tombstone): void {
-  const edits = db.query('SELECT stamp FROM photo_edits WHERE photo_id = ?').get(change.rowId) as
-    | { stamp: string | null }
-    | null;
+  const edits = db.query('SELECT stamp FROM photo_edits WHERE photo_id = ?').get(change.rowId) as {
+    stamp: string | null;
+  } | null;
   if (edits?.stamp == null || edits.stamp <= change.stamp) return;
   log.warn('a photograph removed elsewhere took develop settings made here after the removal', {
     photo: change.rowId,
@@ -677,7 +727,12 @@ function keyParts(entity: ReplicatedEntity, rowId: string): Map<string, string> 
   return new Map(entity.key.map((column, i): [string, string] => [column, parts[i]!]));
 }
 
-function buried(db: Database, libraryId: string, entity: ReplicatedEntity, change: LiveChange): boolean {
+function buried(
+  db: Database,
+  libraryId: string,
+  entity: ReplicatedEntity,
+  change: LiveChange,
+): boolean {
   const at = graveOf(db, libraryId, entity.kind, change.rowId);
   if (at == null) return false;
   // The newest unit, computed here rather than read off the change: what this asks
@@ -696,7 +751,9 @@ function newestUnit(change: LiveChange): string {
 /** The stamp this peer buried a row at, or null if it never buried one. */
 function graveOf(db: Database, libraryId: string, kind: string, rowId: string): string | null {
   const grave = db
-    .query('SELECT stamp FROM replication_log WHERE library_id = ? AND entity = ? AND row_id = ? AND deleted = 1')
+    .query(
+      'SELECT stamp FROM replication_log WHERE library_id = ? AND entity = ? AND row_id = ? AND deleted = 1',
+    )
     .get(libraryId, kind, rowId) as { stamp: string } | null;
   return grave?.stamp ?? null;
 }

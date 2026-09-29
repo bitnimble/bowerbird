@@ -51,7 +51,11 @@ export class ScanTiles {
     this.adopting.push(
       (async () => {
         for (const { photoId, staged } of taken) {
-          await this.processing.adoptScannedTile?.(photoId, dataPathForLibraryId(this.libraryId), staged);
+          await this.processing.adoptScannedTile?.(
+            photoId,
+            dataPathForLibraryId(this.libraryId),
+            staged,
+          );
         }
       })().catch((err: unknown) => {
         // Never fatal: the row keeps `needs_tile`, so the rendition pass builds the tile.

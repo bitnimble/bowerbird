@@ -36,7 +36,12 @@ function insertPhoto(id: string, shootId: string, taken: string | null, added: s
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-shoot-repo-test', 'lib', 'taken_asc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    '/tmp/bb-shoot-repo-test',
+    'lib',
+    'taken_asc',
+  );
   shoots = new ShootsRepository(db);
 });
 

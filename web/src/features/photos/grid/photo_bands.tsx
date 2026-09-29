@@ -50,7 +50,8 @@ export function tilesFor(
     // The block's own ::after is what leaves its last line at the size the photos
     // want rather than stretched across the width; a band after that line takes
     // the ::after off it, so the line is given one of its own.
-    if (last) tiles.push(<span key="line-end" {...stylex.props(cells.lineEnd)} aria-hidden="true" />);
+    if (last)
+      tiles.push(<span key="line-end" {...stylex.props(cells.lineEnd)} aria-hidden="true" />);
     // The first of a line's bands is the one drawn joined to its tile: the others
     // are separated from theirs by a band, and their colour is what pairs them.
     for (const [i, open] of pending.splice(0).entries())
@@ -87,7 +88,15 @@ export function tilesFor(
     const fused = masonry
       ? open != null && pending.length === 0
       : photo.stack_id != null && listing.fusedStacks.has(photo.stack_id);
-    tiles.push(<PhotoTile key={photo.id} photo={photo} index={index} isFocused={marks.focusIndex === index} fused={fused} />);
+    tiles.push(
+      <PhotoTile
+        key={photo.id}
+        photo={photo}
+        index={index}
+        isFocused={marks.focusIndex === index}
+        fused={fused}
+      />,
+    );
     if (open != null) pending.push(open);
   }
   // Whatever is still open on the block's last line, which has no line after it
@@ -194,7 +203,12 @@ export const BandTiles = observer(function BandTiles({
         placed ? [cells.window, cells.down(store.rail.positionOf(top))] : band.inline,
         store.mode === 'list' && band.list,
         bandColourOf(store.bandColours.get(expansion.stackId)),
-        join != null && [band.fused, join.at, join.first && band.fuseFirst, join.last && band.fuseLast],
+        join != null && [
+          band.fused,
+          join.at,
+          join.first && band.fuseFirst,
+          join.last && band.fuseLast,
+        ],
         // Photograph against photograph: masonry's cap bounds the picture inside the
         // cell, so the tile's own pad comes off before the comparison.
         cap != null && band.cap((cap - 2 * TILE_PAD) * BAND_LINE_CAP),
@@ -213,8 +227,12 @@ export const BandTiles = observer(function BandTiles({
           radius on either box (§19.6). Out of the grid's flow, being absolute, and
           only on a side that has one: at an end of the band the line runs straight
           through. */}
-      {join != null && !join.first && <span {...stylex.props(band.join, band.joinLeft)} aria-hidden="true" />}
-      {join != null && !join.last && <span {...stylex.props(band.join, band.joinRight)} aria-hidden="true" />}
+      {join != null && !join.first && (
+        <span {...stylex.props(band.join, band.joinLeft)} aria-hidden="true" />
+      )}
+      {join != null && !join.last && (
+        <span {...stylex.props(band.join, band.joinRight)} aria-hidden="true" />
+      )}
       {expansion.photos.map((photo) => (
         <BandMember key={photo.id} photo={photo} />
       ))}

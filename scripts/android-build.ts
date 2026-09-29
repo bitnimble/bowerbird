@@ -63,7 +63,16 @@ if (!existsSync(join(repoRoot, 'src-tauri', 'gen', 'android'))) {
 }
 
 const config = JSON.stringify({ version: VERSION });
-const args = ['android', 'build', '--target', 'aarch64', '--apk', '--config', config, ...process.argv.slice(2)];
+const args = [
+  'android',
+  'build',
+  '--target',
+  'aarch64',
+  '--apk',
+  '--config',
+  config,
+  ...process.argv.slice(2),
+];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
@@ -94,7 +103,9 @@ if (found.length === 0) {
 const release = found.filter((apk) => /[/\\]release[/\\]/.test(apk));
 const chosen = release.length > 0 ? release : found;
 if (chosen.length > 1) {
-  console.error(`[android-build] ${chosen.length} APKs under ${outputs}, so which one ships is ambiguous:`);
+  console.error(
+    `[android-build] ${chosen.length} APKs under ${outputs}, so which one ships is ambiguous:`,
+  );
   for (const apk of chosen) console.error(`  ${apk}`);
   console.error('[android-build] clear the outputs tree and build again');
   process.exit(1);

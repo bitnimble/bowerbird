@@ -14,8 +14,6 @@ const EXPORT_THUMBNAIL_QUALITY = 60;
 export class RenderTargets {
   constructor(private readonly settings: SettingsRepository) {}
 
-
-
   /**
    * A composite's target, sized so the rendition names the crop the reader is shown.
    *
@@ -39,9 +37,11 @@ export class RenderTargets {
     return { ...target, size: canvasLongEdgeFor(parsed.data, target.size) };
   }
 
-
-
-  exportTargets(outputPath: string, options: ExportOptions, thumbnailPath?: string): RenditionTarget[] {
+  exportTargets(
+    outputPath: string,
+    options: ExportOptions,
+    thumbnailPath?: string,
+  ): RenditionTarget[] {
     const settings = this.settings.get();
     return [
       {
@@ -60,27 +60,25 @@ export class RenderTargets {
       // Named `max` like the export it rides with, and second: `runOneOff` stamps by the
       // first target of a name, so the photograph's own rendition stamps read the export's
       // settings rather than a tile's. SDR and 4:2:0, being a tile in a list.
-      ...(thumbnailPath == null ?
-        []
-      : [
-          {
-            rendition: 'max' as const,
-            hdr: false,
-            source: 'render' as const,
-            outputPath: thumbnailPath,
-            size: EXPORT_THUMBNAIL_EDGE,
-            sdrQuantizer: encoderQuality('avif-sdr', EXPORT_THUMBNAIL_QUALITY),
-            hdrQuantizer: encoderQuality('avif-hdr', EXPORT_THUMBNAIL_QUALITY),
-            preset: settings.avif_speed,
-            stillFullChroma: false,
-            sdrFullChroma: false,
-            intent: options.renderingIntent,
-          },
-        ]),
+      ...(thumbnailPath == null
+        ? []
+        : [
+            {
+              rendition: 'max' as const,
+              hdr: false,
+              source: 'render' as const,
+              outputPath: thumbnailPath,
+              size: EXPORT_THUMBNAIL_EDGE,
+              sdrQuantizer: encoderQuality('avif-sdr', EXPORT_THUMBNAIL_QUALITY),
+              hdrQuantizer: encoderQuality('avif-hdr', EXPORT_THUMBNAIL_QUALITY),
+              preset: settings.avif_speed,
+              stillFullChroma: false,
+              sdrFullChroma: false,
+              intent: options.renderingIntent,
+            },
+          ]),
     ];
   }
-
-
 
   // Size, quality and encoder settings for one rendition. The grid and the
   // full-size view share the rendition settings; the max-resolution one is native
@@ -103,7 +101,9 @@ export class RenderTargets {
   ): RenditionTarget {
     const settings = this.settings.get();
     const sizes: Record<Rendition, number> = {
-      grid: wide ? settings.grid_rendition_size * PANORAMA_TILE_SCALE : settings.grid_rendition_size,
+      grid: wide
+        ? settings.grid_rendition_size * PANORAMA_TILE_SCALE
+        : settings.grid_rendition_size,
       full: wide ? settings.panorama_full_rendition_size : settings.full_rendition_size,
       max: 0,
       // A photograph's camera view is the JPEG inside it, at whatever size that is, and nothing
@@ -139,7 +139,10 @@ export class RenderTargets {
     // The same refusal for the same reason: `renditionVariant` gives no HDR path for the
     // cameras' own view of a canvas, so an HDR encode here would be filed as SDR.
     if (rendition === 'embedded' && hdr) {
-      throw new AppError('VALIDATION_ERROR', 'the composited camera view is always SDR; asked for an HDR one');
+      throw new AppError(
+        'VALIDATION_ERROR',
+        'the composited camera view is always SDR; asked for an HDR one',
+      );
     }
 
     return {
@@ -168,8 +171,6 @@ export class RenderTargets {
     };
   }
 
-
-
   // What the render itself gets, before any rendition is cut from it (§10.9).
   //
   // The denoise and the sharpen are not here: they belong to the photograph rather than to the
@@ -179,8 +180,6 @@ export class RenderTargets {
   render(): { defringe: number } {
     return { defringe: this.settings.get().raw_defringe };
   }
-
-
 
   grade(): HdrGrade {
     const settings = this.settings.get();

@@ -89,7 +89,11 @@ const styles = stylex.create({
       default: 'underline',
       [FINE]: { default: 'none', ':hover': 'underline', ':focus-visible': 'underline' },
     },
-    textDecorationColor: { default: color.boneDim, ':hover': color.satin, ':focus-visible': color.satin },
+    textDecorationColor: {
+      default: color.boneDim,
+      ':hover': color.satin,
+      ':focus-visible': color.satin,
+    },
     textUnderlineOffset: '2px',
     color: { default: null, '[aria-current=page]': color.glass },
   },
@@ -148,9 +152,21 @@ function Footer(): JSX.Element {
 }
 
 /** `TextLink`'s look on a plain anchor: the web one is a router link. */
-function SiteLink({ href, current = false, children }: { href: string; current?: boolean; children: ReactNode }): JSX.Element {
+function SiteLink({
+  href,
+  current = false,
+  children,
+}: {
+  href: string;
+  current?: boolean;
+  children: ReactNode;
+}): JSX.Element {
   return (
-    <a {...stylex.props(styles.link, focusRing.ring)} href={href} aria-current={current ? 'page' : undefined}>
+    <a
+      {...stylex.props(styles.link, focusRing.ring)}
+      href={href}
+      aria-current={current ? 'page' : undefined}
+    >
       {children}
     </a>
   );

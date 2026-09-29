@@ -2,7 +2,13 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { color } from '../../../ui/tokens.stylex';
-import { framePointOf, MIN_SCALE, stagePointOf, type Size, type View } from '../../photos/viewer/zoom_pan';
+import {
+  framePointOf,
+  MIN_SCALE,
+  stagePointOf,
+  type Size,
+  type View,
+} from '../../photos/viewer/zoom_pan';
 import type { RepairPresenter } from './repair_presenter';
 import type { RepairStore } from './repair_store';
 import { overlayColour } from '../overlay.stylex';
@@ -95,7 +101,10 @@ function holds(loop: readonly Point[], point: Point): boolean {
 }
 
 function centre(loop: readonly Point[]): Point {
-  const sum = loop.reduce((total, { x, y }) => ({ x: total.x + x, y: total.y + y }), { x: 0, y: 0 });
+  const sum = loop.reduce((total, { x, y }) => ({ x: total.x + x, y: total.y + y }), {
+    x: 0,
+    y: 0,
+  });
   return { x: sum.x / Math.max(loop.length, 1), y: sum.y / Math.max(loop.length, 1) };
 }
 
@@ -139,7 +148,11 @@ export const RepairOverlay = observer(function RepairOverlay({
    * A part being dragged: its outline as it was taken, and how far the pointer has carried it, which
    * the outlines the presenter maps for each step trail behind.
    */
-  const [dragged, setDragged] = useState<{ part: Part; outline: readonly Point[]; by: Point } | null>(null);
+  const [dragged, setDragged] = useState<{
+    part: Part;
+    outline: readonly Point[];
+    by: Point;
+  } | null>(null);
   /** Whether the last press took a part, whose click is then not the stage's to zoom on. */
   const pressed = useRef(false);
   // `url(#…)` takes the id as it is written, and React's has characters that do not survive it.
@@ -153,7 +166,8 @@ export const RepairOverlay = observer(function RepairOverlay({
   if (!store.repairing || natural.width === 0 || box.width === 0) return null;
 
   const editing = store.repairOptions != null;
-  const fill = store.repairShownAt == null ? null : store.repairOutlines[store.repairShownAt] ?? null;
+  const fill =
+    store.repairShownAt == null ? null : (store.repairOutlines[store.repairShownAt] ?? null);
   const source = store.repairSourceOutline;
 
   const onOutput = (event: { offsetX: number; offsetY: number }): Point => {
@@ -329,12 +343,17 @@ export const RepairOverlay = observer(function RepairOverlay({
   const sourceShown = dragged?.part === 'source' ? shifted(dragged.outline, dragged.by) : source;
   const removal = editing || hovered === store.repairShownAt ? null : hovered;
   const cursor =
-    dragged != null ? styles.grabbing
-    : editing && over != null ? styles.grab
-    : editing && view.scale > MIN_SCALE ? styles.panning
-    : editing ? styles.editing
-    : removal != null ? styles.overRemoval
-    : null;
+    dragged != null
+      ? styles.grabbing
+      : editing && over != null
+        ? styles.grab
+        : editing && view.scale > MIN_SCALE
+          ? styles.panning
+          : editing
+            ? styles.editing
+            : removal != null
+              ? styles.overRemoval
+              : null;
   return (
     <div
       {...stylex.props(styles.overlay, cursor)}
@@ -351,13 +370,21 @@ export const RepairOverlay = observer(function RepairOverlay({
     >
       <svg {...stylex.props(styles.lines)} viewBox={`0 0 ${box.width} ${box.height}`}>
         <defs>
-          <marker id={arrow} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+          <marker
+            id={arrow}
+            viewBox="0 0 8 8"
+            refX="7"
+            refY="4"
+            markerWidth="8"
+            markerHeight="8"
+            orient="auto"
+          >
             <path {...stylex.props(styles.arrow)} d="M0,0 L8,4 L0,8 z" />
           </marker>
         </defs>
         {store.repairOutlines.map((seam, index) =>
           // The one under the pointer is drawn with outlines hidden too: it is what a click opens.
-          index !== store.repairShownAt && (store.repairOutlinesShown || index === removal) ?
+          index !== store.repairShownAt && (store.repairOutlinesShown || index === removal) ? (
             <polygon
               key={index}
               {...stylex.props(styles.seam, index === removal && styles.seamHovered)}
@@ -365,7 +392,7 @@ export const RepairOverlay = observer(function RepairOverlay({
               aria-label={RepairOverlayStrings.removal(index + 1)}
               points={onStage(seam)}
             />
-          : null,
+          ) : null,
         )}
         {editing && (
           <>
@@ -379,7 +406,10 @@ export const RepairOverlay = observer(function RepairOverlay({
             )}
             {fillShown != null && (
               <polygon
-                {...stylex.props(styles.fill, (over === 'fill' || dragged?.part === 'fill') && styles.fillOver)}
+                {...stylex.props(
+                  styles.fill,
+                  (over === 'fill' || dragged?.part === 'fill') && styles.fillOver,
+                )}
                 role="img"
                 aria-label={RepairOverlayStrings.fill()}
                 points={onStage(fillShown)}

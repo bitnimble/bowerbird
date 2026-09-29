@@ -29,7 +29,12 @@ fn screen_is_hdr(window: &tauri::WebviewWindow<crate::Runtime>) -> Option<bool> 
     // Safety: Tauri's own NSWindow for `window`, which outlives this call.
     let ns_window = unsafe { &*raw.cast::<NSWindow>() };
     // What WebKit's own `(dynamic-range: high)` reads, and Safari answers from.
-    Some(ns_window.screen()?.maximumPotentialExtendedDynamicRangeColorComponentValue() > 1.0)
+    Some(
+        ns_window
+            .screen()?
+            .maximumPotentialExtendedDynamicRangeColorComponentValue()
+            > 1.0,
+    )
 }
 
 #[cfg(not(target_os = "macos"))]

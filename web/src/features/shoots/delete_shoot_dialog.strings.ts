@@ -9,7 +9,8 @@ export const DeleteShootStrings = {
   keep: () => 'Keep photos in library',
   keepHint: () => 'Your photos keep their ratings and leave this shoot.',
   removeOption: () => 'Remove photos from library',
-  removeHint: (photographs: string) => `Ratings, verdicts, and notes on ${photographs} will be lost. Your files stay on disk.`,
+  removeHint: (photographs: string) =>
+    `Ratings, verdicts, and notes on ${photographs} will be lost. Your files stay on disk.`,
 
   thePhotographs: () => 'the photos',
 

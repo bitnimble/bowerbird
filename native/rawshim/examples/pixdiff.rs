@@ -57,7 +57,11 @@ fn main() {
                 }
             }
         }
-        rawshim::rgb::Rgb { data, width, height }
+        rawshim::rgb::Rgb {
+            data,
+            width,
+            height,
+        }
     };
     // Trimmed to the smaller rather than refused, for the reason `stitch` gives: two pictures of one
     // scene bounded to the same long edge land a pixel apart when their sources round differently.
@@ -71,7 +75,11 @@ fn main() {
             data[y * width * 3..(y + 1) * width * 3]
                 .copy_from_slice(&image.data[from..from + width * 3]);
         }
-        rawshim::rgb::Rgb { data, width, height }
+        rawshim::rgb::Rgb {
+            data,
+            width,
+            height,
+        }
     };
     let (raw_a, raw_b) = (read(&left), read(&right));
     let width = raw_a.width.min(raw_b.width);
@@ -112,10 +120,24 @@ fn main() {
     let mean = |c: usize| sums[c] / pixels as f64;
     let all = (sums[0] + sums[1] + sums[2]) / (pixels * 3) as f64;
     println!("{}x{}, {pixels} pixels", a.width, a.height);
-    println!("  a levels       r {:.1}  g {:.1}  b {:.1}", la[0], la[1], la[2]);
-    println!("  b levels       r {:.1}  g {:.1}  b {:.1}", lb[0], lb[1], lb[2]);
-    println!("  mean |delta|   r {:.3}  g {:.3}  b {:.3}   all {all:.3}", mean(0), mean(1), mean(2));
-    println!("  worst          r {}  g {}  b {}", worst[0], worst[1], worst[2]);
+    println!(
+        "  a levels       r {:.1}  g {:.1}  b {:.1}",
+        la[0], la[1], la[2]
+    );
+    println!(
+        "  b levels       r {:.1}  g {:.1}  b {:.1}",
+        lb[0], lb[1], lb[2]
+    );
+    println!(
+        "  mean |delta|   r {:.3}  g {:.3}  b {:.3}   all {all:.3}",
+        mean(0),
+        mean(1),
+        mean(2)
+    );
+    println!(
+        "  worst          r {}  g {}  b {}",
+        worst[0], worst[1], worst[2]
+    );
     println!(
         "  samples over 1 count: {over_one} of {} ({:.2}%)",
         pixels * 3,

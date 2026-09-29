@@ -65,7 +65,10 @@ fn tile(raw: &str, out_path: &str) {
 /// Both of the above out of one open, which is what `Job::header` is for.
 fn fused(raw: &str, out_path: &str) {
     let outcome = job::run(&tile_job(raw, out_path, true)).expect("the fused pass runs");
-    assert!(outcome.header.is_some(), "a fused pass reports the catalogue's fields");
+    assert!(
+        outcome.header.is_some(),
+        "a fused pass reports the catalogue's fields"
+    );
 }
 
 /// The job `processing_service.target` builds for a grid tile, as JSON because that is how it
@@ -107,7 +110,11 @@ fn regions(raw: &str, out_dir: &Path) {
     let show = |label: &str| {
         let runs = resident(raw);
         let bytes: usize = runs.iter().map(|(_, len)| len).sum();
-        print!("  {label:<8} {:>4} runs, {:>7.2}MB  ", runs.len(), bytes as f64 / 1e6);
+        print!(
+            "  {label:<8} {:>4} runs, {:>7.2}MB  ",
+            runs.len(),
+            bytes as f64 / 1e6
+        );
         for (at, len) in runs.iter().take(6) {
             print!("[{:.2}MB +{:.2}] ", *at as f64 / 1e6, *len as f64 / 1e6);
         }
@@ -131,11 +138,19 @@ fn regions(raw: &str, out_dir: &Path) {
     // What pass 2 wants that pass 1 did not already bring in. The rest is the second trip fusing
     // removes; this is the part it would have to make anyway.
     let covered = |at: usize, len: usize| {
-        after_scan.iter().any(|(from, size)| at >= *from && at + len <= from + size)
+        after_scan
+            .iter()
+            .any(|(from, size)| at >= *from && at + len <= from + size)
     };
-    let fresh: usize =
-        after_tile.iter().filter(|(at, len)| !covered(*at, *len)).map(|(_, len)| len).sum();
-    println!("  pass 2 reads {:.2}MB pass 1 had not\n", fresh as f64 / 1e6);
+    let fresh: usize = after_tile
+        .iter()
+        .filter(|(at, len)| !covered(*at, *len))
+        .map(|(_, len)| len)
+        .sum();
+    println!(
+        "  pass 2 reads {:.2}MB pass 1 had not\n",
+        fresh as f64 / 1e6
+    );
 }
 
 /// Every run of resident pages in the file, as `(offset, length)` in bytes.
@@ -150,12 +165,23 @@ fn resident(path: &str) -> Vec<(usize, usize)> {
     let page = unsafe { sysconf(SC_PAGESIZE) } as usize;
     // Mapping does not fault anything in, and `mincore` reports rather than reads, so asking the
     // question does not change the answer.
-    let base =
-        unsafe { mmap(std::ptr::null_mut(), len, PROT_READ, MAP_SHARED, file.as_raw_fd(), 0) };
+    let base = unsafe {
+        mmap(
+            std::ptr::null_mut(),
+            len,
+            PROT_READ,
+            MAP_SHARED,
+            file.as_raw_fd(),
+            0,
+        )
+    };
     assert!(base as isize != -1, "could not map {path}");
     let mut pages = vec![0u8; len.div_ceil(page)];
     let status = unsafe { mincore(base, len, pages.as_mut_ptr()) };
-    assert_eq!(status, 0, "could not ask which pages of {path} are resident");
+    assert_eq!(
+        status, 0,
+        "could not ask which pages of {path} are resident"
+    );
     unsafe { munmap(base, len) };
 
     let mut runs: Vec<(usize, usize)> = Vec::new();
@@ -172,8 +198,15 @@ fn resident(path: &str) -> Vec<(usize, usize)> {
 }
 
 fn out(dir: &Path, variant: &str, raw: &str) -> String {
-    let stem = Path::new(raw).file_stem().expect("a RAW has a name").to_string_lossy().into_owned();
-    dir.join(variant).join(format!("{stem}.avif")).to_string_lossy().into_owned()
+    let stem = Path::new(raw)
+        .file_stem()
+        .expect("a RAW has a name")
+        .to_string_lossy()
+        .into_owned();
+    dir.join(variant)
+        .join(format!("{stem}.avif"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// The body this is about embeds a full-resolution JPEG beside a small one, and its files are
@@ -192,7 +225,8 @@ fn raws(dir: &str, skip: usize, limit: usize) -> Vec<String> {
             let path = entry.path();
             let extension = path.extension()?.to_string_lossy().to_lowercase();
             let big = entry.metadata().ok()?.len() >= SMALLEST_RAW;
-            (big && known.contains(&extension.as_str())).then(|| path.to_string_lossy().into_owned())
+            (big && known.contains(&extension.as_str()))
+                .then(|| path.to_string_lossy().into_owned())
         })
         .collect();
     files.sort();
@@ -213,7 +247,9 @@ unsafe extern "C" {
 fn evict(file: &str) {
     use std::os::fd::AsRawFd;
     const POSIX_FADV_DONTNEED: i32 = 4;
-    let Ok(handle) = std::fs::File::open(file) else { return };
+    let Ok(handle) = std::fs::File::open(file) else {
+        return;
+    };
     // 0 length means "to the end of the file".
     let status = unsafe { posix_fadvise(handle.as_raw_fd(), 0, 0, POSIX_FADV_DONTNEED) };
     assert_eq!(status, 0, "could not evict {file} from the page cache");

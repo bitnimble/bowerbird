@@ -18,7 +18,12 @@ function insert(id: string, deleted: boolean): void {
 
 beforeAll(() => {
   db = createDatabase(':memory:');
-  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-filter', 'lib', 'added_desc');
+  db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(
+    LIB,
+    '/tmp/bb-filter',
+    'lib',
+    'added_desc',
+  );
   photos = new PhotoListingRepository(db);
   insert('photo001', false);
   insert('photo002', true);

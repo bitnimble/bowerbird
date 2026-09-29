@@ -1,7 +1,10 @@
 /** Where the page under test was loaded from, which decides whether it reaches its server through the shell. */
 export function loadedFrom(url: string): void {
   const { protocol, hostname } = new URL(url);
-  Object.defineProperty(globalThis, 'location', { value: { protocol, hostname }, configurable: true });
+  Object.defineProperty(globalThis, 'location', {
+    value: { protocol, hostname },
+    configurable: true,
+  });
 }
 
 export function unload(): void {

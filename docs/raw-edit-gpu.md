@@ -16,7 +16,7 @@ Where the code went:
   the page's canvas through `transferControlToOffscreen`, and draws onto it - so
   a tick is a region and a set of edits crossing the worker boundary, and no
   pixels at all. `gpu.rs` records the same passes for a rendition.
-- What is left on the page is `raw_edit_presenter.ts`, which decides *what* to
+- What is left on the page is `raw_edit_presenter.ts`, which decides _what_ to
   draw, and `stage_resolution.ts`, which decides how large a backing store the
   reader's box is worth - the one thing that needs a layout box and a device
   pixel ratio.
@@ -65,13 +65,13 @@ count. Entry: `grade_from` in `wasm.rs`.
 
 ## 2. Stages on a slider tick
 
-| # | Stage | Code | What it does |
-|---|---|---|---|
-| 1 | Copy | `working.copy_from_slice` | Prepared (or interactive) `u16` RGB into the working buffer |
-| 2 | Grade | `hdr::grade_prepared` → `tone::grade` | Exposure × camera curves / matrix / chroma + BT.2390 EETF roll-off |
-| 3 | PQ | `tone::encode_pq` | ST 2084 via a 64k LUT |
-| 4 | Finish | `image::finish` | Defringe → luma denoise → chroma denoise → sharpen (library strengths; defaults are non-zero) |
-| 5 | Emit | `emit` | Sink-dependent (below) |
+| #   | Stage  | Code                                  | What it does                                                                                  |
+| --- | ------ | ------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1   | Copy   | `working.copy_from_slice`             | Prepared (or interactive) `u16` RGB into the working buffer                                   |
+| 2   | Grade  | `hdr::grade_prepared` → `tone::grade` | Exposure × camera curves / matrix / chroma + BT.2390 EETF roll-off                            |
+| 3   | PQ     | `tone::encode_pq`                     | ST 2084 via a 64k LUT                                                                         |
+| 4   | Finish | `image::finish`                       | Defringe → luma denoise → chroma denoise → sharpen (library strengths; defaults are non-zero) |
+| 5   | Emit   | `emit`                                | Sink-dependent (below)                                                                        |
 
 **Emit by sink** (`wasm::Sink`, chosen in `raw_edit_route.ts`):
 
@@ -86,13 +86,13 @@ colour are never approximated, only resolution.
 
 Timed inside `grade_from` at a ~9.8MP settle (DESIGN §21.1.1):
 
-| Stage | ms | Share |
-|---|---|---|
-| Copy | 3–5 | noise |
-| Grade | 118–146 | ~10% |
-| PQ | 6–15 | noise |
-| **Finish** | **837–1035** | **~80% track/still, ~60% AVIF** |
-| Emit | 106–190 (pack) / 146–189 (PNG) / 617–798 (AVIF) | rest |
+| Stage      | ms                                              | Share                           |
+| ---------- | ----------------------------------------------- | ------------------------------- |
+| Copy       | 3–5                                             | noise                           |
+| Grade      | 118–146                                         | ~10%                            |
+| PQ         | 6–15                                            | noise                           |
+| **Finish** | **837–1035**                                    | **~80% track/still, ~60% AVIF** |
+| Emit       | 106–190 (pack) / 146–189 (PNG) / 617–798 (AVIF) | rest                            |
 
 A drag tick at 960 is 88ms (PNG route) and 119ms (AVIF), delivering 7-12fps
 depending on route (DESIGN §21.2, §21.3).
@@ -160,7 +160,7 @@ larger CAP affordable rather than something to adopt first.
 
 `Radii::for_strength` and `LUMA_DENOISE_RADIUS` are absolute pixel radii scaled
 by strength alone, and `measure_noise` / `measure_defocus` are whole-frame. So
-at 960 every filter in `finish` covers roughly 4x the *picture* it covers at
+at 960 every filter in `finish` covers roughly 4x the _picture_ it covers at
 3840: the drag is already showing a different denoise and a different sharpen
 from the settle it lands on. It pays ~80ms of its ~88ms tick to do that.
 
@@ -177,16 +177,16 @@ worth more than it looks.
 
 ## 5. GPU accelerability, stage by stage
 
-| Stage | GPU-shaped? | Worth it? |
-|---|---|---|
-| **Finish** | Yes, guided filters + Richardson-Lucy are classic image kernels | **Yes**, dominates settle |
-| Grade | Yes, per-pixel LUT / matrix plus one sampled reduction | Marginal (~130ms) |
-| PQ / pack | Yes, trivial | No, already cheap |
-| PNG / AVIF | No, entropy coding is serial / warp-divergent | No (same argument as server AV1 in DESIGN §10.4) |
+| Stage      | GPU-shaped?                                                     | Worth it?                                        |
+| ---------- | --------------------------------------------------------------- | ------------------------------------------------ |
+| **Finish** | Yes, guided filters + Richardson-Lucy are classic image kernels | **Yes**, dominates settle                        |
+| Grade      | Yes, per-pixel LUT / matrix plus one sampled reduction          | Marginal (~130ms)                                |
+| PQ / pack  | Yes, trivial                                                    | No, already cheap                                |
+| PNG / AVIF | No, entropy coding is serial / warp-divergent                   | No (same argument as server AV1 in DESIGN §10.4) |
 
 DESIGN §10.4's "why not a GPU" is about the **server import** budget (decode /
 fit / AV1). It does not rule out WebGPU for the **editor tick**; the bottleneck
-and the runtime are different. Note the converse too: `finish` is a *shared*
+and the runtime are different. Note the converse too: `finish` is a _shared_
 stage, so a GPU `finish` would answer part of the import budget that §10.4 never
 addressed, since §10.4's objections are about the unpack and the coder.
 
@@ -252,11 +252,11 @@ halves resident workgroups per SM, reducing latency hiding.
 Measured on this machine's integrated RDNA2, defaults against what the adapter
 actually offers:
 
-| limit | default | this adapter |
-|---|---|---|
-| `maxComputeWorkgroupStorageSize` | 16KB | 64KB |
-| `maxStorageBufferBindingSize` | 128MB | 4GB |
-| `maxTextureDimension2D` | 8192 | 16384 |
+| limit                            | default | this adapter |
+| -------------------------------- | ------- | ------------ |
+| `maxComputeWorkgroupStorageSize` | 16KB    | 64KB         |
+| `maxStorageBufferBindingSize`    | 128MB   | 4GB          |
+| `maxTextureDimension2D`          | 8192    | 16384        |
 
 The design consequences, at the defaults:
 
@@ -494,7 +494,7 @@ used: both spaces are D65 with the sRGB transfer, so greys are identical in
 either, and only chromatic values would separate them.
 
 Rank this against `finish` rather than after it. On the track route emit is
-106-190ms of a 1.2s settle *and* the whole of the drag's delivery ceiling
+106-190ms of a 1.2s settle _and_ the whole of the drag's delivery ceiling
 (§4.3), and unlike `finish` it removes code rather than doubling it.
 
 **Probe page**: `/codebox-workspace/bowerbird/hdr-canvas-test.html`, which
@@ -524,11 +524,11 @@ any display) says otherwise.
 graceful roll-off on the media side to lose. What moves is the headroom, with
 the SDR brightness slider:
 
-| SDR brightness | row 4 separates up to |
-|---|---|
-| 100% | nothing, the whole row is one block |
-| 75% | 1500 nits |
-| ~55% | 3000 nits, 4000 and above merged |
+| SDR brightness | row 4 separates up to               |
+| -------------- | ----------------------------------- |
+| 100%           | nothing, the whole row is one block |
+| 75%            | 1500 nits                           |
+| ~55%           | 3000 nits, 4000 and above merged    |
 
 So the headroom is roughly 15x SDR white at 55% brightness and under 7x at 100%,
 and the drawn peak is the display peak over 203, which is 4.9x at the
@@ -571,7 +571,7 @@ loop is parked from `copy` to `emit`, the same sync/async wall the rayon workers
 hit, released between ticks rather than never. So the two placements are not
 interchangeable:
 
-- **Device on the editor worker**: the GPU stage has to be driven *between* wasm
+- **Device on the editor worker**: the GPU stage has to be driven _between_ wasm
   calls (`grade` split pre / GPU / post), since the promises only settle once
   the handler returns. Nothing can orchestrate a device on its own worker from
   inside a blocking call: waiting for `mapAsync` deadlocks the loop that would
@@ -590,7 +590,7 @@ views and needed a copy. Measure, don't assume free.
 
 ### Rayon threads
 
-Rayon pool workers are also dedicated workers, so they *have* `navigator.gpu`
+Rayon pool workers are also dedicated workers, so they _have_ `navigator.gpu`
 in theory. In practice:
 
 - After `wbg_rayon_start_worker` they park in a **sync** wasm run loop, no
@@ -615,16 +615,16 @@ isolation the whole page carries for it.
 `Editor::new` plus `fit_camera_match` on a 24MP ARW at the 3840 edge, native, 12
 threads against 1 (native numbers, so read the ratios and not the absolutes):
 
-| Stage | 12 threads | 1 thread | cost |
-|---|---|---|---|
-| LibRaw decode | 349ms | 651ms | 1.9x |
-| `hdr::prepare` | 25ms | 28ms | none, its quantile is a fixed sample count |
-| preview JPEG | 19ms | 17ms | none, single-threaded either way |
-| camera fit | 413ms | 1495ms | 3.6x |
-| lens warp | 99ms | 710ms | **7.2x** |
-| interactive shrink | 3ms | 18ms | 6x |
-| **open, total** | **908ms** | **2918ms** | **3.2x** |
-| one 960 tick | 76ms | 245ms | 3.2x (moot, this is the GPU's) |
+| Stage              | 12 threads | 1 thread   | cost                                       |
+| ------------------ | ---------- | ---------- | ------------------------------------------ |
+| LibRaw decode      | 349ms      | 651ms      | 1.9x                                       |
+| `hdr::prepare`     | 25ms       | 28ms       | none, its quantile is a fixed sample count |
+| preview JPEG       | 19ms       | 17ms       | none, single-threaded either way           |
+| camera fit         | 413ms      | 1495ms     | 3.6x                                       |
+| lens warp          | 99ms       | 710ms      | **7.2x**                                   |
+| interactive shrink | 3ms        | 18ms       | 6x                                         |
+| **open, total**    | **908ms**  | **2918ms** | **3.2x**                                   |
+| one 960 tick       | 76ms       | 245ms      | 3.2x (moot, this is the GPU's)             |
 
 So dropping the pool naively costs about two seconds on a one-off open, behind a
 progress state that already exists. A 61MP body from the same set moves the
@@ -640,7 +640,7 @@ refine is a sequential hill-climb (DESIGN §10.4). That leaves roughly
 **So it comes down to one question: is a CPU tick still a supported fallback?**
 
 - **If WebGPU is required**, all of it goes. The reference implementation for
-  renditions is the *server's* native build, which keeps rayon and is untouched
+  renditions is the _server's_ native build, which keeps rayon and is untouched
   by any of this, so "keep the CPU path as the reference" (§9) does not require
   keeping it in the browser. The cost is a slower open and no editor at all on
   an engine without WebGPU; the gain is deleting every item in the first
@@ -654,19 +654,19 @@ Worth noting the encode side is already threadless: libaom in the module is
 built single-threaded (DESIGN §21.3), so Firefox's rewrap route does not depend
 on the pool either.
 
-| Where | Verdict |
-|---|---|
-| Editor worker driving the device between wasm calls | Viable |
-| Sibling GPU worker, editor blocking on `Atomics.wait` | Viable, and the only shape that keeps wasm the orchestrator |
-| Daemon owning GPU | Bad fit: it is deliberately free of pixel work so `kill` can run while the editor is blocked mid-tick |
-| Inside rayon / wasm `par_chunks` | Dead end until WebGPU multi-worker + sync GPU (neither exists) |
+| Where                                                 | Verdict                                                                                               |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Editor worker driving the device between wasm calls   | Viable                                                                                                |
+| Sibling GPU worker, editor blocking on `Atomics.wait` | Viable, and the only shape that keeps wasm the orchestrator                                           |
+| Daemon owning GPU                                     | Bad fit: it is deliberately free of pixel work so `kill` can run while the editor is blocked mid-tick |
+| Inside rayon / wasm `par_chunks`                      | Dead end until WebGPU multi-worker + sync GPU (neither exists)                                        |
 
 ## 9. Order of work
 
 Cheapest first, and the first three are not GPU work at all:
 
 1. **Settle at the stage's size, capped** (§4.1). One constant, 2-4x off every
-   row of §3 on a typical display, and a *correctness* fix on a 5K or 6K one
+   row of §3 on a typical display, and a _correctness_ fix on a 5K or 6K one
    where 3840 is currently too small to judge a sharpen through
 2. **Drop `finish` from the drag** (§4.2). ~80ms of an ~88ms tick, for a filter
    whose output the drag cannot show anyway
@@ -684,7 +684,7 @@ Cheapest first, and the first three are not GPU work at all:
 5. **Only then port `finish` with wgpu** (§6), resident frame. Whether the
    browser keeps a CPU tick as a fallback is the decision that also decides
    whether `SharedArrayBuffer`, the pool and cross-origin isolation can be
-   deleted (§8.1); the *reference* implementation is the server's native build
+   deleted (§8.1); the _reference_ implementation is the server's native build
    either way
 
 Steps 1-3 need no device, no twin, no tolerance pin and no engine-coverage
@@ -737,7 +737,7 @@ the streaming design rather than this one:
   forced there by the native editor needing an open-ended custom-protocol
   response to push frames into, which only CEF can hold open, so a mixed build
   would fork the editor's transport. A canvas needs no stream at all: one
-  transfer per *open* (§10.2b), which wry's one-shot protocol serves perfectly
+  transfer per _open_ (§10.2b), which wry's one-shot protocol serves perfectly
   well. The mixed build stops being a trap and becomes the obvious choice, and
   only Linux pays CEF's ~180-240MB
 - **The latency risk it names goes with it.** "A media pipeline buffers to smooth
@@ -749,7 +749,7 @@ the streaming design rather than this one:
 What it gets right and this note agrees with: `routeFor()` and all three arms go,
 the wasm module leaves the shell, and `SharedArrayBuffer` with it (§8.1).
 
-One caveat that is nobody's webview: HDR *presentation* on Linux is a compositor
+One caveat that is nobody's webview: HDR _presentation_ on Linux is a compositor
 question (Wayland colour management, nothing on X11), not an engine one. CEF
 gets the pipeline running there; whether the panel lights is a platform matter
 and is nascent generally.
@@ -768,12 +768,12 @@ at all today.
 
 The webview per platform is what decides which option is even available:
 
-| Tauri platform | Webview | WebGPU | Canvas plan (§7) |
-|---|---|---|---|
-| macOS | WKWebView (wry) | yes, from macOS/iOS 26 | works, with an OS floor |
-| Windows | WebView2 (Chromium, wry) | yes | works |
-| Linux | CEF (bundled Chromium) | yes | works |
-| ~~Linux~~ | ~~webkit2gtk~~ | ~~no~~ | ~~why Linux takes CEF~~ |
+| Tauri platform | Webview                  | WebGPU                 | Canvas plan (§7)        |
+| -------------- | ------------------------ | ---------------------- | ----------------------- |
+| macOS          | WKWebView (wry)          | yes, from macOS/iOS 26 | works, with an OS floor |
+| Windows        | WebView2 (Chromium, wry) | yes                    | works                   |
+| Linux          | CEF (bundled Chromium)   | yes                    | works                   |
+| ~~Linux~~      | ~~webkit2gtk~~           | ~~no~~                 | ~~why Linux takes CEF~~ |
 
 **macOS carries a deployment floor rather than a doubt.** Safari's feature flags
 do not reach WKWebView: Apple's own answer to a developer hitting exactly this
@@ -792,7 +792,7 @@ on. So WebGPU is not built into the `webkit2gtk` anyone ships, and nothing at
 runtime can enable what is not compiled. Reaching it would mean building and
 distributing our own WebKitGTK.
 
-Worth separating from the thing that *is* runtime-toggleable, because the two
+Worth separating from the thing that _is_ runtime-toggleable, because the two
 get confused: `UseGPUProcessForWebGL` is a WebKit runtime feature, settable
 through `webkit_settings_set_feature_enabled` and therefore reachable from wry,
 but it is about moving **WebGL** into the GPU process and has nothing to do with
@@ -835,7 +835,7 @@ The part worth spelling out is that **the tick path needs no wasm at all**.
    webview at all
 
 So the wasm build stops being something the desktop app carries and becomes the
-*web* build's business only. That is not a fork in the source: `rawshim` already
+_web_ build's business only. That is not a fork in the source: `rawshim` already
 compiles as a cdylib for wasm and an rlib for the server, and this is the same
 arrangement with the desktop app as a third consumer of the native side.
 
@@ -845,11 +845,11 @@ Tauri-controlled headers make isolation available but don't justify it.
 **(c) Render natively, put the pixels in the window.** Two very different
 things get called this:
 
-- *Shared memory into a canvas*: there is no zero-copy path into a webview
+- _Shared memory into a canvas_: there is no zero-copy path into a webview
   canvas on any platform. The best available is an IPC buffer plus
   `writeTexture`, which is a copy per tick and still needs the webview to have
   WebGPU, so it inherits (b)'s Linux problem while giving up (b)'s simplicity
-- *A native surface composited in the window*: wgpu renders into a layer of its
+- _A native surface composited in the window_: wgpu renders into a layer of its
   own, the webview draws the UI around a transparent region. This is the real
   punch-through, and Tauri exposes the window handle that wgpu needs. It also
   has the simplest data flow of the three, since `prepared` never leaves Rust:

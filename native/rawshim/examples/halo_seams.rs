@@ -31,7 +31,10 @@ fn main() {
         eprintln!("halo_seams <raw> <out-dir> [x,y,side] [halo,halo,...]");
         std::process::exit(2);
     };
-    let region = args.next().and_then(|s| triple(&s)).unwrap_or((3000, 2000, 1024));
+    let region = args
+        .next()
+        .and_then(|s| triple(&s))
+        .unwrap_or((3000, 2000, 1024));
     let halos: Vec<usize> = args
         .next()
         .map(|s| s.split(',').filter_map(|v| v.parse().ok()).collect())
@@ -68,9 +71,19 @@ fn main() {
             .showing(rawshim::px::Rect::exact(left, top, width, height));
         // Whatever is passed here is overridden by `set_tile_halo` for the whole sweep, which is
         // the point of the harness; the constant only names what a caller would have asked for.
-        let frame = rawshim::decode_tile(&path, view, amounts, rawshim::galosh::Fit::Given(fit), rawshim::RENDITION_TILE_HALO)
-            .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
-        assert_eq!((frame.width, frame.height), (width, height), "the tile came back a different size");
+        let frame = rawshim::decode_tile(
+            &path,
+            view,
+            amounts,
+            rawshim::galosh::Fit::Given(fit),
+            rawshim::RENDITION_TILE_HALO,
+        )
+        .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
+        assert_eq!(
+            (frame.width, frame.height),
+            (width, height),
+            "the tile came back a different size"
+        );
         let scale = 1.0 / f64::from(frame.neutral_ceiling.max(1e-6));
         frame
             .samples16()
@@ -98,9 +111,17 @@ fn main() {
     // 100% and the corner where they meet, which is where a short halo has least context of all.
     let window = (side / 2).min(512);
     let crop = |image: &[u8]| centred(image, side, window);
-    write(&format!("{out}/seam-reference"), &crop(&reference), window, window);
+    write(
+        &format!("{out}/seam-reference"),
+        &crop(&reference),
+        window,
+        window,
+    );
 
-    eprintln!("region roughness {:.1} of 255, so it is texture rather than sky", roughness(&reference));
+    eprintln!(
+        "region roughness {:.1} of 255, so it is texture rather than sky",
+        roughness(&reference)
+    );
     // Tighter than the individual crops, because the strip is for looking at several halos at once
     // and a panel that has to be scaled down to fit beside its neighbours is no longer 100%.
     const PANEL: usize = 256;
@@ -139,7 +160,12 @@ fn main() {
             seam.1,
             away.1,
         );
-        write(&format!("{out}/seam-halo{halo}"), &crop(&assembled), window, window);
+        write(
+            &format!("{out}/seam-halo{halo}"),
+            &crop(&assembled),
+            window,
+            window,
+        );
         let diff = crop(&amplified(&assembled, &reference));
         write(&format!("{out}/diff-halo{halo}"), &diff, window, window);
         strip.push(panel(&assembled));
@@ -151,7 +177,12 @@ fn main() {
     // small. Still 100%: the panels are cropped tighter, never scaled.
     let side_by_side = alongside(&strip, PANEL.min(side));
     let across = strip.len() * (PANEL.min(side) + GUTTER) - GUTTER;
-    write(&format!("{out}/seams-side-by-side"), &side_by_side, across, PANEL.min(side));
+    write(
+        &format!("{out}/seams-side-by-side"),
+        &side_by_side,
+        across,
+        PANEL.min(side),
+    );
 
     eprintln!(
         "\nwrote {} pairs to {out}: {window}x{window} at 100%, both seams crossing in the middle",
@@ -171,7 +202,13 @@ fn main() {
 /// columns straddling the join are compared against columns far enough out to be ordinary and near
 /// enough to be the same subject. The excess between them is the seam; the baseline is whatever
 /// this comparison cannot resolve anyway.
-fn seam_line(mine: &[u8], reference: &[u8], side: usize, half: usize, vertical: bool) -> (f64, f64) {
+fn seam_line(
+    mine: &[u8],
+    reference: &[u8],
+    side: usize,
+    half: usize,
+    vertical: bool,
+) -> (f64, f64) {
     let profile = |at: usize| -> f64 {
         let mut total = 0f64;
         for other in 0..side {
@@ -188,8 +225,10 @@ fn seam_line(mine: &[u8], reference: &[u8], side: usize, half: usize, vertical: 
     };
     // The quarters meet between `half - 1` and `half`, so the join is both of them.
     let join = (profile(half - 1) + profile(half)) / 2.0;
-    let baseline: f64 =
-        (24..48).map(|d| profile(half - d) + profile(half + d)).sum::<f64>() / 48.0;
+    let baseline: f64 = (24..48)
+        .map(|d| profile(half - d) + profile(half + d))
+        .sum::<f64>()
+        / 48.0;
     (join, baseline)
 }
 
@@ -249,8 +288,7 @@ fn centred(image: &[u8], side: usize, window: usize) -> Vec<u8> {
     let mut out = vec![0u8; window * window * 3];
     for row in 0..window {
         let at = ((from + row) * side + from) * 3;
-        out[row * window * 3..(row + 1) * window * 3]
-            .copy_from_slice(&image[at..at + window * 3]);
+        out[row * window * 3..(row + 1) * window * 3].copy_from_slice(&image[at..at + window * 3]);
     }
     out
 }
@@ -303,7 +341,11 @@ fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
     )
     .expect("the crop encodes");
 
-    let image = rawshim::rgb::RgbRef { width, height, data: rgb };
+    let image = rawshim::rgb::RgbRef {
+        width,
+        height,
+        data: rgb,
+    };
     let jpeg = rawshim::jpeg::encode(image, 100).expect("the crop encodes as JPEG");
     std::fs::write(format!("{stem}.jpg"), jpeg).expect("the JPEG writes");
 }

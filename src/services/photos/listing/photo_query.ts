@@ -6,9 +6,18 @@ import { COMPOSITE_KINDS_SQL, type CompositeKind, type Triage } from '../../../s
 import { canvasOf, recipeOf } from '../../../schemas/recipes';
 import type { RenditionSource } from '../../processing/workers/processing_types';
 import { renditionVariant } from '../../processing/renditions/renditions';
-import { FULL_VARIANT_OF_LIBRARY, owesRendition, renditionBuiltAt, renditionsBuiltAt } from '../../processing/renditions/renditions_repository';
+import {
+  FULL_VARIANT_OF_LIBRARY,
+  owesRendition,
+  renditionBuiltAt,
+  renditionsBuiltAt,
+} from '../../processing/renditions/renditions_repository';
 import type { ViewerRendition } from '../../../schemas/settings';
-import type { PhotoListFilters, UnresolvedDetail, UnresolvedSummary } from './photo_listing_repository';
+import type {
+  PhotoListFilters,
+  UnresolvedDetail,
+  UnresolvedSummary,
+} from './photo_listing_repository';
 import { INPUTS_EDITED } from '../photo_edit_sql';
 import { PATH_OF } from '../paths/photo_paths_repository';
 
@@ -49,8 +58,8 @@ export function hiddenShootsSql(exempt?: string): string {
 export function hiddenIs(prefix: string, hidden: boolean, exempt?: string): string {
   const own = `${prefix}is_hidden = ${hidden ? 1 : 0}`;
   const shoots = hiddenShootIds(exempt);
-  return hidden ?
-      `(${own} OR ${prefix}shoot_id IN (${shoots}))`
+  return hidden
+    ? `(${own} OR ${prefix}shoot_id IN (${shoots}))`
     : `(${own} AND (${prefix}shoot_id IS NULL OR ${prefix}shoot_id NOT IN (${shoots})))`;
 }
 
@@ -180,7 +189,10 @@ const notAFrame = (alias: string): string => `NOT EXISTS (
 
 export const NOT_A_FRAME = notAFrame('photos.');
 
-export function representativeFilter(filters: PhotoListFilters, member: MemberScope): { sql: string; params: (string | number)[] } {
+export function representativeFilter(
+  filters: PhotoListFilters,
+  member: MemberScope,
+): { sql: string; params: (string | number)[] } {
   // An uncollapsed listing keeps every stack *member*, so the promotion below is that filter's
   // absence rather than a filter of its own (§19.5.4) - but a panorama's frames are not stack
   // members and "expand stacks" is not "dismantle my panoramas". A composite stands for its
@@ -191,7 +203,9 @@ export function representativeFilter(filters: PhotoListFilters, member: MemberSc
   // this test is how a whole stack vanishes: the flagged member holds the flag while being
   // hidden by `NOT_A_FRAME`, so the promotion below finds a representative and refuses to
   // promote the siblings that are still visible.
-  const visible = [notAFrame('m.'), ...(member.sql === '' ? [] : [member.sql]), ...clauses].join(' AND ');
+  const visible = [notAFrame('m.'), ...(member.sql === '' ? [] : [member.sql]), ...clauses].join(
+    ' AND ',
+  );
   const inListing = ` AND ${visible}`;
   const memberParams = [...member.params, ...params];
   const taken = (alias: string) => `COALESCE(${alias}date_taken, ${alias}date_added)`;
@@ -219,7 +233,10 @@ export function representativeFilter(filters: PhotoListFilters, member: MemberSc
  * strict (§19.5.2). Either way it honours the listing's own view of the bin, so
  * the number on the tile and the set an action touches are the same.
  */
-export function sizeExpression(filters: PhotoListFilters, counting: MemberScope): { sql: string; params: (string | number)[] } {
+export function sizeExpression(
+  filters: PhotoListFilters,
+  counting: MemberScope,
+): { sql: string; params: (string | number)[] } {
   // Uncollapsed, a row stands for the one photograph it is, so nothing in the
   // grid may read it as a stack (§19.5.4).
   if (filters.expandStacks === true) return { sql: '1', params: [] };
@@ -322,7 +339,10 @@ function toTriage(value: string | null): Triage {
   return value === 'picked' || value === 'rejected' ? value : 'untriaged';
 }
 
-export function orderingDate(ordering: Ordering, row: Pick<SummaryRow, 'date_taken' | 'date_added'>): string | null {
+export function orderingDate(
+  ordering: Ordering,
+  row: Pick<SummaryRow, 'date_taken' | 'date_added'>,
+): string | null {
   return ordering === 'taken_asc' || ordering === 'taken_desc' ? row.date_taken : row.date_added;
 }
 
@@ -375,7 +395,10 @@ function displayed(row: DetailRow): { display_width: number; display_height: num
   try {
     const parsed = EditDocSchema.safeParse(JSON.parse(row.edited));
     if (!parsed.success) return same;
-    const [whole = row.width, tall = row.height] = canvasOf(recipeOf(row.recipe)) ?? [row.width, row.height];
+    const [whole = row.width, tall = row.height] = canvasOf(recipeOf(row.recipe)) ?? [
+      row.width,
+      row.height,
+    ];
     const size = displaySize(whole, tall, parsed.data);
     return { display_width: size.width, display_height: size.height };
   } catch {
@@ -458,7 +481,10 @@ export const inAlbum = (albumId: string): MemberScope => ({
   params: [albumId],
 });
 
-export const inShoot = (shootId: string): MemberScope => ({ sql: 'm.shoot_id = ?', params: [shootId] });
+export const inShoot = (shootId: string): MemberScope => ({
+  sql: 'm.shoot_id = ?',
+  params: [shootId],
+});
 
 // A listing of one shoot's photographs, which is the one place a hidden shoot does not hide them:
 // the reader asked this shoot what it holds, and answering nothing is a page that opens onto a
@@ -477,7 +503,10 @@ export const ownShoot = (shootId: string, filters: PhotoListFilters): PhotoListF
  * running: a second copy of this would drift, and a listing whose promotion
  * disagreed with its own filter would show a stack twice or not at all.
  */
-export function conditions(filters: PhotoListFilters, prefix: string): { clauses: string[]; params: (string | number)[] } {
+export function conditions(
+  filters: PhotoListFilters,
+  prefix: string,
+): { clauses: string[]; params: (string | number)[] } {
   // Scope says which rows are in play at all; user holds the filter chips. They
   // are built separately because only the chips honour `match`.
   const scope: string[] = [];
@@ -539,7 +568,9 @@ export function conditions(filters: PhotoListFilters, prefix: string): { clauses
     scopeParams.push(...wanted);
   }
   for (const labelId of filters.labels ?? []) {
-    scope.push(`EXISTS (SELECT 1 FROM photo_labels pl WHERE pl.photo_id = ${prefix}id AND pl.label_id = ?)`);
+    scope.push(
+      `EXISTS (SELECT 1 FROM photo_labels pl WHERE pl.photo_id = ${prefix}id AND pl.label_id = ?)`,
+    );
     scopeParams.push(labelId);
   }
 
@@ -553,7 +584,8 @@ export function conditions(filters: PhotoListFilters, prefix: string): { clauses
     user.push(hiddenIs(prefix, true, exempt));
     if (filters.exemptShoot != null) userParams.push(filters.exemptShoot);
   }
-  if (filters.rated != null) user.push(filters.rated ? `${prefix}rating > 0` : `${prefix}rating = 0`);
+  if (filters.rated != null)
+    user.push(filters.rated ? `${prefix}rating > 0` : `${prefix}rating = 0`);
   if (filters.triage != null && filters.triage.length > 0) {
     // NULL is the untriaged bucket, so it needs an IS NULL arm rather than an IN.
     const wanted = filters.triage.filter((t) => t !== 'untriaged');

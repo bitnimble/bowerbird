@@ -1,7 +1,11 @@
 import { ptr } from 'bun:ffi';
 import { shim } from './rawshim';
 import type { Job } from '../../../schemas/jobs';
-import { type PreparedHeader, type PreparedReplyHeader, PreparedReplyHeaderSchema } from '../../../schemas/prepared';
+import {
+  type PreparedHeader,
+  type PreparedReplyHeader,
+  PreparedReplyHeaderSchema,
+} from '../../../schemas/prepared';
 
 /** One picture of a recipe, coded, as it came back: the header, and the samples behind it. */
 export interface PreparedPicture {
@@ -64,7 +68,11 @@ function readHeader(framed: Uint8Array): PreparedReplyHeader {
   const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength);
   const length = view.getUint32(0, true);
   if (4 + length > framed.byteLength) {
-    throw new Error(`a prepared picture states a ${length}-byte header in ${framed.byteLength} bytes`);
+    throw new Error(
+      `a prepared picture states a ${length}-byte header in ${framed.byteLength} bytes`,
+    );
   }
-  return PreparedReplyHeaderSchema.parse(JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length))));
+  return PreparedReplyHeaderSchema.parse(
+    JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length))),
+  );
 }

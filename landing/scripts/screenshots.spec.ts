@@ -1,11 +1,23 @@
-import { expect, request, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import {
+  expect,
+  request,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 import path from 'node:path';
 import { PathSegment, route } from '../../src/schemas/route';
 import { API_URL, LIBRARY_ROOT, PHOTO_COUNT, SHOTS_DIR } from './shots_state';
 
 test.describe.configure({ mode: 'serial' });
 
-type Photo = { id: string; file_path: string | null; tile_built_at: string | null; renditions_built_at: string | null };
+type Photo = {
+  id: string;
+  file_path: string | null;
+  tile_built_at: string | null;
+  renditions_built_at: string | null;
+};
 
 let api: APIRequestContext;
 let libraryId = '';
@@ -18,13 +30,20 @@ function idOf(fileName: string): string {
 }
 
 async function listPhotos(): Promise<Photo[]> {
-  const response = await api.get(`${route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.photos())}?limit=200`);
+  const response = await api.get(
+    `${route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.photos())}?limit=200`,
+  );
   return ((await response.json()) as { photos: Photo[] }).photos;
 }
 
 async function shot(page: Page, name: string): Promise<void> {
   await page.mouse.move(0, page.viewportSize()?.height ?? 0);
-  await page.screenshot({ path: path.join(SHOTS_DIR, name), type: 'jpeg', quality: 85, animations: 'disabled' });
+  await page.screenshot({
+    path: path.join(SHOTS_DIR, name),
+    type: 'jpeg',
+    quality: 85,
+    animations: 'disabled',
+  });
 }
 
 function stage(page: Page): Locator {
@@ -42,10 +61,14 @@ async function stageReady(page: Page): Promise<void> {
 
 async function openEditor(page: Page, photoId: string): Promise<void> {
   await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
-  await expect(stage(page).getByRole('img', { name: 'Edit preview' })).toBeVisible({ timeout: 300_000 });
+  await expect(stage(page).getByRole('img', { name: 'Edit preview' })).toBeVisible({
+    timeout: 300_000,
+  });
   // Not busy is live or failed, and a failed open is no picture to take.
   await expect(stage(page)).toHaveAttribute('aria-busy', 'false', { timeout: 300_000 });
-  await expect(page.getByRole('region', { name: 'Photo details' }).getByText(/^Unavailable/)).toHaveCount(0);
+  await expect(
+    page.getByRole('region', { name: 'Photo details' }).getByText(/^Unavailable/),
+  ).toHaveCount(0);
 }
 
 test.beforeAll(async () => {
@@ -60,12 +83,16 @@ test.beforeAll(async () => {
     .poll(
       async () => {
         const photos = await listPhotos();
-        return photos.length === PHOTO_COUNT && photos.every((photo) => photo.tile_built_at != null && photo.renditions_built_at != null);
+        return (
+          photos.length === PHOTO_COUNT &&
+          photos.every((photo) => photo.tile_built_at != null && photo.renditions_built_at != null)
+        );
       },
       { timeout: 1_200_000, intervals: [5_000] },
     )
     .toBe(true);
-  for (const photo of await listPhotos()) photoIds.set(path.basename(photo.file_path ?? ''), photo.id);
+  for (const photo of await listPhotos())
+    photoIds.set(path.basename(photo.file_path ?? ''), photo.id);
 
   const verdicts: [string, { rating?: number; triage?: 'picked' }][] = [
     ['AFXT2721.RAF', { rating: 5, triage: 'picked' }],
@@ -95,7 +122,12 @@ test('editor', async ({ page }) => {
 });
 
 test.describe('phone', () => {
-  test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
+  test.use({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    hasTouch: true,
+    isMobile: true,
+  });
 
   test('viewer', async ({ page }) => {
     await page.goto(route(PathSegment.photos(), idOf('DSC00853.ARW')));

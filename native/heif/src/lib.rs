@@ -92,11 +92,19 @@ pub struct File {
 /// Canon file to the wrong decoder, which is a library that imports nothing and reports that no
 /// decoder read it.
 pub fn is_heif(bytes: &[u8]) -> bool {
-    let Some(ftyp) = top_level(bytes, b"ftyp") else { return false };
+    let Some(ftyp) = top_level(bytes, b"ftyp") else {
+        return false;
+    };
     // The major brand, then the compatible brands: four bytes each, with a version between them.
     let major = ftyp.get(..4);
-    let compatible = ftyp.get(8..).into_iter().flat_map(|rest| rest.chunks_exact(4));
-    major.into_iter().chain(compatible).any(|brand| STILL_BRANDS.contains(&brand))
+    let compatible = ftyp
+        .get(8..)
+        .into_iter()
+        .flat_map(|rest| rest.chunks_exact(4));
+    major
+        .into_iter()
+        .chain(compatible)
+        .any(|brand| STILL_BRANDS.contains(&brand))
 }
 
 /// The brands that mean "a still picture in a `meta` box", out of ISO/IEC 23008-12 §B and the
@@ -113,10 +121,14 @@ pub fn read(bytes: &[u8]) -> Result<File, String> {
     }
     let meta = top_level(bytes, b"meta").ok_or("this HEIF file has no meta box")?;
     // `meta` is a full box: a version and three flag bytes before its children.
-    let meta = meta.get(4..).ok_or("this HEIF file's meta box is truncated")?;
+    let meta = meta
+        .get(4..)
+        .ok_or("this HEIF file's meta box is truncated")?;
     let catalogue = Catalogue::read(bytes, meta)?;
 
-    let primary = catalogue.primary.ok_or("this HEIF file names no primary item")?;
+    let primary = catalogue
+        .primary
+        .ok_or("this HEIF file names no primary item")?;
     let (base, gain) = catalogue.tone_mapped(primary);
     let mut picture = catalogue.picture(base)?;
     // **Where the pair splits, the reader's own answers belong to the primary.** For an ISO
@@ -134,7 +146,10 @@ pub fn read(bytes: &[u8]) -> Result<File, String> {
         // otherwise import with no capture date and no camera at all.
         exif: catalogue.exif(base).or_else(|| catalogue.exif(primary)),
         gain: gain.and_then(|(map, metadata)| {
-            Some(GainMap { picture: catalogue.picture(map).ok()?, metadata })
+            Some(GainMap {
+                picture: catalogue.picture(map).ok()?,
+                metadata,
+            })
         }),
     })
 }
@@ -244,7 +259,9 @@ impl<'a> Catalogue<'a> {
     /// reading it off there finds nothing on every real file, and the branch that looks for it
     /// would never fire.
     fn aux_type(&self, item: u32) -> Option<String> {
-        let (_, body) = self.properties_of(item).find(|(kind, _)| *kind == b"auxC")?;
+        let (_, body) = self
+            .properties_of(item)
+            .find(|(kind, _)| *kind == b"auxC")?;
         let urn = body.get(4..)?.split(|byte| *byte == 0).next()?;
         Some(String::from_utf8_lossy(urn).into_owned())
     }
@@ -294,9 +311,10 @@ impl<'a> Catalogue<'a> {
 
     fn single(&self, item: u32) -> Result<Picture, String> {
         let mut picture = self.described(item)?;
-        picture.tiles = vec![self
-            .item_bytes(item)
-            .ok_or_else(|| format!("item {item}'s coded bytes are not in the file"))?];
+        picture.tiles = vec![
+            self.item_bytes(item)
+                .ok_or_else(|| format!("item {item}'s coded bytes are not in the file"))?,
+        ];
         picture.tile = (picture.width, picture.height);
         credible(&picture)?;
         Ok(picture)
@@ -324,7 +342,10 @@ impl<'a> Catalogue<'a> {
         let (Some(width), Some(height)) = (width, height) else {
             return Err("this HEIF file's grid header is truncated".to_string());
         };
-        let (columns, rows) = (usize::from(*columns_less_one) + 1, usize::from(*rows_less_one) + 1);
+        let (columns, rows) = (
+            usize::from(*columns_less_one) + 1,
+            usize::from(*rows_less_one) + 1,
+        );
 
         let members = self.referenced(item, b"dimg");
         if members.len() != columns * rows {
@@ -372,7 +393,9 @@ impl<'a> Catalogue<'a> {
 
     /// Everything a picture item's properties say about it, with no bytes gathered yet.
     fn described(&self, item: u32) -> Result<Picture, String> {
-        let kind = self.kind_of(item).ok_or_else(|| format!("no item {item}"))?;
+        let kind = self
+            .kind_of(item)
+            .ok_or_else(|| format!("no item {item}"))?;
         let codec = match &kind {
             b"hvc1" | b"hev1" => Codec::Hevc,
             b"av01" => Codec::Av1,
@@ -484,8 +507,9 @@ impl<'a> Catalogue<'a> {
     /// rather than refused, because dropping an importable photograph over a property almost no
     /// file carries is the worse of the two failures - but silence is not one of the options.
     fn unhandled_essential(&self, item: u32) -> Option<String> {
-        const HANDLED: [&[u8; 4]; 7] =
-            [b"ispe", b"hvcC", b"av1C", b"pixi", b"colr", b"irot", b"imir"];
+        const HANDLED: [&[u8; 4]; 7] = [
+            b"ispe", b"hvcC", b"av1C", b"pixi", b"colr", b"irot", b"imir",
+        ];
         let assigned = self.assigned.get(&item)?;
         assigned.iter().filter(|it| it.essential).find_map(|at| {
             let (kind, _) = self.properties.get(at.index.wrapping_sub(1))?;
@@ -556,7 +580,11 @@ fn turn_of(quarters: u8, mirrored: Option<u8>) -> Orientation {
 /// An absolute bound, not one relative to the file's length: AV1 codes a flat sky in almost
 /// nothing, and a 1200x800 web image in 65kB is past any ratio that still rejects the 25GB file.
 fn credible(picture: &Picture) -> Result<(), String> {
-    match picture.width.checked_mul(picture.height).filter(|pixels| *pixels <= MAX_PIXELS) {
+    match picture
+        .width
+        .checked_mul(picture.height)
+        .filter(|pixels| *pixels <= MAX_PIXELS)
+    {
         Some(_) => Ok(()),
         None => Err(format!(
             "this HEIF file says its picture is {}x{}, which is past the {MAX_PIXELS} pixels this \
@@ -606,7 +634,9 @@ fn boxes(bytes: &[u8]) -> impl Iterator<Item = (&[u8; 4], &[u8])> {
 
 /// The first top-level box of this type.
 fn top_level<'a>(bytes: &'a [u8], want: &[u8; 4]) -> Option<&'a [u8]> {
-    boxes(bytes).find(|(kind, _)| *kind == want).map(|(_, body)| body)
+    boxes(bytes)
+        .find(|(kind, _)| *kind == want)
+        .map(|(_, body)| body)
 }
 
 fn read_pitm(body: &[u8]) -> Option<u32> {
@@ -636,7 +666,9 @@ fn read_iinf(body: &[u8]) -> std::collections::HashMap<u32, Entry> {
             3 => (entry.get(4..8).map(be32), 10),
             _ => (None, 0),
         };
-        let (Some(id), Some(kind)) = (id, entry.get(kind_at..kind_at + 4)) else { continue };
+        let (Some(id), Some(kind)) = (id, entry.get(kind_at..kind_at + 4)) else {
+            continue;
+        };
         let kind: [u8; 4] = match kind.try_into() {
             Ok(kind) => kind,
             Err(_) => continue,
@@ -649,7 +681,9 @@ fn read_iinf(body: &[u8]) -> std::collections::HashMap<u32, Entry> {
 fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
     let mut out = std::collections::HashMap::new();
     let version = body.first().copied().unwrap_or(0);
-    let Some(sizes) = body.get(4..6) else { return out };
+    let Some(sizes) = body.get(4..6) else {
+        return out;
+    };
     let (offset_size, length_size) = ((sizes[0] >> 4) as usize, (sizes[0] & 15) as usize);
     let (base_size, index_size) = ((sizes[1] >> 4) as usize, (sizes[1] & 15) as usize);
 
@@ -669,12 +703,19 @@ fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
 
     let number = |body: &[u8], at: usize, width: usize| -> Option<usize> {
         let bytes = body.get(at..at + width)?;
-        Some(bytes.iter().fold(0usize, |value, byte| (value << 8) | usize::from(*byte)))
+        Some(
+            bytes
+                .iter()
+                .fold(0usize, |value, byte| (value << 8) | usize::from(*byte)),
+        )
     };
 
     for _ in 0..count {
         let id = match version < 2 {
-            true => body.get(at..at + 2).map(|b| u32::from(be16(b))).inspect(|_| at += 2),
+            true => body
+                .get(at..at + 2)
+                .map(|b| u32::from(be16(b)))
+                .inspect(|_| at += 2),
             false => body.get(at..at + 4).map(be32).inspect(|_| at += 4),
         };
         let Some(id) = id else { break };
@@ -691,9 +732,13 @@ fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
         // handed to a decoder as if they were the picture. Declined rather than misread.
         let external = body.get(at..at + 2).map(be16).unwrap_or(0) != 0;
         at += 2;
-        let Some(base) = number(body, at, base_size) else { break };
+        let Some(base) = number(body, at, base_size) else {
+            break;
+        };
         at += base_size;
-        let Some(extents) = body.get(at..at + 2).map(be16) else { break };
+        let Some(extents) = body.get(at..at + 2).map(be16) else {
+            break;
+        };
         at += 2;
 
         let mut spans = Vec::new();
@@ -702,9 +747,10 @@ fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
             if version >= 1 && index_size > 0 {
                 at += index_size;
             }
-            let (Some(offset), Some(length)) =
-                (number(body, at, offset_size), number(body, at + offset_size, length_size))
-            else {
+            let (Some(offset), Some(length)) = (
+                number(body, at, offset_size),
+                number(body, at + offset_size, length_size),
+            ) else {
                 whole = false;
                 break;
             };
@@ -725,7 +771,13 @@ fn read_iloc(body: &[u8]) -> std::collections::HashMap<u32, Location> {
             break;
         }
         if !external {
-            out.insert(id, Location { construction, extents: spans });
+            out.insert(
+                id,
+                Location {
+                    construction,
+                    extents: spans,
+                },
+            );
         }
     }
     out
@@ -740,11 +792,16 @@ fn read_ipma(body: &[u8]) -> std::collections::HashMap<u32, Vec<Association>> {
     at += 4;
     for _ in 0..count {
         let id = match version < 1 {
-            true => body.get(at..at + 2).map(|b| u32::from(be16(b))).inspect(|_| at += 2),
+            true => body
+                .get(at..at + 2)
+                .map(|b| u32::from(be16(b)))
+                .inspect(|_| at += 2),
             false => body.get(at..at + 4).map(be32).inspect(|_| at += 4),
         };
         let Some(id) = id else { break };
-        let Some(associations) = body.get(at).copied() else { break };
+        let Some(associations) = body.get(at).copied() else {
+            break;
+        };
         at += 1;
         let mut indices = Vec::new();
         for _ in 0..associations {
@@ -755,12 +812,18 @@ fn read_ipma(body: &[u8]) -> std::collections::HashMap<u32, Vec<Association>> {
                     .get(at..at + 2)
                     .map(|b| {
                         let word = be16(b);
-                        Association { index: usize::from(word & 0x7fff), essential: word & 0x8000 != 0 }
+                        Association {
+                            index: usize::from(word & 0x7fff),
+                            essential: word & 0x8000 != 0,
+                        }
                     })
                     .inspect(|_| at += 2),
                 false => body
                     .get(at)
-                    .map(|b| Association { index: usize::from(b & 0x7f), essential: b & 0x80 != 0 })
+                    .map(|b| Association {
+                        index: usize::from(b & 0x7f),
+                        essential: b & 0x80 != 0,
+                    })
                     .inspect(|_| at += 1),
             };
             let Some(index) = index else { break };
@@ -787,8 +850,12 @@ fn read_iref(body: &[u8]) -> Vec<([u8; 4], u32, Vec<u32>)> {
             }
         };
         let Some(from) = read(0) else { continue };
-        let Some(count) = entry.get(step..step + 2).map(be16) else { continue };
-        let to = (0..usize::from(count)).filter_map(|k| read(step + 2 + k * step)).collect();
+        let Some(count) = entry.get(step..step + 2).map(be16) else {
+            continue;
+        };
+        let to = (0..usize::from(count))
+            .filter_map(|k| read(step + 2 + k * step))
+            .collect();
         out.push((*kind, from, to));
     }
     out
@@ -808,7 +875,9 @@ mod tests {
         file.extend_from_slice(&12u32.to_be_bytes());
         file.extend_from_slice(b"mdat");
         file.extend_from_slice(&[1, 2, 3, 4]);
-        let found: Vec<_> = boxes(&file).map(|(kind, body)| (*kind, body.len())).collect();
+        let found: Vec<_> = boxes(&file)
+            .map(|(kind, body)| (*kind, body.len()))
+            .collect();
         assert_eq!(found, vec![(*b"free", 0), (*b"mdat", 4)]);
     }
 
@@ -820,7 +889,9 @@ mod tests {
         file.extend_from_slice(&64u32.to_be_bytes());
         file.extend_from_slice(b"meta");
         file.extend_from_slice(&[0; 4]);
-        let found: Vec<_> = boxes(&file).map(|(kind, body)| (*kind, body.len())).collect();
+        let found: Vec<_> = boxes(&file)
+            .map(|(kind, body)| (*kind, body.len()))
+            .collect();
         assert_eq!(found, vec![(*b"meta", 4)]);
     }
 
@@ -842,11 +913,17 @@ mod tests {
         };
         assert!(!is_heif(&ftyp(b"crx ", &[b"crx ", b"isom"])), "a CR3");
         assert!(!is_heif(&ftyp(b"isom", &[b"mp42"])), "an MP4");
-        assert!(is_heif(&ftyp(b"heic", &[b"mif1", b"heic"])), "an iPhone HEIC");
+        assert!(
+            is_heif(&ftyp(b"heic", &[b"mif1", b"heic"])),
+            "an iPhone HEIC"
+        );
         assert!(is_heif(&ftyp(b"avif", &[b"avif", b"mif1"])), "an AVIF");
         // The generic still brand on its own, which is what a Canon or Fujifilm HIF declares.
         assert!(is_heif(&ftyp(b"mif1", &[b"heix"])));
-        assert!(!is_heif(b"II*\0"), "and something that is not ISOBMFF at all");
+        assert!(
+            !is_heif(b"II*\0"),
+            "and something that is not ISOBMFF at all"
+        );
     }
 
     #[test]
@@ -890,7 +967,10 @@ mod tests {
         iloc.extend_from_slice(&u64::MAX.to_be_bytes()); // extent offset
         iloc.extend_from_slice(&16u64.to_be_bytes()); // extent length
 
-        assert!(read_iloc(&iloc).get(&7).is_none(), "the item is dropped, not summed");
+        assert!(
+            read_iloc(&iloc).get(&7).is_none(),
+            "the item is dropped, not summed"
+        );
     }
 
     /// A declared size is a `u32` out of the file and the decoder allocates from it, so an absurd
@@ -914,12 +994,24 @@ mod tests {
         };
         assert!(credible(&huge).is_err(), "25 gigabytes");
         // And the overflow case, which is the lucky one: the multiply wraps rather than asking.
-        let wrapping = Picture { width: usize::MAX, height: 3, ..huge };
+        let wrapping = Picture {
+            width: usize::MAX,
+            height: 3,
+            ..huge
+        };
         assert!(credible(&wrapping).is_err());
 
-        let ordinary = Picture { width: 4032, height: 3024, ..wrapping };
+        let ordinary = Picture {
+            width: 4032,
+            height: 3024,
+            ..wrapping
+        };
         assert!(credible(&ordinary).is_ok(), "a 12MP HEIC");
-        let panorama = Picture { width: 33804, height: 8000, ..ordinary };
+        let panorama = Picture {
+            width: 33804,
+            height: 8000,
+            ..ordinary
+        };
         assert!(credible(&panorama).is_ok(), "a stitched panorama");
     }
 

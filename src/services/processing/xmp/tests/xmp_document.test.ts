@@ -46,17 +46,36 @@ describe('parseXmp: container and namespaces', () => {
     // compared whole: a form handled for one type and not another is the way
     // this fails in the wild.
     const scalars: [string, string][] = [
-      ['crs:ProcessVersion', '6.7'], ['crs:Version', '13.2'], ['crs:HasSettings', 'True'],
-      ['crs:Exposure2012', '+0.35'], ['crs:Contrast2012', '12'], ['crs:ToneCurveName2012', 'Medium Contrast'],
-      ['crs:WhiteBalance', 'Cloudy'], ['crs:Temperature', '6500'], ['crs:Dehaze', '+7.5'],
-      ['crs:ConvertToGrayscale', 'True'], ['crs:GrayMixerAqua', '-14'], ['crs:Sharpness', '55'],
-      ['crs:SplitToningShadowHue', '215'], ['crs:LensProfileName', 'Canon EF 35mm'], ['crs:GrainAmount', '12'],
-      ['crs:BlueHue', '-6'], ['tiff:Orientation', '6'], ['crs:HasCrop', 'True'], ['crs:CropRight', '0.8'],
-      ['crs:PerspectiveUpright', '3'], ['crs:CameraProfile', 'Adobe Color'], ['xmp:Rating', '4'],
-      ['xmp:CreateDate', '2025-11-02T17:41:09+11:00'], ['crs:RawFileName', 'IMG_1234.CR2'],
+      ['crs:ProcessVersion', '6.7'],
+      ['crs:Version', '13.2'],
+      ['crs:HasSettings', 'True'],
+      ['crs:Exposure2012', '+0.35'],
+      ['crs:Contrast2012', '12'],
+      ['crs:ToneCurveName2012', 'Medium Contrast'],
+      ['crs:WhiteBalance', 'Cloudy'],
+      ['crs:Temperature', '6500'],
+      ['crs:Dehaze', '+7.5'],
+      ['crs:ConvertToGrayscale', 'True'],
+      ['crs:GrayMixerAqua', '-14'],
+      ['crs:Sharpness', '55'],
+      ['crs:SplitToningShadowHue', '215'],
+      ['crs:LensProfileName', 'Canon EF 35mm'],
+      ['crs:GrainAmount', '12'],
+      ['crs:BlueHue', '-6'],
+      ['tiff:Orientation', '6'],
+      ['crs:HasCrop', 'True'],
+      ['crs:CropRight', '0.8'],
+      ['crs:PerspectiveUpright', '3'],
+      ['crs:CameraProfile', 'Adobe Color'],
+      ['xmp:Rating', '4'],
+      ['xmp:CreateDate', '2025-11-02T17:41:09+11:00'],
+      ['crs:RawFileName', 'IMG_1234.CR2'],
     ];
     const asAttributes = parseAttrs(scalars.map(([tag, value]) => `${tag}="${value}"`).join(' '));
-    const asElements = parseAttrs('', scalars.map(([tag, value]) => `<${tag}>${value}</${tag}>`).join(''));
+    const asElements = parseAttrs(
+      '',
+      scalars.map(([tag, value]) => `<${tag}>${value}</${tag}>`).join(''),
+    );
     expect(asAttributes.tone.exposure).toBe(0.35);
     expect(asAttributes.metadata.rating).toBe(4);
     expect(asElements).toEqual(asAttributes);
@@ -112,7 +131,9 @@ describe('parseXmp: container and namespaces', () => {
     );
     expect(settings.tone.exposure).toBe(0.75);
     expect(settings.tone.contrast).toBe(30);
-    expect(settings.issues).toEqual([{ tag: 'crs:Exposure2012', reason: 'duplicate', value: '+0.25' }]);
+    expect(settings.issues).toEqual([
+      { tag: 'crs:Exposure2012', reason: 'duplicate', value: '+0.25' },
+    ]);
   });
 
   it('parses a leading BOM and hundreds of bytes of xpacket padding', () => {
@@ -123,7 +144,10 @@ describe('parseXmp: container and namespaces', () => {
   it('yields an array for a one-element rdf:Bag', () => {
     const one = parseAttrs('', '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li></rdf:Bag></dc:subject>');
     expect(one.metadata.subject).toEqual(['owl']);
-    const two = parseAttrs('', '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li><rdf:li>tree</rdf:li></rdf:Bag></dc:subject>');
+    const two = parseAttrs(
+      '',
+      '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li><rdf:li>tree</rdf:li></rdf:Bag></dc:subject>',
+    );
     expect(two.metadata.subject).toEqual(['owl', 'tree']);
   });
 
@@ -136,9 +160,15 @@ describe('parseXmp: container and namespaces', () => {
   });
 
   it('matches x-default whatever case it is written in, and falls back to the first', () => {
-    const cased = parseAttrs('', '<dc:title><rdf:Alt><rdf:li xml:lang="fr">Hibou</rdf:li><rdf:li xml:lang="X-Default">Owl</rdf:li></rdf:Alt></dc:title>');
+    const cased = parseAttrs(
+      '',
+      '<dc:title><rdf:Alt><rdf:li xml:lang="fr">Hibou</rdf:li><rdf:li xml:lang="X-Default">Owl</rdf:li></rdf:Alt></dc:title>',
+    );
     expect(cased.metadata.title).toBe('Owl');
-    const unmarked = parseAttrs('', '<dc:title><rdf:Alt><rdf:li xml:lang="fr">Hibou</rdf:li><rdf:li xml:lang="de">Eule</rdf:li></rdf:Alt></dc:title>');
+    const unmarked = parseAttrs(
+      '',
+      '<dc:title><rdf:Alt><rdf:li xml:lang="fr">Hibou</rdf:li><rdf:li xml:lang="de">Eule</rdf:li></rdf:Alt></dc:title>',
+    );
     expect(unmarked.metadata.title).toBe('Hibou');
   });
 
@@ -151,8 +181,8 @@ describe('parseXmp: container and namespaces', () => {
 
   it('finds an rdf:RDF nested below the depth a packet usually puts it', () => {
     const nested = parseXmp(
-      `<wrapper xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><outer><inner><x:xmpmeta xmlns:x="adobe:ns:meta/">`
-        + `<rdf:RDF>${description(`${CURRENT} crs:Whites2012="3"`)}</rdf:RDF></x:xmpmeta></inner></outer></wrapper>`,
+      `<wrapper xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><outer><inner><x:xmpmeta xmlns:x="adobe:ns:meta/">` +
+        `<rdf:RDF>${description(`${CURRENT} crs:Whites2012="3"`)}</rdf:RDF></x:xmpmeta></inner></outer></wrapper>`,
     );
     expect(nested?.tone.whites).toBe(3);
   });
@@ -167,8 +197,8 @@ describe('parseXmp: container and namespaces', () => {
   it('decodes numeric character references, not just named entities', () => {
     const settings = parseAttrs(
       `${CURRENT} crs:LensProfileName="Sigma 50mm f/1.4 &#188; stop"`,
-      '<dc:subject><rdf:Bag><rdf:li>Bj&#246;rk</rdf:li><rdf:li>caf&#xE9;</rdf:li></rdf:Bag></dc:subject>'
-        + '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Salt &amp; Pepper</rdf:li></rdf:Alt></dc:title>',
+      '<dc:subject><rdf:Bag><rdf:li>Bj&#246;rk</rdf:li><rdf:li>caf&#xE9;</rdf:li></rdf:Bag></dc:subject>' +
+        '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Salt &amp; Pepper</rdf:li></rdf:Alt></dc:title>',
     );
     expect(settings.metadata.subject).toEqual(['Björk', 'café']);
     expect(settings.metadata.title).toBe('Salt & Pepper');
@@ -176,14 +206,17 @@ describe('parseXmp: container and namespaces', () => {
   });
 
   it('keeps the space between text runs split by a CDATA section', () => {
-    const settings = parseAttrs('', '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Hello <![CDATA[World]]></rdf:li></rdf:Alt></dc:title>');
+    const settings = parseAttrs(
+      '',
+      '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Hello <![CDATA[World]]></rdf:li></rdf:Alt></dc:title>',
+    );
     expect(settings.metadata.title).toBe('Hello World');
   });
 
   it('reports a collision between two structured values, not just two scalars', () => {
     const settings = parse(
-      `${description(CURRENT, '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li></rdf:Bag></dc:subject>')}\n`
-        + `${description('', '<dc:subject><rdf:Bag><rdf:li>heron</rdf:li></rdf:Bag></dc:subject>')}`,
+      `${description(CURRENT, '<dc:subject><rdf:Bag><rdf:li>owl</rdf:li></rdf:Bag></dc:subject>')}\n` +
+        `${description('', '<dc:subject><rdf:Bag><rdf:li>heron</rdf:li></rdf:Bag></dc:subject>')}`,
     );
     expect(settings.metadata.subject).toEqual(['heron']);
     expect(settings.issues).toEqual([{ tag: 'dc:subject', reason: 'duplicate', value: '' }]);
@@ -199,15 +232,17 @@ describe('parseXmp: container and namespaces', () => {
 
   it('resolves a prefix that collides with an Object property name', () => {
     const settings = parse(
-      '<rdf:Description rdf:about="" xmlns:__proto__="http://ns.adobe.com/camera-raw-settings/1.0/"'
-        + ' __proto__:ProcessVersion="6.7" __proto__:Whites2012="9"/>',
+      '<rdf:Description rdf:about="" xmlns:__proto__="http://ns.adobe.com/camera-raw-settings/1.0/"' +
+        ' __proto__:ProcessVersion="6.7" __proto__:Whites2012="9"/>',
     );
     expect(settings.tone.whites).toBe(9);
     expect(settings.processVersion).toEqual({ generation: 3, raw: '6.7' });
   });
 
   it('drops a property whose prefix was never declared', () => {
-    const settings = parse(`<rdf:Description rdf:about="" ${NS} nope:Exposure2012="+2.0" crs:ProcessVersion="6.7"/>`);
+    const settings = parse(
+      `<rdf:Description rdf:about="" ${NS} nope:Exposure2012="+2.0" crs:ProcessVersion="6.7"/>`,
+    );
     expect(settings.tone.exposure).toBe(0);
     expect(settings.unsupported).toEqual([]);
   });
@@ -221,11 +256,18 @@ describe('parseXmp: container and namespaces', () => {
       `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">${description(`${CURRENT} crs:Blacks2012="-5"`)}</rdf:RDF>`,
     );
     expect(bare?.tone.blacks).toBe(-5);
-    expect(parseXmp(`<?xml version="1.0" encoding="UTF-8"?>\n${packet(description(`${CURRENT} crs:Blacks2012="-5"`))}`)?.tone.blacks).toBe(-5);
+    expect(
+      parseXmp(
+        `<?xml version="1.0" encoding="UTF-8"?>\n${packet(description(`${CURRENT} crs:Blacks2012="-5"`))}`,
+      )?.tone.blacks,
+    ).toBe(-5);
   });
 
   it('reads a structure whose nested rdf:Description holds its fields as elements', () => {
-    const settings = parseAttrs(CURRENT, '<crs:Look><rdf:Description><crs:Name>Adobe Vivid</crs:Name><crs:Amount>0.5</crs:Amount></rdf:Description></crs:Look>');
+    const settings = parseAttrs(
+      CURRENT,
+      '<crs:Look><rdf:Description><crs:Name>Adobe Vivid</crs:Name><crs:Amount>0.5</crs:Amount></rdf:Description></crs:Look>',
+    );
     expect(settings.look).toEqual({
       name: 'Adobe Vivid',
       amount: 0.5,

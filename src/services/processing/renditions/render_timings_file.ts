@@ -37,6 +37,9 @@ export class RenderTimingsFile {
     // Merged with what is on disk now rather than with anything read earlier: a benchmark takes
     // minutes, and another one's may have landed while this one ran.
     const now = this.read();
-    writeFileSync(this.file, JSON.stringify({ ...now, [rendition]: { ...now[rendition], [denoiser]: timing } }, null, 2));
+    writeFileSync(
+      this.file,
+      JSON.stringify({ ...now, [rendition]: { ...now[rendition], [denoiser]: timing } }, null, 2),
+    );
   }
 }

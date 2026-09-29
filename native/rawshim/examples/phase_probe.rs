@@ -25,8 +25,10 @@ fn main() {
     let path = args.next().expect("phase_probe <raw> <x,y,w,h>...");
     let windows: Vec<(usize, usize, usize, usize)> = args
         .map(|spec| {
-            let v: Vec<usize> =
-                spec.split(',').map(|n| n.parse().expect("x,y,w,h are numbers")).collect();
+            let v: Vec<usize> = spec
+                .split(',')
+                .map(|n| n.parse().expect("x,y,w,h are numbers"))
+                .collect();
             (v[0], v[1], v[2], v[3])
         })
         .collect();
@@ -34,8 +36,9 @@ fn main() {
 
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(&path)).expect("the file");
     let decoder = rawler::get_decoder(&source).expect("a decoder");
-    let image =
-        decoder.raw_image(&source, &RawDecodeParams::default(), false).expect("the frame decodes");
+    let image = decoder
+        .raw_image(&source, &RawDecodeParams::default(), false)
+        .expect("the frame decodes");
     let RawImageData::Integer(samples) = &image.data else {
         panic!("not integer samples");
     };

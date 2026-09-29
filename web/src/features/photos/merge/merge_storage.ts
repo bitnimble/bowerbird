@@ -57,7 +57,9 @@ export function loadMergeSession(key: string): StoredMergeSession | null {
     const isRect = (value: unknown): value is Rect =>
       typeof value === 'object' &&
       value != null &&
-      (['x0', 'y0', 'x1', 'y1'] as const).every((k) => typeof (value as Record<string, unknown>)[k] === 'number');
+      (['x0', 'y0', 'x1', 'y1'] as const).every(
+        (k) => typeof (value as Record<string, unknown>)[k] === 'number',
+      );
     if (!isNumberArray(picks) || typeof base !== 'number') return null;
     if (!Array.isArray(seeds) || !seeds.every(isRect)) return null;
     const session: StoredMergeSession = { picks, base, seeds };

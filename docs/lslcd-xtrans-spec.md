@@ -4,14 +4,14 @@ The normative document for `slang/lslcd.slang` and `native/rawshim/src/lslcd.rs`
 either disagrees with this file, the code is wrong.
 
 **Section 2 is independently derived.** Dubois's framework decomposes periodic CFA data into
-baseband luma and chroma on pattern carriers: *Frequency-domain methods for demosaicking
-of Bayer-sampled color images* (IEEE SPL, 2005), generalised in *Color filter array sampling
-of color images* (2009). Rafinazari and Dubois's X-Trans paper, *Demosaicking algorithm for the
-Fujifilm X-Trans color filter array* (ICIP 2014, pp. 660-663), **was unavailable to this author;
+baseband luma and chroma on pattern carriers: _Frequency-domain methods for demosaicking
+of Bayer-sampled color images_ (IEEE SPL, 2005), generalised in _Color filter array sampling
+of color images_ (2009). Rafinazari and Dubois's X-Trans paper, _Demosaicking algorithm for the
+Fujifilm X-Trans color filter array_ (ICIP 2014, pp. 660-663), **was unavailable to this author;
 this file does not reproduce it.** Check §2 from mask coefficients, exact inversion and recovery
 of the published Bayer result.
 
-Leung, Jeon and Dubois's *Least-squares luma-chroma demultiplexing algorithm for Bayer demosaicking*
+Leung, Jeon and Dubois's _Least-squares luma-chroma demultiplexing algorithm for Bayer demosaicking_
 (IEEE TIP 20(7), 2011) fits filters to photograph statistics. §3.3 instead fits a chroma-spectrum model.
 
 ## 1. Scope

@@ -25,7 +25,18 @@ function build(width: number): { listing: ListingStore; presenter: PhotosPresent
   const listing = new ListingStore(stacks);
   const marks = new MarksStore(listing, stacks);
   const viewer = new ViewerStore(listing, stacks);
-  const presenter = new PhotosPresenter(listing, marks, stacks, viewer, absent, absent, absent, absent, {} as never, absent);
+  const presenter = new PhotosPresenter(
+    listing,
+    marks,
+    stacks,
+    viewer,
+    absent,
+    absent,
+    absent,
+    absent,
+    {} as never,
+    absent,
+  );
   runInAction(() => {
     listing.viewportWidth = width;
     listing.tileSize = 240;
@@ -34,7 +45,10 @@ function build(width: number): { listing: ListingStore; presenter: PhotosPresent
 }
 
 const columnsAt = (s: ListingStore, zoom: number): number =>
-  gridColumns(s.viewportWidth, tileWidthForColumns(s.viewportWidth, columnsAtZoom(zoom, s.maxColumns)));
+  gridColumns(
+    s.viewportWidth,
+    tileWidthForColumns(s.viewportWidth, columnsAtZoom(zoom, s.maxColumns)),
+  );
 
 test('the ends of the track are as many as the window holds and one photograph across', () => {
   for (const width of WIDTHS) {
@@ -48,7 +62,9 @@ test('moving up the track never adds a column', () => {
   for (const width of WIDTHS) {
     const s = store(width);
     for (let zoom = 1; zoom <= ZOOM_STEPS; zoom++) {
-      expect(columnsAt(s, zoom), `${width}px at ${zoom}`).toBeLessThanOrEqual(columnsAt(s, zoom - 1));
+      expect(columnsAt(s, zoom), `${width}px at ${zoom}`).toBeLessThanOrEqual(
+        columnsAt(s, zoom - 1),
+      );
     }
   }
 });

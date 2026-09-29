@@ -128,11 +128,13 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
 const LibraryTile = observer(function LibraryTile({ library }: { library: Library }): JSX.Element {
   const scan = useScanStore();
   const libraryStore = useLibrariesStore();
-  const status = libraryStore.statuses.get(library.id) ?? (scan.libraryId === library.id ? scan.status : null);
+  const status =
+    libraryStore.statuses.get(library.id) ?? (scan.libraryId === library.id ? scan.status : null);
   const scanBusy = status != null && status.status !== 'idle';
   const activity = libraryStore.activities.get(library.id);
   const local = libraryStore.localRendering.get(library.id)?.size ?? 0;
-  const activities: readonly Activity[] | undefined = local > 0 ? [...(activity ?? []), { kind: 'local_rendering', count: local }] : activity;
+  const activities: readonly Activity[] | undefined =
+    local > 0 ? [...(activity ?? []), { kind: 'local_rendering', count: local }] : activity;
   const { libraries, scan: scanPresenter, confirm } = usePresenters();
   const navigate = useNavigate();
   const params = useParams();
@@ -141,9 +143,9 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
   const backupSection = useRef<HTMLDivElement>(null);
   const setSettingsOpen = (open: boolean): void =>
     navigate(
-      open ?
-        route(PathSegment.settings(), PathSegment.libraries(), library.id)
-      : route(PathSegment.settings(), PathSegment.libraries()),
+      open
+        ? route(PathSegment.settings(), PathSegment.libraries(), library.id)
+        : route(PathSegment.settings(), PathSegment.libraries()),
       { replace: true },
     );
 
@@ -162,11 +164,17 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
           >
             {library.root_path}
           </TextLink>
-        ) : library.root_path}
+        ) : (
+          library.root_path
+        )}
         {' · '}
         {SettingsStrings.libraryPhotoCount(library)}
       </Text>
-      <ScanStrip library={library} status={libraryStore.statuses.get(library.id)} activities={activities} />
+      <ScanStrip
+        library={library}
+        status={libraryStore.statuses.get(library.id)}
+        activities={activities}
+      />
       <BackupStrip libraryId={library.id} />
       <LibraryJobs library={library} />
 
@@ -215,7 +223,13 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         title={SettingsStrings.librarySettingsTitle(libraryLabel(library))}
-        initialFocus={params.section === PathSegment.sync() ? syncSection : params.section === PathSegment.backup() ? backupSection : undefined}
+        initialFocus={
+          params.section === PathSegment.sync()
+            ? syncSection
+            : params.section === PathSegment.backup()
+              ? backupSection
+              : undefined
+        }
       >
         <DialogBody wide>
           <DialogColumns>
@@ -229,7 +243,13 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
             </div>
             <div>
               <RenderStagesPanel library={library} />
-              <div ref={backupSection} role="region" aria-label={BackupStrings.heading()} tabIndex={-1} {...stylex.props(styles.focusTarget)}>
+              <div
+                ref={backupSection}
+                role="region"
+                aria-label={BackupStrings.heading()}
+                tabIndex={-1}
+                {...stylex.props(styles.focusTarget)}
+              >
                 <BackupPanel library={library} />
               </div>
             </div>
@@ -270,7 +290,11 @@ const LibraryName = observer(function LibraryName({ library }: { library: Librar
 // What the library is, as opposed to what it builds: how much of the folder tree
 // belongs to it. Standing rules rather than decisions taken at import, so a
 // folder made next month is in or out for the same reason today's are (§4.1).
-const FolderSettings = observer(function FolderSettings({ library }: { library: Library }): JSX.Element {
+const FolderSettings = observer(function FolderSettings({
+  library,
+}: {
+  library: Library;
+}): JSX.Element {
   const { libraries } = usePresenters();
   const defaults = useLibrariesStore().defaults;
   // Held here rather than in the field, because the checkbox above sends it too.
@@ -282,8 +306,10 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
     <Panel title={SettingsStrings.folders()} flush={!hasRules}>
       <SettingRow
         label={SettingsStrings.includeSubfolders()}
-        onReset={resetTo(library.include_subfolders, defaults?.include_subfolders, (v) =>
-          void libraries.setIncludeSubfolders(library.id, v),
+        onReset={resetTo(
+          library.include_subfolders,
+          defaults?.include_subfolders,
+          (v) => void libraries.setIncludeSubfolders(library.id, v),
         )}
       >
         <input
@@ -297,8 +323,10 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
 
       <SettingRow
         label={SettingsStrings.includeNonRaw()}
-        onReset={resetTo(library.include_non_raw, defaults?.include_non_raw, (v) =>
-          void libraries.setIncludeNonRaw(library.id, v),
+        onReset={resetTo(
+          library.include_non_raw,
+          defaults?.include_non_raw,
+          (v) => void libraries.setIncludeNonRaw(library.id, v),
         )}
       >
         <input
@@ -310,10 +338,7 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
         />
       </SettingRow>
 
-      <SettingRow
-        label={SettingsStrings.readOnly()}
-        hint={SettingsStrings.readOnlyHint()}
-      >
+      <SettingRow label={SettingsStrings.readOnly()} hint={SettingsStrings.readOnlyHint()}>
         <input
           {...stylex.props(focusRing.ring)}
           type="checkbox"
@@ -322,7 +347,13 @@ const FolderSettings = observer(function FolderSettings({ library }: { library: 
           // Letting the app write again means making a bin, so the name goes with
           // the request - whatever is in the field below, which is where the
           // reader picks another when the root already holds one of that name.
-          onChange={(e) => void libraries.setReadOnly(library.id, e.currentTarget.checked, binDraft.trim() || 'Bin')}
+          onChange={(e) =>
+            void libraries.setReadOnly(
+              library.id,
+              e.currentTarget.checked,
+              binDraft.trim() || 'Bin',
+            )
+          }
         />
       </SettingRow>
 
@@ -386,7 +417,11 @@ const BinNameField = observer(function BinNameField({
 // Invisible state otherwise: both rules are written by deleting a shoot, and a
 // folder that has quietly stopped being part of the library needs somewhere it
 // can be found and undone.
-const FolderRuleList = observer(function FolderRuleList({ library }: { library: Library }): JSX.Element | null {
+const FolderRuleList = observer(function FolderRuleList({
+  library,
+}: {
+  library: Library;
+}): JSX.Element | null {
   const store = useLibrariesStore();
   const { libraries } = usePresenters();
   const rules = store.folderRules.get(library.id) ?? [];
@@ -408,7 +443,9 @@ const FolderRuleList = observer(function FolderRuleList({ library }: { library: 
             {rule.folder_path}
           </Text>
           <Text variant="muted">
-            {rule.rule === 'excluded' ? SettingsStrings.ruleExcluded() : SettingsStrings.ruleNotAShoot()}
+            {rule.rule === 'excluded'
+              ? SettingsStrings.ruleExcluded()
+              : SettingsStrings.ruleNotAShoot()}
           </Text>
           <Button onClick={() => void libraries.clearFolderRule(library.id, rule.folder_path)}>
             {PhotoDetailStrings.undo()}
@@ -424,7 +461,11 @@ const FolderRuleList = observer(function FolderRuleList({ library }: { library: 
 // retroactive: it decides what gets built next, and rebuilding an existing
 // catalogue is a job you ask for explicitly, not something a preference does to
 // thousands of files behind your back.
-const RenditionSettings = observer(function RenditionSettings({ library }: { library: Library }): JSX.Element {
+const RenditionSettings = observer(function RenditionSettings({
+  library,
+}: {
+  library: Library;
+}): JSX.Element {
   const { libraries } = usePresenters();
   const defaults = useLibrariesStore().defaults;
 
@@ -432,8 +473,10 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
     <Panel title={SettingsStrings.renditions()} flush>
       <SettingRow
         label={SettingsStrings.preRenderImported()}
-        onReset={resetTo(library.rendition_source, defaults?.rendition_source, (v) =>
-          void libraries.setRenditionSource(library.id, v),
+        onReset={resetTo(
+          library.rendition_source,
+          defaults?.rendition_source,
+          (v) => void libraries.setRenditionSource(library.id, v),
         )}
       >
         <input
@@ -441,14 +484,21 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
           type="checkbox"
           aria-label={SettingsStrings.preRenderImported()}
           checked={library.rendition_source === 'render'}
-          onChange={(e) => void libraries.setRenditionSource(library.id, e.currentTarget.checked ? 'render' : 'embedded')}
+          onChange={(e) =>
+            void libraries.setRenditionSource(
+              library.id,
+              e.currentTarget.checked ? 'render' : 'embedded',
+            )
+          }
         />
       </SettingRow>
 
       <SettingRow
         label={SettingsStrings.buildHdrRenditions()}
-        onReset={resetTo(library.rendition_hdr, defaults?.rendition_hdr, (v) =>
-          void libraries.setRenditionHdr(library.id, v),
+        onReset={resetTo(
+          library.rendition_hdr,
+          defaults?.rendition_hdr,
+          (v) => void libraries.setRenditionHdr(library.id, v),
         )}
       >
         <input
@@ -465,7 +515,11 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
 
 // Per library, because one catalogue may be burst-heavy sport where a stack is
 // the unit of work and another a studio where every frame is deliberate.
-const StackSettings = observer(function StackSettings({ library }: { library: Library }): JSX.Element {
+const StackSettings = observer(function StackSettings({
+  library,
+}: {
+  library: Library;
+}): JSX.Element {
   const { libraries } = usePresenters();
   const defaults = useLibrariesStore().defaults;
 
@@ -474,8 +528,10 @@ const StackSettings = observer(function StackSettings({ library }: { library: Li
       <SettingRow
         label={SettingsStrings.autoStack()}
         hint={SettingsStrings.autoStackHint()}
-        onReset={resetTo(library.auto_stack, defaults?.auto_stack, (v) =>
-          void libraries.setAutoStack(library.id, v),
+        onReset={resetTo(
+          library.auto_stack,
+          defaults?.auto_stack,
+          (v) => void libraries.setAutoStack(library.id, v),
         )}
       >
         <input
@@ -580,29 +636,45 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
   const store = useLibrariesStore();
   const replication = useReplicationStore();
   const backupStore = useBackupStore();
-  const { scan: scanPresenter, libraries, replication: replicationPresenter, backup } = usePresenters();
-  const status = store.statuses.get(library.id) ?? (scan.libraryId === library.id ? scan.status : null);
+  const {
+    scan: scanPresenter,
+    libraries,
+    replication: replicationPresenter,
+    backup,
+  } = usePresenters();
+  const status =
+    store.statuses.get(library.id) ?? (scan.libraryId === library.id ? scan.status : null);
   const busy = status != null && (status.status !== 'idle' || status.photos_processing > 0);
   const activity = store.activities.get(library.id) ?? [];
   const renders = library.rendition_source === 'render';
-  const syncing = activity.some((work) => work.kind === 'syncing') || replication.replicating === library.id;
+  const syncing =
+    activity.some((work) => work.kind === 'syncing') || replication.replicating === library.id;
   const backupStatus = backupStore.statusOf(library.id);
-  const backingUp = activity.some((work) => work.kind === 'backing_up' || work.kind === 'restoring_backup') || backupStore.busy(library.id);
+  const backingUp =
+    activity.some((work) => work.kind === 'backing_up' || work.kind === 'restoring_backup') ||
+    backupStore.busy(library.id);
 
   return (
     <details>
-      <summary {...stylex.props(styles.summary, focusRing.ring)}>{SettingsStrings.libraryJobs()}</summary>
+      <summary {...stylex.props(styles.summary, focusRing.ring)}>
+        {SettingsStrings.libraryJobs()}
+      </summary>
       <Panel flush style={styles.jobs}>
         {replication.hasPeers(library.id) && (
           <SettingRow
             label={SettingsStrings.syncLibrary()}
             disabledReason={
-              library.read_only ? BulkBarStrings.notOnReadOnlyLibrary()
-              : syncing ? SettingsStrings.jobBusy()
-              : undefined
+              library.read_only
+                ? BulkBarStrings.notOnReadOnlyLibrary()
+                : syncing
+                  ? SettingsStrings.jobBusy()
+                  : undefined
             }
           >
-            <Button disabled={syncing || library.read_only} onClick={() => void replicationPresenter.replicate(library.id)}>
+            <Button
+              disabled={syncing || library.read_only}
+              onClick={() => void replicationPresenter.replicate(library.id)}
+            >
               <RefreshCw size={ICON} />
               {syncing ? SyncedDevicesStrings.syncing() : SettingsStrings.run()}
             </Button>
@@ -610,7 +682,10 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
         )}
 
         {backupStatus?.configured === true && (
-          <SettingRow label={SettingsStrings.backUpOriginals()} disabledReason={backingUp ? SettingsStrings.jobBusy() : undefined}>
+          <SettingRow
+            label={SettingsStrings.backUpOriginals()}
+            disabledReason={backingUp ? SettingsStrings.jobBusy() : undefined}
+          >
             <Button disabled={backingUp} onClick={() => void backup.runNow(library.id)}>
               <HardDriveUpload size={ICON} />
               {backingUp ? BackupStrings.backingUp() : SettingsStrings.run()}
@@ -629,7 +704,10 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           </Button>
         </SettingRow>
 
-        <SettingRow label={SettingsStrings.rebuildThumbnails()} disabledReason={busy ? SettingsStrings.jobBusy() : undefined}>
+        <SettingRow
+          label={SettingsStrings.rebuildThumbnails()}
+          disabledReason={busy ? SettingsStrings.jobBusy() : undefined}
+        >
           <Button disabled={busy} onClick={() => void scanPresenter.rebuildTiles(library.id)}>
             <Image size={ICON} />
             {SettingsStrings.run()}
@@ -640,12 +718,17 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           label={SettingsStrings.rebuildRenditions()}
           hint={SettingsStrings.rebuildRenditionsHint()}
           disabledReason={
-            busy ? SettingsStrings.jobBusy()
-            : renders ? undefined
-            : SettingsStrings.noRenditionsToRebuild()
+            busy
+              ? SettingsStrings.jobBusy()
+              : renders
+                ? undefined
+                : SettingsStrings.noRenditionsToRebuild()
           }
         >
-          <Button disabled={busy || !renders} onClick={() => void scanPresenter.rebuildRenditions(library.id)}>
+          <Button
+            disabled={busy || !renders}
+            onClick={() => void scanPresenter.rebuildRenditions(library.id)}
+          >
             <Sparkles size={ICON} />
             {SettingsStrings.run()}
           </Button>
@@ -655,12 +738,17 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           label={SettingsStrings.groupSimilarPhotos()}
           hint={SettingsStrings.groupSimilarPhotosHint()}
           disabledReason={
-            busy ? SettingsStrings.jobBusy()
-            : library.auto_stack ? undefined
-            : SettingsStrings.autoStackOff()
+            busy
+              ? SettingsStrings.jobBusy()
+              : library.auto_stack
+                ? undefined
+                : SettingsStrings.autoStackOff()
           }
         >
-          <Button disabled={busy || !library.auto_stack} onClick={() => void libraries.detectStacks(library.id)}>
+          <Button
+            disabled={busy || !library.auto_stack}
+            onClick={() => void libraries.detectStacks(library.id)}
+          >
             <Layers size={ICON} />
             {SettingsStrings.run()}
           </Button>

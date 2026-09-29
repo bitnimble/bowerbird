@@ -65,7 +65,10 @@ fn main() {
     let path = raw.expect("--raw <file>; a synthetic will not stand in for one, see above");
     // Cropped unless told otherwise, because the whole of a 61MP frame is not survivable here:
     // four `f32` planes of it is 3GB and the process is killed with no output at all.
-    let picture = centre(read_mosaic(&path).expect("the RAW reads"), crop.unwrap_or(2400));
+    let picture = centre(
+        read_mosaic(&path).expect("the RAW reads"),
+        crop.unwrap_or(2400),
+    );
     let (w, h) = (picture.width, picture.height);
     let (native, matrix) = (picture.native, picture.matrix);
     let cfa = &picture.cfa;
@@ -82,7 +85,11 @@ fn main() {
         "{w}x{h}, cfa {cfa:?}, content {}, native sigma {}",
         path,
         native.map_or("-".to_string(), |fit| {
-            format!("{:.5} (gat {:.3})", fit.model().at_white(), fit.unified_sigma)
+            format!(
+                "{:.5} (gat {:.3})",
+                fit.model().at_white(),
+                fit.unified_sigma
+            )
         }),
     );
     println!(
@@ -125,20 +132,21 @@ fn main() {
         let stencil = coded.as_ref().and_then(|plane| stencil_terms(plane, w, h));
         // Over the flat arm, which is pure reconstructed grain: what a 3x3-mean residual keeps of
         // it, which is the divisor `image::sigma_from` needs.
-        let kept = coded.as_ref().and_then(|plane| residual_fraction(plane, w, h));
+        let kept = coded
+            .as_ref()
+            .and_then(|plane| residual_fraction(plane, w, h));
         // What the grain actually adds to the fit's sums over this content, coupling included,
         // against what the noise measured on its own predicts it should.
         let added = quiet.as_ref().and_then(|clean| {
             let noisy = reconstruct_coded(gpu, rcd, &structured_mosaic, cfa, w, h, matrix)?;
             added_terms(clean, &noisy, w, h)
         });
-        let pearson =
-            |stats: &Stats| {
-                format!(
-                    "{:+.2} {:+.2} {:+.2}",
-                    stats.correlation[0], stats.correlation[1], stats.correlation[2]
-                )
-            };
+        let pearson = |stats: &Stats| {
+            format!(
+                "{:+.2} {:+.2} {:+.2}",
+                stats.correlation[0], stats.correlation[1], stats.correlation[2]
+            )
+        };
         // The same reconstruction with a known softness on it, so the row below carries an answer
         // the fit can be graded against rather than only compared with its neighbours.
         let mut softened = structured.clone();
@@ -205,7 +213,9 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
     const MARGIN: usize = 12;
     let at = |x: usize, y: usize, c: usize| f64::from(plane[(y * width + x) * 3 + c]);
     let luma = |x: usize, y: usize| -> f64 {
-        (0..3).map(|c| f64::from(rawshim::image::LUMA[c]) * at(x, y, c)).sum()
+        (0..3)
+            .map(|c| f64::from(rawshim::image::LUMA[c]) * at(x, y, c))
+            .sum()
     };
     let (mut sum, mut square, mut curved, mut counted) = (0f64, 0f64, 0f64, 0f64);
     let mut against = [0f64; 2];
@@ -226,8 +236,9 @@ fn stencil_terms(plane: &[f32], width: usize, height: usize) -> Option<[f64; 3]>
     let variance = square / counted - (sum / counted).powi(2);
     // A field with no grain in it has no variance to take a ratio over, and the quotient is then
     // whatever the rounding left behind.
-    (variance > 1e-12)
-        .then(|| [curved / counted, against[0] / counted, against[1] / counted].map(|v| v / variance))
+    (variance > 1e-12).then(|| {
+        [curved / counted, against[0] / counted, against[1] / counted].map(|v| v / variance)
+    })
 }
 
 /// What fraction of a plane's noise survives the residual of a 3x3 mean, against the 0.83
@@ -243,7 +254,9 @@ fn residual_fraction(plane: &[f32], width: usize, height: usize) -> Option<f64> 
     const MARGIN: usize = 12;
     let weight = rawshim::image::LUMA;
     let luma = |x: usize, y: usize| -> f64 {
-        (0..3).map(|c| f64::from(weight[c]) * f64::from(plane[(y * width + x) * 3 + c])).sum()
+        (0..3)
+            .map(|c| f64::from(weight[c]) * f64::from(plane[(y * width + x) * 3 + c]))
+            .sum()
     };
     let (mut sum, mut square, mut counted) = (0f64, 0f64, 0f64);
     let mut residuals: Vec<f64> = Vec::new();
@@ -294,7 +307,11 @@ fn added_terms(clean: &[f32], noisy: &[f32], width: usize, height: usize) -> Opt
     let weight = rawshim::image::LUMA;
     let sums = |plane: &[f32]| -> [f64; 3] {
         let at = |x: usize, y: usize, c: usize| f64::from(plane[(y * width + x) * 3 + c]);
-        let luma = |x: usize, y: usize| (0..3).map(|c| f64::from(weight[c]) * at(x, y, c)).sum::<f64>();
+        let luma = |x: usize, y: usize| {
+            (0..3)
+                .map(|c| f64::from(weight[c]) * at(x, y, c))
+                .sum::<f64>()
+        };
         let (mut curved, mut red, mut blue) = (0f64, 0f64, 0f64);
         for y in MARGIN..height - MARGIN {
             for x in MARGIN..width - MARGIN {
@@ -314,7 +331,11 @@ fn added_terms(clean: &[f32], noisy: &[f32], width: usize, height: usize) -> Opt
         let at = |x: usize, y: usize, c: usize| {
             f64::from(noisy[(y * width + x) * 3 + c]) - f64::from(clean[(y * width + x) * 3 + c])
         };
-        let luma = |x: usize, y: usize| (0..3).map(|c| f64::from(weight[c]) * at(x, y, c)).sum::<f64>();
+        let luma = |x: usize, y: usize| {
+            (0..3)
+                .map(|c| f64::from(weight[c]) * at(x, y, c))
+                .sum::<f64>()
+        };
         let (mut sum, mut square, mut counted) = (0f64, 0f64, 0f64);
         for y in MARGIN..height - MARGIN {
             for x in MARGIN..width - MARGIN {
@@ -355,7 +376,12 @@ fn greyed(
     let weight = rawshim::image::LUMA;
     Some(
         (0..width * height)
-            .map(|at| (0..3).map(|c| weight[c] * plane[at * 3 + c]).sum::<f32>().clamp(0.0, 1.0))
+            .map(|at| {
+                (0..3)
+                    .map(|c| weight[c] * plane[at * 3 + c])
+                    .sum::<f32>()
+                    .clamp(0.0, 1.0)
+            })
             .collect(),
     )
 }
@@ -376,16 +402,28 @@ struct Read {
 
 /// The middle of a mosaic, cut on even boundaries so the CFA still indexes it.
 fn centre(read: Read, want: usize) -> Read {
-    let (width, height) =
-        (want.min(read.width) & !1, (want.saturating_mul(3) / 4).min(read.height) & !1);
-    let (left, top) = (((read.width - width) / 2) & !1, ((read.height - height) / 2) & !1);
+    let (width, height) = (
+        want.min(read.width) & !1,
+        (want.saturating_mul(3) / 4).min(read.height) & !1,
+    );
+    let (left, top) = (
+        ((read.width - width) / 2) & !1,
+        ((read.height - height) / 2) & !1,
+    );
     let plane = (0..height)
         .flat_map(|r| {
             let row = (top + r) * read.width + left;
             read.plane[row..row + width].iter().copied()
         })
         .collect();
-    Read { plane, width, height, cfa: read.cfa, matrix: read.matrix, native: read.native }
+    Read {
+        plane,
+        width,
+        height,
+        cfa: read.cfa,
+        matrix: read.matrix,
+        native: read.native,
+    }
 }
 
 fn read_mosaic(path: &str) -> Option<Read> {
@@ -396,13 +434,24 @@ fn read_mosaic(path: &str) -> Option<Read> {
     let rawler::rawimage::RawImageData::Integer(values) = &image.data else {
         return None;
     };
-    let white = image.whitelevel.0.first().copied().unwrap_or(u32::from(u16::MAX)) as f32;
-    let black =
-        image.blacklevel.levels.first().map_or(0.0, |level| level.n as f32 / level.d as f32);
+    let white = image
+        .whitelevel
+        .0
+        .first()
+        .copied()
+        .unwrap_or(u32::from(u16::MAX)) as f32;
+    let black = image
+        .blacklevel
+        .levels
+        .first()
+        .map_or(0.0, |level| level.n as f32 / level.d as f32);
     let range = (white - black).max(1.0);
     let cfa = rawshim::cfa::Cfa::from_rawler(&image.camera.cfa)?;
     Some(Read {
-        plane: values.iter().map(|&v| ((f32::from(v) - black) / range).clamp(0.0, 1.0)).collect(),
+        plane: values
+            .iter()
+            .map(|&v| ((f32::from(v) - black) / range).clamp(0.0, 1.0))
+            .collect(),
         width: image.width,
         height: image.height,
         cfa,
@@ -423,12 +472,18 @@ fn reconstruct(
     height: usize,
 ) -> Option<Vec<f32>> {
     let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
-    pollster::block_on(rawshim::demosaic::demosaic_plane(gpu, rcd, &uploaded, cfa, |bytes| {
-        bytes
-            .chunks_exact(4)
-            .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
-            .collect::<Vec<f32>>()
-    }))
+    pollster::block_on(rawshim::demosaic::demosaic_plane(
+        gpu,
+        rcd,
+        &uploaded,
+        cfa,
+        |bytes| {
+            bytes
+                .chunks_exact(4)
+                .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
+                .collect::<Vec<f32>>()
+        },
+    ))
 }
 
 /// The same reconstruction with the camera matrix on it: the frame the defringe is handed.
@@ -462,7 +517,10 @@ fn reconstruct_coded(
         &uploaded,
         cfa,
         &at,
-        rawshim::demosaic::Colour { matrix, ceiling: [1.0; 3] },
+        rawshim::demosaic::Colour {
+            matrix,
+            ceiling: [1.0; 3],
+        },
         &into,
         &shape,
     ))?;
@@ -509,8 +567,10 @@ fn fit(
     noise: Option<rawshim::galosh::NoiseFit>,
     matrix: [[f32; 3]; 3],
 ) -> Option<(f32, f32)> {
-    let samples: Vec<u16> =
-        plane.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16).collect();
+    let samples: Vec<u16> = plane
+        .iter()
+        .map(|&v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16)
+        .collect();
     pollster::block_on(rawshim::base::measure_defocus(
         gpu,
         base,
@@ -556,11 +616,14 @@ impl Stats {
             }
         }
         if counted == 0.0 {
-            return Stats { correlation: [0.0; 3] };
+            return Stats {
+                correlation: [0.0; 3],
+            };
         }
         let mean = sum.map(|total| total / counted);
-        let variance: Vec<f64> =
-            (0..3).map(|c| (square[c] / counted - mean[c] * mean[c]).max(0.0)).collect();
+        let variance: Vec<f64> = (0..3)
+            .map(|c| (square[c] / counted - mean[c] * mean[c]).max(0.0))
+            .collect();
         let pearson = |slot: usize| {
             let (a, b) = PAIRS[slot];
             let spread = (variance[a] * variance[b]).sqrt();
@@ -569,7 +632,9 @@ impl Stats {
                 false => 0.0,
             }
         };
-        Stats { correlation: [pearson(0) as f32, pearson(1) as f32, pearson(2) as f32] }
+        Stats {
+            correlation: [pearson(0) as f32, pearson(1) as f32, pearson(2) as f32],
+        }
     }
 }
 
@@ -580,11 +645,17 @@ struct Lcg {
 
 impl Lcg {
     fn new(seed: u64) -> Lcg {
-        Lcg { state: seed | 1, spare: None }
+        Lcg {
+            state: seed | 1,
+            spare: None,
+        }
     }
 
     fn uniform(&mut self) -> f32 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         // The top bits, which are the ones an LCG mixes; the low bits of one cycle with a
         // period as short as two.
         ((self.state >> 40) as f32 + 0.5) / (1u32 << 24) as f32

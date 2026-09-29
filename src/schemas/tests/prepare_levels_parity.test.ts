@@ -18,7 +18,16 @@ import {
   longEdgeAt,
 } from '../prepare_levels';
 
-const TABLE = join(import.meta.dir, '..', '..', '..', 'test', 'fixtures', 'tables', 'prepare-levels.txt');
+const TABLE = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  'test',
+  'fixtures',
+  'tables',
+  'prepare-levels.txt',
+);
 
 test('the server picks the level the native host produces', () => {
   const rows = readFileSync(TABLE, 'utf8')

@@ -10,7 +10,11 @@ import { NothingSchema, request } from './request';
 export const folderRulesApi = {
   // Where a folder differs from what the library's settings say in general (§4.7).
   list: (libraryId: string): Promise<FolderRule[]> =>
-    request(FolderRulesSchema, 'GET', route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.folderRules())),
+    request(
+      FolderRulesSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.folderRules()),
+    ),
   set: (libraryId: string, body: SetFolderRuleRequest): Promise<FolderRule[]> =>
     request(
       FolderRulesSchema,

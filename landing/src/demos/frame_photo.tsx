@@ -25,7 +25,10 @@ export function FramePhoto({ frame, alt }: { frame: Frame; alt: string }): JSX.E
       {...stylex.props(styles.photo)}
       src={DEMO_PHOTO[frame.scene]}
       alt={alt}
-      style={{ filter: `brightness(${frame.exposure})`, transform: `scale(${frame.zoom}) translateX(${frame.shift}%)` }}
+      style={{
+        filter: `brightness(${frame.exposure})`,
+        transform: `scale(${frame.zoom}) translateX(${frame.shift}%)`,
+      }}
     />
   );
 }

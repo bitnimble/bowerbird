@@ -70,9 +70,8 @@ fn main() {
         // search is what switching this on costs once, and the correction is what every band, every
         // loupe tile and every rendition pays again.
         let at = std::time::Instant::now();
-        let spots =
-            pollster::block_on(rawshim::dust::detect(gpu, held.device_mosaic(), &sensor))
-                .unwrap_or_default();
+        let spots = pollster::block_on(rawshim::dust::detect(gpu, held.device_mosaic(), &sensor))
+            .unwrap_or_default();
         let found = at.elapsed().as_millis();
         let detected_mb = peak_mb();
 
@@ -95,7 +94,10 @@ fn main() {
                 rawshim::dust::device(gpu),
                 &copy,
                 &spots,
-                rawshim::dust::Removal { sensitivity: 0.5, intensity: 1.0 },
+                rawshim::dust::Removal {
+                    sensitivity: 0.5,
+                    intensity: 1.0,
+                },
                 (0, 0),
             );
         }

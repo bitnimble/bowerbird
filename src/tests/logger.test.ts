@@ -8,15 +8,21 @@ describe('format', () => {
   });
 
   it('quotes values that would otherwise run into the next field', () => {
-    expect(format('info', 'sync', 'start', { root: '/photos/My Trip' })).toEndWith('root="/photos/My Trip"');
+    expect(format('info', 'sync', 'start', { root: '/photos/My Trip' })).toEndWith(
+      'root="/photos/My Trip"',
+    );
   });
 
   it('renders an error as its message', () => {
-    expect(format('error', 'sync', 'failed', { err: new Error('disk gone') })).toEndWith('err="disk gone"');
+    expect(format('error', 'sync', 'failed', { err: new Error('disk gone') })).toEndWith(
+      'err="disk gone"',
+    );
   });
 
   it('leaves out fields with no value', () => {
-    expect(format('info', 'sync', 'start', { paths: undefined, mode: 'full' })).toEndWith('start mode=full');
+    expect(format('info', 'sync', 'start', { paths: undefined, mode: 'full' })).toEndWith(
+      'start mode=full',
+    );
   });
 });
 

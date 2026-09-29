@@ -37,7 +37,12 @@ mkdirSync(staging, { recursive: true });
 const releaseDir = existsSync(join(ROOT, 'src-tauri', 'target', triple))
   ? join(ROOT, 'src-tauri', 'target', triple, 'release')
   : join(ROOT, 'src-tauri', 'target', 'release');
-const sidecar = join(ROOT, 'src-tauri', 'binaries', `bowerbird-server-${triple}${triple.includes('windows') ? '.exe' : ''}`);
+const sidecar = join(
+  ROOT,
+  'src-tauri',
+  'binaries',
+  `bowerbird-server-${triple}${triple.includes('windows') ? '.exe' : ''}`,
+);
 const resources = join(ROOT, 'src-tauri', 'resources');
 
 function need(path: string, how: string): string {
@@ -54,7 +59,9 @@ function macBundle(): string {
   need(bundles, 'Run `bun run build:app` first.');
   const found = readdirSync(bundles).filter((entry) => entry.endsWith('.app'));
   if (found.length !== 1) {
-    throw new Error(`${bundles} holds ${found.length} bundles, so which one ships is ambiguous: ${found.join(', ')}`);
+    throw new Error(
+      `${bundles} holds ${found.length} bundles, so which one ships is ambiguous: ${found.join(', ')}`,
+    );
   }
   return join(bundles, found[0]!);
 }
@@ -69,14 +76,28 @@ if (triple.includes('apple')) {
   // resources under `Contents/Resources` - so this is a check rather than a copy.
   need(join(macos, 'bowerbird-server'), 'The bundle does not hold the server.');
   need(join(macos, 'bowerbird-updater'), 'The bundle does not hold the updater.');
-  need(join(app, 'Contents', 'Resources', 'resources', 'server', 'index.js'), 'The bundle does not hold the server bundle.');
-  need(join(app, 'Contents', 'Resources', 'web', 'index.html'), 'The bundle does not hold the page.');
+  need(
+    join(app, 'Contents', 'Resources', 'resources', 'server', 'index.js'),
+    'The bundle does not hold the server bundle.',
+  );
+  need(
+    join(app, 'Contents', 'Resources', 'web', 'index.html'),
+    'The bundle does not hold the page.',
+  );
 } else {
-  cpSync(need(join(releaseDir, 'app.exe'), 'Run `bun run build:app` first.'), join(staging, 'bowerbird-app.exe'));
-  cpSync(need(join(releaseDir, 'bowerbird-updater.exe'), 'Run `bun run build:app` first.'), join(staging, 'bowerbird-updater.exe'));
+  cpSync(
+    need(join(releaseDir, 'app.exe'), 'Run `bun run build:app` first.'),
+    join(staging, 'bowerbird-app.exe'),
+  );
+  cpSync(
+    need(join(releaseDir, 'bowerbird-updater.exe'), 'Run `bun run build:app` first.'),
+    join(staging, 'bowerbird-updater.exe'),
+  );
   cpSync(sidecar, join(staging, 'bowerbird-server.exe'));
   cpSync(resources, join(staging, 'resources'), { recursive: true });
-  cpSync(need(join(ROOT, 'web', 'dist'), 'Run `bun run build:app` first.'), join(staging, 'web'), { recursive: true });
+  cpSync(need(join(ROOT, 'web', 'dist'), 'Run `bun run build:app` first.'), join(staging, 'web'), {
+    recursive: true,
+  });
   // Windows resolves a dependent DLL from the loading process's own directory, so whatever the
   // shell imports goes beside the executables. `rawshim.dll` adds nothing to that list: its
   // codecs are static (DESIGN §23.7.1).

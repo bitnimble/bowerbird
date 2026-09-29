@@ -41,7 +41,8 @@ try {
 
   const { movedAside, version, restamped } = await restoreBackup(config.dbPath, chosen);
   console.log(`Restored ${chosen} to ${config.dbPath} (schema ${version}).`);
-  if (movedAside != null) console.log(`The catalogue that was there is at ${movedAside}; delete it once you are happy.`);
+  if (movedAside != null)
+    console.log(`The catalogue that was there is at ${movedAside}; delete it once you are happy.`);
   if (restamped > 0) {
     console.log(
       `This library replicates, so ${restamped} row(s) were re-stamped: what you restored is what the ` +

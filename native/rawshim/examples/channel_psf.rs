@@ -76,15 +76,19 @@ fn main() {
 
 /// What the shipping estimate makes of the same frame, off the pipeline's own decode.
 fn fitted(path: &str) -> String {
-    let Some(gpu) = rawshim::gpu::device() else { return "no adapter".to_string() };
-    let Some(base) = rawshim::base::device(gpu) else { return "no pipelines".to_string() };
-    let Ok(bytes) = std::fs::read(path) else { return "unreadable".to_string() };
+    let Some(gpu) = rawshim::gpu::device() else {
+        return "no adapter".to_string();
+    };
+    let Some(base) = rawshim::base::device(gpu) else {
+        return "no pipelines".to_string();
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return "unreadable".to_string();
+    };
     // Scene-linear and undenoised, which is the frame `base::prepare` measures on. `Fit::Only`
     // rather than `Measure`: this decode asks for no denoise, and `Measure` fits nothing where
     // there are no amounts, which would leave the fitted ceiling below unexercised.
-    let Some(frame) =
-        rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only)
-    else {
+    let Some(frame) = rawshim::decode_frame_bytes(&bytes, 0, rawshim::galosh::Fit::Only) else {
         return "no decode".to_string();
     };
     let rawshim::frame::Pixels::Sixteen(samples) = &frame.pixels else {
@@ -131,15 +135,25 @@ fn measure(path: &str) -> Result<Found, String> {
         .map_err(|e| format!("{e}"))?;
     let decoder = rawler::get_decoder(&source).map_err(|e| format!("{e}"))?;
     let params = rawler::decoders::RawDecodeParams::default();
-    let image = decoder.raw_image(&source, &params, false).map_err(|e| format!("{e}"))?;
+    let image = decoder
+        .raw_image(&source, &params, false)
+        .map_err(|e| format!("{e}"))?;
     let plane = match &image.data {
         rawler::rawimage::RawImageData::Integer(values) => values,
         _ => return Err("not an integer plane".to_string()),
     };
     let (width, height) = (image.width, image.height);
-    let white = image.whitelevel.0.first().copied().unwrap_or(u32::from(u16::MAX)) as f32;
-    let black =
-        image.blacklevel.levels.first().map_or(0.0, |level| level.n as f32 / level.d as f32);
+    let white = image
+        .whitelevel
+        .0
+        .first()
+        .copied()
+        .unwrap_or(u32::from(u16::MAX)) as f32;
+    let black = image
+        .blacklevel
+        .levels
+        .first()
+        .map_or(0.0, |level| level.n as f32 / level.d as f32);
     let range = (white - black).max(1.0);
     let floor = |counts: f32| {
         let level = ((counts - black) / range).clamp(0.0, 1.0);
@@ -155,8 +169,9 @@ fn measure(path: &str) -> Result<Found, String> {
     // measured, so the pair is no longer a clean sample of it.
     let ceiling = white - 1.0;
     let near_clipping = |r: usize, c: usize| {
-        (r.saturating_sub(1)..=(r + 1).min(height - 1))
-            .any(|rr| (c.saturating_sub(1)..=(c + 1).min(width - 1)).any(|cc| at(rr, cc) >= ceiling))
+        (r.saturating_sub(1)..=(r + 1).min(height - 1)).any(|rr| {
+            (c.saturating_sub(1)..=(c + 1).min(width - 1)).any(|cc| at(rr, cc) >= ceiling)
+        })
     };
 
     let voted = |offsets: &[(usize, usize)], want: usize| -> Option<f32> {
@@ -181,7 +196,9 @@ fn measure(path: &str) -> Result<Found, String> {
                 }
             }
         }
-        let spacing = offsets.first().map(|&(dr, dc)| (dr * dr + dc * dc) as f32)?;
+        let spacing = offsets
+            .first()
+            .map(|&(dr, dc)| (dr * dr + dc * dc) as f32)?;
         tally.sigma(spacing)
     };
 
@@ -203,7 +220,9 @@ struct Tally {
 
 impl Default for Tally {
     fn default() -> Tally {
-        Tally { bins: vec![0; Tally::BINS] }
+        Tally {
+            bins: vec![0; Tally::BINS],
+        }
     }
 }
 

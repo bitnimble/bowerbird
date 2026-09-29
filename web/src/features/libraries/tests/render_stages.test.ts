@@ -3,7 +3,10 @@
 // a list of what runs - an upgrade would silently turn the new stage off for every library.
 import { expect, test } from 'bun:test';
 import { type Library, type UpdateLibraryRequest } from '../../../../../src/schemas/libraries';
-import { type OptionalStage, type RenderedRendition } from '../../../../../src/schemas/render_stages';
+import {
+  type OptionalStage,
+  type RenderedRendition,
+} from '../../../../../src/schemas/render_stages';
 import { librariesApi } from '../../../api/libraries';
 import { restoreApiAfterTests } from '../../../test_api';
 import { LibrariesPresenter } from '../libraries_presenter';
@@ -44,19 +47,29 @@ async function sent(
 
 test('unticking a stage adds it to that rendition alone', async () => {
   expect(await sent(LIBRARY, 'max', 'denoise', false)).toEqual({ render_skip_max: ['denoise'] });
-  expect(await sent(LIBRARY, 'full', 'denoise', false)).toEqual({ render_skip_full: ['denoise', 'lens', 'colour'] });
+  expect(await sent(LIBRARY, 'full', 'denoise', false)).toEqual({
+    render_skip_full: ['denoise', 'lens', 'colour'],
+  });
 });
 
 test('ticking the lens leaves colour off until explicitly enabled', async () => {
   expect(await sent(LIBRARY, 'full', 'lens', true)).toEqual({ render_skip_full: ['colour'] });
-  expect(await sent({ ...LIBRARY, render_skip_full: ['colour'] }, 'full', 'colour', true)).toEqual({ render_skip_full: [] });
+  expect(await sent({ ...LIBRARY, render_skip_full: ['colour'] }, 'full', 'colour', true)).toEqual({
+    render_skip_full: [],
+  });
 });
 
 test('unticking a stage that is already out sends the same list rather than two of it', async () => {
-  expect(await sent(LIBRARY, 'full', 'lens', false)).toEqual({ render_skip_full: ['lens', 'colour'] });
+  expect(await sent(LIBRARY, 'full', 'lens', false)).toEqual({
+    render_skip_full: ['lens', 'colour'],
+  });
 });
 
 test('disabling lens also disables colour and colour cannot enable it', async () => {
-  expect(await sent(LIBRARY, 'max', 'lens', false)).toEqual({ render_skip_max: ['lens', 'colour'] });
-  expect(await sent(LIBRARY, 'full', 'colour', true)).toEqual({ render_skip_full: ['lens', 'colour'] });
+  expect(await sent(LIBRARY, 'max', 'lens', false)).toEqual({
+    render_skip_max: ['lens', 'colour'],
+  });
+  expect(await sent(LIBRARY, 'full', 'colour', true)).toEqual({
+    render_skip_full: ['lens', 'colour'],
+  });
 });

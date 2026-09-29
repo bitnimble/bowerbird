@@ -12,7 +12,15 @@ import { stagePath, stagedSize, stagingDir } from '../blob_store';
 import { BackupLocations } from '../../backup/backup_locations';
 import { TransferService } from '../transfer_service';
 import { queueMaterialisation } from '../../replication/materialise';
-import { addPhoto, forgetPeers, LIB, library, makePeer, net, type Peer } from './blob_transfers_test_helpers';
+import {
+  addPhoto,
+  forgetPeers,
+  LIB,
+  library,
+  makePeer,
+  net,
+  type Peer,
+} from './blob_transfers_test_helpers';
 
 afterEach(forgetPeers);
 
@@ -37,7 +45,10 @@ it('tracks a peer upload until its bytes finish or its stream fails', async () =
   for (const fails of [false, true]) {
     const source = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
     const body = new ReadableStream<Uint8Array>({ start: source.resolve });
-    const upload = peer.routes.request(`${route(fails ? 'p2' : 'p1', PathSegment.stage())}?offset=0`, { method: 'PUT', body });
+    const upload = peer.routes.request(
+      `${route(fails ? 'p2' : 'p1', PathSegment.stage())}?offset=0`,
+      { method: 'PUT', body },
+    );
     await Bun.sleep(0);
     expect(peer.activity.current(LIB)).toEqual([{ kind: 'receiving', count: 1 }]);
     const controller = await source.promise;
@@ -62,12 +73,14 @@ it('keeps a cancelled transfer visible until its in-flight byte work settles', a
   const held = new Hono();
   held.get(route('photo1', PathSegment.original()), () => {
     started.resolve();
-    return new Response(new ReadableStream<Uint8Array>({
-      async start(controller) {
-        await released.promise;
-        controller.error(new Error('copy stopped'));
-      },
-    }));
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await released.promise;
+          controller.error(new Error('copy stopped'));
+        },
+      }),
+    );
   });
   held.route('/', sender.routes);
   net.set(sender.id, held);
@@ -99,7 +112,9 @@ function addShoot(peer: Peer, id: string, folderPath: string): void {
 /** A remote peer's location row as replication would have landed it. */
 function knowsHolder(peer: Peer, photoId: string, holder: string): void {
   peer.db
-    .query('INSERT OR IGNORE INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)')
+    .query(
+      'INSERT OR IGNORE INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)',
+    )
     .run(LIB, photoId, holder, 'ffffffffffff0000' + holder);
 }
 
@@ -146,7 +161,10 @@ describe('push', () => {
 
       const response = await b.routes.request(route('photo1', PathSegment.stage()));
 
-      expect(BlobStageResponseSchema.parse(await response.json())).toEqual({ staged: 7, held: true });
+      expect(BlobStageResponseSchema.parse(await response.json())).toEqual({
+        staged: 7,
+        held: true,
+      });
       expect(readFileSync(stagePath(library(b), 'photo1'), 'utf8')).toBe('RAW-one');
       expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe(bytes);
     }
@@ -172,7 +190,9 @@ describe('push', () => {
     // §7.1: the sender computed and stored the hash off the stream it sent.
     expect(a.photoMetadata.contentHashOf('photo1')).toBe(sha256('RAW-one'));
     const logged = a.db
-      .query("SELECT stamp FROM replication_log WHERE library_id = ? AND entity = 'photo.imported' AND row_id = 'photo1'")
+      .query(
+        "SELECT stamp FROM replication_log WHERE library_id = ? AND entity = 'photo.imported' AND row_id = 'photo1'",
+      )
       .get(LIB) as { stamp: string } | null;
     expect(logged).not.toBeNull();
 
@@ -183,9 +203,7 @@ describe('push', () => {
     // is handed the arrival.
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(true);
     const owed = b.db
-      .query(
-        `SELECT variant, needs_build FROM renditions WHERE photo_id = ? ORDER BY variant`,
-      )
+      .query(`SELECT variant, needs_build FROM renditions WHERE photo_id = ? ORDER BY variant`)
       .all('photo1');
     expect(owed).toEqual([
       { variant: 'full-hdr', needs_build: 1 },
@@ -237,7 +255,12 @@ describe('push', () => {
 
     // Day1 holds photo1 alone, so one more is queued and photo2's entry stays.
     expect(await a.transfers.pushDiff(LIB, b.id, { shoot_id: 'day1' })).toBe(1);
-    expect(a.transfers.list(LIB).map((t) => t.photo_id).sort()).toEqual(['photo1', 'photo2']);
+    expect(
+      a.transfers
+        .list(LIB)
+        .map((t) => t.photo_id)
+        .sort(),
+    ).toEqual(['photo1', 'photo2']);
 
     expect(await a.transfers.pushDiff(LIB, b.id, { shoot_id: 'day3' })).toBe(0);
   });
@@ -250,7 +273,11 @@ describe('push', () => {
     const res = await a.routes.request(route(PathSegment.push()), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ library_id: LIB, peer_id: b.id, scope: { photo_ids: ['photo1'], shoot_id: 'day1' } }),
+      body: JSON.stringify({
+        library_id: LIB,
+        peer_id: b.id,
+        scope: { photo_ids: ['photo1'], shoot_id: 'day1' },
+      }),
     });
 
     expect(res.status).toBe(400);
@@ -262,7 +289,9 @@ describe('push', () => {
     const b = makePeer('b');
     addPhoto(a, 'photo1', 'one.arw', 'RAW-one');
     addPhoto(b, 'photo1', 'one.arw');
-    b.db.query('UPDATE photos SET content_hash = ? WHERE id = ?').run(sha256('something else'), 'photo1');
+    b.db
+      .query('UPDATE photos SET content_hash = ? WHERE id = ?')
+      .run(sha256('something else'), 'photo1');
 
     await a.transfers.pushDiff(LIB, b.id, { library: true });
     await a.transfers.drain();
@@ -346,7 +375,9 @@ describe('pull', () => {
     await b.transfers.drain();
 
     expect(b.transfers.list(LIB)[0]!.state).toBe('done');
-    expect(b.sent.find((r) => r.path === route('photo1', PathSegment.original()))?.range).toBe('bytes=5-');
+    expect(b.sent.find((r) => r.path === route('photo1', PathSegment.original()))?.range).toBe(
+      'bytes=5-',
+    );
     expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('ABCDEFGHIJ');
     expect(existsSync(stagingDir(library(b)))).toBe(false);
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(true);
@@ -378,7 +409,9 @@ describe('pull', () => {
 
     expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('RAW-one');
     // Fetched once. The second entry finished without asking anybody for bytes.
-    expect(b.sent.filter((r) => r.path === route('photo1', PathSegment.original()))).toHaveLength(1);
+    expect(b.sent.filter((r) => r.path === route('photo1', PathSegment.original()))).toHaveLength(
+      1,
+    );
     expect(b.built).toEqual(['photo1']);
     expect(b.db.query('SELECT COUNT(*) AS n FROM materialisation_flags').get()).toEqual({ n: 0 });
   });
@@ -465,7 +498,9 @@ describe('pull', () => {
     await c.transfers.drain();
 
     expect(readFileSync(path.join(c.root, 'one.arw'), 'utf8')).toBe('RAW-one');
-    const byPeer = Object.fromEntries(c.transfers.list(LIB).map((item) => [item.peer_id, item.state]));
+    const byPeer = Object.fromEntries(
+      c.transfers.list(LIB).map((item) => [item.peer_id, item.state]),
+    );
     expect(byPeer).toEqual({ [empty.id]: 'failed', [holder.id]: 'done' });
   });
 
@@ -484,7 +519,9 @@ describe('pull', () => {
     await c.transfers.pullDiff(LIB, a.id, { library: true });
     await c.transfers.drain();
 
-    expect(c.transfers.list(LIB).map((item) => [item.peer_id, item.state])).toEqual([[a.id, 'failed']]);
+    expect(c.transfers.list(LIB).map((item) => [item.peer_id, item.state])).toEqual([
+      [a.id, 'failed'],
+    ]);
     expect(existsSync(path.join(c.root, 'one.arw'))).toBe(false);
   });
 
@@ -558,10 +595,12 @@ describe('queue durability', () => {
     for (const state of ['queued', 'active', 'paused', 'failed']) {
       addPhoto(b, state, `${state}.arw`);
       writeFileSync(stagePath(library(b), state), `${state} bytes`);
-      b.db.query(
-        `INSERT INTO blob_transfers (id, library_id, photo_id, peer_id, direction, state, queued_at)
+      b.db
+        .query(
+          `INSERT INTO blob_transfers (id, library_id, photo_id, peer_id, direction, state, queued_at)
            VALUES (?, ?, ?, ?, 'pull', ?, '2026-01-01T00:00:00.000Z')`,
-      ).run(state, LIB, state, a.id, state);
+        )
+        .run(state, LIB, state, a.id, state);
     }
     writeFileSync(path.join(dir, 'keep.arw'), 'users own');
     writeFileSync(stagePath(library(b), 'abandoned'), 'orphan');
@@ -670,7 +709,9 @@ describe('eviction', () => {
       .query("SELECT deleted FROM replication_log WHERE entity = 'blob_location' AND row_id = ?")
       .get(`photo1/${a.id}`) as { deleted: number } | null;
     expect(grave?.deleted).toBe(1);
-    const row = a.db.query('SELECT is_missing FROM photos WHERE id = ?').get('photo1') as { is_missing: number };
+    const row = a.db.query('SELECT is_missing FROM photos WHERE id = ?').get('photo1') as {
+      is_missing: number;
+    };
     expect(row.is_missing).toBe(1);
   });
 
@@ -695,11 +736,13 @@ describe('eviction', () => {
    * photographer's own file, never imported, deleted to free space for a photograph
    * whose original is somewhere else entirely.
    */
-  it('refuses to evict a photograph whose path may be holding somebody else\'s file', async () => {
+  it("refuses to evict a photograph whose path may be holding somebody else's file", async () => {
     const { a, b } = await transferred();
     // As a refused materialisation leaves it: a flag, and a stranger at the path.
     a.db
-      .query("INSERT INTO materialisation_flags (library_id, photo_id, target_path, reason) VALUES (?, ?, ?, 'occupied')")
+      .query(
+        "INSERT INTO materialisation_flags (library_id, photo_id, target_path, reason) VALUES (?, ?, ?, 'occupied')",
+      )
       .run(LIB, 'photo1', 'one.arw');
     writeFileSync(path.join(a.root, 'one.arw'), 'SOMEBODY-ELSE');
 
@@ -759,7 +802,14 @@ describe('eviction', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         peer_id: b.id,
-        target: { selection: { scope: { kind: 'library', id: LIB }, filters: {}, ranges: [{ start: 0, end: 0 }], members: [] } },
+        target: {
+          selection: {
+            scope: { kind: 'library', id: LIB },
+            filters: {},
+            ranges: [{ start: 0, end: 0 }],
+            members: [],
+          },
+        },
       }),
     });
 
@@ -778,7 +828,14 @@ describe('eviction', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         peer_id: b.id,
-        target: { selection: { scope: { kind: 'library', id: LIB }, filters: {}, ranges: [{ start: 0, end: 0 }], members: [] } },
+        target: {
+          selection: {
+            scope: { kind: 'library', id: LIB },
+            filters: {},
+            ranges: [{ start: 0, end: 0 }],
+            members: [],
+          },
+        },
       }),
     });
 
@@ -874,9 +931,13 @@ describe('reconcile', () => {
     a.locations.record(LIB, 'moved');
     const reconciling = a.locations.reconcile(library(a));
     expect(a.activity.current(LIB)).toEqual([{ kind: 'reconciling', count: 1 }]);
-    a.db.query('UPDATE photos SET recipe = ? WHERE id = ?').run(JSON.stringify({ kind: 'file', path: 'after.arw' }), 'moved');
+    a.db
+      .query('UPDATE photos SET recipe = ? WHERE id = ?')
+      .run(JSON.stringify({ kind: 'file', path: 'after.arw' }), 'moved');
     queueMaterialisation(a.db, LIB, 'moved', 'before.arw');
-    a.db.query('UPDATE photos SET recipe = ? WHERE id = ?').run(JSON.stringify({ kind: 'file', path: 'found.arw' }), 'found');
+    a.db
+      .query('UPDATE photos SET recipe = ? WHERE id = ?')
+      .run(JSON.stringify({ kind: 'file', path: 'found.arw' }), 'found');
     writeFileSync(path.join(a.root, 'found.arw'), 'RAW-found');
     a.locations.flag(LIB, 'flagged', 'occupied.arw', 'target occupied');
     await reconciling;
@@ -902,7 +963,9 @@ describe('reconcile', () => {
     const a = makePeer('a');
     addPhoto(a, 'photo1', 'Day1/one.arw', 'RAW-one');
     a.db
-      .query("INSERT INTO shoots (id, library_id, folder_path, name) VALUES ('shoot1', ?, 'Day2', 'Day two')")
+      .query(
+        "INSERT INTO shoots (id, library_id, folder_path, name) VALUES ('shoot1', ?, 'Day2', 'Day two')",
+      )
       .run(LIB);
 
     await a.locations.reconcile(library(a));

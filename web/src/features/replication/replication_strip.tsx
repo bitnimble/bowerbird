@@ -60,20 +60,22 @@ export const ReplicationStrip = observer(function ReplicationStrip({
             <StripLabel
               tone={peer.last_error == null && peer.outdated == null ? undefined : 'error'}
               tooltip={
-                peer.last_error != null && peer.outdated == null ? ReplicationStripStrings.deviceErrorTitle() : undefined
+                peer.last_error != null && peer.outdated == null
+                  ? ReplicationStripStrings.deviceErrorTitle()
+                  : undefined
               }
             >
               {ReplicationStripStrings.deviceLine(
                 peer.name,
-                peer.last_replicated_at == null ?
-                  ReplicationStripStrings.neverSynced()
-                : ReplicationStripStrings.syncedAt(relativeTime(peer.last_replicated_at)),
+                peer.last_replicated_at == null
+                  ? ReplicationStripStrings.neverSynced()
+                  : ReplicationStripStrings.syncedAt(relativeTime(peer.last_replicated_at)),
               )}
-              {peer.outdated === 'peer' ?
-                ReplicationStripStrings.updatePeer(peer.name)
-              : peer.outdated === 'this_device' ?
-                ReplicationStripStrings.updateThisDevice()
-              : peer.last_error != null && ReplicationStripStrings.deviceError()}
+              {peer.outdated === 'peer'
+                ? ReplicationStripStrings.updatePeer(peer.name)
+                : peer.outdated === 'this_device'
+                  ? ReplicationStripStrings.updateThisDevice()
+                  : peer.last_error != null && ReplicationStripStrings.deviceError()}
               {sending > 0 && ReplicationStripStrings.sending(sending)}
               {fetching > 0 && ReplicationStripStrings.fetching(fetching)}
               {failed > 0 && ReplicationStripStrings.failed(failed)}
@@ -86,9 +88,9 @@ export const ReplicationStrip = observer(function ReplicationStrip({
               variant="ghost"
               disabled={!peer.wants_originals}
               tooltip={
-                peer.wants_originals ?
-                  ReplicationStripStrings.sendOriginalsTitle(peer.name)
-                : ReplicationStripStrings.sendOriginalsRefused(peer.name)
+                peer.wants_originals
+                  ? ReplicationStripStrings.sendOriginalsTitle(peer.name)
+                  : ReplicationStripStrings.sendOriginalsRefused(peer.name)
               }
               onClick={() => void presenter.sendMissing(library.id, peer.peer_id)}
             >
@@ -99,9 +101,11 @@ export const ReplicationStrip = observer(function ReplicationStrip({
               variant="ghost"
               disabled={library.read_only || !keepsOriginals}
               tooltip={
-                library.read_only ? BulkBarStrings.notOnReadOnlyLibrary()
-                : keepsOriginals ? ReplicationStripStrings.fetchOriginalsTitle(peer.name)
-                : ReplicationStripStrings.fetchOriginalsRefused()
+                library.read_only
+                  ? BulkBarStrings.notOnReadOnlyLibrary()
+                  : keepsOriginals
+                    ? ReplicationStripStrings.fetchOriginalsTitle(peer.name)
+                    : ReplicationStripStrings.fetchOriginalsRefused()
               }
               onClick={() => void presenter.fetchMissing(library.id, peer.peer_id)}
             >

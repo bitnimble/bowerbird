@@ -53,7 +53,11 @@ export class StacksRepository {
   }
 
   get(id: string): Stack | null {
-    return (this.db.query(`SELECT ${STACK_COLS} FROM stacks WHERE stacks.id = ?`).get(id) as StackRow | null) ?? null;
+    return (
+      (this.db
+        .query(`SELECT ${STACK_COLS} FROM stacks WHERE stacks.id = ?`)
+        .get(id) as StackRow | null) ?? null
+    );
   }
 
   /**
@@ -84,7 +88,9 @@ export class StacksRepository {
         `SELECT id FROM photos WHERE stack_id = ? AND is_deleted = ?${visible}
          ORDER BY ${orderByClause(ordering)}`,
       )
-      .all(stackId, deleted ? 1 : 0, ...(deleted || shootId == null ? [] : [shootId])) as { id: string }[];
+      .all(stackId, deleted ? 1 : 0, ...(deleted || shootId == null ? [] : [shootId])) as {
+      id: string;
+    }[];
     return rows.map((row) => row.id);
   }
 
@@ -117,7 +123,11 @@ export class StacksRepository {
     // A capture time SQLite cannot parse would otherwise sort as NULL and make
     // every gap from it enormous, which reads as "never adjacent" and is the
     // right answer anyway; 0 says the same thing without arithmetic on null.
-    return rows.map((row) => ({ id: row.id, timestamp: row.timestamp ?? 0, shootId: row.shoot_id }));
+    return rows.map((row) => ({
+      id: row.id,
+      timestamp: row.timestamp ?? 0,
+      shootId: row.shoot_id,
+    }));
   }
 
   /** Every live photograph whose body recorded a multi-shot capture, for `bracketsOf`. */
@@ -129,10 +139,17 @@ export class StacksRepository {
          FROM photos
          WHERE library_id = ? AND capture_sequence IS NOT NULL AND is_deleted = 0`,
       )
-      .all(libraryId) as { id: string; shoot_id: string | null; capture_sequence: string; timestamp: number | null }[];
+      .all(libraryId) as {
+      id: string;
+      shoot_id: string | null;
+      capture_sequence: string;
+      timestamp: number | null;
+    }[];
     return rows.flatMap((row) => {
       const sequence = captureSequenceOf(row.capture_sequence);
-      return sequence == null ? [] : [{ id: row.id, shootId: row.shoot_id, timestamp: row.timestamp ?? 0, sequence }];
+      return sequence == null
+        ? []
+        : [{ id: row.id, shootId: row.shoot_id, timestamp: row.timestamp ?? 0, sequence }];
     });
   }
 
@@ -190,7 +207,9 @@ export class StacksRepository {
     // own stamp moves whenever anything about the stack is written.
     const at = stamp(this.db);
     this.db
-      .query('INSERT INTO stacks (id, library_id, origin, date_created, stamp, created_stamp) VALUES (?, ?, ?, ?, ?, ?)')
+      .query(
+        'INSERT INTO stacks (id, library_id, origin, date_created, stamp, created_stamp) VALUES (?, ?, ?, ?, ?, ?)',
+      )
       .run(id, libraryId, origin, dateCreated, at, at);
   }
 
@@ -220,7 +239,9 @@ export class StacksRepository {
     const found: string[] = [];
     for (const batch of chunk(photoIds)) {
       const placeholders = batch.map(() => '?').join(', ');
-      const rows = this.db.query(`SELECT id FROM photos WHERE id IN (${placeholders})`).all(...batch) as { id: string }[];
+      const rows = this.db
+        .query(`SELECT id FROM photos WHERE id IN (${placeholders})`)
+        .all(...batch) as { id: string }[];
       found.push(...rows.map((row) => row.id));
     }
     return found;
@@ -228,9 +249,9 @@ export class StacksRepository {
 
   /** Clears a whole stack's membership and deletes it. */
   dissolve(stackId: string, released: boolean): void {
-    const row = this.db.query('SELECT library_id FROM stacks WHERE id = ?').get(stackId) as
-      | { library_id: string }
-      | null;
+    const row = this.db.query('SELECT library_id FROM stacks WHERE id = ?').get(stackId) as {
+      library_id: string;
+    } | null;
     // The members leaving and the stack going are one deletion, so they carry one
     // stamp: two would land as two events, and a peer taking only the first holds a
     // stack with nothing in it until the repair pass notices.
@@ -270,7 +291,9 @@ export class StacksRepository {
 
   /** A human has touched this stack, so detection stops managing it (§19.4.4). */
   markManual(stackId: string): void {
-    this.db.query("UPDATE stacks SET origin = 'manual', stamp = ? WHERE id = ?").run(stamp(this.db), stackId);
+    this.db
+      .query("UPDATE stacks SET origin = 'manual', stamp = ? WHERE id = ?")
+      .run(stamp(this.db), stackId);
   }
 
   /** The distinct stacks a set of photos belongs to. */
@@ -283,7 +306,9 @@ export class StacksRepository {
     for (const batch of chunk(photoIds)) {
       const placeholders = batch.map(() => '?').join(', ');
       const rows = this.db
-        .query(`SELECT DISTINCT stack_id FROM photos WHERE id IN (${placeholders}) AND stack_id IS NOT NULL`)
+        .query(
+          `SELECT DISTINCT stack_id FROM photos WHERE id IN (${placeholders}) AND stack_id IS NOT NULL`,
+        )
         .all(...batch) as { stack_id: string }[];
       for (const row of rows) found.add(row.stack_id);
     }
@@ -293,7 +318,9 @@ export class StacksRepository {
   /** How many photos a stack still holds, binned ones aside. */
   countMembers(stackId: string): number {
     return (
-      this.db.query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_deleted = 0').get(stackId) as {
+      this.db
+        .query('SELECT COUNT(*) AS n FROM photos WHERE stack_id = ? AND is_deleted = 0')
+        .get(stackId) as {
         n: number;
       }
     ).n;

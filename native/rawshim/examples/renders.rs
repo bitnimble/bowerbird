@@ -130,7 +130,10 @@ fn grade() -> Grade {
 }
 
 fn strengths() -> Strengths {
-    Strengths { sharpen: 0.5, defringe: 1.0 }
+    Strengths {
+        sharpen: 0.5,
+        defringe: 1.0,
+    }
 }
 
 /// `edge` of 0 is no reduction, which is the default: a crop at 1:1 is the point, and the editor is
@@ -144,7 +147,10 @@ fn options(edge: usize, stages: Stages<'_>) -> EncodeOptions {
         grade: grade(),
         crf: 26,
         preset: 6,
-        strengths: Strengths { sharpen: stages.sharpen, defringe: stages.defringe },
+        strengths: Strengths {
+            sharpen: stages.sharpen,
+            defringe: stages.defringe,
+        },
         sharpen_sigma: None,
         max_edge: match edge {
             0 => 100_000.0,
@@ -208,10 +214,15 @@ fn graded(
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
     let resident = frame.on_device(gpu).expect("the frame reaches the device");
     let matched = rawshim::fit_hdr_for(&resident, path, options.grade.white_quantile);
-    let levels =
-        rawshim::hdr::levels_of(gpu, samples, frame.width, frame.height, options.grade.white_quantile)
-            .expect("levels")
-            .anchored();
+    let levels = rawshim::hdr::levels_of(
+        gpu,
+        samples,
+        frame.width,
+        frame.height,
+        options.grade.white_quantile,
+    )
+    .expect("levels")
+    .anchored();
     // The anchor and what the match made of it, because a render that came out the wrong colour
     // is answered by the matrix row that did it and not by looking harder at the picture.
     // The floor in stops as well as levels says whether the frame reached the
@@ -250,8 +261,11 @@ fn graded(
             rawshim::hdr_fit::Stage::Tone,
         ))
         .expect("the device evaluates the model");
-        let shape: Vec<String> =
-            toned.iter().enumerate().map(|(bin, v)| format!("{bin}:{:.4}", v[1])).collect();
+        let shape: Vec<String> = toned
+            .iter()
+            .enumerate()
+            .map(|(bin, v)| format!("{bin}:{:.4}", v[1]))
+            .collect();
         eprintln!("  curve toe {}", shape.join(" "));
         // The whole domain, not just its first sixteenth: the toe above is sampled over the bottom
         // 6% and says nothing about where a highlight lands, which is half of what a curve decides.
@@ -271,16 +285,13 @@ fn graded(
         let full: Vec<String> = over
             .iter()
             .enumerate()
-            .map(|(step, v)| {
-                format!("{:.2}:{:.4}", colour.ceiling * step as f64 / 16.0, v[1])
-            })
+            .map(|(step, v)| format!("{:.2}:{:.4}", colour.ceiling * step as f64 / 16.0, v[1]))
             .collect();
         eprintln!("  curve whole {}", full.join(" "));
     }
 
     let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
-    let size =
-        rawshim::hdr_args::target_size(frame.width as u32, frame.height as u32, &options);
+    let size = rawshim::hdr_args::target_size(frame.width as u32, frame.height as u32, &options);
     // As `job::run` composes it: the frame's measured capture sigma where the decode has one,
     // carried to the target's scale.
     let sensor_long = frame.width.max(frame.height) * frame.reduced.max(1);
@@ -311,9 +322,7 @@ fn graded(
     )
     .at(
         rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(
-            size.width.max(size.height) as usize,
-        ),
+        rawshim::px::Span::<rawshim::px::Drawn>::exact(size.width.max(size.height) as usize),
     );
     // What the deconvolution was actually given, since `deconvolve_split` clamps and a run that
     // sat on the ceiling is sharpening less than the frame asked for.
@@ -327,8 +336,7 @@ fn graded(
         },
     );
     let cut = {
-        let resident =
-            rawshim::resident::Resident::upload(gpu, samples, frame.width, frame.height);
+        let resident = rawshim::resident::Resident::upload(gpu, samples, frame.width, frame.height);
         // No lens here: a rendition's warp is per target and happens in `Cut::from_base` below, so
         // this is the defringe and the coding alone, exactly as `Base::build` takes them.
         let (prepared, _) = pollster::block_on(rawshim::base::prepare(
@@ -338,11 +346,18 @@ fn graded(
             rawshim::base::Gather::frame(rawshim::px::Size::exact(frame.width, frame.height)),
             levels,
             options.grade.reference_white_nits,
-            Strengths { sharpen: stages.sharpen, defringe: stages.defringe }.before_the_fit(),
+            Strengths {
+                sharpen: stages.sharpen,
+                defringe: stages.defringe,
+            }
+            .before_the_fit(),
             rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
             rawshim::image::SharpenNoise::NONE,
             &rawshim::fit::Lens::none(),
-            stages.defocus.map_or(rawshim::base::Defringe::Measure, rawshim::base::Defringe::Take),
+            stages.defocus.map_or(
+                rawshim::base::Defringe::Measure,
+                rawshim::base::Defringe::Take,
+            ),
             frame.noise,
             frame.matrix,
         ))
@@ -351,40 +366,48 @@ fn graded(
         hdr::Cut::from_base(prepared, lens, size, stages.sharpen, sigma, sharpen_noise)
     };
 
-    let colour = matched.as_ref().filter(|_| stages.matched).and_then(|m| m.colour.as_ref()).map(|colour| {
-        let mut colour = colour.clone();
-        if !stages.lattice {
-            colour.chroma = None;
-        }
-        if !stages.matrix {
-            colour.matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        }
-        if !stages.saturation {
-            colour.saturation = 1.0;
-        }
-        colour.saturation *= stages.chroma;
-        if stages.curve_gain != 1.0 {
-            for curve in &mut colour.curves {
-                // Mid-grey, not the domain's middle: the domain runs to a shade under diffuse
-                // white, so its midpoint is a highlight and expanding about it buries the picture.
-                let anchor = curve[curve.len() / 5].max(1e-6);
-                for v in curve.iter_mut() {
-                    *v = anchor * (v.max(1e-6) / anchor).powf(stages.curve_gain);
+    let colour = matched
+        .as_ref()
+        .filter(|_| stages.matched)
+        .and_then(|m| m.colour.as_ref())
+        .map(|colour| {
+            let mut colour = colour.clone();
+            if !stages.lattice {
+                colour.chroma = None;
+            }
+            if !stages.matrix {
+                colour.matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+            }
+            if !stages.saturation {
+                colour.saturation = 1.0;
+            }
+            colour.saturation *= stages.chroma;
+            if stages.curve_gain != 1.0 {
+                for curve in &mut colour.curves {
+                    // Mid-grey, not the domain's middle: the domain runs to a shade under diffuse
+                    // white, so its midpoint is a highlight and expanding about it buries the picture.
+                    let anchor = curve[curve.len() / 5].max(1e-6);
+                    for v in curve.iter_mut() {
+                        *v = anchor * (v.max(1e-6) / anchor).powf(stages.curve_gain);
+                    }
                 }
             }
-        }
-        if !stages.curves {
-            colour.curves =
-                [colour.curves[1].clone(), colour.curves[1].clone(), colour.curves[1].clone()];
-        }
-        if !stages.tone {
-            let bins = colour.curves[0].len();
-            let ramp: Vec<f64> =
-                (0..bins).map(|i| colour.ceiling * i as f64 / (bins - 1) as f64).collect();
-            colour.curves = [ramp.clone(), ramp.clone(), ramp];
-        }
-        colour
-    });
+            if !stages.curves {
+                colour.curves = [
+                    colour.curves[1].clone(),
+                    colour.curves[1].clone(),
+                    colour.curves[1].clone(),
+                ];
+            }
+            if !stages.tone {
+                let bins = colour.curves[0].len();
+                let ramp: Vec<f64> = (0..bins)
+                    .map(|i| colour.ceiling * i as f64 / (bins - 1) as f64)
+                    .collect();
+                colour.curves = [ramp.clone(), ramp.clone(), ramp];
+            }
+            colour
+        });
     let scene = rawshim::tone::SceneGrade::new(
         colour.as_ref(),
         levels,
@@ -413,15 +436,21 @@ fn graded(
         Domain::Pq => rawshim::gpu::Output::Pq,
         Domain::Linear => rawshim::gpu::Output::Rolled,
     };
-    let grade = rawshim::gpu::Grade { intent: stages.intent, ..scene.gpu_grade(cut.width, cut.height, output) };
+    let grade = rawshim::gpu::Grade {
+        intent: stages.intent,
+        ..scene.gpu_grade(cut.width, cut.height, output)
+    };
     let mut coded = hdr::encode_cut(gpu, &cut, &grade);
     if stages.domain == Domain::Pq {
         // What `job::run` reads to pick this still's chroma, so a render here says which way a
         // rendition of it would have gone.
-        let leak =
-            pollster::block_on(rawshim::base::chroma_leak_of(gpu, base, &coded, cut.width, cut.height))
-                .expect("the leak measures");
-        eprintln!("  chroma leak {leak:.4} (worst 64px tile's fraction of blocks past the threshold)");
+        let leak = pollster::block_on(rawshim::base::chroma_leak_of(
+            gpu, base, &coded, cut.width, cut.height,
+        ))
+        .expect("the leak measures");
+        eprintln!(
+            "  chroma leak {leak:.4} (worst 64px tile's fraction of blocks past the threshold)"
+        );
     }
     // Through the rendition's own encoder and back, so a pattern at the pixel's scale can be
     // laid at the encoder's door or taken away from it. `max`'s settings: `lossless_quantizer`
@@ -429,7 +458,11 @@ fn graded(
     if let (Domain::Pq, Some((quantizer, chroma))) = (stages.domain, stages.encode) {
         let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
         let still = rawshim::avif::StillOptions {
-            cicp: rawshim::avif::Cicp { primaries, transfer, matrix },
+            cicp: rawshim::avif::Cicp {
+                primaries,
+                transfer,
+                matrix,
+            },
             format: chroma.avif_format(),
             quantizer,
             speed: 8,
@@ -445,7 +478,11 @@ fn graded(
         .expect("the rendition encodes");
         let (decoded, w, h) = rawshim::avif::decode_at(&file, 16).expect("the rendition decodes");
         assert_eq!((w, h), (cut.width, cut.height));
-        eprintln!("  encoded and decoded in {}ms, {} bytes", started.elapsed().as_millis(), file.len());
+        eprintln!(
+            "  encoded and decoded in {}ms, {} bytes",
+            started.elapsed().as_millis(),
+            file.len()
+        );
         // Kept, so `avif_crop` can cut it beside a rendition the server wrote.
         std::fs::write(format!("{}/encoded.avif", stages.out), &file)
             .expect("the encoded still writes");
@@ -454,7 +491,8 @@ fn graded(
     // The rolled frame's 1.0 is PQ's ceiling, so a straight byte would put diffuse white at a
     // fiftieth of the range and nothing would be visible at all.
     let to_white = f32::from(u16::MAX)
-        * (options.grade.reference_white_nits.raw() / output.mastered(options.grade.reference_white_nits).raw()) as f32;
+        * (options.grade.reference_white_nits.raw()
+            / output.mastered(options.grade.reference_white_nits).raw()) as f32;
     let byte = |v: &u16| match stages.domain {
         Domain::Srgb => *v as u8,
         Domain::Pq => (v >> 8) as u8,
@@ -504,7 +542,10 @@ fn main() {
         encode: None,
         out: &out,
     };
-    let mut file = File { quantizer: CROP_QUANTIZER, full_chroma: true };
+    let mut file = File {
+        quantizer: CROP_QUANTIZER,
+        full_chroma: true,
+    };
     while let Some(flag) = args.next() {
         match flag.as_str() {
             // Each names a stage to hold still while the other moves. A pattern that survives
@@ -613,7 +654,12 @@ fn main() {
             // with: `lossless_sdr_quantizer` is 8 and `sdr_full_chroma` is off, so what a reader
             // pixel-peeps is 4:2:0 at a quantizer, and the JPEG below is decoded back out of the
             // file so that shows.
-            "--as-export" => file = File { quantizer: 8, full_chroma: false },
+            "--as-export" => {
+                file = File {
+                    quantizer: 8,
+                    full_chroma: false,
+                }
+            }
             // The two sliders move independently in the panel, and a reader who takes Colour to
             // zero and leaves Luminance up is an ordinary position rather than a corner. `auto` is
             // neither set, which is what a document that has never been edited holds and so the
@@ -629,8 +675,7 @@ fn main() {
                 };
             }
             "--luminance" => {
-                detail.luminance =
-                    Some(args.next().expect("a number").parse().expect("a number"));
+                detail.luminance = Some(args.next().expect("a number").parse().expect("a number"));
             }
             "--colour" => {
                 detail.colour = Some(args.next().expect("a number").parse().expect("a number"));
@@ -647,8 +692,10 @@ fn main() {
             }
             "--crop" => {
                 let spec = args.next().expect("x,y,side");
-                let n: Vec<usize> =
-                    spec.split(',').map(|v| v.parse().expect("a number")).collect();
+                let n: Vec<usize> = spec
+                    .split(',')
+                    .map(|v| v.parse().expect("a number"))
+                    .collect();
                 crops.push((n[0], n[1], n[2]));
             }
             // **What a rendition of that size actually is**, rather than the sensor's own frame.
@@ -696,7 +743,17 @@ fn main() {
     std::fs::create_dir_all(&out).expect("the output directory");
 
     if !sweep.is_empty() {
-        sweep_grid(&path, &out, &sweep, sweep_colour, sweep_luma, columns, &crops, edge, stages);
+        sweep_grid(
+            &path,
+            &out,
+            &sweep,
+            sweep_colour,
+            sweep_luma,
+            columns,
+            &crops,
+            edge,
+            stages,
+        );
         return;
     }
 
@@ -717,7 +774,11 @@ fn main() {
         let started = std::time::Instant::now();
         let (data, width, height) = rendition(&path, detail, edge, stages);
         eprintln!("  {width}x{height} in {}ms", started.elapsed().as_millis());
-        let whole = rawshim::rgb::RgbRef { width, height, data: &data };
+        let whole = rawshim::rgb::RgbRef {
+            width,
+            height,
+            data: &data,
+        };
 
         if let Some(dir) = &camera {
             std::fs::create_dir_all(dir).expect("the camera directory");
@@ -757,15 +818,23 @@ fn main() {
                         edge_spread(cut.as_ref())
                             .map_or("-".to_string(), |(n, w)| format!("{w:.2}px/{n}")),
                     );
-                    for (name, plane) in
-                        [("luma", Plane::Luma), ("cr  ", Plane::Cr), ("cb  ", Plane::Cb)]
-                    {
+                    for (name, plane) in [
+                        ("luma", Plane::Luma),
+                        ("cr  ", Plane::Cr),
+                        ("cb  ", Plane::Cb),
+                    ] {
                         match noise_blobs(cut.as_ref(), plane) {
                             Some((sizes, gaps, count)) => eprintln!(
                                 "      {name} specks {count:>5}  size p25/50/75/90 \
                                  {:.1}/{:.1}/{:.1}/{:.1}px2  gap {:.2}/{:.2}/{:.2}/{:.2}px",
-                                sizes[0], sizes[1], sizes[2], sizes[3],
-                                gaps[0], gaps[1], gaps[2], gaps[3],
+                                sizes[0],
+                                sizes[1],
+                                sizes[2],
+                                sizes[3],
+                                gaps[0],
+                                gaps[1],
+                                gaps[2],
+                                gaps[3],
                             ),
                             None => eprintln!("      {name} specks: too few to rank"),
                         }
@@ -806,8 +875,7 @@ fn main() {
                 grain[0],
                 grain[1],
                 grain[2],
-                edge_spread(cut.as_ref())
-                    .map_or("-".to_string(), |(n, w)| format!("{w:.2}px/{n}")),
+                edge_spread(cut.as_ref()).map_or("-".to_string(), |(n, w)| format!("{w:.2}px/{n}")),
             );
             eprintln!(
                 "      cr by scale {}  cb by scale {}",
@@ -819,13 +887,16 @@ fn main() {
                 "      phase {:.2}/{:.2}/{:.2}/{:.2} worst ratio {worst:.2}",
                 phases[0], phases[1], phases[2], phases[3],
             );
-            for (name, plane) in [("luma", Plane::Luma), ("cr  ", Plane::Cr), ("cb  ", Plane::Cb)] {
+            for (name, plane) in [
+                ("luma", Plane::Luma),
+                ("cr  ", Plane::Cr),
+                ("cb  ", Plane::Cb),
+            ] {
                 match noise_blobs(cut.as_ref(), plane) {
                     Some((sizes, gaps, count)) => eprintln!(
                         "      {name} specks {count:>5}  size p25/50/75/90 \
                          {:.1}/{:.1}/{:.1}/{:.1}px2  gap {:.2}/{:.2}/{:.2}/{:.2}px",
-                        sizes[0], sizes[1], sizes[2], sizes[3],
-                        gaps[0], gaps[1], gaps[2], gaps[3],
+                        sizes[0], sizes[1], sizes[2], sizes[3], gaps[0], gaps[1], gaps[2], gaps[3],
                     ),
                     None => eprintln!("      {name} specks: too few to rank"),
                 }
@@ -833,7 +904,10 @@ fn main() {
             if std::env::var("BOWERBIRD_CROP_PROFILE").is_ok() {
                 let (across, down) = correlation_profile(cut.as_ref());
                 let show = |v: &[f64]| {
-                    v.iter().map(|c| format!("{c:+.2}")).collect::<Vec<_>>().join(" ")
+                    v.iter()
+                        .map(|c| format!("{c:+.2}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 };
                 eprintln!("      across {}", show(&across));
                 eprintln!("      down   {}", show(&down));
@@ -870,7 +944,11 @@ fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> raws
         data[row * side * 3..(row + 1) * side * 3]
             .copy_from_slice(&image.data[from..from + side * 3]);
     }
-    rawshim::rgb::Rgb { width: side, height: side, data }
+    rawshim::rgb::Rgb {
+        width: side,
+        height: side,
+        data,
+    }
 }
 
 /// How many octaves of scale the noise is reported across.
@@ -945,8 +1023,11 @@ fn noise_by_scale(image: rawshim::rgb::RgbRef<'_>, which: Plane) -> [(f64, f64);
         }
         // What the smoothing took out is this octave, and its own median absolute deviation is the
         // sigma of it: 1.4826 is the Gaussian's, the same constant the MAD is always scaled by.
-        let mut detail: Vec<f64> =
-            plane.iter().zip(&smoothed).map(|(v, s)| (v - s).abs()).collect();
+        let mut detail: Vec<f64> = plane
+            .iter()
+            .zip(&smoothed)
+            .map(|(v, s)| (v - s).abs())
+            .collect();
         let mid = detail.len() / 2;
         detail.select_nth_unstable_by(mid, f64::total_cmp);
         let sigma = detail[mid] * 1.4826;
@@ -964,7 +1045,9 @@ fn noise_by_scale(image: rawshim::rgb::RgbRef<'_>, which: Plane) -> [(f64, f64);
 
 /// The bands as one line, widest last, which is the order a defect grows along.
 fn bands(image: rawshim::rgb::RgbRef<'_>, which: Plane) -> String {
-    noise_by_scale(image, which).map(|(v, _)| format!("{v:.2}")).join("/")
+    noise_by_scale(image, which)
+        .map(|(v, _)| format!("{v:.2}"))
+        .join("/")
 }
 
 /// The 10-90 width of the crop's sharpest edges, which is what "how sharp is this" means.
@@ -989,7 +1072,9 @@ fn edge_spread(image: rawshim::rgb::RgbRef<'_>) -> Option<(usize, f32)> {
     for y in 0..image.height {
         let row = &luma[y * image.width..(y + 1) * image.width];
         for x in 4..image.width - 12 {
-            let Some(end) = (1..9).find(|&n| row[x + n + 1] <= row[x + n]) else { continue };
+            let Some(end) = (1..9).find(|&n| row[x + n + 1] <= row[x + n]) else {
+                continue;
+            };
             if end < 2 {
                 continue;
             }
@@ -1423,7 +1508,11 @@ fn edge_bias(image: rawshim::rgb::RgbRef<'_>) -> (f64, f64, f64) {
     // The finest octave is the grain; the plane two smoothings up is the picture under it, whose
     // own gradient is what says a pixel is near an edge without consulting the noise.
     let first = blur(&luma, 1);
-    let grain: Vec<f64> = luma.iter().zip(&first).map(|(v, s)| (v - s).abs()).collect();
+    let grain: Vec<f64> = luma
+        .iter()
+        .zip(&first)
+        .map(|(v, s)| (v - s).abs())
+        .collect();
     let structure_plane = blur(&blur(&first, 2), 4);
     let structure: Vec<f64> = (0..w * h)
         .map(|i| {
@@ -1535,8 +1624,10 @@ fn aligned(
         for row in (0..side).step_by(STRIDE) {
             for col in (0..side).step_by(STRIDE) {
                 let here = luma(&want, row * want.width + col);
-                let there =
-                    luma(&preview, (top as usize + row) * preview.width + left as usize + col);
+                let there = luma(
+                    &preview,
+                    (top as usize + row) * preview.width + left as usize + col,
+                );
                 sum += (here - there).abs();
             }
         }
@@ -1561,7 +1652,16 @@ fn aligned(
         }
     }
     let (dx, dy, _) = best;
-    (dx, dy, cut(preview, (x as i64 + dx) as usize, (y as i64 + dy) as usize, side))
+    (
+        dx,
+        dy,
+        cut(
+            preview,
+            (x as i64 + dx) as usize,
+            (y as i64 + dy) as usize,
+            side,
+        ),
+    )
 }
 
 /// Every crop written as its own luma, camera panel included.
@@ -1585,11 +1685,18 @@ fn greyscale(image: rawshim::rgb::Rgb) -> rawshim::rgb::Rgb {
         data[i * 3 + 1] = grey;
         data[i * 3 + 2] = grey;
     }
-    rawshim::rgb::Rgb { width: image.width, height: image.height, data }
+    rawshim::rgb::Rgb {
+        width: image.width,
+        height: image.height,
+        data,
+    }
 }
 
 fn crop_zoom() -> usize {
-    std::env::var("BOWERBIRD_CROP_ZOOM").ok().and_then(|z| z.parse().ok()).unwrap_or(1)
+    std::env::var("BOWERBIRD_CROP_ZOOM")
+        .ok()
+        .and_then(|z| z.parse().ok())
+        .unwrap_or(1)
 }
 
 /// **Nearest neighbour.** A pattern at the pixel's own scale is what a sharpener goes wrong at, and
@@ -1608,7 +1715,11 @@ fn magnify(image: rawshim::rgb::Rgb, by: usize) -> rawshim::rgb::Rgb {
             out[(y * w * by + x) * 3..][..3].copy_from_slice(&image.data[from..from + 3]);
         }
     }
-    rawshim::rgb::Rgb { width: w * by, height: h * by, data: out }
+    rawshim::rgb::Rgb {
+        width: w * by,
+        height: h * by,
+        data: out,
+    }
 }
 
 /// One grid per crop: the body's own JPEG of the frame, then the slider walked across its track.
@@ -1685,9 +1796,17 @@ fn sweep_grid(
                 None => (amount, colour.unwrap_or(amount)),
             },
         };
-        let (data, width, height) =
-            rendition(path, rawshim::galosh::Detail::at(pair.0, pair.1), edge, stages);
-        let whole = rawshim::rgb::RgbRef { width, height, data: &data };
+        let (data, width, height) = rendition(
+            path,
+            rawshim::galosh::Detail::at(pair.0, pair.1),
+            edge,
+            stages,
+        );
+        let whole = rawshim::rgb::RgbRef {
+            width,
+            height,
+            data: &data,
+        };
         eprintln!(
             "  luminance {} colour {} in {}ms",
             pair.0,
@@ -1750,7 +1869,11 @@ fn grid(panels: &[rawshim::rgb::Rgb], columns: usize) -> rawshim::rgb::Rgb {
             data[to..to + pw * 3].copy_from_slice(&panel.data[from..from + pw * 3]);
         }
     }
-    rawshim::rgb::Rgb { width, height, data }
+    rawshim::rgb::Rgb {
+        width,
+        height,
+        data,
+    }
 }
 
 const GRID_GAP: usize = 8;
@@ -1844,8 +1967,9 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
         // a lifted luma clips that channel while its neighbours still have room, and what the
         // reader sees is not the luma the pass computed.
         for (channel, offset) in [("r", 0usize), ("g", 1), ("b", 2)] {
-            let run: Vec<u8> =
-                (0..span.min(40)).map(|step| image.data[sample(step) * 3 + offset]).collect();
+            let run: Vec<u8> = (0..span.min(40))
+                .map(|step| image.data[sample(step) * 3 + offset])
+                .collect();
             eprintln!("      {channel}: {run:?}");
         }
     }
@@ -1871,12 +1995,20 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
             total / (means.len().saturating_sub(2)).max(1) as f64
         };
         let rows: Vec<f64> = (0..image.height)
-            .map(|y| (0..image.width).map(|x| luma(y * image.width + x)).sum::<f64>()
-                / image.width as f64)
+            .map(|y| {
+                (0..image.width)
+                    .map(|x| luma(y * image.width + x))
+                    .sum::<f64>()
+                    / image.width as f64
+            })
             .collect();
         let cols: Vec<f64> = (0..image.width)
-            .map(|x| (0..image.height).map(|y| luma(y * image.width + x)).sum::<f64>()
-                / image.height as f64)
+            .map(|x| {
+                (0..image.height)
+                    .map(|y| luma(y * image.width + x))
+                    .sum::<f64>()
+                    / image.height as f64
+            })
             .collect();
         eprintln!(
             "    bands: rows {:.4} columns {:.4}, ratio {:.2}",
@@ -1907,7 +2039,9 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
             let row = &luma[y * image.width..(y + 1) * image.width];
             for x in 4..image.width - 12 {
                 // A run that climbs without pause, with a settled level either side of it.
-                let Some(end) = (1..9).find(|&n| row[x + n + 1] <= row[x + n]) else { continue };
+                let Some(end) = (1..9).find(|&n| row[x + n + 1] <= row[x + n]) else {
+                    continue;
+                };
                 if end < 2 {
                     continue;
                 }
@@ -1986,7 +2120,11 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
                 }
                 at += piece.width + GAP;
             }
-            rawshim::rgb::Rgb { width, height, data: out }
+            rawshim::rgb::Rgb {
+                width,
+                height,
+                data: out,
+            }
         }
     };
     match rawshim::jpeg::encode(stored.as_ref(), 95) {

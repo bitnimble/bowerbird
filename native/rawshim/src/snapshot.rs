@@ -262,7 +262,9 @@ impl Snapshot {
 
     pub fn encode(&self) -> Vec<u8> {
         match self.coding {
-            Coding::Pq => crate::png_write::encode_hdr(&self.samples, self.width, self.height, None),
+            Coding::Pq => {
+                crate::png_write::encode_hdr(&self.samples, self.width, self.height, None)
+            }
             Coding::Srgb => {
                 let bytes: Vec<u8> = self.samples.iter().map(|&v| (v / 257) as u8).collect();
                 crate::png_write::encode_sdr(&bytes, self.width, self.height, None)
@@ -675,7 +677,10 @@ mod tests {
         let zoom = (VIEW_LONG / 32).min(VIEW_MAX_ZOOM);
         let (panel_w, panel_h) = (32 * zoom, 16 * zoom);
         let (width, height, pixels) = drawn(&side_by_side_png(None, &after));
-        assert_eq!((width, height), (3 * panel_w + 2 * GAP, 2 * panel_h + BAND_GAP));
+        assert_eq!(
+            (width, height),
+            (3 * panel_w + 2 * GAP, 2 * panel_h + BAND_GAP)
+        );
         let centre = |column: usize| {
             let (x, y) = (column * (panel_w + GAP) + panel_w / 2, panel_h / 2);
             <[u8; 3]>::try_from(&pixels[(y * width + x) * 3..][..3]).expect("a pixel")

@@ -36,7 +36,11 @@ export class FrameTvService {
 
   async send(request: SendToFrameTvRequest): Promise<void> {
     this.requireEnabled();
-    const finish = this.activity.begin(this.libraryOf(request.photo_id), 'sending_to_tv', request.photo_id);
+    const finish = this.activity.begin(
+      this.libraryOf(request.photo_id),
+      'sending_to_tv',
+      request.photo_id,
+    );
     const sent = this.sending.then(() => this.sendNow(request)).finally(finish);
     this.sending = sent.catch(() => undefined);
     await sent;
@@ -48,8 +52,14 @@ export class FrameTvService {
   }
 
   private async sendNow(request: SendToFrameTvRequest): Promise<void> {
-    const tv = this.tvs.find((each) => each.id === request.tv_id) ?? (await this.list()).find((each) => each.id === request.tv_id);
-    if (tv == null) throw new AppError('NOT_FOUND', `no Samsung Frame TV ${request.tv_id} answered on the network`);
+    const tv =
+      this.tvs.find((each) => each.id === request.tv_id) ??
+      (await this.list()).find((each) => each.id === request.tv_id);
+    if (tv == null)
+      throw new AppError(
+        'NOT_FOUND',
+        `no Samsung Frame TV ${request.tv_id} answered on the network`,
+      );
     const rendition = request.rendition ?? (await this.shares.built(request.photo_id));
     const jpeg = await this.shares.jpeg(request.photo_id, rendition);
     const client = this.client(tv);
@@ -83,6 +93,7 @@ export class FrameTvService {
   }
 
   private requireEnabled(): void {
-    if (!this.settings.get().frame_tv_enabled) throw new AppError('CONFLICT', 'Samsung Frame TV integration is turned off');
+    if (!this.settings.get().frame_tv_enabled)
+      throw new AppError('CONFLICT', 'Samsung Frame TV integration is turned off');
   }
 }

@@ -48,11 +48,15 @@ export class SyncLocksRepository {
 
   // Owner-scoped, so a late `finally` cannot delete a successor's lock.
   release(libraryId: string, owner: string): void {
-    this.db.query('DELETE FROM sync_locks WHERE library_id = ? AND owner = ?').run(libraryId, owner);
+    this.db
+      .query('DELETE FROM sync_locks WHERE library_id = ? AND owner = ?')
+      .run(libraryId, owner);
   }
 
   ownerOf(libraryId: string): string | null {
-    const row = this.db.query('SELECT owner FROM sync_locks WHERE library_id = ?').get(libraryId) as { owner: string } | null;
+    const row = this.db
+      .query('SELECT owner FROM sync_locks WHERE library_id = ?')
+      .get(libraryId) as { owner: string } | null;
     return row?.owner ?? null;
   }
 
@@ -65,9 +69,9 @@ export class SyncLocksRepository {
    * first attempt was.
    */
   expiresAt(libraryId: string): Date | null {
-    const row = this.db.query('SELECT refreshed_at FROM sync_locks WHERE library_id = ?').get(libraryId) as
-      | { refreshed_at: string }
-      | null;
+    const row = this.db
+      .query('SELECT refreshed_at FROM sync_locks WHERE library_id = ?')
+      .get(libraryId) as { refreshed_at: string } | null;
     return row == null ? null : new Date(Date.parse(row.refreshed_at) + LEASE_MS);
   }
 }

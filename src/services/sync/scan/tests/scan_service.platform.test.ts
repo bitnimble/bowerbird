@@ -11,7 +11,12 @@ afterEach(() => {
 describe('a missing library root', () => {
   it('keeps every shoot when the root disappears during the walk and returns', async () => {
     let restore = (): void => {};
-    const peer = makeLibrary({ pendingMoves: () => { restore(); return []; } });
+    const peer = makeLibrary({
+      pendingMoves: () => {
+        restore();
+        return [];
+      },
+    });
     put(peer, 'A/a.arw', 'A');
     put(peer, 'B/b.arw', 'B');
     await peer.scan.scanLibrary(LIB);
@@ -27,7 +32,11 @@ describe('a missing library root', () => {
       restore = () => {};
     };
     const keeper = ScanLeases.prototype.keeper;
-    const duringWalk = spyOn(ScanLeases.prototype, 'keeper').mockImplementation(function(this: ScanLeases, libraryId, owner) {
+    const duringWalk = spyOn(ScanLeases.prototype, 'keeper').mockImplementation(function (
+      this: ScanLeases,
+      libraryId,
+      owner,
+    ) {
       const keepLease = keeper.call(this, libraryId, owner);
       let entered = 0;
       return () => {
@@ -87,27 +96,35 @@ describe('a missing library root', () => {
     expect(missing.photos_removed).toBe(1);
     expect(missing.photos_modified).toBe(1);
     expect(peer.db.query('SELECT is_missing FROM photos ORDER BY id').all()).toEqual([
-      { is_missing: 1 }, { is_missing: 1 },
+      { is_missing: 1 },
+      { is_missing: 1 },
     ]);
     expect(statSync(ancestor).isFile()).toBe(true);
   });
 });
 
 describe('which shoots a full scan removes', () => {
-  const shootPaths = (peer: Peer): string[] => peer.shoots.listByLibrary(LIB).map((s) => s.folder_path).sort();
+  const shootPaths = (peer: Peer): string[] =>
+    peer.shoots
+      .listByLibrary(LIB)
+      .map((s) => s.folder_path)
+      .sort();
 
-  it.each(['.cache', 'Excluded'])('drops a removed shoot beside a dangling out-of-scope link named %s', async (link) => {
-    const peer = makeLibrary();
-    put(peer, 'Trip/a.arw');
-    await peer.scan.scanLibrary(LIB);
-    expect(shootPaths(peer)).toEqual(['Trip']);
+  it.each(['.cache', 'Excluded'])(
+    'drops a removed shoot beside a dangling out-of-scope link named %s',
+    async (link) => {
+      const peer = makeLibrary();
+      put(peer, 'Trip/a.arw');
+      await peer.scan.scanLibrary(LIB);
+      expect(shootPaths(peer)).toEqual(['Trip']);
 
-    rmSync(path.join(peer.root, 'Trip'), { recursive: true });
-    peer.db.query('DELETE FROM photos').run();
-    peer.rules.set(LIB, 'Excluded', 'excluded');
-    symlinkSync(path.join(peer.root, 'Absent'), path.join(peer.root, link));
-    await peer.scan.scanLibrary(LIB);
+      rmSync(path.join(peer.root, 'Trip'), { recursive: true });
+      peer.db.query('DELETE FROM photos').run();
+      peer.rules.set(LIB, 'Excluded', 'excluded');
+      symlinkSync(path.join(peer.root, 'Absent'), path.join(peer.root, link));
+      await peer.scan.scanLibrary(LIB);
 
-    expect(shootPaths(peer)).toEqual([]);
-  });
+      expect(shootPaths(peer)).toEqual([]);
+    },
+  );
 });

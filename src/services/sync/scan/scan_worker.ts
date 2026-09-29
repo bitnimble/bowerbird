@@ -1,4 +1,8 @@
-import { extractMetadata, type FileMetadata, type TileStage } from '../../processing/analysis/metadata';
+import {
+  extractMetadata,
+  type FileMetadata,
+  type TileStage,
+} from '../../processing/analysis/metadata';
 
 // Bun worker thread: the header read of one file, off the main thread - and its grid
 // tile, where the scan was given somewhere to put one (§10.4).

@@ -23,15 +23,11 @@
   "features": {
     "aom": {
       "description": "AV1 codec library",
-      "dependencies": [
-        "aom"
-      ]
+      "dependencies": ["aom"]
     },
     "dav1d": {
       "description": "dav1d decoder library",
-      "dependencies": [
-        "dav1d"
-      ]
+      "dependencies": ["dav1d"]
     }
   }
 }

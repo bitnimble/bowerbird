@@ -26,31 +26,79 @@ const OWN_LIBRARY = '$.library_id';
 export const REPLICATED_UNITS: readonly ReplicatedUnit[] = [
   // Import facts: what the file is, and what the camera recorded. The same file
   // gives the same answers on every peer, so a conflict here is a formality.
-  { entity: 'photo.imported', table: 'photos', stamp: 'stamp_imported', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'photo.imported',
+    table: 'photos',
+    stamp: 'stamp_imported',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
   // The cull verdict.
-  { entity: 'photo.triage', table: 'photos', stamp: 'stamp_triage', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'photo.triage',
+    table: 'photos',
+    stamp: 'stamp_triage',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
   // Where the photograph sits in the tree. Apart from the bin, so a folder rename
   // - which rewrites a path on every photo under it - cannot clobber a binning
   // somebody made on another peer while it happened.
-  { entity: 'photo.placement', table: 'photos', stamp: 'stamp_placement', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'photo.placement',
+    table: 'photos',
+    stamp: 'stamp_placement',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
   { entity: 'photo.bin', table: 'photos', stamp: 'stamp_bin', rowId: '$.id', library: OWN_LIBRARY },
   // Only the human verdict. Membership itself is stack_members below, because a
   // pointer cannot carry two stacks at once and the merge needs to see the overlap.
-  { entity: 'photo.stack', table: 'photos', stamp: 'stamp_stack', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'photo.stack',
+    table: 'photos',
+    stamp: 'stamp_stack',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
   // Apart from the verdict: hiding a frame and rating it are separate decisions made at separate
   // times, and a rating arriving from another peer must not un-hide what somebody put away.
-  { entity: 'photo.hidden', table: 'photos', stamp: 'stamp_hidden', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'photo.hidden',
+    table: 'photos',
+    stamp: 'stamp_hidden',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
 
   { entity: 'shoot', table: 'shoots', stamp: 'stamp', rowId: '$.id', library: OWN_LIBRARY },
   // Where the folder is. Apart from the label and the ordering because a different hand writes it -
   // only the scan does, following a rename on disk - and because settling two peers who renamed onto
   // one folder has to move this stamp, which on the shared one would claim the label was rewritten
   // then too and drop an edit to it that was still on its way (§5.6).
-  { entity: 'shoot.folder', table: 'shoots', stamp: 'stamp_folder', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'shoot.folder',
+    table: 'shoots',
+    stamp: 'stamp_folder',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
   // Apart from the shoot's own fields, because `relocate` rewrites `folder_path` across a whole
   // subtree: on one stamp, any folder rename would carry a stale hidden flag over a fresh one.
-  { entity: 'shoot.hidden', table: 'shoots', stamp: 'stamp_hidden', rowId: '$.id', library: OWN_LIBRARY },
-  { entity: 'folder_rule', table: 'folder_rules', stamp: 'stamp', rowId: '$.folder_path', library: OWN_LIBRARY },
+  {
+    entity: 'shoot.hidden',
+    table: 'shoots',
+    stamp: 'stamp_hidden',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
+  {
+    entity: 'folder_rule',
+    table: 'folder_rules',
+    stamp: 'stamp',
+    rowId: '$.folder_path',
+    library: OWN_LIBRARY,
+  },
   { entity: 'stack', table: 'stacks', stamp: 'stamp', rowId: '$.id', library: OWN_LIBRARY },
   {
     entity: 'stack_member',
@@ -64,7 +112,13 @@ export const REPLICATED_UNITS: readonly ReplicatedUnit[] = [
   { entity: 'label', table: 'labels', stamp: 'stamp', rowId: '$.id', library: OWN_LIBRARY },
   // Apart from the name and colour: a reorder writes every label's position at once, and on one
   // stamp it would clobber a rename made on another peer while they were apart.
-  { entity: 'label.position', table: 'labels', stamp: 'stamp_position', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'label.position',
+    table: 'labels',
+    stamp: 'stamp_position',
+    rowId: '$.id',
+    library: OWN_LIBRARY,
+  },
   {
     entity: 'photo_label',
     table: 'photo_labels',

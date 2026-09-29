@@ -117,10 +117,16 @@ fn auto(
         "  §3.1's corner check: {:.3} analysis px of radial pattern, against a bound of {:?}{}",
         analysed.radial.map_or(f64::NAN, |radial| {
             let plane = rawshim::assembly_planes::ANALYSIS_LONG;
-            radial.across(rawshim::px::Span::<rawshim::px::Analysis>::exact(plane)).raw()
+            radial
+                .across(rawshim::px::Span::<rawshim::px::Analysis>::exact(plane))
+                .raw()
         }),
         rawshim::assembly_analysis::NEAR_IDENTITY,
-        if analysed.unaligned { " - unaligned" } else { "" },
+        if analysed.unaligned {
+            " - unaligned"
+        } else {
+            ""
+        },
     );
 
     let stored: Vec<Option<rawshim::photo_analysis::PhotoAnalysis>> = spec
@@ -497,9 +503,14 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
         rawshim::dust::Wanted::Off,
     );
     let resident = frame.as_ref().and_then(|frame| frame.on_device(gpu));
-    let measured = resident
-        .as_ref()
-        .and_then(|resident| rawshim::fit_hdr_measured(resident, path, WHITE_QUANTILE, rawshim::hdr_fit::CameraMatch::LensAndColour));
+    let measured = resident.as_ref().and_then(|resident| {
+        rawshim::fit_hdr_measured(
+            resident,
+            path,
+            WHITE_QUANTILE,
+            rawshim::hdr_fit::CameraMatch::LensAndColour,
+        )
+    });
     let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
     match measured {
         Some((matched, levels)) => {

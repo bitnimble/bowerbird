@@ -147,7 +147,10 @@ pub struct RwLockReadGuard<'a, T: ?Sized>(sync::RwLockReadGuard<'a, T>);
 impl<'a, T: ?Sized> RwLockReadGuard<'a, T> {
     pub fn map<U: ?Sized, F: FnOnce(&T) -> &U>(guard: Self, f: F) -> MappedRwLockReadGuard<'a, U> {
         let target: *const U = f(&guard.0);
-        MappedRwLockReadGuard { _held: Box::new(guard), target }
+        MappedRwLockReadGuard {
+            _held: Box::new(guard),
+            target,
+        }
     }
 }
 

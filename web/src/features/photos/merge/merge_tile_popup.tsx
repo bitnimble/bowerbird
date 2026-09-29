@@ -132,7 +132,11 @@ function clamp(value: number, low: number, high: number): number {
  *
  * `polygon` and `stage` are both in the stage's own CSS pixels, measured from its top left.
  */
-export function flyoutAt(polygon: readonly Point[], popup: Size, stage: Size): { left: number; top: number } {
+export function flyoutAt(
+  polygon: readonly Point[],
+  popup: Size,
+  stage: Size,
+): { left: number; top: number } {
   if (polygon.length === 0) return { left: 0, top: 0 };
   const xs = polygon.map((p) => p.x);
   const ys = polygon.map((p) => p.y);
@@ -153,19 +157,34 @@ export function flyoutAt(polygon: readonly Point[], popup: Size, stage: Size): {
   }
   // Clamped only once nowhere on the stage is clear, the flyout being larger than what is left of
   // it; the stage clips what leaves it either way.
-  return clearOf(polygon, popup, stage) ?? { left: across, top: clamp(y1 + FLYOUT_GAP, 0, stage.height - popup.height) };
+  return (
+    clearOf(polygon, popup, stage) ?? {
+      left: across,
+      top: clamp(y1 + FLYOUT_GAP, 0, stage.height - popup.height),
+    }
+  );
 }
 
 /** The spot furthest from the tile that the flyout covers none of it in, or null where there is none. */
-function clearOf(polygon: readonly Point[], popup: Size, stage: Size): { left: number; top: number } | null {
+function clearOf(
+  polygon: readonly Point[],
+  popup: Size,
+  stage: Size,
+): { left: number; top: number } | null {
   const xs = polygon.map((p) => p.x);
   const ys = polygon.map((p) => p.y);
-  const middle = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
+  const middle = {
+    x: (Math.min(...xs) + Math.max(...xs)) / 2,
+    y: (Math.min(...ys) + Math.max(...ys)) / 2,
+  };
   let best: { left: number; top: number; reach: number } | null = null;
   for (let top = 0; top <= stage.height - popup.height; top += FLYOUT_STEP) {
     for (let left = 0; left <= stage.width - popup.width; left += FLYOUT_STEP) {
       if (covers({ left, top, width: popup.width, height: popup.height }, polygon)) continue;
-      const reach = Math.hypot(left + popup.width / 2 - middle.x, top + popup.height / 2 - middle.y);
+      const reach = Math.hypot(
+        left + popup.width / 2 - middle.x,
+        top + popup.height / 2 - middle.y,
+      );
       if (best == null || reach > best.reach) best = { left, top, reach };
     }
   }
@@ -173,10 +192,14 @@ function clearOf(polygon: readonly Point[], popup: Size, stage: Size): { left: n
 }
 
 /** Whether a box and a loop share any ground at all, either one being able to contain the other. */
-function covers(box: { left: number; top: number; width: number; height: number }, polygon: readonly Point[]): boolean {
+function covers(
+  box: { left: number; top: number; width: number; height: number },
+  polygon: readonly Point[],
+): boolean {
   const right = box.left + box.width;
   const bottom = box.top + box.height;
-  if (polygon.some((p) => p.x >= box.left && p.x <= right && p.y >= box.top && p.y <= bottom)) return true;
+  if (polygon.some((p) => p.x >= box.left && p.x <= right && p.y >= box.top && p.y <= bottom))
+    return true;
   if (encloses(polygon, { x: box.left, y: box.top })) return true;
   const corners: Point[] = [
     { x: box.left, y: box.top },
@@ -199,7 +222,10 @@ function encloses(polygon: readonly Point[], point: Point): boolean {
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const a = polygon[i]!;
     const b = polygon[j]!;
-    if (a.y > point.y !== b.y > point.y && point.x < a.x + ((point.y - a.y) / (b.y - a.y)) * (b.x - a.x)) {
+    if (
+      a.y > point.y !== b.y > point.y &&
+      point.x < a.x + ((point.y - a.y) / (b.y - a.y)) * (b.x - a.x)
+    ) {
       inside = !inside;
     }
   }
@@ -239,9 +265,11 @@ function SwatchCanvas({
     const canvas = canvasRef.current;
     if (canvas == null || frame.closed) return;
     const size = { width: backingWidth, height: backingHeight };
-    void stageCanvases.paint(canvas, size, frame, { devicePeakNits, region: { x, y, width, height } }).catch((err: unknown) => {
-      if (err instanceof CanvasLost) setAttempt((was) => was + 1);
-    });
+    void stageCanvases
+      .paint(canvas, size, frame, { devicePeakNits, region: { x, y, width, height } })
+      .catch((err: unknown) => {
+        if (err instanceof CanvasLost) setAttempt((was) => was + 1);
+      });
   }, [frame, x, y, width, height, backingWidth, backingHeight, attempt, devicePeakNits]);
 
   return (
@@ -251,7 +279,11 @@ function SwatchCanvas({
       role="img"
       aria-label={label}
       {...stylex.props(styles.picture)}
-      style={{ width: `${swatch.width}px`, height: `${swatch.height}px`, clipPath: swatch.clipPath }}
+      style={{
+        width: `${swatch.width}px`,
+        height: `${swatch.height}px`,
+        clipPath: swatch.clipPath,
+      }}
     />
   );
 }
@@ -328,7 +360,11 @@ export const MergeTilePopup = observer(function MergeTilePopup({
   const natural = store.layerSize ?? NO_SIZE;
   const outline = clear.map(([x, y]) => stagePointOf({ x, y }, zoom.view, zoom.box, natural));
   const searching = store.searching;
-  const at = flyoutAt(outline, searching ? SEARCHING_SIZE : flyoutSize(swatches.length, zoom.box), zoom.box);
+  const at = flyoutAt(
+    outline,
+    searching ? SEARCHING_SIZE : flyoutSize(swatches.length, zoom.box),
+    zoom.box,
+  );
 
   if (searching) {
     return (
@@ -340,7 +376,11 @@ export const MergeTilePopup = observer(function MergeTilePopup({
         style={{ left: `${at.left}px`, top: `${at.top}px` }}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <div {...stylex.props(styles.searching)} role="status" aria-label={MergePageStrings.searching()}>
+        <div
+          {...stylex.props(styles.searching)}
+          role="status"
+          aria-label={MergePageStrings.searching()}
+        >
           <Spinner />
         </div>
       </div>
@@ -367,46 +407,51 @@ export const MergeTilePopup = observer(function MergeTilePopup({
           const frame = store.layers.get(swatch.source);
           const current = store.picks[tile] === swatch.source;
           return (
-          <button
-            key={swatch.source}
-            type="button"
-            aria-label={MergePageStrings.pickSwatch(index)}
-            aria-pressed={current}
-            {...stylex.props(styles.swatch, focusRing.ring)}
-            onMouseEnter={() => presenter.hoverSwatch(swatch.source)}
-            onClick={() => {
-              presenter.pick(tile, swatch.source);
-              onClose();
-            }}
-            // A finger has no hover, so the same button takes the gesture instead: hold to
-            // preview, release to commit. `ViewSwitch`'s peek is the same shape for the same
-            // reason - the capture is what makes a release outside the button still end it.
-            onPointerDown={(event) => {
-              if (event.pointerType !== 'touch') return;
-              try {
-                event.currentTarget.setPointerCapture(event.pointerId);
-              } catch {
-                /* the cancel handler still ends the preview */
-              }
-              presenter.hoverSwatch(swatch.source);
-            }}
-            onPointerUp={(event) => {
-              if (event.pointerType !== 'touch') return;
-              presenter.hoverSwatch(null);
-              presenter.pick(tile, swatch.source);
-              onClose();
-            }}
-            onPointerCancel={() => presenter.hoverSwatch(null)}
-          >
-            <span {...stylex.props(styles.crop, current && styles.cropCurrent)}>
-              {grown.length > 0 && frame != null && (
-                <SwatchCanvas frame={frame} loop={grown} label={MergePageStrings.swatchAlt(index)} devicePeakNits={devicePeakNits} />
-              )}
-            </span>
-            <Tooltip label={swatch.name}>
-              <span {...stylex.props(styles.name)}>{swatch.name}</span>
-            </Tooltip>
-          </button>
+            <button
+              key={swatch.source}
+              type="button"
+              aria-label={MergePageStrings.pickSwatch(index)}
+              aria-pressed={current}
+              {...stylex.props(styles.swatch, focusRing.ring)}
+              onMouseEnter={() => presenter.hoverSwatch(swatch.source)}
+              onClick={() => {
+                presenter.pick(tile, swatch.source);
+                onClose();
+              }}
+              // A finger has no hover, so the same button takes the gesture instead: hold to
+              // preview, release to commit. `ViewSwitch`'s peek is the same shape for the same
+              // reason - the capture is what makes a release outside the button still end it.
+              onPointerDown={(event) => {
+                if (event.pointerType !== 'touch') return;
+                try {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                } catch {
+                  /* the cancel handler still ends the preview */
+                }
+                presenter.hoverSwatch(swatch.source);
+              }}
+              onPointerUp={(event) => {
+                if (event.pointerType !== 'touch') return;
+                presenter.hoverSwatch(null);
+                presenter.pick(tile, swatch.source);
+                onClose();
+              }}
+              onPointerCancel={() => presenter.hoverSwatch(null)}
+            >
+              <span {...stylex.props(styles.crop, current && styles.cropCurrent)}>
+                {grown.length > 0 && frame != null && (
+                  <SwatchCanvas
+                    frame={frame}
+                    loop={grown}
+                    label={MergePageStrings.swatchAlt(index)}
+                    devicePeakNits={devicePeakNits}
+                  />
+                )}
+              </span>
+              <Tooltip label={swatch.name}>
+                <span {...stylex.props(styles.name)}>{swatch.name}</span>
+              </Tooltip>
+            </button>
           );
         })}
       </Row>

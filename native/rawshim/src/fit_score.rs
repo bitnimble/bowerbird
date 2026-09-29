@@ -76,7 +76,11 @@ fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         };
         let read = wgpu::BufferBindingType::Storage { read_only: true };
@@ -108,7 +112,11 @@ fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
                 cache: None,
             })
         };
-        Kernel { target: pipeline("fit_target"), score: pipeline("fit_score"), layout }
+        Kernel {
+            target: pipeline("fit_target"),
+            score: pipeline("fit_score"),
+            layout,
+        }
     })
 }
 
@@ -134,7 +142,10 @@ fn packed(count: usize, fill: impl Fn(usize) -> [u8; 4] + Sync + Send) -> Vec<u8
 /// A `below` plane from colours the host holds: each pair's colour, and the luma beside it.
 ///
 /// One zeroed pair where there are none, since a binding cannot be empty.
-pub fn below_buffer(gpu: &'static crate::gpu::Gpu, below: &[([f64; 3], f64)]) -> crate::gpu::Buffer {
+pub fn below_buffer(
+    gpu: &'static crate::gpu::Gpu,
+    below: &[([f64; 3], f64)],
+) -> crate::gpu::Buffer {
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_score below"),
         contents: &packed(below.len().max(1) * 4, |k| {
@@ -253,13 +264,34 @@ impl Scoring {
             label: Some("fit_score"),
             layout: &kernel(gpu).layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: below.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: held_target.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: parameters.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: held_srgb.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: partials.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: invariant.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: below.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: held_target.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: parameters.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: held_srgb.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: partials.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: invariant.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 20,
+                    resource: push.as_entire_binding(),
+                },
             ],
         });
         let scoring = Scoring {
@@ -320,7 +352,11 @@ impl Scoring {
         if probes.is_empty() || self.pairs == 0 {
             return Some(vec![Vec::new(); probes.len()]);
         }
-        assert!(probes.len() <= self.capacity, "{} probes at once", probes.len());
+        assert!(
+            probes.len() <= self.capacity,
+            "{} probes at once",
+            probes.len()
+        );
         let units = probes.len() * self.blocks;
         let bytes = (units * PARTIAL * 4) as u64;
         // Written rather than created, which is the whole point of holding them.
@@ -338,7 +374,9 @@ impl Scoring {
             pass.set_bind_group(0, &self.group, &[]);
             pass.dispatch_workgroups((units as u32).div_ceil(64), 1, 1);
         }
-        recording.encoder().copy_buffer_to_buffer(&self.partials, 0, &self.staging, 0, bytes);
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.partials, 0, &self.staging, 0, bytes);
         recording.submit();
 
         // The buffer is sized for `capacity` and this call wrote `units` of it, so the tail
@@ -367,9 +405,7 @@ impl Scoring {
                         bias: std::array::from_fn(|i| [at(4 + 2 * i), at(4 + 2 * i + 1)]),
                         seen: std::array::from_fn(|i| at(invariant + 4 + i)),
                         class_error: std::array::from_fn(|i| at(classes + i)),
-                        class_seen: std::array::from_fn(|i| {
-                            at(invariant + 4 + BIAS_BUCKETS + i)
-                        }),
+                        class_seen: std::array::from_fn(|i| at(invariant + 4 + BIAS_BUCKETS + i)),
                     }
                 })
                 .collect::<Vec<Partial>>()
@@ -388,7 +424,10 @@ pub struct Probe {
 impl Probe {
     /// The probe that changes nothing: saturation exactly 1.0, which the shader short-circuits.
     pub fn neutral() -> Probe {
-        Probe { matrix: [[0.0; 3]; 3], saturation: 1.0 }
+        Probe {
+            matrix: [[0.0; 3]; 3],
+            saturation: 1.0,
+        }
     }
 
     fn words(&self) -> Vec<f32> {
@@ -409,9 +448,18 @@ mod tests {
     fn the_shader_pools_the_buckets_the_host_folds() {
         const SOURCE: &str = include_str!("../../../slang/fit_score.slang");
         let line = format!("static const int BIAS_BUCKETS = {};", BIAS_BUCKETS);
-        assert!(SOURCE.contains(&line), "fit_score.slang does not say `{line}`");
-        let sectors = format!("static const int HUE_SECTORS = {};", (COLOUR_CLASSES - 1) / 3);
-        assert!(SOURCE.contains(&sectors), "fit_score.slang does not say `{sectors}`");
+        assert!(
+            SOURCE.contains(&line),
+            "fit_score.slang does not say `{line}`"
+        );
+        let sectors = format!(
+            "static const int HUE_SECTORS = {};",
+            (COLOUR_CLASSES - 1) / 3
+        );
+        assert!(
+            SOURCE.contains(&sectors),
+            "fit_score.slang does not say `{sectors}`"
+        );
         assert!(SOURCE.contains("static const int COLOUR_CLASSES = 1 + 3 * HUE_SECTORS;"));
         assert!(SOURCE.contains("static const int INVARIANT = 4 + BIAS_BUCKETS + COLOUR_CLASSES;"));
         assert!(SOURCE.contains(
@@ -427,57 +475,104 @@ mod tests {
     /// its level by one is exactly the distance this asserts away.
     #[test]
     fn the_camera_lands_back_on_the_level_it_was_encoded_from() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let lit: Vec<[f64; 3]> = [[0u8, 0, 0], [13, 64, 200], [128, 128, 128], [255, 255, 255]]
             .into_iter()
             .map(|codes| codes.map(crate::hdr_fit::srgb_eotf))
             .collect();
         let below: Vec<([f64; 3], f64)> = lit.iter().map(|v| (*v, 0.0)).collect();
-        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &lit, &[1.0; 4], &IDENTITY, 2, 1);
+        let scoring = Scoring::new(
+            gpu,
+            below_buffer(gpu, &below),
+            &lit,
+            &[1.0; 4],
+            &IDENTITY,
+            2,
+            1,
+        );
         let partials =
             pollster::block_on(scoring.partials(&Shape::Saturation, &[Probe::neutral()]))
                 .expect("the device scored");
         let flat: f64 = partials[0].iter().map(|p| p.flat).sum();
-        assert!(flat < 1e-2, "the camera's side moved off its levels by {flat}");
+        assert!(
+            flat < 1e-2,
+            "the camera's side moved off its levels by {flat}"
+        );
     }
 
     /// Each pair's error lands in the class of the camera's colour: the neutrals first, then a muted,
     /// a vivid and a deep class for every 30 degrees of Lab hue.
     #[test]
     fn a_pairs_error_lands_in_its_colours_class() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let light = |codes: [u8; 3]| codes.map(crate::hdr_fit::srgb_eotf);
         // Lab hues 37 and 73: a saturated red chroma past its lightness, and a lit orange wall under
         // it; and near 23, a dark red chroma three times past its lightness.
-        let (grey, red, wall) = (light([128, 128, 128]), light([180, 20, 15]), light([200, 150, 100]));
+        let (grey, red, wall) = (
+            light([128, 128, 128]),
+            light([180, 20, 15]),
+            light([200, 150, 100]),
+        );
         let dark_red = light([58, 1, 5]);
         let target = [grey, red, wall, dark_red];
         let (purple, pink) = (light([180, 20, 90]), light([51, 1, 13]));
-        let below: Vec<([f64; 3], f64)> =
-            [grey, purple, wall, pink].iter().map(|v| (*v, 0.0)).collect();
-        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &target, &[1.0; 4], &IDENTITY, 2, 1);
+        let below: Vec<([f64; 3], f64)> = [grey, purple, wall, pink]
+            .iter()
+            .map(|v| (*v, 0.0))
+            .collect();
+        let scoring = Scoring::new(
+            gpu,
+            below_buffer(gpu, &below),
+            &target,
+            &[1.0; 4],
+            &IDENTITY,
+            2,
+            1,
+        );
         let partials =
             pollster::block_on(scoring.partials(&Shape::Saturation, &[Probe::neutral()]))
                 .expect("the device scored");
         let seen = |class: usize| partials[0].iter().map(|p| p.class_seen[class]).sum::<f64>();
-        let error = |class: usize| partials[0].iter().map(|p| p.class_error[class]).sum::<f64>();
+        let error = |class: usize| {
+            partials[0]
+                .iter()
+                .map(|p| p.class_error[class])
+                .sum::<f64>()
+        };
         let (neutral, deep_red, vivid_red, muted_orange) = (0, 1 + 2, 1 + 3 + 1, 1 + 3 * 2);
         for class in [neutral, deep_red, vivid_red, muted_orange] {
             assert_eq!(seen(class), 1.0, "class {class}");
         }
         assert_eq!((0..COLOUR_CLASSES).map(seen).sum::<f64>(), 4.0);
-        assert!(error(vivid_red) > 10.0, "the purple red is far off: {}", error(vivid_red));
-        assert!(error(deep_red) > 1.0, "the pink dark red is off: {}", error(deep_red));
-        assert!(error(neutral) + error(muted_orange) < 1e-2, "the other two are on their levels");
+        assert!(
+            error(vivid_red) > 10.0,
+            "the purple red is far off: {}",
+            error(vivid_red)
+        );
+        assert!(
+            error(deep_red) > 1.0,
+            "the pink dark red is off: {}",
+            error(deep_red)
+        );
+        assert!(
+            error(neutral) + error(muted_orange) < 1e-2,
+            "the other two are on their levels"
+        );
     }
 
     /// The error the fit is scored in keeps most of a turned hue, half of a lighter grey, and little
     /// of a difference next to black, each as a share of CIEDE2000's; and a class holds the same.
     #[test]
     fn the_error_counts_what_an_eye_would_see() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let light = |codes: [u8; 3]| codes.map(crate::hdr_fit::srgb_eotf);
         let share = |target: [u8; 3], ours: [u8; 3]| -> f64 {
@@ -488,7 +583,10 @@ mod tests {
                     .expect("the device scored");
             let sum = |f: fn(&Partial) -> f64| partials[0].iter().map(f).sum::<f64>();
             let class = sum(|p| p.class_error.iter().sum());
-            assert!((class - sum(|p| p.flat)).abs() < 1e-6, "a class holds the mean's error");
+            assert!(
+                (class - sum(|p| p.flat)).abs() < 1e-6,
+                "a class holds the mean's error"
+            );
             sum(|p| p.flat) / sum(|p| p.plain)
         };
         let turned = share([180, 20, 15], [180, 20, 60]);
@@ -496,8 +594,14 @@ mod tests {
         let dark = share([6, 4, 3], [9, 4, 3]);
         let dark_red = share([58, 1, 5], [51, 1, 13]);
         assert!(turned > 0.7, "a red turned purple keeps {turned}");
-        assert!(dark_red > 0.6, "a dark vivid red turned pink is no near-black: {dark_red}");
-        assert!((0.45..0.6).contains(&lighter), "a lighter grey keeps {lighter}");
+        assert!(
+            dark_red > 0.6,
+            "a dark vivid red turned pink is no near-black: {dark_red}"
+        );
+        assert!(
+            (0.45..0.6).contains(&lighter),
+            "a lighter grey keeps {lighter}"
+        );
         assert!(dark < 0.3, "a difference next to black keeps {dark}");
     }
 
@@ -505,7 +609,9 @@ mod tests {
     /// that alone: no deltaE, no place in the trusted count, its weight kept for the gamut sum.
     #[test]
     fn a_clipped_target_counts_for_the_gamut_and_nothing_else() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         // Green a fifth of full scale below zero on a red, which a luma-preserving pull to the
         // hull would take 0.2 / (0.0696 + 0.2) of the chroma to mend; and one inside the gamut,
@@ -514,18 +620,33 @@ mod tests {
         let below = vec![([1.0, -0.2, 0.0], 0.0), (inside, 0.0)];
         let target = [[1.0, 0.0, 0.0], inside];
         let balance = [-2.0, 1.0];
-        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &target, &balance, &IDENTITY, 2, 1);
+        let scoring = Scoring::new(
+            gpu,
+            below_buffer(gpu, &below),
+            &target,
+            &balance,
+            &IDENTITY,
+            2,
+            1,
+        );
         let partials =
             pollster::block_on(scoring.partials(&Shape::Saturation, &[Probe::neutral()]))
                 .expect("the device scored");
         let sum = |f: fn(&Partial) -> f64| partials[0].iter().map(f).sum::<f64>();
         let expected = 0.2 / (0.2126 - 0.7152 * 0.2 + 0.2);
-        assert!((sum(|p| p.gamut_flat) - expected).abs() < 1e-4, "{}", sum(|p| p.gamut_flat));
+        assert!(
+            (sum(|p| p.gamut_flat) - expected).abs() < 1e-4,
+            "{}",
+            sum(|p| p.gamut_flat)
+        );
         assert!((sum(|p| p.gamut_balanced) - 2.0 * expected).abs() < 1e-4);
         assert_eq!(sum(|p| p.trusted), 1.0);
         assert_eq!(sum(|p| p.counted), 2.0);
         assert_eq!(sum(|p| p.weight), 1.0);
         assert_eq!(sum(|p| p.weight_all), 3.0);
-        assert!(sum(|p| p.flat) < 1e-2, "the trusted pair sits on its own level");
+        assert!(
+            sum(|p| p.flat) < 1e-2,
+            "the trusted pair sits on its own level"
+        );
     }
 }

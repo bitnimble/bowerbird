@@ -31,13 +31,24 @@ import type { Row as MetaRow } from './edit_rows';
 import { EditsPanel } from './edits_panel';
 import { MetaPanel } from './meta_panel';
 import { DetailRating } from './detail_rating';
-import { PENDING, bodyLabel, pendingUntil, shutterLabel, stageLabel, takenLabel } from './detail_labels';
+import {
+  PENDING,
+  bodyLabel,
+  pendingUntil,
+  shutterLabel,
+  stageLabel,
+  takenLabel,
+} from './detail_labels';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { styles } from './photo_detail_page.stylex';
 import { renditionLabel } from '../renditions';
 import { isComposite } from '../photos_store';
 
-export const PhotoRating = observer(function PhotoRating({ photoId }: { photoId: string }): JSX.Element {
+export const PhotoRating = observer(function PhotoRating({
+  photoId,
+}: {
+  photoId: string;
+}): JSX.Element {
   return (
     <Row style={styles.rating}>
       <Text variant="label">{PhotoDetailStrings.rating()}</Text>
@@ -46,7 +57,11 @@ export const PhotoRating = observer(function PhotoRating({ photoId }: { photoId:
   );
 });
 
-export const StaleRendition = observer(function StaleRendition({ photoId }: { photoId: string }): JSX.Element {
+export const StaleRendition = observer(function StaleRendition({
+  photoId,
+}: {
+  photoId: string;
+}): JSX.Element {
   const store = useViewerStore();
   const { photos } = usePresenters();
   const building = store.buildingRendition;
@@ -62,7 +77,9 @@ export const StaleRendition = observer(function StaleRendition({ photoId }: { ph
         disabled={store.rerenderTarget == null || building}
         onClick={() => void photos.rerenderRenditions(photoId)}
       >
-        {building ? PhotoDetailStrings.rebuildingRendition() : PhotoDetailStrings.rebuildRendition()}
+        {building
+          ? PhotoDetailStrings.rebuildingRendition()
+          : PhotoDetailStrings.rebuildRendition()}
       </Button>
     </div>
   );
@@ -72,7 +89,10 @@ function RevealButton({ path }: { path: string }): JSX.Element | null {
   const { photos } = usePresenters();
   if (!canRevealFile()) return null;
   return (
-    <InlineIconButton label={PhotoDetailStrings.openContainingFolder()} onClick={() => void photos.revealFile(path)}>
+    <InlineIconButton
+      label={PhotoDetailStrings.openContainingFolder()}
+      onClick={() => void photos.revealFile(path)}
+    >
       <FolderOpen size={12} />
     </InlineIconButton>
   );
@@ -84,7 +104,11 @@ interface DetailPanelProps {
   style?: stylex.StyleXStyles;
 }
 
-export const PhotoEdits = observer(function PhotoEdits({ photoId, defaultOpen, style }: DetailPanelProps): JSX.Element {
+export const PhotoEdits = observer(function PhotoEdits({
+  photoId,
+  defaultOpen,
+  style,
+}: DetailPanelProps): JSX.Element {
   const store = useViewerStore();
   const { photos } = usePresenters();
   useEffect(() => void photos.loadEdits(photoId), [photoId, photos]);
@@ -105,7 +129,11 @@ export const PhotoEdits = observer(function PhotoEdits({ photoId, defaultOpen, s
   );
 });
 
-export const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen, style }: DetailPanelProps): JSX.Element {
+export const CameraPanel = observer(function CameraPanel({
+  photoId,
+  defaultOpen,
+  style,
+}: DetailPanelProps): JSX.Element {
   const pending = pendingUntil(useViewerStore().detailFor(photoId));
 
   return (
@@ -119,35 +147,50 @@ export const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen,
           PhotoDetailStrings.lens(),
           pending((p) => (
             <Tooltip label={p.lens_model ?? undefined}>
-              <span {...stylex.props(styles.clip)}>{p.lens_model ?? PhotoDetailStrings.notRecorded()}</span>
+              <span {...stylex.props(styles.clip)}>
+                {p.lens_model ?? PhotoDetailStrings.notRecorded()}
+              </span>
             </Tooltip>
           )),
         ],
         [PhotoDetailStrings.iso(), pending((p) => p.iso ?? PhotoDetailStrings.notRecorded())],
         [
           PhotoDetailStrings.shutter(),
-          pending((p) => (p.shutter_speed == null ? PhotoDetailStrings.notRecorded() : shutterLabel(p.shutter_speed))),
+          pending((p) =>
+            p.shutter_speed == null
+              ? PhotoDetailStrings.notRecorded()
+              : shutterLabel(p.shutter_speed),
+          ),
         ],
         [
           PhotoDetailStrings.apertureRow(),
-          pending((p) => (p.aperture == null ? PhotoDetailStrings.notRecorded() : PhotoDetailStrings.aperture(p.aperture.toFixed(1)))),
+          pending((p) =>
+            p.aperture == null
+              ? PhotoDetailStrings.notRecorded()
+              : PhotoDetailStrings.aperture(p.aperture.toFixed(1)),
+          ),
         ],
         [
           PhotoDetailStrings.focalLengthRow(),
           pending((p) =>
-            p.focal_length == null ? PhotoDetailStrings.notRecorded() : PhotoDetailStrings.focalLength(Math.round(p.focal_length)),
+            p.focal_length == null
+              ? PhotoDetailStrings.notRecorded()
+              : PhotoDetailStrings.focalLength(Math.round(p.focal_length)),
           ),
         ],
         // The camera's own clock, with the zone it was set to where the body
         // recorded one: without that, 5pm in Sydney and 5pm in London are the
         // same string on a trip that spanned both.
-        [PhotoDetailStrings.takenRow(), pending((p) => takenLabel(p.date_taken, p.date_taken_offset))],
+        [
+          PhotoDetailStrings.takenRow(),
+          pending((p) => takenLabel(p.date_taken, p.date_taken_offset)),
+        ],
         [
           PhotoDetailStrings.gps(),
           pending((p) =>
-            p.latitude == null || p.longitude == null ?
-              PhotoDetailStrings.notRecorded()
-            : PhotoDetailStrings.coordinates(p.latitude.toFixed(5), p.longitude.toFixed(5)),
+            p.latitude == null || p.longitude == null
+              ? PhotoDetailStrings.notRecorded()
+              : PhotoDetailStrings.coordinates(p.latitude.toFixed(5), p.longitude.toFixed(5)),
           ),
         ],
       ]}
@@ -159,13 +202,18 @@ export const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen,
 // rendition, so reading one of them for every rendition reports a number that never touched
 // the other file.
 function qualityLabel(settings: Settings, showing: Exclude<ViewerRendition, 'embedded'>): string {
-  const quality = showing === 'max' ? settings.max_rendition_quality : settings.full_rendition_quality;
+  const quality =
+    showing === 'max' ? settings.max_rendition_quality : settings.full_rendition_quality;
   return PhotoDetailStrings.qualityValue(quality);
 }
 
 // What is actually on screen, which is the only panel that has to hear about a
 // frame decoding.
-export const RenditionPanel = observer(function RenditionPanel({ photoId, defaultOpen, style }: DetailPanelProps): JSX.Element {
+export const RenditionPanel = observer(function RenditionPanel({
+  photoId,
+  defaultOpen,
+  style,
+}: DetailPanelProps): JSX.Element {
   const store = useViewerStore();
   const settings = useAppSettingsStore();
   const photo = store.detailFor(photoId);
@@ -189,31 +237,47 @@ export const RenditionPanel = observer(function RenditionPanel({ photoId, defaul
         // decoded image, the weight off the file the server served it from.
         [
           PhotoDetailStrings.dimensionsRow(),
-          shownImage == null ? PENDING : PhotoDetailStrings.dimensions(shownImage.width, shownImage.height),
+          shownImage == null
+            ? PENDING
+            : PhotoDetailStrings.dimensions(shownImage.width, shownImage.height),
         ],
         [
           PhotoDetailStrings.fileSize(),
-          pending(() => (shownFile?.bytes == null ? PhotoDetailStrings.unknown() : fileSizeLabel(shownFile.bytes))),
+          pending(() =>
+            shownFile?.bytes == null
+              ? PhotoDetailStrings.unknown()
+              : fileSizeLabel(shownFile.bytes),
+          ),
         ],
         // The file the server holds, which is what a reader can act on. Firefox
         // is watching an MP4 of the same frame, but that is made in the page and
         // exists nowhere to be downloaded or measured.
         [
           PhotoDetailStrings.format(),
-          pending(() => (showing === 'embedded' ? PhotoDetailStrings.formatJpeg() : PhotoDetailStrings.formatAvif())),
+          pending(() =>
+            showing === 'embedded'
+              ? PhotoDetailStrings.formatJpeg()
+              : PhotoDetailStrings.formatAvif(),
+          ),
         ],
         // The SDR pipeline's output space; an HDR render leaves it for Rec.2020
         // primaries and a PQ transfer.
         [
           PhotoDetailStrings.colourSpace(),
-          pending(() => (shownFile?.hdr === true ? PhotoDetailStrings.colourSpaceHdr() : PhotoDetailStrings.colourSpaceSdr())),
+          pending(() =>
+            shownFile?.hdr === true
+              ? PhotoDetailStrings.colourSpaceHdr()
+              : PhotoDetailStrings.colourSpaceSdr(),
+          ),
         ],
         [
           PhotoDetailStrings.quality(),
           pending(() =>
-            showing === 'embedded' ? PhotoDetailStrings.qualityNotApplicable()
-            : settings.settings == null ? PhotoDetailStrings.unknown()
-            : qualityLabel(settings.settings, showing),
+            showing === 'embedded'
+              ? PhotoDetailStrings.qualityNotApplicable()
+              : settings.settings == null
+                ? PhotoDetailStrings.unknown()
+                : qualityLabel(settings.settings, showing),
           ),
         ],
         // The camera's JPEG has no file of its own: this is the RAW it is lifted
@@ -224,7 +288,9 @@ export const RenditionPanel = observer(function RenditionPanel({ photoId, defaul
             if (shownFile?.path == null) return PhotoDetailStrings.unknown();
             return (
               <>
-                {showing === 'embedded' ? PhotoDetailStrings.embeddedPath(shownFile.path) : shownFile.path}
+                {showing === 'embedded'
+                  ? PhotoDetailStrings.embeddedPath(shownFile.path)
+                  : shownFile.path}
                 <CopyButton text={shownFile.path} />
                 <RevealButton path={shownFile.path} />
               </>
@@ -238,7 +304,11 @@ export const RenditionPanel = observer(function RenditionPanel({ photoId, defaul
 
 // The original on disk and what the catalogue has made of it. The only panel
 // that reads the shoot and album lists, so renaming either wakes nothing else.
-export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style }: DetailPanelProps): JSX.Element {
+export const RawPanel = observer(function RawPanel({
+  photoId,
+  defaultOpen,
+  style,
+}: DetailPanelProps): JSX.Element {
   const store = useViewerStore();
   const shoots = useShootsStore();
   const albums = useAlbumsStore();
@@ -253,7 +323,8 @@ export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style
   useEffect(() => {
     if (shootId != null && shoot == null) void shootsPresenter.ensure(shootId);
   }, [shootId, shoot, shootsPresenter]);
-  const photoAlbums = photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
+  const photoAlbums =
+    photo == null ? [] : albums.albums.filter((a) => photo.album_ids.includes(a.id));
 
   return (
     <MetaPanel
@@ -261,16 +332,23 @@ export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style
       defaultOpen={defaultOpen}
       style={style}
       rows={[
-        [PhotoDetailStrings.dimensionsRow(), shape == null ? PENDING : PhotoDetailStrings.dimensions(shape.width, shape.height)],
+        [
+          PhotoDetailStrings.dimensionsRow(),
+          shape == null ? PENDING : PhotoDetailStrings.dimensions(shape.width, shape.height),
+        ],
         [
           PhotoDetailStrings.fileSize(),
-          pending((p) => (p.file_size == null ? PhotoDetailStrings.unknown() : fileSizeLabel(p.file_size))),
+          pending((p) =>
+            p.file_size == null ? PhotoDetailStrings.unknown() : fileSizeLabel(p.file_size),
+          ),
         ],
         [PhotoDetailStrings.added(), pending((p) => localDateTime(p.date_added) ?? p.date_added)],
         [
           ShootPhotosStrings.shoot(),
           pending(() =>
-            shoot == null ? PhotoDetailStrings.none() : (
+            shoot == null ? (
+              PhotoDetailStrings.none()
+            ) : (
               <TextLink to={route(PathSegment.shoots(), shoot.id)}>{shoot.folder_path}</TextLink>
             ),
           ),
@@ -296,36 +374,47 @@ export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style
           pending(
             (p) =>
               `${
-                p.is_offloaded ? PhotoDetailStrings.stateOnBackup()
-                : p.is_missing ? PhotoDetailStrings.stateMissing()
-                : p.is_deleted ? PhotoDetailStrings.stateBinned()
-                : PhotoDetailStrings.stateOk()
+                p.is_offloaded
+                  ? PhotoDetailStrings.stateOnBackup()
+                  : p.is_missing
+                    ? PhotoDetailStrings.stateMissing()
+                    : p.is_deleted
+                      ? PhotoDetailStrings.stateBinned()
+                      : PhotoDetailStrings.stateOk()
               }${stageLabel(p)}`,
           ),
         ],
-        ...(photo?.processing_error != null ? ([[PhotoDetailStrings.error(), photo.processing_error]] as MetaRow[]) : []),
+        ...(photo?.processing_error != null
+          ? ([[PhotoDetailStrings.error(), photo.processing_error]] as MetaRow[])
+          : []),
         // Neither for a row composed rather than imported, which has no file of its own to name.
-        ...(isComposite(shape) ? []
-        : ([
-            [
-              PhotoDetailStrings.path(),
-              pending((p) => {
-                const path = p.original_path ?? p.file_path;
-                if (path == null) return PhotoDetailStrings.unknown();
-                return (
-                  <>
-                    {path}
-                    <CopyButton text={path} />
-                    {p.has_original && <RevealButton path={path} />}
-                  </>
-                );
-              }),
-            ],
-          ] as MetaRow[])),
+        ...(isComposite(shape)
+          ? []
+          : ([
+              [
+                PhotoDetailStrings.path(),
+                pending((p) => {
+                  const path = p.original_path ?? p.file_path;
+                  if (path == null) return PhotoDetailStrings.unknown();
+                  return (
+                    <>
+                      {path}
+                      <CopyButton text={path} />
+                      {p.has_original && <RevealButton path={path} />}
+                    </>
+                  );
+                }),
+              ],
+            ] as MetaRow[])),
         // An offloaded original needs no asking: whatever reads it fetches it from the backup (§14.4).
-        ...(photo != null && !isComposite(shape) && !photo.has_original && !photo.is_offloaded ?
-          ([[PhotoDetailStrings.original(), <RemoteOriginal photoId={photo.id} libraryId={photo.library_id} />]] as MetaRow[])
-        : []),
+        ...(photo != null && !isComposite(shape) && !photo.has_original && !photo.is_offloaded
+          ? ([
+              [
+                PhotoDetailStrings.original(),
+                <RemoteOriginal photoId={photo.id} libraryId={photo.library_id} />,
+              ],
+            ] as MetaRow[])
+          : []),
       ]}
     />
   );
@@ -353,7 +442,9 @@ export const RemoteOriginal = observer(function RemoteOriginal({
     return (
       <>
         {PhotoDetailStrings.fetching()}
-        {moving != null && total > 0 && PhotoDetailStrings.fetchingPercent(Math.round((moving.bytes_done / total) * 100))}
+        {moving != null &&
+          total > 0 &&
+          PhotoDetailStrings.fetchingPercent(Math.round((moving.bytes_done / total) * 100))}
       </>
     );
   }
@@ -368,7 +459,9 @@ export const RemoteOriginal = observer(function RemoteOriginal({
         onClick={() => void replication.fetchOriginal(photoId)}
       >
         <HardDriveDownload size={ICON} />
-        {pull?.state === 'failed' ? PhotoDetailStrings.tryAgain() : PhotoDetailStrings.fetchOriginal()}
+        {pull?.state === 'failed'
+          ? PhotoDetailStrings.tryAgain()
+          : PhotoDetailStrings.fetchOriginal()}
       </Button>
     </>
   );

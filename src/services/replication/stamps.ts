@@ -14,9 +14,9 @@ function clockFor(db: Database): Clock {
   const known = clocks.get(db);
   if (known != null) return known;
   const row = db.query('SELECT peer_id FROM replication_identity WHERE singleton = 1').get() as
-    | { peer_id: string }
-    | undefined;
-  if (row == null) throw new Error('this catalogue has no replication identity; migrations have not run');
+    { peer_id: string } | undefined;
+  if (row == null)
+    throw new Error('this catalogue has no replication identity; migrations have not run');
   const clock = Clock.fromDatabase(db, row.peer_id);
   clocks.set(db, clock);
   return clock;

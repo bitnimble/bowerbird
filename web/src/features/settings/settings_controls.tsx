@@ -69,7 +69,11 @@ export const settingStyles = stylex.create({
 // `undefined` covers both reasons for nothing: the value already is the default,
 // and the defaults have not arrived from the server yet. A default that is
 // legitimately null - `last_viewer_rendition` - is still a value to go back to.
-export function resetTo<T>(current: T, fallback: T | undefined, apply: (value: T) => void): (() => void) | undefined {
+export function resetTo<T>(
+  current: T,
+  fallback: T | undefined,
+  apply: (value: T) => void,
+): (() => void) | undefined {
   if (fallback === undefined || current === fallback) return undefined;
   return () => apply(fallback);
 }
@@ -102,7 +106,9 @@ export function SettingRow({
 }): JSX.Element {
   return (
     <Tooltip label={disabledReason}>
-      <div {...stylex.props(styles.row, disabledReason != null && styles.off, stylex.defaultMarker())}>
+      <div
+        {...stylex.props(styles.row, disabledReason != null && styles.off, stylex.defaultMarker())}
+      >
         <span {...stylex.props(styles.left)}>{label}</span>
         <div {...stylex.props(styles.value)}>
           {onReset != null && (
@@ -131,7 +137,13 @@ export function GroupTitle({ children }: { children: ReactNode }): JSX.Element {
   return <PanelTitle style={styles.group}>{children}</PanelTitle>;
 }
 
-export function SettingsColumns({ left, right }: { left: ReactNode; right: ReactNode }): JSX.Element {
+export function SettingsColumns({
+  left,
+  right,
+}: {
+  left: ReactNode;
+  right: ReactNode;
+}): JSX.Element {
   return (
     <div {...stylex.props(styles.columns)}>
       <div>{left}</div>
@@ -140,7 +152,9 @@ export function SettingsColumns({ left, right }: { left: ReactNode; right: React
   );
 }
 
-export type SettingOf<T> = { [K in keyof Settings]: Settings[K] extends T ? K : never }[keyof Settings];
+export type SettingOf<T> = {
+  [K in keyof Settings]: Settings[K] extends T ? K : never;
+}[keyof Settings];
 
 export function useSettingWriter(): (patch: UpdateSettingsRequest) => Promise<boolean> {
   const { appSettings, toasts } = usePresenters();
@@ -184,7 +198,10 @@ export const NumberSetting = observer(function NumberSetting({
   const value = store.settings?.[field];
   const [draft, setDraft] = useState(value == null ? '' : showNumber(value / scale, step));
 
-  useEffect(() => setDraft(value == null ? '' : showNumber(value / scale, step)), [value, scale, step]);
+  useEffect(
+    () => setDraft(value == null ? '' : showNumber(value / scale, step)),
+    [value, scale, step],
+  );
 
   async function commit(): Promise<void> {
     const nextDisplay = Number(draft);
@@ -205,7 +222,11 @@ export const NumberSetting = observer(function NumberSetting({
       label={label}
       hint={hint}
       disabledReason={disabledReason}
-      onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
+      onReset={resetTo(
+        value,
+        store.defaults?.[field],
+        (v) => void write({ [field]: v } as UpdateSettingsRequest),
+      )}
     >
       <TextField
         style={settingStyles.field}
@@ -254,7 +275,11 @@ export const TextSetting = observer(function TextSetting({
     <SettingRow
       label={label}
       hint={hint}
-      onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
+      onReset={resetTo(
+        value,
+        store.defaults?.[field],
+        (v) => void write({ [field]: v } as UpdateSettingsRequest),
+      )}
     >
       <TextField
         style={wide ? settingStyles.wide : settingStyles.field}
@@ -289,7 +314,11 @@ export const ToggleSetting = observer(function ToggleSetting({
       label={label}
       hint={hint}
       disabledReason={disabledReason}
-      onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
+      onReset={resetTo(
+        value,
+        store.defaults?.[field],
+        (v) => void write({ [field]: v } as UpdateSettingsRequest),
+      )}
     >
       <input
         {...stylex.props(focusRing.ring)}

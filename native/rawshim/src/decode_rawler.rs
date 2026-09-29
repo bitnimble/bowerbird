@@ -99,11 +99,7 @@ pub fn upright_preview_jpeg_bytes(bytes: &[u8], want: Preview) -> Option<Vec<u8>
 ///
 /// The two that do want bytes - the editor's open and the FFI download - still have
 /// `upright_preview_jpeg`, which is where the re-encode belongs.
-pub fn upright_preview_rgb(
-    path: &str,
-    long_edge: usize,
-    want: Preview,
-) -> Option<crate::rgb::Rgb> {
+pub fn upright_preview_rgb(path: &str, long_edge: usize, want: Preview) -> Option<crate::rgb::Rgb> {
     let source = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
     upright_preview_rgb_with(&source, decoder.as_ref(), long_edge, want)
@@ -127,7 +123,11 @@ pub fn upright_preview_rgb_with(
         return Some(image);
     }
     let (data, width, height) = orient(image.data, image.width, image.height, upright);
-    Some(crate::rgb::Rgb { width, height, data })
+    Some(crate::rgb::Rgb {
+        width,
+        height,
+        data,
+    })
 }
 
 fn upright_preview_of(source: &rawler::rawsource::RawSource, want: Preview) -> Option<Vec<u8>> {
@@ -178,7 +178,14 @@ pub fn decode_tile(
     halo: usize,
     dust: crate::dust::Known<'_>,
 ) -> Option<Frame> {
-    blocking(decode_tile_source(&mapped(path)?, view, detail, fit, halo, dust))
+    blocking(decode_tile_source(
+        &mapped(path)?,
+        view,
+        detail,
+        fit,
+        halo,
+        dust,
+    ))
 }
 
 /// A photograph mapped for a *region* read, which is the whole reason this is not `RawSource::new`.
@@ -205,7 +212,17 @@ pub(crate) async fn decode_tile_source(
     halo: usize,
     dust: crate::dust::Known<'_>,
 ) -> Option<Frame> {
-    let region = match region_mosaic(source, view, detail, fit, halo, crate::px::Span::exact(0), dust).await? {
+    let region = match region_mosaic(
+        source,
+        view,
+        detail,
+        fit,
+        halo,
+        crate::px::Span::exact(0),
+        dust,
+    )
+    .await?
+    {
         Region::Mosaic(region) => region,
         Region::Linear(frame) => return Some(frame),
     };
@@ -253,13 +270,20 @@ pub(crate) async fn decode_shifted_tile(
     {
         return None;
     }
-    let reference_extra = crate::pixel_shift_align::REFERENCE_MARGIN.raw()
+    let reference_extra = crate::pixel_shift_align::REFERENCE_MARGIN
+        .raw()
         .saturating_sub(RCD_MARGIN + crate::tile_halo(halo));
     let Region::Mosaic(reference) = region_mosaic(
-        first, view, detail, fit, halo,
+        first,
+        view,
+        detail,
+        fit,
+        halo,
         crate::px::Span::exact(reference_extra),
         crate::dust::Known::Off,
-    ).await? else {
+    )
+    .await?
+    else {
         return None;
     };
     let gpu = crate::gpu::device()?;
@@ -277,14 +301,22 @@ pub(crate) async fn decode_shifted_tile(
         reference.crop.1.saturating_sub(reach_y),
     );
     let right = (reference.crop.0 + reference.crop.2 + reach_x)
-        .next_multiple_of(period_w).min(reference.mosaic.width);
+        .next_multiple_of(period_w)
+        .min(reference.mosaic.width);
     let bottom = (reference.crop.1 + reference.crop.3 + reach_y)
-        .next_multiple_of(period_h).min(reference.mosaic.height);
+        .next_multiple_of(period_h)
+        .min(reference.mosaic.height);
     let (width, height) = reference.cfa.align_extent(right - left, bottom - top);
     let (reference_x, reference_y) = reference.origin.raw();
     let merge_region = crate::px::Rect::exact(reference_x + left, reference_y + top, width, height);
     let merged = crate::pixel_shift::Merged::over(gpu, merge_region);
-    merged.gather(gpu, &reference.mosaic, &reference.cfa, reference.origin, None)?;
+    merged.gather(
+        gpu,
+        &reference.mosaic,
+        &reference.cfa,
+        reference.origin,
+        None,
+    )?;
     let window = crate::px::Rect::exact(
         reference_x + reference.crop.0,
         reference_y + reference.crop.1,
@@ -295,10 +327,16 @@ pub(crate) async fn decode_shifted_tile(
         // The reference's fit, so every frame is denoised as the one it is merged into.
         let fit = reference.noise.map_or(fit, crate::galosh::Fit::Given);
         let Region::Mosaic(frame) = region_mosaic(
-            source, view, detail, fit, halo,
+            source,
+            view,
+            detail,
+            fit,
+            halo,
             crate::pixel_shift_align::MARGIN,
             crate::dust::Known::Off,
-        ).await? else {
+        )
+        .await?
+        else {
             return None;
         };
         if frame.cfa != reference.cfa {
@@ -318,7 +356,8 @@ pub(crate) async fn decode_shifted_tile(
             window,
             |sensor_x, sensor_y| {
                 let point = [sensor_x - photo_x as f64, sensor_y - photo_y as f64];
-                let projected = crate::pixel_shift::prior_at(recipe, at + 1, point).unwrap_or(fallback);
+                let projected =
+                    crate::pixel_shift::prior_at(recipe, at + 1, point).unwrap_or(fallback);
                 crate::pixel_shift::Offset {
                     x: crate::px::Extent::measured(projected.x.raw() + crop_shift_x),
                     y: crate::px::Extent::measured(projected.y.raw() + crop_shift_y),
@@ -338,15 +377,20 @@ pub(crate) async fn decode_shifted_tile(
         reference.crop,
         reference.colour,
         orientation_code(reference.upright),
-        &|recording, rgb, window| merged.settle(
-            gpu,
-            recording,
-            rgb,
-            (reference_x + window.0 - merge_region.at.x.raw(),
-             reference_y + window.1 - merge_region.at.y.raw(),
-             window.2, window.3),
-            noise,
-        ),
+        &|recording, rgb, window| {
+            merged.settle(
+                gpu,
+                recording,
+                rgb,
+                (
+                    reference_x + window.0 - merge_region.at.x.raw(),
+                    reference_y + window.1 - merge_region.at.y.raw(),
+                    window.2,
+                    window.3,
+                ),
+                noise,
+            )
+        },
     )
     .await?;
     Some(reference.frame(built))
@@ -382,9 +426,24 @@ impl RegionMosaic {
         rcd: &'static crate::demosaic::Rcd,
     ) -> Option<crate::resident::Resident> {
         let crop = self.crop;
-        let crop = (crop.0 / 2, crop.1 / 2, reduced_span(crop.2, 2), reduced_span(crop.3, 2));
+        let crop = (
+            crop.0 / 2,
+            crop.1 / 2,
+            reduced_span(crop.2, 2),
+            reduced_span(crop.3, 2),
+        );
         let orientation = orientation_code(self.upright);
-        reduced_into(gpu, rcd, &self.mosaic, crop, self.mosaic.width, self.colour, orientation, &self.cfa).await
+        reduced_into(
+            gpu,
+            rcd,
+            &self.mosaic,
+            crop,
+            self.mosaic.width,
+            self.colour,
+            orientation,
+            &self.cfa,
+        )
+        .await
     }
 
     fn frame(&self, built: crate::resident::Resident) -> Frame {
@@ -437,13 +496,17 @@ async fn region_mosaic(
     // A DNG is read whole whatever `dummy` says, so a linear one is already here to window.
     if is_linear(&shape) {
         let held = linear(decoder.as_ref(), shape, upright).await;
-        let held = held.map_err(|why| crate::warn(&format!("rawshim: {why}"))).ok()?;
+        let held = held
+            .map_err(|why| crate::warn(&format!("rawshim: {why}")))
+            .ok()?;
         return held.window(view.window, view.scale).map(Region::Linear);
     }
     let (frame_w, frame_h) = (shape.width, shape.height);
-    let (origin, extent) = shape.crop_area.map_or(((0, 0), (frame_w, frame_h)), |area| {
-        ((area.p.x, area.p.y), (area.d.w, area.d.h))
-    });
+    let (origin, extent) = shape
+        .crop_area
+        .map_or(((0, 0), (frame_w, frame_h)), |area| {
+            ((area.p.x, area.p.y), (area.d.w, area.d.h))
+        });
     let extent = (whole_sites(extent.0), whole_sites(extent.1));
     // Named upright, cropped in the sensor's coordinates, handed back upright again.
     let tile = as_sensor_rect(tile, extent.0, extent.1, upright);
@@ -487,7 +550,9 @@ async fn region_mosaic(
     );
 
     let held = crate::raw_cache::region(source, &params, region, || {
-        let (image, covered) = decoder.raw_image_region_tight(&source, &params, region, false).ok()?;
+        let (image, covered) = decoder
+            .raw_image_region_tight(&source, &params, region, false)
+            .ok()?;
         Some(crate::raw_cache::Region { image, covered })
     })?;
     let (image, decoded) = (&held.image, held.covered);
@@ -503,7 +568,8 @@ async fn region_mosaic(
     let mut window = vec![0u16; region_w * region_h];
     for row in 0..region_h {
         let from = (top - decoded.p.y + row) * image.width + (left - decoded.p.x);
-        window[row * region_w..(row + 1) * region_w].copy_from_slice(&samples[from..from + region_w]);
+        window[row * region_w..(row + 1) * region_w]
+            .copy_from_slice(&samples[from..from + region_w]);
     }
 
     let cfa = cfa_of(image)?;
@@ -518,13 +584,26 @@ async fn region_mosaic(
         crate::dust::apply(gpu, &mosaic, &dust, (left, top));
     }
 
-    let noise =
-        denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, channel_ceilings(image)).await;
+    let noise = denoise_over(
+        gpu,
+        &mut mosaic,
+        detail,
+        fit,
+        halo,
+        &cfa,
+        channel_ceilings(image),
+    )
+    .await;
 
     let colour = colour_of(image)?;
     // The tile's place inside the region, which is where the margin that was grown on ends.
     let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
-    let crop = (inset.0, inset.1, tile.width.min(region_w - inset.0), tile.height.min(region_h - inset.1));
+    let crop = (
+        inset.0,
+        inset.1,
+        tile.width.min(region_w - inset.0),
+        tile.height.min(region_h - inset.1),
+    );
     // **Halved where the caller asked for it, which is the same fork `decode_source` takes over a
     // whole frame** - one RGB pixel read straight off each 2x2 site rather than RCD interpolating
     // between them. It is the *demosaic* that goes, not the read and not the denoise: both of those
@@ -561,7 +640,14 @@ async fn region_mosaic(
 
 /// The whole frame, at the sensor's own resolution and with nothing taken off the glass.
 pub fn decode(path: &str, detail: crate::galosh::Detail) -> Option<Frame> {
-    decode_fitted(path, detail, 0, false, crate::galosh::Fit::Measure, crate::dust::Wanted::Off)
+    decode_fitted(
+        path,
+        detail,
+        0,
+        false,
+        crate::galosh::Fit::Measure,
+        crate::dust::Wanted::Off,
+    )
 }
 
 /// The frame, halved where the caller's floor allows it.
@@ -590,7 +676,14 @@ pub fn decode_fitted(
         Err(_) => rawler::rawsource::RawSource::new(path).ok()?,
     };
     lap("file");
-    blocking(decode_source(&source, detail, at_least_long_edge, force_half, fit, dust))
+    blocking(decode_source(
+        &source,
+        detail,
+        at_least_long_edge,
+        force_half,
+        fit,
+        dust,
+    ))
 }
 
 /// The whole file, read past the page cache, and the offset it starts at.
@@ -657,7 +750,13 @@ pub fn decode_bytes(
     fit: crate::galosh::Fit,
     dust: crate::dust::Wanted<'_>,
 ) -> Option<Frame> {
-    blocking(decode_bytes_async(bytes, detail, at_least_long_edge, fit, dust))
+    blocking(decode_bytes_async(
+        bytes,
+        detail,
+        at_least_long_edge,
+        fit,
+        dust,
+    ))
 }
 
 /// The same, awaited, which is the only spelling a browser can take.
@@ -781,10 +880,14 @@ async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::He
     let upright = upright_of(decoder.as_ref(), source, &params);
 
     lap("open");
-    let image = decoder.raw_image(source, &params, false).map_err(|why| why.to_string())?;
+    let image = decoder
+        .raw_image(source, &params, false)
+        .map_err(|why| why.to_string())?;
     lap("read");
     if is_linear(&image) {
-        return linear(decoder.as_ref(), image, upright).await.map(crate::decode::Held::Rendered);
+        return linear(decoder.as_ref(), image, upright)
+            .await
+            .map(crate::decode::Held::Rendered);
     }
     hold(decoder.as_ref(), source, &params, image, upright)
         .await
@@ -795,7 +898,10 @@ async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::He
 /// Whether this file was demosaiced before it was written: a Lightroom merge, an Enhance, a DNG
 /// converter asked for linear output.
 fn is_linear(image: &rawler::RawImage) -> bool {
-    matches!(image.photometric, rawler::rawimage::RawPhotometricInterpretation::LinearRaw)
+    matches!(
+        image.photometric,
+        rawler::rawimage::RawPhotometricInterpretation::LinearRaw
+    )
 }
 
 /// A linear DNG as a picture on the device, conditioned through `linearise.slang`'s table.
@@ -818,18 +924,28 @@ async fn linear(
         rawler::RawImageData::Float(samples) => samples.len(),
     };
     if image.cpp != 3 {
-        return Err(format!("this linear DNG has {} samples a pixel where 3 were expected", image.cpp));
+        return Err(format!(
+            "this linear DNG has {} samples a pixel where 3 were expected",
+            image.cpp
+        ));
     }
     if stored < values {
-        return Err(format!("this linear DNG holds {stored} samples where {values} were expected"));
+        return Err(format!(
+            "this linear DNG holds {stored} samples where {values} were expected"
+        ));
     }
     let matrix = camera_to_rec2020(&image).ok_or("this DNG's camera matrix is singular")?;
     let curves = plane_curves(decoder, width, height)?;
-    let crop = image.crop_area.map_or(crate::px::Rect::exact(0, 0, width, height), |area| {
-        crate::px::Rect::exact(area.p.x, area.p.y, area.d.w, area.d.h)
-    });
-    let coding =
-        crate::transfer::Coding { matrix, curve: crate::transfer::Curve::Linear, depth: 16 };
+    let crop = image
+        .crop_area
+        .map_or(crate::px::Rect::exact(0, 0, width, height), |area| {
+            crate::px::Rect::exact(area.p.x, area.p.y, area.d.w, area.d.h)
+        });
+    let coding = crate::transfer::Coding {
+        matrix,
+        curve: crate::transfer::Curve::Linear,
+        depth: 16,
+    };
     let as_shot = as_shot_of(gpu, &image).await;
 
     let data = std::mem::replace(&mut image.data, rawler::RawImageData::Integer(Vec::new()));
@@ -837,7 +953,12 @@ async fn linear(
         rawler::RawImageData::Integer(mut samples) => {
             let table = linear_table(&image, &curves);
             let ceiling = std::array::from_fn(|channel| {
-                table.iter().skip(channel).step_by(3).copied().fold(0.0f32, f32::max)
+                table
+                    .iter()
+                    .skip(channel)
+                    .step_by(3)
+                    .copied()
+                    .fold(0.0f32, f32::max)
             });
             samples.truncate(values);
             let picture = crate::linearise::Picture::camera(
@@ -877,7 +998,10 @@ fn float_affine(
         .ifd(rawler::decoders::WellKnownIFD::Raw)
         .ok()
         .flatten()
-        .and_then(|ifd| ifd.get_entry(rawler::tags::TiffCommonTag::WhiteLevel).cloned())
+        .and_then(|ifd| {
+            ifd.get_entry(rawler::tags::TiffCommonTag::WhiteLevel)
+                .cloned()
+        })
         .filter(|entry| entry.count() > 0);
     let white = |channel: usize| match &stated {
         Some(entry) => entry.force_f32(channel.min(entry.count() as usize - 1)),
@@ -885,9 +1009,15 @@ fn float_affine(
     };
     let black = &image.blacklevel.levels;
     let gains = white_balance_gains(image);
-    let mut affine = crate::linearise::Affine { scale: [0.0; 3], offset: [0.0; 3] };
+    let mut affine = crate::linearise::Affine {
+        scale: [0.0; 3],
+        offset: [0.0; 3],
+    };
     for channel in 0..3 {
-        let floor = black.get(channel).or(black.first()).map_or(0.0, |level| level.as_f32());
+        let floor = black
+            .get(channel)
+            .or(black.first())
+            .map_or(0.0, |level| level.as_f32());
         let scale = gains[channel] / (white(channel) - floor).max(f32::MIN_POSITIVE);
         affine.scale[channel] = scale;
         affine.offset[channel] = -floor * scale;
@@ -907,9 +1037,19 @@ fn linear_table(image: &rawler::RawImage, curves: &[Vec<f64>; 3]) -> Vec<f32> {
     // width is a fact about the sensor, and a merge's curve was fitted to the level it states.
     let white = &image.whitelevel.0;
     let levels: [Coefficients; 3] = std::array::from_fn(|channel| {
-        let floor = black.get(channel).or(black.first()).map_or(0.0, |level| level.as_f32());
-        let white = white.get(channel).or(white.first()).map_or(65535.0, |level| *level as f32);
-        Coefficients { floor, range: (white - floor).max(1.0), gain: gains[channel] }
+        let floor = black
+            .get(channel)
+            .or(black.first())
+            .map_or(0.0, |level| level.as_f32());
+        let white = white
+            .get(channel)
+            .or(white.first())
+            .map_or(65535.0, |level| *level as f32);
+        Coefficients {
+            floor,
+            range: (white - floor).max(1.0),
+            gain: gains[channel],
+        }
     });
     table_of(levels, curves)
 }
@@ -922,7 +1062,11 @@ fn table_of(levels: [Coefficients; 3], curves: &[Vec<f64>; 3]) -> Vec<f32> {
             std::array::from_fn::<f32, 3, _>(|channel| {
                 let level = levels[channel];
                 let x = f64::from(conditioned(sample, Coefficients { gain: 1.0, ..level }));
-                let y = curves[channel].iter().rev().fold(0.0, |sum, c| sum * x + c).min(1.0);
+                let y = curves[channel]
+                    .iter()
+                    .rev()
+                    .fold(0.0, |sum, c| sum * x + c)
+                    .min(1.0);
                 y as f32 * level.gain
             })
         })
@@ -953,9 +1097,14 @@ fn plane_curves(
         .ifd(rawler::decoders::WellKnownIFD::Raw)
         .ok()
         .flatten()
-        .and_then(|ifd| ifd.get_entry(rawler::tags::DngTag::OpcodeList2).map(|entry| entry.value.clone()));
+        .and_then(|ifd| {
+            ifd.get_entry(rawler::tags::DngTag::OpcodeList2)
+                .map(|entry| entry.value.clone())
+        });
     match list {
-        Some(rawler::formats::tiff::Value::Undefined(bytes)) => opcode_curves(&bytes, width, height),
+        Some(rawler::formats::tiff::Value::Undefined(bytes)) => {
+            opcode_curves(&bytes, width, height)
+        }
         _ => Ok(identity_curves()),
     }
 }
@@ -972,10 +1121,22 @@ fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>;
     let mut curves = identity_curves();
     let truncated = || "this DNG's OpcodeList2 is truncated".to_string();
     let word = |at: usize| -> Result<u32, String> {
-        Ok(u32::from_be_bytes(bytes.get(at..at + 4).ok_or_else(truncated)?.try_into().unwrap()))
+        Ok(u32::from_be_bytes(
+            bytes
+                .get(at..at + 4)
+                .ok_or_else(truncated)?
+                .try_into()
+                .unwrap(),
+        ))
     };
     let float = |at: usize| -> Result<f64, String> {
-        Ok(f64::from_be_bytes(bytes.get(at..at + 8).ok_or_else(truncated)?.try_into().unwrap()))
+        Ok(f64::from_be_bytes(
+            bytes
+                .get(at..at + 8)
+                .ok_or_else(truncated)?
+                .try_into()
+                .unwrap(),
+        ))
     };
     let mut at = 4;
     for _ in 0..word(0)? {
@@ -984,12 +1145,25 @@ fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>;
         at = body.saturating_add(size);
         if id != MAP_POLYNOMIAL {
             match flags & OPTIONAL {
-                0 => return Err(format!("this DNG asks for opcode {id}, which this build does not apply")),
+                0 => {
+                    return Err(format!(
+                        "this DNG asks for opcode {id}, which this build does not apply"
+                    ));
+                }
                 _ => continue,
             }
         }
-        let [top, left, bottom, right, plane, planes, row_pitch, column_pitch, degree] =
-            std::array::from_fn(|k| word(body + k * 4));
+        let [
+            top,
+            left,
+            bottom,
+            right,
+            plane,
+            planes,
+            row_pitch,
+            column_pitch,
+            degree,
+        ] = std::array::from_fn(|k| word(body + k * 4));
         let whole = top? == 0
             && left? == 0
             && bottom? as usize >= height
@@ -999,8 +1173,9 @@ fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>;
         if !whole {
             return Err("this DNG maps only part of its picture through a polynomial".into());
         }
-        let coefficients =
-            (0..=degree? as usize).map(|k| float(body + 36 + k * 8)).collect::<Result<Vec<_>, _>>()?;
+        let coefficients = (0..=degree? as usize)
+            .map(|k| float(body + 36 + k * 8))
+            .collect::<Result<Vec<_>, _>>()?;
         let plane = plane? as usize;
         for curve in curves.iter_mut().skip(plane).take(planes? as usize) {
             *curve = coefficients.clone();
@@ -1099,8 +1274,9 @@ fn optics_of(
 /// two focal lengths do not give a crop factor.
 fn diagonal_mm_of(focal: f32, equivalent: f32) -> crate::px::Extent<crate::px::Millimetre> {
     let full = crate::dust::FULL_FRAME_DIAGONAL_MM;
-    crate::header::crop_of(focal, equivalent)
-        .map_or(full, |crop| crate::px::Extent::exactly(full.raw() / f64::from(crop)))
+    crate::header::crop_of(focal, equivalent).map_or(full, |crop| {
+        crate::px::Extent::exactly(full.raw() / f64::from(crop))
+    })
 }
 
 async fn decode_source(
@@ -1111,13 +1287,24 @@ async fn decode_source(
     fit: crate::galosh::Fit,
     dust: crate::dust::Wanted<'_>,
 ) -> Option<Frame> {
-    let opened = open(source).await.map_err(|why| crate::warn(&format!("rawshim: {why}")));
+    let opened = open(source)
+        .await
+        .map_err(|why| crate::warn(&format!("rawshim: {why}")));
     match opened.ok()? {
         crate::decode::Held::Mosaic(held) => {
-            held.into_frame(detail, at_least_long_edge, force_half, fit, dust, &crate::open_stage::quiet)
-                .await
+            held.into_frame(
+                detail,
+                at_least_long_edge,
+                force_half,
+                fit,
+                dust,
+                &crate::open_stage::quiet,
+            )
+            .await
         }
-        crate::decode::Held::Rendered(held) => crate::decode::whole(&held, at_least_long_edge).await,
+        crate::decode::Held::Rendered(held) => {
+            crate::decode::whole(&held, at_least_long_edge).await
+        }
     }
 }
 
@@ -1203,7 +1390,14 @@ impl Held {
         let gpu = crate::gpu::device();
         let whole = &self.mosaic;
         let Sensor {
-            width: frame_w, height: frame_h, cfa, crop, colour, upright, as_shot, ..
+            width: frame_w,
+            height: frame_h,
+            cfa,
+            crop,
+            colour,
+            upright,
+            as_shot,
+            ..
         } = self.sensor;
         let (origin, extent) = ((crop.0, crop.1), (crop.2, crop.3));
         let tile = as_sensor_rect(tile, extent.0, extent.1, upright);
@@ -1240,8 +1434,7 @@ impl Held {
         // bands either side of it.
         crate::dust::apply(gpu?, &mosaic, &dust, (left, top));
 
-        let noise =
-            denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
+        let noise = denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
 
         let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
         let region_crop = (
@@ -1251,7 +1444,8 @@ impl Held {
             tile.height.min(region_h - inset.1),
         );
         let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-        let halving = scale.halves() && region_crop.0 % 2 == 0 && region_crop.1 % 2 == 0 && cfa.is_bayer();
+        let halving =
+            scale.halves() && region_crop.0 % 2 == 0 && region_crop.1 % 2 == 0 && cfa.is_bayer();
         let built = if halving {
             let crop = (
                 region_crop.0 / 2,
@@ -1259,11 +1453,28 @@ impl Held {
                 reduced_span(region_crop.2, 2),
                 reduced_span(region_crop.3, 2),
             );
-            reduced_into(gpu, rcd, &mosaic, crop, region_w, colour, orientation_code(upright), &cfa)
-                .await
+            reduced_into(
+                gpu,
+                rcd,
+                &mosaic,
+                crop,
+                region_w,
+                colour,
+                orientation_code(upright),
+                &cfa,
+            )
+            .await
         } else {
-            demosaic_in_tiles(gpu, rcd, &mosaic, &cfa, region_crop, colour, orientation_code(upright))
-                .await
+            demosaic_in_tiles(
+                gpu,
+                rcd,
+                &mosaic,
+                &cfa,
+                region_crop,
+                colour,
+                orientation_code(upright),
+            )
+            .await
         };
         drop(mosaic);
         let built = built?;
@@ -1296,9 +1507,12 @@ impl Held {
         report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
         let copy = self.mosaic.duplicate(crate::gpu::device()?);
-        Held { mosaic: copy, sensor: self.sensor.clone() }
-            .into_frame(detail, at_least_long_edge, false, fit, dust, report)
-            .await
+        Held {
+            mosaic: copy,
+            sensor: self.sensor.clone(),
+        }
+        .into_frame(detail, at_least_long_edge, false, fit, dust, report)
+        .await
     }
 
     /// The same, filtering this mosaic where it lies. For a caller that will not ask twice.
@@ -1317,7 +1531,16 @@ impl Held {
         let mut lap = crate::clock::laps("  decode ");
         let gpu = crate::gpu::device();
         let glass = self.sensor.glass();
-        let Sensor { width, height, cfa, crop, colour, upright, as_shot, .. } = self.sensor;
+        let Sensor {
+            width,
+            height,
+            cfa,
+            crop,
+            colour,
+            upright,
+            as_shot,
+            ..
+        } = self.sensor;
         let mosaic = &mut self.mosaic;
 
         // **Above the denoise, so the shadow is gone before anything tries to preserve it**, and
@@ -1372,22 +1595,23 @@ impl Held {
                             true => {
                                 report(crate::open_stage::Stage::Denoising);
                                 match detail.denoiser {
-                                    crate::galosh::Denoiser::Pmrid => match crate::pmrid::device(gpu)
-                                    {
-                                        Some(net) => crate::pmrid::denoise(
-                                            gpu,
-                                            net,
-                                            frame,
-                                            &cfa,
-                                            colour.ceiling,
-                                            detail,
-                                            measured,
-                                        ),
-                                        None => crate::warn(
-                                            "rawshim: PMRID's weights have not been handed over, \
+                                    crate::galosh::Denoiser::Pmrid => {
+                                        match crate::pmrid::device(gpu) {
+                                            Some(net) => crate::pmrid::denoise(
+                                                gpu,
+                                                net,
+                                                frame,
+                                                &cfa,
+                                                colour.ceiling,
+                                                detail,
+                                                measured,
+                                            ),
+                                            None => crate::warn(
+                                                "rawshim: PMRID's weights have not been handed over, \
                                              so this frame was not denoised",
-                                        ),
-                                    },
+                                            ),
+                                        }
+                                    }
                                     crate::galosh::Denoiser::Galosh => {
                                         denoise_in_tiles(
                                             gpu,
@@ -1473,14 +1697,31 @@ impl Held {
                     reduced_span(crop.2, by),
                     reduced_span(crop.3, by),
                 );
-                reduced_into(gpu, rcd, &mosaic, crop, width, colour, orientation_code(upright), &cfa)
-                    .await?
+                reduced_into(
+                    gpu,
+                    rcd,
+                    &mosaic,
+                    crop,
+                    width,
+                    colour,
+                    orientation_code(upright),
+                    &cfa,
+                )
+                .await?
             }
             false => {
                 let (gpu, rcd) =
                     gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-                demosaic_in_tiles(gpu, rcd, &mosaic, &cfa, crop, colour, orientation_code(upright))
-                    .await?
+                demosaic_in_tiles(
+                    gpu,
+                    rcd,
+                    &mosaic,
+                    &cfa,
+                    crop,
+                    colour,
+                    orientation_code(upright),
+                )
+                .await?
             }
         };
 
@@ -1667,7 +1908,15 @@ async fn denoise_in_tiles(
     // whole-frame answer never uses - `pass12` shrinks inside a tile indexed from the region
     // origin, so a region off the grid shifts the tiling under every pixel in it.
     crate::galosh::denoise_in_tiles(
-        gpu, kernels, mosaic, cfa, amounts, fit, halo, RENDER_TILE, |_| {},
+        gpu,
+        kernels,
+        mosaic,
+        cfa,
+        amounts,
+        fit,
+        halo,
+        RENDER_TILE,
+        |_| {},
     )
     .await;
 }
@@ -1707,21 +1956,23 @@ async fn reduced_into(
     let reduce = reduction(cfa)? as u32;
     // Once for the region, not once per tile: `demosaic::shape_group` says what that measured.
     let (_shape, shape_group) = crate::demosaic::shape_group(gpu, rcd, cfa, mosaic, 0);
-    let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize)| {
-        crate::demosaic::Placement {
+    let placed =
+        |dest: (usize, usize), inner: (usize, usize, usize, usize)| crate::demosaic::Placement {
             stride: crate::px::Span::exact(stride),
             crop: crate::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
             dest: crate::px::At::exact(dest.0, dest.1),
             frame: crate::px::Size::exact(crop_w, crop_h),
             orientation,
             reduce,
-        }
-    };
+        };
     let (out_w, out_h) = placed((0, 0), (0, 0, 1, 1)).out();
     let frame = crate::resident::Resident::empty(gpu, out_w, out_h);
     for (ty0, ty1) in spans(crop_h) {
         for (tx0, tx1) in spans(crop_w) {
-            let at = placed((tx0, ty0), (crop_left + tx0, crop_top + ty0, tx1 - tx0, ty1 - ty0));
+            let at = placed(
+                (tx0, ty0),
+                (crop_left + tx0, crop_top + ty0, tx1 - tx0, ty1 - ty0),
+            );
             crate::demosaic::reduce_into(
                 gpu,
                 rcd,
@@ -1766,11 +2017,22 @@ async fn demosaic_in_tiles(
     colour: crate::demosaic::Colour,
     orientation: u32,
 ) -> Option<crate::resident::Resident> {
-    demosaic_settled_in_tiles(gpu, rcd, mosaic, cfa, crop, colour, orientation, &|_, _, _| ()).await
+    demosaic_settled_in_tiles(
+        gpu,
+        rcd,
+        mosaic,
+        cfa,
+        crop,
+        colour,
+        orientation,
+        &|_, _, _| (),
+    )
+    .await
 }
 
 /// A tile's RCD plane, and the rectangle of the mosaic it covers as `(left, top, width, height)`.
-type Settle<'a> = dyn Fn(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer, (usize, usize, usize, usize)) + 'a;
+type Settle<'a> = dyn Fn(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer, (usize, usize, usize, usize))
+    + 'a;
 
 /// [`demosaic_in_tiles`], with each tile's plane handed to `settle` before it is coloured
 /// (`demosaic::demosaic_settled_into`).
@@ -1899,7 +2161,10 @@ fn upright_of(
         .raw_metadata(source, params)
         .ok()
         .and_then(|meta| meta.exif.orientation)
-        .map_or(rawler::decoders::Orientation::Normal, rawler::decoders::Orientation::from_u16)
+        .map_or(
+            rawler::decoders::Orientation::Normal,
+            rawler::decoders::Orientation::from_u16,
+        )
 }
 
 /// The sensor's pattern, as its own period rather than as a 2x2.
@@ -1966,7 +2231,14 @@ fn condition(
     };
     let gpu = gpu?;
     let curve = curve(cfa, &levels);
-    crate::condition::normalise(gpu, crate::condition::device(gpu), samples, width, height, &curve)
+    crate::condition::normalise(
+        gpu,
+        crate::condition::device(gpu),
+        samples,
+        width,
+        height,
+        &curve,
+    )
 }
 
 /// What the file says about where the signal sits, read once for the frame.
@@ -2065,7 +2337,11 @@ fn curve(cfa: &crate::cfa::Cfa, levels: &Levels) -> crate::condition::Curve {
         .iter()
         .flat_map(|&at| (0..=u16::MAX).map(move |sample| conditioned(sample, at)))
         .collect();
-    crate::condition::Curve { values, slot_of, period: cfa.period() }
+    crate::condition::Curve {
+        values,
+        slot_of,
+        period: cfa.period(),
+    }
 }
 
 /// The black level of each position in the period, in sensor counts.
@@ -2095,7 +2371,8 @@ fn stated_only(image: &rawler::RawImage) -> bool {
 
 /// Set by the comparison harness to render the stated level and the sensor's cap from one process,
 /// which is the only way to search a frame for where the choice between them matters.
-static STATED_WHITE_LEVEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STATED_WHITE_LEVEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 pub fn use_stated_white_level(on: bool) {
     STATED_WHITE_LEVEL.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -2148,7 +2425,10 @@ pub fn saturation_of(image: &rawler::RawImage) -> f32 {
 /// A stated level rounded up to the width of the converter that produced it.
 fn adc_ceiling(stated: u16) -> u16 {
     // `max` because a level that is already a power of two rounds to just below itself.
-    stated.checked_next_power_of_two().map_or(u16::MAX, |n| n - 1).max(stated)
+    stated
+        .checked_next_power_of_two()
+        .map_or(u16::MAX, |n| n - 1)
+        .max(stated)
 }
 
 /// Per-channel gains, scaled so the largest of them is unity.
@@ -2168,12 +2448,20 @@ fn white_balance_gains(image: &rawler::RawImage) -> [f32; 4] {
 /// The arithmetic of the above, off the coefficients alone.
 fn scaled_gains(wb: [f32; 4]) -> [f32; 4] {
     let usable = |c: f32| c.is_finite() && c > 0.0;
-    let largest = wb.iter().copied().filter(|c| usable(*c)).fold(0.0f32, f32::max);
+    let largest = wb
+        .iter()
+        .copied()
+        .filter(|c| usable(*c))
+        .fold(0.0f32, f32::max);
     let scale = if usable(largest) { largest } else { 1.0 };
     let mut out = [1f32; 4];
     for (channel, slot) in out.iter_mut().enumerate() {
         let coefficient = wb[channel.min(3)];
-        *slot = if usable(coefficient) { coefficient / scale } else { 1.0 };
+        *slot = if usable(coefficient) {
+            coefficient / scale
+        } else {
+            1.0
+        };
     }
     out
 }
@@ -2324,7 +2612,11 @@ mod tests {
         match super::uncached(&path) {
             Ok((bytes, at)) => {
                 let address = bytes.as_ptr() as usize + at;
-                assert_eq!(address % 4096, 0, "the read started at an unaligned address");
+                assert_eq!(
+                    address % 4096,
+                    0,
+                    "the read started at an unaligned address"
+                );
                 assert_eq!(&bytes[at..], &want[..], "the bytes came back changed");
             }
             // A filesystem may still refuse the flag, and the decode maps the file there instead.
@@ -2348,7 +2640,17 @@ mod tests {
 
     fn map_polynomial(plane: u32, rect: [u32; 4], coefficients: &[f64]) -> Vec<u8> {
         let mut body = Vec::new();
-        let words = [rect[0], rect[1], rect[2], rect[3], plane, 1, 1, 1, coefficients.len() as u32 - 1];
+        let words = [
+            rect[0],
+            rect[1],
+            rect[2],
+            rect[3],
+            plane,
+            1,
+            1,
+            1,
+            coefficients.len() as u32 - 1,
+        ];
         for word in words {
             body.extend_from_slice(&word.to_be_bytes());
         }
@@ -2395,11 +2697,22 @@ mod tests {
         const SHORT: u16 = 3;
         const LONG: u16 = 4;
         let rational = |n: i32, d: u32| [n.to_le_bytes(), d.to_le_bytes()].concat();
-        let shorts = |values: &[u16]| values.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+        let shorts = |values: &[u16]| {
+            values
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<u8>>()
+        };
         let long = |value: u32| value.to_le_bytes().to_vec();
         // Rec.709's own XYZ matrix, so the camera is sRGB and a neutral stays one.
-        let matrix = [3.2406, -1.5372, -0.4986, -0.9689, 1.8758, 0.0415, 0.0557, -0.2040, 1.0570];
-        let strip: Vec<u8> = pixels.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+        let matrix = [
+            3.2406, -1.5372, -0.4986, -0.9689, 1.8758, 0.0415, 0.0557, -0.2040, 1.0570,
+        ];
+        let strip: Vec<u8> = pixels
+            .iter()
+            .flatten()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
         let mut entries: Vec<(u16, u16, u32, Vec<u8>)> = vec![
             (254, LONG, 1, long(0)),
             (256, LONG, 1, long(pixels.len() as u32)),
@@ -2416,13 +2729,31 @@ mod tests {
             (284, SHORT, 1, shorts(&[1])),
             (339, SHORT, 3, shorts(&[3, 3, 3])),
             (50706, 1, 4, vec![1, 4, 0, 0]),
-            (50721, 10, 9, matrix.iter().flat_map(|v| rational((v * 10000.0) as i32, 10000)).collect()),
-            (50728, 5, 3, [rational(1, 1), rational(1, 1), rational(1, 1)].concat()),
+            (
+                50721,
+                10,
+                9,
+                matrix
+                    .iter()
+                    .flat_map(|v| rational((v * 10000.0) as i32, 10000))
+                    .collect(),
+            ),
+            (
+                50728,
+                5,
+                3,
+                [rational(1, 1), rational(1, 1), rational(1, 1)].concat(),
+            ),
         ];
         let ifd_bytes = 2 + entries.len() * 12 + 4;
         let mut spill = Vec::new();
         let spill_at = 8 + ifd_bytes;
-        let strip_at = spill_at + entries.iter().filter(|e| e.3.len() > 4).map(|e| e.3.len()).sum::<usize>();
+        let strip_at = spill_at
+            + entries
+                .iter()
+                .filter(|e| e.3.len() > 4)
+                .map(|e| e.3.len())
+                .sum::<usize>();
         entries.iter_mut().find(|e| e.0 == 273).unwrap().3 = long(strip_at as u32);
 
         let mut out = b"II*\0".to_vec();
@@ -2454,7 +2785,11 @@ mod tests {
     /// its brightest entry is 1.
     #[test]
     fn a_linear_dngs_table_puts_the_curve_between_the_fill_and_the_balance() {
-        let level = |floor: f32, gain: f32| super::Coefficients { floor, range: 1000.0 - floor, gain };
+        let level = |floor: f32, gain: f32| super::Coefficients {
+            floor,
+            range: 1000.0 - floor,
+            gain,
+        };
         let levels = [level(100.0, 1.0), level(0.0, 0.5), level(0.0, 1.0)];
         let squared = vec![0.0, 0.0, 1.0];
         let table = super::table_of(levels, &[squared, vec![0.0, 1.0], vec![0.0, 0.5]]);
@@ -2463,11 +2798,26 @@ mod tests {
         // Red is the brightest ceiling, so it is what the table was divided by.
         assert!((at(1000, 0) - 1.0).abs() < 1e-6);
         // Half filled past its own black, then squared.
-        assert!((at(550, 0) - 0.25).abs() < 1e-6, "red at 550: {}", at(550, 0));
+        assert!(
+            (at(550, 0) - 0.25).abs() < 1e-6,
+            "red at 550: {}",
+            at(550, 0)
+        );
         // Green's balance applies after its curve, and its ceiling is half red's.
-        assert!((at(500, 1) - 0.25).abs() < 1e-6, "green at 500: {}", at(500, 1));
-        assert!((at(2000, 1) - 0.5).abs() < 1e-6, "green past white: {}", at(2000, 1));
-        assert!((at(1000, 2) - 0.5).abs() < 1e-6, "blue's curve tops out at half");
+        assert!(
+            (at(500, 1) - 0.25).abs() < 1e-6,
+            "green at 500: {}",
+            at(500, 1)
+        );
+        assert!(
+            (at(2000, 1) - 0.5).abs() < 1e-6,
+            "green past white: {}",
+            at(2000, 1)
+        );
+        assert!(
+            (at(1000, 2) - 0.5).abs() < 1e-6,
+            "blue's curve tops out at half"
+        );
     }
 
     /// A floating-point DNG decodes, reads 1.0 as its white, and keeps a sample two stops past
@@ -2483,10 +2833,20 @@ mod tests {
             crate::decode::Held::Rendered(held) => held,
             crate::decode::Held::Mosaic(_) => panic!("a linear DNG was read as a mosaic"),
         };
-        let window = crate::px::Rect { at: crate::px::At::ORIGIN, size: held.size() };
-        let frame = held.window(window, crate::view::Scale::Full).expect("the window is drawn");
-        assert_eq!(frame.stated_white, None, "a camera's white is measured, as a RAW's is");
-        let crate::frame::Pixels::Resident(resident) = frame.pixels else { panic!("not on the device") };
+        let window = crate::px::Rect {
+            at: crate::px::At::ORIGIN,
+            size: held.size(),
+        };
+        let frame = held
+            .window(window, crate::view::Scale::Full)
+            .expect("the window is drawn");
+        assert_eq!(
+            frame.stated_white, None,
+            "a camera's white is measured, as a RAW's is"
+        );
+        let crate::frame::Pixels::Resident(resident) = frame.pixels else {
+            panic!("not on the device")
+        };
         let samples = pollster::block_on(resident.into_host()).expect("the frame reads back");
 
         let white = 65535.0 / crate::transfer::HDR_HEADROOM;
@@ -2548,12 +2908,23 @@ mod tests {
     /// the upper half of its noise.
     #[test]
     fn a_sample_below_black_is_conditioned_negative() {
-        let at = super::Coefficients { floor: 512.0, range: 16383.0 - 512.0, gain: 2.0 };
+        let at = super::Coefficients {
+            floor: 512.0,
+            range: 16383.0 - 512.0,
+            gain: 2.0,
+        };
         let below = super::conditioned(462, at);
         let above = super::conditioned(562, at);
-        assert!((below + above).abs() < 1e-7, "{below} and {above} are not symmetric about black");
+        assert!(
+            (below + above).abs() < 1e-7,
+            "{below} and {above} are not symmetric about black"
+        );
         assert!((above - 2.0 * 50.0 / (16383.0 - 512.0)).abs() < 1e-7);
-        assert_eq!(super::conditioned(u16::MAX, at), 2.0, "saturation still clips ahead of the gain");
+        assert_eq!(
+            super::conditioned(u16::MAX, at),
+            2.0,
+            "saturation still clips ahead of the gain"
+        );
     }
 
     /// A body's size comes off the two focal lengths, and nothing else is guessed at.
@@ -2566,12 +2937,28 @@ mod tests {
         let diagonal = |focal, equivalent| super::diagonal_mm_of(focal, equivalent).raw();
         let full = crate::dust::FULL_FRAME_DIAGONAL_MM.raw();
         let apsc = diagonal(24.0, 36.0);
-        assert!((apsc - 28.84).abs() < 0.01, "an APS-C body is not read as full frame");
+        assert!(
+            (apsc - 28.84).abs() < 0.01,
+            "an APS-C body is not read as full frame"
+        );
         assert_eq!(diagonal(50.0, 50.0), full);
-        assert!((diagonal(63.0, 50.0) - 54.52).abs() < 0.01, "medium format is larger, not smaller");
+        assert!(
+            (diagonal(63.0, 50.0) - 54.52).abs() < 0.01,
+            "medium format is larger, not smaller"
+        );
         assert!((diagonal(4.3, 24.0) - 7.75).abs() < 0.01);
-        for (focal, equivalent) in [(24.0, 0.0), (0.0, 36.0), (0.0, 0.0), (1.0, 400.0), (400.0, 1.0)] {
-            assert_eq!(diagonal(focal, equivalent), full, "{focal} against {equivalent}");
+        for (focal, equivalent) in [
+            (24.0, 0.0),
+            (0.0, 36.0),
+            (0.0, 0.0),
+            (1.0, 400.0),
+            (400.0, 1.0),
+        ] {
+            assert_eq!(
+                diagonal(focal, equivalent),
+                full,
+                "{focal} against {equivalent}"
+            );
         }
     }
 
@@ -2624,7 +3011,10 @@ mod tests {
             let slot = curve.slot_of[position] as usize;
             let value = curve.values[slot * (u16::MAX as usize + 1) + 16383];
             let want = levels.gains[quad[position] as usize];
-            assert_eq!(value, want, "position {position} left saturation at {value}");
+            assert_eq!(
+                value, want,
+                "position {position} left saturation at {value}"
+            );
         }
     }
 
@@ -2638,8 +3028,16 @@ mod tests {
     fn the_gains_put_the_most_amplified_channel_on_one() {
         let gains = super::scaled_gains([1.6074219, 1.0, 1.9921875, 1.0]);
         assert_eq!(gains[2], 1.0, "blue carries the largest coefficient here");
-        assert!((gains[0] - 0.80686).abs() < 1e-4, "red came back {}", gains[0]);
-        assert!((gains[1] - 0.50196).abs() < 1e-4, "green came back {}", gains[1]);
+        assert!(
+            (gains[0] - 0.80686).abs() < 1e-4,
+            "red came back {}",
+            gains[0]
+        );
+        assert!(
+            (gains[1] - 0.50196).abs() < 1e-4,
+            "green came back {}",
+            gains[1]
+        );
         // Nothing usable to scale against is the identity rather than a divide by zero.
         assert_eq!(super::scaled_gains([0.0, f32::NAN, -1.0, 0.0]), [1.0; 4]);
     }
@@ -2662,7 +3060,9 @@ mod tests {
     /// anything about.
     #[test]
     fn the_kernel_conditions_every_sample_at_its_own_position() {
-        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let kernels = crate::condition::device(gpu);
 
         // RGGB, so the two greens are one colour on two positions with two black levels, which is
@@ -2679,7 +3079,9 @@ mod tests {
         // negative values and the saturation clip are exercised; every fifth index lands on odd
         // columns as well as even ones. The rest is a spread wide enough that a mispacked sample
         // could not read its neighbour's level and agree by coincidence.
-        let corners = [0u16, 499, 500, 512, 516, 528, 529, 8191, 16382, 16383, 16384, 32767, 65535];
+        let corners = [
+            0u16, 499, 500, 512, 516, 528, 529, 8191, 16382, 16383, 16384, 32767, 65535,
+        ];
         let sample = |at: usize| -> u16 {
             match at % 5 {
                 0 => corners[at % corners.len()],
@@ -2711,7 +3113,8 @@ mod tests {
                 .position(|(mine, theirs)| mine != theirs)
                 .map(|at| (at, mine[at], theirs[at]));
             assert_eq!(
-                differs, None,
+                differs,
+                None,
                 "at {width}x{height}, sample {:?} at position {:?}",
                 differs.map(|(at, _, _)| samples[at]),
                 differs.map(|(at, _, _)| ((at / width) & 1) * 2 + ((at % width) & 1)),
@@ -2759,7 +3162,10 @@ mod tests {
                 assert_eq!(pair[0].1, pair[1].0, "{total} leaves a gap");
             }
             let smallest = spans.iter().map(|(a, b)| b - a).min().expect("a span");
-            assert!(smallest >= total.min(1024), "{total} cut a {smallest}-wide strip");
+            assert!(
+                smallest >= total.min(1024),
+                "{total} cut a {smallest}-wide strip"
+            );
         }
     }
 

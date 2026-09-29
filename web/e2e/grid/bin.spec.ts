@@ -41,7 +41,9 @@ test('Delete bins the focused photo and the toast undoes it', async ({ page }) =
   await expect(gallery(page).getByText(binned, { exact: true })).toBeVisible();
 });
 
-test('the Bin holds only the binned photo, and restoring returns it to the library', async ({ page }) => {
+test('the Bin holds only the binned photo, and restoring returns it to the library', async ({
+  page,
+}) => {
   await gotoLibrary(page, BIN_PHOTOS_DIR);
 
   await selectPhoto(page);

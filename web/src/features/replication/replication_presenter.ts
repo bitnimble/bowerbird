@@ -3,7 +3,12 @@ import { type EvictResult, type Transfer } from '../../../../src/schemas/blobs';
 import { type EditConflict } from '../../../../src/schemas/photo_edits';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
-import { type AddReplicaRequest, type AllPeersResponse, type BrowsedRemote, type PeersResponse } from '../../../../src/schemas/replication';
+import {
+  type AddReplicaRequest,
+  type AllPeersResponse,
+  type BrowsedRemote,
+  type PeersResponse,
+} from '../../../../src/schemas/replication';
 import { blobsApi } from '../../api/blobs';
 import { photoEditsApi } from '../../api/photo_edits';
 import { replicationApi } from '../../api/replication';
@@ -158,13 +163,20 @@ export class ReplicationPresenter {
    * ever say on its behalf that it held them. Which is also why the originals
    * only *it* is recorded as holding are counted before the question is asked.
    */
-  async forget(libraryId: string, peerId: string, confirm: (sole: number) => Promise<boolean>): Promise<void> {
+  async forget(
+    libraryId: string,
+    peerId: string,
+    confirm: (sole: number) => Promise<boolean>,
+  ): Promise<void> {
     const name = this.store.peerName(libraryId, peerId);
     let sole = 0;
     try {
       sole = (await replicationApi.soleHoldings(libraryId, peerId)).photos.length;
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotWorkOutSoleHoldings(name), message(err));
+      this.toasts.showError(
+        ReplicationPresenterStrings.couldNotWorkOutSoleHoldings(name),
+        message(err),
+      );
       return;
     }
     if (!(await confirm(sole))) return;
@@ -255,9 +267,9 @@ export class ReplicationPresenter {
     try {
       const { queued } = await blobsApi.pushOriginals(libraryId, peerId);
       this.toasts.show(
-        queued === 0 ?
-          ReplicationPresenterStrings.otherDeviceHoldsEverything(name)
-        : ReplicationPresenterStrings.queuedToSend(queued, name),
+        queued === 0
+          ? ReplicationPresenterStrings.otherDeviceHoldsEverything(name)
+          : ReplicationPresenterStrings.queuedToSend(queued, name),
       );
     } catch (err) {
       this.toasts.showError(ReplicationPresenterStrings.couldNotQueueForDevice(name), message(err));
@@ -272,12 +284,15 @@ export class ReplicationPresenter {
     try {
       const { queued } = await blobsApi.pullOriginals(libraryId, peerId);
       this.toasts.show(
-        queued === 0 ?
-          ReplicationPresenterStrings.thisDeviceHoldsEverything(name)
-        : ReplicationPresenterStrings.queuedToFetch(queued, name),
+        queued === 0
+          ? ReplicationPresenterStrings.thisDeviceHoldsEverything(name)
+          : ReplicationPresenterStrings.queuedToFetch(queued, name),
       );
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotQueueFromDevice(name), message(err));
+      this.toasts.showError(
+        ReplicationPresenterStrings.couldNotQueueFromDevice(name),
+        message(err),
+      );
       return;
     }
     await this.refreshTransfers();
@@ -305,9 +320,9 @@ export class ReplicationPresenter {
       // one (the peer is unreachable, or holds none of it), and a toast listing
       // a thousand identical lines says less than a count and an example.
       this.toasts.showError(
-        gone === 0 ?
-          ReplicationPresenterStrings.noneConfirmed(name, result.refused.length)
-        : ReplicationPresenterStrings.someConfirmed(gone, result.refused.length, name),
+        gone === 0
+          ? ReplicationPresenterStrings.noneConfirmed(name, result.refused.length)
+          : ReplicationPresenterStrings.someConfirmed(gone, result.refused.length, name),
         result.refused[0]!.reason,
       );
     }
@@ -391,10 +406,15 @@ export class ReplicationPresenter {
     try {
       transfers = await blobsApi.listTransfers();
     } catch (err) {
-      if (!this.queueUnreadable) this.toasts.showError(ReplicationPresenterStrings.couldNotReadTransferQueue(), message(err));
+      if (!this.queueUnreadable)
+        this.toasts.showError(
+          ReplicationPresenterStrings.couldNotReadTransferQueue(),
+          message(err),
+        );
       this.queueUnreadable = true;
       // Kept asking: a fetch-and-edit waits on the pull this read would have seen finish.
-      if (this.store.anyInFlight) this.timer = setTimeout(() => void this.refreshTransfers(), POLL_MS);
+      if (this.store.anyInFlight)
+        this.timer = setTimeout(() => void this.refreshTransfers(), POLL_MS);
       return;
     }
     this.queueUnreadable = false;
@@ -426,7 +446,9 @@ export class ReplicationPresenter {
     // Replaced rather than merged: a library absent from the answer replicates
     // with nobody, and left behind it would go on rendering a strip for a peer
     // this device has forgotten.
-    this.store.peersByLibrary = new Map(libraries.map((library) => [library.library_id, library.peers]));
+    this.store.peersByLibrary = new Map(
+      libraries.map((library) => [library.library_id, library.peers]),
+    );
     this.store.syncOriginalsByLibrary = new Map(
       libraries.map((library) => [library.library_id, library.sync_originals]),
     );

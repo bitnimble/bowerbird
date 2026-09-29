@@ -84,7 +84,10 @@ class AvifPlanes {
    * Null for a picture the planar draw does not read, one that would not decode, and one aborted.
    * An abort takes a waiting decode off the queue, and stops a running one only if it is large.
    */
-  async decode(file: Uint8Array, { signal, urgent = true, promoted, pixels = 0 }: DecodeOptions): Promise<PlanarPicture | null> {
+  async decode(
+    file: Uint8Array,
+    { signal, urgent = true, promoted, pixels = 0 }: DecodeOptions,
+  ): Promise<PlanarPicture | null> {
     // Nothing would ever start the worker, so the ask would wait forever.
     if (this.uncompiled) return null;
     // An abort already past fires no event, so it is never cancelled.
@@ -109,7 +112,8 @@ class AvifPlanes {
         this.running = reply.id;
         clearTimeout(this.deadline);
         this.deadline = setTimeout(() => {
-          if (this.running === reply.id) this.restart({ id: reply.id, failed: 'the decoder stopped answering' });
+          if (this.running === reply.id)
+            this.restart({ id: reply.id, failed: 'the decoder stopped answering' });
         }, DECODE_DEADLINE_MS);
         return;
       }
@@ -129,7 +133,9 @@ class AvifPlanes {
       (module) => worker.postMessage({ module } satisfies DecoderStart),
       (err: unknown) => {
         this.uncompiled = true;
-        this.fail(`the decoder would not compile: ${err instanceof Error ? err.message : String(err)}`);
+        this.fail(
+          `the decoder would not compile: ${err instanceof Error ? err.message : String(err)}`,
+        );
       },
     );
     return worker;
@@ -164,7 +170,8 @@ class AvifPlanes {
     clearTimeout(this.deadline);
     this.settle(answer);
     this.worker = this.start();
-    for (const [id, { file, urgent }] of this.pending) this.worker.postMessage({ id, file, urgent } satisfies DecodeAsk);
+    for (const [id, { file, urgent }] of this.pending)
+      this.worker.postMessage({ id, file, urgent } satisfies DecodeAsk);
   }
 
   private settle(answer: DecodeAnswer): void {
@@ -175,7 +182,10 @@ class AvifPlanes {
 
 let started: AvifPlanes | null = null;
 
-export function decodeAvifPlanes(file: Uint8Array, options: DecodeOptions = {}): Promise<PlanarPicture | null> {
+export function decodeAvifPlanes(
+  file: Uint8Array,
+  options: DecodeOptions = {},
+): Promise<PlanarPicture | null> {
   started ??= new AvifPlanes();
   return started.decode(file, options);
 }

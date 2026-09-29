@@ -36,7 +36,11 @@ impl Planes {
     pub fn layout(&self) -> [(usize, usize); 3] {
         let (chroma_width, chroma_height) = chroma_size(self.width, self.height, self.subsampled);
         let luma = self.width * self.height;
-        [(0, self.width), (luma, chroma_width), (luma + chroma_width * chroma_height, chroma_width)]
+        [
+            (0, self.width),
+            (luma, chroma_width),
+            (luma + chroma_width * chroma_height, chroma_width),
+        ]
     }
 }
 
@@ -55,7 +59,11 @@ pub fn decode(bytes: &[u8], threads: u32) -> Result<Decoded, String> {
     }
     match picture.nclx {
         Some(nclx) if nclx.transfer == TRANSFER_PQ && !nclx.full_range => {}
-        _ => return Ok(Decoded::Declined("this AVIF is not limited-range PQ".to_string())),
+        _ => {
+            return Ok(Decoded::Declined(
+                "this AVIF is not limited-range PQ".to_string(),
+            ));
+        }
     }
     DECODER.with_borrow_mut(|held| {
         if held.as_ref().is_none_or(|it| it.threads != threads) {
@@ -80,7 +88,10 @@ fn assembled(decoder: &mut Decoder, picture: &heif::Picture) -> Result<Decoded, 
     let (columns, _) = picture.grid;
     let mut out: Option<Planes> = None;
     for (at, tile) in picture.tiles.iter().enumerate() {
-        let origin = ((at % columns) * picture.tile.0, (at / columns) * picture.tile.1);
+        let origin = (
+            (at % columns) * picture.tile.0,
+            (at / columns) * picture.tile.1,
+        );
         let declined = decoder.decode(tile, |decoded| {
             let p = &decoded.p;
             let subsampled = match p.layout {
@@ -99,15 +110,23 @@ fn assembled(decoder: &mut Decoder, picture: &heif::Picture) -> Result<Decoded, 
                     height: picture.height,
                     bits: p.bpc as u32,
                     subsampled,
-                    samples: vec![0; picture.width * picture.height + 2 * chroma_width * chroma_height],
+                    samples: vec![
+                        0;
+                        picture.width * picture.height + 2 * chroma_width * chroma_height
+                    ],
                 }
             });
             let size = (p.w as usize, p.h as usize);
-            if size != picture.tile || planes.subsampled != subsampled || planes.bits != p.bpc as u32 {
+            if size != picture.tile
+                || planes.subsampled != subsampled
+                || planes.bits != p.bpc as u32
+            {
                 return Some("this AVIF's grid tiles are not all alike".to_string());
             }
             if subsampled && (origin.0 % 2 == 1 || origin.1 % 2 == 1) {
-                return Some("this AVIF's 4:2:0 grid starts a tile between two chroma samples".to_string());
+                return Some(
+                    "this AVIF's 4:2:0 grid starts a tile between two chroma samples".to_string(),
+                );
             }
             // SAFETY: `decoded` is a live picture of `size` at more than eight bits, so each plane
             // is rows of `u16` at its stride.
@@ -118,7 +137,8 @@ fn assembled(decoder: &mut Decoder, picture: &heif::Picture) -> Result<Decoded, 
             return Ok(Decoded::Declined(why));
         }
     }
-    out.map(Decoded::Planes).ok_or_else(|| "this AVIF has no tiles".to_string())
+    out.map(Decoded::Planes)
+        .ok_or_else(|| "this AVIF has no tiles".to_string())
 }
 
 /// One decoded tile copied into the raster at `origin`, as much of it as falls inside.
@@ -126,23 +146,38 @@ fn assembled(decoder: &mut Decoder, picture: &heif::Picture) -> Result<Decoded, 
 /// # Safety
 ///
 /// `decoded` holds `size` samples per plane (halved for 4:2:0 chroma) as `u16` rows at its strides.
-unsafe fn place(planes: &mut Planes, decoded: &Dav1dPicture, origin: (usize, usize), size: (usize, usize)) {
+unsafe fn place(
+    planes: &mut Planes,
+    decoded: &Dav1dPicture,
+    origin: (usize, usize),
+    size: (usize, usize),
+) {
     let shift = usize::from(planes.subsampled);
     let layout = planes.layout();
     let full = (planes.width, planes.height);
     for (plane, (first, row_length)) in layout.into_iter().enumerate() {
         let scale = if plane == 0 { 0 } else { shift };
         let (x0, y0) = (origin.0 >> scale, origin.1 >> scale);
-        let (raster_width, raster_height) = if plane == 0 { full } else { chroma_size(full.0, full.1, planes.subsampled) };
+        let (raster_width, raster_height) = if plane == 0 {
+            full
+        } else {
+            chroma_size(full.0, full.1, planes.subsampled)
+        };
         let (tile_width, tile_height) = ((size.0 + scale) >> scale, (size.1 + scale) >> scale);
         let columns = tile_width.min(raster_width.saturating_sub(x0));
         let rows = tile_height.min(raster_height.saturating_sub(y0));
-        let Some(base) = decoded.data[plane] else { continue };
+        let Some(base) = decoded.data[plane] else {
+            continue;
+        };
         let stride = decoded.stride[plane.min(1)];
         for row in 0..rows {
             // SAFETY: `row < tile_height` and `columns <= tile_width`, inside the plane.
             let source = unsafe {
-                let start = base.as_ptr().cast::<u8>().offset(row as isize * stride).cast::<u16>();
+                let start = base
+                    .as_ptr()
+                    .cast::<u8>()
+                    .offset(row as isize * stride)
+                    .cast::<u16>();
                 std::slice::from_raw_parts(start, columns)
             };
             let at = first + (y0 + row) * row_length + x0;
@@ -177,15 +212,27 @@ impl Decoder {
         settings.max_frame_delay = 1;
         let mut context: Option<Dav1dContext> = None;
         // SAFETY: both pointers are live for the call.
-        let status = unsafe { dav1d_open(Some(NonNull::from(&mut context)), Some(NonNull::from(&mut settings))) };
+        let status = unsafe {
+            dav1d_open(
+                Some(NonNull::from(&mut context)),
+                Some(NonNull::from(&mut settings)),
+            )
+        };
         match context {
             Some(context) if status.0 == 0 => Ok(Decoder { context, threads }),
-            _ => Err(format!("rav1d would not open on {threads} threads ({})", status.0)),
+            _ => Err(format!(
+                "rav1d would not open on {threads} threads ({})",
+                status.0
+            )),
         }
     }
 
     /// One AV1 still, handed to `read` while it is decoded.
-    fn decode<T>(&mut self, coded: &[u8], read: impl FnOnce(&Dav1dPicture) -> T) -> Result<T, String> {
+    fn decode<T>(
+        &mut self,
+        coded: &[u8],
+        read: impl FnOnce(&Dav1dPicture) -> T,
+    ) -> Result<T, String> {
         let eagain = -libc::EAGAIN;
         // SAFETY: every rav1d call gets the open context and pointers live for the call; `data`
         // is created at `coded`'s length and filled before it is sent, and unreferenced after.
@@ -200,13 +247,18 @@ impl Decoder {
             let mut status = eagain;
             for _ in 0..MAX_ATTEMPTS {
                 if data.sz > 0 {
-                    let sent = dav1d_send_data(Some(self.context.clone()), Some(NonNull::from(&mut data)));
+                    let sent =
+                        dav1d_send_data(Some(self.context.clone()), Some(NonNull::from(&mut data)));
                     if sent.0 < 0 && sent.0 != eagain {
                         status = sent.0;
                         break;
                     }
                 }
-                status = dav1d_get_picture(Some(self.context.clone()), Some(NonNull::from(&mut picture))).0;
+                status = dav1d_get_picture(
+                    Some(self.context.clone()),
+                    Some(NonNull::from(&mut picture)),
+                )
+                .0;
                 if status != eagain {
                     break;
                 }
@@ -269,16 +321,32 @@ mod exports {
     ///
     /// `file` is `len` readable bytes and `out` `ANSWER_WORDS` writable words.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn avif_planes_decode(file: *const u8, len: usize, threads: u32, out: *mut u32) {
+    pub unsafe extern "C" fn avif_planes_decode(
+        file: *const u8,
+        len: usize,
+        threads: u32,
+        out: *mut u32,
+    ) {
         let bytes = unsafe { std::slice::from_raw_parts(file, len) };
         let words = HELD.with_borrow_mut(|(samples, message)| {
             let mut words = [0u32; ANSWER_WORDS];
             match decode(bytes, threads) {
                 Ok(Decoded::Planes(planes)) => {
-                    let shape = [planes.width as u32, planes.height as u32, planes.bits, u32::from(planes.subsampled)];
-                    let layout = planes.layout().map(|(first, row)| [first as u32 * 2, row as u32 * 2]);
+                    let shape = [
+                        planes.width as u32,
+                        planes.height as u32,
+                        planes.bits,
+                        u32::from(planes.subsampled),
+                    ];
+                    let layout = planes
+                        .layout()
+                        .map(|(first, row)| [first as u32 * 2, row as u32 * 2]);
                     *samples = planes.samples;
-                    words[..3].copy_from_slice(&[0, samples.as_ptr() as u32, (samples.len() * 2) as u32]);
+                    words[..3].copy_from_slice(&[
+                        0,
+                        samples.as_ptr() as u32,
+                        (samples.len() * 2) as u32,
+                    ]);
                     words[3..7].copy_from_slice(&shape);
                     words[7..].copy_from_slice(layout.as_flattened());
                 }

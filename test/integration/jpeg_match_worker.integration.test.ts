@@ -9,7 +9,11 @@ import path from 'node:path';
 import { adjustOf } from '../../src/schemas/edit_adjust';
 import { neutralEdits } from '../../src/schemas/photo_edits';
 import { _for_testing_deltaEToPreview } from '../../src/services/processing/rawshim/rawshim_for_testing';
-import type { ProcessingResult, RenditionJob, RenditionTarget } from '../../src/services/processing/workers/processing_types';
+import type {
+  ProcessingResult,
+  RenditionJob,
+  RenditionTarget,
+} from '../../src/services/processing/workers/processing_types';
 
 const FIXTURE = `${import.meta.dir}/../fixtures/DSC02981.ARW`;
 const WORKER = `${import.meta.dir}/../../src/services/processing/workers/processing_worker.ts`;
@@ -58,7 +62,12 @@ function runJob(job: RenditionJob): Promise<ProcessingResult> {
 async function render(
   matchCamera: boolean,
   name: string,
-  render: { denoiseLuminance: number; denoiseColour: number; sharpen: number; defringe: number } = { denoiseLuminance: 0, denoiseColour: 0, sharpen: 0, defringe: 0 },
+  render: { denoiseLuminance: number; denoiseColour: number; sharpen: number; defringe: number } = {
+    denoiseLuminance: 0,
+    denoiseColour: 0,
+    sharpen: 0,
+    defringe: 0,
+  },
 ): Promise<string> {
   const outputPath = path.join(root, `${name}.avif`);
   const result = await runJob({

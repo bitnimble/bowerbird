@@ -127,18 +127,32 @@ export const CropPanel = observer(function CropPanel({
 }): JSX.Element {
   return (
     <>
-      {(section == null || section === 'aspect') && <Panel style={styles.group} titleStyle={styles.groupTitle} title={RawEditPanelStrings.aspectRatio()}>
-        <Select
-          style={styles.selectTrigger}
-          label={RawEditPanelStrings.aspectRatio()}
-          options={ASPECTS}
-          value={store.cropAspect}
-          onChange={presenter.setCropAspect}
-        />
-      </Panel>}
-      {(section == null || section === 'geometry') && <Panel style={styles.group} titleStyle={styles.groupTitle} title={EditToolsStrings.crop()}>
-        <GeometryControls edit={edit} stage={stage} store={store} presenter={presenter} styles={styles} />
-      </Panel>}
+      {(section == null || section === 'aspect') && (
+        <Panel
+          style={styles.group}
+          titleStyle={styles.groupTitle}
+          title={RawEditPanelStrings.aspectRatio()}
+        >
+          <Select
+            style={styles.selectTrigger}
+            label={RawEditPanelStrings.aspectRatio()}
+            options={ASPECTS}
+            value={store.cropAspect}
+            onChange={presenter.setCropAspect}
+          />
+        </Panel>
+      )}
+      {(section == null || section === 'geometry') && (
+        <Panel style={styles.group} titleStyle={styles.groupTitle} title={EditToolsStrings.crop()}>
+          <GeometryControls
+            edit={edit}
+            stage={stage}
+            store={store}
+            presenter={presenter}
+            styles={styles}
+          />
+        </Panel>
+      )}
     </>
   );
 });

@@ -35,12 +35,12 @@ fn main() {
         let bytes = std::fs::read(&path).ok();
         let from_bytes = bytes
             .as_ref()
-            .and_then(|b| {
-                rawshim::decode_frame_bytes(b, 0, rawshim::galosh::Fit::Measure)
-            })
+            .and_then(|b| rawshim::decode_frame_bytes(b, 0, rawshim::galosh::Fit::Measure))
             .map(|f| (f.width, f.height));
 
-        let from_path = rawshim::decode_frame_denoised(&path, 0, Default::default(), Default::default()).map(|f| (f.width, f.height));
+        let from_path =
+            rawshim::decode_frame_denoised(&path, 0, Default::default(), Default::default())
+                .map(|f| (f.width, f.height));
 
         let agree = match (from_bytes, from_path) {
             (Some(a), Some(b)) => {
@@ -53,6 +53,8 @@ fn main() {
             (None, None) => "both declined",
             _ => "one declined",
         };
-        println!("{name:>16}  preview {preview:>12}  bytes {from_bytes:?}  path {from_path:?}  {agree}");
+        println!(
+            "{name:>16}  preview {preview:>12}  bytes {from_bytes:?}  path {from_path:?}  {agree}"
+        );
     }
 }

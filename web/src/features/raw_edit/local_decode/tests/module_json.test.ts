@@ -48,10 +48,20 @@ describe('what a tick carries', () => {
 
   test('carries the camera exposure and an explicit override', () => {
     for (const ev of [null, 1.75]) {
-      expect(OpenAskSchema.parse({
-        kind: 'tick', ev, drawStage: true, region: null, loupe: null, adjust: null,
-        geometry: null, proof: null, print: null, stage: null,
-      })).toMatchObject({ kind: 'tick', ev });
+      expect(
+        OpenAskSchema.parse({
+          kind: 'tick',
+          ev,
+          drawStage: true,
+          region: null,
+          loupe: null,
+          adjust: null,
+          geometry: null,
+          proof: null,
+          print: null,
+          stage: null,
+        }),
+      ).toMatchObject({ kind: 'tick', ev });
     }
   });
 
@@ -62,7 +72,15 @@ describe('what a tick carries', () => {
       shadows: 33,
       whites: -44,
       blacks: 55,
-      toneCurve: { kind: TONE_CURVE_KIND, points: [[0, 0.04], [0.35, 0.3], [0.7, 0.78], [1, 1]] },
+      toneCurve: {
+        kind: TONE_CURVE_KIND,
+        points: [
+          [0, 0.04],
+          [0.35, 0.3],
+          [0.7, 0.78],
+          [1, 1],
+        ],
+      },
       vibrance: -66,
       saturation: 77,
       texture: -88,

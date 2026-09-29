@@ -76,7 +76,8 @@ export function HdrDemo(): JSX.Element {
   // Both arms at once or neither: an 8-bit file lands well before its HDR twin, and a
   // frame that is half one picture and half the other reads as the demo being broken.
   const loading = !shown.has(photo.sdr) || !shown.has(photo.hdr);
-  const markShown = (src: string): void => setShown((was) => (was.has(src) ? was : new Set(was).add(src)));
+  const markShown = (src: string): void =>
+    setShown((was) => (was.has(src) ? was : new Set(was).add(src)));
 
   return (
     <Demo>

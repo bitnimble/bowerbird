@@ -67,7 +67,8 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   // anything for it - which is every undo, every jump through the queue, and every
   // switch between the two presentations. That is exactly the "cast a verdict
   // against a stage that is still building" case the gate exists to stop.
-  const roundKey = store.round == null ? '' : `${store.mode}:${pairKey(store.round.a, store.round.b)}`;
+  const roundKey =
+    store.round == null ? '' : `${store.mode}:${pairKey(store.round.a, store.round.b)}`;
   useEffect(() => setDecoded(new Set()), [roundKey]);
 
   // An explicit route rather than navigate(-1): nothing in the app uses history
@@ -101,7 +102,8 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   // viewer on one of the survivors. `busy` because the closing `picked` writes are
   // in flight until it drops - leaving on the first of them would report failures
   // that had not happened yet.
-  const over = judgedHere.current && store.stackId === stackId && store.status === 'ended' && !store.busy;
+  const over =
+    judgedHere.current && store.stackId === stackId && store.status === 'ended' && !store.busy;
   useEffect(() => {
     if (!over) return;
     // The one moment a session's failed writes can still be reported: there is no
@@ -112,10 +114,14 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
     const failed = store.failed.size;
     if (failed > 0 && stackId !== '') {
       const report = (count: number): void => {
-        toasts.showFailure(StackTriageStrings.notSaved(count), StackTriageStrings.retry(), async () => {
-          await stackTriage.retryFailed(stackId);
-          if (store.stackId === stackId && store.failed.size > 0) report(store.failed.size);
-        });
+        toasts.showFailure(
+          StackTriageStrings.notSaved(count),
+          StackTriageStrings.retry(),
+          async () => {
+            await stackTriage.retryFailed(stackId);
+            if (store.stackId === stackId && store.failed.size > 0) report(store.failed.size);
+          },
+        );
       };
       report(failed);
     }
@@ -140,7 +146,11 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
       <Page>
         <PageHead withSidebarButton />
         <EmptyState
-          title={store.status === 'error' ? StackTriageStrings.couldNotOpenTheStack() : StackTriageStrings.nothingToCompare()}
+          title={
+            store.status === 'error'
+              ? StackTriageStrings.couldNotOpenTheStack()
+              : StackTriageStrings.nothingToCompare()
+          }
         >
           <Text as="p" variant="muted">
             {store.loadError ?? StackTriageStrings.tooFewPhotos()}
@@ -177,7 +187,12 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
               photographs, not just the count: a draw keeps the pool the same size,
               so a count alone says nothing happened. */}
           <div {...stylex.props(styles.visuallyHidden)} aria-live="polite">
-            {StackTriageStrings.round(store.history.length + 1, nameOf(shown[0]), nameOf(shown[1]), store.pool.length)}
+            {StackTriageStrings.round(
+              store.history.length + 1,
+              nameOf(shown[0]),
+              nameOf(shown[1]),
+              store.pool.length,
+            )}
           </div>
           {/* The pool, fetched ahead so the bytes are in cache when a round asks
               for them. Only fetched: a clipped element paints nothing, so nothing

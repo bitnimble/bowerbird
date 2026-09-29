@@ -16,11 +16,23 @@ const NAME = 'environments';
 const SOURCE = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr';
 
 export const ENVIRONMENTS: Record<string, { file: string; sha256: string }> = {
-  studio: { file: '2k/poly_haven_studio_2k.hdr', sha256: '65ffbd4ffdce0914d61e5c28e078a14491a973cdbebbd82fc3c47b30153955b5' },
-  meadow: { file: '2k/meadow_2_2k.hdr', sha256: '18155b1114a567d3abcae29a89a4e8c12cb56fcda1edbb107fa79137f9a673f2' },
-  hotel: { file: '2k/hotel_room_2k.hdr', sha256: '14fdf682ee084d8ad68c77b47031e473fd89413c8b99cb988366c6ac1afb3918' },
+  studio: {
+    file: '2k/poly_haven_studio_2k.hdr',
+    sha256: '65ffbd4ffdce0914d61e5c28e078a14491a973cdbebbd82fc3c47b30153955b5',
+  },
+  meadow: {
+    file: '2k/meadow_2_2k.hdr',
+    sha256: '18155b1114a567d3abcae29a89a4e8c12cb56fcda1edbb107fa79137f9a673f2',
+  },
+  hotel: {
+    file: '2k/hotel_room_2k.hdr',
+    sha256: '14fdf682ee084d8ad68c77b47031e473fd89413c8b99cb988366c6ac1afb3918',
+  },
 };
-const RECIPE = pin(SOURCE, Object.values(ENVIRONMENTS).map(({ sha256 }) => sha256));
+const RECIPE = pin(
+  SOURCE,
+  Object.values(ENVIRONMENTS).map(({ sha256 }) => sha256),
+);
 const HOME = pinnedHome(NAME, RECIPE);
 
 async function download(file: string, sha256: string): Promise<Buffer> {

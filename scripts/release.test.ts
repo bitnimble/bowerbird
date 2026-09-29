@@ -1,6 +1,14 @@
 import { expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -28,7 +36,10 @@ test.each(['main', 'feature', 'detached'])('release from %s', (branch) => {
     if (branch === 'feature') git('switch', '-c', branch);
     if (branch === 'detached') git('switch', '--detach');
     const head = git('rev-parse', 'HEAD');
-    const result = spawnSync(process.execPath, ['scripts/release.ts'], { cwd: root, encoding: 'utf8' });
+    const result = spawnSync(process.execPath, ['scripts/release.ts'], {
+      cwd: root,
+      encoding: 'utf8',
+    });
 
     if (branch === 'main') {
       expect(result.status).toBe(0);
@@ -49,9 +60,19 @@ test.each(['main', 'feature', 'detached'])('release from %s', (branch) => {
 });
 
 test('release planning refuses a failed remote tag lookup', () => {
-  const workflow = z.object({
-    jobs: z.object({ plan: z.object({ steps: z.array(z.object({ id: z.string().optional(), run: z.string().optional() })) }) }),
-  }).parse(Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')));
+  const workflow = z
+    .object({
+      jobs: z.object({
+        plan: z.object({
+          steps: z.array(z.object({ id: z.string().optional(), run: z.string().optional() })),
+        }),
+      }),
+    })
+    .parse(
+      Bun.YAML.parse(
+        readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8'),
+      ),
+    );
   const script = workflow.jobs.plan.steps.find((step) => step.id === 'tag')?.run;
   if (script == null) throw new Error('Release planning has no tag step');
   const root = mkdtempSync(join(tmpdir(), 'bb-release-tag-'));

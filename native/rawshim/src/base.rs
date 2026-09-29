@@ -263,7 +263,12 @@ impl Base {
         });
         let halve_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("halve"),
-            entries: &[uniform_entry(0), read_only_entry(1), written_level(3), read_only_entry(5)],
+            entries: &[
+                uniform_entry(0),
+                read_only_entry(1),
+                written_level(3),
+                read_only_entry(5),
+            ],
         });
         let reduce_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("reduce"),
@@ -747,7 +752,13 @@ pub struct Reduction {
 impl Reduction {
     /// A whole frame to a whole output, which is every reduction but a band's.
     pub fn whole(source: (usize, usize), out: (usize, usize), scale: (f64, f64)) -> Reduction {
-        Reduction { source, out, scale, out_origin: (0, 0), source_origin: (0, 0) }
+        Reduction {
+            source,
+            out,
+            scale,
+            out_origin: (0, 0),
+            source_origin: (0, 0),
+        }
     }
 
     /// `reduction-words.txt` pins these: a pair transposed here is a canvas sampling a pyramid level
@@ -760,7 +771,12 @@ impl Reduction {
         for value in [self.scale.0 as f32, self.scale.1 as f32] {
             params.extend_from_slice(&value.to_le_bytes());
         }
-        for word in [self.out_origin.0, self.out_origin.1, self.source_origin.0, self.source_origin.1] {
+        for word in [
+            self.out_origin.0,
+            self.out_origin.1,
+            self.source_origin.0,
+            self.source_origin.1,
+        ] {
             params.extend_from_slice(&(word as u32).to_le_bytes());
         }
         params.resize(REDUCTION_BYTES, 0);
@@ -795,7 +811,13 @@ pub fn resize(
     if out == source || out.0 > source.0 || out.1 > source.1 || out.0 == 0 || out.1 == 0 {
         return None;
     }
-    Some(resized_through(gpu, base, frame, &Reduction::whole(source, out, resize_scale(source, out)), &base.light_of_code))
+    Some(resized_through(
+        gpu,
+        base,
+        frame,
+        &Reduction::whole(source, out, resize_scale(source, out)),
+        &base.light_of_code,
+    ))
 }
 
 /// A rectangle of what [`resize`] makes of a whole `whole` frame at `whole_out`, from `region` of
@@ -835,16 +857,26 @@ pub fn resize_footprint(
     let near = |at: crate::px::Place<crate::px::Drawn>, scale: f64| {
         ((at.raw() as f64 * scale).floor() as usize).saturating_sub(1)
     };
-    let far = |at: crate::px::Place<crate::px::Drawn>, scale: f64, limit: crate::px::Span<crate::px::Decoded>| {
+    let far = |at: crate::px::Place<crate::px::Drawn>,
+               scale: f64,
+               limit: crate::px::Span<crate::px::Decoded>| {
         (((at.raw() as f64 * scale).ceil() as usize) + 1).min(limit.raw())
     };
     let past = out.past();
     let (left, top) = (near(out.at.x, sx), near(out.at.y, sy));
-    crate::px::Rect::exact(left, top, far(past.x, sx, whole.width) - left, far(past.y, sy, whole.height) - top)
+    crate::px::Rect::exact(
+        left,
+        top,
+        far(past.x, sx, whole.width) - left,
+        far(past.y, sy, whole.height) - top,
+    )
 }
 
 fn resize_scale(source: (usize, usize), out: (usize, usize)) -> (f64, f64) {
-    (source.0 as f64 / out.0 as f64, source.1 as f64 / out.1 as f64)
+    (
+        source.0 as f64 / out.0 as f64,
+        source.1 as f64 / out.1 as f64,
+    )
 }
 
 /// The same over a frame the coding has not reached yet, whose samples are already light.
@@ -867,7 +899,13 @@ pub fn resize_scene(
     if out == source || out.0 > source.0 || out.1 > source.1 || out.0 == 0 || out.1 == 0 {
         return None;
     }
-    Some(resized_through(gpu, base, frame, &Reduction::whole(source, out, resize_scale(source, out)), &base.light_of_level))
+    Some(resized_through(
+        gpu,
+        base,
+        frame,
+        &Reduction::whole(source, out, resize_scale(source, out)),
+        &base.light_of_level,
+    ))
 }
 
 fn resized_through(
@@ -1362,7 +1400,8 @@ impl AtomicF32 {
     }
 
     pub(crate) fn set(&self, value: f32) {
-        self.0.store(value.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        self.0
+            .store(value.to_bits(), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// What was forced, or `default` while nothing non-negative has been.
@@ -2051,7 +2090,11 @@ pub fn gather_and_sharpen(
         .and_then(|lens| warp_lens(gpu, base, &frame, gather, lens));
     // Refused rather than skipped: the frame is the right size either way, so an uncorrected
     // rendition looks like a rendition and only a straight edge near a corner gives it away.
-    assert!(!(correcting && warped.is_none()), "{}", without_a_device("the lens correction"));
+    assert!(
+        !(correcting && warped.is_none()),
+        "{}",
+        without_a_device("the lens correction")
+    );
     let (cut, jacobian) = match warped {
         Some((warped, jacobian)) => {
             frame.reclaim();
@@ -2472,9 +2515,18 @@ pub async fn content_light(
         label: Some("content light"),
         layout: &base.content_light_layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: frame.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: tiles.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: frame.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: tiles.as_entire_binding(),
+            },
         ],
     });
     {
@@ -2484,11 +2536,25 @@ pub async fn content_light(
         pass.dispatch_workgroups(tiles_w as u32, tiles_h as u32, 1);
     }
     let [mapped] = read_all(&mut recording, [(&tiles, bytes)]).await?;
-    let (brightest, sum) = mapped.chunks_exact(8).fold((0.0f64, 0.0f64), |(brightest, sum), tile| {
-        let word = |at: usize| f64::from(f32::from_le_bytes([tile[at], tile[at + 1], tile[at + 2], tile[at + 3]]));
-        (brightest.max(word(0)), sum + word(4))
-    });
-    Some(crate::hdr_args::LightTally { brightest, sum, pixels: width * height })
+    let (brightest, sum) =
+        mapped
+            .chunks_exact(8)
+            .fold((0.0f64, 0.0f64), |(brightest, sum), tile| {
+                let word = |at: usize| {
+                    f64::from(f32::from_le_bytes([
+                        tile[at],
+                        tile[at + 1],
+                        tile[at + 2],
+                        tile[at + 3],
+                    ]))
+                };
+                (brightest.max(word(0)), sum + word(4))
+            });
+    Some(crate::hdr_args::LightTally {
+        brightest,
+        sum,
+        pixels: width * height,
+    })
 }
 
 /// [`chroma_leak`] over a frame on the host, for the harness and the pins.
@@ -2978,8 +3044,7 @@ mod tests {
         let (w, h) = (64usize, 8usize);
         let (low, high) = (60.0f32 * 257.0, 180.0f32 * 257.0);
         let before = blurred_edge(w, h, low, high);
-        let Some(frame) =
-            gpu_sharpened_at(&before, w, h, crate::image::DECONVOLVE_SIGMA, 0.5)
+        let Some(frame) = gpu_sharpened_at(&before, w, h, crate::image::DECONVOLVE_SIGMA, 0.5)
         else {
             return;
         };
@@ -2988,7 +3053,11 @@ mod tests {
         let ideal = |x: usize| if x < w / 2 { low } else { high };
         // Across the transition as a whole: the unregularised estimate rings a column or two out,
         // so single columns there may move away while the edge as a whole closes on the step.
-        let error = |data: &[u16]| (28..36).map(|x| (at(data, x) - ideal(x)).abs()).sum::<f32>();
+        let error = |data: &[u16]| {
+            (28..36)
+                .map(|x| (at(data, x) - ideal(x)).abs())
+                .sum::<f32>()
+        };
         let (was, now) = (error(&before), error(&frame));
         assert!(
             now * 100.0 < was * 52.0,
@@ -3051,7 +3120,10 @@ mod tests {
                 .map(|(x, y)| (f32::from(frame[(y * w + x) * 3]) - diagonal[y * w + x]).abs())
                 .sum::<f32>()
         };
-        let (was, now) = (diagonal_error(&diagonal_before), diagonal_error(&diagonal_after));
+        let (was, now) = (
+            diagonal_error(&diagonal_before),
+            diagonal_error(&diagonal_after),
+        );
         assert!(
             now * 100.0 < was * 87.0,
             "the diagonal sat {was} from the step and now sits {now}"
@@ -3121,8 +3193,7 @@ mod tests {
             let luma = |pixel: usize| {
                 (0..3)
                     .map(|channel| {
-                        crate::image::LUMA[channel]
-                            * f32::from(samples[pixel * 3 + channel])
+                        crate::image::LUMA[channel] * f32::from(samples[pixel * 3 + channel])
                     })
                     .sum::<f32>()
             };
@@ -3159,14 +3230,9 @@ mod tests {
             read_variance: [1e-8, 0.0, 0.0],
             ..crate::image::SharpenNoise::NONE
         };
-        let Some(sharpened) = gpu_sharpened_with_noise(
-            &frame,
-            w,
-            h,
-            crate::image::DECONVOLVE_SIGMA,
-            0.5,
-            noise,
-        ) else {
+        let Some(sharpened) =
+            gpu_sharpened_with_noise(&frame, w, h, crate::image::DECONVOLVE_SIGMA, 0.5, noise)
+        else {
             return;
         };
         let error = |samples: &[u16]| {
@@ -3258,19 +3324,31 @@ mod tests {
         let base = super::device(gpu).expect("the pipelines");
         let (w, h) = (40usize, 20usize);
         let code = |nits: f64| {
-            let nits: crate::light::Light<crate::light::DisplayNits> = crate::light::Light::exactly(nits);
+            let nits: crate::light::Light<crate::light::DisplayNits> =
+                crate::light::Light::exactly(nits);
             (crate::tone::pq(nits).raw() * 65535.0).round() as u16
         };
-        let mut samples: Vec<u16> = (0..w * h).flat_map(|_| [code(20.0), code(100.0), code(50.0)]).collect();
+        let mut samples: Vec<u16> = (0..w * h)
+            .flat_map(|_| [code(20.0), code(100.0), code(50.0)])
+            .collect();
         let hot = (h - 1) * w + w - 1;
         samples[hot * 3..hot * 3 + 3].copy_from_slice(&[code(4000.0), code(10.0), code(10.0)]);
         let frame = crate::resident::Resident::upload(gpu, &samples, w, h);
-        let tally = pollster::block_on(super::content_light(gpu, base, frame.buffer(), w, h)).expect("the readback");
+        let tally = pollster::block_on(super::content_light(gpu, base, frame.buffer(), w, h))
+            .expect("the readback");
         frame.reclaim();
         assert_eq!(tally.pixels, w * h);
-        assert!((tally.brightest / 4000.0 - 1.0).abs() < 0.005, "brightest {}", tally.brightest);
+        assert!(
+            (tally.brightest / 4000.0 - 1.0).abs() < 0.005,
+            "brightest {}",
+            tally.brightest
+        );
         let sum = 100.0 * (w * h - 1) as f64 + 4000.0;
-        assert!((tally.sum / sum - 1.0).abs() < 0.005, "sum {} of {sum}", tally.sum);
+        assert!(
+            (tally.sum / sum - 1.0).abs() < 0.005,
+            "sum {} of {sum}",
+            tally.sum
+        );
     }
 
     #[test]
@@ -3532,7 +3610,10 @@ mod tests {
             .chunks_exact(4)
             .map(|word| f32::from_le_bytes(word.try_into().expect("one word")))
             .collect();
-        assert_eq!(words, (1..=15).map(|value| value as f32).collect::<Vec<_>>());
+        assert_eq!(
+            words,
+            (1..=15).map(|value| value as f32).collect::<Vec<_>>()
+        );
 
         const SLANG: &str = include_str!("../../../slang/sharpen.slang");
         let declared = |name: &str| -> usize {
@@ -3547,7 +3628,10 @@ mod tests {
                 .parse()
                 .unwrap_or_else(|_| panic!("{name} is a number"))
         };
-        assert_eq!(declared("NOISE_SENSITIVITY"), super::SHARPEN_NOISE_SENSITIVITY);
+        assert_eq!(
+            declared("NOISE_SENSITIVITY"),
+            super::SHARPEN_NOISE_SENSITIVITY
+        );
         assert_eq!(declared("NOISE_SHOT"), super::SHARPEN_NOISE_SHOT);
         assert_eq!(declared("NOISE_READ"), super::SHARPEN_NOISE_READ);
         assert_eq!(declared("NOISE_WORDS"), super::SHARPEN_NOISE_WORDS);
@@ -3639,7 +3723,12 @@ mod tests {
             .collect();
         let whole_out = (41usize, 29usize);
         let resized = resized(gpu, base, &samples, whole, whole_out).expect("a smaller frame");
-        for (x, y, width, height) in [(0, 0, 41, 29), (0, 7, 41, 11), (13, 18, 20, 11), (40, 28, 1, 1)] {
+        for (x, y, width, height) in [
+            (0, 0, 41, 29),
+            (0, 7, 41, 11),
+            (13, 18, 20, 11),
+            (40, 28, 1, 1),
+        ] {
             let out = crate::px::Rect::exact(x, y, width, height);
             let reads = super::resize_footprint(
                 crate::px::Size::exact(whole.0, whole.1),
@@ -3648,7 +3737,11 @@ mod tests {
             );
             let (left, top, right) = (reads.at.x.raw(), reads.at.y.raw(), reads.past().x.raw());
             let region: Vec<u16> = (top..reads.past().y.raw())
-                .flat_map(|y| samples[(y * whole.0 + left) * 3..(y * whole.0 + right) * 3].iter().copied())
+                .flat_map(|y| {
+                    samples[(y * whole.0 + left) * 3..(y * whole.0 + right) * 3]
+                        .iter()
+                        .copied()
+                })
                 .collect();
             let (region_w, region_h) = reads.size.raw();
             let held = Resident::upload(gpu, &region, region_w, region_h);
@@ -3664,9 +3757,16 @@ mod tests {
             held.reclaim();
             let band = pollster::block_on(band.into_host()).expect("the band maps");
             let expected: Vec<u16> = (y..y + height)
-                .flat_map(|row| resized[(row * whole_out.0 + x) * 3..(row * whole_out.0 + x + width) * 3].iter().copied())
+                .flat_map(|row| {
+                    resized[(row * whole_out.0 + x) * 3..(row * whole_out.0 + x + width) * 3]
+                        .iter()
+                        .copied()
+                })
                 .collect();
-            assert_eq!(band, expected, "the band at {out:?} is not those pixels of the whole");
+            assert_eq!(
+                band, expected,
+                "the band at {out:?} is not those pixels of the whole"
+            );
         }
     }
 
@@ -4164,9 +4264,15 @@ mod tests {
     fn pyramid_averages_hdr_light_and_preserves_flat_fields() {
         let gpu = crate::gpu::device().expect("the pyramid requires Vulkan");
         let base = super::device(gpu).expect("the pyramid pipeline");
-        let frame: Vec<u16> = (0..16).flat_map(|pixel| {
-            [if pixel % 2 == 1 && pixel / 4 % 2 == 1 { 59150 } else { 37953 }; 3]
-        }).collect();
+        let frame: Vec<u16> = (0..16)
+            .flat_map(|pixel| {
+                [if pixel % 2 == 1 && pixel / 4 % 2 == 1 {
+                    59150
+                } else {
+                    37953
+                }; 3]
+            })
+            .collect();
         let pyramid = super::pyramid(gpu, base, &frame, (4, 4)).expect("a pyramid");
         let levels = pollster::block_on(pyramid.levels_host(gpu)).expect("the levels");
         assert_eq!(levels[0], (vec![50270; 12], (2, 2)));
@@ -4218,13 +4324,18 @@ mod tests {
                                 let code = coarser[((sy * size.0) + sx) * 3 + channel];
                                 acc += crate::tone::pq_inv::<crate::light::SceneNits>(
                                     crate::light::Light::measured(f64::from(code) / 65535.0),
-                                ).raw();
+                                )
+                                .raw();
                                 taps += 1.0;
                             }
                         }
                         mine[((y * half.0) + x) * 3 + channel] = (crate::tone::pq(
                             crate::light::Light::<crate::light::SceneNits>::measured(acc / taps),
-                        ).raw() * 65535.0).round() as u16;
+                        )
+                        .raw()
+                            * 65535.0)
+                            .round()
+                            as u16;
                     }
                 }
             }
@@ -4237,7 +4348,8 @@ mod tests {
             assert!(
                 worst <= 1,
                 "level {level} at {}x{} is {worst} counts off a mean of four",
-                half.0, half.1,
+                half.0,
+                half.1,
             );
             coarser = mine;
             size = half;

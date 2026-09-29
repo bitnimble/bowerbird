@@ -27,8 +27,11 @@ function photo(peer: Peer, id: string, shootId: string | null): void {
 }
 
 function shootOf(peer: Peer, photoId: string): string | null {
-  return (peer.db.query('SELECT shoot_id FROM photos WHERE id = ?').get(photoId) as { shoot_id: string | null })
-    .shoot_id;
+  return (
+    peer.db.query('SELECT shoot_id FROM photos WHERE id = ?').get(photoId) as {
+      shoot_id: string | null;
+    }
+  ).shoot_id;
 }
 
 describe('a photograph arriving before its shoot', () => {
@@ -55,7 +58,9 @@ describe('a photograph arriving before its shoot', () => {
     // Waiting is the right answer and losing the membership is not, so what this
     // forbids is the row being *here* with its shoot gone - the state no later
     // session repairs, because the write succeeded and the stamp was claimed.
-    expect(laptop.db.query('SELECT COUNT(*) AS n FROM photos WHERE shoot_id IS NULL').get()).toEqual({ n: 0 });
+    expect(
+      laptop.db.query('SELECT COUNT(*) AS n FROM photos WHERE shoot_id IS NULL').get(),
+    ).toEqual({ n: 0 });
   });
 
   it('gets there in the end, over as many sessions as it takes', () => {
@@ -70,7 +75,9 @@ describe('a photograph arriving before its shoot', () => {
     replicate(server, laptop);
 
     expect(shootOf(laptop, 'p1')).toBe('s1');
-    expect(laptop.db.query('SELECT name FROM shoots WHERE id = ?').get('s1')).toEqual({ name: 'Iceland' });
+    expect(laptop.db.query('SELECT name FROM shoots WHERE id = ?').get('s1')).toEqual({
+      name: 'Iceland',
+    });
   });
 
   // The case the resolution exists for, which is not the one above: this peer has
@@ -87,11 +94,15 @@ describe('a photograph arriving before its shoot', () => {
 
     // The server has not heard, and goes on describing the photograph as a member.
     server.advance();
-    server.db.query('UPDATE photos SET rating = 4, stamp_triage = ? WHERE id = ?').run(stamp(server.db), 'p1');
+    server.db
+      .query('UPDATE photos SET rating = 4, stamp_triage = ? WHERE id = ?')
+      .run(stamp(server.db), 'p1');
     pull(laptop, server);
 
     expect(shootOf(laptop, 'p1')).toBeNull();
-    expect(laptop.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({ rating: 4 });
+    expect(laptop.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({
+      rating: 4,
+    });
   });
 
   /**
@@ -117,7 +128,9 @@ describe('a photograph arriving before its shoot', () => {
 
     // Covered, and stopping below the deferred photograph rather than at nothing.
     // Named by origin, since a vector holds one entry per peer that ever wrote.
-    const held = server.db.query('SELECT stamp_placement AS at FROM photos WHERE id = ?').get('p1') as { at: string };
+    const held = server.db
+      .query('SELECT stamp_placement AS at FROM photos WHERE id = ?')
+      .get('p1') as { at: string };
     const covered = laptop.db
       .query('SELECT stamp FROM replication_vectors WHERE library_id = ? AND origin = ?')
       .get(LIB, peerId(server.db)) as { stamp: string } | null;
@@ -145,10 +158,14 @@ describe('a photograph arriving before its shoot', () => {
 
     shoot(server, 's1', 'Day1');
     server.advance();
-    server.db.query('UPDATE photos SET shoot_id = ?, stamp_placement = ? WHERE id = ?').run('s1', stamp(server.db), 'p1');
+    server.db
+      .query('UPDATE photos SET shoot_id = ?, stamp_placement = ? WHERE id = ?')
+      .run('s1', stamp(server.db), 'p1');
     // Newer, and minted here, so it is the stamp the whole change reports.
     laptop.advance();
-    laptop.db.query('UPDATE photos SET rating = 4, stamp_triage = ? WHERE id = ?').run(stamp(laptop.db), 'p1');
+    laptop.db
+      .query('UPDATE photos SET rating = 4, stamp_triage = ? WHERE id = ?')
+      .run(stamp(laptop.db), 'p1');
     pull(server, laptop);
     // The shoot pages last, so the placement arrives before it.
     server.advance();
@@ -159,7 +176,9 @@ describe('a photograph arriving before its shoot', () => {
     replicate(server, laptop);
 
     expect(shootOf(laptop, 'p1')).toBe('s1');
-    expect(laptop.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({ rating: 4 });
+    expect(laptop.db.query('SELECT rating FROM photos WHERE id = ?').get('p1')).toEqual({
+      rating: 4,
+    });
   });
 
   // A deferral is not a drop: the page's other changes still land, and the stamp is

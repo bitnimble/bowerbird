@@ -17,7 +17,11 @@ export class LabelsService {
   create(request: CreateLabelRequest): Label {
     this.requireLibrary(request.library_id);
     const wanted = request.name.toLowerCase();
-    if (this.repo.listByLibrary(request.library_id).some((label) => label.name.toLowerCase() === wanted)) {
+    if (
+      this.repo
+        .listByLibrary(request.library_id)
+        .some((label) => label.name.toLowerCase() === wanted)
+    ) {
       throw new AppError('CONFLICT', `label already exists: ${request.name}`);
     }
     const id = this.newId();
@@ -80,7 +84,8 @@ export class LabelsService {
   }
 
   private requireLibrary(libraryId: string): void {
-    if (this.libraries.getById(libraryId) == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (this.libraries.getById(libraryId) == null)
+      throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
   }
 
   private newId(): string {

@@ -42,7 +42,11 @@ export class ThreadPool {
     Atomics.store(this.control, this.nextId, 1);
   }
 
-  static async start(module: WebAssembly.Module, memory: WebAssembly.Memory, size: number): Promise<ThreadPool> {
+  static async start(
+    module: WebAssembly.Module,
+    memory: WebAssembly.Memory,
+    size: number,
+  ): Promise<ThreadPool> {
     const buffer = new SharedArrayBuffer((size * SLOT_WORDS + 2) * Int32Array.BYTES_PER_ELEMENT);
     await Promise.all(
       Array.from({ length: size }, (_, slot) => {
@@ -81,15 +85,25 @@ export class ThreadPool {
 }
 
 /** A pool worker's loop, which never returns: the worker is that thread for its whole life. */
-export async function serveSlot({ module, memory, control: buffer, slot }: PoolStart, ready: () => void): Promise<never> {
+export async function serveSlot(
+  { module, memory, control: buffer, slot }: PoolStart,
+  ready: () => void,
+): Promise<never> {
   const control = new Int32Array(buffer);
   const state = slot * SLOT_WORDS;
   const finished = control.length - 1;
-  const instance = await WebAssembly.instantiate(module, wasiImports(memory, () => -1));
+  const instance = await WebAssembly.instantiate(
+    module,
+    wasiImports(memory, () => -1),
+  );
   const start = instance.exports['wasi_thread_start'] as (id: number, arg: number) => void;
   ready();
   for (;;) {
-    for (let seen = Atomics.load(control, state); seen !== STARTED; seen = Atomics.load(control, state)) {
+    for (
+      let seen = Atomics.load(control, state);
+      seen !== STARTED;
+      seen = Atomics.load(control, state)
+    ) {
       Atomics.wait(control, state, seen);
     }
     try {

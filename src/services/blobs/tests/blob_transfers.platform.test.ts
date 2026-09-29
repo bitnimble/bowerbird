@@ -12,9 +12,12 @@ it('serves resumed original bytes over HTTP with their exact range headers', asy
   addPhoto(peer, 'p1', 'p1.arw', '0123456789ABCDEF');
   const server = Bun.serve({ port: 0, fetch: peer.routes.fetch });
   try {
-    const response = await fetch(`http://localhost:${server.port}${route('p1', PathSegment.original())}`, {
-      headers: { Range: 'bytes=12-' },
-    });
+    const response = await fetch(
+      `http://localhost:${server.port}${route('p1', PathSegment.original())}`,
+      {
+        headers: { Range: 'bytes=12-' },
+      },
+    );
     expect(response.status).toBe(206);
     expect(response.headers.get('content-range')).toBe('bytes 12-15/16');
     expect(response.headers.get('content-length')).toBe('4');
@@ -23,9 +26,13 @@ it('serves resumed original bytes over HTTP with their exact range headers', asy
     expect(peer.activity.current(LIB)).toEqual([]);
 
     for (const range of [undefined, 'bytes=12-', 'bytes=99-200']) {
-      const head = await fetch(`http://localhost:${server.port}${route('p1', PathSegment.original())}`, {
-        method: 'HEAD', headers: range == null ? {} : { Range: range },
-      });
+      const head = await fetch(
+        `http://localhost:${server.port}${route('p1', PathSegment.original())}`,
+        {
+          method: 'HEAD',
+          headers: range == null ? {} : { Range: range },
+        },
+      );
       expect(head.status).toBe(200);
       expect(head.headers.get('content-range')).toBeNull();
       expect(head.headers.get('content-length')).toBe('16');
@@ -58,7 +65,12 @@ describe('push', () => {
     expect(names).not.toContain('one.arw');
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(false);
     expect(b.locations.flags(LIB)).toEqual([
-      { library_id: LIB, photo_id: 'photo1', target_path: 'one.arw', reason: 'target occupied by ONE.ARW' },
+      {
+        library_id: LIB,
+        photo_id: 'photo1',
+        target_path: 'one.arw',
+        reason: 'target occupied by ONE.ARW',
+      },
     ]);
     // The staged copy is kept, so the retry after the user resolves the
     // collision resumes without re-sending a byte.

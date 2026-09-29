@@ -73,9 +73,9 @@ export const AddShootDialog = observer(function AddShootDialog({
           <Text variant="mono" as="p">
             {AddShootStrings.makesTheFolderBefore()}
             <code>
-              {parentPath === '' ?
-                name || AddShootStrings.unnamed()
-              : `${parentPath}/${name || AddShootStrings.unnamed()}`}
+              {parentPath === ''
+                ? name || AddShootStrings.unnamed()
+                : `${parentPath}/${name || AddShootStrings.unnamed()}`}
             </code>
             {AddShootStrings.makesTheFolderAfter()}
           </Text>
@@ -85,14 +85,23 @@ export const AddShootDialog = observer(function AddShootDialog({
           <Text variant="label" as="span">
             {AddLibraryStrings.sortPhotosBy()}
           </Text>
-          <Select label={AddLibraryStrings.sortPhotosBy()} options={ORDERINGS} value={ordering} onChange={setOrdering} />
+          <Select
+            label={AddLibraryStrings.sortPhotosBy()}
+            options={ORDERINGS}
+            value={ordering}
+            onChange={setOrdering}
+          />
         </Field>
 
         {store.error != null && <ErrorBanner>{store.error}</ErrorBanner>}
 
         <DialogActions>
           <Button onClick={() => onOpenChange(false)}>{ModalStrings.cancel()}</Button>
-          <Button variant="primary" disabled={name.trim() === '' || saving} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            disabled={name.trim() === '' || saving}
+            onClick={() => void submit()}
+          >
             {AddShootStrings.createShoot()}
           </Button>
         </DialogActions>

@@ -89,7 +89,10 @@ function chain(points: StoredPoint[], tolerance: number): StoredPoint[] {
     }
   }
   if (widest <= tolerance) return [a, b];
-  return [...chain(points.slice(0, at + 1), tolerance).slice(0, -1), ...chain(points.slice(at), tolerance)];
+  return [
+    ...chain(points.slice(0, at + 1), tolerance).slice(0, -1),
+    ...chain(points.slice(at), tolerance),
+  ];
 }
 
 function distance(a: StoredPoint, b: StoredPoint): number {

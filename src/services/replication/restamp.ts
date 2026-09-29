@@ -14,7 +14,9 @@ const log = new Logger('replication');
 
 /** The newest stamp a catalogue has recorded, or null for one that has none. */
 export function newestStamp(db: Database): string | null {
-  const row = db.query('SELECT MAX(stamp) AS newest FROM replication_log').get() as { newest: string | null } | null;
+  const row = db.query('SELECT MAX(stamp) AS newest FROM replication_log').get() as {
+    newest: string | null;
+  } | null;
   return row?.newest ?? null;
 }
 
@@ -33,7 +35,9 @@ export function newestStamp(db: Database): string | null {
  * card imported on Tuesday.
  */
 export function restampRestored(db: Database, floor: string | null): number {
-  const libraries = db.query('SELECT library_id FROM replication_libraries').all() as { library_id: string }[];
+  const libraries = db.query('SELECT library_id FROM replication_libraries').all() as {
+    library_id: string;
+  }[];
   if (libraries.length === 0) return 0;
 
   // Taken through the ordinary clock, which resumes from this catalogue's own log,
@@ -42,12 +46,15 @@ export function restampRestored(db: Database, floor: string | null): number {
   // stamps were minted on this machine and cannot be beyond the skew bound - and
   // the restore goes ahead on the clock it has rather than failing over it.
   if (floor != null && !observeStamp(db, floor)) {
-    log.warn('the replaced catalogue had an unreadable clock; re-stamping from this one', { floor });
+    log.warn('the replaced catalogue had an unreadable clock; re-stamping from this one', {
+      floor,
+    });
   }
   const at = stamp(db);
 
   const byTable = new Map<string, typeof REPLICATED_UNITS>();
-  for (const unit of REPLICATED_UNITS) byTable.set(unit.table, [...(byTable.get(unit.table) ?? []), unit]);
+  for (const unit of REPLICATED_UNITS)
+    byTable.set(unit.table, [...(byTable.get(unit.table) ?? []), unit]);
 
   let rows = 0;
   db.transaction(() => {
@@ -73,12 +80,12 @@ export function restampRestored(db: Database, floor: string | null): number {
       const scope = units[0]!.library.replaceAll('$.', '');
       const values = units.map(() => at);
       for (const library of libraries) {
-        rows += db.query(`UPDATE ${units[0]!.table} SET ${sets} WHERE ${scope} = ?`).run(...values, library.library_id)
-          .changes;
+        rows += db
+          .query(`UPDATE ${units[0]!.table} SET ${sets} WHERE ${scope} = ?`)
+          .run(...values, library.library_id).changes;
       }
     }
   })();
   log.info('re-stamped a restored catalogue so its state is the one that travels', { rows, at });
   return rows;
 }
-

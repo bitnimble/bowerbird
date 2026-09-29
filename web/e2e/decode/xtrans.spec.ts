@@ -59,7 +59,9 @@ test.beforeAll(async ({ browser }) => {
  * with a fit measured off the mosaic, so they say GALOSH ran on a 6x6 period, that the fit crossed
  * back, and that the editor reached the same conclusion the decode did.
  */
-test('opens in the editor, grades on the GPU through the camera match, and offers the Detail sliders', async ({ page }) => {
+test('opens in the editor, grades on the GPU through the camera match, and offers the Detail sliders', async ({
+  page,
+}) => {
   await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page, 150_000);
 

@@ -58,13 +58,22 @@ async function open(peer: PairedPeer): Promise<void> {
   await act(async () => {});
 }
 
-test.each([RAW_ERROR, 'SQLITE_BUSY'])('a sync failure shows safe status and recovery copy for %s', async (last_error) => {
-  await open({ ...PEER, last_error, last_replicated_at: new Date(Date.now() - 21 * 60 * 1000).toISOString() });
+test.each([RAW_ERROR, 'SQLITE_BUSY'])(
+  'a sync failure shows safe status and recovery copy for %s',
+  async (last_error) => {
+    await open({
+      ...PEER,
+      last_error,
+      last_replicated_at: new Date(Date.now() - 21 * 60 * 1000).toISOString(),
+    });
 
-  const status = screen.getByText("Laptop · Synced 21 min ago · couldn't sync");
-  expect(status.getAttribute('aria-description')).toBe("We couldn't sync with this device. Try again.");
-  expect(screen.queryByText(last_error, { exact: false })).toBeNull();
-});
+    const status = screen.getByText("Laptop · Synced 21 min ago · couldn't sync");
+    expect(status.getAttribute('aria-description')).toBe(
+      "We couldn't sync with this device. Try again.",
+    );
+    expect(screen.queryByText(last_error, { exact: false })).toBeNull();
+  },
+);
 
 test('a device without a sync error has no failure copy or tooltip', async () => {
   await open(PEER);
@@ -77,10 +86,13 @@ test('a device without a sync error has no failure copy or tooltip', async () =>
 test.each([
   ['peer', 'update Bowerbird on Laptop to sync'],
   ['this_device', 'update Bowerbird on this device to sync'],
-] as const)('an outdated %s keeps update guidance without exposing raw errors', async (outdated, guidance) => {
-  await open({ ...PEER, last_error: RAW_ERROR, outdated });
+] as const)(
+  'an outdated %s keeps update guidance without exposing raw errors',
+  async (outdated, guidance) => {
+    await open({ ...PEER, last_error: RAW_ERROR, outdated });
 
-  const status = screen.getByText(`Laptop · Never synced · ${guidance}`);
-  expect(status.getAttribute('aria-description')).toBeNull();
-  expect(screen.queryByText(RAW_ERROR, { exact: false })).toBeNull();
-});
+    const status = screen.getByText(`Laptop · Never synced · ${guidance}`);
+    expect(status.getAttribute('aria-description')).toBeNull();
+    expect(screen.queryByText(RAW_ERROR, { exact: false })).toBeNull();
+  },
+);

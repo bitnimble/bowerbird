@@ -161,7 +161,11 @@ export interface ChangeSink {
  * receiver may claim is what the *sender* held when the session opened, minus any
  * origin it had to defer, and it claims it once at the end rather than per page.
  */
-export async function pushTo(from: Replica, sink: ChangeSink, limit = PAGE_ROWS): Promise<PullResult> {
+export async function pushTo(
+  from: Replica,
+  sink: ChangeSink,
+  limit = PAGE_ROWS,
+): Promise<PullResult> {
   const delivered = coverage(from.db, from.libraryId);
   const deferred: string[] = [];
   let applied = 0;
@@ -225,7 +229,13 @@ interface Intake {
 }
 
 function open(into: Replica): Intake {
-  return { held: coverage(into.db, into.libraryId), applied: 0, pages: 0, deferred: [], edited: new Set() };
+  return {
+    held: coverage(into.db, into.libraryId),
+    applied: 0,
+    pages: 0,
+    deferred: [],
+    edited: new Set(),
+  };
 }
 
 function accept(into: Replica, intake: Intake, next: Page): void {

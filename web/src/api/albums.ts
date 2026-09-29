@@ -7,18 +7,34 @@ import {
   type UpdateAlbumRequest,
   UpdateAlbumRequestSchema,
 } from '../../../src/schemas/albums';
-import { type PhotoListResponse, PhotoListResponseSchema, type PhotoTarget, PhotoTargetSchema } from '../../../src/schemas/photos';
+import {
+  type PhotoListResponse,
+  PhotoListResponseSchema,
+  type PhotoTarget,
+  PhotoTargetSchema,
+} from '../../../src/schemas/photos';
 import { PathSegment, route } from '../../../src/schemas/route';
 import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { photoListQuery, type PhotoListParams } from './photos';
 import { NothingSchema, request } from './request';
 
 export const albumsApi = {
-  list: (): Promise<Album[]> => request(AlbumListSchema, 'GET', route(PathSegment.api(), PathSegment.albums())),
+  list: (): Promise<Album[]> =>
+    request(AlbumListSchema, 'GET', route(PathSegment.api(), PathSegment.albums())),
   create: (body: CreateAlbumRequest): Promise<Album> =>
-    request(AlbumSchema, 'POST', route(PathSegment.api(), PathSegment.albums()), CreateAlbumRequestSchema.parse(body)),
+    request(
+      AlbumSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.albums()),
+      CreateAlbumRequestSchema.parse(body),
+    ),
   update: (id: string, body: UpdateAlbumRequest): Promise<Album> =>
-    request(AlbumSchema, 'PATCH', route(PathSegment.api(), PathSegment.albums(), id), UpdateAlbumRequestSchema.parse(body)),
+    request(
+      AlbumSchema,
+      'PATCH',
+      route(PathSegment.api(), PathSegment.albums(), id),
+      UpdateAlbumRequestSchema.parse(body),
+    ),
   delete: (id: string): Promise<void> =>
     request(NothingSchema, 'DELETE', route(PathSegment.api(), PathSegment.albums(), id)),
   addPhotos: (id: string, target: PhotoTarget): Promise<void> =>
@@ -35,7 +51,12 @@ export const albumsApi = {
       route(PathSegment.api(), PathSegment.albums(), id, PathSegment.photos()),
       PhotoTargetSchema.parse(target),
     ),
-  listPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
+  listPhotos: (
+    id: string,
+    params: PhotoListParams,
+    signal?: AbortSignal,
+    activity?: RequestActivity,
+  ): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',

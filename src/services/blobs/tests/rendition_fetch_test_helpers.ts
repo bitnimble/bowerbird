@@ -11,7 +11,10 @@ import { renditionVariant, type Rendition } from '../../processing/renditions/re
 import { LibrariesRepository } from '../../libraries/libraries_repository';
 import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
-import { PhotoProcessingRepository, type RenditionStamps } from '../../photos/renditions/photo_processing_repository';
+import {
+  PhotoProcessingRepository,
+  type RenditionStamps,
+} from '../../photos/renditions/photo_processing_repository';
 import type { PeerJpeg } from '../../photos/renditions/photo_rendition_service';
 import { PhotoScanRepository } from '../../photos/scan/photo_scan_repository';
 import { StackMembership } from '../../stacks/stack_membership';
@@ -77,7 +80,9 @@ export function makePeer(name: string): Peer {
   // would have replicas - and cases - reading each other's cached tiles.
   const lib = `library-${name}-${++libraryIds}`;
   dataDirs.push(dataPathForLibraryId(lib));
-  db.query("INSERT INTO libraries (id, root_path, name, bin_name) VALUES (?, ?, 'Trip', 'Bin')").run(lib, root);
+  db.query(
+    "INSERT INTO libraries (id, root_path, name, bin_name) VALUES (?, ?, 'Trip', 'Bin')",
+  ).run(lib, root);
   db.query('INSERT INTO replication_libraries (library_id) VALUES (?)').run(lib);
 
   const libraries = new LibrariesRepository(db);
@@ -127,7 +132,13 @@ export function makePeer(name: string): Peer {
   // this disk at the range asked and stamped with the edits it rendered - never a tile, which is
   // the queue's - and otherwise passed on.
   const renderer = {
-    buildForPeer: async (photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[], force = false): Promise<void> => {
+    buildForPeer: async (
+      photoId: string,
+      rendition: Rendition,
+      hdr: boolean,
+      via: readonly string[],
+      force = false,
+    ): Promise<void> => {
       if (!originalHere(photoId)) return fetch.relay(photoId, rendition, hdr, via, force);
       if (rendition === 'grid') return;
       const photo = photoPaths.getBasicById(photoId);
@@ -135,21 +146,40 @@ export function makePeer(name: string): Peer {
       if (lib == null) return;
       const target = getRenditionPath(lib, photoId, rendition, hdr);
       mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, `${renditionVariant(rendition, hdr)} of ${photoId}${force ? ', forced' : ''}`);
+      writeFileSync(
+        target,
+        `${renditionVariant(rendition, hdr)} of ${photoId}${force ? ', forced' : ''}`,
+      );
       const editedFrom = photoProcessing.renditionStamps(photoId, rendition)?.edited_from ?? null;
-      photoProcessing.markCopyBuilt(photoId, BUILT_AT, editedFrom, renditionVariant(rendition, hdr));
+      photoProcessing.markCopyBuilt(
+        photoId,
+        BUILT_AT,
+        editedFrom,
+        renditionVariant(rendition, hdr),
+      );
     },
-    embeddedJpegForPeer: async (photoId: string, via: readonly string[]): Promise<PeerJpeg | null> => {
+    embeddedJpegForPeer: async (
+      photoId: string,
+      via: readonly string[],
+    ): Promise<PeerJpeg | null> => {
       const lifted = camera.get(photoId);
-      const stamps = (): RenditionStamps | null => photoProcessing.renditionStamps(photoId, 'embedded');
-      if (lifted != null) return { bytes: new TextEncoder().encode(lifted), builtFrom: stamps()?.edited_from ?? null };
+      const stamps = (): RenditionStamps | null =>
+        photoProcessing.renditionStamps(photoId, 'embedded');
+      if (lifted != null)
+        return {
+          bytes: new TextEncoder().encode(lifted),
+          builtFrom: stamps()?.edited_from ?? null,
+        };
       await fetch.relay(photoId, 'embedded', false, via);
       const photo = photoPaths.getBasicById(photoId);
       const lib = photo == null ? null : libraries.getById(photo.library_id);
       const now = stamps();
-      if (lib == null || !renditionCurrent(now?.built_from ?? null, now?.edited_from ?? null)) return null;
+      if (lib == null || !renditionCurrent(now?.built_from ?? null, now?.edited_from ?? null))
+        return null;
       const cached = getRenditionPath(lib, photoId, 'embedded', false);
-      return existsSync(cached) ? { bytes: readFileSync(cached), builtFrom: now?.built_from ?? null } : null;
+      return existsSync(cached)
+        ? { bytes: readFileSync(cached), builtFrom: now?.built_from ?? null }
+        : null;
     },
   };
   const api = new BlobsApi(
@@ -230,11 +260,19 @@ export function tilePath(peer: Peer, photoId: string): string {
 }
 
 /** A rendition the pipeline built, as a holder would hold it. */
-export function buildTile(peer: Peer, photoId: string, bytes: string, builtFrom: string | null = null): void {
+export function buildTile(
+  peer: Peer,
+  photoId: string,
+  bytes: string,
+  builtFrom: string | null = null,
+): void {
   const abs = tilePath(peer, photoId);
   mkdirSync(path.dirname(abs), { recursive: true });
   writeFileSync(abs, bytes);
-  peer.photoProcessing.markTileBuilt(photoId, BUILT_AT, builtFrom, { from: 'render', matched: true });
+  peer.photoProcessing.markTileBuilt(photoId, BUILT_AT, builtFrom, {
+    from: 'render',
+    matched: true,
+  });
 }
 
 /** Both sides of a pairing, which is what makes a peer a fetch candidate. */
@@ -242,7 +280,9 @@ export function pair(a: Peer, b: Peer, photoId: string): void {
   registerPeer(a.db, a.lib, b.id, 'b');
   registerPeer(b.db, b.lib, a.id, 'a');
   b.db
-    .query('INSERT OR IGNORE INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)')
+    .query(
+      'INSERT OR IGNORE INTO blob_locations (library_id, photo_id, peer_id, stamp) VALUES (?, ?, ?, ?)',
+    )
     .run(b.lib, photoId, a.id, `ffffffffffff0000${a.id}`);
 }
 

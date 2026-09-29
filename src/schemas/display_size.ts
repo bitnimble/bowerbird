@@ -29,7 +29,11 @@ import type { EditDoc } from './photo_edits';
  * every tile on the wall and on the server for every row it writes, neither of which has the wasm
  * module in reach - so what is shared is the answer rather than the code.
  */
-export function displaySize(width: number, height: number, doc: EditDoc): { width: number; height: number } {
+export function displaySize(
+  width: number,
+  height: number,
+  doc: EditDoc,
+): { width: number; height: number } {
   const radians = (Math.abs(doc.cropAngle) * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);

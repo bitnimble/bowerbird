@@ -15,8 +15,14 @@ export class PrintStore {
   @observable.ref accessor printerProfiles: string[] = [];
   @observable.ref accessor printerProfile: PrinterProfile | null = null;
 
-  @computed get flat(): boolean { return this.scene.presentation === 'flat'; }
-  @computed get surface(): boolean { return this.scene.presentation === 'surface'; }
+  @computed get flat(): boolean {
+    return this.scene.presentation === 'flat';
+  }
+  @computed get surface(): boolean {
+    return this.scene.presentation === 'surface';
+  }
   /** The sheet hanging in a room, which the reader turns with a drag. */
-  @computed get hanging(): boolean { return this.open && this.scene.presentation === 'scene'; }
+  @computed get hanging(): boolean {
+    return this.open && this.scene.presentation === 'scene';
+  }
 }

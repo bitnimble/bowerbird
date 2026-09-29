@@ -155,7 +155,11 @@ export function Cards({ children }: Children): JSX.Element {
   return <div {...stylex.props(styles.cards)}>{children}</div>;
 }
 
-export function Card({ id, title, children }: Children & { id: string; title: string }): JSX.Element {
+export function Card({
+  id,
+  title,
+  children,
+}: Children & { id: string; title: string }): JSX.Element {
   return (
     <article id={id} {...stylex.props(styles.card)}>
       <h3 {...stylex.props(styles.cardTitle)}>{title}</h3>

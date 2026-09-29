@@ -21,16 +21,19 @@ fn main() {
     let path = args.next().expect("demosaic_probe <raw> <x,y,side>...");
     let windows: Vec<(usize, usize, usize)> = args
         .map(|spec| {
-            let v: Vec<usize> =
-                spec.split(',').map(|n| n.parse().expect("x,y,side are numbers")).collect();
+            let v: Vec<usize> = spec
+                .split(',')
+                .map(|n| n.parse().expect("x,y,side are numbers"))
+                .collect();
             (v[0], v[1], v[2])
         })
         .collect();
 
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(&path)).expect("the file");
     let decoder = rawler::get_decoder(&source).expect("a decoder");
-    let image =
-        decoder.raw_image(&source, &RawDecodeParams::default(), false).expect("the frame decodes");
+    let image = decoder
+        .raw_image(&source, &RawDecodeParams::default(), false)
+        .expect("the frame decodes");
     let RawImageData::Integer(samples) = &image.data else {
         panic!("not integer samples");
     };
@@ -113,8 +116,7 @@ fn main() {
                     // Per pixel and clamped as `assemble` does, because a mean taken before the
                     // clamp is not what the frame holds - a channel the matrix sends negative is
                     // answered by the clamp, and averaging first hides that it ever happened.
-                    let mixed: f32 =
-                        (0..3).map(|k| matrix[c][k] * cam[k]).sum::<f32>().max(0.0);
+                    let mixed: f32 = (0..3).map(|k| matrix[c][k] * cam[k]).sum::<f32>().max(0.0);
                     coded[c] += f64::from(mixed);
                 }
                 count += 1.0;
@@ -128,7 +130,10 @@ fn main() {
             "    photosites  R {:.5} G {:.5} B {:.5}",
             measured[0], measured[1], measured[2],
         );
-        println!("    demosaiced  R {:.5} G {:.5} B {:.5}", built[0], built[1], built[2]);
+        println!(
+            "    demosaiced  R {:.5} G {:.5} B {:.5}",
+            built[0], built[1], built[2]
+        );
         println!(
             "    matrixed    R {:.5} G {:.5} B {:.5}  ({:.0} {:.0} {:.0} of 65535)",
             after[0],

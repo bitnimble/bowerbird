@@ -27,14 +27,21 @@ export function stale(caches: Cache[]): Cache[] {
 
 function gh(args: string[]): string {
   const done = spawnSync('gh', args, { encoding: 'utf8' });
-  if (done.status !== 0) throw new Error(`gh ${args.join(' ')} exited ${done.status}:\n${done.stderr}`);
+  if (done.status !== 0)
+    throw new Error(`gh ${args.join(' ')} exited ${done.status}:\n${done.stderr}`);
   return done.stdout;
 }
 
 if (import.meta.main) {
   const repo = process.argv[2];
   if (repo == null) throw new Error('name the repository: owner/repo');
-  const pages = gh(['api', '--paginate', '--jq', '.actions_caches[]', `repos/${repo}/actions/caches?per_page=100`]);
+  const pages = gh([
+    'api',
+    '--paginate',
+    '--jq',
+    '.actions_caches[]',
+    `repos/${repo}/actions/caches?per_page=100`,
+  ]);
   const caches: Cache[] = pages
     .split('\n')
     .filter((line) => line !== '')

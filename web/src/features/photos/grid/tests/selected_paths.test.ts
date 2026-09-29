@@ -35,7 +35,14 @@ test('includes members picked out of an open band', () => {
   const { marks, stacks } = stores();
   marks.selection = SelectionRanges.of(0, 0);
   stacks.expansions = new Map([
-    ['stack-1', { stackId: 'stack-1', position: 1, photos: [row('m0', 'Bin/m0.arw'), row('m1', 'Bin/m1.arw')] }],
+    [
+      'stack-1',
+      {
+        stackId: 'stack-1',
+        position: 1,
+        photos: [row('m0', 'Bin/m0.arw'), row('m1', 'Bin/m1.arw')],
+      },
+    ],
   ]);
   marks.selectedMembers = new Set(['m1']);
   expect(marks.selectedLoadedPaths.sort()).toEqual(['Bin/Trip/a.arw', 'Bin/m1.arw']);

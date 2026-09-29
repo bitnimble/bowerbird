@@ -30,7 +30,7 @@ The Light panel has exposure, contrast, highlights, shadows, whites, blacks, and
 
 The editor and renditions grade through `hdr::prepare` and `hdr::grade_prepared`. `Prepared` holds a decoded frame with geometry, falloff and levels applied, but no exposure - the only per-tick change. A rendition calls both once; the editor calls `prepare` at open and `grade_prepared` per tick.
 
-The spike's separate grade drifted silently: the editor fitted its camera match against a *sharpened* render, the rendition against an unsharpened one, producing different colour from the same file. `Strengths::before_the_fit` defines what both fits see.
+The spike's separate grade drifted silently: the editor fitted its camera match against a _sharpened_ render, the rendition against an unsharpened one, producing different colour from the same file. `Strengths::before_the_fit` defines what both fits see.
 
 **Settings cross as one JSON value, `wasm::EditorSpec`.** The web side reads the server's settings. Inlining peak, anchor or denoise defaults would make edited libraries show one picture and write another.
 
@@ -53,19 +53,19 @@ Toggling `+simd128` changes neither settle nor drag because it gates almost noth
 
 **A settle is a second of `image::finish` and very little else.** Timed inside `grade_from` at the default 3840 edge, a 2566x3840 frame in Chromium, two samples each:
 
-| stage | ms | what it is |
-| --- | --- | --- |
-| copy | 3-5 | the prepared frame into the working buffer |
-| grade | 118-146 | `tone::grade`, the exposure and the fitted camera curve |
-| pq | 6-15 | `tone::encode_pq`, a LUT and a lookup |
-| finish | **837-1035** | `image::finish` - denoise, defringe, sharpen |
-| emit | 106-190 / 146-189 / 617-798 | pack for a track / PNG / AVIF |
+| stage  | ms                          | what it is                                              |
+| ------ | --------------------------- | ------------------------------------------------------- |
+| copy   | 3-5                         | the prepared frame into the working buffer              |
+| grade  | 118-146                     | `tone::grade`, the exposure and the fitted camera curve |
+| pq     | 6-15                        | `tone::encode_pq`, a LUT and a lookup                   |
+| finish | **837-1035**                | `image::finish` - denoise, defringe, sharpen            |
+| emit   | 106-190 / 146-189 / 617-798 | pack for a track / PNG / AVIF                           |
 
 So the still route's 1.2s and the rewrap route's 1.7s are 80% and 60% one function, and the grade proper is a tenth of either. `finish` is not slow through carelessness - it is already rayon-parallel throughout - it is five guided-filter passes plus a Richardson-Lucy deconvolution over three f32 planes of 9.8M pixels, each allocating its own. Optimising the arithmetic of the grade, or vectorising it, addresses the 130ms.
 
 Two substantial options remain unimplemented: reduce `finish` through fewer passes, reused buffers or whole-frame `measure_defocus` reused across ticks; or emit the grade immediately, then the finished frame. The latter preserves the resting picture and roughly quarters perceived latency, but needs two encodes per settle and changes the editor's contract.
 
-**There is no AVX to reach for, in any browser.** WebAssembly SIMD is 128-bit `v128` and nothing else; the 256-bit AVX intrinsics Emscripten documents are emulated as two 128-bit operations, which is source compatibility rather than width, and the proposal for genuinely wider vectors (flexible vectors) is unshipped everywhere. The one step up is relaxed SIMD - still 128-bit, mostly FMA and relaxed lane ops - and it is unavailable to us twice over: Safari does not support it (Chrome 114+, Firefox 146+), and Safari is a blessed platform, so the module would be refused outright there rather than degraded. Measured anyway: building with `+relaxed-simd` emits *zero* relaxed instructions and leaves the SIMD count byte-identical, so there is nothing in this module for it to improve.
+**There is no AVX to reach for, in any browser.** WebAssembly SIMD is 128-bit `v128` and nothing else; the 256-bit AVX intrinsics Emscripten documents are emulated as two 128-bit operations, which is source compatibility rather than width, and the proposal for genuinely wider vectors (flexible vectors) is unshipped everywhere. The one step up is relaxed SIMD - still 128-bit, mostly FMA and relaxed lane ops - and it is unavailable to us twice over: Safari does not support it (Chrome 114+, Firefox 146+), and Safari is a blessed platform, so the module would be refused outright there rather than degraded. Measured anyway: building with `+relaxed-simd` emits _zero_ relaxed instructions and leaves the SIMD count byte-identical, so there is nothing in this module for it to improve.
 
 ### 21.1.2 The merge page draws through the stage's own pipeline, not a second one
 
@@ -75,12 +75,13 @@ the same prohibition on a second implementation applies.
 **Every preview on the page, a hover or a pick, is the viewer's own pipeline with one addition: a
 mask.** `stage.slang`'s `stage_light` is the whole of what turns a decoded plane into a canvas pixel - the
 planes read, PQ taken back to nits, rolled into the display's headroom, rotated onto the canvas's primaries
+
 - and it is called once, from both `planar` and `planar_masked`, so a masked draw is the same picture with
-an alpha rather than a second copy of that arithmetic. `StagePainter.paintMasked` (`stage_gpu.ts`) draws the base layer
-opaque, then each source a tile currently picks blended over it, its alpha sampled from an 8-bit mask
-`merge_mask.ts` rasterises from the tile outlines on an offscreen 2D canvas - fine for a mask, where it
-would not be for the picture itself. Hovering a swatch and clicking it call the identical draw, so the two
-look the same on screen and differ only in whether the choice survives the pointer leaving.
+  an alpha rather than a second copy of that arithmetic. `StagePainter.paintMasked` (`stage_gpu.ts`) draws the base layer
+  opaque, then each source a tile currently picks blended over it, its alpha sampled from an 8-bit mask
+  `merge_mask.ts` rasterises from the tile outlines on an offscreen 2D canvas - fine for a mask, where it
+  would not be for the picture itself. Hovering a swatch and clicking it call the identical draw, so the two
+  look the same on screen and differ only in whether the choice survives the pointer leaving.
 
 **One render pass, one submit, and every plane copied out before the canvas is touched.** A composite cannot
 be spread over several frames: `VideoFrame.copyTo` answers a task or more later, a canvas texture is presented
@@ -96,7 +97,7 @@ every layer is an HDR-decoded `VideoFrame`. Avoid `createImageBitmap`, which ton
 that hides a residual seam and the per-source weight that decides how far a feather reaches - which is
 exactly the kind of second answer this pipeline has already lost to drift, twice, silently (§21.1). There is
 no AVIF decoder in an editor wasm build and no compute pipeline in `web/src` to run one through, so a masked
-*draw* of layers already decoded for the canvas is the whole of what the browser is trusted to do here; the
+_draw_ of layers already decoded for the canvas is the whole of what the browser is trusted to do here; the
 render that actually blends the bands and the weights runs once, in the one native crate, on the server.
 
 **A pick that stands still for 400ms is asked for as a render**, and the server's own picture of it
@@ -113,7 +114,7 @@ the draft it sits beside.
 
 Only the route to the compositor differs by browser; each branch is measured:
 
-- **Chromium, anywhere: a video track.** It accepts a 10-bit `VideoFrame` and composites a PQ track. Also the cheapest route there is - no encode, no blob, no decode, just planes handed to a sink. Where the track is *created* is itself forced: Chromium's `MediaStreamTrackGenerator` is a track, and a track is neither transferable nor cloneable, so it is built on the main thread and fed from the worker; Safari's standard `VideoTrackGenerator` exists only in a worker and hands a track back. Two paths, no way to unify them.
+- **Chromium, anywhere: a video track.** It accepts a 10-bit `VideoFrame` and composites a PQ track. Also the cheapest route there is - no encode, no blob, no decode, just planes handed to a sink. Where the track is _created_ is itself forced: Chromium's `MediaStreamTrackGenerator` is a track, and a track is neither transferable nor cloneable, so it is built on the main thread and fed from the worker; Safari's standard `VideoTrackGenerator` exists only in a worker and hands a track back. Two paths, no way to unify them.
 - **Safari on macOS and iOS: a PNG per tick.** WebKit validates `I420` and `NV12` alone, so a track there is 8 bits, and Apple's guidance for the layer behind a `MediaStream` is that sample buffers need 10 or more to reach EDR - the PQ tag is accepted and then tone-mapped, which on an XDR panel is a washed-out picture. A PNG goes through Core Graphics, which reads CICP and has no bit-depth floor, and carries 16 bits at 4:4:4. The better frame, the worse drag: measured at 9fps against 12, and 1.4GB resident against 841MB.
 - **Firefox: a 12-bit AV1 per tick, rewrapped as an MP4.** Gecko composites HDR through video and only video, and every in-page route to a video frame is capped at 8 bits - which it then will not composite either. So the frame is encoded properly and handed over in the container Gecko will take. See below.
 
@@ -125,17 +126,17 @@ The e2e-only `?route=` query param compares routes on one machine. The viewer ha
 
 Firefox's rendition rewrap (§10.7.2) changes only the container around existing AV1. **A live edit must first encode that AV1.**
 
-Not with WebCodecs. Its input is a `VideoFrame`, which Gecko accepts as 8-bit `I420` or `NV12` and nothing else, so the depth ceiling is in the *frame* type rather than the codec - VP9 profile 2 and HEVC are shut out by the same wall. And 8 bits would not have been enough anyway: an 8-bit PQ AV1 in an MP4, correctly tagged, does not composite as HDR on 153/Windows, measured against a 10-bit control of the same frame on the same page and the same panel. The 10-bit one lights the display and the 8-bit one does not.
+Not with WebCodecs. Its input is a `VideoFrame`, which Gecko accepts as 8-bit `I420` or `NV12` and nothing else, so the depth ceiling is in the _frame_ type rather than the codec - VP9 profile 2 and HEVC are shut out by the same wall. And 8 bits would not have been enough anyway: an 8-bit PQ AV1 in an MP4, correctly tagged, does not composite as HDR on 153/Windows, measured against a 10-bit control of the same frame on the same page and the same panel. The 10-bit one lights the display and the 8-bit one does not.
 
-So the encoder is **libaom, compiled into the wasm module**, taking the graded samples directly and never passing through a `VideoFrame`. rav1e was the obvious candidate - pure Rust, smaller - and is the wrong one: it would be a *second* AV1 encoder with its own colour handling to keep in step with the first, which is the divergence §21.1 exists to prevent. libaom keeps the promise that the frame in the viewer is the frame the library writes, because it is literally `avif::encode_still` under the CICP a rendition uses. The page then hands the AVIF to `avifToMp4` - the same rewrap the photo view uses on stored renditions, so there is one implementation of the container trick and not one per caller.
+So the encoder is **libaom, compiled into the wasm module**, taking the graded samples directly and never passing through a `VideoFrame`. rav1e was the obvious candidate - pure Rust, smaller - and is the wrong one: it would be a _second_ AV1 encoder with its own colour handling to keep in step with the first, which is the divergence §21.1 exists to prevent. libaom keeps the promise that the frame in the viewer is the frame the library writes, because it is literally `avif::encode_still` under the CICP a rendition uses. The page then hands the AVIF to `avifToMp4` - the same rewrap the photo view uses on stored renditions, so there is one implementation of the container trick and not one per caller.
 
 Two settings are the editor's own rather than the library's, because a frame that lives for one slider tick and never reaches a disk is not a size decision: fastest speed, and a quantizer low enough to judge on. Chroma is forced to 4:2:0 whatever `sdr_full_chroma` says, since Firefox decodes 4:4:4 AV1 in software and then declines to composite it in HDR (§10.7).
 
 **It builds with wasi-sdk, not emscripten** (the wasm library build), which is what makes it a static archive that links into an ordinary `wasm32-unknown-unknown` cdylib with wasm-bindgen still owning the boundary - the same route LibRaw already took. `AOM_TARGET_CPU=generic` drops every x86 and NEON path, and the C fallbacks are complete. It is built single-threaded: libaom would otherwise call `pthread_create`, which under wasip1-threads wants a `wasi_thread_spawn` import no browser provides, and this module's threads come from wasm-bindgen-rayon. What is lost is tile threading on a frame the grade has already parallelised into.
 
-Two things in that build are silent when wrong and cost an afternoon each. libaom signals codec errors with `setjmp`/`longjmp`, which on wasm lowers onto exception handling: it needs `-mllvm -wasm-enable-sjlj`, it must link wasi-libc's `libsetjmp.a` or the runtime calls become imports from an `env` module that **the link still accepts**, and it has to use the same non-legacy EH encoding as the prebuilt libc++abi or the browser refuses the whole module. And `find_package(libsharpyuv QUIET)` finds the *host's* copy and links an x86 archive into a wasm one, so the build script asserts no archive references it.
+Two things in that build are silent when wrong and cost an afternoon each. libaom signals codec errors with `setjmp`/`longjmp`, which on wasm lowers onto exception handling: it needs `-mllvm -wasm-enable-sjlj`, it must link wasi-libc's `libsetjmp.a` or the runtime calls become imports from an `env` module that **the link still accepts**, and it has to use the same non-legacy EH encoding as the prebuilt libc++abi or the browser refuses the whole module. And `find_package(libsharpyuv QUIET)` finds the _host's_ copy and links an x86 archive into a wasm one, so the build script asserts no archive references it.
 
-**The cost, measured.** The module goes from 2.87MB to 6.72MB, and 896KB to 2.08MB gzipped - it more than doubles. Tolerable only because the module is fetched by the editor's worker and nothing else, so no one browsing photos pays for it. On a 9.9MP frame in Chromium, against the PNG route on the same machine and the same file: a drag tick costs 119ms against 88ms, a settle 1.4s against 1.05s, and both deliver 7-8fps. The encode is therefore *not* what limits the drag on either route; swapping a fresh blob into an element each tick is.
+**The cost, measured.** The module goes from 2.87MB to 6.72MB, and 896KB to 2.08MB gzipped - it more than doubles. Tolerable only because the module is fetched by the editor's worker and nothing else, so no one browsing photos pays for it. On a 9.9MP frame in Chromium, against the PNG route on the same machine and the same file: a drag tick costs 119ms against 88ms, a settle 1.4s against 1.05s, and both deliver 7-8fps. The encode is therefore _not_ what limits the drag on either route; swapping a fresh blob into an element each tick is.
 
 ### 21.4 Where the state lives
 
@@ -354,7 +355,7 @@ where the emitter is the smaller of the two: balance-weighted MIS is unbiased ei
 lobe's strategy finds a one-degree lamp once in a hundred tries for a hundred times the value, which
 is variance and not signal - held against a thousand-sample render, the pair costs a third of the
 frame and lands closer than the old estimator did.
-The third is that those counts are the *specular's*. Under a hundredth of a steradian - a small
+The third is that those counts are the _specular's_. Under a hundredth of a steradian - a small
 lamp, not a broad one - every geometric factor is constant across the emitter's face, so the diffuse
 half of the same pixel is the diffuser's mean radiance times one cosine, in closed form, at one
 evaluation rather than sixty-four. A near, broad lamp varies its own inverse square over its face by a quarter and
@@ -413,9 +414,9 @@ E2e pins cross-origin isolation and the thread pool: without `SharedArrayBuffer`
 
 The rewrap similarly checks the delivered MP4's `colr` box and AV1 configuration record's `high_bitdepth` bit. A frame lacking high-bit-depth PQ is wrong regardless of browser acceptance.
 
-**A rendition is twelve-bit now, which is AV1 Professional profile, and this is the route that route is most exposed on.** The rewrap copies the file's own `av1C` verbatim, so it carries whatever the still was written at, and a still decoder taking profile 2 says nothing about a *video* pipeline taking it - which is the one Firefox composites HDR through. Untested here, and the failure would be Firefox showing nothing rather than showing it flat.
+**A rendition is twelve-bit now, which is AV1 Professional profile, and this is the route that route is most exposed on.** The rewrap copies the file's own `av1C` verbatim, so it carries whatever the still was written at, and a still decoder taking profile 2 says nothing about a _video_ pipeline taking it - which is the one Firefox composites HDR through. Untested here, and the failure would be Firefox showing nothing rather than showing it flat.
 
-This spec is the second one to run under Gecko as well as Chromium, and the only one whose *subject* is an engine - a route that exists for Firefox and is exercised only in Chromium is tested everywhere except where it matters. It confirms the mechanism end to end there: shared memory, the thread pool, LibRaw, libaom and the rewrap. What it cannot confirm is the pixels reaching an HDR compositor, which no automated check can read back on any of the three routes.
+This spec is the second one to run under Gecko as well as Chromium, and the only one whose _subject_ is an engine - a route that exists for Firefox and is exercised only in Chromium is tested everywhere except where it matters. It confirms the mechanism end to end there: shared memory, the thread pool, LibRaw, libaom and the rewrap. What it cannot confirm is the pixels reaching an HDR compositor, which no automated check can read back on any of the three routes.
 
 ## 22. What HDR is for (`/hdr`)
 
@@ -427,7 +428,7 @@ This spec is the second one to run under Gecko as well as Chromium, and the only
 
 **The HDR arm comes out of `runJob`** (`scripts/demo-assets.ts`) at the settings the app ships with - `SettingsSchema.parse({})`, not a table of numbers copied into the script - with only the size changed, 1200px rather than 3840.
 
-**The 8-bit arm is derived from that file rather than asked for as a second target**, and getting this wrong is what the first version of the page did. A library's SDR rendition is *not* the HDR one with its highlights removed: it came off LibRaw's sRGB output, auto-brightened and fitted to the camera's JPEG (§10.8), where the HDR one is a scene-linear decode graded against a quantile (§10.7.1). On a daylight frame those land in nearly the same place. On a night frame they do not - measured on the neon sign, the SDR arm sat at a black level of 0.059 with a red cast where the HDR arm was at 0.003 and neutral, and on the WC sign it was darker everywhere rather than only in the highlights. Both are defensible renderings and neither is a bug. But a page whose entire claim is *the same picture with less room at the top* cannot be built from two pictures that disagree at the bottom, and a reader looking at those pairs correctly reported that the 8-bit one was simply broken.
+**The 8-bit arm is derived from that file rather than asked for as a second target**, and getting this wrong is what the first version of the page did. A library's SDR rendition is _not_ the HDR one with its highlights removed: it came off LibRaw's sRGB output, auto-brightened and fitted to the camera's JPEG (§10.8), where the HDR one is a scene-linear decode graded against a quantile (§10.7.1). On a daylight frame those land in nearly the same place. On a night frame they do not - measured on the neon sign, the SDR arm sat at a black level of 0.059 with a red cast where the HDR arm was at 0.003 and neutral, and on the WC sign it was darker everywhere rather than only in the highlights. Both are defensible renderings and neither is a bug. But a page whose entire claim is _the same picture with less room at the top_ cannot be built from two pictures that disagree at the bottom, and a reader looking at those pairs correctly reported that the 8-bit one was simply broken.
 
 So the 8-bit arm is now the HDR arm with its ceiling brought down to white: the PQ taken back to light with 203 nits tied to 1.0, everything above that clipped by the sRGB transfer, written out at the quantizer a stored SDR rendition would have used. A clamp and a colour conversion, no second grade - which is exactly what the page says it is showing, and now literally true rather than nearly true.
 
@@ -437,25 +438,25 @@ The cost of the fix is that the page can no longer borrow a difference from the 
 
 **Choose scenes by measurement, then recognisability.** Most raws hold only a stop or two above diffuse white: metering favours the subject, with sensor saturation a little above. Frames containing a light source work best. Encoded rendition measurements:
 
-| | above white | peak | colour recovered |
-|---|---|---|---|
-| rapids under an overcast sky | 2.4% | 587 nits | 0.00% |
-| a sunset over railway tracks | 2.5% | 656 nits | 0.00% |
-| lit arches at night | 2.6% | 1460 nits | **1.28%** |
+|                              | above white | peak      | colour recovered |
+| ---------------------------- | ----------- | --------- | ---------------- |
+| rapids under an overcast sky | 2.4%        | 587 nits  | 0.00%            |
+| a sunset over railway tracks | 2.5%        | 656 nits  | 0.00%            |
+| lit arches at night          | 2.6%        | 1460 nits | **1.28%**        |
 
-**"Above white" turned out to be the wrong number to choose on, and the third column is the right one.** It counts pixels that are bright and *neutral* in the 8-bit arm while still being a colour in the HDR one - which is the thing the page claims in words and the thing a reader checks by eye. Two pictures chosen on headroom alone were rejected on sight for showing "not much" and "still blown-out red", and they score 0.24% and 0.04% here: the metric agrees with the reader, where the headroom figure did not. The arches score 1.28%, an order of magnitude past anything the licensed candidates managed.
+**"Above white" turned out to be the wrong number to choose on, and the third column is the right one.** It counts pixels that are bright and _neutral_ in the 8-bit arm while still being a colour in the HDR one - which is the thing the page claims in words and the thing a reader checks by eye. Two pictures chosen on headroom alone were rejected on sight for showing "not much" and "still blown-out red", and they score 0.24% and 0.04% here: the metric agrees with the reader, where the headroom figure did not. The arches score 1.28%, an order of magnitude past anything the licensed candidates managed.
 
-**What it exposes is a property of the grade, not of the photographs.** Screened across eight night, neon and traffic-light frames, *none* recovers more than 0.04%. The BT.2390 roll-off is applied per channel against a shared curve (§10.7.1), so a light source twenty stops above white arrives with all three channels pressed against the ceiling - near-white in the HDR rendition too, just very much brighter. Saturated colour survives where it sits one to three stops above white and not twenty. The arches are in that window and are what the page argues colour with: measured over the pixels the ceiling touches, mean saturation is **0.571 in HDR against 0.186 in eight bits, and 51% of them go neutral** - they are pink in one file and white in the other, which is the whole claim. Making a neon tube twenty stops up come back red as well would need a hue-preserving roll-off in `tone.rs`, a change to what every HDR rendition in the app looks like and not something a page about the app gets to decide.
+**What it exposes is a property of the grade, not of the photographs.** Screened across eight night, neon and traffic-light frames, _none_ recovers more than 0.04%. The BT.2390 roll-off is applied per channel against a shared curve (§10.7.1), so a light source twenty stops above white arrives with all three channels pressed against the ceiling - near-white in the HDR rendition too, just very much brighter. Saturated colour survives where it sits one to three stops above white and not twenty. The arches are in that window and are what the page argues colour with: measured over the pixels the ceiling touches, mean saturation is **0.571 in HDR against 0.186 in eight bits, and 51% of them go neutral** - they are pink in one file and white in the other, which is the whole claim. Making a neon tube twenty stops up come back red as well would need a hue-preserving roll-off in `tone.rs`, a change to what every HDR rendition in the app looks like and not something a page about the app gets to decide.
 
-**Which picture carries which argument is decided by that measurement, not by the subject.** The sunset looks like the colour example and is not one: over its above-white pixels, saturation goes 0.913 to 0.791 and *none* of them go neutral, so the eight-bit version is barely less colourful - what it loses is height, being folded into the top of the range. It is captioned as that. The copy had the two the wrong way round until the numbers were run.
+**Which picture carries which argument is decided by that measurement, not by the subject.** The sunset looks like the colour example and is not one: over its above-white pixels, saturation goes 0.913 to 0.791 and _none_ of them go neutral, so the eight-bit version is barely less colourful - what it loses is height, being folded into the top of the range. It is captioned as that. The copy had the two the wrong way round until the numbers were run.
 
-**A sunlit snowfield is the worst case for this grade, which is worth writing down because it reads backwards.** The obvious way to show clipping is a big white subject, so twelve snow and surf frames were measured looking for one. Ten came back at 0.0% above white. The reason is structural rather than bad luck: `HDR_WHITE_QUANTILE` puts diffuse white at the 90th percentile of the frame (§10.7.1), and in a picture that is mostly snow the 90th percentile *is* the snow - so white lands on the subject and there is nothing left above it. The one that worked is a sunset, where the snow is in shadow and the sun is not.
+**A sunlit snowfield is the worst case for this grade, which is worth writing down because it reads backwards.** The obvious way to show clipping is a big white subject, so twelve snow and surf frames were measured looking for one. Ten came back at 0.0% above white. The reason is structural rather than bad luck: `HDR_WHITE_QUANTILE` puts diffuse white at the 90th percentile of the frame (§10.7.1), and in a picture that is mostly snow the 90th percentile _is_ the snow - so white lands on the subject and there is nothing left above it. The one that worked is a sunset, where the snow is in shadow and the sun is not.
 
 The second test is recognisability: readers know a backlit beer, traffic light or neon tube. They cannot judge which rendering of an unfamiliar LED-lit room is right, regardless of headroom.
 
 **In Safari, an HDR image inside a scrolling element has to be promoted to its own layer or it is not HDR.** WebKit gives a scroller one shared backing store and that store is SDR, so a PQ image drawn into it composites flat. `will-change: opacity` is enough to take the image out of it.
 
-This cost a day to find, and every wrong turn on the way is instructive about how the failure hides. The strip was flat in Safari and bright in Chromium, so it looked like the file: it was the one asset on the page tagged 1/16/1 at 4:4:4 rather than 9/16/9 at 4:2:0, which is a genuine problem and was worth fixing on its own, and fixing it changed nothing. It was bright in Reader mode, which is the page's CSS being stripped, so it looked like the stylesheet - and an audit for the filter/transform/opacity rule below came back clean, because that rule was not the one being broken. A bare probe page reproduced *none* of it: file, markup, `clli`, scaling, layer promotion, all bright. What finally isolated it was moving the `<img>` up the tree on the real page until it came good, which put it exactly at `.content`, and then killing one declaration.
+This cost a day to find, and every wrong turn on the way is instructive about how the failure hides. The strip was flat in Safari and bright in Chromium, so it looked like the file: it was the one asset on the page tagged 1/16/1 at 4:4:4 rather than 9/16/9 at 4:2:0, which is a genuine problem and was worth fixing on its own, and fixing it changed nothing. It was bright in Reader mode, which is the page's CSS being stripped, so it looked like the stylesheet - and an audit for the filter/transform/opacity rule below came back clean, because that rule was not the one being broken. A bare probe page reproduced _none_ of it: file, markup, `clli`, scaling, layer promotion, all bright. What finally isolated it was moving the `<img>` up the tree on the real page until it came good, which put it exactly at `.content`, and then killing one declaration.
 
 **The photographs escaped the failure accidentally.** `.compare__layer` already had `will-change: opacity` for repaint-free swapping, promoting them out of the scroller.
 
@@ -465,13 +466,13 @@ Firefox uses the photo view's `useHdrVideo` rewrap. Three mounted MP4s cost a fe
 
 **Swatch strips are the page's only synthetic content.** They explain brightness above white before the photographs: five colours start at their 8-bit maximum and rise to their format's limit. Quantisation is lossless; flat colour has no detail to trade away.
 
-**The strip is tagged and subsampled exactly like a rendition - 9/16/9, 4:2:0 - and was not.** It was 4:4:4 at **1/16/1**, Rec.709 primaries with a PQ transfer, which dodged the gamut conversion and rendered correctly in Chromium. Neither half of that is a combination another engine has reason to expect: 4:4:4 is the one thing Firefox will not composite in HDR (§10.7), and 709-with-PQ is not a colour space anything ships a path for. A reader on Safari saw the HDR half come out better than the 8-bit half but not *bright*, and saw it come good in Reader mode - which is the page's own CSS being stripped, so it may yet be page-side, but a file that is the only one of its kind on the page is the first variable to remove.
+**The strip is tagged and subsampled exactly like a rendition - 9/16/9, 4:2:0 - and was not.** It was 4:4:4 at **1/16/1**, Rec.709 primaries with a PQ transfer, which dodged the gamut conversion and rendered correctly in Chromium. Neither half of that is a combination another engine has reason to expect: 4:4:4 is the one thing Firefox will not composite in HDR (§10.7), and 709-with-PQ is not a colour space anything ships a path for. A reader on Safari saw the HDR half come out better than the 8-bit half but not _bright_, and saw it come good in Reader mode - which is the page's own CSS being stripped, so it may yet be page-side, but a file that is the only one of its kind on the page is the first variable to remove.
 
-Two details in doing it. The **conversion to Rec.2020 happens in the script rather than in zimg**, so the samples can be scaled by `1/max` afterwards and diffuse white still lands on 1.0; the conversion pulls a saturated Rec.709 red to 0.65 of full scale and would otherwise put the first patch at 130 nits. And the **8-bit half is clipped before the conversion, not after**, because the clip is the thing being demonstrated and it is an *sRGB* clip. Clipping in the wide space walks the reds to a khaki and the blues to a grey-green, which is not what any JPEG has ever done - it was drawn that way for one build and it looked precisely as wrong as it sounds.
+Two details in doing it. The **conversion to Rec.2020 happens in the script rather than in zimg**, so the samples can be scaled by `1/max` afterwards and diffuse white still lands on 1.0; the conversion pulls a saturated Rec.709 red to 0.65 of full scale and would otherwise put the first patch at 130 nits. And the **8-bit half is clipped before the conversion, not after**, because the clip is the thing being demonstrated and it is an _sRGB_ clip. Clipping in the wide space walks the reds to a khaki and the blues to a grey-green, which is not what any JPEG has ever done - it was drawn that way for one build and it looked precisely as wrong as it sounds.
 
 **All three channels scale together, and the two attempts to avoid that are worth recording** because both looked like improvements. The HDR row reads as getting lighter along its length, which invites holding the two minor channels and raising the dominant one alone: the row then deepens instead of lightening, and side by side the two strips stop looking like the same move at different speeds.
 
-It is wrong twice over. It flattens the 8-bit arm to five identical patches, since that arm goes pale *because* those channels are rising underneath a dominant one that has already stopped - so the arms have to be authored separately, which they then were. And measured across the row it moves the hue: **orange from 24 degrees to 5, red in all but name, and blue from 212 to 235**. A strip captioned "the same colour, brighter" cannot be turning one colour into another, and trading a lightness error for a hue error is not a fix.
+It is wrong twice over. It flattens the 8-bit arm to five identical patches, since that arm goes pale _because_ those channels are rising underneath a dominant one that has already stopped - so the arms have to be authored separately, which they then were. And measured across the row it moves the hue: **orange from 24 degrees to 5, red in all but name, and blue from 212 to 235**. A strip captioned "the same colour, brighter" cannot be turning one colour into another, and trading a lightness error for a hue error is not a fix.
 
 Scaling the triple is the only construction that means what the caption says. It leaves chromaticity alone, so hue and saturation are both held exactly - measured across a row, 24.2 to 24.2 degrees and 0.97 saturation on the orange, while the light goes 198 to 974 nits. The row does look lighter, because more light is what it has; the caption now says that and points at what the 8-bit arm spends to get the same climb.
 
@@ -481,15 +482,15 @@ On most screens, sRGB paints about a quarter brighter than PQ, whether adjacent 
 
 One file can. The left half is the same colours with every channel clamped at white and the right half is those numbers left alone, so whatever the screen does to one half it does to the other and what is left is the comparison. Measured on the composited page, the first patch of each half now paints identically at `187,48,44`, where the last pair reads `188,107,99` against `255,81,74` - the same brightness gone pale on the left, more brightness with the colour intact on the right. On a real HDR screen the left half simply cannot exceed diffuse white, which states the argument as a brightness rather than as a caption.
 
-The photographs never showed any of this, because a swap never puts two pictures next to each other. It is worth knowing anyway: it is what an SDR viewer sees of *every* HDR rendition this app writes, and it is why the notice at the top of the page is worded the way it is.
+The photographs never showed any of this, because a swap never puts two pictures next to each other. It is worth knowing anyway: it is what an SDR viewer sees of _every_ HDR rendition this app writes, and it is why the notice at the top of the page is worded the way it is.
 
 **The stops chart above them started as folklore and took three attempts to source.** "About 8 stops for a JPEG, about 15 for 10-bit" is what it said until a reader asked where those came from, which was nowhere.
 
-*Measuring the code values* was the first answer and made the threshold the author's choice: how far down before the gap between adjacent values exceeds 5% gives 6.0 and 14.6, 2% gives 2.8 and 10.3, and 1% - about the Weber limit, and roughly what PQ was designed against - gives **0.4 and 3.9**. That last pair is true and useless on a chart. A photograph is not a smooth gradient and its own grain dithers away the banding the criterion is hunting for, so quantisation belongs in a sentence rather than in the length of a bar.
+_Measuring the code values_ was the first answer and made the threshold the author's choice: how far down before the gap between adjacent values exceeds 5% gives 6.0 and 14.6, 2% gives 2.8 and 10.3, and 1% - about the Weber limit, and roughly what PQ was designed against - gives **0.4 and 3.9**. That last pair is true and useless on a chart. A photograph is not a smooth gradient and its own grain dithers away the banding the criterion is hunting for, so quantisation belongs in a sentence rather than in the length of a bar.
 
-*Quoting each format's specification* was the second and was wrong in both directions at once. sRGB's 80:1 is its reference *viewing environment* from 1999 - a CRT in a lit office, ambient flare included - and describes no panel anyone owns; it gave the JPEG 6.3 stops, which is far too mean. HDR10's 1000 nits over 0.005 is a mastering reference met by an OLED in a dark room; it gave 17.6, which is far too generous for the LCD most readers are on.
+_Quoting each format's specification_ was the second and was wrong in both directions at once. sRGB's 80:1 is its reference _viewing environment_ from 1999 - a CRT in a lit office, ambient flare included - and describes no panel anyone owns; it gave the JPEG 6.3 stops, which is far too mean. HDR10's 1000 nits over 0.005 is a mastering reference met by an OLED in a dark room; it gave 17.6, which is far too generous for the LCD most readers are on.
 
-*What the hardware can actually show* was the third, and it was answering a different question from the one the label asked: a bar reading "An 8-bit JPEG" that says 10 stops because a monitor is 1000:1 is a fact about the monitor.
+_What the hardware can actually show_ was the third, and it was answering a different question from the one the label asked: a bar reading "An 8-bit JPEG" that says 10 stops because a monitor is 1000:1 is a fact about the monitor.
 
 **So each file gets its format's own range with the screens indented beneath it** as subsets. sRGB encodes codes 1 to 255, which is 11.7 stops; PQ at 10 bits encodes 0.0001 to 10,000 nits, which is 27.9. Under each sit an OLED in a dark room, a MacBook Pro XDR, and an LCD in a lit one.
 
@@ -499,7 +500,7 @@ The photographs never showed any of this, because a swap never puts two pictures
 
 The rows under the JPEG are the reason this is worth drawing four times. **Two of them are identical to the format bar above them**, because either HDR screen outruns sRGB by several stops and so the thing limiting a JPEG there is the JPEG. The HDR file is the other way round on every screen: 27.9 encodable against 17 seen on the OLED, 15 on the XDR and 10.2 on the LCD, because there the panel and then the eye run out long before the file does. Neither fact is visible when a bar carries one number.
 
-**A JPEG's headroom is 0.2 stops rather than none**, which the bar now shows as a sliver past the line rather than stopping dead on it. A camera puts diffuse white around code 240 and not 255, leaving the last 15 codes for specular glints: `log2(linear(255)/linear(240))` is 0.20, and placing white at 235 or 245 gives 0.27 or 0.13. The page kept saying a JPEG has *nothing* above white and it nearly does, but 0.2 against the HDR file's 2.3 makes the point better than a wrong zero would.
+**A JPEG's headroom is 0.2 stops rather than none**, which the bar now shows as a sliver past the line rather than stopping dead on it. A camera puts diffuse white around code 240 and not 255, leaving the last 15 codes for specular glints: `log2(linear(255)/linear(240))` is 0.20, and placing white at 235 or 245 gives 0.27 or 0.13. The page kept saying a JPEG has _nothing_ above white and it nearly does, but 0.2 against the HDR file's 2.3 makes the point better than a wrong zero would.
 
 **Hatch above-white range; draw the white tick heavy over the bars.** The chart's subject is where values fall relative to white, so that boundary must dominate.
 

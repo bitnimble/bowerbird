@@ -10,7 +10,10 @@ import { parseArgs } from 'node:util';
 // without editing the environment. Not strict: the flag has to coexist with
 // whatever else the runtime was invoked with.
 function argPort(): number | undefined {
-  const { values } = parseArgs({ options: { port: { type: 'string', short: 'p' } }, strict: false });
+  const { values } = parseArgs({
+    options: { port: { type: 'string', short: 'p' } },
+    strict: false,
+  });
   if (typeof values.port !== 'string') return undefined;
   const value = Number(values.port);
   if (!Number.isInteger(value) || value < 0 || value > 65535) {
@@ -25,7 +28,8 @@ function envPort(): number {
   const raw = process.env.PORT;
   if (raw == null || raw === '') return 0;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0 || value > 65535) throw new Error(`Invalid PORT: "${raw}" is not a port number`);
+  if (!Number.isInteger(value) || value < 0 || value > 65535)
+    throw new Error(`Invalid PORT: "${raw}" is not a port number`);
   return value;
 }
 

@@ -27,7 +27,8 @@ export const GridKeys = observer(function GridKeys({ scrollerId }: { scrollerId:
       // the browser bring it into view fights the rail (§18.3.2).
       if (e.key.startsWith('Arrow')) {
         const scroller = document.getElementById(scrollerId);
-        if (scroller != null && !scroller.contains(document.activeElement)) scroller.focus({ preventScroll: true });
+        if (scroller != null && !scroller.contains(document.activeElement))
+          scroller.focus({ preventScroll: true });
       }
 
       // Whether the reader has tabbed onto something that owns its own activation
@@ -78,11 +79,13 @@ export const GridKeys = observer(function GridKeys({ scrollerId }: { scrollerId:
           // - the click it synthesises runs the frame's own handler, which is what
           // drives the router, where preventDefault here would swallow it and a
           // bare return would let the browser follow the href as a page load.
-          const fromGrid = target == null || target === document.body || target.closest(`#${scrollerId}`) != null;
+          const fromGrid =
+            target == null || target === document.body || target.closest(`#${scrollerId}`) != null;
           if (!fromGrid || onControl) return;
           const focused = marks.focusedPhoto;
           if (focused == null) return;
-          if (focused.stack_id != null && focused.stack_size > 1) void photos.toggleBand(focused.stack_id, marks.focusIndex);
+          if (focused.stack_id != null && focused.stack_size > 1)
+            void photos.toggleBand(focused.stack_id, marks.focusIndex);
           else navigate(photoPath(focused.id, listing.source));
           break;
         }

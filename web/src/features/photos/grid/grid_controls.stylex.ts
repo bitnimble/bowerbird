@@ -46,7 +46,11 @@ export const styles = stylex.create({
   },
   submenu: {
     width: '100%',
-    backgroundColor: { default: 'transparent', ':hover': color.slate, '[data-popup-open]': color.slate },
+    backgroundColor: {
+      default: 'transparent',
+      ':hover': color.slate,
+      '[data-popup-open]': color.slate,
+    },
     borderStyle: 'none',
     color: color.bone,
     textAlign: 'left',
@@ -137,4 +141,3 @@ export const styles = stylex.create({
     backgroundColor: 'currentColor',
   },
 });
-

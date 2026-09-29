@@ -5,5 +5,6 @@ export const LabelsPresenterStrings = {
   couldNotCreateLabel: () => "We couldn't create that label.",
   couldNotSaveLabels: () => "We couldn't save your labels. Try again in a moment.",
   couldNotChangeLabels: () => "We couldn't change the labels. Try again in a moment.",
-  labelled: (count: number, label: string) => `Added ${label} to ${plural(count, 'photo', 'photos')}.`,
+  labelled: (count: number, label: string) =>
+    `Added ${label} to ${plural(count, 'photo', 'photos')}.`,
 };

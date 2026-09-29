@@ -20,7 +20,14 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** What `composite_scene::rig` writes, in the order it writes them. */
-export const PANORAMA_VIEW_NAMES = ['view0.png', 'view1.png', 'view2.png', 'view3.png', 'view4.png', 'view5.png'];
+export const PANORAMA_VIEW_NAMES = [
+  'view0.png',
+  'view1.png',
+  'view2.png',
+  'view3.png',
+  'view4.png',
+  'view5.png',
+];
 
 /**
  * Writes the views into `directory`, unless they are all already there.

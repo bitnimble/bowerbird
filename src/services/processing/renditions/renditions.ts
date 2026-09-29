@@ -176,5 +176,7 @@ export function renditionVariants(): RenditionVariant[] {
 // still, encoded for Firefox, which the client now makes for itself out of the
 // still (§10.7).
 export function retiredRenditionDirs(): string[] {
-  return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).map((rendition) => `${rendition}-hdr-video`);
+  return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).map(
+    (rendition) => `${rendition}-hdr-video`,
+  );
 }

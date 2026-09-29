@@ -48,7 +48,8 @@ export function prepareState(): void {
   rmSync(STATE_ROOT, { recursive: true, force: true });
   for (const [shoot, files] of Object.entries(LIBRARY)) {
     mkdirSync(path.join(LIBRARY_ROOT, shoot), { recursive: true });
-    for (const [from, to] of files) copyFileSync(path.join(REPO, from), path.join(LIBRARY_ROOT, shoot, to));
+    for (const [from, to] of files)
+      copyFileSync(path.join(REPO, from), path.join(LIBRARY_ROOT, shoot, to));
   }
   mkdirSync(SHOTS_DIR, { recursive: true });
 }

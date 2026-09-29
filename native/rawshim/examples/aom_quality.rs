@@ -37,7 +37,10 @@ fn options(edge: usize) -> EncodeOptions {
         },
         crf: 3,
         preset: HDR_SPEED,
-        strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
+        strengths: Strengths {
+            sharpen: 1.0,
+            defringe: 1.0,
+        },
         sharpen_sigma: None,
         max_edge: edge as f64,
         content_light: None,
@@ -48,7 +51,9 @@ fn options(edge: usize) -> EncodeOptions {
 /// on the coded values, as the encoder's own Y' plane has it.
 fn luma<T: Copy + Into<f64>>(rgb: &[T], full: f64, weights: [f64; 3]) -> Vec<f64> {
     rgb.chunks_exact(3)
-        .map(|p| (weights[0] * p[0].into() + weights[1] * p[1].into() + weights[2] * p[2].into()) / full)
+        .map(|p| {
+            (weights[0] * p[0].into() + weights[1] * p[1].into() + weights[2] * p[2].into()) / full
+        })
         .collect()
 }
 
@@ -74,7 +79,8 @@ fn ssim(a: &[f64], b: &[f64], width: usize, height: usize) -> f64 {
             let va = saa / 64.0 - ma * ma;
             let vb = sbb / 64.0 - mb * mb;
             let cov = sab / 64.0 - ma * mb;
-            sum += ((2.0 * ma * mb + C1) * (2.0 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2));
+            sum += ((2.0 * ma * mb + C1) * (2.0 * cov + C2))
+                / ((ma * ma + mb * mb + C1) * (va + vb + C2));
             count += 1;
         }
     }
@@ -85,7 +91,11 @@ fn ssim(a: &[f64], b: &[f64], width: usize, height: usize) -> f64 {
 fn rmse_in_pq(a: &[u16], b: &[u16]) -> f64 {
     let floor = rawshim::tone::pq(Light::<DisplayNits>::measured(0.5)).raw();
     let signal = |c: u16| (f64::from(c) / 65535.0).max(floor);
-    let sum: f64 = a.iter().zip(b).map(|(x, y)| (signal(*x) - signal(*y)).powi(2)).sum();
+    let sum: f64 = a
+        .iter()
+        .zip(b)
+        .map(|(x, y)| (signal(*x) - signal(*y)).powi(2))
+        .sum();
     (sum / a.len() as f64).sqrt() * 1023.0
 }
 
@@ -95,7 +105,12 @@ fn speckle(a: &[u16], b: &[u16]) -> f64 {
     let mut worst: Vec<u16> = a
         .chunks_exact(3)
         .zip(b.chunks_exact(3))
-        .map(|(x, y)| (0..3).map(|c| x[c].abs_diff(y[c])).max().expect("3 channels"))
+        .map(|(x, y)| {
+            (0..3)
+                .map(|c| x[c].abs_diff(y[c]))
+                .max()
+                .expect("3 channels")
+        })
         .collect();
     let at = worst.len() * 999 / 1000;
     let (_, p, _) = worst.select_nth_unstable(at);
@@ -110,7 +125,11 @@ fn still(pq: &[u16], w: usize, h: usize, q: i32) -> (Vec<u8>, f64) {
         w,
         h,
         &avif::StillOptions {
-            cicp: avif::Cicp { primaries, transfer, matrix },
+            cicp: avif::Cicp {
+                primaries,
+                transfer,
+                matrix,
+            },
             format: match std::env::var("AOMQ_444") {
                 Ok(_) => Chroma::Yuv444.avif_format(),
                 Err(_) => Chroma::Yuv420.avif_format(),
@@ -129,7 +148,12 @@ fn hdr_rows(name: &str, pq: &[u16], w: usize, h: usize) {
     for q in HDR_QUANTIZERS {
         let (bytes, ms) = still(pq, w, h, q);
         let (back, _, _) = avif::decode_at(&bytes, 16).expect("the still decodes");
-        let score = ssim(&reference, &luma(&back, 65535.0, [0.2627, 0.6780, 0.0593]), w, h);
+        let score = ssim(
+            &reference,
+            &luma(&back, 65535.0, [0.2627, 0.6780, 0.0593]),
+            w,
+            h,
+        );
         println!(
             "{name}\thdr\t{q}\t{:.1}\t{ms:.0}\t{score:.5}\t{:.3}\t{:.2}",
             bytes.len() as f64 / 1024.0,
@@ -143,11 +167,15 @@ fn sdr_rows(name: &str, path: &str, srgb: &[u8], w: usize, h: usize) {
     let reference = luma(srgb, 255.0, [0.299, 0.587, 0.114]);
     for q in SDR_QUANTIZERS {
         let started = Instant::now();
-        let bytes = avif::encode_rgb8(Cow::Borrowed(srgb), w, h, q, SDR_SPEED, false).expect("the rendition");
+        let bytes = avif::encode_rgb8(Cow::Borrowed(srgb), w, h, q, SDR_SPEED, false)
+            .expect("the rendition");
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         let (back, _, _) = avif::decode_at(&bytes, 8).expect("the rendition decodes");
         let score = ssim(&reference, &luma(&back, 255.0, [0.299, 0.587, 0.114]), w, h);
-        println!("{name}\t{path}\t{q}\t{:.1}\t{ms:.0}\t{score:.5}\t", bytes.len() as f64 / 1024.0);
+        println!(
+            "{name}\t{path}\t{q}\t{:.1}\t{ms:.0}\t{score:.5}\t",
+            bytes.len() as f64 / 1024.0
+        );
     }
 }
 
@@ -163,13 +191,17 @@ fn sky() {
             let nits = (150.0 + 250.0 * t) * swell;
             let tint = [0.80, 0.92, 1.0];
             for (c, gain) in tint.iter().enumerate() {
-                let code = rawshim::tone::pq(Light::<DisplayNits>::measured(nits) * Gain::of_ratio(*gain)).raw();
+                let code =
+                    rawshim::tone::pq(Light::<DisplayNits>::measured(nits) * Gain::of_ratio(*gain))
+                        .raw();
                 pq[(y * w + x) * 3 + c] = (code * 65535.0).round() as u16;
             }
         }
     }
     let column = |frame: &[u16]| -> usize {
-        let mut levels: Vec<u16> = (0..h).map(|y| (frame[(y * w + w / 2) * 3 + 1] + 8) >> 4).collect();
+        let mut levels: Vec<u16> = (0..h)
+            .map(|y| (frame[(y * w + w / 2) * 3 + 1] + 8) >> 4)
+            .collect();
         levels.dedup();
         levels.len()
     };
@@ -191,23 +223,40 @@ fn main() {
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
     println!("frame\tpath\tq\tkB\tms\tssim\tpq_rmse\tspeckle");
     for path in &paths {
-        let name = std::path::Path::new(path).file_stem().expect("a name").to_string_lossy().to_string();
+        let name = std::path::Path::new(path)
+            .file_stem()
+            .expect("a name")
+            .to_string_lossy()
+            .to_string();
         let detail = rawshim::galosh::Detail::at(20.0, 30.0);
-        let frame = rawshim::decode_frame_denoised(path, 0, detail, Default::default()).expect("decode");
+        let frame =
+            rawshim::decode_frame_denoised(path, 0, detail, Default::default()).expect("decode");
         let samples = frame.samples16().expect("16-bit").to_vec();
-        let source = Source { samples: &samples, width: frame.width, height: frame.height };
+        let source = Source {
+            samples: &samples,
+            width: frame.width,
+            height: frame.height,
+        };
         let resident = frame.on_device(gpu).expect("the frame reaches the device");
         let matched = rawshim::fit_hdr_for(&resident, path, 0.9);
 
-        let (pq, w, h) =
-            hdr::graded_as(&source, &options(3840), matched.as_ref(), rawshim::gpu::Output::Pq);
+        let (pq, w, h) = hdr::graded_as(
+            &source,
+            &options(3840),
+            matched.as_ref(),
+            rawshim::gpu::Output::Pq,
+        );
         hdr_rows(&name, &pq, w, h);
         if std::env::var("AOMQ_HDR_ONLY").is_ok() {
             continue;
         }
         for (edge, label) in [(3840, "sdr3840"), (800, "sdr800")] {
-            let (srgb, w, h) =
-                hdr::graded_as(&source, &options(edge), matched.as_ref(), rawshim::gpu::Output::Srgb);
+            let (srgb, w, h) = hdr::graded_as(
+                &source,
+                &options(edge),
+                matched.as_ref(),
+                rawshim::gpu::Output::Srgb,
+            );
             let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
             sdr_rows(&name, label, &srgb8, w, h);
         }

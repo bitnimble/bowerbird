@@ -255,7 +255,9 @@ function main(): void {
   const stale = !current(budget);
   if (stale) {
     console.log('the budget was recorded over a different set of stages, so none of it is held');
-    console.log('against this run. re-record it with BOWERBIRD_WRITE_BUDGET=1 on an idle machine.\n');
+    console.log(
+      'against this run. re-record it with BOWERBIRD_WRITE_BUDGET=1 on an idle machine.\n',
+    );
   }
 
   // **Over what was measured, not over what the budget knows.** A stage added to the render shows
@@ -279,16 +281,19 @@ function main(): void {
           regressed ||= comparable;
           continue;
         }
-        const over = gate != null && !REPORTED_ONLY.has(stage) && isOverBudget(ms, gate, budget.tolerance);
+        const over =
+          gate != null && !REPORTED_ONLY.has(stage) && isOverBudget(ms, gate, budget.tolerance);
         regressed ||= over && comparable;
         const mark = over ? 'OVER ' : '     ';
-        const wider = was != null && gate != null && gate > was ? `  gate ${gate.toFixed(1)}ms` : '';
+        const wider =
+          was != null && gate != null && gate > was ? `  gate ${gate.toFixed(1)}ms` : '';
         const against =
           was == null
             ? 'no budget yet'
-            : `budget ${was.toFixed(1)}ms  ${((ms - was) / was) * 100 >= 0 ? '+' : ''}${
-                (((ms - was) / was) * 100).toFixed(1)
-              }%${wider}`;
+            : `budget ${was.toFixed(1)}ms  ${((ms - was) / was) * 100 >= 0 ? '+' : ''}${(
+                ((ms - was) / was) *
+                100
+              ).toFixed(1)}%${wider}`;
         console.log(
           `${mark}${fixture.padEnd(16)} ${stage.padEnd(10)} ${ms.toFixed(1).padStart(8)}ms  ` +
             against,

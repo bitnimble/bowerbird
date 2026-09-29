@@ -59,7 +59,9 @@ export function makePeer(name: string): Peer {
   runMigrations(db);
   const root = mkdtempSync(path.join(tmpdir(), `bb-blobs-${name}-`));
   roots.push(root);
-  db.query("INSERT INTO libraries (id, root_path, name, bin_name) VALUES (?, ?, 'Trip', 'Bin')").run(LIB, root);
+  db.query(
+    "INSERT INTO libraries (id, root_path, name, bin_name) VALUES (?, ?, 'Trip', 'Bin')",
+  ).run(LIB, root);
   db.query('INSERT INTO replication_libraries (library_id) VALUES (?)').run(LIB);
 
   const photoProcessing = new PhotoProcessingRepository(db, new RenditionsRepository(db));
@@ -95,12 +97,37 @@ export function makePeer(name: string): Peer {
     build,
     activity,
   );
-  const api = new BlobsApi(photoPaths, photoMetadata, photoProcessing, libraries, locations, transfers,
-    build, undefined, undefined, null, activity);
+  const api = new BlobsApi(
+    photoPaths,
+    photoMetadata,
+    photoProcessing,
+    libraries,
+    locations,
+    transfers,
+    build,
+    undefined,
+    undefined,
+    null,
+    activity,
+  );
   applyErrorHandler(api.routes);
   const id = peerId(db);
   net.set(id, api.routes);
-  return { id, db, root, photoPaths, photoMetadata, photoScan, libraries, locations, transfers, activity, routes: api.routes, sent, built };
+  return {
+    id,
+    db,
+    root,
+    photoPaths,
+    photoMetadata,
+    photoScan,
+    libraries,
+    locations,
+    transfers,
+    activity,
+    routes: api.routes,
+    sent,
+    built,
+  };
 }
 
 export function addPhoto(peer: Peer, id: string, relPath: string, bytes?: string): void {

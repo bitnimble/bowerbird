@@ -34,7 +34,10 @@ export const SidebarResizer = observer(function SidebarResizer(): JSX.Element {
 
   return (
     <div
-      {...stylex.props(styles.resizer, styles.resizerAt(`calc(${sidebarWidth(store.width)} - 3px)`))}
+      {...stylex.props(
+        styles.resizer,
+        styles.resizerAt(`calc(${sidebarWidth(store.width)} - 3px)`),
+      )}
       role="separator"
       aria-orientation="vertical"
       aria-label={SidebarResizerStrings.resizeSidebar()}

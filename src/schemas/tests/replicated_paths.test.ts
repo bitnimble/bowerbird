@@ -69,7 +69,6 @@ describe('a replicated bin name (§11.2)', () => {
     expect(change({ bin_name: null }).success).toBe(true);
   });
 
-
   it.each([
     ['a separator', 'Bin/inner'],
     ['a backslash', 'Bin\\inner'],

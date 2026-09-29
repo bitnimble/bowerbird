@@ -264,7 +264,11 @@ export class ListingPresenter {
     const blocks = new Set(this.viewer.neededBlocks);
     for (const { start, end } of this.marks.selection.ranges) {
       const last = Math.floor(end / BLOCK);
-      for (let block = Math.floor(start / BLOCK); block <= last && blocks.size < MAX_BLOCKS; block++) {
+      for (
+        let block = Math.floor(start / BLOCK);
+        block <= last && blocks.size < MAX_BLOCKS;
+        block++
+      ) {
         if (held.has(block)) blocks.add(block);
       }
     }
@@ -310,7 +314,11 @@ export class ListingPresenter {
     const needed = new Set(blocks);
     this.recent = [...blocks, ...this.recent.filter((block) => !needed.has(block))];
     this.evict(needed);
-    await Promise.all(blocks.filter((block) => !this.blocks.has(block)).map((block) => this.fetchBlock(block, activity)));
+    await Promise.all(
+      blocks
+        .filter((block) => !this.blocks.has(block))
+        .map((block) => this.fetchBlock(block, activity)),
+    );
   }
 
   private async fetchBlock(block: number, requestedActivity?: RequestActivity): Promise<void> {
@@ -334,8 +342,15 @@ export class ListingPresenter {
     this.needsCount = false;
 
     try {
-      const activity = requestedActivity ?? (counting && this.listing.rows.size === 0 ? 'interactive' : 'background');
-      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK, counting), controller.signal, activity);
+      const activity =
+        requestedActivity ??
+        (counting && this.listing.rows.size === 0 ? 'interactive' : 'background');
+      const page = await this.fetchFor(
+        source,
+        this.params(block * BLOCK, BLOCK, counting),
+        controller.signal,
+        activity,
+      );
       if (controller.signal.aborted || generation !== this.generation) return;
       runInAction(() => {
         this.merge(block, page.photos);
@@ -362,7 +377,12 @@ export class ListingPresenter {
 
   // `expandStacks` is stated rather than read so the switch itself can ask about
   // the listing it is moving to before anything commits to it (§19.5.4).
-  params(offset: number, limit: number, count = true, expandStacks = this.listing.expandStacks): PhotoListParams {
+  params(
+    offset: number,
+    limit: number,
+    count = true,
+    expandStacks = this.listing.expandStacks,
+  ): PhotoListParams {
     const f = this.listing.filters;
     return {
       offset,
@@ -422,7 +442,8 @@ export class ListingPresenter {
         this.controllers.get(block)?.abort();
         this.controllers.delete(block);
         this.blocks.delete(block);
-        for (let index = block * BLOCK; index < (block + 1) * BLOCK; index++) this.listing.rows.delete(index);
+        for (let index = block * BLOCK; index < (block + 1) * BLOCK; index++)
+          this.listing.rows.delete(index);
       }
     });
     const dropped = new Set(drop);
@@ -462,7 +483,12 @@ export class ListingPresenter {
     this.rail.reset();
   }
 
-  fetchFor(source: PhotoSource, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> {
+  fetchFor(
+    source: PhotoSource,
+    params: PhotoListParams,
+    signal?: AbortSignal,
+    activity?: RequestActivity,
+  ): Promise<PhotoListResponse> {
     switch (source.kind) {
       case 'library':
         return photosApi.listLibrary(source.libraryId, params, signal, activity);
@@ -473,11 +499,21 @@ export class ListingPresenter {
       case 'missing':
         return photosApi.listMissing(source.libraryId, params, signal, activity);
       case 'no_shoot':
-        return photosApi.listLibrary(source.libraryId, { ...params, no_shoot: true }, signal, activity);
+        return photosApi.listLibrary(
+          source.libraryId,
+          { ...params, no_shoot: true },
+          signal,
+          activity,
+        );
       case 'bin':
         // include_deleted lifts the default exclusion, is_deleted narrows it back
         // to *only* the soft-deleted rows.
-        return photosApi.listLibrary(source.libraryId, { ...params, include_deleted: true, is_deleted: true }, signal, activity);
+        return photosApi.listLibrary(
+          source.libraryId,
+          { ...params, include_deleted: true, is_deleted: true },
+          signal,
+          activity,
+        );
     }
   }
 
@@ -513,7 +549,10 @@ export class ListingPresenter {
     this.listing.showFilenames = saved?.showFilenames ?? true;
     // Off under a finger: marks big enough to hit cover the photo they decide about.
     const marksByDefault = !pointerIsCoarse();
-    this.selection.setDisplay(saved?.showTriage ?? marksByDefault, saved?.showRating ?? marksByDefault);
+    this.selection.setDisplay(
+      saved?.showTriage ?? marksByDefault,
+      saved?.showRating ?? marksByDefault,
+    );
   }
 
   remember(): void {
@@ -538,5 +577,4 @@ export class ListingPresenter {
     this.resetRows();
     this.remember();
   }
-
 }

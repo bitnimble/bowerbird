@@ -77,7 +77,11 @@ try {
   const configured = await fetch(`${origin}/api/settings`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ watch_enabled: true, watch_debounce_ms: 150, full_sync_at: '' } satisfies UpdateSettingsRequest),
+    body: JSON.stringify({
+      watch_enabled: true,
+      watch_debounce_ms: 150,
+      full_sync_at: '',
+    } satisfies UpdateSettingsRequest),
   });
   if (!configured.ok) throw new Error(await configured.text());
 
@@ -86,7 +90,11 @@ try {
   const created = await fetch(`${origin}/api/libraries`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ root_path: join(root, 'photos'), auto_stack: false, rendition_source: 'embedded' }),
+    body: JSON.stringify({
+      root_path: join(root, 'photos'),
+      auto_stack: false,
+      rendition_source: 'embedded',
+    }),
   });
   console.log(`POST /api/libraries -> ${created.status}`);
   if (!created.ok) throw new Error(await created.text());
@@ -112,8 +120,13 @@ try {
   if (!activity.ok) throw new Error(await activity.text());
   const snapshot = ActivitySnapshotSchema.parse(await activity.json());
   const imported = snapshot.libraries.find((each) => each.id === library.id);
-  if (imported == null || imported.photo_count !== 2 || imported.missing_photo_count !== 0 ||
-      imported.unavailable_photo_count !== 0 || imported.rendered_photo_count !== 0) {
+  if (
+    imported == null ||
+    imported.photo_count !== 2 ||
+    imported.missing_photo_count !== 0 ||
+    imported.unavailable_photo_count !== 0 ||
+    imported.rendered_photo_count !== 0
+  ) {
     throw new Error(`unexpected imported library counts: ${JSON.stringify(imported)}`);
   }
   console.log('activity snapshot reports 2 photos, 0 missing, 0 unavailable, 0 rendered');

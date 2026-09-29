@@ -65,7 +65,12 @@ impl Condition {
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("condition"),
-            entries: &[uniform(0), storage(1, true), storage(2, true), storage(3, false)],
+            entries: &[
+                uniform(0),
+                storage(1, true),
+                storage(2, true),
+                storage(3, false),
+            ],
         });
         let rect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("copy_rect"),
@@ -88,7 +93,12 @@ impl Condition {
         };
         let pipeline = compute("condition", &layout, "condition");
         let copy_rect = compute("copy_rect", &rect_layout, "copy_rect");
-        Condition { layout, pipeline, rect_layout, copy_rect }
+        Condition {
+            layout,
+            pipeline,
+            rect_layout,
+            copy_rect,
+        }
     }
 }
 
@@ -119,7 +129,11 @@ impl Mosaic {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        Mosaic { buffer, width, height }
+        Mosaic {
+            buffer,
+            width,
+            height,
+        }
     }
 
     /// A second buffer holding what this one holds, on the device.
@@ -153,7 +167,8 @@ impl Mosaic {
             for sample in block {
                 bytes.extend_from_slice(&sample.to_ne_bytes());
             }
-            gpu.queue.write_buffer(&mosaic.buffer, (at * CHUNK * 4) as u64, &bytes);
+            gpu.queue
+                .write_buffer(&mosaic.buffer, (at * CHUNK * 4) as u64, &bytes);
         }
         mosaic
     }
@@ -199,16 +214,28 @@ impl Mosaic {
         let mut recording = gpu.record();
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("copy_rect"),
-            contents: &words.iter().flat_map(|word| word.to_le_bytes()).collect::<Vec<u8>>(),
+            contents: &words
+                .iter()
+                .flat_map(|word| word.to_le_bytes())
+                .collect::<Vec<u8>>(),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("copy_rect"),
             layout: &kernels.rect_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 4, resource: uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: self.buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: into.buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: into.buffer.as_entire_binding(),
+                },
             ],
         });
         {
@@ -234,7 +261,12 @@ impl Mosaic {
     ///
     /// Rows are contiguous in the buffer, so a band is one range rather than a gathered rectangle -
     /// which is why this takes rows and not a rectangle.
-    pub async fn read_rows(&self, gpu: &crate::gpu::Gpu, top: usize, rows: usize) -> Option<Vec<f32>> {
+    pub async fn read_rows(
+        &self,
+        gpu: &crate::gpu::Gpu,
+        top: usize,
+        rows: usize,
+    ) -> Option<Vec<f32>> {
         let rows = rows.min(self.height.checked_sub(top)?);
         let count = rows.checked_mul(self.width)?;
         let bytes = (count * 4) as u64;
@@ -259,13 +291,13 @@ impl Mosaic {
 
         crate::gpu::read_back(gpu, &readback, |mapped| {
             let mut out = vec![0f32; count];
-            out.par_chunks_mut(GRAIN).zip(mapped.par_chunks(GRAIN * 4)).for_each(
-                |(slots, bytes)| {
+            out.par_chunks_mut(GRAIN)
+                .zip(mapped.par_chunks(GRAIN * 4))
+                .for_each(|(slots, bytes)| {
                     for (slot, word) in slots.iter_mut().zip(bytes.chunks_exact(4)) {
                         *slot = f32::from_le_bytes([word[0], word[1], word[2], word[3]]);
                     }
-                },
-            );
+                });
             out
         })
         .await
@@ -292,7 +324,11 @@ pub struct Curve {
 
 impl Curve {
     fn slots(&self) -> usize {
-        self.slot_of.iter().copied().max().map_or(0, |top| top as usize + 1)
+        self.slot_of
+            .iter()
+            .copied()
+            .max()
+            .map_or(0, |top| top as usize + 1)
     }
 
     /// Whether this describes a whole domain the kernel can read.
@@ -352,10 +388,22 @@ pub fn normalise(
         label: Some("condition"),
         layout: &kernels.layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: words.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: levels.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: mosaic.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: words.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: levels.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: mosaic.buffer.as_entire_binding(),
+            },
         ],
     });
 
@@ -423,7 +471,8 @@ fn upload(recording: &mut crate::gpu::Recording<'_>, samples: &[u16]) -> crate::
                     pair.copy_from_slice(&sample.to_le_bytes());
                 }
             });
-        gpu.queue.write_buffer(&buffer, (at * CHUNK * 2) as u64, scratch);
+        gpu.queue
+            .write_buffer(&buffer, (at * CHUNK * 2) as u64, scratch);
     }
     buffer
 }

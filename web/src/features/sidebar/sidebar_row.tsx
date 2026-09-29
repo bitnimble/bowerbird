@@ -69,8 +69,16 @@ const styles = stylex.create({
     // too, so counts line up.
     paddingRight: { default: '12px', [COARSE]: COARSE_CHEV_SLOT },
     // The chevron lies over the link, so without this the row drops its hover on reaching it.
-    backgroundColor: { default: null, ':hover': color.slateSoft, [stylex.when.ancestor(':hover')]: color.slateSoft },
-    color: { default: color.boneDim, ':hover': color.bone, [stylex.when.ancestor(':hover')]: color.bone },
+    backgroundColor: {
+      default: null,
+      ':hover': color.slateSoft,
+      [stylex.when.ancestor(':hover')]: color.slateSoft,
+    },
+    color: {
+      default: color.boneDim,
+      ':hover': color.bone,
+      [stylex.when.ancestor(':hover')]: color.bone,
+    },
   },
   // With no count to hold the chevron's slot open, the name holds it.
   rowLinkUncounted: {
@@ -182,7 +190,9 @@ export const SidebarRow = observer(function SidebarRow({
   const linkClass: NavLinkProps['className'] = ({ isActive }) => link(isActive).className;
   const linkStyle: NavLinkProps['style'] = ({ isActive }) => link(isActive).style;
   const readOnlyName = readOnly ? SidebarRowStrings.readOnlyName(name) : name;
-  const spokenName = originalsElsewhere ? SidebarRowStrings.originalsElsewhereName(readOnlyName) : readOnlyName;
+  const spokenName = originalsElsewhere
+    ? SidebarRowStrings.originalsElsewhereName(readOnlyName)
+    : readOnlyName;
 
   return (
     <div>
@@ -190,7 +200,8 @@ export const SidebarRow = observer(function SidebarRow({
         {...stylex.props(
           styles.row,
           styles.guides(guides(depth), guides(Math.max(0, depth - 1))),
-          sectionKey != null && styles.sticky(`calc(${derivedSize.sidebarRow} * ${depth})`, 999 - depth),
+          sectionKey != null &&
+            styles.sticky(`calc(${derivedSize.sidebarRow} * ${depth})`, 999 - depth),
           stylex.defaultMarker(),
         )}
       >
@@ -220,7 +231,13 @@ export const SidebarRow = observer(function SidebarRow({
               </Network>
             )}
             {count != null && (
-              <span {...stylex.props(sidebarStyles.count, styles.rowCount, sectionKey != null && styles.countSwapped)}>
+              <span
+                {...stylex.props(
+                  sidebarStyles.count,
+                  styles.rowCount,
+                  sectionKey != null && styles.countSwapped,
+                )}
+              >
                 {count}
               </span>
             )}
@@ -231,7 +248,9 @@ export const SidebarRow = observer(function SidebarRow({
             type="button"
             {...stylex.props(styles.chev, focusRing.ring)}
             aria-expanded={open}
-            aria-label={open ? CollectionListStrings.collapse(name) : CollectionListStrings.expand(name)}
+            aria-label={
+              open ? CollectionListStrings.collapse(name) : CollectionListStrings.expand(name)
+            }
             onClick={() => sidebar.toggle(sectionKey)}
           >
             {open ? <ChevronDown size={ICON} /> : <ChevronRight size={ICON} />}

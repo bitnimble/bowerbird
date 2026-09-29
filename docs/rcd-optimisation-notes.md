@@ -86,14 +86,14 @@ Separate contiguous colour planes let stage F select a base address per channel 
 vector units consecutive samples. Interleaved triples require stride-3 gathers.
 
 The load pass exploits this with a small branchless trick. For each row, the colours at the row's two
-column parities are determined once; every sample in the row is then written into *both* of the
+column parities are determined once; every sample in the row is then written into _both_ of the
 corresponding planes as well as the mosaic buffer. Half of those writes are wrong, but each wrong
 one lands exactly where a later stage will overwrite it; a red site's green slot is filled by stage
 C, a green site's chroma slots by stage F, so no wrong value survives to the output. This replaces a
 per-pixel branch or table lookup on CFA phase with two unconditional stores, and it is the reason
 the later stages need no phase test to know whether a sample is available.
 
-What this does *not* initialise is the third plane: a row carries only two of the three colours, so
+What this does _not_ initialise is the third plane: a row carries only two of the three colours, so
 one whole plane is left untouched across every pixel of that row. Every such slot is written by
 stage E or stage F before anything reads it, but that is a property of the read footprints rather
 than an obvious invariant, and it is worth confirming rather than assuming when porting. One

@@ -16,7 +16,8 @@ import { stamp } from '../stamps';
 describe('a change from a peer that predates a column', () => {
   it('keeps this peer’s own value rather than writing NULL over it', () => {
     const peer = makePeer('older');
-    peer.db.query('UPDATE libraries SET include_non_raw = 1, name = ?, stamp = ? WHERE id = ?')
+    peer.db
+      .query('UPDATE libraries SET include_non_raw = 1, name = ?, stamp = ? WHERE id = ?')
       .run('Trip', stamp(peer.db), LIB);
 
     // The payload an older build sends: every column of the `library` unit except the one it has
@@ -42,7 +43,9 @@ describe('a change from a peer that predates a column', () => {
       },
     ]);
 
-    const row = peer.db.query('SELECT name, include_non_raw FROM libraries WHERE id = ?').get(LIB) as {
+    const row = peer.db
+      .query('SELECT name, include_non_raw FROM libraries WHERE id = ?')
+      .get(LIB) as {
       name: string;
       include_non_raw: number;
     };

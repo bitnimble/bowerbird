@@ -65,7 +65,10 @@ function photoComposites(): PhotoCompositesRepository {
   return new PhotoCompositesRepository(db, stacks, new PhotoPathsRepository(db, stacks));
 }
 
-function mergeComposite(photos: PhotoCompositesRepository, frames: string[] = [PHOTO, PHOTO]): string {
+function mergeComposite(
+  photos: PhotoCompositesRepository,
+  frames: string[] = [PHOTO, PHOTO],
+): string {
   return photos.insertComposite({
     libraryId: 'lib',
     kind: 'panorama',
@@ -111,7 +114,9 @@ beforeEach(() => {
 
 describe('PhotoEditsService.checkpoint', () => {
   it("carries what the photo's library denoises a document naming no filter with", () => {
-    const inLibrary = { getById: (id: string) => (id === PHOTO ? { id, library_id: 'lib' } : null) } as unknown as PhotoListingRepository;
+    const inLibrary = {
+      getById: (id: string) => (id === PHOTO ? { id, library_id: 'lib' } : null),
+    } as unknown as PhotoListingRepository;
     const opening = new PhotoEditsService(
       db,
       new PhotoEditsRepository(db),
@@ -188,7 +193,9 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
     service.finish(PHOTO, from);
 
     expect(owingRenditions()).toEqual([PHOTO]);
-    const tile = db.query(`SELECT needs_build FROM renditions WHERE photo_id = ? AND variant = 'grid'`).get(PHOTO);
+    const tile = db
+      .query(`SELECT needs_build FROM renditions WHERE photo_id = ? AND variant = 'grid'`)
+      .get(PHOTO);
     expect(tile).toEqual({ needs_build: 0 });
   });
 
@@ -196,8 +203,11 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
     const panorama = mergeComposite(photoComposites());
     settled(panorama);
     built(PHOTO, 'grid', 'full');
-    db.query('UPDATE renditions SET built_at = ?, built_from = ? WHERE photo_id = ?')
-      .run('2026-02-01T00:00:00.000Z', photos.builtFromOf(panorama), panorama);
+    db.query('UPDATE renditions SET built_at = ?, built_from = ? WHERE photo_id = ?').run(
+      '2026-02-01T00:00:00.000Z',
+      photos.builtFromOf(panorama),
+      panorama,
+    );
     const from = opened();
     saveExposure(2);
     saveExposure(1);
@@ -229,8 +239,11 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
     const panorama = mergeComposite(photoComposites(), [PHOTO, other]);
     settled(panorama);
     built(PHOTO, 'grid', 'full');
-    db.query('UPDATE renditions SET built_at = ?, built_from = ? WHERE photo_id = ?')
-      .run('2026-02-01T00:00:00.000Z', photos.builtFromOf(panorama), panorama);
+    db.query('UPDATE renditions SET built_at = ?, built_from = ? WHERE photo_id = ?').run(
+      '2026-02-01T00:00:00.000Z',
+      photos.builtFromOf(panorama),
+      panorama,
+    );
     const from = opened();
     saveExposure(2);
     edits.save(other, { ...neutralEdits(), exposure: 1 }, 0);
@@ -362,7 +375,10 @@ describe('PhotoEditsService', () => {
     settled(PHOTO);
     settled(panorama);
     // Built from its recipe, as the merge that made it records.
-    db.query('UPDATE renditions SET built_from = ? WHERE photo_id = ?').run(photos.builtFromOf(panorama), panorama);
+    db.query('UPDATE renditions SET built_from = ? WHERE photo_id = ?').run(
+      photos.builtFromOf(panorama),
+      panorama,
+    );
     expect(photos.queueEditedSince()).toBe(0);
 
     repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
@@ -385,9 +401,11 @@ describe('PhotoEditsService', () => {
     expect(photos.queueEditedSince()).toBe(2);
 
     // The frame's stamp, which is what the composite was rendered from.
-    const stamp = (db.query('SELECT stamp FROM photo_edits WHERE photo_id = ?').get(PHOTO) as {
-      stamp: string;
-    }).stamp;
+    const stamp = (
+      db.query('SELECT stamp FROM photo_edits WHERE photo_id = ?').get(PHOTO) as {
+        stamp: string;
+      }
+    ).stamp;
     for (const [id, variant] of [
       [PHOTO, 'grid'],
       [PHOTO, 'full'],
@@ -438,7 +456,9 @@ describe('PhotoEditsService', () => {
     expect(() => service.save('nope', neutralEdits(), 0)).toThrow(AppError);
     expect(() => service.finish('nope')).toThrow(AppError);
     expect(() => service.checkpoint('nope')).toThrow(AppError);
-    expect(() => service.restore('nope', 0, { doc: neutralEdits(), cursor: 0, history: [] }, 'session')).toThrow(AppError);
+    expect(() =>
+      service.restore('nope', 0, { doc: neutralEdits(), cursor: 0, history: [] }, 'session'),
+    ).toThrow(AppError);
     expect(queueRebuild).not.toHaveBeenCalled();
   });
 });

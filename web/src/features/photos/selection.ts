@@ -72,7 +72,10 @@ export class SelectionRanges {
         merged.push(pending, range);
         pending = null;
       } else {
-        pending = { start: Math.min(pending.start, range.start), end: Math.max(pending.end, range.end) };
+        pending = {
+          start: Math.min(pending.start, range.start),
+          end: Math.max(pending.end, range.end),
+        };
       }
     }
     if (pending != null) merged.push(pending);
@@ -159,5 +162,7 @@ export function rebase(
   // carried over the gap a removal leaves lands the position that went on
   // whichever photograph moved up into it, so a selection whose tail was rejected
   // out of the view came back the same size, naming photographs nobody chose.
-  return SelectionRanges.fromPositions(samples.filter((sample) => known.has(sample.from)).map((sample) => sample.to));
+  return SelectionRanges.fromPositions(
+    samples.filter((sample) => known.has(sample.from)).map((sample) => sample.to),
+  );
 }

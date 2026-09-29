@@ -26,14 +26,27 @@ export const SendToFrameTv = observer(function SendToFrameTv({
   const icon = <Tv size={ICON} />;
   if (store.tvs.length > 1) {
     return (
-      <Submenu label={label} icon={icon} options={store.tvs.map((tv) => ({ value: tv.id, label: tv.name }))} onSelect={onSend} />
+      <Submenu
+        label={label}
+        icon={icon}
+        options={store.tvs.map((tv) => ({ value: tv.id, label: tv.name }))}
+        onSelect={onSend}
+      />
     );
   }
   const tv = store.tvs[0];
-  const missing = store.searching ? SendToFrameTvStrings.searching() : SendToFrameTvStrings.noneFound();
+  const missing = store.searching
+    ? SendToFrameTvStrings.searching()
+    : SendToFrameTvStrings.noneFound();
   return (
     <MenuAction
-      option={{ value: tv?.id ?? '', label, icon, disabled: tv == null, tooltip: tv?.name ?? missing }}
+      option={{
+        value: tv?.id ?? '',
+        label,
+        icon,
+        disabled: tv == null,
+        tooltip: tv?.name ?? missing,
+      }}
       onSelect={onSend}
     />
   );

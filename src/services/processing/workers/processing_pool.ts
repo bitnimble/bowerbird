@@ -22,7 +22,9 @@ export function runProcessingPool(
     const launch = (): boolean => {
       let worker: Worker;
       try {
-        worker = new Worker(workerEntry('processing_worker', new URL('./processing_worker.ts', import.meta.url)));
+        worker = new Worker(
+          workerEntry('processing_worker', new URL('./processing_worker.ts', import.meta.url)),
+        );
       } catch (err) {
         log.error('could not spawn a worker; its jobs stay pending', { err });
         return false;
@@ -56,7 +58,10 @@ export function runProcessingPool(
           for (const target of current.targets) {
             void deleteGeneratedFile(current.dataPath, target.outputPath).catch(() => {});
           }
-          onResult({ photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` }, current);
+          onResult(
+            { photoId: current.photoId, success: false, error: `worker crashed: ${event.message}` },
+            current,
+          );
         }
         worker.terminate();
         live--;

@@ -34,7 +34,11 @@ export class ExportPresenter {
    * passes null and the dialog says nothing about size rather than guessing.
    */
   @action.bound
-  openFor(target: PhotoTarget, count: number, source: { width: number; height: number } | null): void {
+  openFor(
+    target: PhotoTarget,
+    count: number,
+    source: { width: number; height: number } | null,
+  ): void {
     this.store.target = target;
     this.store.count = count;
     this.store.source = source;
@@ -107,7 +111,8 @@ export class ExportPresenter {
       if (sink == null) return;
       // Resolved here rather than at the head of the run, so what is waiting in the queue can
       // be listed photograph by photograph rather than only counted.
-      const photoIds = 'photo_ids' in target ? target.photo_ids : (await photosApi.ids(target)).photo_ids;
+      const photoIds =
+        'photo_ids' in target ? target.photo_ids : (await photosApi.ids(target)).photo_ids;
       // One run, however many photographs are in it, which is what the history lists as an
       // export of several rather than as several exports.
       job = new ExportJob(newId(), photoIds, options, sink);
@@ -129,7 +134,10 @@ export class ExportPresenter {
    */
   private async describe(job: ExportJob): Promise<void> {
     try {
-      const photos = await exportsApi.queued({ photo_ids: job.photoIds, include_edits: job.options.includeEdits });
+      const photos = await exportsApi.queued({
+        photo_ids: job.photoIds,
+        include_edits: job.options.includeEdits,
+      });
       this.described(job, photos);
     } catch {
       // Nothing to say: the run itself is unaffected and the queue still counts it down.

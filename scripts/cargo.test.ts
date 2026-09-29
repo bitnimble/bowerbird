@@ -39,7 +39,10 @@ test('a lockfile bump supersedes the generation before it without waiting a fort
   fingerprint(profile, FRESH, undefined, { features: '["default"]', deps: [['rawler', 2]] });
   fingerprint(profile, STALE, A_WEEK_AGO, { features: '["default"]', deps: [['rawler', 1]] });
   // A different thing to have asked for, so it stands on its own age rather than against the rest.
-  fingerprint(profile, GONE, A_WEEK_AGO, { features: '["default", "fixtures"]', deps: [['rawler', 1]] });
+  fingerprint(profile, GONE, A_WEEK_AGO, {
+    features: '["default", "fixtures"]',
+    deps: [['rawler', 1]],
+  });
 
   const current = file(join(profile, 'deps', `librawshim-${FRESH}.rlib`), 1000);
   const superseded = file(join(profile, 'deps', `librawshim-${STALE}.rlib`), 1000, A_WEEK_AGO);

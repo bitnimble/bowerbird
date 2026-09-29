@@ -21,7 +21,11 @@ describe('FrameArt', () => {
     const received: Buffer[] = [];
     tv.answer = (request, fake) => {
       if (request.request !== 'send_image') return;
-      fake.emit({ event: 'ready_to_use', request_id: request.request_id, conn_info: fake.connInfo() });
+      fake.emit({
+        event: 'ready_to_use',
+        request_id: request.request_id,
+        conn_info: fake.connInfo(),
+      });
     };
     tv.onTransfer = (socket) => {
       socket.on('data', (chunk) => received.push(Buffer.from(chunk)));
@@ -31,7 +35,10 @@ describe('FrameArt', () => {
       });
     };
 
-    const contentId = await connect().upload(image, { fileType: 'jpg', date: new Date(2026, 8, 3, 7, 5, 9) });
+    const contentId = await connect().upload(image, {
+      fileType: 'jpg',
+      date: new Date(2026, 8, 3, 7, 5, 9),
+    });
 
     expect(contentId).toBe('MY_F0042');
     expect(tv.requests.find((request) => request.request === 'send_image')).toMatchObject({
@@ -61,8 +68,11 @@ describe('FrameArt', () => {
     art.close();
     await opening;
 
-    expect(await Promise.race([tv.clientClosed.then(() => 'closed'), Bun.sleep(1000).then(() => 'open')])).toBe(
-      'closed',
-    );
+    expect(
+      await Promise.race([
+        tv.clientClosed.then(() => 'closed'),
+        Bun.sleep(1000).then(() => 'open'),
+      ]),
+    ).toBe('closed');
   });
 });

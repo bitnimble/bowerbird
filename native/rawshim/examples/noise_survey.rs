@@ -43,9 +43,21 @@ fn main() {
     // columns show is only how they diverge away from it.
     let gate = 0.004f32;
     let pivot = 0.015f32;
-    let fixed = |s: f32| if s < gate { 0.0 } else { (40.0 * (s - 0.002) / 0.004).min(40.0) };
+    let fixed = |s: f32| {
+        if s < gate {
+            0.0
+        } else {
+            (40.0 * (s - 0.002) / 0.004).min(40.0)
+        }
+    };
     let clean = |s: f32| (40.0 * s / pivot).min(100.0);
-    let intact = |s: f32| if s < gate { 40.0 } else { (40.0 * pivot / s).min(100.0) };
+    let intact = |s: f32| {
+        if s < gate {
+            40.0
+        } else {
+            (40.0 * pivot / s).min(100.0)
+        }
+    };
 
     println!(
         "{:>8}  {:>10}  {:>11}  {:>9}  {:>6} {:>6} {:>7}  {}",
@@ -59,13 +71,9 @@ fn main() {
         // The fit rides along with a real decode, which is the only place the mosaic exists.
         // The amount barely matters - Phase 0 runs before anything is filtered - so this is
         // the document's default.
-        let Some(model) = rawshim::decode_frame_denoised(
-            path,
-            0,
-            Detail::at(33.0, 33.0),
-            Default::default(),
-        )
-        .and_then(|frame| frame.noise)
+        let Some(model) =
+            rawshim::decode_frame_denoised(path, 0, Detail::at(33.0, 33.0), Default::default())
+                .and_then(|frame| frame.noise)
         else {
             continue;
         };
@@ -129,13 +137,24 @@ fn main() {
     );
     let full = Detail::at(20.0, 30.0);
     for path in &paths {
-        let Some(sixteen) = at(path, full, 16) else { continue };
-        let Some(eight) = at(path, full, 8) else { continue };
-        let Some(four) = at(path, full, 4) else { continue };
-        let Some(none) = at(path, Detail::at(0.0, 0.0), 16) else { continue };
-        let (Some(a), Some(h), Some(q), Some(c)) =
-            (sixteen.samples16(), eight.samples16(), four.samples16(), none.samples16())
-        else {
+        let Some(sixteen) = at(path, full, 16) else {
+            continue;
+        };
+        let Some(eight) = at(path, full, 8) else {
+            continue;
+        };
+        let Some(four) = at(path, full, 4) else {
+            continue;
+        };
+        let Some(none) = at(path, Detail::at(0.0, 0.0), 16) else {
+            continue;
+        };
+        let (Some(a), Some(h), Some(q), Some(c)) = (
+            sixteen.samples16(),
+            eight.samples16(),
+            four.samples16(),
+            none.samples16(),
+        ) else {
             continue;
         };
         let std = sixteen.noise.map_or(0.0, |fit| fit.model().at_mid_grey());

@@ -24,7 +24,9 @@ class MotionEvents {
     }
   }
 
-  count(type: string): number { return this.listeners.get(type)?.size ?? 0; }
+  count(type: string): number {
+    return this.listeners.get(type)?.size ?? 0;
+  }
 }
 
 class Visibility extends MotionEvents {
@@ -60,7 +62,9 @@ class MotionHarness {
         this.frames.set(id, callback);
         return id;
       },
-      cancelFrame: (id) => { this.frames.delete(id); },
+      cancelFrame: (id) => {
+        this.frames.delete(id);
+      },
       now: () => this.time,
     });
   }
@@ -88,12 +92,20 @@ class MotionHarness {
     for (const callback of pending) callback(this.time);
   }
 
-  get pendingFrames(): number { return this.frames.size; }
+  get pendingFrames(): number {
+    return this.frames.size;
+  }
 }
 
 let harness: MotionHarness;
-beforeEach(() => { jest.useFakeTimers(); harness = new MotionHarness(); });
-afterEach(() => { harness.presenter.close(); jest.useRealTimers(); });
+beforeEach(() => {
+  jest.useFakeTimers();
+  harness = new MotionHarness();
+});
+afterEach(() => {
+  harness.presenter.close();
+  jest.useRealTimers();
+});
 
 describe('print surface motion', () => {
   test('draws intermediate poses on a 120 Hz display from 60 Hz sensor samples', () => {
@@ -173,7 +185,11 @@ describe('print surface motion', () => {
 
   test('calibrates without jumping and maps upright-phone motion to the rendered pose', () => {
     harness.open();
-    expect(harness.store.scene).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
+    expect(harness.store.scene).toMatchObject({
+      presentation: 'surface',
+      yawDegrees: 0,
+      pitchDegrees: 0,
+    });
     harness.orient(40, 90, 0);
     expect(harness.store.tiltStatus).toBe('active');
     expect(harness.store.scene.yawDegrees).toBe(0);
@@ -244,7 +260,10 @@ describe('print surface motion', () => {
   test('surface controls preserve and restore desktop rotation', () => {
     harness.presenter.setView('sheet');
     harness.presenter.rotateBy(30, 20);
-    const desktop = { yawDegrees: harness.store.scene.yawDegrees, pitchDegrees: harness.store.scene.pitchDegrees };
+    const desktop = {
+      yawDegrees: harness.store.scene.yawDegrees,
+      pitchDegrees: harness.store.scene.pitchDegrees,
+    };
     harness.presenter.setTouch(true);
     harness.presenter.beginDrag(1, 0, 0, 100);
     harness.presenter.moveDrag(1, 60, 30);
@@ -298,7 +317,11 @@ describe('print surface motion', () => {
     harness.open();
     jest.advanceTimersByTime(2500);
     expect(harness.store.tiltStatus).toBe('unavailable');
-    expect(harness.store.scene).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
+    expect(harness.store.scene).toMatchObject({
+      presentation: 'surface',
+      yawDegrees: 0,
+      pitchDegrees: 0,
+    });
     harness.orient(0, 90, 0);
     expect(harness.store.tiltStatus).toBe('active');
   });
@@ -337,11 +360,17 @@ describe('print surface motion', () => {
     await harness.presenter.enableTilt();
     expect(harness.store.tiltStatus).toBe('denied');
     expect(harness.events.count('deviceorientation')).toBe(0);
-    expect(harness.store.scene).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
+    expect(harness.store.scene).toMatchObject({
+      presentation: 'surface',
+      yawDegrees: 0,
+      pitchDegrees: 0,
+    });
   });
 
   test('a browser requiring another gesture keeps the explicit tilt action available', async () => {
-    harness = new MotionHarness(async () => { throw new Error('permission unavailable'); });
+    harness = new MotionHarness(async () => {
+      throw new Error('permission unavailable');
+    });
     harness.open();
     await harness.presenter.enableTilt();
     expect(harness.store.tiltStatus).toBe('permission');
@@ -351,7 +380,9 @@ describe('print surface motion', () => {
 
   test('a permission grant arriving after close cannot resubscribe', async () => {
     let grant = (_state: string): void => {};
-    const permission = new Promise<string>((resolve) => { grant = resolve; });
+    const permission = new Promise<string>((resolve) => {
+      grant = resolve;
+    });
     harness = new MotionHarness(() => permission);
     harness.open();
     const enabling = harness.presenter.enableTilt();
@@ -366,7 +397,9 @@ describe('print surface motion', () => {
 
   test('switching to desktop cancels an outstanding permission request', async () => {
     let grant = (_state: string): void => {};
-    const permission = new Promise<string>((resolve) => { grant = resolve; });
+    const permission = new Promise<string>((resolve) => {
+      grant = resolve;
+    });
     harness = new MotionHarness(() => permission);
     harness.open();
     const enabling = harness.presenter.enableTilt();
@@ -374,12 +407,18 @@ describe('print surface motion', () => {
     grant('granted');
     await enabling;
     expect(harness.events.count('deviceorientation')).toBe(0);
-    expect(harness.store.scene).toMatchObject({ presentation: 'scene', yawDegrees: -12, pitchDegrees: 8 });
+    expect(harness.store.scene).toMatchObject({
+      presentation: 'scene',
+      yawDegrees: -12,
+      pitchDegrees: 8,
+    });
   });
 
   test('a grant received while hidden only starts sensors after the page returns', async () => {
     let grant = (_state: string): void => {};
-    const permission = new Promise<string>((resolve) => { grant = resolve; });
+    const permission = new Promise<string>((resolve) => {
+      grant = resolve;
+    });
     harness = new MotionHarness(() => permission);
     harness.open();
     const enabling = harness.presenter.enableTilt();

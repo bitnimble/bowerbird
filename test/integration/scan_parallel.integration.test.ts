@@ -9,7 +9,12 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
-import { photoMetadata, photoPaths, photoProcessing, photoScan } from './helpers/photo_repositories';
+import {
+  photoMetadata,
+  photoPaths,
+  photoProcessing,
+  photoScan,
+} from './helpers/photo_repositories';
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
@@ -38,7 +43,11 @@ function catalogue(): ReturnType<typeof createDatabase> {
   return db;
 }
 
-function scan(db: ReturnType<typeof createDatabase>, extract: MetadataExtractor, width: number): Promise<unknown> {
+function scan(
+  db: ReturnType<typeof createDatabase>,
+  extract: MetadataExtractor,
+  width: number,
+): Promise<unknown> {
   const photoProcessingRepo = photoProcessing(db);
   return new ScanService(
     photoScan(db, photoProcessingRepo),
@@ -57,7 +66,9 @@ function scan(db: ReturnType<typeof createDatabase>, extract: MetadataExtractor,
   ).scanLibrary('lib000fa');
 }
 
-function rows(db: ReturnType<typeof createDatabase>): { file_path: string; width: number; file_hash: string }[] {
+function rows(
+  db: ReturnType<typeof createDatabase>,
+): { file_path: string; width: number; file_hash: string }[] {
   return db
     .query(
       `SELECT json_extract(recipe, '$.path') AS file_path, width, file_hash FROM photos

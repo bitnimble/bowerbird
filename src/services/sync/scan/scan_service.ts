@@ -62,13 +62,28 @@ export class ScanService implements LibraryLifecycleListener {
      * here is a photograph whose row and whose file disagree *on purpose*, so this
      * run must not read either as evidence (§7.4).
      */
-    private readonly pendingMoves: (libraryId: string) => readonly { photoId: string; wasAt: string }[] = () => [],
+    private readonly pendingMoves: (
+      libraryId: string,
+    ) => readonly { photoId: string; wasAt: string }[] = () => [],
   ) {
-    const reconciler = new ScanReconciler(photoPaths, photoMetadata, photoScan, libraries, shoots, folderRules);
+    const reconciler = new ScanReconciler(
+      photoPaths,
+      photoMetadata,
+      photoScan,
+      libraries,
+      shoots,
+      folderRules,
+    );
     const fileReader = new ScanFileReader(extract, scanConcurrency);
     this.leases = new ScanLeases(photoScan, syncLocks);
     this.status = new ScanStatus(photoProcessing, libraries, processing);
-    this.rebuilds = new ScanRebuilds(photoProcessing, libraries, this.leases, this.status, processing);
+    this.rebuilds = new ScanRebuilds(
+      photoProcessing,
+      libraries,
+      this.leases,
+      this.status,
+      processing,
+    );
     this.runner = new ScanRunner(
       photoScan,
       photoPaths,
@@ -136,9 +151,15 @@ export class ScanService implements LibraryLifecycleListener {
     const reclaimable = skipped
       .map((libraryId) => this.leases.expiresAt(libraryId)?.getTime())
       .filter((at): at is number => at != null);
-    const waitFor = Math.min(reclaimable.length === 0 ? 0 : Math.max(...reclaimable) - Date.now(), LEASE_MS);
+    const waitFor = Math.min(
+      reclaimable.length === 0 ? 0 : Math.max(...reclaimable) - Date.now(),
+      LEASE_MS,
+    );
     if (waitFor > 0) {
-      log.info('waiting for a held scan lease before re-attempting', { libraries: skipped.length, ms: waitFor });
+      log.info('waiting for a held scan lease before re-attempting', {
+        libraries: skipped.length,
+        ms: waitFor,
+      });
       await Bun.sleep(waitFor);
     }
     for (const libraryId of skipped) await this.scanOne(libraryId);
@@ -162,7 +183,8 @@ export class ScanService implements LibraryLifecycleListener {
   // photos it never reached pending for the next scan to pick up. Both settle
   // back to idle on their own; there is nothing to wait for here.
   cancelScan(libraryId: string): void {
-    if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (!this.libraries.getById(libraryId))
+      throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     log.info('stop requested', { library: libraryId });
     this.leases.abort(libraryId);
   }
@@ -193,5 +215,4 @@ export class ScanService implements LibraryLifecycleListener {
   ): Promise<LibraryScanStatus> {
     return this.runner.run(libraryId, changedScope, trigger);
   }
-
 }

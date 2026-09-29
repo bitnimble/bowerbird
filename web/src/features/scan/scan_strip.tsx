@@ -38,7 +38,11 @@ const styles = stylex.create({
 const MAX_CELLS = 48;
 const BACKUP_WORK: ReadonlySet<ActivityKind> = new Set(['backing_up', 'restoring_backup']);
 
-export const ScanStrip = observer(function ScanStrip({ library, status: current, activities }: {
+export const ScanStrip = observer(function ScanStrip({
+  library,
+  status: current,
+  activities,
+}: {
   library: Library;
   status?: LibraryScanStatus;
   activities?: readonly ServerActivity[];
@@ -49,18 +53,25 @@ export const ScanStrip = observer(function ScanStrip({ library, status: current,
   const rendering = reported?.photos_processing ?? 0;
   const moving = useMoving(library.id);
   const backupStripShown = useBackupStore().statusOf(library.id)?.configured === true;
-  const serverActivity = activities?.filter((activity) =>
-    activity.kind !== 'rendering' && !(backupStripShown && BACKUP_WORK.has(activity.kind)));
-  if (status == null && rendering === 0 && (serverActivity?.length ?? moving.length) === 0) return null;
+  const serverActivity = activities?.filter(
+    (activity) =>
+      activity.kind !== 'rendering' && !(backupStripShown && BACKUP_WORK.has(activity.kind)),
+  );
+  if (status == null && rendering === 0 && (serverActivity?.length ?? moving.length) === 0)
+    return null;
 
-  const progress = status == null || status.photos_to_scan === 0 ? null : {
-    done: status.photos_scanned,
-    total: status.photos_to_scan,
-  };
+  const progress =
+    status == null || status.photos_to_scan === 0
+      ? null
+      : {
+          done: status.photos_scanned,
+          total: status.photos_to_scan,
+        };
   const cells = progress == null ? 0 : Math.min(progress.total, MAX_CELLS);
   const doneCells = progress == null ? 0 : Math.round((progress.done / progress.total) * cells);
-  const rate = scan.libraryId === library.id ? scan.rate : status?.photos_per_second ?? null;
-  const secondsLeft = progress == null || rate == null || rate <= 0 ? null : (progress.total - progress.done) / rate;
+  const rate = scan.libraryId === library.id ? scan.rate : (status?.photos_per_second ?? null);
+  const secondsLeft =
+    progress == null || rate == null || rate <= 0 ? null : (progress.total - progress.done) / rate;
 
   return (
     <>
@@ -86,21 +97,27 @@ export const ScanStrip = observer(function ScanStrip({ library, status: current,
             </div>
           )}
           <StripLabel>
-            {scan.isStopping(library.id) ?
-              ScanStripStrings.stopping()
-            : ScanStripStrings.scanning(status.photos_to_scan > 0)}
+            {scan.isStopping(library.id)
+              ? ScanStripStrings.stopping()
+              : ScanStripStrings.scanning(status.photos_to_scan > 0)}
             {progress != null && ScanStripStrings.count(progress.done, progress.total)}
             {rate != null && ScanStripStrings.rate(rate.toFixed(1))}
-            {secondsLeft != null && secondsLeft > 0 && ScanStripStrings.eta(durationLabel(secondsLeft))}
+            {secondsLeft != null &&
+              secondsLeft > 0 &&
+              ScanStripStrings.eta(durationLabel(secondsLeft))}
           </StripLabel>
         </Strip>
       )}
-      {serverActivity != null ? <ActivityStrips activities={serverActivity} /> : moving.map(({ kind, text }) => (
-        <Strip key={kind}>
-          <StatusDot state="working" />
-          <StripLabel>{text}</StripLabel>
-        </Strip>
-      ))}
+      {serverActivity != null ? (
+        <ActivityStrips activities={serverActivity} />
+      ) : (
+        moving.map(({ kind, text }) => (
+          <Strip key={kind}>
+            <StatusDot state="working" />
+            <StripLabel>{text}</StripLabel>
+          </Strip>
+        ))
+      )}
       {rendering > 0 && (
         <Strip>
           <StatusDot state="working" />
@@ -123,7 +140,8 @@ function useMoving(libraryId: string): Activity[] {
   const fetching = inFlight.some((t) => t.direction === 'pull');
   const sending = inFlight.filter((t) => t.direction === 'push').length;
   const activities: Activity[] = [];
-  if (replication.replicating === libraryId) activities.push({ kind: 'syncing', text: ScanStripStrings.syncing() });
+  if (replication.replicating === libraryId)
+    activities.push({ kind: 'syncing', text: ScanStripStrings.syncing() });
   if (fetching) activities.push({ kind: 'fetching', text: ScanStripStrings.fetching() });
   if (sending > 0) activities.push({ kind: 'sending', text: ScanStripStrings.sending(sending) });
   return activities;
