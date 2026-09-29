@@ -138,10 +138,7 @@ fn resource_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, Stri
     if let Ok(named) = std::env::var("BOWERBIRD_RESOURCES") {
         return Ok(PathBuf::from(named));
     }
-    app.path()
-        .resource_dir()
-        .map(|dir| dir.join("resources"))
-        .map_err(|err| format!("could not locate the app's resources: {err}"))
+    bundled(app, "resources")
 }
 
 /// The page the server serves, on the same terms: `BOWERBIRD_WEB` for a run out of `target/`.
@@ -149,10 +146,23 @@ fn web_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
     if let Ok(named) = std::env::var("BOWERBIRD_WEB") {
         return Ok(PathBuf::from(named));
     }
+    bundled(app, "web")
+}
+
+fn bundled(app: &tauri::AppHandle<crate::Runtime>, name: &str) -> Result<PathBuf, String> {
     app.path()
         .resource_dir()
-        .map(|dir| dir.join("web"))
+        .map(|dir| without_verbatim_prefix(dir).join(name))
         .map_err(|err| format!("could not locate the app's resources: {err}"))
+}
+
+/// Tauri canonicalises the resource directory, which on Windows yields `\\?\C:\...`, and Bun's
+/// resolver cannot open a worker at such a path: every worker fails with `Module not found`.
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
+        Some(disk) if disk.as_bytes().get(1) == Some(&b':') => PathBuf::from(disk),
+        _ => path,
+    }
 }
 
 /// `SIGN_IN_PARAM` in `src/api/require_token.ts`.
@@ -208,12 +218,20 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     let port = free_port().map_err(|err| format!("no port to start the server on: {err}"))?;
     let token = fresh_token()?;
     let mut command = Command::new(&sidecar);
+    // A release shell has no console (`windows_subsystem`), so Windows would open one for Bun.
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     if let Some(updates) = crate::update::home(app) {
         command.env("BOWERBIRD_UPDATES", updates);
     }
     if cfg!(desktop) {
         command.env("WEB_DIST", web_root(app)?);
     }
+    let (stdout, stderr) = server_log(&data);
     let child = command
         .arg(&bundle)
         .env("PORT", port.to_string())
@@ -228,10 +246,8 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
             "BOWERBIRD_REFERENCE_FRAME",
             data.join("reference_frame.ARW"),
         )
-        // Inherited so the server's own log lands wherever the app's does, which is
-        // the only account of what went wrong when it will not start.
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(stdout)
+        .stderr(stderr)
         .spawn()
         .map_err(|err| format!("could not start the server at {}: {err}", sidecar.display()))?;
 
@@ -252,6 +268,24 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         *held = Some(local);
     }
     Ok(signed_in)
+}
+
+/// Where the server's log lands, the only account of what went wrong when it will not start: the
+/// terminal running a debug build.
+#[cfg(debug_assertions)]
+fn server_log(_data: &Path) -> (Stdio, Stdio) {
+    (Stdio::inherit(), Stdio::inherit())
+}
+
+/// A shipped app has no terminal, so the log is a file beside the catalogue, holding this run's.
+#[cfg(not(debug_assertions))]
+fn server_log(data: &Path) -> (Stdio, Stdio) {
+    let opened =
+        std::fs::File::create(data.join("server.log")).and_then(|log| Ok((log.try_clone()?, log)));
+    match opened {
+        Ok((stdout, stderr)) => (stdout.into(), stderr.into()),
+        Err(_) => (Stdio::null(), Stdio::null()),
+    }
 }
 
 /// Hands the app to the updater once the server has staged an update and exited.
@@ -383,6 +417,26 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/api/require_token.ts");
         let server = std::fs::read_to_string(path).unwrap();
         assert!(server.contains(&format!("SIGN_IN_PARAM = '{}'", super::SIGN_IN_PARAM)));
+    }
+
+    #[test]
+    fn workers_get_a_path_bun_can_resolve() {
+        use super::without_verbatim_prefix;
+        use std::path::PathBuf;
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(r"\\?\C:\Users\me\AppData\Local\Bowerbird")),
+            PathBuf::from(r"C:\Users\me\AppData\Local\Bowerbird")
+        );
+        for untouched in [
+            r"\\?\UNC\server\share\Bowerbird",
+            r"C:\Program Files\Bowerbird",
+            "/Applications/Bowerbird.app/Contents/Resources",
+        ] {
+            assert_eq!(
+                without_verbatim_prefix(PathBuf::from(untouched)),
+                PathBuf::from(untouched)
+            );
+        }
     }
 
     #[test]

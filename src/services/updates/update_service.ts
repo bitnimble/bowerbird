@@ -340,7 +340,11 @@ export async function stagePayload(home: string, payload: Payload): Promise<void
  * the disk. The checksum above is the real control; this is what stands behind it.
  */
 async function untar(tarball: string, into: string): Promise<void> {
-  const proc = Bun.spawn(['tar', '-xzf', tarball, '-C', into], { stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn(['tar', '-xzf', tarball, '-C', into], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+    windowsHide: true,
+  });
   const [status, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
   if (status !== 0)
     throw new Error(
