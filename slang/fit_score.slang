@@ -332,7 +332,7 @@ float3 probed(int p, int k)
     if (pc.shape == SHAPE_SATURATION) {
         let saturation = probe[p * 12 + 9];
         let m = held.xyz;
-        // The same short circuit `colour.slang`'s `finish_chroma` takes: `l + (m - l) * 1.0` is
+        // The same short circuit `colour.slang`'s `globally_saturated` takes: `l + (m - l) * 1.0` is
         // not bit-identical to `m`, and the neutral probe is exactly 1.0.
         let blended = saturation == 1.0 ? m : held.w + (m - held.w) * saturation;
         return through_srgb(blended);

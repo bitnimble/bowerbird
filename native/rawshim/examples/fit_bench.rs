@@ -138,9 +138,9 @@ fn measure(path: &str) {
                         },
                     );
                     println!(
-                        "    camera exposure {:.6}  saturation {:.6}",
+                        "    camera exposure {:.6}  saturation slider {}",
                         c.exposure.raw(),
-                        c.camera_saturation.raw(),
+                        c.saturation_slider(),
                     );
                     // The transform itself, so two runs are compared on what they fitted rather than on
                     // how long they took to fit it.

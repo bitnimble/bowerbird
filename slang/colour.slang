@@ -345,11 +345,8 @@ float4 cell_at(Texture2D<float4> cells, float2 at, uint step)
 /// the neighbourhood's colour through the same stages - where the lattice is read.
 public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, float surround)
 {
+    if (edit.has_chroma == 0) { return m; }
     let l = dot(LUMA, m.v);
-    if (edit.has_chroma == 0) {
-        if (edit.saturation == 1.0) { return m; }
-        return measured<Rendered>(float3(l) + (m.v - float3(l)) * edit.saturation);
-    }
     let la = dot(LUMA, at.v);
     let d = correct(la, surround, at.v.r - la, at.v.b - la, l, m.v.r - l, m.v.b - l);
     // The middle channel is not free: LUMA . d is zero by construction, so the two
@@ -361,6 +358,17 @@ public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, f
     // no business trusting, and black is the honest answer there rather than a wrapped colour.
     let lit = max(d.z, 0.0);
     return measured<Rendered>(float3(lit + d.x, lit + dg, lit + d.y));
+}
+
+/// The match's global saturation, last of the match: `adjust.slang`'s `camera_undone` divides this
+/// back out, which is exact only while nothing nonlinear sits between the two. The lattice is
+/// uploaded relative to it (`Gpu::lattice`).
+public Colour<Rendered> globally_saturated(Colour<Rendered> m)
+{
+    // `l + (m - l) * 1.0` is not bit-identical to `m`, and most frames hold exactly 1.0.
+    if (edit.saturation == 1.0) { return m; }
+    let l = dot(LUMA, m.v);
+    return measured<Rendered>(float3(l) + (m.v - float3(l)) * edit.saturation);
 }
 
 /// The camera's own primaries into Rec.2020, which is what every weighting below `LUMA` assumes.
@@ -414,8 +422,9 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
 {
     var matched = matched_scene(nits, at).v;
     // Own encoded luma, the neighbourhood's encoded chroma (`chroma_smooth.slang`): after the
-    // whole model, so the blur flattens only what the camera flattens, and before the
-    // exposure and the sliders, which the neighbourhood was encoded without.
+    // model's lattice, so the blur flattens only what the camera flattens, and before its
+    // global saturation, the exposure and the sliders, which the neighbourhood was encoded
+    // without.
     if (edit.has_smoothed != 0) {
         let around = cell_at(chroma_smoothed, at, max(edit.chroma_shrink, 1u)).rgb;
         let encoded = pow(max(matched, float3(0.0)), float3(1.0 / CHROMA_GAMMA));
@@ -431,6 +440,7 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
                           float3(-CHROMA_MOVES_BY), float3(CHROMA_MOVES_BY));
         matched = pow(max(luma + mine + moved, float3(0.0)), float3(CHROMA_GAMMA));
     }
+    matched = globally_saturated(measured<Rendered>(matched)).v;
     let rendered = measured<Rendered>(matched);
     var graded = matched;
     if (!sliders_at_camera()) {

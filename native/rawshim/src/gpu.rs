@@ -2560,7 +2560,7 @@ impl Adjust {
             c.curve.as_slice()
         });
         let camera_exposure = colour.map_or(crate::light::Stops::ZERO, |c| c.exposure);
-        let saturation = colour.map_or(0.0, |c| saturation_slider(c.camera_saturation));
+        let saturation = colour.map_or(0.0, HdrColour::saturation_slider);
         Adjust {
             tone_curve: None,
             saturation: None,
@@ -3049,8 +3049,6 @@ impl Gpu {
         uploaded
     }
 
-    /// The scene's own top end, in nits, off the same two passes the editor measures it with.
-    ///
     /// The lattice, split in two: the 2x2 in one volume, and the lightness gain's *deviation from
     /// 1* in another.
     ///
@@ -3063,17 +3061,23 @@ impl Gpu {
         let map = colour.chroma.as_ref().unwrap_or(&identity);
         let shape = map.shape();
         let nodes = map.nodes_flat();
+        // The fitted nodes carry the global saturation in their chroma rows, and
+        // `globally_saturated` applies it again after the chroma smoothing.
+        let relative = match colour.chroma {
+            Some(_) => 1.0 / colour.saturation,
+            None => 1.0,
+        };
         let count = nodes.len() / hdr_fit::NODE_VALUES;
         let (mut pairs, mut gains, mut tints) = (Vec::new(), Vec::new(), Vec::new());
         for node in 0..count {
             let at = node * hdr_fit::NODE_VALUES;
             for k in 0..4 {
-                pairs.extend_from_slice(&half(nodes[at + k] as f32));
+                pairs.extend_from_slice(&half((nodes[at + k] * relative) as f32));
             }
             // The second volume carries the two luma-to-chroma terms, the lightness gain's
             // deviation from 1, and the first of the two chroma-to-lightness terms.
-            gains.extend_from_slice(&half(nodes[at + 4] as f32));
-            gains.extend_from_slice(&half(nodes[at + 5] as f32));
+            gains.extend_from_slice(&half((nodes[at + 4] * relative) as f32));
+            gains.extend_from_slice(&half((nodes[at + 5] * relative) as f32));
             gains.extend_from_slice(&half(nodes[at + 6] as f32 - 1.0));
             gains.extend_from_slice(&half(nodes[at + 7] as f32));
             // Nine values need a third volume: eight fill two `rgba16float` texels exactly,
@@ -4854,9 +4858,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.adjust.whites);
     f(&mut w, grade.adjust.blacks);
     f(&mut w, grade.adjust.vibrance);
-    let camera_saturation = grade
-        .colour
-        .map_or(0.0, |c| saturation_slider(c.camera_saturation));
+    let camera_saturation = grade.colour.map_or(0.0, HdrColour::saturation_slider);
     f(&mut w, grade.adjust.saturation.unwrap_or(camera_saturation));
     f(&mut w, grade.adjust.texture);
     f(&mut w, grade.adjust.clarity);
@@ -6160,11 +6162,13 @@ mod tests {
         let frame: Vec<u16> = (0..width * height * 3)
             .map(|i| ((i / 3) * 16 + (i % 3) * 700).min(65535) as u16)
             .collect();
-        let fitted = crate::hdr_fit::HdrColour::identity();
+        let fitted = crate::hdr_fit::HdrColour {
+            saturation: 1.2,
+            ..crate::hdr_fit::HdrColour::identity()
+        };
         let told = crate::hdr_fit::HdrColour {
             exposure: Stops::measured(0.7),
             curve: vec![[0.0, 0.0], [0.35, 0.25], [0.7, 0.78], [1.0, 0.96]],
-            camera_saturation: crate::light::Gain::of_ratio(1.2),
             ..fitted.clone()
         };
         let graded_as = |colour: Option<&crate::hdr_fit::HdrColour>,
@@ -6208,7 +6212,7 @@ mod tests {
             tone_curve: Some(super::ToneCurve::PchipCbrt3 {
                 points: told.curve.clone(),
             }),
-            saturation: Some(super::saturation_slider(told.camera_saturation)),
+            saturation: Some(told.saturation_slider()),
             ..super::Adjust::none()
         };
         let worst = |a: &[u16], b: &[u16]| {
@@ -6230,6 +6234,29 @@ mod tests {
         assert!(
             moved <= 2,
             "the camera's own sliders, written out, moved the match by {moved} codes"
+        );
+        // A thousandth of Contrast takes both through `camera_undone`, so what differs is the
+        // saturation alone and not whether the tone was taken off and put back.
+        let at_zero = |colour: &crate::hdr_fit::HdrColour| {
+            graded_as(
+                Some(colour),
+                Some(told.exposure),
+                super::Adjust {
+                    saturation: Some(0.0),
+                    contrast: 1e-3,
+                    ..written_out.clone()
+                },
+            )
+        };
+        let without_saturation = at_zero(&told);
+        let unsaturated = at_zero(&crate::hdr_fit::HdrColour {
+            saturation: 1.0,
+            ..told.clone()
+        });
+        let off = worst(&unsaturated, &without_saturation);
+        assert!(
+            off <= 2,
+            "Saturation at 0 is {off} codes from the match without its saturation"
         );
 
         // A None profile drops the match and keeps where its sliders start: the neutral arm at the
