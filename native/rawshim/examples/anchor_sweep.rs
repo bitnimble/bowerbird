@@ -15,7 +15,7 @@
 //! Both arms run in one process against one decode, so nothing between them differs - not the
 //! denoise, not the defringe, not the adapter, not the build.
 
-use rawshim::galosh::{Detail, Fit};
+mod support;
 
 /// How much of the curve's shadow range is spent before it has climbed anywhere: its output at a
 /// near-black input, over its output at the top of the toe.
@@ -70,11 +70,11 @@ fn main() {
         let name = std::path::Path::new(path)
             .file_name()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        let Some(frame) = rawshim::decode_frame_denoised(path, 0, Detail::at(0.0, 0.0), Fit::Only)
-        else {
+        let Some(opened) = support::Open::shipped(path, support::FULL_RENDITION_SIZE).run() else {
             println!("{name:<16} would not decode");
             continue;
         };
+        let frame = &opened.frame;
         let Some(resident) = frame.on_device(gpu) else {
             println!("{name:<16} would not upload");
             continue;
@@ -85,7 +85,7 @@ fn main() {
             rawshim::fit_hdr_measured(
                 &resident,
                 path,
-                0.9,
+                support::GRADE.white_quantile,
                 rawshim::hdr_fit::CameraMatch::LensAndColour,
             )
             .map(|(matched, levels)| {

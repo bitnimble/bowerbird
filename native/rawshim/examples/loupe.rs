@@ -12,6 +12,8 @@
 //! comparison every camera-match question ends at. The held-out score and the fitted domain are
 //! printed for the same reason.
 
+mod support;
+
 use rawshim::photo_analysis::{FromRaw, PhotoAnalysis};
 
 fn main() {
@@ -26,20 +28,14 @@ fn main() {
     );
 
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
-    let detail = rawshim::galosh::Detail::at(40.0, 40.0);
-    let frame = rawshim::decode_frame_denoised(raw, 0, detail, rawshim::galosh::Fit::Measure)
-        .expect("decode");
+    let open_started = std::time::Instant::now();
+    let support::Opened { frame, measured } = support::Open::shipped(raw, 0).run().expect("decode");
+    let open_seconds = open_started.elapsed().as_secs_f64();
     assert_eq!(
         frame.reduced, 1,
         "tile coordinates assume the sensor's own grid"
     );
-    let samples = frame.samples16().expect("16-bit").to_vec();
-    let levels =
-        rawshim::hdr::levels_of(gpu, &samples, frame.width, frame.height, 0.9).expect("levels");
-    let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let fit_started = std::time::Instant::now();
-    let matched = rawshim::fit_hdr_for(&resident, raw, 0.9).expect("a fit");
-    let fit_seconds = fit_started.elapsed().as_secs_f64();
+    let matched = measured.matched.expect("a fit");
     let colour = matched.colour.as_ref().expect("colour");
     eprintln!(
         "fit: delta_e {:.3} ceiling {:.3} saturation {:.3} lattice {}",
@@ -53,10 +49,19 @@ fn main() {
     );
 
     let sensor = frame.width;
+    let defocus = match measured.defringe {
+        // `Done` was this open's buffer; the tile decodes its own, which still carries the fringe.
+        rawshim::base::Defringe::Done(pair) | rawshim::base::Defringe::Take(pair) => {
+            rawshim::base::Defringe::Take(pair)
+        }
+        rawshim::base::Defringe::Measure => rawshim::base::Defringe::Measure,
+    };
     let analysis = PhotoAnalysis {
         from_raw: FromRaw {
             matched: Some(matched),
             noise: frame.noise,
+            dust: frame.dust.clone(),
+            capture_sigma: measured.blur,
             ..Default::default()
         },
         ..Default::default()
@@ -65,24 +70,18 @@ fn main() {
     let request = rawshim::tile::TileRequest {
         tile: [x, y, side, side],
         frame: [frame.width, frame.height],
-        grade: rawshim::hdr::Grade {
-            reference_white_nits: rawshim::light::Light::exactly(203.0),
-            white_quantile: 0.9,
-        },
-        strengths: rawshim::image::Strengths {
-            sharpen: 1.0,
-            defringe: 1.0,
-        },
-        denoise_luminance: Some(40.0),
-        denoise_colour: Some(40.0),
+        grade: support::GRADE,
+        strengths: support::STRENGTHS,
+        denoise_luminance: None,
+        denoise_colour: None,
         denoiser: rawshim::galosh::Denoiser::Galosh,
         dust: Default::default(),
         adjust: rawshim::gpu::Adjust::none(),
-        levels: Some(levels),
+        levels: Some(measured.levels),
         noise_fit: frame.noise,
-        capture_sigma: None,
+        capture_sigma: measured.blur,
         sensor_long: None,
-        defocus: rawshim::base::Defringe::Measure,
+        defocus,
         photo_analysis: Some(sidecar.clone()),
         scale: Default::default(),
         repairs: Vec::new(),
@@ -110,7 +109,7 @@ fn main() {
         tick = tick.min(started.elapsed().as_secs_f64());
     }
     eprintln!(
-        "timing: fit {fit_seconds:.2}s, sidecar {sidecar_bytes} bytes, tile {}x{} encode {:.1}ms",
+        "timing: open {open_seconds:.2}s, sidecar {sidecar_bytes} bytes, tile {}x{} encode {:.1}ms",
         window.width,
         window.height,
         tick * 1000.0

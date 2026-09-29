@@ -16,10 +16,10 @@
 use std::borrow::Cow;
 use std::time::Instant;
 
+mod support;
+
 use rawshim::avif;
-use rawshim::hdr::{self, Source};
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
 use rawshim::light::{DisplayNits, Gain, Light};
 
 const HDR_QUANTIZERS: [i32; 15] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 26, 32, 40];
@@ -31,16 +31,10 @@ fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv420,
         output_path: String::new(),
-        grade: hdr::Grade {
-            reference_white_nits: Light::exactly(203.0),
-            white_quantile: 0.9,
-        },
+        grade: support::GRADE,
         crf: 3,
         preset: HDR_SPEED,
-        strengths: Strengths {
-            sharpen: 1.0,
-            defringe: 1.0,
-        },
+        strengths: support::STRENGTHS,
         sharpen_sigma: None,
         max_edge: edge as f64,
         content_light: None,
@@ -220,7 +214,6 @@ fn sky() {
 
 fn main() {
     let paths: Vec<String> = std::env::args().skip(1).collect();
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
     println!("frame\tpath\tq\tkB\tms\tssim\tpq_rmse\tspeckle");
     for path in &paths {
         let name = std::path::Path::new(path)
@@ -228,22 +221,12 @@ fn main() {
             .expect("a name")
             .to_string_lossy()
             .to_string();
-        let detail = rawshim::galosh::Detail::at(20.0, 30.0);
-        let frame =
-            rawshim::decode_frame_denoised(path, 0, detail, Default::default()).expect("decode");
-        let samples = frame.samples16().expect("16-bit").to_vec();
-        let source = Source {
-            samples: &samples,
-            width: frame.width,
-            height: frame.height,
-        };
-        let resident = frame.on_device(gpu).expect("the frame reaches the device");
-        let matched = rawshim::fit_hdr_for(&resident, path, 0.9);
-
-        let (pq, w, h) = hdr::graded_as(
-            &source,
-            &options(3840),
-            matched.as_ref(),
+        let opened = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
+            .run()
+            .expect("decode");
+        let (pq, w, h) = support::graded(
+            &opened,
+            &options(support::FULL_RENDITION_SIZE as usize),
             rawshim::gpu::Output::Pq,
         );
         hdr_rows(&name, &pq, w, h);
@@ -251,12 +234,7 @@ fn main() {
             continue;
         }
         for (edge, label) in [(3840, "sdr3840"), (800, "sdr800")] {
-            let (srgb, w, h) = hdr::graded_as(
-                &source,
-                &options(edge),
-                matched.as_ref(),
-                rawshim::gpu::Output::Srgb,
-            );
+            let (srgb, w, h) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Srgb);
             let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
             sdr_rows(&name, label, &srgb8, w, h);
         }

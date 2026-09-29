@@ -163,7 +163,7 @@ fn command(raw: &str, output: &str) -> rawshim::job::Job {
         // On, which is what `dustSettings(undefined)` asks for. Whether the search then runs is
         // the aperture's to say, so `dust` reads zero on a frame shot wide open.
         "dust": { "enabled": true, "sensitivity": 0.25, "intensity": 1.0 },
-        "sharpen": 0.6,
+        "sharpen": 0.5,
         "defringe": 1.0,
         "grade": { "referenceWhiteNits": 203.0, "whiteQuantile": 0.9 },
         "targets": [{

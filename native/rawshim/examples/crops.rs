@@ -4,10 +4,9 @@
 //! usage: crops <raw> <out-dir> [<x>,<y>,<w>,<h>]...
 //! With no crops given it writes the whole frame reduced to a long edge of 1600.
 
-use rawshim::hdr::{self, Grade, Source};
+mod support;
+
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
-use rawshim::light::Light;
 use std::env;
 
 fn main() {
@@ -15,31 +14,20 @@ fn main() {
     let path = args.next().expect("raw path");
     let out = args.next().expect("out dir");
 
-    let frame = rawshim::decode_frame(&path, 0).expect("decode");
-    let samples = frame.samples16().expect("16-bit");
-    let source = Source {
-        samples,
-        width: frame.width,
-        height: frame.height,
-    };
-
+    let opened = support::Open::shipped(&path, 0).run().expect("decode");
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let matched = rawshim::fit_hdr_for(&resident, &path, 0.99).expect("hdr fit");
+    let matched = opened.measured.matched.as_ref().expect("hdr fit");
 
     // SDR, which is the same grade with the peak at diffuse white and the sRGB transfer on
-    // the end. `max_edge` is high enough not to reduce a 24MP frame, because a crop at 100%
-    // is the whole point.
+    // the end, to sit beside the camera's own SDR JPEG. `max_edge` is high enough not to reduce a
+    // 24MP frame, because a crop at 100% is the whole point.
     let options = EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
-        grade: Grade {
-            reference_white_nits: Light::exactly(203.0),
-            white_quantile: 0.99,
-        },
+        grade: support::GRADE,
         crf: 26,
         preset: 6,
-        strengths: Strengths::default(),
+        strengths: support::STRENGTHS,
         sharpen_sigma: None,
         max_edge: 100_000.0,
         content_light: None,
@@ -85,12 +73,7 @@ fn main() {
     }
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
-    let (coded, width, height) = hdr::graded_as(
-        &source,
-        &options,
-        Some(&matched),
-        rawshim::gpu::Output::Srgb,
-    );
+    let (coded, width, height) = support::graded(&opened, &options, rawshim::gpu::Output::Srgb);
     let data: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
     eprintln!("graded {width}x{height}");
 

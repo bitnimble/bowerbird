@@ -22,9 +22,9 @@
 use rawshim::{header, job};
 use std::path::Path;
 
-/// `grid_rendition_size` and `grid_rendition_quantizer`.
+/// `grid_rendition_size`, and `grid_rendition_quality`'s 80 through `encoderQuality('avif-sdr')`.
 const GRID_SIZE: u32 = 800;
-const GRID_QUANTIZER: i32 = 13;
+const GRID_QUANTIZER: i32 = 18;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -79,9 +79,9 @@ fn tile_job(raw: &str, out_path: &str, scan: bool) -> job::Job {
             "rawFilePath": {raw:?},
             "cameraMatch": "lensAndColour",
             "scan": {scan},
-            "denoiseLuminance": 20,
-            "denoiseColour": 30,
-            "sharpen": 1,
+            "denoiseLuminance": null,
+            "denoiseColour": null,
+            "sharpen": 0.5,
             "defringe": 1,
             "grade": {{ "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
             "targets": [{{
@@ -91,8 +91,8 @@ fn tile_job(raw: &str, out_path: &str, scan: bool) -> job::Job {
                 "size": {GRID_SIZE},
                 "source": "embedded",
                 "sdrQuantizer": {GRID_QUANTIZER},
-                "hdrQuantizer": 32,
-                "preset": 6,
+                "hdrQuantizer": 4,
+                "preset": 8,
                 "stillFullChroma": false,
                 "sdrFullChroma": false
             }}]

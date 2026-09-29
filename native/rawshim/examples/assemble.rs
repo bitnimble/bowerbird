@@ -14,6 +14,8 @@
 //! `--planes <dir>` searches `<dir>/<stem>.jpg` for the alignment's plane, as the server's grid tile
 //! stands in for a camera's JPEG - which is what a synthetic DNG needs, having no preview embedded.
 
+mod support;
+
 use rawshim::assembly_planes::Plane;
 use rawshim::composite_tile::{Blending, Layer, SourceFile};
 
@@ -362,12 +364,12 @@ fn through_the_render(
             window,
             parts: &[],
             scale,
-            white_quantile: 0.99,
+            white_quantile: support::GRADE.white_quantile,
             levels,
-            reference_white_nits: rawshim::light::Light::exactly(203.0),
+            reference_white_nits: support::GRADE.reference_white_nits,
             strengths: rawshim::image::Strengths {
                 sharpen,
-                defringe: 0.0,
+                defringe: support::STRENGTHS.defringe,
             },
             detail,
             sources: &files,
@@ -491,26 +493,9 @@ fn draw_outline(samples: &mut [u16], size: (usize, usize), outline: &[[f32; 2]],
 /// **A file with no embedded JPEG has nothing to match against, and takes the identity** - which is
 /// a synthetic camera's own lens rather than a stand-in for one.
 fn fitted_lens(path: &str) -> Option<Vec<u8>> {
-    const FITTED_ON: u32 = 1600;
-    const WHITE_QUANTILE: f64 = 0.9;
-    let gpu = rawshim::gpu::device()?;
-    let frame = rawshim::decode::frame_from_path(
-        path,
-        rawshim::galosh::Detail::at(0.0, 0.0),
-        FITTED_ON,
-        false,
-        rawshim::galosh::Fit::Measure,
-        rawshim::dust::Wanted::Off,
-    );
-    let resident = frame.as_ref().and_then(|frame| frame.on_device(gpu));
-    let measured = resident.as_ref().and_then(|resident| {
-        rawshim::fit_hdr_measured(
-            resident,
-            path,
-            WHITE_QUANTILE,
-            rawshim::hdr_fit::CameraMatch::LensAndColour,
-        )
-    });
+    let measured = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
+        .run()
+        .and_then(|opened| Some((opened.measured.matched?, opened.measured.levels)));
     let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
     match measured {
         Some((matched, levels)) => {
@@ -518,7 +503,7 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
             analysis.from_raw.matched = Some(matched);
             analysis.from_render.levels = Some(rawshim::photo_analysis::MeasuredLevels {
                 levels,
-                white_quantile: WHITE_QUANTILE,
+                white_quantile: support::GRADE.white_quantile,
             });
         }
         None => {
@@ -536,10 +521,7 @@ fn write_avif(path: &str, samples: &[u16], width: usize, height: usize) {
     let options = rawshim::hdr_args::EncodeOptions {
         still_chroma: rawshim::hdr_args::Chroma::Yuv444,
         output_path: path.to_string(),
-        grade: rawshim::hdr::Grade {
-            reference_white_nits: rawshim::light::Light::exactly(203.0),
-            white_quantile: 0.9,
-        },
+        grade: support::GRADE,
         // Near-lossless and 4:4:4: this is a picture to pixel-peep, not one to ship.
         crf: 2,
         preset: 6,
@@ -566,10 +548,6 @@ struct Args {
     /// The crop's long edge in output pixels, which is what a rendition size names.
     long: usize,
     /// The deconvolution's strength and GALOSH's detail, as a library sets them.
-    ///
-    /// **Zero is not the default a render takes**, and a comparison that leaves them there is
-    /// comparing two pictures neither of which anybody is shown: `EditDoc` starts at a tenth of the
-    /// sharpen's track and at `auto` for the denoise, so those are what a layer is built with.
     sharpen: f64,
     detail: rawshim::galosh::Detail,
     /// The focal a body would have written, for a file with no header to read it from.
@@ -589,9 +567,8 @@ impl Args {
             planes: None,
             drawn: Vec::new(),
             layers: None,
-            // `full_rendition_size`, which is what a merge page's layers are asked for at.
-            long: 3840,
-            sharpen: 0.5,
+            long: support::FULL_RENDITION_SIZE as usize,
+            sharpen: support::STRENGTHS.sharpen,
             detail: rawshim::galosh::Detail::AUTO,
             focal: None,
         };

@@ -6,6 +6,8 @@
 //!
 //! usage: distort_probe <raw>...
 
+mod support;
+
 use rawshim::image::resize;
 use rawshim::{fit, hdr_fit};
 
@@ -22,15 +24,23 @@ fn main() {
 }
 
 fn probe(path: &str) -> Result<(), String> {
-    let frame = rawshim::decode_frame(path, 0).ok_or("the decode declined it")?;
+    let opened = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
+        .run()
+        .ok_or("the decode declined it")?;
     let gpu = rawshim::gpu::device().ok_or("an adapter")?;
-    let resident = frame.on_device(gpu).ok_or("the frame reaches the device")?;
-    let matched = rawshim::fit_hdr_for(&resident, path, 0.9).ok_or("no fit")?;
+    let resident = opened
+        .frame
+        .on_device(gpu)
+        .ok_or("the frame reaches the device")?;
+    let matched = opened.measured.matched.ok_or("no fit")?;
 
     let preview = rawshim::hdr::match_preview(path).ok_or("no preview")?;
     let (wide, _) = hdr_fit::fitted_preview_size(preview.width, preview.height);
-    let prepared = pollster::block_on(rawshim::fit_source::prepared(gpu, &resident, wide, 0.9))
-        .ok_or("no plane")?;
+    let quantile = support::GRADE.white_quantile;
+    let prepared = pollster::block_on(rawshim::fit_source::prepared(
+        gpu, &resident, wide, quantile,
+    ))
+    .ok_or("no plane")?;
     let render = pollster::block_on(rawshim::fit_source::read_render(gpu, &prepared.rendered))
         .ok_or("no render")?;
     let (_, searched) =

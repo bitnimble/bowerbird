@@ -9,6 +9,8 @@
 //! pair's coarse translation, its correlation, how much of a frame it says the two share, and how
 //! many correspondences survived the refine - then the solve's own answer.
 
+mod support;
+
 use rawshim::composite_pairs::{Pyramid, coarse, refined};
 
 fn main() {
@@ -350,12 +352,9 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
     // shorter than the set it was handed, and the render is indexed against the recipe.
     //
     // **With an analysis each, or the picture this writes is not one a library would serve.** The
-    // catalogue keeps a camera match per photograph and the composite is graded through it; handing
-    // the job nothing means there is none to apply, and a panorama graded on the neutral arm comes
-    // back pale and flat beside every single-photograph render. Measured on one frame's cloud: with
-    // its match the chromaticity is r 0.405 / b 0.263, the same frame rendered `--no-match` is
-    // 0.365 / 0.300, and a panorama with no analyses is 0.355 / 0.309 - so the probe was showing a
-    // fault it had introduced itself. `PANO_PROBE_NO_MATCH` leaves them out, for seeing that.
+    // catalogue keeps a camera match per photograph and the composite is graded through it; with
+    // none to apply a panorama grades on the neutral arm, pale and flat beside every
+    // single-photograph render. `PANO_PROBE_NO_MATCH` leaves them out, for seeing that.
     let matching = std::env::var_os("PANO_PROBE_NO_MATCH").is_none();
     let sources: Vec<serde_json::Value> = recipe
         .sources
@@ -400,19 +399,16 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
     };
     let job: rawshim::job::Job = serde_json::from_value(serde_json::json!({
         "rawFilePath": recipe.sources[0].photo_id,
-        "cameraMatch": "none",
-        "denoiseLuminance": 0.0,
-        "denoiseColour": 0.0,
-        "sharpen": 0.0,
-        "defringe": 0.0,
-        // **The library's own quantile, 0.9.** Anchoring diffuse white at the 99th percentile puts
-        // it on content that is nearly the scene's peak, and everything below is lifted to meet it:
-        // measured on one frame's own band against a normal render of the same photograph, 0.99 is
-        // 1.5x the light and puts the highlights at 0.94 where 0.9 leaves them at 0.69 - a cloud
-        // with its modelling flattened out of it. `settings.ts` calls this `hdr_white_quantile` and
-        // `renders` takes the same number, so a picture out of this probe is one a rendition would
-        // have written rather than one only the probe ever sees.
-        "grade": { "referenceWhiteNits": 203.0, "whiteQuantile": 0.9 },
+        // A merge as `composite_renderer.ts` sends it: `developed(null, …)` and the library's grade.
+        "cameraMatch": "lensAndColour",
+        "denoiseLuminance": null,
+        "denoiseColour": null,
+        "sharpen": support::STRENGTHS.sharpen,
+        "defringe": support::STRENGTHS.defringe,
+        "grade": {
+            "referenceWhiteNits": support::GRADE.reference_white_nits.raw(),
+            "whiteQuantile": support::GRADE.white_quantile,
+        },
         "geometry": { "crop": crop, "angleDegrees": 0.0, "rotate": 0, "keystone": null },
         "targets": [{
             "rendition": "full",
@@ -894,38 +890,18 @@ fn write_preview(to: &str, from: &str) {
 
 /// What the catalogue would have kept about one photograph: its camera match and the levels that
 /// match was fitted against.
-///
-/// Fitted off a bounded decode rather than the whole frame, which is what makes it affordable to do
-/// for every source of a set - the match is a colour, and a colour does not want every pixel.
 fn analysis_for(path: &str) -> Option<Vec<u8>> {
-    const FITTED_ON: u32 = 1600;
-    let gpu = rawshim::gpu::device()?;
-    let frame = rawshim::decode::frame_from_path(
-        path,
-        rawshim::galosh::Detail::at(0.0, 0.0),
-        FITTED_ON,
-        false,
-        rawshim::galosh::Fit::Measure,
-        rawshim::dust::Wanted::Off,
-    )?;
-    let resident = frame.on_device(gpu)?;
-    let (matched, levels) = rawshim::fit_hdr_measured(
-        &resident,
-        path,
-        WHITE_QUANTILE,
-        rawshim::hdr_fit::CameraMatch::LensAndColour,
-    )?;
+    let measured = support::Open::shipped(path, support::FULL_RENDITION_SIZE)
+        .run()?
+        .measured;
     let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
-    analysis.from_raw.matched = Some(matched);
+    analysis.from_raw.matched = Some(measured.matched?);
     analysis.from_render.levels = Some(rawshim::photo_analysis::MeasuredLevels {
-        levels,
-        white_quantile: WHITE_QUANTILE,
+        levels: measured.levels,
+        white_quantile: support::GRADE.white_quantile,
     });
     Some(rawshim::photo_analysis::encode(&analysis))
 }
-
-/// The library's own, as `settings.ts` sets it: the number a rendition would be graded at.
-const WHITE_QUANTILE: f64 = 0.9;
 
 /// The photograph's own size, as the catalogue would have it.
 fn size_of(path: &str) -> [usize; 2] {

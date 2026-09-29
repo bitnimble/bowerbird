@@ -16,33 +16,18 @@
 //! Both are written, and a crop of each at 1:1, because the numbers below say how much detail
 //! survived and not whether it is the right detail.
 
-use rawshim::hdr::{self, Grade};
+mod support;
+
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
-use rawshim::light::Light;
-
-fn grade() -> Grade {
-    Grade {
-        reference_white_nits: Light::exactly(203.0),
-        white_quantile: 0.9,
-    }
-}
-
-fn strengths() -> Strengths {
-    Strengths {
-        sharpen: 1.0,
-        defringe: 1.0,
-    }
-}
 
 fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
-        grade: grade(),
+        grade: support::GRADE,
         crf: 4,
         preset: 6,
-        strengths: strengths(),
+        strengths: support::STRENGTHS,
         sharpen_sigma: None,
         max_edge: match edge {
             0 => 100_000.0,
@@ -52,106 +37,14 @@ fn options(edge: usize) -> EncodeOptions {
     }
 }
 
-/// `job::Base::build`'s own chain at whatever size is asked for, rather than `hdr::graded_as`,
-/// which sharpens at a fixed sigma. The sigma is the whole question here: it is composed for the
-/// target's scale, so a render cut at 3840 deconvolves a different blur from one cut whole, and a
-/// harness that held it still would be comparing something nothing ships.
+/// The shipped chain at whatever size is asked for. The sigma is the whole question here: it is
+/// composed for the target's scale, so a render cut at 3840 deconvolves a different blur from one
+/// cut whole.
 fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
-    let amounts = rawshim::galosh::Detail::at(20.0, 30.0);
-    let frame =
-        rawshim::decode_frame_denoised(path, 0, amounts, Default::default()).expect("decode");
-    let samples = frame.samples16().expect("16-bit").to_vec();
-    let options = options(edge);
-
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let matched = rawshim::fit_hdr_for(&resident, path, options.grade.white_quantile);
-    let levels = rawshim::hdr::levels_of(
-        gpu,
-        &samples,
-        frame.width,
-        frame.height,
-        options.grade.white_quantile,
-    )
-    .expect("levels")
-    .anchored();
-
-    let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
-    let size = rawshim::hdr_args::target_size(frame.width as u32, frame.height as u32, &options);
-    let sensor_long = frame.width.max(frame.height) * frame.reduced.max(1);
-    let capture_sigma = pollster::block_on(rawshim::base::measure_edge_spread(
-        gpu,
-        base,
-        resident.buffer(),
-        frame.width,
-        frame.height,
-    ))
-    .map(|blur| blur * frame.reduced.max(1) as f32);
-    let sigma = rawshim::image::deconvolve_split(
-        capture_sigma,
-        sensor_long,
-        size.width.max(size.height) as usize,
-    );
-    let sharpen_noise = rawshim::base::sharpen_noise(
-        levels,
-        options.grade.reference_white_nits,
-        frame.noise,
-        frame.matrix,
-        frame.wb_gains,
-        frame.reduced,
-    )
-    .at(
-        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(size.width.max(size.height) as usize),
-    );
-    let cut = {
-        let resident =
-            rawshim::resident::Resident::upload(gpu, &samples, frame.width, frame.height);
-        let (prepared, _) = pollster::block_on(rawshim::base::prepare(
-            gpu,
-            base,
-            resident,
-            rawshim::base::Gather::frame(rawshim::px::Size::exact(frame.width, frame.height)),
-            levels,
-            options.grade.reference_white_nits,
-            strengths().before_the_fit(),
-            rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
-            rawshim::image::SharpenNoise::NONE,
-            &rawshim::fit::Lens::none(),
-            rawshim::base::Defringe::Measure,
-            frame.noise,
-            frame.matrix,
-        ))
-        .expect("the coding and the defringe");
-        let lens = matched.as_ref().map(|m| &m.lens);
-        hdr::Cut::from_base(
-            prepared,
-            lens,
-            size,
-            strengths().sharpen,
-            sigma,
-            sharpen_noise,
-        )
-    };
-
-    let scene = rawshim::tone::SceneGrade::new(
-        matched.as_ref().and_then(|m| m.colour.as_ref()),
-        levels,
-        options.grade.reference_white_nits,
-        None,
-        rawshim::gpu::Adjust::none(),
-        frame.as_shot,
-    );
-    let coded = hdr::encode_cut(
-        gpu,
-        &cut,
-        &scene.gpu_grade(cut.width, cut.height, rawshim::gpu::Output::Srgb),
-    );
-    (
-        coded.iter().map(|v| *v as u8).collect(),
-        cut.width,
-        cut.height,
-    )
+    let opened = support::Open::shipped(path, 0).run().expect("decode");
+    let (coded, width, height) =
+        support::graded(&opened, &options(edge), rawshim::gpu::Output::Srgb);
+    (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 
 fn laplacians(image: rawshim::rgb::RgbRef<'_>) -> Vec<f64> {
