@@ -25,7 +25,7 @@ const KNOTS_FROM: usize = 3;
 /// Sweep candidates the split buffer is sized for. `nulling_scale` is the widest asker at 61.
 const MAX_CANDIDATES: usize = 128;
 
-struct Kernels {
+pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
     reduce: wgpu::ComputePipeline,
     count: wgpu::ComputePipeline,
@@ -37,7 +37,7 @@ struct Kernels {
     slopes: wgpu::ComputePipeline,
 }
 
-fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
+pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

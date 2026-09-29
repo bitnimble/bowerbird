@@ -14,6 +14,7 @@ import { StackTriagePage } from '../features/photos/stack_triage/stack_triage_pa
 import { ConflictsPage } from '../features/replication/conflicts_page';
 import { SettingsPage } from '../features/settings/settings_page';
 import { OnboardingPage } from '../features/onboarding/onboarding_page';
+import { PrecompilePage } from '../features/precompile/precompile_page';
 import { NoShootPhotosPage } from '../features/shoots/no_shoot_photos_page';
 import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
 import { ShootsPage } from '../features/shoots/shoots_page';
@@ -33,6 +34,7 @@ import { HdrOutput } from './hdr_output';
 import {
   useAppSettingsStore,
   useLibrariesStore,
+  usePrecompileStore,
   usePresenters,
   useSidebarStore,
 } from './stores_context';
@@ -191,7 +193,9 @@ export const App = observer(function App(): JSX.Element {
   const [dragging, setDragging] = useState(false);
   const shell = useRef<HTMLDivElement>(null);
   const { pathname } = useLocation();
-  const { appSettings, sidebar: sidebarPresenter } = usePresenters();
+  const { appSettings, sidebar: sidebarPresenter, precompile } = usePresenters();
+  const { ready: precompiled } = usePrecompileStore();
+  useEffect(precompile.start, [precompile]);
 
   // The sidebar decides what to do on the first photo opened, so the settings cannot
   // wait for the page that reads the rest of them.
@@ -210,6 +214,15 @@ export const App = observer(function App(): JSX.Element {
     shell,
   });
   const toggleSidebar = sidebarPresenter.toggleOpen;
+
+  if (!precompiled) {
+    return (
+      <>
+        <PrecompilePage />
+        <CaptionButtons />
+      </>
+    );
+  }
 
   if (pathname === route(PathSegment.welcome())) {
     return (

@@ -238,14 +238,14 @@ struct Grids {
 // ------------------------------------------------------------------ the grids, on the device
 
 /// `fit_grids.slang`'s two resamplers, built once for the process.
-struct Resamplers {
+pub(crate) struct Resamplers {
     layout: wgpu::BindGroupLayout,
     lanczos: wgpu::ComputePipeline,
     blur: wgpu::ComputePipeline,
     box_blur: wgpu::ComputePipeline,
 }
 
-fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
+pub(crate) fn resamplers(gpu: &'static crate::gpu::Gpu) -> &'static Resamplers {
     static BUILT: std::sync::OnceLock<Resamplers> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

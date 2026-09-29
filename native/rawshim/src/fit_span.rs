@@ -14,7 +14,7 @@ const MARKS_PER_AXIS: usize = 2 * PER_RANK;
 /// Where in a rank's marks the answer lands.
 const PICKED: usize = 2;
 
-struct Kernels {
+pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
     gather: wgpu::ComputePipeline,
     high: wgpu::ComputePipeline,
@@ -23,7 +23,7 @@ struct Kernels {
     finish: wgpu::ComputePipeline,
 }
 
-fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
+pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

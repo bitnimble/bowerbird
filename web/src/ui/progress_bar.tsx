@@ -22,10 +22,14 @@ export function ProgressBar({
   label,
   value,
   max,
+  style,
 }: {
   label: string;
   value: number;
   max: number;
+  style?: stylex.StyleXStyles;
 }): JSX.Element {
-  return <progress {...stylex.props(styles.bar)} aria-label={label} value={value} max={max} />;
+  return (
+    <progress {...stylex.props(styles.bar, style)} aria-label={label} value={value} max={max} />
+  );
 }

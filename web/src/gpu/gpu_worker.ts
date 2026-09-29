@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import init, {
   type HeldRaw,
+  buildEveryPipeline,
   finishDraw,
   holdPicture,
   holdPixels,
@@ -19,8 +20,14 @@ import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode
 import { cachedRecipes, PipelineWarmth } from '../features/raw_edit/stage/pipeline_warmth';
 import { planarLayout } from '../features/photos/viewer/planar_layout';
 import { WebCodecs } from '../features/photos/viewer/image_decoder';
-import { StagePainter } from '../features/photos/viewer/stage_gpu';
-import { AnswerSchema, MessageSchema, ProgressSchema, type Message } from './gpu_protocol';
+import { pipelinesFor, StagePainter } from '../features/photos/viewer/stage_gpu';
+import {
+  AnswerSchema,
+  CompiledSchema,
+  MessageSchema,
+  ProgressSchema,
+  type Message,
+} from './gpu_protocol';
 import { canDecodeAvifPlanes, decodeAvifPlanes, type PlanarPicture } from '../avif/avif_planes';
 import { pageLog } from '../features/logs/page_log';
 
@@ -50,8 +57,10 @@ const IdSchema = z.object({ id: z.number() });
 worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
   const { id } = IdSchema.parse(event.data);
   const report = (stage: string): void => worker.postMessage(ProgressSchema.parse({ id, stage }));
+  const compiled = (done: number, of: number): void =>
+    worker.postMessage(CompiledSchema.parse({ id, compiled: done, of }));
   try {
-    const { value, transfer } = await answer(MessageSchema.parse(event.data), report);
+    const { value, transfer } = await answer(MessageSchema.parse(event.data), report, compiled);
     worker.postMessage(AnswerSchema.parse({ id, ok: true, value }), transfer ?? []);
   } catch (error) {
     worker.postMessage(
@@ -81,8 +90,9 @@ type Report = (stage: string) => void;
 async function answer(
   message: Message,
   report: Report,
+  compiled: (done: number, of: number) => void,
 ): Promise<{ value: unknown; transfer?: Transferable[] }> {
-  await device;
+  const opened = await device;
   // wgpu unwraps what a lost device refuses, so past this point every call would panic as `unreachable`.
   if (lost != null && message.to !== 'close')
     throw new Error(`the GPU was reset (${lost}); reload the page`);
@@ -96,6 +106,14 @@ async function answer(
       opens.get(message.session)?.close();
       opens.delete(message.session);
       return { value: null };
+    case 'precompile': {
+      if (opened == null) return { value: null };
+      // Without its weights PMRID builds nothing, and compiles on its first denoise instead.
+      await networkWeights('pmrid').catch(() => undefined);
+      pipelinesFor(opened);
+      await warmth.precompile(buildEveryPipeline, compiled);
+      return { value: null };
+    }
     case 'open': {
       // A draw reaching a pipeline still warming would compile it again, synchronously, and freeze
       // every page while it did.

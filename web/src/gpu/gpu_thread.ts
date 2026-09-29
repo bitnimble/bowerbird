@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { OpenStage } from '../features/raw_edit/local_decode/local_open';
 import { pageLog } from '../features/logs/page_log';
 import { MessageSchema, ReplySchema, type Addressed } from './gpu_protocol';
@@ -23,6 +23,7 @@ export class GpuThread {
       resolve: (value: unknown) => void;
       reject: (error: unknown) => void;
       onStage: (stage: OpenStage) => void;
+      onCompiled: (compiled: number, of: number) => void;
     }
   >();
   private asked = 0;
@@ -35,6 +36,10 @@ export class GpuThread {
       if (waiter == null) return;
       if ('stage' in answer) {
         waiter.onStage(answer.stage);
+        return;
+      }
+      if ('compiled' in answer) {
+        waiter.onCompiled(answer.compiled, answer.of);
         return;
       }
       this.waiting.delete(answer.id);
@@ -62,16 +67,31 @@ export class GpuThread {
     this.worker.postMessage(MessageSchema.parse({ id: ++this.asked, to: 'close', session }));
   }
 
+  /** A pipeline the browser refuses still counts towards `compiled`. */
+  async precompile(onCompiled: (compiled: number, of: number) => void): Promise<void> {
+    await this.send(z.null(), { to: 'precompile' }, [], () => {}, onCompiled);
+  }
+
   ask<S extends z.ZodType>(
     schema: S,
     message: Addressed,
     transfer: Transferable[] = [],
     onStage: (stage: OpenStage) => void = () => {},
   ): Promise<z.output<S>> {
+    return this.send(schema, message, transfer, onStage, () => {});
+  }
+
+  private send<S extends z.ZodType>(
+    schema: S,
+    message: Addressed,
+    transfer: Transferable[],
+    onStage: (stage: OpenStage) => void,
+    onCompiled: (compiled: number, of: number) => void,
+  ): Promise<z.output<S>> {
     const id = ++this.asked;
     return new Promise<z.output<S>>((resolve, reject) => {
       this.waiting.set(id, {
-        session: message.to === 'stage' ? null : message.session,
+        session: 'session' in message ? message.session : null,
         resolve: (value) => {
           const parsed = schema.safeParse(value);
           if (parsed.success) resolve(parsed.data);
@@ -79,6 +99,7 @@ export class GpuThread {
         },
         reject,
         onStage,
+        onCompiled,
       });
       this.worker.postMessage(MessageSchema.parse({ ...message, id }), transfer);
     });

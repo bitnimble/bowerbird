@@ -329,7 +329,7 @@ fn built(gpu: &'static Gpu, entry: &str) -> crate::hdr_fit::Kernel {
     )
 }
 
-fn repairing(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
+pub(crate) fn repairing(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
     static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| built(gpu, "repair"))
 }

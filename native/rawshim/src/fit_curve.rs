@@ -24,14 +24,14 @@ pub(crate) struct Binned {
     pub count: Vec<usize>,
 }
 
-struct Kernels {
+pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
     levels: wgpu::ComputePipeline,
     weights: wgpu::ComputePipeline,
     bins: wgpu::ComputePipeline,
 }
 
-fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
+pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

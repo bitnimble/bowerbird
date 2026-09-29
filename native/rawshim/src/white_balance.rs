@@ -137,14 +137,14 @@ static LAST: std::sync::Mutex<Option<([f32; 16], Option<AsShot>)>> = std::sync::
 /// The temperature, the tint, and whether the file had an illuminant at all.
 const SOLVED: u64 = 3;
 
-struct Solver {
+pub(crate) struct Solver {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
 
 /// Infallible, as `condition::device` is: this kernel asks for nothing beyond two storage
 /// buffers, and a shader that would not build is a panic through `on_uncaptured_error`.
-fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
+pub(crate) fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
     static BUILT: std::sync::OnceLock<Solver> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

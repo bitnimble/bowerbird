@@ -80,7 +80,7 @@ pub(crate) struct Selected {
     pub frame_target: Vec<[f64; 3]>,
 }
 
-struct Kernels {
+pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
     extent_high: wgpu::ComputePipeline,
     extent_pick: wgpu::ComputePipeline,
@@ -94,7 +94,7 @@ struct Kernels {
     frame_write: wgpu::ComputePipeline,
 }
 
-fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
+pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

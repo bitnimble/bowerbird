@@ -349,6 +349,8 @@ RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=
 # needs them present even though nothing of them survives into the bundle.
 COPY src ./src
 COPY web ./web
+# The page keys its precompiled pipelines on this (web/src/app/build_version.ts).
+COPY VERSION ./VERSION
 # Aliased by path in both vite.config.ts and web/tsconfig.json rather than
 # resolved from node_modules, so it is source the build reads and not a
 # dependency the install brings.

@@ -1631,7 +1631,7 @@ impl Evaluated {
 }
 
 /// `fit_model.slang`'s bindings: `colour.slang`'s model, and the samples in and out.
-fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();
@@ -1876,7 +1876,7 @@ pub async fn evaluated(
     evaluate(gpu, colour, samples, stage).read(gpu).await
 }
 
-fn gather_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn gather_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         kernel(
@@ -3760,12 +3760,12 @@ const SHAPING_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_warp
 const SHAPING_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(0, READ), (1, READ), (2, WRITE), (20, UNIFORM)];
 
-fn warp_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn warp_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| kernel(gpu, "fit_warp", SHAPING_WGSL, SHAPING_BINDINGS, &[]))
 }
 
-fn box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| kernel(gpu, "fit_box", SHAPING_WGSL, SHAPING_BINDINGS, &[]))
 }
@@ -3773,7 +3773,7 @@ fn box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 const PACKED_BOX_BINDINGS: &[(u32, wgpu::BufferBindingType)] =
     &[(2, WRITE), (3, READ), (4, READ), (20, UNIFORM)];
 
-fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         kernel(
@@ -3786,7 +3786,7 @@ fn packed_box_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     })
 }
 
-fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         kernel(
@@ -3807,7 +3807,7 @@ fn register_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     })
 }
 
-fn stats_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn stats_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         kernel(

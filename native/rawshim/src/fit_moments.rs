@@ -8,12 +8,12 @@
 /// Twenty-seven for the three rows' `A^T A` and nine for `A^T b`, which is `Moments` exactly.
 pub(crate) const MOMENT_WORDS: usize = 36;
 
-struct Kernel {
+pub(crate) struct Kernel {
     layout: wgpu::BindGroupLayout,
     moments: wgpu::ComputePipeline,
 }
 
-fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

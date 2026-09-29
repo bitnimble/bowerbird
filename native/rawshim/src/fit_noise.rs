@@ -15,12 +15,12 @@ const NOISE_WORDS: usize = 3 * MAP_LEVEL;
 /// 2x2s one thread walks.
 const NOISE_BLOCK: usize = 1024;
 
-struct Kernel {
+pub(crate) struct Kernel {
     layout: wgpu::BindGroupLayout,
     noise: wgpu::ComputePipeline,
 }
 
-fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

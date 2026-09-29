@@ -196,6 +196,7 @@ pub mod photo_analysis;
 /// heading towards are the same picture.
 #[cfg(feature = "renditions")]
 pub mod picture;
+pub mod pipelines;
 pub mod pixel_shift;
 mod pixel_shift_align;
 pub mod planes;

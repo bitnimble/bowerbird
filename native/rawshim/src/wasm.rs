@@ -37,6 +37,14 @@ pub async fn page_device() -> JsValue {
         .unwrap_or(JsValue::NULL)
 }
 
+/// Builds every pipeline the editor can dispatch, once [`page_device`] has opened a device.
+#[wasm_bindgen(js_name = buildEveryPipeline)]
+pub fn build_every_pipeline() {
+    if let Some(gpu) = crate::gpu::device() {
+        crate::pipelines::build_every_pipeline(gpu);
+    }
+}
+
 /// A photograph opened and kept at the mosaic, so a Detail slider costs a denoise and not a file.
 ///
 /// **The frame below the denoise is a function of the amounts; everything above it is not.** The
