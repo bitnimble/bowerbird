@@ -1,0 +1,33 @@
+name: lfs
+description: Checks out the named LFS files, through the cache.
+
+inputs:
+  include:
+    description: What `git lfs pull --include` takes.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: key
+      shell: bash
+      env:
+        INCLUDE: ${{ inputs.include }}
+      run: |
+        set -euo pipefail
+        objects=$(git lfs ls-files --long --include="$INCLUDE" | git hash-object --stdin)
+        echo "key=lfs-$RUNNER_OS-$objects" >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache/restore@v6
+      with:
+        path: .git/lfs/objects
+        key: ${{ steps.key.outputs.key }}
+    - shell: bash
+      env:
+        INCLUDE: ${{ inputs.include }}
+      run: git lfs pull --include="$INCLUDE"
+    - if: env.SAVE_CACHES == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: .git/lfs/objects
+        key: ${{ steps.key.outputs.key }}

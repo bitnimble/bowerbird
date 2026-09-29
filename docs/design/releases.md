@@ -281,15 +281,25 @@ and tags the commit `v<VERSION>`; `git push --follow-tags` then starts the workf
 on a push to `main` that changes `VERSION`. GitHub restores caches from the current ref and
 `main`; distinct release tags cannot share entries they save. Running on `main` lets each
 release reuse caches saved by earlier releases.
-Its first job refuses a `v<VERSION>` tag on any commit but the one it built, because a build that
+
+**Nothing third-party is fetched twice at one pin.** Bun, Rust and the NDK are named versions
+in the workflow, and every download sits behind a cache: the toolchains, both lockfiles'
+packages, crates, the pinned trees, vcpkg's port builds, Gradle, the Windows bundler's NSIS,
+wasm-pack and wasm-bindgen, and the one LFS file a job reads. A cache holding several pins
+(packages, crates, pinned trees, Gradle) restores its last save when its key misses, so a moved
+pin fetches what moved and nothing else. The image's cache mounts
+travel through the same cache (`buildkit-cache-dance`), apt's downloads among them.
+
+The workflow's first job refuses a `v<VERSION>` tag on any commit but the one it built, because a build that
 ships calling itself something other than its tag is the failure that leaves an update check
 offering a version that is already installed, forever; with no tag pushed, `publish` makes one.
 
 **`bun run release:check` builds the release artifacts locally.** It builds HEAD in a
 detached worktree, since a tag releases the commit and an uncommitted edit would otherwise decide
-the answer. The container is `docker build` on the same Dockerfile, and the apps are its
-`android`, `macos` and `windows` stages, which run the workflow's own scripts and write each
-platform's installer and payload under `dist/installer/<platform>/` and `dist/payload/<platform>/`.
+the answer. The container is `docker build` on the `Dockerfile` the workflow builds, and the apps
+are the `android`, `macos` and `windows` stages of `cross.Dockerfile`, which run the workflow's
+own scripts and write each platform's installer and payload under `dist/installer/<platform>/`
+and `dist/payload/<platform>/`.
 
 The desktop stages cross-build from Linux, so they test the scripts and the Rust for those
 targets rather than reproducing the release: macOS goes through osxcross and yields the `.app`

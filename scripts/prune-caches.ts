@@ -9,9 +9,9 @@ export type Cache = { id: number; key: string; ref: string; created_at: string }
 
 const MAIN = 'refs/heads/main';
 
-/** A key less the hashes that end it: every entry one save replaces the last of. */
+/** A key less the hashes and versions that end it: every entry one save replaces the last of. */
 export function family(key: string): string {
-  return key.replace(/(-[0-9a-f]{8,})+$/, '');
+  return key.replace(/(-([0-9a-f]{8,}|\d+(\.\d+)+))+$/, '');
 }
 
 export function stale(caches: Cache[]): Cache[] {

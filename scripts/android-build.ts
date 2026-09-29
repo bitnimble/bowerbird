@@ -6,9 +6,9 @@
 //
 // `bun run build:app --target aarch64-linux-android` runs this after everything it needs.
 //
-// One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with
-// NDK 27, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must agree - Gradle refuses
-// to guess when they disagree, which is its way of saying the build would be
+// One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with the
+// NDK `NDK_VERSION` names, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must agree -
+// Gradle refuses to guess when they disagree, which is its way of saying the build would be
 // irreproducible.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
@@ -17,6 +17,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const TARGET = 'aarch64-linux-android';
+const NDK_VERSION = '27.2.12479018';
 const under = TARGET.replaceAll('-', '_');
 
 const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -24,12 +25,9 @@ if (sdk == null || !existsSync(sdk)) {
   console.error('[android-build] set ANDROID_HOME to an Android SDK');
   process.exit(1);
 }
-const ndkRoot = join(sdk, 'ndk');
-const ndk =
-  process.env.NDK_HOME ??
-  (existsSync(ndkRoot) ? join(ndkRoot, readdirSync(ndkRoot).sort().reverse()[0] ?? '') : '');
+const ndk = process.env.NDK_HOME ?? join(sdk, 'ndk', NDK_VERSION);
 if (!existsSync(ndk)) {
-  console.error(`[android-build] no NDK under ${ndkRoot}`);
+  console.error(`[android-build] no NDK at ${ndk}: sdkmanager --install "ndk;${NDK_VERSION}"`);
   process.exit(1);
 }
 

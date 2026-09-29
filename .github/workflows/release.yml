@@ -23,6 +23,9 @@ env:
   # `web/.env.example` carries the same value for a dev server.
   VITE_SENTRY_DSN: https://80ef14dcd05cf6dc84d567cbbcdef1d2@o4512127315869696.ingest.de.sentry.io/4512127325044816
   SAVE_CACHES: ${{ github.ref == 'refs/heads/main' }}
+  # Also the ARG defaults in Dockerfile and cross.Dockerfile, which builds outside CI use.
+  BUN_VERSION: 1.4.2
+  RUST_VERSION: 1.98.1
 
 jobs:
   # What this run builds: everything, unless a manual run named some. A release has no inputs,
@@ -109,11 +112,18 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - run: git lfs pull --include="assets/reference_frame.ARW"
-      - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
-      - run: bun install --frozen-lockfile
-      - run: bun install --cwd web --frozen-lockfile
+      - uses: ./.github/actions/lfs
+        with:
+          include: assets/reference_frame.ARW
+      - uses: ./.github/actions/bun-deps
+      - uses: ./.github/actions/rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          save-if: ${{ env.SAVE_CACHES == 'true' }}
+          workspaces: |
+            native/updater
+            native/lensdb
       - run: bun run test:platform
 
   docker:
@@ -129,8 +139,10 @@ jobs:
       # the submodule is a cargo build that fails on a directory that is not there.
       - uses: actions/checkout@v5
         with:
-          lfs: true
           submodules: recursive
+      - uses: ./.github/actions/lfs
+        with:
+          include: assets/reference_frame.ARW
 
       # A runner has ~14GB free, and the native stage's target dirs are ~3GB that the cache
       # below holds twice while it saves. The toolchains this image does not use are what
@@ -144,25 +156,26 @@ jobs:
       - id: buildx
         uses: docker/setup-buildx-action@v4
 
-      # The `native` stage's cargo registry and target dirs, which are cache mounts and so in no
-      # layer the registry cache below carries. A key per lockfile and Dockerfile, restored from
-      # the last one: a dependency moving rebuilds that dependency rather than all of them. On
-      # `main` the full action, whose post step saves after the cache dance's has extracted.
-      - name: The native stage's cargo state, from last time (saved after)
+      # The image's cache mounts - cargo's registry and target dirs, the pinned trees, bun's and
+      # apt's downloads - which are in no layer the registry cache below carries. Keyed on what
+      # fills them, restored from the last one: a dependency or a pin moving fetches that one
+      # rather than all of them. On `main` the full action, whose post step saves after the cache
+      # dance's has extracted.
+      - name: The image's cache mounts, from last time (saved after)
         if: env.SAVE_CACHES == 'true'
-        id: cargo-cache-rw
+        id: mounts-cache-rw
         uses: actions/cache@v6
         with:
-          path: ${{ runner.temp }}/docker-cargo
-          key: docker-cargo-${{ hashFiles('Dockerfile', 'native/rawshim/Cargo.lock') }}
-          restore-keys: docker-cargo-
-      - name: The native stage's cargo state, from last time
+          path: ${{ runner.temp }}/docker-mounts
+          key: docker-mounts-${{ hashFiles('Dockerfile', 'native/rawshim/Cargo.lock', 'bun.lock', 'web/bun.lock', 'scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          restore-keys: docker-mounts-
+      - name: The image's cache mounts, from last time
         if: env.SAVE_CACHES != 'true'
         uses: actions/cache/restore@v6
         with:
-          path: ${{ runner.temp }}/docker-cargo
-          key: docker-cargo-${{ hashFiles('Dockerfile', 'native/rawshim/Cargo.lock') }}
-          restore-keys: docker-cargo-
+          path: ${{ runner.temp }}/docker-mounts
+          key: docker-mounts-${{ hashFiles('Dockerfile', 'native/rawshim/Cargo.lock', 'bun.lock', 'web/bun.lock', 'scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          restore-keys: docker-mounts-
       # Outside the checkout, which is the build context and would otherwise send all of it.
       - uses: reproducible-containers/buildkit-cache-dance@v3.4.0
         with:
@@ -170,10 +183,18 @@ jobs:
           scratch-dir: ${{ runner.temp }}/cache-dance
           cache-map: |
             {
-              "${{ runner.temp }}/docker-cargo/registry": { "target": "/root/.cargo/registry", "id": "bowerbird-cargo-registry" },
-              "${{ runner.temp }}/docker-cargo/target": { "target": "/build/target", "id": "bowerbird-native-target" }
+              "${{ runner.temp }}/docker-mounts/cargo-registry": { "target": "/root/.cargo/registry", "id": "bowerbird-cargo-registry" },
+              "${{ runner.temp }}/docker-mounts/native-target": { "target": "/build/target", "id": "bowerbird-native-target" },
+              "${{ runner.temp }}/docker-mounts/swiftshader": { "target": "/root/.cache", "id": "bowerbird-swiftshader" },
+              "${{ runner.temp }}/docker-mounts/environments": { "target": "/root/.cache", "id": "bowerbird-environments" },
+              "${{ runner.temp }}/docker-mounts/slangc": { "target": "/root/.cache", "id": "bowerbird-slangc" },
+              "${{ runner.temp }}/docker-mounts/pmrid": { "target": "/root/.cache", "id": "bowerbird-pmrid" },
+              "${{ runner.temp }}/docker-mounts/codecs": { "target": "/root/.cache", "id": "bowerbird-codecs" },
+              "${{ runner.temp }}/docker-mounts/bun": { "target": "/root/.bun/install/cache", "id": "bowerbird-bun" },
+              "${{ runner.temp }}/docker-mounts/apt-archives": { "target": "/var/cache/apt", "id": "bowerbird-apt-archives" },
+              "${{ runner.temp }}/docker-mounts/apt-lists": { "target": "/var/lib/apt/lists", "id": "bowerbird-apt-lists" }
             }
-          skip-extraction: ${{ env.SAVE_CACHES != 'true' || steps.cargo-cache-rw.outputs.cache-hit == 'true' }}
+          skip-extraction: ${{ env.SAVE_CACHES != 'true' || steps.mounts-cache-rw.outputs.cache-hit == 'true' }}
 
       - uses: docker/login-action@v4
         with:
@@ -208,6 +229,8 @@ jobs:
           # does not reach.
           build-args: |
             VITE_SENTRY_DSN=${{ env.VITE_SENTRY_DSN }}
+            BUN_VERSION=${{ env.BUN_VERSION }}
+            RUST_VERSION=${{ env.RUST_VERSION }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # The registry, not `type=gha`: the repository's 10GB of Actions cache is mostly Rust, and
@@ -224,8 +247,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/bun-deps
+      - uses: ./.github/actions/rust
         with:
           targets: wasm32-unknown-unknown, wasm32-wasip1-threads
       - uses: Swatinem/rust-cache@v2
@@ -233,20 +256,38 @@ jobs:
           cache-on-failure: true
           save-if: ${{ env.SAVE_CACHES == 'true' }}
           workspaces: native/rawshim
-      - run: bun install --frozen-lockfile
       - name: The pinned trees, from last time
         id: pinned-cache
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-wasm-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          restore-keys: pinned-${{ runner.os }}-wasm-
       - run: bun run get:shell
+      - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
+        run: bun run scripts/prune-pinned.ts
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-wasm-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: ${{ steps.pinned-cache.outputs.cache-primary-key }}
+      - name: wasm-pack and wasm-bindgen, from last time
+        id: wasm-tools-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            /tmp/bunx-*-wasm-pack@*
+            ~/.cache/.wasm-pack
+          key: wasm-tools-${{ hashFiles('scripts/build-wasm.ts', 'native/rawshim/Cargo.lock') }}
+          restore-keys: wasm-tools-
       - run: bun run build:wasm
+      - if: env.SAVE_CACHES == 'true' && steps.wasm-tools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            /tmp/bunx-*-wasm-pack@*
+            ~/.cache/.wasm-pack
+          key: ${{ steps.wasm-tools-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v6
         with:
           name: wasm-pkg
@@ -267,10 +308,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          lfs: true
           submodules: recursive
-      - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/bun-deps
+      - uses: ./.github/actions/rust
         with:
           targets: ${{ matrix.target }}
       # `cache-on-failure`, because the default saves only from a job that passed, and a job
@@ -303,18 +343,15 @@ jobs:
         run: echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
         shell: bash
 
-      - run: bun install --frozen-lockfile
-
       # The codecs are nine libraries built from source, which is most of the time this job
-      # spends before it compiles anything of ours. A tree is named by the hash of its recipe
-      # (`scripts/pinned.ts`), so the getters and the vcpkg manifest are the whole of the key: a
-      # version or a flag moving misses the cache and rebuilds, which is exactly what it should do.
+      # spends before it compiles anything of ours.
       - name: The pinned trees, from last time
         id: pinned-cache
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: pinned-${{ runner.os }}-desktop-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          restore-keys: pinned-${{ runner.os }}-desktop-
 
       # vcpkg's archive of each port it built, for when the trees above miss: a recipe change then
       # rebuilds only the ports it touched. vcpkg checks each against the ABI hash of the port, the
@@ -340,20 +377,36 @@ jobs:
       # Both saved as soon as they exist, rather than by the post step, which only runs for a
       # job that passed.
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
+        run: bun run scripts/prune-pinned.ts
+      - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: ${{ steps.pinned-cache.outputs.cache-primary-key }}
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/vcpkg-archives
           key: vcpkg-${{ runner.os }}-${{ hashFiles('native/rawshim/vcpkg/**', 'scripts/vcpkg.ts') }}
 
+      - name: The bundler's tools, from last time
+        if: runner.os == 'Windows'
+        id: bundler-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/AppData/Local/tauri
+          key: bundler-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bundler-${{ runner.os }}-
+
       - uses: ./.github/actions/wasm-pkg
       - name: Build the app
         run: bun run build:app --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         shell: bash
+      - if: runner.os == 'Windows' && env.SAVE_CACHES == 'true' && steps.bundler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/AppData/Local/tauri
+          key: ${{ steps.bundler-cache.outputs.cache-primary-key }}
 
       # Renamed to `Bowerbird_<version>_<platform><kind>`: the bundler names its files by
       # architecture alone (`_aarch64.dmg`, `_x64-setup.exe`), which says nothing about the OS
@@ -404,19 +457,22 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      # Also `android-build.ts`'s NDK_VERSION, which picks it by name.
+      NDK_VERSION: 27.2.12479018
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: recursive
-      - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/bun-deps
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Tauri CLI adds all 4 itself; listed so the cached toolchain holds them.
+      - uses: ./.github/actions/rust
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
       # `src-tauri` alone: `rawshim` is its path dependency, built into its target directory.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -424,24 +480,57 @@ jobs:
           save-if: ${{ env.SAVE_CACHES == 'true' }}
           workspaces: src-tauri
 
-      - run: sdkmanager --install "ndk;27.2.12479018"
-      - run: bun install --frozen-lockfile
+      - name: The NDK, from last time
+        id: ndk-cache
+        uses: actions/cache/restore@v6
+        with:
+          # = $ANDROID_HOME; runner env is not in the env context
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}
+      - if: steps.ndk-cache.outputs.cache-hit != 'true'
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION"'
+      - if: env.SAVE_CACHES == 'true' && steps.ndk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}
+
       - name: The pinned trees, from last time
         id: pinned-cache
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          restore-keys: pinned-${{ runner.os }}-android-
       - run: bun run get:shell
+      - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
+        run: bun run scripts/prune-pinned.ts
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: ${{ steps.pinned-cache.outputs.cache-primary-key }}
+
+      # The Gradle the generated project names and the plugins and libraries it resolves, which
+      # `tauri android init` writes from the Tauri revision.
+      - name: Gradle, from last time
+        id: gradle-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/tauri.android.conf.json') }}
+          restore-keys: gradle-
       - uses: ./.github/actions/wasm-pkg
-      # `NDK_HOME` is left to the script, which takes the highest under `$ANDROID_HOME/ndk` -
-      # the one installed above, there being only one.
       - run: bun run build:app --target aarch64-linux-android
+      - if: env.SAVE_CACHES == 'true' && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       # Gradle leaves the release APK unsigned, and Android will not install one. With a
       # keystore in the repository's secrets this signs it; without, the unsigned APK is
@@ -488,6 +577,8 @@ jobs:
           sparse-checkout: scripts/prune-caches.ts
           sparse-checkout-cone-mode: false
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
       - run: bun run scripts/prune-caches.ts ${{ github.repository }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -506,10 +597,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-      # The manifest writer reads the schemas, and the schemas are zod: without this it is
-      # a module resolution failure at the last step of a release that otherwise worked.
-      - run: bun install --frozen-lockfile
+      # manifest writer imports the zod schemas
+      - uses: ./.github/actions/bun-deps
       - uses: actions/download-artifact@v7
         with:
           path: dist

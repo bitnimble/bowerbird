@@ -7,6 +7,9 @@
 # write an AVIF, which stopped mattering when the encode moved to libavif and then
 # libvips left entirely - so this is now inertia rather than a constraint. Alpine is
 # untested; musl against the codecs below is the part to check before trying it.
+ARG BUN_VERSION=1.4.2
+FROM oven/bun:${BUN_VERSION}-debian AS bun
+
 FROM debian:trixie-slim AS base
 WORKDIR /app
 
@@ -21,6 +24,9 @@ RUN printf '%s\n' \
       'path-exclude /usr/share/info/*' \
       'path-exclude /usr/share/locale/*' \
     > /etc/dpkg/dpkg.cfg.d/01-nodoc
+# debian image's docker-clean would empty the apt cache mounts
+RUN rm /etc/apt/apt.conf.d/docker-clean \
+  && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-downloads
 
 # Runtime libraries only. The headers rawshim compiles against belong to the build
 # stage and are installed there: a -dev tree drags hundreds of MB of libc6-dev, perl
@@ -66,12 +72,13 @@ RUN printf '%s\n' \
 # No codecs: `rawshim` links all of them statically (`codecs` below). libstdc++6 is named because
 # libjxl and highway are C++, and the runtime they need is the one thing of theirs that stays
 # dynamic - mesa happens to pull it in today, which is not a reason to rely on it.
-RUN apt-get update \
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
   && apt-get install -y --no-install-recommends \
      libstdc++6 \
      mesa-vulkan-drivers libegl1 \
-  && rm /usr/share/vulkan/icd.d/lvp_icd.json \
-  && rm -rf /var/lib/apt/lists/*
+  && rm /usr/share/vulkan/icd.d/lvp_icd.json
 
 # **`libegl1` above is what makes NVIDIA's Vulkan work, and it looks like an OpenGL
 # package.** Their ICD is a shim inside `libGLX_nvidia.so.0` that reaches the real driver
@@ -91,9 +98,9 @@ RUN mkdir -p /usr/share/glvnd/egl_vendor.d \
     > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 # Bun's own image is Debian too, so the binary runs here unchanged and needs nothing
-# but libc. Taking just the binary rather than building on oven/bun:1-debian drops
+# but libc. Taking just the binary rather than building on oven/bun's Debian image drops
 # that image's full-fat Debian base, 120MB against 78MB for slim.
-COPY --from=oven/bun:1-debian /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 # The parts of oven/bun's setup that outlive its base image: uid 1000 (see USER
 # below), and the `node` shim packages shell out to.
 RUN groupadd --gid 1000 bun \
@@ -117,26 +124,30 @@ RUN mkdir -p /app/node_modules /app/web/node_modules /config /data && chown -R b
 # in the image, so the link into it is swapped for a copy; and a build cancelled mid-fetch leaves
 # its `makeOnce` lock behind, which the next one would wait an hour on.
 FROM base AS swiftshader
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-COPY scripts/pinned.ts scripts/get-swiftshader.ts ./scripts/
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-swiftshader.ts ./scripts/
 RUN --mount=type=cache,id=bowerbird-swiftshader,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run scripts/get-swiftshader.ts \
+  && bun run scripts/prune-pinned.ts \
   && tree="$(readlink native/rawshim/.swiftshader)" \
   && rm native/rawshim/.swiftshader \
   && cp -a "$tree" native/rawshim/.swiftshader
 
 # The print preview's HDR environments, which `hash-pkg.ts` serves beside the wasm module.
 FROM base AS environments
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-COPY scripts/pinned.ts scripts/get-environments.ts ./scripts/
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-environments.ts ./scripts/
 RUN --mount=type=cache,id=bowerbird-environments,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run scripts/get-environments.ts \
+  && bun run scripts/prune-pinned.ts \
   && tree="$(readlink native/rawshim/.environments)" \
   && rm native/rawshim/.environments \
   && cp -a "$tree" native/rawshim/.environments
@@ -144,14 +155,16 @@ RUN --mount=type=cache,id=bowerbird-environments,target=/root/.cache,sharing=loc
 # The Slang compiler, on the same terms: one stage fetches the pinned build and the three
 # that need it copy the tree, rather than each refetching it. Through vcpkg, like the codecs.
 FROM base AS slangc
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git tar unzip zip \
-  && rm -rf /var/lib/apt/lists/*
-COPY scripts/pinned.ts scripts/vcpkg.ts scripts/get-slangc.ts ./scripts/
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git tar unzip zip
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/vcpkg.ts scripts/get-slangc.ts ./scripts/
 COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
 RUN --mount=type=cache,id=bowerbird-slangc,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run scripts/get-slangc.ts \
+  && bun run scripts/prune-pinned.ts \
   && tree="$(readlink native/rawshim/.slangc)" \
   && rm native/rawshim/.slangc \
   && cp -a "$tree" native/rawshim/.slangc
@@ -161,16 +174,19 @@ RUN --mount=type=cache,id=bowerbird-slangc,target=/root/.cache,sharing=locked \
 # unpacks a checkpoint with `fflate`, which is a dev dependency: `deps` installs `--production` and
 # so has none, and the build stage has no `node_modules` at all.
 FROM base AS pmrid
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates
 COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
-RUN bun install --frozen-lockfile
-COPY scripts/pinned.ts scripts/get-pmrid.ts ./scripts/
+RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=locked \
+  bun install --frozen-lockfile
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-pmrid.ts ./scripts/
 RUN --mount=type=cache,id=bowerbird-pmrid,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run scripts/get-pmrid.ts \
+  && bun run scripts/prune-pinned.ts \
   && tree="$(readlink native/rawshim/.pmrid)" \
   && rm native/rawshim/.pmrid \
   && cp -a "$tree" native/rawshim/.pmrid
@@ -184,15 +200,17 @@ RUN --mount=type=cache,id=bowerbird-pmrid,target=/root/.cache,sharing=locked \
 # dav1d's assembly, python3 for dav1d's meson, pkg-config, and zip for its binary cache. cmake and
 # ninja it downloads at the versions it pins.
 FROM base AS codecs
-RUN apt-get update \
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
   && apt-get install -y --no-install-recommends \
-     build-essential ca-certificates curl git nasm pkg-config python3 tar unzip zip \
-  && rm -rf /var/lib/apt/lists/*
-COPY scripts/pinned.ts scripts/vcpkg.ts scripts/get-codecs.ts ./scripts/
+     build-essential ca-certificates curl git nasm pkg-config python3 tar unzip zip
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/vcpkg.ts scripts/get-codecs.ts ./scripts/
 COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
 RUN --mount=type=cache,id=bowerbird-codecs,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run scripts/get-codecs.ts \
+  && bun run scripts/prune-pinned.ts \
   && tree="$(readlink native/rawshim/.codecs)" \
   && rm native/rawshim/.codecs \
   && cp -a "$tree" native/rawshim/.codecs
@@ -216,10 +234,11 @@ RUN --mount=type=cache,id=bowerbird-codecs,target=/root/.cache,sharing=locked \
 # without it. Forcing past the dependency leaves apt unable to resolve anything in
 # this stage until `--fix-broken` repairs it, so nothing may install after this line.
 FROM base AS dev
-RUN apt-get update \
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg libavif-bin \
-  && dpkg --force-depends --purge libgl1-mesa-dri libglx-mesa0 \
-  && rm -rf /var/lib/apt/lists/*
+  && dpkg --force-depends --purge libgl1-mesa-dri libglx-mesa0
 COPY --from=swiftshader /app/native/rawshim/.swiftshader/libvk_swiftshader.so /app/native/rawshim/.swiftshader/vk_swiftshader_icd.json /usr/local/share/vulkan/icd.d/
 # Outside /app, which the dev compose files mount the repo over: the checkout's own
 # `native/rawshim/.slangc` is a symlink into the *host's* cache and dangles in here, so the
@@ -231,21 +250,24 @@ ENV PATH="/opt/slangc:${PATH}"
 FROM base AS deps
 COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
-RUN bun install --frozen-lockfile --production
+RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=locked \
+  bun install --frozen-lockfile --production
 
 # The toolchain and the sources both builds of the crate read: the library below and
 # the wasm package after it. What the crate needs from apt is a linker and libclang-dev,
 # without which bindgen cannot parse the codecs' headers.
 FROM base AS rust
-RUN apt-get update \
+ARG RUST_VERSION=1.98.1
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
   && apt-get install -y --no-install-recommends \
-     build-essential ca-certificates curl git libclang-dev \
-  && rm -rf /var/lib/apt/lists/*
+     build-essential ca-certificates curl git libclang-dev
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is
 # the *last* command's, so `curl ... | sh` reports success when curl fails and leaves
 # a stage with no toolchain that only fails several steps later.
 RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
-  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable \
+  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain "$RUST_VERSION" \
   && rm /tmp/rustup.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
 COPY native ./native
@@ -305,9 +327,11 @@ COPY --from=wasm-build /app/native/rawshim/pkg /
 FROM base AS web
 COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
-RUN bun install --frozen-lockfile
+RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=locked \
+  bun install --frozen-lockfile
 COPY web/package.json web/bun.lock ./web/
-RUN cd web && bun install --frozen-lockfile
+RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=locked \
+  cd web && bun install --frozen-lockfile
 # The client imports the server's Zod schemas as types (web/src/api), so its build
 # needs them present even though nothing of them survives into the bundle.
 COPY src ./src
@@ -332,132 +356,6 @@ COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
 ARG VITE_SENTRY_DSN=
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN cd web && bun run build
-
-# The release workflow's `android` and `desktop` jobs, for building the apps locally
-# (`bun run release:check`). Nothing in `runtime` reads any of them.
-#
-# The checkout they build, with every platform's optional packages: a cross-built sidecar ships
-# the target's libSQL and Parcel addons (`build-sidecar.ts`), which a Linux install leaves out.
-FROM base AS source
-COPY package.json bun.lock ./
-COPY packages/samsung-frame-art ./packages/samsung-frame-art
-RUN bun install --frozen-lockfile --os='*' --cpu='*'
-COPY web/package.json web/bun.lock ./web/
-RUN cd web && bun install --frozen-lockfile
-COPY . .
-COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
-COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
-COPY --from=environments /app/native/rawshim/.environments ./native/rawshim/.environments
-
-FROM base AS cross
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git unzip xz-utils \
-  && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
-  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable --target wasm32-unknown-unknown,wasm32-wasip1-threads \
-  && rm /tmp/rustup.sh
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-FROM cross AS android
-RUN mkdir -p /opt/jdk \
-  && curl -sSfLo /tmp/jdk.tar.gz https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse \
-  && tar -xzf /tmp/jdk.tar.gz -C /opt/jdk --strip-components=1 \
-  && rm /tmp/jdk.tar.gz
-ENV JAVA_HOME=/opt/jdk
-ENV ANDROID_HOME=/opt/android-sdk
-ENV ANDROID_SDK_ROOT=/opt/android-sdk
-ENV PATH="/opt/jdk/bin:/opt/android-sdk/cmdline-tools/latest/bin:${PATH}"
-RUN curl -sSfo /tmp/tools.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
-  && unzip -q /tmp/tools.zip -d /tmp/tools \
-  && mkdir -p "$ANDROID_HOME/cmdline-tools" \
-  && mv /tmp/tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest" \
-  && rm -rf /tmp/tools.zip /tmp/tools \
-  && yes | sdkmanager --licenses > /dev/null \
-  && sdkmanager --install platform-tools "ndk;27.2.12479018"
-RUN rustup target add aarch64-linux-android
-COPY --from=source /app ./
-ARG VITE_SENTRY_DSN=
-ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.gradle \
-    --mount=type=cache,target=/app/native/rawshim/target \
-    --mount=type=cache,target=/app/src-tauri/target \
-  bun run build:wasm \
-  && BOWERBIRD_ANDROID_DIST_DIR=/out/installer/android-arm64 bun run scripts/android-build.ts
-
-FROM scratch AS android-dist
-COPY --from=android /out/ /
-
-# macOS from Linux, through osxcross and an SDK packaged from Xcode, which Apple does not let
-# anyone redistribute: `release-check.ts` hands it in as the `macos-sdk` build context. The
-# native library is built without `renditions`, since the codecs are built by vcpkg for the
-# machine it runs on and not cross; and the `.app` is `mac-build.ts`'s, without the `.dmg`.
-FROM cross AS osxcross
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-     bzip2 clang cmake cpio libbz2-dev libssl-dev liblzma-dev libxml2-dev llvm lld patch python3 uuid-dev zlib1g-dev \
-  && rm -rf /var/lib/apt/lists/*
-RUN git clone https://github.com/tpoechtrager/osxcross /tmp/osxcross \
-  && git -C /tmp/osxcross checkout 27d21e4977c9751d01199c7a226a6faf494c3dd9
-COPY --from=macos-sdk / /tmp/osxcross/tarballs/
-RUN cd /tmp/osxcross \
-  && TARGET_DIR=/opt/osxcross UNATTENDED=1 ./build.sh \
-  && rm -rf /tmp/osxcross
-
-FROM osxcross AS macos
-RUN rustup target add aarch64-apple-darwin \
-  && ln -s "$(ls /usr/lib/llvm-*/bin/llvm-otool | sort -V | tail -n1)" /usr/local/bin/otool \
-  && curl -sSfLo /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v$(bun --version)/bun-darwin-aarch64.zip" \
-  && unzip -qj /tmp/bun.zip '*/bun' -d /opt/bun-darwin \
-  && rm /tmp/bun.zip
-ENV OSXCROSS_ROOT=/opt/osxcross
-ENV BOWERBIRD_SIDECAR_RUNTIME=/opt/bun-darwin/bun
-COPY --from=source /app ./
-ARG VITE_SENTRY_DSN=
-ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/app/native/rawshim/target \
-    --mount=type=cache,target=/app/src-tauri/target \
-  bun run build:wasm \
-  && bun run scripts/osxcross.ts bun run build:native:release --target aarch64-apple-darwin --no-default-features \
-  && bun run build:sidecar --target aarch64-apple-darwin \
-  && bun run scripts/mac-build.ts \
-  && bun run scripts/build-payload.ts --target aarch64-apple-darwin --out /out/payload
-
-FROM scratch AS macos-dist
-COPY --from=macos /out/ /
-
-# Windows from Linux, through cargo-xwin, which fetches the MSVC CRT and the Windows SDK itself,
-# and NSIS. The native library is built without `renditions`, as for macOS.
-FROM cross AS windows
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends clang lld llvm nsis \
-  && rm -rf /var/lib/apt/lists/*
-RUN rustup target add x86_64-pc-windows-msvc \
-  && cargo install cargo-xwin --version 0.23.1 --locked \
-  && curl -sSfLo /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v$(bun --version)/bun-windows-x64.zip" \
-  && unzip -qj /tmp/bun.zip '*/bun.exe' -d /opt/bun-windows \
-  && rm /tmp/bun.zip
-ENV BOWERBIRD_SIDECAR_RUNTIME=/opt/bun-windows/bun.exe
-COPY --from=source /app ./
-ARG VITE_SENTRY_DSN=
-ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cache/cargo-xwin \
-    --mount=type=cache,target=/app/native/rawshim/target \
-    --mount=type=cache,target=/app/src-tauri/target \
-  bun run build:wasm \
-  && xwin_env="$(cargo xwin env --target x86_64-pc-windows-msvc)" \
-  && eval "$xwin_env" \
-  && bun run build:native:release --target x86_64-pc-windows-msvc --no-default-features \
-  && bun run build:sidecar --target x86_64-pc-windows-msvc \
-  && bun run scripts/bundle-app.ts --target x86_64-pc-windows-msvc --bundles nsis --runner cargo-xwin \
-  && bun run scripts/build-payload.ts --target x86_64-pc-windows-msvc --out /out/payload \
-  && mkdir -p /out/installer/windows-x86_64 \
-  && cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe /out/installer/windows-x86_64/
-
-FROM scratch AS windows-dist
-COPY --from=windows /out/ /
 
 FROM base AS runtime
 # **No `image.source` label here, deliberately.** GHCR reads it to attach the package to

@@ -5,6 +5,7 @@
 .gitignore
 *.md
 Dockerfile
+cross.Dockerfile
 .dockerignore
 .env
 .env.*
@@ -30,6 +31,7 @@ core.[0-9]*
 native/rawshim/.slangc
 native/rawshim/.codecs
 native/rawshim/.pmrid
+native/rawshim/.environments
 native/rawshim/.swiftshader
 native/rawshim/pkg
 # Generated with this machine's SDK paths baked in (`android-build.ts`), and the build

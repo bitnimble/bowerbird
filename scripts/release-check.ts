@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
 const TARGETS = ['docker', 'android', 'macos', 'windows'] as const;
+const CROSS = 'cross.Dockerfile';
 type Target = (typeof TARGETS)[number];
 
 const repoRoot = resolve(import.meta.dir, '..');
@@ -103,7 +104,11 @@ function build(target: Target, tree: string, work: string): void {
       return;
     case 'android':
     case 'windows':
-      run('docker', ['build', '--target', `${target}-dist`, '--output', dist, '.'], tree);
+      run(
+        'docker',
+        ['build', '-f', CROSS, '--target', `${target}-dist`, '--output', dist, '.'],
+        tree,
+      );
       return;
     case 'macos': {
       if (macosSdk == null) throw new Error('macos needs BOWERBIRD_MACOS_SDK');
@@ -112,6 +117,8 @@ function build(target: Target, tree: string, work: string): void {
         'docker',
         [
           'build',
+          '-f',
+          CROSS,
           '--target',
           'macos-dist',
           '--build-context',

@@ -35,9 +35,13 @@ export function pin(version: string, inputs: readonly string[] = []): string {
  * two worktrees on different pins would otherwise take turns deleting each other's.
  */
 export function pinnedHome(name: string, recipe: string): string {
-  const cache = process.env.XDG_CACHE_HOME || resolve(homedir(), '.cache');
   const identity = createHash('sha256').update(recipe).digest('hex').slice(0, 16);
-  return resolve(cache, 'bowerbird', name, identity);
+  return resolve(pinnedRoot(), name, identity);
+}
+
+export function pinnedRoot(): string {
+  const cache = process.env.XDG_CACHE_HOME || resolve(homedir(), '.cache');
+  return resolve(cache, 'bowerbird');
 }
 
 /** The path `build.rs`, the Dockerfile and `VK_ADD_DRIVER_FILES` all know a pinned tree by. */

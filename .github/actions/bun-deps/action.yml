@@ -1,0 +1,27 @@
+name: bun-deps
+description: Bun at the workflow's `BUN_VERSION`, and the packages of both lockfiles, through the cache.
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ env.BUN_VERSION }}
+    - shell: bash
+      run: echo "BUN_INSTALL_CACHE_DIR=$RUNNER_TEMP/bun-install-cache" >> "$GITHUB_ENV"
+    - id: cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/bun-install-cache
+        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'web/bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-
+    # web too: the key covers both lockfiles, so every save must hold both
+    - shell: bash
+      run: |
+        bun install --frozen-lockfile
+        bun install --cwd web --frozen-lockfile
+    - if: env.SAVE_CACHES == 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/bun-install-cache
+        key: ${{ steps.cache.outputs.cache-primary-key }}

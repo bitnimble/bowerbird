@@ -15,6 +15,7 @@ test('a family is the key without the hashes a save moves', () => {
   expect(
     family('pinned-Linux-wasm-857f755b56b5f65362e783cbcf1dd52772f0c9dc42fd8386d2010065c31c237a'),
   ).toBe('pinned-Linux-wasm');
+  expect(family('ndk-27.2.12479018')).toBe('ndk');
 });
 
 test('only the newest of each family on main survives', () => {

@@ -17,23 +17,22 @@
 // Android's emulator prebuilts serve the driver alone, and the commit they are pinned to fixes the
 // bytes rather than a version, because a CPU driver's rounding is part of what the snapshots are
 // held to. Each file is refused unless it hashes to what those snapshots were measured against.
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import {
-  alreadyPinned,
-  fetchPinned,
-  linkPinned,
-  makeOnce,
-  pin,
-  pinnedHome,
-  pinnedLink,
-} from './pinned';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { alreadyPinned, linkPinned, makeOnce, pin, pinnedHome, pinnedLink } from './pinned';
 
 const NAME = 'swiftshader';
 const COMMIT = 'bbe98768a47ce9166f768e791768ae5f066c04df';
-const PREBUILTS = 'https://android.googlesource.com/platform/prebuilts/android-emulator';
+const REPOSITORIES = [
+  'https://android.googlesource.com/platform/prebuilts/android-emulator',
+  'https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/platform/prebuilts/android-emulator',
+  'https://mirrors.ustc.edu.cn/aosp/platform/prebuilts/android-emulator',
+];
 const VULKAN = 'linux-x86_64/lib64/vulkan';
+const GIT_TIMEOUT_MS = 120_000;
 
 const FILES: Record<string, string> = {
   'libvk_swiftshader.so': '9e2cebc35ffd7f0dd234c219f6b3a1150801b4675ccc26498fcdfce8c79064e7',
@@ -44,19 +43,54 @@ const HOME = pinnedHome(NAME, RECIPE);
 
 export const ICD = resolve(pinnedLink(NAME), 'vk_swiftshader_icd.json');
 
-async function download(name: string, sha256: string): Promise<Buffer> {
-  // Gitiles serves a blob as base64 under `?format=TEXT`, and nothing else.
-  const url = `${PREBUILTS}/+/${COMMIT}/${VULKAN}/${name}?format=TEXT`;
-  const answer = await fetchPinned(url);
-  const bytes = Buffer.from(await answer.text(), 'base64');
-  const got = createHash('sha256').update(bytes).digest('hex');
-  if (got !== sha256) {
-    throw new Error(`${name} hashes ${got}, not the pinned ${sha256}`);
+function download(): Map<string, Buffer> {
+  const failures: string[] = [];
+  for (const repository of REPOSITORIES) {
+    try {
+      return pinnedFiles(repository);
+    } catch (thrown) {
+      failures.push(String(thrown));
+    }
   }
-  return bytes;
+  throw new Error(`no repository had the pinned SwiftShader:\n${failures.join('\n')}`);
 }
 
-async function main(): Promise<void> {
+function pinnedFiles(repository: string): Map<string, Buffer> {
+  const scratch = mkdtempSync(join(tmpdir(), 'bb-swiftshader-'));
+  const git = (args: string[]): Buffer => {
+    const done = spawnSync('git', args, {
+      cwd: scratch,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS,
+    });
+    if (done.status !== 0) {
+      const reason = done.error?.message ?? done.stderr.toString().trim();
+      throw new Error(`git ${args[0]} from ${repository}: ${reason}`);
+    }
+    return done.stdout;
+  };
+  try {
+    git(['init', '--quiet']);
+    git(['remote', 'add', 'origin', repository]);
+    // gigabytes of emulator builds: trees only, `cat-file` fetches each blob it names
+    git(['fetch', '--quiet', '--depth=1', '--filter=blob:none', 'origin', COMMIT]);
+    const files = new Map<string, Buffer>();
+    for (const [name, sha256] of Object.entries(FILES)) {
+      const bytes = git(['cat-file', '-p', `${COMMIT}:${VULKAN}/${name}`]);
+      const got = createHash('sha256').update(bytes).digest('hex');
+      if (got !== sha256) {
+        throw new Error(`${name} from ${repository} hashes ${got}, not the pinned ${sha256}`);
+      }
+      files.set(name, bytes);
+    }
+    return files;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+function main(): void {
   // The hashes below are one machine's, so without this an arm64 host downloads an x86_64 driver,
   // verifies it, records it, and fails much later inside the loader's dlopen.
   if (process.platform !== 'linux' || process.arch !== 'x64') {
@@ -66,10 +100,7 @@ async function main(): Promise<void> {
   }
 
   if (!alreadyPinned(HOME, RECIPE)) {
-    const fetched = new Map<string, Buffer>();
-    for (const [name, sha256] of Object.entries(FILES)) {
-      fetched.set(name, await download(name, sha256));
-    }
+    const fetched = download();
     makeOnce(HOME, RECIPE, false, () => {
       for (const [name, bytes] of fetched) {
         writeFileSync(resolve(HOME, name), bytes);
@@ -84,5 +115,5 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-  await main();
+  main();
 }
