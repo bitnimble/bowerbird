@@ -1,6 +1,6 @@
 import { AppError } from '../../../errors';
 import { workerEntry } from '../../worker_entry';
-import type { ProcessingResult, WorkerJob } from './processing_types';
+import type { ProcessingResult, Ran, WorkerJob } from './processing_types';
 
 /**
  * Somewhere to run a panorama's jobs, so the several a merge is made of can share one device.
@@ -9,14 +9,14 @@ import type { ProcessingResult, WorkerJob } from './processing_types';
  */
 export interface CompositeWorker {
   /**
-   * One job, after whatever is already queued on this worker. Answers what an align answered.
+   * One job, after whatever is already queued on this worker.
    *
    * Any job, not only a panorama's: the far side dispatches on `kind`, and a merge has one that
    * is not - the fit of a lens nothing has measured, which it needs before it can align
    * (`measureCameraMatch`). Sending that to a worker of its own would open a second device and
    * compile the shader modules again, which is the half second this exists to pay once.
    */
-  run(job: WorkerJob): Promise<string | undefined>;
+  run(job: WorkerJob): Promise<Ran>;
   /** Whether its thread is gone, after which every job it is given is refused. */
   crashed(): boolean;
   close(): void;
@@ -31,11 +31,11 @@ export function openCompositeWorker(): CompositeWorker {
   let crashed: string | null = null;
   let queue: Promise<unknown> = Promise.resolve();
 
-  const post = (job: WorkerJob): Promise<string | undefined> =>
-    new Promise<string | undefined>((resolve, reject) => {
+  const post = (job: WorkerJob): Promise<Ran> =>
+    new Promise<Ran>((resolve, reject) => {
       if (crashed != null) return reject(new Error(`worker crashed: ${crashed}`));
       worker.onmessage = (event: MessageEvent<ProcessingResult>) => {
-        if (event.data.success) resolve(event.data.composite);
+        if (event.data.success) resolve(event.data);
         else reject(new AppError('VALIDATION_ERROR', event.data.error));
       };
       worker.onerror = (event: ErrorEvent) => {

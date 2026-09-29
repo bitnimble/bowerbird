@@ -14,8 +14,16 @@ import { StageStore } from '../stage_store';
 import type { LocalPrepare } from '../../local_decode/local_open';
 import type { Region } from '../../edits';
 import type { PreparedHeader } from '../../../../../../src/schemas/prepared';
-import { neutralEdits, TONE_CURVE_KIND } from '../../../../../../src/schemas/photo_edits';
-import { type EditCheckpoint, type EditState } from '../../../../../../src/schemas/photo_edits';
+import {
+  IDENTITY_TONE_CURVE,
+  neutralEdits,
+  TONE_CURVE_KIND,
+} from '../../../../../../src/schemas/photo_edits';
+import {
+  type EditCheckpoint,
+  type EditOpening,
+  type EditState,
+} from '../../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../../api/photo_edits';
 import { ApiError } from '../../../../api/request';
 import { readbackCanvases } from '../../../../gpu/readback_canvas';
@@ -70,17 +78,20 @@ describe('a slider reaching the picture', () => {
     expect(decoder.exposure).toBeCloseTo(1.25, 6);
   });
 
-  test('hands the module null for the camera exposure', async () => {
-    stage.detail = [24, 76];
-    stage.cameraExposure = 0.347;
-    expect(stage.measured?.exposure).toBe(0.347);
+  test("hands the module the camera's own for a default until the camera match is written", async () => {
     presenter.settle({ exposure: 1.25, contrast: 20 });
     await drawn();
+    expect(decoder.exposure).toBeCloseTo(1.25, 6);
 
-    presenter.settle({ exposure: null, contrast: 0 });
+    presenter.settle({ exposure: 0, contrast: 0 });
     await drawn();
     expect(decoder.exposure).toBeNull();
-    expect(decoder.adjust).toMatchObject({ contrast: 0, whites: 0, blacks: 0, toneCurve: null });
+    expect(decoder.adjust).toMatchObject({ contrast: 0, saturation: null, toneCurve: null });
+
+    presenter.settle({ cameraMatchApplied: true });
+    await drawn();
+    expect(decoder.exposure).toBe(0);
+    expect(decoder.adjust).toMatchObject({ saturation: 0, toneCurve: IDENTITY_TONE_CURVE });
   });
 
   test('puts each tone and presence slider under its own name', async () => {
@@ -116,6 +127,84 @@ describe('a slider reaching the picture', () => {
       tint: null,
       colourProfile: 'matched',
     });
+  });
+
+  test('resets only what the camera match writes to the camera match', async () => {
+    const toneCurve = {
+      kind: TONE_CURVE_KIND,
+      points: [
+        [0, 0.1],
+        [1, 1],
+      ],
+    } satisfies NonNullable<PreparedHeader['cameraCurve']>;
+    stage.cameraExposure = 0.35;
+    stage.cameraSaturation = 17;
+    stage.cameraCurve = toneCurve;
+    presenter.settle({
+      exposure: 1,
+      saturation: -20,
+      colourProfile: 'none',
+      clarity: 30,
+      sharpening: 80,
+      cameraMatchApplied: true,
+    });
+    expect(stage.atCameraMatch).toBe(false);
+
+    presenter.resetToCameraMatch();
+    await drawn();
+
+    expect(stage.atCameraMatch).toBe(true);
+    expect(decoder.exposure).toBe(0.35);
+    expect(decoder.adjust).toMatchObject({ saturation: 17, colourProfile: 'matched', clarity: 30 });
+    expect(decoder.adjust?.toneCurve).toEqual(toneCurve);
+    expect(edit.doc?.sharpening).toBe(80);
+  });
+
+  test('writes the camera match once, keeping what was set, as what the open started from', async () => {
+    const tone = { exposure: 0.35, saturation: 17, toneCurve: IDENTITY_TONE_CURVE };
+    const saved: EditOpening = {
+      doc: { ...neutralEdits(), saturation: -20 },
+      rev: 1,
+      canUndo: false,
+      canRedo: false,
+      cursor: 0,
+      history: [],
+      stamp: 'saved',
+      library_denoiser: 'galosh',
+    };
+    const matched: EditOpening = {
+      ...saved,
+      doc: {
+        ...saved.doc,
+        exposure: 0.35,
+        toneCurve: IDENTITY_TONE_CURVE,
+        cameraMatchApplied: true,
+      },
+      rev: 2,
+      stamp: 'matched',
+    };
+    const applied: unknown[] = [];
+    const applyCameraMatch = photoEditsApi.applyCameraMatch;
+    photoEditsApi.applyCameraMatch = (_photoId, sent): Promise<EditOpening> => {
+      applied.push(sent);
+      return Promise.resolve(matched);
+    };
+    try {
+      presenter.edit.begin('a-photo-id');
+      presenter.edit.opened(saved);
+      presenter.edit.applyState(saved);
+
+      await presenter.edit.applyCameraMatch(tone);
+      expect(applied).toEqual([tone]);
+      expect(edit.doc).toMatchObject({ exposure: 0.35, saturation: -20, cameraMatchApplied: true });
+      // Nothing to put back, so no restore reaches the server.
+      expect(await presenter.edit.cancel()).toBe(true);
+
+      await presenter.edit.applyCameraMatch(tone);
+      expect(applied).toHaveLength(1);
+    } finally {
+      photoEditsApi.applyCameraMatch = applyCameraMatch;
+    }
   });
 
   test('draws the neutral grade when the colour profile is none', async () => {
@@ -827,22 +916,16 @@ describe('the level a zoom is served at', () => {
     };
     presenter.showRegion(QUARTER);
     await settled();
-    expect(stage.cameraCurve).toEqual(cameraCurve);
-    expect(stage.measured?.exposure).toBe(0.347);
-    expect(stage.measured?.saturation).toBe(18);
+    const tone = { exposure: 0.347, saturation: 18, toneCurve: cameraCurve };
+    expect(stage.cameraTone).toEqual(tone);
     presenter.setColourProfile('none');
-    expect(stage.cameraCurve).toEqual(cameraCurve);
-    expect(stage.measured?.exposure).toBe(0.347);
-    expect(stage.measured?.saturation).toBe(18);
+    expect(stage.cameraTone).toEqual(tone);
   });
 
-  test('a public window without a camera match shows zero exposure and saturation and identity curve', async () => {
+  test('a public window without a camera match has no camera tone', async () => {
     presenter.showRegion(QUARTER);
     await settled();
-    expect(stage.cameraExposure).toBeNull();
-    expect(stage.cameraCurve).toBeNull();
-    expect(stage.measured?.exposure).toBe(0);
-    expect(stage.measured?.saturation).toBe(0);
+    expect(stage.cameraTone).toBeNull();
   });
 
   test('a public window fetch holds levels only with a measured floor', async () => {

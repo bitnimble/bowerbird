@@ -3,7 +3,13 @@ import { AssemblyRecipeSchema } from './assembly';
 import { CaptureSequenceSchema } from './capture_sequence';
 import { RenditionSchema, RenditionSourceSchema } from './common';
 import type { DustSettings } from './dust_settings';
-import { ColourProfileSchema, DenoiserSchema, RepairSchema, ToneCurveSchema } from './photo_edits';
+import {
+  CameraToneSchema,
+  ColourProfileSchema,
+  DenoiserSchema,
+  RepairSchema,
+  ToneCurveSchema,
+} from './photo_edits';
 import { CameraMatchSchema } from './render_stages';
 import { RenderingIntentSchema } from './rendering_intent';
 
@@ -305,6 +311,8 @@ export const JobReplySchema = z.object({
       photoAnalysis: z.array(z.number()).optional(),
       header: RawHeaderFieldsSchema.optional(),
       composite: z.string().optional(),
+      /** The camera match this job graded under, where it had one. */
+      cameraTone: CameraToneSchema.optional(),
     })
     .optional(),
 });

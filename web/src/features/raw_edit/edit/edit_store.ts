@@ -1,4 +1,5 @@
 import { computed, observable } from 'mobx';
+import { exposureOf } from '../../../../../src/schemas/edit_adjust';
 import { type Denoiser, type EditDoc } from '../../../../../src/schemas/photo_edits';
 import type { AsShot } from '../../../../../src/schemas/prepared';
 
@@ -53,7 +54,8 @@ export class EditStore {
    * would draw a picture that disagrees with what a save would send.
    */
   @computed get exposureEv(): number | null {
-    return this.doc?.exposure ?? null;
+    const doc = this.doc;
+    return doc == null ? null : exposureOf(doc);
   }
 
   /**

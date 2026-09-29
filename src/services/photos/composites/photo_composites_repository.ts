@@ -10,6 +10,7 @@ import { framingEdits } from '../../../schemas/recipes';
 import { stamp } from '../../replication/stamps';
 import type { StackMembership } from '../../stacks/stack_membership';
 import { inChunks } from '../photo_batches';
+import { EDITED } from '../photo_edit_sql';
 import type { BasicPhoto, PhotoPathsRepository } from '../paths/photo_paths_repository';
 
 export interface SequencedFrame {
@@ -155,7 +156,7 @@ export class PhotoCompositesRepository {
     return rows.map((row) => row.photo_id);
   }
   /**
-   * Whether any of these photographs carries a develop document.
+   * Whether any of these photographs is edited (`EDITED`).
    *
    * What a merge asks about its frames, where the queue reads the same thing off the pending row:
    * a composite of a developed frame cannot be built from that frame's camera JPEG
@@ -165,7 +166,9 @@ export class PhotoCompositesRepository {
     for (const batch of inChunks(photoIds)) {
       const placeholders = batch.map(() => '?').join(', ');
       const row = this.db
-        .query(`SELECT 1 FROM photo_edits WHERE photo_id IN (${placeholders}) LIMIT 1`)
+        .query(
+          `SELECT 1 FROM photo_edits WHERE photo_id IN (${placeholders}) AND ${EDITED('photo_edits')} LIMIT 1`,
+        )
         .get(...batch);
       if (row != null) return true;
     }

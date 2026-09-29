@@ -22,6 +22,7 @@ export const PathSegment = {
   blobs: segment('blobs'),
   browse: segment('browse'),
   budget: segment('budget'),
+  cameraMatch: segment('camera-match'),
   cancel: segment('cancel'),
   changes: segment('changes'),
   check: segment('check'),

@@ -73,6 +73,7 @@ describe('ProcessingService.processUnprocessed', () => {
       // camera metered it. `edits` is exercised in `exposure` below.
       edits: null,
       edits_stamp: null,
+      edited: 0,
       // A photograph composes no rows, so there is nothing behind it to be edited.
       inputs_edited: 0,
       built_from: null,
@@ -271,11 +272,19 @@ describe('ProcessingService.processUnprocessed', () => {
     const repo = {
       listPendingProcessing: jest.fn(() => [
         { ...pending('plain'), rendition_source: null, library_rendition_source: 'embedded' },
+        // Only the camera match written in, which is the camera's own picture again.
+        {
+          ...pending('matched'),
+          rendition_source: null,
+          library_rendition_source: 'embedded',
+          edits: JSON.stringify({ version: 1, exposure: 0.35, cameraMatchApplied: true }),
+        },
         {
           ...pending('edited'),
           rendition_source: null,
           library_rendition_source: 'embedded',
           edits: JSON.stringify({ version: 1, exposure: 1 }),
+          edited: 1,
         },
       ]),
       markTileBuilt: jest.fn(),
@@ -289,6 +298,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // somebody worked on pays for a render.
     expect(posted.map((job) => photoStage(job))).toEqual([
       'plain:grid',
+      'matched:grid',
       'edited:grid',
       'edited:full',
     ]);

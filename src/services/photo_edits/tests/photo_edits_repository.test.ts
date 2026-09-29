@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from '../../../db/driver';
 import { runMigrations } from '../../../db/migrate';
 import { PhotoEditsRepository } from '../photo_edits_repository';
-import { neutralEdits, type EditDoc } from '../../../schemas/photo_edits';
+import { neutralEdits, TONE_CURVE_KIND, type EditDoc } from '../../../schemas/photo_edits';
 
 const PHOTO = 'photo';
 
@@ -78,7 +78,7 @@ describe('PhotoEditsRepository.save', () => {
 
     // Not three undos through pictures that never existed - an import writes ten
     // fields at once and a crop drag four.
-    expect(undone.doc.exposure).toBeNull();
+    expect(undone.doc.exposure).toBe(0);
     expect(undone.doc.contrast).toBe(0);
     expect(undone.doc.shadows).toBe(0);
     expect(undone.canUndo).toBe(false);
@@ -94,6 +94,47 @@ describe('PhotoEditsRepository.save', () => {
   });
 });
 
+describe('PhotoEditsRepository.applyCameraMatch', () => {
+  const tone = {
+    exposure: 0.35,
+    saturation: 17.4,
+    toneCurve: {
+      kind: TONE_CURVE_KIND,
+      points: [
+        [0, 0.1],
+        [1, 1],
+      ] as [number, number][],
+    },
+  };
+
+  it('fills what is still at its default, as a starting point rather than an undo step', () => {
+    save({ exposure: 1.5 });
+    const applied = repo.applyCameraMatch(PHOTO, tone);
+
+    expect(applied?.state.doc).toMatchObject({
+      exposure: 1.5,
+      saturation: 17,
+      toneCurve: tone.toneCurve,
+      cameraMatchApplied: true,
+    });
+    expect(applied?.state.rev).toBe(2);
+    // Only the reader's own step is there to undo, and it lands on the camera's exposure, which
+    // is what its 0 stood for when it was taken.
+    const undone = repo.undo(PHOTO, 2);
+    expect(undone.doc).toMatchObject({ exposure: 0.35, saturation: 17, cameraMatchApplied: true });
+    expect(undone.canUndo).toBe(false);
+    expect(repo.redo(PHOTO, undone.rev).doc.exposure).toBe(1.5);
+  });
+
+  it('writes once, so a reset to 0 afterwards is kept', () => {
+    repo.applyCameraMatch(PHOTO, tone);
+    save({ exposure: 0 });
+
+    expect(repo.applyCameraMatch(PHOTO, tone)).toBeNull();
+    expect(repo.get(PHOTO).doc.exposure).toBe(0);
+  });
+});
+
 describe('PhotoEditsRepository undo and redo', () => {
   it('steps back and forward over the same array without losing the redo tail', () => {
     save({ exposure: 1.0 });
@@ -106,7 +147,7 @@ describe('PhotoEditsRepository undo and redo', () => {
     expect(back.canRedo).toBe(true);
 
     const again = repo.undo(PHOTO, back.rev);
-    expect(again.doc.exposure).toBeNull();
+    expect(again.doc.exposure).toBe(0);
     expect(again.canUndo).toBe(false);
     expect(again.canRedo).toBe(true);
 

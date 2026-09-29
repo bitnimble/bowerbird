@@ -6216,6 +6216,7 @@ const CAMERA_CURVE_SAMPLES: usize = 257;
 const CAMERA_CURVE_MAX_ERROR: f64 = 0.005;
 const CAMERA_KNOT_GAP: f64 = 0.1;
 const CAMERA_EXPOSURE_LIMIT: crate::light::Stops = crate::light::Stops::exactly(4.0);
+const CAMERA_EXPOSURE_STEP: f64 = 0.01;
 const CAMERA_MIN_SLOPE: f64 = 0.02;
 const CAMERA_MIN_PIVOT_SHARE: crate::light::Gain = crate::light::Gain::of_ratio(1e-9);
 
@@ -6241,7 +6242,10 @@ async fn camera_curve(
     let bounded = (exposed_pivot.raw() / pivot.raw())
         .log2()
         .clamp(-CAMERA_EXPOSURE_LIMIT.raw(), CAMERA_EXPOSURE_LIMIT.raw());
-    let exposure = Stops::measured(f64::from(bounded as f32));
+    // On the Exposure slider's step, as the saturation is on its own: both are written into the
+    // photograph's edits, and the curve below is fitted around this exact level.
+    let stepped = (bounded / CAMERA_EXPOSURE_STEP).round() * CAMERA_EXPOSURE_STEP;
+    let exposure = Stops::measured(f64::from(stepped as f32));
     let gain = Gain::of(exposure);
     let pivot_code = CurveCode::of_white_ratio(Gain::of_ratio(pivot.raw()) * gain).raw();
     let dense: Vec<f64> = (0..CAMERA_CURVE_SAMPLES)

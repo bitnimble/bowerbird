@@ -58,14 +58,14 @@ self.onmessage = async (event) => {
                   self.postMessage({ kind: 'started', photoId: job.photoId, analysisCache })
               : undefined,
           );
-    const { descriptor, photoAnalysis, composite } =
+    const { descriptor, photoAnalysis, composite, cameraTone } =
       job.kind === 'composite'
         ? runJob(command)
         : job.rendered != null
           ? writeRendered(command, job.rendered)
           : runJob(command);
     if (photoAnalysis != null) writePhotoAnalysis(job.dataPath, job.photoId, photoAnalysis);
-    self.postMessage({ photoId: job.photoId, success: true, descriptor, composite });
+    self.postMessage({ photoId: job.photoId, success: true, descriptor, composite, cameraTone });
   } catch (err) {
     for (const output of outputsOf(job))
       await Bun.file(output)

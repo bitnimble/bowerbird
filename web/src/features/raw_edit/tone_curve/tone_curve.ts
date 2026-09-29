@@ -1,12 +1,10 @@
 import {
+  IDENTITY_TONE_CURVE,
   TONE_CURVE_MAX_POINTS,
   type ToneCurvePoints,
 } from '../../../../../src/schemas/photo_edits';
 
-export const IDENTITY_CURVE: ToneCurvePoints = [
-  [0, 0],
-  [1, 1],
-];
+export const IDENTITY_CURVE: ToneCurvePoints = IDENTITY_TONE_CURVE.points;
 const GAP = 1 / 1024;
 export const clamp = (value: number, low: number, high: number): number =>
   Math.min(high, Math.max(low, value));

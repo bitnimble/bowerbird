@@ -18,7 +18,7 @@ import type {
   UnresolvedDetail,
   UnresolvedSummary,
 } from './photo_listing_repository';
-import { INPUTS_EDITED } from '../photo_edit_sql';
+import { EDITED, INPUTS_EDITED } from '../photo_edit_sql';
 import { PATH_OF } from '../paths/photo_paths_repository';
 
 export function orderByClause(ordering: Ordering, prefix = 'photos.', reversed = false): string {
@@ -89,8 +89,9 @@ export const RENDITIONS_BUILT_AT = `${renditionsBuiltAt(
 // Qualified with `photos.` because listByAlbum joins album_photos, which also has
 // a date_added column (bare names would be ambiguous).
 // `is_edited` is an EXISTS rather than the document itself: which rendition a photo is
-// drawn from turns on whether it has one at all (§18.5), and a listing that carried every
+// drawn from turns on whether it has an edit at all (§18.5), and a listing that carried every
 // develop document would read a page of JSON to answer a boolean.
+const IS_EDITED = `EXISTS (SELECT 1 FROM photo_edits e WHERE e.photo_id = photos.id AND ${EDITED('e')})`;
 //
 // Which capture the camera ran, where this row is one frame of a bracket stack: what the merge menu
 // offers for the stack, and whether it offers anything.
@@ -110,7 +111,7 @@ const COMPOSITE_KIND = `CASE WHEN json_extract(photos.recipe, '$.kind') IN (${CO
 // cameras' pictures carry as well as a render does, where a *frame's* is an edit no JPEG of that
 // frame has in it (`renditions::sourceFor`).
 export function summaryColumns(): string {
-  return `photos.id, photos.library_id, photos.shoot_id, ${COMPOSITE_KIND}, ${PATH_OF} AS file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, ${TILE_BUILT_AT}, ${RENDITIONS_BUILT_AT}, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, ${IS_OFFLOADED} AS is_offloaded, photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden, photos.stack_id, EXISTS (SELECT 1 FROM photo_edits e WHERE e.photo_id = photos.id) AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited`;
+  return `photos.id, photos.library_id, photos.shoot_id, ${COMPOSITE_KIND}, ${PATH_OF} AS file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, ${TILE_BUILT_AT}, ${RENDITIONS_BUILT_AT}, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, ${IS_OFFLOADED} AS is_offloaded, photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden, photos.stack_id, ${IS_EDITED} AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited`;
 }
 
 // Whether the original is on a backup rather than on this device (docs/replication.md §14.5), which
@@ -264,7 +265,7 @@ export function detailColumns(): string {
     photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden,
     photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
     photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.viewer_rendition,
-    photos.stack_id, photos.recipe, ${INPUTS_EDITED('photos.')} AS frames_edited`;
+    photos.stack_id, photos.recipe, ${IS_EDITED} AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited`;
 }
 
 export interface SummaryRow {
@@ -298,19 +299,14 @@ export interface SummaryRow {
   is_hidden: number;
 }
 
-// `is_edited` is the one summary column `detailColumns` does not select: the detail answers the
-// same question from `edited` below, which it needs the settings of anyway. Omitted rather than
-// inherited, or it is typed as a number and is `undefined` at runtime, and the next reader to
-// mirror `toSummary`'s `is_edited === 1` here gets a silent false.
-export interface DetailRow extends Omit<SummaryRow, 'is_edited'> {
+export interface DetailRow extends SummaryRow {
   /** As stored, JSON; `toDetail` parses it. */
   recipe: string;
   orientation: number;
   // The stored develop settings as JSON, or absent where the photo has none. A
   // subquery rather than a join because the detail read is one row and this is one
-  // optional value on it. Two things are read out of it: whether the photo is edited
-  // at all - the camera's own JPEG cannot stand in for the picture once it is - and
-  // the geometry, which decides the shape the grid lays the tile out at.
+  // optional value on it. What is read out of it is the geometry, which decides the
+  // shape the grid lays the tile out at.
   edited?: string | null;
   file_hash: string | null;
   // Detail only: a grid tile is labelled with a wall clock, and a zone per tile
@@ -460,7 +456,7 @@ export function toDetail(row: DetailRow, albumIds: string[], labelIds: string[])
     original_path: null,
     // The service's to answer: it holds the library, and this is a stat.
     has_original: false,
-    is_edited: row.edited != null,
+    is_edited: row.is_edited === 1,
     frames_edited: row.frames_edited === 1,
     ...displayed(row),
     renditions: null,

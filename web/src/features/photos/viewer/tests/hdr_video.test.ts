@@ -11,6 +11,7 @@ const revoked: string[] = [];
 void mock.module('avif-hdr-video', () => ({
   needsHdrVideo: (): boolean => true,
   orientationOfAvif: (): 0 => 0,
+  contentLightOfAvif: (): null => null,
   hdrVideoUrl: (source: string): Promise<string> => {
     made += 1;
     return Promise.resolve(`blob:${source}`);

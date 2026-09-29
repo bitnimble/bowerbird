@@ -3,6 +3,7 @@ import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { AlignShape } from '../../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
+import type { CameraTone } from '../../../schemas/photo_edits';
 import { cameraMatchWithStages } from '../../../schemas/render_stages';
 import { getDataPath } from '../../../utils/paths';
 import { hasEmbeddedJpeg } from '../../../utils/scan';
@@ -32,6 +33,7 @@ export class CompositeRenderer {
     private readonly targets: RenderTargets,
     private readonly settings: SettingsRepository,
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
+    private readonly cameraMatched: (photoId: string, tone: CameraTone) => void,
   ) {}
 
   /**
@@ -51,7 +53,7 @@ export class CompositeRenderer {
     on: CompositeWorker,
     shape: AlignShape,
   ): Promise<string> {
-    const recipe = await on.run({
+    const { composite: recipe } = await on.run({
       kind: 'composite',
       cameraMatch: 'lensAndColour',
       want: 'align',
@@ -82,7 +84,7 @@ export class CompositeRenderer {
     on: CompositeWorker,
     volumePath: string,
   ): Promise<string> {
-    const analysed = await on.run({
+    const { composite: analysed } = await on.run({
       kind: 'composite',
       cameraMatch: 'lensAndColour',
       want: 'analyse',
@@ -122,7 +124,7 @@ export class CompositeRenderer {
       this.seaming = null;
     }
     this.seaming ??= this.openComposite();
-    const solved = await this.seaming.run({
+    const { composite: solved } = await this.seaming.run({
       kind: 'composite',
       cameraMatch: 'lensAndColour',
       want: 'seams',
@@ -278,8 +280,9 @@ export class CompositeRenderer {
     // Before the build, so a change landing during it is still owed one.
     const builtFrom = this.photoProcessing.builtFromOf(photoId);
     const on = this.openComposite();
+    let tone: CameraTone | undefined;
     try {
-      await this.buildCompositeRendition(
+      tone = await this.buildCompositeRendition(
         photoId,
         composite.sources,
         composite.recipe,
@@ -307,6 +310,7 @@ export class CompositeRenderer {
       { from: source, matched: false },
     );
     this.announce(photoId, { stage: rendition === 'grid' ? 'tile' : 'renditions', version });
+    if (tone != null) this.cameraMatched(photoId, tone);
     return true;
   }
 
@@ -329,9 +333,9 @@ export class CompositeRenderer {
     on: CompositeWorker,
     /** Whether a merge is watching this render's progress. */
     watched = false,
-  ): Promise<void> {
+  ): Promise<CameraTone | undefined> {
     const dataPath = getDataPath(library);
-    await on.run(
+    const { cameraTone } = await on.run(
       withStagesOff(
         {
           kind: 'composite',
@@ -354,6 +358,7 @@ export class CompositeRenderer {
         renditionSkips(library, rendition),
       ),
     );
+    return cameraTone;
   }
 
   /**
@@ -376,7 +381,7 @@ export class CompositeRenderer {
   async runComposite(job: CompositeJob): Promise<string | undefined> {
     const on = this.openComposite();
     try {
-      return await on.run(job);
+      return (await on.run(job)).composite;
     } finally {
       on.close();
     }

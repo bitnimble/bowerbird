@@ -156,6 +156,8 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await page.keyboard.press('Tab');
   await expect(panel.getByRole('textbox', { name: 'Exposure value', exact: true })).toBeFocused();
   await page.keyboard.press('Tab');
+  await expect(panel.getByRole('button', { name: 'Reset Exposure', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
   await expect(slider).toBeFocused();
   const value = await slider.getAttribute('aria-valuenow');
   const box = await slider.boundingBox();

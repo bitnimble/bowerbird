@@ -8,6 +8,7 @@
 // see the lifetimes it depends on.
 import { ptr } from 'bun:ffi';
 import { type Job, JobReplySchema, type RawHeaderFields } from '../../../schemas/jobs';
+import type { CameraTone } from '../../../schemas/photo_edits';
 import { shim } from './rawshim';
 
 export interface JobOutcome {
@@ -25,6 +26,7 @@ export interface JobOutcome {
   header?: RawHeaderFields;
   /** The recipe an align found, as JSON for the caller to store on the stack. */
   composite?: string;
+  cameraTone?: CameraTone;
 }
 
 // Big enough for any reply the job produces. Two things in one are variable-length and both
@@ -96,6 +98,7 @@ function replied(call: (reply: Uint8Array) => number): JobOutcome {
     photoAnalysis: photoAnalysis == null ? undefined : Uint8Array.from(photoAnalysis),
     header: parsed.outcome?.header,
     composite: parsed.outcome?.composite,
+    cameraTone: parsed.outcome?.cameraTone,
   };
 }
 

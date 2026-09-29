@@ -55,7 +55,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
   const [hoverX, setHoverX] = useState<number | null>(null);
   const headerKnown = stage.headerKnown;
   const disabled = !headerKnown || !stage.editable;
-  const points = edit.doc?.toneCurve?.points ?? stage.cameraCurve?.points ?? IDENTITY_CURVE;
+  const points = edit.doc?.toneCurve?.points ?? IDENTITY_CURVE;
   const insertable = !disabled && points.length < TONE_CURVE_MAX_POINTS;
   const ghost = insertable && hoverX != null ? insertPoint(points, hoverX) : null;
   useEffect(() => {

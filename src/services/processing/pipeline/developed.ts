@@ -1,4 +1,4 @@
-import { adjustOf } from '../../../schemas/edit_adjust';
+import { adjustOf, exposureOf } from '../../../schemas/edit_adjust';
 import { dustSettings } from '../../../schemas/dust_settings';
 import { EditDocSchema, type Denoiser, type EditDoc } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
@@ -56,7 +56,7 @@ type FromDocument = Omit<Developed, 'defringe'>;
 
 function asJob(doc: EditDoc, libraryDenoiser: Denoiser): FromDocument {
   return {
-    exposure: doc.exposure,
+    exposure: exposureOf(doc),
     denoiseLuminance: doc.luminanceNoise,
     denoiseColour: doc.colourNoise,
     denoiser: doc.denoiser ?? libraryDenoiser,

@@ -2,12 +2,14 @@ import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { stamp } from '../replication/stamps';
 import { MAX_CHAIN_HOPS, parseChain, type SessionHop } from './edit_sessions';
+import { cameraMatchedEdits, cameraMatchedHistory } from '../../schemas/edit_adjust';
 import {
   EditDocSchema,
   EditHistorySchema,
   applyEdits,
   diffEdits,
   neutralEdits,
+  type CameraTone,
   type EditCheckpoint,
   type EditDelta,
   type EditDoc,
@@ -101,6 +103,30 @@ export class PhotoEditsRepository {
       },
       session,
     );
+  }
+
+  /**
+   * Writes the camera match into a document that has not had it yet, beneath its undo history.
+   *
+   * Null where the document already has it; otherwise the new state and the stamp the document
+   * was written from.
+   */
+  applyCameraMatch(
+    photoId: string,
+    tone: CameraTone,
+  ): { state: EditState; from: string | null } | null {
+    const row = this.row(photoId);
+    let written = false;
+    const state = this.write(photoId, row?.rev ?? 0, (current, history, cursor) => {
+      if (current.cameraMatchApplied) return null;
+      written = true;
+      return {
+        doc: cameraMatchedEdits(current, tone),
+        history: cameraMatchedHistory(history, tone),
+        cursor,
+      };
+    });
+    return written ? { state, from: row?.stamp ?? null } : null;
   }
 
   undo(photoId: string, rev: number): EditState {

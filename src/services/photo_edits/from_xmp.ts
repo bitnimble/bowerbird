@@ -136,7 +136,7 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   const doc: EditDoc = {
     ...neutralEdits(),
     ...(geometry.hasCrop && geometry.cropUnits === 0 ? crop : {}),
-    exposure: tone.exposure === 0 ? null : tone.exposure,
+    exposure: tone.exposure,
     contrast: tone.contrast,
     highlights: tone.highlights,
     shadows: tone.shadows,
@@ -146,7 +146,7 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
     clarity: presence.clarity,
     dehaze: presence.dehaze,
     vibrance: presence.vibrance,
-    saturation: presence.saturation === 0 ? null : presence.saturation,
+    saturation: presence.saturation,
     whiteBalanceMode: whiteBalance.mode,
     temperature: custom ? whiteBalance.temperature : null,
     tint: custom ? whiteBalance.tint : null,

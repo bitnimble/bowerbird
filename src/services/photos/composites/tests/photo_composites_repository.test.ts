@@ -353,11 +353,11 @@ describe('a panorama and the frames it stands for', () => {
 // composite's own row.
 describe('PhotoCompositesRepository, the documents behind a composite', () => {
   const STAMP = '01a084e624e40000ueee1n2ebb8p7y9r';
-  const develop = (id: string, stamp: string): void => {
+  const develop = (id: string, stamp: string, cursor = 1): void => {
     db.query(
       `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp)
-         VALUES (?, '{}', 0, 1, '2026-01-01T00:00:00.000Z', ?)`,
-    ).run(id, stamp);
+         VALUES (?, '{}', ?, 1, '2026-01-01T00:00:00.000Z', ?)`,
+    ).run(id, cursor, stamp);
   };
   const pendingRow = (id: string): { inputs_edited: number; built_from: string | null } => {
     const row = processing.listPendingProcessing(LIB).find((pending) => pending.photo_id === id);
@@ -417,6 +417,17 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
     expect(pendingRow('live')).toEqual({ inputs_edited: 0, built_from: STAMP });
   });
 
+  it('queues a photograph holding only the camera match as unedited', () => {
+    composite();
+    develop('live', STAMP, 0);
+    const edited = (): number | undefined =>
+      processing.listPendingProcessing(LIB).find((row) => row.photo_id === 'live')?.edited;
+    expect(edited()).toBe(0);
+
+    db.query("UPDATE photo_edits SET cursor = 1 WHERE photo_id = 'live'").run();
+    expect(edited()).toBe(1);
+  });
+
   // A reopened assembly saved elsewhere arrives as a recipe alone, with no document moving.
   it('owes a composite its copies again once its recipe changes', () => {
     const panorama = composite();
@@ -445,8 +456,11 @@ describe('PhotoCompositesRepository, the documents behind a composite', () => {
   });
 
   it('answers whether any of a set the merge is about to build is developed', () => {
-    composite();
+    const panorama = composite();
+    // The camera match alone, written beneath the history.
+    develop('frame001', STAMP, 0);
     expect(repo.anyEdited(['frame001', 'frame002'])).toBe(false);
+    expect(pendingRow(panorama).inputs_edited).toBe(0);
 
     develop('frame002', STAMP);
 

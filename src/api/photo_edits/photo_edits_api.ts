@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
 import {
+  CameraToneSchema,
   EditOpeningSchema,
   EditConflictsQuerySchema,
   EditConflictsSchema,
@@ -43,6 +44,26 @@ export class PhotoEditsApi {
           respond(
             EditStateSchema,
             this.service.save(this.id(c.req.param('id')), doc, rev, session),
+          ),
+        );
+      },
+    );
+
+    // No revision: it writes only into a document that has not had the match yet, and is a no-op
+    // on one that has.
+    app.post(
+      route(
+        PathSegment.photos(),
+        PathSegment.param('id'),
+        PathSegment.edits(),
+        PathSegment.cameraMatch(),
+      ),
+      async (c) => {
+        const tone = CameraToneSchema.parse(await c.req.json());
+        return c.json(
+          respond(
+            EditOpeningSchema,
+            this.service.applyCameraMatch(this.id(c.req.param('id')), tone),
           ),
         );
       },

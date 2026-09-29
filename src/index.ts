@@ -277,7 +277,7 @@ const photoEditsService = new PhotoEditsService(
   photoListingRepo,
   (ids) => processingService.rebuildEdited(ids),
   replicationChanged,
-  (photoId, stamp) => photoProcessingRepo.vouchCameHome(photoId, stamp),
+  (photoId, stamp) => photoProcessingRepo.vouchSamePicture(photoId, stamp),
   (libraryId) => librariesRepo.getConfiguration(libraryId)?.denoiser ?? 'galosh',
 );
 const shootsService = new ShootsService(
@@ -388,6 +388,16 @@ librariesService.addLifecycleListener(new ReplicationLifecycle(db));
 processingService.onDescribed((photoId, descriptor) =>
   stacksService.storeDescriptor(photoId, descriptor),
 );
+
+// Inside a worker's result handler, where nothing catches: a write that loses a race with the
+// editor is written by the next render instead.
+processingService.onCameraMatched((photoId, tone) => {
+  try {
+    photoEditsService.applyCameraMatch(photoId, tone);
+  } catch (err) {
+    log.warn('could not write the camera match into the edits', { photo: photoId, err });
+  }
+});
 
 // Detection runs when a sync settles, and only if that sync actually brought
 // something in. Not an optimisation: watching is on by default with a two-second

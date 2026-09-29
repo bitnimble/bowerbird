@@ -10,7 +10,7 @@
 // front of it - while a plain React input in the same document answers all three. Their wiring
 // stays in `raw_editing.spec.ts`, where a browser can say.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { neutralEdits, TONE_CURVE_KIND } from '../../../../../src/schemas/photo_edits';
+import { neutralEdits } from '../../../../../src/schemas/photo_edits';
 import { registerDom } from '../../../test_dom';
 import { CropStore } from '../crop/crop_store';
 import { EditStore } from '../edit/edit_store';
@@ -86,16 +86,6 @@ function open(
   // show where the document holds nothing. Distinct and off every fixed number the panel could
   // have fallen back to, so a row reading one of those fails here.
   stage.detail = status === 'live' ? [24, 76] : null;
-  // The same for the camera match's own tone, fitted rather than chosen, so off every step too.
-  stage.cameraCurve = {
-    kind: TONE_CURVE_KIND,
-    points: [
-      [0, 0.1],
-      [1, 1],
-    ],
-  };
-  stage.cameraExposure = 0.347;
-  stage.cameraSaturation = 17;
   stage.noiseFit = noiseFit;
   const { presenter, calls } = recording();
   render(
@@ -186,39 +176,31 @@ describe('the edit panel', () => {
     expect(calls).toEqual([{ name: 'settle', value: { highlights: 0 } }]);
   });
 
-  test('shows the camera exposure rounded to its slider step', () => {
-    open();
+  test('shows the exposure and saturation the camera match wrote, and resets them to 0', () => {
+    const { calls } = open({ exposure: 0.35, saturation: 17, cameraMatchApplied: true });
     const light = within(screen.getByRole('group', { name: 'Light' }));
     expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe(
       '+0.35 EV',
     );
-  });
-
-  test('keeps the camera exposure and saturation with the colour profile off', () => {
-    open({ colourProfile: 'none' });
-    expect(
-      (screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value,
-    ).toBe('+0.35 EV');
     expect(
       (screen.getByRole('textbox', { name: 'Saturation value' }) as HTMLInputElement).value,
     ).toBe('+17');
-  });
-
-  test('resets saturation to the camera value', () => {
-    const { calls } = open({ saturation: 40 });
-
-    screen.getByLabelText('Reset Saturation').click();
-    expect(calls).toEqual([{ name: 'settle', value: { saturation: null } }]);
-  });
-
-  test('resets exposure to the camera value', () => {
-    const { calls } = open({ exposure: 1.5 });
 
     screen.getByLabelText('Reset Exposure').click();
-    expect(calls).toEqual([{ name: 'settle', value: { exposure: null } }]);
+    screen.getByLabelText('Reset Saturation').click();
+    expect(calls).toEqual([
+      { name: 'settle', value: { exposure: 0 } },
+      { name: 'settle', value: { saturation: 0 } },
+    ]);
   });
 
-  test('leaves the exposure readout unknown until the header arrives', () => {
+  test('offers nothing to reset on exposure and saturation at 0', () => {
+    open();
+    expect((screen.getByLabelText('Reset Exposure') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText('Reset Saturation') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test('shuts the exposure until the header arrives', () => {
     open({}, null, false, 'opening');
     expect(screen.queryByRole('textbox', { name: 'Exposure value' })).toBeNull();
     expect((screen.getByRole('slider', { name: 'Exposure' }) as HTMLInputElement).disabled).toBe(

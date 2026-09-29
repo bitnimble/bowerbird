@@ -1,6 +1,7 @@
 import { computed, observable } from 'mobx';
 import type { JobLevels, NoiseFit } from '../../../../../src/schemas/jobs';
-import type { EditDoc, ToneCurve } from '../../../../../src/schemas/photo_edits';
+import { atCameraMatch } from '../../../../../src/schemas/edit_adjust';
+import type { CameraTone, EditDoc, ToneCurve } from '../../../../../src/schemas/photo_edits';
 import type { EditStore } from '../edit/edit_store';
 import type { Region } from '../edits';
 import type { OpenStage } from '../local_decode/local_open';
@@ -100,18 +101,24 @@ export class StageStore {
   /**
    * What each slider the photograph answers for shows where the document holds null
    * (`SliderSpec.measured`). Null until a frame is open.
-   *
-   * The camera's under either colour profile: None drops only the match's residual colour.
    */
   @computed get measured(): Partial<Record<keyof EditDoc, number>> | null {
     const detail = this.detail;
     if (detail == null) return null;
-    return {
-      luminanceNoise: detail[0],
-      colourNoise: detail[1],
-      exposure: this.cameraExposure ?? 0,
-      saturation: this.cameraSaturation ?? 0,
-    };
+    return { luminanceNoise: detail[0], colourNoise: detail[1] };
+  }
+
+  /** Null where nothing was matched or before a frame is open. */
+  @computed get cameraTone(): CameraTone | null {
+    const { cameraExposure: exposure, cameraSaturation: saturation, cameraCurve: toneCurve } = this;
+    if (exposure == null || saturation == null || toneCurve == null) return null;
+    return { exposure, saturation, toneCurve };
+  }
+
+  @computed get atCameraMatch(): boolean {
+    const doc = this.edit.doc;
+    const tone = this.cameraTone;
+    return doc != null && tone != null && atCameraMatch(doc, tone);
   }
 
   /**

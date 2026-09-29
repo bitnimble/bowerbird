@@ -59,6 +59,22 @@ export const ToneCurveSchema = z.discriminatedUnion('kind', [
 ]);
 export type ToneCurve = z.infer<typeof ToneCurveSchema>;
 
+export const IDENTITY_TONE_CURVE: ToneCurve = {
+  kind: TONE_CURVE_KIND,
+  points: [
+    [0, 0],
+    [1, 1],
+  ],
+};
+
+/** The camera match's exposure, saturation and curve, on the scales `EditDoc` stores them. */
+export const CameraToneSchema = z.object({
+  exposure: z.number(),
+  saturation: z.number(),
+  toneCurve: ToneCurveSchema,
+});
+export type CameraTone = z.infer<typeof CameraToneSchema>;
+
 // The document is one replicated cell re-parsed on every write, so a repair is bounded: the most
 // repairs times the most vertices, twice, is `MOST_VERTICES` of an assembly's recipe, which lives in
 // the same kind of cell.
@@ -111,12 +127,13 @@ export const EditDocSchema = z
 
     // Tone. `exposure` is EV and is the only one here with a physical unit; the
     // rest are slider positions whose mapping to anything is ours to decide.
-    exposure: z.number().min(-5).max(5).nullable().default(null),
+    exposure: z.number().min(-5).max(5).default(0),
     contrast: z.number().int().min(-100).max(100).default(0),
     highlights: z.number().int().min(-100).max(100).default(0),
     shadows: z.number().int().min(-100).max(100).default(0),
     whites: z.number().int().min(-100).max(100).default(0),
     blacks: z.number().int().min(-100).max(100).default(0),
+    // Null is the straight line.
     toneCurve: ToneCurveSchema.nullable().default(null),
 
     // Presence. `dehaze` is a real where its neighbours are integers, which is
@@ -128,10 +145,15 @@ export const EditDocSchema = z
     // Named as Camera Raw names it. The `Edit` uniform already has a `saturation`
     // that is the camera match's own fit multiplier around 1.0 and not a slider
     // (`colour.slang`), so the shader has to give this one a distinct uniform name -
-    // renaming it *here* would cost the import its identity mapping instead. Null is the camera
-    // match's own, as for `exposure`.
-    saturation: z.number().int().min(-100).max(100).nullable().default(null),
+    // renaming it *here* would cost the import its identity mapping instead.
+    saturation: z.number().int().min(-100).max(100).default(0),
     colourProfile: ColourProfileSchema.default('matched'),
+    /**
+     * Whether the camera match's exposure, saturation and curve have been written into this
+     * document (`cameraMatchedEdits`). Until then each of the three still at its default renders
+     * as the camera's, so a photograph looks the same before and after the write.
+     */
+    cameraMatchApplied: z.boolean().default(false),
 
     // Detail. Both are positions on a slider rather than a strength in anything: the denoise
     // reads them as GALOSH's own two knobs (`galosh::Amounts`), on the mosaic, wherever the

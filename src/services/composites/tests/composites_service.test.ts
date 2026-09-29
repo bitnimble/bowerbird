@@ -233,7 +233,7 @@ function settings(): SettingsRepository {
 function edited(id: string, stamp = '01a084e624e40000ueee1n2ebb8p7y9r'): void {
   db.query(
     `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp)
-       VALUES (?, '{"exposure":0.5}', 0, 1, '2026-01-02T00:00:00.000Z', ?)`,
+       VALUES (?, '{"exposure":0.5}', 1, 1, '2026-01-02T00:00:00.000Z', ?)`,
   ).run(id, stamp);
 }
 

@@ -437,6 +437,8 @@ export class RawEditPresenter {
       // measures a zoom against, so the first one past this resolution fetches a window.
       this.took(header);
       this.opened(header, local.onTheBackend);
+      const tone = this.stage.cameraTone;
+      if (!fromRendition && tone != null) void this.edit.applyCameraMatch(tone);
       // The canvas goes to the worker, where the frame is. Re-attached rather than left as it
       // was: the observer needs a region to size against, and there was none when React handed
       // the element over.
@@ -730,6 +732,11 @@ export class RawEditPresenter {
   @action.bound
   setDenoiser(denoiser: Denoiser): void {
     this.edit.setDenoiser(denoiser);
+  }
+
+  resetToCameraMatch(): void {
+    const tone = this.stage.cameraTone;
+    if (tone != null) this.edit.resetToCameraMatch(tone);
   }
 
   flushReprepare(): void {

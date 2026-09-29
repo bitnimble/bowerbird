@@ -36,22 +36,26 @@ describe('every slider is judged against the neutral the editor resets it to', (
   }
 });
 
-test('a stored zero exposure and a stored curve are edits', () => {
-  expect(labels({ exposure: null, contrast: 0 })).toEqual([]);
-  expect(labels({ exposure: 0, contrast: 0 })).toEqual(['Exposure']);
-  expect(
-    rowsOf(
-      doc({
-        toneCurve: {
-          kind: TONE_CURVE_KIND,
-          points: [
-            [0, 0.1],
-            [1, 1],
-          ],
-        },
-      }),
-    ),
-  ).toContainEqual(['Tone curve', 'Edited']);
+test('the camera match, once written, is listed as the edits it made', () => {
+  const rows = rowsOf(
+    doc({
+      exposure: 0.35,
+      saturation: 17,
+      toneCurve: {
+        kind: TONE_CURVE_KIND,
+        points: [
+          [0, 0.1],
+          [1, 1],
+        ],
+      },
+      cameraMatchApplied: true,
+    }),
+  );
+  expect(rows).toEqual([
+    ['Exposure', '+0.35 EV'],
+    ['Saturation', '+17'],
+    ['Tone curve', 'Edited'],
+  ]);
 });
 
 test('a crop is listed as what it kept, and a full frame is not a crop', () => {

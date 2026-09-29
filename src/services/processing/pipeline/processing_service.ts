@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Logger } from '../../../logger';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
+import type { CameraTone } from '../../../schemas/photo_edits';
 import { isComposite } from '../../../schemas/recipes';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { dataPathForLibraryId, renditionPathFor } from '../../../utils/paths';
@@ -359,19 +360,21 @@ export class ProcessingService extends RenderService {
         continue;
       }
       const on = this.openComposite();
+      let tone: CameraTone | undefined;
       try {
         for (const want of owed) {
-          await this.buildCompositeRendition(
-            row.photo_id,
-            composite.sources,
-            composite.recipe,
-            composite.kind,
-            library,
-            want.rendition,
-            want.hdr,
-            want.from,
-            on,
-          );
+          tone =
+            (await this.buildCompositeRendition(
+              row.photo_id,
+              composite.sources,
+              composite.recipe,
+              composite.kind,
+              library,
+              want.rendition,
+              want.hdr,
+              want.from,
+              on,
+            )) ?? tone;
           const at = new Date().toISOString();
           // A composite is never anybody's plane, so the geometry beside it is nothing's question.
           const made = { from: want.from, matched: false };
@@ -387,6 +390,7 @@ export class ProcessingService extends RenderService {
             );
           }
         }
+        if (tone != null) this.matchedCamera(row.photo_id, tone);
       } catch (err) {
         log.error('could not compose a panorama; it stays owed', { photo: row.photo_id, err });
       } finally {
@@ -469,6 +473,9 @@ export class ProcessingService extends RenderService {
             matched: job.cameraMatch !== 'none',
           });
         }
+        // This pass rather than the tile's: its job was built from the document as it stood before
+        // the tile pass, so a write there would leave these copies recorded against a stale one.
+        if (result.cameraTone != null) this.matchedCamera(result.photoId, result.cameraTone);
       },
       stopped,
     );
@@ -619,7 +626,7 @@ export class ProcessingService extends RenderService {
     const source = sourceFor({
       recipe: pending.recipe,
       inputs: [pending.recipe.path],
-      edited: pending.edits != null,
+      edited: pending.edited === 1,
       photoSource: pending.rendition_source,
       librarySource: pending.library_rendition_source,
       hdr: pending.rendition_hdr === 1,

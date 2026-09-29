@@ -1,5 +1,6 @@
 import type { Database } from '../../../db/driver';
 import type { RenditionSource } from '../../../schemas/common';
+import { EDITS_RENDER } from '../../photos/photo_edit_sql';
 import { renditionVariant, type RenditionVariant } from './renditions';
 
 /**
@@ -255,7 +256,12 @@ export class RenditionsRepository {
     // No entry reads as owed, and has to: a build with nothing to record leaves the
     // stamp null, which is indistinguishable from a copy never built - so a photograph
     // whose tile was built before anyone edited it would never be queued once they did.
-    for (const variant of [`'grid'`, FULL_VARIANT_OF_LIBRARY]) {
+    for (const [variant, owes] of [
+      [`'grid'`, 'TRUE'],
+      // The stamp also moves for the camera match and a composite's framing; owed on that alone, a
+      // row shown the cameras' picture is queued on every read and each pass sweeps its `max`.
+      [FULL_VARIANT_OF_LIBRARY, `(p.rendition_source IS NOT 'embedded' OR ${EDITS_RENDER('p.')})`],
+    ]) {
       const stale = `(SELECT r.built_from FROM renditions r
           WHERE r.photo_id = p.id AND r.variant = ${variant})`;
       const query = (narrowed: (column: string) => string): string =>
@@ -263,7 +269,7 @@ export class RenditionsRepository {
            SELECT p.id, ${variant}, 1 FROM (${TOUCHED_BY_EDITS(narrowed)}) t
              JOIN photos p ON p.id = t.id
              JOIN libraries l ON l.id = p.library_id
-            WHERE p.is_missing = 0 AND p.is_deleted = 0
+            WHERE p.is_missing = 0 AND p.is_deleted = 0 AND ${owes}
               AND (${stale} IS NULL OR t.stamp > ${stale})
          ON CONFLICT (photo_id, variant) DO UPDATE SET needs_build = 1
          RETURNING photo_id AS id`;

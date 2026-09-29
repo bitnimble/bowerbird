@@ -138,6 +138,7 @@ async function split(
     denoiser: 'galosh',
     edits: null,
     edits_stamp: null,
+    edited: 0,
     inputs_edited: 0,
     built_from: null,
   }));

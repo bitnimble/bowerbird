@@ -344,6 +344,29 @@ pub struct Outcome {
     /// was given - the lenses nothing has fitted among them (`composite_job::align`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composite: Option<String>,
+    /// The camera match this job graded under, for the caller to write into the photograph's edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_tone: Option<CameraTone>,
+}
+
+/// The camera match's exposure, saturation and curve, on the scales `EditDoc` stores them.
+#[derive(Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraTone {
+    pub exposure: Stops,
+    pub saturation: f64,
+    pub tone_curve: crate::gpu::ToneCurve,
+}
+
+impl CameraTone {
+    pub(crate) fn of(colour: Option<&crate::hdr_fit::HdrColour>) -> Option<CameraTone> {
+        let (curve, exposure, saturation) = crate::edit::camera_defaults(colour);
+        Some(CameraTone {
+            exposure: exposure?,
+            saturation: saturation?,
+            tone_curve: curve?,
+        })
+    }
 }
 
 /// What `bb_read_header` reports, as JSON rather than as a `#[repr(C)]` struct.
@@ -1440,6 +1463,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         },
     ))?;
     outcome.photo_analysis = measured.owed;
+    outcome.camera_tone = measured.camera_tone;
     if banded.is_empty() {
         return Ok(outcome);
     }
@@ -1856,7 +1880,10 @@ pub(crate) async fn render(
     // (`composite_job::camera_levels`), so the knee a render of the RAWs rolled off against is not on
     // its scale. Both halves of the pair are gated, or the arm that is forbidden from filing a peak
     // would still be graded by one.
-    let at_rest = job.exposure.is_none() && job.adjust == crate::gpu::Adjust::none();
+    let at_rest = job.adjust.at_the_camera(
+        job.exposure,
+        matched.as_ref().and_then(|m| m.colour.as_ref()),
+    );
     // The cache key omits match mode, so neutral peaks must not reuse or replace matched peaks.
     let keeps_peak =
         at_rest && describes_the_photograph && matched.as_ref().is_some_and(|m| m.colour.is_some());
@@ -1997,6 +2024,9 @@ pub(crate) async fn render(
     let known = analysis.filled_from(&stored);
     Ok(Rendered {
         owed: adds.then(|| crate::photo_analysis::encode(&known)),
+        camera_tone: describes_the_photograph
+            .then(|| CameraTone::of(matched.as_ref().and_then(|m| m.colour.as_ref())))
+            .flatten(),
         #[cfg(feature = "renditions")]
         known,
         #[cfg(feature = "renditions")]
@@ -2006,6 +2036,7 @@ pub(crate) async fn render(
 
 pub(crate) struct Rendered {
     owed: Option<Vec<u8>>,
+    camera_tone: Option<CameraTone>,
     #[cfg(feature = "renditions")]
     pub(crate) known: crate::photo_analysis::PhotoAnalysis,
     #[cfg(feature = "renditions")]
@@ -2037,6 +2068,8 @@ struct RenderedHeader {
     content_light: Option<crate::hdr_args::ContentLight>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     photo_analysis: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    camera_tone: Option<CameraTone>,
 }
 
 /// A job's one rendition, rendered from the photograph's bytes and framed for the host that
@@ -2053,7 +2086,11 @@ pub async fn render_bytes(job: &Job, bytes: &[u8]) -> Result<Vec<u8>, String> {
     let rendered = [target];
     let base = single(job, Raw::Bytes(bytes), largest_size(&rendered), &rendered).await?;
     let mut graded = None;
-    let photo_analysis = render(job, base, &rendered, |_, coded, width, height, options| {
+    let Rendered {
+        owed: photo_analysis,
+        camera_tone,
+        ..
+    } = render(job, base, &rendered, |_, coded, width, height, options| {
         graded = Some((
             coded,
             width,
@@ -2063,8 +2100,7 @@ pub async fn render_bytes(job: &Job, bytes: &[u8]) -> Result<Vec<u8>, String> {
         ));
         Ok(())
     })
-    .await?
-    .owed;
+    .await?;
     let (coded, width, height, full_chroma, content_light) =
         graded.ok_or("the job rendered nothing")?;
     framed(
@@ -2076,6 +2112,7 @@ pub async fn render_bytes(job: &Job, bytes: &[u8]) -> Result<Vec<u8>, String> {
             full_chroma,
             content_light,
             photo_analysis,
+            camera_tone,
         },
         &coded,
     )
@@ -2161,6 +2198,7 @@ pub fn write_rendered(job: &Job, framed: &[u8]) -> Result<Outcome, String> {
         &mut outcome,
     )?;
     outcome.photo_analysis = header.photo_analysis;
+    outcome.camera_tone = header.camera_tone;
     Ok(outcome)
 }
 
@@ -2302,8 +2340,19 @@ mod tests {
                 max_fall: 90,
             }),
             photo_analysis: Some(vec![1, 2, 3]),
+            camera_tone: Some(camera_tone()),
         };
         framed(&header, &coded).expect("the frame serialises")
+    }
+
+    fn camera_tone() -> CameraTone {
+        CameraTone {
+            exposure: Stops::measured(0.625),
+            saturation: 25.0,
+            tone_curve: crate::gpu::ToneCurve::PchipCbrt3 {
+                points: vec![[0.0, 0.1], [0.5, 0.55], [1.0, 1.0]],
+            },
+        }
     }
 
     #[cfg(feature = "renditions")]
@@ -2330,6 +2379,7 @@ mod tests {
             })
         );
         assert_eq!(header.photo_analysis, Some(vec![1, 2, 3]));
+        assert_eq!(header.camera_tone, Some(camera_tone()));
         // 40000 is code 2499.43 of 4095, which crosses as 2499 and comes back as its sixteen bits.
         assert!(matches!(coded, Coded::Pq(samples) if samples == vec![39_993; 18]));
     }

@@ -3,6 +3,7 @@ import { AppError } from '../../errors';
 import { newId } from '../../schemas/id';
 import {
   diffEdits,
+  type CameraTone,
   type Denoiser,
   type EditCheckpoint,
   type EditConflict,
@@ -54,7 +55,7 @@ export class PhotoEditsService {
      * one that chose would go on offering a decision that has already been made.
      */
     private readonly changed: (libraryId: string) => void = () => {},
-    /** Vouch for the copies built from this photo's document as it stood at `stamp` (`finish`). */
+    /** Vouch for the copies built from this photo's document as it stood at `stamp`. */
     private readonly vouch: (photoId: string, stamp: string | null) => void = () => {},
     private readonly denoiserOf: (libraryId: string) => Denoiser = () => 'galosh',
   ) {}
@@ -85,6 +86,18 @@ export class PhotoEditsService {
   save(photoId: string, doc: EditDoc, rev: number, session?: string): EditState {
     this.require(photoId);
     return this.edits.save(photoId, doc, rev, session);
+  }
+
+  /**
+   * Writes the camera match into a document that has not had it yet (`cameraMatchedEdits`).
+   *
+   * Answers the checkpoint after it, which an editor open on the photo takes as what it opened on.
+   */
+  applyCameraMatch(photoId: string, tone: CameraTone): EditOpening {
+    this.require(photoId);
+    const applied = this.edits.applyCameraMatch(photoId, tone);
+    if (applied != null) this.vouch(photoId, applied.from);
+    return this.checkpoint(photoId);
   }
 
   undo(photoId: string, rev: number): EditState {

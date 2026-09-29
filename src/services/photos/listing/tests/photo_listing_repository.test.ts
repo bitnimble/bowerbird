@@ -97,18 +97,27 @@ describe('PhotoListingRepository.listByLibrary', () => {
 });
 
 describe('PhotoListingRepository summary rows', () => {
-  it('says which photographs have develop settings, on every listing that carries a row', () => {
-    db.query(
-      `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at)
-         VALUES ('live', '{}', 0, 1, '2026-01-01T00:00:00.000Z')`,
-    ).run();
-
+  it('says which photographs are edited, on every listing that carries a row', () => {
     const edited = (rows: { id: string; is_edited: boolean }[]): string[] =>
       rows.filter((row) => row.is_edited).map((row) => row.id);
+    const listed = (): string[] =>
+      edited(repo.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false }).photos);
+    // The detail joins its library, which the listings above do not.
+    db.query(`INSERT INTO libraries (id, root_path, name) VALUES (?, '/photos', 'Library')`).run(
+      LIB,
+    );
 
-    expect(
-      edited(repo.listByLibrary(LIB, 'added_asc', 0, 10, { includeDeleted: false }).photos),
-    ).toEqual(['live']);
+    // The camera match alone, written beneath the history, renders the camera's own picture.
+    db.query(
+      `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at)
+         VALUES ('live', '{"cameraMatchApplied":true,"exposure":0.35}', 0, 1, '2026-01-01T00:00:00.000Z')`,
+    ).run();
+    expect(listed()).toEqual([]);
+    expect(repo.getById('live')?.is_edited).toBe(false);
+
+    db.query(`UPDATE photo_edits SET cursor = 1 WHERE photo_id = 'live'`).run();
+    expect(listed()).toEqual(['live']);
+    expect(repo.getById('live')?.is_edited).toBe(true);
     expect(
       edited(
         navigation.neighboursInLibrary(LIB, 'added_asc', 'live', 2, { includeDeleted: false }),

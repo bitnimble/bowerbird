@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'bun:test';
+import { IDENTITY_TONE_CURVE } from '../../../../schemas/photo_edits';
 import { developed } from '../developed';
 
 describe('developed', () => {
   it('leaves an unedited photo at the camera exposure', () => {
     expect(developed(null, 'galosh').exposure).toBeNull();
+  });
+
+  it('grades a document the camera match was written into at its own values, zeros included', () => {
+    const job = developed(JSON.stringify({ cameraMatchApplied: true }), 'galosh');
+    expect(job.exposure).toBe(0);
+    expect(job.adjust).toMatchObject({ saturation: 0, toneCurve: IDENTITY_TONE_CURVE });
   });
 
   // A prepare for an editor previewing a Detail or dust setting it has not saved: those run before

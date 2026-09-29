@@ -26,8 +26,8 @@ export interface SliderSpec {
   /**
    * Whether the *photograph* answers where the document holds null, rather than a fixed default.
    *
-   * Exposure and saturation come from the camera match and the Detail pair from the noise fit
-   * where the document stores null. Reset keeps the measured value following the photograph.
+   * The Detail pair come from the noise fit where the document stores null. Reset keeps the
+   * measured value following the photograph.
    */
   measured?: boolean;
 }
@@ -53,7 +53,6 @@ export const LIGHT: readonly SliderSpec[] = [
     max: EV_RANGE,
     step: 0.01,
     unit: RawEditPanelStrings.exposureUnit(),
-    measured: true,
   },
   { key: 'contrast', label: RawEditPanelStrings.contrast(), min: -100, max: 100, step: 1 },
   { key: 'highlights', label: RawEditPanelStrings.highlights(), min: -100, max: 100, step: 1 },
@@ -64,14 +63,7 @@ export const LIGHT: readonly SliderSpec[] = [
 
 export const COLOUR: readonly SliderSpec[] = [
   { key: 'vibrance', label: RawEditPanelStrings.vibrance(), min: -100, max: 100, step: 1 },
-  {
-    key: 'saturation',
-    label: RawEditPanelStrings.saturation(),
-    min: -100,
-    max: 100,
-    step: 1,
-    measured: true,
-  },
+  { key: 'saturation', label: RawEditPanelStrings.saturation(), min: -100, max: 100, step: 1 },
 ];
 
 export const EFFECTS: readonly SliderSpec[] = [

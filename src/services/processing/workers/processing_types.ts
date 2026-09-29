@@ -5,7 +5,7 @@ import {
 } from '../../../schemas/common';
 import type { DustSettings } from '../../../schemas/dust_settings';
 import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/jobs';
-import type { Denoiser, Repair } from '../../../schemas/photo_edits';
+import type { CameraTone, Denoiser, Repair } from '../../../schemas/photo_edits';
 import type { CameraMatch } from '../../../schemas/render_stages';
 import type { RenderingIntent } from '../../../schemas/rendering_intent';
 import type { Rendition } from '../renditions/renditions';
@@ -201,5 +201,13 @@ export type ProcessingResult =
   // HTTP request and idles the worker that is waiting to be handed its next job.
   // `photoId` is the job's own key, which for a panorama is its stack's id: the pool matches a
   // result to the job it answers, and a panorama is not one of the photographs behind it.
-  | { photoId: string; success: true; descriptor?: Uint8Array; composite?: string }
+  | {
+      photoId: string;
+      success: true;
+      descriptor?: Uint8Array;
+      composite?: string;
+      cameraTone?: CameraTone;
+    }
   | { photoId: string; success: false; error: string };
+
+export type Ran = Extract<ProcessingResult, { success: true }>;

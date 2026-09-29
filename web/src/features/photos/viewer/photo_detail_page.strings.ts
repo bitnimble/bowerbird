@@ -64,6 +64,11 @@ export const PhotoDetailStrings = {
   /** Reverse the last thing done - an edit, a round, a bin, a folder rule. */
   undo: () => 'Undo',
   redo: () => 'Redo',
+  resetToCameraMatch: () => 'Reset edits to camera match',
+  resetToCameraMatchQuestion: () => 'Reset edits to camera match?',
+  resetToCameraMatchWarning: () =>
+    'This removes your exposure, saturation, tone curve, and colour profile edits.',
+  reset: () => 'Reset',
   previousPhoto: () => 'Previous photo',
   nextPhoto: () => 'Next photo',
   hideMetadata: () => 'Hide metadata',

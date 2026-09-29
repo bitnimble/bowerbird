@@ -1,4 +1,6 @@
 import {
+  type CameraTone,
+  CameraToneSchema,
   type EditCheckpoint,
   type EditConflict,
   EditConflictsSchema,
@@ -61,6 +63,19 @@ export const photoEditsApi = {
         PathSegment.redo(),
       ),
       StepEditsRequestSchema.parse({ rev }),
+    ),
+  applyCameraMatch: (photoId: string, tone: CameraTone): Promise<EditOpening> =>
+    request(
+      EditOpeningSchema,
+      'POST',
+      route(
+        PathSegment.api(),
+        PathSegment.photos(),
+        photoId,
+        PathSegment.edits(),
+        PathSegment.cameraMatch(),
+      ),
+      CameraToneSchema.parse(tone),
     ),
   checkpoint: (photoId: string): Promise<EditOpening> =>
     request(

@@ -8,7 +8,12 @@ import {
 import { photoEditsApi } from '../../../api/photo_edits';
 import { ApiError } from '../../../api/request';
 import { newId } from '../../../../../src/schemas/id';
-import { type ColourProfile, type Denoiser } from '../../../../../src/schemas/photo_edits';
+import {
+  type CameraTone,
+  type ColourProfile,
+  type Denoiser,
+} from '../../../../../src/schemas/photo_edits';
+import { cameraMatchedEdits, cameraMatchReset } from '../../../../../src/schemas/edit_adjust';
 import type { AsShot } from '../../../../../src/schemas/prepared';
 import type { RepairPresenter } from '../repair/repair_presenter';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
@@ -186,6 +191,35 @@ export class EditPresenter {
   @action.bound
   setDenoiser(denoiser: Denoiser): void {
     this.settle({ denoiser });
+  }
+
+  @action.bound
+  resetToCameraMatch(tone: CameraTone): void {
+    this.settle(cameraMatchReset(tone));
+  }
+
+  /** Writes the camera match into a document no render has written it into yet. */
+  async applyCameraMatch(tone: CameraTone): Promise<void> {
+    const photoId = this.photoId;
+    const doc = this.store.doc;
+    if (photoId == null || doc == null || doc.cameraMatchApplied) return;
+    // Locally first, or a slider moved during the write is saved over the unmatched document.
+    this.adopt(cameraMatchedEdits(doc, tone));
+    await this.exclusively(async () => {
+      try {
+        const matched = await photoEditsApi.applyCameraMatch(photoId, tone);
+        // The match is where this open starts: Cancel keeps it, and Done alone rebuilds nothing.
+        this.opened(matched);
+        this.stored(matched, this.locallyEdited);
+      } catch (error) {
+        this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
+      }
+    });
+  }
+
+  @action.bound
+  private adopt(doc: EditDoc): void {
+    this.store.doc = doc;
   }
 
   /**

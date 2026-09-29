@@ -10,7 +10,7 @@ import {
 import type { StoredRecipe } from '../../../schemas/recipes';
 import type { Denoiser } from '../../../schemas/photo_edits';
 import { inChunks } from '../photo_batches';
-import { BUILT_FROM_STAMP, INPUTS_EDITED, type EditStamp } from '../photo_edit_sql';
+import { BUILT_FROM_STAMP, EDITED, INPUTS_EDITED, type EditStamp } from '../photo_edit_sql';
 import { withRecipe } from '../paths/photo_paths_repository';
 import { hiddenIs, orderByClause } from '../listing/photo_query';
 
@@ -45,6 +45,8 @@ export interface PendingPhoto {
   // this build did not include, and recording the settings as they stand at the
   // end would retire the rebuild it is owed.
   edits_stamp: string | null;
+  // `EDITED`, not `edits != null`: a document holding only the camera match is not an edit.
+  edited: number;
   // Whether any row this one composes carries an edit. Nothing for a photograph, which
   // composes no rows.
   //
@@ -102,7 +104,7 @@ export class PhotoProcessingRepository {
                 MAX(r.variant = ${FULL_VARIANT_OF_LIBRARY}) AS needs_renditions,
                 l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr,
                 l.render_skip_full, l.denoiser,
-                e.doc AS edits, e.stamp AS edits_stamp,
+                e.doc AS edits, e.stamp AS edits_stamp, COALESCE(${EDITED('e')}, 0) AS edited,
                 -- The frames' documents, for a row composed out of other rows. A subquery rather
                 -- than a join: it is one row per composite and none at all for a photograph, where
                 -- joining photo_sources would multiply every pending row by its frame count.
@@ -217,11 +219,11 @@ export class PhotoProcessingRepository {
     };
   }
   /**
-   * `photoId`'s document is back to the one it held at `stamp`: every copy built from exactly
+   * `photoId`'s document renders the picture it did at `stamp`: every copy built from exactly
    * that state - its own, and each composite it is a frame of - is vouched for at the stamp
    * standing now, rather than rebuilt into the same picture.
    */
-  vouchCameHome(photoId: string, stamp: string | null): void {
+  vouchSamePicture(photoId: string, stamp: string | null): void {
     const asOpened: EditStamp = (alias) =>
       `CASE WHEN ${alias}.photo_id = ?1 THEN ?2 ELSE ${alias}.stamp END`;
     this.db
@@ -307,6 +309,7 @@ export class PhotoProcessingRepository {
    */
   markRenditionsUnowed(id: string, variant: RenditionVariant): void {
     this.renditions.unqueue(id, [variant]);
+    this.db.query(`UPDATE photos SET rendition_source = 'embedded' WHERE id = ?`).run(id);
   }
   // Both stages: the failure is the file rather than the stage, so a photo whose
   // tile could not be built has nothing to gain from being asked for renditions.

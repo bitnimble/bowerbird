@@ -36,7 +36,6 @@ function open(
   edit.doc = { ...neutralEdits(), toneCurve };
   stage.status = 'live';
   stage.detail = known ? [20, 70] : null;
-  stage.cameraCurve = CAMERA;
   const calls: { kind: string; curve: ToneCurve | null }[] = [];
   const record = action((kind: string, value: ToneCurve | null): void => {
     if (edit.doc != null) edit.doc = { ...edit.doc, toneCurve: value };
@@ -73,11 +72,11 @@ const diagonal = (length: number): ToneCurve =>
     }),
   );
 
-test('camera curve supplies named points until document stores one', () => {
+test('a document with no curve shows the straight line, with nothing to reset', () => {
   open();
-  screen.getByRole('slider', { name: 'Black point, 0% input, 10% output' });
-  screen.getByRole('slider', { name: 'Curve point 1, 50% input, 55% output' });
+  screen.getByRole('slider', { name: 'Black point, 0% input, 0% output' });
   screen.getByRole('slider', { name: 'White point, 100% input, 100% output' });
+  expect(screen.queryByRole('slider', { name: /Curve point/ })).toBeNull();
   expect(
     (screen.getByRole('button', { name: 'Reset tone curve' }) as HTMLButtonElement).disabled,
   ).toBe(true);

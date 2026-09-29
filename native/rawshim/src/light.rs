@@ -221,6 +221,13 @@ pub fn curve_is_valid(points: &[[f64; 2]]) -> bool {
             .all(|p| p[0][0] < p[1][0] && p[0][1] <= p[1][1])
 }
 
+/// Whether two curves are one at the `f32` a uniform carries: a fitted curve written into the edits
+/// and read back through JSON can land a unit in the last place away in `f64`.
+pub fn same_curve(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
+    let narrowed = |p: &[f64; 2]| p.map(|v| v as f32);
+    a.len() == b.len() && a.iter().zip(b).all(|(p, q)| narrowed(p) == narrowed(q))
+}
+
 pub fn curve_tangents(points: &[[f64; 2]]) -> Vec<f64> {
     let secants: Vec<f64> = points
         .windows(2)

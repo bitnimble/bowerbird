@@ -2549,6 +2549,32 @@ impl Adjust {
         matched.filter(|_| self.colour_profile == ColourProfile::Matched)
     }
 
+    /// Whether this, at `exposure`, is the camera match's own rendering: every slider at rest, and
+    /// the three the match fits either unset or at the match's own values.
+    pub fn at_the_camera(
+        &self,
+        exposure: Option<crate::light::Stops>,
+        colour: Option<&HdrColour>,
+    ) -> bool {
+        let curve = colour.map_or(crate::light::IDENTITY_CURVE.as_slice(), |c| {
+            c.curve.as_slice()
+        });
+        let camera_exposure = colour.map_or(crate::light::Stops::ZERO, |c| c.exposure);
+        let saturation = colour.map_or(0.0, |c| saturation_slider(c.camera_saturation));
+        Adjust {
+            tone_curve: None,
+            saturation: None,
+            ..self.clone()
+        } == Adjust::none()
+            // At `f32`, for the reason `same_curve` gives.
+            && exposure.is_none_or(|e| e.raw() as f32 == camera_exposure.raw() as f32)
+            && self.saturation.is_none_or(|s| s == saturation)
+            && self
+                .tone_curve
+                .as_ref()
+                .is_none_or(|c| crate::light::same_curve(c.points(), curve))
+    }
+
     /// Whether any slider reads the neighbourhood, and so whether `detail` has to be built.
     ///
     /// **`adjust.slang`'s `local`, and it has to stay that**: the shader samples the texture only
@@ -4916,7 +4942,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         );
         w.push(points.len() as u32);
     }
-    w.push(u32::from(grade.adjust.tone_curve.is_none()));
+    w.push(u32::from(crate::light::same_curve(reader, camera)));
     for points in [reader, camera] {
         let tangents = crate::light::curve_tangents(points);
         for (point, tangent) in points.iter().zip(tangents) {

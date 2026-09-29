@@ -3,6 +3,7 @@ import {
   AppWindow,
   ArrowLeft,
   Bug,
+  Camera,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -168,6 +169,8 @@ const ROTATE_ACTIONS: Option<ViewAction>[] = [
   { value: 'rotateRight', label: EditToolsStrings.rotateRight(), icon: <RotateCw size={ICON} /> },
 ];
 
+type EditAction = 'undo' | 'redo' | 'cameraMatch';
+
 type Action = 'edit' | 'editMerge' | 'metadata' | 'rerender' | 'hide' | 'delete';
 
 // Greyed out rather than absent where a library serves the camera's JPEG: there is
@@ -307,7 +310,7 @@ export const DetailNav = observer(function DetailNav({
   const store = useViewerStore();
   const replicationStore = useReplicationStore();
   const libraries = useLibrariesStore();
-  const { photos, export: exportPhotos, feedback, frameTv, replication } = usePresenters();
+  const { photos, export: exportPhotos, feedback, frameTv, replication, confirm } = usePresenters();
   const step = useStep();
   const navigate = useNavigate();
   const mobile = useIsMobile();
@@ -357,7 +360,7 @@ export const DetailNav = observer(function DetailNav({
         }))),
   ];
 
-  const undoRedo: Option<'undo' | 'redo'>[] = [
+  const undoRedo: Option<EditAction>[] = [
     {
       value: 'undo',
       label: PhotoDetailStrings.undo(),
@@ -372,19 +375,41 @@ export const DetailNav = observer(function DetailNav({
     },
   ];
 
-  // A phone's bar has no width for these beside the tools, so they are the menu's first rows.
+  const resetToCameraMatch: Option<EditAction> = {
+    value: 'cameraMatch',
+    label: PhotoDetailStrings.resetToCameraMatch(),
+    icon: <Camera size={ICON} />,
+    disabled:
+      edit == null ||
+      !edit.stage.editable ||
+      edit.stage.cameraTone == null ||
+      edit.stage.atCameraMatch,
+  };
+  const onEditAction = async (action: EditAction): Promise<void> => {
+    if (action === 'undo') return edit?.presenter.undo();
+    if (action === 'redo') return edit?.presenter.redo();
+    const confirmed = await confirm.ask({
+      title: PhotoDetailStrings.resetToCameraMatchQuestion(),
+      body: PhotoDetailStrings.resetToCameraMatchWarning(),
+      action: PhotoDetailStrings.reset(),
+      tone: 'danger',
+    });
+    if (confirmed) edit?.presenter.resetToCameraMatch();
+  };
+
+  const editSection = editing
+    ? [
+        menuSection({
+          label: PhotoDetailStrings.sectionEdit(),
+          // A phone's bar has no width for undo and redo beside the tools.
+          options: [...(mobile ? undoRedo : []), resetToCameraMatch],
+          onSelect: (action) => void onEditAction(action),
+        }),
+      ]
+    : [];
+
   const crowded = mobile
     ? [
-        ...(editing
-          ? [
-              menuSection({
-                label: PhotoDetailStrings.sectionEdit(),
-                options: undoRedo,
-                onSelect: (action) =>
-                  void (action === 'undo' ? edit?.presenter.undo() : edit?.presenter.redo()),
-              }),
-            ]
-          : []),
         menuSection({
           label: SoftProofMenuStrings.softProof(),
           options: softProofOptions(proof, hdrOffered),
@@ -405,6 +430,7 @@ export const DetailNav = observer(function DetailNav({
           }),
         ]
       : []),
+    ...editSection,
     ...crowded,
     menuSection({
       label: PhotoDetailStrings.sectionView(),

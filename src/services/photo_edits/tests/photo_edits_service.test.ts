@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, jest } from 'bun:test';
 import { Database } from '../../../db/driver';
 import { runMigrations } from '../../../db/migrate';
 import { AppError } from '../../../errors';
-import { neutralEdits, type EditDoc } from '../../../schemas/photo_edits';
+import { IDENTITY_TONE_CURVE, neutralEdits, type EditDoc } from '../../../schemas/photo_edits';
 import { PhotoCompositesRepository } from '../../photos/composites/photo_composites_repository';
 import { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
@@ -145,7 +145,7 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
       listing,
       (ids) => void photos.queueEditedSince(ids),
       () => {},
-      (photoId, stamp) => photos.vouchCameHome(photoId, stamp),
+      (photoId, stamp) => photos.vouchSamePicture(photoId, stamp),
     );
     settled(PHOTO);
     edits.save(PHOTO, { ...neutralEdits(), exposure: 1 }, 0);
@@ -252,6 +252,44 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
     service.finish(PHOTO, from);
 
     expect(owingRenditions()).toEqual([panorama]);
+  });
+});
+
+describe('PhotoEditsService.applyCameraMatch', () => {
+  const tone = { exposure: 0.35, saturation: 17, toneCurve: IDENTITY_TONE_CURVE };
+  let photos: PhotoProcessingRepository;
+
+  beforeEach(() => {
+    photos = photoProcessing();
+    service = new PhotoEditsService(
+      db,
+      new PhotoEditsRepository(db),
+      listing,
+      () => {},
+      () => {},
+      (photoId, stamp) => photos.vouchSamePicture(photoId, stamp),
+    );
+    settled(PHOTO);
+  });
+
+  it('keeps the copies built before it current', () => {
+    built(PHOTO, 'grid', 'full');
+
+    expect(service.applyCameraMatch(PHOTO, tone).doc).toMatchObject({
+      exposure: 0.35,
+      cameraMatchApplied: true,
+    });
+    expect(photos.queueEditedSince()).toBe(0);
+  });
+
+  it('leaves a library that renders owing the copy it never built', () => {
+    db.query(`UPDATE photos SET rendition_source = 'render' WHERE id = ?`).run(PHOTO);
+    built(PHOTO, 'grid');
+
+    service.applyCameraMatch(PHOTO, tone);
+
+    expect(photos.queueEditedSince()).toBe(1);
+    expect(owingRenditions()).toEqual([PHOTO]);
   });
 });
 
@@ -386,6 +424,40 @@ describe('PhotoEditsService', () => {
     // Both: the frame's own copies, and the canvas made of it.
     expect(photos.queueEditedSince([PHOTO])).toBe(2);
     expect(owingRenditions().sort()).toEqual([panorama, PHOTO].sort());
+  });
+
+  it('owes no viewer copy of a photo served the camera JPEG until it is edited', () => {
+    const repo = new PhotoEditsRepository(db);
+    const photos = photoProcessing();
+    db.query(`UPDATE photos SET rendition_source = 'embedded' WHERE id = ?`).run(PHOTO);
+    settled(PHOTO);
+    const matched = repo.applyCameraMatch(PHOTO, {
+      exposure: 0.35,
+      saturation: 17,
+      toneCurve: IDENTITY_TONE_CURVE,
+    });
+    built(PHOTO, 'grid');
+
+    expect(photos.queueEditedSince([PHOTO])).toBe(0);
+
+    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, matched?.state.rev ?? 0);
+    expect(photos.queueEditedSince([PHOTO])).toBe(1);
+    expect(owingRenditions()).toEqual([PHOTO]);
+  });
+
+  it('owes no viewer copy of a panorama served the camera JPEGs until a frame is edited', () => {
+    const repo = new PhotoEditsRepository(db);
+    const photos = photoProcessing();
+    const panorama = mergeComposite(photoComposites());
+    settled(panorama);
+    photos.markRenditionsUnowed(panorama, 'full');
+
+    photos.queueEditedSince();
+    expect(owingRenditions()).not.toContain(panorama);
+
+    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, 0);
+    photos.queueEditedSince([PHOTO]);
+    expect(owingRenditions()).toContain(panorama);
   });
 
   // Which settles, or the sweep would rebuild every panorama of an edited frame for good: a

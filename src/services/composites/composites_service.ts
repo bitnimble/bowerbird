@@ -8,6 +8,7 @@ import { newId } from '../../schemas/id';
 import type { AlignShape } from '../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import type { CompositeKind } from '../../schemas/photos';
+import type { CameraTone } from '../../schemas/photo_edits';
 import type { CameraMatch } from '../../schemas/render_stages';
 import {
   AnalysedSchema,
@@ -900,8 +901,9 @@ export class CompositesService {
     });
     const builtFrom = this.photoProcessing.builtFromOf(photoId);
 
+    let tone: CameraTone | undefined;
     for (const [at, want] of owed.entries()) {
-      await this.watched(watching, at + 1, () =>
+      const graded = await this.watched(watching, at + 1, () =>
         this.processing.buildCompositeRendition(
           photoId,
           sources,
@@ -923,7 +925,9 @@ export class CompositesService {
         // A composite is never anybody's plane, so the geometry beside it is nothing's question.
         { from: want.from, matched: false },
       );
+      tone = graded ?? tone;
     }
+    if (tone != null) this.processing.matchedCamera(photoId, tone);
     // A library that serves the cameras' pictures is shown this canvas composited from them, and
     // that is done when a reader opens it rather than now: a merge is over in seconds, and a pan
     // nobody opens costs nothing. Said here so the row stops owing a copy it will never be

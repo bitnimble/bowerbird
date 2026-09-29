@@ -6,7 +6,7 @@ import type { Job } from '../../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { AlignShape } from '../../../schemas/jobs';
 import type { CompositeKind } from '../../../schemas/photos';
-import type { Denoiser } from '../../../schemas/photo_edits';
+import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import { renditionPathFor, stagedDescriptorPath } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
@@ -20,9 +20,7 @@ import { renditionSkips } from '../renditions/render_stages';
 import type { CompositeWorker } from '../workers/composite_worker';
 import type { Missing, Shown } from '../workers/prepare_pool';
 import type {
-  CompositeJob,
   CompositeJobSource,
-  RenditionJob,
   RenditionSource,
   RenditionWritten,
 } from '../workers/processing_types';
@@ -50,6 +48,7 @@ export abstract class RenderService {
   private readonly benchmark: RenderBenchmark;
   private readonly processed = new Set<(photoId: string, written: RenditionWritten) => void>();
   protected readonly described = new Set<(photoId: string, descriptor: Uint8Array) => void>();
+  private readonly cameraMatched = new Set<(photoId: string, tone: CameraTone) => void>();
 
   constructor(
     protected readonly photoProcessing: PhotoProcessingRepository,
@@ -71,6 +70,7 @@ export abstract class RenderService {
       this.targets,
       settings,
       (photoId, written) => this.announce(photoId, written),
+      (photoId, tone) => this.matchedCamera(photoId, tone),
     );
     this.prepareRenderer = new PrepareRenderer(
       photoPaths,
@@ -91,6 +91,7 @@ export abstract class RenderService {
       (photoId, descriptor) => {
         for (const listener of this.described) listener(photoId, descriptor);
       },
+      (photoId, tone) => this.matchedCamera(photoId, tone),
     );
     this.exports = new ExportRenderer(
       settings,
@@ -206,6 +207,16 @@ export abstract class RenderService {
     this.described.add(listener);
   }
 
+  /** Called with the camera match a render of a photograph graded under. */
+  onCameraMatched(listener: (photoId: string, tone: CameraTone) => void): void {
+    this.cameraMatched.add(listener);
+  }
+
+  /** After the copies graded under `tone` are recorded, which is what lets a listener vouch for them. */
+  matchedCamera(photoId: string, tone: CameraTone): void {
+    for (const listener of this.cameraMatched) listener(photoId, tone);
+  }
+
   // Announced from the two places that write a rendition - the queue's result
   // handler and the one-off run - rather than from the queue alone: an on-demand
   // build is a file changing behind a URL exactly as much as a queued one is, and
@@ -286,7 +297,7 @@ export abstract class RenderService {
     on: CompositeWorker,
     /** Whether a merge is watching this render's progress. */
     watched = false,
-  ): Promise<void> {
+  ): Promise<CameraTone | undefined> {
     return this.composites.buildCompositeRendition(
       photoId,
       sources,
@@ -303,10 +314,6 @@ export abstract class RenderService {
 
   openComposite(): CompositeWorker {
     return this.composites.openComposite();
-  }
-
-  private async runComposite(job: CompositeJob): Promise<string | undefined> {
-    return this.composites.runComposite(job);
   }
 
   async preparePicture(
@@ -369,14 +376,6 @@ export abstract class RenderService {
     on?: CompositeWorker,
   ): Promise<void> {
     return this.singlePhoto.measureCameraMatch(rawFilePath, photoId, library, on);
-  }
-
-  private async runOneOff(job: RenditionJob, builtFrom: string | null): Promise<void> {
-    return this.singlePhoto.runOneOff(job, builtFrom);
-  }
-
-  private async runDetached(job: RenditionJob): Promise<Uint8Array | undefined> {
-    return this.singlePhoto.runDetached(job);
   }
 
   async renderExport(

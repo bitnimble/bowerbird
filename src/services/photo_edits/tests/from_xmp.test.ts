@@ -228,18 +228,13 @@ describe('editsFromXmp', () => {
     expect(doc).toEqual({ ...neutralEdits(), exposure: 2.0 });
   });
 
-  it('leaves a zero exposure at the camera value alongside another edit', () => {
-    const { doc } = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="0" crs:Contrast2012="20"`));
+  it('leaves a zero exposure and saturation at their defaults, for the camera match to fill', () => {
+    const { doc } = editsFromXmp(
+      parse(`${CURRENT} crs:Exposure2012="0" crs:Saturation="0" crs:Contrast2012="20"`),
+    );
 
-    expect(doc?.exposure).toBeNull();
-    expect(doc?.contrast).toBe(20);
-  });
-
-  it('leaves a zero saturation at the camera value alongside another edit', () => {
-    const { doc } = editsFromXmp(parse(`${CURRENT} crs:Saturation="0" crs:Contrast2012="20"`));
-
-    expect(doc?.saturation).toBeNull();
-    expect(doc?.contrast).toBe(20);
+    expect(doc).toMatchObject({ exposure: 0, saturation: 0, contrast: 20 });
+    expect(doc?.cameraMatchApplied).toBe(false);
   });
 
   it('declines a sidecar whose tone sits at Camera Raw zeros and states nothing else', () => {

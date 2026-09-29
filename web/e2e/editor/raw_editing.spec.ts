@@ -298,7 +298,6 @@ test('tone curve points drag, stop at the plot edge, and go on double-click', as
     data: {
       doc: {
         ...original.doc,
-        exposure: null,
         toneCurve: {
           kind: TONE_CURVE_KIND,
           points: [
@@ -321,15 +320,6 @@ test('tone curve points drag, stop at the plot edge, and go on double-click', as
 
   try {
     await open(page);
-    const exposure = page.getByRole('slider', { name: 'Exposure', exact: true });
-    const thumb = await exposure.evaluate((input) => {
-      const box = input.parentElement?.getBoundingClientRect();
-      if (box == null) throw new Error('exposure has no thumb');
-      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-    });
-    const neutralCommit = savedByEditor();
-    await page.mouse.click(thumb.x, thumb.y);
-    expect(EditStateSchema.parse(await (await neutralCommit).json()).doc.exposure).toBeNull();
     const plot = page.getByRole('group', { name: 'Tone curve' });
     const plotBox = await plot.boundingBox();
     if (plotBox == null) throw new Error('tone curve has no plot');

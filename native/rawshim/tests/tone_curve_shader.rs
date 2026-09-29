@@ -1,6 +1,6 @@
 use rawshim::gpu::{Grade, ToneCurve};
 use rawshim::hdr_fit::HdrColour;
-use rawshim::light::{CurveCode, Gain, Light, Stops};
+use rawshim::light::{CurveCode, Gain, Light, Stops, same_curve};
 
 fn probe(entry: &str, samples: &[[f32; 4]], grade: &Grade<'_>) -> Vec<[f32; 4]> {
     let gpu = rawshim::gpu::device().expect("Vulkan adapter");
@@ -107,6 +107,18 @@ fn probe_grade(count: usize) -> Grade<'static> {
         Light::exactly(1.0),
         Light::exactly(10000.0),
     )
+}
+
+#[test]
+fn a_curve_read_back_a_unit_off_in_f64_is_still_the_camera_s() {
+    let fitted = [[0.0, 0.0], [0.5, f64::from(0.37_f32)], [1.0, 1.0]];
+    let mut read_back = fitted;
+    read_back[1][1] = f64::from_bits(fitted[1][1].to_bits() + 1);
+    assert!(same_curve(&fitted, &read_back));
+
+    let mut moved = fitted;
+    moved[1][1] = f64::from(f32::from_bits(0.37_f32.to_bits() + 1));
+    assert!(!same_curve(&fitted, &moved));
 }
 
 #[test]

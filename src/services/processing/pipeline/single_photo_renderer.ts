@@ -4,7 +4,7 @@ import { Logger } from '../../../logger';
 import { newId } from '../../../schemas/id';
 import type { Job } from '../../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
-import type { Denoiser } from '../../../schemas/photo_edits';
+import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { getDataPath } from '../../../utils/paths';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
@@ -17,6 +17,7 @@ import { workerEntry } from '../../worker_entry';
 import type { CompositeWorker } from '../workers/composite_worker';
 import type {
   ProcessingMessage,
+  Ran,
   RenditionJob,
   RenditionSource,
   RenditionTarget,
@@ -35,6 +36,7 @@ export class SinglePhotoRenderer {
     private readonly targets: RenderTargets,
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
     private readonly describe: (photoId: string, descriptor: Uint8Array) => void,
+    private readonly cameraMatched: (photoId: string, tone: CameraTone) => void,
   ) {}
 
   // One rendition, on demand: the detail view asking for a size or a range it
@@ -273,15 +275,15 @@ export class SinglePhotoRenderer {
     // read has to hand it over exactly as the queue does. Dropping it here left a
     // photo whose tile was rebuilt unable to stack, silently and for good: nothing
     // revisits a tile that is now on disk.
-    let descriptor: Uint8Array | undefined;
+    let result: Ran;
     if (job.rendered == null) {
-      descriptor = await this.runDetached(job);
+      result = await this.runDetached(job);
     } else {
       const target = job.targets[0];
       if (target == null) throw new Error('a client rendition needs one target');
       const temporary = target.outputPath + '.' + newId() + '.tmp';
       try {
-        descriptor = await this.runDetached({
+        result = await this.runDetached({
           ...job,
           targets: [{ ...target, outputPath: temporary }],
         });
@@ -339,7 +341,9 @@ export class SinglePhotoRenderer {
       this.announce(job.photoId, { stage: 'renditions', version });
     }
     // After the writes, and best-effort, for the reasons `stageDone` gives.
-    if (descriptor != null) this.describe(job.photoId, descriptor);
+    if (result.descriptor != null) this.describe(job.photoId, result.descriptor);
+    // After the copies are recorded, which is what lets the write vouch for them.
+    if (result.cameraTone != null) this.cameraMatched(job.photoId, result.cameraTone);
   }
 
   /**
@@ -349,12 +353,12 @@ export class SinglePhotoRenderer {
    * is bumped and no listener hears about the descriptor, because none of those describe what
    * is now on disk under this photo.
    */
-  async runDetached(job: RenditionJob): Promise<Uint8Array | undefined> {
+  async runDetached(job: RenditionJob): Promise<Ran> {
     const fields = { photo: job.photoId, file: path.basename(job.rawFilePath) };
     const worker = new Worker(
       workerEntry('processing_worker', new URL('../workers/processing_worker.ts', import.meta.url)),
     );
-    return await new Promise<Uint8Array | undefined>((resolve, reject) => {
+    return await new Promise<Ran>((resolve, reject) => {
       worker.onmessage = (event: MessageEvent<ProcessingMessage>) => {
         if ('kind' in event.data) {
           log.info('render inputs', {
@@ -379,7 +383,7 @@ export class SinglePhotoRenderer {
           });
           return;
         }
-        if (event.data.success) resolve(event.data.descriptor);
+        if (event.data.success) resolve(event.data);
         else reject(new Error(event.data.error));
       };
       worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
