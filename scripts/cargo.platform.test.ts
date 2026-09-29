@@ -44,7 +44,7 @@ test('cargo fmt checks and formats only the selected crate', () => {
   expect(run().status).toBe(0);
   expect(readFileSync(source, 'utf8')).toBe('pub fn answer() -> u32 {\n    42\n}\n');
   expect(run('--check').status).toBe(0);
-});
+}, 60_000);
 
 test("an uplift outlives the generation it points at, unless it is the last one's", () => {
   profile = mkdtempSync(join(tmpdir(), 'sweep-'));

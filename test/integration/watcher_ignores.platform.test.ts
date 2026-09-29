@@ -56,6 +56,10 @@ async function start(
   watcher = new LibraryWatcher(libraries, scan, DEBOUNCE, POLL);
   watcher.start();
   await watcher.whenReady();
+  // FSEvents delivers the setup's own mkdirs after the subscription, which would
+  // read as a scan the change under test caused.
+  await quiet();
+  calls = [];
 }
 
 beforeEach(() => {
