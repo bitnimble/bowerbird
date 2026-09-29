@@ -16,7 +16,11 @@ for its platform, and hands off to an updater that swaps it in and restarts.
 ### 23.1 The changelog is the release description
 
 The GitHub release body is the changelog, rendered from markdown in `release_notes.tsx`.
-The workflow asks GitHub to generate it from the tag's commits.
+`bun run release` writes it into `changelog.json` under the new tag, in the same commit as
+`VERSION`: `scripts/changelog.ts` has `claude -p` sort the commits since the last tag into
+New, Improved and Fixed, keeping only what a user would notice. Without claude, or when the
+call fails, the entry is "Bug fixes and performance improvements". The workflow publishes the
+tag's entry as the release description.
 
 The dialog is **cumulative**: every release newer than the running version, newest first,
 including all three months if the reader skipped three months.

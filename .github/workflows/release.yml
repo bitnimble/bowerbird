@@ -602,14 +602,15 @@ jobs:
           pattern: dist-*
           merge-multiple: true
       - run: bun run scripts/write-release-manifest.ts --dist dist ${{ needs.docker.result == 'success' && format('--image-repo ghcr.io/{0}', github.repository) || '' }}
+      - run: jq -r --arg tag "$TAG" '.[$tag] // "Bug fixes and performance improvements"' changelog.json > "$RUNNER_TEMP/changelog.md"
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.plan.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          # The description of this release is the changelog the app shows (DESIGN §23.1),
-          # so it is generated rather than left empty: an update nobody can read the
-          # reason for is an update nobody installs.
-          generate_release_notes: true
+          # The description of this release is the changelog the app shows (DESIGN §23.1).
+          body_path: ${{ runner.temp }}/changelog.md
           files: |
             dist/release.yml
             dist/*/*
