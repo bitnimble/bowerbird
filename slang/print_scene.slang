@@ -519,7 +519,8 @@ float3 glass_reflected_light(PrintHit hit)
 {
     if (hit.view.z <= 0.0) { return float3(0.0); }
     let at = hit.position + hit.view * ((frame_glass_depth() - hit.position.z) / hit.view.z);
-    let direction = reflect(-hit.view, normalize(float3(-glass_wave(at.xy * print.surface.z), 1.0)));
+    let direction = reflect(-hit.view,
+        normalize(float3(-glass_wave(at.xy * print.surface.z, GLASS_WAVE), 1.0)));
     if (direction.z <= 0.0) { return float3(0.0); }
     if (frame_occluded(at, direction, frame_aperture(hit.half), frame_front_depth())) { return float3(0.0); }
     let light = print.light.xyz;
@@ -592,7 +593,8 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     let focal = print_focal(canvas, frame_outer_half(photo_half));
     let radians = min(canvas.x, canvas.y) * focal;
     let lamp_angle = print.surface.y / length(float3(lamp.xy, 2.0 * depth - lamp.z) - eye);
-    let middle = paper_pixel(mirrored_image(lamp, eye, depth, !sheet), canvas, focal);
+    let wave = GLASS_WAVE;
+    let middle = paper_pixel(mirrored_image(lamp, eye, depth, !sheet, wave), canvas, focal);
     if (length(pixel - middle) / radians > 1.5 * lamp_angle + 12.0 * FLARE_REACH) { return 0.0; }
     // A rough sheet spreads the lamp over a lobe wider than the lamp, and its image dims by as much.
     let alpha = print.material.x * print.material.x;
@@ -603,7 +605,7 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     let tangent = lamp_tangent();
     let bitangent = cross(print.light.xyz, tangent);
     let magnified = sheet ? 1.0 : wave_magnification(lamp, eye, depth,
-        paper_inverse(print.surface.y * tangent), paper_inverse(print.surface.y * bitangent));
+        paper_inverse(print.surface.y * tangent), paper_inverse(print.surface.y * bitangent), wave);
     var flare = 0.0;
     for (int j = 0; j < FLARE_SAMPLES; j += 1) {
         for (int i = 0; i < FLARE_SAMPLES; i += 1) {
@@ -611,7 +613,7 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
             if (dot(at, at) > 1.0) { continue; }
             let face = paper_inverse(lamp_face(at, tangent, bitangent));
             if (face.z <= depth) { continue; }
-            let image = mirrored_image(face, eye, depth, !sheet);
+            let image = mirrored_image(face, eye, depth, !sheet, wave);
             let crossing = eye + image * ((depth - eye.z) / image.z);
             if (any(abs(crossing.xy) > bound)) { continue; }
             if (framed && (frame_occluded(crossing, -image, aperture, front)
@@ -640,26 +642,27 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
 /// How much larger the pane's wave draws the lamp's image than a flat pane would, by area: a
 /// curved patch of the pane is a weak mirror lens, and the flux the camera's star spreads is the
 /// lamp's radiance over its image.
-float wave_magnification(float3 lamp, float3 eye, float depth, float3 along, float3 across)
+float wave_magnification(float3 lamp, float3 eye, float depth, float3 along, float3 across,
+    Extent<Millimetre> wave)
 {
-    let flat = mirrored_image(lamp, eye, depth, false);
-    let wavy = mirrored_image(lamp, eye, depth, true);
-    let flat_area = cross(mirrored_image(lamp + along, eye, depth, false) - flat,
-        mirrored_image(lamp + across, eye, depth, false) - flat);
-    let wavy_area = cross(mirrored_image(lamp + along, eye, depth, true) - wavy,
-        mirrored_image(lamp + across, eye, depth, true) - wavy);
+    let flat = mirrored_image(lamp, eye, depth, false, wave);
+    let wavy = mirrored_image(lamp, eye, depth, true, wave);
+    let flat_area = cross(mirrored_image(lamp + along, eye, depth, false, wave) - flat,
+        mirrored_image(lamp + across, eye, depth, false, wave) - flat);
+    let wavy_area = cross(mirrored_image(lamp + along, eye, depth, true, wave) - wavy,
+        mirrored_image(lamp + across, eye, depth, true, wave) - wavy);
     return length(wavy_area) / max(length(flat_area), 1e-20);
 }
 
 /// The direction from `eye` to `face`'s image in the plane at `depth`, tipped by the pane's wave
 /// where `wavy` exactly as [`glass_reflected_light`] tips it.
-float3 mirrored_image(float3 face, float3 eye, float depth, bool wavy)
+float3 mirrored_image(float3 face, float3 eye, float depth, bool wavy, Extent<Millimetre> wave)
 {
     var image = normalize(float3(face.xy, 2.0 * depth - face.z) - eye);
     if (!wavy) { return image; }
     for (uint i = 0; i < 2; i += 1) {
         let crossing = eye + image * ((depth - eye.z) / image.z);
-        let normal = normalize(float3(-glass_wave(crossing.xy * print.surface.z), 1.0));
+        let normal = normalize(float3(-glass_wave(crossing.xy * print.surface.z, wave), 1.0));
         image = normalize(face - 2.0 * dot(face - crossing, normal) * normal - eye);
     }
     return image;

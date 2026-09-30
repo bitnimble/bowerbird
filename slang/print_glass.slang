@@ -6,7 +6,9 @@ import px;
 public static const float GLASS_INDEX = 1.52;
 static const Extent<Millimetre> GLASS_THICKNESS = { 2.0 };
 
-static const Extent<Millimetre> GLASS_WAVE = { 70.0 };
+/// Handed to [`glass_wave`] rather than read inside it: a caller under a loop takes it once above
+/// the loop (`px.slang`).
+public static const Extent<Millimetre> GLASS_WAVE = { 70.0 };
 static const float GLASS_SLOPE = 0.005;
 
 /// How far a pane's own waviness turns its normal, against a position on it in millimetres.
@@ -17,9 +19,9 @@ static const float GLASS_SLOPE = 0.005;
 /// a hand's width, which bends the straight edge of a mirrored lamp into a curve. Left flat, the
 /// lamp arrives as a rectangle with four exact corners: the one thing in the picture that could
 /// only have been computed.
-public float2 glass_wave(float2 millimetres)
+public float2 glass_wave(float2 millimetres, Extent<Millimetre> wave)
 {
-    let at = millimetres / GLASS_WAVE.d;
+    let at = millimetres / wave.d;
     return GLASS_SLOPE * float2(value_noise(at), value_noise(at + float2(31.7, 11.9)));
 }
 
