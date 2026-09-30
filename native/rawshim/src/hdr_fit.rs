@@ -121,21 +121,6 @@ const XYZ_TO_SRGB: [[f64; 3]; 3] = [
 
 const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
-/// `colour.slang`'s `finish_chroma` blend towards luma, without a lattice, as a 3x3.
-fn saturation_matrix(saturation: f64) -> [[f64; 3]; 3] {
-    std::array::from_fn(|r| {
-        std::array::from_fn(|c| {
-            f64::from(u8::from(r == c)) * saturation + (1.0 - saturation) * LUMA[c]
-        })
-    })
-}
-
-/// `total` with `saturation` taken off: `Sat(saturation) * without_saturation(total, saturation)`
-/// is `total`.
-fn without_saturation(total: &[[f64; 3]; 3], saturation: f64) -> [[f64; 3]; 3] {
-    compose3(&saturation_matrix(1.0 / saturation), total)
-}
-
 pub(crate) fn multiply(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
     let mut out = [[0.0f64; 3]; 3];
     for i in 0..3 {
@@ -225,8 +210,7 @@ pub struct HdrColour {
     /// it: a sidecar carrying both could come back with an anchor its own curve does not
     /// imply, and the frame would render a colour no fit ever chose.
     pub anchor: f64,
-    /// Applied after the curves; row-major, output channel by input channel. Only what the
-    /// fitted saturation leaves.
+    /// Applied after the curves; row-major, output channel by input channel.
     pub matrix: [[f64; 3]; 3],
     /// The uniform part of the whole colour fit (`global_saturation`) and the Saturation slider's
     /// default, on its step. A fitted match always carries a `chroma` map, whose nodes hold the
@@ -248,7 +232,7 @@ pub struct HdrColour {
     /// the difference between neighbouring nodes, where those per-pixel gains had none.
     ///
     /// That bound is the *grid*, and it is the whole of it. What stops a wild map is that
-    /// every rung is scored against the scalar on the picture, each colour class with it - an
+    /// every rung is scored against no map on the picture, each colour class with it - an
     /// outcome test rather than a parameter bound.
     ///
     /// A luma term on the nodes would want this re-measured: the grid bounds its gradient
@@ -470,6 +454,8 @@ pub struct ChromaMap {
 /// gives lightness the same freedom.
 pub const NODE_VALUES: usize = 9;
 
+const UNCORRECTED_NODE: [f64; NODE_VALUES] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
 /// A pixel's chroma scatter about its neighbours' on the plane a rendition's pixels are like, per
 /// level of the fitted lattice (`fit_noise.slang`).
 struct LevelNoise {
@@ -554,7 +540,7 @@ impl ChromaMap {
     ///
     /// Which is the point of the shape: one gain applied to every colour alike is this
     /// model with the same 2x2 at every node, so the chroma map is a strict
-    /// generalisation of the scalar it replaces rather than a second thing beside it.
+    /// generalisation of the scalar rather than a second thing beside it.
     /// A frame that wants nothing hue-dependent is described by the same 2x2 at every
     /// node, exactly.
     ///
@@ -566,7 +552,8 @@ impl ChromaMap {
     /// the lightness term present: a frame that wants nothing hue-dependent gets a map
     /// that leaves lightness where the tone stage put it.
     pub fn from_saturation(saturation: f64) -> ChromaMap {
-        let node = [saturation, 0.0, 0.0, saturation, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let mut node = UNCORRECTED_NODE;
+        (node[0], node[3]) = (saturation, saturation);
         let reach = ChromaMap::warp(CHROMA_REACH);
         ChromaMap {
             low: [-reach; 2],
@@ -712,13 +699,16 @@ impl ChromaMap {
         (at, weight)
     }
 
-    /// Every node keeping `strength` of its departure from the scalar `saturation`.
-    fn at_strength(&self, saturation: f64, strength: f64) -> ChromaMap {
-        let scalar = ChromaMap::from_saturation(saturation).nodes[0];
+    /// Every node keeping `strength` of its correction.
+    fn at_strength(&self, strength: f64) -> ChromaMap {
         let nodes = self
             .nodes
             .iter()
-            .map(|node| std::array::from_fn(|k| scalar[k] + strength * (node[k] - scalar[k])))
+            .map(|node| {
+                std::array::from_fn(|k| {
+                    UNCORRECTED_NODE[k] + strength * (node[k] - UNCORRECTED_NODE[k])
+                })
+            })
             .collect();
         ChromaMap {
             nodes,
@@ -726,11 +716,10 @@ impl ChromaMap {
         }
     }
 
-    /// Each node keeping `1 / (1 + r)` of its departure from the scalar `saturation`, `r` being a
-    /// rendition pixel's chroma scatter there in node spacings. For a fitted lattice, whose spacing
-    /// is the one the scatter is measured against.
-    fn noise_damped(&self, saturation: f64, noise: &LevelNoise) -> ChromaMap {
-        let scalar = ChromaMap::from_saturation(saturation).nodes[0];
+    /// Each node keeping `1 / (1 + r)` of its correction, `r` being a rendition pixel's chroma
+    /// scatter there in node spacings. For a fitted lattice, whose spacing is the one the scatter
+    /// is measured against.
+    fn noise_damped(&self, noise: &LevelNoise) -> ChromaMap {
         let chroma = self.chroma_count;
         let nodes = self
             .nodes
@@ -753,7 +742,9 @@ impl ChromaMap {
                         .sum()
                 });
                 let keep = 1.0 / (1.0 + spread);
-                std::array::from_fn(|k| scalar[k] + keep * (node[k] - scalar[k]))
+                std::array::from_fn(|k| {
+                    UNCORRECTED_NODE[k] + keep * (node[k] - UNCORRECTED_NODE[k])
+                })
             })
             .collect();
         ChromaMap {
@@ -762,12 +753,11 @@ impl ChromaMap {
         }
     }
 
-    /// Each node keeping the share of its departure from the scalar `saturation` that `judged`,
-    /// pixels it was not fitted from, asks for: its chroma and its lightness apiece, each the
-    /// minimum of its error along the line from the scalar to the node. Where little landed the
-    /// node keeps its own, as the fit's confidence does. For a fitted lattice, on its own nodes.
-    fn validated(&self, saturation: f64, judged: &ChromaMoments) -> ChromaMap {
-        let scalar = ChromaMap::from_saturation(saturation).nodes[0];
+    /// Each node keeping the share of its correction that `judged`, pixels it was not fitted from,
+    /// asks for: its chroma and its lightness apiece, each the minimum of its error along the line
+    /// from no correction to the node. Where little landed the node keeps its own, as the fit's
+    /// confidence does. For a fitted lattice, on its own nodes.
+    fn validated(&self, judged: &ChromaMoments) -> ChromaMap {
         let nodes = self
             .nodes
             .iter()
@@ -782,8 +772,8 @@ impl ChromaMap {
                 let strength = |rows: &[([usize; 3], [f64; 3])]| -> f64 {
                     let (mut slope, mut curvature) = (0.0, 0.0);
                     for (at, target) in rows {
-                        let s = at.map(|k| scalar[k]);
-                        let d = at.map(|k| node[k] - scalar[k]);
+                        let s = at.map(|k| UNCORRECTED_NODE[k]);
+                        let d = at.map(|k| node[k] - UNCORRECTED_NODE[k]);
                         slope += form(d, s) - (0..3).map(|i| d[i] * target[i]).sum::<f64>();
                         curvature += form(d, d);
                     }
@@ -802,7 +792,7 @@ impl ChromaMap {
                 )]);
                 std::array::from_fn(|k| {
                     let keep = if k < 6 { chroma } else { light };
-                    scalar[k] + keep * (node[k] - scalar[k])
+                    UNCORRECTED_NODE[k] + keep * (node[k] - UNCORRECTED_NODE[k])
                 })
             })
             .collect();
@@ -2132,8 +2122,8 @@ pub fn srgb_oetf(value: f64) -> f64 {
 /// The camera's rendering as the fit will compare against it, and the weights and pair
 /// list every comparison uses, worked out once.
 ///
-/// The fit measures itself dozens of times over - six ridge candidates and a saturation search at
-/// each of three rounds - and none of this changes between them.
+/// The fit measures itself dozens of times over - six ridge candidates at each of three rounds -
+/// and none of this changes between them.
 struct Pairs {
     at: Vec<usize>,
     /// `at` and `greys` on the device, which is where every probe gathers its samples from.
@@ -2726,7 +2716,7 @@ impl Moments {
             / 3.0
     }
 
-    /// The matrix this set asks for, damped by `ridge` towards `toward`, and held to
+    /// The matrix this set asks for, damped by `ridge` towards the identity, and held to
     /// leaving a neutral neutral.
     ///
     /// Each row is solved subject to summing to one, so `(x, x, x)` maps to `(x, x, x)`
@@ -2735,7 +2725,7 @@ impl Moments {
     /// does is tint the greys - and worst of all above the fit domain, where the
     /// highlights are extrapolated and no pair is there to object. Constrained, the
     /// cross-channel freedom a brown needs costs a grey nothing.
-    fn solve(&self, ridge: f64, toward: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    fn solve(&self, ridge: f64) -> [[f64; 3]; 3] {
         // One scale for every row, so a row the camera crushed most of is damped the harder for it.
         let scale = self.trace();
         std::array::from_fn(|o| {
@@ -2743,11 +2733,11 @@ impl Moments {
             let mut atb = self.atb[o];
             for i in 0..3 {
                 ata[i][i] += ridge * scale;
-                atb[i] += ridge * scale * toward[o][i];
             }
+            atb[o] += ridge * scale;
             neutral_row(&ata, &atb)
                 .or_else(|| solve_row(&ata, &atb))
-                .unwrap_or(toward[o])
+                .unwrap_or(IDENTITY[o])
         })
     }
 }
@@ -2804,9 +2794,8 @@ async fn ridge_candidates(
     gpu: &'static crate::gpu::Gpu,
     toned: &crate::gpu::Buffer,
     pairs: &Pairs,
-    toward: &[[f64; 3]; 3],
 ) -> Option<Vec<[[f64; 3]; 3]>> {
-    let mut ridged = [*toward; RIDGE_CANDIDATES.len()];
+    let mut ridged = [IDENTITY; RIDGE_CANDIDATES.len()];
     for _ in 0..CENSOR_ROUNDS {
         let blocks = crate::fit_moments::partials(
             gpu,
@@ -2820,15 +2809,15 @@ async fn ridge_candidates(
         // Folded in block order, which is what makes this the same answer on every adapter.
         let moments: Vec<Moments> = blocks.iter().map(|probe| Moments::folded(probe)).collect();
         if moments.iter().all(|m| m.trace() <= 0.0) {
-            return Some(vec![*toward]);
+            return Some(vec![IDENTITY]);
         }
-        ridged = std::array::from_fn(|k| moments[k].solve(RIDGE_CANDIDATES[k], toward));
+        ridged = std::array::from_fn(|k| moments[k].solve(RIDGE_CANDIDATES[k]));
     }
-    // `toward` ahead of the ridges, as the damped end of the same scale rather than a special
+    // The identity ahead of the ridges, as the damped end of the same scale rather than a special
     // case: the most damped ridge is still solved from the pairs, so on a frame whose pairs are not
     // the picture it can contradict the picture too. It wins where it scores best, which is what
     // "most damped first" already promises on a frame that cannot tell it from one.
-    Some(std::iter::once(*toward).chain(ridged).collect())
+    Some(std::iter::once(IDENTITY).chain(ridged).collect())
 }
 
 fn fitted_matrix(
@@ -3116,8 +3105,7 @@ impl Rescored {
 }
 
 /// The matrix for the tone stage a colour currently carries, and every candidate it was chosen
-/// from, as residuals ([`without_saturation`]) of matrices solved and scored as the whole linear
-/// step, damped towards the saturation alone.
+/// from.
 async fn fitted_matrix_for(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
@@ -3125,12 +3113,10 @@ async fn fitted_matrix_for(
     frame: &Pairs,
     samples: &Gathered,
 ) -> Option<([[f64; 3]; 3], Vec<[[f64; 3]; 3]>)> {
-    let saturated = saturation_matrix(colour.saturation);
-    let residual = |total: &[[f64; 3]; 3]| without_saturation(total, colour.saturation);
     // The tone stage once, kept on the device for the candidates below: they differ only in
     // their matrix, which sits after it.
     let toned = evaluate_over(gpu, colour, &samples.pairs, pairs.at.len(), Stage::Tone);
-    let candidates = ridge_candidates(gpu, &toned.buffer, pairs, &saturated).await?;
+    let candidates = ridge_candidates(gpu, &toned.buffer, pairs).await?;
     if candidates.len() == 1 {
         return Some((IDENTITY, vec![IDENTITY]));
     }
@@ -3145,7 +3131,7 @@ async fn fitted_matrix_for(
     let frame_scored = scored_on_matrices(frame, scoring, &candidates).await?;
     let unmatched = [&scored[0], &frame_scored[0]];
     if crate::clock::watched() {
-        let names = std::iter::once("saturation alone".to_string())
+        let names = std::iter::once("identity".to_string())
             .chain(RIDGE_CANDIDATES.iter().map(|r| r.to_string()));
         let ridges: Vec<String> = names
             .zip(&scored)
@@ -3163,13 +3149,8 @@ async fn fitted_matrix_for(
         eprintln!("  matrix candidates {}", ridges.join(", "));
     }
     Some((
-        residual(&fitted_matrix(
-            &candidates,
-            &scored,
-            &frame_scored,
-            unmatched,
-        )),
-        candidates.iter().map(residual).collect(),
+        fitted_matrix(&candidates, &scored, &frame_scored, unmatched),
+        candidates,
     ))
 }
 
@@ -3229,7 +3210,7 @@ const SATURATION_STEP: f64 = 0.01;
 const INVERSE_PHI: f64 = 0.618_033_988_749_895;
 
 /// Golden steps past the first two probes in the chroma map's strength search, which leaves a
-/// bracket a tenth of the way from the scalar to the map.
+/// bracket a tenth of the way from no map to the map.
 const STRENGTH_STEPS: usize = 5;
 
 /// Steps of the coarse sweep.
@@ -3438,12 +3419,12 @@ async fn scored_on(scoring: &crate::fit_score::Scoring, sweep: &[f64]) -> Option
     )
 }
 
-/// Weight a node needs before it is trusted on its own rather than on the frame's.
+/// Weight a node needs before its own correction is trusted.
 ///
 /// Not a threshold but a half-way point: a node carrying this much keeps half of what it
-/// measured and takes half of the global answer, and one with none keeps none. So a frame
-/// with colour everywhere gets a map that follows it, and a frame of snow and sky gets back
-/// the single scalar this generalises, without a cliff between them.
+/// measured, and one with none keeps none. So a frame with colour everywhere gets a map that
+/// follows it, and a frame of snow and sky gets back the map that changes nothing, without a
+/// cliff between them.
 ///
 /// Low, and it has to be read against the weights rather than as a pair count. It was 400
 /// when the wide pass contributed a flat 0.25 per sample and the pairs carried a hue
@@ -5435,11 +5416,7 @@ async fn lattice_moments(
 ///
 /// Solved rather than searched: with the nodes fixed and the interpolation linear in
 /// them, matching our chroma to the camera's is a weighted least squares per node.
-fn fitted_chroma(
-    axes: &LatticeAxes,
-    moments: &ChromaMoments,
-    saturation: f64,
-) -> Option<ChromaMap> {
+fn fitted_chroma(axes: &LatticeAxes, moments: &ChromaMoments) -> Option<ChromaMap> {
     const NODES: usize = MAP_NODES;
     let ChromaMoments {
         ata,
@@ -5453,16 +5430,16 @@ fn fitted_chroma(
         seen,
     } = moments;
 
-    // Each node solved on its own, then pulled back toward the scalar by how little it
+    // Each node solved on its own, then pulled back toward no correction by how little it
     // saw. A node with nothing keeps nothing of its own.
-    let flat = [saturation, 0.0, 0.0, saturation, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut map = ChromaMap {
         low: [axes.span[0][0], axes.span[1][0]],
         scale: [axes.span[0][1], axes.span[1][1]],
         level_scale: axes.level_scale,
         surround_scale: axes.surround_scale,
-        ..ChromaMap::coarse_shell(vec![flat; MAP_NODES])
+        ..ChromaMap::coarse_shell(vec![UNCORRECTED_NODE; MAP_NODES])
     };
+    const TARGET: [[f64; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let mut fitted = 0usize;
     for node in 0..NODES {
         // The lightness gain first, and independently: it is a scalar least squares that
@@ -5539,15 +5516,11 @@ fn fitted_chroma(
                 m[i][j] += bias * sx[node][i] * sx[node][j];
             }
         }
-        // The ridge pulls toward the scalar rather than toward zero, so damping a node
-        // means "behave like the rest of the frame", not "throw the colour away". The
-        // scalar has no tint, so the two luma-to-chroma terms are damped toward 0.
-        let target: [[f64; 3]; 2] = [[flat[0], flat[1], 0.0], [flat[2], flat[3], 0.0]];
         let mut solved = [0.0f64; 6];
         let mut ok = true;
         for row in 0..2 {
             let rhs: [f64; 3] = std::array::from_fn(|i| {
-                atb[node][row][i] + ridge[i] * target[row][i] + bias * st[node][row] * sx[node][i]
+                atb[node][row][i] + ridge[i] * TARGET[row][i] + bias * st[node][row] * sx[node][i]
             });
             match solve_row(&m, &rhs) {
                 Some(x) => {
@@ -5585,7 +5558,7 @@ fn fitted_chroma(
 
         let keep = seen[node] / (seen[node] + MAP_CONFIDENCE);
         for k in 0..6 {
-            map.nodes[node][k] = flat[k] + (solved[k] - flat[k]) * keep;
+            map.nodes[node][k] = UNCORRECTED_NODE[k] + (solved[k] - UNCORRECTED_NODE[k]) * keep;
         }
         fitted += 1;
     }
@@ -5711,8 +5684,6 @@ async fn fit_colour(
         bits: words,
         pixels: source.pixels(),
     };
-    // `fitted_saturation` has why the scalar weighs every pair alike.
-    let even = train.thinned(gpu, |_| 1.0);
     let global = train.thinned(gpu, |k| train.balance[k]);
     lap("mask, census, pairs");
     let (model, candidates) = fit_model(
@@ -5721,7 +5692,7 @@ async fn fit_colour(
         &evidence,
         &balance,
         ceiling,
-        [&global, &even, &frame],
+        [&global, &frame],
     )
     .await?;
     lap("model");
@@ -5769,7 +5740,7 @@ async fn fit_colour(
     // Every matrix candidate is judged with the lattice it would carry, since the lattice mends
     // locally what a 3x3 cannot, and a matrix that serves a frame's commonest colours by turning a
     // rare one is only as bad as what is left of that after the lattice. Each against the one
-    // reference, the fitted saturation alone, so their costs and harms are comparable.
+    // reference, the curves alone, so their costs and harms are comparable.
     let with_matrix = |matrix: [[f64; 3]; 3]| HdrColour {
         matrix,
         ..model.clone()
@@ -5780,8 +5751,8 @@ async fn fit_colour(
     // twice between them.
     let flat_budget = reference.held.flat + MAP_FLAT_SLACK;
     // Judged on both held populations and the picture, each with its classes. The flats
-    // are held near the reference's, because the wide samples score terribly under a scalar
-    // (saturated content is what a scalar cannot say) and an unbounded sum would let a map buy
+    // are held near the reference's, because the wide samples score terribly without a map
+    // (saturated content is what the curves cannot say) and an unbounded sum would let a map buy
     // a large wide win with the flats, which are most of the picture.
     let cost = async |trial: &HdrColour| -> Option<(f64, Score)> {
         let judged = judges.judge(gpu, trial).await?;
@@ -5832,14 +5803,9 @@ async fn fit_colour(
         }
     }
     let (_, mut colour, scored) = chosen?;
-    // Where the scalar won, as the map that does exactly what it does: the grade applies the
-    // saturation after the mean-frame clamp, where a matrix re-expressed around a new split would
-    // not survive it, and a map carries its chroma whatever `saturation` is set to.
-    let chroma = colour
-        .chroma
-        .take()
-        .unwrap_or_else(|| ChromaMap::from_saturation(colour.saturation));
-    colour.chroma = Some(chroma);
+    // A map even where none won: without one `finish_chroma` blends by `saturation`, which is the
+    // slider's default and not part of this render.
+    colour.chroma.get_or_insert_with(ChromaMap::identity);
     lap("matrix and lattice");
     // The map reads the surround at grade time, so its thumb travels with it.
     let step = 16usize;
@@ -5940,7 +5906,7 @@ struct Lattice<'a> {
 }
 
 /// The chroma lattice `colour` would carry, the cost `cost` puts on the result, and its held
-/// pairs' score. None for the lattice where the scalar costs least.
+/// pairs' score. None for the lattice where no map costs least.
 async fn fitted_lattice(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
@@ -5957,15 +5923,13 @@ async fn fitted_lattice(
         surround,
     } = *on;
     let (width, height) = (source.width, source.height);
-    // Then the hue-dependent part, kept only if it earns its place. Least squares on
-    // chroma minimises chroma error, and this fit is judged on deltaE - the same gap
-    // that made a mean chroma ratio the wrong way to pick the scalar. Per node it is far
-    // better constrained than one number was, but "better constrained" is not "always an
-    // improvement", so it is measured rather than assumed.
+    // The hue-dependent part, kept only if it earns its place. Least squares on chroma
+    // minimises chroma error, and this fit is judged on deltaE, so it is measured rather than
+    // assumed.
     //
     // Gated on pairs the map was not fitted from, which is what makes this a question about
     // the model rather than about how well it memorised its inputs. Scored on its own pairs
-    // the map could not lose: it contains the scalar exactly, so more capacity always fitted
+    // the map could not lose: it contains no correction exactly, so more capacity always fitted
     // them better, and it took a render to look at to notice that the extra capacity was
     // going into a cast.
     //
@@ -6005,7 +5969,7 @@ async fn fitted_lattice(
             .map(|v| v.map(|axes| axes.map(|a| (a.sqrt() * 1e4).round() / 1e4)));
         eprintln!("  colour chroma noise by level {sigma:?}");
     }
-    let (scalar, unmapped) = cost(colour).await?;
+    let (bare, unmapped) = cost(colour).await?;
     let mapped = async |map: &ChromaMap| {
         cost(&HdrColour {
             chroma: Some(map.clone()),
@@ -6066,13 +6030,13 @@ async fn fitted_lattice(
     for wide_weight in [0.0, 0.002, 0.01, 0.05, 0.25, 1.0, 4.0] {
         let mut moments = taught.clone();
         moments.add(&wide_taught, wide_weight * WIDE_STANDS_FOR);
-        let Some(map) = fitted_chroma(&axes, &moments, colour.saturation) else {
+        let Some(map) = fitted_chroma(&axes, &moments) else {
             continue;
         };
         let map = map
             .level_trended(&moments.seen)
-            .noise_damped(colour.saturation, &noise)
-            .validated(colour.saturation, &held_out);
+            .noise_damped(&noise)
+            .validated(&held_out);
         // Smoothed before it is judged: the choice must score the surface a render will actually
         // read, not the fitted lattice it was built from.
         let (spent, score) = mapped(&map.smoothed()).await?;
@@ -6083,13 +6047,12 @@ async fn fitted_lattice(
             rungs = Some((spent, map, score));
         }
     }
-    // The rung that won is taken at the strength its cost is least at, from none of it - the
-    // scalar, as the identity is for the matrix - to all of it. A map that helps most colours and
-    // harms one is applied as far as that trade pays, where on or off would take it whole or lose
-    // it whole.
-    let mut best: (f64, Option<ChromaMap>, Score) = (scalar, None, unmapped);
+    // The rung that won is taken at the strength its cost is least at, from none of it to all of
+    // it. A map that helps most colours and harms one is applied as far as that trade pays, where
+    // on or off would take it whole or lose it whole.
+    let mut best: (f64, Option<ChromaMap>, Score) = (bare, None, unmapped);
     if let Some((whole, map, score)) = rungs {
-        let at = |strength: f64| map.at_strength(colour.saturation, strength).smoothed();
+        let at = |strength: f64| map.at_strength(strength).smoothed();
         let mut judged = vec![(whole, 1.0, score)];
         let (mut low, mut high) = (0.0, 1.0);
         let mut inner = [
@@ -6120,7 +6083,7 @@ async fn fitted_lattice(
         }
         for (spent, strength, score) in judged {
             if crate::clock::watched() {
-                eprintln!("  chroma at {strength:.3}: {spent:.3} against the scalar's {scalar:.3}");
+                eprintln!("  chroma at {strength:.3}: {spent:.3} against {bare:.3} bare");
             }
             if spent < best.0 {
                 best = (spent, Some(at(strength)), score);
@@ -6147,7 +6110,7 @@ async fn fit_model(
     evidence: &crate::fit_curve::Evidence,
     balance: &[f64],
     ceiling: f64,
-    [pairs, even, frame]: [&Pairs; 3],
+    [pairs, frame]: [&Pairs; 2],
 ) -> Option<(HdrColour, Vec<[[f64; 3]; 3]>)> {
     let mut lap = crate::clock::laps("  model ");
     let (curves, anchor) = fit_curves(gpu, evidence, balance, ceiling, None).await?;
@@ -6177,12 +6140,11 @@ async fn fit_model(
     // whole, so whatever of it is cross-channel - and on this camera a good deal is,
     // green scaled 0.884 on grass and 0.690 on a brown - is booked into a per-channel
     // curve that cannot express it and cannot be corrected by the matrix afterwards.
-    // Undoing the saturation and matrix from the target and refitting the curves against what is
-    // left gives each stage only the part it can represent. `fit.rs` alternates its falloff
-    // against the colour for the same reason, and lands within 0.1 after three rounds.
+    // Undoing the matrix from the target and refitting the curves against what is left gives each
+    // stage only the part it can represent. `fit.rs` alternates its falloff against the colour
+    // for the same reason, and lands within 0.1 after three rounds.
     // Once, outside the alternation: neither set's pixels nor the plane under them move with the
     // rounds, and a gather is a dispatch and an allocation apiece.
-    let even = SaturationPairs::over(gpu, source, None, even);
     let samples = Gathered {
         pairs: gathered(gpu, source, &pairs.indices, pairs.at.len(), None),
         frame: gathered(gpu, source, &frame.indices, frame.at.len(), None),
@@ -6193,14 +6155,10 @@ async fn fit_model(
     };
     let mut candidates = Vec::new();
     for round in 0..FIT_ROUNDS {
-        // Ahead of the matrix, so the matrix is only what a saturation cannot say.
-        colour.saturation = fitted_saturation(gpu, &colour, &even, Stage::Tone).await?;
-        lap("saturation");
         (colour.matrix, candidates) =
             fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
         lap("matrix");
-        let linear = compose3(&saturation_matrix(colour.saturation), &colour.matrix);
-        let Some(inverse) = invert3(&linear).filter(|_| round + 1 < FIT_ROUNDS) else {
+        let Some(inverse) = invert3(&colour.matrix).filter(|_| round + 1 < FIT_ROUNDS) else {
             break;
         };
         (colour.curves, colour.anchor) =
@@ -7384,7 +7342,7 @@ mod tests {
                 for (v, t) in reds.iter().filter(|_| with_reds) {
                     m.add(20.0, v, t, &matrix);
                 }
-                matrix = m.solve(0.0005, &IDENTITY);
+                matrix = m.solve(0.0005);
             }
             matrix
         };
@@ -7701,11 +7659,11 @@ mod tests {
         let quiet = LevelNoise {
             variance: [None; MAP_LEVEL],
         };
-        assert_eq!(map.noise_damped(1.0, &quiet).nodes, map.nodes);
+        assert_eq!(map.noise_damped(&quiet).nodes, map.nodes);
 
         let mut variance = [None; MAP_LEVEL];
         variance[2] = Some([1e-4; 2]);
-        let damped = map.noise_damped(1.0, &LevelNoise { variance });
+        let damped = map.noise_damped(&LevelNoise { variance });
         let at = |x: usize, z: usize| (z * MAP_CHROMA + x) * MAP_CHROMA + x;
         let kept = |x, z| (damped.nodes[at(x, z)][0] - 1.0) / 0.3;
         let grey = (-map.low[0] * map.scale[0]).round() as usize;
@@ -7856,7 +7814,7 @@ mod tests {
                 judged.land(&[node; 16], &share, 1e6, input, target, input[2]);
             }
         }
-        let validated = map.validated(1.0, &judged);
+        let validated = map.validated(&judged);
         let kept = |node: usize| (validated.nodes[node][0] - 1.0) / 0.3;
         assert!((kept(0) - 1.0).abs() < 1e-3, "{}", kept(0));
         assert!(kept(1).abs() < 1e-3, "{}", kept(1));
@@ -7865,6 +7823,25 @@ mod tests {
             (kept(3) - 1.0).abs() < 1e-12,
             "a node nothing judged keeps its own"
         );
+    }
+
+    #[test]
+    fn a_node_no_pair_reached_is_left_uncorrected() {
+        let mut moments = ChromaMoments::default();
+        let mut share = [0.0; 16];
+        share[0] = 1.0;
+        for input in [[0.05, 0.02, 0.5], [-0.03, 0.04, 0.3], [0.01, -0.06, 0.6]] {
+            let target = [1.3 * input[0], 1.3 * input[1]];
+            moments.land(&[0; 16], &share, 1e6, input, target, input[2]);
+        }
+        let axes = LatticeAxes {
+            span: [[-0.3, 10.0]; 2],
+            level_scale: 8.0,
+            surround_scale: 2.0,
+        };
+        let map = fitted_chroma(&axes, &moments).expect("one node was reached");
+        assert!((map.nodes[0][0] - 1.3).abs() < 1e-2, "{:?}", map.nodes[0]);
+        assert_eq!(map.nodes[1], UNCORRECTED_NODE);
     }
 
     /// A candidate that wins the means by ruining one small class of colour loses to one that
@@ -8312,77 +8289,6 @@ mod tests {
             "{:?}",
             out[0]
         );
-    }
-
-    #[test]
-    fn the_residual_composes_back_to_the_total() {
-        let total = [
-            [1.12, -0.09, -0.03],
-            [-0.06, 1.1, -0.04],
-            [-0.01, -0.12, 1.13],
-        ];
-        assert_eq!(without_saturation(&total, 1.0), total);
-        for saturation in [0.5, 0.82, 1.37, 2.0] {
-            let residual = without_saturation(&total, saturation);
-            let back = compose3(&saturation_matrix(saturation), &residual);
-            for (row, want) in back.iter().zip(&total) {
-                for (v, w) in row.iter().zip(want) {
-                    assert!((v - w).abs() < 1e-12, "{back:?} against {total:?}");
-                }
-            }
-            for row in residual {
-                assert!(
-                    (row.iter().sum::<f64>() - 1.0).abs() < 1e-12,
-                    "{residual:?} tints a neutral"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_saturation_is_applied_after_the_residual_matrix() {
-        let residual = [
-            [1.06, -0.04, -0.02],
-            [-0.03, 1.05, -0.02],
-            [-0.02, -0.05, 1.07],
-        ];
-        let samples = [
-            [0.8, 0.2, 0.2, 0.0],
-            [0.2, 0.5, 0.1, 0.0],
-            [0.1, 0.3, 0.6, 0.0],
-        ];
-        let as_total = |matrix: [[f64; 3]; 3]| HdrColour {
-            matrix,
-            ..identity_colour()
-        };
-        let split = HdrColour {
-            saturation: 1.3,
-            ..as_total(residual)
-        };
-        let Some(out) = through(&split, Stage::Full, &samples) else {
-            return;
-        };
-        let after = through(
-            &as_total(compose3(&saturation_matrix(1.3), &residual)),
-            Stage::Full,
-            &samples,
-        )
-        .expect("the same adapter");
-        let before = through(
-            &as_total(compose3(&residual, &saturation_matrix(1.3))),
-            Stage::Full,
-            &samples,
-        )
-        .expect("the same adapter");
-        let worst = |a: &[[f64; 3]], b: &[[f64; 3]]| {
-            a.iter()
-                .flatten()
-                .zip(b.iter().flatten())
-                .map(|(x, y)| (x - y).abs())
-                .fold(0.0, f64::max)
-        };
-        assert!(worst(&out, &after) < 1e-5, "{out:?} against {after:?}");
-        assert!(worst(&out, &before) > 1e-3, "the order is not visible here");
     }
 
     #[test]
@@ -9343,7 +9249,7 @@ mod tests {
             m.add(1.0, &v, &y, &IDENTITY);
         }
 
-        let matrix = m.solve(0.0005, &IDENTITY);
+        let matrix = m.solve(0.0005);
         for (o, row) in matrix.iter().enumerate() {
             let sum: f64 = row.iter().sum();
             assert!((sum - 1.0).abs() < 1e-9, "row {o} sums to {sum}");
@@ -9364,9 +9270,8 @@ mod tests {
     }
 
     #[test]
-    fn a_hard_ridge_lands_on_what_it_pulls_towards() {
-        let toward = saturation_matrix(1.4);
-        assert_eq!(Moments::default().solve(1.0, &toward), toward);
+    fn a_hard_ridge_lands_on_the_identity() {
+        assert_eq!(Moments::default().solve(1.0), IDENTITY);
         let mut m = Moments::default();
         for (v, y) in [
             ([0.5, 0.3, 0.2], [0.5, 0.18, 0.2]),
@@ -9375,10 +9280,10 @@ mod tests {
         ] {
             m.add(1.0, &v, &y, &IDENTITY);
         }
-        let held = m.solve(1e6, &toward);
-        for (row, want) in held.iter().zip(&toward) {
+        let held = m.solve(1e6);
+        for (row, want) in held.iter().zip(&IDENTITY) {
             for (v, w) in row.iter().zip(want) {
-                assert!((v - w).abs() < 1e-3, "{held:?} against {toward:?}");
+                assert!((v - w).abs() < 1e-3, "{held:?}");
             }
         }
     }
