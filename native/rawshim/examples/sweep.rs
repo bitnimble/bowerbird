@@ -27,6 +27,15 @@ const NEUTRAL: f64 = 0.04;
 /// way to clipping, and a cast in the mid-tones is what the eye reads.
 const BAND: (u8, u8) = (60, 210);
 
+/// Light added to every cell of both pictures before they are compared, as a share of white: what
+/// a display's own black and the eye's glare from the picture's bright regions lay over a shadow.
+///
+/// Without it the comparison is of light no viewer receives. A colour difference formula is
+/// steepest at zero, so a tint at code 6 - two counts of chroma, which the camera's JPEG has
+/// already quantised to grey - scores like a cast in the mid-tones, and a night frame is judged on
+/// its blacks. A lifted black still costs: at this veil, black against code 26 is over 6 L*.
+const VEILING_GLARE: f64 = 0.01;
+
 /// Samples a colour class needs before its mean is one.
 const MIN_CLASS_SAMPLES: f64 = 32.0;
 
@@ -262,7 +271,7 @@ fn against_camera(
             }
         }
         let n = ((x[1] - x[0]) * (y[1] - y[0])).max(1) as f64;
-        sum.map(|s| s / n)
+        sum.map(|s| s / n + VEILING_GLARE)
     };
     let scale = camera.width as f64 / width as f64;
     let on_camera = |v: usize, limit: usize| ((v as f64 * scale) as usize).min(limit);
