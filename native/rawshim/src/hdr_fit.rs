@@ -896,34 +896,46 @@ impl ChromaMap {
     /// error somewhere new; a cubic keeps every trend the level profile can honestly
     /// claim and still cannot alternate stripe-fine, so the bands are excluded by
     /// construction rather than by trade.
-    fn level_trended(&self) -> ChromaMap {
+    ///
+    /// Each node counts by how much landed on it (`seen`, per node): a level no pair reached
+    /// holds the prior, and counted like the rest it draws the cubic through itself.
+    fn level_trended(&self, seen: &[f64]) -> ChromaMap {
         let (c, l, s) = (self.chroma_count, self.level_count, self.surround_count);
         let area = c * c;
-        // Orthogonal polynomials over the node indices, so the projection is four dot
-        // products per profile rather than a solve.
-        let mean = (l as f64 - 1.0) / 2.0;
-        let p1: Vec<f64> = (0..l).map(|z| z as f64 - mean).collect();
-        let m2 = p1.iter().map(|v| v * v).sum::<f64>() / l as f64;
-        let p2: Vec<f64> = p1.iter().map(|v| v * v - m2).collect();
-        let m4 = p1.iter().map(|v| v.powi(4)).sum::<f64>() / p1.iter().map(|v| v * v).sum::<f64>();
-        let p3: Vec<f64> = p1.iter().map(|v| v.powi(3) - m4 * v).collect();
-        let (n1, n2, n3) = (
-            p1.iter().map(|v| v * v).sum::<f64>(),
-            p2.iter().map(|v| v * v).sum::<f64>(),
-            p3.iter().map(|v| v * v).sum::<f64>(),
-        );
+        let powers = |z: usize| {
+            let x = z as f64 / (l - 1) as f64 - 0.5;
+            [1.0, x, x * x, x * x * x]
+        };
         let mut nodes = self.nodes.clone();
         for si in 0..s {
             for at in 0..area {
+                let index = |z: usize| (si * l + z) * area + at;
+                let weight = |z: usize| {
+                    seen[index(z)] / (seen[index(z)] + MAP_CONFIDENCE) + UNSEEN_LEVEL_WEIGHT
+                };
+                let mut normal = [0.0f64; 16];
+                for z in 0..l {
+                    let basis = powers(z);
+                    for i in 0..4 {
+                        for j in 0..4 {
+                            normal[i * 4 + j] += weight(z) * basis[i] * basis[j];
+                        }
+                    }
+                }
                 for ch in 0..NODE_VALUES {
-                    let v = |z: usize| self.nodes[(si * l + z) * area + at][ch];
-                    let a0 = (0..l).map(&v).sum::<f64>() / l as f64;
-                    let a1 = (0..l).map(|z| v(z) * p1[z]).sum::<f64>() / n1;
-                    let a2 = (0..l).map(|z| v(z) * p2[z]).sum::<f64>() / n2;
-                    let a3 = (0..l).map(|z| v(z) * p3[z]).sum::<f64>() / n3;
+                    let mut asked = [0.0f64; 4];
                     for z in 0..l {
-                        nodes[(si * l + z) * area + at][ch] =
-                            a0 + a1 * p1[z] + a2 * p2[z] + a3 * p3[z];
+                        let basis = powers(z);
+                        for i in 0..4 {
+                            asked[i] += weight(z) * basis[i] * self.nodes[index(z)][ch];
+                        }
+                    }
+                    let Some(cubic) = crate::fit::gaussian(&normal, &asked, 4) else {
+                        continue;
+                    };
+                    for z in 0..l {
+                        nodes[index(z)][ch] =
+                            powers(z).iter().zip(&cubic).map(|(p, k)| p * k).sum();
                     }
                 }
             }
@@ -3440,6 +3452,10 @@ async fn scored_on(scoring: &crate::fit_score::Scoring, sweep: &[f64]) -> Option
 /// solved to the surroundings. With both sides weighted alike, the same object arrives with
 /// enough to be believed, and this is what "enough" now means.
 const MAP_CONFIDENCE: f64 = 2.0;
+
+/// What a level node no pair reached still counts for in its profile's cubic. Above zero so a
+/// profile with nothing on it has a solution, which is the prior it already holds.
+const UNSEEN_LEVEL_WEIGHT: f64 = 1e-3;
 
 /// How far the lattice's chroma-to-lightness terms may reach, in lightness per unit chroma.
 ///
@@ -6054,7 +6070,7 @@ async fn fitted_lattice(
             continue;
         };
         let map = map
-            .level_trended()
+            .level_trended(&moments.seen)
             .noise_damped(colour.saturation, &noise)
             .validated(colour.saturation, &held_out);
         // Smoothed before it is judged: the choice must score the surface a render will actually
@@ -7619,6 +7635,62 @@ mod tests {
         );
         let (_, tint) = perceptual_score([128u8; 3].map(srgb_eotf), [140u8; 3].map(srgb_eotf));
         assert!(tint < 1e-3, "lightness alone produced colour bias {tint}");
+    }
+
+    #[test]
+    fn the_level_trend_follows_the_levels_pairs_reached() {
+        let reached = MAP_LEVEL - 3;
+        let gain = |z: usize| match z < reached {
+            true => 0.8,
+            false => 0.5,
+        };
+        let map =
+            ChromaMap::from_nodes(|_, _, z| [gain(z), 0.0, 0.0, gain(z), 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let area = MAP_CHROMA * MAP_CHROMA;
+        let seen_to = |top: usize| -> Vec<f64> {
+            (0..MAP_NODES)
+                .map(|n| match (n / area) % MAP_LEVEL < top {
+                    true => 1e4,
+                    false => 0.0,
+                })
+                .collect()
+        };
+        let furthest = |trended: &ChromaMap| {
+            (0..reached)
+                .map(|z| (trended.nodes[z * area][0] - 0.8).abs())
+                .fold(0.0f64, f64::max)
+        };
+
+        let trended = map.level_trended(&seen_to(reached));
+        assert!(furthest(&trended) < 0.005, "moved {}", furthest(&trended));
+
+        let counted_alike = map.level_trended(&seen_to(MAP_LEVEL));
+        assert!(
+            furthest(&counted_alike) > 0.02,
+            "the unreached levels must be able to pull a profile they are counted in, or the \
+             assertion above passes on a projection that ignores its weights: {}",
+            furthest(&counted_alike)
+        );
+    }
+
+    #[test]
+    fn the_level_trend_keeps_a_cubic_it_was_handed() {
+        let cubic = |z: usize| {
+            let x = z as f64 / (MAP_LEVEL - 1) as f64;
+            0.9 - 0.4 * x + 0.7 * x * x - 0.5 * x * x * x
+        };
+        let map = ChromaMap::from_nodes(|_, _, z| {
+            [cubic(z), 0.0, 0.0, cubic(z), 0.0, 0.0, 1.0, 0.0, 0.0]
+        });
+        let trended = map.level_trended(&vec![1e4; MAP_NODES]);
+        for (kept, was) in trended.nodes.iter().zip(&map.nodes) {
+            assert!(
+                (kept[0] - was[0]).abs() < 1e-9,
+                "{} against {}",
+                kept[0],
+                was[0]
+            );
+        }
     }
 
     /// A node keeps its whole correction where no scatter reaches it, and at a noisy level gives
