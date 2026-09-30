@@ -2799,6 +2799,62 @@ mod tests {
         assert!(mean.abs() < 0.0001, "black denoised to a mean of {mean:.5}");
     }
 
+    #[test]
+    fn a_photosite_under_black_survives_a_fit_with_no_read_noise() {
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(galosh) = device(gpu) else {
+            return;
+        };
+
+        let (width, height) = (512, 384);
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut uniform = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / 16777216.0
+        };
+        let noisy: Vec<f32> = (0..width * height)
+            .map(|at| {
+                let (x, y) = (at % width, at / width);
+                let slot = (y & 1) | ((x & 1) << 1);
+                let level: f32 = if x > width / 2 {
+                    [0.20, 0.34, 0.34, 0.12][slot]
+                } else {
+                    0.0
+                };
+                let sigma = 0.001 + 0.01 * level.sqrt();
+                level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma
+            })
+            .collect();
+        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let measured = pollster::block_on(super::fit(gpu, galosh, &uploaded, &rggb()));
+        pollster::block_on(super::denoise_with(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts::from_sliders(40.0, 40.0),
+            NoiseFit {
+                sigma_sq: 0.0,
+                ..measured
+            },
+        ));
+        let denoised = read(gpu, &uploaded);
+
+        // The black half went in within 0.003 of zero.
+        let worst = (16..height - 16)
+            .flat_map(|row| (16..width / 2 - 32).map(move |col| row * width + col))
+            .map(|at| denoised[at])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(worst < 0.01, "a black photosite came back at {worst}");
+    }
+
     /// A colour step at the top of the Colour track must stay where the scene put it.
     ///
     /// The coarse levels are box downsamples, so taken whole the eighth spread a saturated green

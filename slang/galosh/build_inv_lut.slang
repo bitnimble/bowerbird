@@ -90,8 +90,8 @@ void build_inv_lut(uint3 id : SV_DispatchThreadID)
     // `2/alpha`, so a zero in the slot is an infinity in the table. The two GAT forwards read it
     // through the same floor, so the transform this inverts is still the one that ran.
     let a = max(params[P_ALPHA], ALPHA_MIN);
-    let sq = params[P_SIGMA_SQ];
-    let sig = sqrt(max(sq, 1e-20));
+    let sq = read_variance(a, params[P_SIGMA_SQ]);
+    let sig = sqrt(sq);
     let y_break = -0.375 * a;
     let t_break = 2.0 * sig / a;
 

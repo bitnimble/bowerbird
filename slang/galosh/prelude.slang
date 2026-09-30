@@ -159,10 +159,20 @@ public static const float BLOCK_MEAN_CEILING = 0.97;
 // `build_inv_lut` is accurate at any alpha now that it stops summing where f32 cannot.
 public static const float ALPHA_MIN = 1e-8;
 
-public float gat_forward(Gain sample, float alpha, float sigma_sq)
+/// The read-noise variance the GAT and its inverse run at: the fitted one, held to one electron's,
+/// which `alpha` is in these units. Below its break the transform is `1 / sigma`, so a fitted zero
+/// puts a photosite under black seven orders out.
+public float read_variance(float alpha, float sigma_sq)
 {
     let a = max(alpha, ALPHA_MIN);
-    let sigma_raw = sqrt(max(sigma_sq, 1e-20));
+    return max(sigma_sq, a * a);
+}
+
+public float gat_forward(Gain sample, float alpha, float fitted_sigma_sq)
+{
+    let a = max(alpha, ALPHA_MIN);
+    let sigma_sq = read_variance(alpha, fitted_sigma_sq);
+    let sigma_raw = sqrt(sigma_sq);
     let y_break = -0.375 * a;
     let t_break = 2.0 * sigma_raw / a;
     let x = sample.g;

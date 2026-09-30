@@ -1,12 +1,13 @@
 //! The denoise watched at the real mosaic: what the filter changed, before any demosaic.
 //!
 //! ```text
-//! mosaic_probe <raw> <out-dir> <x,y,w,h> [luminance] [colour]
+//! mosaic_probe <raw> <out-dir> <x,y,w,h> [luminance] [colour] [sigma_sq]
 //! ```
 //!
 //! Writes the window of the conditioned mosaic before and after the denoise, and their
 //! difference amplified, as PGMs, and the window before as little-endian f32 for a fixture.
 //! Coordinates are the sensor's own; the window origin must align to the CFA period.
+//! `sigma_sq` replaces the fit's read noise, for telling a wrong fit from a wrong filter.
 
 use rawshim::galosh::Amounts;
 
@@ -60,8 +61,11 @@ fn main() {
         cfa.aligned(x, y),
         "the window origin must align to the CFA period"
     );
-    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa));
+    let mut fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa));
     eprintln!("fit: {fit:?}");
+    if let Some(sigma_sq) = args.next() {
+        fit.sigma_sq = sigma_sq.parse().expect("a number");
+    }
 
     let noisy = pollster::block_on(mosaic.read(gpu)).expect("reads back");
     let filtered = mosaic.duplicate(gpu);
@@ -80,6 +84,14 @@ fn main() {
     let raw: Vec<u8> = before.iter().flat_map(|v| v.to_le_bytes()).collect();
     std::fs::write(format!("{out}/window.f32"), raw).expect("wrote");
     eprintln!("cfa {:?}", cfa);
+    let range = |values: &[f32]| {
+        values
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                (lo.min(*v), hi.max(*v))
+            })
+    };
+    eprintln!("before {:?} after {:?}", range(&before), range(&after));
 
     // The scene is dark; a fixed gain makes the window readable without inventing a grade.
     let lifted = |values: &[f32]| values.iter().map(|v| v * 8.0).collect::<Vec<f32>>();
