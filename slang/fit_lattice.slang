@@ -192,11 +192,8 @@ void lat_total(uint3 id: SV_DispatchThreadID)
     counts[ends() + cell] = total;
 }
 
-/// Where each block's run inside each cell starts, so the compaction below keeps pair order.
-///
-/// A cell at a time, blocks in order: that is what makes a cell's run the pairs in the order a
-/// serial walk would have met them, which is what the fold's determinism rests on. One lane,
-/// because a prefix is what it is - but over the cells rather than over every pair.
+/// Where each cell's run ends, in landings and in slices. One lane, because a prefix is what it
+/// is - but over the cells rather than over every pair.
 [shader("compute")]
 [numthreads(1, 1, 1)]
 void lat_scan()
@@ -205,16 +202,28 @@ void lat_scan()
     var sliced = 0u;
     for (int cell = 0; cell < CELLS; cell++) {
         let total = counts[ends() + cell];
-        var seen = base;
-        for (int b = 0; b < pc.blocks; b++) {
-            let kept = counts[b * CELLS + cell];
-            counts[pc.blocks * CELLS + b * CELLS + cell] = seen;
-            seen += kept;
-        }
         base += total;
         sliced += (total + uint(SLICE) - 1u) / uint(SLICE);
         counts[ends() + cell] = base;
         counts[slice_ends() + cell] = sliced;
+    }
+}
+
+/// Where each block's run inside a cell starts, so the compaction below keeps pair order.
+///
+/// A thread a cell, blocks in order: that is what makes a cell's run the pairs in the order a
+/// serial walk would have met them, which is what the fold's determinism rests on.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void lat_starts(uint3 id: SV_DispatchThreadID)
+{
+    let cell = int(id.x);
+    if (cell >= CELLS) { return; }
+    var seen = run_of(cell).x;
+    for (int b = 0; b < pc.blocks; b++) {
+        let kept = counts[b * CELLS + cell];
+        counts[pc.blocks * CELLS + b * CELLS + cell] = seen;
+        seen += kept;
     }
 }
 
@@ -303,25 +312,24 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
 
 /// A node's sixteen corners added in corner order, each cell's slices in pair order, which is what
 /// makes the answer the same on every adapter.
+///
+/// A thread a (node, sum): a shadow cell's run is hundreds of slices long, and one thread carrying
+/// all of a node's sums down it keeps them in memory rather than in a register.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void lat_fold(uint3 id: SV_DispatchThreadID)
 {
-    let node = int(id.x);
+    let node = int(id.x) / NODE_WORDS;
+    let word = int(id.x) % NODE_WORDS;
     if (node >= MAP_NODES) { return; }
-    float sums[NODE_WORDS];
-    for (int i = 0; i < NODE_WORDS; i++) { sums[i] = 0.0; }
+    var sum = 0.0;
     for (int c = 0; c < CORNERS; c++) {
         let cell = cell_toward(node, c);
         if (cell < 0) { continue; }
         let slices = slices_of(cell);
         for (uint piece = slices.x; piece < slices.y; piece++) {
-            for (int i = 0; i < NODE_WORDS; i++) {
-                sums[i] += corners[(int(piece) * CORNERS + c) * NODE_WORDS + i];
-            }
+            sum += corners[(int(piece) * CORNERS + c) * NODE_WORDS + word];
         }
     }
-    for (int i = 0; i < NODE_WORDS; i++) {
-        moments[node * NODE_WORDS + i] = sums[i];
-    }
+    moments[int(id.x)] = sum;
 }

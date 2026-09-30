@@ -26,8 +26,13 @@ static const int TILE_DIM = 16;
 static const Span<Sensor> HALO = { 3 };
 static const int TILE_W = TILE_DIM + 2 * int(HALO.n);
 static const int TILE_PIX = TILE_W * TILE_W;
+/// A block reads its neighbours' palettes two photosites out (`shares_at`).
+static const int PALETTE_HALO = int(HALO.n) + 2;
+static const int PALETTE_W = TILE_DIM + 2 * PALETTE_HALO;
+static const int PALETTE_PIX = PALETTE_W * PALETTE_W;
 
 groupshared float4 blocks[484];
+groupshared float4 palettes[676];
 
 uint colour_at(int x, int y)
 {
@@ -73,6 +78,19 @@ float4 palette_at(int x, int y)
         -c.x - c.y + c.z);
 }
 
+/// Where `palettes` sits on the frame. The width travels rather than being read off `PALETTE_W`,
+/// whose `Span` would otherwise be built under the block loops (`wgsl_call_shapes.rs`).
+struct Table {
+    int2 origin;
+    int width;
+};
+
+/// `palette_at`, off the tile's own table.
+float4 palette_held(Table table, int x, int y)
+{
+    return palettes[(y - table.origin.y) * table.width + x - table.origin.x];
+}
+
 float3 signs_at(int x, int y)
 {
     let row = y == 0 ? 1.0 : -1.0;
@@ -80,14 +98,14 @@ float3 signs_at(int x, int y)
     return float3(row, column, row * column);
 }
 
-float4 shares_at(int x, int y)
+float4 shares_at(Table table, int x, int y)
 {
     var level = 0.0;
     var palette = float4(0.0);
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             level += luma_sample(luma, pc.width, pc.height, x + 2 * dx, y + 2 * dy);
-            palette += palette_at(x + 2 * dx, y + 2 * dy);
+            palette += palette_held(table, x + 2 * dx, y + 2 * dy);
         }
     }
     if (level <= 1e-3) { return float4(0.25); }
@@ -99,7 +117,7 @@ float4 shares_at(int x, int y)
     return levels / dot(levels, float4(1.0));
 }
 
-float4 block_at(int x, int y, float strength)
+float4 block_at(Table table, int x, int y, float strength)
 {
     let samples = float4(raw_at(x, y), raw_at(x + 1, y), raw_at(x, y + 1), raw_at(x + 1, y + 1));
     let raw_chroma = 0.5 * float3(
@@ -109,11 +127,11 @@ float4 block_at(int x, int y, float strength)
     let pooled = pooled_luma(luma, pc.width, pc.height, x, y, pc.pooled != 0);
     if (strength <= 0.0) { return float4(raw_chroma, pooled); }
 
-    let palette = palette_at(x, y);
+    let palette = palette_held(table, x, y);
     var shares = float4(0.25);
     var derivatives = float3(0.0);
     if (pc.detail != 0) {
-        shares = shares_at(x, y);
+        shares = shares_at(table, x, y);
         derivatives = brightness_derivatives(luma, pc.width, pc.height, x, y);
     }
     var chroma = float3(0.0);
@@ -148,14 +166,26 @@ void reconstruct_bayer(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
     let halo = int(HALO.n);
     let amount = clamp(pc.colour_amount, 0.0, 1.0);
     let strength = amount * amount * (3.0 - 2.0 * amount);
+    Table table;
+    table.origin = int2(tile_x - PALETTE_HALO, tile_y - PALETTE_HALO);
+    table.width = PALETTE_W;
+    if (strength > 0.0) {
+        for (int i = lid; i < PALETTE_PIX; i += TILE_DIM * TILE_DIM) {
+            palettes[i] = palette_at(table.origin.x + i % table.width, table.origin.y + i / table.width);
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     for (int i = lid; i < TILE_PIX; i += TILE_DIM * TILE_DIM) {
         let x = tile_x - halo + i % TILE_W;
         let y = tile_y - halo + i / TILE_W;
         let parity_x = x & 1;
         let parity_y = y & 1;
+        // Clamped towards the frame, so a block stays inside the tile's own reach and its
+        // palettes inside the table.
         let sx = clamp(x, -parity_x, pc.width - 2 + parity_x);
         let sy = clamp(y, -parity_y, pc.height - 2 + parity_y);
-        blocks[i] = block_at(sx, sy, strength);
+        blocks[i] = block_at(table, sx, sy, strength);
     }
     GroupMemoryBarrierWithGroupSync();
 

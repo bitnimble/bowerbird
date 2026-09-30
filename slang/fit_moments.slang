@@ -52,6 +52,47 @@ float trust(float level)
     return x * x * (3.0 - 2.0 * x);
 }
 
+/// One output row's normal equations. Vectors, not a loop-indexed array: that stays in memory on
+/// the device and makes a block's walk several times slower.
+struct Row {
+    float3 ata0;
+    float3 ata1;
+    float3 ata2;
+    float3 atb;
+};
+
+void row_none(out Row row)
+{
+    row.ata0 = float3(0.0);
+    row.ata1 = float3(0.0);
+    row.ata2 = float3(0.0);
+    row.atb = float3(0.0);
+}
+
+/// A pair into output row `o` of the matrix at `m`.
+void row_take(inout Row row, int m, int o, float3 v, float4 t, float w)
+{
+    let predicted = matrices[m + o * 3] * v.x + matrices[m + o * 3 + 1] * v.y
+        + matrices[m + o * 3 + 2] * v.z;
+    let measured = trust(t[o]);
+    let over = predicted > t[o] ? 1.0 : 0.0;
+    let wo = w * (measured + (1.0 - measured) * over);
+    row.ata0 += (wo * v.x) * v;
+    row.ata1 += (wo * v.y) * v;
+    row.ata2 += (wo * v.z) * v;
+    row.atb += (wo * v) * t[o];
+}
+
+void row_write(Row row, int at, int o)
+{
+    for (int c = 0; c < 3; c++) {
+        partial[at + o * 9 + c] = row.ata0[c];
+        partial[at + o * 9 + 3 + c] = row.ata1[c];
+        partial[at + o * 9 + 6 + c] = row.ata2[c];
+        partial[at + 27 + o * 3 + c] = row.atb[c];
+    }
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void fit_moments(uint3 id: SV_DispatchThreadID)
@@ -64,10 +105,12 @@ void fit_moments(uint3 id: SV_DispatchThreadID)
     let last = min(first + pc.block, pc.pairs);
     let m = probe * 9;
 
-    float ata[27];
-    float atb[9];
-    for (int i = 0; i < 27; i++) { ata[i] = 0.0; }
-    for (int i = 0; i < 9; i++) { atb[i] = 0.0; }
+    Row red;
+    Row green;
+    Row blue;
+    row_none(red);
+    row_none(green);
+    row_none(blue);
 
     for (int k = first; k < last; k++) {
         let v = below[k].xyz;
@@ -80,26 +123,13 @@ void fit_moments(uint3 id: SV_DispatchThreadID)
         // same either side of zero. Clamped to zero instead, such a pair would come back with the
         // floor's full weight, which is a thousand times its neighbours'.
         let w = t.w / (pow(abs(camera), 2.0 / 3.0) + 1e-3);
-        for (int o = 0; o < 3; o++) {
-            let predicted = matrices[m + o * 3] * v.x + matrices[m + o * 3 + 1] * v.y
-                + matrices[m + o * 3 + 2] * v.z;
-            let measured = trust(t[o]);
-            let over = predicted > t[o] ? 1.0 : 0.0;
-            let wo = w * (measured + (1.0 - measured) * over);
-            for (int a = 0; a < 3; a++) {
-                for (int c = 0; c < 3; c++) {
-                    ata[o * 9 + a * 3 + c] += wo * v[a] * v[c];
-                }
-                atb[o * 3 + a] += wo * v[a] * t[o];
-            }
-        }
+        row_take(red, m, 0, v, t, w);
+        row_take(green, m, 1, v, t, w);
+        row_take(blue, m, 2, v, t, w);
     }
 
     let at = unit * MOMENT_WORDS;
-    for (int i = 0; i < 27; i++) {
-        partial[at + i] = ata[i];
-    }
-    for (int i = 0; i < 9; i++) {
-        partial[at + 27 + i] = atb[i];
-    }
+    row_write(red, at, 0);
+    row_write(green, at, 1);
+    row_write(blue, at, 2);
 }

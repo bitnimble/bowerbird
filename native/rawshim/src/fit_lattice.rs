@@ -17,7 +17,7 @@ const CORNERS: usize = 16;
 /// Landings one gathering thread walks at most.
 const SLICE: usize = 256;
 /// Pairs one thread of the count and the write walks.
-const BLOCK: usize = 4096;
+const BLOCK: usize = 512;
 
 pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
@@ -25,6 +25,7 @@ pub(crate) struct Kernels {
     count: wgpu::ComputePipeline,
     total: wgpu::ComputePipeline,
     scan: wgpu::ComputePipeline,
+    starts: wgpu::ComputePipeline,
     write: wgpu::ComputePipeline,
     gather: wgpu::ComputePipeline,
     fold: wgpu::ComputePipeline,
@@ -87,6 +88,7 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
             count: build("lat_count"),
             total: build("lat_total"),
             scan: build("lat_scan"),
+            starts: build("lat_starts"),
             write: build("lat_write"),
             gather: build("lat_gather"),
             fold: build("lat_fold"),
@@ -235,9 +237,10 @@ pub(crate) async fn moments(
         (&built.count, over(blocks)),
         (&built.total, over(cells)),
         (&built.scan, 1),
+        (&built.starts, over(cells)),
         (&built.write, over(blocks)),
         (&built.gather, over(slices * CORNERS)),
-        (&built.fold, over(nodes)),
+        (&built.fold, over(nodes * NODE_WORDS)),
     ] {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(pipeline);

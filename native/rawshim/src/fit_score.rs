@@ -349,36 +349,64 @@ impl Scoring {
     /// the bias pooling and the two weightings live, and it is the half that has to keep `f64`.
     /// A stage with no pairs has no blocks, so each probe folds to what an empty sum gives.
     pub async fn partials(&self, shape: &Shape, probes: &[Probe]) -> Option<Vec<Vec<Partial>>> {
-        if probes.is_empty() || self.pairs == 0 {
-            return Some(vec![Vec::new(); probes.len()]);
-        }
-        assert!(
-            probes.len() <= self.capacity,
-            "{} probes at once",
-            probes.len()
-        );
-        let units = probes.len() * self.blocks;
-        let bytes = (units * PARTIAL * 4) as u64;
-        // Written rather than created, which is the whole point of holding them.
-        self.gpu.queue.write_buffer(
-            &self.parameters,
-            0,
-            &words(probes.iter().flat_map(Probe::words)),
-        );
-        self.describe(probes.len(), shape);
+        Scoring::ask(&[self], shape, probes);
+        self.answer(probes.len()).await
+    }
 
-        let mut recording = self.gpu.record();
+    /// The same probes handed to the device for each of `scorings`, for [`Scoring::answer`] to read
+    /// off each.
+    pub fn ask(scorings: &[&Scoring], shape: &Shape, probes: &[Probe]) {
+        let asked: Vec<&&Scoring> = scorings.iter().filter(|s| s.pairs > 0).collect();
+        let Some(first) = asked.first() else {
+            return;
+        };
+        if probes.is_empty() {
+            return;
+        }
+        for scoring in &asked {
+            assert!(
+                probes.len() <= scoring.capacity,
+                "{} probes at once",
+                probes.len()
+            );
+            // Written rather than created, which is the whole point of holding them.
+            scoring.gpu.queue.write_buffer(
+                &scoring.parameters,
+                0,
+                &words(probes.iter().flat_map(Probe::words)),
+            );
+            scoring.describe(probes.len(), shape);
+        }
+
+        let mut recording = first.gpu.record();
         {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&kernel(self.gpu).score);
-            pass.set_bind_group(0, &self.group, &[]);
-            pass.dispatch_workgroups((units as u32).div_ceil(64), 1, 1);
+            pass.set_pipeline(&kernel(first.gpu).score);
+            for scoring in &asked {
+                let units = probes.len() * scoring.blocks;
+                pass.set_bind_group(0, &scoring.group, &[]);
+                pass.dispatch_workgroups((units as u32).div_ceil(64), 1, 1);
+            }
         }
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&self.partials, 0, &self.staging, 0, bytes);
+        for scoring in &asked {
+            let bytes = (probes.len() * scoring.blocks * PARTIAL * 4) as u64;
+            recording.encoder().copy_buffer_to_buffer(
+                &scoring.partials,
+                0,
+                &scoring.staging,
+                0,
+                bytes,
+            );
+        }
         recording.submit();
+    }
 
+    /// What the last [`Scoring::ask`] of `probes` probes came to.
+    pub async fn answer(&self, probes: usize) -> Option<Vec<Vec<Partial>>> {
+        if probes == 0 || self.pairs == 0 {
+            return Some(vec![Vec::new(); probes]);
+        }
+        let units = probes * self.blocks;
         // The buffer is sized for `capacity` and this call wrote `units` of it, so the tail
         // holds whatever the last call left.
         let read = crate::gpu::read_back(self.gpu, &self.staging, |mapped| {
