@@ -6158,6 +6158,7 @@ mod tests {
             .collect();
         let fitted = crate::hdr_fit::HdrColour {
             saturation: 1.2,
+            chroma: Some(crate::hdr_fit::ChromaMap::from_saturation(1.2)),
             ..crate::hdr_fit::HdrColour::identity()
         };
         let told = crate::hdr_fit::HdrColour {

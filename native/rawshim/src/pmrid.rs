@@ -29,8 +29,7 @@ const QUIETEST_SIGMA: f64 = 7.11772e-7 * 100.0 * 100.0 + 6.514934e-4 * 100.0 + 0
 const V: f64 = 959.0;
 const INPUT_SCALE: f64 = 256.0;
 
-/// How much of the fitted variance the network is handed, which is where it lifts nothing: the
-/// median of twelve noisy frames off two sensors, which run from 0.28 to 0.93
+/// How much of the fitted variance the network is handed, which is where it lifts nothing
 /// (`examples/noise_alpha.rs`).
 const NETWORK_NOISE: f64 = 0.53;
 
@@ -2189,7 +2188,7 @@ mod tests {
     }
 
     /// The network moves the committed Bayer frames' photosites by next to nothing on average at
-    /// the fit's own noise: what it lifts is how far the fit is from the noise it finds.
+    /// `NETWORK_NOISE` of the fit: what it lifts is how far that is from the noise it finds.
     #[cfg(feature = "fixtures")]
     #[test]
     fn the_fit_leaves_the_network_nothing_to_lift() {
@@ -2436,7 +2435,7 @@ mod tests {
                 .zip(&against)
                 .map(|(a, b)| f64::from((a - b).abs()))
                 .fold(0.0, f64::max);
-            // 0.08 on this frame, and a quarter of a code is the room another driver's rounding has.
+            // A quarter of a code is the room another driver's rounding has.
             assert!(
                 worst * 255.0 < 0.25,
                 "{arm:?} is {:.4} codes from Float",

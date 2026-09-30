@@ -36,9 +36,9 @@
 // calibrated on a single frame carrying an unusually large 5.05px, where the inflation
 // happened to land nearer the truth; on an ordinary frame it carries past it.
 //
-// Every one of the three passes through `accept`, which drops a curve that does not
-// measurably reduce the fringe it claims to correct. That is what makes trusting a source
-// safe rather than a leap.
+// A supplied curve and a measured one pass through `accept`, which drops a curve the frame's
+// point sources refute. That is what makes trusting a source safe rather than a leap. The
+// regression has no source behind it, so `estimate` keeps it only where they confirm it.
 //
 // Every walk over pixels is `slang/tca.slang`, driven by `tca_device.rs`. What is here is what
 // decides: the argmin of a sweep, the bins, the regression's solve, and the gates.
@@ -466,10 +466,10 @@ pub async fn measure(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> 
 /// a curve that is right in the middle of the frame and wrong at the edge is judged where
 /// the evidence is.
 ///
-/// `None` where the frame offers nothing to check against - a portrait, a flat wall - and
-/// there the curve is allowed through unverified rather than dropped: absence of evidence
-/// is not evidence, and refusing every frame without stars would disable the correction
-/// almost everywhere it is wanted.
+/// `None` where the frame offers nothing to check against - a portrait, a flat wall. What
+/// that means is the caller's: `accept` lets a sourced curve through unverified, since
+/// refusing every frame without stars would disable the correction almost everywhere it is
+/// wanted, and `estimate` drops a regressed one.
 async fn improves(frame: &crate::tca_device::Frame, curve: &[Vec<f64>; 2]) -> Option<bool> {
     let band = (POINT_FROM, ANY_RADIUS.1);
     let before = frame.haloed(None, band).await?;
@@ -510,7 +510,7 @@ fn plausible(frame: &crate::tca_device::Frame, curve: [Vec<f64>; 2]) -> Option<[
     Some(curve)
 }
 
-/// Whether a curve is worth applying, and the one place that decides it.
+/// Whether a curve with a source behind it is worth applying.
 async fn accept(frame: &crate::tca_device::Frame, curve: [Vec<f64>; 2]) -> Option<[Vec<f64>; 2]> {
     let curve = plausible(frame, curve)?;
     // Last, because it is the only test here that reads the picture rather than the
@@ -990,7 +990,7 @@ mod tests {
 
     #[test]
     fn the_gate_refuses_a_backwards_curve_through_the_public_path() {
-        // Wired into `accept`, so every path that produces a curve is covered rather than
+        // Wired into `accept`, so every path that trusts a source is covered rather than
         // only the one this test calls. A supplied curve pointing the wrong way is the
         // case that shipped: the Sony tag was read backwards for a while and nothing
         // rejected it.

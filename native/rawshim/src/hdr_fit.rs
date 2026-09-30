@@ -216,27 +216,6 @@ pub struct HdrColour {
     /// default, on its step. A fitted match always carries a `chroma` map, whose nodes hold the
     /// whole chroma, so this never reaches its render: `finish_chroma` blends by it only without
     /// one.
-    ///
-    /// A curve over chroma and a gain per hue each described this camera's saturation far
-    /// better - it takes a brown's chroma up 36% where it takes grass's up 8% - and both
-    /// had to come out again, because a gain computed per pixel from that pixel's own
-    /// colour amplifies the *variation* in that colour. Across a dog's flat fur
-    /// neighbouring pixels were pulled apart into red speckles beside green ones, and a
-    /// wall the camera renders flat grey came out blotchy. They improved every number this
-    /// fit reports and damaged the picture, which is why the numbers are not the last
-    /// word. Denoising the render first does not buy them back either: the speckle is
-    /// still there at the strength the render is denoised by (§10.9).
-    ///
-    /// What made a hue-dependent correction safe afterwards was bounding how fast it may
-    /// vary - a coarse lattice read by trilinear interpolation has a gradient bounded by
-    /// the difference between neighbouring nodes, where those per-pixel gains had none.
-    ///
-    /// That bound is the *grid*, and it is the whole of it. What stops a wild map is that
-    /// every rung is scored against no map on the picture, each colour class with it - an
-    /// outcome test rather than a parameter bound.
-    ///
-    /// A luma term on the nodes would want this re-measured: the grid bounds its gradient
-    /// too, but the eye reads luma noise differently from chroma noise.
     pub saturation: f64,
     /// The hue-dependent part, where the frame supported fitting one.
     ///
@@ -264,9 +243,22 @@ pub struct HdrColour {
 ///
 /// Deliberately coarse. What this corrects is a camera's hue-dependent rendering, which
 /// is smooth; what it must not do is vary fast enough with a pixel's own colour to
-/// amplify the noise in that colour, which is what took the per-hue gain out again
-/// (`HdrColour::saturation`). Cell width is the denominator of that gradient, so it is
+/// amplify the noise in that colour. Cell width is the denominator of that gradient, so it is
 /// the safety margin.
+///
+/// **A gain computed per pixel from that pixel's own colour has no such bound**, and a curve
+/// over chroma or a gain per hue is one. Either describes a camera's saturation far better -
+/// it takes a brown's chroma up 36% where it takes grass's up 8% - and either amplifies the
+/// *variation* in a colour: across a dog's flat fur neighbouring pixels are pulled apart into
+/// red speckles beside green ones, and a wall the camera renders flat grey comes out blotchy.
+/// They improve every number this fit reports and damage the picture, and denoising the render
+/// first does not buy them back: the speckle is still there at the strength the render is
+/// denoised by (§10.9).
+///
+/// The grid is the whole of the bound. What stops a wild map is that every rung is scored
+/// against no map on the picture, each colour class with it - an outcome test rather than a
+/// parameter bound. A luma term on the nodes would want this re-measured: the grid bounds its
+/// gradient too, but the eye reads luma noise differently from chroma noise.
 ///
 /// **Held-out pairs do not answer this and a holdout cannot be made to.** Swept from 7 to 39
 /// nodes an axis, held-out `delta_e` says the opposite of what the render says - it falls all
@@ -3697,6 +3689,7 @@ pub(crate) const SAMPLE_RANGE: f64 = 0.008;
 ///
 /// The same box in `fit_wide`'s samples lost (1.0458 perceptual), so that pass keeps `SAMPLE`.
 const REGISTER_SAMPLE: isize = 2;
+const _: () = assert!(REGISTER_SAMPLE <= PATCH);
 
 /// The two wide planes' luma on the device, held across the passes that search them: `registered`
 /// searches every grid position and `fitted_chroma`'s wide pass whatever its gates admit.
@@ -8846,7 +8839,7 @@ mod tests {
     }
 
     #[test]
-    fn the_global_saturation_moves_out_of_the_colour_fit() {
+    fn the_global_saturation_is_the_uniform_gain_a_lattice_carries() {
         let (render, _) = ramped_planes([0.5, 0.3, 0.18]);
         let gpu = searching();
         let frame = Pairs::over(gpu, &render, &render);

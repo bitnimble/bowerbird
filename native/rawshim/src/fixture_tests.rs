@@ -1450,12 +1450,7 @@ mod decode_geometry {
                 );
             };
             near(fit.alpha, alpha, alpha.abs() * 1e-3 + 1e-9, "alpha");
-            near(
-                fit.sigma_sq,
-                sigma_sq,
-                sigma_sq.abs() * 1e-3 + 1e-9,
-                "sigma_sq",
-            );
+            near(fit.sigma_sq, sigma_sq, sigma_sq.abs() * 1e-3, "sigma_sq");
             for (slot, want) in fit.dark_ref.iter().zip(dark) {
                 near(*slot, want, 1e-3, "a dark reference slot");
             }

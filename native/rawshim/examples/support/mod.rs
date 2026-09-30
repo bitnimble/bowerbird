@@ -39,7 +39,8 @@ pub struct Open<'a> {
 }
 
 pub struct Opened {
-    /// Read back to the host, already defringed: `measured.defringe` is `Done`, never `Measure`.
+    /// Read back to the host. A RAW is already defringed and `measured.defringe` is `Done`; a
+    /// rendered file is not, and carries `Measure` or `Take`.
     pub frame: rawshim::frame::Frame,
     pub measured: rawshim::open::Measured,
 }
@@ -152,6 +153,9 @@ pub struct Cutting {
 }
 
 /// `job::Base::build`'s coding, then the fit to size, warp and sharpen a rendition takes.
+///
+/// One size, cut from the base: a job with several targets cuts and sharpens its largest and
+/// downscales the rest from it.
 ///
 /// `options.sharpen_sigma` fixes the deconvolution's sigma in place of the measured one.
 pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit::Lens>) -> Cutting {

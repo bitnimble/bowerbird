@@ -36,20 +36,12 @@ static const int WG = 256;
 /// what that low a slice of a block estimate's own scatter reads on noise alone.
 static const float ENVELOPE_RATIO = 0.71;
 
-/// Blocks to a bin before it is read. A field under black that would fill as many counts for half.
 static const int BIN_BLOCKS = 20;
 
 /// `ne_block_stats`'s 8x8.
 static const float BLOCK_SAMPLES = 64.0;
 
-/// The read variance the photosites under black measure, weighed by how much of a field they are.
-///
-/// A zero-mean normal's lower half has a mean depth of `sigma * sqrt(2 / pi)`. Green's where any
-/// green is under black; the other colours' otherwise, which carry their gain and so read high.
-///
-/// **Only a field at black is that lower half.** A defect, or the tail of a field that is lit, is
-/// under black too and measures neither, so the reading counts by how many bins its paired
-/// photosites would fill: all of it over a masked border, none of it for a lone photosite.
+/// The read variance the photosites under black measure, zero where they are no field.
 float read_variance_under_black()
 {
     UnderBlack levels[BLACK_LEVELS];
@@ -61,13 +53,17 @@ float read_variance_under_black()
             under_black_merge(levels[l], partial);
         }
     }
-    // `black_level_of` puts green's two first.
+    // `black_level_of` puts green's two first. The other colours' carry their gain and read
+    // high, so they answer only where no green is under black.
     var first = 0;
     if (levels[0].count + levels[1].count == 0.0) { first = 2; }
     let depth = levels[first].depth + levels[first + 1].depth;
     let count = levels[first].count + levels[first + 1].count;
     if (count == 0.0) { return 0.0; }
+    // sqrt(pi / 2): a zero-mean normal's lower half has a mean depth of `sigma * sqrt(2 / pi)`.
     let sigma = depth / count * 1.2533141;
+    // Only a field at black is that lower half. A defect or a lit field's tail is under black
+    // too and measures neither, so the reading counts by the bins its paired photosites fill.
     let field = (levels[first].paired + levels[first + 1].paired) / BLOCK_SAMPLES;
     return sigma * sigma * field / (field + float(BIN_BLOCKS));
 }

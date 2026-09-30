@@ -120,8 +120,8 @@ const PHASE_POOL_ID: &str = "0";
 /// Four costs ~45ms more on a 24MP mosaic and buys nothing measurable here.
 ///
 /// **Flat, rather than chosen per frame, because nothing about a frame predicts the cost.** Over 43
-/// photographs from two libraries the deviation barely tracks the noise - `at_mid_grey` 0.00310 and
-/// 0.00314 cost 1.23 and 3.51 counts of 65535, 0.00633 and 0.00753 cost 1.30 and 6.33 - so what
+/// photographs from two libraries the deviation barely tracks the noise - two frames of one
+/// `at_mid_grey` cost 1.23 and 3.51 counts of 65535, two at twice that 1.30 and 6.33 - so what
 /// varies is the content, which no summary the fit carries can see.
 ///
 /// Overridable, which is how those were measured and how `renders --phases` shows a reader the
@@ -2881,16 +2881,30 @@ mod tests {
         let denoised = read(gpu, &uploaded);
 
         // The black half went in within 0.003 of zero.
-        let worst = (16..height - 16)
+        let worst = farthest_from_black(&denoised, width, height);
+        assert!(
+            worst < 0.01,
+            "a black photosite came back {worst} from black"
+        );
+    }
+
+    /// The farthest from zero a frame's black left half came back, or NaN where any of it did.
+    fn farthest_from_black(denoised: &[f32], width: usize, height: usize) -> f32 {
+        (16..height - 16)
             .flat_map(|row| (16..width / 2 - 32).map(move |col| row * width + col))
-            .map(|at| denoised[at])
-            .fold(f32::NEG_INFINITY, f32::max);
-        assert!(worst < 0.01, "a black photosite came back at {worst}");
+            .map(|at| denoised[at].abs())
+            .fold(
+                0.0,
+                |worst, v| if v > worst || v.is_nan() { v } else { worst },
+            )
     }
 
     /// Dark noise a block's Laplacians read as nothing is fitted from the photosites under black.
     #[test]
     fn dark_noise_no_block_can_see_is_fitted_from_the_photosites_under_black() {
+        let _held = ONE_DENOISE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
@@ -2940,11 +2954,57 @@ mod tests {
             fit.sigma_sq
         );
         // The black half went in within 0.002 of zero.
-        let worst = (16..height - 16)
-            .flat_map(|row| (16..width / 2 - 32).map(move |col| row * width + col))
-            .map(|at| denoised[at])
-            .fold(f32::NEG_INFINITY, f32::max);
-        assert!(worst < 0.01, "a black photosite came back at {worst}");
+        let worst = farthest_from_black(&denoised, width, height);
+        assert!(
+            worst < 0.01,
+            "a black photosite came back {worst} from black"
+        );
+    }
+
+    /// Photosites under black with none beside them are defects or a lit field's tail, and say
+    /// nothing about the read noise however deep they sit.
+    #[test]
+    fn a_lone_photosite_under_black_does_not_move_the_fit() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(galosh) = device(gpu) else {
+            return;
+        };
+
+        let (width, height) = (1024usize, 768usize);
+        let fitted = |defects: bool| {
+            let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+            let mut uniform = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed >> 40) as f32 / 16777216.0
+            };
+            // Lit throughout, so nothing is under black but what is put there.
+            let noisy: Vec<f32> = (0..width * height)
+                .map(|at| {
+                    let (x, y) = (at % width, at / width);
+                    let level = 0.02 + 0.48 * x as f32 / width as f32;
+                    let sigma = (2e-4 * level + 1e-6).sqrt();
+                    let lit = level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma;
+                    // One green photosite in a 128x128 cell, each at a depth of its own.
+                    match defects && x % 128 == 7 && y % 128 == 10 {
+                        true => -0.01 - 1e-5 * (at % 997) as f32,
+                        false => lit,
+                    }
+                })
+                .collect();
+            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            pollster::block_on(super::fit(gpu, galosh, &uploaded, &rggb()))
+        };
+        let (clean, defective) = (fitted(false), fitted(true));
+        assert!(
+            (defective.sigma_sq / clean.sigma_sq - 1.0).abs() < 0.05,
+            "48 lone photosites moved the read variance from {} to {}",
+            clean.sigma_sq,
+            defective.sigma_sq
+        );
     }
 
     /// The fit states the variance a photosite has, in both of its terms, whether or not the frame
