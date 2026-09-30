@@ -24,6 +24,15 @@ export const styles = stylex.create({
   leaving: {
     opacity: 0,
   },
+  // Two opacities summing to 1 under normal blending let the stage through between them,
+  // which dips the photograph towards the background mid-fade.
+  fading: {
+    mixBlendMode: 'plus-lighter',
+  },
+  // plus-lighter adds the stage behind the pictures to them as well, unless they are a group.
+  isolated: {
+    isolation: 'isolate',
+  },
   pending: {
     display: 'grid',
     placeItems: 'center',

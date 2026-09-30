@@ -771,9 +771,8 @@ screen on every `Pick B` and put the challenger where it had been - two halves
 changing at once, when the one that did not change is the only cue for the one
 that did. A pair is never offered twice, so at most one photo can carry over and
 the rule cannot be asked to hold two. Nothing carried means the tournament's own
-order, and the half that changed **fades** rather than cutting: `PhotoStage`'s step
-with no direction to express (§18.6), since neither photograph moved through a
-collection.
+order, and the half that changed **fades** rather than cutting: `PhotoStage` fades
+one picture in over the one it replaces, whichever way it arrived.
 
 **Split** draws both at once, each at the **same displayed area**, in whichever of
 row or column makes that area largest. With aspect `a`, area `S`, `s = √S`, and

@@ -2,13 +2,8 @@
 // opacity change and nothing else. `step_exchange.test.tsx` pins what counts as a
 // step; this pins that choosing a rendition cannot be one.
 //
-// The bug: the step a frame arrived with rode on the frame itself, and every
-// rendition of a photograph was a frame of its own. Going back to the one the
-// photo was stepped to at put the step back on an element that had lost it, and
-// the browser replayed the entrance - a slide, in the direction of a step taken
-// minutes ago, over a picture the page had decoded all along. The renditions
-// share a picture, and the picture is what animates, so the flip does not reach
-// the animated element at all.
+// The renditions share a picture, and the picture is what animates, so the flip
+// does not reach the animated element at all.
 import { afterEach, expect, test } from 'bun:test';
 import { registerDom } from '../../../../test_dom';
 
@@ -19,11 +14,12 @@ const { activityOf, arriveDetailAt, fileOf, forgetFrames, holdDecodeOf, holdDeta
 const { PhotoStage } = await import('../photo_stage');
 const { PhotoStageStrings } = await import('../photo_stage.strings');
 
+/** The pictures a step brought in. */
 const moved: HTMLElement[] = [];
 Object.defineProperty(globalThis.HTMLElement.prototype, 'animate', {
-  value(this: HTMLElement) {
-    moved.push(this);
-    return { cancel: () => undefined };
+  value(this: HTMLElement, frames: Keyframe[]) {
+    if (frames[0]?.scale != null) moved.push(this);
+    return { cancel: () => undefined, finished: new Promise(() => {}) };
   },
   configurable: true,
   writable: true,

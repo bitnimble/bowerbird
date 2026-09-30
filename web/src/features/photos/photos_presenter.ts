@@ -1491,7 +1491,7 @@ export class PhotosPresenter {
   // Off the run, which is the ordering prev/next themselves are read from and the
   // only one a stack's members appear in: the collapsed listing has no row for
   // them (§19.5.3), so a position taken from there is -1 on every step inside a
-  // stack and the frames never learn which way to slide. Read now, while both
+  // stack and the stage never learns which way the reader is heading. Read now, while both
   // photographs are still in the same window of the run - it is re-fetched around
   // whichever photo is open, so an index kept from an earlier one means nothing.
   private stepTaken(
