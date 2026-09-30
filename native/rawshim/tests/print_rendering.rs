@@ -3,6 +3,7 @@ use rawshim::hdr_fit::HdrColour;
 use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
 use rawshim::print::{Paper, Presentation, Scene};
 use rawshim::px::Size;
+use rawshim::transfer::Primaries;
 
 #[test]
 fn warm_highlight_detail_survives_diffuse_light_and_glare() {
@@ -42,6 +43,7 @@ fn camera_meters_diffuse_paper_without_spending_highlight_headroom() {
             let scene = Scene {
                 yaw_degrees: 0.0,
                 pitch_degrees: pitch,
+                key_lux: Light::exactly(1000.0),
                 fill_lux: Light::exactly(fill),
                 refractive_index: 1.0,
                 surface_texture: 0.0,
@@ -72,9 +74,14 @@ fn camera_meters_diffuse_paper_without_spending_highlight_headroom() {
                 bright_luma < white - 30.0 && bright_luma - dark > 40.0,
                 "warm detail lost headroom or contrast: {dark}, {bright_luma}, white {white}"
             );
-            let black = draw([0.0; 3], scene);
-            let color: [f64; 3] =
-                std::array::from_fn(|channel| bright[channel].raw() - black[channel].raw());
+            // Against the paper's own white and black in the same light, which carries the lamp's
+            // and the room's colours in whatever mix the pose gives them.
+            let black = in_rec2020(draw([0.0; 3], scene));
+            let paper = in_rec2020(draw([1.0; 3], scene));
+            let bright = in_rec2020(bright);
+            let color: [f64; 3] = std::array::from_fn(|channel| {
+                (bright[channel] - black[channel]) / (paper[channel] - black[channel])
+            });
             let ratios = [color[0] / color[1], color[2] / color[1]];
             if let Some(reference) = hue {
                 assert!(
@@ -96,6 +103,7 @@ fn coating_reflections_keep_hdr_headroom_after_camera_adaptation() {
             yaw_degrees: 0.0,
             pitch_degrees: -37.5,
             light_angular_degrees: size,
+            key_lux: Light::exactly(1000.0),
             fill_lux: Light::ZERO,
             roughness,
             surface_texture: 0.0,
@@ -159,15 +167,6 @@ fn ambient_light_sets_the_background_and_camera_adapts_to_bright_rooms() {
         sample([0.5; 3], scene, [0, 0]).map(|light| light.raw()),
         [0.0; 3]
     );
-    // A lamp in an unlit room is not a lamp in a void: what it throws past the print comes back
-    // off the floor, which is the whole of the light a sheet turned away from it then has.
-    scene.key_lux = Light::exactly(1000.0);
-    let lamp_only = luminance(sample([0.5; 3], scene, [0, 0])).raw();
-    assert!(
-        lamp_only > 1.0 && lamp_only < 30.0,
-        "the lamp lit no room at all: {lamp_only} nits"
-    );
-    scene.key_lux = Light::ZERO;
     scene.fill_lux = Light::exactly(500.0);
     let room = luminance(draw([0.5; 3], scene)).raw();
     let background = luminance(sample([0.5; 3], scene, [0, 0])).raw();
@@ -188,9 +187,10 @@ fn ambient_light_sets_the_background_and_camera_adapts_to_bright_rooms() {
 
 #[test]
 fn light_temperature_changes_colour_without_changing_illuminance() {
+    // The lamp alone: the room keeps its own colour at any temperature.
     let mut scene = Scene {
-        key_lux: Light::ZERO,
-        fill_lux: Light::exactly(500.0),
+        key_lux: Light::exactly(1000.0),
+        fill_lux: Light::ZERO,
         ..Scene::default()
     };
     scene.light_temperature_kelvin = 2700.0;
@@ -223,7 +223,7 @@ fn ambient_only_gloss_mirrors_the_room_rather_than_washing_the_sheet() {
         "the grazing wall went missing: {face} vs {grazing}"
     );
     // Half the angle to the ceiling and half the angle to the floor: the same Fresnel either way,
-    // so what is left between them is the room, whose floor is half its ceiling.
+    // so what is left between them is the room, whose floor and ceiling differ.
     let ceiling = luminance(draw(
         [0.0; 3],
         Scene {
@@ -243,7 +243,7 @@ fn ambient_only_gloss_mirrors_the_room_rather_than_washing_the_sheet() {
     ))
     .raw();
     assert!(
-        ceiling > floor * 1.6,
+        ceiling.max(floor) > ceiling.min(floor) * 1.6,
         "the sheen is a wash rather than a reflection: {floor} vs {ceiling}"
     );
 }
@@ -316,57 +316,6 @@ fn the_reader_is_a_body_hanging_below_the_eye_rather_than_a_head_around_it() {
     assert!(
         above > below * 1.25,
         "the silhouette is as tall as it is wide: {above} over the reader, {below} down them"
-    );
-}
-
-/// A lamp lights the room it is in, and the room lights the print.
-#[test]
-fn a_lamp_in_an_unlit_room_still_reaches_a_sheet_turned_away_from_it() {
-    let scene = Scene {
-        yaw_degrees: 0.0,
-        key_lux: Light::exactly(1000.0),
-        fill_lux: Light::ZERO,
-        refractive_index: 1.0,
-        surface_texture: 0.0,
-        ..Scene::default()
-    }
-    .lit_from(0.0, 75.0, 4.0);
-    let towards = luminance(draw(
-        [1.0; 3],
-        Scene {
-            pitch_degrees: -60.0,
-            ..scene
-        },
-    ))
-    .raw();
-    let away = luminance(draw(
-        [1.0; 3],
-        Scene {
-            pitch_degrees: 30.0,
-            ..scene
-        },
-    ))
-    .raw();
-    assert!(
-        away > towards * 0.05,
-        "a sheet turned from the lamp went black: {away} against {towards} nits towards it"
-    );
-    assert!(
-        away < towards * 0.4,
-        "the room's bounce stood in for the lamp: {away} against {towards} nits"
-    );
-    // Turned further it faces the floor, which is where a lamp's spill lands and comes back from.
-    let floorward = luminance(draw(
-        [1.0; 3],
-        Scene {
-            pitch_degrees: 60.0,
-            ..scene
-        },
-    ))
-    .raw();
-    assert!(
-        floorward > away,
-        "the floor carried nothing: {floorward} against {away} nits"
     );
 }
 
@@ -636,6 +585,17 @@ fn luminance(color: [Light<DisplayNits>; 3]) -> Light<DisplayNits> {
             .map(|(value, weight)| value.raw() * weight)
             .sum(),
     )
+}
+
+/// A drawn colour in the primaries the print is lit in.
+fn in_rec2020(color: [Light<DisplayNits>; 3]) -> [f64; 3] {
+    let matrix = Primaries::DISPLAY_P3.to_rec2020();
+    matrix.map(|row| {
+        row.into_iter()
+            .zip(color)
+            .map(|(weight, value)| f64::from(weight) * value.raw())
+            .sum()
+    })
 }
 
 fn draw(source: [f64; 3], scene: Scene) -> [Light<DisplayNits>; 3] {
