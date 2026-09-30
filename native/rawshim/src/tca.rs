@@ -150,6 +150,16 @@ pub fn flat(red: f64, blue: f64) -> [Vec<f64>; 2] {
     ]
 }
 
+/// The regressed scale of red and of blue against green, where the frame's point sources
+/// confirm it.
+///
+/// Confirmed, where `accept` only asks not to be refuted: the regression reads a scene's own
+/// coloured edges as a fringe, so on a frame with nothing to judge it on it is dropped.
+pub async fn estimate(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> {
+    let curve = regressed(frame).await?;
+    (improves(frame, &curve).await == Some(true)).then_some(curve)
+}
+
 /// The radial scale of red and of blue against green, or None where there is nothing
 /// worth correcting.
 ///
@@ -158,9 +168,9 @@ pub fn flat(red: f64, blue: f64) -> [Vec<f64>; 2] {
 /// falls out of a least-squares fit of that difference against the gradient projected
 /// onto the radius - one pass, no search, and the scene's own colour contributes only
 /// variance because it does not align with the radial projection.
-pub async fn estimate(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> {
+async fn regressed(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> {
     let (red, blue) = slopes(frame).await?;
-    accept(frame, flat(1.0 + red, 1.0 + blue)).await
+    plausible(frame, flat(1.0 + red, 1.0 + blue))
 }
 
 /// A curve the file records, applied as it stands.
@@ -601,8 +611,8 @@ mod tests {
         pollster::block_on(crate::tca_device::frame(gpu, &render)).expect("a frame")
     }
 
-    fn estimated(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
-        pollster::block_on(estimate(&framed(gpu, image)))
+    fn regression(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
+        pollster::block_on(regressed(&framed(gpu, image)))
     }
 
     fn measured(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
@@ -619,7 +629,7 @@ mod tests {
         };
         let source = checks(900, 600);
         for injected in [1.0008f64, 1.0015, 0.9988] {
-            let found = estimated(gpu, &inject(&source, 0, injected)).expect("a scale");
+            let found = regression(gpu, &inject(&source, 0, injected)).expect("a scale");
             let red = corner(&found, 0);
             assert!(
                 (red - 1.0 / injected).abs() < 0.0004,
@@ -637,14 +647,14 @@ mod tests {
             return;
         };
         let aberrated = inject(&checks(900, 600), 0, 1.0015);
-        let found = estimated(gpu, &aberrated).expect("a scale");
+        let found = regression(gpu, &aberrated).expect("a scale");
         let corrected = inject(&aberrated, 0, corner(&found, 0));
         assert!(
             (corner(&found, 1) - 1.0).abs() < 0.0004,
             "blue should not have moved"
         );
         assert!(
-            estimated(gpu, &corrected).is_none(),
+            regression(gpu, &corrected).is_none(),
             "correcting by the estimate has to leave nothing worth correcting",
         );
     }
@@ -657,7 +667,7 @@ mod tests {
             return;
         };
         let moved = inject(&checks(900, 600), 2, 1.0015);
-        let found = estimated(gpu, &moved).expect("a scale");
+        let found = regression(gpu, &moved).expect("a scale");
         let (red, blue) = (corner(&found, 0), corner(&found, 1));
         assert!((blue - 1.0 / 1.0015).abs() < 0.0004, "blue {blue}");
         assert!(
@@ -767,18 +777,18 @@ mod tests {
         };
         let clean = checks(900, 600);
         assert!(
-            estimated(gpu, &inject(&clean, 0, 1.0015)).is_some(),
+            regression(gpu, &inject(&clean, 0, 1.0015)).is_some(),
             "the fixture must be one this estimator can actually read, or the assertions \
              below pass on a decline that has nothing to do with a colour cast",
         );
         assert!(
-            estimated(gpu, &clean).is_none(),
+            regression(gpu, &clean).is_none(),
             "the fixture itself must carry nothing"
         );
 
         for strength in [0.05f64, 0.15, 0.3] {
             let cast = colour_cast(&clean, 0, strength);
-            let found = estimated(gpu, &cast);
+            let found = regression(gpu, &cast);
             assert!(
                 found.is_none(),
                 "a {strength} radial cast on a registered frame was read as a scale of {:?}",
@@ -829,12 +839,12 @@ mod tests {
         };
         let clean = checks(900, 600);
         assert!(
-            estimated(gpu, &inject(&clean, 0, 1.0015)).is_some(),
+            regression(gpu, &inject(&clean, 0, 1.0015)).is_some(),
             "the fixture must be one this estimator can actually read",
         );
         for amplitude in [4.0f64, 10.0, 20.0] {
             let frame = noisy(&clean, amplitude);
-            let found = estimated(gpu, &frame);
+            let found = regression(gpu, &frame);
             assert!(
                 found.is_none(),
                 "noise of {amplitude} counts on a registered frame was read as {:?}",
@@ -932,6 +942,50 @@ mod tests {
         };
         let judged = pollster::block_on(improves(&framed(gpu, &flat_frame), &flat(1.001, 1.0)));
         assert_eq!(judged, None);
+    }
+
+    /// Edges for the regression in the middle of the frame, point sources for the verification
+    /// outside it: neither `checks` nor `starfield` gives both a reading.
+    fn edges_and_stars(width: usize, height: usize) -> Rgb {
+        let (edges, stars) = (checks(width, height), starfield(width, height));
+        let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+        let half = (cx * cx + cy * cy).sqrt();
+        let mut data = edges.data;
+        for y in 0..height {
+            for x in 0..width {
+                let r = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt() / half;
+                if r >= POINT_FROM - 0.05 {
+                    let i = (y * width + x) * 3;
+                    data[i..i + 3].copy_from_slice(&stars.data[i..i + 3]);
+                }
+            }
+        }
+        Rgb {
+            width,
+            height,
+            data,
+        }
+    }
+
+    #[test]
+    fn the_regression_is_kept_only_where_point_sources_confirm_it() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let unjudged = framed(gpu, &inject(&checks(900, 600), 0, 1.0015));
+        assert!(
+            pollster::block_on(regressed(&unjudged)).is_some(),
+            "the fixture must be one the regression answers on",
+        );
+        assert_eq!(pollster::block_on(estimate(&unjudged)), None);
+
+        let judged = framed(gpu, &inject(&edges_and_stars(1200, 900), 0, 1.0015));
+        let found = pollster::block_on(estimate(&judged)).expect("a confirmed scale");
+        assert!(
+            (corner(&found, 0) - 1.0 / 1.0015).abs() < 0.0006,
+            "recovered {}",
+            corner(&found, 0)
+        );
     }
 
     #[test]
@@ -1143,7 +1197,7 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
-        assert!(estimated(gpu, &checks(900, 600)).is_none());
+        assert!(regression(gpu, &checks(900, 600)).is_none());
     }
 
     #[test]
@@ -1156,6 +1210,6 @@ mod tests {
             height: 200,
             data: vec![128u8; 200 * 200 * 3],
         };
-        assert!(estimated(gpu, &flat).is_none());
+        assert!(regression(gpu, &flat).is_none());
     }
 }
