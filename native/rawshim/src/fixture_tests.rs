@@ -1427,15 +1427,15 @@ mod decode_geometry {
         let recorded = [
             (
                 sony(),
-                0.000033906806_f32,
-                0.000000004439296_f32,
-                [2.5511618_f32, 3.2173107, 3.141663, 2.229705],
+                0.00006399314_f32,
+                0.000000008378388_f32,
+                [2.6745415_f32, 3.3139818, 3.2424848, 2.339822],
             ),
             (
                 canon(),
-                0.0000032712883,
-                0.0,
-                [1.4005831, 1.818243, 1.852943, 1.6612188],
+                0.0000061739815,
+                0.0000000035847272,
+                [18.246365, 17.887793, 17.906157, 18.088154],
             ),
         ];
         for (path, alpha, sigma_sq, dark) in recorded {
@@ -1475,7 +1475,7 @@ mod decode_geometry {
     ///
     /// **Three makes, so the ordering is worth only as much as its margins.** Six frames from three
     /// sensors could in principle order by sensor rather than by sensitivity. Measured here they do
-    /// not: 0.00021, 0.00039, 0.00069, 0.00159, 0.00214, 0.00498, whose tightest neighbouring gap
+    /// not: 0.00030, 0.00053, 0.00095, 0.00219, 0.00294, 0.00684, whose tightest neighbouring gap
     /// is the clipped frame at 5000 over the X-T3 at 4000, and that is still 1.34x. The Sony at 640
     /// over the X-T3 at 160 is the next tightest at 1.77x. Nothing a reduction order moves is near
     /// either. A frame swapped into this list wants the gaps checked again.

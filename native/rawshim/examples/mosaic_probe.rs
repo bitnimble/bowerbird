@@ -6,6 +6,7 @@
 //!
 //! Writes the window of the conditioned mosaic before and after the denoise, and their
 //! difference amplified, as PGMs, and the window before as little-endian f32 for a fixture.
+//! Prints the window's range and mean either side: a denoise that moves the mean has a bias.
 //! Coordinates are the sensor's own; the window origin must align to the CFA period.
 //! `sigma_sq` replaces the fit's read noise, for telling a wrong fit from a wrong filter.
 
@@ -91,7 +92,15 @@ fn main() {
                 (lo.min(*v), hi.max(*v))
             })
     };
-    eprintln!("before {:?} after {:?}", range(&before), range(&after));
+    let mean =
+        |values: &[f32]| values.iter().map(|v| f64::from(*v)).sum::<f64>() / values.len() as f64;
+    eprintln!(
+        "before {:?} mean {:e} after {:?} mean {:e}",
+        range(&before),
+        mean(&before),
+        range(&after),
+        mean(&after)
+    );
 
     // The scene is dark; a fixed gain makes the window readable without inventing a grade.
     let lifted = |values: &[f32]| values.iter().map(|v| v * 8.0).collect::<Vec<f32>>();

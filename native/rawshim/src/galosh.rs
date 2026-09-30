@@ -48,10 +48,11 @@ pub fn force_ratio_floor(floor: f32) {
 /// `the_fit_is_the_one_this_sensor_has`, since nothing else reads the fit's absolute value.
 const DR_WORKGROUPS: u32 = 512;
 
-/// Sizes of the histograms and the table `prelude.slang` declares, held against its text by
-/// `the_table_sizes_are_the_ones_the_shader_declares`.
+/// Sizes of the histograms, the table and the partials `prelude.slang` declares, held against its
+/// text by `the_table_sizes_are_the_ones_the_shader_declares`.
 const SIGMA_BINS: usize = 4096;
 const LUT_SIZE: usize = 4096;
+const UNDER_BLACK_SUMS: usize = 24;
 
 /// `params_buf` slots, which are `prelude.slang`'s and must stay its.
 ///
@@ -257,6 +258,7 @@ struct Kernel {
 /// Every kernel, built once and kept for the process.
 pub struct Galosh {
     ne_block_stats: Kernel,
+    under_black_reduce: Kernel,
     ne_finalize: Kernel,
     gat_forward_full: Kernel,
     build_inv_lut: Kernel,
@@ -413,7 +415,8 @@ impl Galosh {
         const W: bool = false;
         Some(Galosh {
             ne_block_stats: kernel!("ne_block_stats", &[(0, R), (1, W), (2, W)]),
-            ne_finalize: kernel!("ne_finalize", &[(0, R), (1, R), (3, W)]),
+            under_black_reduce: kernel!("under_black_reduce", &[(0, R), (1, W)]),
+            ne_finalize: kernel!("ne_finalize", &[(0, R), (1, R), (2, R), (3, W)]),
             gat_forward_full: kernel!("gat_forward_full", &[(0, R), (1, W), (6, R)]),
             build_inv_lut: kernel!("build_inv_lut", &[(0, R), (1, W), (2, W), (3, W)]),
             lut_finalize: kernel!("lut_finalize", &[(0, R), (1, W)]),
@@ -667,8 +670,8 @@ impl NoiseModel {
     /// own JPEG of the frame, 40 keeps the faint detail the track's three-quarter point was already
     /// softening.
     pub fn suggested_amount(&self) -> f64 {
-        const GATE: f32 = 0.0006;
-        const SPAN: f32 = 0.00539;
+        const GATE: f32 = 0.00082;
+        const SPAN: f32 = 0.0074;
         let over = self.shadow_noise() - GATE;
         if over <= 0.0 {
             return 0.0;
@@ -1374,6 +1377,10 @@ async fn run(
     );
     let partial = plane!("galosh partial", DR_WORKGROUPS as usize * 5);
     let partial_resid = plane!("galosh partial resid", DR_WORKGROUPS as usize * 2);
+    let under_black = plane!(
+        "galosh under black",
+        DR_WORKGROUPS as usize * UNDER_BLACK_SUMS
+    );
 
     // **The blocks are the channel's own sub-lattice, so they shrink with the period.** A Bayer
     // channel is a quarter of the frame and an X-Trans one a thirty-sixth, which is the same total
@@ -1464,6 +1471,15 @@ async fn run(
     // thirty-six apiece, one of Bayer's four. `unified_sigma` combines the four either way.
     let sigma_merge = pushes.add(&[Word::I(slices as i32 * slots / 4)]);
     let packed = cfa.packed_colours().map(|word| Word::I(word as i32));
+    let under_black_push = pushes.add(&[
+        Word::I(w),
+        Word::I(h),
+        Word::I(pw as i32),
+        Word::I(ph as i32),
+        packed[0],
+        packed[1],
+        packed[2],
+    ]);
     let [gain_c1, gain_c2] = cfa.chroma_gain().map(Word::F);
     let extract = pushes.add(&[
         Word::I(w),
@@ -1707,9 +1723,22 @@ async fn run(
                 (slots as u32 * ne_sampled as u32).div_ceil(64).max(1),
                 1,
             );
+            let g = bind(&galosh.under_black_reduce, &[(0, &raw), (1, &under_black)]);
+            run(
+                &galosh.under_black_reduce,
+                &g,
+                under_black_push,
+                DR_WORKGROUPS,
+                1,
+            );
             let g = bind(
                 &galosh.ne_finalize,
-                &[(0, &blk_mean), (1, &blk_var), (3, &params)],
+                &[
+                    (0, &blk_mean),
+                    (1, &blk_var),
+                    (2, &under_black),
+                    (3, &params),
+                ],
             );
             run(&galosh.ne_finalize, &g, finalize, 1, 1);
         }
@@ -2158,7 +2187,11 @@ mod tests {
     #[test]
     fn the_table_sizes_are_the_ones_the_shader_declares() {
         const SLANG: &str = include_str!("../../../slang/galosh/prelude.slang");
-        for (name, here) in [("SIGMA_BINS", SIGMA_BINS), ("LUT_SIZE", LUT_SIZE)] {
+        for (name, here) in [
+            ("SIGMA_BINS", SIGMA_BINS),
+            ("LUT_SIZE", LUT_SIZE),
+            ("UNDER_BLACK_SUMS", super::UNDER_BLACK_SUMS),
+        ] {
             let opener = format!("public static const int {name} = ");
             let start = SLANG
                 .find(&opener)
@@ -2322,12 +2355,12 @@ mod tests {
             .suggested_amounts()
         };
         // A base-ISO frame is declined on both halves rather than on one.
-        assert_eq!(at(0.00027), (0.0, 0.0));
+        assert_eq!(at(0.00037), (0.0, 0.0));
         // **Luminance lands well short of the end of its track and colour is at the end of its**,
         // which is the same rule read on two tracks rather than an inconsistency: what is lost to
         // under-denoising luminance is grain and still reads as a photograph, and what is lost to
         // under-denoising colour is mottle and never does. This is `DSC00982` at ISO 12800.
-        let (luma, colour) = at(0.00287);
+        let (luma, colour) = at(0.00394);
         assert!((35.0..45.0).contains(&luma), "luma {luma}");
         assert_eq!(
             colour, 100.0,
@@ -2337,7 +2370,7 @@ mod tests {
         // A frame the ramp puts mid-track, where the lead is the lead rather than the clamp: this
         // is `IMG_4138` at ISO 2000, whose colour still runs past 50, where the chroma pyramid
         // stops an octave short of the eighth-resolution anchor.
-        let (luma, colour) = at(0.00170);
+        let (luma, colour) = at(0.00235);
         assert!(colour > luma, "colour {colour} does not lead luma {luma}");
         assert!(
             (colour - luma * COLOUR_LEAD).abs() < 1e-6,
@@ -2372,7 +2405,7 @@ mod tests {
     fn an_unset_detail_is_the_frames_own_and_not_a_number() {
         let noisy = NoiseFit {
             alpha: 0.0,
-            sigma_sq: 0.00187 * 0.00187,
+            sigma_sq: 0.00257 * 0.00257,
             unified_sigma: 1.2,
             dark_ref: [0.0; 4],
         };
@@ -2404,7 +2437,7 @@ mod tests {
         // A clean frame is declined on both halves, and that is the whole of what a fit can say -
         // so an automatic decode of one filters nothing rather than filtering a little.
         let clean = NoiseFit {
-            sigma_sq: 0.00026 * 0.00026,
+            sigma_sq: 0.00036 * 0.00036,
             ..noisy
         };
         assert_eq!(Detail::AUTO.resolved(Some(clean)), (0.0, 0.0));
@@ -2600,7 +2633,7 @@ mod tests {
         };
         // Base ISO, across both libraries: the whole range is declined rather than put through
         // the chain to be left alone.
-        for clean in [0.00021, 0.00027, 0.00032, 0.00039] {
+        for clean in [0.00029, 0.00037, 0.00044, 0.00054] {
             assert_eq!(
                 at(clean),
                 0.0,
@@ -2610,23 +2643,23 @@ mod tests {
         // Nothing measured reaches the upper half, the ramp erring towards grain rather than
         // towards smearing.
         assert!(
-            (1.0..20.0).contains(&at(0.00107)),
+            (1.0..20.0).contains(&at(0.00147)),
             "ISO 1250 asks {}",
-            at(0.00107)
+            at(0.00147)
         );
         assert!(
-            (15.0..30.0).contains(&at(0.00179)),
+            (15.0..30.0).contains(&at(0.00246)),
             "ISO 6400 asks {}",
-            at(0.00179)
+            at(0.00246)
         );
         assert!(
-            (40.0..50.0).contains(&at(0.00308)),
+            (40.0..50.0).contains(&at(0.00423)),
             "ISO 25600 asks {}",
-            at(0.00308)
+            at(0.00423)
         );
         // Ramped rather than stepped, so two frames either side of the gate are not two
         // different photographs.
-        assert!(at(0.0007) < at(0.0009));
+        assert!(at(0.00096) < at(0.00124));
     }
 
     /// A frame clean enough that its Poisson means run past what f32 can sum.
@@ -2853,6 +2886,115 @@ mod tests {
             .map(|at| denoised[at])
             .fold(f32::NEG_INFINITY, f32::max);
         assert!(worst < 0.01, "a black photosite came back at {worst}");
+    }
+
+    /// Dark noise a block's Laplacians read as nothing is fitted from the photosites under black.
+    #[test]
+    fn dark_noise_no_block_can_see_is_fitted_from_the_photosites_under_black() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(galosh) = device(gpu) else {
+            return;
+        };
+
+        let (width, height) = (1024, 768);
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut uniform = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / 16777216.0
+        };
+        // Black on the left, as a field that is flat across each of the fit's blocks with a spike
+        // in one photosite of two hundred; a ramp on the right carrying shot noise alone.
+        let block = 16;
+        let field: Vec<f32> = (0..(width / block) * (height / block))
+            .map(|_| (uniform() - 0.5) * 6e-4)
+            .collect();
+        let noisy: Vec<f32> = (0..width * height)
+            .map(|at| {
+                let (x, y) = (at % width, at / width);
+                if x < width / 2 {
+                    let spike = if uniform() < 0.005 { -1.5e-3 } else { 0.0 };
+                    return field[(y / block) * (width / block) + x / block] + spike;
+                }
+                let level = 0.5 * (x - width / 2) as f32 / (width / 2) as f32;
+                level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * 0.01 * level.sqrt()
+            })
+            .collect();
+        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let fit = pollster::block_on(denoise(
+            gpu,
+            galosh,
+            &uploaded,
+            &rggb(),
+            Amounts::from_sliders(40.0, 40.0),
+        ));
+        let denoised = read(gpu, &uploaded);
+
+        // The field's lower half has a mean depth of 1.5e-4, which is a sigma of 1.9e-4.
+        assert!(
+            (1e-8..1e-7).contains(&fit.sigma_sq),
+            "the photosites under black read a variance of {}",
+            fit.sigma_sq
+        );
+        // The black half went in within 0.002 of zero.
+        let worst = (16..height - 16)
+            .flat_map(|row| (16..width / 2 - 32).map(move |col| row * width + col))
+            .map(|at| denoised[at])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(worst < 0.01, "a black photosite came back at {worst}");
+    }
+
+    /// The fit states the variance a photosite has, in both of its terms, whether or not the frame
+    /// carries rows the sensor never read: those sit at the file's zero, far under black, at a
+    /// value to each black level.
+    #[test]
+    fn the_fit_reads_back_the_model_a_frame_was_drawn_from() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(galosh) = device(gpu) else {
+            return;
+        };
+
+        let (width, height) = (1024usize, 768usize);
+        let (alpha, sigma_sq) = (2e-4f32, 1e-6f32);
+        for read_rows in [height, height - 64] {
+            let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+            let mut uniform = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed >> 40) as f32 / 16777216.0
+            };
+            // Black over the left quarter, then a ramp: a second difference reads none of it.
+            let noisy: Vec<f32> = (0..width * height)
+                .map(|at| {
+                    let (x, y) = (at % width, at / width);
+                    if y >= read_rows {
+                        return [-0.034, -0.011, -0.012, -0.017][(y & 1) | ((x & 1) << 1)];
+                    }
+                    let level = 0.5 * x.saturating_sub(width / 4) as f32 / (3 * width / 4) as f32;
+                    let sigma = (alpha * level + sigma_sq).sqrt();
+                    level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma
+                })
+                .collect();
+            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+            let fit = pollster::block_on(super::fit(gpu, galosh, &uploaded, &rggb()));
+
+            assert!(
+                (fit.alpha / alpha - 1.0).abs() < 0.1,
+                "a shot slope of {alpha} was fitted as {} over {read_rows} rows",
+                fit.alpha
+            );
+            assert!(
+                (fit.sigma_sq / sigma_sq - 1.0).abs() < 0.2,
+                "a read variance of {sigma_sq} was fitted as {} over {read_rows} rows",
+                fit.sigma_sq
+            );
+        }
     }
 
     /// A colour step at the top of the Colour track must stay where the scene put it.

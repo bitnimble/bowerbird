@@ -159,30 +159,26 @@ public static const float BLOCK_MEAN_CEILING = 0.97;
 // `build_inv_lut` is accurate at any alpha now that it stops summing where f32 cannot.
 public static const float ALPHA_MIN = 1e-8;
 
-/// The read-noise variance the GAT and its inverse run at: the fitted one, held to one electron's,
-/// which `alpha` is in these units. Below its break the transform is `1 / sigma`, so a fitted zero
-/// puts a photosite under black seven orders out.
-public float read_variance(float alpha, float sigma_sq)
+/// The sigma the GAT reads at black: the read noise's, and Anscombe's 3/8 of an electron with it.
+public float gat_sigma_at_black(float a, float sigma_sq)
 {
-    let a = max(alpha, ALPHA_MIN);
-    return max(sigma_sq, a * a);
+    return sqrt(0.375 * a * a + max(sigma_sq, 0.0));
 }
 
-public float gat_forward(Gain sample, float alpha, float fitted_sigma_sq)
+public float gat_forward(Gain sample, float alpha, float sigma_sq)
 {
     let a = max(alpha, ALPHA_MIN);
-    let sigma_sq = read_variance(alpha, fitted_sigma_sq);
-    let sigma_raw = sqrt(sigma_sq);
-    let y_break = -0.375 * a;
-    let t_break = 2.0 * sigma_raw / a;
+    let at_black = gat_sigma_at_black(a, sigma_sq);
     let x = sample.g;
     var x_safe = x;
     if (!(x == x)) { x_safe = 0.0; }
-    if (x_safe >= y_break) {
-        let arg = a * x_safe + 0.375 * a * a + sigma_sq;
-        return (2.0 / a) * sqrt(max(arg, 0.0));
+    if (x_safe >= 0.0) {
+        return (2.0 / a) * sqrt(a * x_safe + at_black * at_black);
     }
-    return t_break + (x_safe - y_break) / sigma_raw;
+    // Light ends at black and so does the curve: a sample under it goes down the tangent there.
+    // Followed to its own zero the curve steepens to `1 / sigma`, and a fit that read no read
+    // noise then throws a photosite under black seven orders out.
+    return 2.0 * at_black / a + x_safe / at_black;
 }
 
 /// Workgroups the two dark-reference reducers are dispatched over, which they stride their
@@ -193,6 +189,99 @@ public float gat_forward(Gain sample, float alpha, float fitted_sigma_sq)
 /// fitted to part of it, which is a dark frame subtracted at the wrong level rather than a
 /// failure. `the_reducers_stride_the_grid_the_host_dispatches` holds the two together.
 public static const int DR_WORKGROUPS = 512;
+
+/// The black levels a mosaic is conditioned against, as far as they are told apart under black:
+/// green's on either row, which a Bayer body levels separately, then red's and blue's.
+public static const int BLACK_LEVELS = 4;
+
+public int black_level_of(uint colour, int row)
+{
+    if (colour == 1u) { return row & 1; }
+    return colour == 0u ? 2 : 3;
+}
+
+/// One black level's photosites under it, as `under_black_reduce` gathers them and `ne_finalize`
+/// reads them back.
+///
+/// **The deepest value a level holds is kept apart, and is not the noise's.** It is where the
+/// file's zero lands, which every photosite that was never read sits at: Sony pads a 61MP frame
+/// with 3.5 million of them, thirty to each one the read noise put under black, and a dead
+/// photosite is the same value. Where a frame has neither it is one sample of the tail.
+public struct UnderBlack {
+    /// Summed over every photosite above the deepest, with how many.
+    public float depth;
+    public float count;
+    /// How many of those have the next photosite of their colour under black too: every second one
+    /// of a field at black, and none of a defect or of a lit field's tail.
+    public float paired;
+    /// Zero where nothing is under black.
+    public float deepest;
+    public float at_deepest;
+    public float paired_at_deepest;
+};
+
+/// What a workgroup of `under_black_reduce` writes: an [`UnderBlack`] to each black level.
+public static const int UNDER_BLACK_SUMS = 24;
+
+// Every one of these writes through a parameter, a field at a time: they are called under loops,
+// where Metal drops a call that returns a struct (`tests/wgsl_call_shapes.rs`).
+
+public void under_black_at(
+    StructuredBuffer<float> partials,
+    int workgroup,
+    int level,
+    out UnderBlack held)
+{
+    let at = workgroup * UNDER_BLACK_SUMS + level * (UNDER_BLACK_SUMS / BLACK_LEVELS);
+    held.depth = partials[at];
+    held.count = partials[at + 1];
+    held.paired = partials[at + 2];
+    held.deepest = partials[at + 3];
+    held.at_deepest = partials[at + 4];
+    held.paired_at_deepest = partials[at + 5];
+}
+
+public void under_black_none(out UnderBlack none)
+{
+    none.depth = 0.0;
+    none.count = 0.0;
+    none.paired = 0.0;
+    none.deepest = 0.0;
+    none.at_deepest = 0.0;
+    none.paired_at_deepest = 0.0;
+}
+
+public void under_black_merge(inout UnderBlack into, UnderBlack other)
+{
+    if (other.deepest > into.deepest) {
+        into.depth += into.at_deepest * into.deepest;
+        into.count += into.at_deepest;
+        into.paired += into.paired_at_deepest;
+        into.deepest = other.deepest;
+        into.at_deepest = other.at_deepest;
+        into.paired_at_deepest = other.paired_at_deepest;
+    } else if (other.deepest == into.deepest) {
+        into.at_deepest += other.at_deepest;
+        into.paired_at_deepest += other.paired_at_deepest;
+    } else {
+        into.depth += other.at_deepest * other.deepest;
+        into.count += other.at_deepest;
+        into.paired += other.paired_at_deepest;
+    }
+    into.depth += other.depth;
+    into.count += other.count;
+    into.paired += other.paired;
+}
+
+public void under_black_take(inout UnderBlack into, float depth, bool paired)
+{
+    UnderBlack one;
+    under_black_none(one);
+    one.deepest = depth;
+    one.at_deepest = 1.0;
+    one.paired_at_deepest = paired ? 1.0 : 0.0;
+    under_black_merge(into, one);
+}
 
 /// `galosh::ACHROMATIC_RANGE`, the neutrality gate both dark-reference reducers apply.
 public static const float ACHROMATIC_RANGE = 4.0;
@@ -206,7 +295,7 @@ public static const int LUT_SIZE = 4096;
 /// The GAT undone in closed form, for any `d` at all.
 ///
 /// **What the table is for is the correction, not the transform.** `gat_forward_full` is
-/// `t = (2/a) sqrt(a y + 3/8 a^2 + sigma^2)` above the break and a straight line below it, and both
+/// `t = (2/a) sqrt(a y + 3/8 a^2 + sigma^2)` above black and a straight line below it, and both
 /// invert exactly - so this is a level wherever it is asked. The table carries only Mäkitalo-Foi's
 /// unbiased correction on top of that, which is a photon-starved effect and has converged to
 /// nothing well before the top of the range.
@@ -215,13 +304,14 @@ public static const int LUT_SIZE = 4096;
 /// table: a constant there is what turns a fit that came out wrong into a *flat frame* - white
 /// from the upper arm, black from the lower - and a flat frame is a broken picture reported as a
 /// rendered one. Biased shadows are a picture.
-public float gat_inv_exact(float d, float y_break, float t_break, float sigma_raw, float a, float sq)
+public float gat_inv_exact(float d, float a, float at_black)
 {
-    if (d <= t_break) {
-        return y_break + sigma_raw * (d - t_break);
+    let d_black = 2.0 * at_black / a;
+    if (d <= d_black) {
+        return at_black * (d - d_black);
     }
     let root = d * a * 0.5;
-    return (root * root - 0.375 * a * a - sq) / max(a, ALPHA_MIN);
+    return (root * root - at_black * at_black) / a;
 }
 
 /// The unbiased inverse, off the table `build_inv_lut` filled, falling back to the closed form
@@ -245,9 +335,7 @@ public float gat_inv_lut(
 {
     let bracketed = lut_params[1] > lut_params[0] && d > lut_params[0] && d < lut_params[1];
     if (!bracketed) {
-        return min(
-            gat_inv_exact(d, lut_params[2], lut_params[3], lut_params[4], lut_params[5], lut_params[6]),
-            1.0);
+        return min(gat_inv_exact(d, lut_params[2], lut_params[3]), 1.0);
     }
 
     var lo = 0u;

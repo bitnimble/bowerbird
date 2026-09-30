@@ -29,6 +29,11 @@ const QUIETEST_SIGMA: f64 = 7.11772e-7 * 100.0 * 100.0 + 6.514934e-4 * 100.0 + 0
 const V: f64 = 959.0;
 const INPUT_SCALE: f64 = 256.0;
 
+/// How much of the fitted variance the network is handed, which is where it lifts nothing: the
+/// median of twelve noisy frames off two sensors, which run from 0.28 to 0.93
+/// (`examples/noise_alpha.rs`).
+const NETWORK_NOISE: f64 = 0.53;
+
 /// What each tile is grown by so that its interior has context, in mosaic pixels.
 ///
 /// The halo is what stops the seam: four halvings put a decoder pixel's receptive field over a
@@ -1116,8 +1121,8 @@ fn plan(
     // ISO polynomial: the fit states green's noise, so both terms come off green's gain.
     let green = f64::from(gains[1]);
     let model = fit.model();
-    let sigma = V * V * f64::from(model.sigma_sq) / (green * green);
-    let k = (V * f64::from(model.alpha) / green).max(quietest_k(sigma));
+    let sigma = V * V * NETWORK_NOISE * f64::from(model.sigma_sq) / (green * green);
+    let k = (V * NETWORK_NOISE * f64::from(model.alpha) / green).max(quietest_k(sigma));
     let cvt_k = ANCHOR_K / k;
     let cvt_b = (sigma / (k * k) - ANCHOR_SIGMA / (ANCHOR_K * ANCHOR_K)) * ANCHOR_K / V;
 
