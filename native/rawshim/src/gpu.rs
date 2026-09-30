@@ -3061,23 +3061,17 @@ impl Gpu {
         let map = colour.chroma.as_ref().unwrap_or(&identity);
         let shape = map.shape();
         let nodes = map.nodes_flat();
-        // The fitted nodes carry the global saturation in their chroma rows, and
-        // `globally_saturated` applies it again after the chroma smoothing.
-        let relative = match colour.chroma {
-            Some(_) => 1.0 / colour.saturation,
-            None => 1.0,
-        };
         let count = nodes.len() / hdr_fit::NODE_VALUES;
         let (mut pairs, mut gains, mut tints) = (Vec::new(), Vec::new(), Vec::new());
         for node in 0..count {
             let at = node * hdr_fit::NODE_VALUES;
             for k in 0..4 {
-                pairs.extend_from_slice(&half((nodes[at + k] * relative) as f32));
+                pairs.extend_from_slice(&half(nodes[at + k] as f32));
             }
             // The second volume carries the two luma-to-chroma terms, the lightness gain's
             // deviation from 1, and the first of the two chroma-to-lightness terms.
-            gains.extend_from_slice(&half((nodes[at + 4] * relative) as f32));
-            gains.extend_from_slice(&half((nodes[at + 5] * relative) as f32));
+            gains.extend_from_slice(&half(nodes[at + 4] as f32));
+            gains.extend_from_slice(&half(nodes[at + 5] as f32));
             gains.extend_from_slice(&half(nodes[at + 6] as f32 - 1.0));
             gains.extend_from_slice(&half(nodes[at + 7] as f32));
             // Nine values need a third volume: eight fill two `rgba16float` texels exactly,
@@ -6234,29 +6228,6 @@ mod tests {
         assert!(
             moved <= 2,
             "the camera's own sliders, written out, moved the match by {moved} codes"
-        );
-        // A thousandth of Contrast takes both through `camera_undone`, so what differs is the
-        // saturation alone and not whether the tone was taken off and put back.
-        let at_zero = |colour: &crate::hdr_fit::HdrColour| {
-            graded_as(
-                Some(colour),
-                Some(told.exposure),
-                super::Adjust {
-                    saturation: Some(0.0),
-                    contrast: 1e-3,
-                    ..written_out.clone()
-                },
-            )
-        };
-        let without_saturation = at_zero(&told);
-        let unsaturated = at_zero(&crate::hdr_fit::HdrColour {
-            saturation: 1.0,
-            ..told.clone()
-        });
-        let off = worst(&unsaturated, &without_saturation);
-        assert!(
-            off <= 2,
-            "Saturation at 0 is {off} codes from the match without its saturation"
         );
 
         // A None profile drops the match and keeps where its sliders start: the neutral arm at the

@@ -121,7 +121,7 @@ const XYZ_TO_SRGB: [[f64; 3]; 3] = [
 
 const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
-/// `colour.slang`'s `globally_saturated` as the 3x3 it is.
+/// `colour.slang`'s `finish_chroma` blend towards luma, without a lattice, as a 3x3.
 fn saturation_matrix(saturation: f64) -> [[f64; 3]; 3] {
     std::array::from_fn(|r| {
         std::array::from_fn(|c| {
@@ -130,8 +130,8 @@ fn saturation_matrix(saturation: f64) -> [[f64; 3]; 3] {
     })
 }
 
-/// What of a whole linear step `total` is left once `saturation` is taken off it, so that
-/// `Sat(saturation) * without_saturation(total)` is `total`.
+/// `total` with `saturation` taken off: `Sat(saturation) * without_saturation(total, saturation)`
+/// is `total`.
 fn without_saturation(total: &[[f64; 3]; 3], saturation: f64) -> [[f64; 3]; 3] {
     compose3(&saturation_matrix(1.0 / saturation), total)
 }
@@ -225,14 +225,13 @@ pub struct HdrColour {
     /// it: a sidecar carrying both could come back with an anchor its own curve does not
     /// imply, and the frame would render a colour no fit ever chose.
     pub anchor: f64,
-    /// Applied after the curves; row-major, output channel by input channel. Only what
-    /// `saturation` leaves: the fit takes the global chroma first.
+    /// Applied after the curves; row-major, output channel by input channel. Only what the
+    /// fitted saturation leaves.
     pub matrix: [[f64; 3]; 3],
-    /// Blend towards luma, outermost; 1 leaves chroma alone.
-    ///
-    /// The match's global saturation and the Saturation slider's default, on its step. The
-    /// `chroma` map below carries it too, and `Gpu::lattice` uploads the map divided by it, so
-    /// `adjust.slang`'s `camera_undone` takes it off exactly.
+    /// The uniform part of the whole colour fit (`global_saturation`) and the Saturation slider's
+    /// default, on its step. A fitted match always carries a `chroma` map, whose nodes hold the
+    /// whole chroma, so this never reaches its render: `finish_chroma` blends by it only without
+    /// one.
     ///
     /// A curve over chroma and a gain per hue each described this camera's saturation far
     /// better - it takes a brown's chroma up 36% where it takes grass's up 8% - and both
@@ -1600,6 +1599,9 @@ pub enum Stage {
     Tone,
     ToneMatrix,
     Full,
+    /// Not the model: the neutral arm at the match's exposure and curve, which is what the
+    /// Saturation slider acts on when the profile is None.
+    CameraTone,
 }
 
 /// A stage's output per sample, on the device: the colour, then its luma - the layout
@@ -2118,9 +2120,8 @@ pub fn srgb_oetf(value: f64) -> f64 {
 /// The camera's rendering as the fit will compare against it, and the weights and pair
 /// list every comparison uses, worked out once.
 ///
-/// The fit measures itself dozens of times over - six ridge candidates at each of three
-/// rounds, then the saturation sweep and its refinement - and none of this changes between
-/// them.
+/// The fit measures itself dozens of times over - six ridge candidates and a saturation search at
+/// each of three rounds - and none of this changes between them.
 struct Pairs {
     at: Vec<usize>,
     /// `at` and `greys` on the device, which is where every probe gathers its samples from.
@@ -3103,8 +3104,8 @@ impl Rescored {
 }
 
 /// The matrix for the tone stage a colour currently carries, and every candidate it was chosen
-/// from, each [`without_saturation`]: solved and scored as the whole linear step, damped towards
-/// the saturation alone.
+/// from, as residuals ([`without_saturation`]) of matrices solved and scored as the whole linear
+/// step, damped towards the saturation alone.
 async fn fitted_matrix_for(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
@@ -3203,9 +3204,9 @@ pub(crate) fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
 const SATURATION_RANGE: (f64, f64) = (0.5, 2.0);
 const SATURATION_RESOLUTION: f64 = 0.002;
 
-/// deltaE charged per unit of `(saturation - 1)^2`. Without it the section on a flat objective
-/// walks to the end of its bracket its ties favour.
-const SATURATION_PRIOR: f64 = 2.0;
+/// Mean deltaE differences the search reads as ties, which go to neutral. A few pairs' 8-bit
+/// rounding flipping moves an achromatic frame's mean by 1e-6, and would otherwise pick its end.
+const SATURATION_TIE: f64 = 1e-4;
 
 /// The Saturation slider's step. The fit lands on it because the value is written into a
 /// photograph's edits, and `camera_undone` divides by the slider's value: off the step it would
@@ -3232,18 +3233,15 @@ const SATURATION_SWEEP: usize = 18;
 
 /// One pair in this many is enough to bracket the sweep's minimum.
 ///
-/// The sweep answers *which* 0.05-wide bracket, not what the number is inside it, and the
+/// The sweep answers *which* 0.08-wide bracket, not what the number is inside it, and the
 /// refinement that follows reads every pair. So the accuracy this has to reach is the gap between
 /// neighbouring brackets, which thousands of pairs settle as firmly as a hundred thousand. Eight
 /// rather than twenty because at twenty a frame near a boundary can pick the neighbouring bracket,
 /// and the section then converges to that bracket's edge instead of into the dip.
 const SWEEP_STRIDE: usize = 8;
 
-/// The match's global saturation: the chroma blend over the tone stage's colours, at the strength
-/// that best matches the camera, held towards 1 by [`SATURATION_PRIOR`] and on the slider's step.
-///
-/// Over the tone stage alone because it is fitted first, and the matrix and lattice take only what
-/// it leaves.
+/// The chroma blend over `stage`'s colours that best matches the pairs' targets, on the slider's
+/// step.
 ///
 /// Fitted against deltaE rather than solved for the mean chroma ratio, a proxy that fails
 /// exactly when the stages above it leave a residual: the ratio is a mean, one scalar can
@@ -3251,12 +3249,10 @@ const SWEEP_STRIDE: usize = 8;
 /// out at 1.153 - which took hues that were already within 1.3 of the camera and pushed the
 /// hillside to 11.6, acid yellow-green, while the number it was solving for looked perfect.
 ///
-/// Every pair counts the same here, unlike the curve and matrix fits, so the caller hands pairs
-/// weighed evenly. `hue_balance`
-/// stops a frame's dominant colour deciding what the camera is taken to *do*, and the
-/// curves and the matrix have the freedom to act on that separately per hue. This
-/// scalar has none - it moves the whole picture at once - so balancing it does not
-/// protect a minority hue, it hands the picture to one. IMG_9808 balanced lands at
+/// Pairs count by their `balance`, never by `hue_balance`. That stops a frame's dominant colour
+/// deciding what the camera is taken to *do*, and the curves and the matrix have the freedom to
+/// act on it separately per hue. This scalar has none - it moves the whole picture at once - so
+/// balancing it does not protect a minority hue, it hands the picture to one. IMG_9808 balanced lands at
 /// 0.772 and drains its sky, 75k pairs at deltaE 9.4, to bring 1.2k red ones in.
 ///
 /// Coarse sweep first, then a golden section inside the bracket it found.
@@ -3265,26 +3261,23 @@ const SWEEP_STRIDE: usize = 8;
 /// a non-convex distance and can dip more than once (`SATURATION_SWEEP`), and where it is
 /// flat every comparison ties, so a bisection that discards a half on a tie walks to
 /// whichever end it favours - on an achromatic frame that is a 2x chroma boost applied to
-/// pixels the blurred fit grid never saw. The strict comparison below is what keeps a flat
-/// stretch at neutral.
+/// pixels the blurred fit grid never saw. The comparisons below break ties towards neutral, which
+/// is what keeps a flat stretch there.
 ///
-/// The tone stage is evaluated once and held on the device: the probes above it move nothing
+/// The stage is evaluated once and held on the device: the probes above it move nothing
 /// else, so the curves would otherwise be recomputed thirty times over for one result.
 async fn fitted_saturation(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
-    even: &Even<'_>,
+    over: &SaturationPairs<'_>,
+    stage: Stage,
 ) -> Option<f64> {
-    let count = even.pairs.at.len();
-    let below = evaluate_over(gpu, colour, &even.gathered, count, Stage::Tone);
+    let count = over.pairs.at.len();
+    let below = evaluate_over(gpu, colour, &over.gathered, count, stage);
     let (low, high) = SATURATION_RANGE;
-    let held = |saturation: f64, score: f64| score + SATURATION_PRIOR * (saturation - 1.0).powi(2);
-    let scoring = even.scoring.over(gpu, &below.buffer, 0, count);
+    let scoring = over.scoring.over(gpu, &below.buffer, 0, count);
     let scored = async |saturation: f64| -> Option<f64> {
-        Some(held(
-            saturation,
-            scored_on(scoring, &[saturation]).await?[0],
-        ))
+        Some(scored_on(scoring, &[saturation]).await?[0])
     };
 
     // Neutral first, then the sweep: they do not depend on each other, and asked one at a
@@ -3303,40 +3296,34 @@ async fn fitted_saturation(
     let sampled = evaluate_over(
         gpu,
         colour,
-        &even.sample_gathered,
-        even.sample.at.len(),
-        Stage::Tone,
+        &over.sample_gathered,
+        over.sample.at.len(),
+        stage,
     );
-    let swept: Vec<f64> = scored_on(
-        even.sample_scoring
-            .over(gpu, &sampled.buffer, 0, even.sample.at.len()),
+    let swept = scored_on(
+        over.sample_scoring
+            .over(gpu, &sampled.buffer, 0, over.sample.at.len()),
         &probes,
     )
-    .await?
-    .into_iter()
-    .zip(&probes)
-    .map(|(score, saturation)| held(*saturation, score))
-    .collect();
+    .await?;
 
     let (mut at, mut best) = (1.0, swept[0]);
     for (probe, here) in probes.iter().zip(&swept).skip(1) {
-        // Strictly better, so a flat objective keeps the neutral this started from
-        // instead of sliding to whichever end the comparisons happen to favour.
-        if *here < best {
+        if *here < best - SATURATION_TIE {
             (at, best) = (*probe, *here);
         }
     }
 
     // **Golden section, and it stays one.** Batching this the way the sweep above is batched was
     // tried and is a loss: a section places each probe where the last one's answer says, so it
-    // reaches 0.002 from a 0.05 bracket in nine evaluations, where rounds of eight need sixteen to
-    // reach 0.008. The device's parallel efficiency does not cover 1.8x the work.
+    // reaches 0.002 from a 0.17 bracket in eleven evaluations, where rounds of eight need sixteen
+    // to reach 0.008. The device's parallel efficiency does not cover 1.5x the work.
     let coarse = (high - low) / SATURATION_SWEEP as f64;
     let (mut lo, mut hi) = ((at - coarse).max(low), (at + coarse).min(high));
     let (mut c, mut d) = (hi - (hi - lo) * INVERSE_PHI, lo + (hi - lo) * INVERSE_PHI);
     let (mut fc, mut fd) = (scored(c).await?, scored(d).await?);
     while hi - lo > SATURATION_RESOLUTION {
-        if fc < fd {
+        if prefers_first((c, fc), (d, fd)) {
             (hi, d, fd) = (d, c, fc);
             c = hi - (hi - lo) * INVERSE_PHI;
             fc = scored(c).await?;
@@ -3346,12 +3333,29 @@ async fn fitted_saturation(
             fd = scored(d).await?;
         }
     }
-    Some(((lo + hi) / 2.0 / SATURATION_STEP).round() * SATURATION_STEP)
+    let found = ((lo + hi) / 2.0 / SATURATION_STEP).round() * SATURATION_STEP;
+    // The bracket came off a sample of the pairs, so on every pair it can miss neutral.
+    let neutral = (1.0, scored(1.0).await?);
+    Some(
+        match prefers_first(neutral, (found, scored(found).await?)) {
+            true => 1.0,
+            false => found,
+        },
+    )
 }
 
-/// The evenly weighed pairs [`fitted_saturation`] reads, and the sample its sweep reads, each
-/// gathered and scored once for every round.
-struct Even<'a> {
+/// Whether the saturation search keeps the `(saturation, score)` probe `first` over `second`:
+/// the lower score, or on a tie within [`SATURATION_TIE`] the one nearer neutral.
+fn prefers_first((first, at_first): (f64, f64), (second, at_second): (f64, f64)) -> bool {
+    match (at_first - at_second).abs() <= SATURATION_TIE {
+        true => (first - 1.0).abs() <= (second - 1.0).abs(),
+        false => at_first < at_second,
+    }
+}
+
+/// The pairs [`fitted_saturation`] reads, and the sample its sweep reads, each gathered and
+/// scored once.
+struct SaturationPairs<'a> {
     pairs: &'a Pairs,
     gathered: crate::gpu::Buffer,
     scoring: Rescored,
@@ -3360,8 +3364,13 @@ struct Even<'a> {
     sample_scoring: Rescored,
 }
 
-impl<'a> Even<'a> {
-    fn over(gpu: &'static crate::gpu::Gpu, render: &Source, pairs: &'a Pairs) -> Even<'a> {
+impl<'a> SaturationPairs<'a> {
+    fn over(
+        gpu: &'static crate::gpu::Gpu,
+        render: &Source,
+        surround: Option<&crate::gpu::Buffer>,
+        pairs: &'a Pairs,
+    ) -> SaturationPairs<'a> {
         let sample = pairs.every(gpu, SWEEP_STRIDE);
         let scoring = |pairs: &Pairs, probes: usize| {
             Rescored::new(
@@ -3373,10 +3382,10 @@ impl<'a> Even<'a> {
                 probes,
             )
         };
-        Even {
-            gathered: gathered(gpu, render, &pairs.indices, pairs.at.len(), None),
+        SaturationPairs {
+            gathered: gathered(gpu, render, &pairs.indices, pairs.at.len(), surround),
             scoring: scoring(pairs, 1),
-            sample_gathered: gathered(gpu, render, &sample.indices, sample.at.len(), None),
+            sample_gathered: gathered(gpu, render, &sample.indices, sample.at.len(), surround),
             // Neutral and the sweep's steps.
             sample_scoring: scoring(&sample, SATURATION_SWEEP + 2),
             sample,
@@ -5728,7 +5737,7 @@ async fn fit_colour(
     // Every matrix candidate is judged with the lattice it would carry, since the lattice mends
     // locally what a 3x3 cannot, and a matrix that serves a frame's commonest colours by turning a
     // rare one is only as bad as what is left of that after the lattice. Each against the one
-    // reference, the global saturation alone, so their costs and harms are comparable.
+    // reference, the fitted saturation alone, so their costs and harms are comparable.
     let with_matrix = |matrix: [[f64; 3]; 3]| HdrColour {
         matrix,
         ..model.clone()
@@ -5791,27 +5800,33 @@ async fn fit_colour(
         }
     }
     let (_, mut colour, scored) = chosen?;
+    // Where the scalar won, as the map that does exactly what it does: the grade applies the
+    // saturation after the mean-frame clamp, where a matrix re-expressed around a new split would
+    // not survive it, and a map carries its chroma whatever `saturation` is set to.
+    let chroma = colour
+        .chroma
+        .take()
+        .unwrap_or_else(|| ChromaMap::from_saturation(colour.saturation));
+    colour.chroma = Some(chroma);
     lap("matrix and lattice");
-    // The map that won reads the surround at grade time, so its thumb travels with it.
-    if colour.chroma.is_some() {
-        let step = 16usize;
-        let (tw, th) = ((width / step).max(1), (height / step).max(1));
-        let mut data = Vec::with_capacity(tw * th);
-        for y in 0..th {
-            for x in 0..tw {
-                // Cell centres, because the grade samples the thumb bilinearly at texel
-                // centres; a corner sample would hand it every value half a cell early.
-                let at = (y * step + step / 2).min(height - 1) * width
-                    + (x * step + step / 2).min(width - 1);
-                data.push(f64::from(half::f16::from_f64(surround.of[at])));
-            }
+    // The map reads the surround at grade time, so its thumb travels with it.
+    let step = 16usize;
+    let (tw, th) = ((width / step).max(1), (height / step).max(1));
+    let mut data = Vec::with_capacity(tw * th);
+    for y in 0..th {
+        for x in 0..tw {
+            // Cell centres, because the grade samples the thumb bilinearly at texel
+            // centres; a corner sample would hand it every value half a cell early.
+            let at = (y * step + step / 2).min(height - 1) * width
+                + (x * step + step / 2).min(width - 1);
+            data.push(f64::from(half::f16::from_f64(surround.of[at])));
         }
-        colour.surround = SurroundThumb {
-            width: tw,
-            height: th,
-            data,
-        };
     }
+    colour.surround = SurroundThumb {
+        width: tw,
+        height: th,
+        data,
+    };
 
     colour.delta_e = scored.balanced;
     lap("thumb");
@@ -5823,7 +5838,65 @@ async fn fit_colour(
         colour.curve = curve;
     }
     lap("camera tone");
+    if let Some(saturation) =
+        global_saturation(gpu, &colour, &source, &surround.buffer, &frame).await
+    {
+        colour.saturation = saturation;
+    }
+    lap("global saturation");
     Some(colour)
+}
+
+/// The uniform part of the whole colour fit: the saturation that best takes the neutral arm at the
+/// camera's exposure and curve to what the match renders, over the picture.
+async fn global_saturation(
+    gpu: &'static crate::gpu::Gpu,
+    colour: &HdrColour,
+    source: &Source,
+    surround: &crate::gpu::Buffer,
+    frame: &Pairs,
+) -> Option<f64> {
+    let count = frame.at.len();
+    let samples = gathered(gpu, source, &frame.indices, count, Some(surround));
+    let matched = evaluate_over(gpu, colour, &samples, count, Stage::Full)
+        .read(gpu)
+        .await?;
+    let target: Vec<[f64; 3]> = matched
+        .iter()
+        .map(|v| [v[0], v[1], v[2]].map(f64::from))
+        .collect();
+    // By how colourful the match renders each sample, so the dark mass of a night frame, which a
+    // colour fit takes nearly grey, leaves its desaturation to the lattice's lightness axis.
+    let balance = target
+        .iter()
+        .map(|t| perceptual_chroma(t).max(1e-6))
+        .collect();
+    let rendered = Pairs {
+        at: frame.at.clone(),
+        indices: indices_on(gpu, &frame.at),
+        grey_indices: indices_on(gpu, &[]),
+        target,
+        balance,
+        to_srgb: frame.to_srgb,
+        greys: Vec::new(),
+        grey_target: [0.0; 3],
+        linear: std::cell::OnceCell::new(),
+    };
+    let over = SaturationPairs::over(gpu, source, Some(surround), &rendered);
+    fitted_saturation(gpu, colour, &over, Stage::CameraTone).await
+}
+
+/// A colour's distance from its own grey in cube-root light, where distances are near perceptual.
+fn perceptual_chroma(rgb: &[f64; 3]) -> f64 {
+    let grey = (0..3)
+        .map(|c| LUMA[c] * rgb[c])
+        .sum::<f64>()
+        .max(0.0)
+        .cbrt();
+    rgb.iter()
+        .map(|v| (v.max(0.0).cbrt() - grey).powi(2))
+        .sum::<f64>()
+        .sqrt()
 }
 
 /// What a lattice is fitted over that no matrix candidate moves.
@@ -6077,7 +6150,7 @@ async fn fit_model(
     // against the colour for the same reason, and lands within 0.1 after three rounds.
     // Once, outside the alternation: neither set's pixels nor the plane under them move with the
     // rounds, and a gather is a dispatch and an allocation apiece.
-    let even = Even::over(gpu, source, even);
+    let even = SaturationPairs::over(gpu, source, None, even);
     let samples = Gathered {
         pairs: gathered(gpu, source, &pairs.indices, pairs.at.len(), None),
         frame: gathered(gpu, source, &frame.indices, frame.at.len(), None),
@@ -6088,9 +6161,8 @@ async fn fit_model(
     };
     let mut candidates = Vec::new();
     for round in 0..FIT_ROUNDS {
-        // Ahead of the matrix, so the matrix is only what a global saturation cannot say.
-        // `fitted_saturation` has why it weighs every pair alike.
-        colour.saturation = fitted_saturation(gpu, &colour, &even).await?;
+        // Ahead of the matrix, so the matrix is only what a saturation cannot say.
+        colour.saturation = fitted_saturation(gpu, &colour, &even, Stage::Tone).await?;
         lap("saturation");
         (colour.matrix, candidates) =
             fitted_matrix_for(gpu, &colour, pairs, frame, &samples).await?;
@@ -8663,9 +8735,9 @@ mod tests {
     fn a_frame_with_no_chroma_to_measure_keeps_its_saturation() {
         // Fog, snow, overcast. Every probe rounds to the same 8-bit target, so the
         // objective is flat and every comparison ties - and a search that discards half
-        // its bracket on a tie walks to whichever end it favours. This returned 1.499,
-        // a 1.5x chroma boost, and then applied it to a full-resolution frame that is
-        // not achromatic once it is off the blurred grid the fit measured on.
+        // its bracket on a tie walks to whichever end it favours: a chroma boost, applied to a
+        // full-resolution frame that is not achromatic once it is off the blurred grid the fit
+        // measured on.
         let (render, jpeg) = ramped_planes([0.4, 0.4, 0.4]);
         let ramp: Vec<f64> = (0..BINS).map(|i| i as f64 / (BINS - 1) as f64).collect();
         let pairs = Pairs::over(searching(), &render, &jpeg);
@@ -8674,8 +8746,8 @@ mod tests {
             ..HdrColour::identity()
         };
         let source = source_of(searching(), &render);
-        let even = Even::over(searching(), &source, &pairs);
-        let found = pollster::block_on(fitted_saturation(searching(), &colour, &even))
+        let over = SaturationPairs::over(searching(), &source, None, &pairs);
+        let found = pollster::block_on(fitted_saturation(searching(), &colour, &over, Stage::Tone))
             .expect("the device scores");
         assert!(
             (found - 1.0).abs() < 1e-9,
@@ -8784,6 +8856,70 @@ mod tests {
     }
 
     #[test]
+    fn the_global_saturation_moves_out_of_the_colour_fit() {
+        let (render, _) = ramped_planes([0.5, 0.3, 0.18]);
+        let gpu = searching();
+        let frame = Pairs::over(gpu, &render, &render);
+        let source = source_of(gpu, &render);
+        let surround = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fit surround test"),
+            contents: &vec![0u8; render.width * render.height * 4],
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        for want in [0.6, 1.0, 1.7] {
+            let matched = HdrColour {
+                chroma: Some(ChromaMap::from_saturation(want)),
+                ..identity_colour()
+            };
+            let found =
+                pollster::block_on(global_saturation(gpu, &matched, &source, &surround, &frame))
+                    .expect("the device scores");
+            assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
+        }
+    }
+
+    #[test]
+    fn a_lattice_renders_its_nodes_whatever_the_saturation() {
+        let samples = [
+            [0.8, 0.2, 0.2, 0.0],
+            [0.2, 0.5, 0.1, 0.3],
+            [0.1, 0.3, 0.6, 0.3],
+        ];
+        let at = |saturation| {
+            let colour = HdrColour {
+                chroma: Some(a_bumpy_map()),
+                saturation,
+                ..identity_colour()
+            };
+            through(&colour, Stage::Full, &samples)
+        };
+        let Some(want) = at(1.0) else {
+            return;
+        };
+        assert_eq!(at(1.37).expect("the same adapter"), want);
+    }
+
+    #[test]
+    fn perceptual_chroma_is_zero_on_grey_and_grows_with_colour() {
+        assert!(perceptual_chroma(&[0.4, 0.4, 0.4]) < 1e-9);
+        let dull = perceptual_chroma(&[0.45, 0.4, 0.35]);
+        let vivid = perceptual_chroma(&[0.8, 0.2, 0.1]);
+        assert!(0.0 < dull && dull < vivid, "dull {dull}, vivid {vivid}");
+    }
+
+    #[test]
+    fn the_saturation_search_breaks_ties_towards_neutral() {
+        let tie = SATURATION_TIE / 2.0;
+        assert!(prefers_first((0.98, 1.0), (1.05, 1.0 - tie)));
+        assert!(!prefers_first((0.9, 1.0), (1.05, 1.0 - tie)));
+        assert!(!prefers_first(
+            (1.0, 1.0),
+            (1.3, 1.0 - 2.0 * SATURATION_TIE)
+        ));
+        assert!(prefers_first((1.3, 1.0 - 2.0 * SATURATION_TIE), (1.0, 1.0)));
+    }
+
+    #[test]
     fn the_saturation_search_recovers_the_blend_the_camera_used() {
         // And is not solved from a mean chroma ratio, which on IMG_9808 could be made
         // to come out right by a scalar that pushed the hillside eight deltaE further
@@ -8817,9 +8953,10 @@ mod tests {
                 ..applied
             };
             let source = source_of(searching(), &render);
-            let even = Even::over(searching(), &source, &pairs);
-            let found = pollster::block_on(fitted_saturation(searching(), &neutral, &even))
-                .expect("the device scores");
+            let over = SaturationPairs::over(searching(), &source, None, &pairs);
+            let found =
+                pollster::block_on(fitted_saturation(searching(), &neutral, &over, Stage::Tone))
+                    .expect("the device scores");
             assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
             let slider = crate::gpu::saturation_slider(crate::light::Gain::of_ratio(found));
             assert!(
@@ -9140,6 +9277,26 @@ mod tests {
             matrix[1][0].abs() > 0.05,
             "no cross-channel term was fitted: {matrix:?}"
         );
+    }
+
+    #[test]
+    fn a_hard_ridge_lands_on_what_it_pulls_towards() {
+        let toward = saturation_matrix(1.4);
+        assert_eq!(Moments::default().solve(1.0, &toward), toward);
+        let mut m = Moments::default();
+        for (v, y) in [
+            ([0.5, 0.3, 0.2], [0.5, 0.18, 0.2]),
+            ([0.2, 0.6, 0.1], [0.2, 0.6, 0.1]),
+            ([0.1, 0.2, 0.6], [0.1, 0.2, 0.6]),
+        ] {
+            m.add(1.0, &v, &y, &IDENTITY);
+        }
+        let held = m.solve(1e6, &toward);
+        for (row, want) in held.iter().zip(&toward) {
+            for (v, w) in row.iter().zip(want) {
+                assert!((v - w).abs() < 1e-3, "{held:?} against {toward:?}");
+            }
+        }
     }
 
     #[test]

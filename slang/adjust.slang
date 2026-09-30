@@ -1,7 +1,7 @@
 // The photographer's own adjustments, between the camera's rendering and the roll-off.
 //
 // **Where, and why there.** The camera match reproduces what the body would have made;
-// these are what the reader then wants instead. So they sit after `globally_saturated` and
+// these are what the reader then wants instead. So they sit after `finish_chroma` and
 // before the roll-off - late enough that the picture being adjusted is the one on screen,
 // early enough that the roll-off still maps whatever comes out into the display's range.
 // `peak` measures the scene peak through the same function, so a highlight lift moves
