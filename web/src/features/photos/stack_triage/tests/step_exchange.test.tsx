@@ -13,28 +13,90 @@ const { arriveAt, forgetFrames, holdDecodeOf, wasDecoded } =
   await import('../../viewer/tests/stage_frames');
 const { PhotoStage } = await import('../../viewer/photo_stage');
 
-// jsdom does not animate, so the movement is recorded rather than run: what this pins about it
-// is *when* it is asked for, which is the frame the picture it moves is drawn in.
-const moved: { element: HTMLElement; from: Keyframe | undefined }[] = [];
+interface Move {
+  element: HTMLElement;
+  frames: Keyframe[];
+  timing: KeyframeAnimationOptions;
+  cancelled: boolean;
+  /** Each delay its hold was cut to. */
+  releasedAt: (number | undefined)[];
+  finish: () => void;
+}
+
+/** How long each recorded animation says it has been waiting. */
+const WAITED_MS = 40;
+
+// jsdom does not animate, so the exchange is recorded rather than run.
+const moved: Move[] = [];
 Object.defineProperty(globalThis.HTMLElement.prototype, 'animate', {
-  value(this: HTMLElement, frames: Keyframe[]) {
-    moved.push({ element: this, from: frames[0] });
-    return { cancel: () => undefined };
+  value(this: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions) {
+    let finish = (): void => {};
+    const move: Move = {
+      element: this,
+      frames,
+      timing,
+      cancelled: false,
+      releasedAt: [],
+      finish: () => finish(),
+    };
+    moved.push(move);
+    return {
+      cancel: () => {
+        move.cancelled = true;
+      },
+      finished: new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+      currentTime: WAITED_MS,
+      effect: {
+        updateTiming: ({ delay }: OptionalEffectTiming) => move.releasedAt.push(delay),
+      },
+    };
   },
   configurable: true,
   writable: true,
 });
-globalThis.requestAnimationFrame = ((run: FrameRequestCallback) =>
-  setTimeout(() => run(0), 0)) as never;
+
+const everyTurn = ((run: FrameRequestCallback) => setTimeout(() => run(0), 0)) as never;
+globalThis.requestAnimationFrame = everyTurn;
+
+/** Frames delivered by hand from here on, each at the time given. */
+function framesByHand(): (at: number) => Promise<void> {
+  let waiting: FrameRequestCallback[] = [];
+  globalThis.requestAnimationFrame = ((run: FrameRequestCallback) => waiting.push(run)) as never;
+  return (at) =>
+    act(async () => {
+      const due = waiting;
+      waiting = [];
+      for (const run of due) run(at);
+    });
+}
+
+const matchMedia = window.matchMedia;
 
 afterEach(() => {
   cleanup();
   forgetFrames();
   moved.length = 0;
+  globalThis.requestAnimationFrame = everyTurn;
+  window.matchMedia = matchMedia;
 });
 
 /** `photo_stage`'s own, which is what the neighbours wait out. */
-const STEP_MS = 130;
+const STEP_MS = 150;
+/** And how long it keeps a photograph up that the one stepped to has not yet replaced. */
+const STALE_FRAME_MS = 500;
+const HELD: KeyframeAnimationOptions = {
+  duration: STEP_MS,
+  easing: 'cubic-bezier(0.2, 0, 0, 1)',
+  delay: 2000,
+  fill: 'backwards',
+};
+const ARRIVING = [
+  { opacity: 0, scale: 0.975 },
+  { opacity: 1, scale: 1 },
+];
+const LEAVING = [{ opacity: 1 }, { opacity: 0 }];
 
 const src = (id: string): string => `${id}.avif`;
 const of = (id: string): StagePicture => ({ key: id, sources: [src(id)], alt: id });
@@ -43,7 +105,7 @@ function stage(
   photoKey: string,
   pictures: StagePicture[],
   showing: number,
-  step: 'next' | 'prev' | 'fade' | null,
+  step: 'next' | 'prev' | null,
 ): JSX.Element {
   return (
     <PhotoStage
@@ -66,9 +128,13 @@ const frameOf = (id: string): HTMLElement | null =>
 const shown = (id: string): boolean => screen.queryByRole('img', { name: id }) != null;
 const leaving = (id: string): boolean =>
   frameOf(id)?.parentElement?.getAttribute('aria-hidden') === 'true';
-/** Where the step started this photograph's picture from, if it moved at all. */
-const stepOf = (id: string): Keyframe | undefined =>
-  moved.find((move) => move.element === frameOf(id)?.parentElement)?.from;
+/** How many frames the stage has mounted, named or not: one left behind by a photograph no longer asked for has no name. */
+const mountedFrames = (): number => document.querySelectorAll('[role="img"]').length;
+/** What each exchange did to this photograph's picture. */
+const stepsOf = (id: string): Keyframe[][] =>
+  moved.filter((move) => move.element === frameOf(id)?.parentElement).map((move) => move.frames);
+/** The first of them, if it was animated at all. */
+const stepOf = (id: string): Keyframe[] | undefined => stepsOf(id)[0];
 
 const run = ['p0', 'p1', 'p2'].map(of);
 
@@ -102,34 +168,46 @@ test('stepping to a neighbour the stage is already holding is the step', async (
   await act(async () => {});
 
   expect(shown('p1')).toBe(true);
-  expect(stepOf('p1')).toEqual({ translate: '22px' });
+  expect(stepOf('p1')).toEqual(ARRIVING);
   expect(leaving('p0')).toBe(true);
+  expect(stepOf('p0')).toEqual(LEAVING);
 });
 
 test('trading two pictures of one stage is a flip, not a step', async () => {
   // Stack triage's A/B, where the reader is comparing them in place.
   const round = [of('a'), of('b')];
-  const { rerender } = render(stage('a:b', round, 0, 'fade'));
+  const { rerender } = render(stage('a:b', round, 0, null));
   await act(async () => {});
 
-  rerender(stage('a:b', round, 1, 'fade'));
+  rerender(stage('a:b', round, 1, null));
   await act(async () => {});
 
   expect(shown('b')).toBe(true);
-  expect(stepOf('b')).toBeUndefined();
+  expect(moved).toEqual([]);
 });
 
 test('a photograph held over into the next round did not arrive', async () => {
   // Stack triage's exchange: one side is replaced and the winner keeps its slot, which is
   // the one frame the round must leave alone.
   const round = [of('a'), of('b')];
-  const { rerender } = render(stage('a:b', round, 0, 'fade'));
+  const { rerender } = render(stage('a:b', round, 0, null));
   await act(async () => {});
 
-  rerender(stage('a:c', [of('a'), of('c')], 0, 'fade'));
+  rerender(stage('a:c', [of('a'), of('c')], 0, null));
   await act(async () => {});
 
-  expect(stepOf('a')).toBeUndefined();
+  expect(moved).toEqual([]);
+});
+
+test('and the photograph that replaced the other half of the round did', async () => {
+  const { rerender } = render(stage('a:b', [of('b')], 0, null));
+  await act(async () => {});
+
+  rerender(stage('a:c', [of('c')], 0, null));
+  await act(async () => {});
+
+  expect(shown('c')).toBe(true);
+  expect(stepOf('c')).toEqual(ARRIVING);
 });
 
 test('flipping either way after a winner is held over still shows the frame flipped to', async () => {
@@ -137,36 +215,34 @@ test('flipping either way after a winner is held over still shows the frame flip
   // new key, so what it was last showing has to be recorded against the *new* round: read
   // back against the old one, the flip out of it reads as a step and the flip back into it
   // is refused, leaving the picture on screen hidden by the exit that step created.
-  const { rerender } = render(stage('a:b', [of('a'), of('b')], 0, 'fade'));
+  const { rerender } = render(stage('a:b', [of('a'), of('b')], 0, null));
   await act(async () => {});
 
-  rerender(stage('a:c', [of('a'), of('c')], 0, 'fade'));
+  rerender(stage('a:c', [of('a'), of('c')], 0, null));
   await act(async () => {});
-  rerender(stage('a:c', [of('a'), of('c')], 1, 'fade'));
+  rerender(stage('a:c', [of('a'), of('c')], 1, null));
   await act(async () => {});
   expect(shown('c')).toBe(true);
 
-  rerender(stage('a:c', [of('a'), of('c')], 0, 'fade'));
+  rerender(stage('a:c', [of('a'), of('c')], 0, null));
   await act(async () => {});
   expect(shown('a')).toBe(true);
 });
 
-// The direction lands a render after the route does, so a step is two commits here. What
-// the reader must not see in the first of them is the photograph they stepped away from:
-// it is hidden by leaving itself, which is a resting state and not somewhere an animation
-// puts it - so it holds in that commit, and holds under reduced motion.
-test('the photograph stepped away from is marked gone from the commit the step lands in', async () => {
+// A step is two commits: the route moves, and the direction lands a render later.
+test('the exchange is played in the commit the step lands in, and once', async () => {
   const { rerender } = render(stage('p0', run, 0, null));
   await act(async () => {});
 
   rerender(stage('p1', run, 1, null));
   await act(async () => {});
   expect(leaving('p0')).toBe(true);
+  expect(stepsOf('p1')).toEqual([ARRIVING]);
 
   rerender(stage('p1', run, 1, 'next'));
   await act(async () => {});
   expect(leaving('p0')).toBe(true);
-  expect(stepOf('p1')).toEqual({ translate: '22px' });
+  expect(stepsOf('p1')).toEqual([ARRIVING]);
 });
 
 // Leaving hides a picture outright, so it cannot go on the one still drawing the screen:
@@ -189,10 +265,10 @@ test('the picture drawing the screen is not hidden while the next one is still a
   expect(leaving('p0')).toBe(true);
 });
 
-// The move is worth nothing if it runs while the photograph is still arriving: a decode
+// The fade is worth nothing if it runs while the photograph is still arriving: a decode
 // resolving is not a paint, and on a busy main thread a step animated when the exchange
 // formed is over before the picture is drawn - the reader catches its tail, or none of it.
-test('the step is not moved until the picture it moves is the one on screen', async () => {
+test('the exchange is not played until the picture it brings in is the one on screen', async () => {
   holdDecodeOf(src('p9'));
 
   const { rerender } = render(stage('p0', [of('p0')], 0, null));
@@ -205,23 +281,127 @@ test('the step is not moved until the picture it moves is the one on screen', as
 
   await act(async () => {
     arriveAt(src('p9'));
-    // The move is asked for on a rendering frame, so it is a turn of the loop behind the
-    // decode rather than in the same one.
+    // The frame is painted a turn of the loop behind its decode.
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  expect(moved).toHaveLength(1);
-  expect(stepOf('p9')).toEqual({ translate: '22px' });
+  expect(stepsOf('p9')).toEqual([ARRIVING]);
+  expect(stepsOf('p0')).toEqual([LEAVING]);
+});
+
+// Revealing a full-size frame stalls the renderer, and a fade started then is over before
+// there is a frame to show it in.
+test('the exchange waits at its first keyframe until frames arrive at the display rate', async () => {
+  const { rerender } = render(stage('p0', run, 0, null));
+  await settle();
+  const frame = framesByHand();
+  const stepped = performance.now();
+
+  rerender(stage('p1', run, 1, 'next'));
+  await act(async () => {});
+  expect(moved.map((move) => move.timing)).toEqual([HELD, HELD]);
+
+  await frame(stepped + 16);
+  // The frame the stall delayed.
+  await frame(stepped + 116);
+  expect(moved.map((move) => move.releasedAt)).toEqual([[], []]);
+
+  await frame(stepped + 132);
+  expect(moved.map((move) => move.releasedAt)).toEqual([[WAITED_MS], [WAITED_MS]]);
+});
+
+test('the frame being left stays up for the whole fade, and goes when it is over', async () => {
+  const { rerender } = render(stage('a:b', [of('b')], 0, null));
+  await act(async () => {});
+
+  rerender(stage('a:c', [of('c')], 0, null));
+  // Past the beat a replaced frame is held for without a fade to hold it.
+  await settle();
+  expect(mountedFrames()).toBe(2);
+
+  await act(async () => {
+    for (const move of moved) move.finish();
+  });
+  expect(mountedFrames()).toBe(1);
+});
+
+test('a step taken during another takes over from it', async () => {
+  const { rerender } = render(stage('p0', run, 0, null));
+  await settle();
+  rerender(stage('p1', run, 1, 'next'));
+  await act(async () => {});
+  const first = [...moved];
+
+  rerender(stage('p0', run, 0, 'prev'));
+  await act(async () => {});
+
+  expect(first.map((move) => move.cancelled)).toEqual([true, true]);
+  expect(stepsOf('p0')).toEqual([LEAVING, ARRIVING]);
+  expect(stepsOf('p1')).toEqual([ARRIVING, LEAVING]);
+});
+
+test('under reduced motion a step trades the pictures without animating them', async () => {
+  window.matchMedia = ((media: string) => ({ ...matchMedia(media), matches: true })) as never;
+  const { rerender } = render(stage('p0', run, 0, null));
+  await settle();
+
+  rerender(stage('p1', run, 1, 'next'));
+  await act(async () => {});
+
+  expect(moved).toEqual([]);
+  expect(shown('p1')).toBe(true);
+  expect(leaving('p0')).toBe(true);
+});
+
+// One neighbour is mounted at a time, so which goes first is which is ready when the
+// reader gets there.
+test.each([
+  ['prev', 'p0', 'p2'],
+  ['next', 'p2', 'p0'],
+] as const)('stepping %s, %s is held before %s', async (step, ahead, behind) => {
+  holdDecodeOf(src('p0'));
+  holdDecodeOf(src('p2'));
+
+  render(stage('p1', run, 1, step));
+  await settle();
+
+  expect(frameOf(ahead)).not.toBeNull();
+  expect(frameOf(behind)).toBeNull();
+});
+
+// The stand-in is taken down when the photograph stepped to is too long arriving. Faded
+// from anyway, it comes back whole for the length of the fade, over a stage that had
+// already gone to its background.
+test('a photograph already taken down is not brought back to be faded from', async () => {
+  holdDecodeOf(src('p9'));
+
+  const { rerender } = render(stage('p0', [of('p0')], 0, null));
+  await act(async () => {});
+
+  rerender(stage('p9', [of('p0'), of('p9')], 1, 'next'));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, STALE_FRAME_MS + 30));
+  });
+  expect(shown('p0')).toBe(false);
+
+  await act(async () => {
+    arriveAt(src('p9'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(stepsOf('p9')).toEqual([ARRIVING]);
+  expect(stepsOf('p0')).toEqual([]);
 });
 
 test('a neighbour dropped from the run is not held up as though it had been on screen', async () => {
   // The run slides, so each step drops one photograph off the trailing edge. That frame was
   // never visible, and held under the next one it is drawn opaque at the bottom of the stack -
-  // what appears to slide away on the next step is then a photograph two back.
-  const { rerender } = render(stage('p1', run, 1, null));
-  await act(async () => {});
+  // what the next step appears to fade from is then a photograph two back.
+  const { rerender } = render(stage('p1', run, 1, 'prev'));
+  await settle();
+  expect(frameOf('p0')).not.toBeNull();
 
   rerender(stage('p2', ['p1', 'p2', 'p3'].map(of), 1, 'next'));
   await act(async () => {});
 
-  expect(frameOf('p0')).toBeNull();
+  // Out of the run, so it has no name left to be found by.
+  expect(document.querySelectorAll('[role="img"][aria-label=""]')).toHaveLength(0);
 });

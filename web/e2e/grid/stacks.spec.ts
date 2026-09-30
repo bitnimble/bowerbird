@@ -13,13 +13,13 @@ import {
   fusedBands,
   gotoLibrary,
   openPhotoId,
-  photoStage,
   picks,
   rowTiles,
   selectedTiles,
   selectionBar,
   selectionCount,
   setViewMode,
+  shownFilename,
   shownFrame,
   stackFrames,
   ticked,
@@ -52,17 +52,6 @@ async function stackIdOfLibrary(page: Page): Promise<string> {
 }
 
 const members = (page: Page) => bands(page).getByRole('listitem');
-
-/** Which way the picture on the stage slid in from, while it is still sliding. */
-const slidFrom = (page: Page): Promise<string | null> =>
-  photoStage(page).evaluate((stage) => {
-    const picture = stage.querySelector('[role="img"]:not([aria-hidden="true"])')?.parentElement;
-    const [move] = picture?.getAnimations() ?? [];
-    return (
-      ((move?.effect as KeyframeEffect | undefined)?.getKeyframes()[0]?.translate as
-        string | undefined) ?? null
-    );
-  });
 
 // Stacks, driven through the real grid (DESIGN §19).
 //
@@ -402,21 +391,19 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
 
   // Step to either side and back: both are the stack's own members, so the walk
   // is through the stack rather than over it.
+  //
+  // Each step waits for its photo to be the one on screen, which is a decode however
+  // fast the URL moved.
+  const middleName = await shownFilename(page);
   await next.click();
   await expect(page).not.toHaveURL(new RegExp(middle));
-  // And it is a step in the animation's eyes too, not just the arrows': the
-  // direction is read off the run, so a member with no row in the listing still
-  // slides in from the side the reader is heading towards.
-  //
-  // Read off the picture on screen, not the one leaving, and only once the step has
-  // decoded - so this waits on a decode however fast the URL moved. Polled finely: the
-  // slide is over in a fraction of a second.
-  await expect.poll(() => slidFrom(page), { ...FIRST_FRAME, intervals: [20] }).toBe('22px');
+  await expect.poll(() => shownFilename(page), FIRST_FRAME).not.toBe(middleName);
   const after = openPhotoId(page);
   await previous.click();
   await expect(page).toHaveURL(new RegExp(middle));
-  await expect.poll(() => slidFrom(page), { ...FIRST_FRAME, intervals: [20] }).toBe('-22px');
+  await expect.poll(() => shownFilename(page), FIRST_FRAME).toBe(middleName);
   await previous.click();
+  await expect(page).not.toHaveURL(new RegExp(middle));
   const before = openPhotoId(page);
 
   const stacked = (await (

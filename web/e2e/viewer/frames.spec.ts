@@ -56,18 +56,94 @@ function samplesOf(page: Page, key: string): Promise<Sample[]> {
   return page.evaluate((name) => (window as unknown as Record<string, Sample[]>)[name] ?? [], key);
 }
 
-// Parents of the frames, which carry the zoom, the pan and a step's movement.
+// Parents of the frames, which carry the zoom, the pan and a step's fade.
 function pictures(page: Page): Locator {
   return photoStage(page).locator('canvas[role="img"]').locator('..');
 }
 
-// Where a step started the picture from, or undefined for a picture that is not moving.
-function cameFrom(picture: Locator): Promise<string | undefined> {
-  return picture.evaluate((element) => {
-    const [first] = element.getAnimations();
-    const from = (first?.effect as KeyframeEffect | undefined)?.getKeyframes()[0];
-    return from?.translate as string | undefined;
+const ARRIVING_SCALE = '0.975';
+
+interface StepFrame {
+  /** How much of the photograph stepped to is drawn, and of the one stepped away from. */
+  arriving: number;
+  leaving: number;
+  /** The size the one stepped to is being brought in from, while it is. */
+  from: string | null;
+  /** The two are added to each other, and to nothing behind them. */
+  summed: boolean;
+}
+
+interface StepSampling {
+  stepFrames: StepFrame[];
+  stepSampler: number;
+}
+
+// Runs in the page, so it cannot reach the helpers. The picture on screen is the one a step
+// will leave, and the one named is the neighbour it will bring in.
+function sampleStep(arrivingName: string): void {
+  const seen = (picture: Element | null | undefined): number => {
+    if (picture == null) return 0;
+    const frame = [...picture.querySelectorAll('canvas[role="img"]')].reduce(
+      (most, each) => Math.max(most, Number(getComputedStyle(each).opacity)),
+      0,
+    );
+    return Number(getComputedStyle(picture).opacity) * frame;
+  };
+  const stage = document.querySelector('[role="region"][aria-label="Photo"]');
+  const frames = [...(stage?.querySelectorAll('canvas[role="img"]') ?? [])];
+  const leaving = frames.find(
+    (frame) => frame.getAttribute('aria-hidden') === 'false',
+  )?.parentElement;
+  const arriving = frames.find((frame) =>
+    frame.getAttribute('aria-label')?.startsWith(`${arrivingName}, `),
+  )?.parentElement;
+  const sampling = window as unknown as StepSampling;
+  const samples: StepFrame[] = [];
+  sampling.stepFrames = samples;
+  const mine = (sampling.stepSampler ?? 0) + 1;
+  sampling.stepSampler = mine;
+  const tick = (): void => {
+    if (sampling.stepSampler !== mine) return;
+    const [entrance] = arriving?.getAnimations() ?? [];
+    const first = (entrance?.effect as KeyframeEffect | undefined)?.getKeyframes()[0];
+    samples.push({
+      arriving: seen(arriving),
+      leaving: seen(leaving),
+      from: (first?.scale as string | undefined) ?? null,
+      summed:
+        stage != null &&
+        getComputedStyle(stage).isolation === 'isolate' &&
+        [arriving, leaving].every(
+          (picture) => picture != null && getComputedStyle(picture).mixBlendMode === 'plus-lighter',
+        ),
+    });
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// Steps onto the neighbour named, and hands back every frame from the press until the
+// stage is at rest again.
+async function stepOnto(page: Page, key: string, name: string): Promise<StepFrame[]> {
+  // Drawn and kept, not merely mounted: a neighbour still decoding is stood in for by the
+  // photo being left, and one that takes long enough leaves the stage empty.
+  await expect(
+    photoStage(page).getByRole('img', { name: `${name}, `, includeHidden: true }),
+  ).toHaveCSS('will-change', 'opacity', { timeout: 60_000 });
+  await page.evaluate(sampleStep, name);
+  await page.keyboard.press(key);
+  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${name}, `), {
+    timeout: 60_000,
   });
+  const sampled = (): Promise<StepFrame[]> =>
+    page.evaluate(() => (window as unknown as StepSampling).stepFrames);
+  await expect
+    .poll(async () => {
+      const last = (await sampled()).at(-1);
+      return last != null && last.arriving === 1 && last.from == null && !last.summed;
+    })
+    .toBe(true);
+  return sampled();
 }
 
 test('frames have their fitted dimensions before they are handed to the GPU worker', async ({
@@ -242,49 +318,40 @@ test('the frame being replaced is held opaque under its replacement for a beat',
   expect(counts.at(-1)).toBe(1);
 });
 
-// The direction is read off the run - the ordering the arrows themselves step
-// through - rather than off the control that moved it, so the arrows, the
-// buttons and the browser's own back all animate the way the reader went.
-test('stepping to a neighbour slides in from the side it came from', async ({ page }) => {
+test('stepping to a neighbour fades it in over the photo it replaces', async ({ page }) => {
   await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   // Opening a photo is not a step, so the first picture just appears.
   expect(
     await pictures(page).evaluateAll((all) =>
-      all.filter((picture) =>
-        picture
-          .getAnimations()
-          .some(
-            (move) => (move.effect as KeyframeEffect | null)?.getKeyframes()[0]?.translate != null,
-          ),
-      ),
+      all.filter((picture) => picture.getAnimations().length > 0),
     ),
   ).toHaveLength(0);
 
-  // Where each step actually started the picture from: the movement itself, which is asked
-  // for per step rather than declared in the stylesheet - a step is a move a reader repeats,
-  // and an animation already on an element does not reliably run again when it reappears
-  // there (`photo_stage.tsx`).
   const shown = shownFrame(page).locator('..');
   const openName = await shownFilename(page);
   const otherName = PHOTO_NAMES.find((name) => name !== openName);
+  if (otherName == null) throw new Error('the library has no second photo');
 
-  await page.keyboard.press('ArrowRight');
-  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${otherName}, `), {
-    timeout: 60_000,
-  });
-  await expect.poll(() => cameFrom(shown)).toBe('22px');
+  const frames = await stepOnto(page, 'ArrowRight', otherName);
+  expect(frames.some((frame) => frame.from === ARRIVING_SCALE)).toBe(true);
+  // The one being left is drawn for as long as the other is short of whole, and neither
+  // goes back on itself, so the one arriving is never up whole before it has faded in.
+  for (const frame of frames) expect(frame.arriving + frame.leaving).toBeCloseTo(1, 1);
+  const arrivals = frames.map((frame) => frame.arriving);
+  expect(arrivals).toEqual([...arrivals].sort((a, b) => a - b));
+  // Added together, two part-drawn photographs are one whole one. Laid one over the other
+  // they let the stage through between them, and the picture dips towards it mid-fade.
+  const partway = frames.filter((frame) => frame.arriving > 0 && frame.arriving < 1);
+  expect(partway.length).toBeGreaterThan(0);
+  expect(partway.every((frame) => frame.summed)).toBe(true);
 
-  await page.keyboard.press('ArrowLeft');
-  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${openName}, `), {
-    timeout: 60_000,
-  });
-  // The other way round, or both steps would look identical.
-  await expect.poll(() => cameFrom(shown)).toBe('-22px');
+  const back = await stepOnto(page, 'ArrowLeft', openName);
+  expect(back.some((frame) => frame.from === ARRIVING_SCALE)).toBe(true);
 
   // A rendition swap holds the photo, and the renditions of a photograph are one
   // picture: the second file mounts inside the picture already on screen, which
-  // leaves the animated element untouched. That is why swapping cannot slide -
+  // leaves the animated element untouched. That is why swapping cannot fade -
   // there is no new element to replay an entrance on.
   await shown.evaluate((picture) => picture.setAttribute('data-stepped', '1'));
   await page.keyboard.press('o');
@@ -294,26 +361,13 @@ test('stepping to a neighbour slides in from the side it came from', async ({ pa
   // Both renditions inside the one picture, beside the neighbours' own.
   await expect(shown.locator('canvas[role="img"]')).toHaveCount(2);
   await expect(shown).toHaveAttribute('data-stepped', '1');
-  expect(await cameFrom(shown)).toBeUndefined();
+  expect(await shown.evaluate((picture) => picture.getAnimations().length)).toBe(0);
 
-  // And the same photograph stepped to a second time still moves: a reader going back and
-  // forth arrives at each of a pair over and over, which is where an entrance declared once
-  // against the element quietly stopped replaying.
-  await page.keyboard.press('ArrowRight');
-  await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${otherName}, `), {
-    timeout: 60_000,
-  });
-  await expect.poll(() => cameFrom(shown)).toBe('22px');
-  // The picture carries an inline transform for zoom and pan, so the slide is a `translate`
-  // of its own, which composes with that rather than fighting it. Asserted on the keyframe
-  // that is actually written: the second is `{}`, and an implicit keyframe lists no property
-  // at all, so reading one off it comes back undefined whichever the animation moves.
-  expect(
-    await shown.evaluate((element) => {
-      const [first] = element.getAnimations();
-      return (first?.effect as KeyframeEffect | undefined)?.getKeyframes()[0]?.transform;
-    }),
-  ).toBeUndefined();
+  // And the same photograph stepped to a second time still fades in: a reader going back and
+  // forth arrives at each of a pair over and over, and an entrance declared once against
+  // the element in a stylesheet does not reliably replay.
+  const again = await stepOnto(page, 'ArrowRight', otherName);
+  expect(again.some((frame) => frame.from === ARRIVING_SCALE)).toBe(true);
 });
 
 test('the next photo is fetched while the current one is on screen', async ({ page }) => {

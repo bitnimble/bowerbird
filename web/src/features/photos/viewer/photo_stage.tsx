@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Maximize, Minimize } from 'lucide-react';
 import { Button } from '../../../ui/button';
@@ -46,14 +46,13 @@ const STALE_FRAME_MS = 500;
 // that, stack triage's flip stalls on every press.
 const RETIRED_FRAMES = 3;
 
-// How long the picture arriving takes to slide in, and so how long the frames of the one
-// being left have to stay mounted underneath it. Enough movement to say which way the
-// reader went and no more; a longer slide turns a cull into a wait.
-const STEP_MS = 130;
+const STEP_MS = 150;
+const STEP_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
+const ARRIVING_SCALE = 0.975;
 
-// The longest the move will wait at its starting offset for the browser to put the
+// The longest the exchange will wait at its first keyframe for the browser to put the
 // photograph on screen. A cap rather than a timeout: it is lifted the moment the picture is
-// presented, and is only reached where something has gone wrong enough that sliding a frame
+// presented, and is only reached where something has gone wrong enough that fading a frame
 // nobody can see is the least of it - at which point it plays out by itself.
 const HELD_MS = 2000;
 
@@ -66,13 +65,13 @@ const SETTLED_FRAME_MS = 34;
 // stack triage's split.
 let holders = 0;
 
-// Which way the last step went, so the two frames slide the way the reader
-// moved. `fade` is the same exchange with no direction to express: stack triage
-// replaces one photo of a pair while the other stays put, and a slide would
-// claim a movement through a collection that is not what happened. Null for
-// anything that is not a step - a rendition swap, a flip between a round's two
-// frames, or the first frame after opening a photo - which then just appears.
-type Step = 'next' | 'prev' | 'fade' | null;
+/** One picture taking the stage from another. */
+interface Exchange {
+  to: string;
+  from: string;
+  /** The frame of `from` that was on screen when `to` arrived, if one still was. */
+  frame: string | undefined;
+}
 
 // How far a finger has to travel across the frame to count as a step rather
 // than a tap, and how much straighter than it is tall: a swipe that is mostly
@@ -145,8 +144,8 @@ interface Props {
   onImageMissing?: (source: string) => void;
   /** Clears the stage when it changes. The photo, not the source: a rendition swap must hold the frame. */
   photoKey: string;
-  /** Which way the reader arrived at this photo. Null for anything that is not a step. */
-  step?: Step;
+  /** Which way the reader stepped to this photo, which is the side held ready first. */
+  step?: 'next' | 'prev' | null;
   /** A touch dragged across the frame, which is how a phone steps between photos. Ignored while zoomed, where the same gesture pans. */
   onSwipe?: (step: 'next' | 'prev') => void;
   /** Ask again for a frame that failed. Changes when the server has proven it is back. */
@@ -272,14 +271,13 @@ export function PhotoStage({
   // The frames `painted` just replaced, kept mounted and opaque underneath for
   // RETIRED_FRAMES. Their rasters are the ones the browser already has, so they
   // are what shows through while the replacements' are being built.
-  // `animated` and not a direction: which way the step went is the exchange's to own, and
-  // sampled here it is read a render too early - `lastStep` lands after the route does, and
-  // a warm frame re-decodes in that same commit - so the two answered differently on the
-  // commonest path of all, a step onto a neighbour already held.
   const [retiring, setRetiring] = useState<{ of: ReadonlyMap<string, string>; animated: boolean }>({
     of: new Map(),
     animated: false,
   });
+  const [exchange, setExchange] = useState<Exchange | null>(null);
+  const [faded, setFaded] = useState<Exchange | null>(null);
+  const fading = exchange === faded ? null : exchange;
 
   const sources = pictures.flatMap((picture) => [...picture.sources]);
   const asking = new Map(
@@ -288,7 +286,10 @@ export function PhotoStage({
   // Which picture draws a frame: the one asking for it, or - for a frame on its
   // way off the stage - the one it arrived in.
   const pictureOf = (source: string): string =>
-    asking.get(source) ?? painted?.of.get(source) ?? retiring.of.get(source) ?? source;
+    asking.get(source) ??
+    painted?.of.get(source) ??
+    retiring.of.get(source) ??
+    (source === fading?.frame ? fading.from : source);
 
   // Everything with a raster, whichever photo it belongs to. A photograph stepped away
   // from keeps its own, being a neighbour now; what the cap below drops is only the
@@ -436,113 +437,119 @@ export function PhotoStage({
   // axis is also what tells a step from the three things that are not one, all of which
   // leave the shown picture where it was: a rendition swapped underneath it, a stage
   // painting its first picture, and a photograph held over into the next round.
-  const shownBefore = useRef<
-    { picture: string; photo: string; source: string | undefined } | undefined
-  >(undefined);
-  const [exchange, setExchange] = useState<{ to: string; from: string; step: Step } | null>(null);
-  // The direction is not settled when the exchange happens: the route moves first and
-  // `lastStep` a render later, so it is filled in on the exchange it belongs to rather than
-  // read loose at render.
-  useEffect(() => {
-    if (arrivedBy == null) return;
-    setExchange((was) =>
-      was == null || was.step === arrivedBy ? was : { ...was, step: arrivedBy },
-    );
-  }, [arrivedBy]);
-
-  // The elements the pictures are drawn in, so the one arriving can be told to move.
+  const shownBefore = useRef<{ picture: string; photo: string } | undefined>(undefined);
+  // The elements the pictures are drawn in, so the two of an exchange can be animated.
   const pictureEls = useRef(new Map<string, HTMLDivElement>());
   const holdPicture = useCallback((key: string, element: HTMLDivElement | null): void => {
     if (element == null) pictureEls.current.delete(key);
     else pictureEls.current.set(key, element);
   }, []);
 
+  const moves = useRef<Animation[]>([]);
+  const stopMoves = useCallback((): void => {
+    for (const spent of moves.current) spent.cancel();
+    moves.current = [];
+  }, []);
+  useEffect(() => stopMoves, [stopMoves]);
+
   /**
-   * The picture arriving slides in from the side the reader moved towards.
+   * The picture arriving fades in over the one it replaces, settling up to size.
    *
    * Asked for here rather than declared in the stylesheet, because a step is a *repeat*:
    * the same photograph is arrived at again and again as a reader goes back and forth, and
    * a CSS animation whose name is already on an element it has run before does not reliably
-   * start again - the picture simply appeared, with no way to tell which way it had gone.
-   * Driven from the exchange, every step is a new animation by construction, and `STEP_MS`
-   * is one number rather than one here and six in the stylesheet.
+   * start again. Driven from the exchange, every step is a new animation by construction.
    *
-   * Nothing animates the picture being left: `styles.leaving` hides it outright, which is a
-   * resting state and so holds whether or not anything ran.
+   * What is on screen once it is over is settled by the styles: `styles.leaving` hides the
+   * picture being left, which is a resting state and so holds whether or not anything ran.
    *
    * **It waits for the picture to be on the screen, not merely in the DOM.** Revealing a
    * sixty-megapixel frame is a texture upload the main thread blocks on - measured at 85ms -
    * and an animation started before it runs its whole length against a stalled compositor:
-   * by the time there are pixels to see, the move is over. So it goes up held at its
-   * starting offset (`fill: 'backwards'` behind a delay, which is what makes the picture
-   * *appear* already displaced rather than jump there), and is released two animation frames
-   * later - past the commit that carries the upload, and so past the stall. Released early
-   * by nothing: a delay that is never lifted plays out on its own.
+   * by the time there are pixels to see, it is over. So it goes up held at its first
+   * keyframe (`fill: 'backwards'` behind a delay), which is the picture being left still
+   * whole, and is released once frames are arriving at the display's rate again. Released
+   * early by nothing: a delay that is never lifted plays out on its own.
    */
   const played = useRef<unknown>(null);
-  useEffect(() => {
-    const step = exchange?.step;
-    if (exchange == null || step == null || played.current === exchange) return;
-    const element = pictureEls.current.get(exchange.to);
-    if (element == null) return;
-    // **Not until the picture it moves is the one on screen.** A decode resolving is not a
-    // paint: a full-size camera JPEG revealed on a busy main thread lands a few hundred
+  // A layout effect, as the one forming the exchange is: a paint between the step and the
+  // held first keyframe shows the arriving photograph whole before it fades in.
+  useLayoutEffect(() => {
+    if (exchange == null) {
+      stopMoves();
+      return;
+    }
+    if (played.current === exchange) return;
+    // **Not until the picture it brings in is the one on screen.** A decode resolving is not
+    // a paint: a full-size camera JPEG revealed on a busy main thread lands a few hundred
     // milliseconds later, and an animation started when the exchange formed has run itself
-    // out by then - the reader catches the tail of a move, or none of it.
+    // out by then - the reader catches its tail, or none of it.
     if (visible == null || pictureRef.current(visible) !== exchange.to) return;
     played.current = exchange;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    // Decoration, and the only thing here that is: what is on screen is settled by the
-    // styles either way, so a host without this - jsdom, where the components are tested -
-    // shows the step without the movement rather than failing to render it.
-    if (typeof element.animate !== 'function') return;
-    const from =
-      step === 'fade' ? { opacity: 0 } : { translate: step === 'next' ? '22px' : '-22px' };
-    // Whatever this picture was last told to do, it is not doing it any more. A move still
-    // waiting out its delay holds the offset it starts from, so a reader stepping back and
-    // forth over one pair would otherwise leave the earlier one to surface behind the newer
-    // and shunt the photograph sideways once the newer had finished.
-    if (typeof element.getAnimations === 'function')
-      for (const spent of element.getAnimations()) spent.cancel();
-    const move = element.animate([from, {}], {
+    stopMoves();
+    const arriving = pictureEls.current.get(exchange.to);
+    // Decoration, and the only thing here that is, so a host without it - jsdom, where the
+    // components are tested - shows the step without the fade rather than failing to render it.
+    if (
+      arriving == null ||
+      typeof arriving.animate !== 'function' ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      setFaded(exchange);
+      return;
+    }
+    const timing = {
       duration: STEP_MS,
-      easing: 'ease-out',
+      easing: STEP_EASING,
       delay: HELD_MS,
       fill: 'backwards',
-    });
+    } as const;
+    const leaving = exchange.frame == null ? undefined : pictureEls.current.get(exchange.from);
+    const playing = [
+      arriving.animate(
+        [
+          { opacity: 0, scale: ARRIVING_SCALE },
+          { opacity: 1, scale: 1 },
+        ],
+        timing,
+      ),
+      ...(leaving == null ? [] : [leaving.animate([{ opacity: 1 }, { opacity: 0 }], timing)]),
+    ];
+    moves.current = playing;
+    void Promise.allSettled(playing.map((move) => move.finished)).then(() => setFaded(exchange));
 
     // **Released on the first frame the browser is drawing again.** Revealing the
     // photograph costs an upload the renderer stalls on, and it delivers no frames while it
     // does - so the frame after it arrives late, and counting frames instead lets one slip
-    // through a gap in the work and starts the move against a picture nobody can see yet.
+    // through a gap in the work and starts the fade against a picture nobody can see yet.
     // A gap back at the display's own rate is the stall being over, which is the first
     // moment there is anything to watch.
     let previous = performance.now();
     let frames = 0;
-    let watching = true;
     const tick = (now: number): void => {
-      if (!watching) return;
+      if (moves.current !== playing) return;
       const gap = now - previous;
       previous = now;
       frames++;
       if ((frames >= 2 && gap < SETTLED_FRAME_MS) || frames >= HELD_MS / SETTLED_FRAME_MS) {
-        const waited = Number(move.currentTime ?? 0);
-        move.effect?.updateTiming({ delay: Math.min(waited, HELD_MS) });
+        for (const move of playing) {
+          const waited = Number(move.currentTime ?? 0);
+          move.effect?.updateTiming({ delay: Math.min(waited, HELD_MS) });
+        }
         return;
       }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-    // Or it goes on waking for a picture that has left the page, holding the element it
-    // animates for as long as it does.
-    return () => {
-      watching = false;
-    };
-  }, [exchange, visible]);
-  useEffect(() => {
+  }, [exchange, visible, stopMoves]);
+
+  const onScreenBefore = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    const covered = onScreenBefore.current;
+    onScreenBefore.current = visible;
     // Not until the picture has a frame with a raster in it. A neighbour the run was
     // holding does from the first render, which is the whole point; one that had to arrive
-    // does not, and animating at the mount ran the slide out over an empty frame and left
+    // does not, and animating at the mount ran the fade out over an empty frame and left
     // the photograph to appear afterwards, all at once, with nothing to arrive by.
     if (shownKey == null || !ready) return;
     const was = shownBefore.current;
@@ -550,7 +557,7 @@ export function PhotoStage({
     // leaves `photo` naming the round before: the next flip then reads as a step, and the
     // flip back is refused by the guard below and leaves the picture it is showing hidden as
     // the spent exchange's `from` - a stage stuck at opacity 0 for good.
-    shownBefore.current = { picture: shownKey, photo: photoKey, source: visible };
+    shownBefore.current = { picture: shownKey, photo: photoKey };
     if (was?.picture === shownKey) return;
     // A different picture under the same `photoKey` is a flip, not a step: stack triage's
     // A/B puts two photographs on one stage precisely so the reader can trade them in
@@ -562,8 +569,13 @@ export function PhotoStage({
     }
     // Left in place rather than cleared after the animation: `from` is what keeps the picture
     // stepped away from hidden, and a timer here would reveal it under the one on screen.
-    setExchange({ to: shownKey, from: was.picture, step: arrivedBy });
-  }, [shownKey, photoKey, arrivedBy, ready, visible]);
+    setExchange({
+      to: shownKey,
+      from: was.picture,
+      // A frame the stale cap already took down is not brought back to be faded from.
+      frame: covered != null && pictureRef.current(covered) === was.picture ? covered : undefined,
+    });
+  }, [shownKey, photoKey, ready, visible]);
 
   const onLoaded = useRef(onImageLoad);
   onLoaded.current = onImageLoad;
@@ -682,7 +694,7 @@ export function PhotoStage({
       // What is on screen, and only that. A frame nobody asks for any more is usually a
       // neighbour dropped from the trailing edge of the run, which was never visible and
       // has nothing to hold up: retired, it is drawn opaque at the bottom of the stack, so
-      // what appeared to slide away on a step was a photograph two or three back.
+      // what a step appears to fade from is a photograph two or three back.
       const outgoing = visibleRef.current;
       const covered = outgoing == null || outgoing === source ? [] : [outgoing];
       // Timed like a step only when what is going is a *picture*. A rendition being
@@ -796,8 +808,9 @@ export function PhotoStage({
   const notice =
     status ?? (unreadable ? { label: PhotoStageStrings.frameUnreadable(), busy: false } : null);
 
-  const covering = [...retiring.of.keys()].filter(
-    (source) => source !== visible && !incoming.includes(source),
+  const covering = [...new Set([...retiring.of.keys(), fading?.frame])].filter(
+    (source): source is string =>
+      source != null && source !== visible && !incoming.includes(source),
   );
   // Of those, the ones nothing else mounts: a frame held under its replacement is
   // usually still painted, and keeps the slot it already had.
@@ -903,6 +916,7 @@ export function PhotoStage({
         {...stylex.props(
           stageStyles.viewport,
           fullscreen && styles.viewportFullscreen,
+          fading != null && styles.isolated,
           stylex.defaultMarker(),
         )}
         role="region"
@@ -924,7 +938,11 @@ export function PhotoStage({
             <div
               key={group.key}
               ref={(element) => holdPicture(group.key, element)}
-              {...stylex.props(styles.picture, isLeaving(group.key) && styles.leaving)}
+              {...stylex.props(
+                styles.picture,
+                isLeaving(group.key) && styles.leaving,
+                (group.key === fading?.to || group.key === fading?.from) && styles.fading,
+              )}
               aria-hidden={isLeaving(group.key) || undefined}
               style={{ transform }}
             >

@@ -100,8 +100,8 @@ export class ViewerStore {
   // (null) is distinct from both: the fetch starts in an effect, and the render
   // before it once read as a photo the catalogue does not have.
   @observable.ref accessor open: OpenPhoto | null = null;
-  // Which way the reader arrived at the photo named here, so the stage can slide
-  // its frames the way they moved. Recorded when the step is taken rather than
+  // Which way the reader arrived at the photo named here, so the stage can hold the
+  // photograph they are heading towards first. Recorded when the step is taken rather than
   // worked out afterwards from where the two photographs sit: the run is
   // re-centred as the reader nears its edge, and positions read from two
   // different windows of it do not compare.

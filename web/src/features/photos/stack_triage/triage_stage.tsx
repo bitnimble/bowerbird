@@ -89,11 +89,6 @@ export const Flip = observer(function Flip({
           ]}
           showing={showing}
           frameColor={showing === 0 ? SIDE_COLOR.a : SIDE_COLOR.b}
-          // A round that opens on a photograph this one was not showing has swapped
-          // the picture under the reader; the held-over winner is carried, so it is
-          // left alone. A flip between the frames of one round is not a step and
-          // never reaches this.
-          step="fade"
           alt={onScreen == null ? '' : nameOf(onScreen)}
           filename={onScreen == null ? '' : nameOf(onScreen)}
           devicePeakNits={device.displayPeakNits}
@@ -190,8 +185,8 @@ export const Split = observer(function Split({
         return (
           // By slot, not by photo: keyed by the photograph, the half a verdict
           // replaced would unmount with it, and the stage that arrives has nothing
-          // to exchange with - the fade below needs the outgoing frame still
-          // mounted under it.
+          // to exchange with - its fade needs the outgoing frame still mounted
+          // under it.
           <div
             key={index}
             {...stylex.props(styles.frame)}
@@ -204,10 +199,6 @@ export const Split = observer(function Split({
               photoKey={`${roundKey}:${photo.id}`}
               pictures={[{ key: photo.id, sources: [store.srcOf(photo.id)] }]}
               frameColor={index === 0 ? SIDE_COLOR.a : SIDE_COLOR.b}
-              // Which half changed is the whole question a verdict leaves: the
-              // photo held over stays exactly as it was, and the one being
-              // replaced says so.
-              step="fade"
               alt={nameOf(photo)}
               filename={nameOf(photo)}
               devicePeakNits={device.displayPeakNits}

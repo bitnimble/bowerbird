@@ -1,4 +1,4 @@
-// Which way the viewer's frames slide. The direction is read off the run - the
+// Which way the reader stepped. The direction is read off the run - the
 // same ordering the arrows themselves step through - rather than off the
 // collapsed listing, which has no row for a stack's members and so reported
 // every step inside a stack as directionless.
@@ -63,11 +63,11 @@ function build(): { listing: ListingStore; store: ViewerStore; presenter: Photos
   return { listing, store, presenter };
 }
 
-test('stepping between two frames of one stack slides the way the reader moved', () => {
+test('stepping between two frames of one stack is a step the way the reader moved', () => {
   const { listing, store, presenter } = build();
   store.neighbourhood = [member('a', 'stack-1'), member('b', 'stack-1')];
   // A collapsed listing stands the whole stack up as one row, so neither frame
-  // has a position in it. This is the state an animation keyed on one gives up on.
+  // has a position in it.
   expect(listing.indexOf('a')).toBe(-1);
   expect(listing.indexOf('b')).toBe(-1);
 
