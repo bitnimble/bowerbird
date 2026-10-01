@@ -29,11 +29,6 @@ const BAND: (u8, u8) = (60, 210);
 
 /// Light added to every cell of both pictures before they are compared, as a share of white: what
 /// a display's own black and the eye's glare from the picture's bright regions lay over a shadow.
-///
-/// Without it the comparison is of light no viewer receives. A colour difference formula is
-/// steepest at zero, so a tint at code 6 - two counts of chroma, which the camera's JPEG has
-/// already quantised to grey - scores like a cast in the mid-tones, and a night frame is judged on
-/// its blacks. A lifted black still costs: at this veil, black against code 26 is over 6 L*.
 const VEILING_GLARE: f64 = 0.01;
 
 /// Samples a colour class needs before its mean is one.

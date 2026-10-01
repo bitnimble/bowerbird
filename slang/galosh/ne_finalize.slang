@@ -38,8 +38,7 @@ static const float ENVELOPE_RATIO = 0.71;
 
 static const int BIN_BLOCKS = 20;
 
-/// `ne_block_stats`'s 8x8.
-static const float BLOCK_SAMPLES = 64.0;
+static const float BLOCK_SAMPLES = float(NOISE_BLOCK * NOISE_BLOCK);
 
 /// The read variance the photosites under black measure, zero where they are no field.
 float read_variance_under_black()

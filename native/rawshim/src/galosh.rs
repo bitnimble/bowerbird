@@ -2734,13 +2734,7 @@ mod tests {
         let (width, height) = (512, 384);
         // A blue-ish sky over a near-black hill, meeting along near-horizontal runs, at the
         // levels a sunset actually decodes to.
-        let mut seed = 0x853c_49e6_748f_ea9bu64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
+        let mut uniform = uniform_from(0x853c_49e6_748f_ea9b);
         let noisy: Vec<f32> = (0..width * height)
             .map(|at| {
                 let (x, y) = (at % width, at / width);
@@ -2790,13 +2784,7 @@ mod tests {
         };
 
         let (width, height) = (512, 384);
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
+        let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
         let read_noise = 0.004;
         // Lit on the right so the fit has a slope to measure, black on the left.
         let noisy: Vec<f32> = (0..width * height)
@@ -2845,13 +2833,7 @@ mod tests {
         };
 
         let (width, height) = (512, 384);
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
+        let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
         let noisy: Vec<f32> = (0..width * height)
             .map(|at| {
                 let (x, y) = (at % width, at / width);
@@ -2913,13 +2895,7 @@ mod tests {
         };
 
         let (width, height) = (1024, 768);
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
+        let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
         // Black on the left, as a field that is flat across each of the fit's blocks with a spike
         // in one photosite of two hundred; a ramp on the right carrying shot noise alone.
         let block = 16;
@@ -2974,13 +2950,7 @@ mod tests {
 
         let (width, height) = (1024usize, 768usize);
         let fitted = |defects: bool| {
-            let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-            let mut uniform = || {
-                seed ^= seed << 13;
-                seed ^= seed >> 7;
-                seed ^= seed << 17;
-                (seed >> 40) as f32 / 16777216.0
-            };
+            let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
             // Lit throughout, so nothing is under black but what is put there.
             let noisy: Vec<f32> = (0..width * height)
                 .map(|at| {
@@ -3022,13 +2992,7 @@ mod tests {
         let (width, height) = (1024usize, 768usize);
         let (alpha, sigma_sq) = (2e-4f32, 1e-6f32);
         for read_rows in [height, height - 64] {
-            let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-            let mut uniform = || {
-                seed ^= seed << 13;
-                seed ^= seed >> 7;
-                seed ^= seed << 17;
-                (seed >> 40) as f32 / 16777216.0
-            };
+            let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
             // Black over the left quarter, then a ramp: a second difference reads none of it.
             let noisy: Vec<f32> = (0..width * height)
                 .map(|at| {
@@ -3073,13 +3037,7 @@ mod tests {
         let (width, height) = (512, 384);
         // Off every level's box grid: a step on a multiple of sixteen is never averaged across.
         let edge = 262;
-        let mut seed = 0x2545_f491_4f6c_dd1du64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
+        let mut uniform = uniform_from(0x2545_f491_4f6c_dd1d);
         let level = |x: usize, slot: usize| -> f32 {
             if x < edge {
                 0.1
@@ -3441,13 +3399,7 @@ mod tests {
         let (width, height) = (384, 384);
         let (centre, radius) = (189.3f32, 120.0f32);
         let (inside, outside) = (0.4f32, 0.06f32);
-        let mut seed = 0x6a09_e667_f3bc_c908u64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
+        let mut uniform = uniform_from(0x6a09_e667_f3bc_c908);
         let distance =
             |at: usize| ((at % width) as f32 - centre).hypot((at / width) as f32 - centre) - radius;
         let noisy: Vec<f32> = (0..width * height)
@@ -3502,13 +3454,7 @@ mod tests {
             let cfa = crate::cfa::Cfa::bayer(quad).expect("Bayer pattern");
             let green_at_origin = cfa.colour_at(0, 0) == crate::cfa::GREEN;
             let diagonal = if green_at_origin { 1.0 } else { -1.0 };
-            let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-            let mut uniform = || {
-                seed ^= seed << 13;
-                seed ^= seed >> 7;
-                seed ^= seed << 17;
-                (seed >> 40) as f32 / 16777216.0
-            };
+            let mut uniform = uniform_from(0x9e37_79b9_7f4a_7c15);
             let scene = |x: usize, y: usize| {
                 if y < height / 2 {
                     return 0.25;
@@ -3620,13 +3566,7 @@ mod tests {
         };
 
         let (width, height) = (384, 384);
-        let mut seed = 0x3c6e_f372_fe94_f82bu64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
+        let mut uniform = uniform_from(0x3c6e_f372_fe94_f82b);
         let base = |slot: usize| [0.03f32, 0.18, 0.18, 0.03][slot];
         let texture = |x: usize, y: usize| {
             let (x, y) = (x as f32, y as f32);
@@ -3674,6 +3614,16 @@ mod tests {
     /// being indexed by the same 2x2 slot.
     fn rggb() -> crate::cfa::Cfa {
         crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern")
+    }
+
+    /// Xorshift from `seed`, uniform on [0, 1).
+    fn uniform_from(mut seed: u64) -> impl FnMut() -> f32 {
+        move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / 16777216.0
+        }
     }
 
     /// The mosaic back on the host, which is where these tests compare frames.

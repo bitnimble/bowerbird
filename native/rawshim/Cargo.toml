@@ -109,7 +109,7 @@ required-features = ["renditions"]
 name = "halo_seams"
 required-features = ["renditions"]
 
-# Open through `examples/support`, which fits the camera match off the file's lens profile.
+# Each of these includes `examples/support`, which needs `renditions`.
 [[example]]
 name = "anchor_sweep"
 required-features = ["renditions"]

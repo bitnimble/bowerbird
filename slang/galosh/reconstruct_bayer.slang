@@ -26,8 +26,9 @@ static const int TILE_DIM = 16;
 static const Span<Sensor> HALO = { 3 };
 static const int TILE_W = TILE_DIM + 2 * int(HALO.n);
 static const int TILE_PIX = TILE_W * TILE_W;
-/// A block reads its neighbours' palettes two photosites out (`shares_at`).
-static const int PALETTE_HALO = int(HALO.n) + 2;
+/// How far out `shares_at` reads a block's neighbours' palettes.
+static const Span<Sensor> SHARES_REACH = { 2 };
+static const int PALETTE_HALO = int(HALO.n) + int(SHARES_REACH.n);
 static const int PALETTE_W = TILE_DIM + 2 * PALETTE_HALO;
 static const int PALETTE_PIX = PALETTE_W * PALETTE_W;
 

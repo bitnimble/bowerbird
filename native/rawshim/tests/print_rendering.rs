@@ -243,7 +243,7 @@ fn ambient_only_gloss_mirrors_the_room_rather_than_washing_the_sheet() {
     ))
     .raw();
     assert!(
-        ceiling.max(floor) > ceiling.min(floor) * 1.6,
+        ceiling.min(floor) > 0.0 && ceiling.max(floor) > ceiling.min(floor) * 1.6,
         "the sheen is a wash rather than a reflection: {floor} vs {ceiling}"
     );
 }

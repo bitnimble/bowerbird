@@ -3684,21 +3684,10 @@ pub(crate) const SAMPLE: isize = 1;
 /// own noise, which is the case it was wanted for and no other.
 pub(crate) const SAMPLE_RANGE: f64 = 0.008;
 
-/// Half-width of the box mean a registered pair is read through on both planes, in wide-plane
-/// pixels. Never above `PATCH`: the reads reach `SEARCH` plus this past a grid position, and the
-/// host reserves only `PATCH + SEARCH`.
-///
-/// Unlike `SAMPLE`, ungated. Rendered against the camera over the 32-frame Canon set, flatness gate
-/// unchanged:
-///
-/// | read | perceptual | plain | classed |
-/// |------|------------|-------|---------|
-/// | 3x3, gated at `SAMPLE_RANGE` | 1.0391 | 1.7645 | 1.4312 |
-/// | 3x3 box | 1.0339 | 1.7400 | 1.4119 |
-/// | 5x5 box | 1.0311 | 1.7366 | 1.3935 |
-/// | 7x7 box | 1.0311 | 1.7389 | 1.3959 |
-///
-/// The same box in `fit_wide`'s samples lost (1.0458 perceptual), so that pass keeps `SAMPLE`.
+/// Half-width of the ungated box mean a registered pair is read through on both planes, in
+/// wide-plane pixels. The reads reach `SEARCH` plus this past a grid position, and the host
+/// reserves only `PATCH + SEARCH`. `fit_wide` keeps the gated `SAMPLE`: the box measured worse
+/// there.
 const REGISTER_SAMPLE: isize = 2;
 const _: () = assert!(REGISTER_SAMPLE <= PATCH);
 
@@ -5925,10 +5914,8 @@ fn perceptual_chroma(rgb: &[f64; 3]) -> f64 {
 /// What a lattice is fitted over that no matrix candidate moves.
 struct Lattice<'a> {
     sharp: &'a Sharp,
-    /// [`Sharp::lifted`].
     lifted: crate::gpu::Buffer,
     evidence: &'a crate::fit_curve::Evidence,
-    /// The fit grid's size.
     grid: (usize, usize),
     train: Landed,
     wide_train: Landed,
@@ -6016,35 +6003,37 @@ async fn fitted_lattice(
         WIDE_STANDS_FOR,
     );
     lap("held-out moments");
-    let shaped: Vec<Option<(ChromaMap, ChromaMap)>> = WIDE_WEIGHTS
-        .par_iter()
-        .map(|wide_weight| {
-            let mut moments = taught.clone();
-            moments.add(&wide_taught, wide_weight * WIDE_STANDS_FOR);
-            let map = fitted_chroma(&axes, &moments)?
-                .level_trended(&moments.seen)
-                .noise_damped(&noise)
-                .validated(&held_out);
-            // Smoothed before it is judged: the choice must score the surface a render will
-            // actually read, not the fitted lattice it was built from.
-            let smoothed = map.smoothed();
-            Some((map, smoothed))
-        })
-        .collect();
-    lap("rung lattices");
+    let shape = |wide_weight: &f64| -> Option<(ChromaMap, ChromaMap)> {
+        let mut moments = taught.clone();
+        moments.add(&wide_taught, wide_weight * WIDE_STANDS_FOR);
+        let map = fitted_chroma(&axes, &moments)?
+            .level_trended(&moments.seen)
+            .noise_damped(&noise)
+            .validated(&held_out);
+        // Smoothed before it is judged: the choice must score the surface a render will
+        // actually read, not the fitted lattice it was built from.
+        let smoothed = map.smoothed();
+        Some((map, smoothed))
+    };
     let mut rungs: Option<(f64, ChromaMap, Score)> = None;
-    for (wide_weight, shaped) in WIDE_WEIGHTS.into_iter().zip(shaped) {
-        let Some((map, smoothed)) = shaped else {
-            continue;
-        };
-        let (spent, score) = mapped(smoothed).await?;
-        if crate::clock::watched() {
-            eprintln!("  ladder rung {wide_weight}: {spent:.3}");
-        }
-        if rungs.as_ref().is_none_or(|(held, _, _)| spent < *held) {
-            rungs = Some((spent, map, score));
+    // A thread's worth at a time: the browser's pool is one thread, where all seven densified
+    // lattices held at once would be a hundred megabytes bought for nothing.
+    for batch in WIDE_WEIGHTS.chunks(rayon::current_num_threads().max(1)) {
+        let shaped: Vec<Option<(ChromaMap, ChromaMap)>> = batch.par_iter().map(shape).collect();
+        for (wide_weight, shaped) in batch.iter().zip(shaped) {
+            let Some((map, smoothed)) = shaped else {
+                continue;
+            };
+            let (spent, score) = mapped(smoothed).await?;
+            if crate::clock::watched() {
+                eprintln!("  ladder rung {wide_weight}: {spent:.3}");
+            }
+            if rungs.as_ref().is_none_or(|(held, _, _)| spent < *held) {
+                rungs = Some((spent, map, score));
+            }
         }
     }
+    lap("ladder rungs");
     // The rung that won is taken at the strength its cost is least at, from none of it to all of
     // it. A map that helps most colours and harms one is applied as far as that trade pays, where
     // on or off would take it whole or lose it whole.

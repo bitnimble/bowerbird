@@ -152,6 +152,9 @@ public float2 chroma_weights(uint colour)
 // direction that matters is a block the fit reads whose variance was never computed.
 public static const float BLOCK_MEAN_CEILING = 0.97;
 
+/// The side of a block `ne_block_stats` measures, in its channel's own photosites.
+public static const int NOISE_BLOCK = 8;
+
 // The smallest shot-noise slope the GAT will divide by. Every kernel here scales by `2/alpha`,
 // so a zero or a NaN in the slot is an infinity in the transform and a NaN in every pixel; this
 // is that guard and nothing more. It is deliberately far below any slope an estimator reports -
@@ -226,13 +229,33 @@ public static const int UNDER_BLACK_SUMS = 24;
 // Every one of these writes through a parameter, a field at a time: they are called under loops,
 // where Metal drops a call that returns a struct (`tests/wgsl_call_shapes.rs`).
 
+int under_black_word(int workgroup, int level)
+{
+    return workgroup * UNDER_BLACK_SUMS + level * (UNDER_BLACK_SUMS / BLACK_LEVELS);
+}
+
+public void under_black_put(
+    RWStructuredBuffer<float> partials,
+    int workgroup,
+    int level,
+    UnderBlack held)
+{
+    let at = under_black_word(workgroup, level);
+    partials[at] = held.depth;
+    partials[at + 1] = held.count;
+    partials[at + 2] = held.paired;
+    partials[at + 3] = held.deepest;
+    partials[at + 4] = held.at_deepest;
+    partials[at + 5] = held.paired_at_deepest;
+}
+
 public void under_black_at(
     StructuredBuffer<float> partials,
     int workgroup,
     int level,
     out UnderBlack held)
 {
-    let at = workgroup * UNDER_BLACK_SUMS + level * (UNDER_BLACK_SUMS / BLACK_LEVELS);
+    let at = under_black_word(workgroup, level);
     held.depth = partials[at];
     held.count = partials[at + 1];
     held.paired = partials[at + 2];

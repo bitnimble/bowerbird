@@ -64,14 +64,6 @@ void under_black_reduce(
     }
 
     if (lid == 0) {
-        for (int l = 0; l < BLACK_LEVELS; l++) {
-            let at = wgid * UNDER_BLACK_SUMS + l * (UNDER_BLACK_SUMS / BLACK_LEVELS);
-            partial_buf[at + 0] = lds[l].depth;
-            partial_buf[at + 1] = lds[l].count;
-            partial_buf[at + 2] = lds[l].paired;
-            partial_buf[at + 3] = lds[l].deepest;
-            partial_buf[at + 4] = lds[l].at_deepest;
-            partial_buf[at + 5] = lds[l].paired_at_deepest;
-        }
+        for (int l = 0; l < BLACK_LEVELS; l++) { under_black_put(partial_buf, wgid, l, lds[l]); }
     }
 }

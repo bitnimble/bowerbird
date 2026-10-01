@@ -1561,7 +1561,8 @@ async fn fit_grids(
 /// the frame's own point sources, then a regression. The order is the point - the
 /// regression reads a slope off the whole frame at a quarter resolution, which is where
 /// point sources go, so it ends up fitting scene edges that carry no radial signal. Every
-/// tier is verified against the frame afterwards regardless (`tca::improves`).
+/// tier is checked against the frame (`tca::improves`): the regression is kept only where the
+/// point sources confirm it, the others unless they refute it.
 ///
 /// A 5px corner shift is a tenth of a pixel by the time the fit grid has been reduced to
 /// 640px and blurred at sigma 3, which is where three earlier attempts to fit this through

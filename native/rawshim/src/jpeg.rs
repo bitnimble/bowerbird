@@ -182,6 +182,7 @@ pub fn with_added_rotation(jpeg: &[u8], rotate: u16) -> Option<Vec<u8>> {
 
 /// The byte past the Exif APP1, or past the SOI where there is none: where the segments that
 /// follow EXIF go.
+#[cfg(feature = "renditions")]
 pub(crate) fn after_exif(jpeg: &[u8]) -> usize {
     exif_app1(jpeg).map_or(2, |(_, tiff)| tiff.end)
 }

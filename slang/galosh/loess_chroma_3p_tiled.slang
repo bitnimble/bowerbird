@@ -40,7 +40,6 @@ static const int TILE_W = TILE_DIM + 2 * R;
 static const int TILE_PIX = TILE_W * TILE_W;
 
 groupshared float t_y[900];
-/// The chroma as a share of its own luma, and the pilot about it, as the regression reads them.
 groupshared float t_c1[900];
 groupshared float t_c2[900];
 groupshared float t_c3[900];

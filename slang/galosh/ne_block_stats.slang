@@ -44,7 +44,7 @@ bool green(int channel)
     return ((word >> uint(channel & 31)) & 1u) != 0u;
 }
 
-static const int BLOCK = 8;
+static const int BLOCK = NOISE_BLOCK;
 static const int THREADS = 64;
 
 // 48 horizontal and 48 vertical three-tap Laplacians, rounded up to the power of two a bitonic
