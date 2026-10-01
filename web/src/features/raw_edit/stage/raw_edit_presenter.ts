@@ -1,5 +1,7 @@
 import { action } from 'mobx';
 import {
+  type ColourProfile,
+  type Denoiser,
   type EditDoc,
   type EditState,
   type ToneCurve,
@@ -19,7 +21,6 @@ import type { Ticked } from '../local_decode/local_open';
 import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
-import type { ColourProfile, Denoiser } from '../../../../../src/schemas/photo_edits';
 import { RepairPresenter } from '../repair/repair_presenter';
 import { EditPresenter } from '../edit/edit_presenter';
 import type { EditStore } from '../edit/edit_store';
@@ -34,7 +35,7 @@ import {
 import type { PhotoSummary } from '../../../../../src/schemas/photos';
 import type { KeystoneGuide } from '../keystone/keystone';
 import { KeystonePresenter } from '../keystone/keystone_presenter';
-import type { KeystoneStore } from '../keystone/keystone_store';
+import type { GuideKind, KeystoneStore } from '../keystone/keystone_store';
 import { LoupePresenter } from '../loupe/loupe_presenter';
 import type { LoupeStore } from '../loupe/loupe_store';
 import { PreparePresenter } from './prepare_presenter';
@@ -44,7 +45,6 @@ import { type PreparedHeader, readPreparedHeader } from '../../../../../src/sche
 import type { EditAdjust, Region } from '../edits';
 import { isSoftProof, type SoftProof } from '../proof/soft_proof';
 import type { EditTool } from '../edit_tool';
-import type { GuideKind } from '../keystone/keystone_store';
 import type { RepairStore } from '../repair/repair_store';
 import type { OpenStep, StageStore } from './stage_store';
 import type { PrinterProfile, PrintStore } from '../print/print_store';
@@ -211,17 +211,15 @@ export class RawEditPresenter {
   private async handOver(canvas: HTMLCanvasElement, which: 'stage' | 'loupe'): Promise<void> {
     const local = this.local;
     if (local == null) return;
-    if (this.surface.handedOver(canvas)) {
-      if (which === 'stage') this.drawable = true;
-      return;
+    if (!this.surface.handedOver(canvas)) {
+      this.surface.handOver(canvas, which);
+      const wanted = which === 'stage' ? this.stageSize() : null;
+      const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
+      const onPage = drawsOnThePage(this.device.displayPeakNits);
+      if (onPage) this.surface.onPage[which] = { canvas, ...size };
+      const offscreen = onPage ? null : canvas.transferControlToOffscreen();
+      await local.decoder.attach(which, offscreen, size.width, size.height);
     }
-    this.surface.handOver(canvas, which);
-    const wanted = which === 'stage' ? this.stageSize() : null;
-    const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
-    const onPage = drawsOnThePage(this.device.displayPeakNits);
-    if (onPage) this.surface.onPage[which] = { canvas, ...size };
-    const offscreen = onPage ? null : canvas.transferControlToOffscreen();
-    await local.decoder.attach(which, offscreen, size.width, size.height);
     if (which === 'stage') this.drawable = true;
   }
 
@@ -900,7 +898,7 @@ export class RawEditPresenter {
       // A window the reader has already moved past is not a failure to report: the abort above is
       // this presenter's own doing, and the picture it was going to replace is still on screen.
       if (attempt.signal.aborted) return;
-      this.fail(error instanceof Error ? error.message : String(error));
+      this.fail(describe(error));
     } finally {
       if (this.rewindowing === attempt) {
         this.rewindowing = null;

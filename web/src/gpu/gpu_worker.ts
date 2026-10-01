@@ -52,6 +52,7 @@ const closed = new Set<number>();
 let weights: Promise<void> | null = null;
 const environments = new Map<Environment, Promise<void>>();
 let lost: string | null = null;
+const stages = new KeptStages<KeptStage>(free);
 void device.then((opened) =>
   opened?.lost.then((info) => {
     lost = info.message;
@@ -155,8 +156,6 @@ async function answer(
 function free(value: { free(): void }): void {
   if (lost == null) value.free();
 }
-
-const stages = new KeptStages<KeptStage>(free);
 
 /** One photograph opened on this thread: what `LocalDecoder` holds a session of. */
 class Open {

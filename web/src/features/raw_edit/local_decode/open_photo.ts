@@ -4,7 +4,7 @@ import { photosApi } from '../../../api/photos';
 import { renditionsApi } from '../../../api/renditions';
 import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
-import type { ViewerRendition } from '../../../../../src/schemas/settings';
+import type { Settings, ViewerRendition } from '../../../../../src/schemas/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
 import { readPreparedHeader, type PreparedHeader } from '../../../../../src/schemas/prepared';
@@ -38,16 +38,26 @@ export async function fetchPrepared(
   /** What the loupe's tiles are built from. */
   local: LocalSource;
 }> {
-  const local =
-    opening.from === 'rendition'
-      ? await renditionHere(photoId, opening.rendition, onStep, adoptStage)
-      : opening.from === 'backend'
-        ? await preparedThere(photoId, onStep, adoptStage)
-        : await preparedHere(opening.original, opening.longEdge, mosaic, onStep, adoptStage);
+  const { LocalDecoder } = await import('./local_decoder');
+  const decoder = new LocalDecoder();
   try {
+    const local =
+      opening.from === 'rendition'
+        ? await renditionHere(decoder, photoId, opening.rendition, onStep, adoptStage)
+        : opening.from === 'backend'
+          ? await preparedThere(decoder, photoId, onStep, adoptStage)
+          : await preparedHere(
+              decoder,
+              opening.original,
+              opening.longEdge,
+              mosaic,
+              onStep,
+              adoptStage,
+            );
     return { header: await headerOf(photoId, opening, local), local };
   } catch (error) {
-    local.decoder.close(adoptStage);
+    // Under `adoptStage`, so the stage goes back: freed, the next photo waits on it forever.
+    decoder.close(adoptStage);
     throw error;
   }
 }
@@ -88,7 +98,7 @@ export type Opening =
 
 /** What a tab's own open reads, fetched before the document it is prepared at has arrived. */
 export type Original = {
-  settings: Awaited<ReturnType<typeof settingsApi.get>>;
+  settings: Settings;
   raw: Uint8Array<ArrayBuffer>;
   photoAnalysis: number[] | undefined;
 };
@@ -139,36 +149,25 @@ export type LocalSource = {
  * canvas they compose into - and for a device too small to hold one photograph's samples.
  */
 async function preparedThere(
+  decoder: LocalDecoder,
   photoId: string,
   onStep: (step: OpenStep) => void,
   adoptStage: number | null,
 ): Promise<LocalSource & { prepared: string }> {
-  const { LocalDecoder } = await import('./local_decoder');
-  const decoder = new LocalDecoder();
-  try {
-    const settings = await settingsApi.get();
+  const settings = await settingsApi.get();
+  const open: LocalOpen = {
+    longEdge: 0,
     // The grade the module is told about, which for this arm the prepare already used: the picture
     // arrived coded against these, and a tick anchors to the same numbers.
-    const open: LocalOpen = {
-      longEdge: 0,
-      grade: {
-        referenceWhiteNits: settings.hdr_reference_white_nits,
-        whiteQuantile: settings.hdr_white_quantile,
-      },
-      defringe: settings.raw_defringe,
-    };
-    const prepared = await decoder.holdPicture(
-      await preparedPicture(photoId, undefined, undefined, onStep),
-      open,
-      adoptStage,
-    );
-    return { decoder, open, onTheBackend: true, prepared };
-  } catch (error) {
-    // Closed on the way out, for `preparedHere`'s reason: nothing else can reach a decoder the
-    // caller never received, so a reader retrying would leak an open's frames per attempt.
-    decoder.close(adoptStage);
-    throw error;
-  }
+    grade: gradeOf(settings),
+    defringe: settings.raw_defringe,
+  };
+  const prepared = await decoder.holdPicture(
+    await preparedPicture(photoId, undefined, undefined, onStep),
+    open,
+    adoptStage,
+  );
+  return { decoder, open, onTheBackend: true, prepared };
 }
 
 /**
@@ -176,38 +175,29 @@ async function preparedThere(
  * network is the file rather than the samples it decodes to, and nothing is prepared on the server.
  */
 async function renditionHere(
+  decoder: LocalDecoder,
   photoId: string,
   rendition: ViewerRendition,
   onStep: (step: OpenStep) => void,
   adoptStage: number | null,
 ): Promise<LocalSource & { prepared: string }> {
-  const { LocalDecoder } = await import('./local_decoder');
-  const decoder = new LocalDecoder();
-  try {
-    const [settings, file] = await Promise.all([
-      settingsApi.get(),
-      renditionFile(photoId, rendition, onStep),
-    ]);
-    const open: LocalOpen = {
-      longEdge: 0,
-      grade: {
-        referenceWhiteNits: settings.hdr_reference_white_nits,
-        whiteQuantile: settings.hdr_white_quantile,
-      },
-      // Every edit is already in the file, so it is shown as it was encoded.
-      defringe: 0,
-      statedWhite: true,
-    };
-    return {
-      decoder,
-      open,
-      onTheBackend: false,
-      prepared: await decoder.holdRendition(file, open, adoptStage, onStep),
-    };
-  } catch (error) {
-    decoder.close(adoptStage);
-    throw error;
-  }
+  const [settings, file] = await Promise.all([
+    settingsApi.get(),
+    renditionFile(photoId, rendition, onStep),
+  ]);
+  const open: LocalOpen = {
+    longEdge: 0,
+    grade: gradeOf(settings),
+    // Every edit is already in the file, so it is shown as it was encoded.
+    defringe: 0,
+    statedWhite: true,
+  };
+  return {
+    decoder,
+    open,
+    onTheBackend: false,
+    prepared: await decoder.holdRendition(file, open, adoptStage, onStep),
+  };
 }
 
 /** A rendition's file, built where it is missing or behind the edits. */
@@ -268,44 +258,35 @@ async function refusal(reply: Response): Promise<string> {
 }
 
 async function preparedHere(
+  decoder: LocalDecoder,
   original: Promise<Original>,
   longEdge: number,
   mosaic: LocalPrepare,
   onStep: (step: OpenStep) => void,
   adoptStage: number | null,
 ): Promise<LocalSource & { prepared: string }> {
-  const { LocalDecoder } = await import('./local_decoder');
   const { settings, raw, photoAnalysis } = await original;
   const open: LocalOpen = {
     longEdge: Math.round(longEdge),
     photoAnalysis,
-    grade: {
-      referenceWhiteNits: settings.hdr_reference_white_nits,
-      whiteQuantile: settings.hdr_white_quantile,
-    },
+    grade: gradeOf(settings),
     defringe: settings.raw_defringe,
   };
-  // Kept rather than dropped once the frame is out: a tile is decoded from the same bytes, and
-  // re-fetching 72MB per loupe position is the round trip this whole path exists to remove.
-  const decoder = new LocalDecoder();
-  try {
-    await decoder.hold(raw);
-    return {
-      decoder,
-      open,
-      photoAnalysis,
-      onTheBackend: false,
-      prepared: await decoder.prepare(open, mosaic, adoptStage, onStep),
-    };
-  } catch (error) {
-    // **Closed on the way out, or the open outlives the failure** - the RAW, the mosaic and
-    // whatever the decode had already put on the GPU, held on the thread for the life of the page.
-    // Nothing else can reach it: the caller only learns of a decoder through the value this never
-    // returned, so a reader retrying an unreadable file would leak one per attempt. The stage goes
-    // back, or the next photo waits on it forever.
-    decoder.close(adoptStage);
-    throw error;
-  }
+  await decoder.hold(raw);
+  return {
+    decoder,
+    open,
+    photoAnalysis,
+    onTheBackend: false,
+    prepared: await decoder.prepare(open, mosaic, adoptStage, onStep),
+  };
+}
+
+function gradeOf(settings: Settings): LocalOpen['grade'] {
+  return {
+    referenceWhiteNits: settings.hdr_reference_white_nits,
+    whiteQuantile: settings.hdr_white_quantile,
+  };
 }
 
 /**

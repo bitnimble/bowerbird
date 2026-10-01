@@ -1,9 +1,9 @@
 import { adapterName } from '../../../adapter_name';
 import type { GpuThread } from '../../../gpu/gpu_thread';
 
-export type AdapterInfo = { name: string; maxTexture: number };
+type AdapterInfo = { name: string; maxTexture: number };
 
-export type OnPage = { canvas: HTMLCanvasElement; width: number; height: number };
+type OnPage = { canvas: HTMLCanvasElement; width: number; height: number };
 
 /** What an edit visit keeps across the photos it opens, until {@link close}. */
 export class EditSurface {

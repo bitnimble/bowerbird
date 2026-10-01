@@ -1,5 +1,8 @@
 import { action } from 'mobx';
 import {
+  type CameraTone,
+  type ColourProfile,
+  type Denoiser,
   type EditCheckpoint,
   type EditDoc,
   type EditOpening,
@@ -8,11 +11,6 @@ import {
 import { photoEditsApi } from '../../../api/photo_edits';
 import { ApiError } from '../../../api/request';
 import { newId } from '../../../../../src/schemas/id';
-import {
-  type CameraTone,
-  type ColourProfile,
-  type Denoiser,
-} from '../../../../../src/schemas/photo_edits';
 import { cameraMatchReset, withCameraMatch } from '../../../../../src/schemas/edit_adjust';
 import type { AsShot } from '../../../../../src/schemas/prepared';
 import type { RepairPresenter } from '../repair/repair_presenter';
@@ -64,8 +62,8 @@ export class EditPresenter {
     // Every save from this open carries it, and a merge takes the session whole
     // (docs/replication.md §5.3).
     this.session = newId();
-    // The exposure derives from the document, so clearing it clears that: a stale one would draw the previous photo's grade over this one's
-    // frame for as long as the read takes.
+    // The exposure derives from the document, so clearing it clears that: a stale one would draw
+    // the previous photo's grade over this one's frame for as long as the read takes.
     this.store.doc = null;
     this.store.rev = 0;
     this.store.canUndo = false;

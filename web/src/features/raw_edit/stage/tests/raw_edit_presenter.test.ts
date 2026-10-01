@@ -18,8 +18,6 @@ import {
   IDENTITY_TONE_CURVE,
   neutralEdits,
   TONE_CURVE_KIND,
-} from '../../../../../../src/schemas/photo_edits';
-import {
   type EditCheckpoint,
   type EditOpening,
   type EditState,
