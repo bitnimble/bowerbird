@@ -57,6 +57,7 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
           dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
           repairs: [],
         },
+        null,
         (stage) => stages.push(stage),
       );
       decoder.close();
@@ -131,6 +132,7 @@ test('denoises in the tab with PMRID, off weights fetched beside the module', as
           dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
           repairs: [],
         },
+        null,
       );
       decoder.close();
       return JSON.parse(header);

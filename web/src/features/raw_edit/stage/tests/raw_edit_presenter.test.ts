@@ -1314,6 +1314,83 @@ describe('leaving the editor', () => {
     expect(decoder.keptUnder).toEqual([7]);
   });
 
+  test('stores a settle queued behind the write in flight, against the revision that write made', async () => {
+    const saved: { exposure: number | undefined; rev: number }[] = [];
+    let land: () => void = () => {};
+    photoEditsApi.save = (_photoId, doc, rev): Promise<EditState> => {
+      saved.push({ exposure: doc.exposure, rev });
+      return new Promise((resolve) => {
+        land = () => resolve({ doc, rev: rev + 1, canUndo: true, canRedo: false });
+      });
+    };
+    presenter.settleExposure(1);
+    presenter.settleExposure(2);
+    presenter.close();
+    land();
+    await Bun.sleep(0);
+    land();
+    await Bun.sleep(0);
+    expect(saved).toEqual([
+      { exposure: 1, rev: 1 },
+      { exposure: 2, rev: 2 },
+    ]);
+    expect(finished).toEqual(['a-photo-id']);
+  });
+
+  test('writes nothing into the stores the next photo opens on', () => {
+    presenter.close();
+    presenter.setRepreparing(true);
+    presenter.showRegion({ x: 10, y: 10, width: 100, height: 100 });
+    expect(stage.repreparing).toBe(false);
+    expect(stage.region).toEqual({ x: 0, y: 0, width: 4000, height: 3000 });
+  });
+
+  test("hands the next photo the stores without the last one's state, keeping the reader's habits", () => {
+    stage.renderedMode = 'photo';
+    stage.level = { number: 1, canvas: [2000, 1500] };
+    stage.fetchingWindow = true;
+    stage.repreparing = true;
+    crop.cropping = true;
+    keystone.keystoning = true;
+    keystone.guideKind = 'horizontal';
+    editor.repair.repairing = true;
+    editor.repair.repairSolving = true;
+    loupe.loupeOpen = true;
+    loupe.loupeAt = { x: 1, y: 1 };
+    loupe.loupeMagnification = 4;
+    Object.assign(edit, { libraryDenoiser: 'pmrid' });
+    presenter.close();
+
+    const next = new RawEditPresenter(
+      edit,
+      stage,
+      crop,
+      keystone,
+      editor.repair,
+      loupe,
+      editor.print,
+      editor.device,
+      editor.surface,
+    );
+    void next.open('next-photo', 'max', null);
+
+    expect(stage.region).toBeNull();
+    expect(stage.renderedMode).toBeNull();
+    expect(stage.level).toBeNull();
+    expect(stage.fetchingWindow).toBe(false);
+    expect(stage.repreparing).toBe(false);
+    expect(crop.cropping).toBe(false);
+    expect(keystone.keystoning).toBe(false);
+    expect(editor.repair.repairing).toBe(false);
+    expect(editor.repair.repairSolving).toBe(false);
+    expect(loupe.loupeOpen).toBe(false);
+    expect(loupe.loupeAt).toBeNull();
+    expect(edit.libraryDenoiser).toBe('galosh');
+    expect(keystone.guideKind).toBe('horizontal');
+    expect(loupe.loupeMagnification).toBe(4);
+    next.close();
+  });
+
   test('asks for nothing when nothing was written', async () => {
     presenter.previewExposure(1.25);
 

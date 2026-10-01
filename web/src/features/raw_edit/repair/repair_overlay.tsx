@@ -161,7 +161,17 @@ export const RepairOverlay = observer(function RepairOverlay({
   const shown = useRef({ view, box, natural });
   shown.current = { view, box, natural };
 
-  useEffect(() => () => held.current?.(), []);
+  useEffect(
+    () => () => {
+      held.current?.();
+      setLoop(null);
+      setHovered(null);
+      setOver(null);
+      setDragged(null);
+      pressed.current = false;
+    },
+    [presenter],
+  );
 
   if (!store.repairing || natural.width === 0 || box.width === 0) return null;
 

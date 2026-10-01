@@ -1058,14 +1058,10 @@ impl HeldRaw {
         self.stage.take().map(KeptStage)
     }
 
-    /// A stage another photograph drew onto, at the backing store the page now asks for.
+    /// A stage another photograph drew onto, at its size until the next tick names one.
     #[wasm_bindgen(js_name = adoptStage)]
-    pub fn adopt_stage(&self, kept: KeptStage, width: u32, height: u32) {
-        let mut stage = kept.0;
-        if let Some(gpu) = crate::gpu::device() {
-            stage.resize(gpu, width, height);
-        }
-        self.stage.replace(Some(stage));
+    pub fn adopt_stage(&self, kept: KeptStage) {
+        self.stage.replace(Some(kept.0));
     }
 
     /// The same, for the loupe: a second canvas over the first, drawn from the same frame.

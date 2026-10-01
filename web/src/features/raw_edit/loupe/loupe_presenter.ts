@@ -59,6 +59,15 @@ export class LoupePresenter {
     private readonly host: LoupeHost,
   ) {}
 
+  @action.bound
+  begin(): void {
+    // `setLoupe` builds the tiles only on opening, so a glass left open would never sharpen.
+    this.store.loupeOpen = false;
+    this.store.loupeAt = null;
+    this.store.loupeSharp = false;
+    this.store.loupeRendering = false;
+  }
+
   /**
    * Opens or closes the loupe.
    *

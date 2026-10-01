@@ -23,6 +23,11 @@ export class KeystonePresenter {
     private readonly host: KeystoneHost,
   ) {}
 
+  @action.bound
+  begin(): void {
+    this.store.keystoning = false;
+  }
+
   /**
    * Opens and closes the keystone tool.
    *

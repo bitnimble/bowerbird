@@ -150,12 +150,16 @@ test('a rendition of either range is opened in the browser', async ({ page }) =>
       );
       const decoder = new LocalDecoder();
       try {
-        const header = await decoder.holdRendition(file, {
-          longEdge: 0,
-          grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-          defringe: 0,
-          statedWhite: true,
-        });
+        const header = await decoder.holdRendition(
+          file,
+          {
+            longEdge: 0,
+            grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
+            defringe: 0,
+            statedWhite: true,
+          },
+          null,
+        );
         const { width, height } = JSON.parse(header) as { width: number; height: number };
         opened[rendition] = [width, height];
       } catch (error) {

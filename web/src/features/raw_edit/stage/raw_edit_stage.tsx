@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Fragment, useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { color } from '../../../ui/tokens.stylex';
 import { toggleFullscreenOf } from '../../photos/viewer/fullscreen';
@@ -43,6 +43,15 @@ const styles = stylex.create({
   },
   print: { cursor: 'grab' },
   draggingPrint: { cursor: 'grabbing' },
+  backdrop: {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain',
+    zIndex: 1,
+    pointerEvents: 'none',
+  },
   // Levelling wants a line near whatever is meant to be straight, so tenths rather than thirds.
   straightenGrid: {
     position: 'absolute',
@@ -82,7 +91,6 @@ function spread(touches: Map<number, { x: number; y: number }>): number {
 }
 
 export const RawEditStage = observer(function RawEditStage({
-  photoId,
   stageStore,
   crop,
   keystone,
@@ -93,9 +101,8 @@ export const RawEditStage = observer(function RawEditStage({
   toolsInto,
   zoomInto,
   fullscreenRef,
+  backdrop,
 }: {
-  /** The stage outlives the photo; what is drawn over it does not. */
-  photoId: string;
   stageStore: StageStore;
   crop: CropStore;
   keystone: KeystoneStore;
@@ -113,6 +120,7 @@ export const RawEditStage = observer(function RawEditStage({
   zoomInto?: HTMLElement | null;
   /** The element to put fullscreen, handed up as it mounts. */
   fullscreenRef?: (element: HTMLDivElement | null) => void;
+  backdrop?: string;
 }): JSX.Element {
   const canvas = useRef<HTMLCanvasElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -468,7 +476,8 @@ export const RawEditStage = observer(function RawEditStage({
           ref={canvas}
           {...stylex.props(
             stageStyles.content,
-            stageStyles.ready,
+            // Hidden until this photo's first draw lands, or the last photo's frame shows under the wait.
+            stageStore.renderedMode != null && stageStyles.ready,
             zoomed && stageStyles.zoomed,
             loupe.loupeOpen && styles.loupe,
             scenePrint && styles.print,
@@ -486,18 +495,16 @@ export const RawEditStage = observer(function RawEditStage({
             style={{ aspectRatio: `${natural.width} / ${natural.height}` }}
           />
         )}
-        <Fragment key={photoId}>
-          <CropOverlay crop={crop} keystone={keystone} presenter={presenter} viewport={box} />
-          <KeystoneOverlay store={keystone} presenter={presenter} viewport={box} />
-          <RepairOverlay
-            store={repair}
-            presenter={presenter.repair}
-            view={view}
-            box={box}
-            natural={natural}
-          />
-          <LoupeOverlay store={loupe} presenter={presenter} />
-        </Fragment>
+        <CropOverlay crop={crop} keystone={keystone} presenter={presenter} viewport={box} />
+        <KeystoneOverlay store={keystone} presenter={presenter} viewport={box} />
+        <RepairOverlay
+          store={repair}
+          presenter={presenter.repair}
+          view={view}
+          box={box}
+          natural={natural}
+        />
+        <LoupeOverlay store={loupe} presenter={presenter} />
       </div>
       {/* Read by e2e: none of these has a visible readout, and the canvas is the worker's once
           handed over so cannot report its own backing size. */}
@@ -516,15 +523,18 @@ export const RawEditStage = observer(function RawEditStage({
         data-fetching-window={stageStore.fetchingWindow || undefined}
         data-rendered-mode={stageStore.renderedMode ?? undefined}
       />
-      <OpenStatus stage={stageStore} />
+      <OpenStatus stage={stageStore} backdrop={backdrop} />
     </div>
   );
 });
 
 export const OpenStatus = observer(function OpenStatus({
   stage,
+  backdrop,
 }: {
   stage: StageStore;
+  /** A picture of the photo to show behind the wait. */
+  backdrop?: string;
 }): JSX.Element | null {
   if (stage.status === 'failed') {
     return (
@@ -539,9 +549,12 @@ export const OpenStatus = observer(function OpenStatus({
   // Until a frame lands, not until the open does: the first draw can wait seconds on a shader compile.
   if (stage.live && stage.renderedMode != null) return null;
   return (
-    <div {...stylex.props(stageStyles.busy)} role="status">
-      <Spinner />
-      <Text variant="mono">{RawEditStageStrings.step(stage.step)}</Text>
-    </div>
+    <>
+      {backdrop != null && <img src={backdrop} alt="" {...stylex.props(styles.backdrop)} />}
+      <div {...stylex.props(stageStyles.busy)} role="status">
+        <Spinner />
+        <Text variant="mono">{RawEditStageStrings.step(stage.step)}</Text>
+      </div>
+    </>
   );
 });

@@ -117,8 +117,9 @@ export const CropOverlay = observer(function CropOverlay({
 
   // A drag survives its own element being taken away - closing the editor, or a save that
   // re-renders the tool shut - and releasing capture that way fires no `pointercancel`, so the
-  // listeners below would never come off and the gesture would never settle.
-  useEffect(() => () => held.current?.(), []);
+  // listeners below would never come off and the gesture would never settle. Ended on a step to
+  // the next photo too, whose document a move would otherwise write.
+  useEffect(() => () => held.current?.(), [presenter]);
 
   const rect = crop.cropRect;
   if (!crop.cropping || rect == null) return null;

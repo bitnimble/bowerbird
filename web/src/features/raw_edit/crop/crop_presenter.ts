@@ -44,9 +44,20 @@ export class CropPresenter {
     private readonly store: CropStore,
     private readonly host: CropHost,
   ) {
-    // The habit the last session ended on. Read here rather than defaulted in the store,
-    // which holds data and does not go and get any.
-    store.cropToFit = readSetting(CROP_TO_FIT_KEY) !== '0';
+    this.readHabits();
+  }
+
+  /** The habit the last session ended on, which the store holds and does not go and get. */
+  @action.bound
+  private readHabits(): void {
+    this.store.cropToFit = readSetting(CROP_TO_FIT_KEY) !== '0';
+  }
+
+  @action.bound
+  begin(): void {
+    this.store.cropping = false;
+    this.store.straightening = false;
+    this.store.cropLock = 'custom';
   }
 
   /**

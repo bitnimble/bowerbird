@@ -50,6 +50,7 @@ export class EditPresenter {
   private openedAt: EditCheckpoint | null = null;
   /** Whether the server has stored anything since the open, which `close` asks after it has gone. */
   private written = false;
+  private savedRev = 0;
 
   constructor(
     private readonly store: EditStore,
@@ -63,8 +64,7 @@ export class EditPresenter {
     // Every save from this open carries it, and a merge takes the session whole
     // (docs/replication.md §5.3).
     this.session = newId();
-    // The exposure is derived from the document now, so clearing it is clearing
-    // that: a stale one would draw the previous photo's grade over this one's
+    // The exposure derives from the document, so clearing it clears that: a stale one would draw the previous photo's grade over this one's
     // frame for as long as the read takes.
     this.store.doc = null;
     this.store.rev = 0;
@@ -72,6 +72,7 @@ export class EditPresenter {
     this.store.canRedo = false;
     this.store.saveStatus = 'clean';
     this.store.asShot = null;
+    this.store.libraryDenoiser = 'galosh';
     this.openedAt = null;
     this.written = false;
   }
@@ -209,6 +210,7 @@ export class EditPresenter {
     await this.exclusively(async () => {
       try {
         const matched = await photoEditsApi.applyCameraMatch(photoId, tone);
+        if (this.stage.isClosed()) return;
         // The match is where this open starts: Cancel keeps it, and Done alone rebuilds nothing.
         this.opened(matched);
         this.stored(matched, this.locallyEdited);
@@ -267,6 +269,8 @@ export class EditPresenter {
   async cancel(): Promise<boolean> {
     this.pendingSave = false;
     while (this.writing != null) await this.writing;
+    // The store is the next photo's once this closes.
+    if (this.stage.isClosed()) return false;
     const photoId = this.photoId;
     const openedAt = this.openedAt;
     if (photoId == null || openedAt == null || this.store.rev === openedAt.rev) return true;
@@ -381,14 +385,21 @@ export class EditPresenter {
     const photoId = this.photoId;
     const openedAt = this.openedAt;
     if (photoId == null) return;
+    // Taken now: the store is the next photo's by the time the write in flight lands.
+    const queued = this.pendingSave ? this.store.doc : null;
+    this.pendingSave = false;
+    this.savedRev = this.store.rev;
     void (async () => {
       while (this.writing != null) await this.writing;
+      if (queued != null)
+        this.stored(await photoEditsApi.save(photoId, queued, this.savedRev, this.session));
       if (this.written) await photoEditsApi.finish(photoId, openedAt ?? undefined);
     })().catch(() => {});
   }
 
   /** A write's answer, recorded even once the editor has closed. */
   private stored(state: EditState, keepDoc = false): void {
+    this.savedRev = state.rev;
     if (state.rev !== (this.openedAt?.rev ?? 0)) this.written = true;
     this.applyState(state, keepDoc);
   }

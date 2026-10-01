@@ -63,11 +63,17 @@ export class LocalDecoder {
   prepare(
     request: LocalOpen,
     mosaic: LocalPrepare,
+    adoptStage: number | null,
     onStage?: (stage: OpenStage) => void,
   ): Promise<string> {
     return this.ask(
       JsonSchema,
-      { kind: 'prepare', request: JSON.stringify(request), mosaic: crossing(mosaic) },
+      {
+        kind: 'prepare',
+        request: JSON.stringify(request),
+        mosaic: crossing(mosaic),
+        adoptStage,
+      },
       [],
       onStage,
     );
@@ -82,21 +88,28 @@ export class LocalDecoder {
    * Transferred, like `hold`: the frame is tens of megabytes and the page has no use for it once
    * the module has uploaded it to the device.
    */
-  holdPicture(framed: Uint8Array<ArrayBuffer>, request: LocalOpen): Promise<string> {
-    return this.ask(JsonSchema, { kind: 'holdPicture', framed, request: JSON.stringify(request) }, [
-      framed.buffer,
-    ]);
+  holdPicture(
+    framed: Uint8Array<ArrayBuffer>,
+    request: LocalOpen,
+    adoptStage: number | null,
+  ): Promise<string> {
+    return this.ask(
+      JsonSchema,
+      { kind: 'holdPicture', framed, request: JSON.stringify(request), adoptStage },
+      [framed.buffer],
+    );
   }
 
   /** The same open, from a rendition's own file, decoded in this tab. */
   holdRendition(
     file: Uint8Array<ArrayBuffer>,
     request: LocalOpen,
+    adoptStage: number | null,
     onStage?: (stage: OpenStage) => void,
   ): Promise<string> {
     return this.ask(
       JsonSchema,
-      { kind: 'holdRendition', file, request: JSON.stringify(request) },
+      { kind: 'holdRendition', file, request: JSON.stringify(request), adoptStage },
       [file.buffer],
       onStage,
     );
@@ -382,17 +395,9 @@ export class LocalDecoder {
   }
 
   /**
-   * The stage another open drew onto, kept under `key` when it closed, now drawn onto by this one.
-   * False where nothing was kept there.
-   */
-  adoptStage(key: number, width: number, height: number): Promise<boolean> {
-    return this.ask(z.boolean(), { kind: 'adoptStage', key, width, height });
-  }
-
-  /**
    * Freed rather than left to be collected: the open holds the RAW and the frames on the device,
    * which the thread keeps for as long as the page does. Its stage is kept under `keepStage`, for
-   * the next open's {@link adoptStage}.
+   * the next open to adopt.
    */
   close(keepStage: number | null = null): void {
     this.thread.close(this.session, new Error('this decoder was closed'), keepStage);

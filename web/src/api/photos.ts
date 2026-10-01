@@ -320,15 +320,10 @@ export const photosApi = {
   shareUrl: (photoId: string, rendition: ViewerRendition): string =>
     assetUrl(route(PathSegment.image(), photoId, PathSegment.share(), rendition)),
 
-  /**
-   * What has been measured about this photograph, for a client about to open the RAW itself.
-   *
-   * Bytes nothing on this side reads: they are handed to the open, which skips most of a second of
-   * measuring for having them. 404 until something has measured this photograph.
-   */
-  downloadRaw: async (photoId: string): Promise<Uint8Array<ArrayBuffer>> => {
+  downloadRaw: async (photoId: string, signal?: AbortSignal): Promise<Uint8Array<ArrayBuffer>> => {
     const reply = await fetch(downloadUrl(photoId, 'original'), {
       headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
+      signal: signal ?? null,
     });
     if (!reply.ok) {
       // Named and quoted: this is the first request an open makes, so it is where a photograph
@@ -339,6 +334,12 @@ export const photosApi = {
     return new Uint8Array(await reply.arrayBuffer());
   },
 
+  /**
+   * What has been measured about this photograph, for a client about to open the RAW itself.
+   *
+   * Bytes nothing on this side reads: they are handed to the open, which skips most of a second of
+   * measuring for having them. 404 until something has measured this photograph.
+   */
   analysisUrl: (photoId: string): string =>
     assetUrl(route(PathSegment.image(), photoId, PathSegment.analysis())),
 

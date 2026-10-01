@@ -12,6 +12,7 @@ export class EditSurface {
   private readonly handed = new WeakSet<HTMLCanvasElement>();
   readonly onPage: Partial<Record<'stage' | 'loupe', OnPage>> = {};
   private adapter: AdapterInfo | null = null;
+  private stageHanded = false;
 
   constructor(private readonly thread: Pick<GpuThread, 'keepSurface' | 'dropSurface'>) {
     this.stageKey = thread.keepSurface();
@@ -25,11 +26,17 @@ export class EditSurface {
     return this.adapter;
   }
 
-  /** Whether `canvas` was already given to the worker, marking it given either way. */
-  alreadyHandedOver(canvas: HTMLCanvasElement): boolean {
-    if (this.handed.has(canvas)) return true;
+  handedOver(canvas: HTMLCanvasElement): boolean {
+    return this.handed.has(canvas);
+  }
+
+  get stageHandedOver(): boolean {
+    return this.stageHanded;
+  }
+
+  handOver(canvas: HTMLCanvasElement, which: 'stage' | 'loupe'): void {
     this.handed.add(canvas);
-    return false;
+    if (which === 'stage') this.stageHanded = true;
   }
 
   close(): void {

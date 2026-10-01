@@ -99,7 +99,7 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
   /** The drag in flight, as the way to end it. Null between gestures. */
   const held = useRef<(() => void) | null>(null);
 
-  useEffect(() => () => held.current?.(), []);
+  useEffect(() => () => held.current?.(), [presenter]);
 
   if (!store.keystoning) return null;
 

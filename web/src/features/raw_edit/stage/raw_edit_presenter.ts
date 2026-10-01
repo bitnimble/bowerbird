@@ -24,11 +24,14 @@ import { RepairPresenter } from '../repair/repair_presenter';
 import { EditPresenter } from '../edit/edit_presenter';
 import type { EditStore } from '../edit/edit_store';
 import {
+  downloadOriginal,
   fetchPrepared,
   prepareOf,
   preparedPicture,
   type LocalSource,
+  type Opening,
 } from '../local_decode/open_photo';
+import type { PhotoSummary } from '../../../../../src/schemas/photos';
 import type { KeystoneGuide } from '../keystone/keystone';
 import { KeystonePresenter } from '../keystone/keystone_presenter';
 import type { KeystoneStore } from '../keystone/keystone_store';
@@ -199,8 +202,8 @@ export class RawEditPresenter {
    * **Once per element, for good.** `transferControlToOffscreen` moves the backing store to the
    * worker and the element can never take a context on this thread again, so a remount that
    * transferred the same element twice would throw - and React remounts the loupe whenever the
-   * glass is picked up. The stage outlives the photo, so the next photo's open adopts the stage
-   * the last one drew onto, still configured and showing its last frame.
+   * glass is picked up. The stage outlives the photo: the open took the stage the last one drew
+   * onto ({@link adoptsStage}), and the first tick sizes it.
    *
    * A canvas the page draws itself (`drawsOnThePage`) stays on the page, and the worker holds a
    * texture in its place.
@@ -208,17 +211,13 @@ export class RawEditPresenter {
   private async handOver(canvas: HTMLCanvasElement, which: 'stage' | 'loupe'): Promise<void> {
     const local = this.local;
     if (local == null) return;
-    const wanted = which === 'stage' ? this.stageSize() : null;
-    const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
-    if (this.surface.alreadyHandedOver(canvas)) {
-      if (which === 'loupe') return;
-      if (!(await local.decoder.adoptStage(this.surface.stageKey, size.width, size.height)))
-        throw new Error('the stage the last photo was drawn on was not kept for this one');
-      const kept = this.surface.onPage.stage;
-      if (kept != null) Object.assign(kept, size);
-      this.drawable = true;
+    if (this.surface.handedOver(canvas)) {
+      if (which === 'stage') this.drawable = true;
       return;
     }
+    this.surface.handOver(canvas, which);
+    const wanted = which === 'stage' ? this.stageSize() : null;
+    const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
     const onPage = drawsOnThePage(this.device.displayPeakNits);
     if (onPage) this.surface.onPage[which] = { canvas, ...size };
     const offscreen = onPage ? null : canvas.transferControlToOffscreen();
@@ -227,9 +226,17 @@ export class RawEditPresenter {
   }
 
   /**
+   * The stage a photo this visit opened before drew onto, which holds the canvas now. Off the
+   * surface: this presenter's own canvas may not be attached yet.
+   */
+  private adoptsStage(): number | null {
+    return this.surface.stageHandedOver ? this.surface.stageKey : null;
+  }
+
+  /**
    * The canvas the tick draws into, once React has mounted it.
    *
-   * The configuration is the module's now - `rgba16float` with `toneMapping: extended`, which is
+   * The configuration is the module's - `rgba16float` with `toneMapping: extended`, which is
    * what makes the compositor show values above SDR white (§7) - because the surface is opened
    * where the frame is. What is left here is the box it has to fit.
    */
@@ -240,7 +247,7 @@ export class RawEditPresenter {
     this.density?.removeEventListener('change', this.onDensity);
     this.density = null;
     this.canvas = canvas;
-    if (canvas == null) return;
+    if (canvas == null || this.closed) return;
     // The observer's own box rather than `getBoundingClientRect`: the size arrives with
     // the callback, so nothing on this path reads layout. It also fires once on observe,
     // which is what gives the canvas its first size.
@@ -332,6 +339,7 @@ export class RawEditPresenter {
    */
   @action.bound
   showRegion(region: Region): void {
+    if (this.closed) return;
     const picture = this.displaySize;
     const width = Math.min(Math.max(region.width, 1), picture.width);
     const height = Math.min(Math.max(region.height, 1), picture.height);
@@ -361,15 +369,19 @@ export class RawEditPresenter {
    * opens one of its renditions to show rather than edit: every edit is already in that, so it is
    * drawn at neutral and the saved edits are never read.
    *
-   * **The recipe is read here rather than passed in**, and awaited: which device prepares the
-   * picture is a question about the recipe (`prepare_choice.ts`), and a page that had not finished
-   * reading the detail yet would answer it as "an ordinary photograph" - which for a composite
-   * means downloading a file that does not exist. One small row, alongside the document.
+   * `summary` is the row the page already holds, which says whether the tab opens the photograph
+   * itself (`prepare_choice.ts`): where it does, the RAW starts downloading at once, alongside the
+   * document it is prepared at. A deep link with no row yet asks for the detail instead, since
+   * answering "an ordinary photograph" for a composite means downloading a file that does not exist.
    *
    * Never rejects: both callers fire this and forget it, so anything escaping would leave
    * the page at "loading" with no reason given.
    */
-  async open(photoId: string, longEdge: number | ViewerRendition): Promise<void> {
+  async open(
+    photoId: string,
+    longEdge: number | ViewerRendition,
+    summary: PhotoSummary | null,
+  ): Promise<void> {
     this.begin();
     this.edit.begin(photoId);
     this.photoId = photoId;
@@ -380,17 +392,34 @@ export class RawEditPresenter {
     const edits = fromRendition
       ? Promise.resolve(null)
       : photoEditsApi.checkpoint(photoId).catch(() => null);
-    // The recipe, for the one decision that cannot be made without it. Alongside the document
-    // rather than after it: both are small rows and both are wanted before the decode.
-    const described = photosApi.get(photoId).catch(() => null);
+    const onTheBackend = fromRendition
+      ? Promise.resolve(false)
+      : (summary != null ? Promise.resolve(summary) : photosApi.get(photoId).catch(() => null))
+          // A read that failed leaves this at the local arm, which is right for every ordinary
+          // photograph.
+          .then((photo) => photo != null && preparesOnTheBackend(photo));
     try {
       const adapter = await this.surface.adapterInfo();
       if (adapter == null) {
         this.fail('this browser has no WebGPU, which the editor now needs');
         return;
       }
+      // Past an await before the RAW is asked for: StrictMode's discarded twin is closed by then.
+      if (this.closed) return;
       this.describeAdapter(adapter.name);
       this.maxTexture = adapter.maxTexture;
+      const opening: Promise<Opening> =
+        typeof longEdge === 'string'
+          ? Promise.resolve({ from: 'rendition', rendition: longEdge })
+          : onTheBackend.then((backend) =>
+              backend
+                ? { from: 'backend' }
+                : {
+                    from: 'here',
+                    longEdge,
+                    original: downloadOriginal(photoId, this.downloads.signal),
+                  },
+            );
 
       const saved = await edits;
       if (this.closed) return;
@@ -406,18 +435,18 @@ export class RawEditPresenter {
       // Before `applyState`, whose re-prepare resolves the document's denoiser against the library's.
       this.edit.opened(saved);
       if (saved != null) this.applyState(saved);
-      // A read that failed leaves this at the local arm, which is right for every ordinary
-      // photograph.
-      const photo = await described;
-      const onTheBackend = photo != null && preparesOnTheBackend(photo.recipe, photo);
-      const { header, local } =
-        typeof longEdge === 'string'
-          ? await fetchPrepared(photoId, 0, mosaic, false, this.reached, longEdge)
-          : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend, this.reached);
+      const adoptStage = this.adoptsStage();
+      const { header, local } = await fetchPrepared(
+        photoId,
+        await opening,
+        mosaic,
+        this.reached,
+        adoptStage,
+      );
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
         // to take: leaving it would hold this photograph's RAW and frames for the life of the page.
-        local.decoder.close();
+        local.decoder.close(adoptStage);
         return;
       }
       this.local = local;
@@ -445,7 +474,7 @@ export class RawEditPresenter {
 
       // Through `preview` rather than `request` alone: the pipeline holds the sliders
       // separately from the tick's exposure, so a document has to reach both or the frame
-      // opens graded by the exposure and nothing else. That now includes the denoise, which
+      // opens graded by the exposure and nothing else. That includes the denoise, which
       // is a chain of passes rather than a uniform word. A read that failed leaves `doc`
       // null and `preview` returns on it, which is the editor usable at neutral.
       if (fromRendition) this.draw();
@@ -510,11 +539,13 @@ export class RawEditPresenter {
 
   @action.bound
   clearLevel(): void {
+    if (this.closed) return;
     this.stage.level = null;
   }
 
   @action.bound
   setRepreparing(running: boolean): void {
+    if (this.closed) return;
     this.stage.repreparing = running;
   }
 
@@ -638,6 +669,7 @@ export class RawEditPresenter {
    */
   @action.bound
   followGeometry(): void {
+    if (this.closed) return;
     // The geometry rides on the next tick, which is requested below: sending it now would be a
     // second message the draw does not wait for.
     const { width, height } = this.displaySize;
@@ -880,6 +912,7 @@ export class RawEditPresenter {
 
   @action.bound
   private setFetchingWindow(fetching: boolean): void {
+    if (this.closed) return;
     this.stage.fetchingWindow = fetching;
   }
 
@@ -924,6 +957,7 @@ export class RawEditPresenter {
     return this.atFinest || shown.region.width * level.canvas[0] >= shown.stage;
   }
 
+  private readonly downloads = new AbortController();
   private windowTimer: ReturnType<typeof setTimeout> | null = null;
   private rewindowing: AbortController | null = null;
   /** Settles when the pass `rewindowing` belongs to does. */
@@ -952,6 +986,7 @@ export class RawEditPresenter {
 
   close(): void {
     if (this.closed) return;
+    this.downloads.abort();
     // A re-prepare owed to a control nobody is holding any more, on a pipeline about to be
     // destroyed: cancelled rather than flushed.
     this.prepare.close();
@@ -1068,7 +1103,7 @@ export class RawEditPresenter {
           ...(profileChanged ? { printerProfile: profile?.bytes ?? null } : {}),
           stage,
         })
-        .then((ticked) => this.showOnPage(ticked))
+        .then((ticked) => (this.closed ? undefined : this.showOnPage(ticked)))
         .then(() => landed(), landed);
     });
   }
@@ -1089,6 +1124,7 @@ export class RawEditPresenter {
 
   @action.bound
   private drew(mode: 'photo' | 'print'): void {
+    if (this.closed) return;
     this.stage.renderedMode = mode;
   }
 
@@ -1148,6 +1184,17 @@ export class RawEditPresenter {
     this.stage.cameraSaturation = null;
     this.stage.defocus = null;
     this.stage.levels = null;
+    this.stage.region = null;
+    this.stage.stage = null;
+    this.stage.renderedMode = null;
+    this.stage.preparedElsewhere = false;
+    this.stage.level = null;
+    this.stage.fetchingWindow = false;
+    this.stage.repreparing = false;
+    this.crop.begin();
+    this.keystone.begin();
+    this.repair.begin();
+    this.loupe.begin();
   }
 
   @action.bound

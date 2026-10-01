@@ -102,11 +102,14 @@ once and kept, so a tile costs neither a download nor a copy - and a picture the
 is transferred the same way, once, for the reason in §8.
 
 **An edit visit outlives its photos** (`edit_surface.ts`). Stepping to another photo, by the arrows
-or the filmstrip, keeps three things the next open would otherwise rebuild:
+or the filmstrip, keeps what the next open would otherwise rebuild or remount:
 
+- The editor's stores and components. Each photo gets its own presenter, whose open resets what
+  belongs to the photo (`begin`) and leaves the reader's habits; a closed presenter writes nothing.
 - The stage. A closing session's canvas is kept on the worker under the visit's key (`takeStage`),
-  configured and still showing its last frame, and the next open adopts it (`adoptStage`): a canvas
-  is handed to the worker once per element, so the page keeps the element too.
+  and the next open's prepare names that key to adopt it (`adoptStage`): a canvas is handed to the
+  worker once per element, so the page keeps the element too. An open superseded mid-prepare still
+  holds the stage, and the next waits for it to be kept.
 - The buffers. While a visit holds them (`gpu::hold_buffers`), a buffer let go goes to a pool for the
   next asked for at its size and usage, up to 2GiB idle, and comes back cleared. Allocation was a
   fifth of a 24MP prepare in Chrome, and the next photo's prepare asks for the same shapes again.
@@ -130,8 +133,8 @@ Panoramas can span hundreds of megapixels, beyond phone memory. Server
 transfers coded canvas instead of source frames.
 
 `holdPicture` uploads samples into the same `Drawing` as local open, preserving identical ticks.
-`prepare_choice.ts` selects this path for composites, photos past a hundred megapixels,
-or coarse pointers.
+`prepare_choice.ts` selects this path, from the photo's summary, for composites, photos past a
+hundred megapixels, or devices reporting 4GB of memory or less.
 
 Three things are genuinely absent on that arm, all below the coding:
 

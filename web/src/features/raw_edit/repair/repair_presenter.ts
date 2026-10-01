@@ -70,9 +70,28 @@ export class RepairPresenter {
     private readonly store: RepairStore,
     private readonly host: RepairHost,
   ) {
-    // The habits the last session ended on, as `RawEditPresenter` reads its own.
-    store.repairOutlinesShown = readSetting(REPAIR_OUTLINES_KEY) !== '0';
-    store.repairGrows = readSetting(REPAIR_GROWS_KEY) !== '0';
+    this.readHabits();
+  }
+
+  /** The habits the last session ended on, as `RawEditPresenter` reads its own. */
+  @action.bound
+  private readHabits(): void {
+    this.store.repairOutlinesShown = readSetting(REPAIR_OUTLINES_KEY) !== '0';
+    this.store.repairGrows = readSetting(REPAIR_GROWS_KEY) !== '0';
+  }
+
+  @action.bound
+  begin(): void {
+    this.store.repairing = false;
+    this.store.repairOutlines = [];
+    this.store.repairSourceOutline = null;
+    this.store.repairThumbnails = new Map();
+    this.store.repairOptions = null;
+    this.store.repairOptionThumbnails = new Map();
+    this.store.repairChoice = 0;
+    this.store.repairShownAt = null;
+    this.store.repairSolving = false;
+    this.store.repairRefusal = null;
   }
 
   /**
@@ -172,6 +191,7 @@ export class RepairPresenter {
     this.thumbnailing = true;
     try {
       for (;;) {
+        if (this.host.closed()) return;
         this.pruneThumbnails();
         const next = this.nextThumbnail();
         if (next == null || this.repairAt != null) return;
@@ -681,6 +701,7 @@ export class RepairPresenter {
   @action.bound
   private setSolving(solving: boolean): void {
     this.solves += solving ? 1 : -1;
+    if (this.host.closed()) return;
     this.store.repairSolving = this.solves > 0;
     if (solving) this.store.repairRefusal = null;
   }

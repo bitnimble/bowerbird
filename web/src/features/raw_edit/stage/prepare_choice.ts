@@ -1,4 +1,4 @@
-import type { StoredRecipe } from '../../../../../src/schemas/recipes';
+import type { PhotoSummary } from '../../../../../src/schemas/photos';
 
 // Which device prepares the picture the editor grades.
 //
@@ -31,20 +31,21 @@ export interface Client {
   memoryGb?: number;
 }
 
-/** Whether this tab can prepare the picture itself, or has to ask the server for it. */
+/**
+ * Whether this tab can prepare the picture itself, or has to ask the server for it.
+ *
+ * Asked of the summary every row carries, so the open can start downloading the RAW without
+ * waiting to read the photograph's recipe.
+ */
 export function preparesOnTheBackend(
-  recipe: StoredRecipe,
-  photo: { width: number; height: number },
+  photo: Pick<PhotoSummary, 'composite_kind' | 'width' | 'height'>,
   client: Client = describeClient(),
 ): boolean {
   // **A composite has no file to open**, which is the first reason this exists and does not
   // depend on how large the picture is: the tab's open downloads the photograph's own bytes, and
   // a recipe over several others has none. Ahead of the ceiling, because a two-frame pan of small
   // frames is well inside it and still has nothing to download.
-  //
-  // A recipe this build cannot read goes the same way, and for the same reason: there is no file
-  // named in it either.
-  if (recipe.kind !== 'file') return true;
+  if (photo.composite_kind != null) return true;
   if (photo.width * photo.height > PREPARES_HERE_AT_MOST) return true;
   if (client.memoryGb != null && client.memoryGb <= SMALL_MEMORY_GB) return true;
   // **The shell is not asked about**, though it could be: a prepare answers one level, and the

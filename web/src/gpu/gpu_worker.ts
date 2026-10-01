@@ -33,6 +33,7 @@ import {
 } from './gpu_protocol';
 import { canDecodeAvifPlanes, decodeAvifPlanes, type PlanarPicture } from '../avif/avif_planes';
 import { pageLog } from '../features/logs/page_log';
+import { KeptStages } from './kept_stages';
 
 pageLog.follow('worker');
 
@@ -54,6 +55,8 @@ let lost: string | null = null;
 void device.then((opened) =>
   opened?.lost.then((info) => {
     lost = info.message;
+    // A closing open keeps no stage once the device is gone, so nothing would wake these.
+    stages.abandon();
   }),
 );
 
@@ -136,8 +139,7 @@ async function answer(
       // A draw reaching a pipeline still warming would compile it again, synchronously, and freeze
       // every page while it did. Never for a canvas, which draws nothing: queued behind the warmth,
       // a close posted after it lands first and the transferred canvas is lost with the session.
-      if (message.ask.kind !== 'attach' && message.ask.kind !== 'adoptStage')
-        await warmth.settled();
+      if (message.ask.kind !== 'attach') await warmth.settled();
       if (closed.has(message.session)) throw new Error('this decoder was closed');
       let open = opens.get(message.session);
       if (open == null) {
@@ -154,35 +156,7 @@ function free(value: { free(): void }): void {
   if (lost == null) value.free();
 }
 
-class KeptStages {
-  private readonly kept = new Map<number, KeptStage>();
-  /** Keys the page has let go of, so a close that lands after the drop does not keep a stage forever. */
-  private readonly dropped = new Set<number>();
-
-  keep(key: number, stage: KeptStage): void {
-    if (this.dropped.has(key)) {
-      free(stage);
-      return;
-    }
-    const previous = this.kept.get(key);
-    if (previous != null) free(previous);
-    this.kept.set(key, stage);
-  }
-
-  take(key: number): KeptStage | null {
-    const stage = this.kept.get(key) ?? null;
-    this.kept.delete(key);
-    return stage;
-  }
-
-  drop(key: number): void {
-    this.dropped.add(key);
-    const stage = this.take(key);
-    if (stage != null) free(stage);
-  }
-}
-
-const stages = new KeptStages();
+const stages = new KeptStages<KeptStage>(free);
 
 /** One photograph opened on this thread: what `LocalDecoder` holds a session of. */
 class Open {
@@ -246,11 +220,15 @@ class Open {
         return { value, transfer: [value.buffer] };
       }
       case 'prepare':
-        return { value: await this.preparedAt(ask.request, ask.mosaic, report) };
+        return {
+          value: await this.preparedAt(ask.request, ask.mosaic, ask.adoptStage, report),
+        };
       case 'holdPicture':
-        return { value: await this.pictureAt(ask.framed, ask.request) };
+        return { value: await this.pictureAt(ask.framed, ask.request, ask.adoptStage) };
       case 'holdRendition':
-        return { value: await this.renditionAt(ask.file, ask.request, report) };
+        return {
+          value: await this.renditionAt(ask.file, ask.request, ask.adoptStage, report),
+        };
       case 'takePicture':
         // The same open, a different picture of it: the stage stays where it was transferred.
         return { value: this.drawing().takePicture(ask.framed) };
@@ -266,13 +244,6 @@ class Open {
         if (ask.which === 'stage') editor.attachStage(canvas, ask.width, ask.height);
         else editor.attachLoupe(canvas, ask.width, ask.height);
         return { value: null };
-      }
-      case 'adoptStage': {
-        const editor = this.drawing();
-        const stage = stages.take(ask.key);
-        if (stage == null) return { value: false };
-        editor.adoptStage(stage, ask.width, ask.height);
-        return { value: true };
       }
       case 'releaseLoupe':
         this.drawing().releaseLoupe();
@@ -421,10 +392,19 @@ class Open {
    * Keeps what an open just built, unless the page closed it while it was being built: nothing
    * else would ever free it.
    */
-  private keep(held: HeldRaw, request: string): HeldRaw {
+  private async keep(held: HeldRaw, request: string, adoptStage: number | null): Promise<HeldRaw> {
+    const stage = adoptStage == null || this.closed ? null : await stages.take(adoptStage);
     if (this.closed) {
+      if (stage != null && adoptStage != null) stages.keep(adoptStage, stage);
       free(held);
       throw new Error('this decoder was closed');
+    }
+    if (adoptStage != null) {
+      if (stage == null) {
+        free(held);
+        throw new Error('the editor closed before this photo could be drawn');
+      }
+      held.adoptStage(stage);
     }
     this.release();
     this.held = { held, request };
@@ -446,12 +426,14 @@ class Open {
   private async preparedAt(
     request: string,
     mosaic: PrepareCrossing,
+    adoptStage: number | null,
     report: Report,
   ): Promise<string> {
     await networkWeights(mosaic.denoiser);
     if (this.held?.request !== request) this.release();
     const held =
-      this.held?.held ?? this.keep(await holdRaw(this.heldRaw(), request, report), request);
+      this.held?.held ??
+      (await this.keep(await holdRaw(this.heldRaw(), request, report), request, adoptStage));
     const { enabled, sensitivity, intensity } = mosaic.dust;
     return held.prepare(
       mosaic.luminance,
@@ -474,11 +456,15 @@ class Open {
    * is a new prepare on the far side and arrives as new bytes. Whatever was open is freed and this
    * replaces it.
    */
-  private async pictureAt(framed: Uint8Array, request: string): Promise<string> {
+  private async pictureAt(
+    framed: Uint8Array,
+    request: string,
+    adoptStage: number | null,
+  ): Promise<string> {
     this.release();
     // The header the module answers `prepare` with, which this one already computed: what came back
     // with the samples, read on the side that knows the framing.
-    return this.keep(await holdPicture(framed, request), request).header();
+    return (await this.keep(await holdPicture(framed, request), request, adoptStage)).header();
   }
 
   /**
@@ -488,12 +474,13 @@ class Open {
   private async renditionAt(
     file: Uint8Array<ArrayBuffer>,
     request: string,
+    adoptStage: number | null,
     report: Report,
   ): Promise<string> {
     report('decoding');
     const held = await heldRendition(file, request, report);
     this.release();
-    return this.keep(held, request).prepare(
+    return (await this.keep(held, request, adoptStage)).prepare(
       undefined,
       undefined,
       'galosh',

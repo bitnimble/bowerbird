@@ -36,7 +36,8 @@ import { EditSurface } from '../../raw_edit/stage/edit_surface';
 import { gpuThread } from '../../../gpu/gpu_thread';
 import { toggleFullscreenOf } from './fullscreen';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
-import { sourceOfPath } from '../photos_store';
+import { renditionVersion, sourceOfPath } from '../photos_store';
+import { renditionsApi } from '../../../api/renditions';
 import { StripViewPresenter } from './strip_view_presenter';
 import { StripViewStore } from './strip_view_store';
 import { panelEdge, stripEdge } from './viewer_edges';
@@ -54,7 +55,6 @@ import {
   editPath,
   isPrintRequest,
   mockupPath,
-  type DetailMode,
   type PrintRequest,
 } from './detail_mode';
 import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
@@ -68,6 +68,19 @@ const EDIT_LONG_EDGE = 0;
 const PANELS_KEY = 'bowerbird.detail.panels';
 
 const STRIP_KEY = 'bowerbird.detail.filmstrip';
+
+/** What an edit visit keeps across the photos it steps through. */
+type EditVisit = {
+  key: string;
+  surface: EditSurface;
+  edit: EditStore;
+  stage: StageStore;
+  crop: CropStore;
+  keystone: KeystoneStore;
+  repair: RepairStore;
+  loupe: LoupeStore;
+  print: PrintStore;
+};
 
 // Nothing but the layout and what decides it, so the page itself re-renders once
 // per photo rather than on everything each part of it watches.
@@ -136,24 +149,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const photoPathname = detailPath(pathname);
   const editing = mode === 'edit';
   const previewing = mode !== 'view';
-  const [heldSession, setSession] = useState<{
-    photoId: string;
-    mode: Exclude<DetailMode, 'view'>;
-    surface: EditSurface;
-    edit: EditStore;
-    stage: StageStore;
-    crop: CropStore;
-    keystone: KeystoneStore;
-    repair: RepairStore;
-    loupe: LoupeStore;
-    print: PrintStore;
-    presenter: RawEditPresenter;
-  } | null>(null);
-  const session =
-    heldSession?.photoId === photoId && heldSession.mode === mode ? heldSession : null;
-  // The stage outlives the photo: for the render between a step and the layout effect that builds
-  // the next photo's session, it keeps the last one's rather than unmounting the canvas it shares.
-  const stageSession = heldSession?.mode === mode ? heldSession : null;
 
   useEffect(() => {
     void photos.openDetail(photoId, sourceOfPath(pathname));
@@ -191,77 +186,84 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     return () => observer.disconnect();
   }, [underTabs]);
 
-  const surfaceKey = mode === 'view' ? null : `${mode}:${touch}`;
-  const [surface, setSurface] = useState<{ key: string; surface: EditSurface } | null>(null);
+  const visitKey = mode === 'view' ? null : `${mode}:${touch}`;
+  const [visit, setVisit] = useState<EditVisit | null>(null);
   useLayoutEffect(() => {
-    if (surfaceKey == null) return;
-    const kept = new EditSurface(gpuThread());
-    setSurface({ key: surfaceKey, surface: kept });
-    return () => {
-      kept.close();
-      setSurface(null);
-    };
-  }, [surfaceKey]);
-
-  // Built only while editing, per photo: the frame is this photo's, the surface it is drawn on
-  // the visit's. Layout effect so the stage mounts before paint - otherwise Edit shows one
-  // frame of the stored rendition beside empty panels.
-  useLayoutEffect(() => {
-    // Until the surface for this mode exists: one held over from the last would be closed.
-    if (mode === 'view' || surface == null || surface.key !== surfaceKey) return;
+    if (visitKey == null) return;
     const edit = new EditStore();
     const stage = new StageStore(edit);
     const crop = new CropStore(stage, edit);
     const keystone = new KeystoneStore(stage, edit, crop);
     const repair = new RepairStore(edit, keystone);
-    const loupe = new LoupeStore(crop, keystone, repair);
-    const print = new PrintStore();
-    const presenter = new RawEditPresenter(
+    const kept: EditVisit = {
+      key: visitKey,
+      surface: new EditSurface(gpuThread()),
       edit,
       stage,
       crop,
       keystone,
       repair,
-      loupe,
-      print,
+      loupe: new LoupeStore(crop, keystone, repair),
+      print: new PrintStore(),
+    };
+    setVisit(kept);
+    return () => {
+      kept.surface.close();
+      setVisit(null);
+    };
+  }, [visitKey]);
+
+  // Per photo, over the visit's stores: the presenter's open resets what belongs to the photo.
+  // Layout effect so the stage mounts before paint - otherwise Edit shows one frame of the
+  // stored rendition beside empty panels.
+  const [opened, setOpened] = useState<{ visit: EditVisit; presenter: RawEditPresenter } | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    // Until the visit for this mode exists: one held over from the last would be closed.
+    if (mode === 'view' || visit == null || visit.key !== visitKey) return;
+    const presenter = new RawEditPresenter(
+      visit.edit,
+      visit.stage,
+      visit.crop,
+      visit.keystone,
+      visit.repair,
+      visit.loupe,
+      visit.print,
       device,
-      surface.surface,
+      visit.surface,
     );
     // Before the proof, so a sheet opens as this device's rather than as the desktop's and then turns into it.
     presenter.print.setTouch(touch);
     if (mode === 'print') presenter.setSoftProof(requestedPrint.current.proof);
     else presenter.restoreSoftProof();
-    setSession({
-      photoId,
-      mode,
-      surface: surface.surface,
-      edit,
-      stage,
-      crop,
-      keystone,
-      repair,
-      loupe,
-      print,
-      presenter,
-    });
+    setOpened({ visit, presenter });
     let startingRotation: number | null = null;
     void presenter
-      .open(photoId, mode === 'print' ? requestedPrint.current.rendition : EDIT_LONG_EDGE)
+      .open(
+        photoId,
+        mode === 'print' ? requestedPrint.current.rendition : EDIT_LONG_EDGE,
+        store.photoFor(photoId),
+      )
       .then(() => {
-        startingRotation = edit.doc?.rotate ?? 0;
+        startingRotation = visit.edit.doc?.rotate ?? 0;
       });
     return () => {
       presenter.close();
-      setSession(null);
       // The editor saves through its own store, so the copy the Edits panel holds is behind
       // by however much was changed here.
       if (mode === 'edit')
         photos.forgetEdits(
           photoId,
-          startingRotation != null && startingRotation !== edit.doc?.rotate,
+          startingRotation != null && startingRotation !== visit.edit.doc?.rotate,
         );
     };
-  }, [mode, photoId, photos, touch, device, surface, surfaceKey]);
+  }, [mode, photoId, photos, touch, device, visit, visitKey, store]);
+  // Held over a step until the next photo's presenter replaces it, so nothing remounts between.
+  const session =
+    visit != null && opened?.visit === visit && visit.key === visitKey
+      ? { ...visit, presenter: opened.presenter }
+      : null;
 
   // Both replace (the Edit row's link too), so opening and closing the editor leaves the history
   // where it found it: one entry for this photograph, and Back goes wherever the photograph was
@@ -341,6 +343,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // empty stage on every step, warmed neighbour or not.
   const shape = store.photoFor(photoId);
   const aspect = shape == null ? null : shape.width / shape.height;
+  const backdrop =
+    shape == null || !editing
+      ? undefined
+      : renditionsApi.url(photoId, 'grid', renditionVersion(shape, 'grid'));
   // The strip first, over the whole frame: it spans the frame either way, and the
   // panels lay out inside what it leaves. So opening the panels never moves it -
   // which is the point, since a strip costs a third of what their column does and
@@ -384,7 +390,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     ) : editing ? (
       session != null && (
         <RawEditPanel
-          key={photoId}
           edit={session.edit}
           stage={session.stage}
           crop={session.crop}
@@ -525,20 +530,20 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             // **Keyed by the surface, because the canvas belongs to the worker once it has been
             // handed over.** Stepping between two `/edit` addresses keeps the element, which the
             // next photo's open draws onto; a new surface has nothing kept for an old element.
-            stageSession != null && (
+            session != null && (
               <RawEditStage
-                key={stageSession.surface.stageKey}
-                photoId={stageSession.photoId}
-                stageStore={stageSession.stage}
-                crop={stageSession.crop}
-                keystone={stageSession.keystone}
-                repair={stageSession.repair}
-                loupe={stageSession.loupe}
-                print={stageSession.print}
-                presenter={stageSession.presenter}
+                key={session.surface.stageKey}
+                stageStore={session.stage}
+                crop={session.crop}
+                keystone={session.keystone}
+                repair={session.repair}
+                loupe={session.loupe}
+                print={session.print}
+                presenter={session.presenter}
                 toolsInto={toolsSlot}
                 zoomInto={zoomSlot}
                 fullscreenRef={setStage}
+                backdrop={backdrop}
               />
             )
           ) : (

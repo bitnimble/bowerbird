@@ -155,6 +155,9 @@ const PrepareCrossingSchema = z.object({
   repairs: JsonSchema,
 });
 
+/** The key a closed open's stage was kept under, which an open adopts rather than a new canvas. */
+const AdoptStageSchema = z.number().nullable();
+
 /** What one open on the GPU worker is asked for (`gpu_worker.ts`). */
 export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('hold'), raw: BytesSchema }),
@@ -164,9 +167,24 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     job: JsonSchema,
     denoiser: DenoiserSchema,
   }),
-  z.object({ kind: z.literal('prepare'), request: JsonSchema, mosaic: PrepareCrossingSchema }),
-  z.object({ kind: z.literal('holdPicture'), framed: BytesSchema, request: JsonSchema }),
-  z.object({ kind: z.literal('holdRendition'), file: BytesSchema, request: JsonSchema }),
+  z.object({
+    kind: z.literal('prepare'),
+    request: JsonSchema,
+    mosaic: PrepareCrossingSchema,
+    adoptStage: AdoptStageSchema,
+  }),
+  z.object({
+    kind: z.literal('holdPicture'),
+    framed: BytesSchema,
+    request: JsonSchema,
+    adoptStage: AdoptStageSchema,
+  }),
+  z.object({
+    kind: z.literal('holdRendition'),
+    file: BytesSchema,
+    request: JsonSchema,
+    adoptStage: AdoptStageSchema,
+  }),
   z.object({ kind: z.literal('takePicture'), framed: BytesSchema }),
   z.object({ kind: z.literal('takeTiles'), framed: BytesSchema, asked: JsonSchema }),
   z.object({ kind: z.literal('showTiles'), level: JsonSchema, rect: JsonSchema }),
@@ -176,12 +194,6 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     which: z.enum(['stage', 'loupe']),
     /** Null for a canvas the page draws itself, from what each tick hands back. */
     canvas: CanvasSchema.nullable(),
-    width: z.number(),
-    height: z.number(),
-  }),
-  z.object({
-    kind: z.literal('adoptStage'),
-    key: z.number(),
     width: z.number(),
     height: z.number(),
   }),

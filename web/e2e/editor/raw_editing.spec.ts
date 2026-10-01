@@ -732,10 +732,11 @@ test('a filmstrip tile opens its own photograph in the editor, on the same stage
  */
 test('opening straight into the editor asks for no viewer frames', async ({ page }) => {
   // The editor's own open, which is served from the same prefix as the frames this is about: the
-  // RAW the tab decodes and the match it opens with.
+  // RAW the tab decodes, the match it opens with, and the grid tile shown behind the wait.
   const opening = [
     route(PathSegment.download(), PathSegment.original()),
     route(PathSegment.analysis()),
+    route(PathSegment.renditions(), 'grid'),
   ];
   const asked: string[] = [];
   page.on('request', (request) => {

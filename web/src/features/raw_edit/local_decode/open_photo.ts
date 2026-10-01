@@ -29,23 +29,37 @@ import type { LocalOpen, LocalPrepare } from './local_open';
  */
 export async function fetchPrepared(
   photoId: string,
-  longEdge: number,
+  opening: Opening,
   mosaic: LocalPrepare,
-  onTheBackend: boolean,
   onStep: (step: OpenStep) => void,
-  fromRendition: ViewerRendition | null = null,
+  adoptStage: number | null,
 ): Promise<{
   header: PreparedHeader;
   /** What the loupe's tiles are built from. */
   local: LocalSource;
 }> {
   const local =
-    fromRendition != null
-      ? await renditionHere(photoId, fromRendition, onStep)
-      : onTheBackend
-        ? await preparedThere(photoId, onStep)
-        : await preparedHere(photoId, longEdge, mosaic, onStep);
+    opening.from === 'rendition'
+      ? await renditionHere(photoId, opening.rendition, onStep, adoptStage)
+      : opening.from === 'backend'
+        ? await preparedThere(photoId, onStep, adoptStage)
+        : await preparedHere(opening.original, opening.longEdge, mosaic, onStep, adoptStage);
+  try {
+    return { header: await headerOf(photoId, opening, local), local };
+  } catch (error) {
+    local.decoder.close(adoptStage);
+    throw error;
+  }
+}
+
+/** The open's header, with what it measured kept where the next open will find it. */
+async function headerOf(
+  photoId: string,
+  opening: Opening,
+  local: LocalSource & { prepared: string },
+): Promise<PreparedHeader> {
   const header = readPreparedHeader(local.prepared);
+  const fromRendition = opening.from === 'rendition';
   // What this open had to measure, where nothing had kept it: a tile cannot fit its own match, and
   // an unmatched tile is a magnifier showing a different picture from the stage it sits over.
   //
@@ -61,9 +75,37 @@ export async function fetchPrepared(
     // client holds nothing to fill it from - and the worker that measured it has already written
     // it beside the photograph. Sending it back would be this page returning the server's own
     // bytes to it on every open. Nor for a rendition, which is a picture of the RAW rather than it.
-    if (!local.onTheBackend && fromRendition == null) keepPhotoAnalysis(photoId, measured);
+    if (!local.onTheBackend && !fromRendition) keepPhotoAnalysis(photoId, measured);
   }
-  return { header, local };
+  return header;
+}
+
+/** Which device prepares the picture, and from what. */
+export type Opening =
+  | { from: 'rendition'; rendition: ViewerRendition }
+  | { from: 'backend' }
+  | { from: 'here'; longEdge: number; original: Promise<Original> };
+
+/** What a tab's own open reads, fetched before the document it is prepared at has arrived. */
+export type Original = {
+  settings: Awaited<ReturnType<typeof settingsApi.get>>;
+  raw: Uint8Array<ArrayBuffer>;
+  photoAnalysis: number[] | undefined;
+};
+
+/**
+ * Abort through `signal` once nothing will read it: two downloads of one RAW at once fail one of
+ * them in Chrome (`ERR_CACHE_WRITE_FAILURE`).
+ */
+export function downloadOriginal(photoId: string, signal: AbortSignal): Promise<Original> {
+  const original = Promise.all([
+    settingsApi.get(),
+    photosApi.downloadRaw(photoId, signal),
+    storedPhotoAnalysis(photoId),
+  ]).then(([settings, raw, photoAnalysis]) => ({ settings, raw, photoAnalysis }));
+  // An open closed before its document arrived never awaits this.
+  original.catch(() => undefined);
+  return original;
 }
 
 /** The worker holding this photograph's RAW, and the settings the open used, for the loupe's tiles. */
@@ -99,6 +141,7 @@ export type LocalSource = {
 async function preparedThere(
   photoId: string,
   onStep: (step: OpenStep) => void,
+  adoptStage: number | null,
 ): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
   const decoder = new LocalDecoder();
@@ -117,12 +160,13 @@ async function preparedThere(
     const prepared = await decoder.holdPicture(
       await preparedPicture(photoId, undefined, undefined, onStep),
       open,
+      adoptStage,
     );
     return { decoder, open, onTheBackend: true, prepared };
   } catch (error) {
     // Closed on the way out, for `preparedHere`'s reason: nothing else can reach a decoder the
     // caller never received, so a reader retrying would leak an open's frames per attempt.
-    decoder.close();
+    decoder.close(adoptStage);
     throw error;
   }
 }
@@ -135,6 +179,7 @@ async function renditionHere(
   photoId: string,
   rendition: ViewerRendition,
   onStep: (step: OpenStep) => void,
+  adoptStage: number | null,
 ): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
   const decoder = new LocalDecoder();
@@ -157,10 +202,10 @@ async function renditionHere(
       decoder,
       open,
       onTheBackend: false,
-      prepared: await decoder.holdRendition(file, open, onStep),
+      prepared: await decoder.holdRendition(file, open, adoptStage, onStep),
     };
   } catch (error) {
-    decoder.close();
+    decoder.close(adoptStage);
     throw error;
   }
 }
@@ -223,17 +268,14 @@ async function refusal(reply: Response): Promise<string> {
 }
 
 async function preparedHere(
-  photoId: string,
+  original: Promise<Original>,
   longEdge: number,
   mosaic: LocalPrepare,
   onStep: (step: OpenStep) => void,
+  adoptStage: number | null,
 ): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
-  const [settings, raw, photoAnalysis] = await Promise.all([
-    settingsApi.get(),
-    photosApi.downloadRaw(photoId),
-    storedPhotoAnalysis(photoId),
-  ]);
+  const { settings, raw, photoAnalysis } = await original;
   const open: LocalOpen = {
     longEdge: Math.round(longEdge),
     photoAnalysis,
@@ -253,14 +295,15 @@ async function preparedHere(
       open,
       photoAnalysis,
       onTheBackend: false,
-      prepared: await decoder.prepare(open, mosaic, onStep),
+      prepared: await decoder.prepare(open, mosaic, adoptStage, onStep),
     };
   } catch (error) {
     // **Closed on the way out, or the open outlives the failure** - the RAW, the mosaic and
     // whatever the decode had already put on the GPU, held on the thread for the life of the page.
     // Nothing else can reach it: the caller only learns of a decoder through the value this never
-    // returned, so a reader retrying an unreadable file would leak one per attempt.
-    decoder.close();
+    // returned, so a reader retrying an unreadable file would leak one per attempt. The stage goes
+    // back, or the next photo waits on it forever.
+    decoder.close(adoptStage);
     throw error;
   }
 }
