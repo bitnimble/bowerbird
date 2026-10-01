@@ -82,7 +82,7 @@ pub enum PrintUnit {}
 /// A millimetre of the physical print, resolved from its long edge.
 pub enum Millimetre {}
 
-/// The camera match's own plane, a fixed 1280 across the photograph.
+/// The camera match's own plane, at the fixed long edge its fit sets (`FIT_LONG_EDGE`).
 pub enum FitPlane {}
 
 /// The grid an edit document writes a position on: [`STORED_LONG`] steps across the photograph's

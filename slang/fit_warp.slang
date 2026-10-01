@@ -14,6 +14,8 @@
 // which makes the per-channel path free rather than a second one.
 import prelude;
 import footprint;
+import px;
+import times;
 
 struct Params {
     int source_width;
@@ -99,9 +101,10 @@ void write(int pixel, float3 rgb)
         plane[pixel] = dot(LUMA, out);
         return;
     }
-    plane[pixel * 3] = out.x;
-    plane[pixel * 3 + 1] = out.y;
-    plane[pixel * 3 + 2] = out.z;
+    let i = wide<FitPlane>(pixel) * 3;
+    plane[i] = out.x;
+    plane[i + 1] = out.y;
+    plane[i + 2] = out.z;
 }
 
 /// The source through the lens at its own size, or as it is where `pc.warping` is zero.
@@ -118,7 +121,7 @@ void fit_warp(uint3 id: SV_DispatchThreadID)
     let pixel = y * pc.width + x;
 
     if (pc.warping == 0) {
-        let i = (y * sw + x) * 3;
+        let i = wide_at<FitPlane>(x, y, measured<FitPlane>(sw)) * 3;
         write(pixel, float3(source[i], source[i + 1], source[i + 2]));
         return;
     }
@@ -152,8 +155,8 @@ void fit_warp(uint3 id: SV_DispatchThreadID)
         let y0 = min(int(py), sh - 2);
         let fx = px - float(x0);
         let fy = py - float(y0);
-        let i00 = (y0 * sw + x0) * 3 + c;
-        let i01 = i00 + sw * 3;
+        let i00 = wide_at<FitPlane>(x0, y0, measured<FitPlane>(sw)) * 3 + c;
+        let i01 = i00 + times(sw, 3);
         rgb[c] = source[i00] * (1.0 - fx) * (1.0 - fy)
             + source[i00 + 3] * fx * (1.0 - fy)
             + source[i01] * (1.0 - fx) * fy
@@ -183,7 +186,7 @@ void fit_box(uint3 id: SV_DispatchThreadID)
     var acc = float3(0.0);
     for (int y = b.z; y < b.w; y++) {
         for (int x = b.x; x < b.y; x++) {
-            let i = (y * pc.source_width + x) * 3;
+            let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.source_width)) * 3;
             acc += float3(source[i], source[i + 1], source[i + 2]);
         }
     }
@@ -210,7 +213,7 @@ void fit_box_packed(uint3 id: SV_DispatchThreadID)
     var acc = float3(0.0);
     for (int y = b.z; y < b.w; y++) {
         for (int x = b.x; x < b.y; x++) {
-            let i = (y * pc.source_width + x) * 3;
+            let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.source_width)) * 3;
             acc += float3(level(i), level(i + 1), level(i + 2));
         }
     }

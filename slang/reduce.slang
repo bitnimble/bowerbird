@@ -37,6 +37,7 @@
 //
 import lanes;
 import packed;
+import px;
 
 struct Reduction {
     uint2 source;
@@ -108,7 +109,7 @@ float3 averaged_light(float2 at, float2 scale, uint2 source, uint2 origin)
         for (uint sx = first.x; sx < last.x; sx = sx + 1) {
             let weight = overlap(box.x, box.z, sx) * wy;
             if (weight <= 0.0) { continue; }
-            let base = (((sy - origin.y) * source.x) + (sx - origin.x)) * 3;
+            let base = wide_at<Drawn>(sx - origin.x, sy - origin.y, measured<Drawn>(source.x)) * 3;
             acc = acc + weight * float3(
                 light_of_code[code_at(base)],
                 light_of_code[code_at(base + 1)],
@@ -173,7 +174,7 @@ void resize(uint3 id : SV_DispatchThreadID)
 
     store_pair(
         smaller,
-        pair,
+        wide<Drawn>(first),
         codes_of_light(light_of_code, a),
         codes_of_light(light_of_code, b),
         paired,

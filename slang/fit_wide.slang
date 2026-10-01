@@ -7,6 +7,7 @@
 // batches, stay on the host, which is index bookkeeping over a few thousand probes rather than work
 // on a picture.
 import prelude;
+import px;
 
 struct Params {
     /// The grid both planes are read on, which is the smaller of the two.
@@ -65,7 +66,7 @@ static const int SAMPLE_WORDS = 7;
 
 float3 rgb_at(StructuredBuffer<float> plane, int stride, int x, int y)
 {
-    let i = (y * stride + x) * 3;
+    let i = wide_at<FitPlane>(x, y, measured<FitPlane>(stride)) * 3;
     return float3(plane[i], plane[i + 1], plane[i + 2]);
 }
 

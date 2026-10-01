@@ -11,6 +11,7 @@
 // that meet inside one word cannot race.
 import lanes;
 import packed;
+import px;
 
 struct Params {
     /// Row lengths in pixels.
@@ -40,8 +41,8 @@ uint sample_at(uint at, uint word)
         || y < params.dst_at.y || y >= params.dst_at.y + params.size.y) {
         return half_of(word, at);
     }
-    let from = ((params.src_at.y + y - params.dst_at.y) * params.src_width
-        + params.src_at.x + x - params.dst_at.x) * 3 + at % 3;
+    let from = wide_at<Drawn>(params.src_at.x + x - params.dst_at.x, params.src_at.y + y - params.dst_at.y,
+        measured<Drawn>(params.src_width)) * 3 + at % 3;
     return half_of(src[from / 2], from);
 }
 

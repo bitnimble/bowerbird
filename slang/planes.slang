@@ -5,6 +5,7 @@
 import lanes;
 import light;
 import packed;
+import px;
 import video_range;
 
 struct Params {
@@ -48,7 +49,7 @@ uint code_of(uint sample)
 void planes_to_codes(uint3 id : SV_DispatchThreadID)
 {
     let word = linear(id);
-    let samples = params.width * params.height * 3;
+    let samples = wide<Drawn>(params.width * params.height) * 3;
     if (word * 2 >= samples) { return; }
 
     let low = code_of(word * 2);

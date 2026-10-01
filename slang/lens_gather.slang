@@ -6,6 +6,7 @@ module lens_gather;
 import prelude;
 import packed;
 import catmull_rom;
+import px;
 
 /// One channel of a three-codes-a-pixel frame of `size` sampled at `(px, py)`. The caller has
 /// checked the point is inside the frame.
@@ -22,12 +23,13 @@ public float tap(StructuredBuffer<uint> frame, uint2 size, float px, float py, u
     let wy = cubic_weights(py - float(y0));
     let columns = uint4(max(x0, 1) - 1, x0, min(x0 + 1, sw - 1), min(x0 + 2, sw - 1));
     let rows = uint4(max(y0, 1) - 1, y0, min(y0 + 1, sh - 1), min(y0 + 2, sh - 1));
+    let width = measured<Drawn>(sw);
 
     var total = 0.0;
     for (uint j = 0; j < 4; j++) {
         var across = 0.0;
         for (uint i = 0; i < 4; i++) {
-            let at = (rows[j] * sw + columns[i]) * 3 + channel;
+            let at = wide_at<Drawn>(columns[i], rows[j], width) * 3 + channel;
             across += wx[i] * float(half_of(frame[at / 2], at));
         }
         total += wy[j] * across;

@@ -9,7 +9,9 @@
 // bright side of every luminance step.
 import lanes;
 import packed;
+import px;
 import seam_weight;
+import times;
 
 /// `composite_gather.slang`'s: a pixel the source's own frame does not cover.
 static const float NOT_REACHED = -1e30;
@@ -45,7 +47,7 @@ struct Params {
 
 float3 light_at(StructuredBuffer<uint> from, uint index)
 {
-    let base = index * 3;
+    let base = times(index, 3);
     return float3(
         light_of_code[half_of(from[base / 2], base)],
         light_of_code[half_of(from[(base + 1) / 2], base + 1)],
@@ -123,5 +125,10 @@ void assembly_resolve(uint3 id : SV_DispatchThreadID)
     if (paired) { b = resolved(first + 1); }
 
     store_pair(
-        out_, pair, codes_of_light(light_of_code, a), codes_of_light(light_of_code, b), paired, false);
+        out_,
+        wide<Drawn>(first),
+        codes_of_light(light_of_code, a),
+        codes_of_light(light_of_code, b),
+        paired,
+        false);
 }

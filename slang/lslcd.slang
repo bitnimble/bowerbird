@@ -5,6 +5,7 @@
 
 // The frame, the pattern, the border fill and the margin, shared with RCD. Group 0 is its.
 import mosaic;
+import px;
 
 // Scalars rather than a `float4` or an array, for the reason `mosaic.slang` gives: in the uniform
 // address space both carry alignment rules that silently change the struct's size, and the host
@@ -136,7 +137,8 @@ void assemble(uint3 gid : SV_DispatchThreadID)
         out = filled_margin(r, c);
     }
 
-    rgb[at * 3] = out.x;
-    rgb[at * 3 + 1] = out.y;
-    rgb[at * 3 + 2] = out.z;
+    let base = wide<Sensor>(at) * 3;
+    rgb[base] = out.x;
+    rgb[base + 1] = out.y;
+    rgb[base + 2] = out.z;
 }

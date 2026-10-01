@@ -144,7 +144,7 @@ void sharpen_luma(uint3 id : SV_DispatchThreadID)
 {
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
-    let p = at * 3;
+    let p = wide<Drawn>(at) * 3;
     let rgb = float3(sample_at(p), sample_at(p + 1), sample_at(p + 2));
     let l = dot(params.luma, rgb) / params.full;
     observed[at] = l;
@@ -316,7 +316,7 @@ float3 sharpened(uint pixel)
         max(ratio[column.x], ratio[column.y]),
         max(ratio[column.z], ratio[column.w])));
 
-    let p = pixel * 3;
+    let p = wide<Drawn>(pixel) * 3;
     let rgb = float3(sample_at(p), sample_at(p + 1), sample_at(p + 2));
     let l = observed[pixel];
     let sharp = limited(
@@ -350,5 +350,5 @@ void sharpen_apply(uint3 id : SV_DispatchThreadID)
         b = sharpened(first + 1);
     }
 
-    store_pair(frame, pair, level_of(a), level_of(b), paired, true);
+    store_pair(frame, wide<Drawn>(first), level_of(a), level_of(b), paired, true);
 }

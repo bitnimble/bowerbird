@@ -14,7 +14,9 @@
 import lanes;
 import packed;
 import prelude;
+import px;
 import seam_weight;
+import times;
 
 struct Params {
     /// The buffer's own width and height.
@@ -128,7 +130,7 @@ uint3 repaired(uint pixel, uint3 codes)
     if (weight <= 0.0) { return codes; }
     let from = int2(int(x), int(y)) + params.donor;
     if (any(from < int2(0)) || any(from >= int2(params.size))) { return codes; }
-    let sample = (uint(from.y) * params.size.x + uint(from.x)) * 3;
+    let sample = wide_at<Drawn>(uint(from.x), uint(from.y), measured<Drawn>(params.size.x)) * 3;
     if (sample < params.band_first || sample + 3 > params.band_first + params.band_samples) {
         return codes;
     }
@@ -157,7 +159,7 @@ void repair(uint3 id : SV_DispatchThreadID)
     let total = params.size.x * params.size.y;
     if (first >= total) { return; }
 
-    let word = first * 3 / 2;
+    let word = wide<Drawn>(first) * 3 / 2;
     let w0 = frame[word];
     let w1 = frame[word + 1];
     let a = repaired(first, uint3(w0 & 0xffff, w0 >> 16, w1 & 0xffff));
@@ -186,7 +188,7 @@ void repair_cells(uint3 id : SV_DispatchThreadID)
     var count = 0.0;
     for (uint y = start.y; y < end.y; y++) {
         for (uint x = start.x; x < end.x; x++) {
-            let base = (y * params.size.x + x) * 3;
+            let base = wide_at<Drawn>(x, y, measured<Drawn>(params.size.x)) * 3;
             sum += float3(
                 light_of_code[half_of(frame[base / 2], base)],
                 light_of_code[half_of(frame[(base + 1) / 2], base + 1)],
@@ -194,7 +196,7 @@ void repair_cells(uint3 id : SV_DispatchThreadID)
             count += 1.0;
         }
     }
-    let at = (id.y * params.cells.x + id.x) * 3;
+    let at = times(id.y * params.cells.x + id.x, 3);
     if (count == 0.0) {
         cells[at] = NOT_REACHED;
         cells[at + 1] = 0.0;

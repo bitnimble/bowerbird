@@ -12,6 +12,8 @@
 // - arithmetic, not arithmetic over pixels - and it wants f64.
 
 import prelude;
+import px;
+import times;
 
 struct Params {
     int pixels;
@@ -65,7 +67,8 @@ int2 span_of(int b)
 /// can ask for a negative amount of a channel.
 float3 target_at(int p)
 {
-    let v = float3(jpeg[p * 3], jpeg[p * 3 + 1], jpeg[p * 3 + 2]);
+    let at = wide<FitPlane>(p) * 3;
+    let v = float3(jpeg[at], jpeg[at + 1], jpeg[at + 2]);
     if (pc.inverted == 0) { return v; }
     return max(float3(
         dot(pc.inverse[0].xyz, v),
@@ -95,7 +98,7 @@ void fit_curve_levels(uint3 id: SV_DispatchThreadID)
         let w = hue_weights[mask >> uint(pc.hue_shift)];
         for (int c = 0; c < 3; c++) {
             if ((mask & (1u << uint(c))) == 0) { continue; }
-            levels[base + level_of(render[p * 3 + c])] += w;
+            levels[base + level_of(render[wide<FitPlane>(p) * 3 + c])] += w;
         }
     }
 }
@@ -149,10 +152,10 @@ void fit_curve_bins(uint3 id: SV_DispatchThreadID)
         let want = target_at(p);
         for (int c = 0; c < 3; c++) {
             if ((mask & (1u << uint(c))) == 0) { continue; }
-            let x = render[p * 3 + c];
+            let x = render[wide<FitPlane>(p) * 3 + c];
             let w = hue_weights[mask >> uint(pc.hue_shift)] * weights[level_of(x)];
             let bin = clamp(int(round(x / pc.ceiling * float(pc.bins - 1))), 0, pc.bins - 1);
-            let at = (base + bin) * 3;
+            let at = times(base + bin, 3);
             partials[at] += srgb_oetf(clamp(want[c], 0.0, 1.0)) * w;
             partials[at + 1] += w;
             partials[at + 2] += 1.0;

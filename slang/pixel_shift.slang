@@ -72,7 +72,7 @@ uint colour_at(int x, int y)
 void gather(uint3 gid : SV_DispatchThreadID)
 {
     if (gid.x >= params.width || gid.y >= params.height) { return; }
-    let site = gid.y * params.width + gid.x;
+    let base = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(params.width)) * 3;
     let sensor_x = params.reference_left + int(gid.x);
     let sensor_y = params.reference_top + int(gid.y);
     let moved = displacement(sensor_x, sensor_y);
@@ -93,8 +93,8 @@ void gather(uint3 gid : SV_DispatchThreadID)
             let channel = colour_at(sx, sy);
             Light<Level> value;
             value.v = samples[sy * int(params.frame_width) + sx];
-            sums[site * 3 + channel] += weight * value.v;
-            weights[site * 3 + channel] += weight;
+            sums[base + channel] += weight * value.v;
+            weights[base + channel] += weight;
             if (channel == 1) {
                 green_sum += weight * value.v;
                 green_weight += weight;
@@ -103,8 +103,8 @@ void gather(uint3 gid : SV_DispatchThreadID)
     }
     if (green_weight > 0.0) {
         let green = green_sum / green_weight;
-        greens[site * 3] += green_weight;
-        greens[site * 3 + 1] += green_sum;
-        greens[site * 3 + 2] += green_weight * green * green;
+        greens[base] += green_weight;
+        greens[base + 1] += green_sum;
+        greens[base + 2] += green_weight * green * green;
     }
 }

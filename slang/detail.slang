@@ -117,7 +117,7 @@ uint sample_at(uint index)
 /// subtracted from a value the grade computes, so the two have to be anchored alike.
 float3 scene_at(uint x, uint y)
 {
-    let base = (y * edit.width + x) * 3;
+    let base = wide_at<Output>(x, y, measured<Output>(edit.width)) * 3;
     return float3(
         nits_of_code[sample_at(base)],
         nits_of_code[sample_at(base + 1)],

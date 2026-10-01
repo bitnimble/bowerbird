@@ -13,6 +13,8 @@
 // The curve between the two folds stays on the host: 256 bins of gap-filling, extension and a
 // monotone pass, which is arithmetic over a curve rather than over a picture.
 import prelude;
+import px;
+import times;
 
 struct Params {
     int width;
@@ -92,10 +94,11 @@ int level_of(StructuredBuffer<float> plane, int base, int i)
 
 int3 rgb_of(StructuredBuffer<float> plane, int base, int p)
 {
+    let at = wide<FitPlane>(p) * 3;
     return int3(
-        level_of(plane, base, p * 3),
-        level_of(plane, base, p * 3 + 1),
-        level_of(plane, base, p * 3 + 2));
+        level_of(plane, base, at),
+        level_of(plane, base, at + 1),
+        level_of(plane, base, at + 2));
 }
 
 /// The display-referred luma of a triple, in the same 8-bit levels the pair holds.
@@ -122,7 +125,7 @@ bool paired(int candidate, int x, int y, out int3 ours, out int3 theirs)
     theirs = int3(0);
     if (x < 1 || y < 1 || x + 1 >= pc.width || y + 1 >= pc.height) { return false; }
     let p = y * pc.width + x;
-    let base = candidate * pixels() * 3;
+    let base = int(wide<FitPlane>(candidate * pixels()) * 3);
     theirs = rgb_of(jpeg, 0, p);
     // Clipped samples carry no mapping: everything above the knee landed on the same value, so
     // they would drag the top of the curve down.
@@ -132,9 +135,10 @@ bool paired(int candidate, int x, int y, out int3 ours, out int3 theirs)
     if (min(ours.x, min(ours.y, ours.z)) <= 1) { return false; }
     if (max(ours.x, max(ours.y, ours.z)) >= 254) { return false; }
 
-    let gx = abs(level_of(jpeg, 0, p * 3 + 3) - level_of(jpeg, 0, p * 3 - 3));
-    let gy = abs(
-        level_of(jpeg, 0, (p + pc.width) * 3) - level_of(jpeg, 0, (p - pc.width) * 3));
+    let at = wide<FitPlane>(p) * 3;
+    let gx = abs(level_of(jpeg, 0, at + 3) - level_of(jpeg, 0, at - 3));
+    let gy = abs(level_of(jpeg, 0, wide<FitPlane>(p + pc.width) * 3)
+        - level_of(jpeg, 0, wide<FitPlane>(p - pc.width) * 3));
     if (gx + gy > pc.max_gradient) { return false; }
     // A black warp margin is not scene content.
     return ours.x != 0 || ours.y != 0 || ours.z != 0;
@@ -314,7 +318,7 @@ void fit_obj_curve(uint3 id: SV_DispatchThreadID)
     let out = candidate * LEVELS;
     // Carried out with the score, so the host learns how many pairs the gate admitted without a
     // readback of its own.
-    score[candidate * SCORE_WORDS + 2].store(counts[total_at(candidate)]);
+    score[times(candidate, SCORE_WORDS) + 2].store(counts[total_at(candidate)]);
 
     var curve = float[LEVELS]();
     var known = int[LEVELS]();
@@ -376,8 +380,9 @@ void fit_obj_score(uint3 id: SV_DispatchThreadID)
     int target;
     pair_at(candidate, k, level, target);
     let drawn = int(curves[candidate * LEVELS + level]);
-    score[candidate * SCORE_WORDS].add(uint(abs(drawn - target)));
-    score[candidate * SCORE_WORDS + 1].add(1);
+    let at = times(candidate, SCORE_WORDS);
+    score[at].add(uint(abs(drawn - target)));
+    score[at + 1].add(1);
 }
 
 /// The falloff's radius bins, summed over the pairs the gate admitted.
@@ -431,10 +436,11 @@ void fit_obj_falloff(uint3 id: SV_DispatchThreadID)
         counted[bin] += 1.0;
     }
 
-    let at = b * FALLOFF_BINS * FALLOFF_WORDS;
+    let at = times(b * FALLOFF_BINS, FALLOFF_WORDS);
     for (int i = 0; i < FALLOFF_BINS; i++) {
-        falloff_bins[at + i * FALLOFF_WORDS] = wanted[i];
-        falloff_bins[at + i * FALLOFF_WORDS + 1] = had[i];
-        falloff_bins[at + i * FALLOFF_WORDS + 2] = counted[i];
+        let word = at + times(i, FALLOFF_WORDS);
+        falloff_bins[word] = wanted[i];
+        falloff_bins[word + 1] = had[i];
+        falloff_bins[word + 2] = counted[i];
     }
 }

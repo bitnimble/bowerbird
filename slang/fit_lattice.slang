@@ -12,6 +12,7 @@
 // shadow cell, so no thread walks a whole run.
 
 import prelude;
+import times;
 
 struct Params {
     /// Pairs the lattice was given, and how many one thread of the scan walks.
@@ -285,12 +286,12 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
 
         for (int a = 0; a < 2; a++) {
             for (int b = 0; b < 3; b++) {
-                sums[9 + a * 3 + b] += sw * input[b] * tgt[a];
+                sums[9 + times(a, 3) + b] += sw * input[b] * tgt[a];
             }
         }
         for (int a = 0; a < 3; a++) {
             for (int b = 0; b < 3; b++) {
-                sums[a * 3 + b] += sw * input[a] * input[b];
+                sums[times(a, 3) + b] += sw * input[a] * input[b];
             }
             sums[15 + a] += sw * input[a];
         }

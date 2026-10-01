@@ -8,6 +8,7 @@
 import lanes;
 import packed;
 import lens_gather;
+import px;
 
 struct Params {
     uint2 source;
@@ -137,5 +138,5 @@ void warp_lens(uint3 id : SV_DispatchThreadID)
         b = gathered(first + 1);
     }
 
-    store_pair(out_, pair, level_of(a), level_of(b), paired, false);
+    store_pair(out_, wide<Drawn>(first), level_of(a), level_of(b), paired, false);
 }

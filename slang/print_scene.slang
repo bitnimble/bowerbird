@@ -11,6 +11,7 @@ import print_noise;
 import prelude;
 import primaries;
 import gamut_map;
+import times;
 [vk::binding(1, 1)] StructuredBuffer<float> print_albedo;
 [vk::binding(2, 1)] public StructuredBuffer<float> print_light_calibration;
 /// `printer_gamut::target`: whether the edge is a table, the paper's black as a share of its white,
@@ -181,7 +182,7 @@ public Colour<DisplayNits> room_radiance(float3 world_direction, float3 world_vi
 
 float3 room_band(uint band)
 {
-    let at = ROOM_BANDS + band * 3;
+    let at = ROOM_BANDS + times(band, 3);
     return float3(print_light_calibration[at], print_light_calibration[at + 1], print_light_calibration[at + 2]);
 }
 

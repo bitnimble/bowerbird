@@ -33,7 +33,7 @@ struct Params {
 
 float moved_at(int r, int c)
 {
-    let site = (uint(r) * params.region_width + uint(c)) * 3;
+    let site = wide_at<Sensor>(uint(c), uint(r), measured<Sensor>(params.region_width)) * 3;
     let weight = greens[site];
     if (weight <= 0.0) { return 0.0; }
     let mean = greens[site + 1] / weight;
@@ -60,8 +60,8 @@ void settle(uint3 gid : SV_DispatchThreadID)
             moved = max(moved, moved_at(rr, cc));
         }
     }
-    let here = (gid.y * params.width + gid.x) * 3;
-    let from = (uint(r) * params.region_width + uint(c)) * 3;
+    let here = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(params.width)) * 3;
+    let from = wide_at<Sensor>(uint(c), uint(r), measured<Sensor>(params.region_width)) * 3;
     let covered = min(min(weights[from], weights[from + 1] * 0.5), weights[from + 2]);
     let confidence = (1.0 - moved) * clamp(covered, 0.0, 1.0);
     for (uint channel = 0; channel < 3; channel++) {

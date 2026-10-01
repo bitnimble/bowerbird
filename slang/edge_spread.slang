@@ -13,6 +13,7 @@
 // meets, so measuring on the mosaic - where the green lattice is two pixels apart and a 1.8 pixel
 // rise cannot be resolved at all - would answer a different question badly.
 import packed;
+import px;
 
 /// Widths span 0 to SPAN_CEIL pixels across BINS even bins; the host mirrors both to turn a bin
 /// back into a sigma.
@@ -56,7 +57,7 @@ float sample_at(uint at)
 /// after, or this and the CPU round differently.
 float luma_at(uint x, uint y)
 {
-    let p = (y * params.width + x) * 3;
+    let p = wide_at<Drawn>(x, y, measured<Drawn>(params.width)) * 3;
     return dot(params.luma, float3(sample_at(p), sample_at(p + 1), sample_at(p + 2))) / 65535.0;
 }
 

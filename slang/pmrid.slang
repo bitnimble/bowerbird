@@ -4,6 +4,8 @@
 // convolution, a depthwise one, a transposed 2x2 upsample, and a residual add. Each entry point
 // here is one of those, and `Params` says where its input, weights and output sit.
 
+import times;
+
 struct Params {
     uint in_width;
     uint in_height;
@@ -278,7 +280,7 @@ void spread<let TILE_COLS : uint, let THREADS_HERE : uint, let K : uint, let S :
             let p = i % TILE_COLS;
             let px = p % WIDE_HERE;
             let py = p / WIDE_HERE;
-            let taps = pc.taps_at + (first + sub + row) * K * K;
+            let taps = pc.taps_at + (first + sub + row) * (K * K);
             var sum = Cell(0.0);
             [ForceUnroll]
             for (uint ky = 0; ky < K; ky++) {
@@ -483,7 +485,7 @@ void depthwise_as<let K : uint, let S : uint>(uint3 id, uint3 group, uint3 local
     GroupMemoryBarrierWithGroupSync();
     if (outside(id)) { return; }
 
-    let taps = pc.weights_at + id.z * K * K;
+    let taps = pc.weights_at + id.z * (K * K);
     var sum = Cell(0.0);
     [ForceUnroll]
     for (uint ky = 0; ky < K; ky++) {
@@ -525,13 +527,13 @@ void upsample(uint3 id : SV_DispatchThreadID)
         let taps = pc.weights_at + (c * pc.out_channels + id.z) * 4;
         let step = pc.out_channels * 4;
         s0 += a0 * weights[taps] + a1 * weights[taps + step]
-            + a2 * weights[taps + 2 * step] + a3 * weights[taps + 3 * step];
+            + a2 * weights[taps + 2 * step] + a3 * weights[taps + times(step, 3)];
         s1 += a0 * weights[taps + 1] + a1 * weights[taps + step + 1]
-            + a2 * weights[taps + 2 * step + 1] + a3 * weights[taps + 3 * step + 1];
+            + a2 * weights[taps + 2 * step + 1] + a3 * weights[taps + times(step, 3) + 1];
         s2 += a0 * weights[taps + 2] + a1 * weights[taps + step + 2]
-            + a2 * weights[taps + 2 * step + 2] + a3 * weights[taps + 3 * step + 2];
+            + a2 * weights[taps + 2 * step + 2] + a3 * weights[taps + times(step, 3) + 2];
         s3 += a0 * weights[taps + 3] + a1 * weights[taps + step + 3]
-            + a2 * weights[taps + 2 * step + 3] + a3 * weights[taps + 3 * step + 3];
+            + a2 * weights[taps + 2 * step + 3] + a3 * weights[taps + times(step, 3) + 3];
     }
     for (; c < pc.in_channels; c++) {
         let value = fetch(from + c * plane);
@@ -666,7 +668,7 @@ void sow(uint3 id : SV_DispatchThreadID)
         // Unclamped below: cutting the noise at black off lifts the shadows before the network has
         // done anything.
         let raw = min(mosaic[read] / edges.gain_at[plane], 1.0);
-        let at = plane * site + id.y * wide + id.x;
+        let at = times(site, plane) + id.y * wide + id.x;
         put(edges.input_at + at, (raw * edges.cvt_k + edges.cvt_b) * edges.scale);
     }
 }
@@ -692,8 +694,8 @@ void tally(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex)
         let at = id.y * wide + id.x;
         [ForceUnroll]
         for (uint plane = 0; plane < 4; plane++) {
-            let was = fetch(edges.input_at + plane * site + at);
-            let predicted = fetch(edges.predicted_at + plane * site + at);
+            let was = fetch(edges.input_at + times(site, plane) + at);
+            let predicted = fetch(edges.predicted_at + times(site, plane) + at);
             let bin = lift_bin(raw_of(predicted));
             let moved = clamp(
                 (predicted - was) / (edges.scale * edges.cvt_k), -LIFT_CLIP, LIFT_CLIP);
@@ -732,8 +734,8 @@ void reap(uint3 id : SV_DispatchThreadID)
     var light = 0.0;
     [ForceUnroll]
     for (uint plane = 0; plane < 4; plane++) {
-        was[plane] = fetch(edges.input_at + plane * site + at);
-        found[plane] = fetch(edges.predicted_at + plane * site + at) - was[plane];
+        was[plane] = fetch(edges.input_at + times(site, plane) + at);
+        found[plane] = fetch(edges.predicted_at + times(site, plane) + at) - was[plane];
         light += found[plane] * edges.gain_at[plane] * 0.25;
     }
 

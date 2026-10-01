@@ -12,6 +12,7 @@
 // wholly wrong, and a fraction of the frame would not see it.
 import packed;
 import prelude;
+import px;
 
 struct Params {
     uint width;
@@ -40,7 +41,7 @@ static const float3 LUMA_2020 = LUMA;
 
 float3 pixel_at(uint x, uint y)
 {
-    let p = (y * params.width + x) * 3;
+    let p = wide_at<Output>(x, y, measured<Output>(params.width)) * 3;
     return float3(
         float(half_of(frame[p / 2], p)),
         float(half_of(frame[(p + 1) / 2], p + 1)),

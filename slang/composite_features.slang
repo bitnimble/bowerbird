@@ -13,6 +13,7 @@
 // also what stops a detector handing back four hundred points of the same railing.
 
 import px;
+import times;
 
 struct Push {
     int width;
@@ -99,7 +100,7 @@ void composite_corners(uint3 id: SV_DispatchThreadID)
     if (bucket >= pc.across * rows) { return; }
     let down = bucket / pc.across;
     let across = bucket % pc.across;
-    let out = 3 * bucket;
+    let out = times(bucket, 3);
     corners[out] = -1e30;
     corners[out + 1] = 0.0;
     corners[out + 2] = 0.0;

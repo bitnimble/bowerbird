@@ -14,6 +14,7 @@ import lanes;
 import light;
 import packed;
 import prelude;
+import px;
 
 struct Params {
     uint pixels;
@@ -111,7 +112,7 @@ void composite_add(uint3 id : SV_DispatchThreadID)
     let reach = weight[pixel];
     if (reach <= 0.0) { return; }
 
-    let base = pixel * 3;
+    let base = wide<Drawn>(pixel) * 3;
     let light = float3(
         light_of_code[code_at(base)],
         light_of_code[code_at(base + 1)],
@@ -158,5 +159,10 @@ void composite_resolve(uint3 id : SV_DispatchThreadID)
     }
 
     store_pair(
-        out_, pair, codes_of_light(light_of_code, a), codes_of_light(light_of_code, b), paired, false);
+        out_,
+        wide<Drawn>(first),
+        codes_of_light(light_of_code, a),
+        codes_of_light(light_of_code, b),
+        paired,
+        false);
 }

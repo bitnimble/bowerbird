@@ -13,6 +13,7 @@
 import lanes;
 import packed;
 import lens_gather;
+import px;
 
 struct Params {
     /// The window written, in output pixels.
@@ -291,7 +292,7 @@ void composite_gather(uint3 id : SV_DispatchThreadID)
         b = gathered(first + 1);
     }
 
-    store_pair(out_, pair, level_of(a), level_of(b), paired, false);
+    store_pair(out_, wide<Drawn>(first), level_of(a), level_of(b), paired, false);
 }
 
 /// The coordinate the gather would tap, without tapping it: what the host's own projection maths is
@@ -309,7 +310,8 @@ void composite_probe(uint3 id : SV_DispatchThreadID)
     let inside = ahead
         && source.x >= 0.0 && source.y >= 0.0
         && source.x <= params.edge.x && source.y <= params.edge.y;
-    probe[3 * pixel] = source.x;
-    probe[3 * pixel + 1] = source.y;
-    probe[3 * pixel + 2] = inside ? 1.0 : 0.0;
+    let at = wide<Drawn>(pixel) * 3;
+    probe[at] = source.x;
+    probe[at + 1] = source.y;
+    probe[at + 2] = inside ? 1.0 : 0.0;
 }

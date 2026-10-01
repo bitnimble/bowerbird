@@ -16,6 +16,8 @@
 // is what makes a curve's check free of a warp - a corrected frame's red at `q` is the raw frame's
 // red at `q` scaled, so applying a candidate and measuring what it leaves is the same arithmetic as
 // measuring what is there with the sampling positions moved.
+import px;
+import times;
 
 struct Params {
     int width;
@@ -99,7 +101,7 @@ float level(int index)
 
 float at_of(int x, int y, int c)
 {
-    return level((y * pc.width + x) * 3 + c);
+    return level(int(wide_at<FitPlane>(uint(x), uint(y), measured<FitPlane>(uint(pc.width))) * 3) + c);
 }
 
 /// The summed brightness of a pixel. Summed rather than averaged: the scan runs on every pixel and
@@ -218,7 +220,7 @@ void tca_reduce(uint3 id: SV_DispatchThreadID)
     }
     // Truncated, because the host summed `u32` and divided them.
     let n = float(pc.reduce * pc.reduce);
-    let out = (y * pc.out_width + x) * 3;
+    let out = int(wide_at<FitPlane>(uint(x), uint(y), measured<FitPlane>(uint(pc.out_width))) * 3);
     for (int c = 0; c < 3; c++) {
         small[out + c] = uint(floor(totals[c] / n));
     }
@@ -409,7 +411,7 @@ void tca_gains(uint3 id: SV_DispatchThreadID)
     let pixel = int(id.x) * 97;
     if (pixel >= pc.out_width * pc.out_height) { return; }
     for (int c = 0; c < 3; c++) {
-        tally[c].add(small[pixel * 3 + c]);
+        tally[c].add(small[int(wide<FitPlane>(uint(pixel)) * 3) + c]);
     }
 }
 
@@ -431,13 +433,13 @@ void tca_slopes(uint3 id: SV_DispatchThreadID)
     let inset = (float(pc.reduce) - 1.0) / 2.0;
     let cx = (float(pc.width) * 0.5 - inset) / float(pc.reduce);
     let cy = (float(pc.height) * 0.5 - inset) / float(pc.reduce);
-    let row = pc.out_width * 3;
+    let row = times(pc.out_width, 3);
 
     var cross = float2(0.0);
     var square = float2(0.0);
     var counted = 0.0;
     for (int x = 1; x < pc.out_width - 1; x += pc.stride) {
-        let i = (y * pc.out_width + x) * 3;
+        let i = int(wide_at<FitPlane>(uint(x), uint(y), measured<FitPlane>(uint(pc.out_width))) * 3);
         let gx = (float(small[i + 3 + 1]) - float(small[i - 3 + 1])) / 2.0;
         let gy = (float(small[i + row + 1]) - float(small[i - row + 1])) / 2.0;
         if (abs(gx) + abs(gy) < pc.min_edge) { continue; }

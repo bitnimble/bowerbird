@@ -27,6 +27,7 @@ import edit;
 import adjust;
 import packed;
 import light;
+import px;
 
 // The frame stays as it arrived: interleaved RGB `u16` of normalised PQ, three to a pixel, in
 // the buffer it was uploaded into. Not a texture, and not padded to four components - that
@@ -80,7 +81,7 @@ public uint sample_at(uint index)
 /// caller walking it in one dimension needs no `x` and `y` to get back.
 public float3 level_of(uint pixel)
 {
-    let base = pixel * 3;
+    let base = wide<Output>(pixel) * 3;
     return float3(float(sample_at(base)), float(sample_at(base + 1)), float(sample_at(base + 2)));
 }
 

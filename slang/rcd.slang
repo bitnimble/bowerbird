@@ -6,6 +6,8 @@
 // The frame, the pattern, the border fill and the margin come from here, shared with every other
 // demosaic. `Shape::margin` is what the specification's reach analysis (§10) fixes.
 import mosaic;
+import px;
+import times;
 
 // **Every binding is spelled out.** Slang assigns them in an order that is not declaration order
 // when it is left to, and the host's bind group layouts are written by hand against these numbers.
@@ -60,7 +62,7 @@ static const int REACH_CHROMA = 7; // stage E, from green at +-2 diagonal
 /// gain - the local signature of lateral chromatic aberration (§3.2).
 float response(int r, int c, int dr, int dc)
 {
-    let far = m_at(r - 3 * dr, c - 3 * dc) + m_at(r + 3 * dr, c + 3 * dc);
+    let far = m_at(r - times(dr, 3), c - times(dc, 3)) + m_at(r + times(dr, 3), c + times(dc, 3));
     let mid = m_at(r - 2 * dr, c - 2 * dc) + m_at(r + 2 * dr, c + 2 * dc);
     let near = m_at(r - dr, c - dc) + m_at(r + dr, c + dc);
     return far - 3.0 * mid - near + 6.0 * m_at(r, c);
@@ -352,7 +354,8 @@ void assemble(uint3 gid : SV_DispatchThreadID)
         out = filled_margin(r, c);
     }
 
-    rgb[at * 3] = out.x;
-    rgb[at * 3 + 1] = out.y;
-    rgb[at * 3 + 2] = out.z;
+    let base = wide<Sensor>(at) * 3;
+    rgb[base] = out.x;
+    rgb[base + 1] = out.y;
+    rgb[base + 2] = out.z;
 }

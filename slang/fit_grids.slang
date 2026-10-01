@@ -16,6 +16,8 @@
 // The box beside it is the colour fit's own prefilter, three passes an axis rather than one, and its
 // window is truncated at the frame's edge rather than repeated.
 
+import px;
+
 struct Params {
     int source_width;
     int source_height;
@@ -49,7 +51,7 @@ float component(int index)
 
 float3 at(int x, int y)
 {
-    let i = (y * pc.source_width + x) * 3;
+    let i = wide_at<Drawn>(x, y, measured<Drawn>(pc.source_width)) * 3;
     return float3(component(i), component(i + 1), component(i + 2));
 }
 
@@ -61,7 +63,7 @@ float3 along(int other, int step)
 
 void put(int x, int y, float3 rgb)
 {
-    let i = (y * pc.width + x) * 3;
+    let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.width)) * 3;
     // A Lanczos window has negative lobes, so a hard edge overshoots either end of the range and
     // the pass after this one would resample the overshoot.
     plane[i] = clamp(rgb.x, 0.0, 1.0);
@@ -153,7 +155,7 @@ void fit_box_blur(uint3 id: SV_DispatchThreadID)
     let out = max(acc / float(hi - lo + 1), float3(0.0));
     // Not `put`: the planes this filters carry scene light above diffuse white, and the clamp a
     // Lanczos pass needs would flatten every highlight in them to one.
-    let i = (y * pc.width + x) * 3;
+    let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.width)) * 3;
     plane[i] = out.x;
     plane[i + 1] = out.y;
     plane[i + 2] = out.z;
