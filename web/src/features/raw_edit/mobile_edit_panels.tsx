@@ -5,10 +5,15 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { buttonStyles } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { SliderIsolationContext } from '../../ui/slider_isolation';
-import { color, derivedSize, size } from '../../ui/tokens.stylex';
+import { color, size } from '../../ui/tokens.stylex';
+import { editSheet } from './edit_sheet.stylex';
 import { MobileEditPanelsStrings as S } from './mobile_edit_panels.strings';
 import { MobileEditPanelsPresenter } from './mobile_edit_panels_presenter';
 import { MobileEditPanelsStore } from './mobile_edit_panels_store';
+
+// Whatever is below takes the safe area itself.
+const FOOTER_PAD = `max(${size.sheetPad}, calc(env(safe-area-inset-bottom) - ${editSheet.below}))`;
+const FOOTER_TOP = `calc(${editSheet.below} + ${size.controlH} + ${size.sheetPad} + ${FOOTER_PAD} + 1px)`;
 
 const styles = stylex.create({
   root: {
@@ -17,14 +22,14 @@ const styles = stylex.create({
   footer: {
     position: 'fixed',
     insetInline: 0,
-    bottom: 0,
+    bottom: editSheet.below,
     zIndex: 20,
     backgroundColor: color.ink,
     borderTopWidth: '1px',
     borderTopStyle: 'solid',
     borderTopColor: color.slate,
     paddingTop: size.sheetPad,
-    paddingBottom: `max(${size.sheetPad}, env(safe-area-inset-bottom))`,
+    paddingBottom: FOOTER_PAD,
   },
   tabs: {
     display: 'flex',
@@ -56,12 +61,12 @@ const styles = stylex.create({
   overlay: {
     position: 'fixed',
     insetInline: 0,
-    bottom: derivedSize.sheetH,
+    bottom: FOOTER_TOP,
     zIndex: 19,
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr)',
     gap: '8px',
-    maxHeight: `min(55dvh, calc(100dvh - ${derivedSize.sheetH} - 64px))`,
+    maxHeight: `min(55dvh, calc(100dvh - ${FOOTER_TOP} - ${editSheet.top} - ${size.sheetPad}))`,
     paddingBlock: size.sheetPad,
     paddingInline: size.padX,
     overflowY: 'auto',
@@ -135,11 +140,13 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({
             type="button"
             aria-label={S.close()}
             tabIndex={-1}
+            // Over the stage, which owns a sideways drag.
+            data-owns-sideways
             onClick={presenter.close}
             {...stylex.props(styles.backdrop, focusRing.ring)}
           />
         )}
-        <div {...stylex.props(styles.footer)}>
+        <div {...stylex.props(styles.footer)} data-owns-sideways>
           <div role="tablist" aria-label={S.tabs()} {...stylex.props(styles.tabs)}>
             {panels.map((panel) => (
               <button

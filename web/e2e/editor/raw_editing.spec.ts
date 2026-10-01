@@ -14,10 +14,13 @@ import {
   editTools,
   emulateHdrDisplay,
   firstPhotoId,
+  frames,
+  gotoPhoto,
   photoAction,
   photoStage,
   savedRev,
   softProof,
+  tiles,
   waitForEditorLive,
   watchForComplaints,
 } from '../helpers';
@@ -649,23 +652,25 @@ test('an exposure survives a reload, and the undo that follows it', async ({ pag
 });
 
 /**
- * Leaving the editor has to mean leaving it, including on the way back.
- *
- * Editing was remembered as the photo it had been opened for. Stepping to the next
- * photograph stopped it matching, which reads as closed - but the flag was still set, so
- * stepping back matched again and re-entered the editor nobody had asked for, on a page that
- * had no triage or rating controls while it was there, and paid another full-sensor decode
- * for the privilege. It is read off `/edit` in the address, which a step drops on its own.
- *
- * Stepped away while still editing, with no Escape first. Escape clears the flag, so a
- * version of this that pressed it went green against the bug it was written for: what has to
- * be walked away from is an editor that is still open.
+ * The arrows step the editor to the neighbouring photograph, and leaving the editor has to mean
+ * leaving it, including on the way back: a step from the viewer to a photograph once edited
+ * must not re-enter the editor nobody asked for, and pay another full-sensor decode for it.
  */
-test('stepping away from the editor and back does not reopen it', async ({ page }) => {
+test('the arrows step within the editor, and once it is left a step back does not reopen it', async ({
+  page,
+}) => {
   await open(page);
 
+  const entries = await page.evaluate(() => history.length);
   await page.keyboard.press('ArrowRight');
   await expect.poll(async () => new URL(page.url()).pathname).not.toContain(photoId);
+  expect(new URL(page.url()).pathname).toMatch(new RegExp(`${route(PathSegment.edit())}$`));
+  await expect(editTools(page)).toBeVisible();
+  // Replaced rather than pushed, so Done leaves no editor behind it for Back to reopen.
+  expect(await page.evaluate(() => history.length)).toBe(entries);
+
+  await page.keyboard.press('Escape');
+  await expect(editTools(page)).toBeHidden();
   await page.keyboard.press('ArrowLeft');
   await expect.poll(async () => new URL(page.url()).pathname).toContain(photoId);
 
@@ -673,6 +678,22 @@ test('stepping away from the editor and back does not reopen it', async ({ page 
   // a bare assertion here would pass before the frame that would have shown it.
   await page.waitForTimeout(500);
   await expect(editTools(page)).toBeHidden();
+});
+
+test('a filmstrip tile opens its own photograph in the editor', async ({ page }) => {
+  await gotoPhoto(page, EDIT_PHOTOS_DIR, route(PathSegment.edit()));
+  await expect(editTools(page)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Show filmstrip' }).click();
+  const cells = tiles(page);
+  const entries = await page.evaluate(() => history.length);
+  await frames(cells.last()).click();
+
+  await expect.poll(async () => new URL(page.url()).pathname).not.toContain(photoId);
+  expect(new URL(page.url()).pathname).toMatch(new RegExp(`${route(PathSegment.edit())}$`));
+  await expect(cells.last()).toHaveAttribute('aria-current', 'page');
+  await waitForEditorLive(page);
+  expect(await page.evaluate(() => history.length)).toBe(entries);
 });
 
 /**

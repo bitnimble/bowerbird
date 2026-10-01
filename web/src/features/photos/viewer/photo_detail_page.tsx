@@ -59,6 +59,8 @@ import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
 import { IntentChoice } from '../../raw_edit/proof/intent_choice';
 import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
 
+// 0 decodes at the sensor's own size: the draw runs per canvas pixel, so the frame's size is paid
+// once at the open, and a smaller decode is detail a zoom cannot get back (`docs/raw-edit-gpu.md` §4.1).
 const EDIT_LONG_EDGE = 0;
 
 const PANELS_KEY = 'bowerbird.detail.panels';
@@ -116,13 +118,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // inside the mockup is not a second open.
   const requestedPrint = useRef<PrintRequest>({ proof: 'print3d', rendition: 'max' });
   requestedPrint.current = isPrintRequest(state) ? state : { proof: 'print3d', rendition: 'max' };
-  // In the address rather than in state, because the address is the one thing stepping
-  // already changes: `useStep` navigates to a bare photo path, so walking away drops `/edit`
-  // and there is nothing left to go stale.
+  // In the address rather than in state, because the address is the one thing every way out
+  // changes: Done, Escape and a step from the viewer all land on a bare photo path, so leaving
+  // drops `/edit` and there is nothing left to go stale.
   //
   // Held as state instead, remembered against the photo it was opened for, the flag is
-  // masked while the reader is elsewhere but never cleared - so stepping to the next
-  // photograph and back re-enters an editor nobody asked for, each re-entry another
+  // masked while the reader is elsewhere but never cleared - so leaving for the next
+  // photograph and stepping back re-enters an editor nobody asked for, each re-entry another
   // full-sensor decode.
   //
   // `/edit` lands a deep link, a new tab and e2e straight in, and so does `/mockup`.
@@ -171,6 +173,18 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     observer.observe(box);
     return () => observer.disconnect();
   }, [box, photos]);
+
+  const [underTabs, setUnderTabs] = useState<HTMLDivElement | null>(null);
+  const [underTabsHeight, setUnderTabsHeight] = useState(0);
+  useEffect(() => {
+    if (underTabs == null) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry?.borderBoxSize[0]?.blockSize;
+      if (height != null) setUnderTabsHeight(height);
+    });
+    observer.observe(underTabs);
+    return () => observer.disconnect();
+  }, [underTabs]);
 
   // Built only while editing. The pair owns a GPU device and the frame's texture, which
   // belong to this visit rather than to the session.
@@ -317,12 +331,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     aspect == null
       ? 'below'
       : stripEdge(aspect, store.detailWidth, store.detailHeight, strip.view.thickness);
+  const stripOffered = mode !== 'print';
+  const mobilePreview = previewing && (mobile || touch);
+  const editTabs = editing && mobilePreview;
+  const stripInSheet = mobile || editTabs;
+  const stripShown = !stripInSheet && stripOffered && stripOpen;
   // The phone's strip is inside the detail grid rather than around it, and its panels
   // are a sheet: neither takes a slice off the other there.
-  const stripTaken =
-    !mobile && stripOpen && !previewing
-      ? { edge: stripAxis, thickness: strip.view.thickness }
-      : null;
+  const stripTaken = stripShown ? { edge: stripAxis, thickness: strip.view.thickness } : null;
   const edge =
     aspect == null
       ? 'beside'
@@ -331,8 +347,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // without scrolling; below, it is a 34vh strip and does not, and neither does
   // a phone's sheet.
   const expanded = !mobile && edge === 'beside';
-  const mobileStrip = mobile && stripOpen && !previewing;
-  const mobilePreview = previewing && (mobile || touch);
+  const sheetStrip = stripInSheet && stripOffered && stripOpen;
   const layout = mobile || mobilePreview ? 'sheet' : !panelsOpen && !previewing ? 'only' : edge;
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
@@ -442,7 +457,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         photoId={photoId}
         mode={mode}
         onExitPreview={stopPreview}
-        onToggleStrip={mobile || previewing ? undefined : toggleStrip}
+        onToggleStrip={!mobile && stripOffered ? toggleStrip : undefined}
         onTogglePanels={mobile || previewing ? undefined : togglePanels}
       />
       <DetailNav
@@ -450,10 +465,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         toolsRef={setToolsSlot}
         panelsOpen={mobile ? null : panelsOpen}
         onTogglePanels={togglePanels}
-        // A phone's toggle is in the sheet beside the verdict, where its thumb
-        // already is; none in the editor, where stepping away mid-grade is not
-        // something to leave one press from.
-        stripOpen={mobile || previewing ? null : stripOpen}
+        // A phone viewer's toggle is in the sheet beside the verdict, where its thumb
+        // already is.
+        stripOpen={stripOffered && (!mobile || editing) ? stripOpen : null}
         onToggleStrip={toggleStrip}
         editHref={editPath(photoPathname)}
         onDone={stopPreview}
@@ -477,7 +491,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           {...stylex.props(
             styles.detail,
             styles[layout],
-            layout === 'sheet' && mobileStrip && styles.sheetStrip,
+            layout === 'sheet' && sheetStrip && styles.sheetStrip,
+            editTabs && store.detailHeight > 0 && styles.sheetTop(store.detailHeight),
+            sheetStrip && editTabs && [styles.sheetOverStrip, styles.belowTabs(underTabsHeight)],
           )}
         >
           {previewing ? (
@@ -520,14 +536,22 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
               the window, so a strip down the side of it would be a column an inch wide.
               A row of the grid rather than part of the sheet above it, so the photograph
               shrinks to make room instead of being covered. */}
-          {mobileStrip && <DetailFilmstrip photoId={photoId} strip={strip} edge="below" />}
+          {sheetStrip && !editTabs && (
+            <DetailFilmstrip photoId={photoId} strip={strip} edge="below" />
+          )}
+          {/* Under the edit panels' tabs, which are fixed to the window and lifted by its height. */}
+          {sheetStrip && editTabs && (
+            <div ref={setUnderTabs} {...stylex.props(styles.underTabs)}>
+              <DetailFilmstrip photoId={photoId} strip={strip} edge="below" opensEditor />
+            </div>
+          )}
           {(mobile || panelsOpen || previewing) && panels}
         </div>
 
         {/* Outside the panels, so it spans them: whichever axis still has room
             once they have taken theirs is the one to spend on the strip. */}
-        {stripOpen && !mobile && !previewing && (
-          <DetailFilmstrip photoId={photoId} strip={strip} edge={stripAxis} />
+        {stripShown && (
+          <DetailFilmstrip photoId={photoId} strip={strip} edge={stripAxis} opensEditor={editing} />
         )}
       </div>
     </Page>

@@ -17,7 +17,7 @@ export const DetailKeys = observer(function DetailKeys({
   photoId: string;
   mode: DetailMode;
   onExitPreview: () => void;
-  /** Absent where the viewer offers no such toggle: a phone, and the editor. */
+  /** Absent where the viewer offers no such toggle: a phone, and the mockup. */
   onToggleStrip?: () => void;
   onTogglePanels?: () => void;
 }): null {
@@ -30,6 +30,8 @@ export const DetailKeys = observer(function DetailKeys({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
+      // A focused control already acted on it: a tone curve point's arrow nudges the point.
+      if (e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;

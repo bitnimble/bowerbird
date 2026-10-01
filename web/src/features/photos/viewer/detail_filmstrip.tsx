@@ -1,6 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect } from 'react';
 import { PhotoStrip } from '../grid/photo_strip';
+import { StripOpensEditor } from '../grid/photo_tile';
 import type { Edge } from './viewer_edges';
 import type { StripViewPresenter } from './strip_view_presenter';
 import type { StripViewStore } from './strip_view_store';
@@ -19,12 +20,14 @@ export const DetailFilmstrip = observer(function DetailFilmstrip({
   photoId,
   strip,
   edge,
+  opensEditor = false,
 }: {
   photoId: string;
   /** Built by the page, which needs its thickness to place it (`stripEdge`). */
   strip: StripView;
   /** Which side the page gave it. */
   edge: Edge;
+  opensEditor?: boolean;
 }): JSX.Element {
   useEffect(() => {
     strip.presenter.watch();
@@ -42,5 +45,9 @@ export const DetailFilmstrip = observer(function DetailFilmstrip({
     if (cell != null && pitch > 0) strip.presenter.reveal(photoId);
   }, [cell, pitch, photoId, strip]);
 
-  return <PhotoStrip view={strip.view} presenter={strip.presenter} />;
+  return (
+    <StripOpensEditor.Provider value={opensEditor}>
+      <PhotoStrip view={strip.view} presenter={strip.presenter} />
+    </StripOpensEditor.Provider>
+  );
 });

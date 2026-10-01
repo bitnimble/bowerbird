@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { type Triage } from '../../../../../src/schemas/photos';
 import { useIsTouch } from '../../../app/device';
 import { useListingStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { photoPath } from '../photos_store';
+import { detailMode, editPath } from './detail_mode';
 import type { ViewerStore } from './viewer_store';
 
 // Stepping to a neighbour, which the bar's buttons, the arrow keys and a swipe
@@ -15,16 +16,22 @@ export function useStep(): (step: 'next' | 'prev') => void {
   const store = useViewerStore();
   const navigate = useNavigate();
   const touch = useIsTouch();
+  const editing = detailMode(useLocation().pathname) === 'edit';
   return useCallback(
     (step: 'next' | 'prev') => {
       const id = step === 'next' ? store.nextPhotoId : store.prevPhotoId;
+      if (id == null) return;
+      const path = photoPath(id, listing.source);
       // A finger leaves the viewer by the back gesture, so the whole run stays on
       // the one entry the collection pushed: an entry per photograph is a run to
       // walk back out of, each frame of it rendered on the way. A mouse has a Back
       // button and no gesture, so there a step keeps pushing.
-      if (id != null) navigate(photoPath(id, listing.source), { replace: touch });
+      //
+      // Never pushed while editing: Done replaces only the last entry, so every one
+      // behind it is an editor Back reopens, a full-sensor decode each.
+      navigate(editing ? editPath(path) : path, { replace: touch || editing });
     },
-    [store, navigate, touch],
+    [store, navigate, touch, editing],
   );
 }
 

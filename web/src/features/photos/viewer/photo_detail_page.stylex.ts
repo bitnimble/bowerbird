@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { color, derivedSize, size } from '../../../ui/tokens.stylex';
+import { editSheet } from '../../raw_edit/edit_sheet.stylex';
 
 export const styles = stylex.create({
   menuRating: {
@@ -94,6 +95,25 @@ export const styles = stylex.create({
   sheetStrip: {
     gridTemplateRows: 'minmax(0, 1fr) auto',
   },
+  sheetOverStrip: {
+    paddingBottom: 0,
+  },
+  belowTabs: (height: number) => ({ [editSheet.below]: `${height}px` }),
+  // The frame runs from under the header, however many rows it wraps to, down to the page's padding.
+  sheetTop: (frameHeight: number) => ({
+    [editSheet.top]: `calc(100dvh - ${size.padB} - ${frameHeight}px)`,
+  }),
+  // Room above for the tabs, at their height with nothing in the safe area, which this takes.
+  // Down over the page's own padding to the window's foot, so its height is what lifts the tabs.
+  underTabs: {
+    // Over the open panel's dismissing backdrop (z-index 18), which would otherwise take its swipes.
+    position: 'relative',
+    zIndex: 20,
+    minWidth: 0,
+    marginTop: `calc(${size.controlH} + 2 * ${size.sheetPad} + 1px)`,
+    marginBottom: `calc(-1 * ${size.padB})`,
+    paddingBottom: `max(${size.padB}, env(safe-area-inset-bottom))`,
+  },
   panels: {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr)',
@@ -161,10 +181,3 @@ export const styles = stylex.create({
     whiteSpace: 'nowrap',
   },
 });
-
-// Longest edge the decode is fitted to; 0 is the sensor's own.
-//
-// It was 3840, back when a tick cost what the frame cost. The draw runs once per canvas
-// pixel now, so the frame's size is paid for once at the open and never again, and holding
-// the decode below the sensor would only mean a reader who zooms in sees detail the decode
-// threw away (`docs/raw-edit-gpu.md` §4.1).

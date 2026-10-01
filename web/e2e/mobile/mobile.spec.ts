@@ -24,7 +24,7 @@ import {
 // which is what everything below is about.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-// Long because one spec opens a RAW: the decode is the same cold open
+// Long because the editor's specs open a RAW: the decode is the same cold open
 // `editor/raw_editing.spec.ts` gives three minutes for, and the config's default 60s would kill it
 // however patient the poll inside it is.
 test.describe.configure({ timeout: 180_000 });
@@ -540,6 +540,61 @@ test('the filmstrip opens from the sheet, along the foot and above the verdict',
 
   await details.getByRole('button', { name: 'Hide filmstrip' }).click();
   await expect(gallery(page)).toHaveCount(0);
+});
+
+test("the editor's menu opens the filmstrip under its tabs, and a tile opens its photo in the editor", async ({
+  page,
+}) => {
+  const photoId = await gotoPhoto(page, PHONE_PHOTOS_DIR, route(PathSegment.edit()));
+  await waitForEditorLive(page);
+
+  const tabs = page.getByRole('tablist', { name: 'Edit panels' });
+  const tabsBox = await tabs.boundingBox();
+  if (tabsBox == null) throw new Error('the editor has no tabs');
+  // The tabs scroll sideways, so a drag along them is theirs rather than the drawer's.
+  await swipe(page, { x: 40, y: tabsBox.y + tabsBox.height / 2 }, 160);
+  await expect(drawer(page)).not.toBeVisible();
+
+  const stage = photoStage(page);
+  const before = await stage.boundingBox();
+  await photoControls(page).getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Toggle filmstrip' }).click();
+  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
+
+  // The tabs are lifted once the strip under them has been measured.
+  await expect
+    .poll(async () => {
+      const box = await gallery(page).boundingBox();
+      const raised = await tabs.boundingBox();
+      return box != null && raised != null && raised.y + raised.height <= Math.round(box.y) + 1;
+    })
+    .toBe(true);
+  const box = await gallery(page).boundingBox();
+  const raised = await tabs.boundingBox();
+  const after = await stage.boundingBox();
+  if (box == null || raised == null || before == null || after == null)
+    throw new Error('the strip has no box');
+  expect(after.y + after.height).toBeLessThanOrEqual(Math.round(raised.y) + 1);
+  expect(after.height).toBeLessThan(before.height);
+
+  // An open panel's backdrop covers the page, but not the strip: it still scrolls under a finger.
+  await tabs.getByRole('tab', { name: 'Light' }).click();
+  await expect(page.getByRole('tabpanel')).toBeVisible();
+  const underFinger = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="list"]')?.ariaLabel ?? null,
+    { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+  );
+  expect(underFinger).toMatch(/^\d+ photos$/);
+  await tabs.getByRole('tab', { name: 'Light' }).click();
+
+  const entries = await page.evaluate(() => history.length);
+  await frames(tiles(page).last()).click();
+  await expect.poll(async () => new URL(page.url()).pathname).not.toContain(photoId);
+  expect(new URL(page.url()).pathname).toMatch(new RegExp(`${route(PathSegment.edit())}$`));
+  await expect(tiles(page).last()).toHaveAttribute('aria-current', 'page');
+  await waitForEditorLive(page);
+  // Replaced rather than pushed, so Done leaves no editor behind it for Back to reopen.
+  expect(await page.evaluate(() => history.length)).toBe(entries);
 });
 
 // The only way to size the strip here: the edge is dragged, and a finger has to be

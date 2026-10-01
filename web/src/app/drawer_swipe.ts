@@ -14,11 +14,9 @@ const SETTLE = 0.5;
 
 // What already means something by being dragged sideways, and so is not the drawer being
 // asked for: a stage steps photographs and pans, a slider carries a value, a filmstrip
-// along the foot scrolls the collection. Asked of the element rather than of the route, so
-// a page that grows either later needs no change here.
-//
-// The strip only when it runs sideways: down the side of the photograph it scrolls the
-// other way, and a drag across it is the drawer like anywhere else.
+// along the foot scrolls the collection, the editor's tabs scroll through its sections.
+// Asked of the element rather than of the route, so a page that grows another later
+// needs no change here.
 const OWNS_SIDEWAYS = [
   `[role="region"][aria-label="${PhotoStageStrings.stage()}"]`,
   '[role="group"]:has(input[type="range"])',

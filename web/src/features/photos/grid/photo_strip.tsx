@@ -191,7 +191,8 @@ export const PhotoStrip = observer(function PhotoStrip({
             )}
             id={STRIP_ID}
             ref={scroller}
-            // The phone drawer's swipe leaves a drag along a sideways strip to the strip (`drawer_swipe.ts`).
+            // The phone drawer's swipe leaves a drag along a sideways strip to the strip (`drawer_swipe.ts`);
+            // down the side it scrolls the other way, so a drag across it is the drawer's.
             data-owns-sideways={along === 'x' || undefined}
             role="list"
             aria-label={PhotoGridStrings.gridLabel(store.total)}

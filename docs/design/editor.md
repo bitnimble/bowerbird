@@ -145,7 +145,7 @@ Two things in that build are silent when wrong and cost an afternoon each. libao
 Drag requests **coalesce rather than queue**: only the latest position remains outstanding, avoiding slow-motion replay after release.
 
 What the stage is proofed as is one choice, the `Soft proof` menu in the header - in the editor
-between the zoom and the overflow menu, in the viewer between the triage buttons and the
+between the zoom and the filmstrip, in the viewer between the triage buttons and the
 filmstrip, and labelled with the proof in force. `HDR (Rec.2020 PQ)` is the default and is withheld
 from a rendition with no HDR in it; `SDR (sRGB)` is always offered and is what an SDR rendition
 already shows; the two printed media proofs are always offered. Choosing one adds its panels under the edit panels: SDR the rendering intent, titled `Tone mapping`,

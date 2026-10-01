@@ -22,6 +22,7 @@ import { tileMarker } from './grid.stylex';
 import { PanoramaIcon } from './panorama_icon';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
 import { PhotoStageStrings } from '../viewer/photo_stage.strings';
+import { editPath } from '../viewer/detail_mode';
 import { isComposite, photoPath, renditionVersion } from '../photos_store';
 import { PhotoGridStrings } from './photo_grid.strings';
 import { PhotoTileMarks } from './photo_tile_marks';
@@ -50,6 +51,21 @@ function rowName(photo: PhotoSummary): string {
 // points back at it, which is up in the gallery and sideways along the foot.
 export const InStrip = createContext<'x' | 'y' | null>(null);
 
+export const StripOpensEditor = createContext(false);
+
+function useOpenPhoto(): { pathOf: (photoId: string) => string; open: (photoId: string) => void } {
+  const listing = useListingStore();
+  const navigate = useNavigate();
+  const opensEditor = useContext(StripOpensEditor);
+  const pathOf = (photoId: string): string => {
+    const path = photoPath(photoId, listing.source);
+    return opensEditor ? editPath(path) : path;
+  };
+  // Never pushed from the editor: Done replaces only the last entry, so every one behind it is
+  // an editor Back reopens, a full-sensor decode each.
+  return { pathOf, open: (photoId) => navigate(pathOf(photoId), { replace: opensEditor }) };
+}
+
 // The tick box that starts a selection, and the only way into one with a mouse
 // (a touch screen has the long press): the frame itself opens the photo (§18.3.1).
 // Drawn only while the tile is hovered or holds focus, or on a touch screen while
@@ -76,7 +92,7 @@ export const PhotoTile = observer(function PhotoTile({
   const stacks = useStacksStore();
   const viewer = useViewerStore();
   const { photos } = usePresenters();
-  const navigate = useNavigate();
+  const { pathOf, open: openPhoto } = useOpenPhoto();
   const [loaded, setLoaded] = useState(false);
   const inStrip = useContext(InStrip);
   const layout = layoutOf(listing.mode, inStrip);
@@ -177,7 +193,7 @@ export const PhotoTile = observer(function PhotoTile({
     if (e.metaKey || e.ctrlKey) return photos.toggle(index);
     if (disclosure) return void photos.toggleBand(photo.stack_id!, index);
     if (selecting) return photos.toggle(index);
-    navigate(photoPath(photo.id, listing.source));
+    openPhoto(photo.id);
   };
 
   // A listitem cannot take aria-selected, so the state rides on the frame's own
@@ -280,7 +296,7 @@ export const PhotoTile = observer(function PhotoTile({
         ) : (
           <a
             {...stylex.props(tile.hit, focusRing.ring)}
-            href={photoPath(photo.id, listing.source)}
+            href={pathOf(photo.id)}
             onClick={onFrameClick}
             aria-label={label}
           >
@@ -528,7 +544,7 @@ export const BandMember = observer(function BandMember({
   const marks = useMarksStore();
   const viewer = useViewerStore();
   const { photos } = usePresenters();
-  const navigate = useNavigate();
+  const { pathOf, open: openPhoto } = useOpenPhoto();
   const [loaded, setLoaded] = useState(false);
   const inStrip = useContext(InStrip);
   const selected = marks.memberSelected(photo);
@@ -566,12 +582,12 @@ export const BandMember = observer(function BandMember({
       <div {...stylex.props(photoStyle(layout, false))}>
         <a
           {...stylex.props(tile.hit, focusRing.ring)}
-          href={photoPath(photo.id, listing.source)}
+          href={pathOf(photo.id)}
           onClick={(e) => {
             e.preventDefault();
             if (e.shiftKey) photos.extendMembersTo(photo);
             else if (e.metaKey || e.ctrlKey || marks.hasSelection) photos.toggleMember(photo);
-            else navigate(photoPath(photo.id, listing.source));
+            else openPhoto(photo.id);
           }}
           aria-label={PhotoGridStrings.tile(selected, null, name, null)}
         >

@@ -52,3 +52,15 @@ test('a bracket typed into a field is the field’s', async () => {
 
   expect(pressed).toEqual([]);
 });
+
+test('a key a focused control already handled is the control’s', async () => {
+  const pressed: string[] = [];
+  await open({ strip: () => pressed.push('strip'), panels: () => pressed.push('panels') });
+
+  const handled = (e: KeyboardEvent): void => e.preventDefault();
+  document.body.addEventListener('keydown', handled);
+  await press('[');
+  document.body.removeEventListener('keydown', handled);
+
+  expect(pressed).toEqual([]);
+});

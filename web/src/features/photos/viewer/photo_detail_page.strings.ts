@@ -4,6 +4,7 @@ export const PhotoDetailStrings = {
   frameName: (filename: string, rendition: string) => `${filename}, ${rendition}`,
   showFilmstrip: () => 'Show filmstrip',
   hideFilmstrip: () => 'Hide filmstrip',
+  toggleFilmstrip: () => 'Toggle filmstrip',
 
   pending: () => 'loading',
   notRecorded: () => 'not recorded',

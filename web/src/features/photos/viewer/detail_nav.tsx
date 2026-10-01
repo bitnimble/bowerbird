@@ -153,7 +153,7 @@ function offered<T extends 'original' | ViewerRendition>(
   return options.filter((option) => option.value !== 'embedded');
 }
 
-type ViewAction = 'fullscreen' | 'rotateLeft' | 'rotateRight';
+type ViewAction = 'fullscreen' | 'rotateLeft' | 'rotateRight' | 'filmstrip';
 
 const VIEW_ACTIONS: Option<ViewAction>[] = [
   {
@@ -286,7 +286,10 @@ export const DetailNav = observer(function DetailNav({
   /** Null on a phone, where the sheet's own handle owns the panels. */
   panelsOpen: boolean | null;
   onTogglePanels: () => void;
-  /** Null where this bar is not what offers the strip: a phone, and the editor. */
+  /**
+   * Null where this bar is not what offers the strip: a phone's viewer, and the mockup. A phone's
+   * editor offers it as a menu row.
+   */
   stripOpen: boolean | null;
   onToggleStrip: () => void;
   /** Where the Edit row goes, which replaces this entry in the history rather than pushing one. */
@@ -323,7 +326,7 @@ export const DetailNav = observer(function DetailNav({
     photo.is_offloaded;
   const editing = mode === 'edit';
   // The print mockup renders through the editor's session, so it takes the editor's chrome
-  // rules - no filmstrip, no rendition choice - while leaving the grade's own controls out.
+  // rules - no rendition choice - while leaving the grade's own controls out.
   const previewing = mode !== 'view';
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
@@ -358,6 +361,15 @@ export const DetailNav = observer(function DetailNav({
           ...option,
           disabled: editing ? !edit?.stage.editable : !editable,
         }))),
+    ...(mobile && stripOpen != null
+      ? [
+          {
+            value: 'filmstrip' as const,
+            label: PhotoDetailStrings.toggleFilmstrip(),
+            icon: <GalleryThumbnails size={ICON} />,
+          },
+        ]
+      : []),
   ];
 
   const undoRedo: Option<EditAction>[] = [
@@ -441,6 +453,10 @@ export const DetailNav = observer(function DetailNav({
       onSelect: (action) => {
         if (action === 'fullscreen') {
           onFullscreen();
+          return;
+        }
+        if (action === 'filmstrip') {
+          onToggleStrip();
           return;
         }
         const by = action === 'rotateLeft' ? -90 : 90;
@@ -587,8 +603,7 @@ export const DetailNav = observer(function DetailNav({
     >
       <ShowSidebarButton />
       {/* The way out and the way back through the grade take the same corner: leaving is
-          what the reader reaches for in either mode, and stepping to another photograph
-          mid-edit is not something to leave one press away. */}
+          what the reader reaches for in either mode. */}
       {editing ? (
         <>
           <Button
@@ -670,11 +685,9 @@ export const DetailNav = observer(function DetailNav({
       {/* Between two spacers where there is room for them, so the toolbar sits in the middle
           of the bar rather than on the end of whichever group happens to be longer. */}
       {editing && edit != null && (
-        <>
-          <EditToolbar stage={edit.stage} loupe={edit.loupe} presenter={edit.presenter} />
-          {centred && <Spacer />}
-        </>
+        <EditToolbar stage={edit.stage} loupe={edit.loupe} presenter={edit.presenter} />
       )}
+      {editing && <Spacer />}
 
       <div {...stylex.props(styles.tools)} ref={toolsRef} />
 
@@ -697,7 +710,7 @@ export const DetailNav = observer(function DetailNav({
 
       {!mobile && <SoftProofMenu value={proof} hdrOffered={hdrOffered} onChange={onProof} />}
 
-      {stripOpen != null && (
+      {stripOpen != null && !mobile && (
         <Button
           iconOnly
           aria-label={
