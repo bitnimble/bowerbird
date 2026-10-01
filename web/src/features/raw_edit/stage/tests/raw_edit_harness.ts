@@ -17,6 +17,7 @@ import type { PrinterProfileSource } from '../../print/print_presenter';
 import { PrintStore } from '../../print/print_store';
 import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
+import { EditSurface } from '../edit_surface';
 import { DeviceSettingsStore } from '../../../settings/device_settings_store';
 import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
 import { readPreparedHeader } from '../../../../../../src/schemas/prepared';
@@ -346,9 +347,17 @@ export class FakeDecoder {
     return Promise.resolve(new Blob([new Uint8Array(1)], { type: 'image/png' }));
   }
 
-  close(): void {
-    /* the worker is the thing terminated, and nothing here has one */
+  /** The key every close kept the stage under, which the next open adopts. */
+  readonly keptUnder: (number | null)[] = [];
+
+  close(keepStage: number | null = null): void {
+    this.keptUnder.push(keepStage);
   }
+}
+
+/** A surface on no worker, whose stage is kept under 7. */
+export function testSurface(): EditSurface {
+  return new EditSurface({ keepSurface: () => 7, dropSurface: () => {} });
 }
 
 export type Editor = {
@@ -360,6 +369,7 @@ export type Editor = {
   loupe: LoupeStore;
   print: PrintStore;
   device: DeviceSettingsStore;
+  surface: EditSurface;
   presenter: RawEditPresenter;
   decoder: FakeDecoder;
 };
@@ -402,6 +412,7 @@ export function openEditor(): Editor {
   stage.status = 'live';
   // The whole picture, which is what the open leaves the view showing.
   stage.region = { x: 0, y: 0, width: 4000, height: 3000 };
+  const surface = testSurface();
   const editor = {
     edit,
     stage,
@@ -411,6 +422,7 @@ export function openEditor(): Editor {
     loupe,
     print,
     device,
+    surface,
     presenter: new RawEditPresenter(
       edit,
       stage,
@@ -420,6 +432,7 @@ export function openEditor(): Editor {
       loupe,
       print,
       device,
+      surface,
       PRINTER_PROFILES,
     ),
     decoder: new FakeDecoder(keystone),

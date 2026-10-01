@@ -103,7 +103,15 @@ export type Painted = z.infer<typeof PaintedSchema>;
 /** Every message the GPU worker takes, each with the id its answer carries back. */
 export const MessageSchema = z.discriminatedUnion('to', [
   z.object({ id: z.number(), to: z.literal('open'), session: z.number(), ask: OpenAskSchema }),
-  z.object({ id: z.number(), to: z.literal('close'), session: z.number() }),
+  z.object({
+    id: z.number(),
+    to: z.literal('close'),
+    session: z.number(),
+    /** The key its stage is kept under for the next open, where there is one. */
+    keepStage: z.number().nullable(),
+  }),
+  z.object({ id: z.number(), to: z.literal('keepSurface'), key: z.number() }),
+  z.object({ id: z.number(), to: z.literal('dropSurface'), key: z.number() }),
   z.object({ id: z.number(), to: z.literal('stage'), ask: StageAskSchema }),
   z.object({ id: z.number(), to: z.literal('precompile') }),
 ]);

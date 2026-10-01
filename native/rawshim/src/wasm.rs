@@ -45,6 +45,18 @@ pub fn build_every_pipeline() {
     }
 }
 
+/// Keeps the buffers every prepare lets go for the next photo's to take, until [`release_buffers`].
+#[wasm_bindgen(js_name = holdBuffers)]
+pub fn hold_buffers() {
+    crate::gpu::hold_buffers();
+}
+
+/// Ends one [`hold_buffers`]; the last frees every buffer kept.
+#[wasm_bindgen(js_name = releaseBuffers)]
+pub fn release_buffers() {
+    crate::gpu::release_buffers();
+}
+
 /// A photograph opened and kept at the mosaic, so a Detail slider costs a denoise and not a file.
 ///
 /// **The frame below the denoise is a function of the amounts; everything above it is not.** The
@@ -144,6 +156,10 @@ pub struct HeldRaw {
     /// tiles like any picture prepared elsewhere.
     header: std::cell::RefCell<String>,
 }
+
+/// The canvas a closed open drew onto, still configured and showing its last frame.
+#[wasm_bindgen]
+pub struct KeptStage(crate::gpu::Stage);
 
 /// One rendition tile, on the device, with the grade's resources over it.
 ///
@@ -1034,6 +1050,22 @@ impl HeldRaw {
         height: u32,
     ) -> Result<(), JsValue> {
         self.attach(&self.stage, canvas, width, height)
+    }
+
+    /// The stage, taken off this photograph for the next one to draw onto.
+    #[wasm_bindgen(js_name = takeStage)]
+    pub fn take_stage(&self) -> Option<KeptStage> {
+        self.stage.take().map(KeptStage)
+    }
+
+    /// A stage another photograph drew onto, at the backing store the page now asks for.
+    #[wasm_bindgen(js_name = adoptStage)]
+    pub fn adopt_stage(&self, kept: KeptStage, width: u32, height: u32) {
+        let mut stage = kept.0;
+        if let Some(gpu) = crate::gpu::device() {
+            stage.resize(gpu, width, height);
+        }
+        self.stage.replace(Some(stage));
     }
 
     /// The same, for the loupe: a second canvas over the first, drawn from the same frame.

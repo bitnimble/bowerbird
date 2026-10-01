@@ -32,6 +32,8 @@ import { PrintControls } from '../../raw_edit/print/print_controls';
 import { RawEditPresenter } from '../../raw_edit/stage/raw_edit_presenter';
 import { RawEditStage } from '../../raw_edit/stage/raw_edit_stage';
 import { StageStore } from '../../raw_edit/stage/stage_store';
+import { EditSurface } from '../../raw_edit/stage/edit_surface';
+import { gpuThread } from '../../../gpu/gpu_thread';
 import { toggleFullscreenOf } from './fullscreen';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { sourceOfPath } from '../photos_store';
@@ -137,7 +139,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const [heldSession, setSession] = useState<{
     photoId: string;
     mode: Exclude<DetailMode, 'view'>;
-    touch: boolean;
+    surface: EditSurface;
     edit: EditStore;
     stage: StageStore;
     crop: CropStore;
@@ -149,6 +151,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   } | null>(null);
   const session =
     heldSession?.photoId === photoId && heldSession.mode === mode ? heldSession : null;
+  // The stage outlives the photo: for the render between a step and the layout effect that builds
+  // the next photo's session, it keeps the last one's rather than unmounting the canvas it shares.
+  const stageSession = heldSession?.mode === mode ? heldSession : null;
 
   useEffect(() => {
     void photos.openDetail(photoId, sourceOfPath(pathname));
@@ -186,12 +191,24 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     return () => observer.disconnect();
   }, [underTabs]);
 
-  // Built only while editing. The pair owns a GPU device and the frame's texture, which
-  // belong to this visit rather than to the session.
-  // Layout effect so the stage mounts before paint - otherwise Edit shows one
+  const surfaceKey = mode === 'view' ? null : `${mode}:${touch}`;
+  const [surface, setSurface] = useState<{ key: string; surface: EditSurface } | null>(null);
+  useLayoutEffect(() => {
+    if (surfaceKey == null) return;
+    const kept = new EditSurface(gpuThread());
+    setSurface({ key: surfaceKey, surface: kept });
+    return () => {
+      kept.close();
+      setSurface(null);
+    };
+  }, [surfaceKey]);
+
+  // Built only while editing, per photo: the frame is this photo's, the surface it is drawn on
+  // the visit's. Layout effect so the stage mounts before paint - otherwise Edit shows one
   // frame of the stored rendition beside empty panels.
   useLayoutEffect(() => {
-    if (mode === 'view') return;
+    // Until the surface for this mode exists: one held over from the last would be closed.
+    if (mode === 'view' || surface == null || surface.key !== surfaceKey) return;
     const edit = new EditStore();
     const stage = new StageStore(edit);
     const crop = new CropStore(stage, edit);
@@ -208,6 +225,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       loupe,
       print,
       device,
+      surface.surface,
     );
     // Before the proof, so a sheet opens as this device's rather than as the desktop's and then turns into it.
     presenter.print.setTouch(touch);
@@ -216,7 +234,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     setSession({
       photoId,
       mode,
-      touch,
+      surface: surface.surface,
       edit,
       stage,
       crop,
@@ -243,7 +261,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           startingRotation != null && startingRotation !== edit.doc?.rotate,
         );
     };
-  }, [mode, photoId, photos, touch, device]);
+  }, [mode, photoId, photos, touch, device, surface, surfaceKey]);
 
   // Both replace (the Edit row's link too), so opening and closing the editor leaves the history
   // where it found it: one entry for this photograph, and Back goes wherever the photograph was
@@ -497,28 +515,27 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           )}
         >
           {previewing ? (
-            // Nothing until the pair exists, rather than the viewer's stage for the render
+            // Nothing until the first pair exists, rather than the viewer's stage for the render
             // before the layout effect runs: its elements ask for this photograph's rendition
             // with nothing painted, and mount both neighbours' as soon as one of them decodes.
             //
             // The same slot the viewer's stage draws into, so the zoom control sits where it
             // always sits rather than moving when the reader opens the editor.
             //
-            // **Keyed, because the canvas belongs to the worker once it has been handed over.**
-            // `transferControlToOffscreen` is permanent and throws on a second call, and stepping
-            // between two `/edit` addresses rebuilds the pair without React ever seeing a null
-            // session - so an unkeyed stage would hand the *new* presenter an element the *old*
-            // worker already owns, and the editor would open failed for good.
-            session != null && (
+            // **Keyed by the surface, because the canvas belongs to the worker once it has been
+            // handed over.** Stepping between two `/edit` addresses keeps the element, which the
+            // next photo's open draws onto; a new surface has nothing kept for an old element.
+            stageSession != null && (
               <RawEditStage
-                key={`${session.photoId}:${session.mode}:${session.touch}`}
-                stageStore={session.stage}
-                crop={session.crop}
-                keystone={session.keystone}
-                repair={session.repair}
-                loupe={session.loupe}
-                print={session.print}
-                presenter={session.presenter}
+                key={stageSession.surface.stageKey}
+                photoId={stageSession.photoId}
+                stageStore={stageSession.stage}
+                crop={stageSession.crop}
+                keystone={stageSession.keystone}
+                repair={stageSession.repair}
+                loupe={stageSession.loupe}
+                print={stageSession.print}
+                presenter={stageSession.presenter}
                 toolsInto={toolsSlot}
                 zoomInto={zoomSlot}
                 fullscreenRef={setStage}

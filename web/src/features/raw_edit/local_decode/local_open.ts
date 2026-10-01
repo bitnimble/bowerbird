@@ -179,6 +179,12 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     width: z.number(),
     height: z.number(),
   }),
+  z.object({
+    kind: z.literal('adoptStage'),
+    key: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }),
   z.object({ kind: z.literal('releaseLoupe') }),
   z.object({ kind: z.literal('holdTile'), request: JsonSchema }),
   z.object({ kind: z.literal('releaseTile') }),

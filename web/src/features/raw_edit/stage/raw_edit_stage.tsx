@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useCallback, useEffect, useRef } from 'react';
+import { Fragment, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { color } from '../../../ui/tokens.stylex';
 import { toggleFullscreenOf } from '../../photos/viewer/fullscreen';
@@ -82,6 +82,7 @@ function spread(touches: Map<number, { x: number; y: number }>): number {
 }
 
 export const RawEditStage = observer(function RawEditStage({
+  photoId,
   stageStore,
   crop,
   keystone,
@@ -93,6 +94,8 @@ export const RawEditStage = observer(function RawEditStage({
   zoomInto,
   fullscreenRef,
 }: {
+  /** The stage outlives the photo; what is drawn over it does not. */
+  photoId: string;
   stageStore: StageStore;
   crop: CropStore;
   keystone: KeystoneStore;
@@ -483,16 +486,18 @@ export const RawEditStage = observer(function RawEditStage({
             style={{ aspectRatio: `${natural.width} / ${natural.height}` }}
           />
         )}
-        <CropOverlay crop={crop} keystone={keystone} presenter={presenter} viewport={box} />
-        <KeystoneOverlay store={keystone} presenter={presenter} viewport={box} />
-        <RepairOverlay
-          store={repair}
-          presenter={presenter.repair}
-          view={view}
-          box={box}
-          natural={natural}
-        />
-        <LoupeOverlay store={loupe} presenter={presenter} />
+        <Fragment key={photoId}>
+          <CropOverlay crop={crop} keystone={keystone} presenter={presenter} viewport={box} />
+          <KeystoneOverlay store={keystone} presenter={presenter} viewport={box} />
+          <RepairOverlay
+            store={repair}
+            presenter={presenter.repair}
+            view={view}
+            box={box}
+            natural={natural}
+          />
+          <LoupeOverlay store={loupe} presenter={presenter} />
+        </Fragment>
       </div>
       {/* Read by e2e: none of these has a visible readout, and the canvas is the worker's once
           handed over so cannot report its own backing size. */}

@@ -5,7 +5,6 @@ import {
   type ToneCurve,
 } from '../../../../../src/schemas/photo_edits';
 import type { ViewerRendition } from '../../../../../src/schemas/settings';
-import { adapterName } from '../../../adapter_name';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi } from '../../../api/photos';
 import { preparesOnTheBackend } from './prepare_choice';
@@ -36,6 +35,7 @@ import type { KeystoneStore } from '../keystone/keystone_store';
 import { LoupePresenter } from '../loupe/loupe_presenter';
 import type { LoupeStore } from '../loupe/loupe_store';
 import { PreparePresenter } from './prepare_presenter';
+import type { EditSurface } from './edit_surface';
 import { SUPERSAMPLE, stageResolution } from './stage_resolution';
 import { type PreparedHeader, readPreparedHeader } from '../../../../../src/schemas/prepared';
 import type { EditAdjust, Region } from '../edits';
@@ -101,17 +101,6 @@ export class RawEditPresenter {
    * device to ask: the one the picture is drawn on is the module's, in the worker.
    */
   private maxTexture = 8192;
-  /**
-   * The canvases already given to the worker.
-   *
-   * `transferControlToOffscreen` is once per element for good, so this is what stops a remount
-   * from throwing on a canvas whose backing store has already gone.
-   */
-  private readonly handedOver = new WeakSet<HTMLCanvasElement>();
-  /** The canvases kept on the page (`readback_canvas.ts`), at the backing store the worker draws. */
-  private readonly onPage: Partial<
-    Record<'stage' | 'loupe', { canvas: HTMLCanvasElement; width: number; height: number }>
-  > = {};
   /** Whether an open has a frame to draw, which a tick before one would draw nothing of. */
   private drawable = false;
   /** The reader's sliders, as the module's `Adjust`. Sent with the tick that has to show them. */
@@ -150,6 +139,7 @@ export class RawEditPresenter {
     loupeStore: LoupeStore,
     private readonly printStore: PrintStore,
     private readonly device: DeviceSettingsStore,
+    private readonly surface: EditSurface,
     printerProfiles?: PrinterProfileSource,
   ) {
     this.print = new PrintPresenter(
@@ -209,18 +199,28 @@ export class RawEditPresenter {
    * **Once per element, for good.** `transferControlToOffscreen` moves the backing store to the
    * worker and the element can never take a context on this thread again, so a remount that
    * transferred the same element twice would throw - and React remounts the loupe whenever the
-   * glass is picked up.
+   * glass is picked up. The stage outlives the photo, so the next photo's open adopts the stage
+   * the last one drew onto, still configured and showing its last frame.
    *
-   * Unless it is one the page draws itself, which is settled here for as long as the element lives.
+   * A canvas the page draws itself (`drawsOnThePage`) stays on the page, and the worker holds a
+   * texture in its place.
    */
   private async handOver(canvas: HTMLCanvasElement, which: 'stage' | 'loupe'): Promise<void> {
     const local = this.local;
-    if (local == null || this.handedOver.has(canvas)) return;
-    this.handedOver.add(canvas);
+    if (local == null) return;
     const wanted = which === 'stage' ? this.stageSize() : null;
     const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
+    if (this.surface.alreadyHandedOver(canvas)) {
+      if (which === 'loupe') return;
+      if (!(await local.decoder.adoptStage(this.surface.stageKey, size.width, size.height)))
+        throw new Error('the stage the last photo was drawn on was not kept for this one');
+      const kept = this.surface.onPage.stage;
+      if (kept != null) Object.assign(kept, size);
+      this.drawable = true;
+      return;
+    }
     const onPage = drawsOnThePage(this.device.displayPeakNits);
-    if (onPage) this.onPage[which] = { canvas, ...size };
+    if (onPage) this.surface.onPage[which] = { canvas, ...size };
     const offscreen = onPage ? null : canvas.transferControlToOffscreen();
     await local.decoder.attach(which, offscreen, size.width, size.height);
     if (which === 'stage') this.drawable = true;
@@ -384,16 +384,13 @@ export class RawEditPresenter {
     // rather than after it: both are small rows and both are wanted before the decode.
     const described = photosApi.get(photoId).catch(() => null);
     try {
-      // Asked here only to say whether there is one and to name it: the device the picture is
-      // drawn on is the module's own, opened in the worker where the frame lives, and this
-      // thread never holds a GPU object at all.
-      const adapter = await navigator.gpu?.requestAdapter();
+      const adapter = await this.surface.adapterInfo();
       if (adapter == null) {
         this.fail('this browser has no WebGPU, which the editor now needs');
         return;
       }
-      this.describeAdapter(adapter);
-      this.maxTexture = adapter.limits.maxTextureDimension2D;
+      this.describeAdapter(adapter.name);
+      this.maxTexture = adapter.maxTexture;
 
       const saved = await edits;
       if (this.closed) return;
@@ -977,9 +974,9 @@ export class RawEditPresenter {
     this.density = null;
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     this.drawable = false;
-    // The thread the picture was drawn on, holding the RAW, the frame, the canvases and the
-    // module's heap - all of it, which is why there is nothing else to destroy here.
-    this.local?.decoder.close();
+    // The RAW, the frame and the tiles, on the worker - all of it but the stage, kept there for the
+    // next photo to draw onto.
+    this.local?.decoder.close(this.surface.stageKey);
     this.local = null;
   }
 
@@ -1052,7 +1049,8 @@ export class RawEditPresenter {
       // Both arms, because a worker that died mid-draw rejects too - and a rejection swallowed
       // here would leave the flag set and every later frame waiting on a tick that never lands.
       const stage = drawStage ? this.stageSize() : null;
-      if (stage != null && this.onPage.stage != null) Object.assign(this.onPage.stage, stage);
+      const onPage = this.surface.onPage.stage;
+      if (stage != null && onPage != null) Object.assign(onPage, stage);
       void local.decoder
         .tick({
           ev: this.editStore.exposureEv,
@@ -1078,7 +1076,7 @@ export class RawEditPresenter {
   private async showOnPage(ticked: Ticked): Promise<void> {
     for (const which of ['stage', 'loupe'] as const) {
       const bytes = ticked[which];
-      const shown = this.onPage[which];
+      const shown = this.surface.onPage[which];
       if (bytes == null || shown == null) continue;
       const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
       await readbackCanvases.show(shown.canvas, {
@@ -1130,8 +1128,8 @@ export class RawEditPresenter {
   private pendingLoupe: Region | null = null;
 
   @action.bound
-  private describeAdapter(adapter: GPUAdapter): void {
-    this.stage.adapter = adapterName(adapter);
+  private describeAdapter(name: string): void {
+    this.stage.adapter = name;
   }
 
   @action.bound

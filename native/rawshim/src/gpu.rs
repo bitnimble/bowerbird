@@ -561,17 +561,20 @@ pub async fn read_back<T>(
 /// schedules it against that submission rather than taking it from under it. Native wgpu-core frees
 /// on the last reference either way, which is why no native suite can see the difference.
 trait Release {
-    fn release(&self);
+    /// `keep` is whether the resource may go to [`KeptBuffers`] for the next allocation of its shape.
+    fn release(&self, keep: bool);
 }
 
 impl Release for wgpu::Buffer {
-    fn release(&self) {
-        self.destroy();
+    fn release(&self, keep: bool) {
+        if !(keep && kept_buffers(|kept| kept.give(self))) {
+            self.destroy();
+        }
     }
 }
 
 impl Release for wgpu::Texture {
-    fn release(&self) {
+    fn release(&self, _: bool) {
         self.destroy();
     }
 }
@@ -579,13 +582,126 @@ impl Release for wgpu::Texture {
 struct Held<T: Release> {
     resource: T,
     bytes: u64,
+    keep: bool,
 }
 
 impl<T: Release> Drop for Held<T> {
     fn drop(&mut self) {
-        self.resource.release();
+        self.resource.release(self.keep);
         LIVE.fetch_sub(self.bytes, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// Buffers let go while anyone [`hold_buffers`], each kept for the next one asked for at its size
+/// and usage.
+struct KeptBuffers {
+    holds: usize,
+    /// Oldest first, which is the order the budget evicts in.
+    idle: std::collections::VecDeque<wgpu::Buffer>,
+    bytes: u64,
+    reused: u64,
+}
+
+const KEPT_BUFFER_BYTES: u64 = 2 << 30;
+
+#[cfg(not(target_arch = "wasm32"))]
+static KEPT_BUFFERS: std::sync::Mutex<KeptBuffers> = std::sync::Mutex::new(KeptBuffers::new());
+
+// A page's buffers are not `Send`, and its module has the one thread.
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static KEPT_BUFFERS: std::cell::RefCell<KeptBuffers> =
+        const { std::cell::RefCell::new(KeptBuffers::new()) };
+}
+
+fn kept_buffers<R>(use_them: impl FnOnce(&mut KeptBuffers) -> R) -> R {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use_them(
+            &mut KEPT_BUFFERS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        KEPT_BUFFERS.with_borrow_mut(use_them)
+    }
+}
+
+/// Whether a buffer of this shape may be kept: not one whose mapping its last owner may have left,
+/// nor one `clear_buffer` refuses to clear whole.
+fn keepable(descriptor: &wgpu::BufferDescriptor<'_>) -> bool {
+    !descriptor.mapped_at_creation
+        && descriptor.size % wgpu::COPY_BUFFER_ALIGNMENT == 0
+        && !descriptor
+            .usage
+            .intersects(wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::MAP_WRITE)
+}
+
+impl KeptBuffers {
+    const fn new() -> KeptBuffers {
+        KeptBuffers {
+            holds: 0,
+            idle: std::collections::VecDeque::new(),
+            bytes: 0,
+            reused: 0,
+        }
+    }
+
+    fn give(&mut self, buffer: &wgpu::Buffer) -> bool {
+        if self.holds == 0 || buffer.size() > KEPT_BUFFER_BYTES {
+            return false;
+        }
+        while self.bytes + buffer.size() > KEPT_BUFFER_BYTES {
+            let Some(oldest) = self.idle.pop_front() else {
+                break;
+            };
+            self.bytes -= oldest.size();
+            oldest.destroy();
+        }
+        self.bytes += buffer.size();
+        self.idle.push_back(buffer.clone());
+        true
+    }
+
+    fn take(&mut self, size: u64, usage: wgpu::BufferUsages) -> Option<wgpu::Buffer> {
+        let at = self
+            .idle
+            .iter()
+            .rposition(|idle| idle.size() == size && idle.usage() == usage)?;
+        let buffer = self.idle.remove(at)?;
+        self.bytes -= size;
+        self.reused += 1;
+        Some(buffer)
+    }
+
+    fn free(&mut self) {
+        for buffer in self.idle.drain(..) {
+            buffer.destroy();
+        }
+        self.bytes = 0;
+    }
+}
+
+/// Keeps every buffer let go from here for the next of its shape, until every hold is released.
+pub fn hold_buffers() {
+    kept_buffers(|kept| kept.holds += 1);
+}
+
+/// How many buffers have been handed out again rather than allocated, over the process.
+pub fn buffers_reused() -> u64 {
+    kept_buffers(|kept| kept.reused)
+}
+
+/// Ends one [`hold_buffers`]; the last frees every buffer kept.
+pub fn release_buffers() {
+    kept_buffers(|kept| {
+        kept.holds = kept.holds.saturating_sub(1);
+        if kept.holds == 0 {
+            kept.free();
+        }
+    });
 }
 
 /// Device memory this process is holding, as the handles above count it.
@@ -600,9 +716,13 @@ pub fn live_bytes() -> u64 {
     LIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-fn counted<T: Release>(resource: T, bytes: u64) -> std::sync::Arc<Held<T>> {
+fn counted<T: Release>(resource: T, bytes: u64, keep: bool) -> std::sync::Arc<Held<T>> {
     LIVE.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
-    std::sync::Arc::new(Held { resource, bytes })
+    std::sync::Arc::new(Held {
+        resource,
+        bytes,
+        keep,
+    })
 }
 
 /// What a texture descriptor asks the driver for, summed over its mip chain.
@@ -1223,23 +1343,45 @@ impl Gpu {
 
     /// A buffer whose life is its own rather than a submission's: a frame, a mosaic, a pyramid.
     pub fn own_buffer(&self, descriptor: &wgpu::BufferDescriptor<'_>) -> Buffer {
-        Buffer(counted(
-            self.device.create_buffer(descriptor),
-            descriptor.size,
-        ))
+        let keep = keepable(descriptor);
+        // Clearable, so a kept one can be handed out as zeroed as a fresh one.
+        let usage = match keep {
+            true => descriptor.usage | wgpu::BufferUsages::COPY_DST,
+            false => descriptor.usage,
+        };
+        let reused = keep
+            .then(|| kept_buffers(|kept| kept.take(descriptor.size, usage)))
+            .flatten();
+        let buffer = match reused {
+            Some(buffer) => {
+                // Stages accumulate into buffers they never cleared, reading a fresh one's zeros.
+                let mut encoder = self.device.create_command_encoder(&Default::default());
+                encoder.clear_buffer(&buffer, 0, None);
+                self.queue.submit([encoder.finish()]);
+                buffer
+            }
+            None => self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: descriptor.label,
+                size: descriptor.size,
+                usage,
+                mapped_at_creation: descriptor.mapped_at_creation,
+            }),
+        };
+        Buffer(counted(buffer, descriptor.size, keep))
     }
 
     pub fn own_buffer_init(&self, descriptor: &wgpu::util::BufferInitDescriptor<'_>) -> Buffer {
         use wgpu::util::DeviceExt;
         let buffer = self.device.create_buffer_init(descriptor);
         let bytes = buffer.size();
-        Buffer(counted(buffer, bytes))
+        Buffer(counted(buffer, bytes, false))
     }
 
     pub fn own_texture(&self, descriptor: &wgpu::TextureDescriptor<'_>) -> Texture {
         Texture(counted(
             self.device.create_texture(descriptor),
             texture_bytes(descriptor),
+            false,
         ))
     }
 
@@ -1254,6 +1396,7 @@ impl Gpu {
             self.device
                 .create_texture_with_data(&self.queue, descriptor, order, data),
             texture_bytes(descriptor),
+            false,
         ))
     }
 
@@ -1603,6 +1746,7 @@ impl Gpu {
                 mapped_at_creation: false,
             }),
             PQ_CODES * 4,
+            false,
         ));
         let decode_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("decode"),

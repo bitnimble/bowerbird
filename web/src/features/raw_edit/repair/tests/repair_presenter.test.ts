@@ -14,6 +14,7 @@ import {
   GRADE,
   openEditor,
   openedWith,
+  testSurface,
   type Editor,
 } from '../../stage/tests/raw_edit_harness';
 import { MOVED_SOLVE_QUIET_MS } from '../repair_presenter';
@@ -86,6 +87,7 @@ function rememberedRepair(): RepairStore {
     nextLoupe,
     new PrintStore(),
     new DeviceSettingsStore(),
+    testSurface(),
   );
   return nextRepair;
 }

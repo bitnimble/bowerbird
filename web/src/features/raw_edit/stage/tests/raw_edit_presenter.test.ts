@@ -553,7 +553,7 @@ describe('the window each frame is drawn at', () => {
       shown.push({ canvas, width: frame.width, height: frame.height, words: frame.words.length });
     };
     try {
-      Object.assign(presenter, { onPage: { stage: { canvas: kept, width: 1, height: 1 } } });
+      Object.assign(editor.surface.onPage, { stage: { canvas: kept, width: 1, height: 1 } });
       decoder.handsBack = true;
       for (const angle of [0, 3, 6]) {
         presenter.previewStraighten(angle);
@@ -1307,6 +1307,11 @@ describe('leaving the editor', () => {
     presenter.close();
     await Bun.sleep(0);
     expect(finished).toEqual(['a-photo-id']);
+  });
+
+  test('leaves its stage for the next photo to draw onto', () => {
+    presenter.close();
+    expect(decoder.keptUnder).toEqual([7]);
   });
 
   test('asks for nothing when nothing was written', async () => {

@@ -96,10 +96,26 @@ answer pair over `postMessage`. **That worker holds the app's only GPU device**:
 (`gpu::page_device`) and hands the browser's `GPUDevice` under it to the viewer's own WebGPU drawing
 (`stage_gpu.ts`), whose canvases the page transfers in on their first paint (`stage_canvas.ts`). So
 the editor, the print mockup, the merge page, the viewer and the renditions this device builds share
-one device and one set of compiled pipelines for the life of the page. Each editor open is a session
-on it (`LocalDecoder`), freed when the editor closes. The RAW is transferred in once and kept, so a
-tile costs neither a download nor a copy - and a picture the tab did not decode is transferred the
-same way, once, for the reason in §8.
+one device and one set of compiled pipelines for the life of the page. Each photo the editor opens is
+a session on it (`LocalDecoder`), freed when the reader leaves that photo. The RAW is transferred in
+once and kept, so a tile costs neither a download nor a copy - and a picture the tab did not decode
+is transferred the same way, once, for the reason in §8.
+
+**An edit visit outlives its photos** (`edit_surface.ts`). Stepping to another photo, by the arrows
+or the filmstrip, keeps three things the next open would otherwise rebuild:
+
+- The stage. A closing session's canvas is kept on the worker under the visit's key (`takeStage`),
+  configured and still showing its last frame, and the next open adopts it (`adoptStage`): a canvas
+  is handed to the worker once per element, so the page keeps the element too.
+- The buffers. While a visit holds them (`gpu::hold_buffers`), a buffer let go goes to a pool for the
+  next asked for at its size and usage, up to 2GiB idle, and comes back cleared. Allocation was a
+  fifth of a 24MP prepare in Chrome, and the next photo's prepare asks for the same shapes again.
+  Cleared because several kernels accumulate into buffers they never zeroed
+  (`a_reused_buffer_reads_as_a_fresh_one`).
+- The adapter, asked once per visit.
+
+The worker frees a session's picture only once no ask on it is still running: a tick suspended
+inside a freed picture throws when it resumes, outside any ask, and takes the worker down.
 
 Page retains open header for the panel. Its `stage_resolution.ts` decides backing-store
 dimensions from layout size and device pixel ratio.

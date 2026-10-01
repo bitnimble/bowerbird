@@ -1,8 +1,10 @@
 /// <reference lib="webworker" />
 import init, {
   type HeldRaw,
+  type KeptStage,
   buildEveryPipeline,
   finishDraw,
+  holdBuffers,
   holdPicture,
   holdPixels,
   holdPlanes,
@@ -10,6 +12,7 @@ import init, {
   holdPrintEnvironment,
   holdRaw,
   pageDevice,
+  releaseBuffers,
   renderRendition,
 } from '../../../native/rawshim/pkg/rawshim';
 import { pmridWeightsUrl } from '../../../native/rawshim/pkg/pmrid_weights';
@@ -43,6 +46,8 @@ warmth.install(worker);
 const device: Promise<GPUDevice | null> = openDevice();
 const painter: Promise<StagePainter> = device.then((opened) => new StagePainter(opened));
 const opens = new Map<number, Open>();
+/** An ask waiting out the warmth resumes after a close posted behind it, and would open it again. */
+const closed = new Set<number>();
 let weights: Promise<void> | null = null;
 const environments = new Map<Environment, Promise<void>>();
 let lost: string | null = null;
@@ -102,9 +107,22 @@ async function answer(
       if (value == null || typeof value === 'string') return { value };
       return { value, transfer: ['words' in value ? value.words.buffer : value.bitmap] };
     }
-    case 'close':
-      opens.get(message.session)?.close();
+    case 'close': {
+      const kept = opens.get(message.session)?.close();
       opens.delete(message.session);
+      closed.add(message.session);
+      if (kept != null) {
+        if (message.keepStage == null) free(kept);
+        else stages.keep(message.keepStage, kept);
+      }
+      return { value: null };
+    }
+    case 'keepSurface':
+      holdBuffers();
+      return { value: null };
+    case 'dropSurface':
+      stages.drop(message.key);
+      releaseBuffers();
       return { value: null };
     case 'precompile': {
       if (opened == null) return { value: null };
@@ -116,8 +134,11 @@ async function answer(
     }
     case 'open': {
       // A draw reaching a pipeline still warming would compile it again, synchronously, and freeze
-      // every page while it did.
-      await warmth.settled();
+      // every page while it did. Never for a canvas, which draws nothing: queued behind the warmth,
+      // a close posted after it lands first and the transferred canvas is lost with the session.
+      if (message.ask.kind !== 'attach' && message.ask.kind !== 'adoptStage')
+        await warmth.settled();
+      if (closed.has(message.session)) throw new Error('this decoder was closed');
       let open = opens.get(message.session);
       if (open == null) {
         open = new Open();
@@ -127,6 +148,41 @@ async function answer(
     }
   }
 }
+
+/** Freeing into a lost device panics like any other call; the reload reclaims it instead. */
+function free(value: { free(): void }): void {
+  if (lost == null) value.free();
+}
+
+class KeptStages {
+  private readonly kept = new Map<number, KeptStage>();
+  /** Keys the page has let go of, so a close that lands after the drop does not keep a stage forever. */
+  private readonly dropped = new Set<number>();
+
+  keep(key: number, stage: KeptStage): void {
+    if (this.dropped.has(key)) {
+      free(stage);
+      return;
+    }
+    const previous = this.kept.get(key);
+    if (previous != null) free(previous);
+    this.kept.set(key, stage);
+  }
+
+  take(key: number): KeptStage | null {
+    const stage = this.kept.get(key) ?? null;
+    this.kept.delete(key);
+    return stage;
+  }
+
+  drop(key: number): void {
+    this.dropped.add(key);
+    const stage = this.take(key);
+    if (stage != null) free(stage);
+  }
+}
+
+const stages = new KeptStages();
 
 /** One photograph opened on this thread: what `LocalDecoder` holds a session of. */
 class Open {
@@ -142,14 +198,37 @@ class Open {
    */
   private held: { held: HeldRaw; request: string } | null = null;
   private closed = false;
+  /** Asks still running, which may be suspended inside a `HeldRaw` method. */
+  private asking = 0;
+  /**
+   * What was let go while an ask was running, freed once none is: an async method of a freed
+   * `HeldRaw` throws when it next resumes, outside any ask, and takes the worker down with it.
+   */
+  private retired: HeldRaw[] = [];
 
-  close(): void {
+  /** Frees everything but the stage, which is handed back for the next open to draw onto. */
+  close(): KeptStage | null {
     this.closed = true;
     this.raw = null;
+    const stage = lost == null ? (this.held?.held.takeStage() ?? null) : null;
     this.release();
+    return stage;
   }
 
   async answer(
+    ask: OpenAsk,
+    report: Report,
+  ): Promise<{ value: unknown; transfer?: Transferable[] }> {
+    this.asking += 1;
+    try {
+      return await this.answered(ask, report);
+    } finally {
+      this.asking -= 1;
+      this.sweep();
+    }
+  }
+
+  private async answered(
     ask: OpenAsk,
     report: Report,
   ): Promise<{ value: unknown; transfer?: Transferable[] }> {
@@ -187,6 +266,13 @@ class Open {
         if (ask.which === 'stage') editor.attachStage(canvas, ask.width, ask.height);
         else editor.attachLoupe(canvas, ask.width, ask.height);
         return { value: null };
+      }
+      case 'adoptStage': {
+        const editor = this.drawing();
+        const stage = stages.take(ask.key);
+        if (stage == null) return { value: false };
+        editor.adoptStage(stage, ask.width, ask.height);
+        return { value: true };
       }
       case 'releaseLoupe':
         this.drawing().releaseLoupe();
@@ -310,9 +396,14 @@ class Open {
   }
 
   private release(): void {
-    // Freeing into a lost device panics like any other call; the reload reclaims it instead.
-    if (lost == null) this.held?.held.free();
+    if (this.held != null) this.retired.push(this.held.held);
     this.held = null;
+    this.sweep();
+  }
+
+  private sweep(): void {
+    if (this.asking > 0) return;
+    for (const held of this.retired.splice(0)) free(held);
   }
 
   /**
@@ -332,7 +423,7 @@ class Open {
    */
   private keep(held: HeldRaw, request: string): HeldRaw {
     if (this.closed) {
-      held.free();
+      free(held);
       throw new Error('this decoder was closed');
     }
     this.release();

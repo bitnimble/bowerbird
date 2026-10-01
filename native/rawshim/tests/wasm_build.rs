@@ -159,6 +159,8 @@ fn the_page_imports_the_entry_points_this_declares() {
         [
             "pageDevice",
             "buildEveryPipeline",
+            "holdBuffers",
+            "releaseBuffers",
             "holdRaw",
             "holdPlanes",
             "holdPixels",
@@ -178,6 +180,8 @@ fn the_page_imports_the_entry_points_this_declares() {
             "takePicture",
             "prepare",
             "attachStage",
+            "takeStage",
+            "adoptStage",
             "attachLoupe",
             "heldStage",
             "heldLoupe",

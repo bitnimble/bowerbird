@@ -57,14 +57,34 @@ export class GpuThread {
     return ++this.opened;
   }
 
-  /** Frees an open's state, refusing whatever it still has in flight. */
-  close(session: number, why: Error): void {
+  /**
+   * Frees an open's state, refusing whatever it still has in flight. Its stage is kept under
+   * `keepStage` for the next open's `adoptStage`.
+   */
+  close(session: number, why: Error, keepStage: number | null): void {
     for (const [id, waiter] of this.waiting) {
       if (waiter.session !== session) continue;
       this.waiting.delete(id);
       waiter.reject(why);
     }
-    this.worker.postMessage(MessageSchema.parse({ id: ++this.asked, to: 'close', session }));
+    this.worker.postMessage(
+      MessageSchema.parse({ id: ++this.asked, to: 'close', session, keepStage }),
+    );
+  }
+
+  /**
+   * Begins an edit visit, whose opens keep their stage under the key answered and whose prepares
+   * let their buffers go for the next to take, until {@link dropSurface}.
+   */
+  keepSurface(): number {
+    const key = ++this.opened;
+    this.worker.postMessage(MessageSchema.parse({ id: ++this.asked, to: 'keepSurface', key }));
+    return key;
+  }
+
+  /** Ends an edit visit: its stage is freed, and so is any closed open's kept under it later. */
+  dropSurface(key: number): void {
+    this.worker.postMessage(MessageSchema.parse({ id: ++this.asked, to: 'dropSurface', key }));
   }
 
   /** A pipeline the browser refuses still counts towards `compiled`. */

@@ -159,7 +159,7 @@ export class LocalDecoder {
    *
    * **Transferred, not shared.** `transferControlToOffscreen` moves the backing store for good -
    * the element can never take a context on this thread again, and transferring the same element
-   * twice throws - so the presenter transfers each canvas once and remembers that it did.
+   * twice throws - so each canvas is transferred once, and the next photo adopts the stage.
    *
    * Null keeps the canvas on the page, and every tick hands back what it drew there.
    */
@@ -382,11 +382,20 @@ export class LocalDecoder {
   }
 
   /**
-   * Freed rather than left to be collected: the open holds the RAW and the frames on the device,
-   * which the thread keeps for as long as the page does.
+   * The stage another open drew onto, kept under `key` when it closed, now drawn onto by this one.
+   * False where nothing was kept there.
    */
-  close(): void {
-    this.thread.close(this.session, new Error('this decoder was closed'));
+  adoptStage(key: number, width: number, height: number): Promise<boolean> {
+    return this.ask(z.boolean(), { kind: 'adoptStage', key, width, height });
+  }
+
+  /**
+   * Freed rather than left to be collected: the open holds the RAW and the frames on the device,
+   * which the thread keeps for as long as the page does. Its stage is kept under `keepStage`, for
+   * the next open's {@link adoptStage}.
+   */
+  close(keepStage: number | null = null): void {
+    this.thread.close(this.session, new Error('this decoder was closed'), keepStage);
   }
 
   private async nothing(ask: OpenAsk, transfer: Transferable[] = []): Promise<void> {

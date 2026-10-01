@@ -680,9 +680,22 @@ test('the arrows step within the editor, and once it is left a step back does no
   await expect(editTools(page)).toBeHidden();
 });
 
-test('a filmstrip tile opens its own photograph in the editor', async ({ page }) => {
+/**
+ * The next photo is drawn onto the same canvas element, which the worker can only be handed once:
+ * the page keeps it across the step and the next open adopts the stage the last one drew on.
+ */
+test('a filmstrip tile opens its own photograph in the editor, on the same stage', async ({
+  page,
+}) => {
   await gotoPhoto(page, EDIT_PHOTOS_DIR, route(PathSegment.edit()));
-  await expect(editTools(page)).toBeVisible();
+  await waitForEditorLive(page);
+  const canvas = await editPreview(page).elementHandle();
+  const downloaded: string[] = [];
+  page.on('request', (request) => {
+    const { pathname } = new URL(request.url());
+    if (pathname.includes(route(PathSegment.download(), PathSegment.original())))
+      downloaded.push(pathname);
+  });
 
   await page.getByRole('button', { name: 'Show filmstrip' }).click();
   const cells = tiles(page);
@@ -693,7 +706,18 @@ test('a filmstrip tile opens its own photograph in the editor', async ({ page })
   expect(new URL(page.url()).pathname).toMatch(new RegExp(`${route(PathSegment.edit())}$`));
   await expect(cells.last()).toHaveAttribute('aria-current', 'page');
   await waitForEditorLive(page);
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
+  const stepped = new URL(page.url()).pathname.split('/').at(-2) ?? '';
+  expect(downloaded.some((path) => path.includes(stepped))).toBe(true);
+  expect(await canvas?.evaluate((element) => element.isConnected)).toBe(true);
   expect(await page.evaluate(() => history.length)).toBe(entries);
+
+  // And back, onto the stage once more.
+  await frames(cells.first()).click();
+  await expect(cells.first()).toHaveAttribute('aria-current', 'page');
+  await waitForEditorLive(page);
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
+  expect(await canvas?.evaluate((element) => element.isConnected)).toBe(true);
 });
 
 /**
