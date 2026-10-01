@@ -231,15 +231,31 @@ test('a drag held at the foot of the grid scrolls it, picking what comes into vi
   await page.getByRole('slider', { name: 'Thumbnail size' }).press('End');
   await page.keyboard.press('Escape');
   // One photo a row, and a window that stops just above the second, which with 2 photos is the
-  // only way to have somewhere to scroll to.
+  // only way to have somewhere to scroll to. Measured once the grid has laid the row out, since a
+  // box read from the layout before it is a window that cuts through the first photo instead.
+  await expect
+    .poll(async () => {
+      const [first, second] = [
+        await frames(page).nth(0).boundingBox(),
+        await frames(page).nth(1).boundingBox(),
+      ];
+      return first != null && second != null && second.y >= first.y + first.height;
+    })
+    .toBe(true);
   const below = await frames(page).nth(1).boundingBox();
   if (below == null) throw new Error('the second photo has no box');
-  await page.setViewportSize({ width: 390, height: Math.floor(below.y) - 2 });
+  const foot = Math.floor(below.y) - 2;
+  await page.setViewportSize({ width: 390, height: foot });
   await expect(frames(page).nth(1)).not.toBeInViewport();
+  await expect
+    .poll(async () => {
+      const grid = await gallery(page).boundingBox();
+      return grid == null ? Infinity : grid.y + grid.height;
+    })
+    .toBeLessThanOrEqual(foot);
 
   const box = await gallery(page).boundingBox();
   if (box == null) throw new Error('the grid has no box');
-  expect(box.y + box.height).toBeLessThanOrEqual(Math.floor(below.y) - 2);
   const first = await centreOf(frames(page).nth(0));
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });

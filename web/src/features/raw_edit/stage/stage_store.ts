@@ -67,6 +67,12 @@ export class StageStore {
    */
   @observable accessor preparedElsewhere = false;
 
+  /** The level of a picture prepared elsewhere the module is holding tiles of, and its shape. */
+  @observable.ref accessor level: { number: number; canvas: [number, number] } | null = null;
+
+  /** Whether a window of that picture, or tiles of it, are on their way. */
+  @observable accessor fetchingWindow = false;
+
   /**
    * The sensor's noise as the open measured it off the mosaic, for the loupe to hand back.
    *

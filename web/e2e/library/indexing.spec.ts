@@ -3,6 +3,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
+import { PRECOMPILED_KEY } from '../../src/features/precompile/precompiled_key';
 import { INDEX_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import { forgetLibrary, gallery, gotoLibrary, openLibrary, tiles } from '../helpers';
 
@@ -92,7 +93,13 @@ test('the sort follows the collection rather than the browser it was set in', as
   await page.getByRole('option', { name: 'Recently added' }).click();
   await expect(sort).toHaveAccessibleName('Sort photos: Recently added');
 
-  await page.evaluate(() => localStorage.clear());
+  // All but the precompile marker the fixture seeds: without it the reload waits out a full shader
+  // precompile before the grid.
+  await page.evaluate((marker) => {
+    const kept = localStorage.getItem(marker);
+    localStorage.clear();
+    if (kept != null) localStorage.setItem(marker, kept);
+  }, PRECOMPILED_KEY);
   await page.reload();
   await expect(sort).toHaveAccessibleName('Sort photos: Recently added');
 });

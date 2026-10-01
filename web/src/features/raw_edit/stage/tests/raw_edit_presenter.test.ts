@@ -894,11 +894,11 @@ describe('the level a zoom is served at', () => {
       photoId: 'pan001',
       local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
       shown: { width: PAN_ROW.width, height: PAN_ROW.height },
-      // The whole picture at the coarsest level it has, which is what an open is handed: 4000
-      // canvas pixels across a picture of 8000, so the page's own pixels are twice the samples'.
-      level: { number: 1, canvas: [4000, 3000] },
       levelScale: 0.5,
     });
+    // The whole picture at the coarsest level it has, which is what an open is handed: 4000
+    // canvas pixels across a picture of 8000, so the page's own pixels are twice the samples'.
+    stage.level = { number: 1, canvas: [4000, 3000] };
     stage.preparedElsewhere = true;
     stage.stage = { width: 1600, height: 900 };
     decoder.pictureSize = { width: 4000, height: 3000 };
@@ -952,13 +952,36 @@ describe('the level a zoom is served at', () => {
     expect(stage.levels).toBeNull();
   });
 
+  test('a window pass taken over by a newer one settles only once the newer one has', async () => {
+    const fetching = globalThis.fetch;
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      await held;
+      return fetching(input, init);
+    }) as typeof globalThis.fetch;
+    stage.region = QUARTER;
+
+    let firstSettled = false;
+    const first = presenter.rewindow().then(() => {
+      firstSettled = true;
+    });
+    const second = presenter.rewindow();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(firstSettled).toBe(false);
+
+    release();
+    await Promise.all([first, second]);
+    expect(stage.level?.number).toBe(0);
+  });
+
   test('maps a framed zoom into the held level before asking for picture coverage', async () => {
     opened({
       photoId: 'pan001',
       local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
-      level: { number: 2, canvas: [2000, 1500] },
       levelScale: 0.25,
     });
+    stage.level = { number: 2, canvas: [2000, 1500] };
     const mapped: Region[] = [];
     decoder.picturePart = (region) => {
       mapped.push(region);

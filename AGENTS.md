@@ -224,7 +224,7 @@ Locate/assert through role, accessible name, text, label, aria state (`aria-sele
 If an element cannot be found, fix its semantics.
 
 Exception: hidden `raw-edit-diagnostics` in `raw_edit_stage.tsx` exposes GPU adapter,
-prepared/canvas sizes and camera-match status through `editDiagnostics` in
+prepared/canvas sizes, camera-match status and tile level/fetch state through `editDiagnostics` in
 `web/e2e/helpers.ts`. New hooks need equally non-user-visible data.
 
 Playwright `has:` resolves relative to its outer locator. Inside it, use

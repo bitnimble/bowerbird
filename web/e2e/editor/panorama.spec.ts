@@ -97,6 +97,11 @@ function regionWidth(url: string): number {
   return Number.isFinite(width) ? width : 1;
 }
 
+/** Whether a request is a prepare, and not one of the editor's own modules Vite serves by name. */
+function isPrepare(url: string): boolean {
+  return new URL(url).pathname.endsWith(route(PathSegment.prepare()));
+}
+
 /** Whether a prepare named a level and a rectangle of it, which is what a tile fetch is. */
 function isTileFetch(url: string): boolean {
   const query = new URL(url, 'http://library.test').searchParams;
@@ -111,19 +116,18 @@ test('zooming in fetches a finer level, and a pan after it fetches tiles', async
   // goes wrong leaves a canvas that is black rather than one that is wrong.
   const prepares: string[] = [];
   page.on('request', (request) => {
-    if (request.url().includes(route(PathSegment.prepare()))) prepares.push(request.url());
+    if (isPrepare(request.url())) prepares.push(request.url());
   });
 
+  // A bigger stage magnifies the open's level and asks for the finest at once, leaving the zoom
+  // nothing finer to ask for.
+  await page.setViewportSize({ width: 640, height: 480 });
   await openComposite(page);
   // The open asks for nothing: which level the whole picture fits at is the server's alone.
-  await expect.poll(() => prepares.length, { timeout: 60_000 }).toBeGreaterThan(0);
+  expect(prepares).toHaveLength(1);
   expect(prepares[0]).not.toContain('region=');
-  // It may well ask again straight away, and that is the ladder working rather than a fault: this
-  // canvas's coarsest level is a halving, so a stage with more pixels than the level has samples
-  // across it is magnifying from the first frame. What the zoom below has to do is ask for *less*
-  // of the picture than whatever it settles on here.
-  await page.waitForTimeout(1500);
-  const before = Math.min(...prepares.map(regionWidth));
+  const coarse = await editDiagnostics(page).getAttribute('data-level');
+  expect(coarse).not.toBeNull();
 
   // The keyboard's way to the zoom stops, which is a window listener the stage installs.
   await page.keyboard.press('+');
@@ -133,7 +137,22 @@ test('zooming in fetches a finer level, and a pan after it fetches tiles', async
   // on. Half or less, because a zoom stop is not a nudge.
   await expect
     .poll(() => Math.min(...prepares.map(regionWidth)), { timeout: 60_000 })
-    .toBeLessThan(before / 2);
+    .toBeLessThan(0.5);
+  // The zoom's pass under way: until it starts, nothing is fetching and the wait below passes.
+  await expect
+    .poll(
+      async () => {
+        const level = await editDiagnostics(page).getAttribute('data-level');
+        return level != null && level !== coarse;
+      },
+      { timeout: 60_000 },
+    )
+    .toBe(true);
+  // And its tiles in: a drag before then replaces the pass with a window reaching past the pan, or
+  // is credited with the zoom's own tiles.
+  await expect(editDiagnostics(page)).not.toHaveAttribute('data-fetching-window', {
+    timeout: 60_000,
+  });
 
   // **And the pan after it costs tiles rather than a window**, which is the whole point of the
   // grid: the level is in hand, so what is asked for is the rectangle the module says it is short
@@ -143,15 +162,17 @@ test('zooming in fetches a finer level, and a pan after it fetches tiles', async
   // keys it binds are the zoom stops and fullscreen.
   const viewport = await photoStage(page).boundingBox();
   if (viewport == null) throw new Error('the stage has no viewport to drag');
-  const middle = { x: viewport.x + viewport.width / 2, y: viewport.y + viewport.height / 2 };
-  await page.mouse.move(middle.x, middle.y);
-  await page.mouse.down();
-  // Far enough to leave the quarter-viewport `TILE_REACH` keeps in hand, in steps, since a pan is
-  // a stream of moves and one jump can read as a click.
-  for (let step = 1; step <= 8; step += 1) {
-    await page.mouse.move(middle.x - (viewport.width / 2) * (step / 8), middle.y);
+  const y = viewport.y + viewport.height / 2;
+  // Three widths of the stage, past the window the zoom took and the tiles around it whichever way
+  // it reached. In steps, since a pan is a stream of moves and one jump can read as a click.
+  for (let drag = 0; drag < 3; drag += 1) {
+    await page.mouse.move(viewport.x + viewport.width - 4, y);
+    await page.mouse.down();
+    for (let step = 1; step <= 8; step += 1) {
+      await page.mouse.move(viewport.x + viewport.width - 4 - (viewport.width - 8) * (step / 8), y);
+    }
+    await page.mouse.up();
   }
-  await page.mouse.up();
 
   await expect
     .poll(() => prepares.slice(settled).some(isTileFetch), { timeout: 60_000 })
@@ -219,7 +240,7 @@ test('a loop drawn on a zoomed panorama is offered fills, and one is kept', asyn
 test('moving the sharpening prepares the picture again at it', async ({ page }) => {
   const prepares: URL[] = [];
   page.on('request', (request) => {
-    if (request.url().includes(route(PathSegment.prepare()))) prepares.push(new URL(request.url()));
+    if (isPrepare(request.url())) prepares.push(new URL(request.url()));
   });
   await openComposite(page);
   const wasAt = await savedRev(page, panoramaId);

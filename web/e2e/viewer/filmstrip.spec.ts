@@ -65,10 +65,13 @@ test('an open stack is a spine, and the photograph on the stage is ringed inside
   // The frame the stack's tile would show is the first cell of its band, so it is
   // not drawn twice: no picture, and a bar's width rather than a cell's.
   await expect(spine.locator('img')).toHaveCount(0);
-  const bar = await spine.boundingBox();
-  const cell = await member.boundingBox();
-  if (bar == null || cell == null) throw new Error('the strip has no cells');
-  expect(bar.width).toBeLessThan(cell.width / 4);
+  // Polled: the strip sizes its cells from its own measured box, a frame after it mounts.
+  await expect
+    .poll(async () => {
+      const [bar, cell] = [await spine.boundingBox(), await member.boundingBox()];
+      return bar != null && cell != null && bar.width < cell.width / 4;
+    })
+    .toBe(true);
   // Back the way the band opened, which along the foot is sideways.
   await expect(spine.locator('svg.lucide-chevron-left')).toHaveCount(1);
 
@@ -82,12 +85,14 @@ test('an open stack is a spine, and the photograph on the stage is ringed inside
   // across the axis - a spine is thin the other way, and the chevron turns with it.
   await page.setViewportSize({ width: 1600, height: 800 });
   await expect(strip).toHaveCSS('overflow-y', 'auto');
-  const sideBar = await spine.boundingBox();
-  const sideCell = await member.boundingBox();
-  if (sideBar == null || sideCell == null) throw new Error('the strip has no cells');
   // Half rather than the quarter the other axis is held to: a cell down the side is
   // as tall as the strip is wide, which is a fraction of how wide one is along the
   // foot, and the spine is the same bar either way.
-  expect(sideBar.height).toBeLessThan(sideCell.height / 2);
+  await expect
+    .poll(async () => {
+      const [bar, cell] = [await spine.boundingBox(), await member.boundingBox()];
+      return bar != null && cell != null && bar.height < cell.height / 2;
+    })
+    .toBe(true);
   await expect(spine.locator('svg.lucide-chevron-up')).toHaveCount(1);
 });

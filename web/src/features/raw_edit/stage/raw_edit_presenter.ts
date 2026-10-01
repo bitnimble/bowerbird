@@ -511,8 +511,9 @@ export class RawEditPresenter {
     return this.photoId;
   }
 
+  @action.bound
   clearLevel(): void {
-    this.level = null;
+    this.stage.level = null;
   }
 
   @action.bound
@@ -771,8 +772,16 @@ export class RawEditPresenter {
    *
    * One in flight, and the newer wins: a reader who zooms, waits, and zooms again would otherwise
    * have two windows racing to be the one drawn, and the loser is the one they can see.
+   *
+   * Settles once the frame holds what was asked for, which may be the newer pass's doing: a repair
+   * drawn, or a search read, off a frame whose tiles are still on their way finds nothing under it.
    */
   async rewindow(): Promise<void> {
+    await this.rewindowOnce();
+    while (this.rewindowing != null) await this.windowPass;
+  }
+
+  private async rewindowOnce(): Promise<void> {
     const photoId = this.photoId;
     const region = this.stage.region;
     const stage = this.stage.stage;
@@ -791,6 +800,9 @@ export class RawEditPresenter {
     this.rewindowing?.abort();
     const attempt = new AbortController();
     this.rewindowing = attempt;
+    this.setFetchingWindow(true);
+    let passed = (): void => {};
+    this.windowPass = new Promise((resolve) => (passed = resolve));
     const mine = (): boolean => !this.closed && this.rewindowing === attempt;
 
     try {
@@ -828,7 +840,7 @@ export class RawEditPresenter {
         this.describe(kept, true);
       }
 
-      const level = this.level;
+      const level = this.stage.level;
       if (!mine() || level == null) return;
       // Bounded, because the loop's exit is the module saying it is no longer short of anything:
       // one round fetches, the next assembles. A third would mean a square that cannot be stored,
@@ -861,8 +873,17 @@ export class RawEditPresenter {
       if (attempt.signal.aborted) return;
       this.fail(error instanceof Error ? error.message : String(error));
     } finally {
-      if (this.rewindowing === attempt) this.rewindowing = null;
+      if (this.rewindowing === attempt) {
+        this.rewindowing = null;
+        this.setFetchingWindow(false);
+      }
+      passed();
     }
+  }
+
+  @action.bound
+  private setFetchingWindow(fetching: boolean): void {
+    this.stage.fetchingWindow = fetching;
   }
 
   /**
@@ -882,7 +903,7 @@ export class RawEditPresenter {
     // **The level, so a pan can ask for tiles of it.** Named back by the header rather than worked
     // out here, because deriving it from the canvas against the picture is a second copy of
     // `composite_job::sized` - rounding, composite ceiling and all.
-    this.level = { number: header.level ?? 0, canvas: [canvasWide, canvasTall] };
+    this.stage.level = { number: header.level ?? 0, canvas: [canvasWide, canvasTall] };
     // The picture's own pixels, said by the side that knows how many halvings it has. A reader
     // zoomed past 1:1 is looking at the bottom rung, and without this every pan for the rest of
     // the open costs a round trip for a picture identical to the one on screen.
@@ -901,15 +922,15 @@ export class RawEditPresenter {
     region: { x: number; y: number; width: number; height: number };
     stage: number;
   }): boolean {
-    const level = this.level;
+    const level = this.stage.level;
     if (level == null) return false;
     return this.atFinest || shown.region.width * level.canvas[0] >= shown.stage;
   }
 
   private windowTimer: ReturnType<typeof setTimeout> | null = null;
   private rewindowing: AbortController | null = null;
-  /** The level the module is holding tiles of, and that level's own shape. */
-  private level: { number: number; canvas: [number, number] } | null = null;
+  /** Settles when the pass `rewindowing` belongs to does. */
+  private windowPass: Promise<void> = Promise.resolve();
   /** Whether the server has already answered a finer ask with the level it had just served. */
   private atFinest = false;
   private commit(): Promise<void> {

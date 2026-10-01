@@ -507,6 +507,8 @@ export const RawEditStage = observer(function RawEditStage({
             : `${stageStore.stage.width}x${stageStore.stage.height}`
         }
         data-matched={stageStore.matched}
+        data-level={stageStore.level?.number}
+        data-fetching-window={stageStore.fetchingWindow || undefined}
         data-rendered-mode={stageStore.renderedMode ?? undefined}
       />
       <OpenStatus stage={stageStore} />

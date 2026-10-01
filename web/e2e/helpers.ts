@@ -575,7 +575,9 @@ export function editPreview(page: Page): Locator {
 
 /**
  * The editor's hidden readout of what no control shows: `data-adapter`, `data-size` (the prepared
- * frame), `data-stage` (the canvas backing size asked of the worker) and `data-matched`.
+ * frame), `data-stage` (the canvas backing size asked of the worker), `data-matched`, and for a
+ * picture prepared elsewhere `data-level` (the level whose tiles the module holds) and
+ * `data-fetching-window` (present while a window or tiles of it are on their way).
  */
 export function editDiagnostics(page: Page): Locator {
   return page.getByTestId('raw-edit-diagnostics');
