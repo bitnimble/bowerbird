@@ -15,7 +15,7 @@
 //   frame's own extent through `measured`, or from a `Share` of the picture resolved against that
 //   extent - so two distances in one shader trace back to one frame.
 //
-// **Nothing here survives into the WGSL.** A `Span` is one `uint` in a struct with no methods that
+// **No type here survives into the WGSL.** A `Span` is one `uint` in a struct with no methods that
 // touch memory, and Slang monomorphises the generic away, so what a host binds and what a lane
 // reads are the numbers they always were. `the_generic_pixels_cost_nothing` holds that.
 //
@@ -59,6 +59,8 @@
 // declaration; what walks the loop is the number.
 module px;
 
+import times;
+
 /// A picture a number can be a number of.
 public interface ISpace {}
 
@@ -87,7 +89,7 @@ public struct Texel : ISpace {}
 /// The stage the editor draws onto, in the pixels the browser hands out.
 public struct Canvas : ISpace {}
 
-/// The camera match's own plane, a fixed 1280 across the photograph.
+/// The camera match's own plane, at the fixed long edge its fit sets (`FIT_LONG_EDGE`).
 public struct FitPlane : IAbsolute {}
 
 /// The plane a composite's geometry search runs on: the frames' embedded JPEGs, brought to one
@@ -156,6 +158,7 @@ public Span<S> exact<S : IAbsolute>(uint n)
 ///
 /// Rare on purpose. It belongs where a frame's extent arrives from the uniform and nowhere else,
 /// because everything downstream of it can be derived.
+[ForceInline]
 public Span<S> measured<S : ISpace>(uint n)
 {
     Span<S> span;
@@ -195,4 +198,36 @@ public Span<S> times<S : ISpace>(Span<S> a, uint by)
     Span<S> span;
     span.n = a.n * by;
     return span;
+}
+
+/// A number that grows with a whole plane of `S`'s pixels and can pass 2^24: a place in it counted
+/// along its rows, or a count of them. `wide * 3` is that pixel's first value in a three-to-a-pixel
+/// buffer, or for a count, the count of values.
+public struct Wide<S : ISpace> {
+    public uint n;
+}
+
+/// The pixel at `(x, y)` of a plane `width` of `S`'s pixels across.
+[ForceInline]
+public Wide<S> wide_at<S : ISpace>(uint x, uint y, Span<S> width)
+{
+    Wide<S> wide;
+    wide.n = y * width.n + x;
+    return wide;
+}
+
+/// A place or a count in `S` that arrives already flat: a pixel a dispatch runs over, a plane's area.
+[ForceInline]
+public Wide<S> wide<S : ISpace>(uint n)
+{
+    Wide<S> wide;
+    wide.n = n;
+    return wide;
+}
+
+[ForceInline]
+public uint operator*<S : ISpace>(Wide<S> wide, uint per)
+{
+    // Never `wide.n * per`: Adreno truncates it past 2^24 (`times.slang`).
+    return times(wide.n, per);
 }

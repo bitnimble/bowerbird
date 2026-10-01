@@ -12,6 +12,7 @@
 // Through `nits_of_code`, not a host-side decode: the grade has one implementation (21.1),
 // and this average has to sit exactly where the grade's own reads sit.
 import packed;
+import px;
 
 struct Push {
     uint width;
@@ -49,7 +50,7 @@ void mean(uint3 id : SV_DispatchThreadID)
     var count = 0.0;
     for (uint y = y0; y < y1; y++) {
         for (uint x = x0; x < x1; x++) {
-            let base = (y * pc.width + x) * 3;
+            let base = wide_at<Drawn>(x, y, measured<Drawn>(pc.width)) * 3;
             sum += float3(
                 nits_of_code[half_of(frame[base / 2], base)],
                 nits_of_code[half_of(frame[(base + 1) / 2], base + 1)],

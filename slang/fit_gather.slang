@@ -7,6 +7,8 @@
 // plane. Gathered here they never leave the device; gathered on the host they were a two megabyte
 // upload each time.
 
+import px;
+
 struct Params {
     int count;
     /// Pixels across the plane, which the indices are into.
@@ -37,8 +39,9 @@ void fit_gather(uint3 id: SV_DispatchThreadID)
     // otherwise walk off the end of it rather than say so.
     if (p >= pc.pixels) { return; }
 
-    samples[k * 4] = plane[p * 3];
-    samples[k * 4 + 1] = plane[p * 3 + 1];
-    samples[k * 4 + 2] = plane[p * 3 + 2];
+    let i = wide<FitPlane>(p) * 3;
+    samples[k * 4] = plane[i];
+    samples[k * 4 + 1] = plane[i + 1];
+    samples[k * 4 + 2] = plane[i + 2];
     samples[k * 4 + 3] = pc.surrounded != 0 ? surround[p] : 0.0;
 }

@@ -16,6 +16,8 @@
 // still finds - the correlation peak widens rather than moving - and the roll itself is solved
 // later, from the dense correspondences a translation is accurate enough to seed.
 
+import times;
+
 struct Push {
     int a_width;
     int a_height;
@@ -102,7 +104,8 @@ void composite_coarse(uint3 id: SV_DispatchThreadID)
     let smaller = min(pc.a_width * pc.a_height, pc.b_width * pc.b_height);
     let overlap = n * float(STRIDE * STRIDE) / float(smaller);
     let weight = min(1.0, overlap / pc.overlap_full);
-    scored[3 * candidate] = zncc * weight;
-    scored[3 * candidate + 1] = float(dx);
-    scored[3 * candidate + 2] = float(dy);
+    let at = times(candidate, 3);
+    scored[at] = zncc * weight;
+    scored[at + 1] = float(dx);
+    scored[at + 2] = float(dy);
 }

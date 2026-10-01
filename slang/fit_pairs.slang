@@ -15,6 +15,7 @@
 import prelude;
 import primaries;
 import fit_class;
+import px;
 
 struct Params {
     int width;
@@ -130,8 +131,17 @@ static const uint HUES = 6;
 /// Words a pair's record occupies.
 static const uint PAIR_WORDS = 5;
 
-float3 render_at(int p) { return float3(render[p * 3], render[p * 3 + 1], render[p * 3 + 2]); }
-float3 jpeg_at(int p) { return float3(jpeg[p * 3], jpeg[p * 3 + 1], jpeg[p * 3 + 2]); }
+float3 render_at(int p)
+{
+    let at = wide<FitPlane>(p) * 3;
+    return float3(render[at], render[at + 1], render[at + 2]);
+}
+
+float3 jpeg_at(int p)
+{
+    let at = wide<FitPlane>(p) * 3;
+    return float3(jpeg[at], jpeg[at + 1], jpeg[at + 2]);
+}
 
 float high_of(float3 v) { return max(v.x, max(v.y, v.z)); }
 float low_of(float3 v) { return min(v.x, min(v.y, v.z)); }

@@ -17,6 +17,7 @@
 // already holds it; a second copy here is the kind that stays right until somebody retunes one.
 import lanes;
 import packed;
+import px;
 
 struct Params {
     uint width;
@@ -55,7 +56,7 @@ void defringe_luma(uint3 id : SV_DispatchThreadID)
 {
     let at = linear(id);
     if (at >= params.width * params.height) { return; }
-    let p = at * 3;
+    let p = wide<Drawn>(at) * 3;
     let rgb = float3(sample_at(p), sample_at(p + 1), sample_at(p + 2));
     luma[at] = dot(params.luma, rgb) / params.full;
 }
@@ -82,7 +83,7 @@ float3 corrected(uint pixel)
     let green = (params.luma.r * params.k_red + params.luma.b * params.k_blue) / params.luma.g;
     let shift = float3(-params.k_red, green, -params.k_blue) * curvature * params.full;
 
-    let p = pixel * 3;
+    let p = wide<Drawn>(pixel) * 3;
     return float3(sample_at(p), sample_at(p + 1), sample_at(p + 2)) + shift;
 }
 
@@ -112,5 +113,5 @@ void defringe_apply(uint3 id : SV_DispatchThreadID)
         b = corrected(first + 1);
     }
 
-    store_pair(frame, pair, level_of(a), level_of(b), paired, true);
+    store_pair(frame, wide<Drawn>(first), level_of(a), level_of(b), paired, true);
 }

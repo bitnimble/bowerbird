@@ -28,6 +28,8 @@ import prelude;
 import light;
 import packed;
 import orientation;
+import px;
+import times;
 
 struct Params {
     /// The decoded picture, in the orientation its bytes are in.
@@ -107,7 +109,7 @@ float3 light_at(uint x, uint y)
 {
     let row = min(y, params.src_height - 1) - params.strip_top;
     let column = min(x, params.src_width - 1) - params.strip_left;
-    let base = (row * params.strip_width + column) * 3;
+    let base = wide_at<Drawn>(column, row, measured<Drawn>(params.strip_width)) * 3;
     if (params.float_samples != 0) {
         let stored = float3(asfloat(codes[base]), asfloat(codes[base + 1]), asfloat(codes[base + 2]));
         // A NaN would reach the final `uint()` as one, which WGSL leaves undefined.
@@ -115,9 +117,9 @@ float3 light_at(uint x, uint y)
         return sample * params.sample_scale.xyz + params.sample_offset.xyz;
     }
     return float3(
-        table[sample_at(codes, base) * 3],
-        table[sample_at(codes, base + 1) * 3 + 1],
-        table[sample_at(codes, base + 2) * 3 + 2]);
+        table[times(sample_at(codes, base), 3)],
+        table[times(sample_at(codes, base + 1), 3) + 1],
+        table[times(sample_at(codes, base + 2), 3) + 2]);
 }
 
 /// The gain map at a point of the source, bilinear, as its three normalised recovery values.
@@ -150,7 +152,7 @@ float3 recovery_at(uint x, uint y)
     let at = uint4(y0 * params.gain_width + x0, y0 * params.gain_width + x1,
                    y1 * params.gain_width + x0, y1 * params.gain_width + x1);
     for (uint k = 0; k < 4; k = k + 1) {
-        let base = at[k] * 3;
+        let base = wide<Drawn>(at[k]) * 3;
         corner[k] = float3(
             sample_at(gain_map, base),
             sample_at(gain_map, base + 1),
@@ -249,7 +251,7 @@ uint sample_of(uint sample)
 void linearise(uint3 id : SV_DispatchThreadID)
 {
     let word = params.first_word + linear(id);
-    let samples = params.out_width * params.out_height * 3;
+    let samples = wide<Drawn>(params.out_width * params.out_height) * 3;
     if (word >= params.end_word || word * 2 >= samples) { return; }
 
     let low = sample_of(word * 2);

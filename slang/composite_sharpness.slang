@@ -8,6 +8,7 @@
 import lanes;
 import packed;
 import prelude;
+import px;
 
 struct Params {
     uint width;
@@ -35,7 +36,7 @@ float luma_at(int x, int y)
 {
     let cx = uint(clamp(x, 0, int(params.width) - 1));
     let cy = uint(clamp(y, 0, int(params.height) - 1));
-    let base = (cy * params.width + cx) * 3;
+    let base = wide_at<Drawn>(cx, cy, measured<Drawn>(params.width)) * 3;
     let light = float3(
         light_of_code[half_of(layer[base / 2], base)],
         light_of_code[half_of(layer[(base + 1) / 2], base + 1)],

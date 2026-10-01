@@ -20,6 +20,7 @@
 // puts blue on every red whose bound would have held it down.
 
 import prelude;
+import times;
 
 struct Params {
     int pairs;
@@ -72,8 +73,8 @@ void row_none(out Row row)
 /// A pair into output row `o` of the matrix at `m`.
 void row_take(inout Row row, int m, int o, float3 v, float4 t, float w)
 {
-    let predicted = matrices[m + o * 3] * v.x + matrices[m + o * 3 + 1] * v.y
-        + matrices[m + o * 3 + 2] * v.z;
+    let at = m + times(o, 3);
+    let predicted = matrices[at] * v.x + matrices[at + 1] * v.y + matrices[at + 2] * v.z;
     let measured = trust(t[o]);
     let over = predicted > t[o] ? 1.0 : 0.0;
     let wo = w * (measured + (1.0 - measured) * over);
@@ -89,7 +90,7 @@ void row_write(Row row, int at, int o)
         partial[at + o * 9 + c] = row.ata0[c];
         partial[at + o * 9 + 3 + c] = row.ata1[c];
         partial[at + o * 9 + 6 + c] = row.ata2[c];
-        partial[at + 27 + o * 3 + c] = row.atb[c];
+        partial[at + 27 + times(o, 3) + c] = row.atb[c];
     }
 }
 

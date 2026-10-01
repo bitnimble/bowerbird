@@ -14,6 +14,8 @@
 // COARSE, so the frame is read once rather than at two resolutions. Luma is weighed out of the same
 // sums, so the whole descriptor comes off one dispatch.
 import lanes;
+import px;
+import times;
 
 struct Params {
     int width;
@@ -50,7 +52,7 @@ void gather(int base, int x, int y, int left, int top, int w, int h, uint3 rgb)
     if (x < left || y < top || x >= left + w || y >= top + h) { return; }
     let gx = ((x - left) * pc.cells) / w;
     let gy = ((y - top) * pc.cells) / h;
-    let cell = base + (gy * pc.cells + gx) * 3;
+    let cell = base + times(gy * pc.cells + gx, 3);
     sums[cell].add(rgb.x);
     sums[cell + 1].add(rgb.y);
     sums[cell + 2].add(rgb.z);
@@ -64,12 +66,12 @@ void stacks_cells(uint3 id: SV_DispatchThreadID)
     if (at >= uint(pc.pixels)) { return; }
 
     let pixel = int(at);
-    let i = pixel * 3;
+    let i = int(wide<Output>(at) * 3);
     let rgb = uint3(sample_at(i), sample_at(i + 1), sample_at(i + 2));
     let y = pixel / pc.width;
     let x = pixel - y * pc.width;
 
     gather(0, x, y, pc.x0, pc.y0, pc.w, pc.h, rgb);
-    let crop = pc.cells * pc.cells * 3;
+    let crop = times(pc.cells * pc.cells, 3);
     gather(crop, x, y, pc.crop_x0, pc.crop_y0, pc.crop_w, pc.crop_h, rgb);
 }

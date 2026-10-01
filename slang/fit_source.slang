@@ -10,6 +10,7 @@
 import prelude;
 import packed;
 import footprint;
+import px;
 
 struct Params {
     int width;
@@ -70,12 +71,12 @@ void fit_resize(uint3 id: SV_DispatchThreadID)
     var acc = float3(0.0);
     for (int y = b.z; y < b.w; y++) {
         for (int x = b.x; x < b.y; x++) {
-            let i = (y * pc.width + x) * 3;
+            let i = wide_at<Drawn>(x, y, measured<Drawn>(pc.width)) * 3;
             acc += float3(sample_at(i), sample_at(i + 1), sample_at(i + 2));
         }
     }
     let n = float((b.w - b.z) * (b.y - b.x));
-    let out = (dy * pc.out_width + dx) * 3;
+    let out = wide_at<FitPlane>(dx, dy, measured<FitPlane>(pc.out_width)) * 3;
     plane[out] = acc.x / n;
     plane[out + 1] = acc.y / n;
     plane[out + 2] = acc.z / n;
@@ -112,7 +113,7 @@ uint spread_index(uint k, uint pixels, uint counted)
 void fit_levels(uint3 id: SV_DispatchThreadID)
 {
     if (int(id.x) >= pc.counted) { return; }
-    let i = int(3u * spread_index(id.x, uint(pc.pixels), uint(pc.counted)));
+    let i = int(wide<Drawn>(spread_index(id.x, uint(pc.pixels), uint(pc.counted))) * 3);
     let brightest = max(sample_at(i), max(sample_at(i + 1), sample_at(i + 2)));
     histogram[uint(brightest)].add(1);
 }
@@ -181,7 +182,7 @@ void fit_render(uint3 id: SV_DispatchThreadID)
     if (x >= pc.out_width || y >= pc.out_height) { return; }
 
     let white = levels[0];
-    let i = (y * pc.out_width + x) * 3;
+    let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.out_width)) * 3;
     // A frame whose quantile landed on level 0 - a lens cap, a failed exposure - has no white to
     // divide by. `Levels::anchored` floors it on the host for the grade; here the render is simply
     // black, which is what such a frame is.

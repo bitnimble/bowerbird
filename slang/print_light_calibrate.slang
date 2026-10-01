@@ -4,6 +4,7 @@ import primaries;
 import prelude;
 import print_glass;
 import print_environment;
+import times;
 
 struct Lamp { float4 shape; float4 temperature; };
 [vk::binding(0, 0)] ConstantBuffer<Lamp> light;
@@ -110,7 +111,7 @@ void room_calibration()
     calibration[6] = scale;
     for (uint band = 0; band < 9; band += 1) {
         for (uint channel = 0; channel < 3; channel += 1) {
-            calibration[ROOM_BANDS + band * 3 + channel] = scale * irradiance[band][channel];
+            calibration[ROOM_BANDS + times(band, 3) + channel] = scale * irradiance[band][channel];
         }
     }
 }

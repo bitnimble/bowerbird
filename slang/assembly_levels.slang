@@ -8,6 +8,7 @@
 import lanes;
 import packed;
 import prelude;
+import px;
 
 static const uint MOST_SOURCES = 12;
 static const float NOT_REACHED = -1e30;
@@ -74,7 +75,7 @@ uint cells()
 /// squares it.
 float level_at(uint pixel)
 {
-    let base = pixel * 3;
+    let base = wide<Drawn>(pixel) * 3;
     let rgb = float3(
         light_of_code[code_at(base)],
         light_of_code[code_at(base + 1)],
@@ -89,7 +90,7 @@ float level_at(uint pixel)
 
 bool is_clipped(uint pixel)
 {
-    let base = pixel * 3;
+    let base = wide<Drawn>(pixel) * 3;
     return code_at(base) == 65535 || code_at(base + 1) == 65535 || code_at(base + 2) == 65535;
 }
 
@@ -118,9 +119,10 @@ void assembly_tint(uint3 id : SV_DispatchThreadID)
     let y0 = (cell / cells_across()) * params.shrink;
     var sum = float3(0.0);
     var n = 0u;
+    let width = measured<Drawn>(params.size.x);
     for (uint y = y0; y < min(y0 + params.shrink, params.size.y); y = y + 1) {
         for (uint x = x0; x < min(x0 + params.shrink, params.size.x); x = x + 1) {
-            let base = (y * params.size.x + x) * 3;
+            let base = wide_at<Drawn>(x, y, width) * 3;
             let rgb = float3(
                 light_of_code[code_at(base)],
                 light_of_code[code_at(base + 1)],

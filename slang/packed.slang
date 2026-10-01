@@ -5,6 +5,8 @@
 // arithmetic that rounds back into `u16` anyway.
 module packed;
 
+import px;
+
 /// The half of `word` that sample `at` occupies.
 ///
 /// **The only statement of which half is which, and that is the reason it is a module.** The
@@ -16,14 +18,16 @@ public uint half_of(uint word, uint at)
     return select((at & 1) == 0, word & 0xffff, word >> 16);
 }
 
-/// Pixel pair `pair` of a frame three codes to a pixel: its three words, of which only the first
-/// one and a half exist where `b` would fall past the end of an odd-sized frame.
+/// The pixel pair starting at even pixel `first` of a frame three codes to a pixel: its three words,
+/// of which only the first one and a half exist where `b` would fall past the end of an odd-sized
+/// frame.
 ///
 /// `keep_padding` is for a frame written in place, whose last half-word is not this pass's to
 /// clear.
-public void store_pair(RWStructuredBuffer<uint> words, uint pair, uint3 a, uint3 b, bool paired, bool keep_padding)
+public void store_pair(
+    RWStructuredBuffer<uint> words, Wide<Drawn> first, uint3 a, uint3 b, bool paired, bool keep_padding)
 {
-    let word = pair * 3;
+    let word = first * 3 / 2;
     words[word] = a.r | (a.g << 16);
     if (paired) {
         words[word + 1] = a.b | (b.r << 16);

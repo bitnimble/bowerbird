@@ -27,6 +27,8 @@
 import lanes;
 import prelude;
 import light;
+import px;
+import times;
 
 struct Params {
     /// Row stride of the source plane, in pixels: the region RCD ran over, halo included.
@@ -326,7 +328,7 @@ uint channel_of(float3 held, uint channel)
 /// is what the budget records, the 61MP frame's reduced walk went from 118ms to 71 against 105.7.
 float3 pixel_of(uint2 site)
 {
-    let base = (site.y * params.stride + site.x) * 3;
+    let base = wide_at<Sensor>(site.x, site.y, measured<Sensor>(params.stride)) * 3;
     // Off the mosaic rather than off the interpolation, which is the whole point of the correction:
     // beside a blown stroke the neighbours RCD reconstructs from are the blown ones, so the plane
     // reports a channel at its ceiling well before that channel's own wells are full.
@@ -367,18 +369,18 @@ float3 pixel_of_reduced<let SIDE : int>(uint2 at)
     // them together; the walk this replaced took `top`, `top + 1`, `top + stride` and read two
     // dwords at a time. On an adapter whose memory is the system's that is the difference between
     // two fetches a pixel and four.
-    let top = (uint(at.y) * uint(side)) * params.stride + uint(at.x) * uint(side);
+    let top = times(uint(at.y), uint(side)) * params.stride + times(uint(at.x), uint(side));
     [ForceUnroll]
     for (int dy = 0; dy < side; dy = dy + 1) {
         let row = top + uint(dy) * params.stride;
-        let sy = int(at.y) * side + dy;
+        let sy = times(int(at.y), side) + dy;
         [ForceUnroll]
         for (int dx = 0; dx < side; dx = dx + 1) {
             let value = rgb[row + uint(dx)];
             // Three scalar accumulations rather than a masked vector one: the mask spends three
             // compares, three conversions and six fused multiplies where this spends one compare
             // and two adds, and only one of the three is ever live.
-            let colour = colour_of(cfa, sy, int(at.x) * side + dx);
+            let colour = colour_of(cfa, sy, times(int(at.x), side) + dx);
             if (colour == 0) { sums.r += value; counts.r += 1.0; }
             else if (colour == 2) { sums.b += value; counts.b += 1.0; }
             else { sums.g += value; counts.g += 1.0; }
@@ -415,7 +417,7 @@ uint owned_word(uint3 group, uint3 local, uint3 id)
     let across = group.x * PATCH + local.x % PATCH;
     let down = group.y * PATCH + local.x / PATCH;
     if (across >= params.tile_across || down >= params.tile_rows) { return ~0u; }
-    let row_words = params.out_width * 3 / 2;
+    let row_words = times(params.out_width, 3) / 2;
     return (params.tile_row + down) * row_words + params.tile_word + across;
 }
 
@@ -442,7 +444,7 @@ void put(uint word, uint2 low, uint2 high)
 void assemble_rec2020(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
 {
     let word = owned_word(group, local, id);
-    let samples = params.out_width * params.out_height * 3;
+    let samples = wide<Drawn>(params.out_width * params.out_height) * 3;
     if (word == ~0u || word * 2 >= samples) { return; }
 
     let a = source_for(word * 2);
@@ -474,7 +476,7 @@ void assemble_rec2020(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, 
 void assemble_block<let SIDE : int>(uint3 id, uint3 group, uint3 local)
 {
     let word = owned_word(group, local, id);
-    let samples = params.out_width * params.out_height * 3;
+    let samples = wide<Drawn>(params.out_width * params.out_height) * 3;
     if (word == ~0u || word * 2 >= samples) { return; }
 
     let a = source_for(word * 2);

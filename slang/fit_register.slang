@@ -9,6 +9,7 @@
 // the prefiltered ones first: blur is a poor answer to misregistration but it is a bounded one,
 // where a sharp read at an unverified location is not.
 import prelude;
+import px;
 
 struct Params {
     int width;
@@ -39,7 +40,7 @@ struct Params {
 
 float3 rgb_at(StructuredBuffer<float> plane, int x, int y)
 {
-    let i = (y * pc.wide_width + x) * 3;
+    let i = wide_at<FitPlane>(x, y, measured<FitPlane>(pc.wide_width)) * 3;
     return float3(plane[i], plane[i + 1], plane[i + 2]);
 }
 
@@ -81,10 +82,11 @@ void fit_register(uint3 id: SV_DispatchThreadID)
     // ones: this takes a sample rather than resampling, and the nearest is the one it means.
     let target = sample_at(theirs, x + int(round(found[4 * p])), y + int(round(found[4 * p + 1])));
 
-    render[p * 3] = mine.x;
-    render[p * 3 + 1] = mine.y;
-    render[p * 3 + 2] = mine.z;
-    jpeg[p * 3] = target.x;
-    jpeg[p * 3 + 1] = target.y;
-    jpeg[p * 3 + 2] = target.z;
+    let i = wide<FitPlane>(p) * 3;
+    render[i] = mine.x;
+    render[i + 1] = mine.y;
+    render[i + 2] = mine.z;
+    jpeg[i] = target.x;
+    jpeg[i + 1] = target.y;
+    jpeg[i + 2] = target.z;
 }

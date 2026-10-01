@@ -6,6 +6,7 @@
 import packed;
 import prelude;
 import light;
+import px;
 
 struct Params {
     uint width;
@@ -34,7 +35,7 @@ void content_light(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
 {
     var top = 0.0;
     if (id.x < params.width && id.y < params.height) {
-        let p = (id.y * params.width + id.x) * 3;
+        let p = wide_at<Output>(id.x, id.y, measured<Output>(params.width)) * 3;
         let r = nits_of(half_of(frame[p / 2], p));
         let g = nits_of(half_of(frame[(p + 1) / 2], p + 1));
         let b = nits_of(half_of(frame[(p + 2) / 2], p + 2));

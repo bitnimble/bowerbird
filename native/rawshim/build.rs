@@ -262,6 +262,35 @@ fn compile(slangc: &Path, from: &Path, to: &Path, entry_points: &[String], defin
             String::from_utf8_lossy(&run.stderr),
         );
     }
+    if to.extension().and_then(|it| it.to_str()) == Some("wgsl") {
+        refuse_multiplies_by_three(from, to);
+    }
+}
+
+/// Every integer times three in a stage, which `slang/times.slang` says no shader may hold: no
+/// desktop adapter miscomputes one, so nothing but this would notice.
+fn refuse_multiplies_by_three(from: &Path, wgsl: &Path) {
+    let source =
+        std::fs::read_to_string(wgsl).unwrap_or_else(|e| panic!("{}: {e}", wgsl.display()));
+    let offenders: Vec<String> = source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| {
+            let packed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+            ["*u32(3)", "*i32(3)", "u32(3)*", "i32(3)*"]
+                .iter()
+                .any(|spelled| packed.contains(spelled))
+        })
+        .map(|(at, line)| format!("  line {}: {}", at + 1, line.trim()))
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "{} multiplies an integer by three, which Adreno truncates past 2^24. A place or count in a \
+         plane is `wide * 3` with a `px.slang` `Wide`, anything else `times(x, 3)` \
+         (`slang/times.slang`):\n{}",
+        from.display(),
+        offenders.join("\n"),
+    );
 }
 
 /// AVIF, encode and decode, which only a `renditions` build binds.

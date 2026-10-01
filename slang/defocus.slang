@@ -30,6 +30,8 @@
 // `base::measure_defocus` holds the six-number fit those feed, and says where the line is drawn.
 import lanes;
 import packed;
+import px;
+import times;
 
 /// `image::DEFOCUS_BINS`, `DEFOCUS_STRIDE` and `NOISE_BINS`. The host asserts all three, because a
 /// frame binned one way and fitted another has no error that shows.
@@ -76,7 +78,7 @@ float sample_at(uint at)
 /// after, or the response and the regressor round differently from the CPU's.
 float luma_at(uint x, uint y)
 {
-    let p = (y * params.width + x) * 3;
+    let p = wide_at<Drawn>(x, y, measured<Drawn>(params.width)) * 3;
     return dot(params.luma, float3(sample_at(p), sample_at(p + 1), sample_at(p + 2))) / 65535.0;
 }
 
@@ -90,7 +92,7 @@ void defocus_bins(uint3 id : SV_DispatchThreadID)
 {
     let segment = linear(id);
     if (segment >= params.rows * params.segments) { return; }
-    let y = 1 + (segment / params.segments) * STRIDE;
+    let y = 1 + times(segment / params.segments, STRIDE);
     let dy = float(y) - params.cy;
 
     float cross_red[BINS];
@@ -108,12 +110,13 @@ void defocus_bins(uint3 id : SV_DispatchThreadID)
 
     let first = (segment % params.segments) * PER_SEGMENT;
     let last = min(first + PER_SEGMENT, params.samples_x);
+    let width = measured<Drawn>(params.width);
     for (uint s = first; s < last; s++) {
-        let x = 1 + s * STRIDE;
+        let x = 1 + times(s, STRIDE);
         let here = luma_at(x, y);
         let curvature = luma_at(x - 1, y) + luma_at(x + 1, y) + luma_at(x, y - 1)
             + luma_at(x, y + 1) - 4.0 * here;
-        let p = (y * params.width + x) * 3;
+        let p = wide_at<Drawn>(x, y, width) * 3;
         // Against luma rather than against green, as the correction is applied.
         let red = sample_at(p) / 65535.0 - here;
         let blue = sample_at(p + 2) / 65535.0 - here;
@@ -150,15 +153,17 @@ void defocus_residuals(uint3 id : SV_DispatchThreadID)
     let y0 = max(y, 1) - 1;
     let y1 = min(y + 1, params.height - 1);
     let window = float((x1 - x0 + 1) * (y1 - y0 + 1));
+    let width = measured<Drawn>(params.width);
+    let pixel = wide<Drawn>(at);
 
     for (uint channel = 0; channel < 3; channel++) {
         float sum = 0.0;
         for (uint yy = y0; yy <= y1; yy++) {
             for (uint xx = x0; xx <= x1; xx++) {
-                sum += sample_at((yy * params.width + xx) * 3 + channel) / 65535.0;
+                sum += sample_at(wide_at<Drawn>(xx, yy, width) * 3 + channel) / 65535.0;
             }
         }
-        let residual = abs(sample_at(at * 3 + channel) / 65535.0 - sum / window);
+        let residual = abs(sample_at(pixel * 3 + channel) / 65535.0 - sum / window);
         let slot = min(uint(residual / params.noise_max * float(NOISE_BINS)), NOISE_BINS - 1);
         residuals[channel * NOISE_BINS + slot].add(1);
     }

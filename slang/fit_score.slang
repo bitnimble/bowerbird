@@ -19,6 +19,7 @@
 
 import prelude;
 import fit_class;
+import times;
 
 struct Params {
     int pairs;
@@ -115,7 +116,7 @@ int bucket_of(float3 lab)
     let chroma = chroma_of(lab);
     let band = chroma < NEUTRAL_CHROMA ? 0 : (chroma < 20.0 ? 1 : 2);
     let light = lab.x < 30.0 ? 0 : (lab.x < 70.0 ? 1 : 2);
-    return band * 3 + light;
+    return times(band, 3) + light;
 }
 
 /// Which of `COLOUR_CLASSES` the camera's own rendering puts a pair in.
@@ -124,7 +125,7 @@ int class_of(float3 lab)
     if (chroma_of(lab) < NEUTRAL_CHROMA) { return 0; }
     let sector = min(int(degrees_of(atan2(lab.z, lab.y)) * (float(HUE_SECTORS) / 360.0)), HUE_SECTORS - 1);
     let band = chroma_of(lab) >= DEEP * lab.x ? 2 : select(vivid(lab), 1, 0);
-    return 1 + 3 * sector + band;
+    return 1 + times(sector, 3) + band;
 }
 
 /// `t`'s four cosines by angle addition from one direction.

@@ -15,6 +15,9 @@
 // Both of an axis's percentiles come off one histogram, which is why the passes carry two ranks: the
 // distribution is the same one, and only where a walk of it stops differs.
 
+import px;
+import times;
+
 struct Params {
     int width;
     int height;
@@ -84,7 +87,8 @@ void fit_span_gather(uint3 id: SV_DispatchThreadID)
     if (x >= pc.width || y >= pc.height) { return; }
     let p = y * pc.width + x;
 
-    var v = float3(plane[p * 3], plane[p * 3 + 1], plane[p * 3 + 2]);
+    let i = wide<FitPlane>(p) * 3;
+    var v = float3(plane[i], plane[i + 1], plane[i + 2]);
     // Without it a corner's darkness reads as a chroma of its own, exactly as the pair loop has it.
     if (pc.falloff != 0) {
         let dx = float(x) - float(pc.width) * 0.5;
@@ -160,8 +164,9 @@ void fit_span_pick(uint3 id: SV_GroupThreadID)
         uint bucket;
         uint below;
         if (passed(id.x, bins, 0u, ranks[r], bucket, below)) {
-            marks[base + r * PER_RANK] = bucket;
-            marks[base + r * PER_RANK + 1] = below;
+            let at = base + times(r, PER_RANK);
+            marks[at] = bucket;
+            marks[at + 1] = below;
         }
     }
 }
@@ -176,7 +181,7 @@ void fit_span_low(uint3 id: SV_DispatchThreadID)
     let base = uint(pc.axis) * MARKS_PER_AXIS;
     let word = ordered(spread_of(k));
     for (uint r = 0; r < 2; r++) {
-        if ((word >> 16) == marks[base + r * PER_RANK]) {
+        if ((word >> 16) == marks[base + times(r, PER_RANK)]) {
             histogram[bins + (r + 1) * HALF_BINS + (word & 0xffffu)].add(1);
         }
     }
@@ -190,11 +195,12 @@ void fit_span_finish(uint3 id: SV_GroupThreadID)
     let base = uint(pc.axis) * MARKS_PER_AXIS;
     let ranks = uint2(uint(pc.low_rank), uint(pc.high_rank));
     for (uint r = 0; r < 2; r++) {
-        let seen = marks[base + r * PER_RANK + 1];
+        let at = base + times(r, PER_RANK);
+        let seen = marks[at + 1];
         uint low;
         uint below;
         if (passed(id.x, bins + (r + 1) * HALF_BINS, seen, ranks[r], low, below)) {
-            marks[base + r * PER_RANK + 2] = unordered((marks[base + r * PER_RANK] << 16) | low);
+            marks[at + 2] = unordered((marks[at] << 16) | low);
         }
     }
 }
