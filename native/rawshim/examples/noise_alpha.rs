@@ -4,10 +4,11 @@
 //! noise_alpha <raw>...
 //! ```
 //!
-//! PMRID is only unbiased when its k-sigma transform is handed the frame's real noise, so the lift
-//! `pmrid::lift` measures at a model is how wrong that model is, in noise sigmas. Per frame: the
-//! fit, the lift at it, and the scale on both its terms at which the lift crosses zero - which is
-//! what `ne_finalize`'s `ENVELOPE_RATIO` was set from.
+//! PMRID is only unbiased when its k-sigma transform is handed the noise it was trained to find,
+//! so the lift `pmrid::lift` measures at a model is how far that model is from it, in noise
+//! sigmas. Per frame: the fit, the lift at it, and the scale on both its terms at which the lift
+//! crosses zero. That scale is over `pmrid`'s `NETWORK_NOISE`, which is the constant a median off
+//! one across the noisy frames moves.
 
 use rawshim::galosh::NoiseFit;
 

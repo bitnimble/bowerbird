@@ -17,6 +17,8 @@
 //! one scalar, and GALOSH's dispatch shape is fixed by the frame's dimensions. So the timings
 //! transfer and the comparison is exact, without holding a decode beside them.
 
+mod support;
+
 use rawshim::galosh::Amounts;
 
 fn main() {
@@ -60,7 +62,8 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
     let bytes = std::fs::read(path).ok()?;
 
     let began = std::time::Instant::now();
-    let cold = match rawshim::edit::prepare_bytes(&bytes, &request(None), 1.0) {
+    let sharpen = support::STRENGTHS.sharpen;
+    let cold = match rawshim::edit::prepare_bytes(&bytes, &request(None), sharpen) {
         Ok(cold) => cold,
         Err(error) => {
             eprintln!("{}: {error}", name(path));
@@ -68,12 +71,18 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
         }
     };
     let cold_ms = began.elapsed().as_millis();
+    println!(
+        "{}: camera exposure {:?} saturation {:?}",
+        name(path),
+        cold.header.camera_exposure,
+        cold.header.camera_saturation,
+    );
     let analysis = cold.header.photo_analysis.clone();
     let dimensions = (cold.header.width, cold.header.height);
     drop(cold);
 
     let began = std::time::Instant::now();
-    let warm = rawshim::edit::prepare_bytes(&bytes, &request(analysis.clone()), 1.0);
+    let warm = rawshim::edit::prepare_bytes(&bytes, &request(analysis.clone()), sharpen);
     let warm_ms = began.elapsed().as_millis();
     let fitted = match &warm {
         Ok(prepared) => prepared.header.matched,
@@ -98,6 +107,10 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
     let fit = pollster::block_on(held.fit());
     let held_ms = began.elapsed().as_millis();
 
+    let stored = analysis
+        .as_deref()
+        .and_then(rawshim::photo_analysis::decode)
+        .unwrap_or_default();
     let mut request = request(analysis);
     for (luminance, colour) in [(40.0, 40.0), (20.0, 30.0)] {
         request.denoise_luminance = Some(luminance);
@@ -107,7 +120,7 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
             request.detail(),
             request.long_edge,
             fit.map_or(rawshim::galosh::Fit::Measure, rawshim::galosh::Fit::Given),
-            rawshim::dust::Wanted::Off,
+            request.dust.wanted(stored.from_raw.dust.as_deref()),
             &rawshim::open_stage::quiet,
         ));
         let frame = frame?;
@@ -116,7 +129,7 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
             &bytes,
             true,
             &request,
-            1.0,
+            sharpen,
             &rawshim::open_stage::quiet,
         ));
         let ms = began.elapsed().as_millis();
@@ -132,19 +145,15 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
 fn request(photo_analysis: Option<Vec<u8>>) -> rawshim::edit::EditRequest {
     rawshim::edit::EditRequest {
         long_edge: 0,
-        grade: rawshim::hdr::Grade {
-            reference_white_nits: rawshim::light::Light::exactly(203.0),
-            white_quantile: 0.995,
-        },
-        defringe: 1.0,
+        grade: support::GRADE,
+        defringe: support::STRENGTHS.defringe,
         photo_analysis,
         dust: Default::default(),
         repairs: Vec::new(),
         stated_white: false,
-        // The document's defaults, so the open being timed is the one a reader waits for -
-        // the denoise is inside it now.
-        denoise_luminance: Some(20.0),
-        denoise_colour: Some(30.0),
+        // The document's defaults, so the open being timed is the one a reader waits for.
+        denoise_luminance: None,
+        denoise_colour: None,
         denoiser: rawshim::galosh::Denoiser::Galosh,
     }
 }

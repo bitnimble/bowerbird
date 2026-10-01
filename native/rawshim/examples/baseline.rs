@@ -9,14 +9,13 @@
 //! per photograph carrying the numbers a comparison actually turns on: the per-channel means, the
 //! mean luma, and the luma roughness of the crop. Run it before a change and after, and diff.
 //!
-//! The renders go through `hdr::graded_as` exactly as a rendition does, so what is recorded is the
+//! The renders go through `support::graded`, the shipped chain, so what is recorded is the
 //! product's own output and not a harness's approximation of it.
 
+mod support;
+
 use rawler::imgop::{Dim2, Point, Rect};
-use rawshim::hdr::{self, Grade, Source};
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
-use rawshim::light::Light;
 
 /// Long edge of the whole-frame record. Small enough to keep the directory manageable, large
 /// enough that a colour shift is visible by eye.
@@ -25,24 +24,14 @@ const OVERVIEW: usize = 1600;
 /// Side of the 1:1 crop, taken from the centre of the frame.
 const CROP: usize = 512;
 
-fn grade() -> Grade {
-    Grade {
-        reference_white_nits: Light::exactly(203.0),
-        white_quantile: 0.995,
-    }
-}
-
 fn options() -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
-        grade: grade(),
+        grade: support::GRADE,
         crf: 26,
         preset: 6,
-        strengths: Strengths {
-            sharpen: 1.0,
-            defringe: 1.0,
-        },
+        strengths: support::STRENGTHS,
         sharpen_sigma: None,
         // No reduction: the crop is taken at 1:1 and a resize would hide exactly the differences
         // this harness exists to measure.
@@ -65,35 +54,19 @@ fn main() {
             .map_or_else(|| path.clone(), |s| s.to_string_lossy().into_owned());
 
         let started = std::time::Instant::now();
-        let Some(frame) =
-            rawshim::decode_frame_denoised(&path, 0, Default::default(), Default::default())
-        else {
+        let Some(opened) = support::Open::shipped(&path, 0).run() else {
             println!("{{\"file\":\"{name}\",\"error\":\"decode failed\"}}");
             continue;
         };
         let decode_ms = started.elapsed().as_millis();
-        let (width, height) = (frame.width, frame.height);
-
-        let Some(samples) = frame.samples16() else {
+        if opened.frame.samples16().is_none() {
             println!("{{\"file\":\"{name}\",\"error\":\"not a 16-bit decode\"}}");
             continue;
-        };
-        let source = Source {
-            samples,
-            width,
-            height,
-        };
-        let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-        let resident = frame.on_device(gpu).expect("the frame reaches the device");
-        let matched = rawshim::fit_hdr_for(&resident, &path, grade().white_quantile);
+        }
+        let matched = opened.measured.matched.as_ref();
 
         let graded = std::time::Instant::now();
-        let (rgb, out_w, out_h) = hdr::graded_as(
-            &source,
-            &options(),
-            matched.as_ref(),
-            rawshim::gpu::Output::Srgb,
-        );
+        let (rgb, out_w, out_h) = support::graded(&opened, &options(), rawshim::gpu::Output::Srgb);
         let grade_ms = graded.elapsed().as_millis();
         let bytes: Vec<u8> = rgb.iter().map(|v| *v as u8).collect();
         let whole = rawshim::rgb::RgbRef {

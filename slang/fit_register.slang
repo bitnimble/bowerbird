@@ -19,8 +19,6 @@ struct Params {
     int scale;
     /// Taps either side of a sample's centre.
     int sample;
-    /// How far a neighbour's channel may sit from the centre's and still be averaged with it.
-    float sample_range;
     /// Zero where the lens has no falloff; otherwise `gains` holds one per radius bucket.
     int falloff;
     /// Half the wide plane's diagonal, which the radius bucket is a fraction of.
@@ -45,25 +43,17 @@ float3 rgb_at(StructuredBuffer<float> plane, int x, int y)
     return float3(plane[i], plane[i + 1], plane[i + 2]);
 }
 
-/// A colour read at a matched location: a small average, gated so it cannot mix across a boundary.
-///
-/// Every channel, not luma. A luma gate lets a red and a green of the same lightness average
-/// together, which is the one thing a colour fit must not do - and foliage against a cream surface
-/// is exactly that pair.
+/// A colour read at a matched location: the box mean around it.
 float3 sample_at(StructuredBuffer<float> plane, int x, int y)
 {
-    let centre = rgb_at(plane, x, y);
     var sum = float3(0.0);
-    var count = 0.0;
     for (int dy = -pc.sample; dy <= pc.sample; dy++) {
         for (int dx = -pc.sample; dx <= pc.sample; dx++) {
-            let v = rgb_at(plane, x + dx, y + dy);
-            if (any(abs(v - centre) > float3(pc.sample_range))) { continue; }
-            sum += v;
-            count += 1.0;
+            sum += rgb_at(plane, x + dx, y + dy);
         }
     }
-    return sum / count;
+    let side = float(2 * pc.sample + 1);
+    return sum / (side * side);
 }
 
 [shader("compute")]

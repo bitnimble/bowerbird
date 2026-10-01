@@ -1,7 +1,7 @@
 //! What actually limits an HDR still, once the quantizer is not the answer.
 //!
 //! ```text
-//! hdrq <raw> [edge]
+//! hdrq <raw> [edge] [luminance colour]
 //! ```
 //!
 //! Three questions, one render each:
@@ -11,31 +11,20 @@
 //! - what the quantizer buys on each;
 //! - what 4:2:0 costs at a quantizer low enough that nothing else is in the way.
 
-use rawshim::avif;
-use rawshim::hdr::{self, Source};
-use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
-use rawshim::light::{DisplayNits, Gain, Light};
+mod support;
 
-/// The library's shipped grade.
-fn grade() -> hdr::Grade {
-    hdr::Grade {
-        reference_white_nits: Light::exactly(203.0),
-        white_quantile: 0.9,
-    }
-}
+use rawshim::avif;
+use rawshim::hdr_args::{Chroma, EncodeOptions};
+use rawshim::light::{DisplayNits, Gain, Light};
 
 fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv420,
         output_path: String::new(),
-        grade: grade(),
+        grade: support::GRADE,
         crf: 10,
         preset: 8,
-        strengths: Strengths {
-            sharpen: 1.0,
-            defringe: 1.0,
-        },
+        strengths: support::STRENGTHS,
         sharpen_sigma: None,
         max_edge: edge as f64,
         content_light: None,
@@ -122,36 +111,26 @@ fn rmse_in_pq(a: &[u16], b: &[u16], full: f64, sdr: bool, black: f64) -> f64 {
 fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("a raw path");
-    let edge: usize = args.next().map_or(3840, |e| e.parse().expect("a number"));
-    let luma: f64 = args.next().map_or(20.0, |v| v.parse().expect("a number"));
-    let colour: f64 = args.next().map_or(30.0, |v| v.parse().expect("a number"));
-
-    // The document's shipped defaults, so this is the picture the library actually writes.
-    let detail = rawshim::galosh::Detail::at(luma, colour);
-    let frame =
-        rawshim::decode_frame_denoised(&path, 0, detail, Default::default()).expect("decode");
-    let samples = frame.samples16().expect("16-bit").to_vec();
-    let source = Source {
-        samples: &samples,
-        width: frame.width,
-        height: frame.height,
+    let edge: usize = args
+        .next()
+        .map_or(support::FULL_RENDITION_SIZE as usize, |e| {
+            e.parse().expect("a number")
+        });
+    let mut number = || args.next().map(|v| v.parse::<f64>().expect("a number"));
+    let detail = rawshim::galosh::Detail {
+        luminance: number(),
+        colour: number(),
+        ..rawshim::galosh::Detail::AUTO
     };
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let matched = rawshim::fit_hdr_for(&resident, &path, 0.9);
 
-    let (pq, w, h) = hdr::graded_as(
-        &source,
-        &options(edge),
-        matched.as_ref(),
-        rawshim::gpu::Output::Pq,
-    );
-    let (srgb, _, _) = hdr::graded_as(
-        &source,
-        &options(edge),
-        matched.as_ref(),
-        rawshim::gpu::Output::Srgb,
-    );
+    let opened = support::Open {
+        detail,
+        ..support::Open::shipped(&path, edge as u32)
+    }
+    .run()
+    .expect("decode");
+    let (pq, w, h) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Pq);
+    let (srgb, _, _) = support::graded(&opened, &options(edge), rawshim::gpu::Output::Srgb);
     let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
 
     println!("{w}x{h}");

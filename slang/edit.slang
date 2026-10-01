@@ -71,8 +71,8 @@ public struct Edit {
     /// inserting a scalar earlier moves every field after it and the binding comes back
     /// rejected. Growing the tail moves nothing.
     ///
-    /// `sat_adjust` rather than `saturation`, which is taken - that one is the camera
-    /// match's own fit multiplier around 1.0 and not a slider anybody moves.
+    /// `sat_adjust` rather than `saturation`, which is taken - that one is what a match with no
+    /// lattice blends towards luma by, and not a slider anybody moves.
     public float contrast;
     public float highlights;
     public float shadows;

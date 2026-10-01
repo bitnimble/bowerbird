@@ -19,10 +19,12 @@
 //! to start when looking for somewhere worth cutting. Crops are in the frame's own pixels and are
 //! written at 1:1, because noise and texture are invisible in a downscale.
 
-use rawshim::hdr::{self, Grade};
+mod support;
+
+use rawshim::hdr;
 use rawshim::hdr_args::{Chroma, EncodeOptions};
 use rawshim::image::Strengths;
-use rawshim::light::{Light, Stops};
+use rawshim::light::Stops;
 
 /// Which stages of the chain below the decode this render is to run.
 ///
@@ -120,22 +122,6 @@ struct File {
     full_chroma: bool,
 }
 
-/// The grade both paths are rendered through. The library's own defaults, so neither render is
-/// answering a question about settings.
-fn grade() -> Grade {
-    Grade {
-        reference_white_nits: Light::exactly(203.0),
-        white_quantile: 0.9,
-    }
-}
-
-fn strengths() -> Strengths {
-    Strengths {
-        sharpen: 0.5,
-        defringe: 1.0,
-    }
-}
-
 /// `edge` of 0 is no reduction, which is the default: a crop at 1:1 is the point, and the editor is
 /// not reducing either. Anything else renders as a rendition of that size *does* - through
 /// `Cut::from_base`, and so through the downscale a rendition actually uses - which is the only way
@@ -144,14 +130,14 @@ fn options(edge: usize, stages: Stages<'_>) -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
-        grade: grade(),
+        grade: support::GRADE,
         crf: 26,
         preset: 6,
         strengths: Strengths {
             sharpen: stages.sharpen,
             defringe: stages.defringe,
         },
-        sharpen_sigma: None,
+        sharpen_sigma: stages.sharpen_sigma,
         max_edge: match edge {
             0 => 100_000.0,
             edge => edge as f64,
@@ -160,69 +146,42 @@ fn options(edge: usize, stages: Stages<'_>) -> EncodeOptions {
     }
 }
 
-/// The rendition path: denoised inside the decode, on the mosaic, then fitted and graded.
+/// The rendition path: denoised inside the decode, on the mosaic, then opened and graded.
 ///
-/// `job::Base::build` in miniature, at the sensor's own size.
+/// `job::Base::build` in miniature, decoded at the floor a target of `edge` sets.
 fn rendition(
     path: &str,
     detail: rawshim::galosh::Detail,
     edge: usize,
     stages: Stages<'_>,
 ) -> (Vec<u8>, usize, usize) {
-    // **`Fit::Only` measures and filters nothing**, which is what `--detail 0` wants and no other
-    // level does: the defringe's noise ceiling comes off a fit, so without this the sliders at zero
-    // would compare renders whose defringe never saw the frame's noise.
-    let fit = match detail.could_do_anything() {
-        true => rawshim::galosh::Fit::Measure,
-        false => rawshim::galosh::Fit::Only,
-    };
-    let frame = rawshim::decode_frame_denoised(path, 0, detail, fit).expect("decode");
+    let opened = support::Open {
+        detail,
+        strengths: Strengths {
+            sharpen: stages.sharpen,
+            defringe: stages.defringe,
+        },
+        defocus: stages.defocus,
+        ..support::Open::shipped(path, edge as u32)
+    }
+    .run()
+    .expect("decode");
     // Against the fit the decode came back holding, which is what an unset slider was resolved from.
     eprintln!(
         "  fit {:?} amounts {:?}",
-        frame.noise.map(|n| n.model()),
-        detail.amounts(frame.noise),
+        opened.frame.noise.map(|n| n.model()),
+        detail.amounts(opened.frame.noise),
     );
-    let samples = frame.samples16().expect("16-bit").to_vec();
-    graded(path, &frame, &samples, edge, stages)
+    graded(&opened, edge, stages)
 }
 
-/// The rendition's tail: fit the camera match off the frame, then cut and grade it to sRGB.
-///
-/// **`job::Base::build`'s own chain**, rather than `hdr::graded_as`, which runs neither the
-/// defringe nor a measured sigma: its `cut_for` codes by hand and sharpens at the fixed
-/// default, where an export defringes on the linear frame and deconvolves the capture's own
-/// blur. A harness one stage short of the export is the wrong picture to be looking at an
-/// edge in.
-///
-/// `base::prepare` rather than `hdr::code_base` for the same reason one step earlier. It is the
-/// defringe as well as the coding, and the defringe is a shader on the linear frame - so coding by
-/// hand leaves a harness that cannot see a fringe, which is half of what it is opened to look for.
-/// `before_the_fit` is what keeps the sharpen out of it; `Cut::from_base` runs it after the warp.
-fn graded(
-    path: &str,
-    frame: &rawshim::frame::Frame,
-    samples: &[u16],
-    edge: usize,
-    stages: Stages<'_>,
-) -> (Vec<u8>, usize, usize) {
+/// The rendition's tail: cut and grade the opened frame, with the stages' overrides.
+fn graded(opened: &support::Opened, edge: usize, stages: Stages<'_>) -> (Vec<u8>, usize, usize) {
     let options = options(edge, stages);
-    // **One quantile, because the fit and the anchor have to be the same white.** `open::measure`
-    // hands the fit `grade.white_quantile` and anchors the grade on it too; fitted against a frame
-    // normalised by one white and applied to a frame anchored on another, the camera match's tone
-    // curves land at the ratio between them - which is most of a picture's brightness.
+    let frame = &opened.frame;
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
-    let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let matched = rawshim::fit_hdr_for(&resident, path, options.grade.white_quantile);
-    let levels = rawshim::hdr::levels_of(
-        gpu,
-        samples,
-        frame.width,
-        frame.height,
-        options.grade.white_quantile,
-    )
-    .expect("levels")
-    .anchored();
+    let matched = opened.measured.matched.as_ref();
+    let levels = opened.measured.levels.anchored();
     // The anchor and what the match made of it, because a render that came out the wrong colour
     // is answered by the matrix row that did it and not by looking harder at the picture.
     // The floor in stops as well as levels says whether the frame reached the
@@ -234,7 +193,7 @@ fn graded(
         levels.peak.raw(),
         (floor.max(1.0 / 65536.0) / levels.white.raw()).log2(),
     );
-    if let Some(colour) = matched.as_ref().and_then(|m| m.colour.as_ref()) {
+    if let Some(colour) = matched.and_then(|m| m.colour.as_ref()) {
         let rows: Vec<String> = colour
             .matrix
             .iter()
@@ -290,39 +249,14 @@ fn graded(
         eprintln!("  curve whole {}", full.join(" "));
     }
 
-    let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
-    let size = rawshim::hdr_args::target_size(frame.width as u32, frame.height as u32, &options);
-    // As `job::run` composes it: the frame's measured capture sigma where the decode has one,
-    // carried to the target's scale.
-    let sensor_long = frame.width.max(frame.height) * frame.reduced.max(1);
-    // As `open::measure` reads it, off the linear frame and scaled into the sensor's pixels.
-    let capture_sigma = pollster::block_on(rawshim::base::measure_edge_spread(
-        gpu,
-        base,
-        resident.buffer(),
-        frame.width,
-        frame.height,
-    ))
-    .map(|blur| blur * frame.reduced.max(1) as f32);
-    let sigma = match stages.sharpen_sigma {
-        Some(fixed) => rawshim::image::SharpenSigma::fixed(fixed),
-        None => rawshim::image::deconvolve_split(
-            capture_sigma,
-            sensor_long,
-            size.width.max(size.height) as usize,
-        ),
-    };
-    let sharpen_noise = rawshim::base::sharpen_noise(
-        levels,
-        options.grade.reference_white_nits,
-        frame.noise,
-        frame.matrix,
-        frame.wb_gains,
-        frame.reduced,
-    )
-    .at(
-        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
-        rawshim::px::Span::<rawshim::px::Drawn>::exact(size.width.max(size.height) as usize),
+    let support::Cutting {
+        cut,
+        capture_sigma,
+        sigma,
+    } = support::cut(
+        opened,
+        &options,
+        matched.map(|m| &m.lens).filter(|_| stages.lens),
     );
     // What the deconvolution was actually given, since `deconvolve_split` clamps and a run that
     // sat on the ceiling is sharpening less than the frame asked for.
@@ -335,39 +269,8 @@ fn graded(
             false => "",
         },
     );
-    let cut = {
-        let resident = rawshim::resident::Resident::upload(gpu, samples, frame.width, frame.height);
-        // No lens here: a rendition's warp is per target and happens in `Cut::from_base` below, so
-        // this is the defringe and the coding alone, exactly as `Base::build` takes them.
-        let (prepared, _) = pollster::block_on(rawshim::base::prepare(
-            gpu,
-            base,
-            resident,
-            rawshim::base::Gather::frame(rawshim::px::Size::exact(frame.width, frame.height)),
-            levels,
-            options.grade.reference_white_nits,
-            Strengths {
-                sharpen: stages.sharpen,
-                defringe: stages.defringe,
-            }
-            .before_the_fit(),
-            rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
-            rawshim::image::SharpenNoise::NONE,
-            &rawshim::fit::Lens::none(),
-            stages.defocus.map_or(
-                rawshim::base::Defringe::Measure,
-                rawshim::base::Defringe::Take,
-            ),
-            frame.noise,
-            frame.matrix,
-        ))
-        .expect("the coding and the defringe");
-        let lens = matched.as_ref().map(|m| &m.lens).filter(|_| stages.lens);
-        hdr::Cut::from_base(prepared, lens, size, stages.sharpen, sigma, sharpen_noise)
-    };
 
     let colour = matched
-        .as_ref()
         .filter(|_| stages.matched)
         .and_then(|m| m.colour.as_ref())
         .map(|colour| {
@@ -444,6 +347,7 @@ fn graded(
     if stages.domain == Domain::Pq {
         // What `job::run` reads to pick this still's chroma, so a render here says which way a
         // rendition of it would have gone.
+        let base = rawshim::base::device(gpu).expect("the device the pipelines were built on");
         let leak = pollster::block_on(rawshim::base::chroma_leak_of(
             gpu, base, &coded, cut.width, cut.height,
         ))
@@ -516,9 +420,9 @@ fn main() {
     let mut edge = 0usize;
     let mut camera: Option<String> = None;
     let mut stages = Stages {
-        sharpen: strengths().sharpen,
+        sharpen: support::STRENGTHS.sharpen,
         sharpen_sigma: None,
-        defringe: strengths().defringe,
+        defringe: support::STRENGTHS.defringe,
         lens: true,
         matched: true,
         none_profile: false,
@@ -672,7 +576,8 @@ fn main() {
                         let both: f64 = number.parse().expect("a number or `auto`");
                         rawshim::galosh::Detail::at(both, both)
                     }
-                };
+                }
+                .using(detail.denoiser);
             }
             "--luminance" => {
                 detail.luminance = Some(args.next().expect("a number").parse().expect("a number"));
@@ -752,6 +657,7 @@ fn main() {
             columns,
             &crops,
             edge,
+            detail.denoiser,
             stages,
         );
         return;
@@ -1736,6 +1642,7 @@ fn sweep_grid(
     columns: usize,
     crops: &[(usize, usize, usize)],
     edge: usize,
+    denoiser: rawshim::galosh::Denoiser,
     stages: Stages<'_>,
 ) {
     assert!(
@@ -1798,7 +1705,7 @@ fn sweep_grid(
         };
         let (data, width, height) = rendition(
             path,
-            rawshim::galosh::Detail::at(pair.0, pair.1),
+            rawshim::galosh::Detail::at(pair.0, pair.1).using(denoiser),
             edge,
             stages,
         );

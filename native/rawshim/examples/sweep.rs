@@ -13,11 +13,10 @@
 //! that reads as a tint. Averaging its magnitude instead would let a green cast on one frame
 //! and a warm one on the next cancel into a clean-looking set.
 
+mod support;
+
 use rawshim::gpu::Intent;
-use rawshim::hdr::{self, Grade, Source};
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
-use rawshim::light::Light;
 use std::env;
 
 /// How close to grey the camera has to render a pixel for it to count, as a fraction of its
@@ -28,13 +27,17 @@ const NEUTRAL: f64 = 0.04;
 /// way to clipping, and a cast in the mid-tones is what the eye reads.
 const BAND: (u8, u8) = (60, 210);
 
+/// Light added to every cell of both pictures before they are compared, as a share of white: what
+/// a display's own black and the eye's glare from the picture's bright regions lay over a shadow.
+const VEILING_GLARE: f64 = 0.01;
+
 /// Samples a colour class needs before its mean is one.
 const MIN_CLASS_SAMPLES: f64 = 32.0;
 
 /// The `full` rendition's long edge, which the photo viewer opens at. A lattice's cost on a
 /// shadow depends on the size it is drawn at - per-pixel noise through a nonlinear map is a cast
 /// once averaged - so the picture is judged at the size people see.
-const VIEWED_EDGE: f64 = 3840.0;
+const VIEWED_EDGE: u32 = support::FULL_RENDITION_SIZE;
 
 fn main() {
     let dir = env::args().nth(1).expect("a directory of RAWs");
@@ -177,49 +180,24 @@ struct Report {
 }
 
 fn measure(path: &str) -> Option<Report> {
-    let frame = rawshim::decode_frame(path, 0)?;
-    let samples = frame.samples16()?;
-    let source = Source {
-        samples,
-        width: frame.width,
-        height: frame.height,
-    };
-
+    let opened = support::Open::shipped(path, VIEWED_EDGE).run()?;
     let gpu = rawshim::gpu::device()?;
-    let resident = frame.on_device(gpu)?;
-    let matched = rawshim::fit_hdr_for(&resident, path, 0.99)?;
+    let matched = opened.measured.matched.as_ref()?;
 
     let options = EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
-        grade: Grade {
-            reference_white_nits: Light::exactly(203.0),
-            white_quantile: 0.99,
-        },
+        grade: support::GRADE,
         crf: 26,
         preset: 6,
-        strengths: Strengths::default(),
+        strengths: support::STRENGTHS,
         sharpen_sigma: None,
-        max_edge: VIEWED_EDGE,
+        max_edge: f64::from(VIEWED_EDGE),
         content_light: None,
     };
     let camera = rawshim::decode_embedded_rgb(path, 0)?;
-    let relative = against_camera(
-        gpu,
-        &source,
-        &options,
-        &matched,
-        &camera,
-        Intent::RelativeColorimetric,
-    )?;
-    let perceptual = against_camera(
-        gpu,
-        &source,
-        &options,
-        &matched,
-        &camera,
-        Intent::Perceptual,
-    )?;
+    let relative = against_camera(&opened, &options, &camera, Intent::RelativeColorimetric)?;
+    let perceptual = against_camera(&opened, &options, &camera, Intent::Perceptual)?;
     Some(Report {
         delta_e: matched.colour.as_ref()?.delta_e,
         rendered: perceptual.rendered,
@@ -252,22 +230,16 @@ struct Rendered {
 }
 
 fn against_camera(
-    gpu: &'static rawshim::gpu::Gpu,
-    source: &Source,
+    opened: &support::Opened,
     options: &EncodeOptions,
-    matched: &rawshim::hdr_fit::HdrMatch,
     camera: &rawshim::rgb::Rgb,
     intent: Intent,
 ) -> Option<Rendered> {
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
-    let (coded, width, height) = hdr::graded_under(
-        source,
-        options,
-        Some(matched),
-        rawshim::gpu::Output::Srgb,
-        intent,
-    );
+    let (coded, width, height) =
+        support::graded_under(opened, options, rawshim::gpu::Output::Srgb, intent);
+    let gpu = rawshim::gpu::device()?;
     let ours: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
 
     // Sampled on a stride rather than every pixel: a 24MP frame has millions of neutrals and
@@ -294,7 +266,7 @@ fn against_camera(
             }
         }
         let n = ((x[1] - x[0]) * (y[1] - y[0])).max(1) as f64;
-        sum.map(|s| s / n)
+        sum.map(|s| s / n + VEILING_GLARE)
     };
     let scale = camera.width as f64 / width as f64;
     let on_camera = |v: usize, limit: usize| ((v as f64 * scale) as usize).min(limit);

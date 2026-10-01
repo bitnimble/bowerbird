@@ -13,7 +13,10 @@
 //! colour was fitted at all. The colour figures below are the fitted transform itself, printed so
 //! that two runs can be held against each other exactly rather than through a rendered picture.
 //!
-//! The decode is done once and the match repeated, because it is the match being measured.
+//! The frame is opened once, as a rendition opens it (denoised, dust divided out, defringed), and
+//! the match repeated over it, because it is the match being measured.
+
+mod support;
 
 use rawshim::hdr;
 
@@ -31,16 +34,16 @@ fn main() {
 }
 
 fn measure(path: &str) {
-    let quantile = 0.9;
+    let quantile = support::GRADE.white_quantile;
     let Some(gpu) = rawshim::gpu::device() else {
         eprintln!("fit_bench: no adapter");
         std::process::exit(2);
     };
-    let Some(frame) = rawshim::decode_frame(path, 0) else {
-        eprintln!("{path}: no decode");
+    let Some(opened) = support::Open::shipped(path, support::FULL_RENDITION_SIZE).run() else {
+        eprintln!("{path}: no open");
         return;
     };
-    let Some(resident) = frame.on_device(gpu) else {
+    let Some(resident) = opened.frame.on_device(gpu) else {
         eprintln!("{path}: not 16-bit");
         return;
     };
@@ -133,6 +136,11 @@ fn measure(path: &str) {
                             Some(_) => "yes",
                             None => "no",
                         },
+                    );
+                    println!(
+                        "    camera exposure {:.6}  saturation slider {}",
+                        c.exposure.raw(),
+                        c.saturation_slider(),
                     );
                     // The transform itself, so two runs are compared on what they fitted rather than on
                     // how long they took to fit it.

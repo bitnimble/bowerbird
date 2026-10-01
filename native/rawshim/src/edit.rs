@@ -612,7 +612,7 @@ pub(crate) fn camera_defaults(
             points: c.curve.clone(),
         }),
         colour.map(|c| c.exposure),
-        colour.map(|c| crate::gpu::saturation_slider(c.camera_saturation)),
+        colour.map(crate::hdr_fit::HdrColour::saturation_slider),
     )
 }
 

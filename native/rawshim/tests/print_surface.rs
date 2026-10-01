@@ -18,6 +18,7 @@ fn surface_fills_the_photo_and_pose_does_not_move_its_pixels() {
         .collect();
     let grade = grade();
     let scene = diffuse();
+    let white = coded([1.0; 3]).repeat(64 * 64);
     let reference = draw(&frame, &grade, Some(&scene));
     for (at, channel) in [([0, 0], 0), ([63, 0], 1), ([0, 63], 2)] {
         let offset = (at[1] * 64 + at[0]) * 4;
@@ -30,9 +31,11 @@ fn surface_fills_the_photo_and_pose_does_not_move_its_pixels() {
             "photo corner lost its source color: {at:?}"
         );
     }
-    // Held as colour rather than as brightness: the sheet is bowed, so turning it turns its curve
-    // through the room and the light on it moves - which is the point of tilting a phone. What may
-    // not move is the photograph, and a pixel that had shifted would take its neighbour's colour.
+    // Held as colour against white paper in the same pose: the sheet is bowed, so turning it turns
+    // its curve through the room and the light on it moves, in brightness and in the room's own
+    // colour - which is the point of tilting a phone. What may not move is the photograph, and a
+    // pixel that had shifted would take its neighbour's colour.
+    let reference_white = draw(&white, &grade, Some(&scene));
     for (yaw, pitch) in [(35.0, 20.0), (-45.0, -30.0), (75.0, 10.0)] {
         let pose = Scene {
             yaw_degrees: yaw,
@@ -40,11 +43,12 @@ fn surface_fills_the_photo_and_pose_does_not_move_its_pixels() {
             ..scene
         };
         let moved = draw(&frame, &grade, Some(&pose));
+        let moved_white = draw(&white, &grade, Some(&pose));
         let difference = (0..64 * 64)
             .map(|at| {
                 let (before, after) = (
-                    chromaticity(&reference, at * 4),
-                    chromaticity(&moved, at * 4),
+                    chromaticity(&reference, &reference_white, at * 4),
+                    chromaticity(&moved, &moved_white, at * 4),
                 );
                 before
                     .into_iter()
@@ -60,14 +64,22 @@ fn surface_fills_the_photo_and_pose_does_not_move_its_pixels() {
     }
 }
 
-fn chromaticity(drawn: &[f32], at: usize) -> [f32; 2] {
-    let colour = [
-        linear(drawn[at]),
-        linear(drawn[at + 1]),
-        linear(drawn[at + 2]),
-    ];
+/// Divided in Rec.2020, the primaries the sheet is lit in, so the light's colour cancels.
+fn chromaticity(drawn: &[f32], white: &[f32], at: usize) -> [f32; 2] {
+    let (drawn, white) = (in_rec2020(drawn, at), in_rec2020(white, at));
+    let colour: [f64; 3] = std::array::from_fn(|channel| drawn[channel] / white[channel]);
     let sum = colour.iter().sum::<f64>().max(1e-6);
     [(colour[0] / sum) as f32, (colour[1] / sum) as f32]
+}
+
+fn in_rec2020(drawn: &[f32], at: usize) -> [f64; 3] {
+    let matrix = rawshim::transfer::Primaries::DISPLAY_P3.to_rec2020();
+    matrix.map(|row| {
+        row.into_iter()
+            .enumerate()
+            .map(|(channel, weight)| f64::from(weight) * linear(drawn[at + channel]))
+            .sum()
+    })
 }
 
 #[test]

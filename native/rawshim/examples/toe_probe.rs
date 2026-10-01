@@ -15,10 +15,10 @@
 //! averaged to one grid, which is what `prepared_planes` does on the device, and nothing here needs
 //! the lens or the colour transform to tell a region apart from another region.
 //!
-//! Writes `toe-bin<N>.pgm` marking where each of the darkest bins lies, over a dimmed render of the
+//! Writes `toe-bin<N>.jpg` marking where each of the darkest bins lies, over a dimmed render of the
 //! frame, so a bin that is one object rather than one tone is visible as one.
 
-use rawshim::galosh::{Detail, Fit};
+mod support;
 
 /// The grid both sides are averaged onto, as `hdr_fit::FIT_LONG_EDGE` has it.
 const GRID: usize = 808;
@@ -48,13 +48,12 @@ fn main() {
     let ceiling: f64 = args.next().map_or(1.8, |v| v.parse().expect("a number"));
     std::fs::create_dir_all(&out).expect("the output directory");
 
-    let frame = rawshim::decode_frame_denoised(&path, 0, Detail::at(0.0, 0.0), Fit::Only)
+    let opened = support::Open::shipped(&path, support::FULL_RENDITION_SIZE)
+        .run()
         .expect("the frame decodes");
+    let frame = &opened.frame;
     let samples = frame.samples16().expect("16-bit");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let levels = rawshim::hdr::levels_of(gpu, samples, frame.width, frame.height, 0.9)
-        .expect("the frame has levels");
-    let white = levels.white.raw();
+    let white = opened.measured.levels.white.raw();
 
     // Ours, box averaged to the grid, in multiples of diffuse white - the domain the curve bins.
     //
@@ -89,7 +88,7 @@ fn main() {
             ours[y * wide + x] = total / seen.max(1) as f64;
         }
     }
-    let preview = rawshim::decode_embedded_rgb(&path, 0).expect("an embedded preview");
+    let preview = rawshim::hdr::match_preview(&path).expect("an embedded preview");
     let theirs = rawshim::image::resize(preview.as_ref(), wide, tall);
 
     // The green channel, which is what the shared curve is read at when a toe is reported.

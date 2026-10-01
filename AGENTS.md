@@ -290,7 +290,10 @@ bun run scripts/cargo.ts run --release --manifest-path native/rawshim/Cargo.toml
 Writes `render-*.avif` at requested frame coordinates, 1:1 (100% zoom), with luma roughness,
 in about five seconds.
 
-- `hdr::graded_as` renders exactly what `job::Base::build` assembles.
+- Examples showing what ships open with `support::Open` (AUTO denoise, dust, defringe before the
+  fit, quantile 0.9) and grade with `support::graded` or `support::cut` (`job::Base::build`'s
+  chain). Never `decode_frame`/`fit_hdr_for`, which skip all three and move the camera match, nor
+  `hdr::graded_as`, which skips the defringe and sharpens at a fixed sigma with no noise table.
 - `gpu.rs` supplies editor passes; `wasm.rs` calls `gpu::present`.
   `gpu.encode(frame, grade)` needs an **already coded and warped** frame.
   `graded_as` codes for itself: passing a prepared frame codes twice, lifting/flattening the image.

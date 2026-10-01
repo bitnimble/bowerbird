@@ -196,7 +196,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     let colour = HdrColour {
         exposure: Stops::measured(0.625),
         curve: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
-        camera_saturation: rawshim::light::Gain::of_ratio(1.25),
+        saturation: 1.25,
         ..HdrColour::identity()
     };
     let at = |exposure: Option<Stops>, adjust: rawshim::gpu::Adjust| {

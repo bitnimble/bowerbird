@@ -1,3 +1,5 @@
+mod support;
+
 use rawshim::gpu::{Canvas, Grade, Intent};
 use rawshim::light::Light;
 use rawshim::print::{Environment, Paper, Presentation, Scene};
@@ -92,11 +94,8 @@ fn main() -> Result<(), String> {
         &bytes,
         &rawshim::edit::EditRequest {
             long_edge: 1600,
-            grade: rawshim::hdr::Grade {
-                reference_white_nits: Light::exactly(203.0),
-                white_quantile: 0.995,
-            },
-            defringe: 1.0,
+            grade: support::GRADE,
+            defringe: support::STRENGTHS.defringe,
             photo_analysis: None,
             denoise_luminance: None,
             denoise_colour: None,
@@ -105,7 +104,7 @@ fn main() -> Result<(), String> {
             repairs: Vec::new(),
             stated_white: false,
         },
-        40.0,
+        support::STRENGTHS.sharpen,
     )?;
     let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
     let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;

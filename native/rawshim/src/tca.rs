@@ -36,9 +36,9 @@
 // calibrated on a single frame carrying an unusually large 5.05px, where the inflation
 // happened to land nearer the truth; on an ordinary frame it carries past it.
 //
-// Every one of the three passes through `accept`, which drops a curve that does not
-// measurably reduce the fringe it claims to correct. That is what makes trusting a source
-// safe rather than a leap.
+// A supplied curve and a measured one pass through `accept`, which drops a curve the frame's
+// point sources refute. That is what makes trusting a source safe rather than a leap. The
+// regression has no source behind it, so `estimate` keeps it only where they confirm it.
 //
 // Every walk over pixels is `slang/tca.slang`, driven by `tca_device.rs`. What is here is what
 // decides: the argmin of a sweep, the bins, the regression's solve, and the gates.
@@ -150,6 +150,16 @@ pub fn flat(red: f64, blue: f64) -> [Vec<f64>; 2] {
     ]
 }
 
+/// The regressed scale of red and of blue against green, where the frame's point sources
+/// confirm it.
+///
+/// Confirmed, where `accept` only asks not to be refuted: the regression reads a scene's own
+/// coloured edges as a fringe, so on a frame with nothing to judge it on it is dropped.
+pub async fn estimate(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> {
+    let curve = regressed(frame).await?;
+    (improves(frame, &curve).await == Some(true)).then_some(curve)
+}
+
 /// The radial scale of red and of blue against green, or None where there is nothing
 /// worth correcting.
 ///
@@ -158,9 +168,9 @@ pub fn flat(red: f64, blue: f64) -> [Vec<f64>; 2] {
 /// falls out of a least-squares fit of that difference against the gradient projected
 /// onto the radius - one pass, no search, and the scene's own colour contributes only
 /// variance because it does not align with the radial projection.
-pub async fn estimate(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> {
+async fn regressed(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> {
     let (red, blue) = slopes(frame).await?;
-    accept(frame, flat(1.0 + red, 1.0 + blue)).await
+    plausible(frame, flat(1.0 + red, 1.0 + blue))
 }
 
 /// A curve the file records, applied as it stands.
@@ -456,10 +466,10 @@ pub async fn measure(frame: &crate::tca_device::Frame) -> Option<[Vec<f64>; 2]> 
 /// a curve that is right in the middle of the frame and wrong at the edge is judged where
 /// the evidence is.
 ///
-/// `None` where the frame offers nothing to check against - a portrait, a flat wall - and
-/// there the curve is allowed through unverified rather than dropped: absence of evidence
-/// is not evidence, and refusing every frame without stars would disable the correction
-/// almost everywhere it is wanted.
+/// `None` where the frame offers nothing to check against - a portrait, a flat wall. What
+/// that means is the caller's: `accept` lets a sourced curve through unverified, since
+/// refusing every frame without stars would disable the correction almost everywhere it is
+/// wanted, and `estimate` drops a regressed one.
 async fn improves(frame: &crate::tca_device::Frame, curve: &[Vec<f64>; 2]) -> Option<bool> {
     let band = (POINT_FROM, ANY_RADIUS.1);
     let before = frame.haloed(None, band).await?;
@@ -500,7 +510,7 @@ fn plausible(frame: &crate::tca_device::Frame, curve: [Vec<f64>; 2]) -> Option<[
     Some(curve)
 }
 
-/// Whether a curve is worth applying, and the one place that decides it.
+/// Whether a curve with a source behind it is worth applying.
 async fn accept(frame: &crate::tca_device::Frame, curve: [Vec<f64>; 2]) -> Option<[Vec<f64>; 2]> {
     let curve = plausible(frame, curve)?;
     // Last, because it is the only test here that reads the picture rather than the
@@ -601,8 +611,8 @@ mod tests {
         pollster::block_on(crate::tca_device::frame(gpu, &render)).expect("a frame")
     }
 
-    fn estimated(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
-        pollster::block_on(estimate(&framed(gpu, image)))
+    fn regression(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
+        pollster::block_on(regressed(&framed(gpu, image)))
     }
 
     fn measured(gpu: &'static crate::gpu::Gpu, image: &Rgb) -> Option<[Vec<f64>; 2]> {
@@ -619,7 +629,7 @@ mod tests {
         };
         let source = checks(900, 600);
         for injected in [1.0008f64, 1.0015, 0.9988] {
-            let found = estimated(gpu, &inject(&source, 0, injected)).expect("a scale");
+            let found = regression(gpu, &inject(&source, 0, injected)).expect("a scale");
             let red = corner(&found, 0);
             assert!(
                 (red - 1.0 / injected).abs() < 0.0004,
@@ -637,14 +647,14 @@ mod tests {
             return;
         };
         let aberrated = inject(&checks(900, 600), 0, 1.0015);
-        let found = estimated(gpu, &aberrated).expect("a scale");
+        let found = regression(gpu, &aberrated).expect("a scale");
         let corrected = inject(&aberrated, 0, corner(&found, 0));
         assert!(
             (corner(&found, 1) - 1.0).abs() < 0.0004,
             "blue should not have moved"
         );
         assert!(
-            estimated(gpu, &corrected).is_none(),
+            regression(gpu, &corrected).is_none(),
             "correcting by the estimate has to leave nothing worth correcting",
         );
     }
@@ -657,7 +667,7 @@ mod tests {
             return;
         };
         let moved = inject(&checks(900, 600), 2, 1.0015);
-        let found = estimated(gpu, &moved).expect("a scale");
+        let found = regression(gpu, &moved).expect("a scale");
         let (red, blue) = (corner(&found, 0), corner(&found, 1));
         assert!((blue - 1.0 / 1.0015).abs() < 0.0004, "blue {blue}");
         assert!(
@@ -767,18 +777,18 @@ mod tests {
         };
         let clean = checks(900, 600);
         assert!(
-            estimated(gpu, &inject(&clean, 0, 1.0015)).is_some(),
+            regression(gpu, &inject(&clean, 0, 1.0015)).is_some(),
             "the fixture must be one this estimator can actually read, or the assertions \
              below pass on a decline that has nothing to do with a colour cast",
         );
         assert!(
-            estimated(gpu, &clean).is_none(),
+            regression(gpu, &clean).is_none(),
             "the fixture itself must carry nothing"
         );
 
         for strength in [0.05f64, 0.15, 0.3] {
             let cast = colour_cast(&clean, 0, strength);
-            let found = estimated(gpu, &cast);
+            let found = regression(gpu, &cast);
             assert!(
                 found.is_none(),
                 "a {strength} radial cast on a registered frame was read as a scale of {:?}",
@@ -829,12 +839,12 @@ mod tests {
         };
         let clean = checks(900, 600);
         assert!(
-            estimated(gpu, &inject(&clean, 0, 1.0015)).is_some(),
+            regression(gpu, &inject(&clean, 0, 1.0015)).is_some(),
             "the fixture must be one this estimator can actually read",
         );
         for amplitude in [4.0f64, 10.0, 20.0] {
             let frame = noisy(&clean, amplitude);
-            let found = estimated(gpu, &frame);
+            let found = regression(gpu, &frame);
             assert!(
                 found.is_none(),
                 "noise of {amplitude} counts on a registered frame was read as {:?}",
@@ -934,9 +944,53 @@ mod tests {
         assert_eq!(judged, None);
     }
 
+    /// Edges for the regression in the middle of the frame, point sources for the verification
+    /// outside it: neither `checks` nor `starfield` gives both a reading.
+    fn edges_and_stars(width: usize, height: usize) -> Rgb {
+        let (edges, stars) = (checks(width, height), starfield(width, height));
+        let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+        let half = (cx * cx + cy * cy).sqrt();
+        let mut data = edges.data;
+        for y in 0..height {
+            for x in 0..width {
+                let r = ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt() / half;
+                if r >= POINT_FROM - 0.05 {
+                    let i = (y * width + x) * 3;
+                    data[i..i + 3].copy_from_slice(&stars.data[i..i + 3]);
+                }
+            }
+        }
+        Rgb {
+            width,
+            height,
+            data,
+        }
+    }
+
+    #[test]
+    fn the_regression_is_kept_only_where_point_sources_confirm_it() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let unjudged = framed(gpu, &inject(&checks(900, 600), 0, 1.0015));
+        assert!(
+            pollster::block_on(regressed(&unjudged)).is_some(),
+            "the fixture must be one the regression answers on",
+        );
+        assert_eq!(pollster::block_on(estimate(&unjudged)), None);
+
+        let judged = framed(gpu, &inject(&edges_and_stars(1200, 900), 0, 1.0015));
+        let found = pollster::block_on(estimate(&judged)).expect("a confirmed scale");
+        assert!(
+            (corner(&found, 0) - 1.0 / 1.0015).abs() < 0.0006,
+            "recovered {}",
+            corner(&found, 0)
+        );
+    }
+
     #[test]
     fn the_gate_refuses_a_backwards_curve_through_the_public_path() {
-        // Wired into `accept`, so every path that produces a curve is covered rather than
+        // Wired into `accept`, so every path that trusts a source is covered rather than
         // only the one this test calls. A supplied curve pointing the wrong way is the
         // case that shipped: the Sony tag was read backwards for a while and nothing
         // rejected it.
@@ -1143,7 +1197,7 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
-        assert!(estimated(gpu, &checks(900, 600)).is_none());
+        assert!(regression(gpu, &checks(900, 600)).is_none());
     }
 
     #[test]
@@ -1156,6 +1210,6 @@ mod tests {
             height: 200,
             data: vec![128u8; 200 * 200 * 3],
         };
-        assert!(estimated(gpu, &flat).is_none());
+        assert!(regression(gpu, &flat).is_none());
     }
 }

@@ -90,10 +90,9 @@ void build_inv_lut(uint3 id : SV_DispatchThreadID)
     // `2/alpha`, so a zero in the slot is an infinity in the table. The two GAT forwards read it
     // through the same floor, so the transform this inverts is still the one that ran.
     let a = max(params[P_ALPHA], ALPHA_MIN);
-    let sq = params[P_SIGMA_SQ];
-    let sig = sqrt(max(sq, 1e-20));
-    let y_break = -0.375 * a;
-    let t_break = 2.0 * sig / a;
+    let sq = max(params[P_SIGMA_SQ], 0.0);
+    let sig = sqrt(sq);
+    let at_black = gat_sigma_at_black(a, sq);
 
     let x_val = float(i) / float(LUT_SIZE - 1);
     let lambda = x_val / a;
@@ -106,7 +105,7 @@ void build_inv_lut(uint3 id : SV_DispatchThreadID)
         // The closed form, which is what the exact inverse has converged to by here - and the only
         // one of the two f32 can still evaluate. The same expression `gat_forward_full` applies, so
         // a level round-trips through this table exactly.
-        value = (2.0 / a) * sqrt(max(a * x_val + 0.375 * a * a + sq, 0.0));
+        value = (2.0 / a) * sqrt(a * x_val + at_black * at_black);
     } else {
         // Bounded by the branch above and by `TERMS_CEILING`: the sum only runs where
         // lambda is small, so it is at most a few thousand terms whatever alpha is.
@@ -130,11 +129,10 @@ void build_inv_lut(uint3 id : SV_DispatchThreadID)
                 let z = 1.4142135623730951 * sig * GH_NODES[g];
                 let noisy_y = float(k) * a + z;
                 float t;
-                if (noisy_y >= y_break) {
-                    let arg = a * noisy_y + 0.375 * a * a + sq;
-                    t = (2.0 / a) * sqrt(max(arg, 0.0));
+                if (noisy_y >= 0.0) {
+                    t = (2.0 / a) * sqrt(a * noisy_y + at_black * at_black);
                 } else {
-                    t = t_break + (noisy_y - y_break) / sig;
+                    t = 2.0 * at_black / a + noisy_y / at_black;
                 }
                 eg_sum = eg_sum + GH_WEIGHTS[g] * t;
             }
@@ -156,10 +154,7 @@ void build_inv_lut(uint3 id : SV_DispatchThreadID)
     lut_x[i] = x_val;
 
     if (i == 0) {
-        lut_params[2] = y_break;
-        lut_params[3] = t_break;
-        lut_params[4] = sig;
-        lut_params[5] = a;
-        lut_params[6] = sq;
+        lut_params[2] = a;
+        lut_params[3] = at_black;
     }
 }

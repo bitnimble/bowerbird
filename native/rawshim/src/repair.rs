@@ -568,9 +568,10 @@ pub(crate) mod tests {
         ] {
             assert!(grid.contains(&line), "the grid does not say `{line}`");
         }
-        let gain = format!("gain: z.number().min(1 / {MOST_GAIN}).max({MOST_GAIN}),");
+        let compact = |text: &str| text.split_whitespace().collect::<String>();
+        let gain = format!("gain:z.number().min(1/{MOST_GAIN}).max({MOST_GAIN}),");
         assert!(
-            include_str!("../../../src/schemas/photo_edits.ts").contains(&gain),
+            compact(include_str!("../../../src/schemas/photo_edits.ts")).contains(&gain),
             "the schema does not say `{gain}`"
         );
     }

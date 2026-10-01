@@ -6,6 +6,11 @@
 // *noise* is once its textured blocks are excluded - and a Huber-weighted least squares over
 // the (mean, variance) pairs gives the slope and the intercept.
 //
+// **The intercept is no less than what a field under black measures.** A line's intercept is an
+// extrapolation, and a block variance is a high-pass: where a sensor's dark noise is not white the
+// blocks read almost none of it and the line lands on zero. The photosites under black are that
+// noise observed directly (`under_black_reduce`).
+//
 // No early return on a degenerate range: WGSL will not admit a workgroup barrier past a branch
 // on workgroup memory, and falling through lands on the fallback anyway, because a range that
 // small leaves every bin under the 20-block floor and the `n_valid < 4` arm writes it.
@@ -13,6 +18,7 @@ import prelude;
 
 [vk::binding(0, 0)] StructuredBuffer<float> blk_mean;
 [vk::binding(1, 0)] StructuredBuffer<float> blk_var;
+[vk::binding(2, 0)] StructuredBuffer<float> under_black;
 [vk::binding(3, 0)] RWStructuredBuffer<float> params;
 
 struct Push {
@@ -26,9 +32,40 @@ static const int NBINS = 32;
 static const int VAR_BINS = 128;
 static const int WG = 256;
 
-/// The 5th to 20th percentile of block variances over the variance at which PMRID lifts nothing
-/// (`examples/noise_alpha.rs`). Iid noise alone reads 0.71.
-static const float ENVELOPE_RATIO = 1.34;
+/// The 5th to 20th percentile of block variances over the variance the photosites have, which is
+/// what that low a slice of a block estimate's own scatter reads on noise alone.
+static const float ENVELOPE_RATIO = 0.71;
+
+static const int BIN_BLOCKS = 20;
+
+static const float BLOCK_SAMPLES = float(NOISE_BLOCK * NOISE_BLOCK);
+
+/// The read variance the photosites under black measure, zero where they are no field.
+float read_variance_under_black()
+{
+    UnderBlack levels[BLACK_LEVELS];
+    for (int l = 0; l < BLACK_LEVELS; l++) { under_black_none(levels[l]); }
+    for (int i = 0; i < DR_WORKGROUPS; i++) {
+        for (int l = 0; l < BLACK_LEVELS; l++) {
+            UnderBlack partial;
+            under_black_at(under_black, i, l, partial);
+            under_black_merge(levels[l], partial);
+        }
+    }
+    // `black_level_of` puts green's two first. The other colours' carry their gain and read
+    // high, so they answer only where no green is under black.
+    var first = 0;
+    if (levels[0].count + levels[1].count == 0.0) { first = 2; }
+    let depth = levels[first].depth + levels[first + 1].depth;
+    let count = levels[first].count + levels[first + 1].count;
+    if (count == 0.0) { return 0.0; }
+    // sqrt(pi / 2): a zero-mean normal's lower half has a mean depth of `sigma * sqrt(2 / pi)`.
+    let sigma = depth / count * 1.2533141;
+    // Only a field at black is that lower half. A defect or a lit field's tail is under black
+    // too and measures neither, so the reading counts by the bins its paired photosites fill.
+    let field = (levels[first].paired + levels[first + 1].paired) / BLOCK_SAMPLES;
+    return sigma * sigma * field / (field + float(BIN_BLOCKS));
+}
 
 float axis(float mean)
 {
@@ -170,7 +207,7 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
         st_mean[lid] = at < pc.total_blocks ? blk_mean[at] : 0.0;
         st_var[lid] = at < pc.total_blocks ? blk_var[at] : 0.0;
         GroupMemoryBarrierWithGroupSync();
-        if (cnt >= 20) {
+        if (cnt >= BIN_BLOCKS) {
             let span = min(WG, pc.total_blocks - c);
             for (int k = sub; k < span; k += tpb) {
                 let bm = st_mean[k];
@@ -186,7 +223,7 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
     }
 
     if (sub == 0) {
-        if (cnt < 20) {
+        if (cnt < BIN_BLOCKS) {
             bin_valid[bin] = 0;
         } else {
             let p5_target = cnt / 20;
@@ -327,5 +364,5 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
     let read_floor = bin_var_arr[darkest] - alpha_est * max(bin_mean_arr[darkest], 0.0);
 
     params[P_ALPHA] = max(alpha_est, ALPHA_MIN);
-    params[P_SIGMA_SQ] = max(sigma_sq_est, read_floor);
+    params[P_SIGMA_SQ] = max(max(sigma_sq_est, read_floor), read_variance_under_black());
 }

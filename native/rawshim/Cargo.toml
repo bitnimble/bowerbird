@@ -109,13 +109,50 @@ required-features = ["renditions"]
 name = "halo_seams"
 required-features = ["renditions"]
 
-# `filter_domain_delta`, `sdr_vs_hdr` and `denoise_before_warp` stood here. Each asked a
-# question phase 0 has since decided and implemented - which domain the filters run in,
-# what an SDR rendition costs against an HDR one, and which side of the warp the denoise
-# belongs on - and each was written against the pipeline that had two of everything. There
-# is no CPU grade to compare against now, no separate SDR path to price, and the filters do
-# not convert a domain at all. Their findings are in the design doc they were written for
-# (§0.2, §0.2.1, §0.2.3) and in DESIGN §10.3 and §10.9; the code is at `ef8dade`.
+# Each of these includes `examples/support`, which needs `renditions`.
+[[example]]
+name = "anchor_sweep"
+required-features = ["renditions"]
+
+[[example]]
+name = "composite_probe"
+required-features = ["renditions"]
+
+[[example]]
+name = "distort_probe"
+required-features = ["renditions"]
+
+[[example]]
+name = "dust_evidence"
+required-features = ["renditions"]
+
+[[example]]
+name = "frame_probe"
+required-features = ["renditions"]
+
+[[example]]
+name = "loupe"
+required-features = ["renditions"]
+
+[[example]]
+name = "open_bench"
+required-features = ["renditions"]
+
+[[example]]
+name = "print_hdr_audit"
+required-features = ["renditions"]
+
+[[example]]
+name = "print_motion_bench"
+required-features = ["renditions"]
+
+[[example]]
+name = "print_preview"
+required-features = ["renditions"]
+
+[[example]]
+name = "toe_probe"
+required-features = ["renditions"]
 
 [dependencies]
 # Our fork, vendored as a submodule. It reads every format the product imports, and it is the

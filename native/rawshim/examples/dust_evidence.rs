@@ -14,73 +14,36 @@
 //! looking at. A spot the resting bar of about 6.0 would keep is a spot the reader will actually
 //! see corrected; anything under 4.0 is in the band where a mistake lives.
 
-use rawshim::hdr::{self, Grade, Source};
+mod support;
+
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
-use rawshim::light::Light;
-
-fn grade() -> Grade {
-    Grade {
-        reference_white_nits: Light::exactly(203.0),
-        white_quantile: 0.9,
-    }
-}
-
-fn strengths() -> Strengths {
-    Strengths {
-        sharpen: 1.0,
-        defringe: 1.0,
-    }
-}
 
 fn options() -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
-        grade: grade(),
+        grade: support::GRADE,
         crf: 26,
         preset: 6,
-        strengths: strengths(),
-        // The fixed default: what this example varies is the glass, and a sigma measured off one
-        // frame and not the other would put a second difference in the pair it is evidence for.
-        sharpen_sigma: None,
+        strengths: support::STRENGTHS,
+        // Fixed: what this example varies is the glass, and a sigma measured off one frame and not
+        // the other would put a second difference in the pair it is evidence for.
+        sharpen_sigma: Some(rawshim::image::DECONVOLVE_SIGMA),
         max_edge: 100_000.0,
         content_light: None,
     }
 }
 
-/// The photograph as a rendition would ship it, with whatever the caller asked done about dust.
-///
-/// Through `decode_fitted` rather than `decode_frame_denoised`, because that one takes the glass off
-/// the request deliberately - a fixture with a spot removed no longer pins what it was written to.
-/// This example is the one caller that wants the opposite.
+/// The photograph as a rendition would ship it, sharpened at the fixed sigma, with whatever the
+/// caller asked done about dust.
 fn rendered(path: &str, glass: rawshim::dust::Wanted<'_>) -> (Vec<u8>, usize, usize) {
-    let detail = rawshim::galosh::Detail::at(40.0, 40.0);
-    let frame = rawshim::decode_rawler::decode_fitted(
-        path,
-        detail,
-        0,
-        Default::default(),
-        Default::default(),
-        glass,
-    )
+    let opened = support::Open {
+        dust: glass,
+        ..support::Open::shipped(path, 0)
+    }
+    .run()
     .expect("decode");
-    let frame = pollster::block_on(frame.to_host()).expect("the frame reads back");
-    let samples = frame.samples16().expect("16-bit").to_vec();
-    let source = Source {
-        samples: &samples,
-        width: frame.width,
-        height: frame.height,
-    };
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let matched = rawshim::fit_hdr_for(&resident, path, 0.995);
-    let (coded, width, height) = hdr::graded_as(
-        &source,
-        &options(),
-        matched.as_ref(),
-        rawshim::gpu::Output::Srgb,
-    );
+    let (coded, width, height) = support::graded(&opened, &options(), rawshim::gpu::Output::Srgb);
     (coded.iter().map(|v| *v as u8).collect(), width, height)
 }
 

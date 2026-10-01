@@ -12,7 +12,7 @@
 //!
 //! Window coordinates are the cropped frame's, which is what `renders --crop` takes.
 
-use rawshim::galosh::{Detail, Fit};
+mod support;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -27,12 +27,12 @@ fn main() {
         })
         .collect();
 
-    let frame = rawshim::decode_frame_denoised(&path, 0, Detail::at(0.0, 0.0), Fit::Only)
+    let opened = support::Open::shipped(&path, 0)
+        .run()
         .expect("the frame decodes");
+    let frame = &opened.frame;
     let samples = frame.samples16().expect("16-bit");
-    let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let levels = rawshim::hdr::levels_of(gpu, samples, frame.width, frame.height, 0.9)
-        .expect("the frame has levels");
+    let levels = opened.measured.levels.anchored();
     let white = levels.white.raw();
     println!(
         "{}x{}  white {white:.0}  peak {:.0}  (of {})",

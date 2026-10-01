@@ -7,6 +7,8 @@
 //!
 //! usage: matches <raw> <out-dir> [count]
 
+mod support;
+
 use rawshim::image::resize;
 use std::env;
 
@@ -23,12 +25,15 @@ fn main() {
     let out = args.next().expect("out dir");
     let count: usize = args.next().and_then(|v| v.parse().ok()).unwrap_or(8);
 
-    let frame = rawshim::decode_frame(&path, 0).expect("decode");
+    let opened = support::Open::shipped(&path, support::FULL_RENDITION_SIZE)
+        .run()
+        .expect("decode");
     let gpu = rawshim::gpu::device().expect("an adapter");
-    let resident = frame.on_device(gpu).expect("the frame reaches the device");
-    let lens = rawshim::fit_hdr_for(&resident, &path, 0.9)
-        .expect("a fit")
-        .lens;
+    let resident = opened
+        .frame
+        .on_device(gpu)
+        .expect("the frame reaches the device");
+    let lens = opened.measured.matched.expect("a fit").lens;
 
     let preview = rawshim::hdr::match_preview(&path).expect("a preview");
     let (plane_width, _) = rawshim::hdr_fit::fitted_preview_size(preview.width, preview.height);
@@ -36,7 +41,7 @@ fn main() {
         gpu,
         &resident,
         plane_width,
-        0.9,
+        support::GRADE.white_quantile,
     ))
     .expect("a plane");
     let render = pollster::block_on(rawshim::fit_source::read_render(gpu, &prepared.rendered))

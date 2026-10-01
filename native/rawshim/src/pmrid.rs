@@ -29,6 +29,10 @@ const QUIETEST_SIGMA: f64 = 7.11772e-7 * 100.0 * 100.0 + 6.514934e-4 * 100.0 + 0
 const V: f64 = 959.0;
 const INPUT_SCALE: f64 = 256.0;
 
+/// How much of the fitted variance the network is handed, which is where it lifts nothing
+/// (`examples/noise_alpha.rs`).
+const NETWORK_NOISE: f64 = 0.53;
+
 /// What each tile is grown by so that its interior has context, in mosaic pixels.
 ///
 /// The halo is what stops the seam: four halvings put a decoder pixel's receptive field over a
@@ -1116,8 +1120,8 @@ fn plan(
     // ISO polynomial: the fit states green's noise, so both terms come off green's gain.
     let green = f64::from(gains[1]);
     let model = fit.model();
-    let sigma = V * V * f64::from(model.sigma_sq) / (green * green);
-    let k = (V * f64::from(model.alpha) / green).max(quietest_k(sigma));
+    let sigma = V * V * NETWORK_NOISE * f64::from(model.sigma_sq) / (green * green);
+    let k = (V * NETWORK_NOISE * f64::from(model.alpha) / green).max(quietest_k(sigma));
     let cvt_k = ANCHOR_K / k;
     let cvt_b = (sigma / (k * k) - ANCHOR_SIGMA / (ANCHOR_K * ANCHOR_K)) * ANCHOR_K / V;
 
@@ -2184,7 +2188,7 @@ mod tests {
     }
 
     /// The network moves the committed Bayer frames' photosites by next to nothing on average at
-    /// the fit's own noise: what it lifts is how far the fit is from the noise it finds.
+    /// `NETWORK_NOISE` of the fit: what it lifts is how far that is from the noise it finds.
     #[cfg(feature = "fixtures")]
     #[test]
     fn the_fit_leaves_the_network_nothing_to_lift() {
@@ -2431,7 +2435,7 @@ mod tests {
                 .zip(&against)
                 .map(|(a, b)| f64::from((a - b).abs()))
                 .fold(0.0, f64::max);
-            // 0.08 on this frame, and a quarter of a code is the room another driver's rounding has.
+            // A quarter of a code is the room another driver's rounding has.
             assert!(
                 worst * 255.0 < 0.25,
                 "{arm:?} is {:.4} codes from Float",

@@ -11,14 +11,13 @@
 //!
 //! With an output path it writes the frame as a PQ AVIF, for looking at the picture as well.
 
+mod support;
+
 use rawshim::gpu::Output;
-use rawshim::hdr::{Grade, Source};
 use rawshim::hdr_args::{Chroma, EncodeOptions};
-use rawshim::image::Strengths;
 
 const REFERENCE_NITS: rawshim::light::Light<rawshim::light::SceneNits> =
-    rawshim::light::Light::exactly(203.0);
-const QUANTILE: f64 = 0.9;
+    support::GRADE.reference_white_nits;
 
 fn saturation(rgb: [f64; 3]) -> f64 {
     let top = rgb[0].max(rgb[1]).max(rgb[2]);
@@ -87,12 +86,11 @@ fn write_view(graded: &[u16], width: usize, height: usize, path: &str) {
 
 fn main() {
     let path = std::env::args().nth(1).expect("a raw path");
-    let frame = rawshim::decode_frame(&path, 0).expect("a decode");
-    let samples = frame.samples16().expect("16-bit").to_vec();
+    let opened = support::Open::shipped(&path, 0).run().expect("a decode");
+    let frame = &opened.frame;
+    let samples = frame.samples16().expect("16-bit");
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter");
-    let levels = rawshim::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
-        .expect("levels")
-        .anchored();
+    let levels = opened.measured.levels.anchored();
     let white = levels.white.raw();
     println!(
         "white {:.0}  peak {:.0}  ratio {:.2}",
@@ -101,9 +99,8 @@ fn main() {
         (levels.peak / levels.white).raw(),
     );
 
-    let resident = frame.on_device(gpu).expect("the frame on the device");
-    let matched = rawshim::fit_hdr_for(&resident, &path, QUANTILE);
-    match matched.as_ref().and_then(|m| m.colour.as_ref()) {
+    let matched = opened.measured.matched.as_ref();
+    match matched.and_then(|m| m.colour.as_ref()) {
         Some(colour) => println!(
             "match deltaE {:.2}  ceiling {:.3}  anchor {:.3}  saturation {:.3}  lattice {}",
             colour.delta_e,
@@ -145,29 +142,17 @@ fn main() {
     let options = EncodeOptions {
         still_chroma: Chroma::Yuv444,
         output_path: out.clone().unwrap_or_default(),
-        grade: Grade {
-            reference_white_nits: REFERENCE_NITS,
-            white_quantile: QUANTILE,
-        },
+        grade: support::GRADE,
         // The library's own `hdr_crf` default, not `examples/renders`' 26: that one writes a file
         // to look at, where a written file here is meant to be the rendition.
         crf: 3,
         preset: 6,
-        strengths: Strengths {
-            sharpen: 1.0,
-            defringe: 1.0,
-        },
+        strengths: support::STRENGTHS,
         sharpen_sigma: None,
         max_edge: 100_000.0,
         content_light: None,
     };
-    let source = Source {
-        samples: &samples,
-        width: frame.width,
-        height: frame.height,
-    };
-    let (graded, width, height) =
-        rawshim::hdr::graded_as(&source, &options, matched.as_ref(), Output::Pq);
+    let (graded, width, height) = support::graded(&opened, &options, Output::Pq);
     println!("graded {width}x{height}");
     if let Some(path) = &out {
         rawshim::hdr::encode_pq_frame(graded.clone(), width, height, &options).expect("an encode");
@@ -224,7 +209,7 @@ fn main() {
         }
     }
 
-    if let Some(colour) = matched.as_ref().and_then(|matched| matched.colour.as_ref()) {
+    if let Some(colour) = matched.and_then(|matched| matched.colour.as_ref()) {
         println!("\nthe tone stage on a saturated highlight, by how far over white it sits:");
         let overs = [0.5, 0.9, 1.0, 2.0, 4.0, 8.0, 16.0];
         let scenes: Vec<[f64; 3]> = overs

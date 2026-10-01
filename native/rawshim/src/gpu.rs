@@ -2560,7 +2560,7 @@ impl Adjust {
             c.curve.as_slice()
         });
         let camera_exposure = colour.map_or(crate::light::Stops::ZERO, |c| c.exposure);
-        let saturation = colour.map_or(0.0, |c| saturation_slider(c.camera_saturation));
+        let saturation = colour.map_or(0.0, HdrColour::saturation_slider);
         Adjust {
             tone_curve: None,
             saturation: None,
@@ -3049,8 +3049,6 @@ impl Gpu {
         uploaded
     }
 
-    /// The scene's own top end, in nits, off the same two passes the editor measures it with.
-    ///
     /// The lattice, split in two: the 2x2 in one volume, and the lightness gain's *deviation from
     /// 1* in another.
     ///
@@ -3062,34 +3060,41 @@ impl Gpu {
         let identity = hdr_fit::ChromaMap::identity();
         let map = colour.chroma.as_ref().unwrap_or(&identity);
         let shape = map.shape();
-        let nodes = map.nodes_flat();
-        let count = nodes.len() / hdr_fit::NODE_VALUES;
-        let (mut pairs, mut gains, mut tints) = (Vec::new(), Vec::new(), Vec::new());
-        for node in 0..count {
-            let at = node * hdr_fit::NODE_VALUES;
-            for k in 0..4 {
-                pairs.extend_from_slice(&half(nodes[at + k] as f32));
+        use crate::parallel::*;
+        let nodes = map.nodes();
+        const TEXEL: usize = 8;
+        const LATTICE_GRAIN: usize = 2048;
+        let texel = |values: [f32; 4], into: &mut [u8]| {
+            for (value, bytes) in values.into_iter().zip(into.chunks_exact_mut(2)) {
+                bytes.copy_from_slice(&half(value));
             }
-            // The second volume carries the two luma-to-chroma terms, the lightness gain's
-            // deviation from 1, and the first of the two chroma-to-lightness terms.
-            gains.extend_from_slice(&half(nodes[at + 4] as f32));
-            gains.extend_from_slice(&half(nodes[at + 5] as f32));
-            gains.extend_from_slice(&half(nodes[at + 6] as f32 - 1.0));
-            gains.extend_from_slice(&half(nodes[at + 7] as f32));
-            // Nine values need a third volume: eight fill two `rgba16float` texels exactly,
-            // and the ninth has nowhere else to sit. Three of its four slots are spare, which
-            // is the price of the chroma-to-lightness pair - a texel of padding per node
-            // against a small saturated object otherwise coming out at its surroundings'
-            // lightness.
-            tints.extend_from_slice(&half(nodes[at + 8] as f32));
-            for _ in 0..3 {
-                tints.extend_from_slice(&half(0.0));
-            }
-        }
+        };
+        let mut pairs = vec![0u8; nodes.len() * TEXEL];
+        let mut gains = vec![0u8; nodes.len() * TEXEL];
+        let mut tints = vec![0u8; nodes.len() * TEXEL];
+        nodes
+            .par_iter()
+            .zip(pairs.par_chunks_exact_mut(TEXEL))
+            .zip(gains.par_chunks_exact_mut(TEXEL))
+            .zip(tints.par_chunks_exact_mut(TEXEL))
+            .with_min_len(LATTICE_GRAIN)
+            .for_each(|(((node, pairs), gains), tints)| {
+                let node = node.map(|v| v as f32);
+                texel([node[0], node[1], node[2], node[3]], pairs);
+                // The second volume carries the two luma-to-chroma terms, the lightness gain's
+                // deviation from 1, and the first of the two chroma-to-lightness terms.
+                texel([node[4], node[5], node[6] - 1.0, node[7]], gains);
+                // Nine values need a third volume: eight fill two `rgba16float` texels exactly,
+                // and the ninth has nowhere else to sit. Three of its four slots are spare, which
+                // is the price of the chroma-to-lightness pair - a texel of padding per node
+                // against a small saturated object otherwise coming out at its surroundings'
+                // lightness.
+                texel([node[8], 0.0, 0.0, 0.0], tints);
+            });
         let size = wgpu::Extent3d {
             width: shape.chroma_count as u32,
             height: shape.chroma_count as u32,
-            // Level and surround packed into depth, surround-major - `nodes_flat`'s own
+            // Level and surround packed into depth, surround-major - `nodes`' own
             // order - and the shader samples one surround slab at a time, so hardware
             // filtering never crosses the seam between slabs.
             depth_or_array_layers: (shape.level_count * shape.surround_count) as u32,
@@ -4854,9 +4859,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.adjust.whites);
     f(&mut w, grade.adjust.blacks);
     f(&mut w, grade.adjust.vibrance);
-    let camera_saturation = grade
-        .colour
-        .map_or(0.0, |c| saturation_slider(c.camera_saturation));
+    let camera_saturation = grade.colour.map_or(0.0, HdrColour::saturation_slider);
     f(&mut w, grade.adjust.saturation.unwrap_or(camera_saturation));
     f(&mut w, grade.adjust.texture);
     f(&mut w, grade.adjust.clarity);
@@ -6160,11 +6163,14 @@ mod tests {
         let frame: Vec<u16> = (0..width * height * 3)
             .map(|i| ((i / 3) * 16 + (i % 3) * 700).min(65535) as u16)
             .collect();
-        let fitted = crate::hdr_fit::HdrColour::identity();
+        let fitted = crate::hdr_fit::HdrColour {
+            saturation: 1.2,
+            chroma: Some(crate::hdr_fit::ChromaMap::from_saturation(1.2)),
+            ..crate::hdr_fit::HdrColour::identity()
+        };
         let told = crate::hdr_fit::HdrColour {
             exposure: Stops::measured(0.7),
             curve: vec![[0.0, 0.0], [0.35, 0.25], [0.7, 0.78], [1.0, 0.96]],
-            camera_saturation: crate::light::Gain::of_ratio(1.2),
             ..fitted.clone()
         };
         let graded_as = |colour: Option<&crate::hdr_fit::HdrColour>,
@@ -6208,7 +6214,7 @@ mod tests {
             tone_curve: Some(super::ToneCurve::PchipCbrt3 {
                 points: told.curve.clone(),
             }),
-            saturation: Some(super::saturation_slider(told.camera_saturation)),
+            saturation: Some(told.saturation_slider()),
             ..super::Adjust::none()
         };
         let worst = |a: &[u16], b: &[u16]| {

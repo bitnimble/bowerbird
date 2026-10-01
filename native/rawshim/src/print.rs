@@ -523,11 +523,9 @@ mod tests {
             .sum()
     }
 
-    /// What the same sheet reads with the lamp turned to stand behind it, which is the room the lamp
-    /// makes and nothing of the lamp itself: the bounce follows the room's own shape rather than the
-    /// lamp's direction or its size, so it survives the turn untouched where every direct term goes
-    /// to zero. Narrowed to a point on the way, since a wide emitter behind a *turned* sheet still
-    /// shows it a corner.
+    /// What the same sheet reads with the lamp turned to stand behind it: the room's light with none
+    /// of the lamp's direct terms. Narrowed to a point on the way, since a wide emitter behind a
+    /// *turned* sheet still shows it a corner.
     fn room_of(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 8]> {
         let scene = Scene {
             light_across: Share::measured(-scene.light_across.raw(), 1.0),

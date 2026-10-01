@@ -86,10 +86,12 @@ void loess_chroma_3p_tiled(uint3 group : SV_GroupID, uint3 local : SV_GroupThrea
         let gx = reflect_index(tile_x - R + tx, pc.width);
         let gy = reflect_index(tile_y - R + ty, pc.height);
         let gp = gy * pc.width + gx;
-        t_y[i] = y_guide[gp];
-        t_c1[i] = c1_in[gp];
-        t_c2[i] = c2_in[gp];
-        t_c3[i] = c3_in[gp];
+        let y = y_guide[gp];
+        let c = float3(c1_in[gp], c2_in[gp], c3_in[gp]) / share_of(y);
+        t_y[i] = y;
+        t_c1[i] = c.x;
+        t_c2[i] = c.y;
+        t_c3[i] = c.z;
         let pilot_x = clamp(gx - pilot_radius, 0, pc.width - pilot_width);
         let pilot_y = clamp(gy - pilot_radius, 0, pc.height - pilot_height);
         var pilot = float2(0.0);
@@ -100,8 +102,9 @@ void loess_chroma_3p_tiled(uint3 group : SV_GroupID, uint3 local : SV_GroupThrea
                     / share_of(y_guide[at]);
             }
         }
-        t_p1[i] = pilot.x;
-        t_p2[i] = pilot.y;
+        let own = (pilot - exclude_centre * colour_axes(c, pc.green_sign)) / pilot_samples;
+        t_p1[i] = own.x;
+        t_p2[i] = own.y;
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -118,15 +121,15 @@ void loess_chroma_3p_tiled(uint3 group : SV_GroupID, uint3 local : SV_GroupThrea
     // inverse rebuilds the line at a fraction of its depth; as a share, the line is a constant and
     // there is nothing for the smoothing to take. The floor holds the share finite in the shadows,
     // where it degrades to the plain difference.
-    let y_c = t_y[cy_lds * TILE_W + cx_lds];
+    let centre = cy_lds * TILE_W + cx_lds;
+    let y_c = t_y[centre];
     let scale_c = share_of(y_c);
-    let c_c = float3(
-        t_c1[cy_lds * TILE_W + cx_lds],
-        t_c2[cy_lds * TILE_W + cx_lds],
-        t_c3[cy_lds * TILE_W + cx_lds]) / scale_c;
-    let pilot_c = (float2(
-        t_p1[cy_lds * TILE_W + cx_lds],
-        t_p2[cy_lds * TILE_W + cx_lds]) - exclude_centre * colour_axes(c_c, pc.green_sign)) / pilot_samples;
+    let c_c = float3(t_c1[centre], t_c2[centre], t_c3[centre]);
+    let pilot_c = float2(t_p1[centre], t_p2[centre]);
+    // No window or pilot here meets the frame's edge, so neither reflects nor clamps.
+    let reach = R + pilot_radius;
+    let interior = tile_x >= reach && tile_x + TILE_DIM - 1 + reach < pc.width
+        && tile_y >= reach && tile_y + TILE_DIM - 1 + reach < pc.height;
     let query_x = clamp(ox - pilot_radius, 0, pc.width - pilot_width);
     let query_y = clamp(oy - pilot_radius, 0, pc.height - pilot_height);
     let bw = BW * pc.level_noise;
@@ -151,24 +154,30 @@ void loess_chroma_3p_tiled(uint3 group : SV_GroupID, uint3 local : SV_GroupThrea
             let p = ty_lds * TILE_W + (cx_lds + dx);
             let yi = t_y[p];
             let scale_i = share_of(yi);
-            let ci = float3(t_c1[p], t_c2[p], t_c3[p]) / scale_i;
+            let ci = float3(t_c1[p], t_c2[p], t_c3[p]);
             cmin = min(cmin, ci);
             cmax = max(cmax, ci);
             let dy_g = yi - y_c;
-            let pilot_i = (float2(t_p1[p], t_p2[p])
-                - exclude_centre * colour_axes(ci, pc.green_sign)) / pilot_samples;
+            let pilot_i = float2(t_p1[p], t_p2[p]);
             let dc = (pilot_i - pilot_c) * scale_c;
-            let candidate_x = reflect_index(ox + dx, pc.width);
-            let candidate_y = reflect_index(oy + dy, pc.height);
-            let pilot_x = clamp(candidate_x - pilot_radius, 0, pc.width - pilot_width);
-            let pilot_y = clamp(candidate_y - pilot_radius, 0, pc.height - pilot_height);
-            let overlap_width = max(min(query_x + pilot_width, pilot_x + pilot_width) - max(query_x, pilot_x), 0);
-            let overlap_height = max(min(query_y + pilot_height, pilot_y + pilot_height) - max(query_y, pilot_y), 0);
-            let query_in_candidate = ox >= pilot_x && ox < pilot_x + pilot_width
-                && oy >= pilot_y && oy < pilot_y + pilot_height;
-            let candidate_in_query = candidate_x >= query_x && candidate_x < query_x + pilot_width
-                && candidate_y >= query_y && candidate_y < query_y + pilot_height;
-            let same_centre = candidate_x == ox && candidate_y == oy;
+            var overlap_width = max(pilot_side - abs(dx), 0);
+            var overlap_height = max(pilot_side - abs(dy), 0);
+            var query_in_candidate = abs(dx) <= pilot_radius && abs(dy) <= pilot_radius;
+            var candidate_in_query = query_in_candidate;
+            var same_centre = dx == 0 && dy == 0;
+            if (!interior) {
+                let candidate_x = reflect_index(ox + dx, pc.width);
+                let candidate_y = reflect_index(oy + dy, pc.height);
+                let pilot_x = clamp(candidate_x - pilot_radius, 0, pc.width - pilot_width);
+                let pilot_y = clamp(candidate_y - pilot_radius, 0, pc.height - pilot_height);
+                overlap_width = max(min(query_x + pilot_width, pilot_x + pilot_width) - max(query_x, pilot_x), 0);
+                overlap_height = max(min(query_y + pilot_height, pilot_y + pilot_height) - max(query_y, pilot_y), 0);
+                query_in_candidate = ox >= pilot_x && ox < pilot_x + pilot_width
+                    && oy >= pilot_y && oy < pilot_y + pilot_height;
+                candidate_in_query = candidate_x >= query_x && candidate_x < query_x + pilot_width
+                    && candidate_y >= query_y && candidate_y < query_y + pilot_height;
+                same_centre = candidate_x == ox && candidate_y == oy;
+            }
             let overlap = float(overlap_width * overlap_height) - exclude_centre
                 * (float(query_in_candidate) + float(candidate_in_query) - float(same_centre));
             let noise_scale = scale_c / scale_i;
