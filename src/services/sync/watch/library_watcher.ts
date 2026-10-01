@@ -39,6 +39,10 @@ const SAMPLE = 5;
 // the two never both run for one library: which it gets is decided per library
 // from what its root is mounted on.
 export class LibraryWatcher implements LibraryLifecycleListener {
+  // @parcel/watcher frees its process-wide backend on the last unsubscribe; a subscribe begun
+  // before that finishes lands on the freed backend's exited FSEvents run loop, deaf for good.
+  private static nativeCalls: Promise<unknown> = Promise.resolve();
+
   private readonly watchers = new Map<string, AsyncSubscription>();
   private readonly timers = new Map<string, Timer>();
   private readonly retryTimers = new Map<string, Timer>();
@@ -190,7 +194,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     const watched = { ...library, root_path: resolvedRoot(library.root_path) };
     const establishing = this.activity
       .track(library.id, 'checking_files', 'watch', () =>
-        subscribe(
+        LibraryWatcher.subscribeInTurn(
           watched.root_path,
           (err, events) => {
             if (err != null) {
@@ -241,10 +245,10 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         ),
       )
       .then((sub: AsyncSubscription) => {
-        // Torn down while the walk was in flight: nothing is holding this
-        // subscription any more, so it would leak its watches.
-        if (this.stopped || !this.libraries.getById(library.id)) {
-          void sub.unsubscribe();
+        // Torn down or replaced while the walk was in flight: nothing is holding
+        // this subscription any more, so it would leak its watches.
+        if (superseded()) {
+          void this.close(library.id, sub);
           return;
         }
         this.watchers.set(library.id, sub);
@@ -252,6 +256,8 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         this.retryDelays.delete(library.id); // watching again: next failure starts from the short delay
       })
       .catch((err: unknown) => {
+        // A retry would drop the watch that replaced this one.
+        if (superseded()) return;
         // Includes a root that is not there at all, which is an unmounted drive
         // rather than a permanent condition.
         log.error('could not watch; will re-attempt', {
@@ -262,8 +268,9 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         this.scheduleRetry(library);
       })
       .finally(() => {
-        this.ready.delete(library.id);
+        if (!superseded()) this.ready.delete(library.id);
       });
+    const superseded = (): boolean => this.ready.get(library.id) !== establishing;
 
     this.ready.set(library.id, establishing);
   }
@@ -438,10 +445,22 @@ export class LibraryWatcher implements LibraryLifecycleListener {
 
   private async close(libraryId: string, sub: AsyncSubscription): Promise<void> {
     try {
-      await sub.unsubscribe();
+      await LibraryWatcher.inTurn(() => sub.unsubscribe());
     } catch (err) {
       log.warn('could not release a watch', { library: libraryId, err });
     }
+  }
+
+  private static subscribeInTurn(
+    ...args: Parameters<typeof subscribe>
+  ): Promise<AsyncSubscription> {
+    return LibraryWatcher.inTurn(() => subscribe(...args));
+  }
+
+  private static inTurn<T>(call: () => Promise<T>): Promise<T> {
+    const turn = LibraryWatcher.nativeCalls.then(call);
+    LibraryWatcher.nativeCalls = turn.catch(() => undefined);
+    return turn;
   }
 
   private record(libraryId: string, relPath: string): void {
@@ -549,8 +568,6 @@ function resolvedRoot(rootPath: string): string {
   }
 }
 
-// What the watch was established with, so a settings change can be compared
-// against it. Only the parts that decide which paths are watched.
 // Every field a live watcher's decisions read, because this is the only thing that tells one its
 // scope has moved: a field left out here is a setting the user can change and the watcher will go
 // on ignoring until the process restarts.

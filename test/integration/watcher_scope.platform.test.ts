@@ -19,6 +19,7 @@ const DEBOUNCE = 150;
 const POLL = 20_000;
 
 let root: string;
+let library: Library;
 let watcher: LibraryWatcher;
 let calls: (string[] | undefined)[];
 let failWith: AppError | null;
@@ -32,12 +33,13 @@ beforeEach(async () => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-scope-'));
   calls = [];
   failWith = null;
-  const library = {
+  library = {
     id: LIB,
     root_path: root,
     bin_name: 'Bin',
     ordering: 'taken_desc',
     include_subfolders: true,
+    include_non_raw: false,
   } as Library;
   const libraries = {
     list: () => [library],
@@ -83,4 +85,14 @@ test('SYNC_IN_PROGRESS re-queues the paths so the retry stays scoped', async () 
   await settle(() => calls.length >= 2);
   expect(calls[0]).toContain('c.arw');
   expect(calls[1]).toContain('c.arw'); // retried with the same scope, not dropped
+});
+
+test('a watch re-established by a settings change still wakes a scan', async () => {
+  library.include_non_raw = true;
+  watcher.onLibraryUpdated(library);
+  await watcher.whenReady();
+
+  writeFileSync(path.join(root, 'd.arw'), '');
+  await settle(() => calls.length > 0);
+  expect(calls[0]).toContain('d.arw');
 });
