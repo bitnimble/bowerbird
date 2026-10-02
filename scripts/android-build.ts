@@ -8,7 +8,7 @@
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with the
 // NDK `.android-ndk-version` names, and a JDK 17.
 import { spawnSync } from 'node:child_process';
-import { ensureIcons } from './make-icons.ts';
+import { ensureIcons, writeAndroidIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -75,6 +75,9 @@ run('bun', [
  * rather than mapped from the archive.
  */
 function patchProject(app: string): void {
+  // `tauri android init` fills these with Tauri's own icon.
+  writeAndroidIcons(join(app, 'src', 'main', 'res'));
+
   const gradlePath = join(app, 'build.gradle.kts');
   let gradle = readFileSync(gradlePath, 'utf8');
   const extracted = 'packaging { jniLibs.useLegacyPackaging = true }';

@@ -2,7 +2,7 @@
 //
 // `web/index.html` carries that mark inline as an SVG data URI - the bower: three
 // collected objects, arranged by colour - and this draws the same rectangles into the
-// raster formats a desktop build wants. Kept as code rather than as checked-in artwork so
+// raster formats a desktop build wants, and the Android launcher icon. Kept as code rather than as checked-in artwork so
 // the two cannot drift, and because the mark is four rectangles.
 //
 // No image library: a PNG is a zlib stream of filtered scanlines with a CRC per chunk, and
@@ -19,7 +19,6 @@ import { join, resolve } from 'node:path';
 /** The favicon's viewBox, so the coordinates below are the ones in `web/index.html`. */
 const UNITS = 32;
 const SIZE = 512;
-const SCALE = SIZE / UNITS;
 
 type Rect = { x: number; y: number; w: number; h: number; fill: [number, number, number] };
 
@@ -30,34 +29,58 @@ const BARS: Rect[] = [
   { x: 5, y: 23, w: 17, h: 4, fill: [0x23, 0x28, 0x33] },
 ];
 
+/**
+ * `tile` is the whole mark on a rounded square. `foreground` is an Android adaptive icon's top
+ * layer: the bars alone on a 108dp canvas, inside the 66dp circle every launcher mask keeps.
+ */
+type Layer = 'tile' | 'foreground';
+
+/** Mark units across an adaptive foreground's 108dp, keeping the bars inside its safe circle. */
+const FOREGROUND_UNITS = 32 * (108 / 60);
+
 /** RGBA, so the corners can be rounded away rather than left square on a dock. */
-function draw(): Uint8Array {
-  const pixels = new Uint8Array(SIZE * SIZE * 4);
+function draw(size: number, layer: Layer = 'tile'): Uint8Array {
+  const pixels = new Uint8Array(size * size * 4);
   // A squircle-ish radius: enough that macOS and Windows both read it as an app tile
   // rather than as a photograph.
-  const radius = SIZE * 0.18;
-  const inside = (x: number, y: number): boolean => {
-    const dx = Math.max(radius - x, x - (SIZE - radius), 0);
-    const dy = Math.max(radius - y, y - (SIZE - radius), 0);
+  const radius = size * 0.18;
+  const inTile = (x: number, y: number): boolean => {
+    const dx = Math.max(radius - x, x - (size - radius), 0);
+    const dy = Math.max(radius - y, y - (size - radius), 0);
     return dx * dx + dy * dy <= radius * radius;
   };
+  const scale = size / (layer === 'tile' ? UNITS : FOREGROUND_UNITS);
+  const offset = size / 2 - (UNITS / 2) * scale;
+  const colourAt = (x: number, y: number): [number, number, number] | null => {
+    if (layer === 'tile' && !inTile(x, y)) return null;
+    const ux = (x - offset) / scale;
+    const uy = (y - offset) / scale;
+    const bar = BARS.findLast((b) => ux >= b.x && ux < b.x + b.w && uy >= b.y && uy < b.y + b.h);
+    return bar?.fill ?? (layer === 'tile' ? BACKGROUND : null);
+  };
 
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const at = (y * SIZE + x) * 4;
-      if (!inside(x + 0.5, y + 0.5)) continue;
-      let colour = BACKGROUND;
-      for (const bar of BARS) {
-        const left = bar.x * SCALE;
-        const top = bar.y * SCALE;
-        if (x >= left && x < left + bar.w * SCALE && y >= top && y < top + bar.h * SCALE) {
-          colour = bar.fill;
+  // Four by four samples a pixel, since the launcher sizes put bar edges mid-pixel.
+  const SAMPLES = 4;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const sum = [0, 0, 0, 0];
+      for (let sy = 0; sy < SAMPLES; sy++) {
+        for (let sx = 0; sx < SAMPLES; sx++) {
+          const colour = colourAt(x + (sx + 0.5) / SAMPLES, y + (sy + 0.5) / SAMPLES);
+          if (colour == null) continue;
+          sum[0]! += colour[0];
+          sum[1]! += colour[1];
+          sum[2]! += colour[2];
+          sum[3]! += 1;
         }
       }
-      pixels[at] = colour[0];
-      pixels[at + 1] = colour[1];
-      pixels[at + 2] = colour[2];
-      pixels[at + 3] = 255;
+      const covered = sum[3]!;
+      if (covered === 0) continue;
+      const at = (y * size + x) * 4;
+      pixels[at] = Math.round(sum[0]! / covered);
+      pixels[at + 1] = Math.round(sum[1]! / covered);
+      pixels[at + 2] = Math.round(sum[2]! / covered);
+      pixels[at + 3] = Math.round((255 * covered) / (SAMPLES * SAMPLES));
     }
   }
   return pixels;
@@ -84,21 +107,21 @@ function chunk(type: string, body: Uint8Array): Buffer {
   return out;
 }
 
-function png(pixels: Uint8Array): Buffer {
+function png(pixels: Uint8Array, size = SIZE): Buffer {
   // Filter byte 0 (none) per scanline, which is what the zlib stream expects in front of
   // each row. The mark is flat colour, so a smarter filter would buy nothing.
-  const raw = Buffer.alloc(SIZE * (SIZE * 4 + 1));
-  for (let y = 0; y < SIZE; y++) {
-    raw[y * (SIZE * 4 + 1)] = 0;
-    Buffer.from(pixels.subarray(y * SIZE * 4, (y + 1) * SIZE * 4)).copy(
+  const raw = Buffer.alloc(size * (size * 4 + 1));
+  for (let y = 0; y < size; y++) {
+    raw[y * (size * 4 + 1)] = 0;
+    Buffer.from(pixels.subarray(y * size * 4, (y + 1) * size * 4)).copy(
       raw,
-      y * (SIZE * 4 + 1) + 1,
+      y * (size * 4 + 1) + 1,
     );
   }
 
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(SIZE, 0);
-  ihdr.writeUInt32BE(SIZE, 4);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
   ihdr[8] = 8; // bit depth
   ihdr[9] = 6; // truecolour with alpha
   return Buffer.concat([
@@ -144,26 +167,70 @@ function icns(embedded: Buffer): Buffer {
   return out;
 }
 
+const ICONS = join(resolve(import.meta.dir, '..'), 'src-tauri', 'icons');
+
 /** Draws all three, for a build script to call before it reaches for cargo. */
 export function ensureIcons(): void {
-  const icons = join(resolve(import.meta.dir, '..'), 'src-tauri', 'icons');
-  mkdirSync(icons, { recursive: true });
-  if (['icon.png', 'icon.ico', 'icon.icns'].every((f) => existsSync(join(icons, f)))) return;
+  if (['icon.png', 'icon.ico', 'icon.icns'].every((f) => existsSync(join(ICONS, f)))) return;
+  writeDesktopIcons();
+}
 
-  const image = png(draw());
-  writeFileSync(join(icons, 'icon.png'), image);
-  writeFileSync(join(icons, 'icon.ico'), ico(image));
-  writeFileSync(join(icons, 'icon.icns'), icns(image));
-  console.error(`[make-icons] ${SIZE}x${SIZE} icon.png, icon.ico and icon.icns in ${icons}`);
+function writeDesktopIcons(): void {
+  mkdirSync(ICONS, { recursive: true });
+  const image = png(draw(SIZE));
+  writeFileSync(join(ICONS, 'icon.png'), image);
+  writeFileSync(join(ICONS, 'icon.ico'), ico(image));
+  writeFileSync(join(ICONS, 'icon.icns'), icns(image));
+  console.error(`[make-icons] ${SIZE}x${SIZE} icon.png, icon.ico and icon.icns in ${ICONS}`);
+}
+
+/** Launcher icon density buckets, as multiples of a 1dp pixel. */
+const DENSITIES = { mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 };
+
+/**
+ * Replaces the launcher icon in a generated Android project's `res`: the tile at 48dp for
+ * Android 7, and an adaptive icon of the bars over the mark's background for every later one.
+ */
+export function writeAndroidIcons(res: string): void {
+  for (const [density, scale] of Object.entries(DENSITIES)) {
+    const mipmap = join(res, `mipmap-${density}`);
+    mkdirSync(mipmap, { recursive: true });
+    const tile = 48 * scale;
+    const foreground = 108 * scale;
+    writeFileSync(join(mipmap, 'ic_launcher.png'), png(draw(tile), tile));
+    writeFileSync(
+      join(mipmap, 'ic_launcher_foreground.png'),
+      png(draw(foreground, 'foreground'), foreground),
+    );
+  }
+  const adaptive = join(res, 'mipmap-anydpi-v26');
+  mkdirSync(adaptive, { recursive: true });
+  writeFileSync(
+    join(adaptive, 'ic_launcher.xml'),
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">',
+      '    <background android:drawable="@color/bowerbird_icon_background" />',
+      '    <foreground android:drawable="@mipmap/ic_launcher_foreground" />',
+      '</adaptive-icon>',
+      '',
+    ].join('\n'),
+  );
+  const hex = BACKGROUND.map((c) => c.toString(16).padStart(2, '0')).join('');
+  mkdirSync(join(res, 'values'), { recursive: true });
+  writeFileSync(
+    join(res, 'values', 'bowerbird_icon.xml'),
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<resources>',
+      `    <color name="bowerbird_icon_background">#${hex}</color>`,
+      '</resources>',
+      '',
+    ].join('\n'),
+  );
 }
 
 // Run directly, always redraw; imported, only fill in what is missing.
 if (import.meta.main) {
-  const icons = join(resolve(import.meta.dir, '..'), 'src-tauri', 'icons');
-  mkdirSync(icons, { recursive: true });
-  const image = png(draw());
-  writeFileSync(join(icons, 'icon.png'), image);
-  writeFileSync(join(icons, 'icon.ico'), ico(image));
-  writeFileSync(join(icons, 'icon.icns'), icns(image));
-  console.error(`[make-icons] ${SIZE}x${SIZE} icon.png, icon.ico and icon.icns in ${icons}`);
+  writeDesktopIcons();
 }
