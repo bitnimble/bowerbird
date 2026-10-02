@@ -271,7 +271,7 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         .env("BOWERBIRD_LIBRARIES_DIR", data.join("libraries"))
         .env(
             "BOWERBIRD_DEFAULT_SETTINGS",
-            r#"{"disk_space_limit_gb":50,"watch_enabled":false}"#,
+            r#"{"disk_space_limit_gb":50,"watch_enabled":false,"full_sync_at":""}"#,
         );
     #[cfg(target_os = "android")]
     crate::android::environment(&mut command, &data)?;

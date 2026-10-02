@@ -282,7 +282,7 @@ request names no folder and the server puts the library under `BOWERBIRD_LIBRARI
 the shell sets inside the app's own storage. It keeps no originals and sends or fetches none
 automatically. The page treats it as a thin shell (`isThinShell`):
 a library's path, folder rules, scanning, watching, stacks and backups are hidden, having nothing
-on this device to act on, and the server starts with watching off (`BOWERBIRD_DEFAULT_SETTINGS`).
+on this device to act on, and the server starts with watching and the daily scan off (`BOWERBIRD_DEFAULT_SETTINGS`).
 
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system
