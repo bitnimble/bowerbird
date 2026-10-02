@@ -236,8 +236,11 @@ export class ImageApi {
         // there being no file to lift one out of. Every other rendition is ours either way.
         const { photo, library } = this.photoRenditions.locate(photoId);
         const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
-        if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true)
-          return this.serveEmbedded(photo, library, c);
+        if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true) {
+          const original = await this.originals.open(library, photo);
+          if (original != null || this.fetchThrough == null)
+            return this.serveEmbedded(photo, original, c);
+        }
         // A photo with no local original, or a composite on a library that keeps none, is not built
         // here; a peer's copy is fetched and cached first, so the read below is an ordinary local
         // one (docs/replication.md §7.9). The peer may render it first, which can take minutes.
@@ -445,13 +448,8 @@ export class ImageApi {
   // The camera's own JPEG, lifted out of the RAW and tagged for display. No
   // demosaic and nothing cached on disk: extraction is a header read plus a copy,
   // which is cheaper than the disk a fourth derivative per photo would cost.
-  private async serveEmbedded(
-    photo: BasicPhoto,
-    library: LibraryConfiguration,
-    c: Context,
-  ): Promise<Response> {
+  private serveEmbedded(photo: BasicPhoto, originalPath: string | null, c: Context): Response {
     const photoId = photo.id;
-    const originalPath = await this.originals.open(library, photo);
     if (originalPath == null)
       throw new AppError(
         'NOT_FOUND',

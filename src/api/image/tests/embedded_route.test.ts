@@ -21,7 +21,10 @@ import { ImageApi } from '../image_api';
  */
 const LIB = 'lib-embedded-route';
 
-function serving(recipe: StoredRecipe): Hono {
+function serving(
+  recipe: StoredRecipe,
+  fetchThrough: ConstructorParameters<typeof ImageApi>[2] = null,
+): Hono {
   const photos = {
     locate: () => ({
       library: { id: LIB, root_path: dataPathForLibraryId(LIB) },
@@ -36,7 +39,7 @@ function serving(recipe: StoredRecipe): Hono {
     new ImageApi(
       {} as ConstructorParameters<typeof ImageApi>[0],
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
-      null,
+      fetchThrough,
       localOriginals(),
       {} as ConstructorParameters<typeof ImageApi>[4],
     ).routes,
@@ -74,4 +77,24 @@ it('goes to the file a row names rather than to a stored copy', async () => {
   );
 
   expect(answer.status).toBe(404);
+});
+
+it('asks a peer for the camera view when the file a row names is not on this device', async () => {
+  const asked: string[] = [];
+  const peer = {
+    takesFromPeer: () => false,
+    ensureCurrent: (photoId: string, rendition: string) => {
+      asked.push(`${rendition} of ${photoId}`);
+      return Promise.resolve();
+    },
+  } as unknown as ConstructorParameters<typeof ImageApi>[2];
+
+  const answer = await serving({ kind: 'file', path: 'nowhere/a.arw' }, peer).request(
+    route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'),
+  );
+
+  expect(asked).toEqual(['embedded of p1']);
+  expect(answer.status).toBe(200);
+  expect(answer.headers.get('content-type')).toBe('image/jpeg');
+  expect(await answer.text()).toBe('canvas');
 });

@@ -776,7 +776,9 @@ dynamic range the asking device shows, and lifts the camera JPEG out of the orig
 caches the result at exactly the path its own pipeline would have written. Everything downstream -
 the staleness rule, the URL versioning, the startup sweep - then reads a fetched copy as a built
 one. The grid tile is the exception: the holder builds it at import and rebuilds it from its
-queue, and serves only what that has made.
+queue, and serves only what that has made. The camera JPEG is asked of a peer wherever the
+original is neither here nor in a backup folder, whatever §7.10's setting says, since lifting it
+needs the file.
 
 Devices unable to build or serve a copy forward and cache it, allowing multi-hop originals.
 `X-Bowerbird-Via` records visited devices; never revisit them. Forwarded requests must not join

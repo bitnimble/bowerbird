@@ -441,7 +441,10 @@ describe('PhotoRenditionService.buildRendition', () => {
   });
 
   // What download and share hand over, so they work wherever the viewer does.
-  it("takes the camera's JPEG from a peer on a library that keeps no originals", async () => {
+  it.each([
+    ['on a library that keeps no originals', true],
+    ['wherever the original is not here', false],
+  ])("takes the camera's JPEG from a peer %s", async (_where, takesFromPeer) => {
     const lib = { ...library, id: 'photos-camera-from-peer' };
     try {
       const ensureCurrent = jest.fn(async () => {
@@ -459,7 +462,7 @@ describe('PhotoRenditionService.buildRendition', () => {
           })),
         },
         libraries: { getConfiguration: jest.fn(() => lib) },
-        fetchThrough: { takesFromPeer: () => true, ensureCurrent },
+        fetchThrough: { takesFromPeer: () => takesFromPeer, ensureCurrent },
       });
 
       const jpeg = await service.embeddedJpeg('p1');

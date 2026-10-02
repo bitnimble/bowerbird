@@ -136,13 +136,15 @@ export class PhotoRenditionService {
   }
   /**
    * The camera's own JPEG, turned as the photo's edits turn it, for a reader on this device: from
-   * a peer on a library that keeps no originals, as every other picture of it is. Null where
-   * there is none to be had.
+   * a peer where the original is not here, as every other picture of it is. Null where there is
+   * none to be had.
    */
   async embeddedJpeg(photoId: string): Promise<Uint8Array | null> {
     const { photo, library } = this.locate(photoId);
-    if (this.fetchThrough?.takesFromPeer(library, photo) !== true)
-      return this.liftEmbedded(library, photo);
+    if (this.fetchThrough?.takesFromPeer(library, photo) !== true) {
+      const lifted = await this.liftEmbedded(library, photo);
+      if (lifted != null || this.fetchThrough == null) return lifted;
+    }
     await this.fetchThrough.ensureCurrent(photoId, 'embedded');
     return this.cachedEmbedded(library, photoId);
   }
