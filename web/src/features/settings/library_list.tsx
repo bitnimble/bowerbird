@@ -25,7 +25,6 @@ import {
   useScanStore,
 } from '../../app/stores_context';
 import { libraryLabel } from '../libraries/library_label';
-import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
 import { BackupPanel } from '../backup/backup_panel';
 import { BackupStrings } from '../backup/backup_panel.strings';
@@ -674,16 +673,10 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
         {replication.hasPeers(library.id) && (
           <SettingRow
             label={SettingsStrings.syncLibrary()}
-            disabledReason={
-              library.read_only
-                ? BulkBarStrings.notOnReadOnlyLibrary()
-                : syncing
-                  ? SettingsStrings.jobBusy()
-                  : undefined
-            }
+            disabledReason={syncing ? SettingsStrings.jobBusy() : undefined}
           >
             <Button
-              disabled={syncing || library.read_only}
+              disabled={syncing}
               onClick={() => void replicationPresenter.replicate(library.id)}
             >
               <RefreshCw size={ICON} />

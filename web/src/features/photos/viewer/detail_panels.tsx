@@ -410,8 +410,10 @@ export const RawPanel = observer(function RawPanel({
                 }),
               ],
             ] as MetaRow[])),
-        // An offloaded original needs no asking: whatever reads it fetches it from the backup (§14.4).
-        ...(photo != null && !isComposite(shape) && !photo.has_original && !photo.is_offloaded
+        ...(photo != null &&
+        !isComposite(shape) &&
+        !photo.has_original &&
+        photo.original_elsewhere != null
           ? ([
               [
                 PhotoDetailStrings.original(),
@@ -463,13 +465,13 @@ export const RemoteOriginal = observer(function RemoteOriginal({
     <>
       {unreachable
         ? PhotoDetailStrings.stateOnUnreachableDevice()
-        : PhotoDetailStrings.onAnotherDevice()}
+        : PhotoDetailStrings.stateOnSyncedDevice()}
       <Button
         variant="ghost"
         disabled={readOnly || unreachable}
         tooltip={
           readOnly
-            ? BulkBarStrings.notOnReadOnlyLibrary()
+            ? BulkBarStrings.libraryIsReadOnly()
             : unreachable
               ? PhotoDetailStrings.stateOnUnreachableDeviceHint()
               : undefined

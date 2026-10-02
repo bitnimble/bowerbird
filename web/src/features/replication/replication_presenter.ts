@@ -86,6 +86,8 @@ export class ReplicationPresenter {
     await this.loadConflicts('background');
     // A session may have queued originals, which nobody here asked for.
     await this.refreshTransfers();
+    // Rows the session brought, and where each photo's original now is (`original_elsewhere`).
+    await this.photos.reload('background');
   }
 
   /** Every library that replicates, in one request, plus what they have diverged over. */

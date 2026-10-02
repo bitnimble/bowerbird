@@ -294,9 +294,6 @@ export class ReplicationService {
   }
 
   setSyncsOriginals(libraryId: string, value: boolean): void {
-    // Keeping originals stops pictures coming from peers, and a read-only library never gets any.
-    if (value && this.library(libraryId).read_only !== 0)
-      throw new AppError('READ_ONLY', 'a read-only library cannot keep originals from peers');
     setSyncsOriginals(this.db, libraryId, value);
     this.changed(libraryId);
   }

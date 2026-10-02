@@ -38,6 +38,8 @@ export const BulkBarStrings = {
 
   /** Every action a read-only library refuses, wherever it is offered. */
   notOnReadOnlyLibrary: () => 'Turn off read-only mode to use this action.',
+  /** Why a library takes no originals, where turning read-only off would stop it syncing. */
+  libraryIsReadOnly: () => 'This library is read-only.',
   restoreRefused: () => 'Turn off read-only mode to restore photos.',
   restoreToOriginalLocation: () => 'Restore to original location',
 

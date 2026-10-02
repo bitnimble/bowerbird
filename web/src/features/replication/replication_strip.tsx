@@ -102,7 +102,7 @@ export const ReplicationStrip = observer(function ReplicationStrip({
               disabled={library.read_only || !keepsOriginals}
               tooltip={
                 library.read_only
-                  ? BulkBarStrings.notOnReadOnlyLibrary()
+                  ? BulkBarStrings.libraryIsReadOnly()
                   : keepsOriginals
                     ? ReplicationStripStrings.fetchOriginalsTitle(peer.name)
                     : ReplicationStripStrings.fetchOriginalsRefused()

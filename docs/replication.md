@@ -762,7 +762,7 @@ user's file), the entry is skipped and flagged with the §5.6 surface.
 
 An arriving original (push or fetch) sets `needs_tile`/`needs_renditions`, so placeholders heal
 into thumbnails without a manual rescan. This is the server's post-trip behaviour: catalogue
-arrives, grid shows badged placeholders naming the holding peer, originals arrive, renditions
+arrives, grid shows placeholders badged as on a synced device, originals arrive, renditions
 build.
 
 ### 7.9 Fetch-through: a device with no originals still shows pictures
@@ -824,6 +824,9 @@ rateable, and none of it costs a 50MB transfer. This is what makes a phone a pee
 same setting on a laptop that wants the library without the terabyte. Every picture such a device
 shows comes from a peer, the camera JPEG and a panorama's included, until an original is fetched
 here by hand: from then on that photo is built here, as on a device that keeps its originals.
+
+A read-only library takes no originals whatever this says: its handshake answers no (§6.2), and
+every picture of a photo whose original is not here comes from a peer.
 
 **Keep this setting local.** One device's storage policy must not overwrite another's.
 
@@ -1001,8 +1004,12 @@ and this sentence is the one that belongs in the user docs in bold.
   lacks, in each direction the two sides' §7.10 answers allow.
 - **Transfer manager**: the persistent queue: per-item progress, pause/resume/cancel, errors.
 - **Conflict page**: candidate cards (§5.3), fetch-to-preview when the original is remote.
-- **Remote badge** names the holding peer ("Original on: Macbook"); opening fetches with
-  progress, size, cancel (§7.5).
+- **Remote badge** says a photo's original is on a synced device; opening fetches with
+  progress, size, cancel (§7.5). Each photo carries `original_elsewhere`: `reachable` when this
+  device can dial a holder, or any device of the library to relay its pictures (§7.9);
+  `unreachable` when only devices that dial in hold it. An unreachable photo says so on its badge,
+  detail panel and stage, its fetch and edit are disabled, and the viewer asks for no build. Each
+  replication event re-reads the open listing, so the badge follows sessions.
 - **Availability filter** ("original on this device") in the existing filter menu. No
   availability _sort_: sorts are collection-owned and replicated; availability is per-peer.
 - **Peer list** (§6.5): forget, holdings, last seen, each under the name the peer gave itself

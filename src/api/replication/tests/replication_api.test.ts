@@ -167,10 +167,6 @@ describe('clone (§9)', () => {
     expect(pairedPeers(clone.db, LIB)[0]!.wants_originals).toBe(false);
     expect(pairedPeers(origin.db, LIB)[0]!.wants_originals).toBe(false);
 
-    expect(() =>
-      new ReplicationService(clone.db, new BlobLocations(clone.db)).setSyncsOriginals(LIB, true),
-    ).toThrow('cannot keep originals');
-
     new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', { rating: 3 });
     await runnerFor(clone.db).replicate(LIB);
     expect(origin.db.query('SELECT rating FROM photos WHERE id = ?').get('p2')).toEqual({
@@ -1056,21 +1052,24 @@ describe('sync RAWs to this device (§7.10)', () => {
 });
 
 it('says where a missing original is, and whether this device can dial it', async () => {
-  const { origin, clone } = await pairedClone(3);
+  const { origin, clone } = await pairedClone(4);
   new BlobLocations(origin.db).record(LIB, 'p1');
+  new BlobLocations(origin.db).record(LIB, 'p4');
   new BlobLocations(clone.db).record(LIB, 'p2');
+  new BlobLocations(clone.db).record(LIB, 'p4');
   origin.db.query("UPDATE photos SET is_missing = 1 WHERE id IN ('p2', 'p3')").run();
   await runnerFor(clone.db).replicate(LIB);
+  clone.db.query("UPDATE photos SET is_missing = 0 WHERE id = 'p4'").run();
 
   const elsewhere = (db: Database): Record<string, string | null> => {
     const listing = new PhotoListingRepository(db);
     return Object.fromEntries(
-      ['p1', 'p2', 'p3'].map((id) => [id, listing.getById(id)?.original_elsewhere ?? null]),
+      ['p1', 'p2', 'p3', 'p4'].map((id) => [id, listing.getById(id)?.original_elsewhere ?? null]),
     );
   };
   // The clone dialled the origin, so it has its address; the origin has none for the clone.
-  expect(elsewhere(clone.db)).toEqual({ p1: 'reachable', p2: null, p3: null });
-  expect(elsewhere(origin.db)).toEqual({ p1: null, p2: 'unreachable', p3: null });
+  expect(elsewhere(clone.db)).toEqual({ p1: 'reachable', p2: null, p3: null, p4: null });
+  expect(elsewhere(origin.db)).toEqual({ p1: null, p2: 'unreachable', p3: null, p4: null });
 });
 
 describe('originals moved by a session', () => {

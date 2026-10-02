@@ -225,7 +225,7 @@ function actions({
           disabled: fetchingOriginal || readOnly || unreachable,
           keepsMenuOpen: true,
           ...(readOnly
-            ? { tooltip: BulkBarStrings.notOnReadOnlyLibrary() }
+            ? { tooltip: BulkBarStrings.libraryIsReadOnly() }
             : unreachable
               ? { tooltip: PhotoDetailStrings.stateOnUnreachableDeviceHint() }
               : {}),

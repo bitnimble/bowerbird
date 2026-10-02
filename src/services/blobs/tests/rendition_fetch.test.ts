@@ -363,6 +363,17 @@ describe('fetching a rendition through a peer', () => {
     expect(b.fetch.takesFromPeer(library(b), photo())).toBe(false);
   });
 
+  it('takes a photo from a peer on a read-only library whatever it keeps, until its original is here', () => {
+    const { b } = holderAndReplica();
+    const photo = b.photoPaths.getBasicById('photo1')!;
+    const readOnly = { ...library(b), read_only: true };
+    expect(b.fetch.takesFromPeer(readOnly, photo)).toBe(true);
+
+    mkdirSync(path.join(b.root, 'Day1'), { recursive: true });
+    writeFileSync(path.join(b.root, 'Day1/one.arw'), 'RAW-one');
+    expect(b.fetch.takesFromPeer(readOnly, photo)).toBe(false);
+  });
+
   it('has the holder render again when forced, and tells clients the copy they hold has changed', async () => {
     const { b } = holderAndReplica();
     await b.fetch.ensureCurrent('photo1', 'full');

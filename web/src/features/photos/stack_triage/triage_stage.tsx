@@ -89,6 +89,7 @@ export const Flip = observer(function Flip({
           ]}
           showing={showing}
           frameColor={showing === 0 ? SIDE_COLOR.a : SIDE_COLOR.b}
+          unreachable={onScreen?.original_elsewhere === 'unreachable'}
           alt={onScreen == null ? '' : nameOf(onScreen)}
           filename={onScreen == null ? '' : nameOf(onScreen)}
           devicePeakNits={device.displayPeakNits}
@@ -199,6 +200,7 @@ export const Split = observer(function Split({
               photoKey={`${roundKey}:${photo.id}`}
               pictures={[{ key: photo.id, sources: [store.srcOf(photo.id)] }]}
               frameColor={index === 0 ? SIDE_COLOR.a : SIDE_COLOR.b}
+              unreachable={photo.original_elsewhere === 'unreachable'}
               alt={nameOf(photo)}
               filename={nameOf(photo)}
               devicePeakNits={device.displayPeakNits}

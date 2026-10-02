@@ -125,15 +125,19 @@ export function summaryColumns(): string {
 const IS_OFFLOADED = `(photos.is_missing = 1 AND EXISTS (
     SELECT 1 FROM backup_locations b WHERE b.library_id = photos.library_id AND b.photo_id = photos.id AND b.health = 'held'))`;
 
-// Any library's address for the holder, as `PeerTransport.canReach` dials it.
-const ORIGINAL_ELSEWHERE = `CASE WHEN photos.is_missing = 0 THEN NULL
+// Reachable through any dialable device of the library, holder or not: a non-holder relays the
+// pictures (§7.9). Null when offloaded: whatever reads that original fetches it from the backup
+// (§14.4).
+const ORIGINAL_ELSEWHERE = `CASE WHEN photos.is_missing = 0 OR ${IS_OFFLOADED} THEN NULL
+  WHEN NOT EXISTS (SELECT 1 FROM blob_locations b
+    WHERE b.library_id = photos.library_id AND b.photo_id = photos.id
+      AND b.peer_id <> (SELECT peer_id FROM replication_identity WHERE singleton = 1)) THEN NULL
   WHEN EXISTS (SELECT 1 FROM blob_locations b JOIN replication_peers rp ON rp.peer_id = b.peer_id
     WHERE b.library_id = photos.library_id AND b.photo_id = photos.id
+      AND rp.kind = 'active' AND rp.address IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM replication_peers rp WHERE rp.library_id = photos.library_id
       AND rp.kind = 'active' AND rp.address IS NOT NULL) THEN 'reachable'
-  WHEN EXISTS (SELECT 1 FROM blob_locations b
-    WHERE b.library_id = photos.library_id AND b.photo_id = photos.id
-      AND b.peer_id <> (SELECT peer_id FROM replication_identity WHERE singleton = 1)) THEN 'unreachable'
-  END`;
+  ELSE 'unreachable' END`;
 
 // How wide a stack counts in a listing (§19.5.2).
 //

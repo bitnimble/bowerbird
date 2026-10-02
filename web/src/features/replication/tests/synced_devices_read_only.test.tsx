@@ -61,7 +61,7 @@ function refusal(name: string): string | null {
 
 test('a read-only library greys fetching, and says why', async () => {
   await openPanel(true);
-  expect(refusal('Fetch originals')).toBe('Turn off read-only mode to use this action.');
+  expect(refusal('Fetch originals')).toBe('This library is read-only.');
 });
 
 test('a writable library offers it', async () => {

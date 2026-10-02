@@ -184,8 +184,8 @@ interface Props {
    * reader zoomed in and panning finds it in the same place.
    */
   status?: { label: string; busy: boolean } | null;
-  /** What the stage says when no frame of the photo can be shown. */
-  unavailable?: string;
+  /** The photo's original is only on devices this one cannot dial, so no frame will arrive. */
+  unreachable?: boolean;
   /**
    * A hairline just outside the frame, in this colour. An outline rather than a
    * border because it takes no space: two stages laid out to the same displayed
@@ -223,7 +223,7 @@ export function PhotoStage({
   zoomInto,
   fullscreenRef,
   status = null,
-  unavailable = PhotoStageStrings.noRenditionYet(),
+  unreachable = false,
   frameColor,
   style,
   proof = null,
@@ -935,7 +935,11 @@ export function PhotoStage({
             "no rendition yet" over a spinner already saying one is being made
             reads as the opposite of what is happening. */}
         {allFailed && painted == null && status?.busy !== true ? (
-          <span {...stylex.props(styles.pending)}>{unavailable}</span>
+          <span {...stylex.props(styles.pending)}>
+            {unreachable
+              ? PhotoStageStrings.onUnreachableDevice()
+              : PhotoStageStrings.noRenditionYet()}
+          </span>
         ) : (
           drawn.map((group) => (
             <div

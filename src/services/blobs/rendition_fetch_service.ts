@@ -172,10 +172,13 @@ export class RenditionFetchService {
 
   /**
    * Whether this photo's pictures come from a peer however they are asked for (§7.10): on a
-   * device set not to keep its originals, until one is fetched here by hand.
+   * device set not to keep its originals, or one that cannot take them, until one is here.
    */
   takesFromPeer(library: Library, photo: BasicPhoto): boolean {
-    return !syncsOriginals(this.db, library.id) && !this.originalHere(library, photo);
+    return (
+      (library.read_only || !syncsOriginals(this.db, library.id)) &&
+      !this.originalHere(library, photo)
+    );
   }
 
   private originalHere(library: Library, photo: BasicPhoto): boolean {

@@ -19,6 +19,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
 }): JSX.Element {
   const store = useReplicationStore();
   const { replication, confirm } = usePresenters();
+  const readOnlyReason = library.read_only ? BulkBarStrings.libraryIsReadOnly() : undefined;
 
   return (
     <Panel title={SyncedDevicesStrings.heading()} flush={store.hasPeers(library.id)}>
@@ -39,12 +40,11 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
             // What is true now, in the same words the add dialog uses: a hint that
             // describes the *other* state reads as a description of this one.
             hint={
-              library.read_only
-                ? BulkBarStrings.notOnReadOnlyLibrary()
-                : store.syncsOriginals(library.id)
-                  ? SyncedDevicesStrings.keepsOriginals()
-                  : SyncedDevicesStrings.catalogueOnly()
+              store.syncsOriginals(library.id)
+                ? SyncedDevicesStrings.keepsOriginals()
+                : SyncedDevicesStrings.catalogueOnly()
             }
+            disabledReason={readOnlyReason}
           >
             <input
               {...stylex.props(focusRing.ring)}
@@ -57,7 +57,10 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
               }
             />
           </SettingRow>
-          <SettingRow label={SyncedDevicesStrings.autoTransferOriginals()}>
+          <SettingRow
+            label={SyncedDevicesStrings.autoTransferOriginals()}
+            disabledReason={readOnlyReason}
+          >
             <input
               {...stylex.props(focusRing.ring)}
               type="checkbox"

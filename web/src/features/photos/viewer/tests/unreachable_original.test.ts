@@ -15,7 +15,10 @@ restoreApiAfterTests();
 const PHOTO = 'p0';
 const absent = new Proxy({}, { get: () => () => undefined }) as never;
 
-function open(elsewhere: OriginalElsewhere): { built: string[]; presenter: PhotosPresenter } {
+function open(
+  elsewhere: OriginalElsewhere,
+  renditions: Record<string, { built: boolean }> = {},
+): { built: string[]; store: ViewerStore; presenter: PhotosPresenter } {
   const built: string[] = [];
   renditionsApi.build = (photoId, rendition): Promise<void> => {
     built.push(`${rendition} of ${photoId}`);
@@ -42,13 +45,10 @@ function open(elsewhere: OriginalElsewhere): { built: string[]; presenter: Photo
   runInAction(() => {
     store.open = { id: PHOTO, status: 'ready' };
     store.details = new Map([
-      [
-        PHOTO,
-        { id: PHOTO, is_missing: true, original_elsewhere: elsewhere, renditions: {} } as never,
-      ],
+      [PHOTO, { id: PHOTO, is_missing: true, original_elsewhere: elsewhere, renditions } as never],
     ]);
   });
-  return { built, presenter };
+  return { built, store, presenter };
 }
 
 test.each([
@@ -62,3 +62,15 @@ test.each([
     expect(built).toEqual([...expected]);
   },
 );
+
+test('picking a rendition of an unreachable photo builds nothing, and keeps a copy already here', async () => {
+  const unbuilt = open('unreachable');
+  await unbuilt.presenter.chooseRendition(PHOTO, 'full');
+  expect(unbuilt.built).toEqual([]);
+  expect(unbuilt.store.rendition).toBeNull();
+
+  const cached = open('unreachable', { full: { built: true } });
+  await cached.presenter.chooseRendition(PHOTO, 'full');
+  expect(cached.built).toEqual([]);
+  expect(cached.store.rendition).toBe('full');
+});

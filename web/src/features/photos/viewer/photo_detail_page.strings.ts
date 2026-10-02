@@ -145,7 +145,6 @@ export const PhotoDetailStrings = {
 
   fetching: () => 'fetching',
   fetchingPercent: (percent: number) => `, ${percent}%`,
-  onAnotherDevice: () => 'on another device',
   tryAgain: () => 'Try again',
   fetchOriginal: () => 'Fetch original',
 

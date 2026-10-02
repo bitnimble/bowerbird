@@ -21,7 +21,7 @@ Requested sizes and quality come from configuration (§15). Every encoded frame 
 
 The three trees were `thumbnails/`, `previews/` and `lossless/`, misleadingly: `thumbnails/full` held the default 3840px viewer image; `previews/` did not. Renditions differ only in size and dynamic range, so one job takes a target list instead of three near-identical job types.
 
-**The camera's picture is a rendition (`embedded`), supplied by the row's recipe.** A single-file row serves it directly from the RAW, without HDR resizing or a cached AVIF transcode. A composite (§19.4) combines its source pictures at viewer size and caches the result on first open; no queue builds it. Thus a merge in an embedded-picture library writes only its tile, deferring the view until someone opens it. Both recipes use the same rendition route. The grid always re-encodes to 800px rather than serving a 9504px preview.
+**The camera's picture is a rendition (`embedded`), supplied by the row's recipe.** A single-file row serves it directly from the RAW, without HDR resizing or a cached AVIF transcode; where the RAW is on another device, it serves the copy a peer lifted (replication §7.9). A composite (§19.4) combines its source pictures at viewer size and caches the result on first open; no queue builds it. Thus a merge in an embedded-picture library writes only its tile, deferring the view until someone opens it. Both recipes use the same rendition route. The grid always re-encodes to 800px rather than serving a 9504px preview.
 
 **Composite canvas width determines tile sizing.** `PANORAMA_TILE_SCALE` widens panorama tiles: their
 canvas spans several frames, so one frame's long edge would undersample every source. An assembly uses
