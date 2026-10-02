@@ -42,6 +42,9 @@ export const PhotoDetailStrings = {
   stateOnSyncedDevice: () => 'on a synced device',
   stateOnSyncedDeviceHint: () =>
     'No local copy. Editing this photo fetches it from a synced device.',
+  stateOnUnreachableDevice: () => 'on a synced device (unreachable)',
+  stateOnUnreachableDeviceHint: () =>
+    "No local copy. The device holding it can't be reached from here.",
   stateBinned: () => 'in Bin',
   // Drawn as the struck-through eye rather than the word, so it reads at the size a tile's badges
   // are - which leaves this as the whole of what says so to a screen reader.

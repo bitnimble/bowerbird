@@ -31,6 +31,9 @@ export const COMPOSITE_KINDS_SQL = CompositeKindSchema.options
   .map((kind) => `'${kind}'`)
   .join(', ');
 
+export const OriginalElsewhereSchema = z.enum(['reachable', 'unreachable']);
+export type OriginalElsewhere = z.infer<typeof OriginalElsewhereSchema>;
+
 export const PhotoSummarySchema = z.object({
   id: IdSchema,
   library_id: IdSchema,
@@ -51,6 +54,8 @@ export const PhotoSummarySchema = z.object({
   // (§14.5). Everything still works - the renditions are here - and anything that needs the RAW
   // fetches it, which is slower and is what the badge on the tile says.
   is_offloaded: z.boolean(),
+  /** Where a missing original is held by another device: whether this one can dial it. */
+  original_elsewhere: OriginalElsewhereSchema.nullable(),
   is_deleted: z.boolean(),
   // Put away: left out of a listing unless it asks for the hidden, and out of every queue (§12.4).
   // True for a photograph whose own flag is set *or* whose shoot is hidden, so a row says what it is

@@ -3,6 +3,7 @@ export const PhotoStageStrings = {
   fullscreen: () => 'Fullscreen',
   fullscreenTitle: () => 'Fullscreen (F)',
   noRenditionYet: () => 'Rendition not ready',
+  onUnreachableDevice: () => 'On a synced device (unreachable)',
   rendering: () => 'Rendering…',
   fetching: () => 'Fetching…',
   // The reader asked for a rendition and is looking at a different one, which without this

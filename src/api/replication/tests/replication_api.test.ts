@@ -12,6 +12,7 @@ import { REPLICATION_PROTOCOL, type Outdated } from '../../../schemas/replicatio
 import { PathSegment, route } from '../../../schemas/route';
 import { BlobLocations } from '../../../services/blobs/blob_locations';
 import { LibrariesRepository } from '../../../services/libraries/libraries_repository';
+import { PhotoListingRepository } from '../../../services/photos/listing/photo_listing_repository';
 import { PhotoStateRepository } from '../../../services/photos/mutations/photo_state_repository';
 import { StackMembership } from '../../../services/stacks/stack_membership';
 import { DEFAULT_SKEW_MS } from '../../../services/replication/clock';
@@ -1052,6 +1053,24 @@ describe('sync RAWs to this device (§7.10)', () => {
 
     expect(pairedPeers(origin.db, LIB)[0]!.wants_originals).toBe(false);
   });
+});
+
+it('says where a missing original is, and whether this device can dial it', async () => {
+  const { origin, clone } = await pairedClone(3);
+  new BlobLocations(origin.db).record(LIB, 'p1');
+  new BlobLocations(clone.db).record(LIB, 'p2');
+  origin.db.query("UPDATE photos SET is_missing = 1 WHERE id IN ('p2', 'p3')").run();
+  await runnerFor(clone.db).replicate(LIB);
+
+  const elsewhere = (db: Database): Record<string, string | null> => {
+    const listing = new PhotoListingRepository(db);
+    return Object.fromEntries(
+      ['p1', 'p2', 'p3'].map((id) => [id, listing.getById(id)?.original_elsewhere ?? null]),
+    );
+  };
+  // The clone dialled the origin, so it has its address; the origin has none for the clone.
+  expect(elsewhere(clone.db)).toEqual({ p1: 'reachable', p2: null, p3: null });
+  expect(elsewhere(origin.db)).toEqual({ p1: null, p2: 'unreachable', p3: null });
 });
 
 describe('originals moved by a session', () => {

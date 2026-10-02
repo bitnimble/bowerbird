@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
 import { type Transfer } from '../../../../../../src/schemas/blobs';
-import { type PhotoDetail } from '../../../../../../src/schemas/photos';
+import { type OriginalElsewhere, type PhotoDetail } from '../../../../../../src/schemas/photos';
 import { PathSegment, route } from '../../../../../../src/schemas/route';
 import { registerDom } from '../../../../test_dom';
 
@@ -32,7 +32,7 @@ const pull = (state: Transfer['state']): Transfer =>
   }) as Transfer;
 
 // A photo of a synced library whose original is on another device.
-function Seed(): null {
+function Seed({ elsewhere }: { elsewhere: OriginalElsewhere }): null {
   const viewer = useViewerStore();
   useEffect(() => {
     runInAction(() => {
@@ -43,21 +43,22 @@ function Seed(): null {
         file_path: 'Day1/one.arw',
         has_original: false,
         is_offloaded: false,
+        original_elsewhere: elsewhere,
         has_embedded: true,
         is_hidden: false,
         stack_id: null,
       } as PhotoDetail);
     });
-  }, [viewer]);
+  }, [viewer, elsewhere]);
   return null;
 }
 
 // The viewer and the editor are one page, told which it is by the address.
-function Page(): JSX.Element {
+function Page({ elsewhere }: { elsewhere: OriginalElsewhere }): JSX.Element {
   const { pathname } = useLocation();
   return (
     <>
-      <Seed />
+      <Seed elsewhere={elsewhere} />
       <DetailNav
         photoId="p1"
         toolsRef={() => {}}
@@ -80,11 +81,11 @@ function Page(): JSX.Element {
   );
 }
 
-async function openMenuAndFetch(): Promise<void> {
+async function openMenu(elsewhere: OriginalElsewhere): Promise<void> {
   render(
     <MemoryRouter initialEntries={[VIEWER]}>
       <StoresProvider>
-        <Page />
+        <Page elsewhere={elsewhere} />
       </StoresProvider>
     </MemoryRouter>,
   );
@@ -92,6 +93,10 @@ async function openMenuAndFetch(): Promise<void> {
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
   });
+}
+
+async function openMenuAndFetch(): Promise<void> {
+  await openMenu('reachable');
   await act(async () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Fetch original and edit' }));
   });
@@ -140,4 +145,23 @@ test('the row returns to what it was when the fetch cannot be asked for', async 
     screen.getByRole('menuitem', { name: 'Fetch original and edit' }).getAttribute('aria-disabled'),
   ).not.toBe('true');
   expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(VIEWER);
+});
+
+test('an original only on a device this one cannot reach is not offered, and says why', async () => {
+  const asked: string[] = [];
+  blobsApi.fetchOriginal = (photoId) => {
+    asked.push(photoId);
+    return Promise.resolve(pull('queued'));
+  };
+
+  await openMenu('unreachable');
+  const item = screen.getByRole('menuitem', { name: 'Fetch original and edit' });
+  expect(item.getAttribute('aria-disabled')).toBe('true');
+  expect(item.getAttribute('aria-description')).toBe(
+    "No local copy. The device holding it can't be reached from here.",
+  );
+  await act(async () => {
+    fireEvent.click(item);
+  });
+  expect(asked).toEqual([]);
 });

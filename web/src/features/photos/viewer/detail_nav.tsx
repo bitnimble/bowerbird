@@ -181,6 +181,7 @@ function actions({
   editable,
   fetchingOriginal,
   readOnly,
+  unreachable,
   editHref,
   hidden,
   merged,
@@ -191,6 +192,7 @@ function actions({
   fetchingOriginal: boolean;
   /** A library that cannot take the original, which a photo that is not editable has to fetch. */
   readOnly: boolean;
+  unreachable: boolean;
   editHref: string;
   /** Whether this photograph is already put away, which is which way the one hide row points. */
   hidden: boolean;
@@ -220,9 +222,13 @@ function actions({
           ) : (
             <HardDriveDownload size={ICON} />
           ),
-          disabled: fetchingOriginal || readOnly,
+          disabled: fetchingOriginal || readOnly || unreachable,
           keepsMenuOpen: true,
-          ...(readOnly ? { tooltip: BulkBarStrings.notOnReadOnlyLibrary() } : {}),
+          ...(readOnly
+            ? { tooltip: BulkBarStrings.notOnReadOnlyLibrary() }
+            : unreachable
+              ? { tooltip: PhotoDetailStrings.stateOnUnreachableDeviceHint() }
+              : {}),
         },
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather
@@ -494,6 +500,7 @@ export const DetailNav = observer(function DetailNav({
               editable,
               fetchingOriginal: replicationStore.fetching.has(photoId),
               readOnly: photo != null && libraries.byId.get(photo.library_id)?.read_only === true,
+              unreachable: store.unreachable(photoId),
               editHref,
               hidden: photo?.is_hidden ?? false,
               merged: isComposite(store.photoFor(photoId)),

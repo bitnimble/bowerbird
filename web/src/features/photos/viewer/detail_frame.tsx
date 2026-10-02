@@ -187,6 +187,11 @@ export const DetailFrame = observer(function DetailFrame({
       // will be.
       hold={store.photoFor(photoId) == null || store.detailWidth === 0}
       status={status}
+      unavailable={
+        store.unreachable(photoId)
+          ? PhotoStageStrings.onUnreachableDevice()
+          : PhotoStageStrings.noRenditionYet()
+      }
       retryEpoch={store.retryEpoch}
       pictures={strip}
       showing={strip.findIndex((each) => each.key === photoId)}

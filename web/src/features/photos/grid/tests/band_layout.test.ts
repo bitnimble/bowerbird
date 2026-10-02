@@ -24,6 +24,7 @@ function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoS
     rating: 0,
     is_missing: false,
     is_offloaded: false,
+    original_elsewhere: null,
     is_deleted: false,
     is_hidden: false,
     tile_built_at: null,

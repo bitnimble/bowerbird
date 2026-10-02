@@ -341,6 +341,11 @@ export class ViewerStore {
     return rendition === 'embedded' && !isComposite(this.photoFor(photoId));
   }
 
+  /** Its original is only on devices this one cannot dial, so nothing can build or fetch a picture. */
+  unreachable(photoId: string): boolean {
+    return this.photoFor(photoId)?.original_elsewhere === 'unreachable';
+  }
+
   /**
    * The rendition the reader picked with `i`/`o`/`m`, or null where they have picked none.
    *

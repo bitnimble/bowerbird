@@ -377,7 +377,11 @@ export const RawPanel = observer(function RawPanel({
                 p.is_offloaded
                   ? PhotoDetailStrings.stateOnBackup()
                   : p.is_missing
-                    ? PhotoDetailStrings.stateMissing()
+                    ? p.original_elsewhere === 'unreachable'
+                      ? PhotoDetailStrings.stateOnUnreachableDevice()
+                      : p.original_elsewhere === 'reachable'
+                        ? PhotoDetailStrings.stateOnSyncedDevice()
+                        : PhotoDetailStrings.stateMissing()
                     : p.is_deleted
                       ? PhotoDetailStrings.stateBinned()
                       : PhotoDetailStrings.stateOk()
@@ -411,7 +415,11 @@ export const RawPanel = observer(function RawPanel({
           ? ([
               [
                 PhotoDetailStrings.original(),
-                <RemoteOriginal photoId={photo.id} libraryId={photo.library_id} />,
+                <RemoteOriginal
+                  photoId={photo.id}
+                  libraryId={photo.library_id}
+                  unreachable={photo.original_elsewhere === 'unreachable'}
+                />,
               ],
             ] as MetaRow[])
           : []),
@@ -426,9 +434,11 @@ export const RawPanel = observer(function RawPanel({
 export const RemoteOriginal = observer(function RemoteOriginal({
   photoId,
   libraryId,
+  unreachable,
 }: {
   photoId: string;
   libraryId: string;
+  unreachable: boolean;
 }): JSX.Element {
   const store = useReplicationStore();
   const libraries = useLibrariesStore();
@@ -451,11 +461,19 @@ export const RemoteOriginal = observer(function RemoteOriginal({
 
   return (
     <>
-      {PhotoDetailStrings.onAnotherDevice()}
+      {unreachable
+        ? PhotoDetailStrings.stateOnUnreachableDevice()
+        : PhotoDetailStrings.onAnotherDevice()}
       <Button
         variant="ghost"
-        disabled={readOnly}
-        tooltip={readOnly ? BulkBarStrings.notOnReadOnlyLibrary() : undefined}
+        disabled={readOnly || unreachable}
+        tooltip={
+          readOnly
+            ? BulkBarStrings.notOnReadOnlyLibrary()
+            : unreachable
+              ? PhotoDetailStrings.stateOnUnreachableDeviceHint()
+              : undefined
+        }
         onClick={() => void replication.fetchOriginal(photoId)}
       >
         <HardDriveDownload size={ICON} />

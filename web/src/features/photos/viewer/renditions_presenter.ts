@@ -73,6 +73,7 @@ export class RenditionsPresenter {
     // A copy served whole is there whenever its file is, so there is nothing to wait for and no
     // detail to wait for it to be reported in (`store.servedWhole`).
     if (this.store.servedWhole(photoId, rendition) || !(force || !built)) return true;
+    if (this.store.unreachable(photoId)) return false;
 
     this.viewer.buildStarted(photoId, rendition);
     try {
@@ -129,7 +130,8 @@ export class RenditionsPresenter {
   // is not what the viewer is asking for, so a library that renders would ask
   // again on the next paint and never stop.
   async buildMissing(photoId: string, rendition: Rendition): Promise<void> {
-    if (this.store.building.has(`${photoId}:${rendition}`)) return;
+    if (this.store.building.has(`${photoId}:${rendition}`) || this.store.unreachable(photoId))
+      return;
     this.viewer.buildStarted(photoId, rendition);
     try {
       await this.build(photoId, rendition);

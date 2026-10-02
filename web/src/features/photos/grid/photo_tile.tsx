@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { ChevronLeft, ChevronUp, EyeOff, Layers, Network, Snowflake } from 'lucide-react';
+import { ChevronLeft, ChevronUp, EyeOff, Layers, Network, Snowflake, Unplug } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -236,7 +236,11 @@ export const PhotoTile = observer(function PhotoTile({
       />
       {!loaded && (
         <span {...stylex.props(tile.pending)}>
-          {failed ? PhotoStageStrings.noRenditionYet() : null}
+          {!failed
+            ? null
+            : photo.original_elsewhere === 'unreachable'
+              ? PhotoStageStrings.onUnreachableDevice()
+              : PhotoStageStrings.noRenditionYet()}
         </span>
       )}
     </>
@@ -374,7 +378,7 @@ const TileBadges = observer(function TileBadges({
   fileState: boolean;
 }): JSX.Element {
   const replication = useReplicationStore();
-  const catalogueOnly = replication.originalsElsewhere(photo.library_id);
+  const unreachable = photo.original_elsewhere === 'unreachable';
   return (
     <div {...stylex.props(tile.badges)}>
       {/* A photograph with no local copy has not gone - the RAW comes back when something needs
@@ -393,13 +397,23 @@ const TileBadges = observer(function TileBadges({
             <Snowflake size={BADGE_ICON} />
           </span>
         </Tooltip>
-      ) : photo.is_missing && catalogueOnly ? (
-        <Tooltip label={PhotoDetailStrings.stateOnSyncedDeviceHint()}>
+      ) : photo.is_missing && photo.original_elsewhere != null ? (
+        <Tooltip
+          label={
+            unreachable
+              ? PhotoDetailStrings.stateOnUnreachableDeviceHint()
+              : PhotoDetailStrings.stateOnSyncedDeviceHint()
+          }
+        >
           <span
             {...stylex.props(tile.badge, tile.elsewhere)}
-            aria-label={PhotoDetailStrings.stateOnSyncedDevice()}
+            aria-label={
+              unreachable
+                ? PhotoDetailStrings.stateOnUnreachableDevice()
+                : PhotoDetailStrings.stateOnSyncedDevice()
+            }
           >
-            <Network size={BADGE_ICON} />
+            {unreachable ? <Unplug size={BADGE_ICON} /> : <Network size={BADGE_ICON} />}
           </span>
         </Tooltip>
       ) : (
