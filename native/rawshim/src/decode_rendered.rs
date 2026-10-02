@@ -75,7 +75,7 @@ pub struct Held {
 
 /// What a picture demosaiced before it was written still says about the sensor behind it.
 pub struct Camera {
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
     /// Where each channel saturates on the frame's scale, as `decode_rawler::channel_ceilings`
     /// states a RAW's.
     pub ceiling: [f32; 3],

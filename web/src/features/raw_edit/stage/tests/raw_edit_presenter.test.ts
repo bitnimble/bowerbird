@@ -14,6 +14,7 @@ import { StageStore } from '../stage_store';
 import type { LocalPrepare } from '../../local_decode/local_open';
 import type { Region } from '../../edits';
 import type { PreparedHeader } from '../../../../../../src/schemas/prepared';
+import { withCameraMatch } from '../../../../../../src/schemas/edit_adjust';
 import {
   IDENTITY_TONE_CURVE,
   neutralEdits,
@@ -123,6 +124,7 @@ describe('a slider reaching the picture', () => {
       saturation: -12,
       temperature: null,
       tint: null,
+      cameraBalance: false,
       colourProfile: 'matched',
     });
   });
@@ -138,12 +140,16 @@ describe('a slider reaching the picture', () => {
     stage.cameraExposure = 0.35;
     stage.cameraSaturation = 17;
     stage.cameraCurve = toneCurve;
+    stage.cameraBalance = { temperature: 5320, tint: -4 };
     presenter.settle({
       exposure: 1,
       saturation: -20,
       colourProfile: 'none',
       clarity: 30,
       sharpening: 80,
+      whiteBalanceMode: 'Custom',
+      temperature: 3200,
+      tint: 10,
     });
     expect(stage.atCameraMatch).toBe(false);
 
@@ -152,13 +158,25 @@ describe('a slider reaching the picture', () => {
 
     expect(stage.atCameraMatch).toBe(true);
     expect(decoder.exposure).toBe(0.35);
-    expect(decoder.adjust).toMatchObject({ saturation: 17, colourProfile: 'matched', clarity: 30 });
+    expect(decoder.adjust).toMatchObject({
+      saturation: 17,
+      colourProfile: 'matched',
+      clarity: 30,
+      temperature: 5320,
+      tint: -4,
+    });
+    expect(edit.doc?.whiteBalanceMode).toBe('Custom');
     expect(decoder.adjust?.toneCurve).toEqual(toneCurve);
     expect(edit.doc?.sharpening).toBe(80);
   });
 
   test('writes the camera match into an unedited photo once, as what the open started from', async () => {
-    const tone = { exposure: 0.35, saturation: 17, toneCurve: IDENTITY_TONE_CURVE };
+    const tone = {
+      exposure: 0.35,
+      saturation: 17,
+      toneCurve: IDENTITY_TONE_CURVE,
+      balance: { temperature: 5320, tint: -4 },
+    };
     const unedited: EditOpening = {
       doc: neutralEdits(),
       rev: 0,
@@ -171,7 +189,7 @@ describe('a slider reaching the picture', () => {
     };
     const matched: EditOpening = {
       ...unedited,
-      doc: { ...unedited.doc, exposure: 0.35, saturation: 17 },
+      doc: withCameraMatch(unedited.doc, tone),
       rev: 1,
       stamp: 'matched',
     };
@@ -188,7 +206,13 @@ describe('a slider reaching the picture', () => {
 
       await presenter.edit.applyCameraMatch(tone);
       expect(applied).toEqual([tone]);
-      expect(edit.doc).toMatchObject({ exposure: 0.35, saturation: 17 });
+      expect(edit.doc).toMatchObject({
+        exposure: 0.35,
+        saturation: 17,
+        whiteBalanceMode: 'Custom',
+        temperature: 5320,
+        tint: -4,
+      });
       // Nothing to put back, so no restore reaches the server.
       expect(await presenter.edit.cancel()).toBe(true);
 
@@ -873,6 +897,7 @@ describe('the level a zoom is served at', () => {
         cameraExposure: null,
         cameraSaturation: null,
         cameraCurve: null,
+        cameraBalance: null,
         defocus: [0, 0],
         ...headerOverrides,
       });
@@ -924,10 +949,16 @@ describe('the level a zoom is served at', () => {
       cameraExposure: 0.347,
       cameraSaturation: 18,
       cameraCurve,
+      cameraBalance: { temperature: 5320, tint: -4 },
     };
     presenter.showRegion(QUARTER);
     await settled();
-    const tone = { exposure: 0.347, saturation: 18, toneCurve: cameraCurve };
+    const tone = {
+      exposure: 0.347,
+      saturation: 18,
+      toneCurve: cameraCurve,
+      balance: { temperature: 5320, tint: -4 },
+    };
     expect(stage.cameraTone).toEqual(tone);
     presenter.setColourProfile('none');
     expect(stage.cameraTone).toEqual(tone);

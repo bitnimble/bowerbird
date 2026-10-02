@@ -349,22 +349,26 @@ pub struct Outcome {
     pub camera_tone: Option<CameraTone>,
 }
 
-/// The camera match's exposure, saturation and curve, on the scales `EditDoc` stores them.
+/// The camera match's exposure, saturation, curve and white balance, on the scales `EditDoc`
+/// stores them.
 #[derive(Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CameraTone {
     pub exposure: Stops,
     pub saturation: f64,
     pub tone_curve: crate::gpu::ToneCurve,
+    /// None where the match leaves the white balance as shot.
+    pub balance: Option<crate::white_balance::Illuminant>,
 }
 
 impl CameraTone {
     pub(crate) fn of(colour: Option<&crate::hdr_fit::HdrColour>) -> Option<CameraTone> {
-        let (curve, exposure, saturation) = crate::edit::camera_defaults(colour);
+        let (curve, exposure, saturation, balance) = crate::edit::camera_defaults(colour);
         Some(CameraTone {
             exposure: exposure?,
             saturation: saturation?,
             tone_curve: curve?,
+            balance,
         })
     }
 }
@@ -627,7 +631,7 @@ pub(crate) struct Base {
     /// The illuminant the decode balanced against, which the stored temperature and tint move
     /// away from. Read off the processor and carried, because the decode is the only place it
     /// exists.
-    pub(crate) as_shot: Option<crate::white_balance::AsShot>,
+    pub(crate) as_shot: Option<crate::white_balance::Illuminant>,
     /// The capture's blur sigma in sensor pixels, and the sensor's long edge those pixels
     /// belong to - the pair `image::deconvolve_split` carries to each target's scale.
     pub(crate) capture_sigma: Option<f32>,
@@ -794,6 +798,7 @@ impl Base {
             fitting: fitting(job, raw),
             noise,
             matrix,
+            as_shot,
         };
         let crate::open::Measured {
             matched,
@@ -2352,6 +2357,10 @@ mod tests {
             tone_curve: crate::gpu::ToneCurve::PchipCbrt3 {
                 points: vec![[0.0, 0.1], [0.5, 0.55], [1.0, 1.0]],
             },
+            balance: Some(crate::white_balance::Illuminant {
+                temperature: 5320.0,
+                tint: -4.0,
+            }),
         }
     }
 

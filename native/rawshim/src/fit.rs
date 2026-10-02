@@ -880,8 +880,8 @@ async fn fit_gain(
 //
 // What survives, being metric-independent: anything measured against an injected
 // ground truth (the falloff alternation), anything read off a parameter directly
-// (the magenta sky's end slopes), anything signed on neutrals (grey_balance's +2.3%
-// green), a named object's hue angle (the blue pot), and every timing.
+// (the magenta sky's end slopes), anything signed on neutrals (the +2.3% green
+// `neutral_pull` takes off), a named object's hue angle (the blue pot), and every timing.
 //
 // Rebuilding this properly means ΔE2000, reported as a distribution, beside a
 // *signed* per-hue statistic that can see a cast - and judged on the wide planes,

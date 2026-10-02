@@ -82,6 +82,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.temperature, Some(4800.0));
     assert_eq!(adjust.tint, None);
     // Off the default, which a dropped field would quietly read as.
+    assert!(adjust.camera_balance);
     assert_eq!(adjust.colour_profile, rawshim::gpu::ColourProfile::None);
 }
 

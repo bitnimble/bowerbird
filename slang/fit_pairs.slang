@@ -354,7 +354,7 @@ void fit_mask(uint3 id: SV_DispatchThreadID)
 /// Either side, not the camera's alone. Selecting on the camera's rendering makes a body that tints
 /// its neutrals exclude itself from its own correction: a scene grey rendered 4% warm reads as 5.7%
 /// chroma, and on the Sony fixture that put 81% of the frame's scene-greys outside the set - 1226 of
-/// 6487, against the floor of 200 below which `grey_balance` does not run at all. The target stays
+/// 6487, against the floor of 200 below which `neutral_pull` does not run at all. The target stays
 /// the camera's rendering of those pixels either way; only which pixels count is widened.
 bool neutral(float3 v)
 {

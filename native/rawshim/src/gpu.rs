@@ -190,11 +190,11 @@ pub fn chroma_smooth_reach(
     chroma_shrink(photograph_long) * (CHROMA_BLUR_REACH + 2) as usize
 }
 
-/// The reader's temperature and tint solved into one matrix.
+/// The reader's temperature and tint solved into one matrix, and the camera match's into another.
 const BALANCE_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/white_balance.wgsl"));
 
-/// Floats that pass writes: three rows of four, the fourth of each unread.
-const BALANCE_FLOATS: u64 = 12;
+/// Floats that pass writes: two matrices of three rows of four, the fourth of each unread.
+const BALANCE_FLOATS: u64 = 24;
 
 /// Entries in that table, which is every `u16` a sample can hold. `PQ_CODES` on the client.
 const PQ_CODES: u64 = 65536;
@@ -2363,7 +2363,7 @@ pub struct Grade<'a> {
     /// The illuminant the camera balanced this frame for, which is the baseline the reader's
     /// temperature and tint move away from. None where the file recorded no usable
     /// multipliers, in which case there is nothing to move relative to and the pair is ignored.
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
     /// Which transfer to write. The grade is the same either way; an SDR target differs by
     /// having its `peak_nits` at diffuse white ([`Output::mastered`]) and by ending here.
     pub output: Output,
@@ -2625,6 +2625,9 @@ pub struct Adjust {
     /// camera metered 3200, where "as shot" means the same thing on every one.
     pub temperature: Option<f64>,
     pub tint: Option<f64>,
+    /// Whether a None half is the camera match's illuminant rather than the camera's own: a
+    /// document still awaiting the match, which has no numbers to state yet.
+    pub camera_balance: bool,
     pub colour_profile: ColourProfile,
 }
 
@@ -2694,7 +2697,7 @@ impl Adjust {
     }
 
     /// Whether this, at `exposure`, is the camera match's own rendering: every slider at rest, and
-    /// the three the match fits either unset or at the match's own values.
+    /// the four the match fits either unset or at the match's own values.
     pub fn at_the_camera(
         &self,
         exposure: Option<crate::light::Stops>,
@@ -2705,11 +2708,22 @@ impl Adjust {
         });
         let camera_exposure = colour.map_or(crate::light::Stops::ZERO, |c| c.exposure);
         let saturation = colour.map_or(0.0, HdrColour::saturation_slider);
+        let illuminant = colour.and_then(|c| c.illuminant);
+        let balance_at_camera = match (self.temperature, self.tint) {
+            (None, None) => self.camera_balance || illuminant.is_none(),
+            (Some(temperature), Some(tint)) => illuminant
+                .is_some_and(|i| i.temperature == temperature && i.tint == tint),
+            _ => false,
+        };
         Adjust {
             tone_curve: None,
             saturation: None,
+            temperature: None,
+            tint: None,
+            camera_balance: false,
             ..self.clone()
         } == Adjust::none()
+            && balance_at_camera
             // At `f32`, for the reason `same_curve` gives.
             && exposure.is_none_or(|e| e.raw() as f32 == camera_exposure.raw() as f32)
             && self.saturation.is_none_or(|s| s == saturation)
@@ -2790,6 +2804,7 @@ impl Output {
 struct Illuminant {
     temperature: Option<f64>,
     tint: Option<f64>,
+    camera_balance: bool,
 }
 
 impl Illuminant {
@@ -2797,6 +2812,7 @@ impl Illuminant {
         Self {
             temperature: grade.adjust.temperature,
             tint: grade.adjust.tint,
+            camera_balance: grade.adjust.camera_balance,
         }
     }
 }
@@ -3614,7 +3630,12 @@ impl Gpu {
     /// Robertson searches disagreeing by a few Kelvin would render as a picture rather than as
     /// an error.
     /// Written into rather than allocated, so a tick can hand the same buffer every frame.
-    fn build_balance(&self, recording: &mut Recording<'_>, edits: &Buffer, balance: &Buffer) {
+    pub(crate) fn build_balance(
+        &self,
+        recording: &mut Recording<'_>,
+        edits: &Buffer,
+        balance: &Buffer,
+    ) {
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("balance"),
             layout: &self.balance_layout,
@@ -3635,7 +3656,7 @@ impl Gpu {
         pass.dispatch_workgroups(1, 1, 1);
     }
 
-    fn balance_buffer(&self) -> Buffer {
+    pub(crate) fn balance_buffer(&self) -> Buffer {
         self.own_buffer(&wgpu::BufferDescriptor {
             label: Some("balance"),
             size: BALANCE_FLOATS * 4,
@@ -4889,6 +4910,8 @@ const EDIT_FIELDS: &[&str] = &[
     "camera_saturation",
     "band_top",
     "band_rows",
+    "matched_temperature",
+    "matched_tint",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -5018,7 +5041,8 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.adjust.tint.unwrap_or(0.0));
     w.push(
         u32::from(grade.adjust.temperature.is_some())
-            | (u32::from(grade.adjust.tint.is_some()) << 1),
+            | (u32::from(grade.adjust.tint.is_some()) << 1)
+            | (u32::from(grade.adjust.camera_balance) << 2),
     );
     // The reader's crop, straighten and turn, which both hosts apply here - in the same dispatch
     // as the grade, off the whole frame. The editor patches these per tick, since a crop handle
@@ -5107,6 +5131,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     let written = grade.written();
     w.push(written.top.raw() as u32);
     w.push(written.rows.raw() as u32);
+    let matched_illuminant = grade.colour.and_then(|c| c.illuminant);
+    f(&mut w, matched_illuminant.map_or(0.0, |i| i.temperature));
+    f(&mut w, matched_illuminant.map_or(0.0, |i| i.tint));
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was
@@ -6451,7 +6478,7 @@ mod tests {
             adjust,
             // Without one there is no illuminant to move away from and the shader is right to
             // leave the frame alone, which would make this test pass on a broken balance.
-            as_shot: Some(crate::white_balance::AsShot {
+            as_shot: Some(crate::white_balance::Illuminant {
                 temperature: 5500.0,
                 tint: 0.0,
             }),
@@ -6699,7 +6726,7 @@ mod tests {
             adjust,
             // Without one the balance has no illuminant to move away from and every temperature
             // below is the identity, which would make this pass on a host that ignores the pair.
-            as_shot: Some(crate::white_balance::AsShot {
+            as_shot: Some(crate::white_balance::Illuminant {
                 temperature: 5500.0,
                 tint: 12.0,
             }),
@@ -6889,7 +6916,7 @@ mod tests {
             2000.0, 2700.0, 3200.0, 5000.0, 5500.0, 6500.0, 10000.0, 20000.0, 50000.0,
         ] {
             for tint in [-150.0, -50.0, 0.0, 25.0, 150.0] {
-                let asked = crate::white_balance::AsShot { temperature, tint };
+                let asked = crate::white_balance::Illuminant { temperature, tint };
                 let grade = super::Grade {
                     adjust: super::Adjust {
                         temperature: Some(temperature),

@@ -37,6 +37,8 @@ export interface EditAdjust {
   dehaze: number;
   temperature: number | null;
   tint: number | null;
+  /** Whether a null half is the camera match's illuminant rather than the camera's own. */
+  cameraBalance: boolean;
   colourProfile: ColourProfile;
 }
 

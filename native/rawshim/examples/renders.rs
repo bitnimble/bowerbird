@@ -328,6 +328,7 @@ fn graded(opened: &support::Opened, edge: usize, stages: Stages<'_>) -> (Vec<u8>
             } else {
                 rawshim::gpu::ColourProfile::Matched
             },
+            camera_balance: true,
             ..rawshim::gpu::Adjust::none()
         },
         // The frame's own, as `job::run` carries it: without it the neutral arm white-balances

@@ -14,6 +14,7 @@
     "dehaze": -12.5,
     "temperature": 4800,
     "tint": null,
+    "cameraBalance": true,
     "colourProfile": "none"
   },
   "print": {

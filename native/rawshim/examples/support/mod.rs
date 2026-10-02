@@ -94,6 +94,7 @@ impl<'a> Open<'a> {
             camera_match: rawshim::hdr_fit::CameraMatch::LensAndColour,
             noise: frame.noise,
             matrix: frame.matrix,
+            as_shot: frame.as_shot,
         };
         let measured = pollster::block_on(rawshim::open::measure(frame.resident()?, &opening))
             .inspect_err(|why| eprintln!("{}: {why}", self.path))
@@ -129,7 +130,10 @@ pub fn graded_under(
         opened.measured.levels.anchored(),
         options.grade.reference_white_nits,
         None,
-        rawshim::gpu::Adjust::none(),
+        rawshim::gpu::Adjust {
+            camera_balance: true,
+            ..rawshim::gpu::Adjust::none()
+        },
         opened.frame.as_shot,
     );
     let (width, height) = (cutting.cut.width, cutting.cut.height);

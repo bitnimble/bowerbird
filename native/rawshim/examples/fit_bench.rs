@@ -81,6 +81,7 @@ fn measure(path: &str) {
             quantile,
             geometry,
             rawshim::hdr_fit::CameraMatch::LensAndColour,
+            opened.frame.as_shot,
         ));
         taken.push(began.elapsed().as_secs_f64() * 1000.0);
         last = fitted;

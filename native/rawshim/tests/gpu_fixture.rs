@@ -197,6 +197,10 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         exposure: Stops::measured(0.625),
         curve: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
         saturation: 1.25,
+        illuminant: Some(rawshim::white_balance::Illuminant {
+            temperature: 5320.0,
+            tint: -4.0,
+        }),
         ..HdrColour::identity()
     };
     let at = |exposure: Option<Stops>, adjust: rawshim::gpu::Adjust| {
@@ -205,7 +209,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                 colour: Some(&colour),
                 exposure,
                 adjust,
-                as_shot: Some(rawshim::white_balance::AsShot {
+                as_shot: Some(rawshim::white_balance::Illuminant {
                     temperature: 5500.0,
                     tint: 12.0,
                 }),
@@ -242,6 +246,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         dehaze: -12.5,
         temperature: Some(4800.0),
         tint: Some(-6.0),
+        camera_balance: true,
         colour_profile: rawshim::gpu::ColourProfile::Matched,
     };
     let cases = [
@@ -272,7 +277,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                 None => "null".to_string(),
             };
             format!(
-                "{name} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+                "{name} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
                 or_null(exposure.map(Stops::raw)),
                 adjust.contrast,
                 adjust.highlights,
@@ -286,6 +291,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                 adjust.dehaze,
                 or_null(adjust.temperature),
                 or_null(adjust.tint),
+                adjust.camera_balance,
                 words.join(","),
             )
         })
@@ -947,7 +953,7 @@ fn graded_frame(
             // The tint is off zero on purpose: a camera's neutral is never exactly on the
             // Planckian locus, and a baseline that was would let a host standing a missing
             // tint up as zero pass by coincidence.
-            as_shot: Some(rawshim::white_balance::AsShot {
+            as_shot: Some(rawshim::white_balance::Illuminant {
                 temperature: 5500.0,
                 tint: 12.0,
             }),

@@ -104,8 +104,9 @@ public struct Edit {
     /// So the hosts copy the document and `balance_set` says which halves it actually held.
     public float temperature;
     public float tint;
-    /// Bit 0 for the temperature, bit 1 for the tint. Zero is "as shot", which is what an
-    /// unedited photo carries.
+    /// Bit 0 for the temperature, bit 1 for the tint. Bit 2 says an unset half is the camera
+    /// match's (`matched_temperature`) rather than the frame's own, which is a document still
+    /// awaiting the match.
     public uint balance_set;
 
     /// The reader's crop, as fractions of the *straightened* frame - Camera Raw's definition
@@ -244,6 +245,10 @@ public struct Edit {
     /// grade whole is graded a band at a time.
     public uint band_top;
     public uint band_rows;
+    /// The illuminant the camera match was fitted under (`HdrColour::illuminant`), zero where it
+    /// pulled no neutral.
+    public float matched_temperature;
+    public float matched_tint;
 };
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;

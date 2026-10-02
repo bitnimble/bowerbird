@@ -88,6 +88,7 @@ describe('what a tick carries', () => {
       dehaze: -12.5,
       temperature: 4800,
       tint: null,
+      cameraBalance: true,
       colourProfile: 'none',
     };
     expect(adjust).toEqual(sample.adjust);

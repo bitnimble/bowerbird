@@ -237,6 +237,10 @@ pub struct HdrColour {
     pub delta_e: f64,
     pub exposure: crate::light::Stops,
     pub curve: Vec<[f64; 2]>,
+    /// The white balance the camera match sets, in whole steps of both sliders: the illuminant that
+    /// pulls the frame's greys onto the camera's, and the one everything above was fitted under.
+    /// None where the frame had no illuminant to move from or too few greys to say where to.
+    pub illuminant: Option<crate::white_balance::Illuminant>,
 }
 
 /// Nodes across each chroma axis and up the level axis.
@@ -435,8 +439,8 @@ pub struct ChromaMap {
 /// cast on near-neutral surfaces at all - the defect a bird bath and a stone wall were
 /// showing. Proportional to `l` rather than a constant, which keeps the properties the 2x2
 /// has: black stays black, and the term stays near identity where the data runs out. They
-/// also subsume `grey_balance`, which is two chroma degrees of freedom held constant across
-/// level where these are two per level node.
+/// hold what `neutral_pull`'s white balance, two chroma degrees of freedom constant across
+/// level, leaves at each level node.
 ///
 /// **`h` and `i` are what lets a node's *lightness* correction depend on the colour.**
 /// Without them the output lightness is exactly `g.l` for one `g` per node, so a small
@@ -1587,6 +1591,7 @@ impl HdrColour {
             delta_e: 0.0,
             exposure: crate::light::Stops::ZERO,
             curve: crate::light::IDENTITY_CURVE.to_vec(),
+            illuminant: None,
         }
     }
 
@@ -2241,7 +2246,7 @@ impl Pairs {
                     .map(|(_, v)| *v)
                     .collect(),
                 to_srgb: self.to_srgb,
-                // Both halves keep the whole grey set. `grey_balance` is not gated on anything,
+                // Both halves keep the whole grey set. `neutral_pull` is not gated on anything,
                 // so there is nothing to hold out from, and halving it would only make the
                 // neutral axis noisier on the frames that have fewest greys to begin with.
                 greys: self.greys.clone(),
@@ -2931,9 +2936,9 @@ const FIT_ROUNDS: usize = 3;
 ///
 /// It lives in the lattice now. `ChromaMap` is indexed by chroma *and* level, so it can say
 /// "grass at this level goes greener" while leaving a grey at that same level alone - the
-/// distinction a per-channel curve is structurally unable to draw. The neutral axis on top
-/// of this is `grey_balance`, one scalar per channel, which is a white balance rather than a
-/// shape and so cannot reintroduce the divergence.
+/// distinction a per-channel curve is structurally unable to draw. The neutral axis is
+/// `neutral_pull`'s white balance, upstream of the curves, which is not a shape and so cannot
+/// reintroduce the divergence.
 ///
 /// `inverse` undoes the matrix from the camera's rendering first, so what the curve is
 /// asked to reproduce is only the part a tone curve can: on the first round there is no
@@ -2961,33 +2966,31 @@ async fn fit_curves(
 /// how many such pixels are needed before their average is worth acting on.
 pub(crate) const GREY_CHROMA: f64 = 0.06;
 const MIN_GREY: u64 = 200;
+const NEUTRAL_PULL_LEAST: crate::light::Gain = crate::light::Gain::of_ratio(0.9);
+const NEUTRAL_PULL_MOST: crate::light::Gain = crate::light::Gain::of_ratio(1.1);
 
-/// Pulls the transform's neutral axis onto the camera's.
+/// The white balance that pulls the frame's greys onto the camera's, one step on from `from`, the
+/// illuminant `plane` is lit by. None where there are too few greys to average.
 ///
-/// Nothing else in the model can. The matrix's rows sum to one, so it maps a grey to a
-/// grey and cannot move one that arrives already tinted; the chroma curve scales chroma
-/// about the luma axis, which is a no-op on a grey. That leaves the three tone curves,
-/// and they are fitted one channel at a time from whatever content sits at each level -
-/// nothing ties them to each other, so a frame whose green channel is sampled from
-/// different objects than its red lands them apart and every grey in the picture picks
-/// up the difference. On IMG_8789 that was +2.3% green on the pixels the camera renders
-/// neutral, which is the wash across the whites and the dogs' pale fur.
+/// Nothing in the model can. The matrix's rows sum to one, so it maps a grey to a grey and cannot
+/// move one that arrives already tinted; the curves share one shape and the chroma curve scales
+/// chroma about the luma axis, both no-ops on a grey. On IMG_8789 the camera renders its neutrals
+/// +2.3% green against ours, which is the wash across the whites and the dogs' pale fur.
 ///
-/// So the frame's own greys say what the gains should be, and the curves are scaled to
-/// meet them. Bounded, because a frame with few greys should nudge this rather than
-/// swing it, and skipped entirely where there are too few to average.
-async fn grey_balance(
+/// Bounded per round, because a frame with few greys should nudge this rather than swing it.
+async fn neutral_pull(
     gpu: &'static crate::gpu::Gpu,
-    colour: &mut HdrColour,
-    render: &Source,
+    colour: &HdrColour,
+    plane: &Source,
     pairs: &Pairs,
-) -> Option<()> {
+    from: crate::white_balance::Illuminant,
+) -> Option<crate::white_balance::Illuminant> {
     if (pairs.greys.len() as u64) < MIN_GREY {
-        return Some(());
+        return None;
     }
     // Surround of zero, because this runs inside the rounds, before any lattice exists - with
     // `chroma` still `None` the surround is never read.
-    let samples = gathered(gpu, render, &pairs.grey_indices, pairs.greys.len(), None);
+    let samples = gathered(gpu, plane, &pairs.grey_indices, pairs.greys.len(), None);
     let mut ours = [0.0f64; 3];
     for v in evaluate_over(gpu, colour, &samples, pairs.greys.len(), Stage::Full)
         .read(gpu)
@@ -2997,36 +3000,17 @@ async fn grey_balance(
             ours[c] += f64::from(v[c]);
         }
     }
-    for c in 0..3 {
-        let gain = (pairs.grey_target[c] / ours[c].max(1e-9)).clamp(0.9, 1.1);
-        let last = colour.curves[c].len().saturating_sub(1).max(1);
-        for (bin, level) in colour.curves[c].iter_mut().enumerate() {
-            // Faded out towards the top of the domain, where it must not act at all.
-            //
-            // The shape is shared, so this is the only per-channel freedom and so the only
-            // thing that can pull a neutral apart - and at the very top there is nothing left
-            // to pull towards. A sensor clipped to exactly neutral and rendered by the camera
-            // as exactly neutral has to come out neutral. Applied flat instead of faded, this
-            // gain reintroduces the tint the shared shape just removed: the blown highlight
-            // comes out [1.261, 1.330, 1.181], 12.7% apart.
-            //
-            // Linear in the bin rather than shaped, because what it interpolates between is
-            // two exactly-known ends - the frame's measured grey gain at the bottom, and
-            // unity at the top - with no evidence about the middle to justify a curve.
-            let toward_white = bin as f64 / last as f64;
-            *level *= gain + (1.0 - gain) * toward_white;
-        }
-        // The taper's multiplier varies across the domain, so unlike a flat gain it can
-        // reorder two bins the fit left nearly level - and a curve that dips is a gradient
-        // that posterises. Held here rather than by weakening the taper, because the fade
-        // is the part that keeps highlights neutral.
-        let mut floor = f64::MIN;
-        for level in colour.curves[c].iter_mut() {
-            floor = floor.max(*level);
-            *level = floor;
-        }
-    }
-    Some(())
+    let white = std::array::from_fn(|c| {
+        let pull = pairs.grey_target[c] / ours[c].max(1e-9);
+        crate::light::Gain::of_ratio(pull.clamp(NEUTRAL_PULL_LEAST.raw(), NEUTRAL_PULL_MOST.raw()))
+    });
+    let found = crate::white_balance::illuminant_for(gpu, from, white).await?;
+    // Whole steps of both sliders, because that is what the document stores: a match fitted
+    // under the unrounded pair would be graded under another one.
+    Some(crate::white_balance::Illuminant {
+        temperature: found.temperature.round(),
+        tint: found.tint.round(),
+    })
 }
 
 /// The plane read at each set's own pixels, and each set's scoring, which is what the rounds below
@@ -5609,6 +5593,7 @@ async fn fit_colour(
     planes: &Corresponded,
     sharp: &Sharp,
     wide: &Wide,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrColour> {
     let (width, height) = (planes.width, planes.height);
     let mut lap = crate::clock::laps("  colour ");
@@ -5706,9 +5691,32 @@ async fn fit_colour(
         &balance,
         ceiling,
         [&global, &frame],
+        as_shot,
     )
     .await?;
     lap("model");
+    // Everything after the model is taught and judged on the planes as the camera match's balance
+    // lights them, which is what the grade hands the lattice.
+    let lit_sharp;
+    let (source, sharp) = match (as_shot, model.illuminant) {
+        (Some(from), Some(to)) => {
+            lit_sharp = Sharp {
+                wide: rebalanced(gpu, &sharp.wide, from, to),
+                camera: Source {
+                    buffer: sharp.camera.buffer.clone(),
+                    width: sharp.camera.width,
+                    height: sharp.camera.height,
+                },
+                falloff: sharp.falloff,
+            };
+            (rebalanced(gpu, &source, from, to), &lit_sharp)
+        }
+        _ => (source, sharp),
+    };
+    let evidence = crate::fit_curve::Evidence {
+        render: source.buffer.clone(),
+        ..evidence
+    };
 
     let surround = surround_plane(gpu, &source, width, height).await?;
     lap("surround");
@@ -6107,6 +6115,7 @@ async fn fit_model(
     balance: &[f64],
     ceiling: f64,
     [pairs, frame]: [&Pairs; 2],
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(HdrColour, Vec<[[f64; 3]; 3]>)> {
     let mut lap = crate::clock::laps("  model ");
     let (curves, anchor) = fit_curves(gpu, evidence, balance, ceiling, None).await?;
@@ -6121,6 +6130,7 @@ async fn fit_model(
         delta_e: f64::INFINITY,
         exposure: crate::light::Stops::ZERO,
         curve: crate::light::IDENTITY_CURVE.to_vec(),
+        illuminant: None,
     };
     lap("curves");
 
@@ -6139,16 +6149,16 @@ async fn fit_model(
     // Undoing the matrix from the target and refitting the curves against what is left gives each
     // stage only the part it can represent. `fit.rs` alternates its falloff against the colour
     // for the same reason, and lands within 0.1 after three rounds.
-    // Once, outside the alternation: neither set's pixels nor the plane under them move with the
-    // rounds, and a gather is a dispatch and an allocation apiece.
-    let samples = Gathered {
-        pairs: gathered(gpu, source, &pairs.indices, pairs.at.len(), None),
-        frame: gathered(gpu, source, &frame.indices, frame.at.len(), None),
+    let gather = |plane: &Source| Gathered {
+        pairs: gathered(gpu, plane, &pairs.indices, pairs.at.len(), None),
+        frame: gathered(gpu, plane, &frame.indices, frame.at.len(), None),
         scoring: [
             Rescored::of_candidates(gpu, pairs),
             Rescored::of_candidates(gpu, frame),
         ],
     };
+    let mut samples = gather(source);
+    let mut lit: Option<Source> = None;
     let mut candidates = Vec::new();
     for round in 0..FIT_ROUNDS {
         (colour.matrix, candidates) =
@@ -6157,8 +6167,15 @@ async fn fit_model(
         let Some(inverse) = invert3(&colour.matrix).filter(|_| round + 1 < FIT_ROUNDS) else {
             break;
         };
+        let plane = lit.as_ref().unwrap_or(source);
+        let evidence = crate::fit_curve::Evidence {
+            render: plane.buffer.clone(),
+            jpeg: evidence.jpeg.clone(),
+            bits: evidence.bits.clone(),
+            pixels: evidence.pixels,
+        };
         (colour.curves, colour.anchor) =
-            fit_curves(gpu, evidence, balance, ceiling, Some(&inverse)).await?;
+            fit_curves(gpu, &evidence, balance, ceiling, Some(&inverse)).await?;
         lap("curves");
         // Inside the alternation, not after it, and not conditional. A camera-neutral
         // rendering neutral is a property the transform should have rather than an
@@ -6166,11 +6183,120 @@ async fn fit_model(
         // rows summing to one - and the matrix refit at the top of the next round is
         // what lets the rest of the fit settle around it. Applied afterwards instead it
         // has no round left to settle in, and scores worse than not doing it at all.
-        grey_balance(gpu, &mut colour, source, pairs).await?;
-        lap("grey");
+        let Some(as_shot) = as_shot else { continue };
+        let from = colour.illuminant.unwrap_or(as_shot);
+        if let Some(to) = neutral_pull(gpu, &colour, plane, pairs, from).await {
+            let relit = rebalanced(gpu, source, as_shot, to);
+            samples = gather(&relit);
+            lit = Some(relit);
+            colour.illuminant = Some(to);
+        }
+        lap("neutral");
     }
 
     Some((colour, candidates))
+}
+
+/// `plane` as it would be lit by `to` rather than by `from`, the illuminant it was balanced for:
+/// the grade's own balance (`colour::lit_by_reader`) over every pixel.
+fn rebalanced(
+    gpu: &'static crate::gpu::Gpu,
+    plane: &Source,
+    from: crate::white_balance::Illuminant,
+    to: crate::white_balance::Illuminant,
+) -> Source {
+    let identity = HdrColour::identity();
+    let grade = crate::gpu::Grade {
+        as_shot: Some(from),
+        adjust: crate::gpu::Adjust {
+            temperature: Some(to.temperature),
+            tint: Some(to.tint),
+            ..crate::gpu::Adjust::none()
+        },
+        ..probe_grade(&identity)
+    };
+    let pixels = plane.pixels();
+    let mut recording = gpu.record();
+    recording.holding(&plane.buffer);
+    let edits = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fit balance edit"),
+        contents: &crate::gpu::uniform_words(&grade, &identity)
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect::<Vec<u8>>(),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let balance = gpu.balance_buffer();
+    recording.holding(&balance);
+    gpu.build_balance(&mut recording, &edits, &balance);
+    let lit = rgb_buffer(&mut recording, "fit balanced", plane.width, plane.height);
+    let push = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fit balance push"),
+        contents: &[pixels as i32, 0, 0, 0]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect::<Vec<u8>>(),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let kernel = balance_device(gpu);
+    let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("fit_balance"),
+        layout: &kernel.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: edits.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: plane.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: lit.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 14,
+                resource: balance.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
+        ],
+    });
+    {
+        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        pass.set_pipeline(&kernel.pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        let (across, down) = crate::base::groups(pixels);
+        pass.dispatch_workgroups(across, down, 1);
+    }
+    recording.submit();
+    Source {
+        buffer: lit,
+        width: plane.width,
+        height: plane.height,
+    }
+}
+
+fn balance_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+    static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| {
+        kernel(
+            gpu,
+            "fit_balance",
+            include_str!(concat!(env!("OUT_DIR"), "/wgsl/fit_balance.wgsl")),
+            &[
+                (0, UNIFORM),
+                (5, READ),
+                (6, WRITE),
+                (14, READ),
+                (20, UNIFORM),
+            ],
+            &[],
+        )
+    })
 }
 
 // ------------------------------------------------------------------- the entry
@@ -6182,15 +6308,19 @@ async fn fit_model(
 /// in multiples of diffuse white so the curve means the same thing whatever the exposure. None
 /// when there are too few usable pairs to fit from, in which case the caller grades
 /// untransformed.
+///
+/// `as_shot` is the illuminant `plane` was balanced for, which the match's own white balance moves
+/// away from; None fits no white balance.
 pub async fn fit(
     gpu: &'static crate::gpu::Gpu,
     plane: &Source,
     levels: crate::tone::Levels,
     preview: &crate::rgb::Rgb,
     lens: crate::fit::Lens,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrMatch> {
     let (wide_jpeg, _) = preview_planes(gpu, preview).await?;
-    fit_linearised(gpu, plane, levels, wide_jpeg, lens).await
+    fit_linearised(gpu, plane, levels, wide_jpeg, lens, as_shot).await
 }
 
 /// The preview at the fit's size twice over: linearised into Rec.2020 for the colour fit, and
@@ -6281,6 +6411,7 @@ pub async fn fit_linearised(
     levels: crate::tone::Levels,
     wide_jpeg: Source,
     lens: crate::fit::Lens,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrMatch> {
     if !(levels.white > crate::light::Light::ZERO) {
         return None;
@@ -6288,7 +6419,15 @@ pub async fn fit_linearised(
     // The normalisation is the only per-fit thing about the plane, and it rides the warp that
     // reads it: a pass of its own would be the whole plane back to the host and up again, between
     // two passes that both already have it.
-    let colour = fit_model_planes(gpu, plane, 1.0 / levels.white.raw(), wide_jpeg, &lens).await?;
+    let colour = fit_model_planes(
+        gpu,
+        plane,
+        1.0 / levels.white.raw(),
+        wide_jpeg,
+        &lens,
+        as_shot,
+    )
+    .await?;
     Some(HdrMatch {
         lens,
         colour: Some(colour),
@@ -6576,13 +6715,14 @@ async fn fit_model_planes(
     scale: f64,
     wide_jpeg: Source,
     lens: &crate::fit::Lens,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<HdrColour> {
     let mut lap = crate::clock::laps("  colour ");
     let planes = prepared_planes(gpu, source, scale, wide_jpeg, lens).await?;
     lap("prepared planes");
     let corresponded = registered(gpu, &planes).await?;
     lap("registered");
-    fit_colour(gpu, &corresponded, &planes.sharp, &planes.resident).await
+    fit_colour(gpu, &corresponded, &planes.sharp, &planes.resident, as_shot).await
 }
 
 /// What a point the search could not match is charged, as a squared displacement in
@@ -8241,6 +8381,42 @@ mod tests {
         }
     }
 
+    /// The fit solves its greys' balance with `illuminant_for` and lights its planes with the
+    /// grade's own matrix, two paths through the shader: a grey lit to an illuminant has to solve
+    /// back to it, or the match is fitted under a balance other than the one it writes.
+    #[test]
+    fn a_grey_lit_to_an_illuminant_solves_back_to_it() {
+        use crate::white_balance::Illuminant;
+        let gpu = searching();
+        let from = Illuminant {
+            temperature: 5487.3,
+            tint: 3.2,
+        };
+        let grey = source_of(
+            gpu,
+            &Plane {
+                width: 1,
+                height: 1,
+                data: vec![1.0; 3],
+            },
+        );
+        for (temperature, tint) in [(5320.0, -4.0), (3200.0, 12.0), (7500.0, -20.0)] {
+            let to = Illuminant { temperature, tint };
+            let lit = pollster::block_on(read_plane(gpu, &rebalanced(gpu, &grey, from, to)))
+                .expect("the plane reads back");
+            let white = std::array::from_fn(|c| crate::light::Gain::of_ratio(lit.data[c]));
+            let found = pollster::block_on(crate::white_balance::illuminant_for(gpu, from, white))
+                .expect("an illuminant");
+            assert!(
+                (found.temperature - temperature).abs() < temperature * 0.005
+                    && (found.tint - tint).abs() < 0.5,
+                "{temperature}K tint {tint} came back as {:.1}K tint {:.2}",
+                found.temperature,
+                found.tint,
+            );
+        }
+    }
+
     #[test]
     fn an_identity_transform_returns_its_input() {
         // Past the ceiling too, where the pixel takes the shared gain: that path reads the
@@ -8970,6 +9146,7 @@ mod tests {
             unit_levels(),
             &preview,
             crate::fit::Lens::none(),
+            None,
         ))
         .expect("the chart is fittable");
 
@@ -9002,6 +9179,7 @@ mod tests {
             unit_levels(),
             &preview,
             crate::fit::Lens::none(),
+            None,
         ))
         .expect("the chart is fittable");
 
@@ -9037,7 +9215,7 @@ mod tests {
     }
 
     /// The camera's rendering of one scene-linear level, per channel. A power curve with a
-    /// per-channel gain: the shape the three share, and a cast for `grey_balance` to pull out.
+    /// per-channel gain: the shape the three share, and a cast on the neutrals.
     const CAMERA_GAIN: [f64; 3] = [1.0, 1.06, 0.94];
     fn camera(channel: usize, level: f64) -> f64 {
         CAMERA_GAIN[channel] * 1.172 * level.max(0.0).powf(0.533)
@@ -9137,31 +9315,60 @@ mod tests {
         // all three would be asserting against the design and could only be met by
         // loosening it until it said nothing.
         let (plane, preview) = warm_chart();
+        let as_shot = crate::white_balance::Illuminant {
+            temperature: 6500.0,
+            tint: 0.0,
+        };
         let fitted = pollster::block_on(fit(
             searching(),
             &source_of(searching(), &plane),
             unit_levels(),
             &preview,
             crate::fit::Lens::none(),
+            Some(as_shot),
         ))
         .expect("the chart is fittable");
+        let colour = fitted.colour.as_ref().expect("colour");
 
         // Through the whole model, not through `curves` alone. The tone stage is one shared
         // shape, so per-channel behaviour is the *model's* to produce and reading a curve on its
         // own says nothing about what the picture gets. This is the same reason a held-out mean
         // could not see the cast: measure the layer, and you learn about the layer.
         //
+        // Lit by the match's own balance first, as the grade lights a frame before the match.
+        //
         // At the level's own surround, because a flat sky's neighbourhood is itself - and it is
         // where the chart's pairs taught the map. Zero would read the one surround slab no pair
         // of this chart reached.
         let levels = [0.4, 0.5, 0.6];
-        let samples: Vec<[f64; 4]> = levels.iter().map(|l| [*l, *l, *l, *l]).collect();
-        let outs = through(
-            fitted.colour.as_ref().expect("colour"),
-            Stage::Full,
-            &samples,
-        )
-        .expect("an adapter for the fit's search");
+        let greys = Plane {
+            width: levels.len(),
+            height: 1,
+            data: levels.iter().flat_map(|l| [*l; 3]).collect(),
+        };
+        let lit = pollster::block_on(read_plane(
+            searching(),
+            &rebalanced(
+                searching(),
+                &source_of(searching(), &greys),
+                as_shot,
+                colour.illuminant.expect("the chart's greys pull a balance"),
+            ),
+        ))
+        .expect("the plane reads back");
+        let samples: Vec<[f64; 4]> = levels
+            .iter()
+            .enumerate()
+            .map(|(k, l)| {
+                [
+                    lit.data[k * 3],
+                    lit.data[k * 3 + 1],
+                    lit.data[k * 3 + 2],
+                    *l,
+                ]
+            })
+            .collect();
+        let outs = through(colour, Stage::Full, &samples).expect("an adapter for the fit's search");
         for (level, out) in levels.iter().copied().zip(outs) {
             for c in 0..3 {
                 let at = out[c] / camera(c, level) - 1.0;

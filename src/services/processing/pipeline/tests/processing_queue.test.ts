@@ -187,6 +187,7 @@ describe('ProcessingService.processUnprocessed', () => {
       // is the decode's own illuminant, which the job never sees and could not carry.
       temperature: 4800,
       tint: -6,
+      cameraBalance: false,
       colourProfile: 'matched',
     });
     // And on both jobs, so the tile and the full view cannot disagree about the picture.

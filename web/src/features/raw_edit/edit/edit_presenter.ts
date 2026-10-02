@@ -7,12 +7,12 @@ import {
   type EditDoc,
   type EditOpening,
   type EditState,
+  type Illuminant,
 } from '../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { ApiError } from '../../../api/request';
 import { newId } from '../../../../../src/schemas/id';
 import { cameraMatchReset, withCameraMatch } from '../../../../../src/schemas/edit_adjust';
-import type { AsShot } from '../../../../../src/schemas/prepared';
 import type { RepairPresenter } from '../repair/repair_presenter';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
 import type { EditStore, SaveStatus } from './edit_store';
@@ -82,7 +82,7 @@ export class EditPresenter {
   }
 
   @action.bound
-  setAsShot(asShot: AsShot | null): void {
+  setAsShot(asShot: Illuminant | null): void {
     this.store.asShot = asShot;
   }
 

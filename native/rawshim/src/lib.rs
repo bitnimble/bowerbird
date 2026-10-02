@@ -737,12 +737,14 @@ pub fn fit_hdr_for(
     frame: &resident::Resident,
     raw_path: &str,
     quantile: f64,
+    as_shot: Option<white_balance::Illuminant>,
 ) -> Option<hdr_fit::HdrMatch> {
     fit_hdr_measured(
         frame,
         raw_path,
         quantile,
         hdr_fit::CameraMatch::LensAndColour,
+        as_shot,
     )
     .map(|(matched, _)| matched)
 }
@@ -755,6 +757,7 @@ pub fn fit_hdr_measured(
     raw_path: &str,
     quantile: f64,
     camera_match: hdr_fit::CameraMatch,
+    as_shot: Option<white_balance::Illuminant>,
 ) -> Option<(hdr_fit::HdrMatch, tone::Levels)> {
     let gpu = gpu::device()?;
     guard("fit_hdr_for", None, || {
@@ -766,6 +769,7 @@ pub fn fit_hdr_measured(
             quantile,
             geometry,
             camera_match,
+            as_shot,
         ))
         .map(|(_, matched, levels)| (matched, levels))
     })
@@ -1016,7 +1020,7 @@ mod tests {
         if let Some(frame) = decode_frame(&path, 0) {
             let gpu = gpu::device().expect("the fit needs an adapter");
             let resident = frame.on_device(gpu).expect("the frame reaches the device");
-            if let Some(fitted) = fit_hdr_for(&resident, &path, 0.995) {
+            if let Some(fitted) = fit_hdr_for(&resident, &path, 0.995, frame.as_shot) {
                 let colour = fitted.colour.as_ref().expect("a colour fit");
                 let numbers = colour.curves.iter().map(Vec::len).sum::<usize>()
                     + 9

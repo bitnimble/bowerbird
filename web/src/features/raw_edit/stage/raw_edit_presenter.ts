@@ -1180,6 +1180,7 @@ export class RawEditPresenter {
     this.stage.cameraCurve = null;
     this.stage.cameraExposure = null;
     this.stage.cameraSaturation = null;
+    this.stage.cameraBalance = null;
     this.stage.defocus = null;
     this.stage.levels = null;
     this.stage.region = null;
@@ -1232,6 +1233,7 @@ export class RawEditPresenter {
     this.stage.cameraCurve = header.cameraCurve;
     this.stage.cameraExposure = header.cameraExposure;
     this.stage.cameraSaturation = header.cameraSaturation;
+    this.stage.cameraBalance = header.cameraBalance;
     this.stage.defocus = header.defocus;
     // All three or none: a tile handed a white and a peak without a floor is refused whole
     // (`tone::Levels::usable`), so there is nothing to hold.

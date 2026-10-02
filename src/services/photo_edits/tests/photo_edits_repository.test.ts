@@ -105,6 +105,7 @@ describe('PhotoEditsRepository.applyCameraMatch', () => {
         [1, 1],
       ] as [number, number][],
     },
+    balance: { temperature: 5320.4, tint: -3.6 },
   };
 
   const source = (): string | undefined =>
@@ -121,6 +122,9 @@ describe('PhotoEditsRepository.applyCameraMatch', () => {
       exposure: 0.35,
       saturation: 17,
       toneCurve: tone.toneCurve,
+      whiteBalanceMode: 'Custom',
+      temperature: 5320,
+      tint: -4,
       awaitsCameraMatch: false,
     });
     expect(applied?.state.canUndo).toBe(false);

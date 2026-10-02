@@ -134,7 +134,7 @@ pub struct Prepared {
     /// The levels the samples above were coded against, which the grade anchors to.
     pub levels: crate::tone::Anchored,
     pub matched: Option<crate::hdr_fit::HdrMatch>,
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
     /// The camera's own multipliers, which a composite files as its balance
     /// (`photo_analysis::FromRaw::balance`).
     ///

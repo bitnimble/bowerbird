@@ -122,7 +122,7 @@ pub struct PreparedHeader {
     ///
     /// For the *panel*, which shows the reader where the sliders start. The grade reads it out
     /// of `tick` below rather than from here, so no arithmetic depends on this field.
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
     /// The two Detail positions this frame was actually filtered at, 0 to 100.
     ///
     /// **What the panel shows where the document has left a slider unset.** The ramp that turns a
@@ -135,6 +135,8 @@ pub struct PreparedHeader {
     pub camera_exposure: Option<crate::light::Stops>,
     /// On the Saturation slider's scale.
     pub camera_saturation: Option<f64>,
+    /// The white balance the camera match sets (`HdrColour::illuminant`).
+    pub camera_balance: Option<crate::white_balance::Illuminant>,
     /// The mosaic's noise, handed back on every loupe tile and every band of a re-prepare - so a
     /// crop is denoised at the strength its own export would use rather than at whatever its few
     /// hundred thousand photosites happen to imply.
@@ -424,6 +426,7 @@ pub async fn from_frame(
             },
             noise: frame.noise,
             matrix: frame.matrix,
+            as_shot,
         };
         if mosaic {
             report(crate::open_stage::Stage::Matching);
@@ -577,7 +580,7 @@ pub struct Opened {
     /// What the frame was coded against, which the tick's uniform anchors to.
     pub levels: crate::tone::Levels,
     pub matched: Option<crate::hdr_fit::HdrMatch>,
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
 }
 
 impl Opened {
@@ -599,13 +602,15 @@ impl Opened {
     }
 }
 
-/// [`PreparedHeader`]'s `camera_curve`, `camera_exposure` and `camera_saturation`.
+/// [`PreparedHeader`]'s `camera_curve`, `camera_exposure`, `camera_saturation` and
+/// `camera_balance`.
 pub(crate) fn camera_defaults(
     colour: Option<&crate::hdr_fit::HdrColour>,
 ) -> (
     Option<crate::gpu::ToneCurve>,
     Option<crate::light::Stops>,
     Option<f64>,
+    Option<crate::white_balance::Illuminant>,
 ) {
     (
         colour.map(|c| crate::gpu::ToneCurve::PchipCbrt3 {
@@ -613,6 +618,7 @@ pub(crate) fn camera_defaults(
         }),
         colour.map(|c| c.exposure),
         colour.map(crate::hdr_fit::HdrColour::saturation_slider),
+        colour.and_then(|c| c.illuminant),
     )
 }
 
@@ -626,7 +632,7 @@ struct Framed {
 async fn payload(
     prepared: Framed,
     matched: Option<&crate::hdr_fit::HdrMatch>,
-    as_shot: Option<crate::white_balance::AsShot>,
+    as_shot: Option<crate::white_balance::Illuminant>,
     request: &EditRequest,
     // What the frame was actually filtered at, which the request only half decides.
     strengths: Strengths,
@@ -674,7 +680,7 @@ async fn payload(
         false => None,
     };
 
-    let (camera_curve, camera_exposure, camera_saturation) =
+    let (camera_curve, camera_exposure, camera_saturation, camera_balance) =
         camera_defaults(matched.as_ref().and_then(|m| m.colour.as_ref()));
     PreparedHeader {
         width: prepared.width,
@@ -692,6 +698,7 @@ async fn payload(
         camera_curve,
         camera_exposure,
         camera_saturation,
+        camera_balance,
         noise_fit,
         defocus,
         photo_analysis,

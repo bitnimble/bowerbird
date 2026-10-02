@@ -39,9 +39,9 @@ import edit;
 import light;
 
 [vk::binding(13, 0)] public Texture2D<float4> detail;
-// The reader's temperature and tint, already solved into one matrix by `white_balance`.
-// Rows of four, and the identity where the pair is at the frame's own illuminant - so the
-// check below is about skipping nine multiplies rather than about correctness.
+// The reader's temperature and tint, already solved into one matrix by `white_balance`, and the
+// camera match's after it. Rows of four, each the identity where its pair is at the frame's own
+// illuminant.
 [vk::binding(14, 0)] StructuredBuffer<float> balance;
 /// Named apart from HLSL's `lerp`, which a global of that name would shadow everywhere.
 [vk::binding(7, 0)] public SamplerState bilinear;
@@ -341,11 +341,22 @@ float3 chroma_adjusted(float3 colour, float luma)
 /// constant, so they are folded in once per dispatch rather than per pixel.
 public Colour<SceneNits> balanced(Colour<SceneNits> colour)
 {
+    return balanced_by(0, colour);
+}
+
+/// The frame rebalanced to the illuminant the camera match was fitted under.
+public Colour<SceneNits> match_balanced(Colour<SceneNits> colour)
+{
+    return balanced_by(12, colour);
+}
+
+Colour<SceneNits> balanced_by(int at, Colour<SceneNits> colour)
+{
     let v = colour.v;
     return measured<SceneNits>(float3(
-        balance[0] * v.r + balance[1] * v.g + balance[2] * v.b,
-        balance[4] * v.r + balance[5] * v.g + balance[6] * v.b,
-        balance[8] * v.r + balance[9] * v.g + balance[10] * v.b));
+        balance[at] * v.r + balance[at + 1] * v.g + balance[at + 2] * v.b,
+        balance[at + 4] * v.r + balance[at + 5] * v.g + balance[at + 6] * v.b,
+        balance[at + 8] * v.r + balance[at + 9] * v.g + balance[at + 10] * v.b));
 }
 
 /// What texture at 100 is worth, in stops of its own band added back.

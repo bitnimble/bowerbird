@@ -479,7 +479,12 @@ fn hdr_match(
 ) -> Result<Option<crate::hdr_fit::HdrMatch>, String> {
     let gpu = crate::gpu::device().ok_or("the fit needs an adapter")?;
     let frame = linear.on_device(gpu).ok_or("the frame could not be read")?;
-    Ok(crate::fit_hdr_for(&frame, path, spec.white_quantile))
+    Ok(crate::fit_hdr_for(
+        &frame,
+        path,
+        spec.white_quantile,
+        linear.as_shot,
+    ))
 }
 
 /// Luma quantiles of a graded frame, in nits.
@@ -560,6 +565,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                 linear.height,
                 &grade.options(),
                 matched.as_ref(),
+                linear.as_shot,
             )?;
             Ok(Reply::default())
         }

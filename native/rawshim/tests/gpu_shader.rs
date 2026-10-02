@@ -166,6 +166,8 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
     f_push(&mut words, 0.0); // camera_saturation
     words.push(0); // band_top
     words.push(1); // band_rows: the one output row
+    f_push(&mut words, 0.0); // matched_temperature: no balance of the match's own
+    f_push(&mut words, 0.0); // matched_tint
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
     // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
     while words.len() % 4 != 0 {

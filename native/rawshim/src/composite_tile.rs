@@ -1195,7 +1195,7 @@ struct Taken {
     ///
     /// [`levels`]: Taken::levels
     coded: crate::tone::Anchored,
-    as_shot: Option<crate::white_balance::AsShot>,
+    as_shot: Option<crate::white_balance::Illuminant>,
     wb_gains: [f32; 3],
     defocus: (f32, f32),
     neutral_ceiling: f32,
@@ -1522,7 +1522,7 @@ pub struct Arrived {
     /// The levels this source was *coded* against, which is the composite's own divided by this
     /// source's gain.
     pub coded: crate::tone::Anchored,
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
     pub wb_gains: [f32; 3],
     pub defocus: (f32, f32),
 }

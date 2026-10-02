@@ -72,6 +72,7 @@ pub struct Source<'a> {
     pub samples: &'a [u16],
     pub width: usize,
     pub height: usize,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
 }
 
 /// Fits the camera's colour for the HDR grade, for a lens the caller already holds.
@@ -88,9 +89,10 @@ pub async fn fit_match(
     frame: &crate::resident::Resident,
     quantile: f64,
     lens: crate::fit::Lens,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
     let preview = match_preview(raw_path)?;
-    fit_match_from(gpu, frame, quantile, &preview, lens).await
+    fit_match_from(gpu, frame, quantile, &preview, lens, as_shot).await
 }
 
 pub async fn fit_match_from(
@@ -99,6 +101,7 @@ pub async fn fit_match_from(
     quantile: f64,
     preview: &crate::rgb::Rgb,
     lens: crate::fit::Lens,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(HdrMatch, tone::Levels)> {
     let (tw, th) = hdr_fit::fitted_preview_size(preview.width, preview.height);
     let (width, height) = frame.size();
@@ -107,7 +110,15 @@ pub async fn fit_match_from(
     }
     let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
     let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
-    let matched = hdr_fit::fit(gpu, &prepared.plane, prepared.levels, preview, lens).await?;
+    let matched = hdr_fit::fit(
+        gpu,
+        &prepared.plane,
+        prepared.levels,
+        preview,
+        lens,
+        as_shot,
+    )
+    .await?;
     Some((matched, prepared.levels))
 }
 
@@ -153,6 +164,7 @@ pub async fn fit_all(
     quantile: f64,
     geometry: crate::fit::Geometry,
     camera_match: CameraMatch,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
@@ -174,6 +186,7 @@ pub async fn fit_all(
         &preview,
         lateral,
         camera_match,
+        as_shot,
     )
     .await
 }
@@ -187,6 +200,7 @@ pub async fn fit_all_from_preview(
     preview: &crate::rgb::Rgb,
     lateral: Option<[Vec<f64>; 2]>,
     camera_match: CameraMatch,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
     if camera_match == CameraMatch::None {
         return None;
@@ -222,7 +236,7 @@ pub async fn fit_all_from_preview(
         };
         return Some((profile, matched, levels));
     }
-    let matched = hdr_fit::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens())
+    let matched = hdr_fit::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens(), as_shot)
         .await
         .unwrap_or_else(|| HdrMatch {
             lens: profile.lens(),
@@ -413,7 +427,7 @@ pub fn graded_under(
         matched,
         levels,
     );
-    let scene = neutral_scene(levels, options, matched);
+    let scene = neutral_scene(levels, options, matched, source.as_shot);
     let graded = encode_cut(
         gpu,
         &cut,
@@ -447,21 +461,24 @@ pub fn encode_cut(
 
 /// The scene as the camera rendered it: the photo's colour and levels, and nobody's edit.
 ///
-/// What both one-shot entry points grade through. Every slider at the camera's own and no as-shot
-/// illuminant, because these serve the pins and the debug paths, which measure the grade itself -
-/// and with the illuminant pair unset there is nothing to balance away from.
+/// What both one-shot entry points grade through, balanced as a document awaiting its match is.
 fn neutral_scene<'a>(
     levels: tone::Anchored,
     options: &EncodeOptions,
     matched: Option<&'a HdrMatch>,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> tone::SceneGrade<'a> {
     tone::SceneGrade::new(
         matched.and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
         None,
-        crate::gpu::Adjust::none(),
-        None,
+        crate::gpu::Adjust {
+            // The match was fitted under its own illuminant, so it reads wrong under any other.
+            camera_balance: true,
+            ..crate::gpu::Adjust::none()
+        },
+        as_shot,
     )
 }
 
@@ -822,12 +839,13 @@ pub fn encode_still(
     height: usize,
     options: &EncodeOptions,
     matched: Option<&HdrMatch>,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Result<(), String> {
     let gpu = crate::gpu::device().ok_or("no GPU adapter, and the shaders are the grade")?;
     let levels = levels_of(gpu, &samples, width, height, options.grade.white_quantile)
         .ok_or("the frame's levels could not be measured")?
         .anchored();
-    let scene = neutral_scene(levels, options, matched);
+    let scene = neutral_scene(levels, options, matched, as_shot);
     // Upright and uncropped: this path serves the pins and the debug renders, which measure the
     // pipeline rather than anybody's edit of it.
     let mut cut = cut_for(gpu, samples, width, height, options, matched, levels);

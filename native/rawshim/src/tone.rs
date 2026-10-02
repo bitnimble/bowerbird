@@ -319,7 +319,7 @@ pub struct SceneGrade<'a> {
     /// The illuminant the decode balanced against, which the pair in `adjust` moves away from.
     /// Settled on the photo like everything else here: two sizes of it must not be balanced
     /// against two different baselines.
-    as_shot: Option<crate::white_balance::AsShot>,
+    as_shot: Option<crate::white_balance::Illuminant>,
     /// The camera match, whatever `adjust`'s profile asks of it (`gpu::Grade::colour`).
     colour: Option<&'a HdrColour>,
 }
@@ -337,7 +337,7 @@ impl<'a> SceneGrade<'a> {
         reference: Light<SceneNits>,
         exposure: Option<Stops>,
         adjust: crate::gpu::Adjust,
-        as_shot: Option<crate::white_balance::AsShot>,
+        as_shot: Option<crate::white_balance::Illuminant>,
     ) -> Self {
         assert!(
             exposure.is_none_or(|stops| stops.raw().is_finite()),

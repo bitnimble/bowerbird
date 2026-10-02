@@ -17,7 +17,7 @@
 /// The illuminant, as the reader's two sliders.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AsShot {
+pub struct Illuminant {
     /// Correlated colour temperature in Kelvin. Higher is a *bluer* illuminant, which renders
     /// as a warmer picture - the processor divides more blue out of the scene.
     pub temperature: f64,
@@ -38,7 +38,7 @@ pub async fn as_shot(
     gpu: &'static crate::gpu::Gpu,
     cam_mul: &[f32; 4],
     cam_xyz: &[[f32; 3]; 4],
-) -> Option<AsShot> {
+) -> Option<Illuminant> {
     let mut words = [0f32; 16];
     words[..4].copy_from_slice(cam_mul);
     for (row, values) in cam_xyz.iter().enumerate() {
@@ -58,9 +58,51 @@ pub async fn as_shot(
     }
 
     let solver = device(gpu);
+    let Some(answer) = solved(gpu, &solver.as_shot, &solver.layout, &words).await else {
+        // Not kept: a device that declined once may answer the next ask, and the alternative is
+        // one transient failure costing the photograph its baseline for as long as the process
+        // lives.
+        crate::warn("rawshim: the illuminant was not read back, so this photograph keeps none");
+        return None;
+    };
+    if let Ok(mut last) = LAST.lock() {
+        *last = Some((words, answer));
+    }
+    answer
+}
+
+/// The illuminant whose balance from `from` scales a linear Rec.2020 grey by `white`: what a pull
+/// on the neutrals is, as the pair the reader edits.
+///
+/// None where the device declined the readback or the colour is not one an illuminant can make.
+pub async fn illuminant_for(
+    gpu: &'static crate::gpu::Gpu,
+    from: Illuminant,
+    white: [crate::light::Gain; 3],
+) -> Option<Illuminant> {
+    let mut words = [0f32; 16];
+    words[0] = from.temperature as f32;
+    words[1] = from.tint as f32;
+    for (c, gain) in white.iter().enumerate() {
+        words[4 + c] = gain.raw() as f32;
+    }
+    let solver = device(gpu);
+    solved(gpu, &solver.illuminant_for, &solver.layout, &words)
+        .await
+        .flatten()
+}
+
+/// One of the two solves, read back: the outer None is a readback the device declined, the inner a
+/// question with no illuminant for an answer.
+async fn solved(
+    gpu: &'static crate::gpu::Gpu,
+    pipeline: &wgpu::ComputePipeline,
+    layout: &wgpu::BindGroupLayout,
+    words: &[f32; 16],
+) -> Option<Option<Illuminant>> {
     let mut recording = gpu.record();
     let asked = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("as shot"),
+        label: Some("illuminant"),
         contents: &words
             .iter()
             .flat_map(|word| word.to_le_bytes())
@@ -68,20 +110,20 @@ pub async fn as_shot(
         usage: wgpu::BufferUsages::STORAGE,
     });
     let solved = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("as shot"),
+        label: Some("illuminant"),
         size: SOLVED * 4,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let readback = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("as shot"),
+        label: Some("illuminant"),
         size: SOLVED * 4,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("as shot"),
-        layout: &solver.layout,
+        label: Some("illuminant"),
+        layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 14,
@@ -95,7 +137,7 @@ pub async fn as_shot(
     });
     {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&solver.pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }
@@ -110,46 +152,37 @@ pub async fn as_shot(
         };
         [word(0), word(4), word(8)]
     })
-    .await;
-    let Some(read) = read else {
-        // Not kept: a device that declined once may answer the next ask, and the alternative is
-        // one transient failure costing the photograph its baseline for as long as the process
-        // lives.
-        crate::warn("rawshim: the illuminant was not read back, so this photograph keeps none");
-        return None;
-    };
-    let answer = match read[2] > 0.0 {
-        true => Some(AsShot {
+    .await?;
+    Some(match read[2] > 0.0 {
+        true => Some(Illuminant {
             temperature: f64::from(read[0]),
             tint: f64::from(read[1]),
         }),
         false => None,
-    };
-    if let Ok(mut last) = LAST.lock() {
-        *last = Some((words, answer));
-    }
-    answer
+    })
 }
 
 /// The last illuminant solved, against the numbers that asked for it.
-static LAST: std::sync::Mutex<Option<([f32; 16], Option<AsShot>)>> = std::sync::Mutex::new(None);
+static LAST: std::sync::Mutex<Option<([f32; 16], Option<Illuminant>)>> =
+    std::sync::Mutex::new(None);
 
-/// The temperature, the tint, and whether the file had an illuminant at all.
+/// The temperature, the tint, and whether there is an illuminant at all.
 const SOLVED: u64 = 3;
 
 pub(crate) struct Solver {
     layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::ComputePipeline,
+    as_shot: wgpu::ComputePipeline,
+    illuminant_for: wgpu::ComputePipeline,
 }
 
-/// Infallible, as `condition::device` is: this kernel asks for nothing beyond two storage
+/// Infallible, as `condition::device` is: these kernels ask for nothing beyond two storage
 /// buffers, and a shader that would not build is a panic through `on_uncaptured_error`.
 pub(crate) fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
     static BUILT: std::sync::OnceLock<Solver> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("as shot"),
+            label: Some("illuminant"),
             source: wgpu::ShaderSource::Wgsl(
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/white_balance.wgsl")).into(),
             ),
@@ -165,24 +198,29 @@ pub(crate) fn device(gpu: &'static crate::gpu::Gpu) -> &'static Solver {
             count: None,
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("as shot"),
+            label: Some("illuminant"),
             entries: &[storage(14, false), storage(18, true)],
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("as shot"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("as shot"),
-                    bind_group_layouts: &[Some(&layout)],
-                    immediate_size: 0,
-                }),
-            ),
-            module: &module,
-            entry_point: Some("as_shot"),
-            compilation_options: Default::default(),
-            cache: None,
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("illuminant"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
-        Solver { layout, pipeline }
+        let pipeline = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        Solver {
+            as_shot: pipeline("as_shot"),
+            illuminant_for: pipeline("illuminant_for"),
+            layout,
+        }
     })
 }
 
@@ -192,7 +230,7 @@ mod tests {
 
     /// A chromaticity through the whole path, as the camera that reports XYZ outright would have
     /// recorded it: the multipliers that neutralise the illuminant, and the identity for a matrix.
-    fn illuminant(gpu: &'static crate::gpu::Gpu, x: f64, y: f64) -> AsShot {
+    fn illuminant(gpu: &'static crate::gpu::Gpu, x: f64, y: f64) -> Illuminant {
         let identity = [
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],

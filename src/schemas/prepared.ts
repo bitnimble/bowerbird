@@ -1,13 +1,9 @@
 import { z } from 'zod';
 import { JobGradeSchema, NoiseFitSchema } from './jobs';
 import { CameraMatchSchema } from './render_stages';
-import { ToneCurveSchema } from './photo_edits';
+import { IlluminantSchema, ToneCurveSchema } from './photo_edits';
 
 const PairSchema = z.tuple([z.number(), z.number()]);
-
-/** The illuminant the camera balanced a frame for. */
-export const AsShotSchema = z.object({ temperature: z.number(), tint: z.number() });
-export type AsShot = z.infer<typeof AsShotSchema>;
 
 /**
  * What an open answers with (`edit::PreparedHeader`), which is everything about the photograph the
@@ -16,7 +12,8 @@ export type AsShot = z.infer<typeof AsShotSchema>;
 export const PreparedHeaderSchema = z.object({
   width: z.number(),
   height: z.number(),
-  asShot: AsShotSchema.nullable(),
+  /** The illuminant the camera balanced the frame for. */
+  asShot: IlluminantSchema.nullable(),
   white: z.number(),
   peak: z.number(),
   /** Null where the picture was prepared without a histogram walk behind it. */
@@ -47,6 +44,8 @@ export const PreparedHeaderSchema = z.object({
   cameraSaturation: z.number().nullable(),
   /** The camera match's curve, or null where nothing was matched. */
   cameraCurve: ToneCurveSchema.nullable(),
+  /** The camera match's white balance, or null where it leaves the frame's own. */
+  cameraBalance: IlluminantSchema.nullable(),
   /**
    * The mosaic's noise, as the open fitted it.
    *

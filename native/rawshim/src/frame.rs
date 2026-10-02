@@ -88,7 +88,7 @@ pub struct Frame {
     /// Read here rather than recomputed downstream because the samples that come out
     /// carry no trace of what was divided out of them. None where the file recorded
     /// nothing usable, which is the same case `camera_multipliers` declines.
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
     /// The sensor's noise, as the denoise fitted it off this frame's mosaic.
     ///
     /// None where the decode had no adapter or a filter array that does not tile into 2x2

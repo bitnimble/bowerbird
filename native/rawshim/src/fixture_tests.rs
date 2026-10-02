@@ -163,6 +163,7 @@ fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
         &target,
         None,
         crate::hdr_fit::CameraMatch::LensAndColour,
+        frame.as_shot,
     ))
     .expect("the fit finds something worth applying");
     assert!(
@@ -2627,6 +2628,7 @@ mod camera_match {
             0.9,
             geometry,
             crate::hdr_fit::CameraMatch::LensAndColour,
+            frame.as_shot,
         ))
         .expect("the fit finds something worth applying");
         (profile, matched)
@@ -2655,6 +2657,7 @@ mod camera_match {
             samples: frame.samples16().expect("a 16-bit decode"),
             width: frame.width,
             height: frame.height,
+            as_shot: frame.as_shot,
         };
         let options = crate::hdr_args::EncodeOptions {
             still_chroma: crate::hdr_args::Chroma::Yuv444,
@@ -3231,6 +3234,7 @@ mod camera_match {
             &target,
             None,
             crate::hdr_fit::CameraMatch::LensAndColour,
+            frame.as_shot,
         ))
         .expect("the fit finds something worth applying");
         assert_eq!(fitted.source, crate::fit::SOURCE_FITTED);
@@ -3359,13 +3363,14 @@ mod hdr_grade {
             samples: frame.samples16().expect("a 16-bit decode"),
             width: frame.width,
             height: frame.height,
+            as_shot: frame.as_shot,
         }
     }
 
     /// The camera match, fitted the way a job fits it (§10.8.1).
     fn matched(frame: &crate::frame::Frame) -> Option<crate::hdr_fit::HdrMatch> {
         let resident = frame.on_device(adapter())?;
-        crate::fit_hdr_for(&resident, sony().to_str().unwrap(), QUANTILE)
+        crate::fit_hdr_for(&resident, sony().to_str().unwrap(), QUANTILE, frame.as_shot)
     }
 
     /// The falloff is the one half of the SDR match that lifts to the grade unchanged
@@ -3448,6 +3453,7 @@ mod hdr_grade {
             QUANTILE,
             geometry,
             crate::hdr_fit::CameraMatch::LensAndColour,
+            frame.as_shot,
         ))
         .expect("the linear fit");
         let lens = profile.lens();
@@ -3480,6 +3486,7 @@ mod hdr_grade {
                 &resident,
                 QUANTILE,
                 lens,
+                frame.as_shot,
             ))
             .expect("a match")
             .0
@@ -3628,6 +3635,7 @@ mod hdr_grade {
                 frame.height,
                 &options(640.0, path.to_str().unwrap()),
                 m,
+                frame.as_shot,
             )
             .expect("the encode");
         }
@@ -3667,6 +3675,7 @@ mod hdr_grade {
             frame.height,
             &options,
             None,
+            frame.as_shot,
         )
         .expect("the encode");
 
@@ -3748,6 +3757,7 @@ mod hdr_grade {
                 samples: &coded,
                 width: decoded.width,
                 height: decoded.height,
+                as_shot: decoded.as_shot,
             };
             let scene = crate::tone::SceneGrade::new(
                 m.and_then(|m| m.colour.as_ref()),
@@ -4663,7 +4673,7 @@ mod tone_domain {
         let samples = frame.samples16().expect("16-bit").to_vec();
         let matched = {
             let resident = frame.on_device(gpu).expect("the frame reaches the device");
-            crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE)
+            crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE, frame.as_shot)
         };
         assert!(
             matched.is_some(),
@@ -4907,7 +4917,7 @@ mod tone_domain {
         let (width, height) = (frame.width, frame.height);
         let matched = {
             let resident = frame.on_device(gpu).expect("the frame reaches the device");
-            crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE)
+            crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE, frame.as_shot)
         };
         let colour = matched.as_ref().and_then(|m| m.colour.as_ref());
         let levels = crate::hdr::levels_of(gpu, &samples, width, height, QUANTILE).expect("levels");
@@ -4998,7 +5008,7 @@ mod tone_domain {
             let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
             let matched = {
                 let resident = frame.on_device(gpu).expect("the frame reaches the device");
-                crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE)
+                crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE, frame.as_shot)
             };
             let levels = crate::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
                 .expect("levels");

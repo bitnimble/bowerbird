@@ -185,7 +185,7 @@ pub fn prepared(
         .defocus
         .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
     let keep = crate::photo_analysis::encode(&filled);
-    let (camera_curve, camera_exposure, camera_saturation) =
+    let (camera_curve, camera_exposure, camera_saturation, camera_balance) =
         crate::edit::camera_defaults(matched.as_ref().and_then(|m| m.colour.as_ref()));
 
     Ok(crate::edit::Prepared {
@@ -208,6 +208,7 @@ pub fn prepared(
             camera_curve,
             camera_exposure,
             camera_saturation,
+            camera_balance,
             noise_fit,
             defocus,
             photo_analysis: Some(keep),
@@ -269,7 +270,7 @@ fn windowed(
         .from_render
         .defocus
         .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
-    let (camera_curve, camera_exposure, camera_saturation) =
+    let (camera_curve, camera_exposure, camera_saturation, camera_balance) =
         crate::edit::camera_defaults(prepared.matched.as_ref().and_then(|m| m.colour.as_ref()));
     Ok(crate::edit::Prepared {
         header: crate::edit::PreparedHeader {
@@ -288,6 +289,7 @@ fn windowed(
             camera_curve,
             camera_exposure,
             camera_saturation,
+            camera_balance,
             noise_fit,
             defocus,
             photo_analysis: Some(crate::photo_analysis::encode(&known)),

@@ -416,7 +416,7 @@ struct RegionMosaic {
     upright: rawler::decoders::Orientation,
     halving: bool,
     noise: Option<crate::galosh::NoiseFit>,
-    as_shot: Option<crate::white_balance::AsShot>,
+    as_shot: Option<crate::white_balance::Illuminant>,
 }
 
 impl RegionMosaic {
@@ -803,7 +803,7 @@ struct Sensor {
     crop: (usize, usize, usize, usize),
     colour: crate::demosaic::Colour,
     upright: rawler::decoders::Orientation,
-    as_shot: Option<crate::white_balance::AsShot>,
+    as_shot: Option<crate::white_balance::Illuminant>,
     /// What the lens was stopped down to, which decides how large and how deep a particle's shadow
     /// is (`crate::dust`). Zero where the file recorded none, and then nothing is looked for.
     aperture: f32,
@@ -2586,7 +2586,7 @@ fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {
 async fn as_shot_of(
     gpu: &'static crate::gpu::Gpu,
     image: &rawler::RawImage,
-) -> Option<crate::white_balance::AsShot> {
+) -> Option<crate::white_balance::Illuminant> {
     let wb = image.wb_coeffs;
     let cam_mul = [wb[0], wb[1], wb[2], wb[3]];
     crate::white_balance::as_shot(gpu, &cam_mul, &xyz_to_cam_of(image)?).await

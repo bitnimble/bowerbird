@@ -67,11 +67,19 @@ export const IDENTITY_TONE_CURVE: ToneCurve = {
   ],
 };
 
-/** The camera match's exposure, saturation and curve, on the scales `EditDoc` stores them. */
+/** An illuminant, as the two white balance sliders. */
+export const IlluminantSchema = z.object({ temperature: z.number(), tint: z.number() });
+export type Illuminant = z.infer<typeof IlluminantSchema>;
+
+/**
+ * The camera match's exposure, saturation, curve and white balance, on the scales `EditDoc`
+ * stores them. A null balance leaves the white balance as shot.
+ */
 export const CameraToneSchema = z.object({
   exposure: z.number(),
   saturation: z.number(),
   toneCurve: ToneCurveSchema,
+  balance: IlluminantSchema.nullable(),
 });
 export type CameraTone = z.infer<typeof CameraToneSchema>;
 

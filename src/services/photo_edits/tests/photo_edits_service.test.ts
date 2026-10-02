@@ -256,7 +256,7 @@ describe('PhotoEditsService.finish, on what the editor opened on', () => {
 });
 
 describe('PhotoEditsService.applyCameraMatch', () => {
-  const tone = { exposure: 0.35, saturation: 17, toneCurve: IDENTITY_TONE_CURVE };
+  const tone = { exposure: 0.35, saturation: 17, toneCurve: IDENTITY_TONE_CURVE, balance: null };
   let photos: PhotoProcessingRepository;
 
   beforeEach(() => {
@@ -450,6 +450,7 @@ describe('PhotoEditsService', () => {
       exposure: 0.35,
       saturation: 17,
       toneCurve: IDENTITY_TONE_CURVE,
+      balance: null,
     });
     built(PHOTO, 'grid');
 

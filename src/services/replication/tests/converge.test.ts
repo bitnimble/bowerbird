@@ -229,6 +229,7 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
       exposure: rng.int(20) / 10 - 1,
       saturation: rng.int(20),
       toneCurve: IDENTITY_TONE_CURVE,
+      balance: { temperature: 5320, tint: -4 },
     });
   },
   // A folder leaving the library: the one thing that removes a photograph's row
@@ -925,6 +926,7 @@ describe('convergence', () => {
       exposure: 1,
       saturation: 10,
       toneCurve: IDENTITY_TONE_CURVE,
+      balance: null,
     });
     laptop.db
       .query(

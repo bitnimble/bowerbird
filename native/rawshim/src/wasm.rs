@@ -221,7 +221,7 @@ struct Drawing {
     _peak: crate::gpu::ScenePeak,
     levels: crate::tone::Levels,
     matched: Option<crate::hdr_fit::HdrMatch>,
-    as_shot: Option<crate::white_balance::AsShot>,
+    as_shot: Option<crate::white_balance::Illuminant>,
     width: usize,
     height: usize,
     /// Where this buffer sits in the picture, where it is a rectangle of a larger one.

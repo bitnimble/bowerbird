@@ -1,7 +1,10 @@
 import { computed, observable } from 'mobx';
 import { exposureOf } from '../../../../../src/schemas/edit_adjust';
-import { type Denoiser, type EditDoc } from '../../../../../src/schemas/photo_edits';
-import type { AsShot } from '../../../../../src/schemas/prepared';
+import {
+  type Denoiser,
+  type EditDoc,
+  type Illuminant,
+} from '../../../../../src/schemas/photo_edits';
 
 /** Whether a save is in flight, and whether the last one was refused. */
 export type SaveStatus = 'clean' | 'saving' | 'conflict' | 'failed';
@@ -37,7 +40,7 @@ export class EditStore {
    * usable multipliers - there being no baseline, a temperature would be a balance away from
    * nothing, and the pair stays closed.
    */
-  @observable accessor asShot: AsShot | null = null;
+  @observable accessor asShot: Illuminant | null = null;
 
   /** What a document naming no denoiser is denoised with: its library's. */
   @observable accessor libraryDenoiser: Denoiser = 'galosh';
@@ -66,7 +69,7 @@ export class EditStore {
    * show null, so it shows the frame's own illuminant until the reader moves it, and the first
    * move is what turns the pair into stored numbers.
    */
-  @computed get balance(): AsShot | null {
+  @computed get balance(): Illuminant | null {
     const neutral = this.asShotBalance;
     if (neutral == null) return null;
     return {
@@ -83,7 +86,7 @@ export class EditStore {
    * header's own unrounded pair, so a photo nobody has balanced is graded at exactly the
    * illuminant it was shot under rather than a fifth of a Kelvin off it.
    */
-  @computed get asShotBalance(): AsShot | null {
+  @computed get asShotBalance(): Illuminant | null {
     const asShot = this.asShot;
     if (asShot == null) return null;
     return { temperature: Math.round(asShot.temperature), tint: Math.round(asShot.tint) };

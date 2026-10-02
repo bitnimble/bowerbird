@@ -31,7 +31,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 20;
+const VERSION: u8 = 21;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -100,7 +100,7 @@ pub struct FromRaw {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Balance {
     pub wb_gains: [f32; 3],
-    pub as_shot: Option<crate::white_balance::AsShot>,
+    pub as_shot: Option<crate::white_balance::Illuminant>,
 }
 
 /// What only a rendered frame can say, and the settings it said it under.
@@ -475,7 +475,7 @@ fn take_balance(at: &mut Reader<'_>) -> Option<Balance> {
             // The illuminant alone is refused where the gains are kept: the panel opens without a
             // baseline, which is what a file with no multipliers gets anyway.
             ((1000.0..=50_000.0).contains(&temperature) && tint.is_finite())
-                .then_some(crate::white_balance::AsShot { temperature, tint })
+                .then_some(crate::white_balance::Illuminant { temperature, tint })
         }
     };
     Some(Balance { wb_gains, as_shot })
@@ -545,6 +545,14 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
     put_u32(out, colour.curve.len() as u32);
     for point in &colour.curve {
         put_f32s(out, point);
+    }
+    match colour.illuminant {
+        None => out.push(0),
+        Some(illuminant) => {
+            out.push(1);
+            put_f32(out, illuminant.temperature);
+            put_f32(out, illuminant.tint);
+        }
     }
 
     match &colour.chroma {
@@ -627,6 +635,13 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     for _ in 0..count {
         curve.push([at.f32()?, at.f32()?]);
     }
+    let illuminant = match at.u8()? {
+        0 => None,
+        _ => Some(crate::white_balance::Illuminant {
+            temperature: at.f32()?,
+            tint: at.f32()?,
+        }),
+    };
 
     let (chroma, surround) = match at.u8()? {
         0 => (None, crate::hdr_fit::SurroundThumb::none()),
@@ -670,6 +685,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     if !exposure.raw().is_finite()
         || !crate::light::curve_is_valid(&curve)
         || !(saturation > 0.0 && saturation.is_finite())
+        || illuminant.is_some_and(|i| !(i.temperature > 0.0 && i.tint.is_finite()))
     {
         return Some(None);
     }
@@ -682,6 +698,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
         delta_e,
         exposure,
         curve,
+        illuminant,
         chroma,
         surround,
     }))
@@ -990,6 +1007,10 @@ pub(crate) mod tests {
                 curve: [[0.0, 0.04], [0.35, 0.3], [0.68, 0.72], [1.0, 1.0]]
                     .map(|point| point.map(|value| f64::from(value as f32)))
                     .to_vec(),
+                illuminant: Some(crate::white_balance::Illuminant {
+                    temperature: 5320.0,
+                    tint: -4.0,
+                }),
                 // Densified, as every map a fit hands out is: the writer stores its coarse
                 // decimation and the reader densifies back, so this round-trips exactly.
                 chroma: ChromaMap::from_parts(&nodes, [0.11, 0.22], [3.5, 4.5])
@@ -1075,7 +1096,7 @@ pub(crate) mod tests {
                 capture_sigma: Some(0.62),
                 balance: Some(Balance {
                     wb_gains: [2.14, 1.0, 1.63],
-                    as_shot: Some(crate::white_balance::AsShot {
+                    as_shot: Some(crate::white_balance::Illuminant {
                         temperature: 5240.0,
                         tint: -3.5,
                     }),
@@ -1107,6 +1128,7 @@ pub(crate) mod tests {
         }
         assert_eq!(is_colour.curve.len(), was_colour.curve.len());
         assert_eq!(is_colour.exposure, was_colour.exposure);
+        assert_eq!(is_colour.illuminant, was_colour.illuminant);
         assert_eq!(is_colour.curve, was_colour.curve);
         for (read, wrote) in is_colour.curve.iter().zip(&was_colour.curve) {
             assert!(

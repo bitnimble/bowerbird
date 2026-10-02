@@ -87,6 +87,7 @@ fn main() {
                 path,
                 support::GRADE.white_quantile,
                 rawshim::hdr_fit::CameraMatch::LensAndColour,
+                frame.as_shot,
             )
             .map(|(matched, levels)| {
                 (

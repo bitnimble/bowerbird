@@ -86,6 +86,8 @@ export const JobAdjustSchema = z.object({
    */
   temperature: z.number().nullable(),
   tint: z.number().nullable(),
+  /** Whether a null pair is the camera match's illuminant rather than the camera's own. */
+  cameraBalance: z.boolean(),
   colourProfile: ColourProfileSchema,
 });
 export type JobAdjust = z.infer<typeof JobAdjustSchema>;

@@ -55,6 +55,9 @@ pub struct Opening<'a> {
     /// The matrix the demosaic multiplied the samples by, which the same estimate propagates its
     /// channel correlations through.
     pub matrix: Option<[[f32; 3]; 3]>,
+    /// The illuminant the decode balanced against, which the camera match's own white balance is
+    /// fitted relative to.
+    pub as_shot: Option<crate::white_balance::Illuminant>,
 }
 
 /// Everything an open measured, in the units the stages below it read.
@@ -166,14 +169,18 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
             how.camera_match.apply(stored.from_raw.matched.clone()),
             None,
         ),
-        (fitting, Some(matched)) => {
-            complete_colour(fitting, frame, how.grade.white_quantile, matched)
-                .await
-                .map_or_else(
-                    || (Some(matched.clone()), None),
-                    |(matched, levels)| (Some(matched), Some(levels)),
-                )
-        }
+        (fitting, Some(matched)) => complete_colour(
+            fitting,
+            frame,
+            how.grade.white_quantile,
+            matched,
+            how.as_shot,
+        )
+        .await
+        .map_or_else(
+            || (Some(matched.clone()), None),
+            |(matched, levels)| (Some(matched), Some(levels)),
+        ),
         (Fitting::Preview(bytes), None) => match crate::gpu::device() {
             Some(gpu) => {
                 fit_from_preview(
@@ -182,6 +189,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
                     frame,
                     how.grade.white_quantile,
                     how.camera_match,
+                    how.as_shot,
                 )
                 .await
             }
@@ -189,9 +197,14 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
         }
         .unzip(),
         #[cfg(feature = "renditions")]
-        (Fitting::Profiled(path), None) => {
-            crate::fit_hdr_measured(frame, path, how.grade.white_quantile, how.camera_match).unzip()
-        }
+        (Fitting::Profiled(path), None) => crate::fit_hdr_measured(
+            frame,
+            path,
+            how.grade.white_quantile,
+            how.camera_match,
+            how.as_shot,
+        )
+        .unzip(),
     };
     lap("camera match");
 
@@ -223,6 +236,7 @@ async fn complete_colour(
     frame: &Resident,
     quantile: f64,
     matched: &crate::hdr_fit::HdrMatch,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
     let gpu = crate::gpu::device()?;
     let preview = match fitting {
@@ -231,7 +245,15 @@ async fn complete_colour(
         #[cfg(feature = "renditions")]
         Fitting::Profiled(path) => crate::hdr::match_preview(path)?,
     };
-    crate::hdr::fit_match_from(gpu, frame, quantile, &preview, matched.lens.clone()).await
+    crate::hdr::fit_match_from(
+        gpu,
+        frame,
+        quantile,
+        &preview,
+        matched.lens.clone(),
+        as_shot,
+    )
+    .await
 }
 
 /// The camera match off the file's own embedded preview, with the geometry fitted from the picture.
@@ -245,6 +267,7 @@ async fn fit_from_preview(
     frame: &Resident,
     quantile: f64,
     camera_match: CameraMatch,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
     // A decode narrower than the preview cannot be paired against it: `fit_source::plane_size`
     // clamps its target to the frame's own width, so the two grids come out different sizes and
@@ -270,6 +293,7 @@ async fn fit_from_preview(
         &preview,
         recorded.lateral,
         camera_match,
+        as_shot,
     )
     .await
     .map(|(_, matched, levels)| (matched, levels))

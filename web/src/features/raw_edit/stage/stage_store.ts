@@ -1,7 +1,12 @@
 import { computed, observable } from 'mobx';
 import type { JobLevels, NoiseFit } from '../../../../../src/schemas/jobs';
 import { atCameraMatch } from '../../../../../src/schemas/edit_adjust';
-import type { CameraTone, EditDoc, ToneCurve } from '../../../../../src/schemas/photo_edits';
+import type {
+  CameraTone,
+  EditDoc,
+  Illuminant,
+  ToneCurve,
+} from '../../../../../src/schemas/photo_edits';
 import type { EditStore } from '../edit/edit_store';
 import type { Region } from '../edits';
 import type { OpenStage } from '../local_decode/local_open';
@@ -99,6 +104,8 @@ export class StageStore {
   @observable accessor cameraExposure: number | null = null;
   /** The camera match's saturation on the slider's scale, where one was fitted. */
   @observable accessor cameraSaturation: number | null = null;
+  /** The camera match's white balance, where it moved one. */
+  @observable.ref accessor cameraBalance: Illuminant | null = null;
 
   @computed get headerKnown(): boolean {
     return this.detail != null;
@@ -118,7 +125,7 @@ export class StageStore {
   @computed get cameraTone(): CameraTone | null {
     const { cameraExposure: exposure, cameraSaturation: saturation, cameraCurve: toneCurve } = this;
     if (exposure == null || saturation == null || toneCurve == null) return null;
-    return { exposure, saturation, toneCurve };
+    return { exposure, saturation, toneCurve, balance: this.cameraBalance };
   }
 
   @computed get atCameraMatch(): boolean {

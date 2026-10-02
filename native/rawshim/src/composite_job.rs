@@ -567,12 +567,18 @@ thread_local! {
 /// Stacked rather than laid out where each source falls on the canvas, because neither a quantile
 /// nor a colour fit cares where a sample sat - only which samples there were. The overlaps counting
 /// twice moves nothing that a tenth of the picture sits above.
+///
+/// With the illuminant the `reference` source was balanced for, which the canvas is graded against.
 fn stacked_sources(
     gpu: &'static crate::gpu::Gpu,
     base: &'static crate::base::Base,
     job: &Job,
     files: &[crate::composite_tile::SourceFile<'_>],
-) -> Option<crate::resident::Resident> {
+    reference: usize,
+) -> Option<(
+    crate::resident::Resident,
+    Option<crate::white_balance::Illuminant>,
+)> {
     /// The long edge each source is reduced to before it joins the stack.
     const REDUCED_TO: usize = 1024;
     const DECODED_AT: u32 = 1024;
@@ -581,7 +587,8 @@ fn stacked_sources(
     STACKS.with(|stacks| stacks.set(stacks.get() + 1));
 
     let mut parts: Vec<crate::resident::Resident> = Vec::with_capacity(files.len());
-    for file in files {
+    let mut as_shot = None;
+    for (at, file) in files.iter().enumerate() {
         let frame = crate::decode::frame_from_path(
             file.path,
             job.detail(),
@@ -590,6 +597,9 @@ fn stacked_sources(
             crate::galosh::Fit::Measure,
             crate::dust::Wanted::Off,
         )?;
+        if at == reference {
+            as_shot = frame.as_shot;
+        }
         let resident = frame.on_device(gpu)?;
         let (wide, tall) = resident.size();
         let long = wide.max(tall);
@@ -635,7 +645,7 @@ fn stacked_sources(
     for part in parts {
         part.reclaim();
     }
-    Some(stacked)
+    Some((stacked, as_shot))
 }
 
 /// The levels of every source's samples taken together, measured once.
@@ -689,6 +699,7 @@ fn union_match(
     job: &Job,
     files: &[crate::composite_tile::SourceFile<'_>],
     stacked: &crate::resident::Resident,
+    as_shot: Option<crate::white_balance::Illuminant>,
 ) -> Option<crate::hdr_fit::HdrMatch> {
     if job.camera_match != crate::hdr_fit::CameraMatch::LensAndColour {
         return None;
@@ -747,6 +758,7 @@ fn union_match(
         prepared.levels,
         wide_jpeg,
         crate::fit::Lens::none(),
+        as_shot,
     ))?;
     Some(crate::hdr_fit::HdrMatch {
         lens: crate::fit::Lens::none(),
@@ -930,19 +942,22 @@ pub(crate) fn base(
             .as_ref()
             .and_then(|m| m.colour.as_ref())
             .is_none();
-    let stacked = match from {
+    let (stacked, stacked_as_shot) = match from {
         crate::composite_tile::From::Original if filed.is_none() || needs_colour => {
-            crate::base::device(gpu).and_then(|base| stacked_sources(gpu, base, job, &files))
+            crate::base::device(gpu)
+                .and_then(|base| stacked_sources(gpu, base, job, &files, spec.reference))
+                .unzip()
         }
-        _ => None,
+        _ => (None, None),
     };
+    let stacked_as_shot = stacked_as_shot.flatten();
     let measured = match filed {
         Some(levels) => {
             crate::progress::advance();
             let matched = if needs_colour {
                 stacked
                     .as_ref()
-                    .and_then(|stacked| union_match(gpu, job, &files, stacked))
+                    .and_then(|stacked| union_match(gpu, job, &files, stacked, stacked_as_shot))
             } else {
                 known.from_raw.matched.clone()
             };
@@ -960,7 +975,7 @@ pub(crate) fn base(
                 levels,
                 stacked
                     .as_ref()
-                    .and_then(|stacked| union_match(gpu, job, &files, stacked)),
+                    .and_then(|stacked| union_match(gpu, job, &files, stacked, stacked_as_shot)),
             )
         }),
     };
@@ -1914,7 +1929,7 @@ mod tests {
             .wb_gains;
         filed.from_raw.balance = Some(crate::photo_analysis::Balance {
             wb_gains: gains,
-            as_shot: Some(crate::white_balance::AsShot {
+            as_shot: Some(crate::white_balance::Illuminant {
                 temperature: WARM,
                 tint: 1.5,
             }),

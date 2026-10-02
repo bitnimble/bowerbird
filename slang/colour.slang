@@ -169,9 +169,7 @@ public Colour<Rendered> curves_at(Colour<SceneNits> nits, Gain scale)
 
     // The colour of a highlight, read where the camera's rendering still expands chroma
     // (`chroma_anchor`) rather than at the shoulder it clips into, and off one channel's
-    // curve for all three: `grey_balance`'s gain is tapered to unity at the ceiling so a
-    // blown neutral stays neutral, and read per channel at the anchor, where the taper is
-    // still half-strength, it comes straight back.
+    // curve for all three, so a blown neutral stays neutral.
     var ratios = toned / top;
     if (edit.tone_anchor < edit.trust_ceiling)
     {
@@ -384,10 +382,17 @@ public Colour<Rendered> apply_matrix(Colour<Rendered> t)
 ///
 /// The identity where the frame's camera recorded no neutral, which is a photograph with nothing
 /// to balance *away from* however the sliders are set.
-Colour<SceneNits> lit_by_reader(Colour<SceneNits> nits)
+public Colour<SceneNits> lit_by_reader(Colour<SceneNits> nits)
 {
     if (edit.as_shot_temperature <= 0.0) { return nits; }
     return in_gamut(balanced(nits));
+}
+
+/// The scene as the camera match saw it: lit by the illuminant it was fitted under.
+Colour<SceneNits> lit_as_matched(Colour<SceneNits> nits)
+{
+    if (edit.as_shot_temperature <= 0.0) { return nits; }
+    return in_gamut(match_balanced(nits));
 }
 
 /// The frame's own luma at a pixel, scene-relative, before the match and before the exposure.
@@ -474,9 +479,10 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
     if (edit.has_mean == 0 && edit.as_shot_temperature > 0.0) {
         // Indexing the lattice with the light the reader asked for is what walks a rebalanced
         // frame onto nodes fitted for a colour the camera never saw, so the index comes off the
-        // unbalanced colour - the same split the branch below makes one texel out. `m` already is
-        // that on a frame nobody has rebalanced, and the branch below overwrites this.
-        index = apply_matrix(curves_at(nits, gain(1.0))).v;
+        // colour as the fit saw it - the same split the branch below makes one texel out. `m`
+        // already is that where the reader is at the match's own balance, and the branch below
+        // overwrites this.
+        index = apply_matrix(curves_at(lit_as_matched(nits), gain(1.0))).v;
     }
     // The whole nonlinear front end read at the neighbourhood the fit taught, not at the
     // pixel it never saw (`mean_frame.slang`): the fit teaches on supervision-block
@@ -491,7 +497,7 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
         let mean_lit = lit_by_reader(mean);
         // The index off the frame as the fit saw it, the value off the light the reader asked
         // for - the same split as above, one texel out.
-        index = apply_matrix(curves_at(mean, gain(1.0))).v;
+        index = apply_matrix(curves_at(lit_as_matched(mean), gain(1.0))).v;
         let curved = curves_at(mean_lit, gain(1.0)).v;
         // **The ratio is a first-order expansion about the mean, and nothing here bounds how far
         // it is carried.** Over a block's own texture it is a percent or two and it is what makes
