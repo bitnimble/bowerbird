@@ -17,7 +17,7 @@ export const DetailKeys = observer(function DetailKeys({
   photoId: string;
   mode: DetailMode;
   onExitPreview: () => void;
-  /** Absent where the viewer offers no such toggle: a phone, and the mockup. */
+  /** Absent where the viewer offers no such toggle: a phone, a touch editor, and the mockup. */
   onToggleStrip?: () => void;
   onTogglePanels?: () => void;
 }): null {

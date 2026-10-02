@@ -133,6 +133,9 @@ export const styles = stylex.create({
   panelFlush: {
     marginBottom: 0,
   },
+  spanRow: {
+    gridColumn: '1 / -1',
+  },
   sheetBar: {
     position: 'fixed',
     left: 0,

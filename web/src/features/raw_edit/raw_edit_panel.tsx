@@ -385,6 +385,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   print,
   presenter,
   mobile = false,
+  style,
 }: {
   edit: EditStore;
   stage: StageStore;
@@ -394,6 +395,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   print: PrintStore;
   presenter: RawEditPresenter;
   mobile?: boolean;
+  style?: stylex.StyleXStyles;
 }): JSX.Element {
   const notice = (edit.saveStatus === 'conflict' || edit.saveStatus === 'failed') && (
     <Panel style={styles.group}>
@@ -547,7 +549,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   }
   if (mobile) return <MobileEditPanels panels={panels} scope={scope} notice={notice} />;
   return (
-    <div {...stylex.props(styles.panel)}>
+    <div {...stylex.props(styles.panel, style)}>
       {notice}
       {panels.map(({ id, content }) => (
         <Fragment key={id}>{content}</Fragment>
