@@ -38,7 +38,9 @@ import { DialogBody, DialogColumns } from '../../ui/dialog_layout';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
 import { TextLink } from '../../ui/link';
+import { menuSection } from '../../ui/menu_section';
 import { Modal } from '../../ui/modal';
+import { OverflowMenu } from '../../ui/overflow_menu';
 import { Panel } from '../../ui/panel';
 import { Row } from '../../ui/row';
 import { Spinner } from '../../ui/spinner';
@@ -65,8 +67,8 @@ const styles = stylex.create({
     paddingBottom: '12px',
     marginBottom: 0,
   },
-  name: {
-    width: '100%',
+  heading: {
+    flexWrap: 'nowrap',
   },
   meta: {
     overflowWrap: 'anywhere',
@@ -136,6 +138,15 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
   const activities: readonly Activity[] | undefined =
     local > 0 ? [...(activity ?? []), { kind: 'local_rendering', count: local }] : activity;
   const { libraries, scan: scanPresenter, confirm } = usePresenters();
+  const remove = async (): Promise<void> => {
+    const confirmed = await confirm.ask({
+      title: SettingsStrings.removeLibraryQuestion(libraryLabel(library)),
+      body: SettingsStrings.removeLibraryWarning(library.photo_count),
+      action: SettingsStrings.remove(),
+      tone: 'danger',
+    });
+    if (confirmed) void libraries.remove(library.id);
+  };
   const thin = isThinShell();
   const navigate = useNavigate();
   const params = useParams();
@@ -152,7 +163,25 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
 
   return (
     <Panel role="listitem" style={styles.tile}>
-      <LibraryName library={library} />
+      <Row style={styles.heading}>
+        <LibraryName library={library} />
+        <OverflowMenu
+          label={SettingsStrings.libraryActions()}
+          sections={[
+            menuSection({
+              options: [
+                {
+                  value: 'remove',
+                  label: SettingsStrings.removeLibrary(),
+                  icon: <Trash2 size={ICON} />,
+                  destructive: true,
+                },
+              ],
+              onSelect: () => void remove(),
+            }),
+          ]}
+        />
+      </Row>
       <Text variant="mono" as="div" style={styles.meta}>
         {!thin && (
           <>
@@ -208,22 +237,6 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
             </Button>
           )
         )}
-
-        <Button
-          variant="danger"
-          onClick={async () => {
-            const confirmed = await confirm.ask({
-              title: SettingsStrings.removeLibraryQuestion(libraryLabel(library)),
-              body: SettingsStrings.removeLibraryWarning(library.photo_count),
-              action: SettingsStrings.remove(),
-              tone: 'danger',
-            });
-            if (confirmed) void libraries.remove(library.id);
-          }}
-        >
-          <Trash2 size={ICON} />
-          {SettingsStrings.remove()}
-        </Button>
       </Row>
 
       <Modal
@@ -286,7 +299,7 @@ const LibraryName = observer(function LibraryName({ library }: { library: Librar
 
   return (
     <TextField
-      style={styles.name}
+      grow
       label={SettingsStrings.libraryName()}
       value={draft}
       onChange={setDraft}
