@@ -11,7 +11,11 @@ import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import { renditionCurrent, type RenditionFetchService } from '../../blobs/rendition_fetch_service';
 import { extractMetadata, type FileMetadata } from '../../processing/analysis/metadata';
 import type { ProcessingService } from '../../processing/pipeline/processing_service';
-import { renditionVariant, type Rendition } from '../../processing/renditions/renditions';
+import {
+  renditionVariant,
+  type Rendition,
+  type RenditionVariant,
+} from '../../processing/renditions/renditions';
 import type { PhotoListingRepository } from '../listing/photo_listing_repository';
 import type { PhotoMetadataRepository } from '../metadata/photo_metadata_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../paths/photo_paths_repository';
@@ -408,6 +412,9 @@ export class PhotoRenditionService {
     const stamps = this.photoProcessing.renditionStamps(photoId, 'grid');
     if (stamps?.edited_from == null || stamps.failed) return;
     this.processing.rebuildEdited([photoId]);
+  }
+  markUsed(photoId: string, variant: RenditionVariant): void {
+    this.photoProcessing.markUsed(photoId, variant);
   }
   /** Whether the copy on disk was built from develop settings the photograph has moved past. */
   stale(photoId: string, rendition: Rendition, hdr: boolean): boolean {

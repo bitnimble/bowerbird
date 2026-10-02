@@ -78,14 +78,18 @@ export class RenditionCache {
   /** Forgets a file that has gone, so the total stops counting it. */
   forget(libraryId: string, photoId: string, rendition: Rendition, hdr: boolean): void {
     this.db.transaction(() => {
-      const forgotten = this.db
-        .query(
-          'DELETE FROM fetched_renditions WHERE library_id = ? AND photo_id = ? AND rendition = ? AND hdr = ?',
-        )
-        .run(libraryId, photoId, rendition, hdr ? 1 : 0).changes;
-      if (forgotten === 0) return;
+      if (this.release(libraryId, photoId, rendition, hdr) === 0) return;
       this.renditions.forgetBuilt(photoId, [renditionVariant(rendition, hdr)]);
     })();
+  }
+
+  /** Stops counting a file that has gone, leaving its build stamps alone. Returns rows dropped. */
+  release(libraryId: string, photoId: string, rendition: Rendition, hdr: boolean): number {
+    return this.db
+      .query(
+        'DELETE FROM fetched_renditions WHERE library_id = ? AND photo_id = ? AND rendition = ? AND hdr = ?',
+      )
+      .run(libraryId, photoId, rendition, hdr ? 1 : 0).changes;
   }
 
   bytesHeld(libraryId: string): number {

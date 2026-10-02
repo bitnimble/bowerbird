@@ -62,7 +62,7 @@ const SELECT = `SELECT ${COLUMNS},
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
     AND p.is_missing = 1 AND NOT ${ORIGINAL_ON_PEER}) AS unavailable_photo_count,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
-    AND EXISTS (SELECT 1 FROM renditions r WHERE r.photo_id = p.id AND r.built_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM renditions r WHERE r.photo_id = p.id AND r.used_at IS NOT NULL
       AND r.variant IN ('full', 'full-hdr', 'max', 'max-hdr'))) AS rendered_photo_count
   FROM libraries l`;
 

@@ -98,6 +98,8 @@ import { ScanPool } from './services/sync/scan/scan_pool';
 import { LibraryWatcher } from './services/sync/watch/library_watcher';
 import { DailyScan } from './services/sync/watch/daily_scan';
 import { PruneService, ScheduledPrune } from './services/maintenance/prune_service';
+import { DiskSpaceLimit } from './services/maintenance/disk_space_limit';
+import { RenditionCache } from './services/blobs/rendition_cache';
 import { BackupService, ScheduledBackup } from './services/maintenance/backup_service';
 import { ProcessingService } from './services/processing/pipeline/processing_service';
 import { shim } from './services/processing/rawshim/rawshim';
@@ -136,6 +138,7 @@ const db = createDatabase(config.dbPath);
 
 const settingsRepo = new SettingsRepository(db);
 const activity = new LibraryActivity();
+const storageUsage = new StorageUsageService();
 const librariesRepo = new LibrariesRepository(db);
 const renderTimings = new RenderTimingsFile();
 // After the repository exists, because it reads every library's root. `DATA_DIR`
@@ -576,7 +579,7 @@ app.route(
     settingsRepo,
     renderTimings,
     (rendition, denoiser) => processingService.benchmarkRender(rendition, denoiser, renderTimings),
-    new StorageUsageService(),
+    storageUsage,
   ).routes,
 );
 app.route(
@@ -725,6 +728,12 @@ const scheduledPrune = new ScheduledPrune(
   new PruneService(librariesRepo, photoMetadataRepo, activity),
 );
 const scheduledBackup = new ScheduledBackup(new BackupService(config.dbPath, {}, activity));
+const diskSpaceLimit = new DiskSpaceLimit(
+  renditionsRepo,
+  new RenditionCache(db),
+  storageUsage,
+  activity,
+);
 
 function applySettings(settings: Settings): void {
   setLogLevel(settings.log_level);
@@ -736,6 +745,7 @@ function applySettings(settings: Settings): void {
   dailyScan.configure(settings.full_sync_at);
   scheduledPrune.configure(settings.prune_every_days);
   scheduledBackup.configure(settings.backup_every_days, settings.backup_keep);
+  diskSpaceLimit.configure(settings.disk_space_limit_gb);
 }
 settingsRepo.onChange(applySettings);
 applySettings(settingsRepo.get());

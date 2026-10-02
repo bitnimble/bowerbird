@@ -18,7 +18,7 @@ import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { libraryLabel } from '../libraries/library_label';
 import { AddReplicaDialog } from '../replication/add_replica_dialog';
 import { AddReplicaStrings } from '../replication/add_replica_dialog.strings';
-import { ToggleSetting, useSettingWriter } from '../settings/settings_controls';
+import { NumberSetting, ToggleSetting, useSettingWriter } from '../settings/settings_controls';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { OnboardingStrings } from './onboarding_page.strings';
 
@@ -146,6 +146,13 @@ function PreferencesStep(): JSX.Element {
           field="frame_tv_enabled"
           label={SettingsStrings.frameTvEnabled()}
           hint={SettingsStrings.frameTvEnabledHint()}
+        />
+        <NumberSetting
+          field="disk_space_limit_gb"
+          label={SettingsStrings.diskSpaceLimit()}
+          hint={SettingsStrings.diskSpaceLimitHint()}
+          suffix="GB"
+          min={1}
         />
       </Panel>
     </div>

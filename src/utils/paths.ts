@@ -9,6 +9,7 @@ import {
   RENDITION_EXTENSION,
   renditionVariant,
   type Rendition,
+  type RenditionVariant,
 } from '../services/processing/renditions/renditions';
 
 // Whether `child` is `parent` or sits beneath it. Resolved first, so a relative
@@ -44,12 +45,15 @@ export function renditionPathFor(
   rendition: Rendition,
   hdr: boolean,
 ): string {
-  return path.join(
-    dataPath,
-    'renditions',
-    renditionVariant(rendition, hdr),
-    `${photoId}${RENDITION_EXTENSION}`,
-  );
+  return renditionVariantPath(dataPath, photoId, renditionVariant(rendition, hdr));
+}
+
+export function renditionVariantPath(
+  dataPath: string,
+  photoId: string,
+  variant: RenditionVariant,
+): string {
+  return path.join(dataPath, 'renditions', variant, `${photoId}${RENDITION_EXTENSION}`);
 }
 
 export function getRenditionPath(

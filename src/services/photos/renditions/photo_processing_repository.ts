@@ -157,6 +157,9 @@ export class PhotoProcessingRepository {
   forgetBuilt(id: string, variants: readonly RenditionVariant[]): void {
     this.renditions.forgetBuilt(id, variants);
   }
+  markUsed(id: string, variant: RenditionVariant): void {
+    this.renditions.markUsed(id, variant, new Date().toISOString());
+  }
   // The viewer's renditions have landed, which is also when `rendition_source`
   // becomes true: it records what the viewer is served (§10.2).
   //

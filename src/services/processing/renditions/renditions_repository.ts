@@ -18,6 +18,15 @@ export interface Made {
   matched: boolean;
 }
 
+const USED_AT_RESOLUTION_MS = 60_000;
+
+export interface EvictableCopy {
+  photo_id: string;
+  variant: RenditionVariant;
+  used_at: string;
+  library_id: string;
+}
+
 /** What one stored copy records: when it was written, and which develop settings it rendered. */
 export interface BuildStamps {
   built_at: string | null;
@@ -118,11 +127,11 @@ export class RenditionsRepository {
   ): void {
     this.db
       .query(
-        `INSERT INTO renditions (photo_id, variant, needs_build, built_at, built_from, source, matched)
-           VALUES (?, ?, 0, ?, ?, ?, ?)
+        `INSERT INTO renditions (photo_id, variant, needs_build, built_at, built_from, source, matched, used_at)
+           VALUES (?, ?, 0, ?, ?, ?, ?, ?)
          ON CONFLICT (photo_id, variant)
            DO UPDATE SET needs_build = 0, built_at = excluded.built_at, built_from = excluded.built_from,
-             source = excluded.source, matched = excluded.matched`,
+             source = excluded.source, matched = excluded.matched, used_at = excluded.used_at`,
       )
       .run(
         photoId,
@@ -131,6 +140,7 @@ export class RenditionsRepository {
         builtFrom,
         made?.from ?? null,
         made?.matched === true ? 1 : null,
+        builtAtIso,
       );
   }
 
@@ -138,11 +148,42 @@ export class RenditionsRepository {
     for (const variant of variants) {
       this.db
         .query(
-          `UPDATE renditions SET built_at = NULL, built_from = NULL, source = NULL, matched = NULL
+          `UPDATE renditions SET built_at = NULL, built_from = NULL, source = NULL, matched = NULL, used_at = NULL
           WHERE photo_id = ? AND variant = ?`,
         )
         .run(photoId, variant);
     }
+  }
+
+  /** At most one write a minute per copy, and none to a copy that is not on disk. */
+  markUsed(photoId: string, variant: RenditionVariant, atIso: string): void {
+    const staleBefore = new Date(Date.parse(atIso) - USED_AT_RESOLUTION_MS).toISOString();
+    this.db
+      .query('UPDATE renditions SET used_at = ? WHERE photo_id = ? AND variant = ? AND used_at < ?')
+      .run(atIso, photoId, variant, staleBefore);
+  }
+
+  /** The copies on disk the disk space limit may evict, least recently used first. Never a grid tile. */
+  leastRecentlyUsed(limit: number): EvictableCopy[] {
+    return this.db
+      .query(
+        `SELECT r.photo_id, r.variant, r.used_at, p.library_id FROM renditions r
+           JOIN photos p ON p.id = r.photo_id
+          WHERE r.used_at IS NOT NULL AND r.variant != 'grid'
+          ORDER BY r.used_at, r.photo_id, r.variant
+          LIMIT ?`,
+      )
+      .all(limit) as EvictableCopy[];
+  }
+
+  markEvicted({ photo_id, variant, used_at }: EvictableCopy): void {
+    // Stamps stay: cleared, `queueEditedSince` would re-render every evicted copy of an edited photo.
+    // `used_at` matched so a rebuild landing mid-eviction stays a candidate rather than leaking.
+    this.db
+      .query(
+        'UPDATE renditions SET used_at = NULL WHERE photo_id = ? AND variant = ? AND used_at = ?',
+      )
+      .run(photo_id, variant, used_at);
   }
 
   /**

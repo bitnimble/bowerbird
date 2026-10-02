@@ -20,6 +20,7 @@ import type { RenditionFetchService } from '../../services/blobs/rendition_fetch
 import {
   RENDITION_CONTENT_TYPE,
   isRendition,
+  renditionVariant,
 } from '../../services/processing/renditions/renditions';
 import type { ShareService } from '../../services/processing/exports/share_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
@@ -246,6 +247,11 @@ export class ImageApi {
         // the viewer draws and not the grid tile: scrolling past a thumbnail is not using the photo,
         // and a page of a hundred would be a hundred writes.
         if (rendition === 'full' || rendition === 'max') this.originals.touch(photoId);
+        if (rendition !== 'grid')
+          this.photoRenditions.markUsed(
+            photoId,
+            renditionVariant(rendition, library.rendition_hdr),
+          );
         this.photoRenditions.rebuildIfStale(photoId);
         // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
         // the camera view has.

@@ -38,6 +38,8 @@ export const renditions = sqliteTable(
     // camera's picture is not the space the table starts in, which is the difference between a
     // render a panorama can be aligned on and one it cannot.
     matched: integer('matched'),
+    // When the copy on disk was last built or served; null where there is no copy.
+    usedAt: text('used_at'),
   },
   (t) => [
     primaryKey({ columns: [t.photoId, t.variant] }),
@@ -45,6 +47,9 @@ export const renditions = sqliteTable(
     index('idx_renditions_owed')
       .on(t.variant)
       .where(sql`${t.needsBuild} = 1`),
+    index('idx_renditions_used')
+      .on(t.usedAt)
+      .where(sql`${t.usedAt} IS NOT NULL AND ${t.variant} != 'grid'`),
   ],
 );
 

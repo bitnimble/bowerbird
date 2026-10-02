@@ -28,6 +28,7 @@ function serving(recipe: StoredRecipe): Hono {
       photo: { id: 'p1', file_path: null, recipe },
     }),
     rebuildIfStale: () => undefined,
+    markUsed: () => undefined,
   };
   const app = new Hono();
   app.route(

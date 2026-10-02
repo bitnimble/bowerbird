@@ -160,7 +160,7 @@ describe('library photo counts', () => {
     db.query('UPDATE photos SET is_deleted = 0, is_missing = 1 WHERE id = ?').run('photo');
     db.query('DELETE FROM blob_locations WHERE photo_id = ?').run('photo');
     expect(counts()).toEqual({ photos: 1, missing: 0, unavailable: 1, rendered: 1 });
-    db.query('UPDATE renditions SET built_at = NULL WHERE photo_id = ?').run('photo');
+    for (const copy of renditions.leastRecentlyUsed(10)) renditions.markEvicted(copy);
     expect(counts()).toEqual({ photos: 1, missing: 0, unavailable: 1, rendered: 0 });
   });
 

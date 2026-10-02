@@ -87,6 +87,8 @@ export const SettingsSchema = z.object({
   // runs, since what it is really bounding is the thumbnail beside each one; whole runs are
   // what leaves, so the count is a floor rather than a ceiling.
   export_history_limit: z.number().int().min(1).default(1000),
+  // Measured as the disk usage row measures; only renditions are ever deleted to meet it.
+  disk_space_limit_gb: z.number().int().min(1).default(200),
 
   processing_concurrency: z.number().int().min(1).default(4),
   // How many files a scan reads the headers of at once. Its own number rather than

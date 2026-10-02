@@ -158,6 +158,13 @@ export function owedOf(row: Buildable): readonly Owed[] {
   ];
 }
 
+export function variantParts(variant: RenditionVariant): { rendition: Rendition; hdr: boolean } {
+  const hdr = variant.endsWith('-hdr');
+  const rendition = hdr ? variant.slice(0, -'-hdr'.length) : variant;
+  if (!isRendition(rendition)) throw new Error(`not a rendition variant: ${variant}`);
+  return { rendition, hdr };
+}
+
 export const RENDITION_EXTENSION = '.avif';
 export const RENDITION_CONTENT_TYPE = 'image/avif';
 

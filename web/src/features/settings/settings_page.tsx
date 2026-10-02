@@ -698,6 +698,13 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
             {settings != null && (
               <>
                 <NumberSetting
+                  field="disk_space_limit_gb"
+                  label={SettingsStrings.diskSpaceLimit()}
+                  hint={SettingsStrings.diskSpaceLimitHint()}
+                  suffix="GB"
+                  min={1}
+                />
+                <NumberSetting
                   field="prune_every_days"
                   label={SettingsStrings.pruneEveryDays()}
                   suffix="days"

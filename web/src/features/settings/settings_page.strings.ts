@@ -179,6 +179,9 @@ export const SettingsStrings = {
   calculatingDiskUsage: () => 'Calculating…',
   couldNotMeasureDiskUsage: () => "We couldn't measure disk usage. Try again.",
   retryDiskUsage: () => 'Try again',
+  diskSpaceLimit: () => 'Disk space limit',
+  diskSpaceLimitHint: () =>
+    'Bowerbird deletes the least recently viewed renditions above the specified limit.',
   watchDebounce: () => 'Scan delay after a change',
   watchPollInterval: () => 'Network library scan interval',
   watchPollIntervalHint: () => 'Bowerbird checks network drives for changes at this interval.',

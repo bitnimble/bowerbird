@@ -471,6 +471,7 @@ the bounds; the reasoning behind each number lives beside it there.
 | `backup_every_days`        | `1`     | Interval for the rolling catalogue backup; `0` disables (§4.9)                                                                                                                                                                                                     |
 | `backup_keep`              | `7`     | How many backups to keep. A count of files rather than of days, so lengthening the interval does not silently shorten the window (§4.9)                                                                                                                            |
 | `export_history_limit`     | `1000`  | How many exported files the history keeps. Whole runs are culled oldest-first past it, so it is a floor (§10.5.2)                                                                                                                                                  |
+| `disk_space_limit_gb`      | `200`   | Ceiling on what the disk usage row measures, checked hourly and on change. Over it, renditions other than grid tiles are evicted least recently built or served first (§10.6.2)                                                                                    |
 
 Two shapes of consumer, and they take a setting differently:
 

@@ -663,3 +663,17 @@ Each entry point states what it will not do:
 | `unlinkMovedFile(from, movedTo)`             | Removes the source half of a move only once the destination exists, so a failed link or copy can never leave the move having consumed the file.                                                                                                  |
 
 Sweep on an interval, not startup: restarts imply no orphaning and development reloads would repeat the work.
+
+### 10.6.2 The disk space limit
+
+`disk_space_limit_gb` (default 200) caps everything the disk usage row measures (`StorageUsageService`):
+the data directory, the catalogue and its backups, printer profiles and caches. Only renditions are
+deleted to meet it. `DiskSpaceLimit` checks at startup, hourly and whenever the limit changes; over it,
+it evicts renditions least recently used first. `renditions.used_at` is set by a build and by a serve
+of anything but a grid tile (at most once a minute per copy), and is null where no copy is on disk.
+
+Grid tiles are never evicted: nothing stamps them on a scroll, so by build time they would go first and
+be repaired on every pass. An evicted copy keeps its `built_at`/`built_from`: clearing them would have
+`queueEditedSince` re-render every evicted copy of an edited photo, refilling the disk. Readers already
+treat a missing file as not built (`renditionsOf`), so the viewer rebuilds it on the next open. A file
+that will not delete keeps its `used_at` and is retried on the next pass.
