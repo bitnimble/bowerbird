@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
-import { appDataDir, openAppDataDir, setUiScale, shellInvoke, uiScale } from '../../api/transport';
+import { appDataDir, openAppDataDir, shellInvoke } from '../../api/transport';
 import {
   useAppSettingsStore,
   useDeviceSettingsStore,
@@ -442,20 +442,16 @@ function ThisApp(): JSX.Element | null {
   );
 }
 
-function UiScale(): JSX.Element | null {
-  const [scale, setScale] = useState<string | null>(null);
+const UiScale = observer(function UiScale(): JSX.Element {
+  const device = useDeviceSettingsStore();
+  const { deviceSettings } = usePresenters();
   const [failure, setFailure] = useState<string | null>(null);
-
-  useEffect(() => {
-    void uiScale().then((value) => value != null && setScale(String(value)));
-  }, []);
-
-  if (scale == null) return null;
+  const scale = String(device.uiScale);
 
   const choose = (next: string): void => {
     setFailure(null);
-    void setUiScale(Number(next))
-      .then(() => setScale(next))
+    void deviceSettings
+      .setUiScale(Number(next))
       .catch(() => setFailure(SettingsStrings.couldNotSetUiScale()));
   };
 
@@ -473,7 +469,7 @@ function UiScale(): JSX.Element | null {
       />
     </SettingRow>
   );
-}
+});
 
 function AppDataFolder(): JSX.Element | null {
   const [path, setPath] = useState<string | null>(null);

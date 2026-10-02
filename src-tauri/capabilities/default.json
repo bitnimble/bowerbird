@@ -7,7 +7,6 @@
   "remote": { "urls": ["http://127.0.0.1:*"] },
   "permissions": [
     "core:default",
-    "allow-ui-scale",
     "allow-set-ui-scale",
     "allow-app-logs",
     "allow-read-device-file",

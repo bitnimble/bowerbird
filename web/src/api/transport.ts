@@ -66,18 +66,13 @@ export async function send(
   return { status: response.status, headers, bytes: new Uint8Array(await response.arrayBuffer()) };
 }
 
-/** The webview's zoom, or null in a browser, which has its own. */
-export async function uiScale(): Promise<number | null> {
-  const invoke = shellInvoke();
-  if (invoke == null) return null;
-  return z.number().parse(await invoke('ui_scale', {}));
-}
-
-export async function setUiScale(value: number): Promise<void> {
-  const invoke = shellInvoke();
-  if (invoke == null) throw new Error('the interface scale is the app’s to set');
-  await invoke('set_ui_scale', { value });
-  scaleViewport(value);
+/** Zooms the app's page; a browser has its own zoom, so there it does nothing. */
+export async function applyUiScale(scale: number): Promise<void> {
+  if (scalesOwnViewport()) {
+    scaleViewport(scale);
+    return;
+  }
+  await shellInvoke()?.('set_ui_scale', { value: scale });
 }
 
 /** A file the app keeps for this device's page, or null where it has none yet. */
@@ -93,19 +88,11 @@ export async function writeDeviceFile(
   await invoke('write_device_file', { name, contents });
 }
 
-/** Puts back the scale the Android app was last set to, which its shell cannot apply. */
-export async function restoreUiScale(): Promise<void> {
-  if (!scalesOwnViewport()) return;
-  const scale = await uiScale();
-  if (scale != null) scaleViewport(scale);
-}
-
 /**
  * Android's webview has no page zoom for the shell to set, so the page scales its viewport: an
  * initial scale with no width lays the page out that much narrower, as a page zoom does.
  */
 function scaleViewport(scale: number): void {
-  if (!scalesOwnViewport()) return;
   document
     .querySelector('meta[name="viewport"]')
     ?.setAttribute('content', `initial-scale=${scale}`);

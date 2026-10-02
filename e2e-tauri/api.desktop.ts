@@ -6,9 +6,7 @@
 // Linux that needs CEF - WebKitGTK has ENABLE_WEBGPU off (`docs/raw-edit-gpu.md` §10.1), so the
 // WebGPU spec is the one thing here a WebKitGTK build could never pass.
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { APP_BINARY, CDP_URL } from './shell';
+import { CDP_URL } from './shell';
 import { PathSegment, route } from '../src/schemas/route';
 
 type Bridge = { __TAURI__: { core: { invoke: (c: string, a: unknown) => Promise<unknown> } } };
@@ -87,22 +85,12 @@ test.describe('Bowerbird desktop shell', () => {
     expect(gpu.adapter).toBe(true);
   });
 
-  test('keeps its own settings beside the binary, so an unpacked build is portable', async () => {
-    const before = await shell.evaluate(async () => {
+  test("keeps the page's preferences in its data folder, which a new port each launch cannot lose", async () => {
+    const kept = await shell.evaluate(async () => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
-      const held = (await invoke('ui_scale', {})) as number;
-      await invoke('set_ui_scale', { value: 1.25 });
-      return held;
+      await invoke('write_device_file', { name: 'e2e-probe', contents: '{"kept":true}' });
+      return invoke('read_device_file', { name: 'e2e-probe' });
     });
-    try {
-      const beside = join(dirname(APP_BINARY), 'config.json');
-      expect(existsSync(beside)).toBe(true);
-      expect((JSON.parse(readFileSync(beside, 'utf8')) as { uiScale?: number }).uiScale).toBe(1.25);
-    } finally {
-      await shell.evaluate(async (restore: number) => {
-        const { invoke } = (window as unknown as Bridge).__TAURI__.core;
-        await invoke('set_ui_scale', { value: restore });
-      }, before);
-    }
+    expect(kept).toBe('{"kept":true}');
   });
 });

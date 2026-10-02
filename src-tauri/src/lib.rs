@@ -8,7 +8,6 @@
 mod android;
 mod app_log;
 mod caption;
-mod config;
 mod device_files;
 mod display;
 /// Renders the page asks for and this app writes to a folder, rather than answers.
@@ -18,6 +17,7 @@ mod open_with;
 mod reveal;
 /// The Bowerbird server this app carries, so the library is local and works offline.
 mod server;
+mod ui_scale;
 mod update;
 
 // `#[default_runtime(crate::Wry, wry)]` only defaults `AppHandle`'s generic while the `wry`
@@ -34,13 +34,9 @@ pub type Runtime = tauri::Wry;
 pub fn run() {
     let builder = tauri::Builder::default()
         .setup(|app| {
-            config::load(app.handle());
             if let Err(err) = open_window(app.handle()) {
                 server::stop();
                 return Err(err.into());
-            }
-            if let Err(why) = config::apply_ui_scale(app.handle()) {
-                app_log::error(why);
             }
             #[cfg(target_os = "macos")]
             {
@@ -51,8 +47,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            config::ui_scale,
-            config::set_ui_scale,
+            ui_scale::set_ui_scale,
             app_log::app_logs,
             caption::set_caption_buttons,
             device_files::read_device_file,

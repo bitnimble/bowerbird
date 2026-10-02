@@ -16,4 +16,6 @@ export class DeviceSettingsStore {
    * `dynamic-range` is a boolean.
    */
   @observable accessor displayPeakNits = DEFAULT_DISPLAY_PEAK_NITS;
+  /** The app's page zoom, which a browser has its own of. */
+  @observable accessor uiScale = 1;
 }

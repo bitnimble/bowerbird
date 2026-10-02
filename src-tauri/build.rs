@@ -3,7 +3,6 @@ fn main() {
     // http by the local server, and Tauri answers a remote origin only the commands
     // a capability names (`capabilities/`).
     let commands = tauri_build::AppManifest::new().commands(&[
-        "ui_scale",
         "set_ui_scale",
         "app_logs",
         "set_caption_buttons",
