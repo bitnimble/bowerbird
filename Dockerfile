@@ -171,7 +171,7 @@ RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=l
     --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
   apt-get update \
   && apt-get install -y --no-install-recommends build-essential ca-certificates curl git tar unzip zip
-COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/vcpkg.ts scripts/get-slangc.ts ./scripts/
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/vcpkg.ts scripts/android-ndk.ts scripts/get-slangc.ts ./scripts/
 COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
 RUN --mount=type=cache,id=bowerbird-slangc,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
@@ -217,7 +217,7 @@ RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=l
   apt-get update \
   && apt-get install -y --no-install-recommends \
      build-essential ca-certificates curl git nasm pkg-config python3 tar unzip zip
-COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/vcpkg.ts scripts/get-codecs.ts ./scripts/
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/vcpkg.ts scripts/android-ndk.ts scripts/get-codecs.ts ./scripts/
 COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
 RUN --mount=type=cache,id=bowerbird-codecs,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
