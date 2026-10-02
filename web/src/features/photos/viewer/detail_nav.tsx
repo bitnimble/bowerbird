@@ -289,7 +289,7 @@ export const DetailNav = observer(function DetailNav({
   toolsRef: (slot: HTMLDivElement | null) => void;
   /** Where it draws the zoom's whole range, which is inside this bar's menu. */
   zoomRef: (slot: HTMLDivElement | null) => void;
-  /** Null on a phone, where the sheet's own handle owns the panels. */
+  /** Null on a phone or touch editor, whose sheet owns the panels, and in the mockup. */
   panelsOpen: boolean | null;
   onTogglePanels: () => void;
   /**
@@ -730,9 +730,7 @@ export const DetailNav = observer(function DetailNav({
         </Button>
       )}
 
-      {/* Forced open while editing (the exposure panel has nowhere else to live),
-          so the toggle would only confuse. */}
-      {panelsOpen != null && !previewing && (
+      {panelsOpen != null && (
         <Button
           iconOnly
           aria-label={

@@ -96,8 +96,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Kept across photos: opened once to read a frame's settings, the reader means
   // to read the next one's too.
   const [sheetOpen, setSheetOpen] = useState(false);
-  // Same on the wide layout, where the bar's info button hides the whole column
-  // and gives its width back to the photograph. Off by default: the photograph is
+  // Same on the wide layout, where the bar's info button hides the viewer's whole
+  // column and gives its width back to the photograph. Off by default: the photograph is
   // the job, and the panels are opt-in. Remembered across visits once toggled.
   const [panelsOpen, setPanelsOpen] = useState(() => readSetting(PANELS_KEY) === '1');
   // The same, for the strip along the foot. Off by default for the reason the
@@ -372,6 +372,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // a phone's sheet.
   const expanded = !mobile && edge === 'beside';
   const sheetStrip = stripInSheet && stripOffered && stripOpen;
+  const panelsOffered = !mobile && (mode === 'view' || (editing && !mobilePreview));
   const layout = mobile || mobilePreview ? 'sheet' : !panelsOpen && !previewing ? 'only' : edge;
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
@@ -389,16 +390,27 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       )
     ) : editing ? (
       session != null && (
-        <RawEditPanel
-          edit={session.edit}
-          stage={session.stage}
-          crop={session.crop}
-          keystone={session.keystone}
-          repair={session.repair}
-          print={session.print}
-          presenter={session.presenter}
-          mobile={mobile || touch}
-        />
+        <>
+          <RawEditPanel
+            edit={session.edit}
+            stage={session.stage}
+            crop={session.crop}
+            keystone={session.keystone}
+            repair={session.repair}
+            print={session.print}
+            presenter={session.presenter}
+            mobile={mobile || touch}
+            style={styles.spanRow}
+          />
+          {/* Edits is stale until the editor closes; the stage is no stored rendition. */}
+          {panelsOffered && panelsOpen && (
+            <>
+              <DetailInfo photoId={photoId} style={panelStyle} />
+              <CameraPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
+              <RawPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
+            </>
+          )}
+        </>
       )
     ) : (
       <>
@@ -481,12 +493,12 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         mode={mode}
         onExitPreview={stopPreview}
         onToggleStrip={!mobile && stripOffered ? toggleStrip : undefined}
-        onTogglePanels={mobile || previewing ? undefined : togglePanels}
+        onTogglePanels={panelsOffered ? togglePanels : undefined}
       />
       <DetailNav
         photoId={photoId}
         toolsRef={setToolsSlot}
-        panelsOpen={mobile ? null : panelsOpen}
+        panelsOpen={panelsOffered ? panelsOpen : null}
         onTogglePanels={togglePanels}
         // A phone viewer's toggle is in the sheet beside the verdict, where its thumb
         // already is.

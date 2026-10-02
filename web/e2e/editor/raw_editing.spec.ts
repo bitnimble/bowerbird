@@ -883,6 +883,21 @@ test('editor rotation lives in overflow and saves orientation edit', async ({ pa
     .toBe(90);
 });
 
+test('the info toggle shows the metadata panels under the edit panels', async ({ page }) => {
+  await open(page);
+  const panel = (title: string) => page.getByRole('group', { name: title, exact: true });
+  await expect(panel('Camera')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Show metadata' }).click();
+  await expect(panel('Info')).toBeVisible();
+  await expect(panel('Camera').getByText('Body', { exact: true })).toBeVisible();
+  await expect(panel('Original')).toBeVisible();
+  await expect(panel('Light')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Hide metadata' }).click();
+  await expect(panel('Camera')).toHaveCount(0);
+});
+
 test('print mode rotates with a real pointer and keyboard without saving a photo edit', async ({
   page,
 }) => {
