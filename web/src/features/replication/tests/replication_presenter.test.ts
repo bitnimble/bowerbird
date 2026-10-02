@@ -55,6 +55,8 @@ interface Harness {
   reloadActivities: (RequestActivity | undefined)[];
   libraryLoads: () => number;
   toasts: string[];
+  /** The detail each error toast carried, beside its message. */
+  details: (string | undefined)[];
 }
 
 // `api` is a module singleton, so this is the seam.
@@ -66,6 +68,7 @@ function harness(): Harness {
   const reloadActivities: (RequestActivity | undefined)[] = [];
   let libraryLoads = 0;
   const toasts: string[] = [];
+  const details: (string | undefined)[] = [];
   const presenter = new ReplicationPresenter(
     store,
     librariesStore,
@@ -78,7 +81,10 @@ function harness(): Harness {
     },
     {
       show: (message: string) => toasts.push(message),
-      showError: (message: string) => toasts.push(message),
+      showError: (message: string, detail?: string) => {
+        toasts.push(message);
+        details.push(detail);
+      },
     },
   );
   return {
@@ -89,6 +95,7 @@ function harness(): Harness {
     reloadActivities,
     libraryLoads: () => libraryLoads,
     toasts,
+    details,
   };
 }
 
@@ -387,6 +394,16 @@ test('fetching an original to edit outlasts a read of the queue that fails', asy
   expect(await presenter.fetchOriginalAndWait('photo1')).toBe(true);
   expect(store.pullFor('photo1')?.state).toBe('done');
   expect(toasts).toHaveLength(1);
+});
+
+test('a fetch to edit that fails says why rather than going quietly back', async () => {
+  const { presenter, details } = harness();
+  blobsApi.fetchOriginal = () => Promise.resolve(pull('queued'));
+  blobsApi.listTransfers = () =>
+    Promise.resolve([{ ...pull('failed'), error: 'peer answered 404' } as Transfer]);
+
+  expect(await presenter.fetchOriginalAndWait('photo1')).toBe(false);
+  expect(details).toEqual(['peer answered 404']);
 });
 
 test('fetching an original to edit gives up when the fetch cannot be asked for', async () => {

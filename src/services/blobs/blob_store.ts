@@ -1,10 +1,10 @@
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { link, open } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { LibraryConfiguration } from '../../schemas/libraries';
-import { deleteEmptyStagingDirectory, unlinkMovedFile } from '../../utils/deletions';
-import { ensureDir } from '../../utils/files';
+import { deleteEmptyStagingDirectory } from '../../utils/deletions';
+import { ensureDir, moveWithoutReplacing } from '../../utils/files';
 import { containsPath, libraryPath } from '../../utils/paths';
 
 // The disk half of moving originals between peers (docs/replication.md §7.3,
@@ -127,7 +127,7 @@ export async function materialise(
   }
   // And so is where it is moved *from*. The drain reaches here with a path this peer recorded
   // for the photograph at an earlier merge, which is remote input one step removed - and what
-  // follows is a link and then an **unlink of the source**, so a source outside the root is a
+  // follows is a move that **removes the source**, so a source outside the root is a
   // file taken from somewhere nobody asked about. Staging is under the root (`stagingDir`), so
   // the one legitimate caller passes this too.
   if (!containsPath(library.root_path, stageFile)) {
@@ -140,15 +140,13 @@ export async function materialise(
   const taken = occupant(path.dirname(target), path.basename(target));
   if (taken != null) return { placed: false, occupiedBy: taken };
   try {
-    // Claiming the name IS the move, as in moveIntoDir: link cannot overwrite.
-    await link(stageFile, target);
+    await moveWithoutReplacing(stageFile, target);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
       return { placed: false, occupiedBy: path.basename(target) };
     }
     throw new AppError('IO_ERROR', `failed to materialise ${filePath}: ${(err as Error).message}`);
   }
-  await unlinkMovedFile(stageFile, target);
   await deleteEmptyStagingDirectory(stagingDir(library));
   return { placed: true };
 }

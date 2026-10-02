@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { rm, rmdir, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -270,6 +270,15 @@ export async function deleteBackedUpOriginal(
       'local_changed',
       `The local copy of ${path.basename(target)} has changed. Check the local file before removing it.`,
     );
+  }
+  await unlink(target);
+}
+
+// The name a move claimed with an empty file and then could not fill. Holding no
+// bytes, it cannot be an original, which is checked rather than trusted.
+export async function deleteEmptyClaim(target: string): Promise<void> {
+  if (statSync(target).size !== 0) {
+    throw new AppError('IO_ERROR', `refusing to remove ${target}: it is not empty`);
   }
   await unlink(target);
 }

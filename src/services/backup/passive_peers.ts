@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { link } from 'node:fs/promises';
 import path from 'node:path';
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
@@ -7,12 +6,8 @@ import { BlobCommitRequestSchema } from '../../schemas/blobs';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { soleInputOf } from '../../schemas/recipes';
 import { PathSegment } from '../../schemas/route';
-import {
-  deleteEmptyStagingDirectory,
-  deleteStagedBlob,
-  unlinkMovedFile,
-} from '../../utils/deletions';
-import { ensureDir } from '../../utils/files';
+import { deleteEmptyStagingDirectory, deleteStagedBlob } from '../../utils/deletions';
+import { ensureDir, moveWithoutReplacing } from '../../utils/files';
 import { contentHash } from '../../utils/hash';
 import { originalPathOf } from '../../utils/paths';
 import { appendToStage, isOnDisk, occupant, stagedSize } from '../blobs/blob_store';
@@ -92,10 +87,9 @@ export async function placeInMirror(
     );
   }
   signal?.throwIfAborted();
-  // Claiming the name is the move: both paths are under the mirror's root, so this is one
-  // filesystem and `link` cannot overwrite.
+  // Both paths are under the mirror's root, so this is one filesystem.
   try {
-    await link(from, to);
+    await moveWithoutReplacing(from, to);
   } catch (err) {
     if (err instanceof Error && 'code' in err && err.code === 'EEXIST') {
       throw new BackupError(
@@ -105,7 +99,6 @@ export async function placeInMirror(
     }
     throw err;
   }
-  await unlinkMovedFile(from, to);
 }
 
 export class PassivePeers implements PeerTransport {

@@ -360,7 +360,12 @@ export class ReplicationPresenter {
     if (!(await this.fetchOriginal(photoId))) return false;
     await when(() => !this.store.fetching.has(photoId));
     const settled = this.store.pullFor(photoId);
-    return settled == null || settled.state === 'done';
+    if (settled == null || settled.state === 'done') return true;
+    this.toasts.showError(
+      ReplicationPresenterStrings.couldNotFetchOriginal(),
+      settled.error ?? undefined,
+    );
+    return false;
   }
 
   async pause(id: string): Promise<void> {

@@ -1,28 +1,32 @@
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, link, mkdir, rename } from 'node:fs/promises';
+import { copyFile, link, mkdir, open, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
-import { unlinkMovedFile } from './deletions';
+import { deleteEmptyClaim, unlinkMovedFile } from './deletions';
 
 // Atomically moves `from` into `dir` with a collision-free name, returning the
-// absolute destination. Claiming the name (link, or COPYFILE_EXCL across
-// devices) IS the move, so two concurrent moves of the same basename can't
+// absolute destination. Claiming the name (moveWithoutReplacing, or COPYFILE_EXCL
+// across devices) IS the move, so two concurrent moves of the same basename can't
 // overwrite each other the way existsSync()+rename() could.
 export async function moveIntoDir(from: string, dir: string, filename: string): Promise<string> {
   const ext = path.extname(filename);
   const base = path.basename(filename, ext);
-  let claim = (to: string): Promise<void> => link(from, to);
+  let acrossDevices = false;
   for (let n = 0; ; n++) {
     const candidate = path.join(dir, n === 0 ? filename : `${base}_${n}${ext}`);
     try {
-      await claim(candidate);
+      if (!acrossDevices) {
+        await moveWithoutReplacing(from, candidate);
+        return candidate;
+      }
+      await copyFile(from, candidate, fsConstants.COPYFILE_EXCL);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'EEXIST') continue; // name taken (possibly by a concurrent move)
-      // link() can't span devices (a custom data dir): retry this same candidate
+      // A link can't span devices (a custom data dir): retry this same candidate
       // with a (non-atomic) copy, which COPYFILE_EXCL still makes collision-safe.
-      if (code === 'EXDEV') {
-        claim = (to) => copyFile(from, to, fsConstants.COPYFILE_EXCL);
+      if (code === 'EXDEV' && !acrossDevices) {
+        acrossDevices = true;
         n--;
         continue;
       }
@@ -33,6 +37,34 @@ export async function moveIntoDir(from: string, dir: string, filename: string): 
     }
     await unlinkMovedFile(from, candidate);
     return candidate;
+  }
+}
+
+/**
+ * Moves `from` to `to` on the same filesystem, failing with `EEXIST` rather than replacing a file
+ * already there, including one another move is placing at the same moment.
+ */
+export async function moveWithoutReplacing(from: string, to: string): Promise<void> {
+  try {
+    await link(from, to);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // Android refuses an app's hard links outright (SELinux), whatever the directory allows.
+    if (code !== 'EPERM' && code !== 'EACCES') throw err;
+    await moveOverClaim(from, to);
+    return;
+  }
+  await unlinkMovedFile(from, to);
+}
+
+/** The same, claiming `to` with an exclusive create and renaming the bytes over that claim. */
+export async function moveOverClaim(from: string, to: string): Promise<void> {
+  await (await open(to, 'wx')).close();
+  try {
+    await rename(from, to);
+  } catch (err) {
+    await deleteEmptyClaim(to).catch(() => undefined);
+    throw err;
   }
 }
 

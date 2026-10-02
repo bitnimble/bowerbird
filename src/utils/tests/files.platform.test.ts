@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'bun:test';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { moveIntoDir } from '../files';
+import { moveIntoDir, moveOverClaim, moveWithoutReplacing } from '../files';
 import { scanLibraryTree } from '../scan';
 import { scope, withRoot } from './library_tree_test_helpers';
 
@@ -84,6 +84,41 @@ describe('moveIntoDir', () => {
       expect(dest).toBe(path.join(dir, 'a_1.arw'));
       expect(await readFile(path.join(dir, 'a.arw'), 'utf8')).toBe('existing');
       expect(await readFile(dest, 'utf8')).toBe('new');
+    }),
+  );
+});
+
+// Both ways a move claims its name: the link everywhere that allows one, and the exclusive
+// create where Android refuses an app's links.
+describe.each([
+  ['moveWithoutReplacing', moveWithoutReplacing],
+  ['moveOverClaim', moveOverClaim],
+])('%s', (_, move) => {
+  it(
+    'moves the file and leaves nothing at its old name',
+    withRoot(async (root) => {
+      const from = path.join(root, 'a.partial');
+      const to = path.join(root, 'a.arw');
+      writeFileSync(from, 'data');
+
+      await move(from, to);
+      expect(await readFile(to, 'utf8')).toBe('data');
+      expect(existsSync(from)).toBe(false);
+    }),
+  );
+
+  it(
+    'refuses a name already taken, keeping both files as they were',
+    withRoot(async (root) => {
+      const from = path.join(root, 'a.partial');
+      const to = path.join(root, 'a.arw');
+      writeFileSync(from, 'new');
+      writeFileSync(to, 'existing');
+
+      const refused = await move(from, to).catch((err: NodeJS.ErrnoException) => err.code);
+      expect(refused).toBe('EEXIST');
+      expect(await readFile(to, 'utf8')).toBe('existing');
+      expect(await readFile(from, 'utf8')).toBe('new');
     }),
   );
 });
