@@ -68,3 +68,13 @@ test('a writable library offers it', async () => {
   await openPanel(false);
   expect(refusal('Fetch originals')).toBeNull();
 });
+
+test.each([
+  [true, true],
+  [false, false],
+])('read-only %s greys the originals settings: %s', async (readOnly, greyed) => {
+  await openPanel(readOnly);
+  for (const name of ['Keep originals on this device', 'Automatically send and fetch originals']) {
+    expect(screen.getByRole('checkbox', { name }).matches(':disabled')).toBe(greyed);
+  }
+});

@@ -217,13 +217,7 @@ export const PageSchema = z.object({
 });
 export type Page = z.infer<typeof PageSchema>;
 
-/**
- * A library a peer is offering, as the dialog that picks one needs it (§9.1).
- *
- * Read-only libraries are listed rather than hidden: they cannot be replicated
- * (§1), and a library missing from the list with no reason given is the sort of
- * thing that has somebody checking their network for an hour.
- */
+/** A library a peer is offering, as the dialog that picks one needs it (§9.1). */
 export const RemoteLibrarySchema = z.object({
   id: IdSchema,
   name: z.string(),
@@ -280,6 +274,7 @@ export type PairRequest = z.infer<typeof PairRequestSchema>;
 export const PairResponseSchema = z.object({
   library_id: IdSchema,
   library_name: z.string(),
+  read_only: z.boolean(),
   peer_id: PeerIdSchema,
   name: z.string(),
   clock_ms: z.number().int(),
@@ -300,6 +295,7 @@ export const HandshakeRequestSchema = BuildVersionSchema.extend({
   clock_ms: z.number().int().nonnegative(),
   coverage: VectorSchema,
   wants_originals: WantsOriginalsSchema,
+  read_only: z.boolean(),
 });
 export type HandshakeRequest = z.infer<typeof HandshakeRequestSchema>;
 

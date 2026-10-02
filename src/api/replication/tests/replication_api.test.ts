@@ -88,8 +88,8 @@ it('shows inbound catalogue work while it waits and clears it after success or r
   expect((await incoming).status).toBe(200);
   expect(activity.current(LIB)).toEqual([]);
 
-  db.query('UPDATE libraries SET read_only = 1 WHERE id = ?').run(LIB);
-  expect((await sending()).status).toBe(403);
+  db.query('DELETE FROM replication_peers WHERE peer_id = ?').run(peer);
+  expect((await sending()).status).toBe(404);
   expect(activity.current(LIB)).toEqual([]);
   db.close();
 });
@@ -130,16 +130,11 @@ describe('clone (§9)', () => {
     expect(replicatedState(clone.db)).toBe(replicatedState(origin.db));
   });
 
-  // Listed rather than hidden, because a library missing with no reason given is
-  // what has somebody checking their network for an hour (§9.1).
-  it('offers a readonly library in the list and refuses to pair it', async () => {
+  it('clones a read-only library as read-only, with no bin and no originals', async () => {
     const origin = serve(catalogue());
-    seedLibrary(origin.db, 1);
-    origin.db
-      .query(
-        "INSERT INTO libraries (id, root_path, name, read_only) VALUES ('rolib000', '/ro', 'RO', 1)",
-      )
-      .run();
+    seedLibrary(origin.db, 2);
+    origin.db.query('UPDATE libraries SET read_only = 1, bin_name = NULL WHERE id = ?').run(LIB);
+    const clone = serve(catalogue());
 
     const offered = (await (
       await fetch(
@@ -148,18 +143,60 @@ describe('clone (§9)', () => {
     ).json()) as {
       libraries: { id: string; read_only: boolean; replicating: boolean }[];
     };
-    expect(offered.libraries.find((l) => l.id === 'rolib000')).toMatchObject({ read_only: true });
-    // Not yet paired with anyone, so nothing claims to be replicating.
-    expect(offered.libraries.every((l) => !l.replicating)).toBe(true);
+    expect(offered.libraries).toMatchObject([{ id: LIB, read_only: true, replicating: false }]);
 
-    const response = await post(origin.url, route(PathSegment.pair()), {
-      library_id: 'rolib000',
-      peer_id: 'peerbbbbbbbbbbbb',
-      name: 'Macbook',
+    const created = await post(clone.url, route(PathSegment.replicas()), {
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: true,
     });
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ error: { code: 'READ_ONLY' } });
+    expect(created.status).toBe(201);
+    expect(
+      clone.db.query('SELECT read_only, bin_name FROM libraries WHERE id = ?').get(LIB),
+    ).toEqual({ read_only: 1, bin_name: null });
+    expect(syncsOriginals(clone.db, LIB)).toBe(false);
+    expect(autoTransfersOriginals(clone.db, LIB)).toBe(false);
+    expect(replicatedState(clone.db)).toBe(replicatedState(origin.db));
+
+    // Each side says it takes no originals, so neither queues a send the other refuses,
+    // whatever its keep-originals setting says.
+    setSyncsOriginals(clone.db, LIB, true);
+    await pullFromRemote(clone.replica, origin.url);
+    expect(pairedPeers(clone.db, LIB)[0]!.wants_originals).toBe(false);
+    expect(pairedPeers(origin.db, LIB)[0]!.wants_originals).toBe(false);
+
+    expect(() =>
+      new ReplicationService(clone.db, new BlobLocations(clone.db)).setSyncsOriginals(LIB, true),
+    ).toThrow('cannot keep originals');
+
+    new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', { rating: 3 });
+    await runnerFor(clone.db).replicate(LIB);
+    expect(origin.db.query('SELECT rating FROM photos WHERE id = ?').get('p2')).toEqual({
+      rating: 3,
+    });
   });
+
+  it.each([
+    ['the clone', 'on the other device'],
+    ['the origin', 'on this device'],
+  ])(
+    'refuses to sync once %s turns writable, naming the read-only side',
+    async (writable, readOnlySide) => {
+      const origin = serve(catalogue());
+      seedLibrary(origin.db, 1);
+      origin.db.query('UPDATE libraries SET read_only = 1, bin_name = NULL WHERE id = ?').run(LIB);
+      const clone = serve(catalogue());
+      await addReplica(clone.db, origin.url, LIB, cloneRoot());
+
+      (writable === 'the clone' ? clone : origin).db
+        .query("UPDATE libraries SET read_only = 0, bin_name = 'Bin' WHERE id = ?")
+        .run(LIB);
+      const refused = pullFromRemote(clone.replica, origin.url);
+      await expect(refused).rejects.toMatchObject({ code: 'READ_ONLY' });
+      await expect(refused).rejects.toThrow(`read-only ${readOnlySide}`);
+    },
+  );
 
   it('says which of its libraries it already replicates, so the list can say so', async () => {
     const { origin } = await pairedClone(1);
@@ -285,6 +322,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       name: 'Laptop',
       clock_ms: Date.now(),
       coverage: {},
+      read_only: false,
     });
     expect(response.status).toBe(426);
     const body = (await response.json()) as { error: { code: string; message: string } };
@@ -308,6 +346,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
         name: 'Laptop',
         clock_ms: Date.now(),
         coverage: {},
+        read_only: false,
       });
       expect(response.status).toBe(200);
     },
@@ -386,6 +425,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
         name: 'Laptop',
         clock_ms: Date.now(),
         coverage: {},
+        read_only: false,
       });
       expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([outdated]);
 
@@ -437,9 +477,30 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       name: 'Laptop',
       clock_ms: Date.now() + 2 * DEFAULT_SKEW_MS,
       coverage: {},
+      read_only: false,
     });
     expect(await response.json()).toMatchObject({ error: { code: 'CLOCK_SKEW' } });
   });
+
+  it.each(['pull', 'push'])(
+    'refuses a read-only peer of a writable library %sing',
+    async (direction) => {
+      const { origin, clone } = await pairedClone();
+      const response = await post(origin.url, route(PathSegment.handshake()), {
+        protocol: REPLICATION_PROTOCOL,
+        schema: latestMigrationMillis(),
+        direction,
+        library_id: LIB,
+        peer_id: peerIdOf(clone.db),
+        name: 'Laptop',
+        clock_ms: Date.now(),
+        coverage: {},
+        read_only: true,
+      });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: { code: 'READ_ONLY' } });
+    },
+  );
 
   it('refuses a peer it was never paired with, and a library the peer is not paired to', async () => {
     const { origin, clone } = await pairedClone();
@@ -452,6 +513,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       name: 'Stranger',
       clock_ms: Date.now(),
       coverage: {},
+      read_only: false,
     });
     expect(stranger.status).toBe(404);
 

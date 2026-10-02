@@ -33,6 +33,7 @@ import { PathSegment, route } from '../../schemas/route';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import {
   deviceName,
+  isReadOnly,
   markReplicated,
   recordPeerAppetite,
   recordPeerName,
@@ -150,9 +151,10 @@ function linkFailureOf(error: unknown): LinkFailure | null {
 
 /**
  * Births the replica (§9.1): the remote's library id verbatim under a local root,
- * linked for replication, the remote recorded as a paired peer. The catalogue
- * then arrives by `pullFromRemote` as the ordinary delta stream against an empty
- * vector - there is no snapshot path to be a second, subtly different copy.
+ * read-only if the remote's is, linked for replication, the remote recorded as a
+ * paired peer. The catalogue then arrives by `pullFromRemote` as the ordinary
+ * delta stream against an empty vector - there is no snapshot path to be a
+ * second, subtly different copy.
  *
  * The root has to be empty, or not exist yet. A clone lands a whole catalogue's
  * worth of paths under it and materialises files into them, and a folder that
@@ -244,16 +246,18 @@ export function addReplica(
         // would be imported as this library's own and replicated to every peer.
         assertEmptyRoot(rootPath);
         db.query(
-          'INSERT INTO libraries (id, root_path, name, bin_name, denoiser) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO libraries (id, root_path, name, bin_name, read_only, denoiser) VALUES (?, ?, ?, ?, ?, ?)',
         ).run(
           libraryId,
           rootPath,
           paired.library_name,
-          // Writable with no bin is the one shape the columns must never hold
-          // (§4.1): binning would flag rows deleted and leave the files, and
-          // replicate that to peers as though they had moved. The real name
-          // arrives with the library unit on the first page and overwrites this.
-          DEFAULT_BIN_NAME,
+          // A writable replica needs a bin: writable with no bin is the one shape
+          // the columns must never hold (§4.1), since binning would flag rows
+          // deleted and leave the files, and replicate that to peers as though
+          // they had moved. The real name arrives with the library unit on the
+          // first page and overwrites this.
+          paired.read_only ? null : DEFAULT_BIN_NAME,
+          paired.read_only ? 1 : 0,
           denoiser,
         );
         // Linked bare, without the genesis walk the server ran when it paired: a
@@ -261,7 +265,11 @@ export function addReplica(
         // library row would let those defaults beat the server's real settings.
         db.query(
           'INSERT INTO replication_libraries (library_id, sync_originals, auto_transfer_originals) VALUES (?, ?, ?)',
-        ).run(libraryId, syncOriginals ? 1 : 0, autoTransferOriginals ? 1 : 0);
+        ).run(
+          libraryId,
+          syncOriginals && !paired.read_only ? 1 : 0,
+          autoTransferOriginals && !paired.read_only ? 1 : 0,
+        );
         // With the address, because this is the side that dials: everything this
         // replica ever wants from the server - a session, a photograph's original, a
         // rendition it cannot build - goes back to where it paired.
@@ -320,6 +328,7 @@ async function handshake(
   base: string,
   direction: 'pull' | 'push',
 ): Promise<HandshakeResponse> {
+  const readOnly = isReadOnly(replica.db, replica.libraryId);
   let shaken: HandshakeResponse;
   try {
     shaken = await post(
@@ -333,7 +342,8 @@ async function handshake(
         name: deviceName(replica.db),
         clock_ms: Date.now(),
         coverage: packVector(coverage(replica.db, replica.libraryId)),
-        wants_originals: syncsOriginals(replica.db, replica.libraryId),
+        wants_originals: !readOnly && syncsOriginals(replica.db, replica.libraryId),
+        read_only: readOnly,
       }),
       HandshakeResponseSchema,
     );
@@ -360,15 +370,6 @@ function peerAt(db: Database, libraryId: string, address: string): string | null
 
 /** Handshakes (§6.2) and returns the remote as a source `pullFrom` can drain. */
 export async function openRemote(into: Replica, base: string): Promise<ChangeSource> {
-  const library = into.db
-    .query('SELECT read_only FROM libraries WHERE id = ?')
-    .get(into.libraryId) as {
-    read_only: number;
-  } | null;
-  if (library == null) throw new AppError('NOT_FOUND', `library not found: ${into.libraryId}`);
-  if (library.read_only !== 0)
-    throw new AppError('READ_ONLY', 'replication requires a writable library');
-
   const self = peerId(into.db);
   const shaken = await handshake(into, base, 'pull');
   return {

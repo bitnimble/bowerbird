@@ -39,7 +39,6 @@ Non-goals (v1):
   cascade local album memberships through the existing FK, as local library deletion does.
 - Linking independent libraries. Replicas are **born from** an existing library (§9), never
   merged with one. Do not preclude a future dedup-based merge; do not build it now.
-- Readonly libraries. Replication requires rw and refuses otherwise.
 - Deleting files on other peers. Replication propagates catalogue-row tombstones and never a
   file deletion: bin is a move and library removal is DB-rows-only, and the two places a RAW is
   unlinked (§7.6, §14.5) are each one device giving up its own copy on evidence it holds
@@ -581,9 +580,12 @@ Either side initiates; the flow is symmetric. One session between two peers cove
 library both replicate.
 
 1. **Handshake**: protocol version (stamp widths included), app schema version, which way the
-   rows go, the shared library ids, rw check, both clocks (skew guard), both coverage vectors.
-   Rows only ever go from a schema to the same or a newer one (§8.5); a direction that cannot is
-   refused with "update the app", never half-understood.
+   rows go, the shared library ids, both read-only flags, both clocks (skew guard), both
+   coverage vectors. Rows only ever go from a schema to the same or a newer one (§8.5); a
+   direction that cannot is refused with "update the app", never half-understood. A library
+   read-only on one side and writable on the other is refused: the writable side's imports, moves
+   and bins need originals and files written under a root the read-only side must not write to.
+   A read-only side never wants originals (§7.10).
 2. **Stream**: each sender opens a **stable read snapshot** and streams, per library, every
    unit the receiver's vector lacks, in stamp order, in pages. The sender's claimed coverage is
    its own vector joined with its own clock, **as of that snapshot**.
@@ -938,11 +940,14 @@ window.
 ## 9. Replica creation
 
 "Connect to another Bowerbird", alongside "Add library", takes the other device's address, lists what it
-offers, and takes a local root for the one picked. It refuses a readonly library, creates the bin
-folder with identity columns recorded (the same helper library creation uses, not the scan's
-healing path), then clones: the ordinary stream from an empty vector, ids preserved verbatim. The
-replica starts with zero blobs, everything remote-badged, and the user pulls what they want or
-starts importing.
+offers, and takes a local root for the one picked. For a writable library it creates the bin
+folder with identity columns recorded (the same helper library creation uses, not the scan's healing path), then
+clones: the ordinary stream from an empty vector, ids preserved verbatim. The replica starts with
+zero blobs, everything remote-badged, and the user pulls what they want or starts importing.
+
+A replica of a read-only library is born read-only, with no bin and no originals: the pair
+response carries the flag, and the handshake refuses every session once the two flags differ
+(§6.2). Bowerbird writes no original into it, and neither side asks the other for one.
 
 ### 9.1 The flow
 
@@ -953,6 +958,8 @@ Production similarly serves the client from bun so one published address answers
 On the joining device: **"Connect to another Bowerbird"** is three steps. The address; the list of what
 that device offers; then the folder, which the picker can create, and whether to keep originals
 (§7.10) and automatically send and fetch originals. Both options start enabled and are independent.
+A read-only library offers neither: both are off, and the dialog says its originals stay on the
+other device.
 Keeping originals controls whether this device receives them, automatic transfer controls whether
 each session exchanges missing originals. The choices are saved when the replica is created,
 before its first session. A replica that keeps originals queues a fetch of every original the

@@ -178,6 +178,70 @@ test.each([
   },
 );
 
+test('a read-only library can be picked, and is added read-only without originals', async () => {
+  replicationApi.browseRemote = () =>
+    Promise.resolve({
+      peer_id: 'peer000000000001',
+      name: 'Desktop',
+      address: 'http://desktop:5173',
+      clock_ms: Date.now(),
+      clock_skew_ms: 0,
+      libraries: [
+        { id: 'library1', name: 'Archive', photo_count: 3, read_only: true, replicating: false },
+      ],
+    });
+  const requests: AddReplicaRequest[] = [];
+  replicationApi.addReplica = (request) => {
+    requests.push(request);
+    return Promise.resolve({ library_id: 'library1', peer_id: 'peer000000000001', applied: 0 });
+  };
+  render(
+    <StoresProvider>
+      <AddReplicaDialog open onOpenChange={() => {}} />
+    </StoresProvider>,
+  );
+  const field = screen.getByRole('textbox', { name: 'Device address' });
+  await act(async () => {
+    fireEvent.change(field, { target: { value: 'desktop:5173' } });
+  });
+  await act(async () => {
+    fireEvent.keyDown(field, { key: 'Enter' });
+  });
+  screen.getByText('3 photos · read-only');
+  const radio = screen.getByRole('radio', { name: 'Archive, read-only' });
+  expect(radio.matches(':disabled')).toBe(false);
+  await act(async () => {
+    fireEvent.click(radio);
+  });
+  await press('Next');
+
+  expect(screen.queryByRole('checkbox', { name: 'Keep originals on this device' })).toBeNull();
+  expect(
+    screen.queryByRole('checkbox', { name: 'Automatically send and fetch originals' }),
+  ).toBeNull();
+  screen.getByText('Originals stay on the other device.');
+  await press('Choose folder');
+  const picker = within(screen.getByRole('dialog', { name: 'Choose folder' }));
+  await act(async () => {
+    fireEvent.change(picker.getByRole('textbox', { name: 'Library root' }), {
+      target: { value: '/fixture/archive' },
+    });
+    fireEvent.click(picker.getByRole('button', { name: 'Choose folder' }));
+  });
+  await press('Add "Archive"');
+
+  expect(requests).toEqual([
+    {
+      address: 'http://desktop:5173',
+      library_id: 'library1',
+      root_path: '/fixture/archive',
+      sync_originals: false,
+      auto_transfer_originals: false,
+      denoiser: 'galosh',
+    },
+  ]);
+});
+
 test('the mobile app leaves the folder to its server and asks nothing about originals', async () => {
   const userAgent = navigator.userAgent;
   const bridge = globalThis as { __TAURI__?: unknown };

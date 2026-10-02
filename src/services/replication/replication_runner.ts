@@ -104,7 +104,7 @@ export class ReplicationRunner {
     );
     try {
       const result = await this.replicate(cloned.libraryId);
-      if (request.sync_originals && !request.auto_transfer_originals) {
+      if (syncsOriginals(this.db, cloned.libraryId) && !request.auto_transfer_originals) {
         await this.queueOriginals(cloned.libraryId, cloned.peer, 'pull');
       }
       return { library_id: cloned.libraryId, peer_id: cloned.peer, applied: result.applied };

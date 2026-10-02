@@ -119,6 +119,14 @@ export function syncsOriginals(db: Database, libraryId: string): boolean {
   return row == null || row.sync_originals !== 0;
 }
 
+export function isReadOnly(db: Database, libraryId: string): boolean {
+  const row = db.query('SELECT read_only FROM libraries WHERE id = ?').get(libraryId) as {
+    read_only: number;
+  } | null;
+  if (row == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+  return row.read_only !== 0;
+}
+
 export function setSyncsOriginals(db: Database, libraryId: string, value: boolean): void {
   const changed = db
     .query('UPDATE replication_libraries SET sync_originals = ? WHERE library_id = ?')

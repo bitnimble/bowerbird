@@ -22,6 +22,7 @@ import { FolderBrowserStore } from '../browse/folder_browser_store';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { DENOISERS } from '../raw_edit/denoisers';
 import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
+import { SidebarRowStrings } from '../sidebar/sidebar_row.strings';
 import { AddReplicaStrings } from './add_replica_dialog.strings';
 import { SyncedDevicesStrings } from './synced_devices_panel.strings';
 
@@ -111,8 +112,8 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
       address: remote.address,
       library_id: picked.id,
       ...(thin ? {} : { root_path: path }),
-      sync_originals: keepOriginals,
-      auto_transfer_originals: autoTransferOriginals,
+      sync_originals: keepOriginals && !picked.read_only,
+      auto_transfer_originals: autoTransferOriginals && !picked.read_only,
       denoiser,
     });
     if (mine !== opening.current) return;
@@ -183,10 +184,11 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                     {...stylex.props(focusRing.ring)}
                     type="radio"
                     name="remote-library"
-                    aria-label={candidate.name}
-                    // A read-only library is not replicated at all (§1), so it is
-                    // shown and refused rather than quietly missing from the list.
-                    disabled={candidate.read_only}
+                    aria-label={
+                      candidate.read_only
+                        ? SidebarRowStrings.readOnlyName(candidate.name)
+                        : candidate.name
+                    }
                     checked={picked?.id === candidate.id}
                     onChange={() => setPicked(candidate)}
                   />
@@ -195,8 +197,8 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                     {AddReplicaStrings.photoCount(
                       candidate.photo_count.toLocaleString(),
                       candidate.photo_count === 1,
+                      candidate.read_only,
                     )}
-                    {candidate.read_only && AddReplicaStrings.readOnly()}
                   </Text>
                 </Row>
               ))}
@@ -234,7 +236,18 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
               </Field>
             )}
 
-            {!thin && (
+            {picked.read_only && (
+              <Field>
+                <Text variant="label" as="span">
+                  {AddReplicaStrings.originals()}
+                </Text>
+                <Text variant="mono" as="p">
+                  {AddReplicaStrings.readOnlyHere()}
+                </Text>
+              </Field>
+            )}
+
+            {!thin && !picked.read_only && (
               <Field>
                 <Text variant="label" as="span">
                   {AddReplicaStrings.originals()}

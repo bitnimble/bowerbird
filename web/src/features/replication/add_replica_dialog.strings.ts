@@ -13,8 +13,8 @@ export const AddReplicaStrings = {
   clockSkew: (minutes: number) =>
     `Your devices' clocks differ by ${minutes} minutes. Correct the time and try again.`,
   noLibraries: () => 'No libraries on that device',
-  photoCount: (count: string, isOne: boolean) => `${count} ${isOne ? 'photo' : 'photos'}`,
-  readOnly: () => ' · read-only, sync unavailable',
+  photoCount: (count: string, isOne: boolean, readOnly: boolean) =>
+    `${count} ${isOne ? 'photo' : 'photos'}${readOnly ? ' · read-only' : ''}`,
   /** The wizard's previous step, which is not the way out of a page. */
   back: () => 'Back',
 
@@ -23,6 +23,7 @@ export const AddReplicaStrings = {
   folderHint: () => 'Choose a new or empty folder.',
 
   originals: () => 'Originals',
+  readOnlyHere: () => 'Originals stay on the other device.',
 
   settingUp: () => 'Setting up…',
   add: (libraryName: string) => `Add "${libraryName}"`,

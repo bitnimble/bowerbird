@@ -111,11 +111,10 @@ export class ReplicationService {
    * Records the caller as a peer of one of this device's libraries (§9.1).
    *
    * No secret is presented and none is asked for: the network is the boundary
-   * (§11.1). What this does check is that the library exists and can be
-   * replicated at all.
+   * (§11.1). What this does check is that the library exists.
    */
   pair(request: PairRequest): PairResponse {
-    const library = this.writableLibrary(request.library_id);
+    const library = this.library(request.library_id);
     this.db.transaction(() => {
       linkLibrary(this.db, request.library_id);
       registerPeer(this.db, request.library_id, request.peer_id, request.name);
@@ -124,6 +123,7 @@ export class ReplicationService {
     return {
       library_id: request.library_id,
       library_name: library.name,
+      read_only: library.read_only !== 0,
       peer_id: peerId(this.db),
       name: deviceName(this.db),
       clock_ms: this.now(),
@@ -164,7 +164,16 @@ export class ReplicationService {
       );
     }
     assertPaired(this.db, request.library_id, request.peer_id);
-    this.writableLibrary(request.library_id);
+    // A writable side imports originals the read-only side can never take.
+    const readOnly = this.library(request.library_id).read_only !== 0;
+    if (readOnly !== request.read_only) {
+      throw new AppError(
+        'READ_ONLY',
+        readOnly
+          ? 'This library is read-only on the other device and writable on this one.'
+          : 'This library is read-only on this device and writable on the other one.',
+      );
+    }
     const skew = Math.abs(this.now() - request.clock_ms);
     if (skew > DEFAULT_SKEW_MS) {
       throw new AppError(
@@ -183,7 +192,7 @@ export class ReplicationService {
       name: deviceName(this.db),
       clock_ms: this.now(),
       coverage: packVector(coverage(this.db, request.library_id)),
-      wants_originals: syncsOriginals(this.db, request.library_id),
+      wants_originals: !readOnly && syncsOriginals(this.db, request.library_id),
     };
   }
 
@@ -207,7 +216,6 @@ export class ReplicationService {
    */
   async receive(request: PushPageRequest): Promise<PushPageResponse> {
     assertPaired(this.db, request.library_id, request.peer_id);
-    this.writableLibrary(request.library_id);
     if (!observePage(this.db, request.page.changes)) {
       throw new AppError('VALIDATION_ERROR', 'page carries malformed or future-dated stamps');
     }
@@ -286,6 +294,9 @@ export class ReplicationService {
   }
 
   setSyncsOriginals(libraryId: string, value: boolean): void {
+    // Keeping originals stops pictures coming from peers, and a read-only library never gets any.
+    if (value && this.library(libraryId).read_only !== 0)
+      throw new AppError('READ_ONLY', 'a read-only library cannot keep originals from peers');
     setSyncsOriginals(this.db, libraryId, value);
     this.changed(libraryId);
   }
@@ -317,7 +328,7 @@ export class ReplicationService {
     return this.locations.soleHoldings(libraryId, peerId);
   }
 
-  private writableLibrary(libraryId: string): { name: string } {
+  private library(libraryId: string): { name: string; read_only: number } {
     const library = this.db
       .query('SELECT name, read_only FROM libraries WHERE id = ?')
       .get(libraryId) as {
@@ -325,8 +336,6 @@ export class ReplicationService {
       read_only: number;
     } | null;
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
-    if (library.read_only !== 0)
-      throw new AppError('READ_ONLY', 'replication requires a writable library');
     return library;
   }
 }

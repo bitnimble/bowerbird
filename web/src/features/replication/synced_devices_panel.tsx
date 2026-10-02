@@ -6,6 +6,7 @@ import { isThinShell } from '../../app/thin_shell';
 import { focusRing } from '../../ui/focus_ring';
 import { Panel } from '../../ui/panel';
 import { Text } from '../../ui/text';
+import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
 import { SettingRow } from '../settings/settings_controls';
 import { ReplicationStrip } from './replication_strip';
 import { SyncedDevicesStrings } from './synced_devices_panel.strings';
@@ -38,15 +39,18 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
             // What is true now, in the same words the add dialog uses: a hint that
             // describes the *other* state reads as a description of this one.
             hint={
-              store.syncsOriginals(library.id)
-                ? SyncedDevicesStrings.keepsOriginals()
-                : SyncedDevicesStrings.catalogueOnly()
+              library.read_only
+                ? BulkBarStrings.notOnReadOnlyLibrary()
+                : store.syncsOriginals(library.id)
+                  ? SyncedDevicesStrings.keepsOriginals()
+                  : SyncedDevicesStrings.catalogueOnly()
             }
           >
             <input
               {...stylex.props(focusRing.ring)}
               type="checkbox"
               aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
+              disabled={library.read_only}
               checked={store.syncsOriginals(library.id)}
               onChange={(e) =>
                 void replication.setSyncOriginals(library.id, e.currentTarget.checked)
@@ -58,6 +62,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
               {...stylex.props(focusRing.ring)}
               type="checkbox"
               aria-label={SyncedDevicesStrings.autoTransferOriginals()}
+              disabled={library.read_only}
               checked={store.autoTransfersOriginals(library.id)}
               onChange={(e) =>
                 void replication.setAutoTransferOriginals(library.id, e.currentTarget.checked)
