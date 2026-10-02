@@ -46,7 +46,6 @@ import {
   type RequestActivity,
 } from '../../../src/schemas/request_activity';
 import type { ViewerRendition } from '../../../src/schemas/settings';
-import { assetUrl } from './transport';
 import { NothingSchema, request, requestFile } from './request';
 
 export interface PhotoListParams {
@@ -95,7 +94,7 @@ type AskedPicture =
     };
 
 function downloadUrl(photoId: string, form: 'original'): string {
-  return assetUrl(route(PathSegment.image(), photoId, PathSegment.download(), form));
+  return route(PathSegment.image(), photoId, PathSegment.download(), form);
 }
 
 /** One of the photograph's own files, as a bug report attaches them (DESIGN §18.8). */
@@ -291,11 +290,6 @@ export const photosApi = {
       { signal, activity: 'background' },
     ),
 
-  // The URLs below are loaded by the browser itself - an `<img>`, an `EventSource`, a
-  // download - so they cannot go through `send`, and under the desktop shell they carry its
-  // own scheme instead (`assetUrl`). Everything after the prefix is the same path the API
-  // serves, which is what keeps one set of routes for both.
-
   // The file the camera wrote, handed over as it is. No extension in the URL - the catalogue
   // holds several RAW formats, and the server names the download off the file it served.
   downloadUrl,
@@ -318,7 +312,7 @@ export const photosApi = {
   // than a PQ AVIF it has never heard of. Named in the URL, unlike everywhere else here, because
   // which rendition is on screen is the client's own answer.
   shareUrl: (photoId: string, rendition: ViewerRendition): string =>
-    assetUrl(route(PathSegment.image(), photoId, PathSegment.share(), rendition)),
+    route(PathSegment.image(), photoId, PathSegment.share(), rendition),
 
   downloadRaw: async (photoId: string, signal?: AbortSignal): Promise<Uint8Array<ArrayBuffer>> => {
     const reply = await fetch(downloadUrl(photoId, 'original'), {
@@ -341,7 +335,7 @@ export const photosApi = {
    * measuring for having them. 404 until something has measured this photograph.
    */
   analysisUrl: (photoId: string): string =>
-    assetUrl(route(PathSegment.image(), photoId, PathSegment.analysis())),
+    route(PathSegment.image(), photoId, PathSegment.analysis()),
 
   /**
    * One picture of this photograph, coded, for a client that will grade it itself.
@@ -361,7 +355,7 @@ export const photosApi = {
    * cross, where they differ from the last save.
    */
   preparedPictureUrl: (photoId: string, asked?: AskedPicture, develop?: PrepareDevelop): string => {
-    const url = assetUrl(route(PathSegment.image(), photoId, PathSegment.prepare()));
+    const url = route(PathSegment.image(), photoId, PathSegment.prepare());
     const query = shownQuery(asked);
     if (develop != null) query.push(`develop=${encodeURIComponent(JSON.stringify(develop))}`);
     return query.length === 0 ? url : `${url}?${query.join('&')}`;

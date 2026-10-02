@@ -429,10 +429,12 @@ export type BrowseRemoteRequest = z.infer<typeof BrowseRemoteRequestSchema>;
 export const AddReplicaRequestSchema = z.object({
   address: z.string().trim().min(1).max(2048),
   library_id: IdSchema,
+  // Absent where the server keeps its own libraries' folders (`BOWERBIRD_LIBRARIES_DIR`).
   root_path: z
     .string()
     .min(1)
-    .refine((path) => path.trim() !== ''),
+    .refine((path) => path.trim() !== '')
+    .optional(),
   sync_originals: WantsOriginalsSchema,
   auto_transfer_originals: z.boolean().default(true),
   denoiser: DenoiserSchema.default('galosh'),

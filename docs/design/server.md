@@ -417,17 +417,20 @@ catalogue can be opened.
 | `DB_PATH`  | `./bowerbird.db` | SQLite database file path                                                                                                                     |
 | `DATA_DIR` | `./data`         | Where every generated file lives, one subdirectory per library (§6). Resolved absolute at load, created and tested for writability at startup |
 
-Five **launcher-owned variables, not user configuration**, identify the server's
-environment (§23.3, §10.4). Only the desktop shell, Dockerfile or container entrypoint
+Eight **launcher-owned variables, not user configuration**, identify the server's
+environment (§23.3, §10.4). Only the shell, Dockerfile or container entrypoint
 sets them; manual values misrepresent the installation.
 
-| Variable               | Set by                              | Description                                                                                                                                                                                                   |
-| ---------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BOWERBIRD_UPDATES`    | the desktop shell                   | Where an update is staged, and set only where the app can hand itself to the updater, which is what decides whether an in-place update is offered at all                                                      |
-| `BOWERBIRD_PLATFORM`   | the Dockerfile                      | Which release platform this install is, where it cannot be worked out from the kernel - the image runs the same Linux a desktop build does and installs an entirely different file                            |
-| `BOWERBIRD_NATIVE_LIB` | the shell, the container entrypoint | The path to the packaged pixel library. The container ships an x86-64 build (§10.4).                                                                                                                          |
-| `WEB_DIST`             | the desktop shell                   | The web client to serve, which is the page the shell's webview loads from this server. Unset, `./web/dist` where it exists, which is the container's                                                          |
-| `BOWERBIRD_API_TOKEN`  | the desktop shell                   | A secret every request must carry, as a bearer token or the cookie the shell's page is signed in with (`?token=` once, then redirected off the address), so nothing else on the machine can drive the library |
+| Variable                                | Set by                              | Description                                                                                                                                                                                                   |
+| --------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BOWERBIRD_UPDATES`                     | the desktop shell                   | Where an update is staged, and set only where the app can hand itself to the updater, which is what decides whether an in-place update is offered at all                                                      |
+| `BOWERBIRD_PLATFORM`                    | the Dockerfile, the Android shell   | Which release platform this install is, where it cannot be worked out from the kernel - the image runs the same Linux a desktop build does and installs an entirely different file                            |
+| `BOWERBIRD_NATIVE_LIB`                  | the shell, the container entrypoint | The path to the packaged pixel library. The container ships an x86-64 build (§10.4).                                                                                                                          |
+| `WEB_DIST`                              | the shell                           | The web client to serve, which is the page the shell's webview loads from this server. Unset, `./web/dist` where it exists, which is the container's                                                          |
+| `BOWERBIRD_API_TOKEN`                   | the shell                           | A secret every request must carry, as a bearer token or the cookie the shell's page is signed in with (`?token=` once, then redirected off the address), so nothing else on the machine can drive the library |
+| `BOWERBIRD_LIBRARIES_DIR`               | the mobile shell                    | Where a synced library goes when adding it names no folder, as `<dir>/<library id>`. Unset, adding one requires a folder                                                                                      |
+| `BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB` | the mobile shell                    | The disk space limit a fresh catalogue starts with and Settings resets to (50 on mobile)                                                                                                                      |
+| `BOWERBIRD_ADDON_DIR`                   | the Android shell                   | Where the Android build's `libsql` and `@parcel/watcher` addons are, which their bundled loaders open from there                                                                                              |
 
 Three more are genuinely optional. The first replaces the lens database the binary carries; the other two say where update checks are made (§23.5):
 
@@ -471,7 +474,7 @@ the bounds; the reasoning behind each number lives beside it there.
 | `backup_every_days`        | `1`     | Interval for the rolling catalogue backup; `0` disables (§4.9)                                                                                                                                                                                                     |
 | `backup_keep`              | `7`     | How many backups to keep. A count of files rather than of days, so lengthening the interval does not silently shorten the window (§4.9)                                                                                                                            |
 | `export_history_limit`     | `1000`  | How many exported files the history keeps. Whole runs are culled oldest-first past it, so it is a floor (§10.5.2)                                                                                                                                                  |
-| `disk_space_limit_gb`      | `200`   | Ceiling on what the disk usage row measures, checked hourly and on change. Over it, renditions other than grid tiles are evicted least recently built or served first (§10.6.2)                                                                                    |
+| `disk_space_limit_gb`      | `200`   | Ceiling on what the disk usage row measures, checked hourly and on change. Over it, renditions other than grid tiles are evicted least recently built or served first (§10.6.2). `BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB` replaces the default (mobile: 50)         |
 
 Two shapes of consumer, and they take a setting differently:
 
@@ -615,8 +618,7 @@ in separate Bun processes here so module mocks cannot leak into real watcher tes
 shell's shared export-path module directly with Rust, without building the GUI or image pipeline.
 The frozen root and web installs, Rust toolchain and `assets/reference_frame.ARW` from Git LFS
 are enough to run it. The release workflow requires this suite to pass on Linux, macOS and Windows
-before starting any full build or publishing. Android carries no Bun server; its build uses the
-same gate for the shared host code.
+before starting any full build or publishing, Android's included.
 
 Unit tests (mocked dependencies, run anywhere):
 

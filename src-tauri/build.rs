@@ -1,17 +1,13 @@
 fn main() {
-    // Declared so each command has a permission a capability can grant: the desktop page is
-    // served over http by the local server, and Tauri answers a remote origin only the commands
+    // Declared so each command has a permission a capability can grant: the page is served over
+    // http by the local server, and Tauri answers a remote origin only the commands
     // a capability names (`capabilities/`).
     let commands = tauri_build::AppManifest::new().commands(&[
-        "api",
-        "server_origin",
-        "set_server_origin",
         "ui_scale",
         "set_ui_scale",
         "app_logs",
         "set_caption_buttons",
         "display_is_hdr",
-        "events_following",
         "pick_export_folder",
         "export_to_folder",
         "open_original_with",

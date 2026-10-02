@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { Database } from '../driver';
 import { runMigrations } from '../migrate';
-import { DEFAULT_SETTINGS } from '../../schemas/settings';
+import { config } from '../../config';
 
 function settingsFor(db: Database, keys: string[]): Record<string, string> {
   const rows = db.query('SELECT key, value FROM settings').all() as {
@@ -94,7 +94,7 @@ describe('opening a catalogue', () => {
     const keys = new Set(seeded.map((row) => row.key));
     // Every key but the ones whose default is null: an absent row is already "nothing chosen",
     // which is what `last_viewer_rendition` is until something is.
-    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+    for (const [key, value] of Object.entries(config.defaultSettings)) {
       expect(keys.has(key)).toBe(value != null);
     }
     expect(keys.has('last_viewer_rendition')).toBe(false);

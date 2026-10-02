@@ -10,7 +10,7 @@ pub fn reveal_file(path: String) -> Result<(), String> {
     reveal(Path::new(&path))
 }
 
-/// Where the server's disk is not this machine's - a hosted library - there is nothing here to show.
+/// Where this device holds no copy of the original there is nothing here to show.
 #[tauri::command]
 pub async fn reveal_original(photo_id: String) -> Result<(), String> {
     reveal(&crate::open_with::original_path(&photo_id).await?)

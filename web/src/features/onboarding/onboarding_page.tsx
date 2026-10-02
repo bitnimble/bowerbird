@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderPlus, Link2 } from 'lucide-react';
 import { route } from '../../../../src/schemas/route';
+import { inMobileApp } from '../../api/transport';
 import { useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { Heading } from '../../ui/heading';
@@ -44,6 +45,8 @@ const styles = stylex.create({
 type Step = 'library' | 'preferences';
 
 const STEPS: Step[] = ['library', 'preferences'];
+
+const ONLY_SYNCED = inMobileApp();
 
 export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
   const store = useLibrariesStore();
@@ -106,7 +109,9 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
       <Heading>{OnboardingStrings.welcome()}</Heading>
       {none ? (
         <Text variant="muted" as="p">
-          {SettingsStrings.noLibrariesHint()}
+          {ONLY_SYNCED
+            ? SettingsStrings.noSyncedLibrariesHint()
+            : SettingsStrings.noLibrariesHint()}
         </Text>
       ) : (
         <List label={SettingsStrings.libraries()}>
@@ -121,11 +126,16 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
         </List>
       )}
       <Row>
-        <Button variant={none ? 'primary' : 'default'} onClick={() => setAdding(true)}>
-          <FolderPlus size={ICON} />
-          {AddLibraryStrings.title()}
-        </Button>
-        <Button onClick={() => setJoining(true)}>
+        {!ONLY_SYNCED && (
+          <Button variant={none ? 'primary' : 'default'} onClick={() => setAdding(true)}>
+            <FolderPlus size={ICON} />
+            {AddLibraryStrings.title()}
+          </Button>
+        )}
+        <Button
+          variant={ONLY_SYNCED && none ? 'primary' : 'default'}
+          onClick={() => setJoining(true)}
+        >
           <Link2 size={ICON} />
           {AddReplicaStrings.title()}
         </Button>

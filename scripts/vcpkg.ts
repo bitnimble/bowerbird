@@ -9,20 +9,36 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
+import { ANDROID_TARGET, androidNdk } from './android-ndk';
 import { pin, unpack } from './pinned';
 
 const VCPKG = '398e9a716997ec84676dc7c7afdd51afcede2269';
 const ROOT = resolve(import.meta.dir, '..');
 const MANIFEST = resolve(ROOT, 'native/rawshim/vcpkg');
 export const WINDOWS = process.platform === 'win32';
-export const TRIPLET = triplet();
+export const HOST_TRIPLET = hostTriplet();
+
+/** The triplet that builds for a Rust target: this machine's, or the phone's. */
+export function tripletFor(target: string | undefined): string {
+  if (target == null) return HOST_TRIPLET;
+  if (target === ANDROID_TARGET) return 'arm64-android';
+  throw new Error(`no vcpkg triplet builds for ${target}`);
+}
 
 /**
  * What a tree installed for `feature` is named by: the commit, the triplet, the manifest, and the
  * `getter` that shapes the tree after vcpkg is done with it.
  */
-export function vcpkgRecipe(feature: string, getter: string): string {
-  return pin(VCPKG, [feature, TRIPLET, text(getter), text(import.meta.path), ...manifest()]);
+export function vcpkgRecipe(feature: string, getter: string, triplet = HOST_TRIPLET): string {
+  const ndk = triplet.endsWith('-android') ? [text(resolve(ROOT, '.android-ndk-version'))] : [];
+  return pin(VCPKG, [
+    feature,
+    triplet,
+    text(getter),
+    text(import.meta.path),
+    ...ndk,
+    ...manifest(),
+  ]);
 }
 
 /**
@@ -36,8 +52,11 @@ export function vcpkgInstall(
   feature: string,
   tools: readonly string[],
   cached: boolean,
+  triplet = HOST_TRIPLET,
 ): void {
   refuseMissingTools(tools);
+  // vcpkg's Android toolchain finds the NDK through `ANDROID_NDK_HOME` and nothing else.
+  const toolchain = triplet.endsWith('-android') ? androidNdk().env : {};
   // vcpkg's own root and its build trees, somewhere short: the trees nest deep enough to pass
   // Windows' 260-character path limit under a cache directory, and run to gigabytes. Thrown away
   // once the install succeeds, and kept when it does not, since the logs a failure names are in it.
@@ -72,11 +91,11 @@ export function vcpkgInstall(
         `--x-buildtrees-root=${join(work, 'b')}`,
         `--x-packages-root=${join(work, 'p')}`,
         `--downloads-root=${join(work, 'd')}`,
-        `--triplet=${TRIPLET}`,
+        `--triplet=${triplet}`,
         '--clean-after-build',
       ],
       root,
-      binaryCache,
+      { ...binaryCache, ...toolchain },
     );
   } catch (failed) {
     console.error(`vcpkg's build trees and logs are kept at ${work}`);
@@ -87,7 +106,8 @@ export function vcpkgInstall(
 
 /**
  * Where a host dependency's `path` landed: under the triplet vcpkg built tools for, which is this
- * machine's and not necessarily `TRIPLET` - on Windows the libraries are static and the tools not.
+ * machine's and not necessarily the libraries' - on Windows the libraries are static and the tools
+ * not, and an Android tree's tools run here.
  */
 export function hostPath(installed: string, path: string): string {
   for (const host of readdirSync(installed)) {
@@ -97,7 +117,7 @@ export function hostPath(installed: string, path: string): string {
   throw new Error(`vcpkg installed no ${path} under ${installed}`);
 }
 
-function triplet(): string {
+function hostTriplet(): string {
   const known: Record<string, string> = {
     'linux-x64': 'x64-linux',
     'darwin-arm64': 'arm64-osx',

@@ -4,10 +4,10 @@
 //! handle and writes through it; this app has a filesystem, so the reader picks a folder in
 //! their own file manager's dialog and the shell writes there.
 //!
-//! **The bytes never reach the page.** A reply crosses IPC as a binary body (`api.rs`), but a
-//! command's *arguments* are JSON - so the page fetching a render and handing it to a writer
-//! command would put a 60MP TIFF through that leg as an array of decimal numbers. The render
-//! is fetched and written here instead, which is one hop rather than three.
+//! **The bytes never reach the page.** A command's arguments are JSON, so the page fetching a
+//! render and handing it to a writer command would put a 60MP TIFF through that leg as an array
+//! of decimal numbers. The render is fetched and written here instead, which is one hop rather
+//! than three.
 
 use std::path::Path;
 
@@ -24,10 +24,10 @@ pub enum Folder {
     /// Built only off the desktop, so a desktop build is where it reads as dead.
     #[cfg_attr(desktop, allow(dead_code))]
     Unsupported,
+    #[cfg_attr(not(desktop), allow(dead_code))]
     Dismissed,
-    Picked {
-        path: String,
-    },
+    #[cfg_attr(not(desktop), allow(dead_code))]
+    Picked { path: String },
 }
 
 /// The reader's own folder dialog.
@@ -49,8 +49,8 @@ async fn picked() -> Folder {
         })
 }
 
-/// Android has no folder to pick: storage is scoped, a folder is a granted tree rather than
-/// a path, and `rfd` has no backend for the platform at all.
+/// The mobile app has no folder to pick: storage is scoped, a folder is a granted tree rather
+/// than a path, and `rfd` has no mobile backend at all.
 #[cfg(not(desktop))]
 async fn picked() -> Folder {
     Folder::Unsupported
@@ -69,8 +69,8 @@ pub async fn export_to_folder(
     options: serde_json::Value,
     run_id: String,
 ) -> Result<String, String> {
-    let url = format!("{}/api/export", crate::api::origin());
-    let reply = crate::api::request(reqwest::Method::POST, &url)
+    let url = "/api/export";
+    let reply = crate::server::request(reqwest::Method::POST, url)?
         // The run is carried into the render because the history's tile is a second size off
         // it; where the file then lands is reported by the page, which is what knows.
         .json(&serde_json::json!({ "photoId": photo_id, "options": options, "runId": run_id }))

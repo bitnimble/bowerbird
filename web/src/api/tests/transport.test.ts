@@ -1,89 +1,19 @@
-// The two transports have to agree, and the places they quietly did not.
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   appDataDir,
-  assetUrl,
   canRevealFile,
   openAppDataDir,
   subscribeEvents,
   type EventHandlers,
 } from '../transport';
 import { PathSegment, route } from '../../../../src/schemas/route';
-import { BUNDLED, SERVED, loadedFrom, unload } from './page';
 
-const gridRendition = route(PathSegment.image(), 'abc', PathSegment.renditions(), 'grid');
-const events = route(PathSegment.api(), PathSegment.events());
-
-type Internals = {
-  convertFileSrc?: (file: string, protocol: string) => string;
-  invoke?: (command: string, args: unknown) => Promise<unknown>;
-};
-type Listen = (
-  event: string,
-  handler: (message: { payload: unknown }) => void,
-) => Promise<() => void>;
 const global = globalThis as {
-  __TAURI_INTERNALS__?: Internals;
-  __TAURI__?: {
-    core?: { invoke?: (command: string, args: unknown) => Promise<unknown> };
-    event?: { listen?: Listen };
-  };
+  __TAURI__?: { core?: { invoke?: (command: string, args: unknown) => Promise<unknown> } };
 };
 
 afterEach(() => {
-  delete global.__TAURI_INTERNALS__;
   delete global.__TAURI__;
-  unload();
-});
-
-/** What `tauri/scripts/core.js` emits, verbatim, for each platform it distinguishes. */
-function shell(osName: 'android' | 'macos'): void {
-  global.__TAURI_INTERNALS__ = {
-    convertFileSrc: (file, protocol) =>
-      osName === 'android'
-        ? `http://${protocol}.localhost/${encodeURIComponent(file)}`
-        : `${protocol}://localhost/${encodeURIComponent(file)}`,
-  };
-  global.__TAURI__ = { core: { invoke: async () => null } };
-}
-
-describe('assetUrl', () => {
-  test('is the path itself in a browser', () => {
-    expect(assetUrl(gridRendition)).toBe(gridRendition);
-  });
-
-  // The desktop's page is its server's, so an `<img>` loads from it as it would in a browser.
-  test('is the path itself on a page its server serves, shell or not', () => {
-    loadedFrom(SERVED);
-    shell('macos');
-    expect(assetUrl(gridRendition)).toBe(gridRendition);
-  });
-
-  // The prefix is the injected script's to say: hardcoded to one form, every rendition,
-  // download and event stream resolved to a scheme the other platforms' webviews do not answer.
-  test.each([
-    ['macos', `bowerbird://localhost${gridRendition}`],
-    ['android', `http://bowerbird.localhost${gridRendition}`],
-  ] as const)('follows the platform on a bundled page: %s', (osName, expected) => {
-    loadedFrom(BUNDLED);
-    shell(osName);
-    expect(assetUrl(gridRendition)).toBe(expected);
-  });
-
-  // It is handed the empty string precisely because it percent-encodes what it is given, so
-  // a path passed through it would come back with its slashes escaped.
-  test('does not let the helper encode our path', () => {
-    loadedFrom(BUNDLED);
-    shell('android');
-    expect(assetUrl(events)).toBe(`http://bowerbird.localhost${events}`);
-  });
-
-  test('falls back to the bare path where the helper is absent', () => {
-    loadedFrom(BUNDLED);
-    global.__TAURI_INTERNALS__ = {};
-    global.__TAURI__ = { core: { invoke: async () => null } };
-    expect(assetUrl(events)).toBe(events);
-  });
 });
 
 describe('the app data folder', () => {
@@ -112,7 +42,7 @@ describe('the app data folder', () => {
     expect(shell.asked()).toEqual(['app_data_dir', 'open_app_data_dir']);
   });
 
-  // Android: the folder is app-private, so the shell offers no path and the settings page
+  // The mobile app: the folder is app-private, so the shell offers no path and the settings page
   // renders no row rather than a button that opens nothing.
   test('is nothing where the shell says there is nowhere to open', async () => {
     shellAnswering(null);
@@ -127,22 +57,41 @@ describe('showing a file in its folder', () => {
   };
   afterEach(() => pretend(userAgent));
 
-  test('is offered by a desktop shell, and by neither a browser nor Android', () => {
+  test('is offered by a desktop shell, and by neither a browser nor the mobile app', () => {
     pretend('Mozilla/5.0 (X11; Linux x86_64)');
     expect(canRevealFile()).toBe(false);
 
     global.__TAURI__ = { core: { invoke: async () => null } };
     expect(canRevealFile()).toBe(true);
 
-    pretend('Mozilla/5.0 (Linux; Android 14; Pixel 8)');
-    expect(canRevealFile()).toBe(false);
+    for (const phone of [
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8)',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+    ]) {
+      pretend(phone);
+      expect(canRevealFile()).toBe(false);
+    }
+  });
+
+  test('tells an iPad from the Mac its webview claims to be', () => {
+    const touchPoints = navigator.maxTouchPoints;
+    const touch = (points: number): void => {
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: points, configurable: true });
+    };
+    try {
+      global.__TAURI__ = { core: { invoke: async () => null } };
+      pretend('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15');
+      touch(0);
+      expect(canRevealFile()).toBe(true);
+      touch(5);
+      expect(canRevealFile()).toBe(false);
+    } finally {
+      touch(touchPoints);
+    }
   });
 });
 
 describe('subscribeEvents', () => {
-  /** What `events_following` answers with when the stream is up. */
-  const LIBRARY = 'http://127.0.0.1:3000';
-
   function handlers(watching: Partial<EventHandlers> = {}): EventHandlers {
     return {
       open: () => {},
@@ -156,189 +105,78 @@ describe('subscribeEvents', () => {
     };
   }
 
-  /** Stands in for the shell, holding whatever the page registered. */
-  function shellEvents(following: string | null = null): {
-    deliver: (payload: unknown) => void;
-    channel: () => string;
-    unlistened: () => number;
-    settled: () => Promise<void>;
+  /** Stands in for the browser's `EventSource`, holding whatever the page registered. */
+  function eventSource(): {
+    opened: string[];
+    deliver: (kind: string, data?: string) => void;
+    closed: () => boolean;
+    restore: () => void;
   } {
-    let handler: ((message: { payload: unknown }) => void) | null = null;
-    let channel = '';
-    let unlistened = 0;
-    let landed: () => void = () => {};
-    const registered = new Promise<void>((resolve) => (landed = resolve));
-
-    loadedFrom(BUNDLED);
-    global.__TAURI__ = {
-      // `events_following` answers with the library it is streaming from, or null.
-      core: { invoke: async () => following },
-      event: {
-        listen: async (event, given) => {
-          channel = event;
-          handler = given;
-          landed();
-          return () => {
-            unlistened += 1;
-          };
-        },
-      },
-    };
-    return {
-      deliver: (payload) => handler?.({ payload }),
-      channel: () => channel,
-      unlistened: () => unlistened,
-      // The listen round trip and the state query resolve on their own microtask chains, so
-      // this drains rather than counting ticks and hoping.
-      settled: async () => {
-        await registered;
-        for (let tick = 0; tick < 8; tick++) await Promise.resolve();
-      },
-    };
-  }
-
-  test('is the page’s own connection on a page its server serves, shell or not', () => {
+    const real = globalThis.EventSource;
     const opened: string[] = [];
-    const eventSource = globalThis.EventSource;
+    const listeners = new Map<string, (event: { data: string }) => void>();
+    let closed = false;
     globalThis.EventSource = class {
       constructor(url: string) {
         opened.push(url);
       }
-      addEventListener(): void {}
-      close(): void {}
+      addEventListener(kind: string, listener: (event: { data: string }) => void): void {
+        listeners.set(kind, listener);
+      }
+      close(): void {
+        closed = true;
+      }
     } as unknown as typeof EventSource;
+    return {
+      opened,
+      deliver: (kind, data = '') => listeners.get(kind)?.({ data }),
+      closed: () => closed,
+      restore: () => (globalThis.EventSource = real),
+    };
+  }
+
+  test('routes each kind to its handler, on the page’s own connection', () => {
+    const source = eventSource();
     try {
-      loadedFrom(SERVED);
-      let listened = false;
-      global.__TAURI__ = {
-        core: { invoke: async () => null },
-        event: {
-          listen: async () => {
-            listened = true;
-            return () => {};
-          },
-        },
-      };
-      subscribeEvents(handlers()).close();
-      expect(opened).toEqual([events]);
-      expect(listened).toBe(false);
+      const seen: string[] = [];
+      subscribeEvents(
+        handlers({
+          rendition: (data) => seen.push(`rendition:${data}`),
+          replication: (data) => seen.push(`replication:${data}`),
+        }),
+      );
+      source.deliver('rendition', '{"id":"a"}');
+      source.deliver('replication', '{"library_id":"lib"}');
+      expect(source.opened).toEqual([route(PathSegment.api(), PathSegment.events())]);
+      expect(seen).toEqual(['rendition:{"id":"a"}', 'replication:{"library_id":"lib"}']);
     } finally {
-      globalThis.EventSource = eventSource;
+      source.restore();
     }
   });
 
-  test('routes each kind to its handler', async () => {
-    const shell = shellEvents();
-    const seen: string[] = [];
-    subscribeEvents(
-      handlers({
-        open: () => seen.push('open'),
-        rendition: (data) => seen.push(`rendition:${data}`),
-        replication: (data) => seen.push(`replication:${data}`),
-        backup: (data) => seen.push(`backup:${data}`),
-      }),
-    );
-    await shell.settled();
-
-    expect(shell.channel()).toBe('library:event');
-    shell.deliver({ kind: 'open', data: '' });
-    shell.deliver({ kind: 'rendition', data: '{"id":"a"}' });
-    shell.deliver({ kind: 'replication', data: '{"library_id":"lib"}' });
-    shell.deliver({ kind: 'backup', data: '{"library_id":"lib"}' });
-    // A kind the page does not know is ignored rather than thrown on, so a newer shell
-    // emitting a second event type does not break an older page.
-    shell.deliver({ kind: 'something-later', data: 'x' });
-    expect(seen).toEqual([
-      'open',
-      'rendition:{"id":"a"}',
-      'replication:{"library_id":"lib"}',
-      'backup:{"library_id":"lib"}',
-    ]);
+  // A page served by the API cannot have loaded while the API was unreachable, so only the
+  // connects after the first are a server coming back.
+  test('says the first connect is the baseline and every later one a reconnect', () => {
+    const source = eventSource();
+    try {
+      const opens: boolean[] = [];
+      subscribeEvents(handlers({ open: (reconnect) => opens.push(reconnect) }));
+      source.deliver('open');
+      source.deliver('open');
+      source.deliver('open');
+      expect(opens).toEqual([false, true, true]);
+    } finally {
+      source.restore();
+    }
   });
 
-  test('stops listening once closed', async () => {
-    const shell = shellEvents();
-    const stream = subscribeEvents(handlers());
-    await shell.settled();
-
-    stream.close();
-    expect(shell.unlistened()).toBe(1);
-  });
-
-  // `listen` resolves after a round trip, so a view that mounts and unmounts inside it would
-  // otherwise leave its handler registered for the life of the app.
-  test('unlistens a subscription closed before it was registered', async () => {
-    const shell = shellEvents();
-    subscribeEvents(handlers()).close();
-    await shell.settled();
-    expect(shell.unlistened()).toBe(1);
-  });
-
-  // The stream is the app's and connects at startup, so by the time a page subscribes its
-  // `open` has already been emitted to nobody. Without asking, `serverReachable` would never
-  // run for that session - which a browser never suffers, because there the page owns the
-  // connection and gets its own `open`.
-  test('opens for a page that subscribed after the stream was already up', async () => {
-    const shell = shellEvents(LIBRARY);
-    let opens = 0;
-    subscribeEvents(handlers({ open: () => (opens += 1) }));
-    await shell.settled();
-    expect(opens).toBe(1);
-  });
-
-  test('does not open where the stream is down', async () => {
-    const shell = shellEvents(null);
-    let opens = 0;
-    subscribeEvents(handlers({ open: () => (opens += 1) }));
-    await shell.settled();
-    expect(opens).toBe(0);
-  });
-
-  // Which kind of open it is, not merely that one happened, because the two mean opposite
-  // things to a view. A stream already up when the page subscribed is the baseline it was
-  // rendered against; one that comes up after is a library that was unreachable and now is
-  // not - and in the shell that is the ordinary case, since the page renders from its
-  // embedded bundle whether or not the library is running.
-  test('says the baseline is not a reconnect', async () => {
-    const shell = shellEvents(LIBRARY);
-    const opens: boolean[] = [];
-    subscribeEvents(handlers({ open: (reconnect) => opens.push(reconnect) }));
-    await shell.settled();
-    expect(opens).toEqual([false]);
-
-    shell.deliver({ kind: 'open', data: '' });
-    expect(opens).toEqual([false, true]);
-  });
-
-  // The regression: launched against a library that was not running, the page's first open is
-  // a server becoming reachable. Reported as a first connect, `serverReachable` never ran and
-  // every thumbnail that failed while the library was down stayed a placeholder for the life
-  // of the page.
-  test('says a stream that comes up later is a reconnect', async () => {
-    const shell = shellEvents(null);
-    const opens: boolean[] = [];
-    subscribeEvents(handlers({ open: (reconnect) => opens.push(reconnect) }));
-    await shell.settled();
-    expect(opens).toEqual([]);
-
-    shell.deliver({ kind: 'open', data: '' });
-    expect(opens).toEqual([true]);
-  });
-
-  // Once for the state it asked for, then again for each reconnect, and never twice for one
-  // connection - `serverReachable` re-asks every view holding a dead request.
-  test('opens once per connection, and again on a reconnect', async () => {
-    const shell = shellEvents(LIBRARY);
-    let opens = 0;
-    subscribeEvents(handlers({ open: () => (opens += 1) }));
-    await shell.settled();
-    expect(opens).toBe(1);
-
-    shell.deliver({ kind: 'open', data: '' });
-    expect(opens).toBe(2);
-    shell.deliver({ kind: 'rendition', data: '{}' });
-    expect(opens).toBe(2);
-    shell.deliver({ kind: 'open', data: '' });
-    expect(opens).toBe(3);
+  test('closes the connection', () => {
+    const source = eventSource();
+    try {
+      subscribeEvents(handlers()).close();
+      expect(source.closed()).toBe(true);
+    } finally {
+      source.restore();
+    }
   });
 });

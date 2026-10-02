@@ -180,11 +180,10 @@ export class MergePresenter {
 
   private async settleRecipe(
     recipe: AssemblyRecipe,
-    served: string[],
+    layerUrls: string[],
     restore: StoredMergeSession | null,
     signal: AbortSignal,
   ): Promise<void> {
-    const layerUrls = served.map(compositesApi.layerUrl);
     keepOnly(LAYER_HOLDER, layerUrls);
     // A layer that will not decode costs that source its preview, not the page: the overlay, the
     // scores and the commit all read the recipe, and `MergeStage` skips a source it has no frame
@@ -560,7 +559,7 @@ export class MergePresenter {
     try {
       const { url } = await this.previewAssembly(wanted, controller.signal);
       if (this.previewing !== controller) return;
-      this.compositor.drawSettled(compositesApi.layerUrl(url));
+      this.compositor.drawSettled(url);
     } catch {
       // A render nobody could build leaves the masked draw, which is a picture rather than an
       // error: the reader is choosing frames, not waiting on this.

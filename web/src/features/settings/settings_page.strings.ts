@@ -103,7 +103,6 @@ export const SettingsStrings = {
     'When enabled, shows menu options to send photos to a Samsung Frame TV on your local network.',
 
   couldNotSaveSetting: () => "We couldn't save that setting. Try again.",
-  couldNotUseServerAddress: () => "We couldn't use that server address. Check it and try again.",
   couldNotOpenAppDataFolder: () =>
     "We couldn't open the app data folder. Try opening it in your file manager.",
 
@@ -116,9 +115,6 @@ export const SettingsStrings = {
   deviceName: () => 'Device name',
   deviceNameHint: () => 'Shown on your synced devices',
   groupThisApp: () => 'This app',
-  serverAddress: () => 'Bowerbird server',
-  serverAddressPlaceholder: () => 'http://bowerbird.local:3000',
-  connect: () => 'Connect',
   uiScale: () => 'Interface scale',
   uiScalePercent: (percent: number) => `${percent}%`,
   couldNotSetUiScale: () => "We couldn't change the interface scale. Try again.",
@@ -210,6 +206,8 @@ export const SettingsStrings = {
   libraries: () => 'Libraries',
   noLibrariesYet: () => 'No libraries yet',
   noLibrariesHint: () => 'Add a folder of RAW files to start your library.',
+  /** The mobile app's, which can only sync a library from another device. */
+  noSyncedLibrariesHint: () => 'Connect to another Bowerbird to sync one of its libraries.',
   groupGeneral: () => 'General',
   groupAdvanced: () => 'Advanced',
   groupSystem: () => 'System',

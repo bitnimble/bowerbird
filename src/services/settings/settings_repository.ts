@@ -1,10 +1,6 @@
+import { config } from '../../config';
 import type { Database } from '../../db/driver';
-import {
-  DEFAULT_SETTINGS,
-  SettingsSchema,
-  type Settings,
-  type UpdateSettingsRequest,
-} from '../../schemas/settings';
+import { SettingsSchema, type Settings, type UpdateSettingsRequest } from '../../schemas/settings';
 
 // Values are stored as text, so the default's type says what to read one back
 // as. Anything else (a nullable string) is already what it will be parsed as.
@@ -54,7 +50,8 @@ export class SettingsRepository {
   // read as the default rather than failing the whole request: a bad row must
   // not stop the viewer opening or the server booting.
   private read(): Settings {
-    const settings: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+    const defaults = config.defaultSettings;
+    const settings: Record<string, unknown> = { ...defaults };
     const rows = this.db.query('SELECT key, value FROM settings').all() as Array<{
       key: string;
       value: string;
@@ -62,7 +59,7 @@ export class SettingsRepository {
     for (const { key, value } of rows) {
       const field = SettingsSchema.shape[key as keyof Settings];
       if (field == null) continue;
-      const parsed = field.safeParse(typed(DEFAULT_SETTINGS[key as keyof Settings], value));
+      const parsed = field.safeParse(typed(defaults[key as keyof Settings], value));
       if (parsed.success) settings[key] = parsed.data;
     }
     return settings as Settings;

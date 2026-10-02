@@ -36,6 +36,7 @@
     "get:shell": "bun run get:slangc && bun run get:pmrid && bun run get:environments",
     "get:slangc": "bun run scripts/get-slangc.ts",
     "get:codecs": "bun run scripts/get-codecs.ts",
+    "get:android-runtime": "bun run scripts/get-android-runtime.ts",
     "get:swiftshader": "bun run scripts/get-swiftshader.ts",
     "get:pmrid": "bun run scripts/get-pmrid.ts",
     "get:environments": "bun run scripts/get-environments.ts",

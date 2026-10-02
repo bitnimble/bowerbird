@@ -182,8 +182,11 @@ native/rawshim/pkg/
 # slash: these are files here, and a directory pattern would not match them.
 # `bun run get:slangc`, a toolchain rather than a source.
 native/rawshim/.slangc
-# `bun run get:codecs`.
+# `bun run get:codecs`, and `--target <triple>`'s.
 native/rawshim/.codecs
+native/rawshim/.codecs-*
+# `bun run get:android-runtime`.
+native/rawshim/.android-runtime
 # `bun run get:swiftshader`, wanted only on a machine with no GPU.
 native/rawshim/.swiftshader
 # PMRID's published weights, `bun run get:pmrid`.

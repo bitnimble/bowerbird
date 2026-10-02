@@ -21,13 +21,9 @@ tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5
 tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# The shell proxies for the hosted server, so it needs a client. `rustls` rather than the
-# system TLS so a bundled build carries its own and does not want OpenSSL on the box.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-# The event stream's reconnect backoff. Already in the tree - `tauri` runs on it - and named
-# here only because `tauri::async_runtime` re-exports the channel and lock types but not the
-# timer. `Response::chunk` is not feature-gated, so reading the stream itself needs nothing.
-tokio = { version = "1", features = ["time", "sync", "macros"] }
+# What the shell asks of the local server itself: an export's render, a RAW's path.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio = { version = "1", features = ["sync"] }
 updater = { path = "../native/updater" }
 getrandom = "0.3"
 

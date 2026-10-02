@@ -24,7 +24,6 @@ import {
 import { PathSegment, route } from '../../../src/schemas/route';
 import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { NothingSchema, request } from './request';
-import { assetUrl } from './transport';
 
 const assemblyOf = (photoId: string): string =>
   route(PathSegment.api(), PathSegment.composites(), PathSegment.assembly(), photoId);
@@ -140,12 +139,4 @@ export const compositesApi = {
       assemblyOf(photoId),
       CommitAssemblyRequestSchema.parse({ recipe }),
     ),
-
-  /**
-   * A draft's layer, which the server names as the path it serves it at (§4.3).
-   *
-   * Through `assetUrl` like every other picture the browser fetches for itself: the path is the
-   * API's, and under the desktop shell the scheme in front of it is not.
-   */
-  layerUrl: (path: string): string => assetUrl(path),
 };

@@ -15,9 +15,8 @@ import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
 import {
   appDataDir,
+  inMobileApp,
   openAppDataDir,
-  serverOrigin,
-  setServerOrigin,
   setUiScale,
   shellInvoke,
   uiScale,
@@ -428,25 +427,21 @@ const LOG_LEVELS: Option<Settings['log_level']>[] = [
   { value: 'error', label: SettingsStrings.logLevelError() },
 ];
 
-// The desktop app serves its own library, so only Android has a server to name.
-const HAS_SERVER_ADDRESS = navigator.userAgent.includes('Android');
+const ONLY_SYNCED = inMobileApp();
 
 const UI_SCALES: Option<string>[] = ['0.8', '0.9', '1', '1.1', '1.25', '1.5'].map((value) => ({
   value,
   label: SettingsStrings.uiScalePercent(Math.round(Number(value) * 100)),
 }));
 
-/**
- * The settings the shell keeps for itself rather than the library, and nothing at all in a
- * browser. They cannot live with the settings below, because those are on the far side of the
- * server address: asking the server where the server is does not work.
- */
 function ThisApp(): JSX.Element | null {
   if (shellInvoke() == null) return null;
   return (
     <>
       <GroupTitle>{SettingsStrings.groupThisApp()}</GroupTitle>
-      <Panel flush>{HAS_SERVER_ADDRESS ? <ServerAddress /> : <UiScale />}</Panel>
+      <Panel flush>
+        <UiScale />
+      </Panel>
     </>
   );
 }
@@ -483,63 +478,6 @@ function UiScale(): JSX.Element | null {
     </SettingRow>
   );
 }
-
-/**
- * Which Bowerbird this app talks to.
- *
- * Applied on save rather than as you type: every request in the app goes through this, and
- * re-pointing them at a half-typed hostname would empty the screen with each keystroke.
- */
-const ServerAddress = observer(function ServerAddress(): JSX.Element | null {
-  const [saved, setSaved] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
-  const [failure, setFailure] = useState<string | null>(null);
-
-  useEffect(() => {
-    void serverOrigin().then((origin) => {
-      if (origin == null) return;
-      setSaved(origin);
-      setDraft(origin);
-    });
-  }, []);
-
-  if (saved == null) return null;
-
-  const apply = (): void => {
-    setFailure(null);
-    void setServerOrigin(draft)
-      .then((settled) => {
-        setSaved(settled);
-        setDraft(settled);
-        // A reload rather than a re-fetch: everything already on screen was read from the
-        // old address, and there is no partial version of "this is a different library".
-        window.location.reload();
-      })
-      .catch(() => setFailure(SettingsStrings.couldNotUseServerAddress()));
-  };
-
-  return (
-    <SettingRow
-      label={SettingsStrings.serverAddress()}
-      hint={failure ?? undefined}
-      onReset={saved === draft ? undefined : () => setDraft(saved)}
-    >
-      <TextField
-        style={settingStyles.field}
-        label={SettingsStrings.serverAddress()}
-        value={draft}
-        placeholder={SettingsStrings.serverAddressPlaceholder()}
-        onChange={setDraft}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') apply();
-        }}
-      />
-      <Button variant="primary" disabled={draft === saved} onClick={apply}>
-        {SettingsStrings.connect()}
-      </Button>
-    </SettingRow>
-  );
-});
 
 function AppDataFolder(): JSX.Element | null {
   const [path, setPath] = useState<string | null>(null);
@@ -800,14 +738,16 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
 
           <PageHead>
             <Spacer />
-            <Button onClick={() => setJoining(true)}>
+            <Button variant={ONLY_SYNCED ? 'primary' : 'default'} onClick={() => setJoining(true)}>
               <Link2 size={ICON} />
               {AddReplicaStrings.title()}
             </Button>
-            <Button variant="primary" onClick={() => setAdding(true)}>
-              <FolderPlus size={ICON} />
-              {AddLibraryStrings.title()}
-            </Button>
+            {!ONLY_SYNCED && (
+              <Button variant="primary" onClick={() => setAdding(true)}>
+                <FolderPlus size={ICON} />
+                {AddLibraryStrings.title()}
+              </Button>
+            )}
           </PageHead>
           <AddLibraryDialog open={adding} onOpenChange={setAdding} />
           <AddReplicaDialog open={joining} onOpenChange={setJoining} />
@@ -815,7 +755,9 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
           {store.isEmpty && (
             <EmptyState title={SettingsStrings.noLibrariesYet()}>
               <Text as="p" variant="muted">
-                {SettingsStrings.noLibrariesHint()}
+                {ONLY_SYNCED
+                  ? SettingsStrings.noSyncedLibrariesHint()
+                  : SettingsStrings.noLibrariesHint()}
               </Text>
             </EmptyState>
           )}

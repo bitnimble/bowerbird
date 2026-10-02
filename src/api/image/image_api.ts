@@ -360,9 +360,7 @@ export class ImageApi {
    * One picture of this photograph, coded, for a client that will grade it itself.
    *
    * **The numbers come back in the body, not beside it.** The reply is framed - a `u32` header
-   * length, that much JSON, padding to a word, then the samples - because the desktop shell's
-   * proxy keeps seven response headers and drops everything else, so a header naming the levels
-   * and the colour match would reach the webview empty (`src-tauri/src/api.rs`).
+   * length, that much JSON, padding to a word, then the samples.
    *
    * **The URL says what the client can show, never which level to serve.** With nothing, the
    * whole picture at the coarsest level it has, which is what a reader opens on. With `region`

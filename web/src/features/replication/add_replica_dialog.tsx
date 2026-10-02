@@ -3,6 +3,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import { type BrowsedRemote, type RemoteLibrary } from '../../../../src/schemas/replication';
+import { inMobileApp } from '../../api/transport';
 import { usePresenters, useReplicationStore } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
@@ -46,13 +47,16 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 }): JSX.Element {
   const store = useReplicationStore();
   const { replication } = usePresenters();
+  // The phone's server picks the folder in its own storage, and a phone has little room for
+  // originals.
+  const onlySynced = inMobileApp();
   const [browser, setBrowser] = useState(newBrowser);
   const [step, setStep] = useState<Step>('address');
   const [address, setAddress] = useState('');
   const [remote, setRemote] = useState<BrowsedRemote | null>(null);
   const [picked, setPicked] = useState<RemoteLibrary | null>(null);
   const [path, setPath] = useState('');
-  const [keepOriginals, setKeepOriginals] = useState(true);
+  const [keepOriginals, setKeepOriginals] = useState(!onlySynced);
   const [autoTransferOriginals, setAutoTransferOriginals] = useState(true);
   const [denoiser, setDenoiser] = useState<Denoiser>('galosh');
   const [busy, setBusy] = useState(false);
@@ -69,16 +73,17 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     setStep('address');
     setRemote(null);
     setPicked(null);
-    setKeepOriginals(true);
+    setKeepOriginals(!onlySynced);
     setAutoTransferOriginals(true);
     setDenoiser('galosh');
     setBusy(false);
+    if (onlySynced) return;
     const next = newBrowser();
     setBrowser(next);
     void next.presenter.open('/');
-  }, [open, replication]);
+  }, [open, replication, onlySynced]);
 
-  const root = path;
+  const canAdd = onlySynced || path.trim() !== '';
   const canConnect = address.trim() !== '' && !busy;
 
   async function connect(): Promise<void> {
@@ -106,7 +111,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     const done = await replication.addReplica({
       address: remote.address,
       library_id: picked.id,
-      root_path: root,
+      ...(onlySynced ? {} : { root_path: path }),
       sync_originals: keepOriginals,
       auto_transfer_originals: autoTransferOriginals,
       denoiser,
@@ -210,22 +215,24 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
         {step === 'where' && picked != null && (
           <>
-            <Field>
-              <Text variant="label" as="span">
-                {AddReplicaStrings.folderOnThisDevice()}
-              </Text>
-              <FolderBrowser
-                store={browser.store}
-                presenter={browser.presenter}
-                label={AddLibraryStrings.libraryRootPath()}
-                placeholder={AddReplicaStrings.rootPlaceholder()}
-                canCreate
-                onPathChange={setPath}
-              />
-              <Text variant="mono" as="p">
-                {AddReplicaStrings.folderHint()}
-              </Text>
-            </Field>
+            {!onlySynced && (
+              <Field>
+                <Text variant="label" as="span">
+                  {AddReplicaStrings.folderOnThisDevice()}
+                </Text>
+                <FolderBrowser
+                  store={browser.store}
+                  presenter={browser.presenter}
+                  label={AddLibraryStrings.libraryRootPath()}
+                  placeholder={AddReplicaStrings.rootPlaceholder()}
+                  canCreate
+                  onPathChange={setPath}
+                />
+                <Text variant="mono" as="p">
+                  {AddReplicaStrings.folderHint()}
+                </Text>
+              </Field>
+            )}
 
             <Field>
               <Text variant="label" as="span">
@@ -274,11 +281,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
             <DialogActions>
               <Button onClick={() => back('pick')}>{AddReplicaStrings.back()}</Button>
-              <Button
-                variant="primary"
-                disabled={root.trim() === '' || busy}
-                onClick={() => void add()}
-              >
+              <Button variant="primary" disabled={!canAdd || busy} onClick={() => void add()}>
                 {busy ? AddReplicaStrings.settingUp() : AddReplicaStrings.add(picked.name)}
               </Button>
             </DialogActions>

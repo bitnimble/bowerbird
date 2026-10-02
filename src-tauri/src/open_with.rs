@@ -16,8 +16,8 @@ pub async fn open_original_with(window: Window, photo_id: String) -> Result<(), 
     choose(&window, &file).await
 }
 
-/// The RAW itself where the server shares this machine's disk, so another application's sidecar
-/// lands beside it; a downloaded copy where the library is hosted elsewhere.
+/// The RAW itself where this device holds it, so another application's sidecar lands beside it;
+/// a downloaded copy where it does not.
 async fn local_original(photo_id: &str) -> Result<PathBuf, String> {
     let path = original_path(photo_id).await?;
     if path.exists() {
@@ -26,13 +26,13 @@ async fn local_original(photo_id: &str) -> Result<PathBuf, String> {
     downloaded(photo_id).await
 }
 
-/// Where the RAW is on the server's disk, which is this machine's only where the server is local.
+/// Where the RAW is on the library's disk.
 pub(crate) async fn original_path(photo_id: &str) -> Result<PathBuf, String> {
     #[derive(serde::Deserialize)]
     struct Original {
         path: PathBuf,
     }
-    let url = format!("{}/image/{photo_id}/original", crate::api::origin());
+    let url = format!("/image/{photo_id}/original");
     let (_, bytes) = fetched(&url).await?;
     let original: Original = serde_json::from_slice(&bytes)
         .map_err(|e| format!("{url} answered something else: {e}"))?;
@@ -43,10 +43,7 @@ pub(crate) async fn original_path(photo_id: &str) -> Result<PathBuf, String> {
 async fn downloaded(photo_id: &str) -> Result<PathBuf, String> {
     let folder = crate::export_paths::plain(photo_id)
         .ok_or_else(|| format!("not a photo id: {photo_id}"))?;
-    let url = format!(
-        "{}/image/{photo_id}/download/original",
-        crate::api::origin()
-    );
+    let url = format!("/image/{photo_id}/download/original");
     let (named, bytes) = fetched(&url).await?;
     let named = named.ok_or_else(|| format!("{url} did not name the file it answered with"))?;
     let folder = std::env::temp_dir().join("bowerbird-open").join(folder);
@@ -58,7 +55,7 @@ async fn downloaded(photo_id: &str) -> Result<PathBuf, String> {
 
 /// The body of a successful reply, and the file name it came under if it named one.
 async fn fetched(url: &str) -> Result<(Option<String>, Vec<u8>), String> {
-    let reply = crate::api::request(reqwest::Method::GET, url)
+    let reply = crate::server::request(reqwest::Method::GET, url)?
         .send()
         .await
         .map_err(|e| format!("could not reach {url}: {e}"))?;

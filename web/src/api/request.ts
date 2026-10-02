@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { type ErrorEnvelope, ErrorEnvelopeSchema } from '../../../src/schemas/error';
-import { PathSegment, route } from '../../../src/schemas/route';
 import { describe } from '../errors';
 import { type Reply, type RequestOptions, send } from './transport';
 
@@ -21,13 +20,6 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * Every call below, over whichever transport is running (`transport.ts`).
- *
- * `cmd` is the caller's own name and is carried rather than used: it is what a Rust side
- * answering from a local library would match on, and until offline mode exists every one
- * of them proxies. Derived from the method and path so a new call cannot forget one.
- */
 export async function request<S extends z.ZodType>(
   schema: S,
   method: string,
@@ -37,17 +29,10 @@ export async function request<S extends z.ZodType>(
 ): Promise<z.output<S>> {
   let reply: Reply;
   try {
-    reply = await send(commandName(method, path), method, path, body, options);
+    reply = await send(method, path, body, options);
   } catch (err) {
-    // A transport only rejects when it never got an answer, so this is "API unreachable",
+    // `send` only rejects when it never got an answer, so this is "API unreachable",
     // which is a different thing for the UI to say than any HTTP status.
-    //
-    // `describe` rather than `.message`, because the two transports do not reject alike:
-    // `fetch` throws a `TypeError`, where a Tauri command that returns `Result<_, String>`
-    // rejects with the bare string. Reading `.message` off that is `undefined`, so the shell
-    // reported "cannot reach the API at /api/settings: undefined" and threw away the reason
-    // the Rust had gone to the trouble of producing - on the one screen where the reader is
-    // trying to work out why the address is wrong.
     throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${describe(err)}`, 0);
   }
 
@@ -72,7 +57,7 @@ export async function requestFile(
 ): Promise<{ bytes: Uint8Array; mediaType: string; filename: string | null }> {
   let reply: Reply;
   try {
-    reply = await send(commandName(method, path), method, path, body);
+    reply = await send(method, path, body);
   } catch (err) {
     throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${describe(err)}`, 0);
   }
@@ -88,24 +73,10 @@ export async function requestFile(
   };
 }
 
-const API_PREFIX = new RegExp(`^(${route(PathSegment.api())}|${route(PathSegment.image())})/`);
-
-/** `PATCH /api/libraries/abc/photos` becomes `patch:libraries/:id/photos`. */
-function commandName(method: string, path: string): string {
-  const pattern = path
-    .split('?')[0]!
-    .replace(API_PREFIX, '')
-    .split('/')
-    .map((part) => (/^[0-9a-z]{8}$/.test(part) ? ':id' : part))
-    .join('/');
-  return `${method.toLowerCase()}:${pattern}`;
-}
-
 export function errorFrom(status: number, text: string): ApiError {
   const envelope = envelopeOf(text);
   return new ApiError(
     envelope?.error.code ?? 'INTERNAL_ERROR',
-    // A transport carries no status text, so a bodiless error has nothing else to say.
     envelope?.error.message ?? (text.slice(0, 200) || `the API answered ${status}`),
     status,
     envelope?.error.details,

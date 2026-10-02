@@ -384,11 +384,21 @@ fn server_bindings(include: &Path) -> bindgen::Bindings {
 /// libavif is too old to read a gain map, and a silent fall-back is a feature quietly absent from
 /// a build that looks complete.
 fn codecs() -> PathBuf {
-    let home = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".codecs");
+    let target = std::env::var("TARGET").expect("cargo sets TARGET");
+    let host = std::env::var("HOST").expect("cargo sets HOST");
+    let (name, getter) = if target == host {
+        (".codecs".to_string(), "bun run get:codecs".to_string())
+    } else {
+        (
+            format!(".codecs-{target}"),
+            format!("bun run get:codecs --target {target}"),
+        )
+    };
+    let home = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name);
     let link = home.join("link.txt");
     let lines = std::fs::read_to_string(&link).unwrap_or_else(|_| {
         panic!(
-            "{}: no codecs here. This build links the pinned ones:\n\n    bun run get:codecs",
+            "{}: no codecs here. This build links the pinned ones:\n\n    {getter}",
             home.display()
         )
     });

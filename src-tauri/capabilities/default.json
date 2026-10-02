@@ -1,26 +1,17 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "default",
-  "description": "What Android's bundled page is allowed to call: it reaches its server through the shell",
+  "description": "What the mobile page, served by the app's own server, is allowed to call: what a page cannot do itself",
   "platforms": ["android", "iOS"],
   "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*"] },
   "permissions": [
     "core:default",
-    "allow-api",
-    "allow-server-origin",
-    "allow-set-server-origin",
     "allow-ui-scale",
     "allow-set-ui-scale",
     "allow-app-logs",
     "allow-display-is-hdr",
-    "allow-events-following",
     "allow-pick-export-folder",
-    "allow-export-to-folder",
-    "allow-open-original-with",
-    "allow-open-folder",
-    "allow-reveal-file",
-    "allow-reveal-original",
-    "allow-app-data-dir",
-    "allow-open-app-data-dir"
+    "allow-app-data-dir"
   ]
 }

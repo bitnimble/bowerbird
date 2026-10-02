@@ -10,7 +10,6 @@ import {
   RecordExportRequestSchema,
 } from '../../../src/schemas/exports';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { assetUrl } from './transport';
 import { NothingSchema, request, requestFile } from './request';
 
 export const exportsApi = {
@@ -58,5 +57,5 @@ export const exportsApi = {
   // The picture beside a history row, written when the export was and never rewritten - so
   // unversioned, and served with a year's cache behind it.
   thumbnailUrl: (exportId: string): string =>
-    assetUrl(route(PathSegment.image(), PathSegment.exports(), exportId)),
+    route(PathSegment.image(), PathSegment.exports(), exportId),
 };

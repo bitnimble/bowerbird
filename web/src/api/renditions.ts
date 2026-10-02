@@ -1,11 +1,10 @@
 import { PathSegment, route } from '../../../src/schemas/route';
 import { type RenditionJobResponse, RenditionJobResponseSchema } from '../../../src/schemas/photos';
 import type { Rendition } from '../../../src/services/processing/renditions/renditions';
-import { assetUrl } from './transport';
 import { errorFrom, NothingSchema, request } from './request';
 
 function renditionUrl(photoId: string, rendition: Rendition, version = 0): string {
-  const url = assetUrl(route(PathSegment.image(), photoId, PathSegment.renditions(), rendition));
+  const url = route(PathSegment.image(), photoId, PathSegment.renditions(), rendition);
   return version === 0 ? url : `${url}?v=${version}`;
 }
 

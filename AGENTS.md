@@ -101,6 +101,7 @@ into `native/rawshim/.codecs`, pinned by one vcpkg commit (DESIGN §23.7). Missi
 naming that command. Distribution codecs are unsuitable: libavif gain-map API arrived behind
 a flag in 1.1, settled in 1.2; Ubuntu 24.04 ships 1.0.4, Debian trixie 1.1.1 with flag off.
 Distributed libjxl 0.7 predates encoder API stability in 0.10.
+`--target aarch64-linux-android` builds the Android app's into `.codecs-aarch64-linux-android`.
 
 All link **statically**; `librawshim` needs only C/C++ runtimes. `native/rawshim/vcpkg/` holds
 manifest, libavif overlay using sharpyuv rather than libyuv, and triplets skipping debug builds
@@ -110,9 +111,10 @@ and pinning macOS deployment target. A vcpkg bump must re-record `encode` rows i
 Linux/macOS prerequisites: compiler, git, pkg-config, python3, zip, unzip, nasm on x86.
 Getter names missing tools; vcpkg fetches cmake/ninja, and everything on Windows.
 
-All five getters reuse trees only when recipes match (`scripts/pinned.ts`):
+All six getters reuse trees only when recipes match (`scripts/pinned.ts`):
 codecs/compiler record vcpkg commit, files under `native/rawshim/vcpkg/`, getter source;
-driver/maps record file hashes; weights record checkpoint hash and getter source.
+driver/maps record file hashes; weights record checkpoint hash and getter source;
+`get:android-runtime` (the Android app's Bun and native addons) records their pins and versions.
 `get:environments` supplies print-preview HDR maps, `get:pmrid` denoiser weights;
 `get:shell` runs both. `get:codecs` also rejects libavif without sharpyuv, whose stub returns
 `NOT_IMPLEMENTED` for every 4:2:0 encode, including grid tiles.

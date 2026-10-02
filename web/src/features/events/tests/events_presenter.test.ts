@@ -9,14 +9,11 @@ import { EventsPresenter } from '../events_presenter';
 
 restoreApiAfterTests();
 const sourceDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
-const bridgeDescriptor = Object.getOwnPropertyDescriptor(globalThis, '__TAURI__');
 const sessions: EventsPresenter[] = [];
 afterEach(() => {
   sessions.splice(0).forEach((events) => events.disconnect());
   if (sourceDescriptor == null) Reflect.deleteProperty(globalThis, 'EventSource');
   else Object.defineProperty(globalThis, 'EventSource', sourceDescriptor);
-  if (bridgeDescriptor == null) Reflect.deleteProperty(globalThis, '__TAURI__');
-  else Object.defineProperty(globalThis, '__TAURI__', bridgeDescriptor);
 });
 
 test('backup loads before Settings, refreshes on each stream open and reads backup invalidations', async () => {
@@ -35,7 +32,6 @@ test('backup loads before Settings, refreshes on each stream open and reads back
     close(): void {}
   }
   Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: Source });
-  Reflect.deleteProperty(globalThis, '__TAURI__');
   const store = new BackupStore();
   const backup = new BackupPresenter(
     store,

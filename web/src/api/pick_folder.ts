@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PickFolderStrings } from './pick_folder.strings';
-import { shellInvoke } from './transport';
+import { inMobileApp, shellInvoke } from './transport';
 
 const FolderSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('unsupported') }),
@@ -9,7 +9,7 @@ const FolderSchema = z.discriminatedUnion('kind', [
 ]);
 
 export function canPickFolder(): boolean {
-  return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
+  return shellInvoke() != null && !inMobileApp();
 }
 
 export async function pickFolder(): Promise<z.infer<typeof FolderSchema>> {

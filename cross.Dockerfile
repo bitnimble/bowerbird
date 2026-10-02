@@ -53,6 +53,10 @@ RUN --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=loc
      done
 
 FROM cross AS android
+# The codecs' vcpkg build, and bindgen for `rawshim`.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends pkg-config python3 libclang-dev cmake \
+  && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /opt/jdk \
   && curl -sSfLo /tmp/jdk.tar.gz https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse \
   && tar -xzf /tmp/jdk.tar.gz -C /opt/jdk --strip-components=1 \
@@ -75,6 +79,7 @@ ARG VITE_SENTRY_DSN=
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.gradle \
+    --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=locked \
     --mount=type=cache,target=/app/native/rawshim/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \

@@ -1,11 +1,9 @@
-// What a failed request does, over each transport, when the failure carries no body.
+// What a failed request does when the failure carries no body.
 import { afterEach, describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { albumsApi } from '../albums';
 import { ApiError } from '../request';
 import { settingsApi } from '../settings';
-import { PathSegment, route } from '../../../../src/schemas/route';
-import { BUNDLED, loadedFrom, unload } from './page';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -30,7 +28,6 @@ describe('a failed request', () => {
     answers(502);
     const error = (await settingsApi.get().catch((e: unknown) => e)) as ApiError;
     expect(error.status).toBe(502);
-    // Not the empty string: `res.statusText` is what a transport does not carry.
     expect(error.message).toContain('502');
   });
 
@@ -71,36 +68,12 @@ describe('a failed request', () => {
   });
 });
 
-// The two transports do not reject alike, and only one of them rejects with an `Error`.
-// A Tauri command returning `Result<_, String>` rejects with the bare string, so reading
-// `.message` off it gave `undefined` - and the reason the Rust produced, which is the whole
-// point of the message, was thrown away on the one screen where it is being read.
-describe('a transport that never got an answer', () => {
-  const global = globalThis as {
-    __TAURI__?: { core?: { invoke?: (command: string, args: unknown) => Promise<unknown> } };
-  };
-  afterEach(() => {
-    delete global.__TAURI__;
-    unload();
-  });
+test('a request that never got an answer says why', async () => {
+  globalThis.fetch = (() =>
+    Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
 
-  test('carries a string rejection through, as the shell produces', async () => {
-    const why = `could not reach http://127.0.0.1:9999${route(PathSegment.api(), PathSegment.settings())}: Connection refused`;
-    loadedFrom(BUNDLED);
-    global.__TAURI__ = { core: { invoke: async () => Promise.reject(why) } };
-
-    const error = (await settingsApi.get().catch((e: unknown) => e)) as ApiError;
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error.code).toBe('NETWORK_ERROR');
-    expect(error.message).toContain('Connection refused');
-    expect(error.message).not.toContain('undefined');
-  });
-
-  test('and an Error rejection, as fetch produces', async () => {
-    globalThis.fetch = (() =>
-      Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
-
-    const error = (await settingsApi.get().catch((e: unknown) => e)) as ApiError;
-    expect(error.message).toContain('Failed to fetch');
-  });
+  const error = (await settingsApi.get().catch((e: unknown) => e)) as ApiError;
+  expect(error).toBeInstanceOf(ApiError);
+  expect(error.code).toBe('NETWORK_ERROR');
+  expect(error.message).toContain('Failed to fetch');
 });

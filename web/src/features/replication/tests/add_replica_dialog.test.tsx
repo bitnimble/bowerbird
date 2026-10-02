@@ -177,3 +177,41 @@ test.each([
     ]);
   },
 );
+
+test('the mobile app leaves the folder to its server and starts without originals', async () => {
+  const userAgent = navigator.userAgent;
+  const bridge = globalThis as { __TAURI__?: unknown };
+  Object.defineProperty(navigator, 'userAgent', {
+    value: 'Mozilla/5.0 (Linux; Android 14; Pixel 8)',
+    configurable: true,
+  });
+  bridge.__TAURI__ = { core: { invoke: async () => null } };
+  try {
+    const requests: AddReplicaRequest[] = [];
+    replicationApi.addReplica = (request) => {
+      requests.push(request);
+      return Promise.resolve({ library_id: 'library1', peer_id: 'peer000000000001', applied: 0 });
+    };
+    render(
+      <StoresProvider>
+        <AddReplicaDialog open onOpenChange={() => {}} />
+      </StoresProvider>,
+    );
+    await chooseLibrary();
+
+    expect(screen.queryByRole('button', { name: 'Choose folder' })).toBeNull();
+    await press('Add "Trip"');
+    expect(requests).toEqual([
+      {
+        address: 'http://desktop:5173',
+        library_id: 'library1',
+        sync_originals: false,
+        auto_transfer_originals: true,
+        denoiser: 'galosh',
+      },
+    ]);
+  } finally {
+    delete bridge.__TAURI__;
+    Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+  }
+});

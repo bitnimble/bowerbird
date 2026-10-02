@@ -134,8 +134,8 @@ keys, whose replacement would need an administrator.
 
 ### 23.5 Where the check runs
 
-`UpdateService` checks on the server: a phone opening a NAS is offered the NAS's update.
-One hourly call covers every device watching that library. Answers are cached for ten
+`UpdateService` checks on the server: a browser opening a NAS is offered the NAS's update.
+One hourly call covers every tab watching that library. Answers are cached for ten
 minutes, limiting launch and hourly checks to six GitHub calls an hour.
 
 Failure is **quiet**: offline libraries still work. Settings shows the reason; the sidebar
@@ -188,7 +188,7 @@ earlier would show a blank screen while the server restarts.
 | linux-x86_64   | nothing, paused | -            | -                         |
 | macos-arm64    | dmg             | yes          | yes                       |
 | windows-x86_64 | NSIS installer  | yes          | yes                       |
-| android-arm64  | apk             | no           | **no**                    |
+| android-arm64  | apk             | yes          | **no**                    |
 | docker-x86_64  | ghcr image      | yes          | no, `docker compose pull` |
 
 **The Linux desktop is paused, and the container is not.** A server reaches Linux through the
@@ -209,7 +209,9 @@ libjxl builds under `cl.exe` and under `clang-cl`, and libavif always did.
 
 **The codecs are vcpkg's, built static on every platform.** `bun run get:codecs` installs libavif
 and libjxl and the six libraries under them - aom, dav1d and sharpyuv under libavif; highway,
-brotli and lcms2 under libjxl - on `arm64-osx`, `x64-windows-static-md` and `x64-linux`. On
+brotli and lcms2 under libjxl - on `arm64-osx`, `x64-windows-static-md` and `x64-linux`, and
+`--target aarch64-linux-android` cross-builds them for `arm64-android` into a tree of its own,
+`.codecs-aarch64-linux-android`, which `build.rs` links when cargo builds for the phone. On
 Windows `-static-md` is the load-bearing half of the name: static archives against the _dynamic_
 C runtime, which is the runtime Rust's MSVC target links.
 
@@ -261,16 +263,27 @@ the shell already asks for. What still goes beside the executables is whatever t
 directory into the tarball's root, which the updater swaps into the install directory beside
 the executables, so a fresh install and an in-place update resolve alike.
 
+**Android carries its server as the desktop does, but executes only what is in `jniLibs`.**
+The platform maps code only from the native library directory its package installer fills, and
+only from files named `lib*.so`, so Bun's own Android build ships as `libbun.so`, beside
+`librawshim.so` and the two native addons, `libsql` (compiled from its tag, since it publishes no
+Android build) and Parcel's watcher (`get:android-runtime`). The Gradle project is patched to
+extract them on install and to allow cleartext to `127.0.0.1` alone (`android-build.ts`), and
+`build-sidecar.ts` fails the build on any of them needing a library outside the NDK's stable set
+and what ships beside them: the codecs' libc++ is the NDK's static one, and Parcel's watcher
+wants the shared one, which ships as `libc++_shared.so`. The bundle and the page are only read,
+so they travel as the app's assets and `android.rs` unpacks them into the data directory once per
+build, keyed by the `payload-id` hash `build-sidecar.ts` writes beside them. The bundle loads each
+addon through a loader that opens it from `BOWERBIRD_ADDON_DIR`.
+
+**The mobile app holds synced libraries only.** Its server can read nothing in the phone's shared
+storage, so the app offers no local library to add, only a connection to another Bowerbird. The
+request names no folder and the server puts the library under `BOWERBIRD_LIBRARIES_DIR`, which
+the shell sets inside the app's own storage, with originals off by default.
+
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system
 installer takes it from there.
-
-**A client pointed at a hosted Bowerbird is offered that server's update, not its own.**
-That follows from where the check runs (§23.5) and it is the right answer for the common
-case - the server is what holds the library, and a shell talking to one is a transport. It
-does mean a desktop app pointed elsewhere has no in-place update of its own; when that
-matters, it is a version the shell would have to report and a command of its own, rather
-than anything this arrangement is in the way of.
 
 ### 23.8 Versions
 

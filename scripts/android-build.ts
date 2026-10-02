@@ -1,54 +1,42 @@
-// Build the Android APK. Dev testing only, unsigned.
+// Build the Android APK, unsigned; `release.yml` signs it.
 //
-// The shell links `rawshim` without its `renditions` feature, so nothing here needs a C library
-// cross-built for the target: rawler reads the RAWs, the lens database is `lensdb`, the demosaic
-// and the grade are WGSL, and the JPEG codec either side is Rust.
-//
-// `bun run build:app --target aarch64-linux-android` runs this after everything it needs.
+// The app starts its own server as the desktop does (`src-tauri/src/android.rs`), so this builds
+// everything that server runs on for the phone first: the codecs, `librawshim`, and Bun with its
+// two native addons (`get:android-runtime`). `bun run build:app --target aarch64-linux-android`
+// runs this after the steps every app shares.
 //
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with the
-// NDK `.android-ndk-version` names, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must
-// agree - Gradle refuses to guess when they disagree, which is its way of saying the build
-// would be irreproducible.
+// NDK `.android-ndk-version` names, and a JDK 17.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
+import { ANDROID_TARGET, androidNdk } from './android-ndk.ts';
 
-const TARGET = 'aarch64-linux-android';
-const NDK_VERSION = readFileSync(
-  resolve(import.meta.dir, '../.android-ndk-version'),
-  'utf8',
-).trim();
-const under = TARGET.replaceAll('-', '_');
-
-const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
-if (sdk == null || !existsSync(sdk)) {
-  console.error('[android-build] set ANDROID_HOME to an Android SDK');
+let ndk: ReturnType<typeof androidNdk>;
+try {
+  ndk = androidNdk();
+} catch (missing) {
+  console.error(`[android-build] ${(missing as Error).message}`);
   process.exit(1);
 }
-const ndk = process.env.NDK_HOME ?? join(sdk, 'ndk', NDK_VERSION);
-if (!existsSync(ndk)) {
-  console.error(`[android-build] no NDK at ${ndk}: sdkmanager --install "ndk;${NDK_VERSION}"`);
-  process.exit(1);
-}
-
-// The NDK's macOS toolchain is universal under this name.
-const prebuilt = process.platform === 'darwin' ? 'darwin-x86_64' : 'linux-x86_64';
-const toolchain = join(ndk, 'toolchains', 'llvm', 'prebuilt', prebuilt, 'bin');
-// API 24, which is what the NDK's own linker wrappers are named for.
-const clang = join(toolchain, `aarch64-linux-android24-clang`);
-
 const env: Record<string, string> = {
   ...(process.env as Record<string, string>),
-  ANDROID_HOME: sdk,
-  ANDROID_SDK_ROOT: sdk,
-  NDK_HOME: ndk,
-  [`CC_${under}`]: clang,
-  [`CXX_${under}`]: `${clang}++`,
-  [`AR_${under}`]: join(toolchain, 'llvm-ar'),
+  ...ndk.env,
 };
+
+function run(command: string, args: string[], cwd = repoRoot, extra = {}): void {
+  const done = spawnSync(command, args, { stdio: 'inherit', env: { ...env, ...extra }, cwd });
+  if (done.status !== 0) process.exit(done.status ?? 1);
+}
 
 ensureIcons();
 
@@ -56,15 +44,24 @@ ensureIcons();
 // is generated rather than committed and a fresh checkout has none.
 const repoRoot = resolve(import.meta.dir, '..');
 if (!existsSync(join(repoRoot, 'src-tauri', 'gen', 'android'))) {
-  const started = spawnSync('bun', ['x', '@tauri-apps/cli', 'android', 'init'], {
-    stdio: 'inherit',
-    env,
-  });
-  if (started.status !== 0) process.exit(started.status ?? 1);
+  run('bun', ['x', '@tauri-apps/cli', 'android', 'init']);
 }
+patchProject(join(repoRoot, 'src-tauri', 'gen', 'android', 'app'));
+
+run('bun', ['run', 'get:codecs', '--target', ANDROID_TARGET]);
+run('bun', ['run', 'build:native:release', '--target', ANDROID_TARGET], repoRoot, {
+  CARGO_PROFILE_RELEASE_STRIP: 'symbols',
+});
+run('bun', ['run', 'get:android-runtime']);
+// The page the server serves and the server itself, which `tauri.android.conf.json` embeds as the
+// app's assets.
+run('bun', ['run', 'build'], join(repoRoot, 'web'));
+run('bun', ['run', 'scripts/build-sidecar.ts', '--target', ANDROID_TARGET]);
 
 const config = JSON.stringify({ version: VERSION });
-const args = [
+run('bun', [
+  'x',
+  '@tauri-apps/cli',
   'android',
   'build',
   '--target',
@@ -73,9 +70,53 @@ const args = [
   '--config',
   config,
   ...process.argv.slice(2),
-];
-const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
-if (built.status !== 0) process.exit(built.status ?? 1);
+]);
+
+/**
+ * What the generated project gets wrong for an app whose page is its own local server's.
+ *
+ * Release builds refuse cleartext, and the page is `http://127.0.0.1`, so cleartext is allowed to
+ * that address and no other. And the runtime and the addons run from the native library
+ * directory, which the installer only fills when the APK's libraries are packaged to be extracted
+ * rather than mapped from the archive.
+ */
+function patchProject(app: string): void {
+  const gradlePath = join(app, 'build.gradle.kts');
+  let gradle = readFileSync(gradlePath, 'utf8');
+  const extracted = 'packaging { jniLibs.useLegacyPackaging = true }';
+  if (!gradle.includes(extracted)) {
+    const anchor = '    buildFeatures {';
+    if (!gradle.includes(anchor)) {
+      throw new Error(`${gradlePath} has no \`buildFeatures\` to patch beside`);
+    }
+    gradle = gradle.replace(anchor, `    ${extracted}\n${anchor}`);
+    writeFileSync(gradlePath, gradle);
+  }
+
+  const xml = join(app, 'src', 'main', 'res', 'xml');
+  mkdirSync(xml, { recursive: true });
+  writeFileSync(
+    join(xml, 'network_security_config.xml'),
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<network-security-config>',
+      '    <domain-config cleartextTrafficPermitted="true">',
+      '        <domain includeSubdomains="false">127.0.0.1</domain>',
+      '    </domain-config>',
+      '</network-security-config>',
+      '',
+    ].join('\n'),
+  );
+  const manifestPath = join(app, 'src', 'main', 'AndroidManifest.xml');
+  const manifest = readFileSync(manifestPath, 'utf8');
+  const named = 'android:networkSecurityConfig="@xml/network_security_config"';
+  if (!manifest.includes(named)) {
+    if (!manifest.includes('<application')) {
+      throw new Error(`${manifestPath} has no \`<application>\` to patch`);
+    }
+    writeFileSync(manifestPath, manifest.replace('<application', `<application\n        ${named}`));
+  }
+}
 
 // Gradle leaves the APK under the generated project; copy it somewhere a phone can reach.
 const outputs = join(repoRoot, 'src-tauri', 'gen', 'android', 'app', 'build', 'outputs', 'apk');

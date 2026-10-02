@@ -13,3 +13,8 @@ test.each(['/fixture/Trip ', 'C:\\Photos\\Trip '])(
 test.each(['', ' \t '])('a replica refuses an empty folder path: %j', (root_path) => {
   expect(AddReplicaRequestSchema.safeParse({ ...request, root_path }).success).toBe(false);
 });
+
+// The mobile app names no folder, and its server picks one in its own storage.
+test('a replica may leave the folder to the server', () => {
+  expect(AddReplicaRequestSchema.parse(request).root_path).toBeUndefined();
+});

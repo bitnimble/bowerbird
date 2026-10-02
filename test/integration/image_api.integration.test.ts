@@ -238,13 +238,3 @@ test(
     expect(await res.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
   }),
 );
-
-// The editor's open is the tab's own now, or the desktop shell's in its own process, so the
-// server has no route to answer for it.
-test(
-  'no longer prepares a frame for the editor',
-  withRoot(async (root) => {
-    const res = await buildApp(root, photo({})).request('/image/p1/prepared?longEdge=0');
-    expect(res.status).toBe(404);
-  }),
-);

@@ -2,6 +2,8 @@
 // rendition a photo opens at (§10.2) and the server's own tuning (§15).
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
+import { join } from 'node:path';
+import { config } from '../../src/config';
 import { Database } from '../../src/db/driver';
 import { runMigrations } from '../../src/db/migrate';
 import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
@@ -15,7 +17,7 @@ function repo(): { settings: SettingsRepository; db: Database } {
 
 test('an untouched catalogue reads every setting as its default', () => {
   const { settings, db } = repo();
-  expect(settings.get()).toEqual(DEFAULT_SETTINGS);
+  expect(settings.get()).toEqual(config.defaultSettings);
   db.close();
 });
 
@@ -24,7 +26,7 @@ test('each setting is written and read back independently', () => {
   settings.update({ viewer_rendition_mode: 'max' });
   settings.update({ last_viewer_rendition: 'full' });
   expect(settings.get()).toEqual({
-    ...DEFAULT_SETTINGS,
+    ...config.defaultSettings,
     viewer_rendition_mode: 'max',
     last_viewer_rendition: 'full',
   });
@@ -79,6 +81,50 @@ test('a change reaches the parts of the server configured from it', () => {
   settings.update({ prune_every_days: 3 });
   expect(seen).toEqual([3]);
   db.close();
+});
+
+// The mobile app starts its server with a smaller disk, and both what a fresh catalogue
+// holds and what Settings resets to have to follow it.
+test('the launcher sets the disk space limit a fresh catalogue starts with', () => {
+  const run = (limit: string | undefined): { exitCode: number; stdout: string; stderr: string } => {
+    const script = [
+      "import { Database } from './src/db/driver';",
+      "import { runMigrations } from './src/db/migrate';",
+      "import { config } from './src/config';",
+      "import { SettingsRepository } from './src/services/settings/settings_repository';",
+      "const db = new Database(':memory:');",
+      'runMigrations(db);',
+      'const seeded = new SettingsRepository(db).get().disk_space_limit_gb;',
+      'console.log(JSON.stringify([seeded, config.defaultSettings.disk_space_limit_gb]));',
+    ].join('\n');
+    const env = { ...process.env };
+    delete env.BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB;
+    if (limit != null) env.BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB = limit;
+    const done = Bun.spawnSync(['bun', '-e', script], {
+      cwd: join(import.meta.dir, '..', '..'),
+      env,
+    });
+    return {
+      exitCode: done.exitCode,
+      stdout: done.stdout.toString(),
+      stderr: done.stderr.toString(),
+    };
+  };
+  const read = (limit: string | undefined): unknown => {
+    const done = run(limit);
+    expect(done.stderr).toBe('');
+    expect(done.exitCode).toBe(0);
+    return JSON.parse(done.stdout);
+  };
+  const fallback = DEFAULT_SETTINGS.disk_space_limit_gb;
+  expect(read('50')).toEqual([50, 50]);
+  expect(read(undefined)).toEqual([fallback, fallback]);
+  expect(read('')).toEqual([fallback, fallback]);
+  for (const bad of ['abc', '0', '-1', '1.5']) {
+    const done = run(bad);
+    expect(done.exitCode).not.toBe(0);
+    expect(done.stderr).toContain('BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB');
+  }
 });
 
 // The viewer writes `last_viewer_rendition` as it is used, and re-configuring the

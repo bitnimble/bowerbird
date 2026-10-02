@@ -1,12 +1,5 @@
 //! The Bowerbird server this app carries, and its life.
 //!
-//! A desktop Bowerbird is not a thin client onto somebody's server: it holds a real
-//! library of its own, imports and triages and edits with no network at all, and
-//! replicates with other copies when it can reach them. So the app starts a server
-//! for itself and points the page at that; a remote address, if the reader sets one,
-//! is a *replication peer* the local server talks to, not something the page reaches
-//! past it.
-//!
 //! Two things travel beside the executable and neither can be inside it. The server
 //! is a bundle run by the Bun runtime, because a compiled single file cannot start a
 //! worker and this one reads every RAW header on one. The native library is a shared
@@ -14,7 +7,6 @@
 //! rather than guessed at by the server, because a packaged app has no source tree to
 //! sit beside.
 
-use std::io::ErrorKind;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -53,20 +45,24 @@ impl Local {
     }
 }
 
-/// The local server's address, once it is answering.
-pub(crate) fn local_origin() -> Option<String> {
-    LOCAL
+/// A request the shell makes of the local server, signed in.
+pub(crate) fn request(
+    method: reqwest::Method,
+    path: &str,
+) -> Result<reqwest::RequestBuilder, String> {
+    let held = LOCAL
         .lock()
-        .ok()
-        .and_then(|held| held.as_ref().map(|local| local.origin.clone()))
+        .map_err(|_| "the local server's address is locked".to_string())?;
+    let local = held.as_ref().ok_or("the local server is not running")?;
+    Ok(client()
+        .request(method, format!("{}{path}", local.origin))
+        .bearer_auth(&local.token))
 }
 
-/// The secret the local server requires of every request, where `url` is on it.
-pub(crate) fn token_for(url: &str) -> Option<String> {
-    let held = LOCAL.lock().ok()?;
-    held.as_ref()
-        .filter(|local| local.serves(url))
-        .map(|local| local.token.clone())
+/// One client for the process, because a client is a connection pool.
+fn client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -112,18 +108,59 @@ fn free_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
+/// Where everything the server is made of landed.
+struct Layout {
+    runtime: PathBuf,
+    /// The bundle's directory, which every worker is a file in.
+    server: PathBuf,
+    native: PathBuf,
+    web: PathBuf,
+}
+
+#[cfg(desktop)]
+fn layout(app: &tauri::AppHandle<crate::Runtime>, _data: &Path) -> Result<Layout, String> {
+    let resources = resource_root(app)?;
+    Ok(Layout {
+        runtime: sidecar_path().map_err(|err| format!("could not locate the server: {err}"))?,
+        server: resources.join("server"),
+        // In a directory of its own, with every library it needs: what finds those is a relative
+        // search path on the library itself, so they have to be siblings.
+        native: resources.join("native").join(library_name()),
+        web: web_root(app)?,
+    })
+}
+
+/// Android executes only what its package installer unpacked, so the runtime and every native
+/// library ship as `jniLibs` beside this one, and the bundle and the page, which are only read,
+/// are unpacked from the app's assets.
+#[cfg(target_os = "android")]
+fn layout(app: &tauri::AppHandle<crate::Runtime>, data: &Path) -> Result<Layout, String> {
+    let native = crate::android::native_dir()?;
+    let payload = crate::android::unpacked(app, &data.join("payload"))?;
+    Ok(Layout {
+        runtime: native.join(crate::android::RUNTIME),
+        server: payload.join("server"),
+        native: native.join(library_name()),
+        web: payload.join("web"),
+    })
+}
+
 /// Where Tauri put a sidecar: beside the executable, with the target triple gone.
 ///
 /// `BOWERBIRD_SIDECAR` overrides it, because that copying only happens for a
 /// packaged build - a run straight out of `target/` has no server beside it, and
 /// pointing at one is how the desktop app is exercised without bundling it first.
+#[cfg(desktop)]
 fn sidecar_path() -> std::io::Result<PathBuf> {
     if let Ok(named) = std::env::var("BOWERBIRD_SIDECAR") {
         return Ok(PathBuf::from(named));
     }
     let exe = std::env::current_exe()?;
     let dir = exe.parent().ok_or_else(|| {
-        std::io::Error::new(ErrorKind::NotFound, "the executable has no directory")
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "the executable has no directory",
+        )
     })?;
     let name = if cfg!(windows) {
         "bowerbird-server.exe"
@@ -134,6 +171,7 @@ fn sidecar_path() -> std::io::Result<PathBuf> {
 }
 
 /// Where the bundle and the native library landed, on the same terms.
+#[cfg(desktop)]
 fn resource_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
     if let Ok(named) = std::env::var("BOWERBIRD_RESOURCES") {
         return Ok(PathBuf::from(named));
@@ -142,6 +180,7 @@ fn resource_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, Stri
 }
 
 /// The page the server serves, on the same terms: `BOWERBIRD_WEB` for a run out of `target/`.
+#[cfg(desktop)]
 fn web_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
     if let Ok(named) = std::env::var("BOWERBIRD_WEB") {
         return Ok(PathBuf::from(named));
@@ -149,6 +188,7 @@ fn web_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
     bundled(app, "web")
 }
 
+#[cfg(desktop)]
 fn bundled(app: &tauri::AppHandle<crate::Runtime>, name: &str) -> Result<PathBuf, String> {
     app.path()
         .resource_dir()
@@ -158,6 +198,7 @@ fn bundled(app: &tauri::AppHandle<crate::Runtime>, name: &str) -> Result<PathBuf
 
 /// Tauri canonicalises the resource directory, which on Windows yields `\\?\C:\...`, and Bun's
 /// resolver cannot open a worker at such a path: every worker fails with `Module not found`.
+#[cfg(desktop)]
 fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     match path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
         Some(disk) if disk.as_bytes().get(1) == Some(&b':') => PathBuf::from(disk),
@@ -192,32 +233,29 @@ fn library_name() -> &'static str {
 /// nothing useful to show until it is up; a window that paints and then fails every
 /// request looks broken in a way that "starting" does not.
 pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url, String> {
-    let sidecar = sidecar_path().map_err(|err| format!("could not locate the server: {err}"))?;
-    if !sidecar.exists() {
+    // A second start in one process would otherwise leave the first server holding the catalogue.
+    stop();
+    let data = data_dir(app)?;
+    std::fs::create_dir_all(&data)
+        .map_err(|err| format!("could not make {}: {err}", data.display()))?;
+    let layout = layout(app, &data)?;
+    if !layout.runtime.exists() {
         return Err(format!(
             "this build carries no server at {}. Run `bun run build:sidecar` before packaging.",
-            sidecar.display()
+            layout.runtime.display()
         ));
     }
-    let resources = resource_root(app)?;
-    let bundle = resources.join("server").join("index.js");
-    let workers = resources.join("server");
-    // In a directory of its own, with every library it needs: what finds those is a relative
-    // search path on the library itself, so they have to be siblings.
-    let native = resources.join("native").join(library_name());
+    let bundle = layout.server.join("index.js");
     if !bundle.exists() {
         return Err(format!(
             "this build carries no server bundle at {}. Run `bun run build:sidecar` before packaging.",
             bundle.display()
         ));
     }
-    let data = data_dir(app)?;
-    std::fs::create_dir_all(&data)
-        .map_err(|err| format!("could not make {}: {err}", data.display()))?;
 
     let port = free_port().map_err(|err| format!("no port to start the server on: {err}"))?;
     let token = fresh_token()?;
-    let mut command = Command::new(&sidecar);
+    let mut command = Command::new(&layout.runtime);
     // A release shell has no console (`windows_subsystem`), so Windows would open one for Bun.
     #[cfg(all(windows, not(debug_assertions)))]
     {
@@ -228,9 +266,12 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     if let Some(updates) = crate::update::home(app) {
         command.env("BOWERBIRD_UPDATES", updates);
     }
-    if cfg!(desktop) {
-        command.env("WEB_DIST", web_root(app)?);
-    }
+    #[cfg(mobile)]
+    command
+        .env("BOWERBIRD_LIBRARIES_DIR", data.join("libraries"))
+        .env("BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB", "50");
+    #[cfg(target_os = "android")]
+    crate::android::environment(&mut command, &data)?;
     let child = command
         // Windows' sidecar is a compiled stub carrying our name and icon; without this it runs
         // the stub rather than the bundle (`build-sidecar.ts`).
@@ -242,8 +283,9 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         .env("BOWERBIRD_API_TOKEN", &token)
         .env("DB_PATH", data.join("bowerbird.db"))
         .env("DATA_DIR", data.join("data"))
-        .env("BOWERBIRD_WORKER_DIR", &workers)
-        .env("BOWERBIRD_NATIVE_LIB", &native)
+        .env("WEB_DIST", &layout.web)
+        .env("BOWERBIRD_WORKER_DIR", &layout.server)
+        .env("BOWERBIRD_NATIVE_LIB", &layout.native)
         .env(
             "BOWERBIRD_REFERENCE_FRAME",
             data.join("reference_frame.ARW"),
@@ -255,7 +297,12 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         })
         .stderr(server_stderr(&data))
         .spawn()
-        .map_err(|err| format!("could not start the server at {}: {err}", sidecar.display()))?;
+        .map_err(|err| {
+            format!(
+                "could not start the server at {}: {err}",
+                layout.runtime.display()
+            )
+        })?;
 
     let origin = format!("http://127.0.0.1:{port}");
     if let Ok(mut held) = RUNNING.lock() {
@@ -344,6 +391,12 @@ fn wait_until_answering(origin: &str) -> Result<(), String> {
         if std::net::TcpStream::connect(&address).is_ok() {
             return Ok(());
         }
+        if let Some(exited) = exited() {
+            stop();
+            return Err(format!(
+                "the server stopped before it answered ({exited}); its server.stderr.log says why"
+            ));
+        }
         // Long enough not to spin, short enough that a fast start is not held up.
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -351,6 +404,18 @@ fn wait_until_answering(origin: &str) -> Result<(), String> {
     Err(format!(
         "the server did not answer on {origin} within {READY_TIMEOUT:?}"
     ))
+}
+
+/// How the server ended, if it has; `watch_for_update` may already have taken its exit.
+fn exited() -> Option<String> {
+    let mut held = RUNNING.lock().ok()?;
+    match held.as_mut() {
+        None => Some("exited".into()),
+        Some(child) => match child.try_wait() {
+            Ok(Some(status)) => Some(status.to_string()),
+            _ => None,
+        },
+    }
 }
 
 /// The folder to offer the reader, or nothing where there would be nothing to open it with -
@@ -367,7 +432,7 @@ fn reachable_data_dir(app: &tauri::AppHandle<crate::Runtime>) -> Option<String> 
         .map(|dir| dir.to_string_lossy().into_owned())
 }
 
-/// Android's storage is app-private: the folder is real and nothing on the device can open it.
+/// A mobile app's storage is private: the folder is real and nothing on the device can open it.
 #[cfg(not(desktop))]
 fn reachable_data_dir(_app: &tauri::AppHandle<crate::Runtime>) -> Option<String> {
     None
@@ -377,10 +442,6 @@ fn reachable_data_dir(_app: &tauri::AppHandle<crate::Runtime>) -> Option<String>
 #[tauri::command]
 pub fn open_app_data_dir(app: tauri::AppHandle<crate::Runtime>) -> Result<(), String> {
     let dir = data_dir(&app)?;
-    // A shell pointed at a hosted library never starts a server, so nothing has made this
-    // yet - and a file manager handed a path that is not there opens somewhere else instead.
-    std::fs::create_dir_all(&dir)
-        .map_err(|err| format!("could not make {}: {err}", dir.display()))?;
     open_folder(&dir).map_err(|err| format!("could not open {}: {err}", dir.display()))
 }
 

@@ -440,13 +440,10 @@ jobs:
           name: dist-${{ matrix.platform }}-payload
           path: dist/payload/
 
-  # Shell only: `rawshim` without `renditions` links no C at all, and with it would want the
-  # codecs `get:codecs` builds, for an Android triplet it does not name.
-  #
-  # It carries no server either, there being no Bun runtime for Android to carry, so
-  # `tauri.android.conf.json` clears the `externalBin` and the resources the desktop config
-  # names - a build otherwise stops at a sidecar for a triple nothing builds one for. The app
-  # points at a hosted library instead, which `lib.rs` already treats as the ordinary case.
+  # The app starts its own server as the desktop does, so this builds what that server runs on for
+  # the phone: the codecs for vcpkg's `arm64-android`, `rawshim`, and Bun's Android build with the
+  # two native addons (`get:android-runtime`). `tauri.android.conf.json` clears the desktop's
+  # `externalBin` and resources, since Android executes only what is in `jniLibs`.
   android:
     needs: [plan, platform-tests]
     if: needs.plan.outputs.android == 'true'
@@ -467,12 +464,19 @@ jobs:
       - uses: ./.github/actions/rust
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
-      # `src-tauri` alone: `rawshim` is its path dependency, built into its target directory.
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
           save-if: ${{ env.SAVE_CACHES == 'true' }}
-          workspaces: src-tauri
+          workspaces: |
+            native/rawshim
+            src-tauri
+      # The desktop job's, for the codecs' vcpkg build and bindgen.
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git nasm pkg-config python3 zip unzip libclang-dev
 
       - run: echo "NDK_VERSION=$(tr -d '[:space:]' < .android-ndk-version)" >> "$GITHUB_ENV"
       - name: The NDK, from last time
@@ -495,9 +499,12 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'scripts/android-ndk.ts', '.android-ndk-version', 'native/rawshim/vcpkg/**', '.bun-version', 'rust-toolchain.toml', 'bun.lock') }}
           restore-keys: pinned-${{ runner.os }}-android-
-      - run: bun run get:shell
+      - run: |
+          bun run get:shell
+          bun run get:codecs --target aarch64-linux-android
+          bun run get:android-runtime
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
         run: bun run scripts/prune-pinned.ts
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'

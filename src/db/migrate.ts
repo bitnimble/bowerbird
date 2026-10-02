@@ -3,7 +3,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { newId } from '../schemas/id';
 import { DEVICE_NAME_MAX_LENGTH } from '../schemas/replication';
-import { DEFAULT_SETTINGS } from '../schemas/settings';
+import { config } from '../config';
 import type { Database } from './driver';
 import { triggers } from './triggers';
 
@@ -142,7 +142,7 @@ function seedIdentity(db: Database): void {
 // "nothing chosen", which is what `last_viewer_rendition` is until a rendition has been.
 function seedSettings(db: Database): void {
   const insert = db.query('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-  for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+  for (const [key, value] of Object.entries(config.defaultSettings)) {
     if (value != null) insert.run(key, String(value));
   }
 }

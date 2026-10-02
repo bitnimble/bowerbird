@@ -572,7 +572,7 @@ The polyfill's cost was almost entirely the PNG it had to produce: a 121 MB 16-b
 
 **A queued run is listed as the rows it is about to become**, through the same row component and from the same joins: `POST /api/exports/queued` answers the ids with the photograph's path, its library and shoot, and the develop settings the file will carry where the run was asked to take them. So a reader checking what is in the queue asks what they ask of the history and gets it in the same shape - a run of one is the photograph, a run of several is a line that opens onto them - with the destination the one field missing, because nothing has written anywhere yet. The picture beside a waiting row is the **grid tile**, which is the photograph as the library draws it and the picture the reader picked it by; a written row keeps the export's own render (§10.5.2). Best effort: a describe that fails costs the run its rows and not its files. The picker is still answered inside the click, since `showDirectoryPicker` needs that transient activation, so the dialog stands until a folder is chosen and a reader who dismissed it keeps the settings they filled in.
 
-**The shell fetches and writes the render itself** (`src-tauri/src/export.rs`) rather than letting the page fetch it and hand it to a writer command. A _reply_ crosses IPC as a binary body, which is what makes an editor open viable at all (§13.6) - but a command's _arguments_ are JSON, so the page-to-shell leg of that alternative would put a 60MP TIFF through as an array of decimal numbers. `tauri-plugin-dialog` is not what opens the picker for the same reason nothing else here is a plugin: it takes `tauri` from crates.io where this build takes it from git, and cargo does not unify two sources - so it is `rfd` directly, which is what the plugin is.
+**The shell fetches and writes the render itself** (`src-tauri/src/export.rs`) rather than letting the page fetch it and hand it to a writer command. A command's _arguments_ are JSON, so the page-to-shell leg of that alternative would put a 60MP TIFF through as an array of decimal numbers. `tauri-plugin-dialog` is not what opens the picker for the same reason nothing else here is a plugin: it takes `tauri` from crates.io where this build takes it from git, and cargo does not unify two sources - so it is `rfd` directly, which is what the plugin is.
 
 **Neither folder is written over.** A name already in the destination is numbered rather than truncated, checked against the folder rather than tracked across the run, so a second export into the same place is safe too. Two bodies both number their frames from one, so a selection spanning cameras holds `DSC02981` twice, and an export is a reader's own files - the one place a silent overwrite cannot be undone.
 
@@ -666,7 +666,8 @@ Sweep on an interval, not startup: restarts imply no orphaning and development r
 
 ### 10.6.2 The disk space limit
 
-`disk_space_limit_gb` (default 200) caps everything the disk usage row measures (`StorageUsageService`):
+`disk_space_limit_gb` (default 200, and 50 in the mobile app, whose shell starts the server with
+`BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB`) caps everything the disk usage row measures (`StorageUsageService`):
 the data directory, the catalogue and its backups, printer profiles and caches. Only renditions are
 deleted to meet it. `DiskSpaceLimit` checks at startup, hourly and whenever the limit changes; over it,
 it evicts renditions least recently used first. `renditions.used_at` is set by a build and by a serve

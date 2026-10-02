@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { config } from '../../config';
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
@@ -37,6 +39,13 @@ import { LibraryActivity } from '../activity/library_activity';
 const log = new Logger('replication');
 
 const AUTO_EVERY_MS = 5 * 60 * 1000;
+
+function defaultRoot(libraryId: string): string {
+  if (config.librariesDir == null) {
+    throw new AppError('VALIDATION_ERROR', 'a folder on this device is required');
+  }
+  return path.join(config.librariesDir, libraryId);
+}
 
 export class ReplicationRunner {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -88,7 +97,7 @@ export class ReplicationRunner {
       this.db,
       peerBase(request.address),
       request.library_id,
-      request.root_path,
+      request.root_path ?? defaultRoot(request.library_id),
       request.sync_originals,
       request.auto_transfer_originals,
       request.denoiser,

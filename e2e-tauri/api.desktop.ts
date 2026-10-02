@@ -61,21 +61,15 @@ test.describe('Bowerbird desktop shell', () => {
     expect(await shell.evaluate(() => crossOriginIsolated)).toBe(true);
   });
 
-  test('answers what a page cannot do, and refuses the proxy Android reaches its server through', async () => {
-    const answers = await shell.evaluate(async () => {
+  test('answers what a page cannot do', async () => {
+    const answer = await shell.evaluate(async () => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
-      const outcome = (call: Promise<unknown>): Promise<string> =>
-        call.then(
-          () => 'answered',
-          () => 'refused',
-        );
-      return {
-        appDataDir: await outcome(invoke('app_data_dir', {})),
-        api: await outcome(invoke('api', { request: '{}' })),
-        serverOrigin: await outcome(invoke('server_origin', {})),
-      };
+      return invoke('app_data_dir', {}).then(
+        () => 'answered',
+        () => 'refused',
+      );
     });
-    expect(answers).toEqual({ appDataDir: 'answered', api: 'refused', serverOrigin: 'refused' });
+    expect(answer).toBe('answered');
   });
 
   /**

@@ -46,8 +46,6 @@ Non-goals (v1):
   another. If purge ships later it rides the same tombstone machinery.
 - Deduplicating the same RAW imported independently on two peers. Two imports are two photos; a
   future dedup tool is the answer, not the merge engine.
-- **Phone build and UI.** Rendition fetch-through (§7.9) and catalogue-only mode (§7.10)
-  solve full-catalogue browsing without local RAWs. The phone client remains a separate project.
 - Evicting against another _device_ on a policy. Between peers the only eviction is the manual
   "remove local copy" action (§7.6), which requires live verification at the moment it deletes.
   A ceiling that gives copies back on its own exists only against a backup folder (§14.5), where

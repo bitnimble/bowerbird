@@ -31,6 +31,8 @@ core.[0-9]*
 # and `COPY web ./web` lands host-built assets on top of the ones vite just wrote.
 native/rawshim/.slangc
 native/rawshim/.codecs
+native/rawshim/.codecs-*
+native/rawshim/.android-runtime
 native/rawshim/.pmrid
 native/rawshim/.environments
 native/rawshim/.swiftshader

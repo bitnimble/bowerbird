@@ -12,11 +12,30 @@
 // is a shared object opened by `dlopen`, and the shell tells the server where it
 // landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { ANDROID_ABI, ANDROID_TARGET, androidNdk } from './android-ndk';
+import {
+  LIBSQL as ANDROID_LIBSQL,
+  RUNTIME as ANDROID_RUNTIME,
+  WATCHER as ANDROID_WATCHER,
+} from './get-android-runtime';
 import { hostTriple } from './host-triple.ts';
 import { ensureIcons } from './make-icons.ts';
 import { elfClosure, machNames } from './native_closure';
+import { pinnedLink } from './pinned';
 
 const ROOT = join(import.meta.dir, '..');
 const BINARIES = join(ROOT, 'src-tauri', 'binaries');
@@ -74,21 +93,18 @@ function libraryName(triple: string): string {
  */
 function nativeLibrary(triple: string): string {
   const name = libraryName(triple);
-  // **The root decides before the clock does.** A cross build puts the library under the triple
-  // and a native one does not, so mtime across both would let a fresher *host* build win over
-  // the cross one asked for - and it is a valid ELF, so the copy, the relocation and the check
-  // all pass and the app fails at `dlopen` on the reader's machine.
-  const roots = [
-    join(ROOT, 'native', 'rawshim', 'target', triple),
-    join(ROOT, 'native', 'rawshim', 'target'),
-  ];
-  for (const root of roots) {
-    const built = ['release', 'quick']
-      .map((profile) => join(root, profile, name))
-      .filter((candidate) => existsSync(candidate))
-      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-    if (built[0] != null) return built[0];
-  }
+  // **A cross build is only ever looked for under its triple.** A native one lands in either
+  // root (`build:native` without `--target`, `build:app` with it), so both are this machine's and
+  // the clock decides between them; for any other triple the bare root is a *host* build, a valid
+  // ELF that passes the copy, the relocation and the check and fails at `dlopen` on the reader's
+  // machine.
+  const roots = [join(ROOT, 'native', 'rawshim', 'target', triple)];
+  if (triple === hostTriple()) roots.push(join(ROOT, 'native', 'rawshim', 'target'));
+  const built = roots
+    .flatMap((root) => ['release', 'quick'].map((profile) => join(root, profile, name)))
+    .filter((candidate) => existsSync(candidate))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  if (built[0] != null) return built[0];
   throw new Error(`no ${name} for ${triple} to ship. Run \`bun run build:native\` first.`);
 }
 
@@ -254,16 +270,118 @@ function run(command: string, args: string[]): void {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+/**
+ * Android maps code only from the native library directory its package installer fills from
+ * `jniLibs`, so everything executable goes there under a library's name, and the bundle loads each
+ * addon from there (`BOWERBIRD_ADDON_DIR`, which `android.rs` sets) rather than from beside itself.
+ * The bundle and the page are the app's assets, which `android.rs` unpacks.
+ */
+function shipForAndroid(): void {
+  const runtime = pinnedLink('android-runtime');
+  if (!existsSync(join(runtime, ANDROID_RUNTIME))) {
+    throw new Error(`no Android runtime at ${runtime}. Run \`bun run get:android-runtime\` first.`);
+  }
+  const jni = join(
+    ROOT,
+    'src-tauri',
+    'gen',
+    'android',
+    'app',
+    'src',
+    'main',
+    'jniLibs',
+    ANDROID_ABI,
+  );
+  if (!existsSync(dirname(jni))) {
+    throw new Error(`no Android project at ${dirname(jni)}. \`android-build.ts\` makes one.`);
+  }
+  // Emptied for the reason `RESOURCES` is; Tauri's Gradle plugin writes its own library back in.
+  rmSync(jni, { recursive: true, force: true });
+  mkdirSync(jni, { recursive: true });
+  const ndk = androidNdk();
+  const shipped = [
+    ...[ANDROID_RUNTIME, ANDROID_LIBSQL, ANDROID_WATCHER].map((name) =>
+      carry(join(runtime, name), jni),
+    ),
+    carry(nativeLibrary(triple), jni),
+    // Parcel's Android watcher is built against the shared libc++, which no phone has of its own.
+    carry(join(ndk.sysroot, 'usr', 'lib', ANDROID_TARGET, 'libc++_shared.so'), jni),
+  ];
+
+  for (const [addon, library] of [
+    ['@libsql/android-arm64', ANDROID_LIBSQL],
+    ['@parcel/watcher-android-arm64', ANDROID_WATCHER],
+  ] as const) {
+    const at = join(SERVER, 'node_modules', addon);
+    mkdirSync(at, { recursive: true });
+    writeFileSync(
+      join(at, 'package.json'),
+      `${JSON.stringify({ name: addon, main: 'index.js' })}\n`,
+    );
+    writeFileSync(
+      join(at, 'index.js'),
+      [
+        "const { join } = require('node:path');",
+        'const addon = { exports: {} };',
+        `process.dlopen(addon, join(process.env.BOWERBIRD_ADDON_DIR, '${library}'));`,
+        'module.exports = addon.exports;',
+        '',
+      ].join('\n'),
+    );
+  }
+  cpSync(join(ROOT, 'web', 'dist'), join(RESOURCES, 'web'), { recursive: true });
+  // What `android.rs` keys its unpacked copy on, so a phone does not hash the payload every launch.
+  writeFileSync(join(RESOURCES, ANDROID_PAYLOAD_ID), `${payloadId(RESOURCES)}\n`);
+
+  const carried = new Set(shipped.map((library) => basename(library)));
+  const readelf = join(ndk.bin, 'llvm-readelf');
+  for (const library of shipped) {
+    const needed = [
+      ...walk(readelf, library, '-d').matchAll(/\(NEEDED\)\s+Shared library: \[([^\]]+)\]/g),
+    ]
+      .map((match) => match[1]!)
+      .filter((name) => !ANDROID_SYSTEM_LIBRARIES.has(name) && !carried.has(name));
+    if (needed.length > 0) {
+      throw new Error(
+        `${library} needs ${needed.join(', ')}, which Android does not provide: link it statically`,
+      );
+    }
+  }
+  for (const library of shipped) console.log(`jniLibs: ${library}`);
+}
+
+const ANDROID_PAYLOAD_ID = 'payload-id';
+
+function payloadId(root: string): string {
+  const hash = createHash('sha256');
+  const files = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .sort();
+  for (const file of files) {
+    hash.update(relative(root, file)).update('\0').update(readFileSync(file)).update('\0');
+  }
+  return hash.digest('hex').slice(0, 16);
+}
+
+/** What every Android device has, from the NDK's stable system libraries. */
+const ANDROID_SYSTEM_LIBRARIES = new Set([
+  'libc.so',
+  'libm.so',
+  'libdl.so',
+  'liblog.so',
+  'libandroid.so',
+  'libvulkan.so',
+  'libz.so',
+]);
+
 const triple = targetTriple();
-const suffix = triple.includes('windows') ? '.exe' : '';
-mkdirSync(BINARIES, { recursive: true });
 // **Emptied, not written over.** Everything under here is written by this script, and every
 // part of it is copied in whole rather than file by file - a bundle, a library and its closure.
 // So anything left from a previous run is something an installed app would carry twice, and a
 // path this script no longer writes is one nothing would ever remove.
 rmSync(RESOURCES, { recursive: true, force: true });
 mkdirSync(SERVER, { recursive: true });
-mkdirSync(NATIVE, { recursive: true });
 
 // Flat, so a worker is `<dir>/<name>.js` and nothing has to know which folder it
 // came from; `workerEntry` builds exactly that path.
@@ -289,7 +407,6 @@ run('bun', [
 // layouts. Without this the desktop server starts, finds no migrations folder and cannot open a
 // catalogue at all.
 cpSync(join(ROOT, 'src', 'db', 'migrations'), join(SERVER, 'migrations'), { recursive: true });
-shipTheAddons(triple);
 // LGPL: shipped as its own module rather than bundled, so a recipient can replace it (THIRD_PARTY.md).
 cpSync(
   join(ROOT, 'node_modules', 'samsung-frame-art'),
@@ -299,45 +416,54 @@ cpSync(
     dereference: true,
   },
 );
-
-// The runtime, named as Tauri expects a sidecar to be. Copied rather than
-// referenced so the app depends on nothing the machine happens to have.
-//
-// **Cross-building needs one of the target's own**, since this is an executable
-// and not something the bundler produced: `BOWERBIRD_SIDECAR_RUNTIME` is where a
-// macOS `bun` goes when the `.app` is being assembled from Linux. Refused rather
-// than guessed at, because the wrong one produces an app that opens and finds no
-// library, which looks like a bug in the app rather than a missing step here.
-const host = hostTriple();
-const runtime = process.env.BOWERBIRD_SIDECAR_RUNTIME ?? process.execPath;
-if (process.env.BOWERBIRD_SIDECAR_RUNTIME == null && triple !== host) {
-  throw new Error(
-    `building for ${triple} from ${host}: set BOWERBIRD_SIDECAR_RUNTIME to a bun built for ${triple}`,
-  );
-}
-const sidecar = join(BINARIES, `bowerbird-server-${triple}${suffix}`);
-// Unlinked rather than overwritten: a copy of this one still running - a desktop
-// app left open, a probe that outlived its check - holds the file and the write
-// fails with ETXTBSY. Removing the name first leaves that process with its own
-// inode and this build with a clean one.
-rmSync(sidecar, { force: true });
-// `release:check`'s cross-build from Linux cannot name it, and ships Bun's own name and icon.
-if (triple.includes('windows') && process.platform === 'win32') {
-  nameTheWindowsRuntime(runtime, sidecar);
-} else {
-  copyFileSync(runtime, sidecar);
-}
-chmodSync(sidecar, 0o755);
-
-const library = nativeLibrary(triple);
-copyFileSync(library, shippedLibrary());
-// Writable, because the relocation below edits it in place.
-chmodSync(shippedLibrary(), 0o755);
-shipTheClosure(triple);
-
-console.log(`sidecar: ${sidecar} (the Bun runtime, from ${runtime})`);
+if (triple === ANDROID_TARGET) shipForAndroid();
+else shipForDesktop();
 console.log(`server:  ${join(SERVER, 'index.js')}`);
-console.log(`native:  ${shippedLibrary()} (from ${library})`);
 console.log(`schema:  ${join(SERVER, 'migrations')}`);
-for (const name of nativePackages(triple))
-  console.log(`addon:   ${join(SERVER, 'node_modules', name)}`);
+
+function shipForDesktop(): void {
+  shipTheAddons(triple);
+  mkdirSync(BINARIES, { recursive: true });
+  mkdirSync(NATIVE, { recursive: true });
+
+  // The runtime, named as Tauri expects a sidecar to be. Copied rather than
+  // referenced so the app depends on nothing the machine happens to have.
+  //
+  // **Cross-building needs one of the target's own**, since this is an executable
+  // and not something the bundler produced: `BOWERBIRD_SIDECAR_RUNTIME` is where a
+  // macOS `bun` goes when the `.app` is being assembled from Linux. Refused rather
+  // than guessed at, because the wrong one produces an app that opens and finds no
+  // library, which looks like a bug in the app rather than a missing step here.
+  const host = hostTriple();
+  const runtime = process.env.BOWERBIRD_SIDECAR_RUNTIME ?? process.execPath;
+  if (process.env.BOWERBIRD_SIDECAR_RUNTIME == null && triple !== host) {
+    throw new Error(
+      `building for ${triple} from ${host}: set BOWERBIRD_SIDECAR_RUNTIME to a bun built for ${triple}`,
+    );
+  }
+  const suffix = triple.includes('windows') ? '.exe' : '';
+  const sidecar = join(BINARIES, `bowerbird-server-${triple}${suffix}`);
+  // Unlinked rather than overwritten: a copy of this one still running - a desktop
+  // app left open, a probe that outlived its check - holds the file and the write
+  // fails with ETXTBSY. Removing the name first leaves that process with its own
+  // inode and this build with a clean one.
+  rmSync(sidecar, { force: true });
+  // `release:check`'s cross-build from Linux cannot name it, and ships Bun's own name and icon.
+  if (triple.includes('windows') && process.platform === 'win32') {
+    nameTheWindowsRuntime(runtime, sidecar);
+  } else {
+    copyFileSync(runtime, sidecar);
+  }
+  chmodSync(sidecar, 0o755);
+
+  const library = nativeLibrary(triple);
+  copyFileSync(library, shippedLibrary());
+  // Writable, because the relocation below edits it in place.
+  chmodSync(shippedLibrary(), 0o755);
+  shipTheClosure(triple);
+
+  console.log(`sidecar: ${sidecar} (the Bun runtime, from ${runtime})`);
+  console.log(`native:  ${shippedLibrary()} (from ${library})`);
+  for (const name of nativePackages(triple))
+    console.log(`addon:   ${join(SERVER, 'node_modules', name)}`);
+}

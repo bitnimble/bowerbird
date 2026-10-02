@@ -28,10 +28,8 @@ export class EventsPresenter {
     private readonly backup: Pick<BackupPresenter, 'load' | 'refresh' | 'dispose'>,
   ) {}
 
-  // One stream for the session, opened by the shell. Whichever transport carries it
-  // reconnects on its own and replays what it missed through Last-Event-ID, so there is
-  // nothing to retry here; a server that stays down leaves the rows as they are, and the
-  // backoff a view falls back on (§18.6) covers what was never delivered.
+  // EventSource reconnects on its own and replays what it missed through Last-Event-ID, so
+  // nothing retries here; the backoff a view falls back on (§18.6) covers the rest.
   connect(): void {
     if (this.stream != null) return;
     this.stream = subscribeEvents({
@@ -40,11 +38,6 @@ export class EventsPresenter {
       // again - where against a stream that was already up when this subscribed nothing went
       // away and everything on screen was fetched moments ago, so it is a cache thrown away
       // for nothing.
-      //
-      // Which of the two it is comes from the transport rather than from a counter here. A
-      // count says "not the first", and the first is the meaningful one in the shell: the
-      // page renders from its embedded bundle against a library that is not running, and the
-      // connect that follows is exactly the news these views are waiting for.
       open: (reconnect) => {
         this.backup.refresh();
         if (!reconnect) return;
@@ -74,16 +67,13 @@ export class EventsPresenter {
       backup: () => this.backup.refresh(),
       // A merge is minutes of work behind one request, so what the grid draws while it runs -
       // the frames dimmed, the bar in the toast - comes from here rather than from the call.
-      composite: (payload) => this.composited(payload),
+      composite: (payload) =>
+        this.photos.compositeProgressed(CompositeProgressSchema.parse(JSON.parse(payload))),
       // A photograph is one request the client waits on, so how far into it the render has got
       // cannot come back in the answer: the file is the answer.
       export: (payload) => this.exports.progressed(ExportProgressSchema.parse(JSON.parse(payload))),
     });
     void this.backup.load();
-  }
-
-  composited(payload: string): void {
-    this.photos.compositeProgressed(CompositeProgressSchema.parse(JSON.parse(payload)));
   }
 
   disconnect(): void {

@@ -506,6 +506,6 @@ The rows under the JPEG are the reason this is worth drawing four times. **Two o
 
 **Which leaves the chart saying something better than "HDR is bigger".** The formats are not far apart in total once both are read honestly, and on the screen most people own they are within a stop or two of each other. What separates them is entirely on one side of one line: the JPEG's headroom is 0.2 stops and the HDR file's is 2.3, on every row. The other two bars stay approximations: a full-frame sensor's engineering dynamic range at base ISO, and the eye across one scene with the gaze moving.
 
-**Every desktop and Android build pays 845kB:** `public/` is copied into `web/dist`, the `frontendDist`. Halving assets introduces artefacts in the highlights being demonstrated; lazy-loading saves nothing for readers reaching the bottom.
+**Every desktop and Android build pays 845kB:** `public/` is copied into `web/dist`, which each app's server serves. Halving assets introduces artefacts in the highlights being demonstrated; lazy-loading saves nothing for readers reaching the bottom.
 
 `(dynamic-range: high)` decides whether to say the display is SDR, and the copy hedges rather than hiding anything: Firefox answers `standard` on an HDR display. On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.

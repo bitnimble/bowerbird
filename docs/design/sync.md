@@ -382,9 +382,9 @@ _It has to cost one watch per directory._ This is where `chokidar` fails, and th
 
 **Nor does a file the library will never hold.** A text file, a sidecar, a JPEG export saved beside the raws is in scope by _path_ - `isPathAllowed` is about folders - so handing it to a scoped sync like a candidate photograph spends a whole sync run (a mutex, a lease, a transaction, a settled announcement) concluding it was never one. The watcher settles it instead, with one `stat`, asked only of paths whose extension is not one of ours (§7) so a bulk import stats nothing extra. A folder always passes, because an empty one's rename reports no other event at all and dropping it would lose the shoot relocation (§9.4.1); so does a path that is already gone, which is a deletion and could have been either.
 
-It is a native module, which is why its prebuilt bindings matter: they cover linux x64 and arm64 in both glibc and musl, plus macOS and Windows, so nothing is compiled at install time on any platform this runs on.
+It is a native module, which is why its prebuilt bindings matter: they cover linux x64 and arm64 in both glibc and musl, plus macOS, Windows and Android, so nothing is compiled at install time on any platform this runs on.
 
-**The desktop app uses the same watcher.** Its server bundle includes Parcel's JavaScript, and `build-sidecar.ts` ships the target's native binding beside libSQL under the bundle's own `node_modules`. Both bindings are required; a missing target package fails the build. An unmounted library root rejects its subscription, which arms the retry loop below.
+**The desktop and Android apps use the same watcher.** Their server bundle includes Parcel's JavaScript, and `build-sidecar.ts` ships the target's native binding beside libSQL under the bundle's own `node_modules` - on Android, a loader for the binding in the APK's `jniLibs` (§23.7.1). Both bindings are required; a missing target package fails the build. An unmounted library root rejects its subscription, which arms the retry loop below.
 
 A moved folder reports as the folder, with no per-file events beneath it. That is enough: §9.4.1 identifies it by inode and the subtree's paths shift by a prefix, which is two `UPDATE`s rather than one per frame.
 

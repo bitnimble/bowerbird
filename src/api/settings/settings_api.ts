@@ -8,11 +8,8 @@ import {
 } from '../../schemas/render_stages';
 import { DenoiserSchema, type Denoiser } from '../../schemas/photo_edits';
 import { PathSegment, route } from '../../schemas/route';
-import {
-  DEFAULT_SETTINGS,
-  SettingsSchema,
-  UpdateSettingsRequestSchema,
-} from '../../schemas/settings';
+import { config } from '../../config';
+import { SettingsSchema, UpdateSettingsRequestSchema } from '../../schemas/settings';
 import { StorageUsageSchema } from '../../schemas/storage_usage';
 import type { StorageUsageService } from '../../services/maintenance/storage_usage_service';
 import type { RenderTimingsFile } from '../../services/processing/renditions/render_timings_file';
@@ -41,7 +38,7 @@ export class SettingsApi {
     // carrying a copy of the schema's defaults. Before `/` in no sense that
     // matters here - there is no `/:key` route to shadow it.
     app.get(route(PathSegment.defaults()), (c) =>
-      c.json(respond(SettingsSchema, DEFAULT_SETTINGS)),
+      c.json(respond(SettingsSchema, config.defaultSettings)),
     );
 
     app.get(route(PathSegment.renderTimings()), (c) =>

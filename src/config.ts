@@ -1,10 +1,11 @@
-// Where the server listens, where its database is, and where it writes the files
-// it generates: the things that have to be known before the database can be
-// opened. Everything else is a setting in that database, editable from the app
-// (DESIGN §15).
+// Where the server listens, where its database is, where it writes the files it
+// generates, and the defaults its launcher picked: the things that have to be
+// known before the database can be opened. Everything else is a setting in that
+// database, editable from the app (DESIGN §15).
 
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from './schemas/settings';
 
 // -p/--port, taking precedence over PORT so a specific port can be pinned
 // without editing the environment. Not strict: the flag has to coexist with
@@ -33,6 +34,17 @@ function envPort(): number {
   return value;
 }
 
+function envDiskSpaceLimitGb(): number {
+  const raw = process.env.BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB;
+  if (raw == null || raw === '') return DEFAULT_SETTINGS.disk_space_limit_gb;
+  const parsed = SettingsSchema.shape.disk_space_limit_gb.safeParse(Number(raw));
+  if (!parsed.success)
+    throw new Error(
+      `Invalid BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB: "${raw}" is not a whole number of GB`,
+    );
+  return parsed.data;
+}
+
 export const config = {
   port: argPort() ?? envPort(),
   host: process.env.HOST ?? '0.0.0.0',
@@ -41,4 +53,12 @@ export const config = {
   // at load, so nothing downstream has to care what the working directory was.
   dataDir: path.resolve(process.env.DATA_DIR ?? './data'),
   apiToken: process.env.BOWERBIRD_API_TOKEN || undefined,
+  // Where a synced library goes when the request names no folder; the mobile app sets it.
+  librariesDir: process.env.BOWERBIRD_LIBRARIES_DIR
+    ? path.resolve(process.env.BOWERBIRD_LIBRARIES_DIR)
+    : undefined,
+  defaultSettings: {
+    ...DEFAULT_SETTINGS,
+    disk_space_limit_gb: envDiskSpaceLimitGb(),
+  } satisfies Settings,
 } as const;

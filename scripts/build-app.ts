@@ -7,10 +7,10 @@
 // through `bundle-app.ts` and `mac-build.ts` directly.
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { ANDROID_TARGET } from './android-ndk.ts';
 import { hostTriple } from './host-triple.ts';
 
 const ROOT = join(import.meta.dir, '..');
-const ANDROID = 'aarch64-linux-android';
 
 function run(
   command: string,
@@ -40,7 +40,7 @@ const passed = process.argv.slice(2);
 const at = passed.indexOf('--target');
 const target = at === -1 ? hostTriple() : passed[at + 1];
 if (target == null) throw new Error('--target names no triple');
-const android = target === ANDROID;
+const android = target === ANDROID_TARGET;
 if (!android && target !== hostTriple()) {
   throw new Error(
     `${target} is not this machine: build it on one, or cross-build it with \`bun run release:check\``,
