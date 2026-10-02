@@ -124,7 +124,9 @@ function patchProject(app: string): void {
     activity,
     `${pkg}
 
+import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebView
@@ -140,6 +142,10 @@ class MainActivity : TauriActivity() {
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
     )
     super.onCreate(savedInstanceState)
+    // Chrome switches its own window to HDR; a WebView draws HDR only in a window its app has.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+      window.colorMode = ActivityInfo.COLOR_MODE_HDR
+    }
     val content = findViewById<View>(android.R.id.content)
     // \`ink\` in web/src/ui/tokens.stylex.ts, the page's own background.
     content.setBackgroundColor(Color.parseColor("#14161a"))
