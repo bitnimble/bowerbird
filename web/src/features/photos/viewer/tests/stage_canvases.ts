@@ -6,10 +6,16 @@ import { mock } from 'bun:test';
 
 const real = await import('../stage_canvas');
 
+/** Every canvas painted, in order, by its `aria-label`. */
+export const paints: string[] = [];
+
 void mock.module('../stage_canvas', () => ({
   ...real,
   stageCanvases: {
-    paint: (): Promise<void> => Promise.resolve(),
+    paint: (canvas: HTMLCanvasElement): Promise<void> => {
+      paints.push(canvas.getAttribute('aria-label') ?? '');
+      return Promise.resolve();
+    },
     paintMasked: (): Promise<boolean> => Promise.resolve(true),
     release: (): void => undefined,
   },
