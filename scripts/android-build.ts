@@ -10,15 +10,9 @@
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { ANDROID_TARGET, androidNdk } from './android-ndk.ts';
 
 let ndk: ReturnType<typeof androidNdk>;
@@ -159,6 +153,53 @@ const dist = process.env.BOWERBIRD_ANDROID_DIST_DIR?.trim();
 const apk = chosen[0]!;
 if (dist) {
   mkdirSync(resolve(dist), { recursive: true });
-  copyFileSync(apk, join(resolve(dist), 'Bowerbird.apk'));
+  const out = join(resolve(dist), 'Bowerbird.apk');
+  signWithDebugKey(apk, out);
+  console.error(`[android-build] apk, signed with the debug key: ${out}`);
+} else {
+  console.error(`[android-build] apk: ${apk}`);
 }
-console.error(`[android-build] apk: ${dist ? join(resolve(dist), 'Bowerbird.apk') : apk}`);
+
+/** The key Android Studio signs debug builds with, made the way it makes it where it is missing. */
+function signWithDebugKey(unsigned: string, out: string): void {
+  const keystore = join(homedir(), '.android', 'debug.keystore');
+  if (!existsSync(keystore)) {
+    mkdirSync(dirname(keystore), { recursive: true });
+    run('keytool', [
+      '-genkeypair',
+      '-keystore',
+      keystore,
+      '-storepass',
+      'android',
+      '-alias',
+      'androiddebugkey',
+      '-keypass',
+      'android',
+      '-keyalg',
+      'RSA',
+      '-keysize',
+      '2048',
+      '-validity',
+      '10000',
+      '-dname',
+      'CN=Android Debug,O=Android,C=US',
+    ]);
+  }
+  const tools = join(ndk.env.ANDROID_HOME!, 'build-tools');
+  const newest = readdirSync(tools)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .at(-1);
+  if (newest == null) throw new Error(`no build-tools under ${tools} to sign with`);
+  run(join(tools, newest, 'apksigner'), [
+    'sign',
+    '--ks',
+    keystore,
+    '--ks-pass',
+    'pass:android',
+    '--ks-key-alias',
+    'androiddebugkey',
+    '--out',
+    out,
+    unsigned,
+  ]);
+}
