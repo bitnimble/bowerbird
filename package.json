@@ -47,6 +47,7 @@
     "build:wasm": "bun run scripts/build-wasm.ts",
     "build:sidecar": "bun run scripts/build-sidecar.ts",
     "build:app": "bun run scripts/build-app.ts",
+    "build:android": "bun run scripts/build-app.ts --target aarch64-linux-android",
     "probe:server": "bun run scripts/probe-server.ts",
     "probe:desktop": "bun run scripts/probe-desktop.ts",
     "e2e:tauri:build": "bun run scripts/build-desktop-app.ts",

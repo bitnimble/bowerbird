@@ -525,7 +525,7 @@ jobs:
           key: gradle-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/tauri.android.conf.json') }}
           restore-keys: gradle-
       - uses: ./.github/actions/wasm-pkg
-      - run: bun run build:app --target aarch64-linux-android
+      - run: bun run build:android
       - if: env.SAVE_CACHES == 'true' && steps.gradle-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:

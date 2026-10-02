@@ -10,7 +10,7 @@
 // Built from HEAD in a detached worktree rather than from this checkout, because a tag releases
 // the commit: an uncommitted edit would otherwise decide whether the check passes.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
@@ -21,6 +21,7 @@ type Target = (typeof TARGETS)[number];
 const repoRoot = resolve(import.meta.dir, '..');
 const dist = join(repoRoot, 'dist');
 const macosSdk = process.env.BOWERBIRD_MACOS_SDK?.trim() || undefined;
+const androidDist = process.env.BOWERBIRD_ANDROID_DIST_DIR?.trim() || undefined;
 
 function main(): void {
   const targets = parseTargets(process.argv.slice(2));
@@ -109,6 +110,9 @@ function build(target: Target, tree: string, work: string): void {
         ['build', '-f', CROSS, '--target', `${target}-dist`, '--output', dist, '.'],
         tree,
       );
+      if (target === 'android' && androidDist != null) {
+        cpSync(join(dist, 'installer', 'android-arm64'), resolve(androidDist), { recursive: true });
+      }
       return;
     case 'macos': {
       if (macosSdk == null) throw new Error('macos needs BOWERBIRD_MACOS_SDK');

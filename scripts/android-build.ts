@@ -2,8 +2,8 @@
 //
 // The app starts its own server as the desktop does (`src-tauri/src/android.rs`), so this builds
 // everything that server runs on for the phone first: the codecs, `librawshim`, and Bun with its
-// two native addons (`get:android-runtime`). `bun run build:app --target aarch64-linux-android`
-// runs this after the steps every app shares.
+// two native addons (`get:android-runtime`). `bun run build:android` runs this after the steps
+// every app shares.
 //
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with the
 // NDK `.android-ndk-version` names, and a JDK 17.
