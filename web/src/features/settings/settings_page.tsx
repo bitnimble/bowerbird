@@ -84,10 +84,11 @@ const RENDITION_MODES: Option<ViewerRenditionMode>[] = [
   { value: 'best_available', label: SettingsStrings.renditionModeBestAvailable() },
 ];
 
-const GeneralTab = observer(function GeneralTab(): JSX.Element | null {
+const GeneralTab = observer(function GeneralTab(): JSX.Element {
   const settings = useAppSettingsStore();
   const { appSettings } = usePresenters();
-  if (settings.settings == null) return null;
+  // The scale is this device's, so it does not wait on the server's settings.
+  if (settings.settings == null) return <SettingsColumns left={<ThisApp />} right={null} />;
 
   // Global rather than per library: it is about how you look at photos, not about
   // what a catalogue holds, and the renditions are interchangeable views of the
@@ -100,6 +101,7 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element | null {
     <SettingsColumns
       left={
         <>
+          <ThisApp />
           <GroupTitle>{SettingsStrings.groupPhotoViewer()}</GroupTitle>
           <Panel flush>
             <SettingRow
@@ -570,7 +572,6 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
           <Panel flush>
             <DeviceName />
           </Panel>
-          <ThisApp />
           <UpdateSettings />
           {settings != null && shellInvoke() == null && (
             <>

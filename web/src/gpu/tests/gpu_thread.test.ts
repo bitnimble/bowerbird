@@ -6,7 +6,7 @@ class FakeWorker {
   static last: FakeWorker | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onerror: unknown = null;
-  readonly posted: { id: number }[] = [];
+  readonly posted: { id: number; to: unknown }[] = [];
 
   constructor() {
     FakeWorker.last = this;
@@ -14,7 +14,8 @@ class FakeWorker {
 
   postMessage(message: unknown): void {
     if (typeof message !== 'object' || message == null || !('id' in message)) return;
-    if (typeof message.id === 'number') this.posted.push({ id: message.id });
+    const to = 'to' in message ? message.to : null;
+    if (typeof message.id === 'number') this.posted.push({ id: message.id, to });
   }
 
   reply(data: unknown): void {
@@ -35,7 +36,9 @@ test('a stage reaches the ask it belongs to, ahead of its answer', async () => {
         heard[which]!.push(stage),
       ),
     );
-    const [first, second] = worker.posted;
+    // First, ahead of anything that waits on the device, which waits on recipes read through it.
+    expect(worker.posted[0]?.to).toBe('files');
+    const [first, second] = worker.posted.filter((message) => message.to === 'open');
 
     worker.reply({ id: second!.id, stage: 'decoding' });
     worker.reply({ id: second!.id, stage: 'matching' });

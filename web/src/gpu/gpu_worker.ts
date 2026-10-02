@@ -20,13 +20,15 @@ import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environm
 import type { Environment } from '../features/raw_edit/print/print_scene';
 import { z } from 'zod';
 import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode/local_open';
-import { cachedRecipes, PipelineWarmth } from '../features/raw_edit/stage/pipeline_warmth';
+import { PortedFiles } from '../app/local_setting';
+import { PipelineWarmth, storedRecipes } from '../features/raw_edit/stage/pipeline_warmth';
 import { planarLayout } from '../features/photos/viewer/planar_layout';
 import { WebCodecs } from '../features/photos/viewer/image_decoder';
 import { pipelinesFor, StagePainter } from '../features/photos/viewer/stage_gpu';
 import {
   AnswerSchema,
   CompiledSchema,
+  FilesMessageSchema,
   MessageSchema,
   ProgressSchema,
   type Message,
@@ -41,7 +43,8 @@ pageLog.follow('worker');
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 
-const warmth = new PipelineWarmth(cachedRecipes());
+const filesPort = Promise.withResolvers<MessagePort>();
+const warmth = new PipelineWarmth(storedRecipes(new PortedFiles(filesPort.promise)));
 warmth.install(worker);
 
 const device: Promise<GPUDevice | null> = openDevice();
@@ -65,6 +68,12 @@ const IdSchema = z.object({ id: z.number() });
 
 worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
   const { id } = IdSchema.parse(event.data);
+  const files = FilesMessageSchema.safeParse(event.data);
+  // Ahead of `answer`, which waits for the device, which waits for recipes read through this.
+  if (files.success) {
+    filesPort.resolve(files.data.port);
+    return;
+  }
   const report = (stage: string): void => worker.postMessage(ProgressSchema.parse({ id, stage }));
   const compiled = (done: number, of: number): void =>
     worker.postMessage(CompiledSchema.parse({ id, compiled: done, of }));

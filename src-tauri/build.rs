@@ -7,6 +7,8 @@ fn main() {
         "set_ui_scale",
         "app_logs",
         "set_caption_buttons",
+        "read_device_file",
+        "write_device_file",
         "display_is_hdr",
         "pick_export_folder",
         "export_to_folder",

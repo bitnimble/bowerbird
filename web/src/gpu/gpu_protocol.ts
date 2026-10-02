@@ -116,6 +116,18 @@ export const MessageSchema = z.discriminatedUnion('to', [
   z.object({ id: z.number(), to: z.literal('precompile') }),
 ]);
 export type Message = z.infer<typeof MessageSchema>;
+
+/**
+ * Where the worker reads and writes this device's files (`PortedFiles`), sent once at start and
+ * never answered.
+ */
+export const FilesMessageSchema = z.object({
+  id: z.number(),
+  to: z.literal('files'),
+  port: z.custom<MessagePort>(
+    (value) => typeof MessagePort === 'function' && value instanceof MessagePort,
+  ),
+});
 export type Addressed = DistributiveOmit<Message, 'id'>;
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 

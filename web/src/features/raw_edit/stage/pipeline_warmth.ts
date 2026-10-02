@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import type { DeviceFiles } from '../../../app/local_setting';
+import { Logger } from '../../logs/page_log';
+
+const log = new Logger('pipelines');
 
 const BindGroupLayoutSchema = z.custom<GPUBindGroupLayoutDescriptor>(
   (value) =>
@@ -336,7 +340,9 @@ export class PipelineWarmth {
 
   private async save(): Promise<void> {
     this.saveTimer = null;
-    await this.store.save({ recipes: [...this.recipes.values()] }).catch(() => undefined);
+    await this.store
+      .save({ recipes: [...this.recipes.values()] })
+      .catch((error: unknown) => log.warn('could not keep the pipeline recipes', error));
   }
 }
 
@@ -379,19 +385,16 @@ function settersIn(scope: object): Class<Setter>[] {
     .filter((held): held is Class<Setter> => typeof held?.prototype.setPipeline === 'function');
 }
 
-export function cachedRecipes(): RecipeStore {
-  const key = new Request(new URL('/pipeline-recipes.json', self.location.origin));
-  const open = (): Promise<Cache> => caches.open('bowerbird-pipelines');
+export function storedRecipes(files: DeviceFiles): RecipeStore {
+  const name = 'pipeline-recipes';
   return {
     load: async () => {
-      const kept = await (await open()).match(key);
+      const kept = await files.load(name);
       if (kept == null) return null;
       // Written by whichever build ran last, so a shape this one cannot read is a cache to rebuild.
-      const recipes = RecipesSchema.safeParse(await kept.json());
+      const recipes = RecipesSchema.safeParse(JSON.parse(kept));
       return recipes.success ? recipes.data : null;
     },
-    save: async (recipes) => {
-      await (await open()).put(key, new Response(JSON.stringify(recipes)));
-    },
+    save: (recipes) => files.save(name, JSON.stringify(recipes)),
   };
 }

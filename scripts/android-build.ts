@@ -127,6 +127,7 @@ function patchProject(app: string): void {
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.webkit.WebView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
@@ -151,6 +152,11 @@ class MainActivity : TauriActivity() {
       view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
       WindowInsetsCompat.CONSUMED
     }
+  }
+
+  // Off, the WebView ignores the page's viewport tag, which is how its interface scale applies.
+  override fun onWebViewCreate(webView: WebView) {
+    webView.settings.useWideViewPort = true
   }
 }
 `,

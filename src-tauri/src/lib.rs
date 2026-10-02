@@ -9,6 +9,7 @@ mod android;
 mod app_log;
 mod caption;
 mod config;
+mod device_files;
 mod display;
 /// Renders the page asks for and this app writes to a folder, rather than answers.
 mod export;
@@ -54,6 +55,8 @@ pub fn run() {
             config::set_ui_scale,
             app_log::app_logs,
             caption::set_caption_buttons,
+            device_files::read_device_file,
+            device_files::write_device_file,
             display::display_is_hdr,
             export::pick_export_folder,
             export::export_to_folder,
