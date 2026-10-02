@@ -281,20 +281,11 @@ function shipForAndroid(): void {
   if (!existsSync(join(runtime, ANDROID_RUNTIME))) {
     throw new Error(`no Android runtime at ${runtime}. Run \`bun run get:android-runtime\` first.`);
   }
-  const jni = join(
-    ROOT,
-    'src-tauri',
-    'gen',
-    'android',
-    'app',
-    'src',
-    'main',
-    'jniLibs',
-    ANDROID_ABI,
-  );
-  if (!existsSync(dirname(jni))) {
-    throw new Error(`no Android project at ${dirname(jni)}. \`android-build.ts\` makes one.`);
+  const main = join(ROOT, 'src-tauri', 'gen', 'android', 'app', 'src', 'main');
+  if (!existsSync(main)) {
+    throw new Error(`no Android project at ${main}. \`android-build.ts\` makes one.`);
   }
+  const jni = join(main, 'jniLibs', ANDROID_ABI);
   // Emptied for the reason `RESOURCES` is; Tauri's Gradle plugin writes its own library back in.
   rmSync(jni, { recursive: true, force: true });
   mkdirSync(jni, { recursive: true });
