@@ -3,8 +3,8 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import { type BrowsedRemote, type RemoteLibrary } from '../../../../src/schemas/replication';
-import { inMobileApp } from '../../api/transport';
 import { usePresenters, useReplicationStore } from '../../app/stores_context';
+import { isThinShell } from '../../app/thin_shell';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { DialogActions, DialogBody } from '../../ui/dialog_layout';
@@ -47,17 +47,16 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 }): JSX.Element {
   const store = useReplicationStore();
   const { replication } = usePresenters();
-  // The phone's server picks the folder in its own storage, and a phone has little room for
-  // originals.
-  const onlySynced = inMobileApp();
+  // Its server picks the folder, and it fetches an original only when one is opened.
+  const thin = isThinShell();
   const [browser, setBrowser] = useState(newBrowser);
   const [step, setStep] = useState<Step>('address');
   const [address, setAddress] = useState('');
   const [remote, setRemote] = useState<BrowsedRemote | null>(null);
   const [picked, setPicked] = useState<RemoteLibrary | null>(null);
   const [path, setPath] = useState('');
-  const [keepOriginals, setKeepOriginals] = useState(!onlySynced);
-  const [autoTransferOriginals, setAutoTransferOriginals] = useState(true);
+  const [keepOriginals, setKeepOriginals] = useState(!thin);
+  const [autoTransferOriginals, setAutoTransferOriginals] = useState(!thin);
   const [denoiser, setDenoiser] = useState<Denoiser>('galosh');
   const [busy, setBusy] = useState(false);
 
@@ -73,17 +72,17 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     setStep('address');
     setRemote(null);
     setPicked(null);
-    setKeepOriginals(!onlySynced);
-    setAutoTransferOriginals(true);
+    setKeepOriginals(!thin);
+    setAutoTransferOriginals(!thin);
     setDenoiser('galosh');
     setBusy(false);
-    if (onlySynced) return;
+    if (thin) return;
     const next = newBrowser();
     setBrowser(next);
     void next.presenter.open('/');
-  }, [open, replication, onlySynced]);
+  }, [open, replication, thin]);
 
-  const canAdd = onlySynced || path.trim() !== '';
+  const canAdd = thin || path.trim() !== '';
   const canConnect = address.trim() !== '' && !busy;
 
   async function connect(): Promise<void> {
@@ -111,7 +110,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     const done = await replication.addReplica({
       address: remote.address,
       library_id: picked.id,
-      ...(onlySynced ? {} : { root_path: path }),
+      ...(thin ? {} : { root_path: path }),
       sync_originals: keepOriginals,
       auto_transfer_originals: autoTransferOriginals,
       denoiser,
@@ -141,6 +140,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
               </Text>
               <TextField
                 grow
+                verbatim
                 label={AddReplicaStrings.deviceAddress()}
                 value={address}
                 placeholder={AddReplicaStrings.deviceAddressPlaceholder()}
@@ -215,7 +215,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
         {step === 'where' && picked != null && (
           <>
-            {!onlySynced && (
+            {!thin && (
               <Field>
                 <Text variant="label" as="span">
                   {AddReplicaStrings.folderOnThisDevice()}
@@ -234,36 +234,38 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
               </Field>
             )}
 
-            <Field>
-              <Text variant="label" as="span">
-                {AddReplicaStrings.originals()}
-              </Text>
-              <Row as="label">
-                <input
-                  {...stylex.props(focusRing.ring)}
-                  type="checkbox"
-                  aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
-                  checked={keepOriginals}
-                  onChange={(e) => setKeepOriginals(e.currentTarget.checked)}
-                />
-                <Text as="span">{SyncedDevicesStrings.keepOriginalsOnThisDevice()}</Text>
-              </Row>
-              <Text variant="mono" as="p">
-                {keepOriginals
-                  ? SyncedDevicesStrings.keepsOriginals()
-                  : SyncedDevicesStrings.catalogueOnly()}
-              </Text>
-              <Row as="label">
-                <input
-                  {...stylex.props(focusRing.ring)}
-                  type="checkbox"
-                  aria-label={SyncedDevicesStrings.autoTransferOriginals()}
-                  checked={autoTransferOriginals}
-                  onChange={(e) => setAutoTransferOriginals(e.currentTarget.checked)}
-                />
-                <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
-              </Row>
-            </Field>
+            {!thin && (
+              <Field>
+                <Text variant="label" as="span">
+                  {AddReplicaStrings.originals()}
+                </Text>
+                <Row as="label">
+                  <input
+                    {...stylex.props(focusRing.ring)}
+                    type="checkbox"
+                    aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
+                    checked={keepOriginals}
+                    onChange={(e) => setKeepOriginals(e.currentTarget.checked)}
+                  />
+                  <Text as="span">{SyncedDevicesStrings.keepOriginalsOnThisDevice()}</Text>
+                </Row>
+                <Text variant="mono" as="p">
+                  {keepOriginals
+                    ? SyncedDevicesStrings.keepsOriginals()
+                    : SyncedDevicesStrings.catalogueOnly()}
+                </Text>
+                <Row as="label">
+                  <input
+                    {...stylex.props(focusRing.ring)}
+                    type="checkbox"
+                    aria-label={SyncedDevicesStrings.autoTransferOriginals()}
+                    checked={autoTransferOriginals}
+                    onChange={(e) => setAutoTransferOriginals(e.currentTarget.checked)}
+                  />
+                  <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
+                </Row>
+              </Field>
+            )}
 
             <Field>
               <Text variant="label" as="span">

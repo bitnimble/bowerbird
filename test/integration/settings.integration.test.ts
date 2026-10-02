@@ -83,10 +83,12 @@ test('a change reaches the parts of the server configured from it', () => {
   db.close();
 });
 
-// The mobile app starts its server with a smaller disk, and both what a fresh catalogue
-// holds and what Settings resets to have to follow it.
-test('the launcher sets the disk space limit a fresh catalogue starts with', () => {
-  const run = (limit: string | undefined): { exitCode: number; stdout: string; stderr: string } => {
+// The mobile app starts its server with a smaller disk and no watching, and both what a
+// fresh catalogue holds and what Settings resets to have to follow it.
+test('the launcher sets the defaults a fresh catalogue starts with', () => {
+  const run = (
+    defaults: string | undefined,
+  ): { exitCode: number; stdout: string; stderr: string } => {
     const script = [
       "import { Database } from './src/db/driver';",
       "import { runMigrations } from './src/db/migrate';",
@@ -94,12 +96,13 @@ test('the launcher sets the disk space limit a fresh catalogue starts with', () 
       "import { SettingsRepository } from './src/services/settings/settings_repository';",
       "const db = new Database(':memory:');",
       'runMigrations(db);',
-      'const seeded = new SettingsRepository(db).get().disk_space_limit_gb;',
-      'console.log(JSON.stringify([seeded, config.defaultSettings.disk_space_limit_gb]));',
+      'const { disk_space_limit_gb, watch_enabled } = new SettingsRepository(db).get();',
+      'const reset = config.defaultSettings;',
+      'console.log(JSON.stringify([disk_space_limit_gb, watch_enabled, reset.disk_space_limit_gb, reset.watch_enabled]));',
     ].join('\n');
     const env = { ...process.env };
-    delete env.BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB;
-    if (limit != null) env.BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB = limit;
+    delete env.BOWERBIRD_DEFAULT_SETTINGS;
+    if (defaults != null) env.BOWERBIRD_DEFAULT_SETTINGS = defaults;
     const done = Bun.spawnSync(['bun', '-e', script], {
       cwd: join(import.meta.dir, '..', '..'),
       env,
@@ -110,20 +113,21 @@ test('the launcher sets the disk space limit a fresh catalogue starts with', () 
       stderr: done.stderr.toString(),
     };
   };
-  const read = (limit: string | undefined): unknown => {
-    const done = run(limit);
+  const read = (defaults: string | undefined): unknown => {
+    const done = run(defaults);
     expect(done.stderr).toBe('');
     expect(done.exitCode).toBe(0);
     return JSON.parse(done.stdout);
   };
-  const fallback = DEFAULT_SETTINGS.disk_space_limit_gb;
-  expect(read('50')).toEqual([50, 50]);
-  expect(read(undefined)).toEqual([fallback, fallback]);
-  expect(read('')).toEqual([fallback, fallback]);
-  for (const bad of ['abc', '0', '-1', '1.5']) {
+  const { disk_space_limit_gb: limit, watch_enabled: watching } = DEFAULT_SETTINGS;
+  expect(read('{"disk_space_limit_gb":50,"watch_enabled":false}')).toEqual([50, false, 50, false]);
+  expect(read('{"disk_space_limit_gb":50}')).toEqual([50, watching, 50, watching]);
+  expect(read(undefined)).toEqual([limit, watching, limit, watching]);
+  expect(read('')).toEqual([limit, watching, limit, watching]);
+  for (const bad of ['abc', '{"disk_space_limit_gb":0}', '{"disk_space_limt_gb":50}']) {
     const done = run(bad);
     expect(done.exitCode).not.toBe(0);
-    expect(done.stderr).toContain('BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB');
+    expect(done.stderr).toContain('BOWERBIRD_DEFAULT_SETTINGS');
   }
 });
 

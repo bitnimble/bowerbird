@@ -5,9 +5,11 @@ import { Image, Layers, Library, Settings, Trash2, TriangleAlert } from 'lucide-
 import type { PairedPeer } from '../../../../src/schemas/replication';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { useLibrariesStore, useReplicationStore } from '../../app/stores_context';
+import { isThinShell } from '../../app/thin_shell';
 import { Text } from '../../ui/text';
 import { libraryLabel } from '../libraries/library_label';
 import { BinPageStrings } from '../photos/grid/bin_page.strings';
+import { AddReplicaStrings } from '../replication/add_replica_dialog.strings';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { ShootsPageStrings } from '../shoots/shoots_page.strings';
 import { LibraryNavStrings } from './library_nav.strings';
@@ -37,7 +39,7 @@ export const LibraryNav = observer(function LibraryNav(): JSX.Element {
       <SidebarSection>
         <SectionLabel>{SettingsStrings.libraries()}</SectionLabel>
         <SidebarLink to={route(PathSegment.settings())} icon={Settings}>
-          {LibraryNavStrings.addALibrary()}
+          {isThinShell() ? AddReplicaStrings.title() : LibraryNavStrings.addALibrary()}
         </SidebarLink>
       </SidebarSection>
     );
@@ -51,7 +53,7 @@ export const LibraryNav = observer(function LibraryNav(): JSX.Element {
           <SidebarRow
             end
             to={route(PathSegment.libraries(), library.id)}
-            tooltip={library.root_path}
+            tooltip={isThinShell() ? undefined : library.root_path}
             icon={Library}
             name={libraryLabel(library)}
             count={library.photo_count}

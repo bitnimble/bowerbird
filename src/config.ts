@@ -5,6 +5,7 @@
 
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { z } from 'zod';
 import { DEFAULT_SETTINGS, SettingsSchema, type Settings } from './schemas/settings';
 
 // -p/--port, taking precedence over PORT so a specific port can be pinned
@@ -34,14 +35,18 @@ function envPort(): number {
   return value;
 }
 
-function envDiskSpaceLimitGb(): number {
-  const raw = process.env.BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB;
-  if (raw == null || raw === '') return DEFAULT_SETTINGS.disk_space_limit_gb;
-  const parsed = SettingsSchema.shape.disk_space_limit_gb.safeParse(Number(raw));
+function envDefaultSettings(): Settings {
+  const raw = process.env.BOWERBIRD_DEFAULT_SETTINGS;
+  if (raw == null || raw === '') return DEFAULT_SETTINGS;
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new Error(`Invalid BOWERBIRD_DEFAULT_SETTINGS: "${raw}" is not JSON`);
+  }
+  const parsed = SettingsSchema.strict().safeParse(json);
   if (!parsed.success)
-    throw new Error(
-      `Invalid BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB: "${raw}" is not a whole number of GB`,
-    );
+    throw new Error(`Invalid BOWERBIRD_DEFAULT_SETTINGS: ${z.prettifyError(parsed.error)}`);
   return parsed.data;
 }
 
@@ -57,8 +62,5 @@ export const config = {
   librariesDir: process.env.BOWERBIRD_LIBRARIES_DIR
     ? path.resolve(process.env.BOWERBIRD_LIBRARIES_DIR)
     : undefined,
-  defaultSettings: {
-    ...DEFAULT_SETTINGS,
-    disk_space_limit_gb: envDiskSpaceLimitGb(),
-  } satisfies Settings,
+  defaultSettings: envDefaultSettings(),
 } as const;

@@ -2,6 +2,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { usePresenters } from '../../../app/stores_context';
+import { isThinShell } from '../../../app/thin_shell';
 import { Page } from '../../../ui/page';
 import { BackupStrip } from '../../backup/backup_strip';
 import { BulkBar } from './bulk_bar';
@@ -29,7 +30,13 @@ export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Elem
       <GridControls withSidebarButton />
       <BackupStrip libraryId={libraryId} />
       <BulkBar />
-      <PhotoGrid emptyHint={LibraryPhotosPageStrings.emptyHint()} />
+      <PhotoGrid
+        emptyHint={
+          isThinShell()
+            ? LibraryPhotosPageStrings.emptySyncedHint()
+            : LibraryPhotosPageStrings.emptyHint()
+        }
+      />
     </Page>
   );
 });

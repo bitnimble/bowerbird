@@ -178,7 +178,7 @@ test.each([
   },
 );
 
-test('the mobile app leaves the folder to its server and starts without originals', async () => {
+test('the mobile app leaves the folder to its server and asks nothing about originals', async () => {
   const userAgent = navigator.userAgent;
   const bridge = globalThis as { __TAURI__?: unknown };
   Object.defineProperty(navigator, 'userAgent', {
@@ -200,13 +200,17 @@ test('the mobile app leaves the folder to its server and starts without original
     await chooseLibrary();
 
     expect(screen.queryByRole('button', { name: 'Choose folder' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Keep originals on this device' })).toBeNull();
+    expect(
+      screen.queryByRole('checkbox', { name: 'Automatically send and fetch originals' }),
+    ).toBeNull();
     await press('Add "Trip"');
     expect(requests).toEqual([
       {
         address: 'http://desktop:5173',
         library_id: 'library1',
         sync_originals: false,
-        auto_transfer_originals: true,
+        auto_transfer_originals: false,
         denoiser: 'galosh',
       },
     ]);

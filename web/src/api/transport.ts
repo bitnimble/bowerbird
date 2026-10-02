@@ -38,10 +38,7 @@ export function shellInvoke(): Invoke | null {
   return typeof invoke === 'function' ? (invoke as Invoke) : null;
 }
 
-/**
- * The mobile app, which holds only synced libraries: it cannot read the phone's shared storage,
- * so there is no folder of photos to add and no file manager to show one in.
- */
+/** The mobile app, which has no file manager or app chooser to hand anything to. */
 export function inMobileApp(): boolean {
   if (shellInvoke() == null) return false;
   const agent = navigator.userAgent;

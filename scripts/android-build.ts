@@ -110,6 +110,60 @@ function patchProject(app: string): void {
     }
     writeFileSync(manifestPath, manifest.replace('<application', `<application\n        ${named}`));
   }
+
+  // Edge to edge, as Tauri's template asks for, draws the page under the status and navigation
+  // bars, and the WebView reports none of them to CSS; so the page is inset natively instead.
+  const activity = findFile(join(app, 'src', 'main', 'java'), 'MainActivity.kt');
+  if (activity == null) throw new Error(`no MainActivity.kt under ${app}`);
+  const pkg = /^package .+$/m.exec(readFileSync(activity, 'utf8'))?.[0];
+  if (pkg == null) throw new Error(`${activity} names no package`);
+  writeFileSync(
+    activity,
+    `${pkg}
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.View
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+
+class MainActivity : TauriActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge(
+      statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+      navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+    )
+    super.onCreate(savedInstanceState)
+    val content = findViewById<View>(android.R.id.content)
+    // \`ink\` in web/src/ui/tokens.stylex.ts, the page's own background.
+    content.setBackgroundColor(Color.parseColor("#14161a"))
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val bars = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or
+          WindowInsetsCompat.Type.displayCutout() or
+          WindowInsetsCompat.Type.ime(),
+      )
+      view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+      WindowInsetsCompat.CONSUMED
+    }
+  }
+}
+`,
+  );
+}
+
+function findFile(dir: string, name: string): string | null {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isFile() && entry.name === name) return path;
+    if (entry.isDirectory()) {
+      const found = findFile(path, name);
+      if (found != null) return found;
+    }
+  }
+  return null;
 }
 
 // Gradle leaves the APK under the generated project; copy it somewhere a phone can reach.

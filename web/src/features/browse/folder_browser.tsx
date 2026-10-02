@@ -237,6 +237,7 @@ const FolderTree = observer(function FolderTree({
         </Button>
         <TextField
           grow
+          verbatim
           label={label}
           placeholder={placeholder}
           value={draft}
@@ -277,6 +278,7 @@ const FolderTree = observer(function FolderTree({
           <TextField
             grow
             autoFocus
+            verbatim
             label={FolderBrowserStrings.folderName()}
             value={naming}
             onChange={setNaming}

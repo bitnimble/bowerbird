@@ -63,6 +63,7 @@ export function TextField({
   suffix,
   describedBy,
   invalid = false,
+  verbatim = false,
   style,
   inputStyle,
 }: {
@@ -85,6 +86,8 @@ export function TextField({
   /** The id of text saying what this field does, for a reader who only hears the label. */
   describedBy?: string;
   invalid?: boolean;
+  /** An address or a path: a soft keyboard leaves its capitals and spelling alone. */
+  verbatim?: boolean;
   /** On the bed around the input. */
   style?: stylex.StyleXStyles;
   inputStyle?: stylex.StyleXStyles;
@@ -113,6 +116,12 @@ export function TextField({
         aria-describedby={describedBy}
         aria-invalid={invalid || undefined}
         placeholder={placeholder}
+        {...(verbatim && {
+          autoCapitalize: 'off',
+          autoCorrect: 'off',
+          autoComplete: 'off',
+          spellCheck: false,
+        })}
         autoFocus={autoFocus}
         disabled={disabled}
         onBlur={onBlur}

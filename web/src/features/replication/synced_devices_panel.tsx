@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { type Library } from '../../../../src/schemas/libraries';
 import { usePresenters, useReplicationStore } from '../../app/stores_context';
+import { isThinShell } from '../../app/thin_shell';
 import { focusRing } from '../../ui/focus_ring';
 import { Panel } from '../../ui/panel';
 import { Text } from '../../ui/text';
@@ -30,7 +31,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
 
       {/* §7.10. Only where there is another device to hold them: on a library
           nobody else has, "don't keep the RAWs" names nowhere for them to be. */}
-      {store.hasPeers(library.id) && (
+      {store.hasPeers(library.id) && !isThinShell() && (
         <>
           <SettingRow
             label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}

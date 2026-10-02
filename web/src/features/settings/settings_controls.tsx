@@ -283,6 +283,7 @@ export const TextSetting = observer(function TextSetting({
     >
       <TextField
         style={wide ? settingStyles.wide : settingStyles.field}
+        verbatim
         label={label}
         value={draft}
         placeholder={placeholder}

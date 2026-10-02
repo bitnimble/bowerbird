@@ -13,14 +13,7 @@ import {
 } from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
-import {
-  appDataDir,
-  inMobileApp,
-  openAppDataDir,
-  setUiScale,
-  shellInvoke,
-  uiScale,
-} from '../../api/transport';
+import { appDataDir, openAppDataDir, setUiScale, shellInvoke, uiScale } from '../../api/transport';
 import {
   useAppSettingsStore,
   useDeviceSettingsStore,
@@ -29,6 +22,7 @@ import {
   useReplicationStore,
   useUpdatesStore,
 } from '../../app/stores_context';
+import { isThinShell } from '../../app/thin_shell';
 import { DiagnosticsDialog } from '../feedback/diagnostics_dialog';
 import { DiagnosticsStrings } from '../feedback/diagnostics_dialog.strings';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
@@ -141,42 +135,44 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element | null {
         </>
       }
       right={
-        <>
-          <GroupTitle>{SettingsStrings.groupWatching()}</GroupTitle>
-          <Panel flush>
-            <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
-            <NumberSetting
-              field="watch_debounce_ms"
-              label={SettingsStrings.watchDebounce()}
-              suffix="s"
-              scale={1000}
-              min={0}
-            />
-            <NumberSetting
-              field="watch_poll_interval_ms"
-              label={SettingsStrings.watchPollInterval()}
-              suffix="s"
-              hint={SettingsStrings.watchPollIntervalHint()}
-              scale={1000}
-              min={1}
-            />
-            <NumberSetting
-              field="scan_concurrency"
-              label={SettingsStrings.scanConcurrency()}
-              min={1}
-            />
-          </Panel>
+        !isThinShell() && (
+          <>
+            <GroupTitle>{SettingsStrings.groupWatching()}</GroupTitle>
+            <Panel flush>
+              <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
+              <NumberSetting
+                field="watch_debounce_ms"
+                label={SettingsStrings.watchDebounce()}
+                suffix="s"
+                scale={1000}
+                min={0}
+              />
+              <NumberSetting
+                field="watch_poll_interval_ms"
+                label={SettingsStrings.watchPollInterval()}
+                suffix="s"
+                hint={SettingsStrings.watchPollIntervalHint()}
+                scale={1000}
+                min={1}
+              />
+              <NumberSetting
+                field="scan_concurrency"
+                label={SettingsStrings.scanConcurrency()}
+                min={1}
+              />
+            </Panel>
 
-          <GroupTitle>{SettingsStrings.groupSchedule()}</GroupTitle>
-          <Panel flush>
-            <TextSetting
-              field="full_sync_at"
-              label={SettingsStrings.dailyFullScanAt()}
-              placeholder={SettingsStrings.dailyFullScanAtPlaceholder()}
-              hint={SettingsStrings.dailyFullScanAtHint()}
-            />
-          </Panel>
-        </>
+            <GroupTitle>{SettingsStrings.groupSchedule()}</GroupTitle>
+            <Panel flush>
+              <TextSetting
+                field="full_sync_at"
+                label={SettingsStrings.dailyFullScanAt()}
+                placeholder={SettingsStrings.dailyFullScanAtPlaceholder()}
+                hint={SettingsStrings.dailyFullScanAtHint()}
+              />
+            </Panel>
+          </>
+        )
       }
     />
   );
@@ -426,8 +422,6 @@ const LOG_LEVELS: Option<Settings['log_level']>[] = [
   { value: 'warn', label: SettingsStrings.logLevelWarn() },
   { value: 'error', label: SettingsStrings.logLevelError() },
 ];
-
-const ONLY_SYNCED = inMobileApp();
 
 const UI_SCALES: Option<string>[] = ['0.8', '0.9', '1', '1.1', '1.25', '1.5'].map((value) => ({
   value,
@@ -705,6 +699,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const [joining, setJoining] = useState(false);
   const navigate = useNavigate();
   const tab = tabFromPath(useParams().tab);
+  const thin = isThinShell();
 
   useEffect(() => {
     void libraries.load();
@@ -738,11 +733,11 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
 
           <PageHead>
             <Spacer />
-            <Button variant={ONLY_SYNCED ? 'primary' : 'default'} onClick={() => setJoining(true)}>
+            <Button variant={thin ? 'primary' : 'default'} onClick={() => setJoining(true)}>
               <Link2 size={ICON} />
               {AddReplicaStrings.title()}
             </Button>
-            {!ONLY_SYNCED && (
+            {!thin && (
               <Button variant="primary" onClick={() => setAdding(true)}>
                 <FolderPlus size={ICON} />
                 {AddLibraryStrings.title()}
@@ -755,9 +750,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
           {store.isEmpty && (
             <EmptyState title={SettingsStrings.noLibrariesYet()}>
               <Text as="p" variant="muted">
-                {ONLY_SYNCED
-                  ? SettingsStrings.noSyncedLibrariesHint()
-                  : SettingsStrings.noLibrariesHint()}
+                {thin ? SettingsStrings.noSyncedLibrariesHint() : SettingsStrings.noLibrariesHint()}
               </Text>
             </EmptyState>
           )}

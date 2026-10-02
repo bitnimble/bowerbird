@@ -16,6 +16,7 @@ import { type Library } from '../../../../src/schemas/libraries';
 import type { Activity } from '../../../../src/schemas/activity';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { canRevealFile } from '../../api/transport';
+import { isThinShell } from '../../app/thin_shell';
 import {
   useBackupStore,
   useLibrariesStore,
@@ -136,6 +137,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
   const activities: readonly Activity[] | undefined =
     local > 0 ? [...(activity ?? []), { kind: 'local_rendering', count: local }] : activity;
   const { libraries, scan: scanPresenter, confirm } = usePresenters();
+  const thin = isThinShell();
   const navigate = useNavigate();
   const params = useParams();
   const settingsOpen = params.libraryId === library.id;
@@ -153,21 +155,25 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
     <Panel role="listitem" style={styles.tile}>
       <LibraryName library={library} />
       <Text variant="mono" as="div" style={styles.meta}>
-        {canRevealFile() ? (
-          <TextLink
-            to={library.root_path}
-            tooltip={SettingsStrings.openLibraryFolder()}
-            onClick={(event) => {
-              event.preventDefault();
-              void libraries.openFolder(library.root_path);
-            }}
-          >
-            {library.root_path}
-          </TextLink>
-        ) : (
-          library.root_path
+        {!thin && (
+          <>
+            {canRevealFile() ? (
+              <TextLink
+                to={library.root_path}
+                tooltip={SettingsStrings.openLibraryFolder()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void libraries.openFolder(library.root_path);
+                }}
+              >
+                {library.root_path}
+              </TextLink>
+            ) : (
+              library.root_path
+            )}
+            {' · '}
+          </>
         )}
-        {' · '}
         {SettingsStrings.libraryPhotoCount(library)}
       </Text>
       <ScanStrip
@@ -196,10 +202,12 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
             {scan.isStopping(library.id) ? SettingsStrings.stopping() : SettingsStrings.stop()}
           </Button>
         ) : (
-          <Button onClick={() => void scanPresenter.scanLibrary(library.id)}>
-            <RefreshCw size={ICON} />
-            {SettingsStrings.scanNow()}
-          </Button>
+          !thin && (
+            <Button onClick={() => void scanPresenter.scanLibrary(library.id)}>
+              <RefreshCw size={ICON} />
+              {SettingsStrings.scanNow()}
+            </Button>
+          )
         )}
 
         <Button
@@ -234,24 +242,26 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         <DialogBody wide>
           <DialogColumns>
             <div>
-              <FolderSettings library={library} />
+              {!thin && <FolderSettings library={library} />}
               <RenditionSettings library={library} />
-              <StackSettings library={library} />
+              {!thin && <StackSettings library={library} />}
               <div ref={syncSection} tabIndex={-1} {...stylex.props(styles.focusTarget)}>
                 <SyncedDevicesPanel library={library} />
               </div>
             </div>
             <div>
               <RenderStagesPanel library={library} />
-              <div
-                ref={backupSection}
-                role="region"
-                aria-label={BackupStrings.heading()}
-                tabIndex={-1}
-                {...stylex.props(styles.focusTarget)}
-              >
-                <BackupPanel library={library} />
-              </div>
+              {!thin && (
+                <div
+                  ref={backupSection}
+                  role="region"
+                  aria-label={BackupStrings.heading()}
+                  tabIndex={-1}
+                  {...stylex.props(styles.focusTarget)}
+                >
+                  <BackupPanel library={library} />
+                </div>
+              )}
             </div>
           </DialogColumns>
         </DialogBody>
@@ -653,6 +663,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
   const backingUp =
     activity.some((work) => work.kind === 'backing_up' || work.kind === 'restoring_backup') ||
     backupStore.busy(library.id);
+  const thin = isThinShell();
 
   return (
     <details>
@@ -681,7 +692,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           </SettingRow>
         )}
 
-        {backupStatus?.configured === true && (
+        {!thin && backupStatus?.configured === true && (
           <SettingRow
             label={SettingsStrings.backUpOriginals()}
             disabledReason={backingUp ? SettingsStrings.jobBusy() : undefined}
@@ -693,16 +704,18 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           </SettingRow>
         )}
 
-        <SettingRow
-          label={SettingsStrings.scanLibrary()}
-          hint={SettingsStrings.scanLibraryHint()}
-          disabledReason={busy ? SettingsStrings.jobBusy() : undefined}
-        >
-          <Button disabled={busy} onClick={() => void scanPresenter.scanLibrary(library.id)}>
-            <RefreshCw size={ICON} />
-            {SettingsStrings.run()}
-          </Button>
-        </SettingRow>
+        {!thin && (
+          <SettingRow
+            label={SettingsStrings.scanLibrary()}
+            hint={SettingsStrings.scanLibraryHint()}
+            disabledReason={busy ? SettingsStrings.jobBusy() : undefined}
+          >
+            <Button disabled={busy} onClick={() => void scanPresenter.scanLibrary(library.id)}>
+              <RefreshCw size={ICON} />
+              {SettingsStrings.run()}
+            </Button>
+          </SettingRow>
+        )}
 
         <SettingRow
           label={SettingsStrings.rebuildThumbnails()}
@@ -734,25 +747,27 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           </Button>
         </SettingRow>
 
-        <SettingRow
-          label={SettingsStrings.groupSimilarPhotos()}
-          hint={SettingsStrings.groupSimilarPhotosHint()}
-          disabledReason={
-            busy
-              ? SettingsStrings.jobBusy()
-              : library.auto_stack
-                ? undefined
-                : SettingsStrings.autoStackOff()
-          }
-        >
-          <Button
-            disabled={busy || !library.auto_stack}
-            onClick={() => void libraries.detectStacks(library.id)}
+        {!thin && (
+          <SettingRow
+            label={SettingsStrings.groupSimilarPhotos()}
+            hint={SettingsStrings.groupSimilarPhotosHint()}
+            disabledReason={
+              busy
+                ? SettingsStrings.jobBusy()
+                : library.auto_stack
+                  ? undefined
+                  : SettingsStrings.autoStackOff()
+            }
           >
-            <Layers size={ICON} />
-            {SettingsStrings.run()}
-          </Button>
-        </SettingRow>
+            <Button
+              disabled={busy || !library.auto_stack}
+              onClick={() => void libraries.detectStacks(library.id)}
+            >
+              <Layers size={ICON} />
+              {SettingsStrings.run()}
+            </Button>
+          </SettingRow>
+        )}
       </Panel>
     </details>
   );

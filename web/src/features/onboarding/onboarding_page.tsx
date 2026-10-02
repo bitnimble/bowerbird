@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderPlus, Link2 } from 'lucide-react';
 import { route } from '../../../../src/schemas/route';
-import { inMobileApp } from '../../api/transport';
 import { useLibrariesStore, usePresenters } from '../../app/stores_context';
+import { isThinShell } from '../../app/thin_shell';
 import { Button } from '../../ui/button';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
@@ -45,8 +45,6 @@ const styles = stylex.create({
 type Step = 'library' | 'preferences';
 
 const STEPS: Step[] = ['library', 'preferences'];
-
-const ONLY_SYNCED = inMobileApp();
 
 export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
   const store = useLibrariesStore();
@@ -103,15 +101,14 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
   const [adding, setAdding] = useState(false);
   const [joining, setJoining] = useState(false);
   const none = store.libraries.length === 0;
+  const thin = isThinShell();
 
   return (
     <div {...stylex.props(styles.section)}>
       <Heading>{OnboardingStrings.welcome()}</Heading>
       {none ? (
         <Text variant="muted" as="p">
-          {ONLY_SYNCED
-            ? SettingsStrings.noSyncedLibrariesHint()
-            : SettingsStrings.noLibrariesHint()}
+          {thin ? SettingsStrings.noSyncedLibrariesHint() : SettingsStrings.noLibrariesHint()}
         </Text>
       ) : (
         <List label={SettingsStrings.libraries()}>
@@ -119,23 +116,20 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
             <ListRow key={library.id}>
               <ListBody>
                 <ListName>{libraryLabel(library)}</ListName>
-                <ListMeta>{library.root_path}</ListMeta>
+                {!thin && <ListMeta>{library.root_path}</ListMeta>}
               </ListBody>
             </ListRow>
           ))}
         </List>
       )}
       <Row>
-        {!ONLY_SYNCED && (
+        {!thin && (
           <Button variant={none ? 'primary' : 'default'} onClick={() => setAdding(true)}>
             <FolderPlus size={ICON} />
             {AddLibraryStrings.title()}
           </Button>
         )}
-        <Button
-          variant={ONLY_SYNCED && none ? 'primary' : 'default'}
-          onClick={() => setJoining(true)}
-        >
+        <Button variant={thin && none ? 'primary' : 'default'} onClick={() => setJoining(true)}>
           <Link2 size={ICON} />
           {AddReplicaStrings.title()}
         </Button>
@@ -151,7 +145,9 @@ function PreferencesStep(): JSX.Element {
     <div {...stylex.props(styles.section)}>
       <Heading>{OnboardingStrings.preferences()}</Heading>
       <Panel flush>
-        <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
+        {!isThinShell() && (
+          <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
+        )}
         <ToggleSetting
           field="frame_tv_enabled"
           label={SettingsStrings.frameTvEnabled()}

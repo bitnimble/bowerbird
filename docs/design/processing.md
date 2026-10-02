@@ -667,7 +667,7 @@ Sweep on an interval, not startup: restarts imply no orphaning and development r
 ### 10.6.2 The disk space limit
 
 `disk_space_limit_gb` (default 200, and 50 in the mobile app, whose shell starts the server with
-`BOWERBIRD_DEFAULT_DISK_SPACE_LIMIT_GB`) caps everything the disk usage row measures (`StorageUsageService`):
+`BOWERBIRD_DEFAULT_SETTINGS`) caps everything the disk usage row measures (`StorageUsageService`):
 the data directory, the catalogue and its backups, printer profiles and caches. Only renditions are
 deleted to meet it. `DiskSpaceLimit` checks at startup, hourly and whenever the limit changes; over it,
 it evicts renditions least recently used first. `renditions.used_at` is set by a build and by a serve

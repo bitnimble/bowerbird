@@ -279,7 +279,10 @@ addon through a loader that opens it from `BOWERBIRD_ADDON_DIR`.
 **The mobile app holds synced libraries only.** Its server can read nothing in the phone's shared
 storage, so the app offers no local library to add, only a connection to another Bowerbird. The
 request names no folder and the server puts the library under `BOWERBIRD_LIBRARIES_DIR`, which
-the shell sets inside the app's own storage, with originals off by default.
+the shell sets inside the app's own storage. It keeps no originals and sends or fetches none
+automatically. The page treats it as a thin shell (`isThinShell`):
+a library's path, folder rules, scanning, watching, stacks and backups are hidden, having nothing
+on this device to act on, and the server starts with watching off (`BOWERBIRD_DEFAULT_SETTINGS`).
 
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system
