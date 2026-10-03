@@ -1975,6 +1975,7 @@ mod loupe_tile {
             still_full_chroma: false,
             sdr_full_chroma: false,
             intent: crate::gpu::Intent::Perceptual,
+            print: None,
         };
         let mut job = tile_job(path, None, None);
         job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
@@ -2173,6 +2174,7 @@ mod loupe_tile {
             still_full_chroma: false,
             sdr_full_chroma: false,
             intent: crate::gpu::Intent::Perceptual,
+            print: None,
         };
         let mut job = tile_job(path, None, None);
         job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
@@ -2237,7 +2239,7 @@ mod loupe_tile {
             .into_iter()
             .flat_map(|band| match band {
                 crate::job::Coded::Pq(samples) => samples,
-                crate::job::Coded::Srgb(_) => panic!("a PQ target"),
+                _ => panic!("a PQ target"),
             })
             .collect();
         assert_eq!(stitched.len(), whole.len());
@@ -2812,6 +2814,73 @@ mod camera_match {
             analysis.from_raw.matched.is_some(),
             "the camera match was not fitted"
         );
+    }
+
+    /// A print job writes the file the request names: its pixels exactly, turned as asked, at
+    /// sixteen bits, tagged with the space the printer is sent, and from the reader's own crop.
+    #[test]
+    fn a_print_job_writes_the_file_it_was_asked_for() {
+        let path = sony().to_string_lossy().into_owned();
+        let out = std::env::temp_dir().join("bb-print-job.png");
+        let job: crate::job::Job = serde_json::from_str(&format!(
+            r#"{{
+                "rawFilePath": {path:?},
+                "cameraMatch": "none",
+                "denoiseLuminance": 0,
+                "denoiseColour": 0,
+                "sharpen": 0.5,
+                "defringe": 1,
+                "grade": {{ "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
+                "geometry": {{ "crop": [0.1, 0.1, 0.9, 0.9], "angleDegrees": 2, "rotate": 0, "keystone": null }},
+                "targets": [{{
+                    "rendition": "max",
+                    "output": "print",
+                    "outputPath": {:?},
+                    "size": 0,
+                    "source": "render",
+                    "sdrQuantizer": 20,
+                    "hdrQuantizer": 1,
+                    "preset": 8,
+                    "stillFullChroma": true,
+                    "sdrFullChroma": true,
+                    "print": {{
+                        "space": "adobe-rgb", "bits": 16, "intent": "relativeColorimetric",
+                        "blackPointCompensation": true, "icc": null,
+                        "width": 900, "height": 600, "quarterTurns": 1
+                    }}
+                }}]
+            }}"#,
+            out.to_string_lossy(),
+        ))
+        .expect("the print job parses");
+        crate::job::run(&job).expect("the print renders");
+        let mut reader = png::Decoder::new(std::io::Cursor::new(
+            std::fs::read(&out).expect("the print was written"),
+        ))
+        .read_info()
+        .expect("a PNG");
+        let info = reader.info().clone();
+        assert_eq!((info.width, info.height), (900, 600));
+        assert_eq!(info.bit_depth, png::BitDepth::Sixteen);
+        let profile = moxcms::ColorProfile::new_from_slice(
+            info.icc_profile.as_deref().expect("an iCCP chunk"),
+        )
+        .expect("a readable profile");
+        assert!(format!("{:?}", profile.description).contains("Adobe RGB"));
+        let mut bytes = vec![0; reader.output_buffer_size().expect("a size")];
+        reader.next_frame(&mut bytes).expect("the frame");
+        let codes: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        // A straightened, cropped picture reaches off the frame nowhere, so no corner is black.
+        for (x, y) in [(0, 0), (899, 0), (0, 599), (899, 599), (450, 300)] {
+            let pixel = &codes[(y * 900 + x) * 3..][..3];
+            assert!(
+                pixel.iter().any(|&code| code > 2000),
+                "({x}, {y}) is black: {pixel:?}"
+            );
+        }
     }
 
     /// **A rendition a client renders is the picture the server would have written.** The client

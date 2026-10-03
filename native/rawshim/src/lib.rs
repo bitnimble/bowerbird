@@ -206,6 +206,7 @@ pub mod pmrid;
 #[cfg(feature = "renditions")]
 pub mod png_write;
 pub mod print;
+pub mod print_output;
 pub mod printer_gamut;
 /// The printers the OS already has: what each takes, its colour profiles, and jobs sent to it.
 #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]

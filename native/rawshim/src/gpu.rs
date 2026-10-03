@@ -279,6 +279,8 @@ pub struct Gpu {
     draw_from_frame: PipelineCell<wgpu::RenderPipeline>,
     draw_from_pyramid: PipelineCell<wgpu::RenderPipeline>,
     print_layout: wgpu::BindGroupLayout,
+    print_output_layout: wgpu::BindGroupLayout,
+    encode_print: PipelineCell<wgpu::ComputePipeline>,
     print_pipeline: PipelineCell<wgpu::RenderPipeline>,
     print_pq_pipeline: PipelineCell<wgpu::RenderPipeline>,
     print_pigment_pipeline: PipelineCell<wgpu::RenderPipeline>,
@@ -1215,6 +1217,55 @@ impl Gpu {
         self.print_surface();
     }
 
+    /// `encode_print`, built on the first print: the editor never writes one, and every pipeline
+    /// built at the open is time a reader waits.
+    fn encode_print(&self) -> &wgpu::ComputePipeline {
+        self.encode_print.get_or_init(|| {
+            let layout = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("encode print"),
+                    bind_group_layouts: &[Some(&self.layout), Some(&self.print_output_layout)],
+                    ..Default::default()
+                });
+            self.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("encode print"),
+                    layout: Some(&layout),
+                    module: &self.frame_module,
+                    entry_point: Some("encode_print"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+        })
+    }
+
+    /// A printer's device RGB over `printer_gamut::device_table`'s grid, for `print_output.slang`
+    /// to sample; one texel where the target is a tagged space and nothing samples it.
+    fn device_lut(
+        &self,
+        printer: Option<&crate::printer_gamut::PrinterGamut>,
+    ) -> Result<Texture, String> {
+        let (steps, table): (usize, &[f32]) = match printer {
+            Some(printer) => (crate::printer_gamut::LUT_STEPS, printer.device_table()?),
+            None => (1, &[0.0; 4]),
+        };
+        let data: Vec<u8> = table
+            .iter()
+            .flat_map(|value| half::f16::from_f32(*value).to_le_bytes())
+            .collect();
+        let side = steps as u32;
+        Ok(self.volume(
+            wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: side,
+            },
+            &data,
+            "print device table",
+        ))
+    }
+
     fn drawing(&self, from_frame: bool, entry: &str) -> &wgpu::RenderPipeline {
         let held = match entry {
             "fs" if from_frame => &self.draw_from_frame,
@@ -1713,6 +1764,14 @@ impl Gpu {
                 Binding::Sampler.drawn(5),
             ],
         });
+        let print_output_layout = group_layout(
+            "print output",
+            &[
+                (3, Binding::Storage { read_only: true }),
+                (6, Binding::Volume),
+                (7, Binding::Sampler),
+            ],
+        );
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
         // The editor's route to the same number, so that it has one here to be held against:
         // `collect` keeps the brightest of the sampled million and `remeasure` grades only
@@ -1789,6 +1848,8 @@ impl Gpu {
             draw_from_frame: PipelineCell::new(),
             draw_from_pyramid: PipelineCell::new(),
             print_layout,
+            print_output_layout,
+            encode_print: PipelineCell::new(),
             print_pipeline: PipelineCell::new(),
             print_pq_pipeline: PipelineCell::new(),
             print_pigment_pipeline: PipelineCell::new(),
@@ -2397,6 +2458,8 @@ pub struct Grade<'a> {
     pub print_blur: crate::px::Extent<crate::px::Output>,
     /// The output rows an encode writes. None writes every row.
     pub band: Option<Band>,
+    /// The file an [`Output::Print`] encode writes; nothing for every other output.
+    pub print: Option<PrintOutput>,
 }
 
 /// A run of whole output rows.
@@ -2483,6 +2546,7 @@ impl<'a> Grade<'a> {
             intent: Intent::Perceptual,
             print_blur: crate::px::Extent::measured(0.0),
             band: None,
+            print: None,
         }
     }
 
@@ -2569,6 +2633,9 @@ impl<'a> Grade<'a> {
     /// frame it was cut from, so a caller sizing a buffer or a dispatch off `width`/`height`
     /// instead of this under-allocates and writes a picture with an unwritten tail.
     pub fn output(&self) -> crate::px::Size<crate::px::Output> {
+        if let Some(print) = self.print {
+            return print.size;
+        }
         let (width, height) = self.photograph();
         crate::hdr::cropped_out(crate::px::Size::exact(width, height), self.geometry)
     }
@@ -2771,6 +2838,9 @@ pub enum Output {
     /// The rolled frame, before any transfer - what the CPU's grade produced and what every
     /// rendition path already encodes for itself.
     Rolled,
+    /// A print file: the print grade inside [`Uploaded::set_print_target`]'s gamut, coded as
+    /// [`Grade::print`] says, 8 or 16 bits in each count.
+    Print,
 }
 
 impl Output {
@@ -2778,16 +2848,27 @@ impl Output {
     ///
     /// An HDR file is graded scene-referred, to PQ's own ceiling, and fitted to a display by
     /// whatever shows it (`stage.slang`), against the brightest pixel its `clli` names. An SDR one
-    /// has nothing above diffuse white to put a highlight in.
+    /// has nothing above diffuse white to put a highlight in, and nor has paper.
     pub fn mastered(
         self,
         reference: crate::light::Light<crate::light::SceneNits>,
     ) -> crate::light::Light<crate::light::DisplayNits> {
         match self {
             Output::Pq | Output::Rolled => crate::light::Light::PQ_CEILING,
-            Output::Srgb => crate::light::Light::at_diffuse_white(reference),
+            Output::Srgb | Output::Print => crate::light::Light::at_diffuse_white(reference),
         }
     }
+}
+
+/// What a print file is written as, beyond its target's gamut.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PrintOutput {
+    /// The file's pixels, exactly: what the geometry's picture is scaled to cover and cut to.
+    pub size: crate::px::Size<crate::px::Output>,
+    pub sixteen_bit: bool,
+    /// Whether relative colorimetric lifts the picture onto the target's black rather than
+    /// flooring at it (`gamut_map::onto_black`). Perceptual always lifts.
+    pub black_point_compensation: bool,
 }
 
 /// One frame, uploaded once, ready for as many dispatches as a job has outputs.
@@ -4344,6 +4425,11 @@ impl Uploaded<'_> {
             ],
         });
 
+        let print_group = match grade.output {
+            Output::Print => Some(self.print_output_group(&mut recording)?),
+            _ => None,
+        };
+
         // The output's pixels, not the frame's: the dispatch writes one per pixel of what the crop
         // and the turn produce, and reads the frame wherever the geometry sends it.
         let pixels = out_width * out_height;
@@ -4351,8 +4437,14 @@ impl Uploaded<'_> {
         {
             let (x, y) = self.gpu.encode_groups(pixels);
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.gpu.pipeline);
+            pass.set_pipeline(match &print_group {
+                Some(_) => self.gpu.encode_print(),
+                None => &self.gpu.pipeline,
+            });
             pass.set_bind_group(0, &group, &[]);
+            if let Some(print_group) = &print_group {
+                pass.set_bind_group(1, print_group, &[]);
+            }
             pass.dispatch_workgroups(x, y, 1);
         }
         recording
@@ -4364,6 +4456,49 @@ impl Uploaded<'_> {
         // a buffer still mapped is a validation error, and `on_uncaptured_error` makes those fatal.
         // The odd pixel's padding dropped by taking only what the frame has.
         read_back(self.gpu, readback, |mapped| take(mapped, pixels * 3)).await
+    }
+
+    /// What `encode_print` reads beside the frame: the target as a print file is written into, and
+    /// a printer's device table.
+    fn print_output_group(&self, recording: &mut Recording<'_>) -> Option<wgpu::BindGroup> {
+        let target = self.print_target.borrow();
+        let words = crate::printer_gamut::output(&target);
+        let table = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("print target"),
+            contents: &words
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>(),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let lut = match self.gpu.device_lut(target.profile()) {
+            Ok(lut) => lut,
+            Err(error) => {
+                crate::warn(&format!(
+                    "rawshim: the printer's device table could not be built: {error}"
+                ));
+                return None;
+            }
+        };
+        recording.holding_texture(&lut);
+        Some(self.gpu.bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("print output"),
+            layout: &self.gpu.print_output_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: table.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&lut.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&self.gpu.sampler),
+                },
+            ],
+        }))
     }
 
     /// The editor's canvas: `vs` and `fs`, over the frame that is already up.
@@ -4914,6 +5049,8 @@ const EDIT_FIELDS: &[&str] = &[
     "band_rows",
     "matched_temperature",
     "matched_tint",
+    "print_top",
+    "print_compensated",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -4976,6 +5113,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         Output::Pq => 0,
         Output::Srgb => 1,
         Output::Rolled => 2,
+        Output::Print => 3,
     });
     let matched = grade.matched().is_some();
     w.push(u32::from(matched));
@@ -5136,6 +5274,11 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     let matched_illuminant = grade.colour.and_then(|c| c.illuminant);
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.temperature));
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.tint));
+    let sixteen_bit = grade.print.is_some_and(|print| print.sixteen_bit);
+    f(&mut w, if sixteen_bit { 65535.0 } else { 255.0 });
+    w.push(u32::from(
+        grade.print.is_some_and(|print| print.black_point_compensation),
+    ));
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was

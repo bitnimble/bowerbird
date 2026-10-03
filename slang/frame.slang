@@ -27,6 +27,7 @@ import primaries;
 import print_scene;
 import print_parameters;
 import print_geometry;
+import print_output;
 
 [vk::binding(5, 0)] StructuredBuffer<float> peak_out;
 // Two `u16` components to a word, which is what `encode` below says. `ceil(pixels * 3 / 2)`
@@ -46,6 +47,8 @@ import print_geometry;
 static const uint OUTPUT_PQ = 0;
 static const uint OUTPUT_SRGB = 1;
 static const uint OUTPUT_ROLLED = 2;
+/// A print file, written by `encode_print`: `encode` never sees it.
+static const uint OUTPUT_PRINT = 3;
 
 /// The roll-off leaves the display's peak alone when the scene already fits inside it, so
 /// the clamp in `display_nits` is not redundant: a level past `source_level` comes back
@@ -507,8 +510,7 @@ uint4 fs_print_pq(float4 pos : SV_Position) : SV_Target
     return uint4(uint3(round(codes * 65535.0)), 65535);
 }
 
-/// One pixel of the frame as a rendition would hold it, in the `u16` counts every output
-/// stage of this shader ends in.
+/// The frame's scene light where output `pixel` reads it, and `at`, where that was.
 ///
 /// **Through `geometry_at`, exactly as `fs` draws it**, which is what makes this the same picture
 /// the reader was looking at rather than a cousin of it. `pixel` indexes the *output* - what the
@@ -519,19 +521,24 @@ uint4 fs_print_pq(float4 pos : SV_Position) : SV_Target
 /// On an identity geometry `geometry_at` returns the position untouched, and `nits_cubic` at a
 /// pixel's own centre has weights `(0, 1, 0, 0)` - so an uncropped frame is the pixel itself, bit
 /// for bit, and the parity fixtures do not move.
-float3 coded_at(uint pixel)
+float3 scene_at(uint pixel, out float2 at)
 {
     let out_width = max(edit.output_width, 1);
-    let at = geometry_at(float2(float(pixel % out_width), float(pixel / out_width)) + float2(0.5));
+    at = geometry_at(float2(float(pixel % out_width), float(pixel / out_width)) + float2(0.5));
     let last = float2(float(edit.width) - 1.0, float(edit.height) - 1.0);
     // Black where the output reaches off the frame, which is the wedge a straighten leaves at the
     // corners and the band a keystone leaves down a whole side. The gather this stands in for leaves
     // those pixels as they started (`warp.slang`'s `gathered`); clamping to the edge row instead
     // smears it across them.
-    var scene = float3(0.0);
-    if (!outside(at, last)) {
-        scene = nits_cubic(at, last);
-    }
+    return outside(at, last) ? float3(0.0) : nits_cubic(at, last);
+}
+
+/// One pixel of the frame as a rendition would hold it, in the `u16` counts every output
+/// stage of this shader ends in.
+float3 coded_at(uint pixel)
+{
+    float2 at;
+    let scene = scene_at(pixel, at);
     // An sRGB file's gamut is reached before the quantisation, since relative colorimetric's
     // unrolled highlights sit above what the `u16` holds.
     if (edit.output == OUTPUT_SRGB) {
@@ -587,9 +594,39 @@ void encode(uint3 id : SV_DispatchThreadID)
     // buffer is sized for it, so this is padding rather than an overrun.
     var b = float3(0.0);
     if (first + 1 < pixels) { b = coded_at(skipped + first + 1); }
+    packed(first, a, b);
+}
 
+void packed(uint first, float3 a, float3 b)
+{
     let base = first + first / 2;
     counts[base] = uint(a.r) | (uint(a.g) << 16);
     counts[base + 1] = uint(a.b) | (uint(b.r) << 16);
     counts[base + 2] = uint(b.g) | (uint(b.b) << 16);
+}
+
+/// One pixel of a print file: the print grade, as the proof grades it, inside the target the
+/// printer is sent and in that file's codes.
+float3 print_coded_at(uint pixel)
+{
+    float2 at;
+    let scene = scene_at(pixel, at);
+    let compensated = edit.intent == INTENT_PERCEPTUAL || edit.print_compensated != 0;
+    return print_coded(print_signal(measured<SceneNits>(scene), at), edit.intent, compensated, edit.print_top);
+}
+
+/// `encode`, for a print file: its own entry point because the target's table and a printer's
+/// device table are bound beside the frame, and `encode`'s layout has no room for them.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void encode_print(uint3 id : SV_DispatchThreadID)
+{
+    let first = linear(id) * 2;
+    let pixels = edit.output_width * edit.band_rows;
+    if (first >= pixels) { return; }
+    let skipped = edit.band_top * edit.output_width;
+    let a = print_coded_at(skipped + first);
+    var b = float3(0.0);
+    if (first + 1 < pixels) { b = print_coded_at(skipped + first + 1); }
+    packed(first, a, b);
 }

@@ -1,7 +1,9 @@
 use rawshim::gpu::{Canvas, Grade, Intent, Output};
 use rawshim::hdr_fit::HdrColour;
 use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
+use rawshim::png_write::PrintSamples;
 use rawshim::print::{Paper, Presentation, Scene};
+use rawshim::print_output::{Space, Spec};
 use rawshim::printer_gamut::PrintTarget;
 use rawshim::px::Size;
 use rawshim::transfer::Primaries;
@@ -592,6 +594,288 @@ fn an_adobe_rgb_proof_keeps_a_cyan_an_srgb_proof_compresses() {
         "Adobe RGB kept no more of the cyan than sRGB: {adobe} against {srgb}"
     );
     assert_eq!(adobe, generic, "generic paper is the Adobe RGB cube");
+}
+
+fn print_spec(space: Space, bits: u8, width: u32, height: u32, quarter_turns: u16) -> Spec {
+    Spec {
+        space,
+        bits,
+        intent: Intent::RelativeColorimetric,
+        black_point_compensation: true,
+        icc: None,
+        width,
+        height,
+        quarter_turns,
+    }
+}
+
+/// The file is the pixels asked for, turned as asked, at the depth asked, and tagged.
+#[test]
+fn a_print_file_is_its_size_turned_sixteen_bit_and_tagged() {
+    let (red, blue) = ([0.8, 0.1, 0.1], [0.1, 0.1, 0.8]);
+    let halves = |x: usize, _: usize| if x < 20 { red } else { blue };
+    let spec = print_spec(Space::AdobeRgb, 16, 20, 30, 1);
+    let file = decoded(&print_file(&halves, 40, 24, &spec));
+    assert_eq!((file.width, file.height), (20, 30));
+    assert_eq!(file.bit_depth, png::BitDepth::Sixteen);
+    let profile = moxcms::ColorProfile::new_from_slice(&file.icc).expect("a readable profile");
+    assert!(
+        format!("{:?}", profile.description).contains("Adobe RGB"),
+        "{:?}",
+        profile.description
+    );
+    let at = |x: usize, y: usize| -> Vec<u32> {
+        file.samples[(y * 20 + x) * 3..][..3]
+            .iter()
+            .map(|&code| u32::from(code))
+            .collect()
+    };
+    // The left half turned a quarter clockwise is the top half; twice, in the file's gamma codes,
+    // is eight times in light.
+    let (top, bottom) = (at(10, 3), at(10, 26));
+    assert!(top[0] > top[2] * 2, "the top is not red: {top:?}");
+    assert!(
+        bottom[2] > bottom[0] * 2,
+        "the bottom is not blue: {bottom:?}"
+    );
+    let eight = decoded(&print_file(
+        &halves,
+        40,
+        24,
+        &print_spec(Space::Srgb, 8, 20, 30, 1),
+    ));
+    assert_eq!(eight.bit_depth, png::BitDepth::Eight);
+    assert_eq!((eight.width, eight.height), (20, 30));
+}
+
+/// A cyan sRGB cannot hold is laid down in Adobe RGB and compressed towards grey in sRGB.
+#[test]
+fn a_print_keeps_a_cyan_in_adobe_rgb_that_srgb_compresses() {
+    let cyan = [-0.15, 0.75, 0.85];
+    let chroma = |space: Space, primaries: Primaries| {
+        let file = decoded(&print_file(
+            &|_, _| cyan,
+            32,
+            32,
+            &print_spec(space, 16, 32, 32, 0),
+        ));
+        let codes: [u16; 3] = file.samples[(16 * 32 + 16) * 3..][..3]
+            .try_into()
+            .expect("a pixel");
+        let gamma = match space {
+            Space::Srgb => None,
+            _ => Some(2.19921875),
+        };
+        let linear = codes.map(|code| {
+            let level = f64::from(code) / 65535.0;
+            match gamma {
+                Some(gamma) => level.powf(gamma),
+                None => srgb_eotf(level),
+            }
+        });
+        let rec2020 = primaries.to_rec2020().map(|row| {
+            row.into_iter()
+                .zip(linear)
+                .map(|(weight, value)| f64::from(weight) * value)
+                .sum::<f64>()
+        });
+        let luma: f64 = rec2020
+            .iter()
+            .zip([0.2627, 0.678, 0.0593])
+            .map(|(value, weight)| value * weight)
+            .sum();
+        rec2020
+            .iter()
+            .map(|value| (value - luma).powi(2))
+            .sum::<f64>()
+            .sqrt()
+            / luma
+    };
+    let (srgb, adobe) = (
+        chroma(Space::Srgb, Primaries::REC709),
+        chroma(Space::AdobeRgb, Primaries::ADOBE_RGB),
+    );
+    assert!(
+        adobe > srgb * 1.15,
+        "Adobe RGB kept no more of the cyan than sRGB: {adobe} against {srgb}"
+    );
+}
+
+/// A device print lays the gamut-mapped colour as the profile's own transform would.
+#[test]
+fn a_device_print_lays_what_moxcms_lays_of_the_mapped_colour() {
+    let icc = ideal_printer(0.9);
+    let encoded = {
+        let table = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in icc.chunks(3) {
+            let word = chunk.iter().enumerate().fold(0u32, |word, (i, byte)| {
+                word | u32::from(*byte) << (16 - 8 * i)
+            });
+            for i in 0..4 {
+                out.push(if i <= chunk.len() {
+                    table[((word >> (18 - 6 * i)) & 63) as usize] as char
+                } else {
+                    '='
+                });
+            }
+        }
+        out
+    };
+    let device = Spec {
+        icc: Some(encoded),
+        ..print_spec(Space::Device, 16, 32, 32, 0)
+    };
+    let srgb = print_spec(Space::Srgb, 16, 32, 32, 0);
+    let lay = {
+        let mut signal = moxcms::ColorProfile::new_bt2020();
+        let linear = moxcms::ToneReprCurve::Lut(Vec::new());
+        signal.red_trc = Some(linear.clone());
+        signal.green_trc = Some(linear.clone());
+        signal.blue_trc = Some(linear);
+        let printer = moxcms::ColorProfile::new_from_slice(&icc).expect("the printer");
+        signal
+            .create_transform_f32(
+                moxcms::Layout::Rgb,
+                &printer,
+                moxcms::Layout::Rgb,
+                moxcms::TransformOptions {
+                    rendering_intent: moxcms::RenderingIntent::RelativeColorimetric,
+                    ..moxcms::TransformOptions::default()
+                },
+            )
+            .expect("the printer writes")
+    };
+    let mut worst = 0.0f64;
+    for colour in [
+        [0.5, 0.35, 0.3],
+        [0.02, 0.6, 0.55],
+        [0.9, 0.9, 0.9],
+        [0.01, 0.015, 0.02],
+    ] {
+        let through_srgb = decoded(&print_file(&|_, _| colour, 32, 32, &srgb));
+        let mapped = Primaries::REC709.to_rec2020().map(|row| {
+            row.into_iter()
+                .zip(&through_srgb.samples[(16 * 32 + 16) * 3..][..3])
+                .map(|(weight, code)| f64::from(weight) * srgb_eotf(f64::from(*code) / 65535.0))
+                .sum::<f64>() as f32
+        });
+        let mut expected = [0.0f32; 3];
+        lay.transform(&mapped, &mut expected).expect("laid");
+        let through_device = decoded(&print_file(&|_, _| colour, 32, 32, &device));
+        let codes = &through_device.samples[(16 * 32 + 16) * 3..][..3];
+        for channel in 0..3 {
+            worst = worst
+                .max((f64::from(codes[channel]) / 65535.0 - f64::from(expected[channel])).abs());
+        }
+    }
+    assert!(
+        worst * 255.0 < 1.5,
+        "the device print is {} of 255 from the profile's own answer",
+        worst * 255.0
+    );
+}
+
+struct PrintFile {
+    width: usize,
+    height: usize,
+    bit_depth: png::BitDepth,
+    icc: Vec<u8>,
+    /// Every sample, 16-bit codes scaled from 8 where the file is 8.
+    samples: Vec<u16>,
+}
+
+fn decoded(png: &[u8]) -> PrintFile {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .expect("a PNG header");
+    let info = reader.info().clone();
+    let mut bytes = vec![0; reader.output_buffer_size().expect("a size")];
+    reader.next_frame(&mut bytes).expect("the frame");
+    let samples = match info.bit_depth {
+        png::BitDepth::Sixteen => bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect(),
+        _ => bytes.iter().map(|&byte| u16::from(byte) * 257).collect(),
+    };
+    PrintFile {
+        width: info.width as usize,
+        height: info.height as usize,
+        bit_depth: info.bit_depth,
+        icc: info.icc_profile.expect("an iCCP chunk").into_owned(),
+        samples,
+    }
+}
+
+fn srgb_eotf(level: f64) -> f64 {
+    if level <= 0.04045 {
+        level / 12.92
+    } else {
+        ((level + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// A `width` by `height` photograph coloured by `source` at each pixel, in shares of 203 nits
+/// in sRGB primaries, rendered as the print file `spec` asks for.
+fn print_file(
+    source: &dyn Fn(usize, usize) -> [f64; 3],
+    width: usize,
+    height: usize,
+    spec: &Spec,
+) -> Vec<u8> {
+    let gpu = rawshim::gpu::device().expect("print requires Vulkan");
+    let target = spec.target().expect("a print target");
+    let (geometry, _) = spec.geometry(rawshim::image::Geometry::none(), width, height);
+    let grade = Grade {
+        output: Output::Print,
+        intent: spec.intent,
+        print: Some(spec.output()),
+        ..Grade::new(
+            width,
+            height,
+            rawshim::tone::Levels {
+                white: Light::measured(10000.0),
+                peak: Light::measured(10000.0),
+                floor: None,
+            },
+            Light::exactly(203.0),
+            Light::exactly(203.0),
+        )
+    }
+    .showing(geometry);
+    let coded = |colour: [f64; 3]| {
+        rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
+            let value = row
+                .into_iter()
+                .zip(colour)
+                .map(|(weight, value)| weight * value)
+                .sum::<f64>();
+            (rawshim::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round()
+                as u16
+        })
+    };
+    let frame: Vec<u16> = (0..width * height)
+        .flat_map(|at| coded(source(at % width, at / width)))
+        .collect();
+    let peak = gpu.scene_peak();
+    let uploaded = gpu.upload(&frame, &grade, &peak);
+    uploaded.set_print_target(target.clone());
+    let (file_w, file_h) = (spec.width as usize, spec.height as usize);
+    let profile = spec.profile(&target).expect("a profile");
+    let eight;
+    let sixteen;
+    let samples = match spec.bits {
+        16 => {
+            sixteen = uploaded.encode(&grade);
+            PrintSamples::Sixteen(&sixteen)
+        }
+        _ => {
+            eight = uploaded.encode_bytes(&grade);
+            PrintSamples::Eight(&eight)
+        }
+    };
+    rawshim::png_write::encode_print(samples, file_w, file_h, &profile).expect("a print file")
 }
 
 /// A printer reproducing linear Rec.2020 exactly, on a neutral paper reflecting `white`.

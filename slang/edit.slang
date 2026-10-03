@@ -249,6 +249,10 @@ public struct Edit {
     /// pulled no neutral.
     public float matched_temperature;
     public float matched_tint;
+    /// A print file's largest code, 255 or 65535, and whether its black is reached with black
+    /// point compensation (`print_output`). Read by `encode_print` alone.
+    public float print_top;
+    public uint print_compensated;
 };
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;

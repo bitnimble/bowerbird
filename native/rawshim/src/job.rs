@@ -64,6 +64,8 @@ pub enum Output {
     Pq,
     /// Diffuse white, sRGB primaries and transfer, 8-bit.
     Srgb,
+    /// A print file, as [`Target::print`] asks for it: a PNG in the space the printer takes.
+    Print,
 }
 
 #[derive(Deserialize)]
@@ -83,6 +85,9 @@ pub struct Target {
     /// How an sRGB output reaches its gamut. A PQ output reads nothing of it.
     #[serde(default)]
     pub intent: crate::gpu::Intent,
+    /// What an [`Output::Print`] target writes; nothing for every other output.
+    #[serde(default)]
+    pub print: Option<crate::print_output::Spec>,
 }
 
 #[derive(Deserialize)]
@@ -473,6 +478,7 @@ fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOption
     let full_chroma = match target.output {
         Output::Pq => target.still_full_chroma,
         Output::Srgb => target.sdr_full_chroma,
+        Output::Print => true,
     };
     EncodeOptions {
         still_chroma: match full_chroma {
@@ -498,7 +504,18 @@ fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOption
 /// The frame a target cuts from `photograph`, before the reader's geometry: `hdr_args::target_size`,
 /// shrunk until what the geometry writes of it still opens in every AVIF reader. A straighten's
 /// bounding box is larger than the frame it turns, so a frame at the limit can write past it.
-fn drawn_size(job: &Job, photograph: (usize, usize), options: &EncodeOptions) -> hdr_args::Size {
+///
+/// A print's is the frame its file reads at most one pixel of per pixel (`print_output::Spec`).
+fn drawn_size(
+    job: &Job,
+    target: &Target,
+    photograph: (usize, usize),
+    options: &EncodeOptions,
+) -> hdr_args::Size {
+    if let Some(spec) = &target.print {
+        let edge = spec.drawn_long_edge(job.geometry, photograph);
+        return hdr_args::fitted(photograph.0 as u32, photograph.1 as u32, f64::from(edge));
+    }
     let mut options = options.clone();
     loop {
         let size = hdr_args::target_size(photograph.0 as u32, photograph.1 as u32, &options);
@@ -980,6 +997,7 @@ impl Base {
         let sized = |target: &Target| {
             let size = drawn_size(
                 job,
+                target,
                 photograph,
                 &encode_options(job, target, &target.output_path),
             );
@@ -1424,6 +1442,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         still_full_chroma: true,
         sdr_full_chroma: true,
         intent: target.intent,
+        print: None,
     });
     let mut first = whole.clone();
     if let Some(measuring) = &measuring {
@@ -1535,7 +1554,8 @@ const BAND_PIXELS: usize = 16 << 20;
 /// a tiled assembly and a size cap of its own.
 #[cfg(feature = "renditions")]
 fn is_banded(job: &Job, target: &Target) -> bool {
-    if job.composite.is_some() {
+    // A print is one PNG rather than a grid of AVIF tiles, so it is written whole.
+    if job.composite.is_some() || target.print.is_some() {
         return false;
     }
     let header = match crate::decode_rendered::is_rendered(&job.raw_file_path) {
@@ -1548,6 +1568,7 @@ fn is_banded(job: &Job, target: &Target) -> bool {
     let photograph = (header.width as usize, header.height as usize);
     let drawn = drawn_size(
         job,
+        target,
         photograph,
         &encode_options(job, target, &target.output_path),
     );
@@ -1598,17 +1619,18 @@ async fn bands(
             options.content_light = Some(graded.light.content_light());
             let bands = graded.bands.into_iter().filter_map(|band| match band {
                 Coded::Pq(samples) => Some(samples),
-                Coded::Srgb(_) => None,
+                _ => None,
             });
             hdr::encode_bands(bands.collect(), width, &options, rotate, exif)
         }
+        Output::Print => Err("a print is written whole, never in bands".into()),
         Output::Srgb => {
             let bands: Vec<Vec<u8>> = graded
                 .bands
                 .into_iter()
                 .filter_map(|band| match band {
                     Coded::Srgb(samples) => Some(samples),
-                    Coded::Pq(_) => None,
+                    _ => None,
                 })
                 .collect();
             if target.rendition == Rendition::Grid {
@@ -1662,7 +1684,7 @@ pub(crate) async fn graded_bands(
     let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
     let photograph = held.size().raw();
     let options = encode_options(job, target, &target.output_path);
-    let size = drawn_size(job, photograph, &options);
+    let size = drawn_size(job, target, photograph, &options);
     let drawn =
         crate::px::Size::<crate::px::Drawn>::exact(size.width as usize, size.height as usize);
     let geometry = job.pixel_geometry();
@@ -1674,6 +1696,7 @@ pub(crate) async fn graded_bands(
     let output = match target.output {
         Output::Pq => crate::gpu::Output::Pq,
         Output::Srgb => crate::gpu::Output::Srgb,
+        Output::Print => return Err("a print is written whole, never in bands".into()),
     };
     let peak = gpu.given_peak(scene_peak.raw() as f32);
     let mut leak: f64 = 0.0;
@@ -1741,6 +1764,7 @@ pub(crate) async fn graded_bands(
                 light = light.and(band);
             }
             Output::Srgb => bands.push(Coded::Srgb(up.coded_bytes(&grade).await.ok_or(unread)?)),
+            Output::Print => unreachable!("refused above"),
         }
         drop(up);
         frame.reclaim();
@@ -1809,7 +1833,7 @@ pub(crate) async fn render(
             let options = encode_options(job, target, &target.output_path);
             // The *photograph's* size, which a rendition's own is a bound on - not the frame's,
             // which for a cropped render is only the part of it the crop reads.
-            (*target, drawn_size(job, photograph, &options))
+            (*target, drawn_size(job, target, photograph, &options))
         })
         .collect();
     order
@@ -1919,12 +1943,28 @@ pub(crate) async fn render(
         let output = match target.output {
             Output::Pq => crate::gpu::Output::Pq,
             Output::Srgb => crate::gpu::Output::Srgb,
+            Output::Print => crate::gpu::Output::Print,
         };
-        let mut grade = crate::gpu::Grade {
-            intent: target.intent,
-            ..scene.gpu_grade(cut.width, cut.height, output)
-        }
-        .showing(job.pixel_geometry());
+        let print = target
+            .print
+            .as_ref()
+            .map(|spec| Ok::<_, String>((spec, spec.target()?)))
+            .transpose()?;
+        let mut grade = match &print {
+            // The turn goes into the pixels: a print file carries no orientation for a driver to
+            // honour, and the reader's own turn rides with the request's.
+            Some((spec, _)) => crate::gpu::Grade {
+                intent: spec.intent,
+                print: Some(spec.output()),
+                ..scene.gpu_grade(cut.width, cut.height, output)
+            }
+            .showing(spec.geometry(job.geometry, cut.width, cut.height).0),
+            None => crate::gpu::Grade {
+                intent: target.intent,
+                ..scene.gpu_grade(cut.width, cut.height, output)
+            }
+            .showing(job.pixel_geometry()),
+        };
         if let Some(window) = window {
             // Which takes the blur's scale with it. A *whole* frame keeps its own even when it has
             // been downscaled - at 1600 off a 3840 base the photograph is 1600 by then, and the
@@ -1948,9 +1988,17 @@ pub(crate) async fn render(
         // have handed the same shader - read back in the shape this output is written in, so an
         // eight-bit rendition never exists as sixteen (`Uploaded::encode_bytes`).
         let unread = "the graded frame could not be read back";
-        let coded = match target.output {
-            Output::Pq => Coded::Pq(up.coded(&grade).await.ok_or(unread)?),
-            Output::Srgb => Coded::Srgb(up.coded_bytes(&grade).await.ok_or(unread)?),
+        if let Some((_, print_target)) = &print {
+            up.set_print_target(print_target.clone());
+        }
+        let coded = match (target.output, &print) {
+            (Output::Pq, _) => Coded::Pq(up.coded(&grade).await.ok_or(unread)?),
+            (Output::Srgb, _) => Coded::Srgb(up.coded_bytes(&grade).await.ok_or(unread)?),
+            (Output::Print, Some((spec, _))) if spec.bits == 16 => {
+                Coded::Print16(up.coded(&grade).await.ok_or(unread)?)
+            }
+            (Output::Print, Some(_)) => Coded::Print8(up.coded_bytes(&grade).await.ok_or(unread)?),
+            (Output::Print, None) => return Err("a print target says nothing of its file".into()),
         };
         lap("grade");
         // **Chroma is chosen by the frame, not by the setting alone.** 4:2:0 stores four pixels'
@@ -2057,6 +2105,9 @@ pub(crate) struct Rendered {
 pub enum Coded {
     Pq(Vec<u16>),
     Srgb(Vec<u8>),
+    /// A print file's codes, in the space its target names (`print_output.slang`).
+    Print8(Vec<u8>),
+    Print16(Vec<u16>),
 }
 
 /// What travels in front of a rendition rendered on one host for another to encode.
@@ -2129,6 +2180,9 @@ fn framed(header: &RenderedHeader, coded: &Coded) -> Result<Vec<u8>, String> {
     let samples = match coded {
         Coded::Pq(frame) => frame.len() * 2,
         Coded::Srgb(data) => data.len(),
+        Coded::Print8(_) | Coded::Print16(_) => {
+            return Err("a print is written where it is rendered".into());
+        }
     };
     let mut framed = Vec::with_capacity(at + samples);
     framed.extend_from_slice(&(text.len() as u32).to_le_bytes());
@@ -2140,6 +2194,7 @@ fn framed(header: &RenderedHeader, coded: &Coded) -> Result<Vec<u8>, String> {
             framed.extend(frame.iter().map(|&v| twelve_bit(v) as u8));
         }
         Coded::Srgb(data) => framed.extend_from_slice(data),
+        Coded::Print8(_) | Coded::Print16(_) => unreachable!("refused above"),
     }
     Ok(framed)
 }
@@ -2226,6 +2281,7 @@ fn unframed(framed: &[u8]) -> Result<(RenderedHeader, Coded), String> {
     let depth = match header.output {
         Output::Pq => 2,
         Output::Srgb => 1,
+        Output::Print => return Err("a print is written where it is rendered".into()),
     };
     let wanted = header
         .width
@@ -2253,6 +2309,7 @@ fn unframed(framed: &[u8]) -> Result<(RenderedHeader, Coded), String> {
             )
         }
         Output::Srgb => Coded::Srgb(body.to_vec()),
+        Output::Print => unreachable!("refused above"),
     };
     Ok((header, coded))
 }
@@ -2284,6 +2341,21 @@ fn write(
             save_avif(image, target, rotate, exif)?;
             describe_if_grid(image, target, outcome);
         }
+        Coded::Print8(_) | Coded::Print16(_) => {
+            let spec = target
+                .print
+                .as_ref()
+                .ok_or("a print target says nothing of its file")?;
+            let samples = match &coded {
+                Coded::Print8(data) => crate::png_write::PrintSamples::Eight(data),
+                Coded::Print16(data) => crate::png_write::PrintSamples::Sixteen(data),
+                _ => unreachable!(),
+            };
+            let profile = spec.profile(&spec.target()?)?;
+            let png = crate::png_write::encode_print(samples, width, height, &profile)?;
+            std::fs::write(&target.output_path, png)
+                .map_err(|error| format!("could not write {}: {error}", target.output_path))?;
+        }
     }
     Ok(())
 }
@@ -2311,11 +2383,11 @@ mod tests {
         )
         .expect("the target parses");
         let options = encode_options(&job, &job.targets[0], "");
-        let in_limit = drawn_size(&job, (4000, 2000), &options);
+        let in_limit = drawn_size(&job, &job.targets[0], (4000, 2000), &options);
         assert_eq!((in_limit.width, in_limit.height), (4000, 2000));
 
         job.geometry.angle_degrees = 5.0;
-        let capped = drawn_size(&job, (32768, 8192), &options);
+        let capped = drawn_size(&job, &job.targets[0], (32768, 8192), &options);
         assert!(capped.width < 32768);
         let (width, height) = hdr::cropped_size(
             capped.width as usize,
@@ -2333,6 +2405,7 @@ mod tests {
         let coded = match output {
             Output::Pq => Coded::Pq(vec![40_000; samples]),
             Output::Srgb => Coded::Srgb(vec![7; samples]),
+            Output::Print => unreachable!("a print is never framed"),
         };
         let header = RenderedHeader {
             width,

@@ -70,6 +70,9 @@ pub struct PrinterGamut {
     tint: [[f64; 3]; 3],
     profile: ColorProfile,
     icc: Vec<u8>,
+    /// [`PrinterGamut::device_table`], baked on first need: a printer that is only proofed
+    /// never asks for it.
+    device: std::sync::OnceLock<Result<Vec<f32>, String>>,
 }
 
 impl PrinterGamut {
@@ -152,6 +155,7 @@ impl PrinterGamut {
             tint,
             profile: printer,
             icc: icc.to_vec(),
+            device: std::sync::OnceLock::new(),
         })
     }
 
@@ -160,10 +164,56 @@ impl PrinterGamut {
         &self.icc
     }
 
-    pub(crate) fn profile(&self) -> &ColorProfile {
-        &self.profile
+    /// The printer's device RGB for every node of a `LUT_STEPS` grid over linear Rec.2020, as
+    /// `print_output.slang` samples it: four words a node, red fastest, each axis coded by
+    /// `LUT_GAMMA` so the shadows get as many nodes as the lights. Relative colorimetric, the
+    /// gamut having been reached by `gamut_map.slang` already.
+    ///
+    /// Only an RGB printer has one: what a print file carries is the three channels a driver
+    /// takes uncorrected, and an ink set's own channels are the driver's to lay.
+    pub fn device_table(&self) -> Result<&[f32], String> {
+        self.device
+            .get_or_init(|| self.bake_device_table())
+            .as_deref()
+            .map_err(Clone::clone)
+    }
+
+    fn bake_device_table(&self) -> Result<Vec<f32>, String> {
+        if self.profile.color_space != DataColorSpace::Rgb {
+            return Err(format!(
+                "a print file carries RGB, and this printer profile is over {:?}",
+                self.profile.color_space
+            ));
+        }
+        let signal = linear_rec2020();
+        let lay = signal
+            .create_transform_f32(
+                Layout::Rgb,
+                &self.profile,
+                Layout::Rgb,
+                TransformOptions {
+                    rendering_intent: RenderingIntent::RelativeColorimetric,
+                    ..TransformOptions::default()
+                },
+            )
+            .map_err(|error| format!("the profile cannot be written to: {error:?}"))?;
+        let nodes: Vec<f32> = device_grid(3, LUT_STEPS)
+            .into_iter()
+            .map(|coded| coded.powf(LUT_GAMMA))
+            .collect();
+        let mut device = vec![0.0; nodes.len()];
+        lay.transform(&nodes, &mut device)
+            .map_err(|error| format!("the profile cannot be written to: {error:?}"))?;
+        Ok(device
+            .chunks_exact(3)
+            .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 1.0])
+            .collect())
     }
 }
+
+/// `print_output.slang`'s grid: nodes to a side, and the power each axis is coded by.
+pub const LUT_STEPS: usize = 65;
+pub const LUT_GAMMA: f32 = 2.4;
 
 /// The print's target as `print_scene.slang` proofs it: a profile's own paper, or else the tagged
 /// space laid between the scene's paper black and white.
@@ -410,8 +460,74 @@ mod tests {
         assert_eq!(words.len(), TARGET_TABLE + TARGET_HUES * TARGET_LUMAS);
     }
 
+    /// Trilinear on the host, as the sampler reads it, against moxcms laying the colour itself.
+    #[test]
+    fn the_device_table_lays_what_the_profile_does() {
+        let printer = PrinterGamut::new(&ideal_printer(0.9)).expect("a printer");
+        let table = printer.device_table().expect("an RGB printer has a table");
+        assert_eq!(table.len(), LUT_STEPS.pow(3) * 4);
+        let lay = linear_rec2020()
+            .create_transform_f32(
+                Layout::Rgb,
+                &printer.profile,
+                Layout::Rgb,
+                TransformOptions {
+                    rendering_intent: RenderingIntent::RelativeColorimetric,
+                    ..TransformOptions::default()
+                },
+            )
+            .expect("the profile writes");
+        let mut worst = 0.0f32;
+        for colour in [
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.18, 0.18, 0.18],
+            [0.002, 0.004, 0.003],
+            [0.7, 0.1, 0.05],
+            [0.05, 0.6, 0.55],
+            [0.31, 0.27, 0.9],
+            [0.999, 0.5, 0.013],
+        ] {
+            let mut expected = [0.0f32; 3];
+            lay.transform(&colour, &mut expected).expect("laid");
+            let sampled = sample_device_table(table, colour);
+            for channel in 0..3 {
+                worst = worst.max((sampled[channel] - expected[channel]).abs());
+            }
+        }
+        assert!(
+            worst * 255.0 < 0.5,
+            "the table is {worst} from the profile's own answer"
+        );
+    }
+
+    /// `print_output.slang`'s read of the table, in `f32`.
+    fn sample_device_table(table: &[f32], colour: [f32; 3]) -> [f32; 3] {
+        let node = colour
+            .map(|value| value.clamp(0.0, 1.0).powf(1.0 / LUT_GAMMA) * (LUT_STEPS - 1) as f32);
+        let low = node.map(|at| (at.floor() as usize).min(LUT_STEPS - 2));
+        let t = [0, 1, 2].map(|axis| node[axis] - low[axis] as f32);
+        let mut out = [0.0; 3];
+        for corner in 0..8 {
+            let mut weight = 1.0;
+            let mut index = 0;
+            for axis in 0..3 {
+                let up = (corner >> axis) & 1;
+                weight *= if up == 1 { t[axis] } else { 1.0 - t[axis] };
+                index += (low[axis] + up) * LUT_STEPS.pow(axis as u32);
+            }
+            for channel in 0..3 {
+                out[channel] += weight * table[index * 4 + channel];
+            }
+        }
+        out
+    }
+
     #[test]
     fn the_shader_reads_the_table_this_writes() {
+        let output = include_str!("../../../slang/print_output.slang");
+        assert!(output.contains(&format!("static const uint LUT_STEPS = {LUT_STEPS};")));
+        assert!(output.contains(&format!("static const float LUT_GAMMA = {LUT_GAMMA:.1};")));
         let shader = include_str!("../../../slang/print_scene.slang");
         for (name, value) in [
             ("TARGET_HUES", TARGET_HUES),

@@ -78,6 +78,62 @@ fn write<T>(
     Ok(out)
 }
 
+/// A print file's samples, at the depth the printer takes.
+pub enum PrintSamples<'a> {
+    Eight(&'a [u8]),
+    Sixteen(&'a [u16]),
+}
+
+/// A print file: RGB in the space `icc` describes, carried as its `iCCP` chunk, which is the one
+/// tag every print path reads. No `cICP`: a printer's own profile has no code point, and a file
+/// saying both would be read by whichever a driver prefers.
+pub fn encode_print(
+    samples: PrintSamples<'_>,
+    width: usize,
+    height: usize,
+    icc: &[u8],
+) -> Result<Vec<u8>, String> {
+    let count = width * height * 3;
+    let (depth, bytes): (BitDepth, Vec<u8>) = match samples {
+        PrintSamples::Eight(rgb8) => {
+            if rgb8.len() < count {
+                return Err(format!("frame is {} samples, expected {count}", rgb8.len()));
+            }
+            (BitDepth::Eight, rgb8[..count].to_vec())
+        }
+        PrintSamples::Sixteen(rgb16) => {
+            if rgb16.len() < count {
+                return Err(format!(
+                    "frame is {} samples, expected {count}",
+                    rgb16.len()
+                ));
+            }
+            (
+                BitDepth::Sixteen,
+                rgb16[..count]
+                    .iter()
+                    .flat_map(|sample| sample.to_be_bytes())
+                    .collect(),
+            )
+        }
+    };
+    let mut info = png::Info::with_size(width as u32, height as u32);
+    info.color_type = ColorType::Rgb;
+    info.bit_depth = depth;
+    info.icc_profile = Some(std::borrow::Cow::Borrowed(icc));
+    let mut out = Vec::new();
+    let mut writer = Encoder::with_info(&mut out, info)
+        .and_then(|encoder| encoder.write_header())
+        .map_err(|e| format!("could not write a PNG header: {e}"))?;
+    writer
+        .write_image_data(&bytes)
+        .map_err(|e| format!("could not write PNG pixels: {e}"))?;
+    writer
+        .finish()
+        .map_err(|e| format!("could not finish the PNG: {e}"))?;
+    Ok(out)
+}
+
 /// Eight-bit sRGB, for an export with no HDR asked for. `exif` is a TIFF block (`crate::exif`).
 pub fn encode_sdr(
     rgb8: &[u8],
@@ -171,5 +227,31 @@ mod tests {
     fn a_frame_smaller_than_it_claims_is_refused() {
         assert!(encode_sdr(&[0u8; 8], 16, 8, None).is_err());
         assert!(encode_hdr(&[0u16; 8], 16, 8, None).is_err());
+        assert!(encode_print(PrintSamples::Eight(&[0u8; 8]), 16, 8, &[]).is_err());
+    }
+
+    /// Read back for the profile, the depth and the samples in order: big-endian is PNG's, and a
+    /// writer that swapped nothing would decode to a plausible, wrong picture.
+    #[test]
+    fn a_print_png_carries_its_profile_and_sixteen_bits_big_endian() {
+        let icc = moxcms::ColorProfile::new_adobe_rgb()
+            .encode()
+            .expect("Adobe RGB");
+        let samples: Vec<u16> = (0..16 * 8 * 3).map(|i| (i * 977 % 65536) as u16).collect();
+        let encoded =
+            encode_print(PrintSamples::Sixteen(&samples), 16, 8, &icc).expect("the encode");
+        let mut reader = png::Decoder::new(std::io::Cursor::new(&encoded))
+            .read_info()
+            .expect("the header");
+        assert_eq!(reader.info().bit_depth, BitDepth::Sixteen);
+        assert_eq!(reader.info().icc_profile.as_deref(), Some(&icc[..]));
+        assert!(reader.info().coding_independent_code_points.is_none());
+        let mut bytes = vec![0; reader.output_buffer_size().expect("a size")];
+        reader.next_frame(&mut bytes).expect("the frame");
+        let read: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        assert_eq!(read, samples);
     }
 }
