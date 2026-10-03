@@ -170,7 +170,9 @@ fn main() -> Result<(), String> {
             "{path}: gamut read in {:.1} ms",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        uploaded.set_printer(Some(std::sync::Arc::new(printer)));
+        uploaded.set_print_target(rawshim::printer_gamut::PrintTarget::Profile(
+            std::sync::Arc::new(printer),
+        ));
     }
     if !pitches.is_empty() {
         let white = header.grade.reference_white_nits.raw();

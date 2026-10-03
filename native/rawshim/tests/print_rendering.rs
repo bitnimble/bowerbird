@@ -1,8 +1,8 @@
 use rawshim::gpu::{Canvas, Grade, Intent, Output};
 use rawshim::hdr_fit::HdrColour;
 use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
-use rawshim::png_write::PrintSamples;
 use rawshim::print::{Paper, Presentation, Scene};
+use rawshim::print_output::PrintSamples;
 use rawshim::print_output::{Space, Spec};
 use rawshim::printer_gamut::PrintTarget;
 use rawshim::px::Size;
@@ -770,9 +770,9 @@ fn a_device_print_lays_what_moxcms_lays_of_the_mapped_colour() {
         }
     }
     assert!(
-        worst * 255.0 < 1.5,
-        "the device print is {} of 255 from the profile's own answer",
-        worst * 255.0
+        worst * 65535.0 < 128.0,
+        "the device print is {} of 65535 from the profile's own answer",
+        worst * 65535.0
     );
 }
 
@@ -826,7 +826,10 @@ fn print_file(
 ) -> Vec<u8> {
     let gpu = rawshim::gpu::device().expect("print requires Vulkan");
     let target = spec.target().expect("a print target");
-    let (geometry, _) = spec.geometry(rawshim::image::Geometry::none(), width, height);
+    let (geometry, _) = spec.geometry(
+        rawshim::image::Geometry::none(),
+        rawshim::px::Size::<rawshim::px::Drawn>::measured(width, height),
+    );
     let grade = Grade {
         output: Output::Print,
         intent: spec.intent,
@@ -862,20 +865,12 @@ fn print_file(
     let uploaded = gpu.upload(&frame, &grade, &peak);
     uploaded.set_print_target(target.clone());
     let (file_w, file_h) = (spec.width as usize, spec.height as usize);
-    let profile = spec.profile(&target).expect("a profile");
-    let eight;
-    let sixteen;
+    let profile = target.icc().expect("a profile");
     let samples = match spec.bits {
-        16 => {
-            sixteen = uploaded.encode(&grade);
-            PrintSamples::Sixteen(&sixteen)
-        }
-        _ => {
-            eight = uploaded.encode_bytes(&grade);
-            PrintSamples::Eight(&eight)
-        }
+        16 => PrintSamples::Sixteen(uploaded.encode(&grade)),
+        _ => PrintSamples::Eight(uploaded.encode_bytes(&grade)),
     };
-    rawshim::png_write::encode_print(samples, file_w, file_h, &profile).expect("a print file")
+    rawshim::png_write::encode_print(&samples, file_w, file_h, &profile).expect("a print file")
 }
 
 /// A printer reproducing linear Rec.2020 exactly, on a neutral paper reflecting `white`.

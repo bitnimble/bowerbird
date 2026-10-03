@@ -2821,7 +2821,7 @@ mod camera_match {
     #[test]
     fn a_print_job_writes_the_file_it_was_asked_for() {
         let path = sony().to_string_lossy().into_owned();
-        let out = std::env::temp_dir().join("bb-print-job.png");
+        let out = std::env::temp_dir().join(format!("bb-print-job-{}.png", std::process::id()));
         let job: crate::job::Job = serde_json::from_str(&format!(
             r#"{{
                 "rawFilePath": {path:?},

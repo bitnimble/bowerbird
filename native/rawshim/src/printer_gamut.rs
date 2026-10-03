@@ -59,6 +59,21 @@ impl PrintTarget {
             _ => None,
         }
     }
+
+    /// The ICC profile a file in this target is tagged with: the space's own, or the printer's
+    /// verbatim.
+    pub fn icc(&self) -> Result<Vec<u8>, String> {
+        let encoded = |profile: ColorProfile| {
+            profile
+                .encode()
+                .map_err(|error| format!("the profile cannot be written: {error:?}"))
+        };
+        match self {
+            PrintTarget::Srgb => encoded(ColorProfile::new_srgb()),
+            PrintTarget::AdobeRgb => encoded(ColorProfile::new_adobe_rgb()),
+            PrintTarget::Profile(printer) => Ok(printer.icc().to_vec()),
+        }
+    }
 }
 
 /// A printer profile's gamut and paper, in linear Rec.2020 as a share of the paper's white.

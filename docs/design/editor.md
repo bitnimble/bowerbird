@@ -210,8 +210,8 @@ Lightroom's two; absolute colorimetric proofs one medium on another, which a pri
 never asks for. The target is an interface, so
 sRGB and Adobe RGB are a cube in closed form, and a printer profile is a table of its maximum
 chroma over 64 hues and 32 lumas. Generic paper, with no printer named, is the Adobe RGB cube
-between the paper panel's black and white: the widest space a printer is commonly sent, so a
-proof shows what the print keeps rather than what sRGB would have cut. A profile is read into that table with moxcms each time one is
+between the paper panel's black and white: the widest space a printer is commonly sent. A
+profile is read into that table with moxcms each time one is
 picked - its device grid through the profile's relative transform into linear Rec.2020, binned by
 hue and luma - which costs 6ms for a CMYK printer, so nothing is cached. The same pass reads the
 profile's paper white and black, which then take over the paper panel's two reflectances. The

@@ -1,13 +1,9 @@
 //! A print file's request (`job::Target::print`): the space the printer is sent, the file's exact
 //! pixels, and the turn - and what those ask of the grade.
-//!
-//! The picture is scaled to cover the file and cut to it inside the grade's own geometry: the crop
-//! is tightened to the file's shape about the reader's own centre, and the dispatch writes the
-//! file's pixels through `geometry_at`, so the resample is the Catmull-Rom every rendition reads
-//! with and no second one. The frame is drawn at the size that makes that a magnification.
 
 use crate::image::Geometry;
-use crate::printer_gamut::PrintTarget;
+use crate::printer_gamut::{PrintTarget, PrinterGamut};
+use crate::px::{Drawn, Size};
 
 /// The encoding the printer takes, from the best it accepts down.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize)]
@@ -17,6 +13,12 @@ pub enum Space {
     AdobeRgb,
     /// The printer's own RGB, uncorrected, through its paper's profile.
     Device,
+}
+
+/// A print file's samples, at the depth the printer takes.
+pub enum PrintSamples {
+    Eight(Vec<u8>),
+    Sixteen(Vec<u16>),
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -40,40 +42,33 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// The target the file is brought inside, which also proves the request is one this can write.
-    pub fn target(&self) -> Result<PrintTarget, String> {
+    /// Whether this is a file that can be written at all, before anything is decoded for it.
+    pub fn validate(&self) -> Result<(), String> {
         if !matches!(self.bits, 8 | 16) {
             return Err(format!("a print file is 8 or 16 bits, not {}", self.bits));
         }
         if self.width == 0 || self.height == 0 {
             return Err("a print file needs a width and a height".to_owned());
         }
+        if self.space == Space::Device && self.icc.is_none() {
+            return Err("a device print needs the printer's ICC profile".to_owned());
+        }
+        Ok(())
+    }
+
+    /// The target the file is brought inside, which for a device print proves the profile can be
+    /// written to.
+    pub fn target(&self) -> Result<PrintTarget, String> {
+        self.validate()?;
         match self.space {
             Space::Srgb => Ok(PrintTarget::Srgb),
             Space::AdobeRgb => Ok(PrintTarget::AdobeRgb),
             Space::Device => {
-                let icc = self
-                    .icc
-                    .as_deref()
-                    .ok_or("a device print needs the printer's ICC profile")?;
-                let target = PrintTarget::parse("profile", Some(&base64(icc)?))?;
-                target.profile().ok_or("a profile")?.device_table()?;
-                Ok(target)
+                let icc = base64(self.icc.as_deref().unwrap_or_default())?;
+                let printer = PrinterGamut::new(&icc)?;
+                printer.device_table()?;
+                Ok(PrintTarget::Profile(std::sync::Arc::new(printer)))
             }
-        }
-    }
-
-    /// The profile the file is tagged with: the space's own, or the printer's verbatim.
-    pub fn profile(&self, target: &PrintTarget) -> Result<Vec<u8>, String> {
-        let encoded = |profile: moxcms::ColorProfile| {
-            profile
-                .encode()
-                .map_err(|error| format!("the profile cannot be written: {error:?}"))
-        };
-        match target {
-            PrintTarget::Srgb => encoded(moxcms::ColorProfile::new_srgb()),
-            PrintTarget::AdobeRgb => encoded(moxcms::ColorProfile::new_adobe_rgb()),
-            PrintTarget::Profile(printer) => Ok(printer.icc().to_vec()),
         }
     }
 
@@ -99,12 +94,15 @@ impl Spec {
     }
 
     /// The reader's crop, turned by the request and tightened about its own centre to the file's
-    /// shape, over a frame drawn `width` by `height`; and how many file pixels one of that frame's
-    /// pixels then covers, which [`Spec::drawn_long_edge`] holds at one or more.
-    pub fn geometry(&self, document: Geometry, width: usize, height: usize) -> (Geometry, f64) {
+    /// shape, over a `frame` drawn at some size; and how many file pixels one of that frame's
+    /// pixels then covers, which [`Spec::drawn_long_edge`] holds at one or more. The dispatch
+    /// writes the file's pixels through this geometry, so the resample is the Catmull-Rom every
+    /// rendition reads with and no second one.
+    pub fn geometry(&self, document: Geometry, frame: Size<Drawn>) -> (Geometry, f64) {
         let rotate = self.rotate(document);
         let (file_w, file_h) = self.unturned(rotate);
         let (sin, cos) = document.angle_degrees.to_radians().sin_cos();
+        let (width, height) = frame.raw();
         let (sw, sh) = (
             width as f64 * cos.abs() + height as f64 * sin.abs(),
             width as f64 * sin.abs() + height as f64 * cos.abs(),
@@ -128,9 +126,9 @@ impl Spec {
     /// The long edge to draw `photograph` at: shrunk until one of its pixels covers one of the
     /// file's, so what the dispatch's one tap does is at most a magnification, and never past the
     /// photograph's own.
-    pub fn drawn_long_edge(&self, document: Geometry, photograph: (usize, usize)) -> u32 {
-        let native = photograph.0.max(photograph.1);
-        let (_, scale) = self.geometry(document, photograph.0, photograph.1);
+    pub fn drawn_long_edge(&self, document: Geometry, photograph: Size<Drawn>) -> u32 {
+        let native = photograph.long().raw();
+        let (_, scale) = self.geometry(document, photograph);
         ((native as f64 * scale).ceil() as u32).min(native as u32)
     }
 }
@@ -166,6 +164,10 @@ fn base64(text: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
+    fn frame(width: usize, height: usize) -> Size<Drawn> {
+        Size::measured(width, height)
+    }
+
     fn spec(width: u32, height: u32, quarter_turns: u16) -> Spec {
         Spec {
             space: Space::AdobeRgb,
@@ -194,7 +196,7 @@ mod tests {
             crop: [0.1, 0.2, 0.9, 0.8],
             ..Geometry::none()
         };
-        let (geometry, scale) = spec(600, 600, 0).geometry(document, 1000, 1000);
+        let (geometry, scale) = spec(600, 600, 0).geometry(document, frame(1000, 1000));
         let [left, top, right, bottom] = geometry.crop;
         assert!(
             (left - 0.2).abs() < 1e-9 && (right - 0.8).abs() < 1e-9,
@@ -214,15 +216,14 @@ mod tests {
     #[test]
     fn a_turned_print_tightens_to_the_file_as_it_lies_before_the_turn() {
         let document = Geometry::none();
-        let (geometry, scale) = spec(300, 600, 1).geometry(document, 1200, 400);
+        let (geometry, scale) = spec(300, 600, 1).geometry(document, frame(1200, 400));
         assert_eq!(geometry.rotate, 90);
         let turned_twice = spec(300, 600, 1).geometry(
             Geometry {
                 rotate: 270,
                 ..document
             },
-            1200,
-            400,
+            frame(1200, 400),
         );
         assert_eq!(turned_twice.0.rotate, 0);
         let [left, top, right, bottom] = geometry.crop;
@@ -239,19 +240,14 @@ mod tests {
     #[test]
     fn the_frame_is_drawn_no_larger_than_the_file_reads_and_never_past_native() {
         let document = Geometry::none();
+        let photograph = frame(6000, 4000);
+        assert_eq!(spec(600, 400, 0).drawn_long_edge(document, photograph), 600);
+        assert_eq!(spec(600, 600, 0).drawn_long_edge(document, photograph), 900);
         assert_eq!(
-            spec(600, 400, 0).drawn_long_edge(document, (6000, 4000)),
-            600
-        );
-        assert_eq!(
-            spec(600, 600, 0).drawn_long_edge(document, (6000, 4000)),
-            900
-        );
-        assert_eq!(
-            spec(9000, 6000, 0).drawn_long_edge(document, (6000, 4000)),
+            spec(9000, 6000, 0).drawn_long_edge(document, photograph),
             6000
         );
-        let (_, scale) = spec(9000, 6000, 0).geometry(document, 6000, 4000);
+        let (_, scale) = spec(9000, 6000, 0).geometry(document, photograph);
         assert!((scale - 1.5).abs() < 1e-9, "a magnification: {scale}");
     }
 
@@ -280,9 +276,8 @@ mod tests {
         };
         let target = srgb.target().expect("sRGB");
         assert!(matches!(target, PrintTarget::Srgb));
-        let profile =
-            moxcms::ColorProfile::new_from_slice(&srgb.profile(&target).expect("a profile"))
-                .expect("readable");
+        let profile = moxcms::ColorProfile::new_from_slice(&target.icc().expect("a profile"))
+            .expect("readable");
         assert_eq!(profile.profile_class, moxcms::ProfileClass::DisplayDevice);
     }
 }

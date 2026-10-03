@@ -3,12 +3,11 @@ import type { LibraryConfiguration as Library } from '../../../schemas/libraries
 import { getDataPath } from '../../../utils/paths';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import { encoderQuality } from '../analysis/quality';
-import type { CompositeJobSource } from '../workers/processing_types';
+import type { CompositeJobSource, RenditionTarget } from '../workers/processing_types';
 import { AS_METERED, developed } from './developed';
 import type { CompositeRenderer } from './composite_renderer';
 import type { RenderTargets } from './render_targets';
 import type { SinglePhotoRenderer } from './single_photo_renderer';
-import type { RenditionTarget } from '../workers/processing_types';
 
 export class ExportRenderer {
   constructor(

@@ -1217,8 +1217,7 @@ impl Gpu {
         self.print_surface();
     }
 
-    /// `encode_print`, built on the first print: the editor never writes one, and every pipeline
-    /// built at the open is time a reader waits.
+    /// `encode_print`, built on the first print.
     fn encode_print(&self) -> &wgpu::ComputePipeline {
         self.encode_print.get_or_init(|| {
             let layout = self
@@ -1241,7 +1240,7 @@ impl Gpu {
     }
 
     /// A printer's device RGB over `printer_gamut::device_table`'s grid, for `print_output.slang`
-    /// to sample; one texel where the target is a tagged space and nothing samples it.
+    /// to read; one texel where the target is a tagged space and nothing reads it.
     fn device_lut(
         &self,
         printer: Option<&crate::printer_gamut::PrinterGamut>,
@@ -1250,10 +1249,7 @@ impl Gpu {
             Some(printer) => (crate::printer_gamut::LUT_STEPS, printer.device_table()?),
             None => (1, &[0.0; 4]),
         };
-        let data: Vec<u8> = table
-            .iter()
-            .flat_map(|value| half::f16::from_f32(*value).to_le_bytes())
-            .collect();
+        let data: Vec<u8> = table.iter().flat_map(|value| value.to_le_bytes()).collect();
         let side = steps as u32;
         Ok(self.volume(
             wgpu::Extent3d {
@@ -1261,6 +1257,7 @@ impl Gpu {
                 height: side,
                 depth_or_array_layers: side,
             },
+            wgpu::TextureFormat::Rgba32Float,
             &data,
             "print device table",
         ))
@@ -1768,8 +1765,7 @@ impl Gpu {
             "print output",
             &[
                 (3, Binding::Storage { read_only: true }),
-                (6, Binding::Volume),
-                (7, Binding::Sampler),
+                (6, Binding::Volume32),
             ],
         );
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
@@ -2298,6 +2294,8 @@ enum Binding {
     /// loaded, never sampled.
     Curves,
     Volume,
+    /// An `rgba32float` volume, unfilterable and only ever loaded.
+    Volume32,
     Sampler,
     /// Declared by `frame.slang` and unread at `lod` 0, but an explicit layout has to supply
     /// everything the module declares.
@@ -2351,6 +2349,11 @@ impl Binding {
             },
             Binding::Volume => wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D3,
+                multisampled: false,
+            },
+            Binding::Volume32 => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
                 view_dimension: wgpu::TextureViewDimension::D3,
                 multisampled: false,
             },
@@ -3341,10 +3344,11 @@ impl Gpu {
             // filtering never crosses the seam between slabs.
             depth_or_array_layers: (shape.level_count * shape.surround_count) as u32,
         };
+        let half = wgpu::TextureFormat::Rgba16Float;
         (
-            self.volume(size, &pairs, "chroma"),
-            self.volume(size, &gains, "chroma_luma"),
-            self.volume(size, &tints, "chroma_tint"),
+            self.volume(size, half, &pairs, "chroma"),
+            self.volume(size, half, &gains, "chroma_luma"),
+            self.volume(size, half, &tints, "chroma_tint"),
         )
     }
 
@@ -3657,7 +3661,13 @@ impl Gpu {
         )
     }
 
-    fn volume(&self, size: wgpu::Extent3d, data: &[u8], label: &str) -> Texture {
+    fn volume(
+        &self,
+        size: wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        data: &[u8],
+        label: &str,
+    ) -> Texture {
         self.own_texture_with_data(
             &wgpu::TextureDescriptor {
                 label: Some(label),
@@ -3665,7 +3675,7 @@ impl Gpu {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D3,
-                format: wgpu::TextureFormat::Rgba16Float,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
@@ -4493,10 +4503,6 @@ impl Uploaded<'_> {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&lut.view()),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Sampler(&self.gpu.sampler),
-                },
             ],
         }))
     }
@@ -5277,7 +5283,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     let sixteen_bit = grade.print.is_some_and(|print| print.sixteen_bit);
     f(&mut w, if sixteen_bit { 65535.0 } else { 255.0 });
     w.push(u32::from(
-        grade.print.is_some_and(|print| print.black_point_compensation),
+        grade
+            .print
+            .is_some_and(|print| print.black_point_compensation),
     ));
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much

@@ -513,7 +513,10 @@ fn drawn_size(
     options: &EncodeOptions,
 ) -> hdr_args::Size {
     if let Some(spec) = &target.print {
-        let edge = spec.drawn_long_edge(job.geometry, photograph);
+        let edge = spec.drawn_long_edge(
+            job.geometry,
+            crate::px::Size::<crate::px::Drawn>::measured(photograph.0, photograph.1),
+        );
         return hdr_args::fitted(photograph.0 as u32, photograph.1 as u32, f64::from(edge));
     }
     let mut options = options.clone();
@@ -1370,6 +1373,13 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     let opened = source.as_ref().zip(decoder.as_deref());
     let exif = exif_block(job, opened);
     let exif = exif.as_deref();
+    for spec in job
+        .targets
+        .iter()
+        .filter_map(|target| target.print.as_ref())
+    {
+        spec.validate()?;
+    }
     let mut rendered: Vec<&Target> = Vec::new();
     for target in &job.targets {
         // Never for a panorama: what a photograph's embedded target lifts is one JPEG out of one
@@ -1554,7 +1564,6 @@ const BAND_PIXELS: usize = 16 << 20;
 /// a tiled assembly and a size cap of its own.
 #[cfg(feature = "renditions")]
 fn is_banded(job: &Job, target: &Target) -> bool {
-    // A print is one PNG rather than a grid of AVIF tiles, so it is written whole.
     if job.composite.is_some() || target.print.is_some() {
         return false;
     }
@@ -1958,7 +1967,13 @@ pub(crate) async fn render(
                 print: Some(spec.output()),
                 ..scene.gpu_grade(cut.width, cut.height, output)
             }
-            .showing(spec.geometry(job.geometry, cut.width, cut.height).0),
+            .showing(
+                spec.geometry(
+                    job.geometry,
+                    crate::px::Size::<crate::px::Drawn>::measured(cut.width, cut.height),
+                )
+                .0,
+            ),
             None => crate::gpu::Grade {
                 intent: target.intent,
                 ..scene.gpu_grade(cut.width, cut.height, output)
@@ -1994,10 +2009,17 @@ pub(crate) async fn render(
         let coded = match (target.output, &print) {
             (Output::Pq, _) => Coded::Pq(up.coded(&grade).await.ok_or(unread)?),
             (Output::Srgb, _) => Coded::Srgb(up.coded_bytes(&grade).await.ok_or(unread)?),
-            (Output::Print, Some((spec, _))) if spec.bits == 16 => {
-                Coded::Print16(up.coded(&grade).await.ok_or(unread)?)
-            }
-            (Output::Print, Some(_)) => Coded::Print8(up.coded_bytes(&grade).await.ok_or(unread)?),
+            (Output::Print, Some((spec, print_target))) => Coded::Print {
+                samples: match spec.bits {
+                    16 => crate::print_output::PrintSamples::Sixteen(
+                        up.coded(&grade).await.ok_or(unread)?,
+                    ),
+                    _ => crate::print_output::PrintSamples::Eight(
+                        up.coded_bytes(&grade).await.ok_or(unread)?,
+                    ),
+                },
+                icc: print_target.icc()?,
+            },
             (Output::Print, None) => return Err("a print target says nothing of its file".into()),
         };
         lap("grade");
@@ -2105,9 +2127,12 @@ pub(crate) struct Rendered {
 pub enum Coded {
     Pq(Vec<u16>),
     Srgb(Vec<u8>),
-    /// A print file's codes, in the space its target names (`print_output.slang`).
-    Print8(Vec<u8>),
-    Print16(Vec<u16>),
+    /// A print file's codes, in the space its target names (`print_output.slang`), and the
+    /// profile the file is tagged with.
+    Print {
+        samples: crate::print_output::PrintSamples,
+        icc: Vec<u8>,
+    },
 }
 
 /// What travels in front of a rendition rendered on one host for another to encode.
@@ -2180,7 +2205,7 @@ fn framed(header: &RenderedHeader, coded: &Coded) -> Result<Vec<u8>, String> {
     let samples = match coded {
         Coded::Pq(frame) => frame.len() * 2,
         Coded::Srgb(data) => data.len(),
-        Coded::Print8(_) | Coded::Print16(_) => {
+        Coded::Print { .. } => {
             return Err("a print is written where it is rendered".into());
         }
     };
@@ -2194,7 +2219,7 @@ fn framed(header: &RenderedHeader, coded: &Coded) -> Result<Vec<u8>, String> {
             framed.extend(frame.iter().map(|&v| twelve_bit(v) as u8));
         }
         Coded::Srgb(data) => framed.extend_from_slice(data),
-        Coded::Print8(_) | Coded::Print16(_) => unreachable!("refused above"),
+        Coded::Print { .. } => unreachable!("refused above"),
     }
     Ok(framed)
 }
@@ -2341,18 +2366,8 @@ fn write(
             save_avif(image, target, rotate, exif)?;
             describe_if_grid(image, target, outcome);
         }
-        Coded::Print8(_) | Coded::Print16(_) => {
-            let spec = target
-                .print
-                .as_ref()
-                .ok_or("a print target says nothing of its file")?;
-            let samples = match &coded {
-                Coded::Print8(data) => crate::png_write::PrintSamples::Eight(data),
-                Coded::Print16(data) => crate::png_write::PrintSamples::Sixteen(data),
-                _ => unreachable!(),
-            };
-            let profile = spec.profile(&spec.target()?)?;
-            let png = crate::png_write::encode_print(samples, width, height, &profile)?;
+        Coded::Print { samples, icc } => {
+            let png = crate::png_write::encode_print(&samples, width, height, &icc)?;
             std::fs::write(&target.output_path, png)
                 .map_err(|error| format!("could not write {}: {error}", target.output_path))?;
         }

@@ -8,6 +8,7 @@
 //! The matrix coefficient is always 0 and the range always full: PNG stores RGB, so there is no
 //! YCbCr matrix to name and no studio-range convention to honour. `png` refuses anything else.
 
+use crate::print_output::PrintSamples;
 use png::{BitDepth, ColorType, Encoder};
 
 /// Rec.2020 primaries and PQ, which is what every HDR still here is coded in.
@@ -78,17 +79,11 @@ fn write<T>(
     Ok(out)
 }
 
-/// A print file's samples, at the depth the printer takes.
-pub enum PrintSamples<'a> {
-    Eight(&'a [u8]),
-    Sixteen(&'a [u16]),
-}
-
 /// A print file: RGB in the space `icc` describes, carried as its `iCCP` chunk, which is the one
 /// tag every print path reads. No `cICP`: a printer's own profile has no code point, and a file
 /// saying both would be read by whichever a driver prefers.
 pub fn encode_print(
-    samples: PrintSamples<'_>,
+    samples: &PrintSamples,
     width: usize,
     height: usize,
     icc: &[u8],
@@ -227,11 +222,9 @@ mod tests {
     fn a_frame_smaller_than_it_claims_is_refused() {
         assert!(encode_sdr(&[0u8; 8], 16, 8, None).is_err());
         assert!(encode_hdr(&[0u16; 8], 16, 8, None).is_err());
-        assert!(encode_print(PrintSamples::Eight(&[0u8; 8]), 16, 8, &[]).is_err());
+        assert!(encode_print(&PrintSamples::Eight(vec![0u8; 8]), 16, 8, &[]).is_err());
     }
 
-    /// Read back for the profile, the depth and the samples in order: big-endian is PNG's, and a
-    /// writer that swapped nothing would decode to a plausible, wrong picture.
     #[test]
     fn a_print_png_carries_its_profile_and_sixteen_bits_big_endian() {
         let icc = moxcms::ColorProfile::new_adobe_rgb()
@@ -239,7 +232,7 @@ mod tests {
             .expect("Adobe RGB");
         let samples: Vec<u16> = (0..16 * 8 * 3).map(|i| (i * 977 % 65536) as u16).collect();
         let encoded =
-            encode_print(PrintSamples::Sixteen(&samples), 16, 8, &icc).expect("the encode");
+            encode_print(&PrintSamples::Sixteen(samples.clone()), 16, 8, &icc).expect("the encode");
         let mut reader = png::Decoder::new(std::io::Cursor::new(&encoded))
             .read_info()
             .expect("the header");
