@@ -148,7 +148,7 @@ pub struct HeldRaw {
     /// past SDR white.
     display_peak: std::cell::Cell<Option<crate::light::Light<crate::light::DisplayNits>>>,
     print: std::cell::Cell<Option<crate::print::Scene>>,
-    printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
+    print_target: std::cell::RefCell<crate::printer_gamut::PrintTarget>,
     /// What the open last answered with, whichever way the picture arrived.
     ///
     /// Kept for the tiles a finer window is assembled from, which take their camera match and
@@ -426,7 +426,7 @@ impl HeldRaw {
             proof_intent: std::cell::Cell::new(crate::gpu::Intent::Perceptual),
             display_peak: std::cell::Cell::new(None),
             print: std::cell::Cell::new(None),
-            printer: std::cell::RefCell::new(None),
+            print_target: std::cell::RefCell::new(Default::default()),
             header: std::cell::RefCell::new(String::new()),
         }
     }
@@ -1962,19 +1962,17 @@ impl HeldRaw {
         Ok(())
     }
 
-    /// The ICC output profile a print is laid down through, or none for the paper's own white and black.
-    #[wasm_bindgen(js_name = setPrinterProfile)]
-    pub fn set_printer_profile(&self, icc: Option<Vec<u8>>) -> Result<(), JsValue> {
-        let printer = icc
-            .as_deref()
-            .map(crate::printer_gamut::PrinterGamut::new)
-            .transpose()
-            .map_err(|error| {
+    /// What a print is proofed into: `srgb`, `adobe-rgb`, or `profile` with the printer's ICC
+    /// output profile (`printer_gamut::PrintTarget`).
+    #[wasm_bindgen(js_name = setPrintTarget)]
+    pub fn set_print_target(&self, kind: &str, icc: Option<Vec<u8>>) -> Result<(), JsValue> {
+        let target =
+            crate::printer_gamut::PrintTarget::parse(kind, icc.as_deref()).map_err(|error| {
                 JsValue::from_str(&format!(
-                    "rawshim: this printer profile cannot be used: {error}"
+                    "rawshim: this print target cannot be used: {error}"
                 ))
             })?;
-        *self.printer.borrow_mut() = printer.map(std::sync::Arc::new);
+        *self.print_target.borrow_mut() = target;
         Ok(())
     }
 
@@ -2132,7 +2130,7 @@ impl HeldRaw {
         if grade.matched().is_some() && matches!(reading, Reading::Frame) {
             drawing.uploaded.peak_from_candidates(&grade);
         }
-        uploaded.set_printer(self.printer.borrow().clone());
+        uploaded.set_print_target(self.print_target.borrow().clone());
         crate::gpu::present(uploaded, stage, &grade, &drawing.pyramid, print.as_ref());
         refused()
     }

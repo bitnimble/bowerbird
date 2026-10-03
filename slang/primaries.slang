@@ -33,6 +33,13 @@ public static const float3x3 SRGB_TO_R2020 = float3x3(
      0.069108,   0.919519,   0.011360,
      0.016394,   0.088011,   0.895380);
 
+/// Rec.2020 to Adobe RGB (1998), both D65: what a print is proofed into without a printer profile,
+/// and what a printer that takes Adobe RGB is sent.
+public static const float3x3 R2020_TO_ADOBE_RGB = float3x3(
+     1.151978,  -0.097503,  -0.054475,
+    -0.124550,   1.132900,  -0.008349,
+    -0.022530,  -0.049807,   1.072337);
+
 /// XYZ to the Bradford cone responses, and Rec.2020 linear to the same, and back.
 ///
 /// The space an illuminant change is a *diagonal* in - three gains rather than nine terms - and

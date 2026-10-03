@@ -347,7 +347,8 @@ class Open {
             ask.proof.displayPeakNits ?? undefined,
           );
         if (ask.printTarget != null)
-          editor.setPrinterProfile(
+          editor.setPrintTarget(
+            ask.printTarget.kind,
             ask.printTarget.kind === 'profile' ? ask.printTarget.icc : undefined,
           );
         if (ask.print != null) await printEnvironment(ask.print.environment);

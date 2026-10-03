@@ -2,6 +2,7 @@ use rawshim::gpu::{Canvas, Grade, Intent, Output};
 use rawshim::hdr_fit::HdrColour;
 use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
 use rawshim::print::{Paper, Presentation, Scene};
+use rawshim::printer_gamut::PrintTarget;
 use rawshim::px::Size;
 use rawshim::transfer::Primaries;
 
@@ -140,17 +141,27 @@ fn paper_gamut_preserves_neutrals_and_bounds_reflectance() {
             output.raw()
         );
     }
+    // In the paper's own primaries: generic paper is the Adobe RGB cube, whose green lies outside
+    // the P3 canvas, so a bound read off the canvas's channels would fail on a colour the paper holds.
+    let in_adobe = |colour: [Light<DisplayNits>; 3]| {
+        let rec2020 = in_rec2020(colour);
+        Primaries::ADOBE_RGB.from_rec2020().map(|row| {
+            row.into_iter()
+                .zip(rec2020)
+                .map(|(weight, value)| weight * value)
+                .sum::<f64>()
+        })
+    };
+    let white = in_adobe(draw([1.0; 3], scene));
+    let black = in_adobe(draw([0.0; 3], scene));
     for input in [[1.5, 0.02, 0.3], [0.0, 0.8, -0.05], [1.10, 0.75, 0.5]] {
-        let output = draw(input, scene);
-        let white = draw([1.0; 3], scene);
-        let black = draw([0.0; 3], scene);
+        let output = in_adobe(draw(input, scene));
         for (channel, component) in output.into_iter().enumerate() {
             assert!(
-                component.raw().is_finite()
-                    && component.raw() >= black[channel].raw() - 0.003
-                    && component.raw() <= white[channel].raw() + 0.003,
-                "unbounded paper reflectance for {input:?}: {}",
-                component.raw()
+                component.is_finite()
+                    && component >= black[channel] - 0.003
+                    && component <= white[channel] + 0.003,
+                "unbounded paper reflectance for {input:?}: {component}"
             );
         }
     }
@@ -514,9 +525,7 @@ fn a_flat_print_is_the_paper_under_diffuse_white() {
 #[test]
 fn a_printer_profile_lays_down_its_own_paper() {
     let icc = ideal_printer(0.5);
-    let printer = std::sync::Arc::new(
-        rawshim::printer_gamut::PrinterGamut::new(&icc).expect("a printer profile"),
-    );
+    let printer = PrintTarget::parse("profile", Some(&icc)).expect("a printer profile");
     let nits = |source: f64| {
         let scene = Scene {
             presentation: Presentation::Flat,
@@ -543,6 +552,46 @@ fn a_printer_profile_lays_down_its_own_paper() {
         (grey / white - 0.3).abs() < 0.01,
         "a grey left its share of the paper: {grey} against {white} nits"
     );
+}
+
+/// Generic paper is Adobe RGB, so a cyan sRGB cannot hold keeps its colour on it where an sRGB
+/// proof of the same paper compresses it towards grey.
+#[test]
+fn an_adobe_rgb_proof_keeps_a_cyan_an_srgb_proof_compresses() {
+    let scene = Scene {
+        presentation: Presentation::Flat,
+        rendering_intent: Intent::RelativeColorimetric,
+        ..Scene::default()
+    };
+    let cyan = [-0.15, 0.75, 0.85];
+    let chroma = |target: PrintTarget| {
+        let drawn = drawn_as(&|_| cyan, Shown::Printed(scene, target), 32, 1.0, None);
+        let at = (16 * 32 + 16) * 4;
+        let colour = in_rec2020(std::array::from_fn(|channel| {
+            Light::measured(linear(drawn[at + channel]) * 203.0)
+        }));
+        let luma: f64 = colour
+            .iter()
+            .zip([0.2627, 0.678, 0.0593])
+            .map(|(value, weight)| value * weight)
+            .sum();
+        colour
+            .iter()
+            .map(|value| (value - luma).powi(2))
+            .sum::<f64>()
+            .sqrt()
+            / luma
+    };
+    let (srgb, adobe, generic) = (
+        chroma(PrintTarget::Srgb),
+        chroma(PrintTarget::AdobeRgb),
+        chroma(PrintTarget::default()),
+    );
+    assert!(
+        adobe > srgb * 1.15,
+        "Adobe RGB kept no more of the cyan than sRGB: {adobe} against {srgb}"
+    );
+    assert_eq!(adobe, generic, "generic paper is the Adobe RGB cube");
 }
 
 /// A printer reproducing linear Rec.2020 exactly, on a neutral paper reflecting `white`.
@@ -634,8 +683,8 @@ fn linear(coded: f32) -> f64 {
 
 enum Shown {
     Print(Scene),
-    /// A print laid down by a printer profile's printer.
-    Printed(Scene, std::sync::Arc<rawshim::printer_gamut::PrinterGamut>),
+    /// A print brought inside a named target rather than generic paper's.
+    Printed(Scene, PrintTarget),
     /// An sRGB soft proof, brought inside the file's gamut by the intent given.
     Srgb(Intent),
 }
@@ -697,8 +746,8 @@ fn drawn_as(
     let uploaded = gpu.upload(&frame, &grade, &peak);
     match shown {
         Shown::Print(scene) => uploaded.draw_print(&grade, &pyramid, &scene),
-        Shown::Printed(scene, printer) => {
-            uploaded.set_printer(Some(printer));
+        Shown::Printed(scene, target) => {
+            uploaded.set_print_target(target);
             uploaded.draw_print(&grade, &pyramid, &scene)
         }
         Shown::Srgb(_) => uploaded.draw(&grade, &pyramid),

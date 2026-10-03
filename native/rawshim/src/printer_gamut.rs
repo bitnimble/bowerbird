@@ -8,8 +8,12 @@ use moxcms::{
 
 pub const TARGET_HUES: usize = 64;
 pub const TARGET_LUMAS: usize = 32;
-/// Where the edge table starts in [`target`]'s words.
+/// Where the edge table starts in [`proof`]'s words.
 const TARGET_TABLE: usize = 13;
+/// `print_target[0]`, as `print_scene.slang` reads it.
+const TARGET_SRGB: f32 = 0.0;
+const TARGET_ADOBE_RGB: f32 = 1.0;
+const TARGET_PROFILE: f32 = 2.0;
 /// How far the eye settles on the paper's own white: 0 sees its measured cast whole, 1 none of it.
 pub const PAPER_ADAPTATION: f64 = 0.7;
 const BRADFORD: [[f64; 3]; 3] = [
@@ -18,6 +22,45 @@ const BRADFORD: [[f64; 3]; 3] = [
     [0.0389, -0.0685, 1.0296],
 ];
 
+/// What a print is brought inside: a tagged space's cube, or what a printer's profile reaches.
+#[derive(Clone, Default)]
+pub enum PrintTarget {
+    Srgb,
+    /// Generic paper, with no printer named: the widest space a printer is commonly sent.
+    #[default]
+    AdobeRgb,
+    Profile(std::sync::Arc<PrinterGamut>),
+}
+
+impl PrintTarget {
+    pub fn parse(kind: &str, icc: Option<&[u8]>) -> Result<PrintTarget, String> {
+        match (kind, icc) {
+            ("srgb", _) => Ok(PrintTarget::Srgb),
+            ("adobe-rgb", _) => Ok(PrintTarget::AdobeRgb),
+            ("profile", Some(icc)) => Ok(PrintTarget::Profile(std::sync::Arc::new(
+                PrinterGamut::new(icc)?,
+            ))),
+            ("profile", None) => Err("a profile target needs its ICC profile".to_owned()),
+            (other, _) => Err(format!("no print target is called {other}")),
+        }
+    }
+
+    fn kind(&self) -> f32 {
+        match self {
+            PrintTarget::Srgb => TARGET_SRGB,
+            PrintTarget::AdobeRgb => TARGET_ADOBE_RGB,
+            PrintTarget::Profile(_) => TARGET_PROFILE,
+        }
+    }
+
+    pub fn profile(&self) -> Option<&PrinterGamut> {
+        match self {
+            PrintTarget::Profile(printer) => Some(printer),
+            _ => None,
+        }
+    }
+}
+
 /// A printer profile's gamut and paper, in linear Rec.2020 as a share of the paper's white.
 pub struct PrinterGamut {
     /// The most chroma the ink reaches, by hue and then by luma, as `print_scene.slang` indexes it.
@@ -25,6 +68,8 @@ pub struct PrinterGamut {
     black: [f64; 3],
     /// A share of the paper's white to the light it reflects.
     tint: [[f64; 3]; 3],
+    profile: ColorProfile,
+    icc: Vec<u8>,
 }
 
 impl PrinterGamut {
@@ -101,34 +146,66 @@ impl PrinterGamut {
             .mat_mul(bradford)
             .mat_mul(to_xyz)
             .v;
-        Ok(PrinterGamut { edge, black, tint })
+        Ok(PrinterGamut {
+            edge,
+            black,
+            tint,
+            profile: printer,
+            icc: icc.to_vec(),
+        })
+    }
+
+    /// The ICC profile this was read from, byte for byte.
+    pub fn icc(&self) -> &[u8] {
+        &self.icc
+    }
+
+    pub(crate) fn profile(&self) -> &ColorProfile {
+        &self.profile
     }
 }
 
-/// The print's target as `print_scene.slang` reads it: the printer's, or else sRGB laid between the
-/// scene's own paper black and white.
-pub(crate) fn target(scene: &crate::print::Scene, printer: Option<&PrinterGamut>) -> Vec<f32> {
-    let (table, black, tint) = match printer {
-        Some(printer) => (true, printer.black, printer.tint),
+/// The print's target as `print_scene.slang` proofs it: a profile's own paper, or else the tagged
+/// space laid between the scene's paper black and white.
+pub(crate) fn proof(scene: &crate::print::Scene, target: &PrintTarget) -> Vec<f32> {
+    match target.profile() {
+        Some(printer) => words(target, printer.black, printer.tint, Some(&printer.edge)),
         None => {
             let white = scene.white_reflectance.raw();
-            (
-                false,
+            words(
+                target,
                 [scene.black_reflectance.raw() / white; 3],
                 [[white, 0.0, 0.0], [0.0, white, 0.0], [0.0, 0.0, white]],
+                None,
             )
         }
-    };
-    let mut words: Vec<f32> = [if table { 1.0 } else { 0.0 }]
+    }
+}
+
+/// The same target as a print file is written into: a tagged space's black is the printer's to
+/// lay, so it sits at zero, where a profile's is its paper's.
+pub(crate) fn output(target: &PrintTarget) -> Vec<f32> {
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    match target.profile() {
+        Some(printer) => words(target, printer.black, identity, Some(&printer.edge)),
+        None => words(target, [0.0; 3], identity, None),
+    }
+}
+
+fn words(
+    target: &PrintTarget,
+    black: [f64; 3],
+    tint: [[f64; 3]; 3],
+    edge: Option<&[f32]>,
+) -> Vec<f32> {
+    let mut words: Vec<f32> = [f64::from(target.kind())]
         .into_iter()
         .chain(black)
         .chain(tint.into_iter().flatten())
         .map(|value| value as f32)
         .collect();
     debug_assert_eq!(words.len(), TARGET_TABLE);
-    if let Some(printer) = printer {
-        words.extend(&printer.edge);
-    }
+    words.extend(edge.unwrap_or_default());
     words
 }
 
@@ -296,14 +373,41 @@ mod tests {
     }
 
     #[test]
-    fn generic_paper_is_srgb_between_its_black_and_white() {
+    fn generic_paper_is_adobe_rgb_between_its_black_and_white() {
         let scene = crate::print::Scene::default();
-        let words = target(&scene, None);
+        let words = proof(&scene, &PrintTarget::default());
         assert_eq!(words.len(), TARGET_TABLE);
-        assert_eq!(words[0], 0.0);
+        assert_eq!(words[0], TARGET_ADOBE_RGB);
         let black = (scene.black_reflectance.raw() / scene.white_reflectance.raw()) as f32;
         assert_eq!(&words[1..4], &[black; 3]);
         assert_eq!(words[4], scene.white_reflectance.raw() as f32);
+    }
+
+    #[test]
+    fn each_kind_names_itself_and_a_profile_brings_its_table() {
+        let scene = crate::print::Scene::default();
+        assert_eq!(proof(&scene, &PrintTarget::Srgb)[0], TARGET_SRGB);
+        let printer = PrintTarget::parse("profile", Some(&ideal_printer(0.5))).expect("a printer");
+        let words = proof(&scene, &printer);
+        assert_eq!(words[0], TARGET_PROFILE);
+        assert_eq!(words.len(), TARGET_TABLE + TARGET_HUES * TARGET_LUMAS);
+        assert!(PrintTarget::parse("profile", None).is_err());
+        assert!(PrintTarget::parse("cmyk", None).is_err());
+    }
+
+    #[test]
+    fn a_print_file_in_a_tagged_space_starts_at_black() {
+        let words = output(&PrintTarget::AdobeRgb);
+        assert_eq!(words.len(), TARGET_TABLE);
+        assert_eq!(&words[1..4], &[0.0; 3]);
+        assert_eq!(
+            &words[4..13],
+            &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        );
+        let printer = PrintTarget::parse("profile", Some(&ideal_printer(0.5))).expect("a printer");
+        let words = output(&printer);
+        assert_eq!(words[0], TARGET_PROFILE);
+        assert_eq!(words.len(), TARGET_TABLE + TARGET_HUES * TARGET_LUMAS);
     }
 
     #[test]
@@ -313,6 +417,9 @@ mod tests {
             ("TARGET_HUES", TARGET_HUES),
             ("TARGET_LUMAS", TARGET_LUMAS),
             ("TARGET_TABLE", TARGET_TABLE),
+            ("TARGET_SRGB", TARGET_SRGB as usize),
+            ("TARGET_ADOBE_RGB", TARGET_ADOBE_RGB as usize),
+            ("TARGET_PROFILE", TARGET_PROFILE as usize),
         ] {
             assert!(
                 shader.contains(&format!("static const uint {name} = {value};")),

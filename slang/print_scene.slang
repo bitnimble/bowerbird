@@ -14,14 +14,18 @@ import gamut_map;
 import times;
 [vk::binding(1, 1)] StructuredBuffer<float> print_albedo;
 [vk::binding(2, 1)] public StructuredBuffer<float> print_light_calibration;
-/// `printer_gamut::target`: whether the edge is a table, the paper's black as a share of its white,
-/// the paper's tint, row-major, then the table.
+/// `printer_gamut::proof` or `printer_gamut::output`: the target's kind, its black as a share of
+/// its white, its tint, row-major, then a profile's table.
 [vk::binding(3, 1)] StructuredBuffer<float> print_target;
 
 public static const uint LIGHT_SAMPLES = 128;
 static const uint TARGET_HUES = 64;
 static const uint TARGET_LUMAS = 32;
 static const uint TARGET_TABLE = 13;
+/// `print_target[0]`: which gamut the print is brought inside (`printer_gamut::PrintTarget`).
+public static const uint TARGET_SRGB = 0;
+public static const uint TARGET_ADOBE_RGB = 1;
+public static const uint TARGET_PROFILE = 2;
 
 /// A printer profile's gamut: the most chroma its ink reaches, by hue and luma
 /// (`printer_gamut::PrinterGamut`).
@@ -57,14 +61,35 @@ float3x3 target_matrix(uint start)
         print_target[start + 6], print_target[start + 7], print_target[start + 8]);
 }
 
+public uint target_kind()
+{
+    return uint(print_target[0] + 0.5);
+}
+
+/// The target's darkest, as a share of its white.
+public float3 target_black()
+{
+    return float3(print_target[1], print_target[2], print_target[3]);
+}
+
+/// `signal`, a share of white in Rec.2020, brought inside the target's gamut as the intent asks.
+public float3 target_mapped(float3 signal, uint intent)
+{
+    switch (target_kind()) {
+    case TARGET_PROFILE: return mapped(signal, PrinterGamut(), intent);
+    case TARGET_ADOBE_RGB: return mapped(signal, AdobeCube(), intent);
+    default: return mapped(signal, SrgbCube(), intent);
+    }
+}
+
 /// The reflectance the print lays down for `signal`, a share of white in Rec.2020, brought inside
 /// what the paper and ink can reach as the intent asks. `coating_drawn` where the coating's own
 /// reflection is drawn over it, which the paper's black, a 45/0 reading, already holds a share of.
 public float3 print_reflectance(float3 signal, bool coating_drawn)
 {
     let intent = uint(print.framing.z);
-    let colour = print_target[0] > 0.5 ? mapped(signal, PrinterGamut(), intent) : mapped(signal, SrgbCube(), intent);
-    var black = float3(print_target[1], print_target[2], print_target[3]);
+    let colour = target_mapped(signal, intent);
+    var black = target_black();
     if (coating_drawn) {
         let white = dot(LUMA, mul(target_matrix(4), float3(1.0)));
         black = max(black - coating_at_45_0() / white, float3(0.0));

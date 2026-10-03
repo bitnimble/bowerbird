@@ -20,20 +20,30 @@ public interface IGamut
     public float limit(float luma, float3 chroma);
 }
 
+/// How far `chroma` can be carried from grey `luma` before a channel of the cube whose primaries
+/// `from_rec2020` reaches leaves [0, 1].
+float cube_limit(float3x3 from_rec2020, float luma, float3 chroma)
+{
+    let towards = mul(from_rec2020, chroma);
+    var limit = 1e30;
+    for (uint channel = 0; channel < 3; channel += 1) {
+        let step = towards[channel];
+        if (step > 0.0) { limit = min(limit, (1.0 - luma) / step); }
+        if (step < 0.0) { limit = min(limit, -luma / step); }
+    }
+    return max(limit, 0.0);
+}
+
 /// An sRGB file's gamut, which is a cube in its own primaries.
 public struct SrgbCube : IGamut
 {
-    public float limit(float luma, float3 chroma)
-    {
-        let towards = mul(R2020_TO_SRGB, chroma);
-        var limit = 1e30;
-        for (uint channel = 0; channel < 3; channel += 1) {
-            let step = towards[channel];
-            if (step > 0.0) { limit = min(limit, (1.0 - luma) / step); }
-            if (step < 0.0) { limit = min(limit, -luma / step); }
-        }
-        return max(limit, 0.0);
-    }
+    public float limit(float luma, float3 chroma) { return cube_limit(R2020_TO_SRGB, luma, chroma); }
+};
+
+/// An Adobe RGB file's gamut, the same cube over wider primaries.
+public struct AdobeCube : IGamut
+{
+    public float limit(float luma, float3 chroma) { return cube_limit(R2020_TO_ADOBE_RGB, luma, chroma); }
 };
 
 /// `graded` as a share of `white`: rolled under it for perceptual, and left for relative

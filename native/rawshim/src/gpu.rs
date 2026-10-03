@@ -2711,8 +2711,9 @@ impl Adjust {
         let illuminant = colour.and_then(|c| c.illuminant);
         let balance_at_camera = match (self.temperature, self.tint) {
             (None, None) => self.camera_balance || illuminant.is_none(),
-            (Some(temperature), Some(tint)) => illuminant
-                .is_some_and(|i| i.temperature == temperature && i.tint == tint),
+            (Some(temperature), Some(tint)) => {
+                illuminant.is_some_and(|i| i.temperature == temperature && i.tint == tint)
+            }
             _ => false,
         };
         Adjust {
@@ -2822,7 +2823,7 @@ pub struct Uploaded<'a> {
     print_albedo: std::cell::RefCell<Option<(f32, Buffer)>>,
     print_light: std::cell::RefCell<Option<([f32; 4], f32, crate::print::Environment, Buffer)>>,
     print_environment: std::cell::RefCell<Option<(crate::print::Environment, Texture)>>,
-    printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
+    print_target: std::cell::RefCell<crate::printer_gamut::PrintTarget>,
     print_surface: std::cell::RefCell<print_surface::Cached>,
     peak_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
     peak_cached: std::cell::RefCell<Option<(u64, Vec<u32>)>>,
@@ -3155,7 +3156,7 @@ impl Gpu {
             print_albedo: std::cell::RefCell::new(None),
             print_light: std::cell::RefCell::new(None),
             print_environment: std::cell::RefCell::new(None),
-            printer: std::cell::RefCell::new(None),
+            print_target: std::cell::RefCell::new(Default::default()),
             print_surface: std::cell::RefCell::new(print_surface::Cached::default()),
             peak_revision: peak.revision.clone(),
             peak_cached: std::cell::RefCell::new(None),
@@ -3953,9 +3954,10 @@ impl Uploaded<'_> {
         ));
     }
 
-    /// The printer a print is laid down by, or none for the scene's own paper white and black.
-    pub fn set_printer(&self, printer: Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>) {
-        *self.printer.borrow_mut() = printer;
+    /// What a print is brought inside: a profile's printer, or a tagged space between the scene's
+    /// own paper white and black.
+    pub fn set_print_target(&self, target: crate::printer_gamut::PrintTarget) {
+        *self.print_target.borrow_mut() = target;
     }
 
     pub fn invalidate_print_cache(&self) {
@@ -4746,7 +4748,7 @@ impl Uploaded<'_> {
         scene: &crate::print::Scene,
         display_peak: crate::light::Light<crate::light::DisplayNits>,
     ) -> (Buffer, Buffer) {
-        let target = crate::printer_gamut::target(scene, self.printer.borrow().as_deref());
+        let target = crate::printer_gamut::proof(scene, &self.print_target.borrow());
         let target = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print target"),
             contents: &target
@@ -7254,6 +7256,10 @@ mod tests {
         pinned(
             "R2020_TO_P3",
             crate::transfer::Primaries::DISPLAY_P3.from_rec2020(),
+        );
+        pinned(
+            "R2020_TO_ADOBE_RGB",
+            crate::transfer::Primaries::ADOBE_RGB.from_rec2020(),
         );
     }
 
