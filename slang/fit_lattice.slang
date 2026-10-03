@@ -67,7 +67,7 @@ static const int CORNERS = 16;
 /// Words a landing occupies: its cell, its four fractions, its input, its target, the camera's
 /// luma, and its weight.
 static const int LANDING_WORDS = 12;
-/// Sums a node carries: `ata` 9, `atb` 6, `sx` 3, `st` 2, `btb`, `lta`, `lda` 2, `ltb`, `seen`,
+/// Sums a node carries: `ata` 9, `atb` 6, `sx` 3, `st` 2, `btb`, `lta`, `ltb`, `lda` 2, `seen`,
 /// then the residual-weighted offset from the node and its square on each of the four axes, and
 /// the residual weight they were taken under.
 static const int NODE_WORDS = 35;
@@ -160,7 +160,7 @@ void lat_land(uint3 id: SV_DispatchThreadID)
     float4 fraction;
     let cell = cell_at(at, fraction);
 
-    let base = k * LANDING_WORDS;
+    let base = times(k, LANDING_WORDS);
     landed[base] = float(cell);
     landed[base + 1] = fraction.x;
     landed[base + 2] = fraction.y;
@@ -187,7 +187,7 @@ void lat_count(uint3 id: SV_DispatchThreadID)
     let first = b * pc.block;
     let last = min(first + pc.block, pc.pairs);
     for (int k = first; k < last; k++) {
-        let cell = int(landed[k * LANDING_WORDS]);
+        let cell = int(landed[times(k, LANDING_WORDS)]);
         counts[b * cells + cell] = counts[b * cells + cell] + 1u;
     }
 }
@@ -257,7 +257,7 @@ void lat_write(uint3 id: SV_DispatchThreadID)
     let first = b * pc.block;
     let last = min(first + pc.block, pc.pairs);
     for (int k = first; k < last; k++) {
-        let cell = int(landed[k * LANDING_WORDS]);
+        let cell = int(landed[times(k, LANDING_WORDS)]);
         let slot = counts[pc.blocks * cells + b * cells + cell];
         ordered[int(slot)] = uint(k);
         counts[pc.blocks * cells + b * cells + cell] = slot + 1u;
@@ -289,10 +289,12 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
     float sums[NODE_WORDS];
     for (int i = 0; i < NODE_WORDS; i++) { sums[i] = 0.0; }
     for (uint at = from; at < to; at++) {
-        let base = int(ordered[int(at)]) * LANDING_WORDS;
+        let base = times(int(ordered[int(at)]), LANDING_WORDS);
         let f = float4(landed[base + 1], landed[base + 2], landed[base + 3], landed[base + 4]);
-        // The share this corner takes, which is `nodes_of`'s weight for it.
-        let w = lerp(float4(1.0) - f, f, side);
+        // The bake's smootherstep tent (`lattice_bake.slang`), so a node is solved under the
+        // weights it renders with.
+        let eased = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+        let w = lerp(float4(1.0) - eased, eased, side);
         let sw = landed[base + 11] * (w.x * w.y * w.z * w.w);
         if (!(sw > 0.0)) { continue; }
 

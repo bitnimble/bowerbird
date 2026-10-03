@@ -498,8 +498,8 @@ fn section(out: &mut Vec<u8>, kind: u8, body: impl FnOnce(&mut Vec<u8>)) {
 /// The camera match: the curves and the lattice the shader reads, and the lens they were fitted
 /// through.
 ///
-/// The lattice's kernels are stored as `f16`: the bake writes `rgba16float`, so anything more is
-/// precision the GPU truncates on the way out. The tone curves are read from `r32float` and stay
+/// The lattice's kernels are stored as `f16`: their generators to the precision the bake's
+/// `rgba16float` output holds anyway, their places and reaches to a part in a thousand of an axis. The tone curves are read from `r32float` and stay
 /// `f32`: a curve feeding an HDR grade is exactly where a thousandth of an error shows up as a band
 /// in a smooth sky.
 fn put_match(out: &mut Vec<u8>, matched: &HdrMatch) {
@@ -1220,7 +1220,7 @@ pub(crate) mod tests {
     /// What one photograph costs on disk, so the number is measured rather than remembered.
     ///
     /// This fixture's cost is the fixed part: the chroma lattice at 1900 kernels of 17 `f16`,
-    /// what a fit keeps on a typical frame and up to a third more on a busy one, the curves at 768
+    /// about what a fit keeps on a typical frame and up to half again on a busy one, the curves at 768
     /// `f32`, the particles at 22 `f32` each. A real fit adds the surround thumb at its own grid.
     ///
     /// The two are checked apart because they scale differently: the first is a constant per

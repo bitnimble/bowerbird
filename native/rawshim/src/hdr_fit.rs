@@ -9,6 +9,7 @@
 // BT.2390 take over above it (10.7.1).
 
 use crate::lattice::ChromaMap;
+use crate::light::Light;
 use crate::parallel::*;
 use crate::px::TUNED_ON;
 
@@ -256,9 +257,9 @@ pub struct HdrColour {
 /// pixel's scatter. What stops a wild map is that every rung is scored against no map on the
 /// picture, each colour class with it.
 ///
-/// **Held-out pairs cannot size a lattice.** Swept from 7 to 39 nodes an axis on the dense
-/// lattice this replaced, held-out `delta_e` fell all the way while the picture measured against
-/// the camera's own JPEG got steadily worse: the two disagree in direction, not in size. Blocking
+/// **Held-out pairs cannot size a lattice.** Swept from 7 to 39 nodes an axis on a Cartesian
+/// grid, held-out `delta_e` fell all the way while the picture measured against the camera's own
+/// JPEG got steadily worse: the two disagree in direction, not in size. Blocking
 /// the holdout by region does not fix it: a lattice memorises *colours*, and the same lawn and
 /// the same skin sit on both sides of any partition of one photograph, so no split makes a
 /// held-out pair an unseen colour. The whole render against the camera is the only measure that
@@ -266,7 +267,7 @@ pub struct HdrColour {
 ///
 /// **Two things about measuring this that cost a while to learn.** A cast has to be pooled
 /// over pixels of *similar colour*, not over a neighbourhood: on IMG_8789, pooled spatially, a
-/// uniformly finer dense grid scored better at every window from 4px to 64px, because a window on
+/// uniformly finer grid scored better at every window from 4px to 64px, because a window on
 /// that frame is mostly lawn and the lawn genuinely improved, so the bird bath drowns in it. And
 /// the pooling has to be inside a class rather than across the frame, or a green cast on the
 /// neutrals and a warm one on the saturates cancel and the number reads clean. The eye agrees with
@@ -281,15 +282,15 @@ const FINE_HUE: usize = 24;
 const FINE_RINGS: usize = 8;
 /// The share of the fine grid's correction its kept kernels carry (`NodeGrid::carrying`).
 ///
-/// Measured over the Nick library: the whole grid is ~3400 kernels a frame, and 0.999 keeps ~900
-/// of them for perceptual ΔE 0.8246 against 0.8241. Lower costs quality quickly, because the tail
-/// is many thin nodes that each matter little and together a third of the fine pass's gain: 0.97
-/// keeps ~330 and reads 0.8329.
-const FINE_CARRIED: f64 = 0.999;
+/// Measured over the Nick library: the whole grid is ~3400 kernels a frame, and this keeps ~800 of
+/// them at the whole grid's quality. Lower costs quality quickly, because the tail is many thin
+/// nodes that each matter little and together a third of the fine pass's gain: 0.97 keeps ~330
+/// and gives up half the fine pass's perceptual ΔE.
+const FINE_CARRIED: f64 = 0.9997;
 /// Levels from black to the fitted ceiling, in Jz (`LatticeAxes::of`).
 ///
 /// **Five looks better than this and renders worse, which is the trap `MAP_HUE` describes.**
-/// Held-out `delta_e` preferred five by half a point and more on the dense lattice, bracketed on
+/// Held-out `delta_e` preferred five by half a point and more on a Cartesian grid, bracketed on
 /// both sides and at two chroma counts - a thorough-looking result, and wrong. Against the
 /// camera's own JPEG the same change cost about 0.055 whatever the chroma beside it. Reading a
 /// lattice size off the pairs it was fitted from finds five; reading it off the picture finds
@@ -374,8 +375,8 @@ impl LatticeAxes {
         LatticeAxes {
             space,
             chroma_top,
-            level_low: space.lightness_of_neutral(0.0),
-            level_top: space.lightness_of_neutral(colour.ceiling),
+            level_low: space.lightness_of_neutral(Light::ZERO),
+            level_top: space.lightness_of_neutral(Light::measured(colour.ceiling)),
             surround_top: colour.ceiling.sqrt(),
         }
     }
@@ -460,13 +461,7 @@ struct NodeGrid {
 /// only be given their average - the blue pot's node solved to 1.006 with the pot inside it.
 /// The chroma rows could always separate two colours in one node, being linear in `d`; this
 /// gives lightness the same freedom.
-pub const NODE_VALUES: usize = 9;
-
-const UNCORRECTED_NODE: [f64; NODE_VALUES] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-
-/// How far a kernel fitted on what the coarse grid left may narrow, as a share of its grid's gap.
-const NARROWEST_REACH: f64 = 0.5;
-
+///
 /// **Both groups beyond the 2x2 earn their place, asked on the render.** They were added against
 /// held-out `delta_e`, which `MAP_HUE` records disagreeing with the picture elsewhere, so they
 /// were put to the render directly by zeroing each group after the solve.
@@ -474,6 +469,13 @@ const NARROWEST_REACH: f64 = 0.5;
 /// Without `e` and `f` the render loses 0.045 on three fixtures and DSC02981's map stops paying
 /// for itself, shipping with none. Without `h` and `i` three fixtures gain
 /// 0.023 - and forty-three real frames lose 0.006 and 0.022, which is the answer that counts.
+pub const NODE_VALUES: usize = 9;
+
+const UNCORRECTED_NODE: [f64; NODE_VALUES] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+/// How far a kernel fitted on what the coarse grid left may narrow, as a share of its grid's gap.
+const NARROWEST_REACH: f64 = 0.5;
+
 impl NodeGrid {
     fn identity(shape: GridShape, axes: LatticeAxes) -> NodeGrid {
         NodeGrid {
@@ -530,6 +532,11 @@ impl NodeGrid {
     /// `share` of the whole; the rest uncorrected.
     fn carrying(&self, share: f64, seen: &[f64]) -> NodeGrid {
         let weight = |n: usize| -> f64 {
+            // Grey is one kernel (`kernels`), held by every hue's copy.
+            let [hue, ring, ..] = self.shape.place(n);
+            if ring == 0 && hue != 0 {
+                return 0.0;
+            }
             let moved: f64 = self.nodes[n]
                 .iter()
                 .zip(&UNCORRECTED_NODE)
@@ -2155,7 +2162,7 @@ pub(crate) const HUE_SLOTS: usize = 2 * HUE_BINS + 1;
 const BALANCE_LIMIT: f64 = 4.0;
 
 /// Levels the curve fit's pairs are counted over, and how far parity may push one, on the
-/// square root the lattice's own level axis uses.
+/// square root of a level's share of the ceiling (`fit_curve.slang`'s `level_of`).
 pub(crate) const LEVEL_BINS: usize = 12;
 pub(crate) const LEVEL_BALANCE_LIMIT: f64 = 2.0;
 
@@ -2455,7 +2462,7 @@ const FIT_ROUNDS: usize = 3;
 /// *somewhere*, or the frames whose channels really do render differently break - which is
 /// exactly what happened the last time the three were held to one shape.
 ///
-/// It lives in the lattice now. `ChromaMap` is indexed by chroma *and* level, so it can say
+/// It lives in the lattice. `ChromaMap` is indexed by chroma *and* level, so it can say
 /// "grass at this level goes greener" while leaving a grey at that same level alone - the
 /// distinction a per-channel curve is structurally unable to draw. The neutral axis is
 /// `neutral_pull`'s white balance, upstream of the curves, which is not a shape and so cannot
@@ -4484,7 +4491,7 @@ async fn chroma_span(
     evaluated: &crate::gpu::Buffer,
     space: crate::lattice::IndexSpace,
 ) -> Option<f64> {
-    let widest = space.chroma_of([1.0, 0.0, 0.0]);
+    let widest = space.chroma_of(crate::lattice::WHITE_RED);
     let samples = sharp.pixels();
     if samples < MIN_SPAN_SAMPLES {
         return Some(widest.sqrt());
@@ -7361,9 +7368,11 @@ mod tests {
         let space = crate::lattice::IndexSpace::Jzazbz;
         LatticeAxes {
             space,
-            chroma_top: space.chroma_of([0.6, 0.0, 0.0]).sqrt(),
-            level_low: space.lightness_of_neutral(0.0),
-            level_top: space.lightness_of_neutral(1.0),
+            chroma_top: space
+                .chroma_of([Light::measured(0.6), Light::ZERO, Light::ZERO])
+                .sqrt(),
+            level_low: space.lightness_of_neutral(Light::ZERO),
+            level_top: space.lightness_of_neutral(Light::measured(1.0)),
             surround_top: 1.0,
         }
     }
@@ -7386,7 +7395,7 @@ mod tests {
         rendered: [f64; 3],
         surround: f64,
     ) -> Vec<(usize, f64, [f64; 4])> {
-        let [lightness, a, b] = axes.space.opponent_of(rendered);
+        let [lightness, a, b] = axes.space.opponent_of(rendered.map(Light::measured));
         let turn = b.atan2(a) / std::f64::consts::TAU;
         let at = [
             turn - turn.floor(),
@@ -7418,9 +7427,13 @@ mod tests {
                     below[3].0 + side[3],
                 ]);
                 let share = (0..4)
-                    .map(|k| match side[k] {
-                        1 => below[k].1,
-                        _ => 1.0 - below[k].1,
+                    .map(|k| {
+                        let f = below[k].1;
+                        let eased = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+                        match side[k] {
+                            1 => eased,
+                            _ => 1.0 - eased,
+                        }
                     })
                     .product();
                 (
@@ -7545,7 +7558,8 @@ mod tests {
             nodes: vec![UNCORRECTED_NODE; grid.nodes.len()],
             ..grid
         };
-        let (loud, quiet, busy) = (3, 4, 5);
+        let at = |h: usize| grid.shape.index([h, 1, 0, 0]);
+        let (loud, quiet, busy) = (at(3), at(4), at(5));
         grid.nodes[loud] = [2.0, 0.0, 0.0, 2.0, 0.0, 0.0, 1.0, 0.0, 0.0];
         grid.nodes[quiet] = [1.1, 0.0, 0.0, 1.1, 0.0, 0.0, 1.0, 0.0, 0.0];
         grid.nodes[busy] = [1.3, 0.0, 0.0, 1.3, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -7555,6 +7569,16 @@ mod tests {
         assert_eq!(kept.nodes[busy], grid.nodes[busy]);
         assert_eq!(kept.nodes[quiet], grid.nodes[quiet]);
         assert_eq!(kept.nodes[loud], UNCORRECTED_NODE);
+
+        // Grey's copies across hue are one kernel, and count once towards the whole.
+        let grey = |h: usize| grid.shape.index([h, 0, 0, 0]);
+        for h in 0..grid.shape.hue {
+            grid.nodes[grey(h)] = [1.25, 0.0, 0.0, 1.25, 0.0, 0.0, 1.0, 0.0, 0.0];
+            seen[grey(h)] = 1000.0;
+        }
+        let kept = grid.carrying(0.5, &seen);
+        assert_eq!(kept.nodes[busy], grid.nodes[busy]);
+        assert_eq!(kept.nodes[grey(0)], UNCORRECTED_NODE);
     }
 
     /// Most of the pairs in one cell, as a dark frame puts them, so its run is cut into slices.
@@ -8582,37 +8606,45 @@ mod tests {
             Stage::ToneMatrix,
         );
         let ranks = [7, plane.pixels() - 13];
-        let space = crate::lattice::IndexSpace::Jzazbz;
-        let picked = pollster::block_on(crate::fit_span::spans(
-            gpu,
-            &evaluated.buffer,
-            &plane,
-            ranks,
-            space,
-        ))
-        .expect("ranked");
         let read = pollster::block_on(evaluated.read(gpu)).expect("read");
-        for axis in 0..2 {
-            let mut spread: Vec<f64> = read
-                .iter()
-                .map(|m| {
-                    let [lightness, a, b] = space.opponent_of([m[0], m[1], m[2]].map(f64::from));
-                    match axis {
-                        0 => a.hypot(b),
-                        _ => lightness,
-                    }
-                })
-                .collect();
-            spread.sort_by(f64::total_cmp);
-            for (rank, at) in ranks.iter().enumerate() {
-                // The device ranks its own `f32` reading of each sample, the host its `f64` one,
-                // and Jz's transfer raises to the 134th power, which multiplies `f32`'s rounding.
-                assert!(
-                    (picked[axis][rank] - spread[*at]).abs() < 1e-5,
-                    "axis {axis} rank {at}: {} against {}",
-                    picked[axis][rank],
-                    spread[*at]
-                );
+        for space in [
+            crate::lattice::IndexSpace::Jzazbz,
+            crate::lattice::IndexSpace::Ictcp,
+        ] {
+            let picked = pollster::block_on(crate::fit_span::spans(
+                gpu,
+                &evaluated.buffer,
+                &plane,
+                ranks,
+                space,
+            ))
+            .expect("ranked");
+            for axis in 0..2 {
+                let mut spread: Vec<f64> = read
+                    .iter()
+                    .map(|m| {
+                        let [lightness, a, b] = space.opponent_of(
+                            [m[0], m[1], m[2]]
+                                .map(|v| Light::<crate::light::Rendered>::measured(f64::from(v))),
+                        );
+                        match axis {
+                            0 => a.hypot(b),
+                            _ => lightness,
+                        }
+                    })
+                    .collect();
+                spread.sort_by(f64::total_cmp);
+                for (rank, at) in ranks.iter().enumerate() {
+                    // The device ranks its own `f32` reading of each sample, the host its `f64`
+                    // one, and both transfers raise to a power near a hundred, which multiplies
+                    // `f32`'s rounding.
+                    assert!(
+                        (picked[axis][rank] - spread[*at]).abs() < 1e-5,
+                        "{space:?} axis {axis} rank {at}: {} against {}",
+                        picked[axis][rank],
+                        spread[*at]
+                    );
+                }
             }
         }
     }
@@ -8656,7 +8688,7 @@ mod tests {
             space,
         ))
         .expect("the device evaluates the model");
-        let reached = space.chroma_of(red).sqrt();
+        let reached = space.chroma_of(red.map(Light::measured)).sqrt();
         // The axis ends on the frame's own colour to the f32 the device measured it in, so an ulp
         // is not a miss.
         assert!(

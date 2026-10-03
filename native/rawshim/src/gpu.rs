@@ -287,6 +287,7 @@ pub struct Gpu {
     print_environment: PipelineCell<print_environment::Pipelines>,
     print_material: PipelineCell<PrintMaterial>,
     lattice_bake: PipelineCell<crate::lattice::BakeKernel>,
+    identity_lattice: PipelineCell<(Texture, Texture)>,
     id: u64,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
@@ -1810,6 +1811,7 @@ impl Gpu {
             print_environment: PipelineCell::new(),
             print_material: PipelineCell::new(),
             lattice_bake: PipelineCell::new(),
+            identity_lattice: PipelineCell::new(),
             id: {
                 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -3222,7 +3224,10 @@ impl Gpu {
     pub fn lattice(&self, colour: &HdrColour) -> (Texture, Texture) {
         match &colour.chroma {
             Some(map) => map.baked(self),
-            None => crate::lattice::ChromaMap::identity().baked(self),
+            None => self
+                .identity_lattice
+                .get_or_init(|| crate::lattice::ChromaMap::identity().baked(self))
+                .clone(),
         }
     }
 

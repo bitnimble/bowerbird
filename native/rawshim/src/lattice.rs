@@ -7,6 +7,7 @@
 //! generators add, and the bake exponentiates the sum per texel.
 
 use crate::gpu::{Gpu, Texture};
+use crate::light::{Light, Rendered};
 
 /// Floats a kernel occupies on the device, as `lattice_bake.slang` reads them.
 pub const KERNEL_WORDS: usize = 17;
@@ -20,6 +21,9 @@ pub const HUE_TEXELS: usize = 73;
 pub const CHROMA_TEXELS: usize = 25;
 pub const LEVEL_TEXELS: usize = 33;
 pub const SURROUND_TEXELS: usize = 3;
+
+/// Rec.2020's own red at diffuse white, the most chroma a lattice axis needs to reach.
+pub const WHITE_RED: [Light<Rendered>; 3] = [Light::measured(1.0), Light::ZERO, Light::ZERO];
 
 /// Generator magnitude below which a kernel changes nothing a half float can hold.
 const NEGLIGIBLE: f64 = 1e-4;
@@ -57,7 +61,7 @@ impl IndexSpace {
 
     /// A rendered colour's lightness and two opponent axes, as `index_space.slang`'s
     /// `opponent_of` has them: for sizing the lattice's axes off a handful of colours.
-    pub fn opponent_of(self, rendered: [f64; 3]) -> [f64; 3] {
+    pub fn opponent_of(self, rendered: [Light<Rendered>; 3]) -> [f64; 3] {
         let coded = |nits: f64, p: f64| {
             let y = (nits.max(0.0) / 10000.0).powf(PQ_M1);
             ((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y)).powf(p)
@@ -65,7 +69,7 @@ impl IndexSpace {
         let apply = |m: &[[f64; 3]; 3], v: [f64; 3]| -> [f64; 3] {
             std::array::from_fn(|r| (0..3).map(|c| m[r][c] * v[c]).sum())
         };
-        let nits = rendered.map(|v| v * INDEX_WHITE_NITS);
+        let nits = rendered.map(|v| v.raw() * INDEX_WHITE_NITS);
         match self {
             IndexSpace::Ictcp => apply(
                 &ICTCP_LMS_TO_ITP,
@@ -83,18 +87,19 @@ impl IndexSpace {
     }
 
     /// The lightness a neutral at `level` of `Rendered` takes.
-    pub fn lightness_of_neutral(self, level: f64) -> f64 {
+    pub fn lightness_of_neutral(self, level: Light<Rendered>) -> f64 {
         self.opponent_of([level; 3])[0]
     }
 
-    /// The chroma of a colour at `level`, which sizes how far the lattice's chroma axis reaches.
-    pub fn chroma_of(self, rendered: [f64; 3]) -> f64 {
+    /// The chroma of a colour, which sizes how far the lattice's chroma axis reaches.
+    pub fn chroma_of(self, rendered: [Light<Rendered>; 3]) -> f64 {
         let [_, a, b] = self.opponent_of(rendered);
         a.hypot(b)
     }
 }
 
-/// `index_space.slang`'s constants, which `the_host_indexes_as_the_shader_does` holds equal.
+/// `index_space.slang`'s constants, which `hdr_fit`'s `the_span_picks_the_samples_a_sort_would`
+/// holds to the shader's in both spaces.
 pub const INDEX_WHITE_NITS: f64 = 203.0;
 const PQ_M1: f64 = 0.1593017578125;
 const PQ_M2: f64 = 78.84375;
@@ -227,9 +232,9 @@ impl ChromaMap {
             space,
             Vec::new(),
             LutAxes {
-                chroma_top: space.chroma_of([1.0, 0.0, 0.0]).sqrt(),
-                level_low: space.lightness_of_neutral(0.0),
-                level_top: space.lightness_of_neutral(1.0),
+                chroma_top: space.chroma_of(WHITE_RED).sqrt(),
+                level_low: space.lightness_of_neutral(Light::ZERO),
+                level_top: space.lightness_of_neutral(Light::measured(1.0)),
                 surround_top: 1.0,
             },
         )
@@ -345,8 +350,7 @@ impl ChromaMap {
         Some(ChromaMap::new(space, kernels, axes))
     }
 
-    /// This map as a sidecar hands it back: the head in `f32` and the kernels in `f16`, which is
-    /// what the bake's `rgba16float` output holds of them anyway.
+    /// This map as a sidecar hands it back: the head in `f32` and the kernels in `f16`.
     pub fn stored(&self) -> ChromaMap {
         let words: Vec<f64> = self
             .words()
@@ -408,7 +412,7 @@ pub fn generator_of(node: [f64; 7]) -> [f64; 7] {
 
 /// [`generator_of`] undone: the operator a generator exponentiates to, as the bake computes it.
 pub fn operator_of(generator: [f64; 7]) -> [f64; 7] {
-    let g = matrix_of_generator(generator);
+    let g = matrix_of(generator);
     let halvings = (norm(g).max(1e-12).log2().ceil() as i32 + 3).clamp(0, 16);
     let x = scale(g, 1.0 / f64::from(1u32 << halvings));
     let mut term = IDENTITY;
@@ -428,10 +432,6 @@ const IDENTITY: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
 fn matrix_of([a, b, c, d, e, f, g]: [f64; 7]) -> M3 {
     [[a, b, e], [c, d, f], [0.0, 0.0, g]]
-}
-
-fn matrix_of_generator(generator: [f64; 7]) -> M3 {
-    matrix_of(generator)
 }
 
 fn node_of(m: M3) -> [f64; 7] {
@@ -844,9 +844,9 @@ mod tests {
     #[test]
     fn white_sits_where_each_space_puts_it() {
         // Jzazbz puts 100 nits of D65 near 0.167 lightness; ICtCp's I at 203 nits is PQ of 203.
-        let jz = IndexSpace::Jzazbz.lightness_of_neutral(100.0 / INDEX_WHITE_NITS);
+        let jz = IndexSpace::Jzazbz.lightness_of_neutral(Light::measured(100.0 / INDEX_WHITE_NITS));
         assert!((jz - 0.167).abs() < 0.01, "{jz}");
-        let i = IndexSpace::Ictcp.lightness_of_neutral(1.0);
+        let i = IndexSpace::Ictcp.lightness_of_neutral(Light::measured(1.0));
         assert!((i - 0.58).abs() < 0.01, "{i}");
     }
 }

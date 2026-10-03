@@ -12,14 +12,13 @@ import index_space;
 struct Params {
     uint kernels;
     uint space;
-    /// Texels along each axis: hue (one more than its bins, the last a copy of the first so the
-    /// wrap needs no sampler of its own), chroma, lightness and surround.
+    /// Hue holds one more than its bins, the last a copy of the first, so the wrap needs no
+    /// sampler of its own.
     uint hue_texels;
     uint chroma_texels;
     uint level_texels;
     uint surround_texels;
-    /// Lattice coordinate at the last texel of the chroma and surround axes, and the lightness
-    /// span: `hdr_fit::LutAxes`.
+    /// `lattice::LutAxes`.
     float chroma_top;
     float level_low;
     float level_top;
@@ -44,7 +43,7 @@ static const uint GENERATOR = 8;
 static const uint TO_LIGHTNESS = 15;
 
 /// Perlin's smootherstep tent: one at the centre, nothing at the reach, and neighbours a reach
-/// apart sum to one, so a grid of these interpolates as the multilinear tents the fit landed on.
+/// apart sum to one. `fit_lattice.slang` lands pairs under the same weights.
 float tent(float distance, float reach)
 {
     if (reach <= 0.0) { return 1.0; }
@@ -151,7 +150,7 @@ void bake(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_
     let depth = pc.level_texels * pc.surround_texels;
     let inside = id.x < pc.hue_texels && id.y < pc.chroma_texels && id.z < depth;
 
-    // The group's box, its depth taken whole along lightness where it straddles two surrounds.
+    // Lightness wraps inside depth, so a group straddling two surrounds spans every level.
     let first = group * SIDE;
     let last = min(first + uint3(SIDE - 1), uint3(pc.hue_texels, pc.chroma_texels, depth) - 1);
     var low = place_of(first);
@@ -161,9 +160,8 @@ void bake(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_
         high.z = pc.level_top;
     }
 
-    // Each lane counts a run of kernels, a prefix over the lanes places each run, and each lane
-    // writes its own: the list comes out in kernel order, so the sums below add in the same order
-    // as over every kernel.
+    // Compacted by prefix rather than appended atomically: kernel order makes the sums below add
+    // in the same order as over every kernel, so culling cannot move a texel's bits.
     let run = (pc.kernels + LANES - 1) / LANES;
     let from = min(lane * run, pc.kernels);
     let to = min(from + run, pc.kernels);

@@ -114,7 +114,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
     f_push(&mut words, 203.0); // sdr_white
     words.push(1); // row_stride
     words.push(peak_samples);
-    // WGSL puts a `vec2f` on a multiple of eight, and the scalars above end on 84. The
+    // WGSL puts a `vec2f` on a multiple of eight, and the scalars above end on 92. The
     // struct does not name this word - `pad0` earlier is a different one, named because it
     // is reusable - so it has to be written here or every field after it lands short.
     words.push(0);

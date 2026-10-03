@@ -76,7 +76,7 @@ float3 target_at(int p)
         dot(pc.inverse[2].xyz, v)), float3(0.0));
 }
 
-/// Which level band an input falls in, on the square root the lattice's own level axis uses.
+/// Which level band an input falls in, on the square root of its share of the ceiling.
 int level_of(float x)
 {
     let t = sqrt(max(x, 0.0) / max(pc.ceiling, 1e-9));
