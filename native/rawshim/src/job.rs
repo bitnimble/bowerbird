@@ -1937,6 +1937,7 @@ pub(crate) async fn render(
         None => gpu.scene_peak(),
     };
     let mut uploaded: Option<crate::gpu::Uploaded<'_>> = None;
+    let mut uploaded_writing: Option<(usize, usize)> = None;
     for (index, (target, size)) in order.iter().enumerate() {
         let want = (size.width as usize, size.height as usize);
         // Never for a window: `Base::cropped` only takes that route when every target wants the
@@ -1970,7 +1971,12 @@ pub(crate) async fn render(
             .showing(
                 spec.geometry(
                     job.geometry,
-                    crate::px::Size::<crate::px::Drawn>::measured(cut.width, cut.height),
+                    // A window's cut is only the part around the crop, and the crop is a share of
+                    // the whole photograph.
+                    window.map_or(
+                        crate::px::Size::<crate::px::Drawn>::measured(cut.width, cut.height),
+                        |window| window.photograph,
+                    ),
                 )
                 .0,
             ),
@@ -1987,6 +1993,12 @@ pub(crate) async fn render(
             grade = grade.windowed(window.photograph, window.origin);
         }
         let (out_width, out_height) = grade.output_size();
+        // An upload's readback is sized by its first encode, and a print's file is sized by the
+        // print rather than by the frame.
+        if uploaded_writing.is_some_and(|written| written != grade.written_size()) {
+            uploaded = None;
+        }
+        uploaded_writing = Some(grade.written_size());
         let up = match &uploaded {
             Some(up) => up,
             None => uploaded.insert(match cut.resident() {
