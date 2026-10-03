@@ -6,7 +6,7 @@ import { type Page, expect } from '@playwright/test';
 import { z } from 'zod';
 import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { PRINT_PHOTOS_DIR } from '../fixture_library';
+import { PRINT_PHOTO_NAMES, PRINT_PHOTOS_DIR } from '../fixture_library';
 import {
   editDiagnosticSize,
   editDiagnostics,
@@ -26,7 +26,7 @@ const DRAWN = { timeout: 170_000 };
 test.describe.configure({ timeout: 180_000, mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, PRINT_PHOTOS_DIR);
+  await useLibrary(browser, PRINT_PHOTOS_DIR, { photos: PRINT_PHOTO_NAMES.length });
 });
 
 /** What the mockup fetched to draw from, once the viewer's own frame is already on screen. */
