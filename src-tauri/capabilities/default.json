@@ -13,6 +13,7 @@
     "allow-write-device-file",
     "allow-display-is-hdr",
     "allow-pick-export-folder",
+    "allow-print-page",
     "allow-app-data-dir"
   ]
 }

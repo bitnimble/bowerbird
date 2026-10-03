@@ -14,6 +14,7 @@ mod display;
 mod export;
 mod export_paths;
 mod open_with;
+mod printing;
 mod reveal;
 /// The Bowerbird server this app carries, so the library is local and works offline.
 mod server;
@@ -56,6 +57,8 @@ pub fn run() {
             export::pick_export_folder,
             export::export_to_folder,
             open_with::open_original_with,
+            printing::open_printer_settings,
+            printing::print_page,
             reveal::open_folder,
             reveal::reveal_file,
             reveal::reveal_original,
