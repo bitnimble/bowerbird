@@ -75,6 +75,13 @@ export class PrintDialogPresenter {
   }
 
   @action.bound
+  typeCopies(typed: string): void {
+    this.store.copiesTyped = typed;
+    const copies = Number(typed);
+    if (Number.isInteger(copies) && copies >= 1) this.set('copies', copies);
+  }
+
+  @action.bound
   async openPrinterSettings(): Promise<void> {
     const printer = this.store.printer;
     if (printer == null) return;
@@ -263,7 +270,6 @@ export class PrintDialogPresenter {
       media: media?.key ?? null,
       mediaType,
       margin,
-      copies: Math.max(1, Math.min(described.copiesMax, Math.round(settings.copies) || 1)),
       profile,
     };
   }

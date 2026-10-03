@@ -64,11 +64,7 @@ export const PrintJobStateSchema = z.object({
 });
 export type PrintJobState = z.infer<typeof PrintJobStateSchema>;
 
-export const PrintReplySchema = z.object({
-  ok: z.boolean(),
-  error: z.string().optional(),
-  outcome: z.unknown().optional(),
-});
+export const PrintReplySchema = z.object({ ok: z.boolean(), error: z.string().optional() });
 
 /** A printer's own profile, read through the spooler, or an ICC file the reader added. */
 export const ProfileRefSchema = z.object({
@@ -102,11 +98,14 @@ export function transportOf(path: ColourPath): Transport {
   return { space: path.kind === 'profile' ? 'device' : path.kind, bits: path.bits };
 }
 
+const PAGE_EDGE_MAX_PX = 20000;
+const PageEdgeSchema = z.number().int().positive().max(PAGE_EDGE_MAX_PX);
+
 const PlaceSchema = z.object({
   x: z.number().int().nonnegative(),
   y: z.number().int().nonnegative(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  width: PageEdgeSchema,
+  height: PageEdgeSchema,
 });
 
 export const PrintRequestSchema = z.object({
@@ -122,10 +121,7 @@ export const PrintRequestSchema = z.object({
     borderless: z.boolean(),
     copies: z.number().int().positive(),
     resolutionDpi: z.number().int().positive(),
-    page: z.object({
-      widthPx: z.number().int().positive(),
-      heightPx: z.number().int().positive(),
-    }),
+    page: z.object({ widthPx: PageEdgeSchema, heightPx: PageEdgeSchema }),
     place: PlaceSchema,
   }),
 });

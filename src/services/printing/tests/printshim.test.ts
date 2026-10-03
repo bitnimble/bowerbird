@@ -9,6 +9,7 @@ describe('printshimWorkers', () => {
       'the printer did not answer in 300 ms',
     );
     expect(await run({ kind: 'capabilities', printer: 'cups:PRO-200' }, 5000)).toEqual({
+      ok: true,
       asked: 'capabilities',
     });
     await stuck;

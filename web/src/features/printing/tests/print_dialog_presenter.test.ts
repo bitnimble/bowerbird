@@ -236,10 +236,18 @@ describe('PrintDialogPresenter', () => {
 
   test('copies stay within what the printer takes', async () => {
     await openOnPro200();
-    presenter.set('copies', 40);
-    expect(store.settings.copies).toBe(5);
-    presenter.set('copies', 0);
-    expect(store.settings.copies).toBe(1);
+    presenter.typeCopies('40');
+    expect(store.request?.job.copies).toBe(5);
+  });
+
+  test('clearing copies to retype them keeps the last count until a new one is typed', async () => {
+    await openOnPro200();
+    presenter.typeCopies('3');
+    presenter.typeCopies('');
+    expect(store.copiesTyped).toBe('');
+    expect(store.request?.job.copies).toBe(3);
+    presenter.typeCopies('2');
+    expect(store.request?.job.copies).toBe(2);
   });
 
   test('a listing that fails says so for the printer field alone', async () => {

@@ -1,4 +1,4 @@
-import { dlopen, FFIType } from 'bun:ffi';
+import { dlopen, FFIType, type FFIFunction } from 'bun:ffi';
 import path from 'node:path';
 import { Logger } from '../../../logger';
 
@@ -68,10 +68,6 @@ const SYMBOLS = {
     returns: FFIType.i64,
   },
   bb_prepare_header_cap: { args: [], returns: FFIType.u64 },
-  bb_print_command: {
-    args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64],
-    returns: FFIType.i64,
-  },
   // How far the job counting itself right now has got, steps done over steps to do. Called from
   // the thread that is *not* inside `bb_run_job`, which is the only way to ask.
   bb_job_progress: { args: [], returns: FFIType.u64 },
@@ -139,15 +135,21 @@ const LOG_BYTES = 64 * 1024;
 let cached: Shim | null = null;
 
 export function shim(): Shim {
-  if (cached) return cached;
+  cached ??= drainingLog(openRawshim(SYMBOLS));
+  return cached;
+}
+
+/** The library opened for `symbols` alone, so a caller needing other entry points opens its own. */
+export function openRawshim<S extends Record<string, FFIFunction>>(
+  symbols: S,
+): ReturnType<typeof dlopen<S>>['symbols'] {
   // Every candidate's error, not just the last: a build that exists but is stale
   // fails on a missing symbol, and reporting only the last one blames the fallback
   // path for never having existed and hides the one that did.
   const failures: string[] = [];
   for (const candidate of CANDIDATES) {
     try {
-      cached = drainingLog(dlopen(candidate, SYMBOLS).symbols);
-      return cached;
+      return dlopen(candidate, symbols).symbols;
     } catch (error) {
       failures.push(`  ${candidate}: ${String(error)}`);
     }

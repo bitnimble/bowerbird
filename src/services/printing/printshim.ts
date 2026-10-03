@@ -53,7 +53,8 @@ export function printshimWorkers(
 
 function outcomeOf(data: PrintshimReply): unknown {
   if ('failed' in data) throw new Error(data.failed);
-  const parsed = PrintReplySchema.parse(JSON.parse(data.reply));
+  const reply: unknown = JSON.parse(data.reply);
+  const parsed = PrintReplySchema.parse(reply);
   if (!parsed.ok) throw new AppError('UNAVAILABLE', parsed.error ?? 'the printer refused');
-  return parsed.outcome;
+  return reply;
 }

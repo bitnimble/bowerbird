@@ -7,5 +7,5 @@ declare const self: {
 
 self.onmessage = ({ data }) => {
   if (data.kind === 'list') for (;;);
-  self.postMessage({ reply: JSON.stringify({ ok: true, outcome: { asked: data.kind } }) });
+  self.postMessage({ reply: JSON.stringify({ ok: true, asked: data.kind }) });
 };

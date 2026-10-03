@@ -182,8 +182,8 @@ export const PrintDialog = observer(function PrintDialog(): JSX.Element | null {
                 min={1}
                 max={described?.copiesMax}
                 step={1}
-                value={String(settings.copies)}
-                onChange={(value) => presenter.set('copies', Number(value))}
+                value={store.copiesTyped}
+                onChange={presenter.typeCopies}
               />
             </Labelled>
 

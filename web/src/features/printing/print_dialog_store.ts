@@ -53,6 +53,7 @@ export class PrintDialogStore {
   @observable.ref accessor capabilities: Fetched<PrinterCapabilities> = { kind: 'loading' };
   @observable.ref accessor fileProfiles: string[] = [];
   @observable.ref accessor settings: PrintSettings = DEFAULT_PRINT_SETTINGS;
+  @observable accessor copiesTyped = String(DEFAULT_PRINT_SETTINGS.copies);
   @observable accessor submitting = false;
   @observable accessor error: string | null = null;
   /** The rendered photo the system print dialog lays out, where that dialog is ours to use. */
@@ -108,9 +109,9 @@ export class PrintDialogStore {
 
   /** What the Print button sends, or null until every field it needs has arrived. */
   @computed get request(): PrintRequest | null {
-    const { photo, printer, colour, layout, media, dpi, settings } = this;
+    const { photo, printer, colour, layout, media, dpi, settings, described } = this;
     if (photo == null || printer == null || colour == null || layout == null) return null;
-    if (media == null || dpi == null) return null;
+    if (media == null || dpi == null || described == null) return null;
     return {
       photoId: photo.id,
       printer: printer.id,
@@ -122,7 +123,7 @@ export class PrintDialogStore {
         media: media.key,
         mediaType: settings.mediaType,
         borderless: settings.margin === 'borderless',
-        copies: settings.copies,
+        copies: Math.min(described.copiesMax, settings.copies),
         resolutionDpi: dpi,
         page: layout.page,
         place: layout.place,
