@@ -90,6 +90,7 @@ import { PrinterProfilesApi } from './api/printer_profiles/printer_profiles_api'
 import { PrintingApi } from './api/printing/printing_api';
 import { PrintService } from './services/printing/print_service';
 import { printshimWorkers } from './services/printing/printshim';
+import { PrintRenderer } from './services/processing/exports/print_renderer';
 import { printerProfilesDir } from './utils/paths';
 import { UpdateService } from './services/updates/update_service';
 import { VERSION } from './version';
@@ -257,6 +258,7 @@ const photoRenditionService = new PhotoRenditionService(
   renditionFetch,
   activity,
 );
+const printRenderer = new PrintRenderer(photoRenditionService, processingService, originals);
 const photoReadService = new PhotoReadService(
   photoListingRepo,
   photoNavigationRepo,
@@ -603,7 +605,11 @@ app.route(
 );
 app.route(
   route(PathSegment.api(), PathSegment.printing()),
-  new PrintingApi(new PrintService(printshimWorkers(), printerProfilesDir(config.dbPath))).routes,
+  new PrintingApi(
+    new PrintService(printshimWorkers(), printerProfilesDir(config.dbPath), (...print) =>
+      printRenderer.renderPrint(...print),
+    ),
+  ).routes,
 );
 app.route(route(PathSegment.api(), PathSegment.libraries()), librariesApi.routes);
 app.route(route(PathSegment.api()), photosApi.routes);

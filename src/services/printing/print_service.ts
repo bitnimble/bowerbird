@@ -18,7 +18,7 @@ import {
 } from '../../schemas/printing';
 import { deleteScratchDirectory } from '../../utils/deletions';
 import { listPrinterProfiles } from '../../utils/paths';
-import { renderPrint, type PrintRenderTarget } from '../processing/exports/print_renderer';
+import type { PrintRenderer, PrintRenderTarget } from '../processing/exports/print_renderer';
 import type { PrintshimRun } from './printshim';
 
 const ASK_MS = 15_000;
@@ -28,7 +28,7 @@ export class PrintService {
   constructor(
     private readonly run: PrintshimRun,
     private readonly profilesDir: string,
-    private readonly render: typeof renderPrint = renderPrint,
+    private readonly render: PrintRenderer['renderPrint'],
   ) {}
 
   async printers(): Promise<Printer[]> {
