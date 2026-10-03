@@ -5,9 +5,11 @@ import type { Fit, PrintLayout } from '../../../../src/schemas/print_layout';
 import { usePrintDialogStore } from '../../app/stores_context';
 import { Spinner } from '../../ui/spinner';
 import { Text } from '../../ui/text';
+import { size } from '../../ui/tokens.stylex';
 import { PrintPreviewStrings as strings } from './print_preview.strings';
 
 const PAPER = '#ffffff';
+const SURROUND = '#808080';
 
 const styles = stylex.create({
   preview: {
@@ -23,8 +25,12 @@ const styles = stylex.create({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    boxSizing: 'border-box',
     width: '100%',
     height: '420px',
+    padding: '16px',
+    backgroundColor: SURROUND,
+    borderRadius: size.radius,
   },
   page: {
     maxWidth: '100%',
