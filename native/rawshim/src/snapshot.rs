@@ -418,13 +418,29 @@ pub fn dir() -> std::path::PathBuf {
 ///
 /// PQ is drawn twice, one block under the other, by exposure alone and never a tone map: once with
 /// diffuse white at SDR white, clipping above it, and once with [`VIEW_PEAK`] there, which is where
-/// the highlights are read.
+/// the highlights are read. A snapshot of shadows, black at both, is drawn a third time at its own
+/// brightest.
 pub fn side_by_side_png(before: Option<&Snapshot>, after: &Snapshot) -> Vec<u8> {
     let (width, height) = (after.width, after.height);
-    let whites: &[Light<DisplayNits>] = match after.coding {
-        Coding::Pq => &[DISPLAY_WHITE, VIEW_PEAK],
-        Coding::Srgb => &[DISPLAY_WHITE],
+    let mut whites: Vec<Light<DisplayNits>> = match after.coding {
+        Coding::Pq => vec![DISPLAY_WHITE, VIEW_PEAK],
+        Coding::Srgb => vec![DISPLAY_WHITE],
     };
+    if after.coding == Coding::Pq {
+        let mut levels: Vec<u16> = after
+            .samples
+            .chunks_exact(3)
+            .map(|p| p[0].max(p[1]).max(p[2]))
+            .collect();
+        levels.sort_unstable();
+        let brightest = levels[levels.len() * 99 / 100];
+        let own = crate::tone::pq_inv::<DisplayNits>(Light::measured(
+            f64::from(brightest) / f64::from(u16::MAX),
+        ));
+        if own.raw() > 0.0 && own.raw() < DISPLAY_WHITE.raw() / 8.0 {
+            whites.push(own);
+        }
+    }
     let rows: Vec<Vec<Vec<u8>>> = whites
         .iter()
         .map(|&white| {
@@ -696,6 +712,28 @@ mod tests {
         assert_eq!(
             (width, height),
             (2 * 32 * zoom + GAP, 2 * 16 * zoom + BAND_GAP)
+        );
+    }
+
+    #[test]
+    fn a_snapshot_of_shadows_is_drawn_again_at_its_own_level() {
+        let dim = (crate::tone::pq(Light::<DisplayNits>::measured(2.0)).raw() * 65535.0) as u16;
+        let (_, height, pixels) = drawn(&side_by_side_png(None, &flat(32, 16, dim)));
+        let zoom = (VIEW_LONG / 32).min(VIEW_MAX_ZOOM);
+        assert_eq!(height, 3 * 16 * zoom + 2 * BAND_GAP);
+        let width = 3 * 32 * zoom + 2 * GAP;
+        let at = |band: usize| {
+            let (x, y) = (
+                32 * zoom + GAP + 16 * zoom,
+                band * (16 * zoom + BAND_GAP) + 8 * zoom,
+            );
+            pixels[(y * width + x) * 3]
+        };
+        assert!(
+            at(2) > 200 && at(0) < 60,
+            "{} at its own level, {} at white",
+            at(2),
+            at(0)
         );
     }
 
