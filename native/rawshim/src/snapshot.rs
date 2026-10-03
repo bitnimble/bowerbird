@@ -176,6 +176,45 @@ impl Snapshot {
         Snapshot::pq(&samples, size)
     }
 
+    /// A canvas draw's RGBA - the sRGB transfer, signed, over P3 linear at 1 for
+    /// [`crate::gpu::CANVAS_WHITE`] - coded to PQ to be looked at.
+    pub fn canvas<S>(rgba: &[f32], size: Size<S>) -> Snapshot {
+        let (width, height) = size.raw();
+        assert_eq!(
+            rgba.len(),
+            width * height * 4,
+            "a canvas of {width}x{height}"
+        );
+        let to_rec2020 = crate::transfer::Primaries::DISPLAY_P3.to_rec2020();
+        let linear = |coded: f32| {
+            let magnitude = coded.abs();
+            let level = if magnitude <= 0.04045 {
+                magnitude / 12.92
+            } else {
+                ((magnitude + 0.055) / 1.055).powf(2.4)
+            };
+            level.copysign(coded)
+        };
+        let samples = rgba
+            .chunks_exact(4)
+            .flat_map(|pixel| {
+                let p3 = [linear(pixel[0]), linear(pixel[1]), linear(pixel[2])];
+                to_rec2020.map(|row| {
+                    let share: f32 = row
+                        .iter()
+                        .zip(p3)
+                        .map(|(weight, value)| weight * value)
+                        .sum();
+                    let nits = Light::<DisplayNits>::measured(
+                        f64::from(share.max(0.0)) * crate::gpu::CANVAS_WHITE.raw(),
+                    );
+                    (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
+                })
+            })
+            .collect();
+        Snapshot::coded(samples, width, height)
+    }
+
     /// An SDR picture as it was written, at the size it was rendered at.
     pub fn srgb<S>(samples: &[u8], size: Size<S>) -> Snapshot {
         let (width, height) = size.raw();

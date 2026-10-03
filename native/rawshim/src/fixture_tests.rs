@@ -68,10 +68,21 @@ pub fn lawn() -> PathBuf {
     fixture("IMG_8789.CR3")
 }
 
+/// The render benchmark's 61MP frame, a white dog in autumn leaves, and the only frame here large
+/// enough to halve.
+pub fn autumn() -> PathBuf {
+    checked_out(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/reference_frame.ARW"))
+}
+
 fn fixture(name: &str) -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test/fixtures")
-        .join(name);
+    checked_out(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures")
+            .join(name),
+    )
+}
+
+fn checked_out(path: PathBuf) -> PathBuf {
     // A hard failure rather than a skip. The feature is opt-in, so asking for it and
     // silently getting nothing is worse than being told the checkout is incomplete -
     // that is how a suite rots into passing without running.
@@ -81,25 +92,6 @@ fn fixture(name: &str) -> PathBuf {
         path.display(),
     );
     path
-}
-
-/// A 61MP body, which is the only way to exercise halving: the committed fixture is
-/// 24MP, below the threshold by design.
-///
-/// Not committed - a 61MP RAW is ~70MB - so this returns None and the caller says so
-/// rather than failing on a checkout that never had it.
-fn big() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.photos/Test/DSC03451.ARW");
-    match path.is_file() {
-        true => Some(path),
-        false => {
-            eprintln!(
-                "SKIPPED: {} is absent, so the halving cases did not run",
-                path.display()
-            );
-            None
-        }
-    }
 }
 
 /// The corner factor `injected_falloff` darkens by, and the one every test that uses
@@ -2434,7 +2426,7 @@ mod halving {
 
     #[test]
     fn halves_a_61mp_frame_because_4864_still_clears_a_3840_rendition() {
-        let Some(path) = big() else { return };
+        let path = autumn();
         let whole = decode(&path, 0);
         let halved = decode(&path, FULL_RENDITION);
 
@@ -2467,7 +2459,7 @@ mod halving {
     fn never_halves_when_the_caller_needs_native_resolution() {
         // A max-resolution rendition passes 0, which has to mean "the whole frame"
         // rather than "no constraint, do as you like".
-        let Some(path) = big() else { return };
+        let path = autumn();
         let whole = decode(&path, 0);
         assert_eq!(whole.reduced, 1, "0 must mean the whole frame");
         assert!(long_edge(&whole) > FULL_RENDITION as usize);
@@ -2478,7 +2470,7 @@ mod halving {
         // Halving combines each 2x2 site into one pixel, so a site taken off an odd row or
         // column reads the colours next door: still the right size, still sharp, and green.
         // Checked as a picture rather than as dimensions for that reason.
-        let Some(path) = big() else { return };
+        let path = autumn();
         let whole = crate::debug::summarise(&decode(&path, 0));
         let halved = crate::debug::summarise(&decode(&path, FULL_RENDITION));
 
@@ -4278,15 +4270,15 @@ mod pictures {
 
         const CANVAS: (u32, u32) = (320, 240);
         // Wider than the pins beside it, and set by two adapters rather than by the lighting: an
-        // RTX 3080 reads both sheets 15 codes from radv's on average, every one of them inside the
-        // photograph - the mat, the rim and the lamp's image in the glass agree exactly - so what
-        // moves is the frame the adapter prepared, not anything this draw does with it.
+        // RTX 3080 and radv part only inside the photograph - the mat, the rim and the lamp's image
+        // in the glass agree exactly - so what moves is the frame the adapter prepared, not
+        // anything this draw does with it.
         const SHEET: Tolerance = Tolerance {
             worst: 768,
             mean: 20.0,
         };
 
-        let bytes = std::fs::read(sony()).expect("the fixture");
+        let bytes = std::fs::read(autumn()).expect("the fixture");
         let prepared = crate::edit::prepare_bytes(
             &bytes,
             &crate::edit::EditRequest {
@@ -4375,6 +4367,14 @@ mod pictures {
                     ..Scene::default()
                 },
             ),
+            (
+                "print/flat",
+                true,
+                Scene {
+                    presentation: Presentation::Flat,
+                    ..Scene::default()
+                },
+            ),
         ] {
             // The surface presentation maps the whole sheet into the canvas, so its canvas takes
             // the sheet's shape; the scene one draws the sheet inside a canvas of its own.
@@ -4410,11 +4410,14 @@ mod pictures {
             };
             let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
             uploaded.collect_candidates(&grade);
-            let samples = uploaded.print_pq(&grade, &pyramid, &scene);
-            Snapshot::pq(
-                &samples,
-                Size::<crate::px::Canvas>::measured(canvas.0, canvas.1),
-            )
+            let size = Size::<crate::px::Canvas>::measured(canvas.0, canvas.1);
+            match scene.presentation {
+                // Only the canvas draw lays a flat proof; the PQ one is always the room.
+                Presentation::Flat => {
+                    Snapshot::canvas(&uploaded.draw_print(&grade, &pyramid, &scene), size)
+                }
+                _ => Snapshot::pq(&uploaded.print_pq(&grade, &pyramid, &scene), size),
+            }
             .check(name, SHEET);
         }
     }

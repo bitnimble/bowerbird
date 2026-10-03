@@ -5088,6 +5088,15 @@ pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
     uniform_words_with(grade, colour, true)
 }
 
+/// BT.2408 reference white, and the divisor an extended-range canvas needs: a canvas draw's 1.0.
+///
+/// Measured rather than assumed (`docs/raw-edit-gpu.md` §7.1): swept against a real PQ AVIF
+/// of the same pixels, Chrome and Safari both match at 203. It is the *browser's* constant
+/// rather than `reference_nits`, which a library is free to move - which is why it is fixed here
+/// and not read off the grade.
+pub(crate) const CANVAS_WHITE: crate::light::Light<crate::light::DisplayNits> =
+    crate::light::Light::exactly(203.0);
+
 /// `uniform_words`, saying whether `chroma_smoothed` is there to read: the pass that
 /// builds it runs the model without it.
 fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> Vec<u32> {
@@ -5134,14 +5143,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, shape.map_or(0.0, |s| s.chroma_low[1]));
     f(&mut w, shape.map_or(1.0, |s| s.chroma_scale[1]));
     f(&mut w, shape.map_or(1.0, |s| s.level_scale));
-    // sdr_white: BT.2408 reference white, and the divisor an extended-range canvas needs.
-    //
-    // Measured rather than assumed (`docs/raw-edit-gpu.md` §7.1): swept against a real PQ AVIF
-    // of the same pixels, Chrome and Safari both match at 203. It is the *browser's* constant
-    // rather than `reference_nits`, which a library is free to move - which is why it is a
-    // literal here and not read off the grade, and why it lived on the client until the client
-    // stopped building its own uniform.
-    f(&mut w, 203.0);
+    f(&mut w, CANVAS_WHITE.raw());
     let (stride, rows) = sampled_rows(grade.width, grade.height);
     w.push(stride); // row_stride
     w.push(grade.width as u32 * rows); // peak_samples
