@@ -1,11 +1,13 @@
 use super::page::Picture;
 use super::{
     Capabilities, Colour, Connection, Error, Job, JobState, JobStatus, Margins, Media, MediaType,
-    Printer, Profile, ProfileSource, Result, Space, Transport, fail, printer_id,
+    Printer, Profile, ProfileSource, Result, Space, Transport, printer_id, read_icc,
 };
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
-use windows::Win32::Foundation::{E_NOTIMPL, ERROR_INVALID_PARAMETER, RPC_E_CHANGED_MODE};
+use windows::Win32::Foundation::{
+    E_NOTIMPL, ERROR_INVALID_PARAMETER, ERROR_INVALID_PRINTER_NAME, RPC_E_CHANGED_MODE,
+};
 use windows::Win32::Graphics::Gdi::{
     CreateDCW, DEVMODEW, DEVMODEW_0_0, DM_COLOR, DM_COPIES, DM_IN_BUFFER, DM_MEDIATYPE,
     DM_ORIENTATION, DM_OUT_BUFFER, DM_PAPERSIZE, DM_PRINTQUALITY, DM_YRESOLUTION, DMCOLOR_COLOR,
@@ -49,8 +51,7 @@ const CLASS_PRINTER: u32 = u32::from_be_bytes(*b"prtr");
 const XPS_UNITS_PER_INCH: f32 = 96.0;
 const MM_PER_INCH: f64 = 25.4;
 const PAPER_NAME_CHARS: usize = 64;
-/// Tenths of a millimetre within which two papers are the same size.
-const SAME_SIZE: i32 = 10;
+const SAME_SIZE_TENTHS_MM: i32 = 10;
 const JOB_NUMBER_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Spooler;
@@ -66,7 +67,7 @@ impl Spooler {
                 unsafe { EnumPrintersW(flags, PCWSTR::null(), 2, buffer, needed, &mut count) };
             listed.map(|()| count)
         })
-        .map_err(|error| Error(format!("Can't list the printers: {error}")))?;
+        .map_err(|error| Error::unavailable(format!("Can't list the printers: {error}")))?;
         let default = default_printer();
         #[expect(unsafe_code)]
         // SAFETY: EnumPrintersW wrote `count` PRINTER_INFO_2W at the start of the buffer, which
@@ -94,7 +95,10 @@ impl Spooler {
         let device = HSTRING::from(name);
         let printer = PrinterHandle::open(&device)?;
         let defaults = DevMode::user_default(&printer, &device)?;
-        let sizes = sizes(&device, &defaults);
+        let mut sizes = papers(&device);
+        for size in &mut sizes {
+            size.measure(&device, &defaults);
+        }
         let media_types = media_types(&device);
         let default_paper = defaults.paper();
         let devmode = defaults.get();
@@ -142,34 +146,41 @@ impl Spooler {
             .iter()
             .any(|listed| listed == profile)
         {
-            return fail(format!("{name} has no colour profile called {profile}"));
+            return Err(Error::missing(format!(
+                "{name} has no colour profile called {profile}"
+            )));
         }
-        let path = colour_directory()?.join(profile);
-        std::fs::read(&path).map_err(|error| {
-            Error(format!(
-                "Can't read the profile at {}: {error}",
-                path.display()
-            ))
-        })
+        read_icc(&colour_directory()?.join(profile))
     }
 
-    pub fn submit(&self, name: &str, picture: Picture, job: &Job) -> Result<i32> {
+    pub fn submit(&self, name: &str, picture: Picture, job: &Job) -> Result<Option<i32>> {
         if job.transport.bits != 16 || job.transport.space == Space::Device {
-            return fail(format!("{name} takes Adobe RGB or sRGB at 16 bits"));
+            return Err(Error::invalid(format!(
+                "{name} takes Adobe RGB or sRGB at 16 bits"
+            )));
         }
         let Some(icc) = picture.icc.as_deref() else {
-            return fail("The image has no ICC profile to say what its colours are");
+            return Err(Error::invalid(
+                "The image has no ICC profile to say what its colours are",
+            ));
         };
         let device = HSTRING::from(name);
         let printer = PrinterHandle::open(&device)?;
         let mut devmode = DevMode::user_default(&printer, &device)?;
-        let sizes = sizes(&device, &devmode);
-        let Some(size) = sizes.iter().find(|size| size.key() == job.media) else {
-            return fail(format!("{name} doesn't take paper {}", job.media));
+        let Some(mut size) = papers(&device)
+            .into_iter()
+            .find(|size| size.key() == job.media)
+        else {
+            return Err(Error::invalid(format!(
+                "{name} doesn't take paper {}",
+                job.media
+            )));
         };
         let paper = if job.borderless {
-            size.borderless_paper()
-                .ok_or_else(|| Error(format!("{name} can't print {} borderless", size.main().1)))?
+            size.measure(&device, &devmode);
+            size.borderless_paper().ok_or_else(|| {
+                Error::invalid(format!("{name} can't print {} borderless", size.main().1))
+            })?
         } else {
             size.main().0
         };
@@ -177,14 +188,21 @@ impl Spooler {
             .media_type
             .as_deref()
             .map(|key| {
-                key.parse::<u32>()
-                    .map_err(|_| Error(format!("{name} has no media type {key}")))
+                let no_type = || Error::invalid(format!("{name} has no media type {key}"));
+                if !media_types(&device)
+                    .iter()
+                    .any(|offered| offered.key == key)
+                {
+                    return Err(no_type());
+                }
+                key.parse::<u32>().map_err(|_| no_type())
             })
             .transpose()?;
-        let dpi = i16::try_from(job.resolution_dpi)
-            .map_err(|_| Error(format!("{} dpi is not a resolution", job.resolution_dpi)))?;
+        let dpi = i16::try_from(job.resolution_dpi).map_err(|_| {
+            Error::invalid(format!("{} dpi is not a resolution", job.resolution_dpi))
+        })?;
         let copies = i16::try_from(job.copies)
-            .map_err(|_| Error(format!("{} copies is too many", job.copies)))?;
+            .map_err(|_| Error::invalid(format!("{} copies is too many", job.copies)))?;
         {
             let printer_fields = devmode.printer();
             printer_fields.dmPaperSize = paper as i16;
@@ -213,41 +231,45 @@ impl Spooler {
 
         let _com = Com::init()?;
         let ticket = print_ticket(&device, &devmode)?;
-        let windows_error = |what: &str| {
-            let what = what.to_string();
-            move |error: windows::core::Error| Error(format!("{what}: {error}"))
-        };
         #[expect(unsafe_code)]
         // SAFETY: COM is initialised on this thread for as long as `_com` lives, and every
         // interface below is dropped before it.
-        let id = unsafe {
-            let factory: IPrintDocumentPackageTargetFactory = CoCreateInstance(
+        let factory: IPrintDocumentPackageTargetFactory = unsafe {
+            CoCreateInstance(
                 &PrintDocumentPackageTargetFactory,
                 None,
                 CLSCTX_INPROC_SERVER,
             )
-            .map_err(windows_error("Can't reach the print spooler"))?;
-            let target = factory
-                .CreateDocumentPackageTargetForPrintJob(
-                    &device,
-                    &HSTRING::from(job.name.as_str()),
-                    None::<&IStream>,
-                    &ticket,
-                )
-                .map_err(windows_error("The spooler refused the job"))?;
-            let status = JobNumber::watch(&target)?;
-            write_page(&target, &picture.path, picture.pixels_per_metre, icc, job)
-                .map_err(windows_error("Can't send the page to the spooler"))?;
-            status.wait()?
+        }
+        .map_err(windows_error("Can't reach the print spooler"))?;
+        #[expect(unsafe_code)]
+        let target = unsafe {
+            factory.CreateDocumentPackageTargetForPrintJob(
+                &device,
+                &HSTRING::from(job.name.as_str()),
+                None::<&IStream>,
+                &ticket,
+            )
+        }
+        .map_err(windows_error("The spooler refused the job"))?;
+        let sent = send(&target, &picture, icc, job);
+        if sent.is_err() {
+            #[expect(unsafe_code)]
+            let _ = unsafe { target.Cancel() };
+        }
+        let Some(id) = sent? else {
+            return Ok(None);
         };
-        i32::try_from(id).map_err(|_| Error(format!("The spooler numbered the job {id}")))
+        i32::try_from(id)
+            .map(Some)
+            .map_err(|_| Error::unavailable(format!("The spooler numbered the job {id}")))
     }
 
     pub fn job(&self, name: &str, job_id: i32) -> Result<JobStatus> {
         let device = HSTRING::from(name);
         let printer = PrinterHandle::open(&device)?;
         let Ok(job_id) = u32::try_from(job_id) else {
-            return fail(format!("{job_id} is not a job number"));
+            return Err(Error::missing(format!("{job_id} is not a job number")));
         };
         let found = filled(|buffer, needed| {
             #[expect(unsafe_code)]
@@ -264,13 +286,33 @@ impl Spooler {
                     reasons: Vec::new(),
                 });
             }
-            Err(error) => return fail(format!("Can't read job {job_id} on {name}: {error}")),
+            Err(error) => {
+                return Err(Error::unavailable(format!(
+                    "Can't read job {job_id} on {name}: {error}"
+                )));
+            }
         };
         #[expect(unsafe_code)]
         // SAFETY: GetJobW wrote a JOB_INFO_1W at the start of the u64-aligned buffer.
         let status = unsafe { &*buffer.as_ptr().cast::<JOB_INFO_1W>() }.Status;
         Ok(job_status(status))
     }
+}
+
+fn windows_error(what: &'static str) -> impl Fn(windows::core::Error) -> Error {
+    move |error| Error::unavailable(format!("{what}: {error}"))
+}
+
+fn send(
+    target: &IPrintDocumentPackageTarget,
+    picture: &Picture,
+    icc: &[u8],
+    job: &Job,
+) -> Result<Option<u32>> {
+    let status = JobNumber::watch(target)?;
+    write_page(target, &picture.path, picture.pixels_per_metre, icc, job)
+        .map_err(windows_error("Can't send the page to the spooler"))?;
+    status.wait()
 }
 
 fn job_status(status: u32) -> JobStatus {
@@ -327,8 +369,6 @@ fn connection(printer: &str, port: &str) -> Connection {
     }
 }
 
-/// One paper size, as the driver's papers of that size: a size can be listed twice, once
-/// bordered and once named borderless.
 struct Size {
     /// Tenths of a millimetre.
     width: i32,
@@ -358,6 +398,13 @@ impl Size {
             .or(self.zero_margins.then(|| self.main().0))
     }
 
+    fn measure(&mut self, device: &HSTRING, defaults: &DevMode) {
+        if let Some(margins) = paper_margins(device, defaults, self.main().0) {
+            self.margins = margins;
+            self.zero_margins = margins.iter().all(|&margin| margin < 0.05);
+        }
+    }
+
     fn holds(&self, paper: u16) -> bool {
         self.bordered
             .iter()
@@ -382,7 +429,7 @@ impl Size {
     }
 }
 
-fn sizes(device: &HSTRING, defaults: &DevMode) -> Vec<Size> {
+fn papers(device: &HSTRING) -> Vec<Size> {
     let papers = capability::<u16>(device, DC_PAPERS);
     let names = capability::<[u16; PAPER_NAME_CHARS]>(device, DC_PAPERNAMES);
     let dimensions = capability::<[i32; 2]>(device, DC_PAPERSIZE);
@@ -392,7 +439,8 @@ fn sizes(device: &HSTRING, defaults: &DevMode) -> Vec<Size> {
         let index = sizes
             .iter()
             .position(|size| {
-                (size.width - width).abs() <= SAME_SIZE && (size.height - height).abs() <= SAME_SIZE
+                (size.width - width).abs() <= SAME_SIZE_TENTHS_MM
+                    && (size.height - height).abs() <= SAME_SIZE_TENTHS_MM
             })
             .unwrap_or_else(|| {
                 sizes.push(Size {
@@ -412,45 +460,42 @@ fn sizes(device: &HSTRING, defaults: &DevMode) -> Vec<Size> {
             size.bordered.push((paper, name));
         }
     }
-    for size in &mut sizes {
-        if let Some(margins) = paper_margins(device, defaults, size.main().0) {
-            size.margins = margins;
-            size.zero_margins = margins.iter().all(|&margin| margin < 0.05);
-        }
-    }
     sizes
 }
 
-/// Top, right, bottom and left, in millimetres: where the driver's DC for `paper` cannot print.
 fn paper_margins(device: &HSTRING, defaults: &DevMode, paper: u16) -> Option<[f64; 4]> {
     let mut devmode = defaults.clone();
     devmode.printer().dmPaperSize = paper as i16;
     devmode.printer().dmOrientation = DMORIENT_PORTRAIT as i16;
     devmode.get_mut().dmFields |= DM_PAPERSIZE | DM_ORIENTATION;
     #[expect(unsafe_code)]
-    // SAFETY: the DEVMODE is a whole driver-sized buffer, and the DC is deleted before return.
-    unsafe {
-        let dc = CreateDCW(w!("WINSPOOL"), device, PCWSTR::null(), Some(devmode.get()));
-        if dc.is_invalid() {
-            return None;
-        }
-        let caps = |index: GET_DEVICE_CAPS_INDEX| GetDeviceCaps(Some(dc), index) as f64;
-        let (dpi_x, dpi_y) = (caps(LOGPIXELSX), caps(LOGPIXELSY));
-        let (left, top) = (caps(PHYSICALOFFSETX), caps(PHYSICALOFFSETY));
-        let right = caps(PHYSICALWIDTH) - caps(HORZRES) - left;
-        let bottom = caps(PHYSICALHEIGHT) - caps(VERTRES) - top;
-        let _ = DeleteDC(dc);
-        if dpi_x <= 0.0 || dpi_y <= 0.0 {
-            return None;
-        }
-        let mm = |dots: f64, dpi: f64| (dots.max(0.0) / dpi * MM_PER_INCH * 100.0).round() / 100.0;
-        Some([
-            mm(top, dpi_y),
-            mm(right, dpi_x),
-            mm(bottom, dpi_y),
-            mm(left, dpi_x),
-        ])
+    // SAFETY: the DEVMODE is a whole driver-sized buffer.
+    let dc = unsafe { CreateDCW(w!("WINSPOOL"), device, PCWSTR::null(), Some(devmode.get())) };
+    if dc.is_invalid() {
+        return None;
     }
+    let caps = |index: GET_DEVICE_CAPS_INDEX| {
+        #[expect(unsafe_code)]
+        // SAFETY: `dc` is live until the `DeleteDC` below.
+        let cap = unsafe { GetDeviceCaps(Some(dc), index) };
+        cap as f64
+    };
+    let (dpi_x, dpi_y) = (caps(LOGPIXELSX), caps(LOGPIXELSY));
+    let (left, top) = (caps(PHYSICALOFFSETX), caps(PHYSICALOFFSETY));
+    let right = caps(PHYSICALWIDTH) - caps(HORZRES) - left;
+    let bottom = caps(PHYSICALHEIGHT) - caps(VERTRES) - top;
+    #[expect(unsafe_code)]
+    let _ = unsafe { DeleteDC(dc) };
+    if dpi_x <= 0.0 || dpi_y <= 0.0 {
+        return None;
+    }
+    let mm = |dots: f64, dpi: f64| (dots.max(0.0) / dpi * MM_PER_INCH * 100.0).round() / 100.0;
+    Some([
+        mm(top, dpi_y),
+        mm(right, dpi_x),
+        mm(bottom, dpi_y),
+        mm(left, dpi_x),
+    ])
 }
 
 fn media_types(device: &HSTRING) -> Vec<MediaType> {
@@ -528,7 +573,6 @@ fn default_printer() -> Option<String> {
     found.as_bool().then(|| fixed_text(&name))
 }
 
-/// The ICC profiles associated with the printer, by file name in the colour directory.
 fn colour_profiles(device: &HSTRING) -> Vec<String> {
     let record = ENUMTYPEW {
         dwSize: std::mem::size_of::<ENUMTYPEW>() as u32,
@@ -585,13 +629,13 @@ fn colour_directory() -> Result<std::path::PathBuf> {
         )
     };
     if !found.as_bool() {
-        return fail("Can't find Windows' colour profile folder");
+        return Err(Error::unavailable(
+            "Can't find Windows' colour profile folder",
+        ));
     }
     Ok(fixed_text(&directory).into())
 }
 
-/// Calls `fill` once to learn the size and once to fill a u64-aligned buffer of it, returning the
-/// buffer and what the second call returned.
 fn filled(
     mut fill: impl FnMut(Option<&mut [u8]>, &mut u32) -> windows::core::Result<u32>,
 ) -> windows::core::Result<(Vec<u64>, u32)> {
@@ -610,7 +654,14 @@ impl PrinterHandle {
         #[expect(unsafe_code)]
         // SAFETY: `handle` is a local the call writes.
         let opened = unsafe { OpenPrinterW(device, &mut handle, None) };
-        opened.map_err(|error| Error(format!("Can't open the printer {device}: {error}")))?;
+        opened.map_err(|error| {
+            let message = format!("Can't open the printer {device}: {error}");
+            if error.code() == ERROR_INVALID_PRINTER_NAME.to_hresult() {
+                Error::missing(message)
+            } else {
+                Error::unavailable(message)
+            }
+        })?;
         Ok(PrinterHandle(handle))
     }
 }
@@ -650,7 +701,9 @@ impl DevMode {
         // SAFETY: with no buffers the call only reports the size.
         let length = unsafe { DocumentPropertiesW(None, printer.0, device, None, None, 0) };
         if length <= 0 {
-            return fail(format!("Can't read the settings of {device}"));
+            return Err(Error::unavailable(format!(
+                "Can't read the settings of {device}"
+            )));
         }
         let length = length as usize;
         let mut buffer = vec![0u64; length.div_ceil(8)];
@@ -669,7 +722,9 @@ impl DevMode {
             )
         };
         if done < 0 {
-            return fail(format!("{device} refused the print settings"));
+            return Err(Error::unavailable(format!(
+                "{device} refused the print settings"
+            )));
         }
         Ok(DevMode { buffer, length })
     }
@@ -710,123 +765,157 @@ impl DevMode {
 
 fn print_ticket(device: &HSTRING, devmode: &DevMode) -> Result<IStream> {
     let failed = |error: windows::core::Error| {
-        Error(format!(
+        Error::unavailable(format!(
             "Can't turn the print settings into a print ticket: {error}"
         ))
     };
     #[expect(unsafe_code)]
-    // SAFETY: the provider is closed before return, and the DEVMODE is a whole driver buffer of
-    // `length` bytes. PTConvertDevModeToPrintTicket takes the Unicode DEVMODE; its binding names
-    // the ANSI one.
-    unsafe {
-        let provider = PTOpenProvider(device, 1).map_err(failed)?;
-        let stream = SHCreateMemStream(None);
-        let converted = match &stream {
-            Some(stream) => PTConvertDevModeToPrintTicket(
-                provider,
-                devmode.length as u32,
-                (devmode.get() as *const DEVMODEW).cast(),
-                kPTJobScope,
-                stream,
-            ),
-            None => Err(windows::core::Error::from(E_NOTIMPL)),
-        };
-        let _ = PTCloseProvider(provider);
-        converted.map_err(failed)?;
-        let stream = stream.expect("converted into it");
-        stream.Seek(0, STREAM_SEEK_SET, None).map_err(failed)?;
-        Ok(stream)
-    }
+    let provider = unsafe { PTOpenProvider(device, 1) }.map_err(failed)?;
+    #[expect(unsafe_code)]
+    let stream = unsafe { SHCreateMemStream(None) };
+    let converted = match &stream {
+        Some(stream) => {
+            #[expect(unsafe_code)]
+            // SAFETY: the DEVMODE is a whole driver buffer of `length` bytes.
+            // PTConvertDevModeToPrintTicket takes the Unicode DEVMODE; its binding names the ANSI
+            // one.
+            let converted = unsafe {
+                PTConvertDevModeToPrintTicket(
+                    provider,
+                    devmode.length as u32,
+                    (devmode.get() as *const DEVMODEW).cast(),
+                    kPTJobScope,
+                    stream,
+                )
+            };
+            converted
+        }
+        None => Err(windows::core::Error::from(E_NOTIMPL)),
+    };
+    #[expect(unsafe_code)]
+    let _ = unsafe { PTCloseProvider(provider) };
+    converted.map_err(failed)?;
+    let stream = stream.expect("converted into it");
+    #[expect(unsafe_code)]
+    unsafe { stream.Seek(0, STREAM_SEEK_SET, None) }.map_err(failed)?;
+    Ok(stream)
 }
 
-#[expect(unsafe_code)]
-unsafe fn write_page(
+fn write_page(
     target: &IPrintDocumentPackageTarget,
     image: &std::path::Path,
     pixels_per_metre: Option<(u32, u32)>,
     icc: &[u8],
     job: &Job,
 ) -> windows::core::Result<()> {
-    // SAFETY: the caller holds COM initialised; every call is a COM method on a live interface.
-    unsafe {
-        let package: IXpsDocumentPackageTarget =
-            target.GetPackageTarget(&ID_DOCUMENTPACKAGETARGET_MSXPS)?;
-        let om = package.GetXpsOMFactory()?;
-        let part = |uri: PCWSTR| om.CreatePartUri(uri);
-        let writer = package.GetXpsOMPackageWriter(
-            &part(w!("/FixedDocumentSequence.fdseq"))?,
-            &part(w!("/DiscardControl.xml"))?,
-        )?;
-        writer.StartNewDocument(
-            &part(w!("/Documents/1/FixedDocument.fdoc"))?,
-            None,
-            None,
-            None,
-            None,
-        )?;
+    #[expect(unsafe_code)]
+    let package: IXpsDocumentPackageTarget =
+        unsafe { target.GetPackageTarget(&ID_DOCUMENTPACKAGETARGET_MSXPS) }?;
+    #[expect(unsafe_code)]
+    let om = unsafe { package.GetXpsOMFactory() }?;
+    let part = |uri: PCWSTR| {
+        #[expect(unsafe_code)]
+        let part = unsafe { om.CreatePartUri(uri) };
+        part
+    };
+    let sequence = part(w!("/FixedDocumentSequence.fdseq"))?;
+    let discard = part(w!("/DiscardControl.xml"))?;
+    #[expect(unsafe_code)]
+    let writer = unsafe { package.GetXpsOMPackageWriter(&sequence, &discard) }?;
+    let document = part(w!("/Documents/1/FixedDocument.fdoc"))?;
+    #[expect(unsafe_code)]
+    unsafe { writer.StartNewDocument(&document, None, None, None, None) }?;
 
-        let units = |pixels: u32| pixels as f32 * XPS_UNITS_PER_INCH / job.resolution_dpi as f32;
-        let size = XPS_SIZE {
-            width: units(job.page.width_px),
-            height: units(job.page.height_px),
-        };
-        let page = om.CreatePage(&size, w!("en-US"), &part(w!("/Documents/1/Pages/1.fpage"))?)?;
-        let picture = om.CreateImageResource(
-            &om.CreateReadOnlyStreamOnFile(&HSTRING::from(image.as_os_str()))?,
-            XPS_IMAGE_TYPE_PNG,
-            &part(w!("/Resources/Images/1.png"))?,
-        )?;
-        // An image's own units are 1/96 inch at its stated density, 96 dpi where it states none.
-        let image_units = |pixels: u32, per_metre: Option<u32>| match per_metre {
-            Some(per_metre) => pixels as f32 * XPS_UNITS_PER_INCH / (per_metre as f32 * 0.0254),
-            None => pixels as f32,
-        };
-        let viewbox = XPS_RECT {
-            x: 0.0,
-            y: 0.0,
-            width: image_units(job.place.width, pixels_per_metre.map(|(x, _)| x)),
-            height: image_units(job.place.height, pixels_per_metre.map(|(_, y)| y)),
-        };
-        let place = XPS_RECT {
-            x: units(job.place.x),
-            y: units(job.place.y),
-            width: units(job.place.width),
-            height: units(job.place.height),
-        };
-        let brush = om.CreateImageBrush(&picture, &viewbox, &place)?;
-        let profile = om.CreateColorProfileResource(
-            &SHCreateMemStream(Some(icc)).ok_or_else(|| windows::core::Error::from(E_NOTIMPL))?,
-            &part(w!("/Resources/Profiles/1.icc"))?,
-        )?;
-        brush.SetColorProfileResource(&profile)?;
+    let units = |pixels: u32| pixels as f32 * XPS_UNITS_PER_INCH / job.resolution_dpi as f32;
+    let size = XPS_SIZE {
+        width: units(job.page.width_px),
+        height: units(job.page.height_px),
+    };
+    let page_part = part(w!("/Documents/1/Pages/1.fpage"))?;
+    #[expect(unsafe_code)]
+    let page = unsafe { om.CreatePage(&size, w!("en-US"), &page_part) }?;
+    let image_path = HSTRING::from(image.as_os_str());
+    #[expect(unsafe_code)]
+    let image_stream = unsafe { om.CreateReadOnlyStreamOnFile(&image_path) }?;
+    let image_part = part(w!("/Resources/Images/1.png"))?;
+    #[expect(unsafe_code)]
+    let picture =
+        unsafe { om.CreateImageResource(&image_stream, XPS_IMAGE_TYPE_PNG, &image_part) }?;
+    // An image's own units are 1/96 inch at its stated density, 96 dpi where it states none.
+    let image_units = |pixels: u32, per_metre: Option<u32>| match per_metre {
+        Some(per_metre) => pixels as f32 * XPS_UNITS_PER_INCH / (per_metre as f32 * 0.0254),
+        None => pixels as f32,
+    };
+    let viewbox = XPS_RECT {
+        x: 0.0,
+        y: 0.0,
+        width: image_units(job.place.width, pixels_per_metre.map(|(x, _)| x)),
+        height: image_units(job.place.height, pixels_per_metre.map(|(_, y)| y)),
+    };
+    let place = XPS_RECT {
+        x: units(job.place.x),
+        y: units(job.place.y),
+        width: units(job.place.width),
+        height: units(job.place.height),
+    };
+    #[expect(unsafe_code)]
+    let brush = unsafe { om.CreateImageBrush(&picture, &viewbox, &place) }?;
+    #[expect(unsafe_code)]
+    let icc_stream = unsafe { SHCreateMemStream(Some(icc)) }
+        .ok_or_else(|| windows::core::Error::from(E_NOTIMPL))?;
+    let profile_part = part(w!("/Resources/Profiles/1.icc"))?;
+    #[expect(unsafe_code)]
+    let profile = unsafe { om.CreateColorProfileResource(&icc_stream, &profile_part) }?;
+    #[expect(unsafe_code)]
+    unsafe { brush.SetColorProfileResource(&profile) }?;
 
-        let figure = om.CreateGeometryFigure(&XPS_POINT {
-            x: place.x,
-            y: place.y,
-        })?;
-        let corners = [
-            place.x + place.width,
-            place.y,
-            place.x + place.width,
-            place.y + place.height,
-            place.x,
-            place.y + place.height,
-        ];
-        let lines: [XPS_SEGMENT_TYPE; 3] = [XPS_SEGMENT_TYPE_LINE; 3];
-        let strokes = [BOOL(0); 3];
-        figure.SetSegments(3, 6, lines.as_ptr(), corners.as_ptr(), strokes.as_ptr())?;
-        figure.SetIsClosed(true)?;
-        figure.SetIsFilled(true)?;
-        let geometry = om.CreateGeometry()?;
-        geometry.GetFigures()?.Append(&figure)?;
-        let path = om.CreatePath()?;
-        path.SetGeometryLocal(&geometry)?;
-        path.SetFillBrushLocal(&brush.cast::<IXpsOMBrush>()?)?;
-        page.GetVisuals()?.Append(&path.cast::<IXpsOMVisual>()?)?;
+    let origin = XPS_POINT {
+        x: place.x,
+        y: place.y,
+    };
+    #[expect(unsafe_code)]
+    let figure = unsafe { om.CreateGeometryFigure(&origin) }?;
+    let corners = [
+        place.x + place.width,
+        place.y,
+        place.x + place.width,
+        place.y + place.height,
+        place.x,
+        place.y + place.height,
+    ];
+    let lines: [XPS_SEGMENT_TYPE; 3] = [XPS_SEGMENT_TYPE_LINE; 3];
+    let strokes = [BOOL(0); 3];
+    #[expect(unsafe_code)]
+    // SAFETY: 3 segments of 2 coordinates each, in arrays that outlive the call.
+    unsafe { figure.SetSegments(3, 6, lines.as_ptr(), corners.as_ptr(), strokes.as_ptr()) }?;
+    #[expect(unsafe_code)]
+    unsafe { figure.SetIsClosed(true) }?;
+    #[expect(unsafe_code)]
+    unsafe { figure.SetIsFilled(true) }?;
+    #[expect(unsafe_code)]
+    let geometry = unsafe { om.CreateGeometry() }?;
+    #[expect(unsafe_code)]
+    let figures = unsafe { geometry.GetFigures() }?;
+    #[expect(unsafe_code)]
+    unsafe { figures.Append(&figure) }?;
+    #[expect(unsafe_code)]
+    let path = unsafe { om.CreatePath() }?;
+    #[expect(unsafe_code)]
+    unsafe { path.SetGeometryLocal(&geometry) }?;
+    let fill = brush.cast::<IXpsOMBrush>()?;
+    #[expect(unsafe_code)]
+    unsafe { path.SetFillBrushLocal(&fill) }?;
+    #[expect(unsafe_code)]
+    let visuals = unsafe { page.GetVisuals() }?;
+    let visual = path.cast::<IXpsOMVisual>()?;
+    #[expect(unsafe_code)]
+    unsafe { visuals.Append(&visual) }?;
 
-        writer.AddPage(&page, &size, None, None, None, None)?;
-        writer.Close()
-    }
+    #[expect(unsafe_code)]
+    unsafe { writer.AddPage(&page, &size, None, None, None, None) }?;
+    #[expect(unsafe_code)]
+    let closed = unsafe { writer.Close() };
+    closed
 }
 
 struct Com {
@@ -843,7 +932,7 @@ impl Com {
         }
         result
             .ok()
-            .map_err(|error| Error(format!("Can't start COM: {error}")))?;
+            .map_err(|error| Error::unavailable(format!("Can't start COM: {error}")))?;
         Ok(Com { initialised: true })
     }
 }
@@ -860,7 +949,6 @@ impl Drop for Com {
     }
 }
 
-/// The spooler's job number, which arrives in a package status event once the job exists.
 struct JobNumber {
     seen: status_sink::Outcome,
     point: IConnectionPoint,
@@ -868,20 +956,17 @@ struct JobNumber {
 }
 
 impl JobNumber {
-    #[expect(unsafe_code)]
-    unsafe fn watch(target: &IPrintDocumentPackageTarget) -> Result<JobNumber> {
+    fn watch(target: &IPrintDocumentPackageTarget) -> Result<JobNumber> {
         let seen: status_sink::Outcome = Arc::new((Mutex::new(None), Condvar::new()));
         let sink: IPrintDocumentPackageStatusEvent = status_sink::StatusSink(seen.clone()).into();
-        let failed = |error: windows::core::Error| Error(format!("Can't follow the job: {error}"));
-        // SAFETY: COM methods on live interfaces, on a thread the caller initialised.
-        let (point, cookie) = unsafe {
-            let container: IConnectionPointContainer = target.cast().map_err(failed)?;
-            let point = container
-                .FindConnectionPoint(&IPrintDocumentPackageStatusEvent::IID)
-                .map_err(failed)?;
-            let cookie = point.Advise(&sink).map_err(failed)?;
-            (point, cookie)
-        };
+        let failed = windows_error("Can't follow the job");
+        let container: IConnectionPointContainer = target.cast().map_err(&failed)?;
+        #[expect(unsafe_code)]
+        let point =
+            unsafe { container.FindConnectionPoint(&IPrintDocumentPackageStatusEvent::IID) }
+                .map_err(&failed)?;
+        #[expect(unsafe_code)]
+        let cookie = unsafe { point.Advise(&sink) }.map_err(&failed)?;
         Ok(JobNumber {
             seen,
             point,
@@ -889,19 +974,19 @@ impl JobNumber {
         })
     }
 
-    fn wait(self) -> Result<u32> {
+    fn wait(self) -> Result<Option<u32>> {
         let (lock, arrived) = &*self.seen;
         let held = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (held, _) = arrived
             .wait_timeout_while(held, JOB_NUMBER_TIMEOUT, |outcome| outcome.is_none())
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match *held {
-            Some(Ok(id)) => Ok(id),
-            Some(Err(status)) => fail(format!(
+            Some(Ok(id)) => Ok(Some(id)),
+            Some(Err(status)) => Err(Error::unavailable(format!(
                 "The spooler couldn't print the job: {}",
                 windows::core::Error::from(status)
-            )),
-            None => fail("The spooler took the job but never numbered it"),
+            ))),
+            None => Ok(None),
         }
     }
 }

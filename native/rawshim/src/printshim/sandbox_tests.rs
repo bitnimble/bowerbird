@@ -6,7 +6,8 @@
 use super::cups::Cups;
 use super::page::Picture;
 use super::page::tests::{job, png, scratch};
-use super::{Connection, Job, JobState, ProfileSource, Space, Transport};
+use super::{Connection, ErrorKind, Job, JobState, ProfileSource, Space, Transport, is_icc};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const RECEIVED: &str = "http://localhost:6631/received";
@@ -17,15 +18,19 @@ fn sandbox() -> Option<Cups> {
         return None;
     }
     let server = std::env::var("CUPS_SERVER").unwrap_or_else(|_| "localhost:6631".to_string());
-    Some(Cups::at(&server))
+    let mut cups = Cups::at(&server);
+    // `print-sandbox.ts` keeps the driver profile under `pinnedRoot()`.
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .filter(|cache| !cache.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cache"));
+    cups.profile_roots
+        .push(cache.join("bowerbird/print-sandbox"));
+    Some(cups)
 }
 
 fn t(space: Space, bits: u8) -> Transport {
     Transport { space, bits }
-}
-
-fn is_icc(bytes: &[u8]) -> bool {
-    bytes.len() > 128 && &bytes[36..40] == b"acsp"
 }
 
 #[test]
@@ -109,6 +114,29 @@ fn the_photo_printer_is_asked_directly() {
         ProfileSource::Printer
     );
     assert!(is_icc(&cups.profile("Sandbox_Photo", "Glossy").unwrap()));
+    assert_eq!(
+        cups.profile("Sandbox_Photo", "Elsewhere").unwrap_err().kind,
+        ErrorKind::Missing,
+        "a profile served from another port is never listed or fetched"
+    );
+}
+
+#[test]
+#[ignore = "needs the print sandbox: bun run scripts/print-sandbox.ts"]
+fn an_unknown_queue_or_job_is_missing() {
+    let Some(cups) = sandbox() else { return };
+    assert_eq!(
+        cups.capabilities("Sandbox_Nowhere").unwrap_err().kind,
+        ErrorKind::Missing
+    );
+    assert_eq!(
+        cups.job("Sandbox_Photo", 999_999).unwrap_err().kind,
+        ErrorKind::Missing
+    );
+    assert_eq!(
+        cups.profile("Sandbox_Photo", "Matte").unwrap_err().kind,
+        ErrorKind::Missing
+    );
 }
 
 #[test]
@@ -182,7 +210,7 @@ fn page(name: &str, transport: Transport, borderless: bool) -> (Job, Vec<[u16; 3
 
 fn printed(cups: &Cups, queue: &str, job: &Job) -> i32 {
     let picture = Picture::open(&scratch(&format!("{}.png", job.name)), job).unwrap();
-    let id = cups.submit(queue, picture, job).unwrap();
+    let id = cups.submit(queue, picture, job).unwrap().unwrap();
     let started = Instant::now();
     loop {
         let status = cups.job(queue, id).unwrap();

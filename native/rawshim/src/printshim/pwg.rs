@@ -134,8 +134,6 @@ impl Writer {
     }
 }
 
-/// A line's pixels as runs of one repeated pixel (`count - 1`) and runs of literal pixels
-/// (`257 - count`); a lone pixel is a run of one.
 fn pack(row: &[u8], pixel: usize, out: &mut Vec<u8>) {
     let count = row.len() / pixel;
     let at = |i: usize| &row[i * pixel..(i + 1) * pixel];

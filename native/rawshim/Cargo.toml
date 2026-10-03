@@ -256,17 +256,14 @@ incremental = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ash = "0.38"
 
-# `printshim`'s CUPS half, spoken over IPP. The protocol types only: `ipp`'s own blocking client
-# fixes a 10s connect timeout and cannot GET a profile or a PPD, so one `ureq` agent does both.
-# `rustls` is ureq's ring-backed TLS, so the library still links no C beyond the runtime.
+# `ipp` for its types only: its client can't GET a PPD or a profile, so `ureq` carries both.
+# `rustls`, so no C TLS library is linked.
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "android", windows)))'.dependencies]
 ipp = { version = "7.0.0", default-features = false }
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
-# The PDF a queue that takes no PWG raster is sent. Already in the tree under `png`.
 flate2 = "1.1.10"
 
-# `printshim`'s Windows half: the spooler, the driver's capabilities and XPS print packages.
-# wgpu's own version, so it shares the copy already in the tree.
+# wgpu's version, so the tree holds one copy.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",

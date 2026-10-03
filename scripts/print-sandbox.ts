@@ -80,7 +80,7 @@ ATTR keyword print-scaling-default auto
 ATTR keyword sides-supported one-sided
 ATTR keyword sides-default one-sided
 ATTR keyword job-creation-attributes-supported copies,media,media-col,print-color-mode,print-quality,print-scaling,printer-resolution,sides
-ATTR collection printer-icc-profiles { MEMBER name profile-name "Glossy" MEMBER uri profile-url "http://127.0.0.1:6631/sandbox.icc" }
+ATTR collection printer-icc-profiles { MEMBER name profile-name "Glossy" MEMBER uri profile-url "http://127.0.0.1:8701/icon.png" },{ MEMBER name profile-name "Elsewhere" MEMBER uri profile-url "http://127.0.0.1:6631/sandbox.icc" }
 `;
 
 const PDF_ATTRIBUTES = `ATTR text printer-make-and-model "Bowerbird Sandbox PDF"
@@ -185,7 +185,8 @@ for profile in /usr/share/cups/doc-root/sandbox.icc "${DRIVER_PROFILE}"; do
   printf prtr | dd of="$profile" bs=1 seek=12 conv=notrunc 2> /dev/null
 done
 chmod -R 777 ${RECEIVED}
-ippeveprinter -a ${INSIDE}/photo.conf -k -d ${RECEIVED}/photo -p 8701 "Sandbox Photo" > ${INSIDE}/photo.log 2>&1 &
+# ippeveprinter serves its icon file verbatim, so the profile comes from the printer's own port.
+ippeveprinter -a ${INSIDE}/photo.conf -k -d ${RECEIVED}/photo -i /usr/share/cups/doc-root/sandbox.icc -p 8701 "Sandbox Photo" > ${INSIDE}/photo.log 2>&1 &
 ippeveprinter -a ${INSIDE}/photo.conf -k -d ${RECEIVED}/relay -p 8702 "Sandbox Relay" > ${INSIDE}/relay.log 2>&1 &
 ippeveprinter -a ${INSIDE}/pdf.conf -k -d ${RECEIVED}/pdf -p 8703 "Sandbox PDF" > ${INSIDE}/pdf.log 2>&1 &
 cupsd

@@ -1,14 +1,11 @@
-//! A queue whose device is an IPP printer printshim can reach is printed to directly: through
-//! cupsd its attributes describe CUPS's filters rather than what the printer takes.
-
 use super::ipp_attributes::{self as attributes, Attributes};
 use super::page::Picture;
 use super::{
-    Capabilities, Colour, Connection, Error, Job, JobStatus, Printer, Profile, ProfileSource,
-    Result, Space, Transport, fail, pdf, printer_id, pwg,
+    Capabilities, Colour, Connection, Error, Job, JobStatus, PROFILE_LIMIT, Printer, Profile,
+    ProfileSource, Result, Space, Transport, checked_icc, pdf, printer_id, pwg, read_icc,
 };
 use ipp::attribute::IppAttribute;
-use ipp::model::{DelimiterTag, IppVersion, Operation};
+use ipp::model::{DelimiterTag, IppVersion, Operation, StatusCode};
 use ipp::request::IppRequestResponse;
 use ipp::value::IppValue;
 use std::io::{Cursor, Read};
@@ -18,10 +15,30 @@ use std::time::Duration;
 const DEFAULT_SERVER: &str = "localhost:631";
 const IPP_PORT: u16 = 631;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const SEND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const PRINT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const PRINT_SEND_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const RESPONSE_LIMIT: u64 = 64 << 20;
 const CUPS_PROFILES: &str = "/usr/share/cups/profiles";
+const PROFILE_ROOTS: [&str; 6] = [
+    CUPS_PROFILES,
+    "/usr/share/color",
+    "/var/lib/colord",
+    "/Library/ColorSync",
+    "/Library/Printers",
+    "/System/Library/ColorSync",
+];
+// `all` leaves out `media-col-database` (RFC 8011 5.3.2), which is the margins.
+const EVERY_ATTRIBUTE: [&str; 2] = ["all", "media-col-database"];
+const ROUTE_ATTRIBUTES: [&str; 2] = [
+    "document-format-supported",
+    "pwg-raster-document-type-supported",
+];
+const VITAL_JOB_ATTRIBUTES: [(&str, &str); 3] = [
+    ("media-col", "paper"),
+    ("printer-resolution", "resolution"),
+    ("print-scaling", "scaling"),
+];
 const CUPS_PRINTER_DEFAULT: i32 = 0x20000;
 const CUPS_PRINTER_FAX: i32 = 0x40000;
 const IPP_USB_PORTS: std::ops::RangeInclusive<u16> = 60000..=60099;
@@ -35,6 +52,7 @@ pub struct Cups {
     agent: ureq::Agent,
     /// For a printer's own HTTPS, which is self-signed.
     printer_agent: ureq::Agent,
+    pub(super) profile_roots: Vec<PathBuf>,
 }
 
 struct Endpoint {
@@ -53,33 +71,28 @@ impl Endpoint {
         if !self.pdf {
             return Vec::new();
         }
+        // A filtered PDF is rasterised again, at the filter's 8 bits.
+        let bits = if self.ppd.as_deref().is_some_and(|ppd| passes(ppd, PDF)) {
+            16
+        } else {
+            8
+        };
         [Space::AdobeRgb, Space::Srgb]
-            .map(|space| Transport { space, bits: 16 })
+            .map(|space| Transport { space, bits })
             .to_vec()
     }
-
-    fn profiles(&self) -> Vec<(Profile, Source)> {
-        let printer = attributes::icc_profiles(&self.attributes)
-            .into_iter()
-            .map(|(name, url)| (profile(name, ProfileSource::Printer), Source::Url(url)));
-        let driver = self
-            .ppd
-            .as_deref()
-            .map(ppd_profiles)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(name, path)| (profile(name, ProfileSource::Driver), Source::File(path)));
-        printer.chain(driver).collect()
-    }
-}
-
-fn profile(name: String, source: ProfileSource) -> Profile {
-    Profile { name, source }
 }
 
 enum Source {
     Url(String),
     File(PathBuf),
+}
+
+struct Listed {
+    name: String,
+    detail: String,
+    source: ProfileSource,
+    at: Source,
 }
 
 impl Cups {
@@ -91,9 +104,8 @@ impl Cups {
         let agent = |verify: bool| -> ureq::Agent {
             ureq::Agent::config_builder()
                 .timeout_connect(Some(CONNECT_TIMEOUT))
-                .timeout_send_body(Some(SEND_TIMEOUT))
-                .timeout_recv_response(Some(RESPONSE_TIMEOUT))
-                .timeout_recv_body(Some(RESPONSE_TIMEOUT))
+                .timeout_global(Some(REQUEST_TIMEOUT))
+                .max_redirects(0)
                 .tls_config(
                     ureq::tls::TlsConfig::builder()
                         .disable_verification(!verify)
@@ -106,6 +118,7 @@ impl Cups {
             server: server.to_string(),
             agent: agent(true),
             printer_agent: agent(false),
+            profile_roots: PROFILE_ROOTS.iter().map(PathBuf::from).collect(),
         }
     }
 
@@ -149,8 +162,8 @@ impl Cups {
             copies_max: attributes::copies_max(printer),
             colour: Colour {
                 transports: endpoint.transports(),
-                profiles: endpoint
-                    .profiles()
+                profiles: self
+                    .profiles(&endpoint)
                     .into_iter()
                     .map(|(profile, _)| profile)
                     .collect(),
@@ -160,54 +173,50 @@ impl Cups {
 
     pub fn profile(&self, queue: &str, name: &str) -> Result<Vec<u8>> {
         let endpoint = self.endpoint(queue)?;
-        let Some((_, source)) = endpoint
-            .profiles()
+        let Some((_, source)) = self
+            .profiles(&endpoint)
             .into_iter()
             .find(|(profile, _)| profile.name == name)
         else {
-            return fail(format!("{queue} has no colour profile called {name}"));
+            return Err(Error::missing(format!(
+                "{queue} has no colour profile called {name}"
+            )));
         };
         match source {
-            Source::Url(url) => {
-                let agent = if host(&url) == host(&endpoint.uri) {
-                    &self.printer_agent
-                } else {
-                    &self.agent
-                };
-                let mut response = agent
-                    .get(&url)
-                    .call()
-                    .map_err(|error| unreachable(&url, error))?;
-                response
-                    .body_mut()
-                    .with_config()
-                    .limit(RESPONSE_LIMIT)
-                    .read_to_vec()
-                    .map_err(|error| unreachable(&url, error))
-            }
-            Source::File(path) => std::fs::read(&path).map_err(|error| {
-                Error(format!(
-                    "Can't read the profile at {}: {error}",
-                    path.display()
-                ))
-            }),
+            Source::Url(url) => checked_icc(self.get(&url, PROFILE_LIMIT)?, &url),
+            Source::File(path) => read_icc(&self.allowed_profile(&path)?),
         }
     }
 
-    pub fn submit(&self, queue: &str, mut picture: Picture, job: &Job) -> Result<i32> {
+    pub fn submit(&self, queue: &str, mut picture: Picture, job: &Job) -> Result<Option<i32>> {
         let endpoint = self.endpoint(queue)?;
         let sizes = attributes::media_sizes(&endpoint.attributes);
         let Some(size) = sizes.iter().find(|size| size.key == job.media) else {
-            return fail(format!("{queue} doesn't take {} paper", job.media));
+            return Err(Error::invalid(format!(
+                "{queue} doesn't take {} paper",
+                job.media
+            )));
         };
         if job.borderless && !size.borderless {
-            return fail(format!("{queue} can't print {} borderless", job.media));
+            return Err(Error::invalid(format!(
+                "{queue} can't print {} borderless",
+                job.media
+            )));
+        }
+        if let Some(media_type) = &job.media_type
+            && !attributes::media_types(&endpoint.attributes)
+                .iter()
+                .any(|offered| offered.key == *media_type)
+        {
+            return Err(Error::invalid(format!(
+                "{queue} doesn't take {media_type} paper"
+            )));
         }
         if !endpoint.transports().contains(&job.transport) {
-            return fail(format!(
+            return Err(Error::invalid(format!(
                 "{queue} doesn't take {}",
                 attributes::raster_keyword(job.transport)
-            ));
+            )));
         }
         let (format, document) = if endpoint.raster.contains(&job.transport) {
             (PWG_RASTER, pwg::document(&mut picture, job, &job.media)?)
@@ -243,10 +252,11 @@ impl Cups {
         if let Some(media_type) = &job.media_type {
             media_col.push(("media-type", ipp_value(IppValue::new_keyword(media_type))?));
         }
-        let dpi = i32::try_from(job.resolution_dpi)
-            .map_err(|_| Error(format!("{} dpi is not a resolution", job.resolution_dpi)))?;
+        let dpi = i32::try_from(job.resolution_dpi).map_err(|_| {
+            Error::invalid(format!("{} dpi is not a resolution", job.resolution_dpi))
+        })?;
         let copies = i32::try_from(job.copies)
-            .map_err(|_| Error(format!("{} copies is too many", job.copies)))?;
+            .map_err(|_| Error::invalid(format!("{} copies is too many", job.copies)))?;
         for (name, value) in [
             ("media-col", collection(media_col)?),
             ("copies", IppValue::Integer(copies)),
@@ -269,50 +279,61 @@ impl Cups {
         }
 
         let response = self.send(&endpoint.uri, request, Some(document))?;
-        let job_attributes = response
+        let job_id = response
             .attributes()
             .groups_of(DelimiterTag::JobAttributes)
             .next()
             .map(attributes::from_group)
-            .unwrap_or_default();
-        match attributes::integer(&job_attributes, "job-id") {
-            Some(id) => Ok(id),
-            None => fail(format!("{queue} took the job but gave it no job number")),
+            .and_then(|job| attributes::integer(&job, "job-id"));
+        let ignored = ignored_vital_attributes(&response);
+        if ignored.is_empty() {
+            return Ok(job_id);
         }
+        if let Some(job_id) = job_id {
+            let _ = self.cancel(&endpoint.uri, job_id);
+        }
+        Err(Error::unavailable(format!(
+            "{queue} can't print with the {} asked for",
+            ignored.join(" and ")
+        )))
     }
 
     pub fn job(&self, queue: &str, job_id: i32) -> Result<JobStatus> {
-        let endpoint = self.endpoint(queue)?;
-        let mut request = self.request(Operation::GetJobAttributes, Some(&endpoint.uri))?;
+        let queue_uri = self.queue_uri(queue);
+        let queue_attributes = self.printer_attributes(&queue_uri, &["device-uri"])?;
+        let uri = self
+            .direct(&queue_attributes, &ROUTE_ATTRIBUTES)
+            .map_or(queue_uri, |(device, ..)| device);
+        let mut request = self.request(Operation::GetJobAttributes, Some(&uri))?;
         operation(&mut request, "job-id", Ok(IppValue::Integer(job_id)))?;
         requested(&mut request, &["job-state", "job-state-reasons"])?;
-        let response = self.send(&endpoint.uri, request, None)?;
+        let response = self.send(&uri, request, None)?;
         response
             .attributes()
             .groups_of(DelimiterTag::JobAttributes)
             .next()
             .map(attributes::from_group)
             .and_then(|job| attributes::job_status(&job))
-            .ok_or_else(|| Error(format!("{queue} gave no state for job {job_id}")))
+            .ok_or_else(|| Error::unavailable(format!("{queue} gave no state for job {job_id}")))
+    }
+
+    fn cancel(&self, uri: &str, job_id: i32) -> Result<()> {
+        let mut request = self.request(Operation::CancelJob, Some(uri))?;
+        operation(&mut request, "job-id", Ok(IppValue::Integer(job_id)))?;
+        self.send(uri, request, None).map(drop)
     }
 
     fn endpoint(&self, queue: &str) -> Result<Endpoint> {
-        let queue_uri = format!("ipp://{}/printers/{queue}", self.server);
-        let queue_attributes = self.printer_attributes(&queue_uri)?;
-        if let Some(device) = attributes::string(&queue_attributes, "device-uri")
-            .filter(|uri| matches!(scheme(uri), "ipp" | "ipps"))
-            && let Ok(printer) = self.printer_attributes(device)
-        {
-            let raster = attributes::raster_transports(&printer);
-            if accepts(&printer, PWG_RASTER) && !raster.is_empty() {
-                return Ok(Endpoint {
-                    uri: device.to_string(),
-                    attributes: printer,
-                    raster,
-                    pdf: false,
-                    ppd: None,
-                });
-            }
+        let queue_uri = self.queue_uri(queue);
+        let queue_attributes = self.printer_attributes(&queue_uri, &EVERY_ATTRIBUTE)?;
+        if let Some((uri, attributes, raster)) = self.direct(&queue_attributes, &EVERY_ATTRIBUTE) {
+            return Ok(Endpoint {
+                uri,
+                attributes,
+                raster,
+                pdf: false,
+                ppd: None,
+            });
         }
         let ppd = self.ppd(queue);
         Ok(Endpoint {
@@ -324,33 +345,116 @@ impl Cups {
         })
     }
 
+    fn direct(
+        &self,
+        queue: &Attributes,
+        requested: &[&str],
+    ) -> Option<(String, Attributes, Vec<Transport>)> {
+        let device = attributes::string(queue, "device-uri")
+            .filter(|uri| matches!(scheme(uri), "ipp" | "ipps"))?;
+        let printer = self.printer_attributes(device, requested).ok()?;
+        let raster = attributes::raster_transports(&printer);
+        (accepts(&printer, PWG_RASTER) && !raster.is_empty())
+            .then(|| (device.to_string(), printer, raster))
+    }
+
+    fn queue_uri(&self, queue: &str) -> String {
+        format!("ipp://{}/printers/{}", self.server, path_segment(queue))
+    }
+
     fn ppd(&self, queue: &str) -> Option<String> {
-        let url = format!("http://{}/printers/{queue}.ppd", self.server);
-        let mut response = self.agent.get(&url).call().ok()?;
+        let url = format!(
+            "http://{}/printers/{}.ppd",
+            self.server,
+            path_segment(queue)
+        );
+        let ppd = self.get(&url, RESPONSE_LIMIT).ok()?;
+        Some(String::from_utf8_lossy(&ppd).into_owned())
+    }
+
+    fn get(&self, url: &str, limit: u64) -> Result<Vec<u8>> {
+        let agent = if scheme(url) == "https" {
+            &self.printer_agent
+        } else {
+            &self.agent
+        };
+        let mut response = agent
+            .get(url)
+            .call()
+            .map_err(|error| unreachable(url, error))?;
+        if !response.status().is_success() {
+            return Err(Error::unavailable(format!(
+                "{url} answered {}",
+                response.status()
+            )));
+        }
         response
             .body_mut()
             .with_config()
-            .limit(RESPONSE_LIMIT)
-            .read_to_string()
-            .ok()
+            .limit(limit)
+            .read_to_vec()
+            .map_err(|error| unreachable(url, error))
     }
 
-    fn printer_attributes(&self, uri: &str) -> Result<Attributes> {
+    fn profiles(&self, endpoint: &Endpoint) -> Vec<(Profile, Source)> {
+        let printer = attributes::icc_profiles(&endpoint.attributes)
+            .into_iter()
+            .filter(|(_, url)| on_the_printer(url, &endpoint.uri))
+            .map(|(name, url)| Listed {
+                name,
+                detail: url.clone(),
+                source: ProfileSource::Printer,
+                at: Source::Url(url),
+            });
+        let driver = endpoint
+            .ppd
+            .as_deref()
+            .filter(|_| self.is_local())
+            .map(ppd_profiles)
+            .unwrap_or_default();
+        unique(printer.chain(driver).collect())
+    }
+
+    fn is_local(&self) -> bool {
+        is_loopback(split_port(&self.server).0)
+    }
+
+    fn allowed_profile(&self, path: &Path) -> Result<PathBuf> {
+        let canonical = path.canonicalize().map_err(|error| {
+            Error::missing(format!(
+                "Can't find the profile at {}: {error}",
+                path.display()
+            ))
+        })?;
+        let allowed = self
+            .profile_roots
+            .iter()
+            .filter_map(|root| root.canonicalize().ok())
+            .any(|root| canonical.starts_with(root));
+        if !allowed {
+            return Err(Error::invalid(format!(
+                "{} is outside the colour profile folders",
+                canonical.display()
+            )));
+        }
+        Ok(canonical)
+    }
+
+    fn printer_attributes(&self, uri: &str, names: &[&str]) -> Result<Attributes> {
         let mut request = self.request(Operation::GetPrinterAttributes, Some(uri))?;
-        // `all` leaves out `media-col-database` (RFC 8011 5.3.2), which is the margins.
-        requested(&mut request, &["all", "media-col-database"])?;
+        requested(&mut request, names)?;
         let response = self.send(uri, request, None)?;
         response
             .attributes()
             .groups_of(DelimiterTag::PrinterAttributes)
             .next()
             .map(attributes::from_group)
-            .ok_or_else(|| Error(format!("{uri} answered without its attributes")))
+            .ok_or_else(|| Error::unavailable(format!("{uri} answered without its attributes")))
     }
 
     fn request(&self, op: Operation, printer: Option<&str>) -> Result<IppRequestResponse> {
         let mut request = IppRequestResponse::new(IppVersion::v2_0(), op, None)
-            .map_err(|error| Error(format!("Can't build an IPP request: {error}")))?;
+            .map_err(|error| Error::unavailable(format!("Can't build an IPP request: {error}")))?;
         if let Some(printer) = printer {
             operation(&mut request, "printer-uri", IppValue::new_uri(printer))?;
         }
@@ -375,11 +479,20 @@ impl Cups {
             &self.agent
         };
         let header = request.to_bytes();
+        let mut post = agent.post(&url);
+        if document.is_some() {
+            post = post
+                .config()
+                .timeout_global(None)
+                .timeout_send_body(Some(PRINT_SEND_TIMEOUT))
+                .timeout_recv_response(Some(PRINT_RESPONSE_TIMEOUT))
+                .timeout_recv_body(Some(REQUEST_TIMEOUT))
+                .build();
+        }
         let document = document.unwrap_or_default();
         let length = header.len() + document.len();
         let mut body = Cursor::new(header).chain(Cursor::new(document));
-        let mut response = agent
-            .post(&url)
+        let mut response = post
             .header("Content-Type", "application/ipp")
             .header("Content-Length", length.to_string())
             .send(ureq::SendBody::from_reader(&mut body))
@@ -392,7 +505,9 @@ impl Cups {
             .map_err(|error| unreachable(uri, error))?;
         let parsed = ipp::parser::IppParser::new(ipp::reader::IppReader::new(Cursor::new(bytes)))
             .parse()
-            .map_err(|error| Error(format!("{uri} sent an unreadable IPP response: {error}")))?;
+            .map_err(|error| {
+                Error::unavailable(format!("{uri} sent an unreadable IPP response: {error}"))
+            })?;
         let status = parsed.header().status_code();
         if status.is_success() {
             return Ok(parsed);
@@ -406,8 +521,68 @@ impl Cups {
         let message = attributes::string(&operation_attributes, "status-message")
             .map(str::to_string)
             .unwrap_or_else(|| format!("{status:?}"));
-        fail(format!("{uri} refused the request: {message}"))
+        let message = format!("{uri} refused the request: {message}");
+        Err(if status == StatusCode::ClientErrorNotFound {
+            Error::missing(message)
+        } else {
+            Error::unavailable(message)
+        })
     }
+}
+
+fn ignored_vital_attributes(response: &IppRequestResponse) -> Vec<&'static str> {
+    if response.header().status_code() != StatusCode::SuccessfulOkIgnoredOrSubstitutedAttributes {
+        return Vec::new();
+    }
+    let ignored: Vec<String> = response
+        .attributes()
+        .groups_of(DelimiterTag::UnsupportedAttributes)
+        .flat_map(|group| attributes::from_group(group).into_keys())
+        .collect();
+    VITAL_JOB_ATTRIBUTES
+        .into_iter()
+        .filter(|(name, _)| ignored.iter().any(|ignored| ignored == name))
+        .map(|(_, setting)| setting)
+        .collect()
+}
+
+fn unique(listed: Vec<Listed>) -> Vec<(Profile, Source)> {
+    let names: Vec<String> = listed
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let namesakes = || listed.iter().filter(|other| other.name == entry.name);
+            if namesakes().count() == 1 {
+                return entry.name.clone();
+            }
+            let detail_tells_apart = entry.detail != entry.name
+                && namesakes()
+                    .filter(|other| other.detail == entry.detail)
+                    .count()
+                    == 1;
+            if detail_tells_apart {
+                return format!("{} ({})", entry.name, entry.detail);
+            }
+            let nth = listed[..=index]
+                .iter()
+                .filter(|other| other.name == entry.name)
+                .count();
+            format!("{} ({nth})", entry.name)
+        })
+        .collect();
+    listed
+        .into_iter()
+        .zip(names)
+        .map(|(entry, name)| {
+            (
+                Profile {
+                    name,
+                    source: entry.source,
+                },
+                entry.at,
+            )
+        })
+        .collect()
 }
 
 fn listed(printer: &Attributes) -> Option<Printer> {
@@ -447,25 +622,29 @@ fn is_ipp_usb(uri: &str) -> bool {
         return false;
     };
     let (host, port) = split_port(authority);
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
-        && port.is_some_and(|port| IPP_USB_PORTS.contains(&port))
+    is_loopback(host) && port.is_some_and(|port| IPP_USB_PORTS.contains(&port))
+}
+
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost") || matches!(host, "127.0.0.1" | "[::1]")
 }
 
 fn accepts(printer: &Attributes, format: &str) -> bool {
     attributes::strings(printer, "document-format-supported").contains(&format)
 }
 
-/// What a queue's PPD forwards untouched as PWG raster: its `*ColorModel` choices, when a
-/// `*cupsFilter2` passes `image/pwg-raster` through with no filter.
-fn ppd_transports(ppd: &str) -> Vec<Transport> {
-    let passes_raster = ppd.lines().any(|line| {
+fn passes(ppd: &str, format: &str) -> bool {
+    ppd.lines().any(|line| {
         let fields: Vec<&str> = quoted(line, "*cupsFilter2:")
             .or_else(|| quoted(line, "*cupsFilter:"))
             .map(|value| value.split_whitespace().collect())
             .unwrap_or_default();
-        fields.first() == Some(&PWG_RASTER) && fields.last() == Some(&"-")
-    });
-    if !passes_raster {
+        fields.first() == Some(&format) && fields.last() == Some(&"-")
+    })
+}
+
+fn ppd_transports(ppd: &str) -> Vec<Transport> {
+    if !passes(ppd, PWG_RASTER) {
         return Vec::new();
     }
     let setting = |code: &str, name: &str| -> Option<u32> {
@@ -498,24 +677,36 @@ fn ppd_transports(ppd: &str) -> Vec<Transport> {
     )
 }
 
-/// `*cupsICCProfile ColorModel.MediaType.Resolution/Description: "file"`, named by its
-/// description where it has one. A relative file is under CUPS's profiles directory.
-fn ppd_profiles(ppd: &str) -> Vec<(String, PathBuf)> {
+fn ppd_profiles(ppd: &str) -> Vec<Listed> {
     ppd.lines()
         .filter_map(|line| {
             let rest = line.strip_prefix("*cupsICCProfile ")?;
             let (selector, _) = rest.split_once(':')?;
             let file = quoted(line, &format!("*cupsICCProfile {selector}:"))?;
-            let name = selector
-                .split_once('/')
-                .map_or(selector, |(_, description)| description);
+            let (choice, name) = selector.split_once('/').unwrap_or((selector, selector));
             let path = Path::new(file);
             let path = if path.is_absolute() {
                 path.to_owned()
             } else {
                 Path::new(CUPS_PROFILES).join(path)
             };
-            Some((name.trim().to_string(), path))
+            Some(Listed {
+                name: name.trim().to_string(),
+                detail: choice.trim().to_string(),
+                source: ProfileSource::Driver,
+                at: Source::File(path),
+            })
+        })
+        .collect()
+}
+
+fn path_segment(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
         })
         .collect()
 }
@@ -548,13 +739,13 @@ fn add(
     value: std::result::Result<IppValue, ipp::parser::IppParseError>,
 ) -> Result<()> {
     let attribute = IppAttribute::with_name(name, ipp_value(value)?)
-        .map_err(|error| Error(format!("Can't encode {name}: {error}")))?;
+        .map_err(|error| Error::invalid(format!("Can't encode {name}: {error}")))?;
     request.attributes_mut().add(group, attribute);
     Ok(())
 }
 
 fn ipp_value(value: std::result::Result<IppValue, ipp::parser::IppParseError>) -> Result<IppValue> {
-    value.map_err(|error| Error(format!("Can't encode an IPP value: {error}")))
+    value.map_err(|error| Error::invalid(format!("Can't encode an IPP value: {error}")))
 }
 
 fn collection(members: Vec<(&str, IppValue)>) -> Result<IppValue> {
@@ -563,7 +754,7 @@ fn collection(members: Vec<(&str, IppValue)>) -> Result<IppValue> {
         .map(|(name, value)| {
             let name = name
                 .try_into()
-                .map_err(|error| Error(format!("Can't encode {name}: {error}")))?;
+                .map_err(|error| Error::invalid(format!("Can't encode {name}: {error}")))?;
             Ok((name, value))
         })
         .collect::<Result<_>>()
@@ -578,7 +769,7 @@ fn user_name() -> String {
 }
 
 fn unreachable(uri: &str, error: ureq::Error) -> Error {
-    Error(format!("Can't reach {uri}: {error}"))
+    Error::unavailable(format!("Can't reach {uri}: {error}"))
 }
 
 /// `CUPS_SERVER` as libcups reads it, less the domain socket, which has no HTTP to speak.
@@ -607,6 +798,25 @@ fn host(uri: &str) -> Option<&str> {
     authority(uri).map(|authority| split_port(authority).0)
 }
 
+fn on_the_printer(url: &str, printer: &str) -> bool {
+    let same_host =
+        matches!((host(url), host(printer)), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
+    matches!(scheme(url), "http" | "https")
+        && same_host
+        && port_of(url)
+            .is_some_and(|port| port == 80 || port == 443 || Some(port) == port_of(printer))
+}
+
+fn port_of(uri: &str) -> Option<u16> {
+    let explicit = split_port(authority(uri)?).1;
+    explicit.or(match scheme(uri) {
+        "ipp" | "ipps" => Some(IPP_PORT),
+        "http" => Some(80),
+        "https" => Some(443),
+        _ => None,
+    })
+}
+
 fn split_port(authority: &str) -> (&str, Option<u16>) {
     let colon = match authority.rfind(':') {
         Some(colon) if !authority[colon..].contains(']') => colon,
@@ -624,10 +834,10 @@ fn http_url(uri: &str) -> Result<String> {
     let scheme = match scheme(uri) {
         "ipp" | "http" => "http",
         "ipps" | "https" => "https",
-        _ => return fail(format!("{uri} is not an IPP address")),
+        _ => return Err(Error::unavailable(format!("{uri} is not an IPP address"))),
     };
     let (Some(authority), Some((_, rest))) = (authority(uri), uri.split_once("://")) else {
-        return fail(format!("{uri} is not an IPP address"));
+        return Err(Error::unavailable(format!("{uri} is not an IPP address")));
     };
     let path = &rest[authority.len()..];
     let path = if path.is_empty() { "/" } else { path };
@@ -640,6 +850,7 @@ fn http_url(uri: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::ErrorKind;
     use super::*;
 
     #[test]
@@ -717,23 +928,198 @@ mod tests {
         assert_eq!(ppd_transports(&filtered), Vec::new());
     }
 
+    fn named(profiles: &[(Profile, Source)]) -> Vec<(&str, &Path)> {
+        profiles
+            .iter()
+            .map(|(profile, source)| match source {
+                Source::File(path) => (profile.name.as_str(), path.as_path()),
+                Source::Url(url) => (profile.name.as_str(), Path::new(url)),
+            })
+            .collect()
+    }
+
     #[test]
     fn ppd_profiles_resolve_relative_files_under_cups() {
         let ppd = "*cupsICCProfile RGB.Glossy.300dpi/Glossy photo: \"/opt/acme/glossy.icc\"\n\
                    *cupsICCProfile RGB.Plain.: \"acme/plain.icc\"\n";
         assert_eq!(
-            ppd_profiles(ppd),
+            named(&unique(ppd_profiles(ppd))),
             vec![
+                ("Glossy photo", Path::new("/opt/acme/glossy.icc")),
                 (
-                    "Glossy photo".to_string(),
-                    PathBuf::from("/opt/acme/glossy.icc")
-                ),
-                (
-                    "RGB.Plain.".to_string(),
-                    PathBuf::from("/usr/share/cups/profiles/acme/plain.icc")
+                    "RGB.Plain.",
+                    Path::new("/usr/share/cups/profiles/acme/plain.icc")
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn profiles_sharing_a_description_are_told_apart_by_their_selector() {
+        let ppd = "*cupsICCProfile RGB.Glossy.300dpi/Glossy photo: \"a.icc\"\n\
+                   *cupsICCProfile RGB.Glossy.600dpi/Glossy photo: \"b.icc\"\n\
+                   *cupsICCProfile RGB.Plain./Plain: \"c.icc\"\n\
+                   *cupsICCProfile RGB.Matte.: \"d.icc\"\n\
+                   *cupsICCProfile RGB.Matte.: \"e.icc\"\n";
+        assert_eq!(
+            named(&unique(ppd_profiles(ppd))),
+            vec![
+                (
+                    "Glossy photo (RGB.Glossy.300dpi)",
+                    Path::new("/usr/share/cups/profiles/a.icc")
+                ),
+                (
+                    "Glossy photo (RGB.Glossy.600dpi)",
+                    Path::new("/usr/share/cups/profiles/b.icc")
+                ),
+                ("Plain", Path::new("/usr/share/cups/profiles/c.icc")),
+                (
+                    "RGB.Matte. (1)",
+                    Path::new("/usr/share/cups/profiles/d.icc")
+                ),
+                (
+                    "RGB.Matte. (2)",
+                    Path::new("/usr/share/cups/profiles/e.icc")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_printers_profile_is_fetched_only_from_the_printer() {
+        let printer = "ipps://printer.local/ipp/print";
+        assert!(on_the_printer("https://printer.local/glossy.icc", printer));
+        assert!(on_the_printer(
+            "http://PRINTER.local:80/glossy.icc",
+            printer
+        ));
+        assert!(on_the_printer(
+            "http://printer.local:631/glossy.icc",
+            printer
+        ));
+        assert!(!on_the_printer(
+            "http://printer.local:6379/glossy.icc",
+            printer
+        ));
+        assert!(!on_the_printer(
+            "http://elsewhere.local/glossy.icc",
+            printer
+        ));
+        assert!(!on_the_printer(
+            "http://printer.local@elsewhere.local/glossy.icc",
+            printer
+        ));
+        assert!(!on_the_printer("file://printer.local/glossy.icc", printer));
+        assert!(on_the_printer(
+            "http://127.0.0.1:8701/icon.png",
+            "ipp://127.0.0.1:8701/ipp/print"
+        ));
+        assert!(!on_the_printer(
+            "http://127.0.0.1:6631/sandbox.icc",
+            "ipp://127.0.0.1:8701/ipp/print"
+        ));
+    }
+
+    #[test]
+    fn a_pdf_keeps_its_depth_only_when_the_ppd_passes_it_through() {
+        let endpoint = |ppd: Option<&str>| Endpoint {
+            uri: "ipp://localhost/printers/Pdf".into(),
+            attributes: Attributes::new(),
+            raster: Vec::new(),
+            pdf: true,
+            ppd: ppd.map(str::to_string),
+        };
+        let at = |bits| {
+            vec![
+                Transport {
+                    space: Space::AdobeRgb,
+                    bits,
+                },
+                Transport {
+                    space: Space::Srgb,
+                    bits,
+                },
+            ]
+        };
+        let passthrough = "*cupsFilter2: \"application/pdf application/pdf 0 -\"\n";
+        let filtered =
+            "*cupsFilter2: \"application/vnd.cups-raster application/vnd.acme 0 rastertoacme\"\n";
+        assert_eq!(endpoint(Some(passthrough)).transports(), at(16));
+        assert_eq!(endpoint(Some(filtered)).transports(), at(8));
+        assert_eq!(endpoint(None).transports(), at(8));
+    }
+
+    #[test]
+    fn a_job_whose_paper_resolution_or_scaling_was_ignored_is_caught() {
+        let response = |status, ignored: &[&str]| {
+            let mut response =
+                IppRequestResponse::new_response(IppVersion::v2_0(), status, 1).unwrap();
+            for name in ignored {
+                add(
+                    &mut response,
+                    DelimiterTag::UnsupportedAttributes,
+                    name,
+                    IppValue::new_keyword("none"),
+                )
+                .unwrap();
+            }
+            response
+        };
+        let substituted = StatusCode::SuccessfulOkIgnoredOrSubstitutedAttributes;
+        assert_eq!(
+            ignored_vital_attributes(&response(
+                substituted,
+                &["print-quality", "printer-resolution", "media-col"]
+            )),
+            vec!["paper", "resolution"]
+        );
+        assert!(ignored_vital_attributes(&response(substituted, &["print-quality"])).is_empty());
+        assert!(
+            ignored_vital_attributes(&response(StatusCode::SuccessfulOk, &["media-col"]))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_queue_is_one_percent_encoded_path_segment() {
+        assert_eq!(path_segment("Canon_PRO-200S.1~"), "Canon_PRO-200S.1~");
+        assert_eq!(path_segment("a+b@c:d%"), "a%2Bb%40c%3Ad%25");
+        assert_eq!(path_segment("Café"), "Caf%C3%A9");
+        assert_eq!(
+            Cups::at("localhost:631").queue_uri("a+b"),
+            "ipp://localhost:631/printers/a%2Bb"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn driver_profiles_come_only_from_a_local_server_and_its_colour_folders() {
+        assert!(Cups::at("localhost:631").is_local());
+        assert!(Cups::at("127.0.0.1:6631").is_local());
+        assert!(Cups::at("[::1]:631").is_local());
+        assert!(!Cups::at("print.example:631").is_local());
+
+        let root = std::env::temp_dir().join(format!(
+            "bowerbird-printshim-profile-roots-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let allowed = root.join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::write(allowed.join("in.icc"), b"x").unwrap();
+        std::fs::write(root.join("out.icc"), b"x").unwrap();
+        std::os::unix::fs::symlink(root.join("out.icc"), allowed.join("escape.icc")).unwrap();
+        let mut cups = Cups::at("localhost:631");
+        cups.profile_roots = vec![allowed.clone()];
+        assert_eq!(
+            cups.allowed_profile(&allowed.join("in.icc")).unwrap(),
+            allowed.join("in.icc").canonicalize().unwrap()
+        );
+        let kind = |path: PathBuf| cups.allowed_profile(&path).unwrap_err().kind;
+        assert_eq!(kind(root.join("out.icc")), ErrorKind::Invalid);
+        assert_eq!(kind(allowed.join("escape.icc")), ErrorKind::Invalid);
+        assert_eq!(kind(allowed.join("../out.icc")), ErrorKind::Invalid);
+        assert_eq!(kind(allowed.join("gone.icc")), ErrorKind::Missing);
     }
 
     #[test]

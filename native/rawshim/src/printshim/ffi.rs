@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 
 /// Runs one printing command, as `bb_run_job` runs a job: `command` is UTF-8 JSON
 /// ([`Command`]), and the reply is UTF-8 JSON written into `out`, `{"ok":true,...}` with the
-/// command's result or `{"ok":false,"error":"..."}`.
+/// command's result or `{"ok":false,"error":"...","kind":"invalid"|"missing"|"unavailable"}`.
 ///
 /// Returns the reply's length. Larger than `out_cap` means nothing was written and the caller
 /// should ask again with a buffer that size, which runs the command again. Negative is a failure
@@ -28,7 +28,9 @@ pub unsafe extern "C" fn bb_print_command(
     // SAFETY: the caller promises `command_len` readable bytes, borrowed for this call only.
     let bytes = unsafe { std::slice::from_raw_parts(command, command_len) };
     let result = match serde_json::from_slice::<Command>(bytes) {
-        Err(error) => Err(Error(format!("Can't read the print command: {error}"))),
+        Err(error) => Err(Error::invalid(format!(
+            "Can't read the print command: {error}"
+        ))),
         Ok(command) => guard(|| run(command)),
     };
     let payload = reply(result);
@@ -44,7 +46,7 @@ pub unsafe extern "C" fn bb_print_command(
 /// A panic crossing `extern "C"` aborts the whole server, so it comes back as a failed command.
 fn guard(body: impl FnOnce() -> super::Result<Reply>) -> super::Result<Reply> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(body))
-        .unwrap_or_else(|_| Err(Error("Printing failed inside printshim".to_string())))
+        .unwrap_or_else(|_| Err(Error::unavailable("Printing failed inside printshim")))
 }
 
 fn reply(result: super::Result<Reply>) -> Vec<u8> {
@@ -54,9 +56,13 @@ fn reply(result: super::Result<Reply>) -> Vec<u8> {
             object.insert("ok".into(), Value::Bool(true));
             object.extend(fields);
         }
-        Err(Error(message)) => {
+        Err(Error { kind, message }) => {
             object.insert("ok".into(), Value::Bool(false));
             object.insert("error".into(), Value::String(message));
+            object.insert(
+                "kind".into(),
+                serde_json::to_value(kind).expect("a unit variant"),
+            );
         }
     }
     serde_json::to_vec(&Value::Object(object)).expect("a JSON value serialises")
@@ -84,10 +90,11 @@ mod tests {
     fn a_bad_command_is_a_json_error() {
         assert_eq!(
             json(&call(r#"{"kind":"capabilities","printer":"nowhere:x"}"#)),
-            serde_json::json!({"ok": false, "error": "nowhere:x is not a printer on this system"})
+            serde_json::json!({"ok": false, "error": "nowhere:x is not a printer on this system", "kind": "missing"})
         );
         let unknown = json(&call(r#"{"kind":"fly"}"#));
         assert_eq!(unknown["ok"], false);
+        assert_eq!(unknown["kind"], "invalid");
         assert!(
             unknown["error"]
                 .as_str()
@@ -113,7 +120,7 @@ mod tests {
         std::panic::set_hook(previous);
         assert_eq!(
             serde_json::from_slice::<Value>(&reply(result)).unwrap(),
-            serde_json::json!({"ok": false, "error": "Printing failed inside printshim"})
+            serde_json::json!({"ok": false, "error": "Printing failed inside printshim", "kind": "unavailable"})
         );
     }
 

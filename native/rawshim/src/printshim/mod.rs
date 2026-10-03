@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 #[cfg(not(windows))]
 mod cups;
@@ -16,12 +17,44 @@ mod sandbox_tests;
 #[cfg(windows)]
 mod spooler;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorKind {
+    Invalid,
+    Missing,
+    Unavailable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Error(pub String);
+pub struct Error {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+impl Error {
+    pub(crate) fn invalid(message: impl Into<String>) -> Error {
+        Error::new(ErrorKind::Invalid, message)
+    }
+
+    pub(crate) fn missing(message: impl Into<String>) -> Error {
+        Error::new(ErrorKind::Missing, message)
+    }
+
+    pub(crate) fn unavailable(message: impl Into<String>) -> Error {
+        Error::new(ErrorKind::Unavailable, message)
+    }
+
+    fn new(kind: ErrorKind, message: impl Into<String>) -> Error {
+        Error {
+            kind,
+            message: message.into(),
+        }
+    }
+}
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.message)
     }
 }
 
@@ -29,8 +62,46 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub(crate) fn fail<T>(message: impl Into<String>) -> Result<T> {
-    Err(Error(message.into()))
+const PROFILE_LIMIT: u64 = 16 << 20;
+
+fn is_icc(bytes: &[u8]) -> bool {
+    bytes.len() > 128 && &bytes[36..40] == b"acsp"
+}
+
+fn checked_icc(bytes: Vec<u8>, source: &str) -> Result<Vec<u8>> {
+    if bytes.len() as u64 > PROFILE_LIMIT {
+        return Err(Error::invalid(format!(
+            "The profile at {source} is larger than 16 MiB"
+        )));
+    }
+    if !is_icc(&bytes) {
+        return Err(Error::invalid(format!(
+            "The file at {source} isn't an ICC profile"
+        )));
+    }
+    Ok(bytes)
+}
+
+fn read_icc(path: &Path) -> Result<Vec<u8>> {
+    let source = path.display().to_string();
+    let failed = |error: std::io::Error| {
+        let message = format!("Can't read the profile at {source}: {error}");
+        if error.kind() == std::io::ErrorKind::NotFound {
+            Error::missing(message)
+        } else {
+            Error::unavailable(message)
+        }
+    };
+    if !std::fs::metadata(path).map_err(failed)?.is_file() {
+        return Err(Error::invalid(format!(
+            "The profile at {source} isn't a file"
+        )));
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(PROFILE_LIMIT + 1).read_to_end(&mut bytes))
+        .map_err(failed)?;
+    checked_icc(bytes, &source)
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,7 +288,7 @@ struct Icc {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Submitted {
-    job_id: i32,
+    job_id: Option<i32>,
 }
 
 #[cfg(not(windows))]
@@ -226,10 +297,28 @@ const PREFIX: &str = "cups:";
 const PREFIX: &str = "windows:";
 
 fn native_name(id: &str) -> Result<&str> {
-    match id.strip_prefix(PREFIX) {
-        Some(name) if !name.is_empty() => Ok(name),
-        _ => fail(format!("{id} is not a printer on this system")),
+    let name = match id.strip_prefix(PREFIX) {
+        Some(name) if !name.is_empty() => name,
+        _ => {
+            return Err(Error::missing(format!(
+                "{id} is not a printer on this system"
+            )));
+        }
+    };
+    if name.chars().any(forbidden_in_name) {
+        return Err(Error::invalid(format!("{id} is not a printer name")));
     }
+    Ok(name)
+}
+
+#[cfg(not(windows))]
+fn forbidden_in_name(c: char) -> bool {
+    c.is_control() || c.is_whitespace() || matches!(c, '/' | '#' | '?')
+}
+
+#[cfg(windows)]
+fn forbidden_in_name(c: char) -> bool {
+    c.is_control()
 }
 
 pub(crate) fn printer_id(name: &str) -> String {
@@ -328,6 +417,90 @@ mod tests {
         let status: Command =
             serde_json::from_str(r#"{"kind":"job","printer":"cups:Photo","jobId":42}"#).unwrap();
         assert!(matches!(status, Command::Job { job_id: 42, .. }));
+    }
+
+    #[test]
+    fn the_servers_submit_reads_as_a_command() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures/tables/print-json.json");
+        let tables: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let submit: Command = serde_json::from_value(tables["submit"].clone()).unwrap();
+        let Command::Submit {
+            printer,
+            image,
+            job,
+        } = submit
+        else {
+            panic!("not a submit: {submit:?}");
+        };
+        assert_eq!(printer, "cups:Sandbox_Photo");
+        assert_eq!(image, PathBuf::from("/tmp/print.png"));
+        assert_eq!(
+            (
+                job.name.as_str(),
+                job.media.as_str(),
+                job.media_type.as_deref()
+            ),
+            ("IMG_0001", "iso_a4_210x297mm", Some("photographic-glossy"))
+        );
+        assert_eq!(
+            (job.borderless, job.copies, job.resolution_dpi),
+            (false, 1, 300)
+        );
+        assert_eq!((job.page.width_px, job.page.height_px), (2480, 3508));
+        assert_eq!(
+            (job.place.x, job.place.y, job.place.width, job.place.height),
+            (36, 36, 2408, 3436)
+        );
+        assert_eq!(
+            job.transport,
+            Transport {
+                space: Space::Device,
+                bits: 16
+            }
+        );
+    }
+
+    #[test]
+    fn a_profile_is_a_capped_icc_file() {
+        let dir =
+            std::env::temp_dir().join(format!("bowerbird-printshim-icc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut icc = vec![0u8; 132];
+        icc[36..40].copy_from_slice(b"acsp");
+        std::fs::write(dir.join("good.icc"), &icc).unwrap();
+        std::fs::write(dir.join("text.icc"), [b'x'; 132]).unwrap();
+        std::fs::write(dir.join("short.icc"), &icc[..100]).unwrap();
+        let mut huge = icc.clone();
+        huge.resize(PROFILE_LIMIT as usize + 1, 0);
+        std::fs::write(dir.join("huge.icc"), &huge).unwrap();
+        assert_eq!(read_icc(&dir.join("good.icc")), Ok(icc));
+        let kind = |name: &str| read_icc(&dir.join(name)).unwrap_err().kind;
+        assert_eq!(kind("text.icc"), ErrorKind::Invalid);
+        assert_eq!(kind("short.icc"), ErrorKind::Invalid);
+        assert_eq!(kind("huge.icc"), ErrorKind::Invalid);
+        assert_eq!(kind("."), ErrorKind::Invalid);
+        assert_eq!(kind("gone.icc"), ErrorKind::Missing);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn a_cups_name_is_one_path_segment() {
+        assert_eq!(native_name("cups:Canon_PRO-200S.1"), Ok("Canon_PRO-200S.1"));
+        let kind = |id: &str| native_name(id).unwrap_err().kind;
+        for id in [
+            "cups:a/b",
+            "cups:a#b",
+            "cups:a?b",
+            "cups:a b",
+            "cups:a\tb",
+            "cups:a\u{7f}",
+        ] {
+            assert_eq!(kind(id), ErrorKind::Invalid, "{id:?}");
+        }
+        assert_eq!(kind("cups:"), ErrorKind::Missing);
+        assert_eq!(kind("windows:Canon"), ErrorKind::Missing);
     }
 
     #[test]

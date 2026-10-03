@@ -1,4 +1,4 @@
-use super::{Job, Place, Result, fail};
+use super::{Error, Job, Place, Result};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -18,43 +18,44 @@ pub struct Picture {
 impl Picture {
     pub fn open(path: &Path, job: &Job) -> Result<Picture> {
         check_job(job)?;
-        let file = File::open(path)
-            .map_err(|error| super::Error(format!("Can't open {}: {error}", path.display())))?;
+        let file = File::open(path).map_err(|error| {
+            Error::unavailable(format!("Can't open {}: {error}", path.display()))
+        })?;
         let mut decoder = png::Decoder::new(BufReader::new(file));
         decoder.set_transformations(png::Transformations::IDENTITY);
         let reader = decoder.read_info().map_err(|error| {
-            super::Error(format!("{} isn't a readable PNG: {error}", path.display()))
+            Error::invalid(format!("{} isn't a readable PNG: {error}", path.display()))
         })?;
         let info = reader.info();
         let bits = match info.bit_depth {
             png::BitDepth::Eight => 8,
             png::BitDepth::Sixteen => 16,
             other => {
-                return fail(format!(
+                return Err(Error::invalid(format!(
                     "The image is {other:?}-bit; printing takes 8 or 16"
-                ));
+                )));
             }
         };
         if info.color_type != png::ColorType::Rgb {
-            return fail(format!(
+            return Err(Error::invalid(format!(
                 "The image is {:?}; printing takes RGB with no alpha",
                 info.color_type
-            ));
+            )));
         }
         if info.interlaced {
-            return fail("The image is interlaced");
+            return Err(Error::invalid("The image is interlaced"));
         }
         if bits != job.transport.bits {
-            return fail(format!(
+            return Err(Error::invalid(format!(
                 "The image is {bits}-bit but the job asks for {}",
                 job.transport.bits
-            ));
+            )));
         }
         if (info.width, info.height) != (job.place.width, job.place.height) {
-            return fail(format!(
+            return Err(Error::invalid(format!(
                 "The image is {}x{} but the job places {}x{}",
                 info.width, info.height, job.place.width, job.place.height
-            ));
+            )));
         }
         Ok(Picture {
             #[cfg(windows)]
@@ -75,8 +76,8 @@ impl Picture {
     pub fn next_row(&mut self) -> Result<&[u8]> {
         match self.reader.next_row() {
             Ok(Some(row)) => Ok(row.data()),
-            Ok(None) => fail("The image ended early"),
-            Err(error) => fail(format!("The image is damaged: {error}")),
+            Ok(None) => Err(Error::invalid("The image ended early")),
+            Err(error) => Err(Error::invalid(format!("The image is damaged: {error}"))),
         }
     }
 
@@ -112,21 +113,23 @@ fn check_job(job: &Job) -> Result<()> {
         height,
     } = job.place;
     if !matches!(job.transport.bits, 8 | 16) {
-        return fail(format!(
+        return Err(Error::invalid(format!(
             "{} bits per colour isn't a depth printing takes",
             job.transport.bits
-        ));
+        )));
     }
     if job.resolution_dpi == 0 || job.copies == 0 || width == 0 || height == 0 {
-        return fail("The job has a zero resolution, copy count or picture size");
+        return Err(Error::invalid(
+            "The job has a zero resolution, copy count or picture size",
+        ));
     }
     let fits =
         |at: u32, length: u32, page: u32| at.checked_add(length).is_some_and(|end| end <= page);
     if !fits(x, width, job.page.width_px) || !fits(y, height, job.page.height_px) {
-        return fail(format!(
+        return Err(Error::invalid(format!(
             "The picture at {x},{y} sized {width}x{height} runs off the {}x{} page",
             job.page.width_px, job.page.height_px
-        ));
+        )));
     }
     Ok(())
 }
@@ -232,7 +235,11 @@ pub(crate) mod tests {
     fn a_picture_that_disagrees_with_its_job_is_refused() {
         let path = scratch("refused.png");
         png(&path, 2, 2, 8, |_, _| [0, 0, 0]);
-        let refusal = |job: Job| Picture::open(&path, &job).err().unwrap().0;
+        let refusal = |job: Job| {
+            let error = Picture::open(&path, &job).err().unwrap();
+            assert_eq!(error.kind, super::super::ErrorKind::Invalid);
+            error.message
+        };
         assert_eq!(
             refusal(job((4, 4), (1, 1, 2, 2), 16)),
             "The image is 8-bit but the job asks for 16"

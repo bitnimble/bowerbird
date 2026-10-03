@@ -69,7 +69,6 @@ fn member_integer(collection: &Collection, name: &str) -> Option<i32> {
     }
 }
 
-/// One paper size, in hundredths of a millimetre as the printer states it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaSize {
     pub key: String,
@@ -205,7 +204,6 @@ fn entry(collection: &Collection) -> Option<Entry> {
     })
 }
 
-/// Sizes from `media-supported` alone, for a printer with no `media-col-database`.
 fn supported_entries(attributes: &Attributes, named: &[(&str, (i32, i32))]) -> Vec<Entry> {
     let supported = |edge: &str| -> Vec<i32> {
         values(attributes, &format!("media-{edge}-margin-supported"))
@@ -248,7 +246,6 @@ fn says_borderless(name: &str) -> bool {
     name.contains("borderless")
 }
 
-/// A PWG self-describing media name's size (PWG 5101.1), `..._210x297mm` or `..._4x6in`.
 pub fn pwg_dimensions(name: &str) -> Option<(i32, i32)> {
     let size = name.rsplit('_').next()?;
     let (numbers, scale) = if let Some(numbers) = size.strip_suffix("mm") {
@@ -366,7 +363,6 @@ pub fn raster_keyword(transport: Transport) -> String {
     format!("{space}_{}", transport.bits)
 }
 
-/// `(profile-name, profile-url)` pairs from `printer-icc-profiles` (PWG 5100.13).
 pub fn icc_profiles(attributes: &Attributes) -> Vec<(String, String)> {
     values(attributes, "printer-icc-profiles")
         .iter()

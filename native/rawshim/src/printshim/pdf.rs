@@ -1,26 +1,25 @@
 use super::page::Picture;
-use super::{Job, Result, fail};
+use super::{Error, Job, Result};
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use std::io::Write;
 
 pub fn document(picture: &mut Picture, job: &Job) -> Result<Vec<u8>> {
     let Some(icc) = picture.icc.take() else {
-        return fail("The image has no ICC profile to say what its colours are");
+        return Err(Error::invalid(
+            "The image has no ICC profile to say what its colours are",
+        ));
     };
+    let failed =
+        |error: std::io::Error| Error::unavailable(format!("Can't compress the image: {error}"));
     let mut samples = ZlibEncoder::new(Vec::new(), Compression::fast());
     for _ in 0..job.place.height {
-        samples
-            .write_all(picture.next_row()?)
-            .map_err(|error| super::Error(format!("Can't compress the image: {error}")))?;
+        samples.write_all(picture.next_row()?).map_err(failed)?;
     }
-    let samples = samples
-        .finish()
-        .map_err(|error| super::Error(format!("Can't compress the image: {error}")))?;
+    let samples = samples.finish().map_err(failed)?;
     Ok(write(job, &icc, &samples))
 }
 
-/// `samples` are the picture's rows, zlib-compressed.
 fn write(job: &Job, icc: &[u8], samples: &[u8]) -> Vec<u8> {
     let points = |pixels: u32| pixels as f64 * 72.0 / job.resolution_dpi as f64;
     let place = job.place;
