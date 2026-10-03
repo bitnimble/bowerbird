@@ -19,6 +19,7 @@ import {
   type LocalTileRequest,
   type OpenAsk,
   type OpenStage,
+  type PrintTarget,
   type Ticked,
   type TileKeep,
 } from './local_open';
@@ -362,7 +363,7 @@ export class LocalDecoder {
     geometry: EditGeometry | null;
     proof: Proof | null;
     print: PrintScene | null;
-    printerProfile?: Uint8Array<ArrayBuffer> | null;
+    printTarget?: PrintTarget;
     stage: { width: number; height: number } | null;
   }): Promise<Ticked> {
     return this.ask(TickedSchema, {
@@ -375,7 +376,7 @@ export class LocalDecoder {
       geometry: tick.geometry == null ? null : JSON.stringify(tick.geometry),
       proof: tick.proof,
       print: tick.print,
-      printerProfile: tick.printerProfile,
+      printTarget: tick.printTarget,
       stage: tick.stage,
     });
   }

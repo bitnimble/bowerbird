@@ -7,6 +7,7 @@ import {
   type Editor,
 } from '../../stage/tests/raw_edit_harness';
 import { REWINDOW_QUIET_MS } from '../../stage/raw_edit_presenter';
+import type { PrintTarget } from '../../local_decode/local_open';
 import { regionOf } from '../../../photos/viewer/zoom_pan';
 import {
   DEFAULT_PRINT_SCENE,
@@ -510,36 +511,54 @@ describe('print viewing', () => {
 });
 
 describe('the printer', () => {
-  test('opening a print lists the printer profiles, and a chosen one reaches the module once', async () => {
-    editor.presenter.setSoftProof('print');
-    await Promise.resolve();
-    expect(editor.print.printerProfiles).toEqual(['Satin PRO-200.icc']);
+  const iccOf = (target: PrintTarget | null): string | null =>
+    target?.kind === 'profile' ? new TextDecoder().decode(target.icc) : null;
 
-    await editor.presenter.print.setPrinterProfile('Satin PRO-200.icc');
+  test('opening a print lists the printers and profiles, and a chosen one reaches the module once', async () => {
+    editor.presenter.setSoftProof('print');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(editor.print.printerProfiles).toEqual(['Satin PRO-200.icc']);
+    expect(editor.print.printers.map((printer) => printer.name)).toEqual([
+      'Canon PRO-200',
+      'Office',
+    ]);
+
+    await editor.presenter.print.chooseProof({ kind: 'file', name: 'Satin PRO-200.icc' });
     await drawnBy(editor);
-    expect(new TextDecoder().decode(editor.decoder.printerProfile ?? new Uint8Array())).toBe(
-      'Satin PRO-200.icc',
-    );
+    expect(iccOf(editor.decoder.printTarget)).toBe('Satin PRO-200.icc');
     editor.presenter.print.setRenderingIntent('perceptual');
     editor.presenter.print.setBlackPointCompensation(false);
     await drawnBy(editor);
-    expect(editor.decoder.printerProfileSends).toBe(1);
+    expect(editor.decoder.printTargetSends).toBe(1);
     expect(editor.decoder.print).toMatchObject({
       renderingIntent: 'perceptual',
       blackPointCompensation: false,
     });
 
-    await editor.presenter.print.setPrinterProfile(null);
+    await editor.presenter.print.chooseProof({ kind: 'generic' });
     await drawnBy(editor);
-    expect(editor.decoder.printerProfile).toBeNull();
-    expect(editor.decoder.printerProfileSends).toBe(2);
+    expect(editor.decoder.printTarget).toEqual({ kind: 'adobe-rgb' });
+    expect(editor.decoder.printTargetSends).toBe(2);
   });
 
-  test('a profile chosen and then replaced before it arrived is not the one kept', async () => {
-    const first = editor.presenter.print.setPrinterProfile('Satin PRO-200.icc');
-    await editor.presenter.print.setPrinterProfile(null);
+  test('a system printer proofs through its own profile where it takes device RGB, else in what it is sent', async () => {
+    await editor.presenter.print.chooseProof({ kind: 'printer', id: 'cups:PRO-200' });
+    expect(iccOf(editor.print.proof.target)).toBe('PRO-200 Luster');
+    expect(editor.print.profiled).toBe(true);
+
+    await editor.presenter.print.chooseProof({ kind: 'printer', id: 'cups:Office' });
+    expect(editor.print.proof.target).toEqual({ kind: 'adobe-rgb' });
+    expect(editor.print.profiled).toBe(false);
+  });
+
+  test('a proof chosen and then replaced before it arrived is not the one kept', async () => {
+    const first = editor.presenter.print.chooseProof({ kind: 'file', name: 'Satin PRO-200.icc' });
+    await editor.presenter.print.chooseProof({ kind: 'generic' });
     await first;
-    expect(editor.print.printerProfile).toBeNull();
+    expect(editor.print.proof).toEqual({
+      source: { kind: 'generic' },
+      target: { kind: 'adobe-rgb' },
+    });
   });
 
   test('an ink spreads by the paper it lands on, and the printer resolution is its own', () => {

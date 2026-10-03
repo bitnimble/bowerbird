@@ -1,6 +1,9 @@
 import { action } from 'mobx';
 import { printerProfilesApi } from '../../../api/printer_profiles';
+import { printingApi, type PrintingSource } from '../../../api/printing';
+import { colourPath, type Printer } from '../../../../../src/schemas/printing';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
+import type { PrintTarget } from '../local_decode/local_open';
 import {
   DEFAULT_PRINT_SCENE,
   litBy,
@@ -20,12 +23,14 @@ import {
   type PrintMotionEnvironment,
   type PrintTilt,
 } from './print_motion';
-import type { PrinterProfile, PrintStore } from './print_store';
+import type { PrintProof, PrintStore, ProofSource } from './print_store';
 
 export type PrinterProfileSource = {
   list(): Promise<string[]>;
   bytes(name: string): Promise<Uint8Array<ArrayBuffer>>;
 };
+
+export type SystemPrinterSource = Pick<PrintingSource, 'printers' | 'capabilities' | 'profile'>;
 
 type Drag = {
   pointerId: number;
@@ -60,13 +65,15 @@ export class PrintPresenter {
   private awaitingPermission = false;
   private waitingTimer: ReturnType<typeof setTimeout> | null = null;
   private listedProfiles = false;
-  private wantedProfile: string | null = null;
+  private listedPrinters = false;
+  private wantedProof: ProofSource | null = null;
 
   constructor(
     private readonly store: PrintStore,
     private readonly redraw: () => void,
     private readonly motion: PrintMotionEnvironment | null = browserPrintMotion(),
     private readonly profiles: PrinterProfileSource = printerProfilesApi,
+    private readonly printers: SystemPrinterSource = printingApi,
   ) {}
 
   /**
@@ -82,6 +89,7 @@ export class PrintPresenter {
     if (this.store.open && this.store.surface && this.permission === 'unknown')
       void this.enableTilt();
     if (this.store.open && !this.listedProfiles) void this.listPrinterProfiles();
+    if (this.store.open && !this.listedPrinters) void this.listPrinters();
     this.redraw();
   };
 
@@ -90,8 +98,16 @@ export class PrintPresenter {
     try {
       this.listedPrinterProfiles(await this.profiles.list());
     } catch {
-      // Listed again the next time a print opens; until then the paper's own white and black proof it.
       this.listedProfiles = false;
+    }
+  }
+
+  private async listPrinters(): Promise<void> {
+    this.listedPrinters = true;
+    try {
+      this.listedSystemPrinters(await this.printers.printers());
+    } catch {
+      this.listedPrinters = false;
     }
   }
 
@@ -100,17 +116,39 @@ export class PrintPresenter {
     this.store.printerProfiles = names;
   };
 
-  /** Proofs through the named ICC profile, or through the paper's own white and black with null. */
   @action.bound
-  setPrinterProfile = async (name: string | null): Promise<void> => {
-    this.wantedProfile = name;
-    this.gotPrinterProfile(name == null ? null : { name, bytes: await this.profiles.bytes(name) });
+  private listedSystemPrinters = (printers: Printer[]): void => {
+    this.store.printers = printers;
   };
 
+  /** Proofs as `source` prints: through a profile of its paper where it has one, else in the space it is sent. */
   @action.bound
-  private gotPrinterProfile = (profile: PrinterProfile | null): void => {
-    if ((profile?.name ?? null) !== this.wantedProfile) return;
-    this.store.printerProfile = profile;
+  chooseProof = async (source: ProofSource): Promise<void> => {
+    this.wantedProof = source;
+    let target: PrintTarget;
+    try {
+      target = await this.targetOf(source);
+    } catch {
+      return;
+    }
+    this.gotProof({ source, target });
+  };
+
+  private async targetOf(source: ProofSource): Promise<PrintTarget> {
+    if (source.kind === 'generic') return { kind: 'adobe-rgb' };
+    if (source.kind === 'file')
+      return { kind: 'profile', icc: await this.profiles.bytes(source.name) };
+    const { colour } = await this.printers.capabilities(source.id);
+    const own = colour.profiles[0];
+    const path = colourPath(colour, own == null ? null : { from: 'printer', name: own.name });
+    if (path.kind !== 'profile') return { kind: path.kind };
+    return { kind: 'profile', icc: await this.printers.profile(source.id, path.profile.name) };
+  }
+
+  @action.bound
+  private gotProof = (proof: PrintProof): void => {
+    if (proof.source !== this.wantedProof) return;
+    this.store.proof = proof;
     this.redraw();
   };
 

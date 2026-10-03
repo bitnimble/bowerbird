@@ -106,7 +106,7 @@ class FakePrinting implements PrintingSource {
   };
 
   describe(id: string, options: PrinterCapabilities): void {
-    const asked = this.capabilitiesAsked.findLast((each) => each.id === id);
+    const asked = this.capabilitiesAsked.filter((each) => each.id === id).at(-1);
     asked?.pending.resolve(options);
   }
 }

@@ -346,8 +346,10 @@ class Open {
             ask.proof.intent,
             ask.proof.displayPeakNits ?? undefined,
           );
-        if (ask.printerProfile !== undefined)
-          editor.setPrinterProfile(ask.printerProfile ?? undefined);
+        if (ask.printTarget !== undefined)
+          editor.setPrinterProfile(
+            ask.printTarget.kind === 'profile' ? ask.printTarget.icc : undefined,
+          );
         if (ask.print != null) await printEnvironment(ask.print.environment);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);

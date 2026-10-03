@@ -3,6 +3,7 @@ import { registerDom } from '../../../../test_dom';
 import { PrintPresenter } from '../print_presenter';
 import { PrintStore } from '../print_store';
 import type { PrintMotionEnvironment } from '../print_motion';
+import { SYSTEM_PRINTERS } from '../../stage/tests/raw_edit_harness';
 
 registerDom();
 const { act, cleanup, render, screen } = await import('@testing-library/react');
@@ -144,11 +145,18 @@ test('a flat print offers the paper and the ink and nothing a surface needs ligh
 
 test('a printer profile takes over the paper white and black', async () => {
   const store = new PrintStore();
-  const printer = new PrintPresenter(store, () => {}, null, {
-    list: () => Promise.resolve(['Satin.icc']),
-    bytes: () => Promise.resolve(new Uint8Array(4)),
-  });
+  const printer = new PrintPresenter(
+    store,
+    () => {},
+    null,
+    {
+      list: () => Promise.resolve(['Satin.icc']),
+      bytes: () => Promise.resolve(new Uint8Array(4)),
+    },
+    SYSTEM_PRINTERS,
+  );
   presenter = printer;
+  await act(async () => printer.setView('sheet'));
   render(
     <>
       <PrintPanel store={store} presenter={printer} disabled={false} section="printer" />
@@ -162,7 +170,7 @@ test('a printer profile takes over the paper white and black', async () => {
     false,
   );
 
-  await act(() => printer.setPrinterProfile('Satin.icc'));
+  await act(() => printer.chooseProof({ kind: 'file', name: 'Satin.icc' }));
   expect(screen.getByRole('combobox', { name: 'Printer profile' }).textContent).toBe('Satin.icc');
   expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Paper reflectance' }).disabled).toBe(
     true,

@@ -116,6 +116,14 @@ export const BlobSchema = z.instanceof(Blob);
 export const JsonSchema = z.string();
 export const NothingSchema = z.null();
 
+/** The colour space a print is proofed in: the file a printer is sent, or a profile of the paper. */
+export const PrintTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('srgb') }),
+  z.object({ kind: z.literal('adobe-rgb') }),
+  z.object({ kind: z.literal('profile'), icc: BytesSchema }),
+]);
+export type PrintTarget = z.infer<typeof PrintTargetSchema>;
+
 export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() });
 
 /** A tick's draws of the canvases the page draws itself, as RGB9E5 words; null for the rest. */
@@ -251,8 +259,8 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     geometry: JsonSchema.nullable(),
     proof: ProofSchema.nullable(),
     print: PrintSceneSchema.nullable(),
-    /** The ICC profile a print is proofed through, sent only when it changes: absent keeps the last. */
-    printerProfile: BytesSchema.nullable().optional(),
+    /** What a print is proofed through, sent only when it changes: absent keeps the last. */
+    printTarget: PrintTargetSchema.optional(),
     /**
      * The backing store the stage wants, applied before the draw that reads it.
      *

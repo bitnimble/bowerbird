@@ -8,12 +8,13 @@ import { KeystoneStore } from '../../keystone/keystone_store';
 import type {
   LocalPrepare,
   LocalTileRequest,
+  PrintTarget,
   Ticked,
   TileKeep,
 } from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
-import type { PrinterProfileSource } from '../../print/print_presenter';
+import type { PrinterProfileSource, SystemPrinterSource } from '../../print/print_presenter';
 import { PrintStore } from '../../print/print_store';
 import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
@@ -56,9 +57,9 @@ export class FakeDecoder {
    */
   stage = { width: 300, height: 150 };
   print: PrintScene | null = null;
-  /** The printer profile held, and how many times one was handed over. */
-  printerProfile: Uint8Array<ArrayBuffer> | null = null;
-  printerProfileSends = 0;
+  /** The print target held, and how many times one was handed over. */
+  printTarget: PrintTarget | null = null;
+  printTargetSends = 0;
 
   /**
    * Every frame asked for: the window it read, the picture that window is on, and the canvas
@@ -97,16 +98,16 @@ export class FakeDecoder {
     geometry: EditGeometry | null;
     proof: Proof | null;
     print: PrintScene | null;
-    printerProfile?: Uint8Array<ArrayBuffer> | null;
+    printTarget?: PrintTarget;
     stage: { width: number; height: number } | null;
   }): Promise<Ticked> {
     if (tick.adjust != null) this.adjust = tick.adjust;
     if (tick.geometry != null) this.geometry = tick.geometry;
     if (tick.proof != null) this.proof = tick.proof;
     this.print = tick.print;
-    if (tick.printerProfile !== undefined) {
-      this.printerProfile = tick.printerProfile;
-      this.printerProfileSends += 1;
+    if (tick.printTarget !== undefined) {
+      this.printTarget = tick.printTarget;
+      this.printTargetSends += 1;
     }
     if (tick.stage != null) this.stage = tick.stage;
     if (tick.drawStage && tick.region != null && this.geometry != null) {
@@ -380,6 +381,49 @@ export const PRINTER_PROFILES: PrinterProfileSource = {
   bytes: (name) => Promise.resolve(new Uint8Array(new TextEncoder().encode(name))),
 };
 
+/**
+ * Two system printers: one taking device RGB with a profile of its own, whose bytes are its
+ * name's, and one taking Adobe RGB alone.
+ */
+export const SYSTEM_PRINTERS: SystemPrinterSource = {
+  printers: () =>
+    Promise.resolve([
+      {
+        id: 'cups:PRO-200',
+        name: 'Canon PRO-200',
+        isDefault: true,
+        location: null,
+        model: null,
+        connection: 'usb',
+      },
+      {
+        id: 'cups:Office',
+        name: 'Office',
+        isDefault: false,
+        location: null,
+        model: null,
+        connection: 'network',
+      },
+    ]),
+  capabilities: (id) =>
+    Promise.resolve({
+      media: [],
+      defaultMedia: null,
+      mediaTypes: [],
+      defaultMediaType: null,
+      resolutionsDpi: [300],
+      copiesMax: 1,
+      colour:
+        id === 'cups:PRO-200'
+          ? {
+              transports: [{ space: 'device', bits: 16 }],
+              profiles: [{ name: 'PRO-200 Luster', source: 'printer' }],
+            }
+          : { transports: [{ space: 'adobe-rgb', bits: 8 }], profiles: [] },
+    }),
+  profile: (_id, name) => Promise.resolve(new Uint8Array(new TextEncoder().encode(name))),
+};
+
 /** The frames asked for and not yet run. Drained by `runFrames`, which is the display's job. */
 let frames: FrameRequestCallback[] = [];
 
@@ -434,6 +478,7 @@ export function openEditor(): Editor {
       device,
       surface,
       PRINTER_PROFILES,
+      SYSTEM_PRINTERS,
     ),
     decoder: new FakeDecoder(keystone),
   };

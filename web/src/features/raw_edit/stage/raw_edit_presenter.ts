@@ -17,7 +17,7 @@ import { CropPresenter } from '../crop/crop_presenter';
 import type { CropStore } from '../crop/crop_store';
 import { displayPeakNits } from '../../../app/device';
 import { drawsOnThePage, readbackCanvases } from '../../../gpu/readback_canvas';
-import type { Ticked } from '../local_decode/local_open';
+import type { PrintTarget, Ticked } from '../local_decode/local_open';
 import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
@@ -47,8 +47,12 @@ import { isSoftProof, type SoftProof } from '../proof/soft_proof';
 import type { EditTool } from '../edit_tool';
 import type { RepairStore } from '../repair/repair_store';
 import type { OpenStep, StageStore } from './stage_store';
-import type { PrinterProfile, PrintStore } from '../print/print_store';
-import { PrintPresenter, type PrinterProfileSource } from '../print/print_presenter';
+import type { PrintStore } from '../print/print_store';
+import {
+  PrintPresenter,
+  type PrinterProfileSource,
+  type SystemPrinterSource,
+} from '../print/print_presenter';
 import { printDisplaySize } from '../print/print_scene';
 
 const SOFT_PROOF_KEY = 'bowerbird.edit.softProof';
@@ -144,12 +148,14 @@ export class RawEditPresenter {
     private readonly device: DeviceSettingsStore,
     private readonly surface: EditSurface,
     printerProfiles?: PrinterProfileSource,
+    printers?: SystemPrinterSource,
   ) {
     this.print = new PrintPresenter(
       printStore,
       () => this.showGeometry(),
       undefined,
       printerProfiles,
+      printers,
     );
     this.crop = new CropPresenter(stage, editStore, cropStore, {
       preview: (patch) => this.preview(patch),
@@ -619,7 +625,7 @@ export class RawEditPresenter {
 
   /** What this tab opens and magnifies from, until it has opened one. */
   private local: LocalSource | null = null;
-  private sentProfile: PrinterProfile | null = null;
+  private sentTarget: PrintTarget | null = null;
 
   attachLoupe(canvas: HTMLCanvasElement | null): void {
     this.loupe.attachLoupe(canvas);
@@ -1055,9 +1061,9 @@ export class RawEditPresenter {
       this.pendingLoupe = null;
       const local = this.local;
       if (this.closed || local == null || !this.drawable) return;
-      const profile = this.printStore.printerProfile;
-      const profileChanged = profile !== this.sentProfile;
-      this.sentProfile = profile;
+      const target = this.printStore.proof.target;
+      const targetChanged = target !== this.sentTarget;
+      this.sentTarget = target;
       this.drawing = true;
       const landed = (error?: unknown): void => {
         this.drawing = false;
@@ -1098,7 +1104,7 @@ export class RawEditPresenter {
             displayPeakNits: displayPeakNits(this.device.displayPeakNits),
           },
           print,
-          ...(profileChanged ? { printerProfile: profile?.bytes ?? null } : {}),
+          ...(targetChanged ? { printTarget: target } : {}),
           stage,
         })
         .then((ticked) => (this.closed ? undefined : this.showOnPage(ticked)))

@@ -21,7 +21,7 @@ import {
   type Paper,
   type PrintControl,
 } from './print_scene';
-import type { PrintStore } from './print_store';
+import type { PrintStore, ProofSource } from './print_store';
 import type { PrintPresenter } from './print_presenter';
 
 const styles = stylex.create({
@@ -39,8 +39,10 @@ const INK_OPTIONS: Option<Ink>[] = [
   { value: 'pigment', label: strings.pigment() },
 ];
 
-/** Not a name the profile listing can hold: every profile it lists ends in `.icc` or `.icm`. */
-const GENERIC_PAPER = 'generic';
+function proofKey(source: ProofSource): string {
+  if (source.kind === 'generic') return source.kind;
+  return `${source.kind}:${source.kind === 'file' ? source.name : source.id}`;
+}
 
 type Control = {
   key: PrintControl;
@@ -138,7 +140,7 @@ export const PrintPanel = observer(function PrintPanel({
   disabled: boolean;
   section: PrintSection;
 }): JSX.Element {
-  const profiled = store.printerProfile != null;
+  const profiled = store.profiled;
   const controls = (specs: Control[]): JSX.Element[] =>
     specs.map((spec) => {
       const value = store.scene[spec.key];
@@ -199,19 +201,27 @@ export const PrintPanel = observer(function PrintPanel({
     );
   }
   if (section === 'printer') {
-    const profiles: Option<string>[] = [
-      { value: GENERIC_PAPER, label: strings.genericPaper() },
-      ...store.printerProfiles.map((name) => ({ value: name, label: name })),
+    const sources: { source: ProofSource; label: string }[] = [
+      { source: { kind: 'generic' }, label: strings.genericPaper() },
+      ...store.printers.map(({ id, name }) => ({
+        source: { kind: 'printer' as const, id },
+        label: name,
+      })),
+      ...store.printerProfiles.map((name) => ({
+        source: { kind: 'file' as const, name },
+        label: name,
+      })),
     ];
     return (
       <Panel title={strings.printer()} style={styles.group}>
         <Select
           label={strings.printerProfile()}
-          options={profiles}
-          value={store.printerProfile?.name ?? GENERIC_PAPER}
-          onChange={(name) =>
-            void presenter.setPrinterProfile(name === GENERIC_PAPER ? null : name)
-          }
+          options={sources.map(({ source, label }) => ({ value: proofKey(source), label }))}
+          value={proofKey(store.proof.source)}
+          onChange={(key) => {
+            const chosen = sources.find(({ source }) => proofKey(source) === key);
+            if (chosen != null) void presenter.chooseProof(chosen.source);
+          }}
         />
         <IntentChoice value={store.scene.renderingIntent} onChange={presenter.setRenderingIntent} />
         {store.scene.renderingIntent === 'relativeColorimetric' && (
