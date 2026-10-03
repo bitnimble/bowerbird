@@ -8,6 +8,7 @@ import { AS_METERED, developed } from './developed';
 import type { CompositeRenderer } from './composite_renderer';
 import type { RenderTargets } from './render_targets';
 import type { SinglePhotoRenderer } from './single_photo_renderer';
+import type { RenditionTarget } from '../workers/processing_types';
 
 export class ExportRenderer {
   constructor(
@@ -69,6 +70,49 @@ export class ExportRenderer {
       },
       edits?.stamp ?? null,
     );
+  }
+
+  /**
+   * One photograph rendered for a printer: the same edits and settings `renderExport` renders
+   * under, written as the print file `print` names rather than as a rendition (§10.5).
+   *
+   * Detached, because the file is nobody's copy: no stamp moves and no version is bumped.
+   */
+  async renderPrint(
+    rawFilePath: string,
+    photoId: string,
+    library: Library,
+    outputPath: string,
+    print: NonNullable<RenditionTarget['print']>,
+  ): Promise<void> {
+    const settings = this.settings.get();
+    const edits = this.editsFor(photoId);
+    await this.singlePhoto.runDetached({
+      kind: 'rendition',
+      photoId,
+      rawFilePath,
+      dataPath: getDataPath(library),
+      targets: [
+        {
+          rendition: 'max',
+          hdr: false,
+          source: 'render',
+          outputPath,
+          size: 0,
+          sdrQuantizer: 0,
+          hdrQuantizer: 0,
+          preset: 0,
+          stillFullChroma: true,
+          sdrFullChroma: true,
+          print,
+        },
+      ],
+      grade: this.targets.grade(),
+      remeasure: false,
+      cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
+      ...developed(edits?.doc ?? null, library.denoiser),
+      ...this.targets.render(),
+    });
   }
 
   /**

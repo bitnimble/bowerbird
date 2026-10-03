@@ -29,8 +29,29 @@ export type JobGrade = z.infer<typeof JobGradeSchema>;
  * render with a list of outputs, which is what lets several renditions of a photo share
  * the decode, the fit, the filter and the colour transform (§10.3).
  */
-export const JobOutputSchema = z.enum(['pq', 'srgb']);
+export const JobOutputSchema = z.enum(['pq', 'srgb', 'print']);
 export type JobOutput = z.infer<typeof JobOutputSchema>;
+
+/** The encoding a printer takes, from the best it accepts down (`print_output::Space`). */
+export const PrintSpaceSchema = z.enum(['srgb', 'adobe-rgb', 'device']);
+export type PrintSpace = z.infer<typeof PrintSpaceSchema>;
+
+/**
+ * What a `print` target writes (`print_output::Spec`): a PNG of exactly `width` by `height`
+ * after `quarterTurns`, the picture scaled to cover it and cut to it, in `space` at `bits`.
+ * `icc` is the printer's ICC output profile, base64, which `device` writes through.
+ */
+export const JobPrintSchema = z.object({
+  space: PrintSpaceSchema,
+  bits: z.union([z.literal(8), z.literal(16)]),
+  intent: RenderingIntentSchema,
+  blackPointCompensation: z.boolean(),
+  icc: z.string().nullable(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  quarterTurns: z.number().int().min(0).max(3),
+});
+export type JobPrint = z.infer<typeof JobPrintSchema>;
 
 export const JobTargetSchema = z.object({
   rendition: RenditionSchema,
@@ -46,6 +67,8 @@ export const JobTargetSchema = z.object({
   sdrFullChroma: z.boolean(),
   /** How an `srgb` output reaches its gamut; perceptual where absent. */
   intent: RenderingIntentSchema.optional(),
+  /** What a `print` output writes; absent for every other output. */
+  print: JobPrintSchema.optional(),
 });
 export type JobTarget = z.infer<typeof JobTargetSchema>;
 

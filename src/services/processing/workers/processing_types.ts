@@ -4,7 +4,7 @@ import {
   type RenditionSource,
 } from '../../../schemas/common';
 import type { DustSettings } from '../../../schemas/dust_settings';
-import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/jobs';
+import type { CompositeWant, JobAdjust, JobGeometry, JobPrint } from '../../../schemas/jobs';
 import type { CameraTone, Denoiser, Repair } from '../../../schemas/photo_edits';
 import type { CameraMatch } from '../../../schemas/render_stages';
 import type { RenderingIntent } from '../../../schemas/rendering_intent';
@@ -57,6 +57,11 @@ export interface RenditionTarget {
   sdrFullChroma: boolean;
   /** How an SDR target reaches sRGB's gamut; perceptual where absent. */
   intent?: RenderingIntent;
+  /**
+   * A print file in place of a rendition (`JobPrintSchema`), with the printer's ICC profile as
+   * bytes: `toTarget` encodes it for the command.
+   */
+  print?: Omit<JobPrint, 'icc'> & { icc: Uint8Array | null };
 }
 
 /**

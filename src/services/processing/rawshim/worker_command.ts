@@ -56,7 +56,7 @@ export function toTarget(target: RenditionTarget): JobTarget {
     // is stored and what the viewer asks for - and the render only wants to know which
     // transfer to leave the pixels in, since that is the whole of what its dynamic range
     // reaches (§10.3).
-    output: target.hdr ? ('pq' as const) : ('srgb' as const),
+    output: target.print != null ? 'print' : target.hdr ? 'pq' : 'srgb',
     outputPath: target.outputPath,
     size: target.size,
     source: target.source,
@@ -66,6 +66,13 @@ export function toTarget(target: RenditionTarget): JobTarget {
     stillFullChroma: target.stillFullChroma,
     sdrFullChroma: target.sdrFullChroma,
     intent: target.intent,
+    print:
+      target.print == null
+        ? undefined
+        : {
+            ...target.print,
+            icc: target.print.icc == null ? null : Buffer.from(target.print.icc).toString('base64'),
+          },
   };
 }
 

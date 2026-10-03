@@ -22,6 +22,7 @@ import type { Missing, Shown } from '../workers/prepare_pool';
 import type {
   CompositeJobSource,
   RenditionSource,
+  RenditionTarget,
   RenditionWritten,
 } from '../workers/processing_types';
 import {
@@ -412,6 +413,17 @@ export abstract class RenderService {
     quality: number,
   ): Promise<void> {
     return this.exports.renderSdrRoll(rendered, photoId, scratch, outputPath, quality);
+  }
+
+  /** A print file of one photograph, with its saved edits as `renderExport` has them. */
+  async renderPrint(
+    rawFilePath: string,
+    photoId: string,
+    library: Library,
+    outputPath: string,
+    print: NonNullable<RenditionTarget['print']>,
+  ): Promise<void> {
+    return this.exports.renderPrint(rawFilePath, photoId, library, outputPath, print);
   }
 
   async renderCompositeExport(
