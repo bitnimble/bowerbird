@@ -66,3 +66,17 @@ cleared. Technical lens data and fit unchanged.
 Approved crop only: upright 720×208 conditioned photosites covering red plate, blue rim and white
 plates; no metadata. Row-major little-endian f32, GBRG. `galosh.rs` supplies the noise fit and
 dark references in spatial slot order.
+
+## mosaics/sun-disc.f32
+
+Approved crop only, cut with `examples/mosaic_crop.rs` from project-owned Canon EOS R8 frame
+IMG_0275: upright 768×640 undenoised conditioned photosites from sensor `1460,246`, the sun's disc
+blown in every channel and its falloff over sky and a ridge. No metadata. Row-major little-endian
+f32, RGGB. `demosaic.rs`'s `R8_COLOUR` carries the body's matrix and ceilings.
+
+## mosaics/lit-rock.f32
+
+Approved crop only, cut the same way from project-owned Sony ILCE-7CR frame DSC04519: upright
+1248×704 undenoised conditioned photosites from sensor `6400,1300`, lamp-lit rock whose blown
+patches run red and green out with blue still reading. No metadata. Row-major little-endian f32,
+RGGB. `demosaic.rs`'s `A7CR_COLOUR` carries the body's matrix and ceilings.

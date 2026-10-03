@@ -1331,6 +1331,231 @@ mod tests {
         );
     }
 
+    /// IMG_0275's sun, where `reconstructed` was tuned: the disc is blown in every channel and has
+    /// to come back white rather than in the illuminant's pink, and the falloff around it keeps its
+    /// warmth without a magenta ring where the second channel runs out.
+    #[test]
+    fn the_sun_comes_back_white_at_its_disc() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
+        let window = RealWindow::read(gpu, rcd, "sun-disc", (768, 640), R8_COLOUR);
+        let census = window.census();
+        census.blown_is_neutral("the sun's disc", 100_000);
+        census.nothing_near_clipping_is_magenta("the sun");
+        window
+            .snapshot(gpu)
+            .check("highlights/sun-disc", WINDOW_TOLERANCE);
+    }
+
+    /// DSC04519's lamp-lit rock, where red and green run out with blue still reading: left at
+    /// green's ceiling, that is a magenta band a stop and a half wide around every blown patch.
+    #[test]
+    fn a_blown_rock_does_not_turn_magenta() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
+        let window = RealWindow::read(gpu, rcd, "lit-rock", (1248, 704), A7CR_COLOUR);
+        let census = window.census();
+        census.blown_is_neutral("the rock's blown patches", 100_000);
+        census.nothing_near_clipping_is_magenta("the rock");
+        window
+            .snapshot(gpu)
+            .check("highlights/lit-rock", WINDOW_TOLERANCE);
+    }
+
+    const WINDOW_TOLERANCE: crate::snapshot::Tolerance = crate::snapshot::Tolerance {
+        worst: 256,
+        mean: 1.5,
+    };
+
+    const R8_COLOUR: super::Colour = super::Colour {
+        matrix: [
+            [0.9192243, 0.16314033, -0.08228286],
+            [-0.05530379, 1.5033377, -0.44804686],
+            [-0.012427266, -0.30576313, 1.3179761],
+        ],
+        ceiling: [1.0, 0.48831666, 0.7162613],
+    };
+
+    const A7CR_COLOUR: super::Colour = super::Colour {
+        matrix: [
+            [0.8990233, 0.3062718, -0.20521326],
+            [-0.05023299, 1.4729892, -0.42276916],
+            [-0.0013742517, -0.23608698, 1.237247],
+        ],
+        ceiling: [0.60524476, 0.35804197, 1.0],
+    };
+
+    /// A window of a real photograph's conditioned mosaic (`examples/mosaic_crop.rs`), RGGB from its
+    /// origin, through the demosaic and the colour pass, inset past RCD's margin.
+    struct RealWindow {
+        mosaic: Vec<f32>,
+        stride: usize,
+        ceiling: [f32; 3],
+        width: usize,
+        height: usize,
+        rgb: Vec<u16>,
+    }
+
+    impl RealWindow {
+        const INSET: usize = 16;
+
+        fn read(
+            gpu: &'static crate::gpu::Gpu,
+            rcd: &'static super::Rcd,
+            name: &str,
+            (w, h): (usize, usize),
+            colour: super::Colour,
+        ) -> RealWindow {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../../test/fixtures/mosaics/{name}.f32"));
+            let bytes = std::fs::read(path).expect("the window's mosaic");
+            assert_eq!(bytes.len(), w * h * 4);
+            let mosaic: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+                .collect();
+            let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+            let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+            let (width, height) = (w - 2 * Self::INSET, h - 2 * Self::INSET);
+            let at = super::Placement {
+                stride: crate::px::Span::exact(w),
+                crop: crate::px::Rect::exact(Self::INSET, Self::INSET, width, height),
+                dest: crate::px::At::ORIGIN,
+                frame: crate::px::Size::exact(width, height),
+                orientation: 0,
+                reduce: 1,
+            };
+            let frame = super::frame_buffer(gpu, width * height);
+            let (_shape, group) = super::shape_group(gpu, rcd, &cfa, &uploaded, super::MARGIN);
+            pollster::block_on(super::demosaic_into(
+                gpu, rcd, &uploaded, &cfa, &at, colour, &frame, &group,
+            ))
+            .expect("the demosaic runs");
+            let rgb = pollster::block_on(super::read_frame(gpu, &frame, width * height))
+                .expect("it reads back");
+            RealWindow {
+                mosaic,
+                stride: w,
+                ceiling: colour.ceiling,
+                width,
+                height,
+                rgb,
+            }
+        }
+
+        /// How full each colour's photosites are about an output pixel, as `assemble.slang`'s
+        /// `fills_at` measures it.
+        fn fill(&self, x: usize, y: usize) -> [f32; 3] {
+            let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+            let (mx, my) = (x + Self::INSET, y + Self::INSET);
+            let mut sum = [0.0f32; 3];
+            let mut seen = [0.0f32; 3];
+            for sy in my - 1..=my + 1 {
+                for sx in mx - 1..=mx + 1 {
+                    let colour = usize::from(cfa.colour_at(sy, sx)).min(2);
+                    sum[colour] += self.mosaic[sy * self.stride + sx];
+                    seen[colour] += 1.0;
+                }
+            }
+            std::array::from_fn(|c| sum[c] / seen[c] / self.ceiling[c])
+        }
+
+        fn pixel(&self, x: usize, y: usize) -> [f64; 3] {
+            let at = (y * self.width + x) * 3;
+            [0, 1, 2].map(|c| f64::from(self.rgb[at + c]))
+        }
+
+        fn census(&self) -> Census {
+            let mut census = Census::default();
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let fill = self.fill(x, y);
+                    let p = self.pixel(x, y);
+                    let hi = p[0].max(p[1]).max(p[2]);
+                    if fill.iter().all(|f| *f >= 0.995) {
+                        census.blown += 1;
+                        let spread = (hi - p[0].min(p[1]).min(p[2])) / hi.max(1.0);
+                        census.blown_spread = census.blown_spread.max(spread);
+                    }
+                    if fill.iter().any(|f| *f >= 0.75) {
+                        census.near += 1;
+                        if p[1] < 0.95 * p[0].min(p[2]) {
+                            census.magenta += 1;
+                        }
+                    }
+                }
+            }
+            census
+        }
+
+        fn snapshot(&self, gpu: &'static crate::gpu::Gpu) -> crate::snapshot::Snapshot {
+            let levels = crate::hdr::levels_of(gpu, &self.rgb, self.width, self.height, 0.995)
+                .expect("the window has levels");
+            let resident =
+                crate::resident::Resident::upload(gpu, &self.rgb, self.width, self.height);
+            crate::snapshot::Snapshot::crops(
+                crate::snapshot::Frame::Scene(
+                    &resident,
+                    crate::snapshot::Anchoring {
+                        levels: levels.anchored(),
+                        reference_white_nits: crate::light::Light::exactly(203.0),
+                    },
+                ),
+                &[crate::px::Rect::<crate::px::Pinned>::exact(
+                    0,
+                    0,
+                    self.width,
+                    self.height,
+                )],
+            )
+        }
+    }
+
+    #[derive(Default)]
+    struct Census {
+        /// Pixels whose photosites are full in every colour, and the widest any of them strays
+        /// from neutral as a share of its brightest channel.
+        blown: usize,
+        blown_spread: f64,
+        /// Pixels with any colour three quarters full, and those whose green sits more than 5%
+        /// under both red and blue.
+        near: usize,
+        magenta: usize,
+    }
+
+    impl Census {
+        fn blown_is_neutral(&self, what: &str, at_least: usize) {
+            assert!(
+                self.blown >= at_least,
+                "{what} holds {} blown pixels, which no longer covers it",
+                self.blown
+            );
+            assert!(
+                self.blown_spread <= 0.005,
+                "{what} came back {:.1}% off neutral where every photosite ran out",
+                self.blown_spread * 100.0
+            );
+        }
+
+        fn nothing_near_clipping_is_magenta(&self, what: &str) {
+            let share = self.magenta as f64 / self.near.max(1) as f64;
+            assert!(
+                share <= 0.005,
+                "{:.2}% of {what}'s {} pixels near clipping came back magenta",
+                share * 100.0,
+                self.near
+            );
+        }
+    }
+
     /// The middle pixel of a flat field at `level`, one value per CFA colour, through the demosaic
     /// and the colour pass with `colour`.
     ///
