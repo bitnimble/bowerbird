@@ -100,7 +100,7 @@ export const PrintDialog = observer(function PrintDialog(): JSX.Element | null {
       onOpenChange={(open) => (open ? undefined : presenter.close())}
       title={strings.print()}
     >
-      <DialogBody height="fixed">
+      <DialogBody height="capped">
         <Labelled label={strings.printer()} busy={printers.kind === 'loading'}>
           {printers.kind === 'failed' ? (
             <ErrorBanner>{strings.printersFailed()}</ErrorBanner>
