@@ -6,6 +6,7 @@ import {
   type Printer,
   type PrinterCapabilities,
   type PrintJobState,
+  type PrintPreviewRequest,
   type PrintRequest,
   type PrintSheetRequest,
 } from '../../../src/schemas/printing';
@@ -56,6 +57,15 @@ export const printingApi = {
       'GET',
       `${printer(id)}${route(PathSegment.jobs(), String(jobId))}`,
     ),
+  preview: async (preview: PrintPreviewRequest, signal?: AbortSignal): Promise<Blob> => {
+    const { bytes, mediaType } = await requestFile(
+      'POST',
+      route(PathSegment.api(), PathSegment.printing(), PathSegment.preview()),
+      preview,
+      { signal },
+    );
+    return new Blob([new Uint8Array(bytes)], { type: mediaType });
+  },
   sheet: async (sheet: PrintSheetRequest): Promise<Blob> => {
     const { bytes, mediaType } = await requestFile(
       'POST',

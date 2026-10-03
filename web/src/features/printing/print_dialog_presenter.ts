@@ -1,4 +1,4 @@
-import { action } from 'mobx';
+import { action, comparer, reaction } from 'mobx';
 import { printerProfilesApi } from '../../api/printer_profiles';
 import { printingApi, type PrintingSource } from '../../api/printing';
 import { ApiError } from '../../api/request';
@@ -9,6 +9,7 @@ import {
   PrintUnconfirmedSchema,
   type Printer,
   type PrinterCapabilities,
+  type PrintPreviewRequest,
 } from '../../../../src/schemas/printing';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { PrintDialogStrings as strings } from './print_dialog.strings';
@@ -28,6 +29,7 @@ const SHELL: PrintShell = {
 };
 
 const SHEET_LONG_EDGE = 3600;
+const PREVIEW_SETTLE_MS = 250;
 const POLL_MS = 2000;
 const POLLS = 15;
 
@@ -64,6 +66,9 @@ type SheetPrint = 'idle' | 'preparing' | 'ready' | 'printing';
 export class PrintDialogPresenter {
   private printersRequest: AbortController | null = null;
   private capabilitiesRequest: AbortController | null = null;
+  private previewRequest: AbortController | null = null;
+  private stopPreviewing: () => void = () => {};
+  private settingsOpen = false;
   private opening = 0;
   private sheetPrint: SheetPrint = 'idle';
 
@@ -88,6 +93,12 @@ export class PrintDialogPresenter {
     this.store.error = null;
     this.store.submitting = false;
     this.store.open = true;
+    this.stopPreviewing();
+    this.stopPreviewing = reaction(
+      () => this.store.previewAsked,
+      (asked) => void this.loadPreview(asked),
+      { delay: PREVIEW_SETTLE_MS, equals: comparer.structural, fireImmediately: true },
+    );
     void this.listPrinters();
     void this.listFiles();
   };
@@ -96,7 +107,17 @@ export class PrintDialogPresenter {
   close = (): void => {
     this.printersRequest?.abort();
     this.capabilitiesRequest?.abort();
+    this.stopPreviewing();
+    this.previewRequest?.abort();
+    this.showPreview(null);
+    this.settingsOpen = false;
     this.store.open = false;
+  };
+
+  /** The app's window took the focus back, which is how a reader returns from the system's settings. */
+  @action.bound
+  windowFocused = (): void => {
+    if (this.settingsOpen) this.rereadPrinter();
   };
 
   @action.bound
@@ -127,11 +148,15 @@ export class PrintDialogPresenter {
   openPrinterSettings = async (): Promise<void> => {
     const printer = this.store.printer;
     if (printer == null) return;
+    this.settingsOpen = true;
     try {
       await this.shell.openSettings(printer);
     } catch {
+      this.settingsOpen = false;
       this.toasts.showError(strings.settingsDidNotOpen());
+      return;
     }
+    this.rereadPrinter();
   };
 
   @action.bound
@@ -188,17 +213,50 @@ export class PrintDialogPresenter {
     }
   }
 
-  private async describe(id: string): Promise<void> {
+  /** The printer's options again, taking up its defaults: the settings may have changed them. */
+  private rereadPrinter(): void {
+    this.settingsOpen = false;
+    const id = this.store.printerId;
+    if (id != null && this.store.open) void this.describe(id, true);
+  }
+
+  private async describe(id: string, adoptDefaults = false): Promise<void> {
     this.capabilitiesRequest?.abort();
     const request = new AbortController();
     this.capabilitiesRequest = request;
     try {
       const described = await this.api.capabilities(id, request.signal);
-      if (!request.signal.aborted) this.described(id, described);
+      if (!request.signal.aborted) this.described(id, described, adoptDefaults);
     } catch {
-      if (!request.signal.aborted) this.describeFailed(id);
+      if (!request.signal.aborted && !adoptDefaults) this.describeFailed(id);
     }
   }
+
+  private async loadPreview(asked: PrintPreviewRequest | null): Promise<void> {
+    this.previewRequest?.abort();
+    if (asked == null) return;
+    const request = new AbortController();
+    this.previewRequest = request;
+    this.previewing('loading');
+    try {
+      const png = await this.api.preview(asked, request.signal);
+      if (!request.signal.aborted) this.showPreview(URL.createObjectURL(png));
+    } catch {
+      if (!request.signal.aborted) this.previewing('failed');
+    }
+  }
+
+  @action.bound
+  private previewing = (state: 'loading' | 'failed'): void => {
+    this.store.previewState = state;
+  };
+
+  @action.bound
+  private showPreview = (url: string | null): void => {
+    if (this.store.previewUrl != null) URL.revokeObjectURL(this.store.previewUrl);
+    this.store.previewUrl = url;
+    this.store.previewState = url == null ? 'loading' : 'ready';
+  };
 
   private async watch(printer: Printer, jobId: number): Promise<void> {
     for (let poll = 0; poll < POLLS; poll++) {
@@ -278,10 +336,21 @@ export class PrintDialogPresenter {
   };
 
   @action.bound
-  private described = (id: string, described: PrinterCapabilities): void => {
+  private described = (
+    id: string,
+    described: PrinterCapabilities,
+    adoptDefaults: boolean,
+  ): void => {
     if (this.store.printerId !== id) return;
     this.store.capabilities = { kind: 'ready', value: described };
-    this.apply(this.settled(this.store.settings, described));
+    const settings = adoptDefaults
+      ? {
+          ...this.store.settings,
+          media: described.defaultMedia ?? this.store.settings.media,
+          mediaType: described.defaultMediaType ?? this.store.settings.mediaType,
+        }
+      : this.store.settings;
+    this.apply(this.settled(settings, described));
   };
 
   @action.bound

@@ -8,6 +8,7 @@ import {
   PrintersSchema,
   PrintJobIdSchema,
   PrintJobStateSchema,
+  PrintPreviewRequestSchema,
   PrintRequestSchema,
   PrintSheetRequestSchema,
 } from '../../schemas/printing';
@@ -58,6 +59,15 @@ export class PrintingApi {
       if (!parsed.success) throw new AppError('VALIDATION_ERROR', 'not a print request');
       takeAsLongAsItTakes(c);
       return c.json(respond(PrintJobIdSchema, { jobId: await printing.submit(parsed.data) }));
+    });
+
+    app.post(route(PathSegment.preview()), async (c) => {
+      const parsed = PrintPreviewRequestSchema.safeParse(await c.req.json().catch(() => null));
+      if (!parsed.success) throw new AppError('VALIDATION_ERROR', 'not a print preview');
+      takeAsLongAsItTakes(c);
+      return new Response(new Uint8Array(await printing.preview(parsed.data)), {
+        headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' },
+      });
     });
 
     app.post(route(PathSegment.sheet()), async (c) => {

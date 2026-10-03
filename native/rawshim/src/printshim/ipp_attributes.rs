@@ -293,11 +293,12 @@ pub fn media_types(attributes: &Attributes) -> Vec<MediaType> {
 }
 
 pub fn default_media_type(attributes: &Attributes) -> Option<String> {
-    let collection = values(attributes, "media-col-default")
-        .first()?
-        .as_collection()?;
-    member(collection, "media-type")
+    values(attributes, "media-col-default")
+        .first()
+        .and_then(IppValue::as_collection)
+        .and_then(|collection| member(collection, "media-type"))
         .and_then(text)
+        .or_else(|| string(attributes, "media-type-default"))
         .map(str::to_string)
 }
 

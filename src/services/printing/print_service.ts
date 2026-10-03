@@ -14,6 +14,7 @@ import {
   type Printer,
   type PrinterCapabilities,
   type PrintJobState,
+  type PrintPreviewRequest,
   type PrintRequest,
   type PrintSheetRequest,
   type ProfileRef,
@@ -63,16 +64,10 @@ export class PrintService {
 
   async submit(request: PrintRequest): Promise<number | null> {
     const { colour, job, printer } = request;
-    const icc = colour.kind === 'profile' ? await this.icc(printer, colour.profile) : null;
-    const transport = transportOf(colour);
     return this.rendered(
       request.photoId,
       {
-        space: transport.space,
-        bits: transport.bits,
-        intent: request.intent === 'perceptual' ? 'perceptual' : 'relative',
-        blackPointCompensation: true,
-        icc,
+        ...(await this.coded(request)),
         width: job.place.width,
         height: job.place.height,
         quarterTurns: request.quarterTurns,
@@ -80,8 +75,26 @@ export class PrintService {
       async (image) =>
         replyOf(
           PrintJobIdSchema,
-          await this.run({ kind: 'submit', printer, image, job: { ...job, transport } }, SUBMIT_MS),
+          await this.run(
+            { kind: 'submit', printer, image, job: { ...job, transport: transportOf(colour) } },
+            SUBMIT_MS,
+          ),
         ).jobId,
+    );
+  }
+
+  /** The photo coded as its print would be, at eight bits, which shows the same colours. */
+  async preview(request: PrintPreviewRequest): Promise<Uint8Array> {
+    return this.rendered(
+      request.photoId,
+      {
+        ...(await this.coded(request)),
+        bits: 8,
+        width: request.width,
+        height: request.height,
+        quarterTurns: 0,
+      },
+      (image) => readFile(image),
     );
   }
 
@@ -141,6 +154,23 @@ export class PrintService {
         ).unref();
       });
     }
+  }
+
+  private async coded({
+    printer,
+    colour,
+    intent,
+  }: Pick<PrintRequest, 'printer' | 'colour' | 'intent'>): Promise<
+    Omit<PrintRenderTarget, 'width' | 'height' | 'quarterTurns'>
+  > {
+    const { space, bits } = transportOf(colour);
+    return {
+      space,
+      bits,
+      intent: intent === 'perceptual' ? 'perceptual' : 'relative',
+      blackPointCompensation: true,
+      icc: colour.kind === 'profile' ? await this.icc(printer, colour.profile) : null,
+    };
   }
 
   private async icc(printer: string, profile: ProfileRef): Promise<Uint8Array> {

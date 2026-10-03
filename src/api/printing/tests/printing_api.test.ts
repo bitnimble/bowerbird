@@ -160,6 +160,35 @@ describe('PrintingApi', () => {
     expect(existsSync(render?.output ?? '')).toBe(false);
   });
 
+  it('previews the whole photo coded as its print would be, unturned and at eight bits', async () => {
+    await writeFile(path.join(profilesDir(), 'Lustre.icc'), 'lustre');
+    const res = await post(buildApp(), '/preview', {
+      photoId: 'photo-1',
+      printer: PRINTER,
+      colour: REQUEST.colour,
+      intent: REQUEST.intent,
+      width: 900,
+      height: 600,
+    });
+    expect(res.headers.get('content-type')).toBe('image/png');
+    expect(await res.text()).toBe('png of photo-1');
+    const [render] = renders;
+    expect({
+      ...render?.target,
+      icc: new TextDecoder().decode(render?.target.icc ?? undefined),
+    }).toEqual({
+      space: 'device',
+      bits: 8,
+      intent: 'relative',
+      blackPointCompensation: true,
+      icc: 'lustre',
+      width: 900,
+      height: 600,
+      quarterTurns: 0,
+    });
+    expect(commands).toEqual([]);
+  });
+
   it('refuses a profile file outside the folder', async () => {
     await writeFile(path.join(dir, 'secret.icc'), 'secret');
     const res = await post(buildApp(), '/jobs', {

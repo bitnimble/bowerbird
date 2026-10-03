@@ -1,8 +1,14 @@
 //! The system's own printer options, and Android's print dialog over the page.
 
+/// Resolves once the settings have closed where the system says so (Windows), or once they've
+/// opened elsewhere.
 #[tauri::command]
-pub fn open_printer_settings(id: String, name: String) -> Result<(), String> {
-    settings(&id, &name).map_err(|e| format!("could not open the settings for {name}: {e}"))
+pub async fn open_printer_settings(id: String, name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        settings(&id, &name).map_err(|e| format!("could not open the settings for {name}: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(target_os = "windows")]
@@ -14,7 +20,7 @@ fn settings(_id: &str, name: &str) -> std::io::Result<()> {
     // Printing preferences: the per-user defaults a job then prints with.
     std::process::Command::new("rundll32")
         .args(["printui.dll,PrintUIEntry", "/e", "/n", name])
-        .spawn()
+        .status()
         .map(|_| ())
 }
 

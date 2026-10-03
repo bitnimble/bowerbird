@@ -54,10 +54,11 @@ export async function requestFile(
   method: string,
   path: string,
   body?: unknown,
+  options?: RequestOptions,
 ): Promise<{ bytes: Uint8Array; mediaType: string; filename: string | null }> {
   let reply: Reply;
   try {
-    reply = await send(method, path, body);
+    reply = await send(method, path, body, options);
   } catch (err) {
     throw new ApiError('NETWORK_ERROR', `cannot reach the API at ${path}: ${describe(err)}`, 0);
   }

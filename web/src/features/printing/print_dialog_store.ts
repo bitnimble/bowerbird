@@ -1,4 +1,4 @@
-import { computed, observable } from 'mobx';
+import { comparer, computed, observable } from 'mobx';
 import type { RenderingIntent } from '../../../../src/schemas/rendering_intent';
 import {
   marginChoices,
@@ -14,6 +14,7 @@ import {
   type Media,
   type Printer,
   type PrinterCapabilities,
+  type PrintPreviewRequest,
   type PrintRequest,
   type ProfileRef,
 } from '../../../../src/schemas/printing';
@@ -45,6 +46,8 @@ export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
 
 export type PrintSheet = { url: string; name: string };
 
+const PREVIEW_LONG_EDGE = 900;
+
 export class PrintDialogStore {
   @observable accessor open = false;
   @observable.ref accessor photo: PrintPhoto | null = null;
@@ -58,6 +61,32 @@ export class PrintDialogStore {
   @observable accessor error: string | null = null;
   /** The rendered photo the system print dialog lays out, where that dialog is ours to use. */
   @observable.ref accessor sheet: PrintSheet | null = null;
+  /** An object URL of the last preview to arrive, kept on screen while the next is fetched. */
+  @observable accessor previewUrl: string | null = null;
+  @observable accessor previewState: 'loading' | 'ready' | 'failed' = 'loading';
+
+  /** What the preview should show now: the photo as the chosen printer would be sent it. */
+  @computed({ equals: comparer.structural }) get previewAsked(): PrintPreviewRequest | null {
+    const { photo, printer, colour } = this;
+    if (photo == null || printer == null || colour == null) return null;
+    const scale = Math.min(1, PREVIEW_LONG_EDGE / Math.max(photo.width, photo.height));
+    return {
+      photoId: photo.id,
+      printer: printer.id,
+      colour,
+      intent: this.settings.intent,
+      width: Math.max(1, Math.round(photo.width * scale)),
+      height: Math.max(1, Math.round(photo.height * scale)),
+    };
+  }
+
+  /** The note under the preview, where the colour falls short of the best this printer could do. */
+  @computed get colourShortfall(): 'srgb' | 'eight-bit' | null {
+    const colour = this.colour;
+    if (colour?.kind === 'srgb') return 'srgb';
+    if (colour?.kind === 'adobe-rgb' && colour.bits === 8) return 'eight-bit';
+    return null;
+  }
 
   @computed get printer(): Printer | null {
     if (this.printers.kind !== 'ready') return null;

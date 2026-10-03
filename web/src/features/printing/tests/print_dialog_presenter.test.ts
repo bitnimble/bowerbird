@@ -5,6 +5,7 @@ import type {
   Printer,
   PrinterCapabilities,
   PrintJobState,
+  PrintPreviewRequest,
   PrintRequest,
 } from '../../../../../src/schemas/printing';
 import { PrintDialogPresenter, type PrintShell } from '../print_dialog_presenter';
@@ -108,6 +109,11 @@ class FakePrinting implements PrintingSource {
     this.jobsAsked += 1;
     return Promise.resolve(this.jobStates.shift() ?? { state: 'processing', reasons: [] });
   };
+  previews: PrintPreviewRequest[] = [];
+  preview = (asked: PrintPreviewRequest): Promise<Blob> => {
+    this.previews.push(asked);
+    return Promise.resolve(new Blob([new Uint8Array(4)], { type: 'image/png' }));
+  };
   sheetGate: Promise<void> = Promise.resolve();
   sheet = async (sheet: { photoId: string; width: number; height: number }): Promise<Blob> => {
     this.sheets.push(sheet);
@@ -166,6 +172,86 @@ async function openOnPro200(): Promise<void> {
   api.describe(PRO_200.id, PRO_200_OPTIONS);
   await settle();
 }
+
+const previewSettled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 300));
+
+describe('the preview', () => {
+  test('shows the photo as this printer is sent it, and asks again only when that changes', async () => {
+    await openOnPro200();
+    await previewSettled();
+    expect(api.previews).toEqual([
+      {
+        photoId: 'photo-1',
+        printer: PRO_200.id,
+        colour: {
+          kind: 'profile',
+          bits: 16,
+          profile: { from: 'printer', name: 'PRO-200 Luster' },
+        },
+        intent: 'perceptual',
+        width: 900,
+        height: 600,
+      },
+    ]);
+    expect(store.previewState).toBe('ready');
+    const first = store.previewUrl;
+    expect(first).not.toBeNull();
+
+    presenter.set('media', LETTER.key);
+    presenter.set('fit', 'fill');
+    await previewSettled();
+    expect(api.previews).toHaveLength(1);
+
+    presenter.set('intent', 'relativeColorimetric');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.previewUrl).toBe(first);
+    await previewSettled();
+    expect(api.previews.at(-1)?.intent).toBe('relativeColorimetric');
+    expect(store.previewUrl).not.toBe(first);
+  });
+
+  test('notes only a colour that falls short of 16-bit Adobe RGB', async () => {
+    await openOnPro200();
+    expect(store.colourShortfall).toBeNull();
+    const taking = (bits: 8 | 16): PrinterCapabilities => ({
+      ...OFFICE_OPTIONS,
+      colour: { transports: [{ space: 'adobe-rgb', bits }], profiles: [] },
+    });
+    for (const [options, shortfall] of [
+      [taking(16), null],
+      [taking(8), 'eight-bit'],
+      [OFFICE_OPTIONS, 'srgb'],
+    ] as const) {
+      presenter.choosePrinter(OFFICE.id);
+      api.describe(OFFICE.id, options);
+      await settle();
+      expect(store.colourShortfall).toBe(shortfall);
+    }
+  });
+});
+
+describe('the printer settings', () => {
+  test('coming back from them reads the printer again and takes up its new defaults', async () => {
+    await openOnPro200();
+    presenter.set('media', LETTER.key);
+    presenter.set('mediaType', 'stationery');
+    await presenter.openPrinterSettings();
+    api.describe(PRO_200.id, {
+      ...PRO_200_OPTIONS,
+      defaultMedia: A4.key,
+      defaultMediaType: 'photographic-glossy',
+    });
+    await settle();
+    expect(store.settings).toMatchObject({ media: A4.key, mediaType: 'photographic-glossy' });
+  });
+
+  test('a window regaining focus with no settings opened reads nothing', async () => {
+    await openOnPro200();
+    const asked = api.capabilitiesAsked.length;
+    presenter.windowFocused();
+    expect(api.capabilitiesAsked).toHaveLength(asked);
+  });
+});
 
 describe('PrintDialogPresenter', () => {
   test('opening loads the printers, chooses the default, and fills its defaults', async () => {

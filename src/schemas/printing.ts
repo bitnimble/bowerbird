@@ -180,3 +180,16 @@ export const PrintSheetRequestSchema = z.object({
   height: z.number().int().positive().max(12000),
 });
 export type PrintSheetRequest = z.infer<typeof PrintSheetRequestSchema>;
+
+const PREVIEW_EDGE_MAX_PX = 2000;
+
+/** The whole photo, unturned, coded as `printer` would be sent it through `colour`. */
+export const PrintPreviewRequestSchema = z.object({
+  photoId: z.string(),
+  printer: PrinterIdSchema,
+  colour: ColourPathSchema,
+  intent: RenderingIntentSchema,
+  width: z.number().int().positive().max(PREVIEW_EDGE_MAX_PX),
+  height: z.number().int().positive().max(PREVIEW_EDGE_MAX_PX),
+});
+export type PrintPreviewRequest = z.infer<typeof PrintPreviewRequestSchema>;

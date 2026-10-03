@@ -58,6 +58,7 @@ pub struct Cups {
 struct Endpoint {
     uri: String,
     attributes: Attributes,
+    queue: Attributes,
     raster: Vec<Transport>,
     pdf: bool,
     ppd: Option<String>,
@@ -153,11 +154,18 @@ impl Cups {
         } else {
             "pwg-raster-document-resolution-supported"
         };
+        let media_types = attributes::media_types(printer);
+        // The queue's defaults are the ones the reader sets in the system's printer settings.
+        let default_media_type = [&endpoint.queue, printer]
+            .into_iter()
+            .filter_map(attributes::default_media_type)
+            .find(|key| media_types.iter().any(|offered| offered.key == *key));
         Ok(Capabilities {
             media: sizes.iter().map(attributes::MediaSize::media).collect(),
-            default_media: attributes::default_media(printer, &sizes),
-            media_types: attributes::media_types(printer),
-            default_media_type: attributes::default_media_type(printer),
+            default_media: attributes::default_media(&endpoint.queue, &sizes)
+                .or_else(|| attributes::default_media(printer, &sizes)),
+            media_types,
+            default_media_type,
             resolutions_dpi: attributes::resolutions(printer, resolutions),
             copies_max: attributes::copies_max(printer),
             colour: Colour {
@@ -330,6 +338,7 @@ impl Cups {
             return Ok(Endpoint {
                 uri,
                 attributes,
+                queue: queue_attributes,
                 raster,
                 pdf: false,
                 ppd: None,
@@ -340,7 +349,8 @@ impl Cups {
             raster: ppd.as_deref().map(ppd_transports).unwrap_or_default(),
             pdf: accepts(&queue_attributes, PDF),
             uri: queue_uri,
-            attributes: queue_attributes,
+            attributes: queue_attributes.clone(),
+            queue: queue_attributes,
             ppd,
         })
     }
@@ -1025,6 +1035,7 @@ mod tests {
         let endpoint = |ppd: Option<&str>| Endpoint {
             uri: "ipp://localhost/printers/Pdf".into(),
             attributes: Attributes::new(),
+            queue: Attributes::new(),
             raster: Vec::new(),
             pdf: true,
             ppd: ppd.map(str::to_string),
