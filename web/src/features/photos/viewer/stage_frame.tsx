@@ -17,6 +17,14 @@ const styles = stylex.create({
 
 export type FrameState = 'ready' | 'retiring' | 'layer' | null;
 
+interface Painting {
+  element: HTMLCanvasElement;
+  frame: Decoded;
+  proof: RenderingIntent | null;
+  devicePeakNits: number;
+  done: Promise<void>;
+}
+
 // One mounted frame, owning its own decode.
 //
 // A component per source rather than one effect over a list, because a decode is
@@ -80,6 +88,7 @@ export function StageFrame({
   // never had. `stage_gpu` gives the path up at the same moment, so the fresh element takes
   // the 2D route and this cannot go round twice.
   const [attempt, setAttempt] = useState(0);
+  const painting = useRef<Painting | null>(null);
 
   useEffect(() => {
     const element = elementRef.current;
@@ -112,32 +121,42 @@ export function StageFrame({
       // Closed while its decode was in flight - the run moved on and this frame is not held
       // any more - and drawing a closed one throws.
       if (!live || frame.closed) return;
+      const was = painting.current;
+      const holds =
+        was != null &&
+        was.element === element &&
+        was.frame === frame &&
+        was.proof === proof &&
+        was.devicePeakNits === devicePeakNits;
+      const done = holds
+        ? was.done
+        : stageCanvases.paint(element, fittedCanvasSize(frame), frame, { devicePeakNits, proof });
+      if (!holds) painting.current = { element, frame, proof, devicePeakNits, done };
       // Reported after the draw, not beside it: the picture is up once the frame is in the
       // canvas, and everything that waits on a picture being up waits on this.
-      void stageCanvases
-        .paint(element, fittedCanvasSize(frame), frame, { devicePeakNits, proof })
-        .then(
-          () => {
-            if (!live) return;
-            // The file's own shape, not the decoded one's: what is decoded is capped at what this
-            // display can show, and a reader asking a photograph's dimensions is asking about the
-            // photograph.
-            report(frame.naturalWidth, frame.naturalHeight);
-          },
-          (err: unknown) => {
-            if (!live) return;
-            // The element is spent rather than the picture unreadable, so what it needs is a
-            // new element and not a report that the photograph is gone.
-            if (err instanceof CanvasLost) {
-              setAttempt((was) => was + 1);
-              return;
-            }
-            // A frame that decoded and then could not be drawn is as blank as one that never
-            // arrived, so it is reported the same way rather than left as an empty canvas the
-            // stage believes in.
-            missing.current(source);
-          },
-        );
+      void done.then(
+        () => {
+          if (!live) return;
+          // The file's own shape, not the decoded one's: what is decoded is capped at what this
+          // display can show, and a reader asking a photograph's dimensions is asking about the
+          // photograph.
+          report(frame.naturalWidth, frame.naturalHeight);
+        },
+        (err: unknown) => {
+          if (painting.current?.done === done) painting.current = null;
+          if (!live) return;
+          // The element is spent rather than the picture unreadable, so what it needs is a
+          // new element and not a report that the photograph is gone.
+          if (err instanceof CanvasLost) {
+            setAttempt((n) => n + 1);
+            return;
+          }
+          // A frame that decoded and then could not be drawn is as blank as one that never
+          // arrived, so it is reported the same way rather than left as an empty canvas the
+          // stage believes in.
+          missing.current(source);
+        },
+      );
     };
 
     const already = decodedFrame(source);
@@ -164,7 +183,8 @@ export function StageFrame({
     // `photoKey` and `hold`, not just `source`: a canvas is kept while its URL holds, so a
     // frame carried into the next round - which every decisive verdict does, the winner
     // keeping its slot - would otherwise never report again, and the round would show one
-    // photo whichever slot was asked for. Redrawing it costs the blit and no decode.
+    // photo whichever slot was asked for. Only the report reruns: repainting a canvas that
+    // already holds its frame is a GPU upload per held neighbour on every step.
   }, [source, photoKey, hold, attempt, proof, devicePeakNits]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
