@@ -215,6 +215,29 @@ export async function openOriginalWith(photoId: string): Promise<void> {
   await invoke('open_original_with', { photoId });
 }
 
+/** The desktop app talks to the system's printers; Android's app hands a page to its print dialog. */
+export function canPrint(): boolean {
+  return shellInvoke() != null && (!inMobileApp() || printsThroughSystemDialog());
+}
+
+export function printsThroughSystemDialog(): boolean {
+  return inMobileApp() && /Android/i.test(navigator.userAgent);
+}
+
+/** The printer's own options dialog, whose choices the next print uses. */
+export async function openPrinterSettings(printer: { id: string; name: string }): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('printer settings are the desktop app’s to open');
+  await invoke('open_printer_settings', { id: printer.id, name: printer.name });
+}
+
+/** Hands this page, as its print styles lay it out, to Android's print dialog. */
+export async function printPage(jobName: string): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('printing the page is the Android app’s to do');
+  await invoke('print_page', { jobName });
+}
+
 /** A subscription to the library's events. */
 export interface EventStream {
   close(): void;

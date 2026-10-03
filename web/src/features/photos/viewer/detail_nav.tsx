@@ -17,6 +17,7 @@ import {
   Layers2,
   Maximize,
   Maximize2,
+  Printer,
   RefreshCw,
   Redo2,
   RotateCcw,
@@ -31,7 +32,12 @@ import {
 import { observer } from 'mobx-react-lite';
 import { Link, useNavigate } from 'react-router-dom';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
-import { canOpenOriginalWith, canRevealFile, opensWithAMenu } from '../../../api/transport';
+import {
+  canOpenOriginalWith,
+  canPrint,
+  canRevealFile,
+  opensWithAMenu,
+} from '../../../api/transport';
 import { useIsMobile, useIsTouch } from '../../../app/device';
 import {
   useLibrariesStore,
@@ -52,6 +58,7 @@ import { DRAGS_WINDOW } from '../../../ui/title_bar';
 import { Row, Spacer } from '../../../ui/row';
 import { Text } from '../../../ui/text';
 import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
+import { PrintDialogStrings } from '../../printing/print_dialog.strings';
 import { EditToolbar } from '../../raw_edit/edit_tools';
 import { EditToolsStrings } from '../../raw_edit/edit_tools.strings';
 import type { EditStore } from '../../raw_edit/edit/edit_store';
@@ -95,7 +102,7 @@ const RENDITIONS: Option<ViewerRendition>[] = [
 // working copies at the viewer's own settings, where an export is a question with eight answers.
 // The share is the exception, and only because sharing is a gesture about the picture in front
 // of the reader.
-type Send = 'share' | 'original' | 'openWith' | 'reveal' | 'export';
+type Send = 'share' | 'original' | 'openWith' | 'reveal' | 'export' | 'print';
 
 const DOWNLOADS: Option<Send>[] = [
   { value: 'share', label: PhotoDetailStrings.share(), icon: <Share2 size={ICON} /> },
@@ -120,6 +127,7 @@ const DOWNLOADS: Option<Send>[] = [
     label: BulkBarStrings.exportPhotos(),
     icon: <HardDriveDownload size={ICON} />,
   },
+  { value: 'print', label: PrintDialogStrings.printPhoto(), icon: <Printer size={ICON} /> },
 ];
 
 // No share sheet on most desktop browsers, and a row that does nothing when pressed is worse
@@ -127,9 +135,11 @@ const DOWNLOADS: Option<Send>[] = [
 // once: what a browser can do does not change under the reader.
 const SHAREABLE = typeof navigator !== 'undefined' && typeof navigator.canShare === 'function';
 const OPENS_WITH = typeof navigator !== 'undefined' && canOpenOriginalWith();
+const PRINTS = typeof navigator !== 'undefined' && canPrint();
 
 function sendable(option: Option<Send>, composite: boolean): boolean {
   if (option.value === 'share') return SHAREABLE;
+  if (option.value === 'print') return PRINTS;
   // A composite has no RAW of its own to open.
   if (option.value === 'openWith') return OPENS_WITH && !composite;
   if (option.value === 'reveal') return canRevealFile() && !composite;
@@ -319,7 +329,15 @@ export const DetailNav = observer(function DetailNav({
   const store = useViewerStore();
   const replicationStore = useReplicationStore();
   const libraries = useLibrariesStore();
-  const { photos, export: exportPhotos, feedback, frameTv, replication, confirm } = usePresenters();
+  const {
+    photos,
+    export: exportPhotos,
+    feedback,
+    frameTv,
+    replication,
+    confirm,
+    printing,
+  } = usePresenters();
   const step = useStep();
   const navigate = useNavigate();
   const mobile = useIsMobile();
@@ -547,8 +565,22 @@ export const DetailNav = observer(function DetailNav({
     menuSection({
       label: PhotoDetailStrings.sectionSend(),
       content: <SendToFrameTv onSend={(tvId) => void frameTv.sendPhoto(photoId, tvId)} />,
-      options: DOWNLOADS.filter((option) => sendable(option, isComposite(store.photoFor(photoId)))),
+      options: DOWNLOADS.filter((option) =>
+        sendable(option, isComposite(store.photoFor(photoId))),
+      ).map((option) =>
+        option.value === 'print' ? { ...option, disabled: photo == null } : option,
+      ),
       onSelect: (form) => {
+        if (form === 'print') {
+          if (photo == null) return;
+          printing.openFor({
+            id: photoId,
+            name: path.split(/[\\/]/).pop() ?? path,
+            width: photo.display_width,
+            height: photo.display_height,
+          });
+          return;
+        }
         if (form === 'share') {
           void photos.share(photoId);
           return;

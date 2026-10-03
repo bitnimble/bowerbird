@@ -18,6 +18,8 @@ import { LabelsStore } from '../features/labels/labels_store';
 import { LibrariesPresenter } from '../features/libraries/libraries_presenter';
 import { LibrariesStore } from '../features/libraries/libraries_store';
 import { PhotosPresenter } from '../features/photos/photos_presenter';
+import { PrintDialogPresenter } from '../features/printing/print_dialog_presenter';
+import { PrintDialogStore } from '../features/printing/print_dialog_store';
 import { PrecompilePresenter } from '../features/precompile/precompile_presenter';
 import { PrecompileStore } from '../features/precompile/precompile_store';
 import { PRECOMPILED_KEY } from '../features/precompile/precompiled_key';
@@ -75,6 +77,7 @@ const FrameTvStoreContext = createContext<FrameTvStore | null>(null);
 const LabelsStoreContext = createContext<LabelsStore | null>(null);
 const LabelEditorStoreContext = createContext<LabelEditorStore | null>(null);
 const PrecompileStoreContext = createContext<PrecompileStore | null>(null);
+const PrintDialogStoreContext = createContext<PrintDialogStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -98,6 +101,7 @@ interface Presenters {
   frameTv: FrameTvPresenter;
   labels: LabelsPresenter;
   precompile: PrecompilePresenter;
+  printing: PrintDialogPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -145,6 +149,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     labels: new LabelsStore(),
     labelEditor: new LabelEditorStore(),
     precompile: new PrecompileStore(),
+    printing: new PrintDialogStore(),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -241,6 +246,7 @@ function build(): { stores: Stores; presenters: Presenters } {
         write: (version) => writeSetting(PRECOMPILED_KEY, version),
       },
     ),
+    printing: new PrintDialogPresenter(stores.printing, toasts),
   };
   return { stores, presenters };
 }
@@ -270,6 +276,7 @@ interface Stores {
   labels: LabelsStore;
   labelEditor: LabelEditorStore;
   precompile: PrecompileStore;
+  printing: PrintDialogStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -306,7 +313,11 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                                     <PrecompileStoreContext.Provider
                                                       value={stores.precompile}
                                                     >
-                                                      {children}
+                                                      <PrintDialogStoreContext.Provider
+                                                        value={stores.printing}
+                                                      >
+                                                        {children}
+                                                      </PrintDialogStoreContext.Provider>
                                                     </PrecompileStoreContext.Provider>
                                                   </ConfirmStoreContext.Provider>
                                                 </LabelEditorStoreContext.Provider>
@@ -387,5 +398,7 @@ export const useLabelEditorStore = (): LabelEditorStore =>
   required(useContext(LabelEditorStoreContext), 'LabelEditorStore');
 export const usePrecompileStore = (): PrecompileStore =>
   required(useContext(PrecompileStoreContext), 'PrecompileStore');
+export const usePrintDialogStore = (): PrintDialogStore =>
+  required(useContext(PrintDialogStoreContext), 'PrintDialogStore');
 export const usePresenters = (): Presenters =>
   required(useContext(PresentersContext), 'Presenters');

@@ -22,6 +22,8 @@ import { ExportDialog } from '../features/export/export_dialog';
 import { ExportsPage } from '../features/exports/exports_page';
 import { ReportBugDialog } from '../features/feedback/report_bug_dialog';
 import { EditLabelsDialog } from '../features/labels/edit_labels_dialog';
+import { PrintDialog } from '../features/printing/print_dialog';
+import { PrintSheet } from '../features/printing/print_sheet';
 import { Sidebar, sidebarWidth } from '../features/sidebar/sidebar';
 import { SidebarResizer } from '../features/sidebar/sidebar_resizer';
 import { Toasts } from '../features/toasts/toasts';
@@ -36,6 +38,7 @@ import {
   useLibrariesStore,
   usePrecompileStore,
   usePresenters,
+  usePrintDialogStore,
   useSidebarStore,
 } from './stores_context';
 import { useIsMobile, useIsTouch } from './device';
@@ -58,6 +61,9 @@ const styles = stylex.create({
   }),
   collapsed: {
     gridTemplateColumns: '1fr',
+  },
+  hiddenInPrint: {
+    display: { default: 'grid', '@media print': 'none' },
   },
   scrim: {
     position: 'fixed',
@@ -195,6 +201,7 @@ export const App = observer(function App(): JSX.Element {
   const { pathname } = useLocation();
   const { appSettings, sidebar: sidebarPresenter, precompile } = usePresenters();
   const { ready: precompiled } = usePrecompileStore();
+  const printSheet = usePrintDialogStore();
   useEffect(precompile.start, [precompile]);
 
   // The sidebar decides what to do on the first photo opened, so the settings cannot
@@ -243,6 +250,7 @@ export const App = observer(function App(): JSX.Element {
         styles.columns(`${sidebarWidth(sidebar.width)} 1fr`),
         (!sidebarOpen || mobile) && styles.collapsed,
         mobile && drawerOpen && drawerOut,
+        printSheet.sheet != null && styles.hiddenInPrint,
       )}
     >
       <HdrOutput />
@@ -274,6 +282,8 @@ export const App = observer(function App(): JSX.Element {
         {/* Mounted at the root rather than beside the menu that opens it: the bulk bar's
             export is the same dialog over a selection, on a different screen. */}
         <ExportDialog />
+        <PrintDialog />
+        <PrintSheet />
         {/* Opened from the sidebar's badge and from Settings, so it hangs off neither. */}
         <UpdateDialog />
         {/* The same, for the sidebar's entry and the photo menu's: only one of the two knows
