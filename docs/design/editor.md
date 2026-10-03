@@ -208,8 +208,10 @@ limit (perceptual) or cut at it (relative). Black: perceptual lifts the frame on
 black, relative does so with black point compensation and otherwise floors at it. The intents are
 Lightroom's two; absolute colorimetric proofs one medium on another, which a print of a photograph
 never asks for. The target is an interface, so
-sRGB and generic paper are the cube in closed form, and a printer profile is a table of its maximum
-chroma over 64 hues and 32 lumas. A profile is read into that table with moxcms each time one is
+sRGB and Adobe RGB are a cube in closed form, and a printer profile is a table of its maximum
+chroma over 64 hues and 32 lumas. Generic paper, with no printer named, is the Adobe RGB cube
+between the paper panel's black and white: the widest space a printer is commonly sent, so a
+proof shows what the print keeps rather than what sRGB would have cut. A profile is read into that table with moxcms each time one is
 picked - its device grid through the profile's relative transform into linear Rec.2020, binned by
 hue and luma - which costs 6ms for a CMYK printer, so nothing is cached. The same pass reads the
 profile's paper white and black, which then take over the paper panel's two reflectances. The
@@ -220,6 +222,18 @@ Luster reads b* −13 - and a reader's eye settles most of the way onto a sheet'
 Laid on whole, that white turns a whole print lavender.
 What a vendor's own perceptual table does is not reproduced: it is built for SDR input,
 and one operator for both ranges is the point.
+
+**A print is rendered by the same operator, into the best encoding the printer accepts.** A
+`print` job target (`print_output::Spec`) writes a PNG of exactly the pixels asked for: the
+print grade as the proof grades it, scaled to cover the file and cut to it about the reader's own
+crop, turned, brought inside the target by the intent, and coded for the space the printer is
+sent, from the top of the ladder down: the printer's own device RGB through its paper's profile
+(a 65-node table baked with moxcms, relative colorimetric, since the gamut was reached already;
+`print_output.slang` samples it), then Adobe RGB, then sRGB, each file tagged with its profile.
+Nothing of the proof's ink spread or paper tint goes into the file: those are the print seen, and
+the file is the print sent. The cover and the cut are the crop fractions tightened and the dispatch
+writing the file's pixels, so the resample is the gather every rendition reads with, and the frame
+is drawn at the size that makes it a magnification.
 Surface reflections can exceed diffuse white. Dragging or arrow keys rotate the sheet, the wheel
 lengthens the camera's focal length about whatever sits under the pointer and the middle button
 drags the view across, and Home or a double-click puts all three back. Zoom is the focal length
