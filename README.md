@@ -147,6 +147,17 @@ Someone who worked at Canva for a while.
 
 I like birds. Australian bowerbirds collect and arrange bright, shiny things.
 
+## development setup on Windows
+
+`scripts\setup-windows.ps1` installs the build tools with winget, skipping any already there, then
+fetches the pinned toolchains and dependencies. Run outside a checkout, it clones the repository
+first.
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
+bun run build:app
+```
+
 ## development formatting
 
 Install Prettier with `bun install` and rustfmt with `rustup component add rustfmt`.
