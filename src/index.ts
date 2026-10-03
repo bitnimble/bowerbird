@@ -87,6 +87,9 @@ import { QualityCheckApi } from './api/quality/quality_check_api';
 import { SettingsApi } from './api/settings/settings_api';
 import { UpdatesApi } from './api/updates/updates_api';
 import { PrinterProfilesApi } from './api/printer_profiles/printer_profiles_api';
+import { PrintingApi } from './api/printing/printing_api';
+import { PrintService } from './services/printing/print_service';
+import { printshimWorkers } from './services/printing/printshim';
 import { printerProfilesDir } from './utils/paths';
 import { UpdateService } from './services/updates/update_service';
 import { VERSION } from './version';
@@ -597,6 +600,10 @@ app.route(route(PathSegment.api(), PathSegment.browse()), new BrowseApi().routes
 app.route(
   route(PathSegment.api(), PathSegment.printerProfiles()),
   new PrinterProfilesApi(printerProfilesDir(config.dbPath)).routes,
+);
+app.route(
+  route(PathSegment.api(), PathSegment.printing()),
+  new PrintingApi(new PrintService(printshimWorkers(), printerProfilesDir(config.dbPath))).routes,
 );
 app.route(route(PathSegment.api(), PathSegment.libraries()), librariesApi.routes);
 app.route(route(PathSegment.api()), photosApi.routes);

@@ -68,6 +68,10 @@ const SYMBOLS = {
     returns: FFIType.i64,
   },
   bb_prepare_header_cap: { args: [], returns: FFIType.u64 },
+  bb_print_command: {
+    args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64],
+    returns: FFIType.i64,
+  },
   // How far the job counting itself right now has got, steps done over steps to do. Called from
   // the thread that is *not* inside `bb_run_job`, which is the only way to ask.
   bb_job_progress: { args: [], returns: FFIType.u64 },

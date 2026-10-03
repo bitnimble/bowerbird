@@ -60,6 +60,7 @@ const ENTRIES = [
   join(ROOT, 'src', 'services', 'processing', 'workers', 'processing_worker.ts'),
   join(ROOT, 'src', 'services', 'processing', 'workers', 'prepare_worker.ts'),
   join(ROOT, 'src', 'services', 'processing', 'rawshim', 'rawshim_command_worker.ts'),
+  join(ROOT, 'src', 'services', 'printing', 'printshim_worker.ts'),
   join(ROOT, 'src', 'services', 'maintenance', 'backup_worker.ts'),
 ];
 
