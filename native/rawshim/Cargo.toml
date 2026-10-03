@@ -256,6 +256,36 @@ incremental = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ash = "0.38"
 
+# `printshim`'s CUPS half, spoken over IPP. The protocol types only: `ipp`'s own blocking client
+# fixes a 10s connect timeout and cannot GET a profile or a PPD, so one `ureq` agent does both.
+# `rustls` is ureq's ring-backed TLS, so the library still links no C beyond the runtime.
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android", windows)))'.dependencies]
+ipp = { version = "7.0.0", default-features = false }
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+# The PDF a queue that takes no PWG raster is sent. Already in the tree under `png`.
+flate2 = "1.1.10"
+
+# `printshim`'s Windows half: the spooler, the driver's capabilities and XPS print packages.
+# wgpu's own version, so it shares the copy already in the tree.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Printing",
+  "Win32_Graphics_Printing_PrintTicket",
+  "Win32_Security",
+  "Win32_Storage_Packaging_Opc",
+  "Win32_Storage_Xps",
+  "Win32_Storage_Xps_Printing",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+  "Win32_UI_ColorSystem",
+  "Win32_UI_Shell",
+] }
+# `#[implement]` expands to paths through `windows_core`, so the job's status sink needs it named.
+windows-core = "0.62.2"
+
 # Not ours: rawler enables uuid's `v4`, and uuid refuses to compile for wasm32 without a named
 # source of randomness even where nothing generates one - here nothing does, the CR3 reader only
 # compares UUIDs it read out of BMFF boxes. Declared as our dependency so feature unification hands

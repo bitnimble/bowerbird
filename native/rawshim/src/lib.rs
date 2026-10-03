@@ -207,6 +207,9 @@ pub mod pmrid;
 pub mod png_write;
 pub mod print;
 pub mod printer_gamut;
+/// The printers the OS already has: what each takes, its colour profiles, and jobs sent to it.
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+pub mod printshim;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
 pub mod progress;
 pub mod px;
