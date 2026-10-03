@@ -189,6 +189,82 @@ describe('PrintingApi', () => {
     expect(commands).toEqual([]);
   });
 
+  it('renders one preview at a time, dropping one that waits behind a newer', async () => {
+    const finishes: (() => void)[] = [];
+    const rendered: number[] = [];
+    const service = new PrintService(
+      async () => undefined,
+      profilesDir(),
+      async (_photoId, target, output) => {
+        await new Promise<void>((resolve) => finishes.push(resolve));
+        rendered.push(target.width);
+        await writeFile(output, String(target.width));
+      },
+    );
+    const asked = (width: number): Promise<Uint8Array> =>
+      service.preview({
+        photoId: 'photo-1',
+        printer: PRINTER,
+        colour: { kind: 'srgb', bits: 8 },
+        intent: 'perceptual',
+        width,
+        height: 100,
+      });
+    const rendering = async (): Promise<void> => {
+      while (finishes.length === 0) await Bun.sleep(1);
+    };
+    const first = asked(100);
+    await rendering();
+    const second = asked(200);
+    const third = asked(300);
+    finishes.shift()?.();
+    expect(new TextDecoder().decode(await first)).toBe('100');
+    await expect(second).rejects.toMatchObject({ code: 'CONFLICT' });
+    await rendering();
+    expect(finishes).toHaveLength(1);
+    finishes.shift()?.();
+    expect(new TextDecoder().decode(await third)).toBe('300');
+    expect(rendered).toEqual([100, 300]);
+  });
+
+  it("reads a printer's profile once until its capabilities are read again", async () => {
+    outcomes.profile = { icc: Buffer.from('luster').toString('base64') };
+    outcomes.submit = { jobId: 7 };
+    outcomes.capabilities = {
+      media: [],
+      defaultMedia: null,
+      mediaTypes: [],
+      defaultMediaType: null,
+      resolutionsDpi: [300],
+      copiesMax: 99,
+      colour: { transports: [{ space: 'device', bits: 16 }], profiles: [] },
+    };
+    const app = buildApp();
+    const colour = {
+      kind: 'profile',
+      bits: 16,
+      profile: { from: 'printer', name: 'PRO-200 Luster' },
+    } as const;
+    await post(app, '/preview', {
+      photoId: 'photo-1',
+      printer: PRINTER,
+      colour,
+      intent: 'perceptual',
+      width: 900,
+      height: 600,
+    });
+    await post(app, '/jobs', { ...REQUEST, colour });
+    await app.request(`${AT}/printers/${encodeURIComponent(PRINTER)}/capabilities`);
+    await post(app, '/jobs', { ...REQUEST, colour });
+    expect(commands.map((command) => command.kind)).toEqual([
+      'profile',
+      'submit',
+      'capabilities',
+      'profile',
+      'submit',
+    ]);
+  });
+
   it('refuses a profile file outside the folder', async () => {
     await writeFile(path.join(dir, 'secret.icc'), 'secret');
     const res = await post(buildApp(), '/jobs', {

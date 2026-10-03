@@ -154,9 +154,7 @@ export class PrintDialogPresenter {
     } catch {
       this.settingsOpen = false;
       this.toasts.showError(strings.settingsDidNotOpen());
-      return;
     }
-    this.rereadPrinter();
   };
 
   @action.bound
@@ -237,25 +235,19 @@ export class PrintDialogPresenter {
     if (asked == null) return;
     const request = new AbortController();
     this.previewRequest = request;
-    this.previewing('loading');
     try {
       const png = await this.api.preview(asked, request.signal);
-      if (!request.signal.aborted) this.showPreview(URL.createObjectURL(png));
+      if (!request.signal.aborted) this.showPreview({ asked, url: URL.createObjectURL(png) });
     } catch {
-      if (!request.signal.aborted) this.previewing('failed');
+      if (!request.signal.aborted) this.showPreview({ asked, url: null });
     }
   }
 
   @action.bound
-  private previewing = (state: 'loading' | 'failed'): void => {
-    this.store.previewState = state;
-  };
-
-  @action.bound
-  private showPreview = (url: string | null): void => {
-    if (this.store.previewUrl != null) URL.revokeObjectURL(this.store.previewUrl);
-    this.store.previewUrl = url;
-    this.store.previewState = url == null ? 'loading' : 'ready';
+  private showPreview = (preview: PrintDialogStore['preview']): void => {
+    const shown = this.store.preview?.url;
+    if (shown != null) URL.revokeObjectURL(shown);
+    this.store.preview = preview;
   };
 
   private async watch(printer: Printer, jobId: number): Promise<void> {
@@ -342,15 +334,22 @@ export class PrintDialogPresenter {
     adoptDefaults: boolean,
   ): void => {
     if (this.store.printerId !== id) return;
+    const before = this.store.described;
     this.store.capabilities = { kind: 'ready', value: described };
-    const settings = adoptDefaults
-      ? {
-          ...this.store.settings,
-          media: described.defaultMedia ?? this.store.settings.media,
-          mediaType: described.defaultMediaType ?? this.store.settings.mediaType,
-        }
-      : this.store.settings;
-    this.apply(this.settled(settings, described));
+    const { settings } = this.store;
+    const changed = (now: string | null, was: string | null | undefined): string | null =>
+      adoptDefaults && now !== was ? now : null;
+    this.apply(
+      this.settled(
+        {
+          ...settings,
+          media: changed(described.defaultMedia, before?.defaultMedia) ?? settings.media,
+          mediaType:
+            changed(described.defaultMediaType, before?.defaultMediaType) ?? settings.mediaType,
+        },
+        described,
+      ),
+    );
   };
 
   @action.bound

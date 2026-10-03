@@ -1,7 +1,6 @@
 //! The system's own printer options, and Android's print dialog over the page.
 
-/// Resolves once the settings have closed where the system says so (Windows), or once they've
-/// opened elsewhere.
+/// Resolves once the settings have opened; the page learns they closed from its window's focus.
 #[tauri::command]
 pub async fn open_printer_settings(id: String, name: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -20,8 +19,8 @@ fn settings(_id: &str, name: &str) -> std::io::Result<()> {
     // Printing preferences: the per-user defaults a job then prints with.
     std::process::Command::new("rundll32")
         .args(["printui.dll,PrintUIEntry", "/e", "/n", name])
-        .status()
-        .map(|_| ())
+        .spawn()
+        .map(drop)
 }
 
 #[cfg(target_os = "macos")]

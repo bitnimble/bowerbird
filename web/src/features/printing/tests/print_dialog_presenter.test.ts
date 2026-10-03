@@ -193,9 +193,9 @@ describe('the preview', () => {
         height: 600,
       },
     ]);
-    expect(store.previewState).toBe('ready');
-    const first = store.previewUrl;
-    expect(first).not.toBeNull();
+    expect(store.previewBusy).toBe(false);
+    const first = store.preview?.url;
+    expect(first).toBeString();
 
     presenter.set('media', LETTER.key);
     presenter.set('fit', 'fill');
@@ -203,11 +203,34 @@ describe('the preview', () => {
     expect(api.previews).toHaveLength(1);
 
     presenter.set('intent', 'relativeColorimetric');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(store.previewUrl).toBe(first);
+    expect(store.previewBusy).toBe(true);
+    expect(store.preview?.url).toBe(first);
     await previewSettled();
     expect(api.previews.at(-1)?.intent).toBe('relativeColorimetric');
-    expect(store.previewUrl).not.toBe(first);
+    expect(store.preview?.url).not.toBe(first);
+    expect(store.previewBusy).toBe(false);
+  });
+
+  test('a preview that fails takes the last one away, rather than showing other settings', async () => {
+    await openOnPro200();
+    await previewSettled();
+    api.preview = () => Promise.reject(new Error('render failed'));
+    presenter.set('intent', 'relativeColorimetric');
+    await previewSettled();
+    expect(store.preview?.url).toBeNull();
+    expect(store.previewFailed).toBe(true);
+    expect(store.previewBusy).toBe(false);
+  });
+
+  test('stays busy while another printer is described, and stops if it cannot be', async () => {
+    await openOnPro200();
+    await previewSettled();
+    presenter.choosePrinter(OFFICE.id);
+    await settle();
+    expect(store.previewBusy).toBe(true);
+    api.capabilitiesAsked.at(-1)?.pending.reject(new Error('offline'));
+    await settle();
+    expect(store.previewBusy).toBe(false);
   });
 
   test('notes only a colour that falls short of 16-bit Adobe RGB', async () => {
@@ -233,16 +256,33 @@ describe('the preview', () => {
 describe('the printer settings', () => {
   test('coming back from them reads the printer again and takes up its new defaults', async () => {
     await openOnPro200();
+    await presenter.openPrinterSettings();
+    const asked = api.capabilitiesAsked.length;
+    presenter.set('media', A4.key);
+    presenter.set('mediaType', 'photographic-glossy');
+    expect(api.capabilitiesAsked).toHaveLength(asked);
+
+    presenter.windowFocused();
+    api.describe(PRO_200.id, {
+      ...PRO_200_OPTIONS,
+      defaultMedia: LETTER.key,
+      defaultMediaType: 'stationery',
+    });
+    await settle();
+    expect(store.settings).toMatchObject({ media: LETTER.key, mediaType: 'stationery' });
+    presenter.windowFocused();
+    expect(api.capabilitiesAsked).toHaveLength(asked + 1);
+  });
+
+  test('defaults the settings left alone keep what was chosen', async () => {
+    await openOnPro200();
     presenter.set('media', LETTER.key);
     presenter.set('mediaType', 'stationery');
     await presenter.openPrinterSettings();
-    api.describe(PRO_200.id, {
-      ...PRO_200_OPTIONS,
-      defaultMedia: A4.key,
-      defaultMediaType: 'photographic-glossy',
-    });
+    presenter.windowFocused();
+    api.describe(PRO_200.id, PRO_200_OPTIONS);
     await settle();
-    expect(store.settings).toMatchObject({ media: A4.key, mediaType: 'photographic-glossy' });
+    expect(store.settings).toMatchObject({ media: LETTER.key, mediaType: 'stationery' });
   });
 
   test('a window regaining focus with no settings opened reads nothing', async () => {

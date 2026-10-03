@@ -151,10 +151,13 @@ I like birds. Australian bowerbirds collect and arrange bright, shiny things.
 
 `scripts\setup-windows.ps1` installs the build tools with winget, skipping any already there, then
 fetches the pinned toolchains and dependencies. Run outside a checkout, it clones the repository
-first.
+first. Then build and install the app from a new terminal, which sees the updated PATH:
 
 ```
 powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
+```
+
+```
 bun run build:app
 ```
 

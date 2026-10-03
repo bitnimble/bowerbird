@@ -1,11 +1,12 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useId } from 'react';
-import type { Fit, PrintLayout } from '../../../../src/schemas/print_layout';
+import type { PrintLayout } from '../../../../src/schemas/print_layout';
 import { usePrintDialogStore } from '../../app/stores_context';
 import { Spinner } from '../../ui/spinner';
 import { Text } from '../../ui/text';
 import { size } from '../../ui/tokens.stylex';
+import type { PrintPhoto } from './print_dialog_store';
 import { PrintPreviewStrings as strings } from './print_preview.strings';
 
 const PAPER = '#ffffff';
@@ -52,17 +53,16 @@ const SHORTFALL = {
   'eight-bit': strings.eightBit,
 } as const;
 
-/** Where the photo lands on the page and how much of it shows, in page pixels. */
-function pictureOn(
+/** Where the unturned photo goes, before turning about the place's centre, in page pixels. */
+export function pictureOn(
   layout: PrintLayout,
-  fit: Fit,
   photo: { width: number; height: number },
 ): { x: number; y: number; width: number; height: number; turn: number } {
   const { place, quarterTurns } = layout;
   const sideways = quarterTurns % 2 === 1;
   const shown = sideways ? { width: photo.height, height: photo.width } : photo;
-  const scales = [place.width / shown.width, place.height / shown.height];
-  const scale = fit === 'fill' ? Math.max(...scales) : Math.min(...scales);
+  // Cover even when fitting, as the print does: a fitted place is only rounded off the photo's shape.
+  const scale = Math.max(place.width / shown.width, place.height / shown.height);
   const width = photo.width * scale;
   const height = photo.height * scale;
   return {
@@ -74,53 +74,29 @@ function pictureOn(
   };
 }
 
-export const PrintPreview = observer(function PrintPreview(): JSX.Element | null {
+export const PrintPreview = observer(function PrintPreview(): JSX.Element {
   const store = usePrintDialogStore();
-  const clip = useId();
-  const { layout, photo, previewUrl, previewState, colourShortfall } = store;
-  if (layout == null || photo == null) return null;
-  const { page, place } = layout;
-  const picture = pictureOn(layout, store.settings.fit, photo);
-  const centre = { x: place.x + place.width / 2, y: place.y + place.height / 2 };
+  const { layout, photo, previewBusy, previewFailed, colourShortfall } = store;
   return (
-    <section {...stylex.props(styles.preview)} aria-label={strings.printPreview()}>
+    <section
+      {...stylex.props(styles.preview)}
+      aria-label={strings.printPreview()}
+      aria-live="polite"
+      aria-busy={previewBusy}
+    >
       <div {...stylex.props(styles.stage)}>
-        <div {...stylex.props(styles.sheet)}>
-          <svg
-            {...stylex.props(styles.page)}
-            viewBox={`0 0 ${page.widthPx} ${page.heightPx}`}
-            width={page.widthPx}
-            height={page.heightPx}
-            role="img"
-            aria-label={photo.name}
-            aria-busy={previewState === 'loading'}
-          >
-            <clipPath id={clip}>
-              <rect x={place.x} y={place.y} width={place.width} height={place.height} />
-            </clipPath>
-            <rect width={page.widthPx} height={page.heightPx} fill={PAPER} />
-            {previewUrl != null && (
-              <g clipPath={`url(#${clip})`}>
-                <image
-                  href={previewUrl}
-                  x={picture.x}
-                  y={picture.y}
-                  width={picture.width}
-                  height={picture.height}
-                  preserveAspectRatio="none"
-                  transform={`rotate(${picture.turn} ${centre.x} ${centre.y})`}
-                />
-              </g>
-            )}
-          </svg>
-        </div>
-        {previewState === 'loading' && (
+        {layout != null && photo != null && (
+          <div {...stylex.props(styles.sheet)}>
+            <Page layout={layout} photo={photo} url={store.preview?.url ?? null} />
+          </div>
+        )}
+        {previewBusy && (
           <div {...stylex.props(styles.busy)}>
             <Spinner />
           </div>
         )}
       </div>
-      {previewState === 'failed' && (
+      {previewFailed && (
         <Text variant="muted" as="p">
           {strings.noPreview()}
         </Text>
@@ -133,3 +109,46 @@ export const PrintPreview = observer(function PrintPreview(): JSX.Element | null
     </section>
   );
 });
+
+function Page({
+  layout,
+  photo,
+  url,
+}: {
+  layout: PrintLayout;
+  photo: PrintPhoto;
+  url: string | null;
+}): JSX.Element {
+  const clip = useId();
+  const { page, place } = layout;
+  const picture = pictureOn(layout, photo);
+  const centre = { x: place.x + place.width / 2, y: place.y + place.height / 2 };
+  return (
+    <svg
+      {...stylex.props(styles.page)}
+      viewBox={`0 0 ${page.widthPx} ${page.heightPx}`}
+      width={page.widthPx}
+      height={page.heightPx}
+      role="img"
+      aria-label={photo.name}
+    >
+      <clipPath id={clip}>
+        <rect x={place.x} y={place.y} width={place.width} height={place.height} />
+      </clipPath>
+      <rect width={page.widthPx} height={page.heightPx} fill={PAPER} />
+      {url != null && (
+        <g clipPath={`url(#${clip})`}>
+          <image
+            href={url}
+            x={picture.x}
+            y={picture.y}
+            width={picture.width}
+            height={picture.height}
+            preserveAspectRatio="none"
+            transform={`rotate(${picture.turn} ${centre.x} ${centre.y})`}
+          />
+        </g>
+      )}
+    </svg>
+  );
+}

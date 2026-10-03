@@ -61,9 +61,9 @@ export class PrintDialogStore {
   @observable accessor error: string | null = null;
   /** The rendered photo the system print dialog lays out, where that dialog is ours to use. */
   @observable.ref accessor sheet: PrintSheet | null = null;
-  /** An object URL of the last preview to arrive, kept on screen while the next is fetched. */
-  @observable accessor previewUrl: string | null = null;
-  @observable accessor previewState: 'loading' | 'ready' | 'failed' = 'loading';
+  /** The last preview to arrive, kept on screen while the next is fetched; `url` is null where it failed. */
+  @observable.ref accessor preview: { asked: PrintPreviewRequest; url: string | null } | null =
+    null;
 
   /** What the preview should show now: the photo as the chosen printer would be sent it. */
   @computed({ equals: comparer.structural }) get previewAsked(): PrintPreviewRequest | null {
@@ -86,6 +86,16 @@ export class PrintDialogStore {
     if (colour?.kind === 'srgb') return 'srgb';
     if (colour?.kind === 'adobe-rgb' && colour.bits === 8) return 'eight-bit';
     return null;
+  }
+
+  @computed get previewBusy(): boolean {
+    const asked = this.previewAsked;
+    if (asked == null) return this.printerId != null && this.capabilities.kind === 'loading';
+    return !comparer.structural(this.preview?.asked, asked);
+  }
+
+  @computed get previewFailed(): boolean {
+    return this.previewAsked != null && !this.previewBusy && this.preview?.url == null;
   }
 
   @computed get printer(): Printer | null {

@@ -42,6 +42,9 @@ type Ask = Exclude<PrintCommand, { kind: 'submit' }>;
 
 export class PrintService {
   private readonly pending = new Map<string, number>();
+  private readonly printerProfiles = new Map<string, Map<string, Promise<Uint8Array>>>();
+  private previewsAsked = 0;
+  private previewing: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly run: PrintshimRun,
@@ -53,13 +56,25 @@ export class PrintService {
     return replyOf(PrintersSchema, await this.ask({ kind: 'list' })).printers;
   }
 
+  /** Also forgets the printer's profiles, so a dialog opened after a driver change reads them afresh. */
   async capabilities(printer: string): Promise<PrinterCapabilities> {
+    this.printerProfiles.delete(printer);
     return replyOf(CapabilitiesReplySchema, await this.ask({ kind: 'capabilities', printer }));
   }
 
-  async printerProfile(printer: string, name: string): Promise<Uint8Array> {
-    const { icc } = replyOf(PrinterIccSchema, await this.ask({ kind: 'profile', printer, name }));
-    return Buffer.from(icc, 'base64');
+  printerProfile(printer: string, name: string): Promise<Uint8Array> {
+    const profiles = this.printerProfiles.get(printer) ?? new Map<string, Promise<Uint8Array>>();
+    this.printerProfiles.set(printer, profiles);
+    const known = profiles.get(name);
+    if (known != null) return known;
+    const fetched: Promise<Uint8Array> = this.ask({ kind: 'profile', printer, name }).then(
+      (reply) => Buffer.from(replyOf(PrinterIccSchema, reply).icc, 'base64'),
+    );
+    profiles.set(name, fetched);
+    fetched.catch(() => {
+      if (profiles.get(name) === fetched) profiles.delete(name);
+    });
+    return fetched;
   }
 
   async submit(request: PrintRequest): Promise<number | null> {
@@ -83,19 +98,31 @@ export class PrintService {
     );
   }
 
-  /** The photo coded as its print would be, at eight bits, which shows the same colours. */
-  async preview(request: PrintPreviewRequest): Promise<Uint8Array> {
-    return this.rendered(
-      request.photoId,
-      {
-        ...(await this.coded(request)),
-        bits: 8,
-        width: request.width,
-        height: request.height,
-        quarterTurns: 0,
-      },
-      (image) => readFile(image),
-    );
+  /**
+   * The photo coded as its print would be, at eight bits, which shows the same colours. One renders
+   * at a time, and one asked for while another waits is refused in favour of the newer.
+   */
+  preview(request: PrintPreviewRequest): Promise<Uint8Array> {
+    const asked = ++this.previewsAsked;
+    const preview = this.previewing
+      .catch(() => undefined)
+      .then(async () => {
+        if (asked !== this.previewsAsked)
+          throw new AppError('CONFLICT', 'a newer print preview was asked for');
+        return this.rendered(
+          request.photoId,
+          {
+            ...(await this.coded(request)),
+            bits: 8,
+            width: request.width,
+            height: request.height,
+            quarterTurns: 0,
+          },
+          (image) => readFile(image),
+        );
+      });
+    this.previewing = preview;
+    return preview;
   }
 
   async job(printer: string, jobId: number): Promise<PrintJobState> {
