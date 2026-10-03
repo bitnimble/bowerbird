@@ -39,12 +39,12 @@ const styles = stylex.create({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
     gap: '20px',
-    alignItems: 'start',
   },
   fields: {
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
+    alignSelf: 'start',
   },
 });
 

@@ -15,22 +15,23 @@ const styles = stylex.create({
   preview: {
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
     gap: '8px',
-    position: 'sticky',
-    top: 0,
+    height: '100%',
   },
   stage: {
     position: 'relative',
+    flexGrow: 1,
+    minHeight: '320px',
+    backgroundColor: SURROUND,
+    borderRadius: size.radius,
+  },
+  // Absolute, so the page's own pixel size never sets the column's height.
+  sheet: {
+    position: 'absolute',
+    inset: '16px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxSizing: 'border-box',
-    width: '100%',
-    height: '420px',
-    padding: '16px',
-    backgroundColor: SURROUND,
-    borderRadius: size.radius,
   },
   page: {
     maxWidth: '100%',
@@ -84,33 +85,35 @@ export const PrintPreview = observer(function PrintPreview(): JSX.Element | null
   return (
     <section {...stylex.props(styles.preview)} aria-label={strings.printPreview()}>
       <div {...stylex.props(styles.stage)}>
-        <svg
-          {...stylex.props(styles.page)}
-          viewBox={`0 0 ${page.widthPx} ${page.heightPx}`}
-          width={page.widthPx}
-          height={page.heightPx}
-          role="img"
-          aria-label={photo.name}
-          aria-busy={previewState === 'loading'}
-        >
-          <clipPath id={clip}>
-            <rect x={place.x} y={place.y} width={place.width} height={place.height} />
-          </clipPath>
-          <rect width={page.widthPx} height={page.heightPx} fill={PAPER} />
-          {previewUrl != null && (
-            <g clipPath={`url(#${clip})`}>
-              <image
-                href={previewUrl}
-                x={picture.x}
-                y={picture.y}
-                width={picture.width}
-                height={picture.height}
-                preserveAspectRatio="none"
-                transform={`rotate(${picture.turn} ${centre.x} ${centre.y})`}
-              />
-            </g>
-          )}
-        </svg>
+        <div {...stylex.props(styles.sheet)}>
+          <svg
+            {...stylex.props(styles.page)}
+            viewBox={`0 0 ${page.widthPx} ${page.heightPx}`}
+            width={page.widthPx}
+            height={page.heightPx}
+            role="img"
+            aria-label={photo.name}
+            aria-busy={previewState === 'loading'}
+          >
+            <clipPath id={clip}>
+              <rect x={place.x} y={place.y} width={place.width} height={place.height} />
+            </clipPath>
+            <rect width={page.widthPx} height={page.heightPx} fill={PAPER} />
+            {previewUrl != null && (
+              <g clipPath={`url(#${clip})`}>
+                <image
+                  href={previewUrl}
+                  x={picture.x}
+                  y={picture.y}
+                  width={picture.width}
+                  height={picture.height}
+                  preserveAspectRatio="none"
+                  transform={`rotate(${picture.turn} ${centre.x} ${centre.y})`}
+                />
+              </g>
+            )}
+          </svg>
+        </div>
         {previewState === 'loading' && (
           <div {...stylex.props(styles.busy)}>
             <Spinner />
