@@ -147,7 +147,6 @@ pub mod fit;
 mod fit_curve;
 mod fit_lattice;
 mod fit_moments;
-mod fit_noise;
 mod fit_objective;
 mod fit_pairs;
 pub mod fit_score;
@@ -175,6 +174,7 @@ pub mod jpeg_gain_write;
 /// JPEG XL, the same.
 #[cfg(feature = "renditions")]
 pub mod jxl_write;
+pub mod lattice;
 pub mod lens;
 pub mod light;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
@@ -1027,7 +1027,7 @@ mod tests {
                     + colour
                         .chroma
                         .as_ref()
-                        .map_or(0, |map| map.nodes_flat().len())
+                        .map_or(0, |map| map.words().len())
                     + fitted.lens.distortion.as_ref().map_or(0, Vec::len)
                     + fitted
                         .lens

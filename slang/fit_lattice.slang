@@ -1,35 +1,44 @@
 // The chroma lattice's moments, accumulated where the pairs already are.
 //
 // **This one could not be a straight substitution like `fit_moments`.** A pair does not land on
-// one accumulator, it lands on the sixteen corners of its cell, and there are 1323 nodes of 26
-// sums. No thread can hold a private copy of that, and WGSL has no float atomic - so the pairs are
-// binned by the cell they fall in first, and the fold then reads each cell once per corner it
-// feeds. Every landing is visited the sixteen times it was always going to reach, rather than
-// scattered into sixteen places at once.
+// one accumulator, it lands on the sixteen corners of its cell, and there are thousands of nodes of
+// `NODE_WORDS` sums. No thread can hold a private copy of that, and WGSL has no float atomic - so
+// the pairs are binned by the cell they fall in first, and the fold then reads each cell once per
+// corner it feeds. Every landing is visited the sixteen times it was always going to reach, rather
+// than scattered into sixteen places at once.
 //
 // **A thread is a (slice, corner): `SLICE` landings of one cell, fed to one of its corners.** A
 // cell's run is as long as its share of the frame, and a dark frame puts most of its pairs in one
 // shadow cell, so no thread walks a whole run.
+//
+// The grid is polar (`hdr_fit::GridShape`): hue wraps, so it has as many cells as nodes, and its
+// first chroma ring is grey, which the host merges across hues before solving.
 
 import prelude;
 import times;
+import light;
+import index_space;
 
 struct Params {
     /// Pairs the lattice was given, and how many one thread of the scan walks.
     int pairs;
     int block;
     int blocks;
-    /// Where the chroma axes sit for this frame: `LatticeAxes`, one low and one scale an axis.
-    float low0;
-    float scale0;
-    float low1;
-    float scale1;
+    uint space;
+    /// Nodes along hue, chroma, lightness and surround.
+    int hue_nodes;
+    int chroma_nodes;
+    int level_nodes;
+    int surround_nodes;
+    /// Node gaps per unit of each lattice coordinate, and where lightness starts.
+    float chroma_scale;
+    float level_low;
     float level_scale;
     float surround_scale;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
-/// Per pair, the sample through the tone stage and the matrix, with its luma fourth.
+/// Per pair, what the operator acts on: the sample through the model so far, its luma fourth.
 [vk::binding(0, 0)] StructuredBuffer<float4> through;
 /// Per pair, the camera's rendering in the render's own linear Rec.2020.
 [vk::binding(1, 0)] StructuredBuffer<float4> target;
@@ -48,29 +57,33 @@ struct Params {
 [vk::binding(7, 0)] RWStructuredBuffer<float> corners;
 /// Per node, `NODE_WORDS` sums.
 [vk::binding(8, 0)] RWStructuredBuffer<float> moments;
+/// Per pair, the colour the lattice is indexed by: the sample through the tone stage and the
+/// matrix. `through` itself, unless the pass fits on what an earlier lattice left.
+[vk::binding(9, 0)] StructuredBuffer<float4> indexed;
 
-/// `hdr_fit`'s lattice, which every index here is built from.
-static const int MAP_CHROMA = 7;
-static const int MAP_LEVEL = 9;
-static const int MAP_SURROUND = 3;
-static const int MAP_NODES = MAP_CHROMA * MAP_CHROMA * MAP_LEVEL * MAP_SURROUND;
-/// Cells are one fewer than nodes on every axis: a cell is the gap between two of them.
-static const int CELLS =
-    (MAP_CHROMA - 1) * (MAP_CHROMA - 1) * (MAP_LEVEL - 1) * (MAP_SURROUND - 1);
 /// Corners of a cell, which is how many cells a node is a corner of.
 static const int CORNERS = 16;
 
 /// Words a landing occupies: its cell, its four fractions, its input, its target, the camera's
 /// luma, and its weight.
 static const int LANDING_WORDS = 12;
-/// Sums a node carries: `ata` 9, `atb` 6, `sx` 3, `st` 2, `btb`, `lta`, `lda` 2, `ltb`, `seen`.
-static const int NODE_WORDS = 26;
+/// Sums a node carries: `ata` 9, `atb` 6, `sx` 3, `st` 2, `btb`, `lta`, `lda` 2, `ltb`, `seen`,
+/// then the residual-weighted offset from the node and its square on each of the four axes, and
+/// the residual weight they were taken under.
+static const int NODE_WORDS = 35;
+static const int REACH_WORDS = 26;
 /// Landings one gathering thread walks at most.
 static const int SLICE = 256;
 
+int nodes() { return pc.hue_nodes * pc.chroma_nodes * pc.level_nodes * pc.surround_nodes; }
+int cells()
+{
+    return pc.hue_nodes * (pc.chroma_nodes - 1) * (pc.level_nodes - 1) * (pc.surround_nodes - 1);
+}
+
 /// Where the cells' ends, in landings and in slices, start in `counts`.
-int ends() { return 2 * pc.blocks * CELLS; }
-int slice_ends() { return 2 * pc.blocks * CELLS + CELLS; }
+int ends() { return 2 * pc.blocks * cells(); }
+int slice_ends() { return 2 * pc.blocks * cells() + cells(); }
 
 /// A cell's run of landings in `ordered`.
 uint2 run_of(int cell)
@@ -84,17 +97,26 @@ uint2 slices_of(int cell)
     return uint2(cell == 0 ? 0u : counts[slice_ends() + cell - 1], counts[slice_ends() + cell]);
 }
 
+int cell_index(int h, int r, int z, int s)
+{
+    return ((s * (pc.level_nodes - 1) + z) * (pc.chroma_nodes - 1) + r) * pc.hue_nodes + h;
+}
+
 /// The cell a corner of a node lies across, or -1 past the lattice's edge. `which`'s bits say which
-/// side on each axis, and a node is a cell's corner where the same bits are set.
+/// side on each axis, and a node is a cell's corner where the same bits are set. Hue wraps.
 int cell_toward(int node, int which)
 {
-    let cx = node % MAP_CHROMA - (which & 1);
-    let cy = (node / MAP_CHROMA) % MAP_CHROMA - ((which >> 1) & 1);
-    let cz = (node / (MAP_CHROMA * MAP_CHROMA)) % MAP_LEVEL - ((which >> 2) & 1);
-    let cs = node / (MAP_CHROMA * MAP_CHROMA * MAP_LEVEL) - ((which >> 3) & 1);
-    let inside = cx >= 0 && cx < MAP_CHROMA - 1 && cy >= 0 && cy < MAP_CHROMA - 1
-        && cz >= 0 && cz < MAP_LEVEL - 1 && cs >= 0 && cs < MAP_SURROUND - 1;
-    return inside ? ((cs * (MAP_LEVEL - 1) + cz) * (MAP_CHROMA - 1) + cy) * (MAP_CHROMA - 1) + cx : -1;
+    let h = node % pc.hue_nodes;
+    let r = (node / pc.hue_nodes) % pc.chroma_nodes;
+    let z = (node / (pc.hue_nodes * pc.chroma_nodes)) % pc.level_nodes;
+    let s = node / (pc.hue_nodes * pc.chroma_nodes * pc.level_nodes);
+    let ch = (h - (which & 1) + pc.hue_nodes) % pc.hue_nodes;
+    let cr = r - ((which >> 1) & 1);
+    let cz = z - ((which >> 2) & 1);
+    let cs = s - ((which >> 3) & 1);
+    let inside = cr >= 0 && cr < pc.chroma_nodes - 1 && cz >= 0 && cz < pc.level_nodes - 1
+        && cs >= 0 && cs < pc.surround_nodes - 1;
+    return inside ? cell_index(ch, cr, cz, cs) : -1;
 }
 
 /// Where a coordinate sits on an axis running up from `low`, and how far past.
@@ -108,24 +130,19 @@ void axis_at(float value, int nodes, float low, float scale, out int below, out 
     fraction = t - float(below);
 }
 
-/// Chroma to the space the axes are laid out in: signed root, so the nodes go where the colours
-/// are. `colour.slang` warps identically.
-float warp(float d) { return sign(d) * sqrt(abs(d)); }
-
 /// The cell a sample falls in, and its fractions across it.
-int cell_at(float level, float surround_of, float d0, float d2, out float4 fraction)
+int cell_at(float4 at, out float4 fraction)
 {
-    int x;
-    int y;
+    let turns = at.x * float(pc.hue_nodes);
+    let h = min(int(turns), pc.hue_nodes - 1);
+    fraction.x = turns - float(h);
+    int r;
     int z;
     int s;
-    axis_at(warp(d0), MAP_CHROMA, pc.low0, pc.scale0, x, fraction.x);
-    // Square root rather than the level itself, so the shadows get nodes in proportion to how much
-    // of a picture lives in them. The surround takes the same root for the same reason.
-    axis_at(warp(d2), MAP_CHROMA, pc.low1, pc.scale1, y, fraction.y);
-    axis_at(sqrt(max(level, 0.0)), MAP_LEVEL, 0.0, pc.level_scale, z, fraction.z);
-    axis_at(sqrt(max(surround_of, 0.0)), MAP_SURROUND, 0.0, pc.surround_scale, s, fraction.w);
-    return ((s * (MAP_LEVEL - 1) + z) * (MAP_CHROMA - 1) + y) * (MAP_CHROMA - 1) + x;
+    axis_at(at.y, pc.chroma_nodes, 0.0, pc.chroma_scale, r, fraction.y);
+    axis_at(at.z, pc.level_nodes, pc.level_low, pc.level_scale, z, fraction.z);
+    axis_at(at.w, pc.surround_nodes, 0.0, pc.surround_scale, s, fraction.w);
+    return cell_index(h, r, z, s);
 }
 
 /// Every pair as a landing: the cell it falls in and what it brings there.
@@ -139,24 +156,23 @@ void lat_land(uint3 id: SV_DispatchThreadID)
     let t = target[k];
     let ours = m.w;
     let theirs = dot(LUMA, t.xyz);
-    let d0 = m.x - ours;
-    let d2 = m.z - ours;
+    let at = lattice_at(opponent_of(measured<Rendered>(indexed[k].xyz), pc.space), surround[k]);
     float4 fraction;
-    let cell = cell_at(ours, surround[k], d0, d2, fraction);
+    let cell = cell_at(at, fraction);
 
-    let at = k * LANDING_WORDS;
-    landed[at] = float(cell);
-    landed[at + 1] = fraction.x;
-    landed[at + 2] = fraction.y;
-    landed[at + 3] = fraction.z;
-    landed[at + 4] = fraction.w;
-    landed[at + 5] = d0;
-    landed[at + 6] = d2;
-    landed[at + 7] = ours;
-    landed[at + 8] = t.x - theirs;
-    landed[at + 9] = t.z - theirs;
-    landed[at + 10] = theirs;
-    landed[at + 11] = weights[k];
+    let base = k * LANDING_WORDS;
+    landed[base] = float(cell);
+    landed[base + 1] = fraction.x;
+    landed[base + 2] = fraction.y;
+    landed[base + 3] = fraction.z;
+    landed[base + 4] = fraction.w;
+    landed[base + 5] = m.x - ours;
+    landed[base + 6] = m.z - ours;
+    landed[base + 7] = ours;
+    landed[base + 8] = t.x - theirs;
+    landed[base + 9] = t.z - theirs;
+    landed[base + 10] = theirs;
+    landed[base + 11] = weights[k];
 }
 
 /// Landings per (block, cell). One thread a block, walking its own pairs.
@@ -166,29 +182,30 @@ void lat_count(uint3 id: SV_DispatchThreadID)
 {
     let b = int(id.x);
     if (b >= pc.blocks) { return; }
-    for (int c = 0; c < CELLS; c++) { counts[b * CELLS + c] = 0u; }
+    let cells = cells();
+    for (int c = 0; c < cells; c++) { counts[b * cells + c] = 0u; }
     let first = b * pc.block;
     let last = min(first + pc.block, pc.pairs);
     for (int k = first; k < last; k++) {
         let cell = int(landed[k * LANDING_WORDS]);
-        counts[b * CELLS + cell] = counts[b * CELLS + cell] + 1u;
+        counts[b * cells + cell] = counts[b * cells + cell] + 1u;
     }
 }
 
 /// Each cell's own total, a thread a cell.
 ///
 /// Its own pass because the prefix below needs every one of them, and computing each cell's base
-/// by re-summing the cells before it is quadratic in the lattice - measurably so, at a cell count
-/// this size.
+/// by re-summing the cells before it is quadratic in the lattice.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void lat_total(uint3 id: SV_DispatchThreadID)
 {
     let cell = int(id.x);
-    if (cell >= CELLS) { return; }
+    let cells = cells();
+    if (cell >= cells) { return; }
     var total = 0u;
     for (int b = 0; b < pc.blocks; b++) {
-        total += counts[b * CELLS + cell];
+        total += counts[b * cells + cell];
     }
     counts[ends() + cell] = total;
 }
@@ -201,7 +218,8 @@ void lat_scan()
 {
     var base = 0u;
     var sliced = 0u;
-    for (int cell = 0; cell < CELLS; cell++) {
+    let cells = cells();
+    for (int cell = 0; cell < cells; cell++) {
         let total = counts[ends() + cell];
         base += total;
         sliced += (total + uint(SLICE) - 1u) / uint(SLICE);
@@ -219,11 +237,12 @@ void lat_scan()
 void lat_starts(uint3 id: SV_DispatchThreadID)
 {
     let cell = int(id.x);
-    if (cell >= CELLS) { return; }
+    let cells = cells();
+    if (cell >= cells) { return; }
     var seen = run_of(cell).x;
     for (int b = 0; b < pc.blocks; b++) {
-        let kept = counts[b * CELLS + cell];
-        counts[pc.blocks * CELLS + b * CELLS + cell] = seen;
+        let kept = counts[b * cells + cell];
+        counts[pc.blocks * cells + b * cells + cell] = seen;
         seen += kept;
     }
 }
@@ -234,13 +253,14 @@ void lat_write(uint3 id: SV_DispatchThreadID)
 {
     let b = int(id.x);
     if (b >= pc.blocks) { return; }
+    let cells = cells();
     let first = b * pc.block;
     let last = min(first + pc.block, pc.pairs);
     for (int k = first; k < last; k++) {
         let cell = int(landed[k * LANDING_WORDS]);
-        let slot = counts[pc.blocks * CELLS + b * CELLS + cell];
+        let slot = counts[pc.blocks * cells + b * cells + cell];
         ordered[int(slot)] = uint(k);
-        counts[pc.blocks * CELLS + b * CELLS + cell] = slot + 1u;
+        counts[pc.blocks * cells + b * cells + cell] = slot + 1u;
     }
 }
 
@@ -251,10 +271,11 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
 {
     let which = int(id.x) % CORNERS;
     let piece = id.x / uint(CORNERS);
-    if (piece >= counts[slice_ends() + CELLS - 1]) { return; }
+    let cells = cells();
+    if (piece >= counts[slice_ends() + cells - 1]) { return; }
     // The first cell whose slices end past this one.
     var low = 0;
-    var high = CELLS - 1;
+    var high = cells - 1;
     while (low < high) {
         let middle = (low + high) / 2;
         if (counts[slice_ends() + middle] > piece) { high = middle; } else { low = middle + 1; }
@@ -262,21 +283,17 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
     let run = run_of(low);
     let from = run.x + (piece - slices_of(low).x) * uint(SLICE);
     let to = min(from + uint(SLICE), run.y);
+    let side = float4(
+        float(which & 1), float((which >> 1) & 1), float((which >> 2) & 1), float((which >> 3) & 1));
 
     float sums[NODE_WORDS];
     for (int i = 0; i < NODE_WORDS; i++) { sums[i] = 0.0; }
     for (uint at = from; at < to; at++) {
         let base = int(ordered[int(at)]) * LANDING_WORDS;
-        let fx = landed[base + 1];
-        let fy = landed[base + 2];
-        let fz = landed[base + 3];
-        let fs = landed[base + 4];
+        let f = float4(landed[base + 1], landed[base + 2], landed[base + 3], landed[base + 4]);
         // The share this corner takes, which is `nodes_of`'s weight for it.
-        let wx = (which & 1) != 0 ? fx : 1.0 - fx;
-        let wy = ((which >> 1) & 1) != 0 ? fy : 1.0 - fy;
-        let wz = ((which >> 2) & 1) != 0 ? fz : 1.0 - fz;
-        let ws = ((which >> 3) & 1) != 0 ? fs : 1.0 - fs;
-        let sw = landed[base + 11] * (ws * wz * wy * wx);
+        let w = lerp(float4(1.0) - f, f, side);
+        let sw = landed[base + 11] * (w.x * w.y * w.z * w.w);
         if (!(sw > 0.0)) { continue; }
 
         let input = float3(landed[base + 5], landed[base + 6], landed[base + 7]);
@@ -304,6 +321,16 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
         sums[23] += sw * input.x * theirs;
         sums[24] += sw * input.y * theirs;
         sums[25] += sw;
+
+        // Where what the node has left to correct sits about it, in node gaps: the kernel's reach
+        // is sized off this, so a correction that only one tight colour asked for reaches no further.
+        let residual = sw * (length(tgt - input.xy) + abs(theirs - ours));
+        let offset = f - side;
+        for (int a = 0; a < 4; a++) {
+            sums[REACH_WORDS + a] += residual * offset[a];
+            sums[REACH_WORDS + 4 + a] += residual * offset[a] * offset[a];
+        }
+        sums[REACH_WORDS + 8] += residual;
     }
 
     for (int i = 0; i < NODE_WORDS; i++) {
@@ -322,7 +349,7 @@ void lat_fold(uint3 id: SV_DispatchThreadID)
 {
     let node = int(id.x) / NODE_WORDS;
     let word = int(id.x) % NODE_WORDS;
-    if (node >= MAP_NODES) { return; }
+    if (node >= nodes()) { return; }
     var sum = 0.0;
     for (int c = 0; c < CORNERS; c++) {
         let cell = cell_toward(node, c);

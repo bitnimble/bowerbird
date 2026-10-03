@@ -105,6 +105,10 @@ public struct Pq : IStandard {}
 /// The sRGB transfer over `SrgbLinear`: what an SDR rendition holds.
 public struct Srgb : IDomain {}
 
+/// A perceptual opponent space's lightness and two opponent axes (`index_space.slang`): Jzazbz
+/// or ICtCp. Coded, so not `ILinear`; fixed by its standard once `Rendered`'s white is pinned.
+public struct Opponent : IStandard {}
+
 /// A quantity of light, in the units of `D`.
 public struct Light<D : IDomain> {
     public float v;

@@ -12,8 +12,7 @@
 // the blend written out, which is the same data read the way the hardware reads it: a
 // texture unit does the fetch, the weights and the blend as one instruction. The chroma map
 // is the extreme case: eight corners times four components is thirty-two dependent scalar
-// loads for one trilinear that `SampleLevel` performs in a single fetch, and it measured at
-// 2.6ms of a 15ms edit.
+// loads for one trilinear that `SampleLevel` performs in a single fetch.
 //
 // The tone curve does NOT take that filter, and the difference is not luck. Hardware
 // filter weights carry about eight fractional bits; against a chroma correction that is
@@ -28,6 +27,8 @@ import adjust;
 import packed;
 import light;
 import px;
+import index_space;
+import block_split;
 
 // The frame stays as it arrived: interleaved RGB `u16` of normalised PQ, three to a pixel, in
 // the buffer it was uploaded into. Not a texture, and not padded to four components - that
@@ -36,21 +37,16 @@ import px;
 // the 2D cache and a raster scan does not need it.
 [vk::binding(1, 0)] public StructuredBuffer<uint> frame;
 [vk::binding(2, 0)] Texture2D<float4> curves;
+/// The baked lattice (`lattice_bake.slang`): the chroma pair's 2x2, then the tint each chroma
+/// axis takes from lightness and the lightness gain.
 [vk::binding(3, 0)] Texture3D<float4> chroma;
 [vk::binding(4, 0)] StructuredBuffer<float> matrix;
-// The rest of the node, past the four a single `rgba16float` texel holds. The alternatives
-// to more textures all cost the hardware trilinear: packing two nodes per texel breaks
-// filtering on whichever axis is doubled, and widening the volume means interpolating in the
-// shader. Another volume is one more fetch and nothing else.
 [vk::binding(10, 0)] Texture3D<float4> chroma_luma;
-// The ninth value, in a volume of its own. Eight fill two `rgba16float` texels exactly, so
-// the chroma-to-lightness pair costs one more fetch and three spare slots per node.
-[vk::binding(11, 0)] Texture3D<float4> chroma_tint;
 // The frame's own light at arm's length (`hdr_fit::SurroundThumb`), spanning the whole
 // photograph, which is what the lattice's surround axis reads.
 [vk::binding(17, 0)] Texture2D<float> surround_map;
-// The frame's nits at the fit's own footprint (`mean_frame.slang`), where the lattice is
-// read so the correction meets colours the fit actually taught.
+// The frame's nits at the fit's own footprint, two halves a block (`mean_frame.slang`), where
+// the lattice is read so the correction meets colours the fit actually taught.
 [vk::binding(19, 0)] Texture2D<float4> mean_frame;
 // The matched colour encoded for display and smoothed the way the camera smooths chroma
 // (`chroma_smooth.slang`), a texel per `edit.chroma_shrink` pixels on a grid anchored at the
@@ -195,96 +191,45 @@ public Colour<Rendered> curves_at(Colour<SceneNits> nits, Gain scale)
     return measured<Rendered>(ratios * (top + (peak - edit.trust_ceiling) * at_white));
 }
 
-/// `ChromaMap::axis`, as a texture coordinate: the node index, at its texel centre.
-float axis(float value, uint nodes, float low, float scale)
+/// A place on one axis of the baked volumes, as a texture coordinate at its texel centre.
+float texel_at(float t, uint texels)
 {
-    let t = min(max((value - low) * scale, 0.0), float(nodes - 1));
-    return (t + 0.5) / float(nodes);
+    return (min(max(t, 0.0), float(texels - 1)) + 0.5) / float(texels);
 }
 
-/// The lattice's correction, trilinear: the corrected chroma pair, then the corrected
-/// lightness.
+/// The lattice's correction: the corrected chroma pair, then the corrected lightness.
 ///
-/// Two fetches at the same coordinate, one per volume, so both halves of a node are
-/// blended over the same corners with the same weights.
+/// `index` is where the lattice is read; `level`, `d0` and `d2` are what the operator found there
+/// acts on. The fit taught every kernel on a supervision block's *mean*, so the read happens at
+/// the neighbourhood's colour while the correction lands on the pixel's own.
 ///
-/// `at_*` say where the lattice is read; `level`, `d0` and `d2` are what the operator
-/// found there acts on. The fit taught every node on a supervision block's *mean*, so the
-/// read happens at the neighbourhood's colour while the correction lands on the pixel's
-/// own - one coordinate for both is exact only where a pixel is its own neighbourhood.
-///
-/// The surround axis is packed into the volumes' depth, surround-major, and sampled one
-/// slab at a time with the blend done here: the level axis clamps inside its slab, so
-/// hardware filtering never blends across the seam, and the two slabs lerp over the same
-/// sixteen corners the fit landed its samples on (`ChromaMap::nodes_of`).
-float3 correct(
-    float at_level, float surround, float at_d0, float at_d2,
-    float level, float d0, float d2)
+/// The surround axis is packed into the volumes' depth, surround-major, and sampled one slab at a
+/// time with the blend done here, so hardware filtering never blends across the seam.
+float3 correct(float3 index, float surround, float level, float d0, float d2)
 {
-    let at2 = float2(
-        // A span per axis. Red-green and blue-yellow are not distributed alike in a frame, and
-        // one span for both leaves the narrower axis' outer nodes permanently empty.
-        //
-        // The chroma axes are walked in signed root space, the level axis in root space: a
-        // frame's chroma masses near neutral the way its levels mass in the shadows, so the
-        // nodes go where the colours are. `ChromaMap::warp` is the host's half of this.
-        axis(sign(at_d0) * sqrt(abs(at_d0)), edit.chroma_count, edit.chroma_low, edit.chroma_scale),
-        axis(sign(at_d2) * sqrt(abs(at_d2)), edit.chroma_count, edit.chroma_low_by, edit.chroma_scale_by));
-    let tz = min(max(sqrt(max(at_level, 0.0)) * edit.level_scale, 0.0), float(edit.level_count - 1));
-    let ts = min(
-        max(sqrt(max(surround, 0.0)) * edit.surround_scale, 0.0),
-        float(edit.surround_count - 1));
+    let at = lattice_at(opponent_of(measured<Rendered>(index), edit.index_space), surround);
+    // The hue axis carries a last texel that copies the first, so a turn of 1 is the same place
+    // as 0 and the clamp sampler wraps without a sampler of its own.
+    let tx = (at.x * float(edit.hue_count - 1) + 0.5) / float(edit.hue_count);
+    let ty = texel_at(at.y * edit.chroma_scale, edit.chroma_count);
+    let tz = min(max((at.z - edit.level_low) * edit.level_scale, 0.0), float(edit.level_count - 1));
+    let ts = min(max(at.w * edit.surround_scale, 0.0), float(edit.surround_count - 1));
     let slab = min(uint(ts), edit.surround_count - 2);
     let fs = ts - float(slab);
     let depth = float(edit.level_count * edit.surround_count);
-    let near = float3(at2, (float(slab * edit.level_count) + tz + 0.5) / depth);
-    let far = float3(at2, (float((slab + 1) * edit.level_count) + tz + 0.5) / depth);
+    let near = float3(tx, ty, (float(slab * edit.level_count) + tz + 0.5) / depth);
+    let far = float3(tx, ty, (float((slab + 1) * edit.level_count) + tz + 0.5) / depth);
 
     let cell = lerp(chroma.SampleLevel(bilinear, near, 0.0),
                     chroma.SampleLevel(bilinear, far, 0.0), fs);
-    // The volume holds the gain's *deviation* from 1, and the 1 is added here. Half floats
-    // carry a fixed relative precision, so storing 1.02 spends it all on the 1 and leaves
-    // 2^-11 of full scale on the part that matters; storing 0.02 spends it on the 0.02.
-    // It is worth 16x here, and it has to be: the 2x2 above multiplies chroma differences,
-    // which are small, where this multiplies luma itself. Stored as a gain the parity
-    // fixtures miss by 1.33 against a bound of 0.5, all of it f16.
-    // `.r` and `.g` are the luma-to-chroma pair and carry `level`, which is what lets a node
-    // move a colour that arrived with no chroma at all - the only part of this that acts on a
-    // neutral, and so the only part that can express a cast. They need no deviation trick:
-    // zero already means no tint.
+    // The lightness gain is stored as its deviation from 1: half floats carry a fixed relative
+    // precision, and 1.02 spends it on the 1 where 0.02 spends it on the part that matters.
     let rest = lerp(chroma_luma.SampleLevel(bilinear, near, 0.0),
                     chroma_luma.SampleLevel(bilinear, far, 0.0), fs);
-    let tint = lerp(chroma_tint.SampleLevel(bilinear, near, 0.0),
-                    chroma_tint.SampleLevel(bilinear, far, 0.0), fs);
-    // The third component is the corrected lightness outright, not a gain: it depends on
-    // chroma as well as level, so there is no single factor to multiply by. That is what lets
-    // a small saturated object take a different lightness correction from the surroundings it
-    // shares a node with, where one gain per node could only give them the average.
     return float3(
         cell.x * d0 + cell.y * d2 + rest.r * level,
         cell.z * d0 + cell.w * d2 + rest.g * level,
-        // **The chroma-to-lightness pair reads the chroma the fit was taught, scaled to this
-        // pixel's level.** `d0` and `d2` are the colour as the reader has lit it, and a balance
-        // multiplies chroma several times over - so `rest.a * d0` is a coefficient calibrated on
-        // one magnitude meeting another, and the lightness it produces stops tracking the level
-        // at all. Two samples of one surface then cross: measured at 2300K on a daylight frame,
-        // 4.6% of lit pairs across the picture reversed. Taken off the index as a chromaticity
-        // and scaled by `level` the term is proportional to what arrived, as the rest of the row is.
-        (1.0 + rest.b) * level
-            + (rest.a * chromaticity(at_d0, at_level, LUMA.r)
-                + tint.r * chromaticity(at_d2, at_level, LUMA.b)) * level);
-}
-
-/// A chroma difference over its luma, held to what a colour with no negative channel can have:
-/// `-1` where the channel is empty, `1 / weight - 1` where it is the whole luma.
-///
-/// The matrix hands the lattice colours past that - a saturated red at negative green with a
-/// luma near nothing - and dividing by that luma is a term whose size and sign follow the noise,
-/// which rendered as pink and dark speckle over one hue.
-float chromaticity(float d, float at_level, float weight)
-{
-    if (at_level <= 0.0) { return 0.0; }
-    return clamp(d / at_level, -1.0, 1.0 / weight - 1.0);
+        (1.0 + rest.b) * level);
 }
 
 /// A place in the frame, in the photograph's own pixels.
@@ -340,6 +285,36 @@ float4 cell_at(Texture2D<float4> cells, float2 at, uint step)
         f.y);
 }
 
+float3 mean_tap(int2 cell, float3 pixel)
+{
+    return mean_for(
+        mean_frame.Load(int3(cell.x * 2, cell.y, 0)),
+        mean_frame.Load(int3(cell.x * 2 + 1, cell.y, 0)),
+        pixel,
+        edit.reference);
+}
+
+/// `cell_at` over `mean_frame`'s two texels a block, each block's taken at the half `pixel`
+/// belongs to (`block_split.slang`).
+float3 mean_at(float2 at, uint step, float3 pixel)
+{
+    uint wide;
+    uint tall;
+    mean_frame.GetDimensions(wide, tall);
+    let scaled = photo_at(at) / float(step) - float2(0.5);
+    let ours = float2(float(edit.surround_left / step), float(edit.surround_top / step));
+    let local = scaled - ours;
+    let low = floor(local);
+    let f = local - low;
+    let last = int2(int(wide / 2) - 1, int(tall) - 1);
+    let a = clamp(int2(low), int2(0), last);
+    let b = clamp(int2(low) + int2(1), int2(0), last);
+    return lerp(
+        lerp(mean_tap(a, pixel), mean_tap(int2(b.x, a.y), pixel), f.x),
+        lerp(mean_tap(int2(a.x, b.y), pixel), mean_tap(b, pixel), f.x),
+        f.y);
+}
+
 /// What happens around the grey axis, given a colour the matrix has already been through, and
 /// the neighbourhood's colour through the same stages - where the lattice is read.
 public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, float surround)
@@ -349,15 +324,10 @@ public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, f
         if (edit.saturation == 1.0) { return m; }
         return measured<Rendered>(float3(l) + (m.v - float3(l)) * edit.saturation);
     }
-    let la = dot(LUMA, at.v);
-    let d = correct(la, surround, at.v.r - la, at.v.b - la, l, m.v.r - l, m.v.b - l);
+    let d = correct(at.v, surround, l, m.v.r - l, m.v.b - l);
     // The middle channel is not free: LUMA . d is zero by construction, so the two
     // coordinates carried through the map determine the third.
     let dg = -(LUMA.r * d.x + LUMA.b * d.y) / LUMA.g;
-    // The map is read at the level the colour arrived with, so the lookup cannot depend on
-    // its own output. `d.z` is the corrected lightness outright rather than a gain on `l`,
-    // and is floored at zero: a chroma term large enough to go negative is a node the fit had
-    // no business trusting, and black is the honest answer there rather than a wrapped colour.
     let lit = max(d.z, 0.0);
     return measured<Rendered>(float3(lit + d.x, lit + dg, lit + d.y));
 }
@@ -493,7 +463,7 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
     // ratios against the neighbourhood, so the block's mean rendering equals the fitted
     // answer and texture passes through as light rather than through the curve's bend.
     if (edit.has_mean != 0) {
-        let mean = measured<SceneNits>(cell_at(mean_frame, at, max(edit.mean_block, 1u)).rgb);
+        let mean = measured<SceneNits>(mean_at(at, max(edit.mean_block, 1u), nits.v));
         let mean_lit = lit_by_reader(mean);
         // The index off the frame as the fit saw it, the value off the light the reader asked
         // for - the same split as above, one texel out.

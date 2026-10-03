@@ -17,6 +17,8 @@
 
 import px;
 import times;
+import light;
+import index_space;
 
 struct Params {
     int width;
@@ -25,11 +27,13 @@ struct Params {
     int falloff;
     /// Half the plane's diagonal, which the radius bucket is a fraction of.
     float half;
-    /// Which of the two chroma axes this dispatch ranks: 0 is a*, 1 is b*.
+    /// What this dispatch ranks: 0 is the opponent chroma, 1 its lightness.
     int axis;
     /// The two ranks being looked for, as whole samples.
     int low_rank;
     int high_rank;
+    /// `index_space`'s space the lattice is indexed in.
+    uint space;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -53,12 +57,13 @@ static const uint AXIS_BINS = 3 * HALF_BINS;
 static const uint PER_RANK = 3;
 static const uint MARKS_PER_AXIS = 2 * PER_RANK;
 
-/// The chroma this sample carries on the axis being ranked: what the model made of it, less the
-/// luma it was measured against.
+/// What this sample carries on the axis being ranked, in the space the lattice is indexed in.
 float spread_of(int k)
 {
     let at = k * 4;
-    return pc.axis == 0 ? evaluated[at] - evaluated[at + 3] : evaluated[at + 2] - evaluated[at + 3];
+    let colour = measured<Rendered>(float3(evaluated[at], evaluated[at + 1], evaluated[at + 2]));
+    let opponent = opponent_of(colour, pc.space).v;
+    return pc.axis == 0 ? length(opponent.yz) : opponent.x;
 }
 
 /// A float's bits, reordered so that unsigned comparison is the float's own.

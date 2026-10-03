@@ -18,7 +18,8 @@
 
 use crate::fit::Lens;
 use crate::galosh::NoiseFit;
-use crate::hdr_fit::{ChromaMap, HdrColour, HdrMatch};
+use crate::hdr_fit::{HdrColour, HdrMatch};
+use crate::lattice::ChromaMap;
 use crate::tone::Levels;
 use half::f16;
 
@@ -31,7 +32,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 21;
+const VERSION: u8 = 22;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -48,6 +49,10 @@ const KIND_BALANCE: u8 = 8;
 /// The camera match is the largest thing here, two thirds of it the chroma lattice, and
 /// everything else is a few kilobytes.
 const SECTION_MAX: usize = 1 << 22;
+
+/// A stored lattice longer than this many kernel words is corrupt: a fit emits a few thousand
+/// kernels at most, which is the coarse grid's and the fine grid's nodes together.
+const MAX_KERNEL_WORDS: usize = crate::lattice::KERNEL_WORDS * 16384;
 
 #[derive(Clone, Default)]
 pub struct PhotoAnalysis {
@@ -493,10 +498,10 @@ fn section(out: &mut Vec<u8>, kind: u8, body: impl FnOnce(&mut Vec<u8>)) {
 /// The camera match: the curves and the lattice the shader reads, and the lens they were fitted
 /// through.
 ///
-/// Two thirds of it is the chroma lattice, which the shader reads out of an `rgba16float` texture -
-/// so those are stored as `f16`, because anything more is precision the GPU truncates on the way
-/// in. The tone curves are read from `r32float` and stay `f32`: a curve feeding an HDR grade is
-/// exactly where a thousandth of an error shows up as a band in a smooth sky.
+/// The lattice's kernels are stored as `f16`: the bake writes `rgba16float`, so anything more is
+/// precision the GPU truncates on the way out. The tone curves are read from `r32float` and stay
+/// `f32`: a curve feeding an HDR grade is exactly where a thousandth of an error shows up as a band
+/// in a smooth sky.
 fn put_match(out: &mut Vec<u8>, matched: &HdrMatch) {
     match &matched.colour {
         None => out.push(0),
@@ -559,15 +564,12 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
         None => out.push(0),
         Some(map) => {
             out.push(1);
-            // The fitted lattice, not the applied one: `densified` rebuilds the applied
-            // form on load, exactly, so storing it would spend 128x the bytes on numbers
-            // the reader can derive.
-            let coarse = map.coarse();
-            let shape = coarse.shape();
-            put_f32s(out, &shape.chroma_low);
-            put_f32s(out, &shape.chroma_scale);
-            for value in coarse.nodes_flat() {
-                out.extend_from_slice(&f16::from_f64(value).to_le_bytes());
+            let words = map.words();
+            let (head, kernels) = words.split_at(crate::lattice::HEAD_WORDS);
+            put_u32(out, kernels.len() as u32);
+            put_f32s(out, head);
+            for value in kernels {
+                out.extend_from_slice(&f16::from_f64(*value).to_le_bytes());
             }
             // The surround the map reads, which a loupe tile cannot compute for itself.
             put_u32(out, colour.surround.width as u32);
@@ -646,16 +648,15 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     let (chroma, surround) = match at.u8()? {
         0 => (None, crate::hdr_fit::SurroundThumb::none()),
         _ => {
-            let low = [at.f32()?, at.f32()?];
-            let scale = [at.f32()?, at.f32()?];
-            let mut nodes =
-                Vec::with_capacity(crate::hdr_fit::map_nodes() * crate::hdr_fit::NODE_VALUES);
-            for _ in 0..nodes.capacity() {
-                nodes.push(f64::from(f16::from_le_bytes([at.u8()?, at.u8()?])));
+            let count = at.u32()? as usize;
+            if count > MAX_KERNEL_WORDS {
+                return None;
             }
-            let map = ChromaMap::from_parts(&nodes, low, scale)?
-                .with_level_reach(f64::from(ceiling))
-                .densified();
+            let mut words = at.f32s(crate::lattice::HEAD_WORDS)?;
+            for _ in 0..count {
+                words.push(f64::from(f16::from_le_bytes([at.u8()?, at.u8()?])));
+            }
+            let map = ChromaMap::from_words(&words)?;
             let width = at.u32()?;
             let height = at.u32()?;
             // A stored size decides how much is read, so it is bounded before it is
@@ -968,7 +969,6 @@ impl Reader<'_> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::hdr_fit::{NODE_VALUES, map_nodes};
     use crate::light::Light;
 
     pub(crate) fn a_match() -> HdrMatch {
@@ -979,10 +979,18 @@ pub(crate) mod tests {
                 .map(|i| base + f64::from(i) * 0.0031)
                 .collect::<Vec<_>>()
         };
-        let nodes: Vec<f64> =
-            // Stepped so the largest value stays under 1: `f16` keeps the round trip's
-            // 1e-3 only up to there, and the lattice's real values live under it too.
-            (0..map_nodes() * NODE_VALUES).map(|i| 0.5 + f64::from(i as u32) * 0.00005).collect();
+        // As many as a fit keeps on a typical frame (`hdr_fit::FINE_CARRIED`).
+        let kernels = (0..1900)
+            .map(|k| {
+                let v = f64::from(k % 97) * 0.0071;
+                crate::lattice::Kernel {
+                    centre: [v, 0.1 + v, 0.05 + v, 0.3],
+                    reach: [0.083, 0.04, 0.021, 0.5],
+                    generator: [0.01 + v, -v, v, 0.02, 0.003, -0.004, 0.011],
+                    to_lightness: [0.012, -v],
+                }
+            })
+            .collect();
         HdrMatch {
             lens: Lens {
                 distortion: Some(vec![0.0, 0.011, 0.023, 0.041]),
@@ -1011,10 +1019,20 @@ pub(crate) mod tests {
                     temperature: 5320.0,
                     tint: -4.0,
                 }),
-                // Densified, as every map a fit hands out is: the writer stores its coarse
-                // decimation and the reader densifies back, so this round-trips exactly.
-                chroma: ChromaMap::from_parts(&nodes, [0.11, 0.22], [3.5, 4.5])
-                    .map(|map| map.densified()),
+                // At storage precision, as every map a fit hands out is.
+                chroma: Some(
+                    ChromaMap::new(
+                        crate::lattice::IndexSpace::Jzazbz,
+                        kernels,
+                        crate::lattice::LutAxes {
+                            chroma_top: 0.21,
+                            level_low: 0.0,
+                            level_top: 0.37,
+                            surround_top: 1.1,
+                        },
+                    )
+                    .stored(),
+                ),
                 surround: crate::hdr_fit::SurroundThumb {
                     width: 8,
                     height: 5,
@@ -1142,16 +1160,8 @@ pub(crate) mod tests {
         assert!(is.lens.distortion.is_some());
         assert!((is.lens.falloff.unwrap().1 - was.lens.falloff.unwrap().1).abs() < 1e-6);
 
-        // **The lattice keeps only what its texture does.** `rgba16float` is where these end up, so
-        // storing more than `f16` would be storing precision the GPU discards - and the tolerance
-        // here says exactly that rather than hiding it behind a loose comparison.
-        let (read, wrote) = (
-            is_colour.chroma.expect("a map").nodes_flat(),
-            was_colour.chroma.expect("a map").nodes_flat(),
-        );
-        for (read, wrote) in read.iter().zip(&wrote) {
-            assert!((read - wrote).abs() < 1e-3, "{read} against {wrote}");
-        }
+        // A fit hands out its map at storage precision, so it comes back to the bit.
+        assert_eq!(is_colour.chroma, was_colour.chroma);
         assert!((is_colour.ceiling - was_colour.ceiling).abs() < 1e-3);
         assert_eq!(
             (is_colour.surround.width, is_colour.surround.height),
@@ -1209,17 +1219,17 @@ pub(crate) mod tests {
 
     /// What one photograph costs on disk, so the number is measured rather than remembered.
     ///
-    /// This fixture's cost is the fixed part: the chroma lattice at 7938 `f16` across its
-    /// four axes, the curves at 768 `f32`, the particles at 22 `f32` each. A real fit adds
-    /// the surround thumb at its own grid.
+    /// This fixture's cost is the fixed part: the chroma lattice at 1900 kernels of 17 `f16`,
+    /// what a fit keeps on a typical frame and up to a third more on a busy one, the curves at 768
+    /// `f32`, the particles at 22 `f32` each. A real fit adds the surround thumb at its own grid.
     ///
     /// The two are checked apart because they scale differently: the first is a constant per
     /// photograph and the second is however dirty the glass was.
     #[test]
-    fn a_photograph_costs_about_thirty_one_kilobytes() {
+    fn a_photograph_costs_about_seventy_kilobytes() {
         let bytes = encode(&everything()).len();
         assert!(
-            (29_000..=33_000).contains(&bytes),
+            (69_000..=74_000).contains(&bytes),
             "one photograph's analysis is {bytes} bytes",
         );
 
@@ -1232,7 +1242,7 @@ pub(crate) mod tests {
         };
         let clean_bytes = encode(&clean).len();
         assert!(
-            (25_000..=29_500).contains(&clean_bytes),
+            (66_000..=70_500).contains(&clean_bytes),
             "a clean photograph's analysis is {clean_bytes} bytes",
         );
 

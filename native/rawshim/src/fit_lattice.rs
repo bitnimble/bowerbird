@@ -1,14 +1,16 @@
 //! The chroma lattice's moments, summed where the pairs already are.
 //!
-//! `slang/fit_lattice.slang` is the arithmetic. What crosses back is twenty-six sums a node -
-//! thirty-four thousand floats - which the host reads into `ChromaMoments`.
+//! `slang/fit_lattice.slang` is the arithmetic. What crosses back is `NODE_WORDS` sums a node,
+//! which the host reads into `ChromaMoments`.
 //!
 //! **A pair lands on sixteen nodes, so this needed a compaction the other folds did not.** The
 //! landings are binned by their cell in pair order, cut into slices of `SLICE`, and a thread per
 //! (slice, corner) then walks one slice for one of the nodes it reaches.
 
 /// Sums a node carries, which `fit_lattice.slang` states for itself.
-pub(crate) const NODE_WORDS: usize = 26;
+pub(crate) const NODE_WORDS: usize = 35;
+/// Where the residual-weighted offsets a kernel's reach is sized from start among them.
+pub(crate) const REACH_WORDS: usize = 26;
 /// Words a landing occupies on the device.
 const LANDING_WORDS: usize = 12;
 /// Corners of a cell, which is how many cells a node is a corner of.
@@ -64,6 +66,7 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
                 entry(6, write),
                 entry(7, write),
                 entry(8, write),
+                entry(9, read),
                 entry(20, wgpu::BufferBindingType::Uniform),
             ],
         });
@@ -96,26 +99,45 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     })
 }
 
-/// Where the lattice's axes sit for this frame, as the shader reads them.
-pub(crate) struct Axes {
-    pub low: [f64; 2],
-    pub scale: [f64; 2],
-    pub level: f64,
-    pub surround: f64,
+/// The grid a landing is made on, as the shader reads it.
+pub(crate) struct Grid {
+    pub space: crate::lattice::IndexSpace,
+    /// Nodes along hue, chroma, lightness and surround.
+    pub nodes: [usize; 4],
+    /// Node gaps per unit of chroma, lightness and surround, and where lightness starts.
+    pub chroma_scale: f64,
+    pub level_low: f64,
+    pub level_scale: f64,
+    pub surround_scale: f64,
 }
 
-/// Every pair's landing, folded into the twenty-six sums each node carries.
+impl Grid {
+    pub fn node_count(&self) -> usize {
+        self.nodes.iter().product()
+    }
+
+    /// Hue wraps, so it has a cell per node; every other axis has one fewer.
+    pub fn cell_count(&self) -> usize {
+        let [h, c, l, s] = self.nodes;
+        h * (c - 1) * (l - 1) * (s - 1)
+    }
+}
+
+/// Every pair's landing, folded into the sums each node carries.
+///
+/// `indexed` is the colour each pair is landed by and `through` what the operator acts on: the
+/// same buffer, except where the lattice is fitted on what an earlier one left.
 pub(crate) async fn moments(
     gpu: &'static crate::gpu::Gpu,
     through: &crate::gpu::Buffer,
+    indexed: &crate::gpu::Buffer,
     target: &crate::gpu::Buffer,
     surround: &crate::gpu::Buffer,
     weights: &crate::gpu::Buffer,
     pairs: usize,
-    axes: &Axes,
-    nodes: usize,
-    cells: usize,
+    grid: &Grid,
 ) -> Option<Vec<[f64; NODE_WORDS]>> {
+    let (nodes, cells) = (grid.node_count(), grid.cell_count());
     if pairs == 0 {
         return Some(vec![[0.0; NODE_WORDS]; nodes]);
     }
@@ -124,6 +146,7 @@ pub(crate) async fn moments(
 
     let mut recording = gpu.record();
     recording.holding(through);
+    recording.holding(indexed);
     recording.holding(target);
     recording.holding(surround);
     recording.holding(weights);
@@ -161,21 +184,28 @@ pub(crate) async fn moments(
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
 
-    let mut block = [(pairs as i32), (BLOCK as i32), (blocks as i32)]
-        .iter()
-        .flat_map(|v| v.to_ne_bytes())
-        .collect::<Vec<u8>>();
+    let [hue, chroma, level, surround_nodes] = grid.nodes;
+    let mut block = [
+        pairs as i32,
+        BLOCK as i32,
+        blocks as i32,
+        grid.space.word() as i32,
+        hue as i32,
+        chroma as i32,
+        level as i32,
+        surround_nodes as i32,
+    ]
+    .iter()
+    .flat_map(|v| v.to_ne_bytes())
+    .collect::<Vec<u8>>();
     for v in [
-        axes.low[0],
-        axes.scale[0],
-        axes.low[1],
-        axes.scale[1],
-        axes.level,
-        axes.surround,
+        grid.chroma_scale,
+        grid.level_low,
+        grid.level_scale,
+        grid.surround_scale,
     ] {
         block.extend((v as f32).to_ne_bytes());
     }
-    block.resize(48, 0);
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_lattice push"),
         contents: &block,
@@ -220,6 +250,10 @@ pub(crate) async fn moments(
             wgpu::BindGroupEntry {
                 binding: 8,
                 resource: out.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: indexed.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 20,
@@ -268,27 +302,16 @@ pub(crate) async fn moments(
 
 #[cfg(test)]
 mod tests {
-    /// The lattice's shape and a node's stride, both stated on each side.
+    /// A node's stride and a landing's, both stated on each side.
     #[test]
     fn the_host_reads_the_lattice_the_shader_walks() {
         const SOURCE: &str = include_str!("../../../slang/fit_lattice.slang");
         for line in [
             format!("static const int NODE_WORDS = {};", super::NODE_WORDS),
+            format!("static const int REACH_WORDS = {};", super::REACH_WORDS),
             format!("static const int LANDING_WORDS = {};", super::LANDING_WORDS),
             format!("static const int CORNERS = {};", super::CORNERS),
             format!("static const int SLICE = {};", super::SLICE),
-            format!(
-                "static const int MAP_CHROMA = {};",
-                crate::hdr_fit::MAP_CHROMA
-            ),
-            format!(
-                "static const int MAP_LEVEL = {};",
-                crate::hdr_fit::MAP_LEVEL
-            ),
-            format!(
-                "static const int MAP_SURROUND = {};",
-                crate::hdr_fit::MAP_SURROUND
-            ),
         ] {
             assert!(
                 SOURCE.contains(&line),

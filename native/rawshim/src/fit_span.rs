@@ -114,7 +114,14 @@ pub(crate) fn lifted(
         contents: &gains,
         usage: storage,
     });
-    let push = describing(gpu, plane, falloff.is_some(), 0, [0, 0]);
+    let push = describing(
+        gpu,
+        plane,
+        falloff.is_some(),
+        0,
+        [0, 0],
+        crate::lattice::IndexSpace::Jzazbz,
+    );
     let (evaluated, histogram, marks) = (held("unused"), held("unused"), held("unused"));
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fit_span gather"),
@@ -170,10 +177,11 @@ fn describing(
     falloff: bool,
     axis: usize,
     ranks: [usize; 2],
+    space: crate::lattice::IndexSpace,
 ) -> crate::gpu::Buffer {
     let (cx, cy) = (plane.width as f64 / 2.0, plane.height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt().max(1.0);
-    let mut block: Vec<u8> = [
+    let block: Vec<u8> = [
         (plane.width as i32).to_ne_bytes(),
         (plane.height as i32).to_ne_bytes(),
         i32::from(falloff).to_ne_bytes(),
@@ -181,10 +189,9 @@ fn describing(
         (axis as i32).to_ne_bytes(),
         (ranks[0] as i32).to_ne_bytes(),
         (ranks[1] as i32).to_ne_bytes(),
+        space.word().to_ne_bytes(),
     ]
     .concat();
-    // Seven fields is twenty-eight bytes and a uniform block is rounded up to sixteen.
-    block.resize(32, 0);
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_span push"),
         contents: &block,
@@ -192,13 +199,14 @@ fn describing(
     })
 }
 
-/// Both ranks of both axes: `[axis][rank]`, in the units the lattice is sized in, over `evaluated`,
-/// which is the model's output over every pixel of `plane` as [`lifted`].
+/// Both ranks of the opponent chroma and lightness `space` gives each sample: `[axis][rank]`, over
+/// `evaluated`, which is the model's output over every pixel of `plane` as [`lifted`].
 pub(crate) async fn spans(
     gpu: &'static crate::gpu::Gpu,
     evaluated: &crate::gpu::Buffer,
     plane: &crate::hdr_fit::Source,
     ranks: [usize; 2],
+    space: crate::lattice::IndexSpace,
 ) -> Option<[[f64; 2]; 2]> {
     let pixels = plane.width * plane.height;
     let held = |label, words: usize, usage| {
@@ -221,7 +229,7 @@ pub(crate) async fn spans(
     let idle = held("unused", 1, storage);
     let no_gains = held("unused gains", 1, storage);
     let pushes: Vec<crate::gpu::Buffer> = (0..2)
-        .map(|axis| describing(gpu, plane, false, axis, ranks))
+        .map(|axis| describing(gpu, plane, false, axis, ranks, space))
         .collect();
 
     // The ranking reads what the model wrote, so the bind group points at that rather than at the

@@ -8,6 +8,7 @@
 // curve extrapolable, which is what lets the camera's rendering stop at diffuse white and
 // BT.2390 take over above it (10.7.1).
 
+use crate::lattice::ChromaMap;
 use crate::parallel::*;
 use crate::px::TUNED_ON;
 
@@ -243,85 +244,56 @@ pub struct HdrColour {
     pub illuminant: Option<crate::white_balance::Illuminant>,
 }
 
-/// Nodes across each chroma axis and up the level axis.
+/// Hues around the coarse grid's circle.
 ///
-/// Deliberately coarse. What this corrects is a camera's hue-dependent rendering, which
-/// is smooth; what it must not do is vary fast enough with a pixel's own colour to
-/// amplify the noise in that colour. Cell width is the denominator of that gradient, so it is
-/// the safety margin.
+/// **A gain computed per pixel from that pixel's own colour amplifies the variation in that
+/// colour**, and a curve over chroma or a gain per hue is one. Either describes a camera's
+/// saturation far better - it takes a brown's chroma up 36% where it takes grass's up 8% - and
+/// across a dog's flat fur pulls neighbouring pixels apart into red speckles beside green ones,
+/// and a wall the camera renders flat grey comes out blotchy. Denoising the render first does not
+/// buy that back (§10.9). The lattice escapes it by where it is read: `colour.slang` indexes it at
+/// the block mean (`mean_frame`), so a kernel however narrow meets a block's colour and not each
+/// pixel's scatter. What stops a wild map is that every rung is scored against no map on the
+/// picture, each colour class with it.
 ///
-/// **A gain computed per pixel from that pixel's own colour has no such bound**, and a curve
-/// over chroma or a gain per hue is one. Either describes a camera's saturation far better -
-/// it takes a brown's chroma up 36% where it takes grass's up 8% - and either amplifies the
-/// *variation* in a colour: across a dog's flat fur neighbouring pixels are pulled apart into
-/// red speckles beside green ones, and a wall the camera renders flat grey comes out blotchy.
-/// They improve every number this fit reports and damage the picture, and denoising the render
-/// first does not buy them back: the speckle is still there at the strength the render is
-/// denoised by (§10.9).
-///
-/// The grid is the whole of the bound. What stops a wild map is that every rung is scored
-/// against no map on the picture, each colour class with it - an outcome test rather than a
-/// parameter bound. A luma term on the nodes would want this re-measured: the grid bounds its
-/// gradient too, but the eye reads luma noise differently from chroma noise.
-///
-/// **Held-out pairs do not answer this and a holdout cannot be made to.** Swept from 7 to 39
-/// nodes an axis, held-out `delta_e` says the opposite of what the render says - it falls all
-/// the way, by a quarter to a third, while the picture measured against the camera's own JPEG
-/// gets steadily worse: at the level nine below, 1.667 at seven nodes, 1.686 at fifteen, 1.722
-/// at thirty-one. The two disagree in direction, not in size.
-///
-/// Blocking the holdout by region rather than by stride does not fix it, which is the part
-/// worth knowing before trying: a lattice memorises *colours*, and the same lawn and the same
-/// skin sit on both sides of any partition of one photograph, so no split makes a held-out pair
-/// an unseen colour. What the table below measures - the whole render against the camera - is
-/// the only thing that has ever been able to see this, and `examples/sweep` reports it.
-///
-/// **And coarse for a second reason, which is now the stronger one: finer overfits.**
-/// Measured on IMG_8789, against the camera's own JPEG at full resolution rather than on
-/// the pairs the fit is scored by:
-///
-/// | grid    | fit ΔE2000 | full-res mean | light muted `da*` |
-/// |---------|-----------:|--------------:|------------------:|
-/// | 5x5x4   |     1.9527 |        5.4981 |            -2.164 |
-/// | 7x7x16  |     1.6591 |        5.3705 |            -2.927 |
-///
-/// The finer grid fits the *training* pairs 15% better, moves the actual render 2%, and
-/// makes the green cast on light near-neutral surfaces 35% worse - a bird bath and a stone
-/// wall, which is the failure this model has twice been shipped with. A mean of a magnitude
-/// cannot see that trade; only a signed statistic can, which is why one exists.
-///
-/// So node count is not the lever it looks like. Every node added divides the pairs that
-/// reach each one, `MAP_CONFIDENCE` then shrinks them harder, and what survives is a
-/// better fit to noise.
-///
-/// **And this cannot be fixed by scoring differently, which was the next thing tried.**
-/// Adding the signed cast to the objective at three times the weight of the mean still
-/// preferred the finer grid - 3.11 against 3.99 - while its held-out cast stayed the worse
-/// of the two. The objective is measured on the pairs the model is fitted to, so a richer
-/// model overfits whatever statistic is put in it, a signed one included. What is missing
-/// is not a better statistic but held-out pairs: `DESIGN`'s falloff keeps its term only
-/// where it wins "on the pairs the round was not fitted on", and that discipline was never
-/// extended to the colour model - which is the stage whose capacity actually grew.
+/// **Held-out pairs cannot size a lattice.** Swept from 7 to 39 nodes an axis on the dense
+/// lattice this replaced, held-out `delta_e` fell all the way while the picture measured against
+/// the camera's own JPEG got steadily worse: the two disagree in direction, not in size. Blocking
+/// the holdout by region does not fix it: a lattice memorises *colours*, and the same lawn and
+/// the same skin sit on both sides of any partition of one photograph, so no split makes a
+/// held-out pair an unseen colour. The whole render against the camera is the only measure that
+/// sees this, and `examples/sweep` reports it.
 ///
 /// **Two things about measuring this that cost a while to learn.** A cast has to be pooled
-/// over pixels of *similar colour*, not over a neighbourhood: pooled spatially the finer
-/// grid scores better at every window from 4px to 64px, because a window on this frame is
-/// mostly lawn and the lawn genuinely improved, so the bird bath drowns in it. And the
-/// pooling has to be inside a class rather than across the frame, or a green cast on the
-/// neutrals and a warm one on the saturates cancel and the number reads clean. The eye
-/// agrees with the classed measure and not with the spatial one: side by side at 1:1, the
-/// finer grid's bird bath is the greener.
-pub(crate) const MAP_CHROMA: usize = 7;
-/// Nine, matched to the level axis reaching the fitted ceiling rather than the default
-/// domain (`with_level_reach`): the same nodes-per-root-unit the shadows and midtones
-/// had over the shorter reach, with the stretch above getting its own.
+/// over pixels of *similar colour*, not over a neighbourhood: on IMG_8789, pooled spatially, a
+/// uniformly finer dense grid scored better at every window from 4px to 64px, because a window on
+/// that frame is mostly lawn and the lawn genuinely improved, so the bird bath drowns in it. And
+/// the pooling has to be inside a class rather than across the frame, or a green cast on the
+/// neutrals and a warm one on the saturates cancel and the number reads clean. The eye agrees with
+/// the classed measure and not with the spatial one: side by side at 1:1, the finer grid's bird
+/// bath was the greener.
+pub(crate) const MAP_HUE: usize = 12;
+/// Chroma rings out from grey, which is a node of its own shared by every hue.
+pub(crate) const MAP_RINGS: usize = 4;
+/// The grid fitted on what the coarse one left: twice the hues and rings, so a correction one
+/// tight colour asks for has kernels small enough to stay on it.
+const FINE_HUE: usize = 24;
+const FINE_RINGS: usize = 8;
+/// The share of the fine grid's correction its kept kernels carry (`NodeGrid::carrying`).
 ///
-/// **Five looks better than this and renders worse, which is the trap `MAP_CHROMA` describes.**
-/// Held-out `delta_e` prefers five by half a point and more, bracketed on both sides and at two
-/// chroma counts - a thorough-looking result, and wrong. Against the camera's own JPEG the same
-/// change costs about 0.055 whatever the chroma is beside it: 1.667 to 1.723 at seven nodes,
-/// 1.686 to 1.736 at fifteen. Reading a lattice size off the pairs it was fitted from finds
-/// five; reading it off the picture finds this.
+/// Measured over the Nick library: the whole grid is ~3400 kernels a frame, and 0.999 keeps ~900
+/// of them for perceptual ΔE 0.8246 against 0.8241. Lower costs quality quickly, because the tail
+/// is many thin nodes that each matter little and together a third of the fine pass's gain: 0.97
+/// keeps ~330 and reads 0.8329.
+const FINE_CARRIED: f64 = 0.999;
+/// Levels from black to the fitted ceiling, in Jz (`LatticeAxes::of`).
+///
+/// **Five looks better than this and renders worse, which is the trap `MAP_HUE` describes.**
+/// Held-out `delta_e` preferred five by half a point and more on the dense lattice, bracketed on
+/// both sides and at two chroma counts - a thorough-looking result, and wrong. Against the
+/// camera's own JPEG the same change cost about 0.055 whatever the chroma beside it. Reading a
+/// lattice size off the pairs it was fitted from finds five; reading it off the picture finds
+/// this.
 ///
 /// Below four there is no lattice at all rather than a smaller one - the map is worth none of its
 /// strength and the fit ships without one - so the axis has a floor as well as a cost.
@@ -339,44 +311,108 @@ pub(crate) const MAP_LEVEL: usize = 9;
 /// from "dark against dark", not to resolve the neighbourhood finely.
 pub(crate) const MAP_SURROUND: usize = 3;
 
-/// The grid `colour.slang`'s `correct` walks, for a caller that has to walk the same one.
-pub struct MapShape {
-    pub chroma_count: usize,
-    pub level_count: usize,
-    pub surround_count: usize,
-    /// Per axis, red-green then blue-yellow: the two carry different spans because a
-    /// frame's chroma is not distributed alike on them.
-    pub chroma_low: [f64; 2],
-    pub chroma_scale: [f64; 2],
-    pub level_scale: f64,
-    pub surround_scale: f64,
+/// The polar grid a lattice is fitted on (`fit_lattice.slang`): nodes around the hue circle,
+/// rings of chroma out from grey, lightness, and the surround.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GridShape {
+    hue: usize,
+    rings: usize,
+    level: usize,
+    surround: usize,
 }
 
-/// Every node of the grid, as a compile-time count.
-const MAP_NODES: usize = MAP_CHROMA * MAP_CHROMA * MAP_LEVEL * MAP_SURROUND;
+impl GridShape {
+    const COARSE: GridShape = GridShape {
+        hue: MAP_HUE,
+        rings: MAP_RINGS,
+        level: MAP_LEVEL,
+        surround: MAP_SURROUND,
+    };
+    const FINE: GridShape = GridShape {
+        hue: FINE_HUE,
+        rings: FINE_RINGS,
+        level: MAP_LEVEL,
+        surround: MAP_SURROUND,
+    };
 
-/// Cells the applied lattice carries per fitted cell, on every axis (`ChromaMap::densified`).
-const MAP_DENSITY: usize = 4;
+    /// Grey is a ring of `hue` nodes that are one place; the fit merges them (`merged_grey`).
+    fn nodes(&self) -> usize {
+        self.hue * (self.rings + 1) * self.level * self.surround
+    }
 
-/// How many nodes the lattice has, for a caller sizing a buffer to read one back into.
-pub fn map_nodes() -> usize {
-    MAP_NODES
+    fn index(&self, [h, r, z, s]: [usize; 4]) -> usize {
+        ((s * self.level + z) * (self.rings + 1) + r) * self.hue + h
+    }
+
+    fn place(&self, n: usize) -> [usize; 4] {
+        let ring = self.rings + 1;
+        [
+            n % self.hue,
+            (n / self.hue) % ring,
+            (n / (self.hue * ring)) % self.level,
+            n / (self.hue * ring * self.level),
+        ]
+    }
 }
 
-/// How far out the chroma axes reach before the grid clamps, and how far up the level
-/// axis does. Beyond either, a colour keeps the last node's correction rather than an
-/// extrapolated one - which is what makes the map safe above the reference's clip point.
+/// Where a frame's lattice sits, in lattice coordinates (`index_space.slang`'s `lattice_at`).
 ///
-/// Measured rather than guessed, and the first guess wasted the grid: at 0.6 the chroma
-/// axes spanned half again what a frame actually contains - |d| runs to 0.42 at its very
-/// widest and 0.375 at the 99th - so 58 of 100 nodes were never touched and the ones that
-/// were sat three to an axis.
-///
-/// The level axis is in the square root, where a frame reaches about 0.85.
-const CHROMA_REACH: f64 = 0.45;
-const LEVEL_REACH: f64 = 0.9;
+/// The chroma reach is the frame's own, so its nodes are spent on colours it contains; the
+/// lightness and surround reach its ceiling, so the stretch above diffuse white is addressable
+/// rather than all of it clamping onto the top level plane.
+#[derive(Clone, Copy, Debug)]
+struct LatticeAxes {
+    space: crate::lattice::IndexSpace,
+    chroma_top: f64,
+    level_low: f64,
+    level_top: f64,
+    surround_top: f64,
+}
 
-/// A correction around the grey axis and along it, indexed by chroma and level.
+impl LatticeAxes {
+    fn of(colour: &HdrColour, space: crate::lattice::IndexSpace, chroma_top: f64) -> LatticeAxes {
+        LatticeAxes {
+            space,
+            chroma_top,
+            level_low: space.lightness_of_neutral(0.0),
+            level_top: space.lightness_of_neutral(colour.ceiling),
+            surround_top: colour.ceiling.sqrt(),
+        }
+    }
+
+    /// The gap between two nodes of `shape` on each axis.
+    fn gaps(&self, shape: GridShape) -> [f64; 4] {
+        [
+            1.0 / shape.hue as f64,
+            self.chroma_top / shape.rings as f64,
+            (self.level_top - self.level_low) / (shape.level - 1) as f64,
+            self.surround_top / (shape.surround - 1) as f64,
+        ]
+    }
+
+    fn grid(&self, shape: GridShape) -> crate::fit_lattice::Grid {
+        let gaps = self.gaps(shape);
+        crate::fit_lattice::Grid {
+            space: self.space,
+            nodes: [shape.hue, shape.rings + 1, shape.level, shape.surround],
+            chroma_scale: 1.0 / gaps[1],
+            level_low: self.level_low,
+            level_scale: 1.0 / gaps[2],
+            surround_scale: 1.0 / gaps[3],
+        }
+    }
+
+    fn lut(&self) -> crate::lattice::LutAxes {
+        crate::lattice::LutAxes {
+            chroma_top: self.chroma_top,
+            level_low: self.level_low,
+            level_top: self.level_top,
+            surround_top: self.surround_top,
+        }
+    }
+}
+
+/// A lattice as the fit solves it: one operator per node of a grid, emitted as kernels.
 ///
 /// **The lightness term is a correction, not the transfer.** The camera's rendering of
 /// level is still the tone curves' job: they hold 256 bins where this holds nine, and the
@@ -387,41 +423,17 @@ const LEVEL_REACH: f64 = 0.9;
 /// degrees of the camera and whose chroma is within 0.2 comes out 4.4 L* too dark, and
 /// the blues as a whole run 2 to 4 L* down while the reds sit at +0.04. No stage in the
 /// model before this one could express that - the matrix is one 3x3 for the whole frame,
-/// so it cannot vary with level; the curves see one channel each, so they cannot vary
-/// with hue; and this lattice preserved luma exactly by construction.
+/// so it cannot vary with level; and the curves see one channel each, so they cannot vary
+/// with hue.
 ///
-/// Near identity everywhere, which is what keeps the old argument intact: a gain that
-/// stays near 1 where the data runs out is still safe above the fit domain, where a
-/// transfer is not.
-///
-/// Indexed in Cartesian chroma rather than hue and saturation, which costs nothing per
-/// pixel: `d = v - luma` already lies in the plane `LUMA . d = 0`, so `(d[0], d[2])` fixes
-/// it and `d[1]` follows. Polar would mean an `atan2` on every one of 180M samples to say
-/// the same thing, and it puts a seam at the wrap where trilinear needs none.
-#[derive(Clone, PartialEq)]
-pub struct ChromaMap {
-    /// Per node, indexed surround-major, then level, then y, then x. `NODE_VALUES`
-    /// describes what is in one.
+/// Near identity everywhere: a gain that stays near 1 where the data runs out is still safe
+/// above the fit domain, where a transfer is not.
+#[derive(Clone)]
+struct NodeGrid {
+    shape: GridShape,
+    axes: LatticeAxes,
+    /// Per node, in `GridShape::index` order. `NODE_VALUES` describes what is in one.
     nodes: Vec<[f64; NODE_VALUES]>,
-    /// Nodes along each chroma axis. `MAP_CHROMA` as fitted; `densified` multiplies it.
-    chroma_count: usize,
-    level_count: usize,
-    surround_count: usize,
-    /// How far the chroma axes reach, fitted to the frame rather than fixed.
-    ///
-    /// A constant here has to be the widest any frame might be, and then every frame that
-    /// is not that wide spends its nodes on colours it does not contain. Measured on
-    /// IMG_8789 at the fixed 0.45: the outermost column of the grid held zero pairs at
-    /// every level, and the blue pot - the one object the lattice most needed to represent -
-    /// sat between two interior nodes carrying 41,225 pairs of lawn and paving between them.
-    /// A fifth of the lattice was unreachable and the object that needed it was averaged
-    /// into its surroundings.
-    /// Axis low edge and gaps-per-unit, red-green then blue-yellow. `chroma_span` sizes
-    /// them so zero lands exactly on a node.
-    low: [f64; 2],
-    scale: [f64; 2],
-    level_scale: f64,
-    surround_scale: f64,
 }
 
 /// Three rows over `(d0, d2, l)`, so every output depends on chroma *and* lightness.
@@ -452,315 +464,104 @@ pub const NODE_VALUES: usize = 9;
 
 const UNCORRECTED_NODE: [f64; NODE_VALUES] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
-/// Dense nodes below which `upsample` stays on its caller's thread: a hop to the pool costs more.
-const UPSAMPLE_ALONE: usize = 32768;
-
-/// A pixel's chroma scatter about its neighbours' on the plane a rendition's pixels are like, per
-/// level of the fitted lattice (`fit_noise.slang`).
-struct LevelNoise {
-    /// Each chroma axis's variance, in the linear units the lookup warps; None where no flat
-    /// pixel landed.
-    variance: [Option<[f64; 2]>; MAP_LEVEL],
-}
-
-/// The mean square move, in the lattice's warped units, of a chroma at warped `u` scattered by
-/// `variance` in linear ones.
-///
-/// Not the variance through the warp's slope: the warp is a square root, steepest at a grey, where
-/// the scatter that matters is the widest.
-fn warped_scatter(u: f64, variance: f64) -> f64 {
-    // Five-point Gauss-Hermite over a unit normal.
-    const AT: [f64; 5] = [
-        0.0,
-        1.355_626_18,
-        -1.355_626_18,
-        2.856_970_01,
-        -2.856_970_01,
-    ];
-    const WEIGHT: [f64; 5] = [
-        0.533_333_33,
-        0.222_075_92,
-        0.222_075_92,
-        0.011_257_41,
-        0.011_257_41,
-    ];
-    let d = u * u.abs();
-    let sigma = variance.max(0.0).sqrt();
-    AT.iter()
-        .zip(WEIGHT)
-        .map(|(z, w)| w * (ChromaMap::warp(d + z * sigma) - u).powi(2))
-        .sum()
-}
+/// How far a kernel fitted on what the coarse grid left may narrow, as a share of its grid's gap.
+const NARROWEST_REACH: f64 = 0.5;
 
 /// **Both groups beyond the 2x2 earn their place, asked on the render.** They were added against
-/// held-out `delta_e`, which `MAP_CHROMA` records disagreeing with the picture elsewhere, so they
+/// held-out `delta_e`, which `MAP_HUE` records disagreeing with the picture elsewhere, so they
 /// were put to the render directly by zeroing each group after the solve.
 ///
 /// Without `e` and `f` the render loses 0.045 on three fixtures and DSC02981's map stops paying
 /// for itself, shipping with none. Without `h` and `i` three fixtures gain
 /// 0.023 - and forty-three real frames lose 0.006 and 0.022, which is the answer that counts.
-
-impl ChromaMap {
-    /// The map that changes nothing, for a caller with no fit yet.
-    pub fn identity() -> ChromaMap {
-        ChromaMap::from_saturation(1.0)
-    }
-
-    /// A map built node by node, for the fixtures and the tests.
-    ///
-    /// `from_saturation` puts the same 2x2 at every node, which is enough to say the lookup
-    /// happens and nothing about where it read: a reader that swapped the chroma axes, or
-    /// scaled the level axis wrongly, lands on an identical node and answers correctly. A
-    /// pin against a second implementation needs a lattice whose nodes differ.
-    ///
-    /// `f` is given the node's `(x, y, z)` - the two chroma axes and the level - in the
-    /// order `nodes` is indexed in. The same values fill every surround slab, so a
-    /// synthetic map answers as it always did whatever surround it is read at.
-    pub fn from_nodes(f: impl Fn(usize, usize, usize) -> [f64; NODE_VALUES]) -> ChromaMap {
-        let mut nodes = vec![[0.0; NODE_VALUES]; MAP_NODES];
-        for s in 0..MAP_SURROUND {
-            for z in 0..MAP_LEVEL {
-                for y in 0..MAP_CHROMA {
-                    for x in 0..MAP_CHROMA {
-                        nodes[((s * MAP_LEVEL + z) * MAP_CHROMA + y) * MAP_CHROMA + x] = f(x, y, z);
-                    }
-                }
-            }
-        }
-        let reach = ChromaMap::warp(CHROMA_REACH);
-        ChromaMap {
-            low: [-reach; 2],
-            scale: [ChromaMap::scale_for(reach); 2],
-            ..ChromaMap::coarse_shell(nodes)
+impl NodeGrid {
+    fn identity(shape: GridShape, axes: LatticeAxes) -> NodeGrid {
+        NodeGrid {
+            shape,
+            axes,
+            nodes: vec![UNCORRECTED_NODE; shape.nodes()],
         }
     }
 
-    /// The map that does exactly what the saturation scalar does.
-    ///
-    /// Which is the point of the shape: one gain applied to every colour alike is this
-    /// model with the same 2x2 at every node, so the chroma map is a strict
-    /// generalisation of the scalar rather than a second thing beside it.
-    /// A frame that wants nothing hue-dependent is described by the same 2x2 at every
-    /// node, exactly.
-    ///
-    /// Exactly in the 2x2, not bit-identically in what it renders: `colour.slang`'s
-    /// `finish_chroma` rebuilds the middle channel as `-(L0.d0 + L2.d2) / L1` where the scalar
-    /// alone never enters it, so the two agree to a few ulps rather than to the bit.
-    ///
-    /// The luma gain is 1 at every node, so the generalisation still holds exactly with
-    /// the lightness term present: a frame that wants nothing hue-dependent gets a map
-    /// that leaves lightness where the tone stage put it.
-    pub fn from_saturation(saturation: f64) -> ChromaMap {
-        let mut node = UNCORRECTED_NODE;
-        (node[0], node[3]) = (saturation, saturation);
-        let reach = ChromaMap::warp(CHROMA_REACH);
-        ChromaMap {
-            low: [-reach; 2],
-            scale: [ChromaMap::scale_for(reach); 2],
-            ..ChromaMap::coarse_shell(vec![node; MAP_NODES])
-        }
-    }
-
-    /// A map at the fitted grid's own shape, for the constructors that fill one in.
-    fn coarse_shell(nodes: Vec<[f64; NODE_VALUES]>) -> ChromaMap {
-        ChromaMap {
-            nodes,
-            chroma_count: MAP_CHROMA,
-            level_count: MAP_LEVEL,
-            surround_count: MAP_SURROUND,
-            low: [0.0; 2],
-            scale: [0.0; 2],
-            level_scale: Self::LEVEL_SCALE,
-            surround_scale: Self::SURROUND_SCALE,
-        }
-    }
-
-    /// Where a coordinate sits on an axis running up from `low`: the node below it, and
-    /// how far past. `scale` is the gap width's reciprocal.
-    #[cfg(test)]
-    fn axis(value: f64, nodes: usize, low: f64, scale: f64) -> (usize, f64) {
-        // `max` then `min` rather than `clamp`: these return whichever operand is not
-        // NaN, so a NaN arriving here lands on a node instead of propagating into an
-        // index.
-        let t = ((value - low) * scale).max(0.0).min((nodes - 1) as f64);
-        let below = (t as usize).min(nodes - 2);
-        (below, t - below as f64)
-    }
-
-    /// Gaps per unit for one half of an axis, given how far that half reaches in
-    /// warped units.
-    fn scale_for(reach: f64) -> f64 {
-        (MAP_CHROMA - 1) as f64 / (2.0 * reach.max(1e-6))
-    }
-
-    /// Chroma to the space the axes are laid out in: signed root, so the nodes go where
-    /// the colours are. A frame's chroma masses near neutral the way its levels mass in
-    /// the shadows, and the level axis takes the same root for the same reason - spaced
-    /// evenly in chroma itself, the nodes either resolve the near-neutral mass and clamp
-    /// the frame's own saturated colours onto the outermost node, or cover them and blur
-    /// the mass; measured, each of those costs about a deltaE against the other's frames.
-    /// `low` and `scale` are in this space; `colour.slang` warps identically.
-    fn warp(d: f64) -> f64 {
-        d.signum() * d.abs().sqrt()
-    }
-
-    const LEVEL_SCALE: f64 = (MAP_LEVEL - 1) as f64 / LEVEL_REACH;
-    const SURROUND_SCALE: f64 = (MAP_SURROUND - 1) as f64 / LEVEL_REACH;
-
-    /// The lattice rebuilt from what [`ChromaMap::nodes_flat`] and [`ChromaMap::shape`] handed
-    /// out, for a match read back from storage rather than fitted.
-    ///
-    /// Refuses a `nodes` of the wrong length rather than padding it: the grid's dimensions are
-    /// this module's, and a stored map that disagrees was written by a build whose lattice was
-    /// a different shape - which would land every colour on the wrong node rather than fail.
-    pub fn from_parts(nodes: &[f64], low: [f64; 2], scale: [f64; 2]) -> Option<ChromaMap> {
-        if nodes.len() != MAP_NODES * NODE_VALUES {
-            return None;
-        }
-        let mut lattice = vec![[0.0; NODE_VALUES]; MAP_NODES];
-        for (node, values) in lattice.iter_mut().zip(nodes.chunks_exact(NODE_VALUES)) {
-            node.copy_from_slice(values);
-        }
-        Some(ChromaMap {
-            low,
-            scale,
-            ..ChromaMap::coarse_shell(lattice)
-        })
-    }
-
-    /// The lattice as one flat array, `NODE_VALUES` per node, in `correct`'s index order.
-    ///
-    /// For the editor's client, which walks the same map in a shader (`edit.rs`). Handing
-    /// out the shape alongside it rather than letting the other side hardcode the grid is
-    /// what keeps a change here from silently landing a colour on the wrong node there.
-    pub fn nodes_flat(&self) -> Vec<f64> {
-        self.nodes.iter().flatten().copied().collect()
-    }
-
-    pub fn nodes(&self) -> &[[f64; NODE_VALUES]] {
-        &self.nodes
-    }
-
-    /// The axis constants `correct` reads the lattice with.
-    pub fn shape(&self) -> MapShape {
-        MapShape {
-            chroma_count: self.chroma_count,
-            level_count: self.level_count,
-            surround_count: self.surround_count,
-            chroma_low: self.low,
-            chroma_scale: self.scale,
-            level_scale: self.level_scale,
-            surround_scale: self.surround_scale,
-        }
-    }
-
-    /// The cell a colour sits in: the node below it on each axis, and how far across it is, as
-    /// `fit_lattice.slang`'s `cell_at` lands a pair.
-    #[cfg(test)]
-    fn cell(
-        axes: &LatticeAxes,
-        level: f64,
-        surround: f64,
-        d0: f64,
-        d2: f64,
-    ) -> ([usize; 4], [f64; 4]) {
-        let (x, fx) = Self::axis(Self::warp(d0), MAP_CHROMA, axes.span[0][0], axes.span[0][1]);
-        let (y, fy) = Self::axis(Self::warp(d2), MAP_CHROMA, axes.span[1][0], axes.span[1][1]);
-        // Square root rather than the level itself, so the shadows get nodes in
-        // proportion to how much of a picture lives in them, and cheaper than a cube root
-        // in a loop this size. The surround takes the same root for the same reason.
-        let (z, fz) = Self::axis(level.max(0.0).sqrt(), MAP_LEVEL, 0.0, axes.level_scale);
-        let (s, fs) = Self::axis(
-            surround.max(0.0).sqrt(),
-            MAP_SURROUND,
-            0.0,
-            axes.surround_scale,
-        );
-        ([x, y, z, s], [fx, fy, fz, fs])
-    }
-
-    /// The sixteen nodes about a cell's corner, and the share of a sample each takes.
-    #[cfg(test)]
-    fn nodes_of([x, y, z, s]: [usize; 4], [fx, fy, fz, fs]: [f64; 4]) -> ([usize; 16], [f64; 16]) {
-        let mut at = [0usize; 16];
-        let mut weight = [0.0f64; 16];
-        let mut k = 0;
-        for (ds, ws) in [(0, 1.0 - fs), (1, fs)] {
-            for (dz, wz) in [(0, 1.0 - fz), (1, fz)] {
-                for (dy, wy) in [(0, 1.0 - fy), (1, fy)] {
-                    for (dx, wx) in [(0, 1.0 - fx), (1, fx)] {
-                        at[k] = (((s + ds) * MAP_LEVEL + z + dz) * MAP_CHROMA + y + dy)
-                            * MAP_CHROMA
-                            + x
-                            + dx;
-                        weight[k] = ws * wz * wy * wx;
-                        k += 1;
-                    }
-                }
-            }
-        }
-        (at, weight)
-    }
-
-    /// Every node keeping `strength` of its correction.
-    fn at_strength(&self, strength: f64) -> ChromaMap {
-        let nodes = self
-            .nodes
-            .iter()
-            .map(|node| {
-                std::array::from_fn(|k| {
-                    UNCORRECTED_NODE[k] + strength * (node[k] - UNCORRECTED_NODE[k])
-                })
-            })
-            .collect();
-        ChromaMap {
-            nodes,
-            ..self.clone()
-        }
-    }
-
-    /// Each node keeping `1 / (1 + r)` of its correction, `r` being a rendition pixel's chroma
-    /// scatter there in node spacings. For a fitted lattice, whose spacing is the one the scatter
-    /// is measured against.
-    fn noise_damped(&self, noise: &LevelNoise) -> ChromaMap {
-        let chroma = self.chroma_count;
-        let nodes = self
-            .nodes
+    /// The grid as kernels, each node's tent reaching its neighbours. `narrowed_by` holds what
+    /// each node had left to correct and where about it that sat, and narrows its kernel to that:
+    /// for a grid fitted on what a coarser one left, whose kernels need cover only what asked.
+    fn kernels(&self, narrowed_by: Option<&ChromaMoments>) -> Vec<crate::lattice::Kernel> {
+        let shape = self.shape;
+        let gaps = self.axes.gaps(shape);
+        self.nodes
             .iter()
             .enumerate()
-            .map(|(n, node)| {
-                let (x, y, z) = (
-                    n % chroma,
-                    (n / chroma) % chroma,
-                    (n / (chroma * chroma)) % self.level_count,
-                );
-                let spread = noise.variance[z].map_or(0.0, |variance| {
-                    [x, y]
-                        .iter()
-                        .enumerate()
-                        .map(|(axis, at)| {
-                            let u = self.low[axis] + *at as f64 / self.scale[axis];
-                            warped_scatter(u, variance[axis]) * self.scale[axis].powi(2)
-                        })
-                        .sum()
-                });
-                let keep = 1.0 / (1.0 + spread);
-                std::array::from_fn(|k| {
-                    UNCORRECTED_NODE[k] + keep * (node[k] - UNCORRECTED_NODE[k])
+            .filter_map(|(n, node)| {
+                let [h, r, z, s] = shape.place(n);
+                // Grey is one place whatever the hue, so one kernel carries it.
+                if r == 0 && h != 0 {
+                    return None;
+                }
+                let mut reach = gaps;
+                if r == 0 {
+                    reach[0] = 0.0;
+                }
+                if let Some(moments) = narrowed_by {
+                    let [.., weight] = moments.reach[n];
+                    if weight > 0.0 {
+                        for axis in 0..3 {
+                            let spread = (moments.reach[n][4 + axis] / weight).sqrt();
+                            reach[axis] *= (2.0 * spread).clamp(NARROWEST_REACH, 1.0);
+                        }
+                    }
+                }
+                Some(crate::lattice::Kernel {
+                    centre: [
+                        h as f64 * gaps[0],
+                        r as f64 * gaps[1],
+                        self.axes.level_low + z as f64 * gaps[2],
+                        s as f64 * gaps[3],
+                    ],
+                    reach,
+                    generator: crate::lattice::generator_of(std::array::from_fn(|k| node[k])),
+                    to_lightness: [node[7], node[8]],
                 })
             })
-            .collect();
-        ChromaMap {
-            nodes,
-            ..self.clone()
+            .collect()
+    }
+
+    /// The heaviest nodes, by how far each corrects times the weight that landed on it, carrying
+    /// `share` of the whole; the rest uncorrected.
+    fn carrying(&self, share: f64, seen: &[f64]) -> NodeGrid {
+        let weight = |n: usize| -> f64 {
+            let moved: f64 = self.nodes[n]
+                .iter()
+                .zip(&UNCORRECTED_NODE)
+                .map(|(a, b)| (a - b).powi(2))
+                .sum();
+            seen[n] * moved
+        };
+        let mut heaviest: Vec<(f64, usize)> =
+            (0..self.nodes.len()).map(|n| (weight(n), n)).collect();
+        heaviest.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let whole: f64 = heaviest.iter().map(|(w, _)| w).sum();
+        let mut nodes = vec![UNCORRECTED_NODE; self.nodes.len()];
+        let mut carried = 0.0;
+        for (w, n) in heaviest {
+            if carried >= share * whole {
+                break;
+            }
+            nodes[n] = self.nodes[n];
+            carried += w;
         }
+        NodeGrid { nodes, ..*self }
+    }
+
+    fn map(&self, narrowed_by: Option<&ChromaMoments>) -> ChromaMap {
+        ChromaMap::new(self.axes.space, self.kernels(narrowed_by), self.axes.lut())
     }
 
     /// Each node keeping the share of its correction that `judged`, pixels it was not fitted from,
     /// asks for: its chroma and its lightness apiece, each the minimum of its error along the line
     /// from no correction to the node. Where little landed the node keeps its own, as the fit's
     /// confidence does. For a fitted lattice, on its own nodes.
-    fn validated(&self, judged: &ChromaMoments) -> ChromaMap {
+    fn validated(&self, judged: &ChromaMoments) -> NodeGrid {
         let nodes = self
             .nodes
             .iter()
@@ -799,84 +600,10 @@ impl ChromaMap {
                 })
             })
             .collect();
-        ChromaMap {
+        NodeGrid {
             nodes,
             ..self.clone()
         }
-    }
-
-    /// The applied form of a fitted lattice: smoothed, then resampled dense.
-    ///
-    /// The fitted nodes are solved independently, so the multilinear read's slope jumps at
-    /// every cell crossing, and a wide smooth gradient renders the jumps as flat zones with
-    /// contours between them - `through`'s failure, in four dimensions. A smooth curve
-    /// *through* the fitted nodes is not the answer: they were solved against the linear
-    /// read, so Catmull-Rom through them overshoots exactly where the lattice is steep -
-    /// deltaE 1.227 against 1.032 on the frame the zones came from. `project` instead finds
-    /// the control values whose curve sits closest to the fitted polyline, which rounds
-    /// each crossing inside its own cell and keeps the fit everywhere else.
-    ///
-    /// The chroma and level axes only. Those are the axes a smooth gradient traverses; the
-    /// surround is read from a plane already blurred to a tenth of the frame, so its kinks
-    /// never land on neighbouring pixels - and at `MAP_SURROUND` nodes a cubic bending
-    /// between the slabs costs real fidelity for that nothing.
-    pub fn smoothed(&self) -> ChromaMap {
-        let (c, l, s) = (self.chroma_count, self.level_count, self.surround_count);
-        let nodes = Self::project(&self.nodes, s * l * c, c, 1);
-        let nodes = Self::project(&nodes, s * l, c, c);
-        let nodes = Self::project(&nodes, s, l, c * c);
-        ChromaMap {
-            nodes,
-            ..self.clone()
-        }
-        .densified()
-    }
-
-    /// Dense samples of the Catmull-Rom curve the node values control.
-    ///
-    /// Reads its input as control values, not as a surface to draw through - `smoothed` is
-    /// where a fitted lattice becomes controls. Resampled at `MAP_DENSITY` cells per fitted
-    /// cell, the read both hosts already do follows the curve with kinks `MAP_DENSITY`
-    /// times smaller than the fitted grid's and a deviation from it `MAP_DENSITY`^2
-    /// smaller.
-    ///
-    /// The controls go through `f16` and the span through `f32` first - the widths the
-    /// sidecar stores them at - so `coarse` of the result round-trips storage exactly:
-    /// the curve passes through its controls, and decimation reads them back.
-    pub fn densified(&self) -> ChromaMap {
-        let quantised: Vec<[f64; NODE_VALUES]> = self
-            .nodes
-            .iter()
-            .map(|node| std::array::from_fn(|c| f64::from(half::f16::from_f64(node[c]))))
-            .collect();
-        let (c, l, s) = (self.chroma_count, self.level_count, self.surround_count);
-        let dense = |n: usize| (n - 1) * MAP_DENSITY + 1;
-        let nodes = Self::upsample(&quantised, s * l * c, c, 1);
-        let nodes = Self::upsample(&nodes, s * l, c, dense(c));
-        let nodes = Self::upsample(&nodes, s, l, dense(c) * dense(c));
-        ChromaMap {
-            nodes,
-            chroma_count: dense(c),
-            level_count: dense(l),
-            surround_count: s,
-            low: self.low.map(|v| f64::from(v as f32)),
-            scale: self.scale.map(|v| f64::from(v as f32) * MAP_DENSITY as f64),
-            level_scale: self.level_scale * MAP_DENSITY as f64,
-            surround_scale: self.surround_scale,
-        }
-    }
-
-    /// The level and surround axes re-scoped to this frame's fitted domain.
-    ///
-    /// At the default reach, a frame whose ceiling was stretched holds content far above
-    /// it, and the whole stretch lands on the top level plane - one shared answer for
-    /// every brightness the stretch admitted, averaged from all of it. On lit skin that
-    /// average is green.
-    pub(crate) fn with_level_reach(mut self, ceiling: f64) -> ChromaMap {
-        let reach = ceiling.sqrt();
-        self.level_scale = (self.level_count - 1) as f64 / reach;
-        self.surround_scale = (self.surround_count - 1) as f64 / reach;
-        self
     }
 
     /// The lattice with each level profile projected onto a cubic.
@@ -892,9 +619,9 @@ impl ChromaMap {
     ///
     /// Each node counts by how much landed on it (`seen`, per node): a level no pair reached
     /// holds the prior, and counted like the rest it draws the cubic through itself.
-    fn level_trended(&self, seen: &[f64]) -> ChromaMap {
-        let (c, l, s) = (self.chroma_count, self.level_count, self.surround_count);
-        let area = c * c;
+    fn level_trended(&self, seen: &[f64]) -> NodeGrid {
+        let (l, s) = (self.shape.level, self.shape.surround);
+        let area = self.shape.hue * (self.shape.rings + 1);
         let powers = |z: usize| {
             let x = z as f64 / (l - 1) as f64 - 0.5;
             [1.0, x, x * x, x * x * x]
@@ -933,206 +660,10 @@ impl ChromaMap {
                 }
             }
         }
-        ChromaMap {
+        NodeGrid {
             nodes,
             ..self.clone()
         }
-    }
-
-    /// The fitted lattice `densified` was built from, at the shape the sidecar stores.
-    /// Exact, not an approximation: the resample passes through the fitted nodes, so
-    /// decimation recovers them.
-    pub fn coarse(&self) -> ChromaMap {
-        if self.chroma_count == MAP_CHROMA {
-            return self.clone();
-        }
-        let d = MAP_DENSITY;
-        let mut nodes = Vec::with_capacity(MAP_NODES);
-        for s in 0..MAP_SURROUND {
-            for z in 0..MAP_LEVEL {
-                for y in 0..MAP_CHROMA {
-                    for x in 0..MAP_CHROMA {
-                        let at = ((s * self.level_count + z * d) * self.chroma_count + y * d)
-                            * self.chroma_count
-                            + x * d;
-                        nodes.push(self.nodes[at]);
-                    }
-                }
-            }
-        }
-        ChromaMap {
-            low: self.low,
-            scale: self.scale.map(|v| v / d as f64),
-            // The fitted reach, not the shell's default: a re-scoped map that loses its
-            // scales here reads the level axis wrong anywhere but through `take_match`,
-            // which happens to re-apply them.
-            level_scale: self.level_scale / d as f64,
-            surround_scale: self.surround_scale,
-            ..ChromaMap::coarse_shell(nodes)
-        }
-    }
-
-    /// The Catmull-Rom sampling matrix for one axis: dense row `j` against control `q`,
-    /// `(n - 1) * MAP_DENSITY + 1` rows of `n`.
-    ///
-    /// A tap past either end reads a linear extension of the edge pair, folded into the
-    /// edge columns. Duplicating the edge control instead flattens the phantom slope and
-    /// the end cell's cubic bends to absorb it - measured, the two largest slope jumps of
-    /// the whole read sat in the last cell.
-    fn cr_matrix(n: usize) -> (usize, Vec<f64>) {
-        let rows = (n - 1) * MAP_DENSITY + 1;
-        let mut matrix = vec![0.0; rows * n];
-        for j in 0..rows {
-            let k = (j / MAP_DENSITY).min(n - 2);
-            let t = (j - k * MAP_DENSITY) as f64 / MAP_DENSITY as f64;
-            let weights = [
-                0.5 * (-t * t * t + 2.0 * t * t - t),
-                0.5 * (3.0 * t * t * t - 5.0 * t * t + 2.0),
-                0.5 * (-3.0 * t * t * t + 4.0 * t * t + t),
-                0.5 * (t * t * t - t * t),
-            ];
-            let row = &mut matrix[j * n..][..n];
-            for (tap, weight) in (k as isize - 1..).zip(weights) {
-                if tap < 0 {
-                    row[0] += 2.0 * weight;
-                    row[1] -= weight;
-                } else if tap as usize > n - 1 {
-                    row[n - 1] += 2.0 * weight;
-                    row[n - 2] -= weight;
-                } else {
-                    row[tap as usize] += weight;
-                }
-            }
-        }
-        (rows, matrix)
-    }
-
-    /// One axis of the lattice resampled `MAP_DENSITY`-fold through `cr_matrix`, for a
-    /// layout of `outer` runs of `n` entries `inner` apart.
-    fn upsample(
-        data: &[[f64; NODE_VALUES]],
-        outer: usize,
-        n: usize,
-        inner: usize,
-    ) -> Vec<[f64; NODE_VALUES]> {
-        let (rows, matrix) = Self::cr_matrix(n);
-        let mut out = vec![[0.0; NODE_VALUES]; outer * rows * inner];
-        let resample = |(line, out): (usize, &mut [[f64; NODE_VALUES]])| {
-            let (o, j) = (line / rows, line % rows);
-            let row = &matrix[j * n..][..n];
-            for (q, weight) in row.iter().enumerate() {
-                if *weight == 0.0 {
-                    continue;
-                }
-                let from = &data[(o * n + q) * inner..][..inner];
-                for (node, from) in out.iter_mut().zip(from) {
-                    for (slot, value) in node.iter_mut().zip(from) {
-                        *slot += weight * value;
-                    }
-                }
-            }
-        };
-        match out.len() < UPSAMPLE_ALONE {
-            true => out.chunks_mut(inner).enumerate().for_each(resample),
-            false => out.par_chunks_mut(inner).enumerate().for_each(resample),
-        }
-        out
-    }
-
-    /// Control values whose curve sits closest to the linear read of `data` along one
-    /// axis, judged at the same dense positions `upsample` emits.
-    ///
-    /// A small least squares per line - `n` is at most `MAP_CHROMA` - against a normal
-    /// matrix every line shares.
-    fn project(
-        data: &[[f64; NODE_VALUES]],
-        outer: usize,
-        n: usize,
-        inner: usize,
-    ) -> Vec<[f64; NODE_VALUES]> {
-        let (rows, matrix) = Self::cr_matrix(n);
-        let mut normal = vec![0.0; n * n];
-        for j in 0..rows {
-            let row = &matrix[j * n..][..n];
-            for p in 0..n {
-                for q in 0..n {
-                    normal[p * n + q] += row[p] * row[q];
-                }
-            }
-        }
-        let mut out = vec![[0.0; NODE_VALUES]; outer * n * inner];
-        for o in 0..outer {
-            for i in 0..inner {
-                let value = |q: usize| data[(o * n + q) * inner + i];
-                let mut rhs = vec![[0.0; NODE_VALUES]; n];
-                for j in 0..rows {
-                    let k = (j / MAP_DENSITY).min(n - 2);
-                    let t = (j - k * MAP_DENSITY) as f64 / MAP_DENSITY as f64;
-                    let (below, above) = (value(k), value(k + 1));
-                    let target: [f64; NODE_VALUES] =
-                        std::array::from_fn(|c| (1.0 - t) * below[c] + t * above[c]);
-                    let row = &matrix[j * n..][..n];
-                    for (q, weight) in row.iter().enumerate() {
-                        if *weight == 0.0 {
-                            continue;
-                        }
-                        for (slot, value) in rhs[q].iter_mut().zip(target) {
-                            *slot += weight * value;
-                        }
-                    }
-                }
-                for (q, node) in Self::solve(&normal, rhs, n).into_iter().enumerate() {
-                    out[(o * n + q) * inner + i] = node;
-                }
-            }
-        }
-        out
-    }
-
-    /// Gaussian elimination with partial pivoting, every `NODE_VALUES` right-hand side at
-    /// once. The matrix is a Catmull-Rom normal matrix: tiny, symmetric positive definite,
-    /// so a pivot is always there to take.
-    fn solve(
-        normal: &[f64],
-        mut rhs: Vec<[f64; NODE_VALUES]>,
-        n: usize,
-    ) -> Vec<[f64; NODE_VALUES]> {
-        let mut a = normal.to_vec();
-        for col in 0..n {
-            let pivot = (col..n)
-                .max_by(|p, q| a[p * n + col].abs().total_cmp(&a[q * n + col].abs()))
-                .unwrap_or(col);
-            if pivot != col {
-                for k in 0..n {
-                    a.swap(col * n + k, pivot * n + k);
-                }
-                rhs.swap(col, pivot);
-            }
-            for row in col + 1..n {
-                let factor = a[row * n + col] / a[col * n + col];
-                for k in col..n {
-                    a[row * n + k] -= factor * a[col * n + k];
-                }
-                let (above, below) = (rhs[col], &mut rhs[row]);
-                for (slot, value) in below.iter_mut().zip(above) {
-                    *slot -= factor * value;
-                }
-            }
-        }
-        for col in (0..n).rev() {
-            for k in col + 1..n {
-                let (ahead, here) = (rhs[k], &mut rhs[col]);
-                let factor = a[col * n + k];
-                for (slot, value) in here.iter_mut().zip(ahead) {
-                    *slot -= factor * value;
-                }
-            }
-            let lead = a[col * n + col];
-            for slot in rhs[col].iter_mut() {
-                *slot /= lead;
-            }
-        }
-        rhs
     }
 }
 
@@ -1698,7 +1229,6 @@ pub(crate) fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 ),
                 entry(10, texture(d3, true)),
-                entry(11, texture(d3, true)),
                 entry(20, buffer(UNIFORM)),
             ],
         });
@@ -1818,14 +1348,9 @@ pub fn evaluate_over(
         .flat_map(|v| (*v as f32).to_ne_bytes())
         .collect();
     let matrix = init("fit model matrix", &matrix, wgpu::BufferUsages::STORAGE);
-    let (chroma, chroma_luma, chroma_tint) = gpu.lattice(colour);
+    let (chroma, chroma_luma) = gpu.lattice(colour);
     let curves = gpu.curves(colour);
-    let (chroma, chroma_luma, chroma_tint, curves) = (
-        chroma.view(),
-        chroma_luma.view(),
-        chroma_tint.view(),
-        curves.view(),
-    );
+    let (chroma, chroma_luma, curves) = (chroma.view(), chroma_luma.view(), curves.view());
     let kernel = model_device(gpu);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fit_model"),
@@ -1862,10 +1387,6 @@ pub fn evaluate_over(
             wgpu::BindGroupEntry {
                 binding: 10,
                 resource: wgpu::BindingResource::TextureView(&chroma_luma),
-            },
-            wgpu::BindGroupEntry {
-                binding: 11,
-                resource: wgpu::BindingResource::TextureView(&chroma_tint),
             },
             wgpu::BindGroupEntry {
                 binding: 20,
@@ -2202,7 +1723,7 @@ fn indices_on(gpu: &'static crate::gpu::Gpu, at: &[usize]) -> crate::gpu::Buffer
 /// hand the fit one part of the picture and judge it on another, which measures how alike
 /// two regions are as much as it measures the model.
 ///
-/// **Holding out by region instead does not buy what it looks like it buys**, and `MAP_CHROMA`
+/// **Holding out by region instead does not buy what it looks like it buys**, and `MAP_HUE`
 /// has the measurement: a lattice memorises colours rather than places, the same lawn is on
 /// both sides of any partition of one photograph, and blocking by region leaves held-out
 /// `delta_e` preferring a finer grid exactly as the stride does - while the render says the
@@ -3549,11 +3070,13 @@ struct ChromaMoments {
     ltb: Vec<f64>,
     /// How much landed here.
     seen: Vec<f64>,
+    /// What the node had left to correct, by where about it that sat: the residual-weighted
+    /// offset from the node in node gaps on each axis, its square, and the residual weight.
+    reach: Vec<[f64; 9]>,
 }
 
-impl Default for ChromaMoments {
-    fn default() -> Self {
-        let nodes = MAP_NODES;
+impl ChromaMoments {
+    fn empty(nodes: usize) -> ChromaMoments {
         ChromaMoments {
             ata: vec![[[0.0; 3]; 3]; nodes],
             atb: vec![[[0.0; 3]; 2]; nodes],
@@ -3564,7 +3087,62 @@ impl Default for ChromaMoments {
             lda: vec![[0.0; 2]; nodes],
             ltb: vec![0.0; nodes],
             seen: vec![0.0; nodes],
+            reach: vec![[0.0; 9]; nodes],
         }
+    }
+
+    /// Grey's nodes, one per hue, given what all of them saw: they are one place, so they are one
+    /// node, and every hue's copy solves to the same answer.
+    fn merged_grey(mut self, shape: GridShape) -> ChromaMoments {
+        for s in 0..shape.surround {
+            for z in 0..shape.level {
+                let at = |h: usize| shape.index([h, 0, z, s]);
+                let mut total = ChromaMoments::empty(1);
+                for h in 0..shape.hue {
+                    total.add_node(0, &self, at(h), 1.0);
+                }
+                for h in 0..shape.hue {
+                    self.set_node(at(h), &total, 0);
+                }
+            }
+        }
+        self
+    }
+
+    fn add_node(&mut self, to: usize, from: &ChromaMoments, at: usize, scale: f64) {
+        for a in 0..3 {
+            for b in 0..3 {
+                self.ata[to][a][b] += scale * from.ata[at][a][b];
+            }
+            self.sx[to][a] += scale * from.sx[at][a];
+        }
+        for a in 0..2 {
+            for b in 0..3 {
+                self.atb[to][a][b] += scale * from.atb[at][a][b];
+            }
+            self.st[to][a] += scale * from.st[at][a];
+            self.lda[to][a] += scale * from.lda[at][a];
+        }
+        self.btb[to] += scale * from.btb[at];
+        self.lta[to] += scale * from.lta[at];
+        self.ltb[to] += scale * from.ltb[at];
+        self.seen[to] += scale * from.seen[at];
+        for k in 0..9 {
+            self.reach[to][k] += scale * from.reach[at][k];
+        }
+    }
+
+    fn set_node(&mut self, to: usize, from: &ChromaMoments, at: usize) {
+        self.ata[to] = from.ata[at];
+        self.atb[to] = from.atb[at];
+        self.sx[to] = from.sx[at];
+        self.st[to] = from.st[at];
+        self.btb[to] = from.btb[at];
+        self.lta[to] = from.lta[at];
+        self.lda[to] = from.lda[at];
+        self.ltb[to] = from.ltb[at];
+        self.seen[to] = from.seen[at];
+        self.reach[to] = from.reach[at];
     }
 }
 
@@ -4884,7 +4462,7 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
     held(mine, camera)
 }
 
-/// Where each chroma axis starts and how many gaps it spans per unit, for *this* frame.
+/// How far the chroma axis reaches for *this* frame, in lattice coordinates (√chroma).
 ///
 /// **Sized to what the grade will look up, not to the fit's pairs.** The pairs are
 /// censored - the camera's clipped pixels and everything over `TRUST_CEILING` are gated
@@ -4896,40 +4474,31 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
 /// correction stepped along the clamp contour - which crosses a lit subject as a visible
 /// band, because absolute chroma grows with brightness.
 ///
-/// Each tail sized on its own, because a frame's chroma is neither centred nor alike on
-/// the two axes: skin, foliage and sky are all one-sided, and the narrower tail of a
-/// one-sided frame is empty. Zero still lands exactly on a node - the split is an integer
-/// gap count - so a grey is left to the node that says leave it alone rather than
-/// interpolating between two neighbours' corrections.
-///
-/// Taken from percentiles so a single outlier cannot stretch the grid, floored so a frame
-/// of snow and sky cannot collapse the axes onto its own noise, and capped at
-/// `CHROMA_REACH`: past the cap live only colours the camera clipped on, where no node
-/// has data and the edge hold is the answer anyway.
+/// Taken from a percentile so a single outlier cannot stretch the grid, floored so a frame of
+/// snow and sky cannot collapse the axis onto its own noise, and capped at the chroma of
+/// Rec.2020's own red at diffuse white: past it live only colours the camera clipped on, where no
+/// node has data and the edge hold is the answer anyway.
 async fn chroma_span(
     gpu: &'static crate::gpu::Gpu,
     sharp: &Source,
     evaluated: &crate::gpu::Buffer,
-) -> Option<[[f64; 2]; 2]> {
-    let reach = ChromaMap::warp(CHROMA_REACH);
-    let fallback = [-reach, ChromaMap::scale_for(reach)];
+    space: crate::lattice::IndexSpace,
+) -> Option<f64> {
+    let widest = space.chroma_of([1.0, 0.0, 0.0]);
     let samples = sharp.pixels();
     if samples < MIN_SPAN_SAMPLES {
-        return Some([fallback; 2]);
+        return Some(widest.sqrt());
     }
     let quantile = |q: f64| ((samples as f64 * q) as usize).min(samples - 1);
-    let picked =
-        crate::fit_span::spans(gpu, evaluated, sharp, [quantile(0.001), quantile(0.999)]).await?;
-    Some(std::array::from_fn(|axis| {
-        let below = ChromaMap::warp((-picked[axis][0]).clamp(CHROMA_REACH / 8.0, CHROMA_REACH));
-        let above = ChromaMap::warp(picked[axis][1].clamp(CHROMA_REACH / 8.0, CHROMA_REACH));
-        let gaps = (MAP_CHROMA - 1) as f64;
-        // At least one gap per side, so the shorter tail keeps a cell of its own instead
-        // of clamping against the zero node.
-        let zero = ((gaps * below / (below + above)).round() as usize).clamp(1, MAP_CHROMA - 2);
-        let cell = (below / zero as f64).max(above / (gaps - zero as f64));
-        [-(zero as f64) * cell, 1.0 / cell]
-    }))
+    let picked = crate::fit_span::spans(
+        gpu,
+        evaluated,
+        sharp,
+        [quantile(0.001), quantile(0.999)],
+        space,
+    )
+    .await?;
+    Some(picked[0][1].clamp(widest / 16.0, widest).sqrt())
 }
 
 /// The surround in both the places that read it: the device, where every probe gathers it beside
@@ -5138,26 +4707,6 @@ async fn wide_samples(
     samples
 }
 
-/// Where the lattice's four axes sit for one frame.
-///
-/// The scales are the frame's own reach, so the ceiling's stretch is addressable rather than all
-/// of it clamping onto the top level plane (`with_level_reach`).
-struct LatticeAxes {
-    span: [[f64; 2]; 2],
-    level_scale: f64,
-    surround_scale: f64,
-}
-
-impl LatticeAxes {
-    fn of(colour: &HdrColour, span: [[f64; 2]; 2]) -> LatticeAxes {
-        LatticeAxes {
-            span,
-            level_scale: (MAP_LEVEL - 1) as f64 / colour.ceiling.sqrt(),
-            surround_scale: (MAP_SURROUND - 1) as f64 / colour.ceiling.sqrt(),
-        }
-    }
-}
-
 impl ChromaMoments {
     /// One sample landed on the sixteen nodes about it, counting `of` times each node's share.
     #[cfg(test)]
@@ -5206,31 +4755,11 @@ impl ChromaMoments {
 
     /// `other`'s sums onto this one's, node by node, each landing counting `scale` times.
     fn add(&mut self, other: &ChromaMoments, scale: f64) {
-        for node in 0..MAP_NODES {
-            for a in 0..3 {
-                for b in 0..3 {
-                    self.ata[node][a][b] += scale * other.ata[node][a][b];
-                }
-                self.sx[node][a] += scale * other.sx[node][a];
-            }
-            for a in 0..2 {
-                for b in 0..3 {
-                    self.atb[node][a][b] += scale * other.atb[node][a][b];
-                }
-                self.st[node][a] += scale * other.st[node][a];
-                self.lda[node][a] += scale * other.lda[node][a];
-            }
-            self.btb[node] += scale * other.btb[node];
-            self.lta[node] += scale * other.lta[node];
-            self.ltb[node] += scale * other.ltb[node];
-            self.seen[node] += scale * other.seen[node];
+        for node in 0..self.seen.len() {
+            self.add_node(node, other, node, scale);
         }
     }
 }
-
-/// Cells the lattice holds: one fewer than nodes on every axis, a cell being the gap between two.
-pub(crate) const MAP_CELLS: usize =
-    (MAP_CHROMA - 1) * (MAP_CHROMA - 1) * (MAP_LEVEL - 1) * (MAP_SURROUND - 1);
 
 /// One population the lattice is taught from or judged on, as `fit_lattice.slang` reads it: what
 /// each sample is, what the camera made of it, its surround and its hue weight. On the device, and
@@ -5306,24 +4835,34 @@ impl Landed {
 
     /// Every sample's landing under `colour`, folded into the lattice's nodes without any of them
     /// crossing the bus.
+    ///
+    /// `on_what_is_left` lands the samples where `colour`'s own lattice indexes them but teaches
+    /// the nodes what that lattice left: the colour after it, against the camera's.
     async fn moments(
         &self,
         gpu: &'static crate::gpu::Gpu,
         colour: &HdrColour,
-        axes: &LatticeAxes,
+        grid: &crate::fit_lattice::Grid,
+        on_what_is_left: bool,
     ) -> Option<ChromaMoments> {
         if self.count == 0 {
-            return Some(ChromaMoments::default());
+            return Some(ChromaMoments::empty(grid.node_count()));
         }
-        let through = evaluate_over(gpu, colour, &self.samples, self.count, Stage::ToneMatrix);
+        let indexed =
+            evaluate_over(gpu, colour, &self.samples, self.count, Stage::ToneMatrix).buffer;
+        let through = match on_what_is_left {
+            true => evaluate_over(gpu, colour, &self.samples, self.count, Stage::Full).buffer,
+            false => indexed.clone(),
+        };
         lattice_moments(
             gpu,
-            &through.buffer,
+            &through,
+            &indexed,
             &self.target,
             &self.surround,
             &self.hue,
             self.count,
-            axes,
+            grid,
         )
         .await
     }
@@ -5345,31 +4884,19 @@ fn floats_on(
 async fn lattice_moments(
     gpu: &'static crate::gpu::Gpu,
     through: &crate::gpu::Buffer,
+    indexed: &crate::gpu::Buffer,
     target: &crate::gpu::Buffer,
     surround: &crate::gpu::Buffer,
     weights: &crate::gpu::Buffer,
     count: usize,
-    axes: &LatticeAxes,
+    grid: &crate::fit_lattice::Grid,
 ) -> Option<ChromaMoments> {
     let nodes = crate::fit_lattice::moments(
-        gpu,
-        through,
-        target,
-        surround,
-        weights,
-        count,
-        &crate::fit_lattice::Axes {
-            low: [axes.span[0][0], axes.span[1][0]],
-            scale: [axes.span[0][1], axes.span[1][1]],
-            level: axes.level_scale,
-            surround: axes.surround_scale,
-        },
-        MAP_NODES,
-        MAP_CELLS,
+        gpu, through, indexed, target, surround, weights, count, grid,
     )
     .await?;
 
-    let mut moments = ChromaMoments::default();
+    let mut moments = ChromaMoments::empty(grid.node_count());
     for (node, sums) in nodes.iter().enumerate() {
         for a in 0..3 {
             for b in 0..3 {
@@ -5388,6 +4915,7 @@ async fn lattice_moments(
         moments.lta[node] = sums[21];
         moments.ltb[node] = sums[22];
         moments.seen[node] = sums[25];
+        moments.reach[node] = std::array::from_fn(|k| sums[crate::fit_lattice::REACH_WORDS + k]);
     }
     Some(moments)
 }
@@ -5404,8 +4932,7 @@ async fn lattice_moments(
 ///
 /// Solved rather than searched: with the nodes fixed and the interpolation linear in
 /// them, matching our chroma to the camera's is a weighted least squares per node.
-fn fitted_chroma(axes: &LatticeAxes, moments: &ChromaMoments) -> Option<ChromaMap> {
-    const NODES: usize = MAP_NODES;
+fn fitted_chroma(axes: LatticeAxes, shape: GridShape, moments: &ChromaMoments) -> Option<NodeGrid> {
     let ChromaMoments {
         ata,
         atb,
@@ -5416,20 +4943,15 @@ fn fitted_chroma(axes: &LatticeAxes, moments: &ChromaMoments) -> Option<ChromaMa
         lda,
         ltb,
         seen,
+        ..
     } = moments;
 
     // Each node solved on its own, then pulled back toward no correction by how little it
     // saw. A node with nothing keeps nothing of its own.
-    let mut map = ChromaMap {
-        low: [axes.span[0][0], axes.span[1][0]],
-        scale: [axes.span[0][1], axes.span[1][1]],
-        level_scale: axes.level_scale,
-        surround_scale: axes.surround_scale,
-        ..ChromaMap::coarse_shell(vec![UNCORRECTED_NODE; MAP_NODES])
-    };
+    let mut map = NodeGrid::identity(shape, axes);
     const TARGET: [[f64; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let mut fitted = 0usize;
-    for node in 0..NODES {
+    for node in 0..shape.nodes() {
         // The lightness gain first, and independently: it is a scalar least squares that
         // shares only the node weights with the chroma solve, so a node whose chroma is
         // degenerate can still carry a lightness correction. Bounded for the reason the
@@ -5713,10 +5235,6 @@ async fn fit_colour(
         }
         _ => (source, sharp),
     };
-    let evidence = crate::fit_curve::Evidence {
-        render: source.buffer.clone(),
-        ..evidence
-    };
 
     let surround = surround_plane(gpu, &source, width, height).await?;
     lap("surround");
@@ -5800,8 +5318,6 @@ async fn fit_colour(
     let lattice = Lattice {
         sharp,
         lifted: sharp.lifted(gpu),
-        evidence: &evidence,
-        grid: (width, height),
         train: landed(&train),
         wide_train: Landed::wides(gpu, &wide_train),
         held: landed(&held),
@@ -5809,25 +5325,49 @@ async fn fit_colour(
         wide_held: Landed::wides(gpu, &wide_held),
     };
     lap("landed");
-    let mut chosen: Option<(f64, HdrColour, Score)> = None;
+    let mut chosen: Option<(FittedLattice, HdrColour)> = None;
     for matrix in candidates {
         let trial = with_matrix(matrix);
-        let (spent, chroma, score) =
-            fitted_lattice(gpu, &trial, &lattice, async |trial| cost(trial).await).await?;
+        let fitted = fitted_lattice(gpu, &trial, &lattice, async |trial| cost(trial).await).await?;
         if crate::clock::watched() {
             eprintln!(
-                "  matrix {matrix:.3?}: {spent:.3}, lattice {}",
-                chroma.is_some()
+                "  matrix {matrix:.3?}: {:.3}, lattice {}",
+                fitted.spent,
+                fitted.map.is_some()
             );
         }
-        if chosen.as_ref().is_none_or(|(held, _, _)| spent < *held) {
-            chosen = Some((spent, HdrColour { chroma, ..trial }, score));
+        if chosen
+            .as_ref()
+            .is_none_or(|(held, _)| fitted.spent < held.spent)
+        {
+            let colour = HdrColour {
+                chroma: fitted.map.clone(),
+                ..trial
+            };
+            chosen = Some((fitted, colour));
         }
     }
-    let (_, mut colour, scored) = chosen?;
+    let (fitted, mut colour) = chosen?;
+    let mut scored = fitted.score;
+    if let Some((_, map, score)) = refined_lattice(gpu, &colour, &lattice, &fitted, async |trial| {
+        cost(trial).await
+    })
+    .await?
+    {
+        colour.chroma = Some(map);
+        scored = score;
+    }
+    lap("refine");
     // A map even where none won: without one `finish_chroma` blends by `saturation`, which is the
     // slider's default and not part of this render.
-    colour.chroma.get_or_insert_with(ChromaMap::identity);
+    // At the precision a sidecar holds it, so a stored match grades as the fresh one did.
+    colour.chroma = Some(
+        colour
+            .chroma
+            .take()
+            .unwrap_or_else(ChromaMap::identity)
+            .stored(),
+    );
     lap("matrix and lattice");
     // The map reads the surround at grade time, so its thumb travels with it.
     let step = 16usize;
@@ -5923,8 +5463,6 @@ fn perceptual_chroma(rgb: &[f64; 3]) -> f64 {
 struct Lattice<'a> {
     sharp: &'a Sharp,
     lifted: crate::gpu::Buffer,
-    evidence: &'a crate::fit_curve::Evidence,
-    grid: (usize, usize),
     train: Landed,
     wide_train: Landed,
     held: Landed,
@@ -5932,17 +5470,172 @@ struct Lattice<'a> {
     wide_held: Landed,
 }
 
+/// What `fitted_lattice` chose, and what it was fitted on, which the finer grid fits on again.
+struct FittedLattice {
+    spent: f64,
+    /// None where no map costs least.
+    map: Option<ChromaMap>,
+    score: Score,
+    wide_weight: f64,
+    axes: LatticeAxes,
+}
+
+/// The moments a grid is taught and judged from, landed once for every rung of the ladder.
+struct Taught {
+    pairs: ChromaMoments,
+    wides: ChromaMoments,
+    held: ChromaMoments,
+}
+
+impl Taught {
+    async fn on(
+        gpu: &'static crate::gpu::Gpu,
+        colour: &HdrColour,
+        on: &Lattice<'_>,
+        grid: &crate::fit_lattice::Grid,
+        on_what_is_left: bool,
+    ) -> Option<Taught> {
+        let pairs = on.train.moments(gpu, colour, grid, on_what_is_left).await?;
+        let wides = on
+            .wide_train
+            .moments(gpu, colour, grid, on_what_is_left)
+            .await?;
+        let mut held = on.held.moments(gpu, colour, grid, on_what_is_left).await?;
+        held.add(
+            &on.frame.moments(gpu, colour, grid, on_what_is_left).await?,
+            1.0,
+        );
+        held.add(
+            &on.wide_held
+                .moments(gpu, colour, grid, on_what_is_left)
+                .await?,
+            WIDE_STANDS_FOR,
+        );
+        Some(Taught { pairs, wides, held })
+    }
+
+    /// The grid these moments teach with the wide samples at `wide_weight`, and the moments it
+    /// was solved from.
+    fn grid(
+        &self,
+        axes: LatticeAxes,
+        shape: GridShape,
+        wide_weight: f64,
+    ) -> Option<(NodeGrid, ChromaMoments)> {
+        let mut moments = self.pairs.clone();
+        moments.add(&self.wides, wide_weight * WIDE_STANDS_FOR);
+        let moments = moments.merged_grey(shape);
+        let held = self.held.clone().merged_grey(shape);
+        let grid = fitted_chroma(axes, shape, &moments)?
+            .level_trended(&moments.seen)
+            .validated(&held);
+        Some((grid, moments))
+    }
+}
+
+/// The strength in `[0, 1]` a map costs least at, by golden section from `whole`, its cost at
+/// full strength: that cost, the strength and its held pairs' score. None where no strength costs
+/// less than `bare`. A map that helps most colours and harms one is applied as far as that trade
+/// pays, where on or off would take it whole or lose it whole.
+async fn strongest(
+    at: impl Fn(f64) -> ChromaMap,
+    whole: (f64, Score),
+    bare: f64,
+    mapped: &mut impl AsyncFnMut(ChromaMap) -> Option<(f64, Score)>,
+) -> Option<Option<(f64, f64, Score)>> {
+    let mut judged = vec![(whole.0, 1.0, whole.1)];
+    let (mut low, mut high) = (0.0, 1.0);
+    let mut inner = [
+        high - INVERSE_PHI * (high - low),
+        low + INVERSE_PHI * (high - low),
+    ];
+    let mut costs = [0.0; 2];
+    for k in 0..2 {
+        let (spent, score) = mapped(at(inner[k])).await?;
+        costs[k] = spent;
+        judged.push((spent, inner[k], score));
+    }
+    for _ in 0..STRENGTH_STEPS {
+        let probe = if costs[0] < costs[1] {
+            high = inner[1];
+            inner = [high - INVERSE_PHI * (high - low), inner[0]];
+            costs[1] = costs[0];
+            0
+        } else {
+            low = inner[0];
+            inner = [inner[1], low + INVERSE_PHI * (high - low)];
+            costs[0] = costs[1];
+            1
+        };
+        let (spent, score) = mapped(at(inner[probe])).await?;
+        costs[probe] = spent;
+        judged.push((spent, inner[probe], score));
+    }
+    let mut least: Option<(f64, f64, Score)> = None;
+    for (spent, strength, score) in judged {
+        if crate::clock::watched() {
+            eprintln!("  chroma at {strength:.3}: {spent:.3} against {bare:.3} bare");
+        }
+        if spent < least.as_ref().map_or(bare, |(held, _, _)| *held) {
+            least = Some((spent, strength, score));
+        }
+    }
+    Some(least)
+}
+
+/// The finer grid, fitted on what `colour`'s own lattice left and joined to it where that costs
+/// less than `colour` alone, `spent` being what `colour` costs.
+///
+/// Its kernels are narrowed to the colours that asked for them, so a correction one tight colour
+/// needs stays on that colour rather than reaching the neighbours a coarse node would have.
+async fn refined_lattice(
+    gpu: &'static crate::gpu::Gpu,
+    colour: &HdrColour,
+    on: &Lattice<'_>,
+    fitted: &FittedLattice,
+    cost: impl AsyncFn(&HdrColour) -> Option<(f64, Score)>,
+) -> Option<Option<(f64, ChromaMap, Score)>> {
+    let mut lap = crate::clock::laps("  refine ");
+    let shape = GridShape::FINE;
+    let taught = Taught::on(gpu, colour, on, &fitted.axes.grid(shape), true).await?;
+    lap("moments");
+    let Some((grid, moments)) = taught.grid(fitted.axes, shape, fitted.wide_weight) else {
+        return Some(None);
+    };
+    let fine = grid
+        .carrying(FINE_CARRIED, &moments.seen)
+        .map(Some(&moments));
+    let base = colour.chroma.clone().unwrap_or_else(ChromaMap::identity);
+    let at = |strength: f64| fine.at_strength(strength).joined(&base);
+    let mut trial = colour.clone();
+    let mut mapped = async |map: ChromaMap| {
+        trial.chroma = Some(map);
+        cost(&trial).await
+    };
+    let whole = mapped(at(1.0)).await?;
+    let chosen = strongest(at, whole, fitted.spent, &mut mapped).await?;
+    lap("strength");
+    if crate::clock::watched() {
+        eprintln!(
+            "  refine: {} kernels, {:?}",
+            fine.kernels().len(),
+            chosen
+                .as_ref()
+                .map(|(spent, strength, _)| (spent, strength))
+        );
+    }
+    Some(chosen.map(|(spent, strength, score)| (spent, at(strength), score)))
+}
+
 /// The chroma lattice `colour` would carry, the cost `cost` puts on the result, and its held
-/// pairs' score. None for the lattice where no map costs least.
+/// pairs' score.
 async fn fitted_lattice(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
     on: &Lattice<'_>,
     cost: impl AsyncFn(&HdrColour) -> Option<(f64, Score)>,
-) -> Option<(f64, Option<ChromaMap>, Score)> {
-    let Lattice {
-        sharp, evidence, ..
-    } = *on;
+) -> Option<FittedLattice> {
+    let Lattice { sharp, .. } = *on;
     // The hue-dependent part, kept only if it earns its place. Least squares on chroma
     // minimises chroma error, and this fit is judged on deltaE, so it is measured rather than
     // assumed.
@@ -5965,129 +5658,62 @@ async fn fitted_lattice(
     // running the whole time. That one needed the model constrained (`fit_curves`), not
     // measured better.
     let mut lap = crate::clock::laps("  lattice ");
+    let space = crate::lattice::IndexSpace::chosen();
     let looked_up = sharp.evaluated(gpu, colour, &on.lifted);
     let axes = LatticeAxes::of(
         colour,
-        chroma_span(gpu, &sharp.wide, &looked_up.buffer).await?,
+        space,
+        chroma_span(gpu, &sharp.wide, &looked_up.buffer, space).await?,
     );
     lap("span");
-    let noise = LevelNoise {
-        variance: crate::fit_noise::by_level(
-            gpu,
-            &looked_up.buffer,
-            (sharp.wide.width, sharp.wide.height),
-            &evidence.bits,
-            on.grid,
-            axes.level_scale,
-        )
-        .await?,
-    };
-    lap("noise");
-    if crate::clock::watched() {
-        let sigma = noise
-            .variance
-            .map(|v| v.map(|axes| axes.map(|a| (a.sqrt() * 1e4).round() / 1e4)));
-        eprintln!("  colour chroma noise by level {sigma:?}");
-    }
     let (bare, unmapped) = cost(colour).await?;
-    let mut trial = colour.clone();
-    let mut mapped = async |map: ChromaMap| {
-        trial.chroma = Some(map);
-        cost(&trial).await
-    };
+    let shape = GridShape::COARSE;
     // A ladder of candidates rather than one, because the wide samples change what the
     // fit believes and the choice must be free to disagree by degree. A cell only they
     // reach is fully taught at any weight on the ladder - `MAP_CONFIDENCE` is 2 against
     // thousands of samples - so what the ladder actually offers is how far they may
     // outvote the pairs in the cells both populations reach.
-    let taught = on.train.moments(gpu, colour, &axes).await?;
-    lap("pair moments");
-    let wide_taught = on.wide_train.moments(gpu, colour, &axes).await?;
-    lap("wide moments");
-    let mut held_out = on.held.moments(gpu, colour, &axes).await?;
-    held_out.add(&on.frame.moments(gpu, colour, &axes).await?, 1.0);
-    held_out.add(
-        &on.wide_held.moments(gpu, colour, &axes).await?,
-        WIDE_STANDS_FOR,
-    );
-    lap("held-out moments");
-    let shape = |wide_weight: &f64| -> Option<(ChromaMap, ChromaMap)> {
-        let mut moments = taught.clone();
-        moments.add(&wide_taught, wide_weight * WIDE_STANDS_FOR);
-        let map = fitted_chroma(&axes, &moments)?
-            .level_trended(&moments.seen)
-            .noise_damped(&noise)
-            .validated(&held_out);
-        // Smoothed before it is judged: the choice must score the surface a render will
-        // actually read, not the fitted lattice it was built from.
-        let smoothed = map.smoothed();
-        Some((map, smoothed))
+    let taught = Taught::on(gpu, colour, on, &axes.grid(shape), false).await?;
+    lap("moments");
+    let mut trial = colour.clone();
+    let mut mapped = async |map: ChromaMap| {
+        trial.chroma = Some(map);
+        cost(&trial).await
     };
-    let mut rungs: Option<(f64, ChromaMap, Score)> = None;
-    // A thread's worth at a time: the browser's pool is one thread, where all seven densified
-    // lattices held at once would be a hundred megabytes bought for nothing.
-    for batch in WIDE_WEIGHTS.chunks(rayon::current_num_threads().max(1)) {
-        let shaped: Vec<Option<(ChromaMap, ChromaMap)>> = batch.par_iter().map(shape).collect();
-        for (wide_weight, shaped) in batch.iter().zip(shaped) {
-            let Some((map, smoothed)) = shaped else {
-                continue;
-            };
-            let (spent, score) = mapped(smoothed).await?;
-            if crate::clock::watched() {
-                eprintln!("  ladder rung {wide_weight}: {spent:.3}");
-            }
-            if rungs.as_ref().is_none_or(|(held, _, _)| spent < *held) {
-                rungs = Some((spent, map, score));
-            }
+    let mut rungs: Option<(f64, ChromaMap, Score, f64)> = None;
+    for wide_weight in WIDE_WEIGHTS {
+        let Some((grid, _)) = taught.grid(axes, shape, wide_weight) else {
+            continue;
+        };
+        let map = grid.map(None);
+        let (spent, score) = mapped(map.clone()).await?;
+        if crate::clock::watched() {
+            eprintln!("  ladder rung {wide_weight}: {spent:.3}");
+        }
+        if rungs.as_ref().is_none_or(|(held, ..)| spent < *held) {
+            rungs = Some((spent, map, score, wide_weight));
         }
     }
     lap("ladder rungs");
-    // The rung that won is taken at the strength its cost is least at, from none of it to all of
-    // it. A map that helps most colours and harms one is applied as far as that trade pays, where
-    // on or off would take it whole or lose it whole.
-    let mut best: (f64, Option<ChromaMap>, Score) = (bare, None, unmapped);
-    if let Some((whole, map, score)) = rungs {
-        let at = |strength: f64| map.at_strength(strength).smoothed();
-        let mut judged = vec![(whole, 1.0, score)];
-        let (mut low, mut high) = (0.0, 1.0);
-        let mut inner = [
-            high - INVERSE_PHI * (high - low),
-            low + INVERSE_PHI * (high - low),
-        ];
-        let mut costs = [0.0; 2];
-        let first = rayon::join(|| at(inner[0]), || at(inner[1]));
-        for (k, lattice) in [first.0, first.1].into_iter().enumerate() {
-            let (spent, score) = mapped(lattice).await?;
-            costs[k] = spent;
-            judged.push((spent, inner[k], score));
-        }
-        for _ in 0..STRENGTH_STEPS {
-            let probe = if costs[0] < costs[1] {
-                high = inner[1];
-                inner = [high - INVERSE_PHI * (high - low), inner[0]];
-                costs[1] = costs[0];
-                0
-            } else {
-                low = inner[0];
-                inner = [inner[1], low + INVERSE_PHI * (high - low)];
-                costs[0] = costs[1];
-                1
+    let mut best = FittedLattice {
+        spent: bare,
+        map: None,
+        score: unmapped,
+        wide_weight: 0.0,
+        axes,
+    };
+    if let Some((whole, map, score, wide_weight)) = rungs {
+        let at = |strength: f64| map.at_strength(strength);
+        if let Some((spent, strength, score)) =
+            strongest(at, (whole, score), bare, &mut mapped).await?
+        {
+            best = FittedLattice {
+                spent,
+                map: Some(map.at_strength(strength)),
+                score,
+                wide_weight,
+                axes,
             };
-            let (spent, score) = mapped(at(inner[probe])).await?;
-            costs[probe] = spent;
-            judged.push((spent, inner[probe], score));
-        }
-        let mut least: Option<(f64, f64, Score)> = None;
-        for (spent, strength, score) in judged {
-            if crate::clock::watched() {
-                eprintln!("  chroma at {strength:.3}: {spent:.3} against {bare:.3} bare");
-            }
-            if spent < least.as_ref().map_or(bare, |(held, _, _)| *held) {
-                least = Some((spent, strength, score));
-            }
-        }
-        if let Some((spent, strength, score)) = least {
-            best = (spent, Some(at(strength)), score);
         }
     }
     lap("chroma ladder");
@@ -7731,6 +7357,81 @@ mod tests {
         assert!(tint < 1e-3, "lightness alone produced colour bias {tint}");
     }
 
+    fn test_axes() -> LatticeAxes {
+        let space = crate::lattice::IndexSpace::Jzazbz;
+        LatticeAxes {
+            space,
+            chroma_top: space.chroma_of([0.6, 0.0, 0.0]).sqrt(),
+            level_low: space.lightness_of_neutral(0.0),
+            level_top: space.lightness_of_neutral(1.0),
+            surround_top: 1.0,
+        }
+    }
+
+    /// A coarse grid whose node at each `[hue, ring, level, surround]` is `f`'s.
+    fn grid_of(f: impl Fn([usize; 4]) -> [f64; NODE_VALUES]) -> NodeGrid {
+        let shape = GridShape::COARSE;
+        NodeGrid {
+            shape,
+            axes: test_axes(),
+            nodes: (0..shape.nodes()).map(|n| f(shape.place(n))).collect(),
+        }
+    }
+
+    /// Where `fit_lattice.slang` lands a rendered colour: the sixteen nodes about it, each one's
+    /// share, and the sample's offset from each in node gaps.
+    fn landing(
+        axes: LatticeAxes,
+        shape: GridShape,
+        rendered: [f64; 3],
+        surround: f64,
+    ) -> Vec<(usize, f64, [f64; 4])> {
+        let [lightness, a, b] = axes.space.opponent_of(rendered);
+        let turn = b.atan2(a) / std::f64::consts::TAU;
+        let at = [
+            turn - turn.floor(),
+            a.hypot(b).sqrt(),
+            lightness,
+            surround.max(0.0).sqrt(),
+        ];
+        let grid = axes.grid(shape);
+        let axis = |value: f64, nodes: usize, low: f64, scale: f64| {
+            let t = ((value - low) * scale).max(0.0).min((nodes - 1) as f64);
+            let below = (t as usize).min(nodes - 2);
+            (below, t - below as f64)
+        };
+        let turns = at[0] * shape.hue as f64;
+        let h = (turns as usize).min(shape.hue - 1);
+        let below = [
+            (h, turns - h as f64),
+            axis(at[1], shape.rings + 1, 0.0, grid.chroma_scale),
+            axis(at[2], shape.level, grid.level_low, grid.level_scale),
+            axis(at[3], shape.surround, 0.0, grid.surround_scale),
+        ];
+        (0..16)
+            .map(|which| {
+                let side: [usize; 4] = std::array::from_fn(|k| (which >> k) & 1);
+                let node = shape.index([
+                    (below[0].0 + side[0]) % shape.hue,
+                    below[1].0 + side[1],
+                    below[2].0 + side[2],
+                    below[3].0 + side[3],
+                ]);
+                let share = (0..4)
+                    .map(|k| match side[k] {
+                        1 => below[k].1,
+                        _ => 1.0 - below[k].1,
+                    })
+                    .product();
+                (
+                    node,
+                    share,
+                    std::array::from_fn(|k| below[k].1 - side[k] as f64),
+                )
+            })
+            .collect()
+    }
+
     #[test]
     fn the_level_trend_follows_the_levels_pairs_reached() {
         let reached = MAP_LEVEL - 3;
@@ -7738,20 +7439,19 @@ mod tests {
             true => 0.8,
             false => 0.5,
         };
-        let map =
-            ChromaMap::from_nodes(|_, _, z| [gain(z), 0.0, 0.0, gain(z), 0.0, 0.0, 1.0, 0.0, 0.0]);
-        let area = MAP_CHROMA * MAP_CHROMA;
+        let map = grid_of(|[_, _, z, _]| [gain(z), 0.0, 0.0, gain(z), 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let shape = map.shape;
         let seen_to = |top: usize| -> Vec<f64> {
-            (0..MAP_NODES)
-                .map(|n| match (n / area) % MAP_LEVEL < top {
+            (0..shape.nodes())
+                .map(|n| match shape.place(n)[2] < top {
                     true => 1e4,
                     false => 0.0,
                 })
                 .collect()
         };
-        let furthest = |trended: &ChromaMap| {
+        let furthest = |trended: &NodeGrid| {
             (0..reached)
-                .map(|z| (trended.nodes[z * area][0] - 0.8).abs())
+                .map(|z| (trended.nodes[shape.index([0, 1, z, 0])][0] - 0.8).abs())
                 .fold(0.0f64, f64::max)
         };
 
@@ -7773,10 +7473,8 @@ mod tests {
             let x = z as f64 / (MAP_LEVEL - 1) as f64;
             0.9 - 0.4 * x + 0.7 * x * x - 0.5 * x * x * x
         };
-        let map = ChromaMap::from_nodes(|_, _, z| {
-            [cubic(z), 0.0, 0.0, cubic(z), 0.0, 0.0, 1.0, 0.0, 0.0]
-        });
-        let trended = map.level_trended(&vec![1e4; MAP_NODES]);
+        let map = grid_of(|[_, _, z, _]| [cubic(z), 0.0, 0.0, cubic(z), 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let trended = map.level_trended(&vec![1e4; map.shape.nodes()]);
         for (kept, was) in trended.nodes.iter().zip(&map.nodes) {
             assert!(
                 (kept[0] - was[0]).abs() < 1e-9,
@@ -7787,34 +7485,76 @@ mod tests {
         }
     }
 
-    /// A node keeps its whole correction where no scatter reaches it, and at a noisy level gives
-    /// up the more of it the greyer it is, the warp spreading a scatter widest at a grey.
+    /// Grey is one place, so its kernel answers whichever hue a colour arrived from, and a grid
+    /// emits it once.
     #[test]
-    fn noise_damps_the_greys_of_a_noisy_level_first() {
-        let map = ChromaMap::from_nodes(|_, _, _| [1.3, 0.0, 0.0, 1.3, 0.0, 0.0, 1.0, 0.0, 0.0]);
-        let quiet = LevelNoise {
-            variance: [None; MAP_LEVEL],
-        };
-        assert_eq!(map.noise_damped(&quiet).nodes, map.nodes);
+    fn grey_is_one_kernel_whatever_the_hue() {
+        let grid = grid_of(|[h, r, _, _]| match r {
+            0 => [1.0, 0.0, 0.0, 1.0, 0.0, 0.1, 1.0, 0.0, 0.0],
+            _ => [
+                1.0 + 0.01 * h as f64,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+            ],
+        });
+        let kernels = grid.kernels(None);
+        let greys: Vec<_> = kernels.iter().filter(|k| k.centre[1] == 0.0).collect();
+        assert_eq!(greys.len(), MAP_LEVEL * MAP_SURROUND);
+        assert!(greys.iter().all(|k| k.reach[0] == 0.0));
+    }
 
-        let mut variance = [None; MAP_LEVEL];
-        variance[2] = Some([1e-4; 2]);
-        let damped = map.noise_damped(&LevelNoise { variance });
-        let at = |x: usize, z: usize| (z * MAP_CHROMA + x) * MAP_CHROMA + x;
-        let kept = |x, z| (damped.nodes[at(x, z)][0] - 1.0) / 0.3;
-        let grey = (-map.low[0] * map.scale[0]).round() as usize;
-        let vivid = MAP_CHROMA - 1;
-        assert!(
-            (kept(grey, 1) - 1.0).abs() < 1e-12,
-            "a quiet level keeps all of it"
-        );
-        assert!(
-            kept(grey, 2) < kept(vivid, 2),
-            "{} against {}",
-            kept(grey, 2),
-            kept(vivid, 2)
-        );
-        assert!(kept(vivid, 2) < 1.0);
+    /// A kernel fitted on what is left narrows to where its residual sat, and no further than
+    /// `NARROWEST_REACH` of its gap.
+    #[test]
+    fn a_tight_residual_narrows_its_kernel() {
+        let grid = grid_of(|_| [1.2, 0.0, 0.0, 1.2, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let shape = grid.shape;
+        let mut moments = ChromaMoments::empty(shape.nodes());
+        let (tight, spread) = (shape.index([3, 2, 4, 1]), shape.index([5, 2, 4, 1]));
+        moments.reach[tight] = [0.0, 0.0, 0.0, 0.0, 0.001, 0.001, 0.001, 0.0, 1.0];
+        moments.reach[spread] = [0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 1.0];
+        let kernels = grid.kernels(Some(&moments));
+        let gaps = grid.axes.gaps(shape);
+        let at = |h: usize| {
+            kernels
+                .iter()
+                .find(|k| {
+                    (k.centre[0] - h as f64 * gaps[0]).abs() < 1e-12
+                        && (k.centre[1] - 2.0 * gaps[1]).abs() < 1e-12
+                        && (k.centre[2] - grid.axes.level_low - 4.0 * gaps[2]).abs() < 1e-12
+                        && (k.centre[3] - gaps[3]).abs() < 1e-12
+                })
+                .expect("the node's kernel")
+                .reach
+        };
+        assert!((at(3)[0] - NARROWEST_REACH * gaps[0]).abs() < 1e-12);
+        assert!((at(5)[0] - gaps[0]).abs() < 1e-12);
+    }
+
+    /// A loud node nothing landed on goes before a quiet one the frame is full of.
+    #[test]
+    fn the_kept_nodes_are_the_ones_carrying_the_correction() {
+        let grid = grid_of(|_| [1.2, 0.0, 0.0, 1.2, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let mut grid = NodeGrid {
+            nodes: vec![UNCORRECTED_NODE; grid.nodes.len()],
+            ..grid
+        };
+        let (loud, quiet, busy) = (3, 4, 5);
+        grid.nodes[loud] = [2.0, 0.0, 0.0, 2.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+        grid.nodes[quiet] = [1.1, 0.0, 0.0, 1.1, 0.0, 0.0, 1.0, 0.0, 0.0];
+        grid.nodes[busy] = [1.3, 0.0, 0.0, 1.3, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let mut seen = vec![0.0; grid.nodes.len()];
+        (seen[loud], seen[quiet], seen[busy]) = (0.01, 1000.0, 1000.0);
+        let kept = grid.carrying(0.9, &seen);
+        assert_eq!(kept.nodes[busy], grid.nodes[busy]);
+        assert_eq!(kept.nodes[quiet], grid.nodes[quiet]);
+        assert_eq!(kept.nodes[loud], UNCORRECTED_NODE);
     }
 
     /// Most of the pairs in one cell, as a dark frame puts them, so its run is cut into slices.
@@ -7823,11 +7563,8 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
-        let axes = LatticeAxes {
-            span: [[-0.4, 7.5]; 2],
-            level_scale: 8.0,
-            surround_scale: 2.0,
-        };
+        let axes = test_axes();
+        let shape = GridShape::COARSE;
         let mut seed = 7u64;
         let mut next = || {
             seed = seed
@@ -7837,14 +7574,16 @@ mod tests {
         };
         let (mut through, mut target, mut surround, mut weight) = (vec![], vec![], vec![], vec![]);
         for k in 0..5000 {
-            let (level, spread) = match k % 5 == 0 {
-                true => (0.05 + 0.8 * next(), 0.2),
-                false => (0.03 + 0.002 * next(), 0.002),
+            // The dark cluster holds one hue: near grey, a cluster scattered round it in every
+            // direction lands on every hue's cell.
+            let (level, spread, tint) = match k % 5 == 0 {
+                true => (0.05 + 0.8 * next(), 0.2, 0.0),
+                false => (0.03 + 0.002 * next(), 0.002, 0.01),
             };
             let m = [
-                level + spread * (next() - 0.5),
+                level + tint + spread * (next() - 0.5),
                 level,
-                level + spread * (next() - 0.5),
+                level - tint + spread * (next() - 0.5),
             ];
             let luma = LUMA[0] * m[0] + LUMA[1] * m[1] + LUMA[2] * m[2];
             through.push([m[0] as f32, m[1] as f32, m[2] as f32, luma as f32]);
@@ -7862,16 +7601,18 @@ mod tests {
         let floats = |values: &mut dyn Iterator<Item = f64>| -> Vec<u8> {
             values.flat_map(|v| (v as f32).to_ne_bytes()).collect()
         };
-        let device = pollster::block_on(crate::fit_lattice::moments(
+        let through_buffer = upload(
+            "through",
+            through
+                .iter()
+                .flatten()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect(),
+        );
+        let device = pollster::block_on(lattice_moments(
             gpu,
-            &upload(
-                "through",
-                through
-                    .iter()
-                    .flatten()
-                    .flat_map(|v| v.to_ne_bytes())
-                    .collect(),
-            ),
+            &through_buffer,
+            &through_buffer,
             &upload(
                 "target",
                 floats(&mut target.iter().flat_map(|t| [t[0], t[1], t[2], 1.0])),
@@ -7879,57 +7620,75 @@ mod tests {
             &upload("surround", floats(&mut surround.iter().copied())),
             &upload("weight", floats(&mut weight.iter().copied())),
             through.len(),
-            &crate::fit_lattice::Axes {
-                low: [axes.span[0][0], axes.span[1][0]],
-                scale: [axes.span[0][1], axes.span[1][1]],
-                level: axes.level_scale,
-                surround: axes.surround_scale,
-            },
-            MAP_NODES,
-            MAP_CELLS,
+            &axes.grid(shape),
         ))
         .expect("summed");
 
-        let mut host = ChromaMoments::default();
+        let mut host = ChromaMoments::empty(shape.nodes());
+        let mut touched = vec![0.0; shape.nodes()];
         for k in 0..through.len() {
-            let [m0, _, m2, ours] = through[k].map(f64::from);
+            let [m0, m1, m2, ours] = through[k].map(f64::from);
             let theirs = LUMA[0] * target[k][0] + LUMA[1] * target[k][1] + LUMA[2] * target[k][2];
             let (d0, d2) = (m0 - ours, m2 - ours);
-            let (corner, fraction) = ChromaMap::cell(&axes, ours, surround[k], d0, d2);
-            let (at, share) = ChromaMap::nodes_of(corner, fraction);
             let reached = [target[k][0] - theirs, target[k][2] - theirs];
-            host.land(&at, &share, weight[k], [d0, d2, ours], reached, theirs);
+            let residual = (reached[0] - d0).hypot(reached[1] - d2) + (theirs - ours).abs();
+            for (node, share, offset) in landing(axes, shape, [m0, m1, m2], surround[k]) {
+                host.land(
+                    &[node; 16],
+                    &{
+                        let mut one = [0.0; 16];
+                        one[0] = share;
+                        one
+                    },
+                    weight[k],
+                    [d0, d2, ours],
+                    reached,
+                    theirs,
+                );
+                let sw = weight[k] * share * residual;
+                for axis in 0..4 {
+                    host.reach[node][axis] += sw * offset[axis];
+                    host.reach[node][4 + axis] += sw * offset[axis] * offset[axis];
+                }
+                host.reach[node][8] += sw;
+                touched[node] += weight[k];
+            }
         }
         let busiest = host.seen.iter().copied().fold(0.0, f64::max);
         assert!(
             busiest > 4.0 * 256.0,
             "one cell holds several slices: {busiest}"
         );
-        for node in 0..MAP_NODES {
-            let mut want = [0.0; crate::fit_lattice::NODE_WORDS];
-            for a in 0..3 {
-                for b in 0..3 {
-                    want[a * 3 + b] = host.ata[node][a][b];
+        // Compared as the fit reads them, grey merged across hue: a near-grey pair's hue is
+        // `atan2` of two `f32` differences, so which hue's grey node it lands on is noise.
+        let (host, device) = (host.merged_grey(shape), device.merged_grey(shape));
+        for s in 0..shape.surround {
+            for z in 0..shape.level {
+                let grey: Vec<usize> = (0..shape.hue).map(|h| shape.index([h, 0, z, s])).collect();
+                let total: f64 = grey.iter().map(|&n| touched[n]).sum();
+                for n in grey {
+                    touched[n] = total;
                 }
-                want[15 + a] = host.sx[node][a];
             }
-            for a in 0..2 {
-                for b in 0..3 {
-                    want[9 + a * 3 + b] = host.atb[node][a][b];
-                }
-                want[18 + a] = host.st[node][a];
-                want[23 + a] = host.lda[node][a];
-            }
-            (want[20], want[21], want[22], want[25]) = (
-                host.btb[node],
-                host.lta[node],
-                host.ltb[node],
-                host.seen[node],
-            );
-            for (word, want) in want.iter().enumerate() {
-                let got = device[node][word];
-                // Signed sums can cancel to near nothing, so the floor scales with what landed.
-                let allowed = 1e-4 * want.abs() + 1e-5 * host.seen[node];
+        }
+        let words = |m: &ChromaMoments, node: usize| -> Vec<f64> {
+            let mut out: Vec<f64> = m.ata[node].iter().flatten().copied().collect();
+            out.extend(m.atb[node].iter().flatten());
+            out.extend(m.sx[node].iter().chain(&m.st[node]).chain(&m.lda[node]));
+            out.extend([m.btb[node], m.lta[node], m.ltb[node], m.seen[node]]);
+            out.extend(m.reach[node]);
+            out
+        };
+        for node in 0..shape.nodes() {
+            for (word, (got, want)) in words(&device, node)
+                .into_iter()
+                .zip(words(&host, node))
+                .enumerate()
+            {
+                // Signed sums can cancel to near nothing, so the floor scales with the weight of
+                // every pair that reached the node: one grazing it lands on the tent's steep
+                // edge, where Jz's 134th power turns `f32` rounding into a share a tenth off.
+                let allowed = 1e-3 * want.abs() + 2e-3 * touched[node];
                 assert!(
                     (got - want).abs() <= allowed,
                     "node {node} word {word}: {got} against {want}"
@@ -7940,8 +7699,8 @@ mod tests {
 
     #[test]
     fn a_node_keeps_what_the_pixels_it_did_not_see_ask_for() {
-        let map = ChromaMap::from_nodes(|_, _, _| [1.3, 0.0, 0.0, 1.3, 0.0, 0.0, 1.0, 0.0, 0.0]);
-        let mut judged = ChromaMoments::default();
+        let map = grid_of(|_| [1.3, 0.0, 0.0, 1.3, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let mut judged = ChromaMoments::empty(map.shape.nodes());
         let mut share = [0.0; 16];
         share[0] = 1.0;
         for (node, gain) in [(0, 1.3), (1, 1.0), (2, 1.15)] {
@@ -7963,19 +7722,15 @@ mod tests {
 
     #[test]
     fn a_node_no_pair_reached_is_left_uncorrected() {
-        let mut moments = ChromaMoments::default();
+        let shape = GridShape::COARSE;
+        let mut moments = ChromaMoments::empty(shape.nodes());
         let mut share = [0.0; 16];
         share[0] = 1.0;
         for input in [[0.05, 0.02, 0.5], [-0.03, 0.04, 0.3], [0.01, -0.06, 0.6]] {
             let target = [1.3 * input[0], 1.3 * input[1]];
             moments.land(&[0; 16], &share, 1e6, input, target, input[2]);
         }
-        let axes = LatticeAxes {
-            span: [[-0.3, 10.0]; 2],
-            level_scale: 8.0,
-            surround_scale: 2.0,
-        };
-        let map = fitted_chroma(&axes, &moments).expect("one node was reached");
+        let map = fitted_chroma(test_axes(), shape, &moments).expect("one node was reached");
         assert!((map.nodes[0][0] - 1.3).abs() < 1e-2, "{:?}", map.nodes[0]);
         assert_eq!(map.nodes[1], UNCORRECTED_NODE);
     }
@@ -8489,123 +8244,6 @@ mod tests {
         }
     }
 
-    /// Every value `f16`-exact, so `densified`'s storage quantisation changes nothing and
-    /// the smoothness comparison below reads the same fitted values both ways.
-    fn a_bumpy_map() -> ChromaMap {
-        ChromaMap::from_nodes(|x, y, z| {
-            let v = (x as f64 * 0.71 + y as f64 * 1.13 + z as f64 * 0.37).sin() * 0.1;
-            [
-                1.0 + v,
-                v * 0.5,
-                -v * 0.3,
-                1.0 - v,
-                v,
-                -v,
-                1.0 + v * 0.2,
-                v * 0.1,
-                -v * 0.1,
-            ]
-            .map(|value| f64::from(half::f16::from_f64(value)))
-        })
-    }
-
-    #[test]
-    fn a_lattice_index_past_the_gamut_is_read_at_its_edge() {
-        // The camera matrix hands the lattice colours no Rec.2020 primary can make - a
-        // saturated red with green below zero and a luma near nothing - and the
-        // chroma-to-lightness pair divides by that luma. Held to the chromaticity a colour with
-        // no negative channel can have, so the read is the gamut edge's rather than a sign
-        // that follows noise. One node everywhere, so the two reads land on identical cells and
-        // differ only in what the pair was scaled by.
-        let mut colour = HdrColour::identity();
-        // Green pulled down by half the red, which is what takes the first sample past the
-        // gamut after an identity tone stage, and leaves the second exactly on its edge.
-        colour.matrix = [[1.0, 0.0, 0.0], [-0.5, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        colour.chroma = Some(ChromaMap::from_nodes(|_, _, _| {
-            [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.1, -0.05]
-        }));
-        let m = [0.3, -0.11, 0.0];
-        let l = LUMA[0] * m[0] + LUMA[1] * m[1] + LUMA[2] * m[2];
-        assert!(
-            l > 0.0 && (m[0] - l) / l > 1.0 / LUMA[0] - 1.0,
-            "not past the gamut: {l}"
-        );
-        let edge = l / LUMA[0];
-        let samples = [
-            [m[0], m[1] + 0.5 * m[0], 0.0, 0.0],
-            [edge, 0.5 * edge, 0.0, 0.0],
-        ];
-        let Some(out) = through(&colour, Stage::Full, &samples) else {
-            return;
-        };
-        // The chroma differs - each keeps its own - but the lightness the pair produced is read
-        // off the index, and the index past the gamut is held to the edge's.
-        let luma = |v: &[f64; 3]| LUMA[0] * v[0] + LUMA[1] * v[1] + LUMA[2] * v[2];
-        let (past, held) = (luma(&out[0]), luma(&out[1]));
-        assert!(
-            (past - held).abs() < 1e-5 * held.max(1e-6),
-            "read past the edge: {:?} against {:?}",
-            out[0],
-            out[1],
-        );
-    }
-
-    #[test]
-    fn the_applied_lattice_round_trips_through_its_coarse_form() {
-        // The curve passes through its controls, so decimating the dense lattice reads the
-        // controls back and `densified` rebuilds it bit-for-bit - the exactness the
-        // sidecar's round trip stands on.
-        let dense = a_bumpy_map().smoothed();
-        let back = dense.coarse();
-        assert_eq!(back.shape().chroma_count, MAP_CHROMA);
-        assert_eq!(back.densified().nodes_flat(), dense.nodes_flat());
-    }
-
-    #[test]
-    fn a_densified_lattice_reads_without_the_kinks() {
-        // What a level-gradient reads is the lattice along `z` at its own chroma position,
-        // and a zone contour is that read's slope jumping. The fitted lattice is linear
-        // between nodes, so all its slope change lands on the crossings; the dense one
-        // spreads a C1 curve's curvature over `MAP_DENSITY` steps. Measured on the value
-        // sequences themselves, per step of each lattice's own grid, so the comparison
-        // carries no smooth background from the probe.
-        let map = a_bumpy_map();
-        let dense = map.smoothed();
-        // An off-grid chroma position - dense grid indices that are not multiples of
-        // `MAP_DENSITY` - so the coarse side is a genuine interpolated read.
-        let (fx, fy) = (0.25, 0.75);
-        let coarse_at = |m: &ChromaMap, z: usize| -> f64 {
-            let node = |x: usize, y: usize| m.nodes[(z * MAP_CHROMA + y) * MAP_CHROMA + x][4];
-            (1.0 - fx) * (1.0 - fy) * node(1, 1)
-                + fx * (1.0 - fy) * node(2, 1)
-                + (1.0 - fx) * fy * node(1, 2)
-                + fx * fy * node(2, 2)
-        };
-        let dense_at = |m: &ChromaMap, z: usize| -> f64 {
-            let (x, y) = (MAP_DENSITY + 1, MAP_DENSITY * 2 - 1);
-            m.nodes[(z * m.chroma_count + y) * m.chroma_count + x][4]
-        };
-        let ridges = |values: Vec<f64>| -> f64 {
-            values
-                .windows(3)
-                .map(|w| (w[2] - 2.0 * w[1] + w[0]).abs())
-                .fold(0.0, f64::max)
-        };
-        let coarse = ridges((0..MAP_LEVEL).map(|z| coarse_at(&map, z)).collect());
-        let smooth = ridges(
-            (0..dense.level_count)
-                .map(|z| dense_at(&dense, z))
-                .collect(),
-        );
-        // The whole slope change of a fitted cell against one dense step's share of it.
-        // Theory says `MAP_DENSITY`^2 apart for an even spread; the curvature bunches
-        // towards the fitted nodes, so half that is what the resample must clear.
-        assert!(
-            smooth < coarse / (MAP_DENSITY * MAP_DENSITY) as f64 * 2.0,
-            "slope still jumps: {smooth} against the fitted lattice's {coarse}"
-        );
-    }
-
     /// What `fit_curve_bins` writes, built on the host: the fixture the tests below want, whose
     /// subject is the solve over the bins rather than the binning that filled them.
     fn binned_by_hand(xs: &[f64], ys: &[f64], ws: &[f64]) -> crate::fit_curve::Binned {
@@ -8944,33 +8582,46 @@ mod tests {
             Stage::ToneMatrix,
         );
         let ranks = [7, plane.pixels() - 13];
+        let space = crate::lattice::IndexSpace::Jzazbz;
         let picked = pollster::block_on(crate::fit_span::spans(
             gpu,
             &evaluated.buffer,
             &plane,
             ranks,
+            space,
         ))
         .expect("ranked");
         let read = pollster::block_on(evaluated.read(gpu)).expect("read");
         for axis in 0..2 {
-            let mut spread: Vec<f32> = read.iter().map(|m| m[axis * 2] - m[3]).collect();
-            spread.sort_by(f32::total_cmp);
+            let mut spread: Vec<f64> = read
+                .iter()
+                .map(|m| {
+                    let [lightness, a, b] = space.opponent_of([m[0], m[1], m[2]].map(f64::from));
+                    match axis {
+                        0 => a.hypot(b),
+                        _ => lightness,
+                    }
+                })
+                .collect();
+            spread.sort_by(f64::total_cmp);
             for (rank, at) in ranks.iter().enumerate() {
-                assert_eq!(
+                // The device ranks its own `f32` reading of each sample, the host its `f64` one,
+                // and Jz's transfer raises to the 134th power, which multiplies `f32`'s rounding.
+                assert!(
+                    (picked[axis][rank] - spread[*at]).abs() < 1e-5,
+                    "axis {axis} rank {at}: {} against {}",
                     picked[axis][rank],
-                    f64::from(spread[*at]),
-                    "axis {axis} rank {at}"
+                    spread[*at]
                 );
             }
         }
     }
 
     #[test]
-    fn a_one_sided_frame_still_reaches_the_colours_it_holds() {
-        // Skin, foliage, sky: one chroma tail full, the other empty. Sized to the
-        // narrower tail the axes collapse to their floor, every saturated pixel rides
-        // the outermost node, and the grade's correction steps along the clamp contour -
-        // which crosses a lit subject as a visible band.
+    fn the_chroma_axis_reaches_the_colours_a_frame_holds() {
+        // Sized short of the frame's own colour, every saturated pixel rides the outermost
+        // node, and the grade's correction steps along the clamp contour - which crosses a lit
+        // subject as a visible band.
         let red = [0.7, 0.3, 0.3];
         let grey = [0.4, 0.4, 0.4];
         let mut data = Vec::new();
@@ -8997,28 +8648,21 @@ mod tests {
             &HdrColour::identity(),
             &sharp.lifted(searching()),
         );
-        let span = pollster::block_on(chroma_span(searching(), &sharp.wide, &looked_up.buffer))
-            .expect("the device evaluates the model");
-
-        let l = LUMA[0] * red[0] + LUMA[1] * red[1] + LUMA[2] * red[2];
-        let gaps = (MAP_CHROMA - 1) as f64;
-        for (axis, d) in [(0, red[0] - l), (1, red[2] - l)] {
-            let u = ChromaMap::warp(d);
-            let (low, scale) = (span[axis][0], span[axis][1]);
-            let high = low + gaps / scale;
-            // The covering tail lands on the axis end to the f32 the device measured it in,
-            // so an ulp is not a miss.
-            assert!(
-                low - 1e-5 <= u.min(0.0) && u.max(0.0) <= high + 1e-5,
-                "axis {axis} spans {low:.3}..{high:.3}, the frame's own colour sits at {u:.3}",
-            );
-            // A grey has to land exactly on a node for the map to leave it alone.
-            let zero = (0.0 - low) * scale;
-            assert!(
-                (zero - zero.round()).abs() < 1e-9,
-                "zero sits between nodes, at {zero}"
-            );
-        }
+        let space = crate::lattice::IndexSpace::Jzazbz;
+        let top = pollster::block_on(chroma_span(
+            searching(),
+            &sharp.wide,
+            &looked_up.buffer,
+            space,
+        ))
+        .expect("the device evaluates the model");
+        let reached = space.chroma_of(red).sqrt();
+        // The axis ends on the frame's own colour to the f32 the device measured it in, so an ulp
+        // is not a miss.
+        assert!(
+            reached <= top + 1e-5 && top <= reached + 1e-3,
+            "the axis reaches {top:.4}, the frame's own colour sits at {reached:.4}",
+        );
     }
 
     #[test]
@@ -9051,9 +8695,20 @@ mod tests {
             [0.2, 0.5, 0.1, 0.3],
             [0.1, 0.3, 0.6, 0.3],
         ];
+        let axes = ChromaMap::identity().axes();
+        let bumpy = ChromaMap::with_kernels(
+            (0..6)
+                .map(|hue| crate::lattice::Kernel {
+                    centre: [hue as f64 / 6.0, axes.chroma_top / 2.0, 0.08, 0.0],
+                    reach: [1.0 / 6.0, axes.chroma_top / 2.0, 0.1, 0.0],
+                    generator: [0.1 * (hue % 3) as f64, 0.05, -0.05, 0.08, 0.01, -0.01, 0.02],
+                    to_lightness: [0.03, -0.02],
+                })
+                .collect(),
+        );
         let at = |saturation| {
             let colour = HdrColour {
-                chroma: Some(a_bumpy_map()),
+                chroma: Some(bumpy.clone()),
                 saturation,
                 ..identity_colour()
             };

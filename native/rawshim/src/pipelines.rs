@@ -24,7 +24,6 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::fit_curve::kernels(gpu);
     crate::fit_lattice::kernels(gpu);
     crate::fit_moments::kernel(gpu);
-    crate::fit_noise::kernel(gpu);
     crate::fit_objective::kernels(gpu);
     crate::fit_pairs::kernels(gpu);
     crate::fit_score::kernel(gpu);
@@ -39,6 +38,7 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::hdr_fit::search_device(gpu);
     crate::hdr_fit::stats_device(gpu);
     crate::hdr_fit::warp_device(gpu);
+    gpu.lattice_bake();
 }
 
 #[cfg(test)]

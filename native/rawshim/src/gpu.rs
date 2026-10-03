@@ -286,6 +286,8 @@ pub struct Gpu {
     print_surface: PipelineCell<print_surface::Pipelines>,
     print_environment: PipelineCell<print_environment::Pipelines>,
     print_material: PipelineCell<PrintMaterial>,
+    lattice_bake: PipelineCell<crate::lattice::BakeKernel>,
+    id: u64,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
     peak_layout: wgpu::BindGroupLayout,
@@ -1196,6 +1198,17 @@ impl Gpu {
         })
     }
 
+    pub(crate) fn lattice_bake(&self) -> &crate::lattice::BakeKernel {
+        self.lattice_bake
+            .get_or_init(|| crate::lattice::BakeKernel::new(self.describing()))
+    }
+
+    /// Distinct for every device this process opens, so a resource cached against one is never
+    /// handed to another.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     fn print_environment_pipelines(&self) -> &print_environment::Pipelines {
         self.print_environment
             .get_or_init(|| print_environment::Pipelines::new(&self.device))
@@ -1796,6 +1809,11 @@ impl Gpu {
             print_surface: PipelineCell::new(),
             print_environment: PipelineCell::new(),
             print_material: PipelineCell::new(),
+            lattice_bake: PipelineCell::new(),
+            id: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             pack_layout,
             pack,
             peak_layout,
@@ -1884,7 +1902,7 @@ impl Gpu {
 
 /// What `encodeLayout` names on the client, in one list so the layout and the bind group
 /// cannot drift apart.
-const ENCODE_BINDINGS: [(u32, Binding); 17] = [
+const ENCODE_BINDINGS: [(u32, Binding); 16] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -1895,7 +1913,6 @@ const ENCODE_BINDINGS: [(u32, Binding); 17] = [
     (7, Binding::Sampler),
     (9, Binding::Pyramid),
     (10, Binding::Volume),
-    (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
     (14, Binding::Storage { read_only: true }),
@@ -1906,7 +1923,7 @@ const ENCODE_BINDINGS: [(u32, Binding); 17] = [
 
 /// `drawLayout` on the client: `ENCODE_BINDINGS` without the buffer the encode writes, and seen by
 /// the fragment stage rather than by a compute one.
-const DRAW_BINDINGS: [(u32, Binding); 16] = [
+const DRAW_BINDINGS: [(u32, Binding); 15] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -1916,7 +1933,6 @@ const DRAW_BINDINGS: [(u32, Binding); 16] = [
     (7, Binding::Sampler),
     (9, Binding::Pyramid),
     (10, Binding::Volume),
-    (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
     (14, Binding::Storage { read_only: true }),
@@ -2175,7 +2191,6 @@ struct ChromaModelInputs<'a> {
     curves: &'a wgpu::TextureView,
     chroma: &'a wgpu::TextureView,
     chroma_luma: &'a wgpu::TextureView,
-    chroma_tint: &'a wgpu::TextureView,
     surround: &'a wgpu::TextureView,
     mean: &'a wgpu::TextureView,
     detail: &'a wgpu::TextureView,
@@ -2183,7 +2198,7 @@ struct ChromaModelInputs<'a> {
 
 /// What `chroma_smooth.slang`'s model pass reads: the colour transform's own set, and the
 /// texture it writes.
-const CHROMA_MODEL_BINDINGS: [(u32, Binding); 15] = [
+const CHROMA_MODEL_BINDINGS: [(u32, Binding); 14] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -2191,7 +2206,6 @@ const CHROMA_MODEL_BINDINGS: [(u32, Binding); 15] = [
     (4, Binding::Storage { read_only: true }),
     (7, Binding::Sampler),
     (10, Binding::Volume),
-    (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
     (14, Binding::Storage { read_only: true }),
@@ -2201,7 +2215,7 @@ const CHROMA_MODEL_BINDINGS: [(u32, Binding); 15] = [
     (22, Binding::Written),
 ];
 
-const PEAK_BINDINGS: [(u32, Binding); 17] = [
+const PEAK_BINDINGS: [(u32, Binding); 16] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -2212,7 +2226,6 @@ const PEAK_BINDINGS: [(u32, Binding); 17] = [
     (7, Binding::Sampler),
     (8, Binding::Storage { read_only: false }),
     (10, Binding::Volume),
-    (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
     (14, Binding::Storage { read_only: true }),
@@ -2837,7 +2850,6 @@ pub struct Uploaded<'a> {
     curves: wgpu::TextureView,
     chroma: wgpu::TextureView,
     chroma_luma: wgpu::TextureView,
-    chroma_tint: wgpu::TextureView,
     surround: wgpu::TextureView,
     mean: wgpu::TextureView,
     /// The camera's own chroma blur, and the illuminant it was built under.
@@ -3103,7 +3115,7 @@ impl Gpu {
             .collect();
         let matrix = buffer(&matrix, wgpu::BufferUsages::STORAGE);
 
-        let (chroma, chroma_luma, chroma_tint) = self.lattice(described);
+        let (chroma, chroma_luma) = self.lattice(described);
         let surround = self.surround(described);
         let mean = self.mean_frame(&samples, grade);
         let curves = self.curves(described);
@@ -3144,7 +3156,6 @@ impl Gpu {
                 curves: &view(&curves),
                 chroma: &view(&chroma),
                 chroma_luma: &view(&chroma_luma),
-                chroma_tint: &view(&chroma_tint),
                 surround: &view(&surround),
                 mean: &view(&mean),
                 detail: &detail_absent,
@@ -3169,7 +3180,6 @@ impl Gpu {
             curves: view(&curves),
             chroma: view(&chroma),
             chroma_luma: view(&chroma_luma),
-            chroma_tint: view(&chroma_tint),
             surround: view(&surround),
             mean: view(&mean),
             chroma_smoothed: std::cell::RefCell::new((
@@ -3192,7 +3202,6 @@ impl Gpu {
                 curves,
                 chroma,
                 chroma_luma,
-                chroma_tint,
                 surround,
                 mean,
                 pyramid,
@@ -3209,61 +3218,12 @@ impl Gpu {
         uploaded
     }
 
-    /// The lattice, split in two: the 2x2 in one volume, and the lightness gain's *deviation from
-    /// 1* in another.
-    ///
-    /// Two volumes because four values fill an `rgba16float` texel and five do not, and the
-    /// deviation because half floats spend a fixed relative precision wherever the value
-    /// sits: storing 1.02 puts it all on the 1. The 2x2 multiplies chroma differences and
-    /// survives that; a gain multiplies luma and does not.
-    pub fn lattice(&self, colour: &HdrColour) -> (Texture, Texture, Texture) {
-        let identity = hdr_fit::ChromaMap::identity();
-        let map = colour.chroma.as_ref().unwrap_or(&identity);
-        let shape = map.shape();
-        use crate::parallel::*;
-        let nodes = map.nodes();
-        const TEXEL: usize = 8;
-        const LATTICE_GRAIN: usize = 2048;
-        let texel = |values: [f32; 4], into: &mut [u8]| {
-            for (value, bytes) in values.into_iter().zip(into.chunks_exact_mut(2)) {
-                bytes.copy_from_slice(&half(value));
-            }
-        };
-        let mut pairs = vec![0u8; nodes.len() * TEXEL];
-        let mut gains = vec![0u8; nodes.len() * TEXEL];
-        let mut tints = vec![0u8; nodes.len() * TEXEL];
-        nodes
-            .par_iter()
-            .zip(pairs.par_chunks_exact_mut(TEXEL))
-            .zip(gains.par_chunks_exact_mut(TEXEL))
-            .zip(tints.par_chunks_exact_mut(TEXEL))
-            .with_min_len(LATTICE_GRAIN)
-            .for_each(|(((node, pairs), gains), tints)| {
-                let node = node.map(|v| v as f32);
-                texel([node[0], node[1], node[2], node[3]], pairs);
-                // The second volume carries the two luma-to-chroma terms, the lightness gain's
-                // deviation from 1, and the first of the two chroma-to-lightness terms.
-                texel([node[4], node[5], node[6] - 1.0, node[7]], gains);
-                // Nine values need a third volume: eight fill two `rgba16float` texels exactly,
-                // and the ninth has nowhere else to sit. Three of its four slots are spare, which
-                // is the price of the chroma-to-lightness pair - a texel of padding per node
-                // against a small saturated object otherwise coming out at its surroundings'
-                // lightness.
-                texel([node[8], 0.0, 0.0, 0.0], tints);
-            });
-        let size = wgpu::Extent3d {
-            width: shape.chroma_count as u32,
-            height: shape.chroma_count as u32,
-            // Level and surround packed into depth, surround-major - `nodes`' own
-            // order - and the shader samples one surround slab at a time, so hardware
-            // filtering never crosses the seam between slabs.
-            depth_or_array_layers: (shape.level_count * shape.surround_count) as u32,
-        };
-        (
-            self.volume(size, &pairs, "chroma"),
-            self.volume(size, &gains, "chroma_luma"),
-            self.volume(size, &tints, "chroma_tint"),
-        )
+    /// The lattice's two volumes, baked from its kernels (`lattice::ChromaMap::baked`).
+    pub fn lattice(&self, colour: &HdrColour) -> (Texture, Texture) {
+        match &colour.chroma {
+            Some(map) => map.baked(self),
+            None => crate::lattice::ChromaMap::identity().baked(self),
+        }
     }
 
     /// The frame's nits at the fit's own footprint (`mean_frame.slang`), where
@@ -3278,7 +3238,7 @@ impl Gpu {
         }
         let (block, phase, cells) = mean_grid(grade);
         let size = wgpu::Extent3d {
-            width: cells.0,
+            width: cells.0 * 2,
             height: cells.1,
             depth_or_array_layers: 1,
         };
@@ -3294,7 +3254,7 @@ impl Gpu {
             block,
             phase.0,
             phase.1,
-            0,
+            (grade.reference_nits.raw() as f32).to_bits(),
             0,
             0,
         ]
@@ -3333,7 +3293,7 @@ impl Gpu {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.mean_pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(size.width.div_ceil(8), size.height.div_ceil(8), 1);
+            pass.dispatch_workgroups(cells.0, cells.1, 1);
         }
         recording.submit();
         texture
@@ -3419,10 +3379,6 @@ impl Gpu {
                 wgpu::BindGroupEntry {
                     binding: 10,
                     resource: wgpu::BindingResource::TextureView(bound.chroma_luma),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::TextureView(bound.chroma_tint),
                 },
                 wgpu::BindGroupEntry {
                     binding: 12,
@@ -3572,23 +3528,6 @@ impl Gpu {
             },
             wgpu::util::TextureDataOrder::LayerMajor,
             &data,
-        )
-    }
-
-    fn volume(&self, size: wgpu::Extent3d, data: &[u8], label: &str) -> Texture {
-        self.own_texture_with_data(
-            &wgpu::TextureDescriptor {
-                label: Some(label),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D3,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            data,
         )
     }
 
@@ -3987,7 +3926,6 @@ impl Uploaded<'_> {
                     curves: &self.curves,
                     chroma: &self.chroma,
                     chroma_luma: &self.chroma_luma,
-                    chroma_tint: &self.chroma_tint,
                     surround: &self.surround,
                     mean: &self.mean,
                     detail: &self.detail_absent,
@@ -4090,10 +4028,6 @@ impl Uploaded<'_> {
                 wgpu::BindGroupEntry {
                     binding: 10,
                     resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&self.chroma_tint),
                 },
                 wgpu::BindGroupEntry {
                     binding: 12,
@@ -4310,10 +4244,6 @@ impl Uploaded<'_> {
                 wgpu::BindGroupEntry {
                     binding: 10,
                     resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&self.chroma_tint),
                 },
                 wgpu::BindGroupEntry {
                     binding: 12,
@@ -4612,10 +4542,6 @@ impl Uploaded<'_> {
                     resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 11,
-                    resource: wgpu::BindingResource::TextureView(&self.chroma_tint),
-                },
-                wgpu::BindGroupEntry {
                     binding: 12,
                     resource: self.gpu.nits_of_code.as_entire_binding(),
                 },
@@ -4833,12 +4759,12 @@ const EDIT_FIELDS: &[&str] = &[
     "has_chroma",
     "curve_bins",
     "trust_ceiling",
+    "hue_count",
     "chroma_count",
     "level_count",
-    "chroma_low",
+    "index_space",
     "chroma_scale",
-    "chroma_low_by",
-    "chroma_scale_by",
+    "level_low",
     "level_scale",
     "sdr_white",
     "row_stride",
@@ -4981,12 +4907,12 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(u32::from(matched && colour.chroma.is_some()));
     w.push(colour.curves[0].len() as u32);
     f(&mut w, colour.ceiling);
+    w.push(shape.map_or(2, |s| s.hue_count as u32));
     w.push(shape.map_or(2, |s| s.chroma_count as u32));
     w.push(shape.map_or(2, |s| s.level_count as u32));
-    f(&mut w, shape.map_or(0.0, |s| s.chroma_low[0]));
-    f(&mut w, shape.map_or(1.0, |s| s.chroma_scale[0]));
-    f(&mut w, shape.map_or(0.0, |s| s.chroma_low[1]));
-    f(&mut w, shape.map_or(1.0, |s| s.chroma_scale[1]));
+    w.push(shape.map_or(0, |s| s.space.word()));
+    f(&mut w, shape.map_or(1.0, |s| s.chroma_scale));
+    f(&mut w, shape.map_or(0.0, |s| s.level_low));
     f(&mut w, shape.map_or(1.0, |s| s.level_scale));
     // sdr_white: BT.2408 reference white, and the divisor an extended-range canvas needs.
     //
@@ -5755,7 +5681,8 @@ mod tests {
                     Light::exactly(1000.0),
                 )
             };
-            assert!(std::panic::catch_unwind(|| super::uniform_words(&grade, &colour)).is_err());
+            let words = std::panic::AssertUnwindSafe(|| super::uniform_words(&grade, &colour));
+            assert!(std::panic::catch_unwind(words).is_err());
         }
     }
 
@@ -6263,18 +6190,18 @@ mod tests {
         let (width, height) = (32usize, 32usize);
         let frame: Vec<u16> = vec![24000; width * height * 3];
         let mut colour = crate::hdr_fit::HdrColour::identity();
-        // `NODE_VALUES`: the 2x2 on chroma, then the two luma-to-chroma terms, then lightness. The
-        // sixth is what takes a neutral towards blue in proportion to its level, which is the one
-        // way a node can tint a grey at all.
-        let tints_blue = [1.0, 0.0, 0.0, 1.0, 0.0, 0.4, 1.0, 0.0, 0.0];
-        let leaves_it = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-        let top = crate::hdr_fit::ChromaMap::identity().shape().level_count - 1;
-        colour.chroma = Some(crate::hdr_fit::ChromaMap::from_nodes(
-            |_, _, level| match level == top {
-                true => tints_blue,
-                false => leaves_it,
+        let axes = crate::lattice::ChromaMap::identity().axes();
+        // The generator's sixth term is the tint the blue-yellow axis takes from lightness: what
+        // takes a neutral towards blue in proportion to its level, the one way a kernel can tint a
+        // grey at all.
+        colour.chroma = Some(crate::lattice::ChromaMap::with_kernels(vec![
+            crate::lattice::Kernel {
+                centre: [0.0, 0.0, axes.level_top, 0.0],
+                reach: [0.0, 0.0, (axes.level_top - axes.level_low) / 8.0, 0.0],
+                generator: [0.0, 0.0, 0.0, 0.0, 0.0, 0.4, 0.0],
+                to_lightness: [0.0; 2],
             },
-        ));
+        ]));
         let grade = |exposure| super::Grade {
             colour: Some(&colour),
             exposure: Some(exposure),
@@ -6336,7 +6263,7 @@ mod tests {
             .collect();
         let fitted = crate::hdr_fit::HdrColour {
             saturation: 1.2,
-            chroma: Some(crate::hdr_fit::ChromaMap::from_saturation(1.2)),
+            chroma: Some(crate::lattice::ChromaMap::from_saturation(1.2)),
             ..crate::hdr_fit::HdrColour::identity()
         };
         let told = crate::hdr_fit::HdrColour {

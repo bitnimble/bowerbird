@@ -31,8 +31,7 @@ golden section), shader input tables, dust blob flood fill (`dust.rs`, surrounde
 `slang/dust_find.slang`). Restriction covers pixel arithmetic.
 
 **Host solvers are small; f64 is not required.** In f32, camera match's 150k-pair 3x3 weighted
-least squares shifts 0.0001 codes of 255; 7x7 Catmull-Rom normal matrix (condition ~2.6)
-shifts 1e-7 on nodes of order 1; 2x2 falloff shifts corner gain 0.0002 codes despite its
+least squares shifts 0.0001 codes of 255; 2x2 falloff shifts corner gain 0.0002 codes despite its
 `r^2`, `r^4` determinant being a seventeenth of its terms. Large pair accumulation already
 runs on device; dispatching a 3x3 solve costs a round trip. Never justify CPU stages by f64.
 Coding-table precision does matter: shader ST 2084 versus `tone::pq` puts a fifth of a real

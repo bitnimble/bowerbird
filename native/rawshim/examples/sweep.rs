@@ -62,14 +62,14 @@ fn main() {
     paths.truncate(limit);
 
     println!(
-        "{:<18} {:>7} {:>8} {:>8} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
+        "{:<18} {:>7} {:>8} {:>8} {:>8} {:>8} {:>7} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
         "frame",
         "deltaE",
         "percept",
         "plain",
         "classed",
         "relative",
-        "map",
+        "kernels",
         "neutrals",
         "drift g-r",
         "drift b-r"
@@ -93,17 +93,14 @@ fn main() {
             ),
             Some(r) => {
                 println!(
-                    "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
+                    "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>7} {:>8} {:>+9.1} {:>+9.1}  \
                      {:+.3} stops, {:?} ({:.6})",
                     r.delta_e,
                     r.rendered,
                     r.plain,
                     r.classed,
                     r.rendered_relative,
-                    match r.map {
-                        true => "yes",
-                        false => "no",
-                    },
+                    r.kernels,
                     r.neutrals,
                     r.drift_gr,
                     r.drift_br,
@@ -170,7 +167,8 @@ struct Report {
     classed: f64,
     classes: Vec<Option<f64>>,
     rendered_relative: f64,
-    map: bool,
+    /// The lattice's kernels, none where the fit kept no lattice.
+    kernels: usize,
     neutrals: usize,
     drift_gr: f64,
     drift_br: f64,
@@ -205,7 +203,12 @@ fn measure(path: &str) -> Option<Report> {
         classed: perceptual.classed,
         classes: perceptual.classes,
         rendered_relative: relative.rendered,
-        map: matched.colour.as_ref()?.chroma.is_some(),
+        kernels: matched
+            .colour
+            .as_ref()?
+            .chroma
+            .as_ref()
+            .map_or(0, |map| map.kernels().len()),
         neutrals: perceptual.neutrals,
         drift_gr: perceptual.drift_gr,
         drift_br: perceptual.drift_br,

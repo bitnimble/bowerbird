@@ -18,8 +18,9 @@
 use rawshim::composite_tile::{CompositeRequest, From, SourceFile};
 use rawshim::composition::{Composition, LensSpec};
 use rawshim::hdr::{self, Prepared};
-use rawshim::hdr_fit::{ChromaMap, HdrColour, TRUST_CEILING};
+use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
 use rawshim::image::Strengths;
+use rawshim::lattice::{ChromaMap, Kernel, generator_of};
 use rawshim::light::{Light, Stops};
 use rawshim::px::Size;
 use rawshim::resident::Resident;
@@ -115,40 +116,59 @@ fn matched() -> HdrColour {
         [0.5234375, 0.5336015820503235],
         [1.0, 1.0],
     ];
-    colour.chroma = Some(ChromaMap::from_nodes(|x, y, z| {
-        let scale = 1.04 + 0.03 * x as f64 - 0.02 * y as f64 + 0.05 * z as f64;
-        let skew = 0.02 * (x as f64 - y as f64);
-        // The lightness gain, off 1 at every node and varying on every axis, so a reader
+    colour.chroma = Some(lattice_on_a_grid(|x, y, z| {
+        let scale = 1.04 + 0.03 * x - 0.02 * y + 0.05 * z;
+        let skew = 0.02 * (x - y);
+        // The lightness gain, off 1 at every kernel and varying on every axis, so a reader
         // that dropped it or packed it in the wrong slot cannot answer correctly.
         //
         // Weakly on the level axis, unlike the 2x2 above. A gain that varies with level
         // makes the measured peak stop tracking the exposure - the pixel lands on a
-        // different node as the slider moves - and the sweep below bounds that at 2%. The
-        // level axis is pinned by the 2x2 regardless, both volumes being read at one
-        // shared coordinate, so what this one is here to pin is the chroma axes. At 0.02
-        // a level the peak came out 4.6% off its gain, which is the model behaving as
-        // asked rather than a fault, on a variation no fit produces: measured, the gains
-        // run 0.9685 to 1.0123 across a whole frame and mostly across chroma.
-        let lift = 1.0 + 0.015 * (x as f64 - 2.0) - 0.01 * (y as f64 - 2.0) + 0.004 * z as f64;
+        // different kernel as the slider moves - and the sweep below bounds that at 2%.
+        let lift = 1.0 + 0.015 * (x - 2.0) - 0.01 * (y - 2.0) + 0.004 * z;
         // The two luma-to-chroma terms, small and of both signs, so a reader that dropped
         // them or packed them in the wrong slot renders a tint on the neutrals rather than
-        // matching. They are the only part of a node that acts at `d = 0`.
-        let tint = 0.004 * (x as f64 - 2.0);
+        // matching. They are the only part of a kernel that acts at `d = 0`.
+        let tint = 0.004 * (x - 2.0);
         [
             scale,
             skew,
             -skew,
             scale * 0.98,
             tint,
-            -0.003 * (y as f64 - 2.0),
+            -0.003 * (y - 2.0),
             lift,
-            // The chroma-to-lightness pair, off zero at every node so a reader that dropped
-            // either or packed them in the wrong slot cannot answer correctly.
-            0.05 * (x as f64 - 2.0),
-            -0.04 * (y as f64 - 2.0),
+            0.05 * (x - 2.0),
+            -0.04 * (y - 2.0),
         ]
     }));
     colour
+}
+
+/// Kernels on a 6 hue, 2 ring, 3 level grid, each taking `node(hue, ring, level)`'s operator.
+fn lattice_on_a_grid(node: impl Fn(f64, f64, f64) -> [f64; 9]) -> ChromaMap {
+    let axes = ChromaMap::identity().axes();
+    let level_gap = (axes.level_top - axes.level_low) / 2.0;
+    let mut kernels = Vec::new();
+    for hue in 0..6 {
+        for ring in 1..=2 {
+            for level in 0..3 {
+                let operator = node(hue as f64 * 0.8, ring as f64 * 1.5, level as f64);
+                kernels.push(Kernel {
+                    centre: [
+                        hue as f64 / 6.0,
+                        axes.chroma_top * ring as f64 / 3.0,
+                        axes.level_low + level_gap * level as f64,
+                        0.0,
+                    ],
+                    reach: [1.0 / 6.0, axes.chroma_top / 3.0, level_gap, 0.0],
+                    generator: generator_of(std::array::from_fn(|k| operator[k])),
+                    to_lightness: [operator[7], operator[8]],
+                });
+            }
+        }
+    }
+    ChromaMap::with_kernels(kernels)
 }
 
 /// The size every synthetic frame here is, in the grade's output pixels.

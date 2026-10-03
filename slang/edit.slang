@@ -41,12 +41,14 @@ public struct Edit {
     public uint has_chroma;
     public uint curve_bins;
     public float trust_ceiling;
+    /// The baked lattice's texels per axis and how a lattice coordinate maps onto them
+    /// (`lattice::MapShape`), and which opponent space it is indexed in.
+    public uint hue_count;
     public uint chroma_count;
     public uint level_count;
-    public float chroma_low;
+    public uint index_space;
     public float chroma_scale;
-    public float chroma_low_by;
-    public float chroma_scale_by;
+    public float level_low;
     public float level_scale;
     public float sdr_white;
     /// Rows apart the peak's quantile samples, so it reads about a million pixels.

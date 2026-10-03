@@ -11,7 +11,8 @@
 //! Skipped where no Vulkan adapter answers, loudly rather than silently: a test that quietly
 //! passes because it never ran is not a test.
 
-use rawshim::hdr_fit::{ChromaMap, HdrColour, TRUST_CEILING};
+use rawshim::hdr_fit::{HdrColour, TRUST_CEILING};
+use rawshim::lattice::{ChromaMap, Kernel, generator_of};
 
 /// The shaders as the crate was built with them, from where `build.rs` gathered them.
 ///
@@ -44,22 +45,39 @@ fn model() -> HdrColour {
         [0.02, -0.25, 1.23],
     ];
     colour.saturation = 1.08;
-    colour.chroma = Some(ChromaMap::from_nodes(|x, y, z| {
-        let scale = 1.04 + 0.03 * x as f64 - 0.02 * y as f64 + 0.05 * z as f64;
-        let skew = 0.02 * (x as f64 - y as f64);
-        let lift = 1.0 + 0.015 * (x as f64 - 2.0) - 0.01 * (y as f64 - 2.0) + 0.004 * z as f64;
-        [
-            scale,
-            skew,
-            -skew,
-            scale * 0.98,
-            0.004 * (x as f64 - 2.0),
-            -0.003 * (y as f64 - 2.0),
-            lift,
-            0.05 * (x as f64 - 2.0),
-            -0.04 * (y as f64 - 2.0),
-        ]
-    }));
+    let axes = ChromaMap::identity().axes();
+    let level_gap = (axes.level_top - axes.level_low) / 2.0;
+    let mut kernels = Vec::new();
+    for hue in 0..6 {
+        for ring in 1..=2 {
+            for level in 0..3 {
+                let (x, y, z) = (hue as f64 * 0.8, ring as f64 * 1.5, level as f64);
+                let scale = 1.04 + 0.03 * x - 0.02 * y + 0.05 * z;
+                let skew = 0.02 * (x - y);
+                let lift = 1.0 + 0.015 * (x - 2.0) - 0.01 * (y - 2.0) + 0.004 * z;
+                kernels.push(Kernel {
+                    centre: [
+                        hue as f64 / 6.0,
+                        axes.chroma_top * ring as f64 / 3.0,
+                        axes.level_low + level_gap * z,
+                        0.0,
+                    ],
+                    reach: [1.0 / 6.0, axes.chroma_top / 3.0, level_gap, 0.0],
+                    generator: generator_of([
+                        scale,
+                        skew,
+                        -skew,
+                        scale * 0.98,
+                        0.004 * (x - 2.0),
+                        -0.003 * (y - 2.0),
+                        lift,
+                    ]),
+                    to_lightness: [0.05 * (x - 2.0), -0.04 * (y - 2.0)],
+                });
+            }
+        }
+    }
+    colour.chroma = Some(ChromaMap::with_kernels(kernels));
     colour
 }
 
@@ -86,12 +104,12 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
     words.push(u32::from(colour.chroma.is_some()));
     words.push(colour.curves[0].len() as u32);
     f_push(&mut words, colour.ceiling as f32);
+    words.push(shape.map_or(2, |s| s.hue_count as u32));
     words.push(shape.map_or(2, |s| s.chroma_count as u32));
     words.push(shape.map_or(2, |s| s.level_count as u32));
-    f_push(&mut words, shape.map_or(0.0, |s| s.chroma_low[0] as f32));
-    f_push(&mut words, shape.map_or(1.0, |s| s.chroma_scale[0] as f32));
-    f_push(&mut words, shape.map_or(0.0, |s| s.chroma_low[1] as f32));
-    f_push(&mut words, shape.map_or(1.0, |s| s.chroma_scale[1] as f32));
+    words.push(shape.map_or(0, |s| s.space.word()));
+    f_push(&mut words, shape.map_or(1.0, |s| s.chroma_scale as f32));
+    f_push(&mut words, shape.map_or(0.0, |s| s.level_low as f32));
     f_push(&mut words, shape.map_or(1.0, |s| s.level_scale as f32));
     f_push(&mut words, 203.0); // sdr_white
     words.push(1); // row_stride
