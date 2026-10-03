@@ -30,10 +30,7 @@ export function printResolution(resolutionsDpi: number[]): number {
   return resolutionsDpi.length > 0 ? Math.min(...resolutionsDpi) : DEFAULT_DPI;
 }
 
-/**
- * Where a photo of `photo`'s displayed size lands on the sheet, turned a quarter where that
- * matches its orientation to the printable area's.
- */
+/** Turns the photo a quarter clockwise where that matches its orientation to the paper's. */
 export function printLayout({
   media,
   margin,

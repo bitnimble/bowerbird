@@ -105,7 +105,7 @@ export class FakeDecoder {
     if (tick.geometry != null) this.geometry = tick.geometry;
     if (tick.proof != null) this.proof = tick.proof;
     this.print = tick.print;
-    if (tick.printTarget !== undefined) {
+    if (tick.printTarget != null) {
       this.printTarget = tick.printTarget;
       this.printTargetSends += 1;
     }

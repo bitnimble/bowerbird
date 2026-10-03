@@ -13,13 +13,9 @@ export type PrintCommand =
 
 export type PrintshimReply = { reply: string } | { failed: string };
 
-/** Runs one command and answers its outcome, rejecting once `timeoutMs` has passed. */
 export type PrintshimRun = (command: PrintCommand, timeoutMs: number) => Promise<unknown>;
 
-/**
- * Each command on a worker of its own, so a spooler that never answers holds one thread and
- * nothing else: not the event loop, and not the next command.
- */
+/** A worker per command: a spooler that never answers holds that thread, never the next command's. */
 export function printshimWorkers(
   entry: string | URL = workerEntry(
     'printshim_worker',

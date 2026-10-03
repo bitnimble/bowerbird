@@ -64,7 +64,6 @@ export const PrintJobStateSchema = z.object({
 });
 export type PrintJobState = z.infer<typeof PrintJobStateSchema>;
 
-/** Every printshim reply, before its outcome is read against the command's own schema. */
 export const PrintReplySchema = z.object({
   ok: z.boolean(),
   error: z.string().optional(),
@@ -85,7 +84,6 @@ export const ColourPathSchema = z.discriminatedUnion('kind', [
 ]);
 export type ColourPath = z.infer<typeof ColourPathSchema>;
 
-/** The best way this printer lets Bowerbird do the colour: matched to the paper, then Adobe RGB, then sRGB. */
 export function colourPath(colour: PrinterColour, chosen: ProfileRef | null): ColourPath {
   const device = deepest(colour, 'device');
   if (device != null && chosen != null) return { kind: 'profile', bits: device, profile: chosen };
