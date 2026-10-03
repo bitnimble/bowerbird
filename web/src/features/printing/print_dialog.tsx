@@ -1,7 +1,7 @@
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
 import type { Fit, Margin } from '../../../../src/schemas/print_layout';
-import type { ColourPath } from '../../../../src/schemas/printing';
+import { keywordName, pwgMediaName, type ColourPath } from '../../../../src/schemas/printing';
 import {
   RenderingIntentSchema,
   type RenderingIntent,
@@ -133,7 +133,10 @@ export const PrintDialog = observer(function PrintDialog(): JSX.Element | null {
                 label={strings.paperSize()}
                 options={media.map((each) => ({
                   value: each.key,
-                  label: each.name ?? strings.paperDimensions(each.widthMm, each.heightMm),
+                  label:
+                    each.name ??
+                    pwgMediaName(each.key) ??
+                    strings.paperDimensions(each.widthMm, each.heightMm),
                 }))}
                 value={settings.media ?? ''}
                 onChange={(value) => presenter.set('media', value)}
@@ -146,7 +149,7 @@ export const PrintDialog = observer(function PrintDialog(): JSX.Element | null {
                   label={strings.paperType()}
                   options={(described?.mediaTypes ?? []).map((each) => ({
                     value: each.key,
-                    label: each.name ?? each.key,
+                    label: each.name ?? keywordName(each.key),
                   }))}
                   value={settings.mediaType ?? ''}
                   onChange={(value) => presenter.set('mediaType', value)}

@@ -180,6 +180,10 @@ cp ${INSIDE}/cupsd.conf /etc/cups/cupsd.conf
 cp /usr/share/color/icc/sRGB.icc /usr/share/cups/doc-root/sandbox.icc
 mkdir -p "${LOCAL}" ${RECEIVED}/photo ${RECEIVED}/relay ${RECEIVED}/pdf
 cp /usr/share/color/icc/compatibleWithAdobeRGB1998.icc "${DRIVER_PROFILE}"
+# Display profiles, relabelled as printers' output class: a print refuses any other class.
+for profile in /usr/share/cups/doc-root/sandbox.icc "${DRIVER_PROFILE}"; do
+  printf prtr | dd of="$profile" bs=1 seek=12 conv=notrunc 2> /dev/null
+done
 chmod -R 777 ${RECEIVED}
 ippeveprinter -a ${INSIDE}/photo.conf -k -d ${RECEIVED}/photo -p 8701 "Sandbox Photo" > ${INSIDE}/photo.log 2>&1 &
 ippeveprinter -a ${INSIDE}/photo.conf -k -d ${RECEIVED}/relay -p 8702 "Sandbox Relay" > ${INSIDE}/relay.log 2>&1 &

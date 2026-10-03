@@ -37,6 +37,29 @@ export const MediaSchema = z.object({
 });
 export type Media = z.infer<typeof MediaSchema>;
 
+const PWG_MEDIA = /^([a-z]+)_([a-z0-9.-]+?)_([\d.]+)x([\d.]+)(mm|in)$/;
+const SIZE_NAME = /^(?:index-)?[\d.]+x[\d.]+$/;
+
+/** A PWG self-describing media key's own name, so `iso_a4_210x297mm` is A4; null for other keys. */
+export function pwgMediaName(key: string): string | null {
+  const match = PWG_MEDIA.exec(key);
+  if (match == null) return null;
+  const [, family, name = '', width, height, unit] = match;
+  if (SIZE_NAME.test(name)) return `${width} × ${height} ${unit}`;
+  if (family === 'iso' || family === 'jis') return name.toUpperCase();
+  return sentenceCase(name);
+}
+
+/** An IPP keyword such as `photographic-glossy` as words. */
+export function keywordName(keyword: string): string {
+  return sentenceCase(keyword);
+}
+
+function sentenceCase(keyword: string): string {
+  const words = keyword.replaceAll('-', ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export const PrinterColourSchema = z.object({
   transports: z.array(TransportSchema),
   profiles: z.array(z.object({ name: z.string(), source: z.enum(['printer', 'driver']) })),

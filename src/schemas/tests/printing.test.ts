@@ -1,6 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { marginChoices, printLayout, printResolution } from '../print_layout';
-import { colourPath, type Media, type PrinterColour } from '../printing';
+import { colourPath, keywordName, pwgMediaName, type Media, type PrinterColour } from '../printing';
+
+describe('pwgMediaName', () => {
+  test('names a size by its own name, or by its dimensions where that is its name', () => {
+    expect(pwgMediaName('iso_a4_210x297mm')).toBe('A4');
+    expect(pwgMediaName('na_letter_8.5x11in')).toBe('Letter');
+    expect(pwgMediaName('na_index-4x6_4x6in')).toBe('4 × 6 in');
+    expect(pwgMediaName('na_5x7_5x7in')).toBe('5 × 7 in');
+    expect(pwgMediaName('na_govt-letter_8x10in')).toBe('Govt letter');
+    expect(pwgMediaName('9')).toBeNull();
+  });
+
+  test('a keyword reads as words', () => {
+    expect(keywordName('photographic-glossy')).toBe('Photographic glossy');
+  });
+});
 
 const A4: Media = {
   key: 'iso_a4_210x297mm',
