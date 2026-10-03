@@ -1,4 +1,4 @@
 export const PrecompilePageStrings = {
-  preparing: () => 'Preparing the editor',
+  preparing: () => 'Preparing Bowerbird',
   precompiling: () => 'Precompiling shaders...',
 };
