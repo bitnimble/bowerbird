@@ -1,10 +1,11 @@
 // A block's two populations, where its pixels hold two: the mean a pixel is read at.
 //
 // `mean_frame.slang` splits each block in two and keeps both means, and `colour.slang` reads a
-// pixel at the one it belongs to. A box mean over an edge is a colour neither side has: read
-// there, the lattice hands a thin red stripe and the wall behind it one correction fitted for
-// their mix. Where the split finds no edge, only texture or noise, both readers fall back to the
-// box mean the fit was taught on.
+// pixel at the one it belongs to; `fit_register.slang` splits each registered pair's window the
+// same way, so the fit is taught at the colours the render reads at. A box mean over an edge is a
+// colour neither side has: read there, the lattice hands a thin red stripe and the wall behind it
+// one correction fitted for their mix. Where the split finds no edge, only texture or noise, every
+// reader falls back to the box mean.
 module block_split;
 
 /// The split is measured in log light, so a ratio is a distance whatever the level, offset by

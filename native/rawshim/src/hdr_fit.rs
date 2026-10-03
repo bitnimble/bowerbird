@@ -3253,8 +3253,8 @@ pub(crate) const SAMPLE: isize = 1;
 /// own noise, which is the case it was wanted for and no other.
 pub(crate) const SAMPLE_RANGE: f64 = 0.008;
 
-/// Half-width of the ungated box mean a registered pair is read through on both planes, in
-/// wide-plane pixels. The reads reach `SEARCH` plus this past a grid position, and the host
+/// Half-width of the window a registered pair is read through on both planes, in wide-plane
+/// pixels: its box mean, or its centre's half where it holds two colours (`fit_register.slang`). The reads reach `SEARCH` plus this past a grid position, and the host
 /// reserves only `PATCH + SEARCH`. `fit_wide` keeps the gated `SAMPLE`: the box measured worse
 /// there.
 const REGISTER_SAMPLE: isize = 2;
@@ -4371,7 +4371,29 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
         })
         .collect();
     let asking = corresponded_grid(gpu, &planes.resident.ours, &planes.resident.theirs, &asked);
+    let (render, jpeg) = sampled_at_found(
+        gpu,
+        [ours, theirs],
+        planes.sharp.falloff,
+        &asking.found,
+        [&planes.render.buffer, &planes.jpeg.buffer],
+        (width, height),
+    );
+    held(render, jpeg)
+}
 
+/// `blurred`'s two `width` by `height` planes with every position the search found read from
+/// `ours` and `theirs` instead (`fit_register.slang`): ours where it is, the camera's at its found
+/// offset.
+fn sampled_at_found(
+    gpu: &'static crate::gpu::Gpu,
+    [ours, theirs]: [&Source; 2],
+    falloff: Option<(f64, f64)>,
+    found: &crate::gpu::Buffer,
+    blurred: [&crate::gpu::Buffer; 2],
+    (width, height): (usize, usize),
+) -> (crate::gpu::Buffer, crate::gpu::Buffer) {
+    let scale = ours.width / width.max(1);
     let mut recording = gpu.record();
     // Both outputs start as the prefiltered planes, so a position the search could not act on
     // keeps its blurred value by the kernel leaving it alone. Blur is a poor answer to
@@ -4391,9 +4413,9 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
             .copy_buffer_to_buffer(from, 0, &out, 0, bytes);
         out
     };
-    let mine = carried(&mut recording, &planes.render.buffer);
-    let camera = carried(&mut recording, &planes.jpeg.buffer);
-    let gains = match planes.sharp.falloff {
+    let mine = carried(&mut recording, blurred[0]);
+    let camera = carried(&mut recording, blurred[1]);
+    let gains = match falloff {
         None => unused_buffer(&mut recording),
         Some((a, b)) => {
             let contents: Vec<u8> = (0..=u8::MAX)
@@ -4414,7 +4436,7 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
         (ours.height as i32).to_ne_bytes(),
         (scale as i32).to_ne_bytes(),
         (REGISTER_SAMPLE as i32).to_ne_bytes(),
-        i32::from(planes.sharp.falloff.is_some()).to_ne_bytes(),
+        i32::from(falloff.is_some()).to_ne_bytes(),
         ((cx * cx + cy * cy).sqrt().max(1.0) as f32).to_ne_bytes(),
     ]
     .concat();
@@ -4431,15 +4453,15 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: planes.sharp.wide.buffer.as_entire_binding(),
+                resource: ours.buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: planes.sharp.camera.buffer.as_entire_binding(),
+                resource: theirs.buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: asking.found.as_entire_binding(),
+                resource: found.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
@@ -4466,7 +4488,7 @@ async fn registered(gpu: &'static crate::gpu::Gpu, planes: &FitPlanes) -> Option
         pass.dispatch_workgroups((width as u32).div_ceil(16), (height as u32).div_ceil(16), 1);
     }
     recording.submit();
-    held(mine, camera)
+    (mine, camera)
 }
 
 /// How far the chroma axis reaches for *this* frame, in lattice coordinates (√chroma).
@@ -8577,6 +8599,78 @@ mod tests {
             (found - 1.0).abs() < 1e-9,
             "invented a saturation out of a flat frame: {found}"
         );
+    }
+
+    /// A red and a green of one brightness, which the camera-luma gradient gate cannot tell apart,
+    /// with the camera's rendering a pixel to the right of ours. A pair across the edge reads its
+    /// centre's side on both planes, tap for tap through the found offset.
+    #[test]
+    fn a_pair_across_an_edge_reads_its_own_side_on_both_planes() {
+        let gpu = searching();
+        let (width, height) = (20, 20);
+        let (red, green) = ([0.5, 0.15, 0.1], [0.12, 0.29, 0.12]);
+        let (camera_red, camera_green) = ([0.6, 0.1, 0.08], [0.1, 0.35, 0.1]);
+        let plane = |left: [f64; 3], right: [f64; 3], edge: usize| {
+            source_of(
+                gpu,
+                &Plane {
+                    width,
+                    height,
+                    data: (0..width * height)
+                        .flat_map(|p| match p % width < edge {
+                            true => left,
+                            false => right,
+                        })
+                        .collect(),
+                },
+            )
+        };
+        let ours = plane(red, green, 10);
+        let theirs = plane(camera_red, camera_green, 11);
+        let grid = (width / 2, height / 2);
+        let blurred = |label| floats_on(gpu, label, std::iter::repeat_n(0.0, grid.0 * grid.1 * 3));
+        let (into_render, into_jpeg) = (blurred("render"), blurred("jpeg"));
+        let (inside, across) = (5 * grid.0 + 3, 5 * grid.0 + 5);
+        let found = floats_on(
+            gpu,
+            "found",
+            (0..grid.0 * grid.1).flat_map(|p| match p == inside || p == across {
+                true => [1.0, 0.0, 1.0, 0.0],
+                false => [0.0, 0.0, 0.0, -1.0],
+            }),
+        );
+        let (render, jpeg) = sampled_at_found(
+            gpu,
+            [&ours, &theirs],
+            None,
+            &found,
+            [&into_render, &into_jpeg],
+            grid,
+        );
+        let read = |buffer| {
+            pollster::block_on(read_plane(
+                gpu,
+                &Source {
+                    buffer,
+                    width: grid.0,
+                    height: grid.1,
+                },
+            ))
+            .expect("read back")
+            .data
+        };
+        let (render, jpeg) = (read(render), read(jpeg));
+        let at = |plane: &[f64], p: usize| [0, 1, 2].map(|c| plane[p * 3 + c]);
+        for (got, want) in [
+            (at(&render, inside), red),
+            (at(&jpeg, inside), camera_red),
+            (at(&render, across), green),
+            (at(&jpeg, across), camera_green),
+        ] {
+            for c in 0..3 {
+                assert!((got[c] - want[c]).abs() < 1e-5, "{got:?} against {want:?}");
+            }
+        }
     }
 
     #[test]

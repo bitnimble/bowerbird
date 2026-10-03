@@ -8,8 +8,12 @@
 // A position the search could not act on is left alone, the caller having filled both planes with
 // the prefiltered ones first: blur is a poor answer to misregistration but it is a bounded one,
 // where a sharp read at an unverified location is not.
+import block_split;
 import prelude;
 import px;
+
+/// Two-means rounds after the seeds, as `mean_frame.slang` settles its blocks.
+static const int SETTLE = 3;
 
 struct Params {
     int width;
@@ -44,17 +48,91 @@ float3 rgb_at(StructuredBuffer<float> plane, int x, int y)
     return float3(plane[i], plane[i + 1], plane[i + 2]);
 }
 
-/// A colour read at a matched location: the box mean around it.
-float3 sample_at(StructuredBuffer<float> plane, int x, int y)
+/// Our tap at `(dx, dy)` about `(x, y)`, where the split reads it.
+float3 split_at(int x, int y, int dx, int dy)
 {
-    var sum = float3(0.0);
+    return split_space(rgb_at(ours, x + dx, y + dy), 1.0);
+}
+
+/// Our tap about `(x, y)` furthest from `from`.
+float3 furthest(int x, int y, float3 from)
+{
+    var best = from;
+    var far = -1.0;
     for (int dy = -pc.sample; dy <= pc.sample; dy++) {
         for (int dx = -pc.sample; dx <= pc.sample; dx++) {
-            sum += rgb_at(plane, x + dx, y + dy);
+            let v = split_at(x, y, dx, dy);
+            let d = length(v - from);
+            if (d > far) { far = d; best = v; }
         }
     }
-    let side = float(2 * pc.sample + 1);
-    return sum / (side * side);
+    return best;
+}
+
+/// A matched location's two colours, ours about `(x, y)` and the camera's about `(cx, cy)`.
+///
+/// The box mean around it, or, where our taps hold two colours (`block_split.slang`), the mean of
+/// the half the centre belongs to. The camera's taps are split where ours are, tap for tap, so the
+/// pair stays one population on both sides: a pair across an edge teaches the colour on its
+/// centre's side of it, which is the colour the render reads that side's pixels at, rather than a
+/// mix of the two that the frame does not hold.
+void sample_at(int x, int y, int cx, int cy, out float3 mine, out float3 target)
+{
+    let taps = float((2 * pc.sample + 1) * (2 * pc.sample + 1));
+    var centre = float3(0.0);
+    for (int dy = -pc.sample; dy <= pc.sample; dy++) {
+        for (int dx = -pc.sample; dx <= pc.sample; dx++) {
+            centre += split_at(x, y, dx, dy);
+        }
+    }
+    var first = furthest(x, y, centre / taps);
+    var second = furthest(x, y, first);
+
+    var ours_by_half = float3x3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    var theirs_by_half = float3x3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    var counts = float2(0.0);
+    var scatter = 0.0;
+    for (int round = 0; round <= SETTLE; round++) {
+        var into_first = float4(0.0);
+        var into_second = float4(0.0);
+        ours_by_half = float3x3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        theirs_by_half = float3x3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        scatter = 0.0;
+        for (int dy = -pc.sample; dy <= pc.sample; dy++) {
+            for (int dx = -pc.sample; dx <= pc.sample; dx++) {
+                let v = split_at(x, y, dx, dy);
+                let to_first = length(v - first);
+                let to_second = length(v - second);
+                let half = to_first <= to_second ? 0 : 1;
+                if (half == 0) {
+                    into_first += float4(v, 1.0);
+                    scatter += to_first * to_first;
+                } else {
+                    into_second += float4(v, 1.0);
+                    scatter += to_second * to_second;
+                }
+                ours_by_half[half] += rgb_at(ours, x + dx, y + dy);
+                theirs_by_half[half] += rgb_at(theirs, cx + dx, cy + dy);
+            }
+        }
+        counts = float2(into_first.a, into_second.a);
+        if (round == SETTLE) { break; }
+        if (into_first.a > 0.0) { first = into_first.rgb / into_first.a; }
+        if (into_second.a > 0.0) { second = into_second.rgb / into_second.a; }
+    }
+
+    mine = (ours_by_half[0] + ours_by_half[1]) / taps;
+    target = (theirs_by_half[0] + theirs_by_half[1]) / taps;
+    if (counts.x <= 0.0 || counts.y <= 0.0) { return; }
+    let trusted = split_weight(
+        length(first - second), sqrt(scatter / taps), min(counts.x, counts.y),
+        float(2 * pc.sample + 1));
+    let axis = second - first;
+    let along = dot(split_at(x, y, 0, 0) - first, axis) / max(dot(axis, axis), 1e-6);
+    let own = smoothstep(0.25, 0.75, along);
+    mine = lerp(mine, lerp(ours_by_half[0] / counts.x, ours_by_half[1] / counts.y, own), trusted);
+    target = lerp(
+        target, lerp(theirs_by_half[0] / counts.x, theirs_by_half[1] / counts.y, own), trusted);
 }
 
 [shader("compute")]
@@ -69,7 +147,11 @@ void fit_register(uint3 id: SV_DispatchThreadID)
 
     let x = gx * pc.scale;
     let y = gy * pc.scale;
-    var mine = sample_at(ours, x, y);
+    // Rounded, the offsets being sub-pixel since `correspond.slang` reads the peak between whole
+    // ones: this takes a sample rather than resampling, and the nearest is the one it means.
+    float3 mine;
+    float3 target;
+    sample_at(x, y, x + int(round(found[4 * p])), y + int(round(found[4 * p + 1])), mine, target);
     // The falloff is not in the wide render, and it has to be on before the sample is compared with
     // the camera's: a corner read without it is dark by however much the lens cost, and the fit
     // would take that darkness for a colour.
@@ -78,9 +160,6 @@ void fit_register(uint3 id: SV_DispatchThreadID)
         let dy = float(y) - float(pc.wide_height) * 0.5;
         mine *= gains[int(min(sqrt(dx * dx + dy * dy) / pc.half * 255.0, 255.0))];
     }
-    // Rounded, the offsets being sub-pixel since `correspond.slang` reads the peak between whole
-    // ones: this takes a sample rather than resampling, and the nearest is the one it means.
-    let target = sample_at(theirs, x + int(round(found[4 * p])), y + int(round(found[4 * p + 1])));
 
     let i = wide<FitPlane>(p) * 3;
     render[i] = mine.x;
