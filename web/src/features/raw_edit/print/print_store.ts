@@ -11,6 +11,11 @@ export type ProofSource =
 
 export type PrintProof = { source: ProofSource; target: PrintTarget };
 
+export const GENERIC_PROOF: PrintProof = {
+  source: { kind: 'generic' },
+  target: { kind: 'adobe-rgb' },
+};
+
 export class PrintStore {
   /** Whether the stage shows the print at all, flat or as a sheet. */
   @observable accessor open = false;
@@ -19,10 +24,9 @@ export class PrintStore {
   @observable accessor tiltStatus: PrintTiltStatus = 'unavailable';
   @observable.ref accessor printerProfiles: string[] = [];
   @observable.ref accessor printers: Printer[] = [];
-  @observable.ref accessor proof: PrintProof = {
-    source: { kind: 'generic' },
-    target: { kind: 'adobe-rgb' },
-  };
+  @observable.ref accessor proof: PrintProof = GENERIC_PROOF;
+  /** Why the proof last chosen isn't the one shown, until another is chosen. */
+  @observable accessor proofError: string | null = null;
 
   /** Whether a profile of the paper, rather than a colour space, sets its white and black. */
   @computed get profiled(): boolean {

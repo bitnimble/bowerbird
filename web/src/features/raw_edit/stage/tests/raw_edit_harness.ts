@@ -60,6 +60,8 @@ export class FakeDecoder {
   /** The print target held, and how many times one was handed over. */
   printTarget: PrintTarget | null = null;
   printTargetSends = 0;
+  /** Whether the module refuses every print target handed over, as it does an unusable profile. */
+  refusesPrintTarget = false;
 
   /**
    * Every frame asked for: the window it read, the picture that window is on, and the canvas
@@ -130,7 +132,8 @@ export class FakeDecoder {
       this.handsBack && tick.drawStage
         ? new Uint8Array(words * Uint32Array.BYTES_PER_ELEMENT)
         : null;
-    return this.landed().then(() => ({ stage, loupe: null }));
+    const printTargetRefused = tick.printTarget != null && this.refusesPrintTarget;
+    return this.landed().then(() => ({ stage, loupe: null, printTargetRefused }));
   }
 
   attach(): Promise<void> {

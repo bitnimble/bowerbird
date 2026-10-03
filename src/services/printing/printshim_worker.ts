@@ -25,12 +25,22 @@ self.onmessage = ({ data }) => {
 };
 
 function printCommand(command: PrintCommand): string {
-  const { bb_print_command } = openRawshim(SYMBOLS);
   const bytes = Buffer.from(JSON.stringify(command), 'utf8');
-  const reply = new Uint8Array(REPLY_CAPACITY);
-  const written = Number(bb_print_command(bytes, bytes.byteLength, ptr(reply), reply.byteLength));
+  const first = call(bytes, REPLY_CAPACITY);
+  if (typeof first === 'string') return first;
+  // Running a submit again would print it again.
+  if (command.kind === 'submit') throw new Error(`printshim's reply needs ${first} bytes`);
+  const second = call(bytes, first);
+  if (typeof second === 'string') return second;
+  throw new Error(`printshim's reply needs ${second} bytes`);
+}
+
+/** The reply, or the size it needs where `capacity` is too small. */
+function call(command: Uint8Array, capacity: number): string | number {
+  const { bb_print_command } = openRawshim(SYMBOLS);
+  const reply = new Uint8Array(capacity);
+  const written = Number(bb_print_command(command, command.byteLength, ptr(reply), capacity));
   if (written < 0) throw new Error('printshim could not run the command');
-  // A second call would run the command again, and for a submit that is a second print.
-  if (written > reply.byteLength) throw new Error(`printshim's reply needs ${written} bytes`);
+  if (written > capacity) return written;
   return new TextDecoder().decode(reply.subarray(0, written));
 }

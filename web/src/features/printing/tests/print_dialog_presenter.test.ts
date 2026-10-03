@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { PrintingSource } from '../../../api/printing';
+import { ApiError } from '../../../api/request';
 import type {
   Printer,
   PrinterCapabilities,
@@ -83,7 +84,10 @@ class FakePrinting implements PrintingSource {
   printersAsked: Pending<Printer[]>[] = [];
   capabilitiesAsked: { id: string; pending: Pending<PrinterCapabilities> }[] = [];
   submitted: PrintRequest[] = [];
-  submitFails = false;
+  submitFails: Error | null = null;
+  submitGate: Promise<void> = Promise.resolve();
+  jobId: number | null = 7;
+  jobsAsked = 0;
   jobStates: PrintJobState[] = [];
   sheets: { photoId: string; width: number; height: number }[] = [];
 
@@ -94,15 +98,21 @@ class FakePrinting implements PrintingSource {
       this.capabilitiesAsked.push({ id, pending: { resolve, reject } }),
     );
   profile = (): Promise<Uint8Array<ArrayBuffer>> => Promise.resolve(new Uint8Array());
-  submit = (request: PrintRequest): Promise<number> => {
+  submit = async (request: PrintRequest): Promise<number | null> => {
     this.submitted.push(request);
-    return this.submitFails ? Promise.reject(new Error('offline')) : Promise.resolve(7);
+    await this.submitGate;
+    if (this.submitFails != null) throw this.submitFails;
+    return this.jobId;
   };
-  job = (): Promise<PrintJobState> =>
-    Promise.resolve(this.jobStates.shift() ?? { state: 'processing', reasons: [] });
-  sheet = (sheet: { photoId: string; width: number; height: number }): Promise<Blob> => {
+  job = (): Promise<PrintJobState> => {
+    this.jobsAsked += 1;
+    return Promise.resolve(this.jobStates.shift() ?? { state: 'processing', reasons: [] });
+  };
+  sheetGate: Promise<void> = Promise.resolve();
+  sheet = async (sheet: { photoId: string; width: number; height: number }): Promise<Blob> => {
     this.sheets.push(sheet);
-    return Promise.resolve(new Blob([new Uint8Array(4)], { type: 'image/png' }));
+    await this.sheetGate;
+    return new Blob([new Uint8Array(4)], { type: 'image/png' });
   };
 
   describe(id: string, options: PrinterCapabilities): void {
@@ -125,10 +135,12 @@ let toasts: FakeToasts;
 let printed: string[];
 let systemDialog: boolean;
 let presenter: PrintDialogPresenter;
+let files: Promise<string[]>;
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
+  files = Promise.resolve(['Hahnemuhle Photo Rag.icc']);
   store = new PrintDialogStore();
   api = new FakePrinting();
   toasts = new FakeToasts();
@@ -142,13 +154,8 @@ beforeEach(() => {
       return Promise.resolve();
     },
   };
-  presenter = new PrintDialogPresenter(
-    store,
-    toasts,
-    api,
-    { list: () => Promise.resolve(['Hahnemuhle Photo Rag.icc']) },
-    shell,
-    () => Promise.resolve(),
+  presenter = new PrintDialogPresenter(store, toasts, api, { list: () => files }, shell, () =>
+    Promise.resolve(),
   );
 });
 
@@ -200,7 +207,7 @@ describe('PrintDialogPresenter', () => {
         copies: 1,
         resolutionDpi: 300,
         page: { widthPx: 2480, heightPx: 3508 },
-        place: { x: 97, y: 40, width: 2285, height: 3428 },
+        place: { x: 98, y: 41, width: 2284, height: 3426 },
       },
     });
   });
@@ -234,10 +241,45 @@ describe('PrintDialogPresenter', () => {
     expect(store.colour).toEqual({ kind: 'srgb', bits: 8 });
   });
 
-  test('copies stay within what the printer takes', async () => {
+  test('copies stay within what the printer takes, and the field shows the count kept', async () => {
     await openOnPro200();
     presenter.typeCopies('40');
     expect(store.request?.job.copies).toBe(5);
+    expect(store.copiesTyped).toBe('5');
+    presenter.typeCopies('40');
+    expect(store.copiesTyped).toBe('5');
+  });
+
+  test('a printer taking fewer copies lowers the count and the field with it', async () => {
+    await openOnPro200();
+    presenter.choosePrinter(OFFICE.id);
+    api.describe(OFFICE.id, OFFICE_OPTIONS);
+    await settle();
+    presenter.typeCopies('40');
+    presenter.choosePrinter(PRO_200.id);
+    api.describe(PRO_200.id, PRO_200_OPTIONS);
+    await settle();
+    expect(store.settings.copies).toBe(5);
+    expect(store.copiesTyped).toBe('5');
+  });
+
+  test('profile files that arrive after the printer was described fill the profile', async () => {
+    let listed: (names: string[]) => void = () => {};
+    files = new Promise((resolve) => {
+      listed = resolve;
+    });
+    presenter.openFor(PHOTO);
+    api.printersAsked[0]?.resolve([PRO_200]);
+    await settle();
+    api.describe(PRO_200.id, {
+      ...PRO_200_OPTIONS,
+      colour: { ...PRO_200_OPTIONS.colour, profiles: [] },
+    });
+    await settle();
+    expect(store.settings.profile).toBeNull();
+    listed(['Hahnemuhle Photo Rag.icc']);
+    await settle();
+    expect(store.settings.profile).toEqual({ from: 'file', name: 'Hahnemuhle Photo Rag.icc' });
   });
 
   test('clearing copies to retype them keeps the last count until a new one is typed', async () => {
@@ -270,22 +312,68 @@ describe('PrintDialogPresenter', () => {
     expect(toasts.shown).toEqual(['Sent to Canon PRO-200S.', 'Printed on Canon PRO-200S.']);
   });
 
-  test('a stopped job is reported with what the printer said', async () => {
+  test('a stopped job is reported with what the printer said, in words', async () => {
     await openOnPro200();
-    api.jobStates = [{ state: 'stopped', reasons: ['media-empty'] }];
+    api.jobStates = [
+      {
+        state: 'stopped',
+        reasons: ['media-empty-error', 'media-needed', 'job-hold-until-specified'],
+      },
+    ];
     await presenter.print();
     expect(toasts.errors).toEqual([
-      { message: 'Canon PRO-200S stopped printing.', detail: 'media-empty' },
+      { message: 'Canon PRO-200S stopped printing.', detail: 'Out of paper' },
     ]);
+  });
+
+  test('a stopped job with no reason a reader can act on says only that it stopped', async () => {
+    await openOnPro200();
+    api.jobStates = [{ state: 'aborted', reasons: ['job-canceled-at-device'] }];
+    await presenter.print();
+    expect(toasts.errors).toEqual([
+      { message: 'Canon PRO-200S stopped printing.', detail: undefined },
+    ]);
+  });
+
+  test('a print sent without a job number is reported sent and not watched', async () => {
+    await openOnPro200();
+    api.jobId = null;
+    await presenter.print();
+    expect(store.open).toBe(false);
+    expect(toasts.shown).toEqual(['Sent to Canon PRO-200S.']);
+    expect(api.jobsAsked).toBe(0);
   });
 
   test('a submit that fails keeps the dialog open and says the photo did not arrive', async () => {
     await openOnPro200();
-    api.submitFails = true;
+    api.submitFails = new Error('offline');
     await presenter.print();
     expect(store.open).toBe(true);
     expect(store.submitting).toBe(false);
     expect(store.error).toBe("The photo didn't reach the printer.");
+  });
+
+  test('a submit the printer never confirmed says the print may still arrive', async () => {
+    await openOnPro200();
+    api.submitFails = new ApiError('UNAVAILABLE', 'no answer', 503, [{ printUnconfirmed: true }]);
+    await presenter.print();
+    expect(store.error).toBe('We lost track of the print. It may still print.');
+  });
+
+  test('a print still sending leaves a dialog reopened for another photo open', async () => {
+    await openOnPro200();
+    let release: () => void = () => {};
+    api.submitGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const printing = presenter.print();
+    presenter.close();
+    presenter.openFor({ ...PHOTO, id: 'photo-2', name: 'DSC0002.ARW' });
+    release();
+    await printing;
+    expect(store.open).toBe(true);
+    expect(store.photo?.id).toBe('photo-2');
+    expect(toasts.shown[0]).toBe('Sent to Canon PRO-200S.');
   });
 
   test('on Android the photo goes to the system dialog as a sheet, printed once it loads', async () => {
@@ -296,7 +384,24 @@ describe('PrintDialogPresenter', () => {
     expect(api.sheets).toEqual([{ photoId: 'photo-1', width: 3600, height: 2400 }]);
     expect(store.sheet?.name).toBe('DSC0001.ARW');
     expect(printed).toEqual([]);
-    await presenter.sheetLoaded();
+    await presenter.sheetLoaded(store.sheet?.url ?? '');
     expect(printed).toEqual(['DSC0001.ARW']);
+    await presenter.sheetLoaded(store.sheet?.url ?? '');
+    expect(printed).toEqual(['DSC0001.ARW']);
+  });
+
+  test('on Android a second tap while the sheet is being prepared is ignored', async () => {
+    systemDialog = true;
+    let release: () => void = () => {};
+    api.sheetGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    presenter.openFor(PHOTO);
+    presenter.openFor({ ...PHOTO, id: 'photo-2' });
+    release();
+    await settle();
+    expect(api.sheets.map((sheet) => sheet.photoId)).toEqual(['photo-1']);
+    await presenter.sheetLoaded('blob:stale');
+    expect(printed).toEqual([]);
   });
 });

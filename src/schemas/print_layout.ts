@@ -14,12 +14,20 @@ const MARGIN_STEPS_MM = [5, 10, 15, 20, 25];
 const MAX_DPI = 360;
 const DEFAULT_DPI = 300;
 
+/** Steps wider than the printer's own, while they leave at least half the short edge to print on. */
 export function marginChoices(media: Media): Margin[] {
-  const least = Math.max(...Object.values(media.margins));
+  const { top, right, bottom, left } = media.margins;
+  const least = Math.max(top, right, bottom, left);
+  const shortEdge = Math.min(media.widthMm, media.heightMm);
+  const printable = (mm: number): number =>
+    Math.min(
+      media.widthMm - Math.max(mm, left) - Math.max(mm, right),
+      media.heightMm - Math.max(mm, top) - Math.max(mm, bottom),
+    );
   return [
     ...(media.borderless ? (['borderless'] as const) : []),
     'minimum',
-    ...MARGIN_STEPS_MM.filter((mm) => mm > least),
+    ...MARGIN_STEPS_MM.filter((mm) => mm > least && printable(mm) >= shortEdge / 2),
   ];
 }
 
@@ -44,17 +52,24 @@ export function printLayout({
   dpi: number;
   photo: { width: number; height: number };
 }): PrintLayout {
-  const px = (mm: number): number => Math.round((mm * dpi) / 25.4);
+  const px = (mm: number): number => (mm * dpi) / 25.4;
   const inset = (side: keyof Media['margins']): number =>
     margin === 'borderless'
       ? 0
-      : px(margin === 'minimum' ? media.margins[side] : Math.max(margin, media.margins[side]));
-  const page = { widthPx: px(media.widthMm), heightPx: px(media.heightMm) };
+      : Math.ceil(
+          px(margin === 'minimum' ? media.margins[side] : Math.max(margin, media.margins[side])),
+        );
+  const page = {
+    widthPx: Math.max(1, Math.round(px(media.widthMm))),
+    heightPx: Math.max(1, Math.round(px(media.heightMm))),
+  };
+  const x = Math.min(inset('left'), page.widthPx - 1);
+  const y = Math.min(inset('top'), page.heightPx - 1);
   const area = {
-    x: inset('left'),
-    y: inset('top'),
-    width: Math.max(1, page.widthPx - inset('left') - inset('right')),
-    height: Math.max(1, page.heightPx - inset('top') - inset('bottom')),
+    x,
+    y,
+    width: Math.max(1, page.widthPx - x - inset('right')),
+    height: Math.max(1, page.heightPx - y - inset('bottom')),
   };
   const sideways = (photo.width - photo.height) * (area.width - area.height) < 0;
   const quarterTurns = sideways ? 1 : 0;

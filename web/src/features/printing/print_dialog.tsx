@@ -1,7 +1,12 @@
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
 import type { Fit, Margin } from '../../../../src/schemas/print_layout';
-import { keywordName, pwgMediaName, type ColourPath } from '../../../../src/schemas/printing';
+import {
+  keywordName,
+  PRINT_COPIES_MAX,
+  pwgMediaName,
+  type ColourPath,
+} from '../../../../src/schemas/printing';
 import {
   RenderingIntentSchema,
   type RenderingIntent,
@@ -183,7 +188,7 @@ export const PrintDialog = observer(function PrintDialog(): JSX.Element | null {
                 type="number"
                 label={strings.copies()}
                 min={1}
-                max={described?.copiesMax}
+                max={Math.min(described?.copiesMax ?? PRINT_COPIES_MAX, PRINT_COPIES_MAX)}
                 step={1}
                 value={store.copiesTyped}
                 onChange={presenter.typeCopies}

@@ -1063,7 +1063,6 @@ export class RawEditPresenter {
       if (this.closed || local == null || !this.drawable) return;
       const target = this.printStore.proof.target;
       const targetChanged = target !== this.sentTarget;
-      this.sentTarget = target;
       this.drawing = true;
       const landed = (error?: unknown): void => {
         this.drawing = false;
@@ -1107,7 +1106,13 @@ export class RawEditPresenter {
           ...(targetChanged ? { printTarget: target } : {}),
           stage,
         })
-        .then((ticked) => (this.closed ? undefined : this.showOnPage(ticked)))
+        .then((ticked) => {
+          if (targetChanged) {
+            this.sentTarget = target;
+            if (ticked.printTargetRefused) this.print.refusedTarget(target);
+          }
+          return this.closed ? undefined : this.showOnPage(ticked);
+        })
         .then(() => landed(), landed);
     });
   }

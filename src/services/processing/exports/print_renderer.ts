@@ -1,5 +1,6 @@
 import { AppError } from '../../../errors';
 import { Logger } from '../../../logger';
+import { isComposite } from '../../../schemas/recipes';
 import type { Originals } from '../../blobs/originals';
 import type { PhotoRenditionService } from '../../photos/renditions/photo_rendition_service';
 import type { ProcessingService } from '../pipeline/processing_service';
@@ -41,6 +42,8 @@ export class PrintRenderer {
       throw new AppError('VALIDATION_ERROR', 'a device print needs the printer profile');
     }
     const { photo, library } = this.photoRenditions.locate(photoId);
+    if (isComposite(photo.recipe))
+      throw new AppError('VALIDATION_ERROR', "panoramas and other merges can't be printed yet");
     await this.originals.openAll(library, photo);
     const original = this.originals.here(library, photo);
     if (original == null)

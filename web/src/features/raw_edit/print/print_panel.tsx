@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { Button } from '../../../ui/button';
 import { CheckLabel } from '../../../ui/check_label';
+import { ErrorBanner } from '../../../ui/error_banner';
 import { focusRing } from '../../../ui/focus_ring';
 import { Panel } from '../../../ui/panel';
 import { Select } from '../../../ui/select';
@@ -223,6 +224,7 @@ export const PrintPanel = observer(function PrintPanel({
             if (chosen != null) void presenter.chooseProof(chosen.source);
           }}
         />
+        {store.proofError != null && <ErrorBanner>{store.proofError}</ErrorBanner>}
         <IntentChoice value={store.scene.renderingIntent} onChange={presenter.setRenderingIntent} />
         {store.scene.renderingIntent === 'relativeColorimetric' && (
           <CheckLabel>

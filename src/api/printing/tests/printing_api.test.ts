@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
@@ -22,8 +22,11 @@ let renders: { photoId: string; target: PrintRenderTarget; output: string }[];
 let imageAtSubmit: string | null;
 let outcomes: Partial<Record<PrintCommand['kind'], unknown>>;
 
+const profilesDir = (): string => path.join(dir, 'profiles');
+
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'printing-api-'));
+  await mkdir(profilesDir());
   commands = [];
   renders = [];
   imageAtSubmit = null;
@@ -43,7 +46,7 @@ function buildApp(): Hono {
       if (outcome instanceof Error) throw outcome;
       return outcome;
     },
-    dir,
+    profilesDir(),
     async (photoId, target, output) => {
       renders.push({ photoId, target, output });
       await writeFile(output, `png of ${photoId}`);
@@ -126,7 +129,7 @@ describe('PrintingApi', () => {
   });
 
   it('renders through the chosen file profile, submits the PNG in device RGB, then deletes it', async () => {
-    await writeFile(path.join(dir, 'Lustre.icc'), 'lustre');
+    await writeFile(path.join(profilesDir(), 'Lustre.icc'), 'lustre');
     outcomes.submit = { jobId: 42 };
     const res = await post(buildApp(), '/jobs', REQUEST);
     expect(await res.json()).toEqual({ jobId: 42 });
@@ -158,6 +161,7 @@ describe('PrintingApi', () => {
   });
 
   it('refuses a profile file outside the folder', async () => {
+    await writeFile(path.join(dir, 'secret.icc'), 'secret');
     const res = await post(buildApp(), '/jobs', {
       ...REQUEST,
       colour: { kind: 'profile', bits: 8, profile: { from: 'file', name: '../secret.icc' } },
@@ -166,9 +170,140 @@ describe('PrintingApi', () => {
     expect(renders).toEqual([]);
   });
 
+  it("renders through the printer's own profile, read from the printer", async () => {
+    outcomes.profile = { icc: Buffer.from('luster').toString('base64') };
+    outcomes.submit = { jobId: 7 };
+    const res = await post(buildApp(), '/jobs', {
+      ...REQUEST,
+      colour: { kind: 'profile', bits: 16, profile: { from: 'printer', name: 'PRO-200 Luster' } },
+    });
+    expect(await res.json()).toEqual({ jobId: 7 });
+    expect(new TextDecoder().decode(renders[0]?.target.icc ?? undefined)).toBe('luster');
+    expect(commands[0]).toEqual({ kind: 'profile', printer: PRINTER, name: 'PRO-200 Luster' });
+  });
+
+  it('answers a print the spooler took without a job number with a null job', async () => {
+    outcomes.submit = { jobId: null };
+    const res = await post(buildApp(), '/jobs', {
+      ...REQUEST,
+      colour: { kind: 'srgb', bits: 8 },
+    });
+    expect(await res.json()).toEqual({ jobId: null });
+  });
+
+  it('sends the printshim the submit the native side reads', async () => {
+    const pinned: unknown = JSON.parse(
+      await readFile(
+        path.join(import.meta.dir, '../../../../test/fixtures/tables/print-json.json'),
+        'utf8',
+      ),
+    );
+    outcomes.profile = { icc: Buffer.from('sandbox').toString('base64') };
+    outcomes.submit = { jobId: 1 };
+    await post(buildApp(), '/jobs', {
+      photoId: 'photo-1',
+      printer: 'cups:Sandbox_Photo',
+      colour: { kind: 'profile', bits: 16, profile: { from: 'printer', name: 'Sandbox' } },
+      intent: 'perceptual',
+      quarterTurns: 0,
+      job: {
+        name: 'IMG_0001',
+        media: 'iso_a4_210x297mm',
+        mediaType: 'photographic-glossy',
+        borderless: false,
+        copies: 1,
+        resolutionDpi: 300,
+        page: { widthPx: 2480, heightPx: 3508 },
+        place: { x: 36, y: 36, width: 2408, height: 3436 },
+      },
+    } satisfies PrintRequest);
+    const sent = commands.find((command) => command.kind === 'submit');
+    expect(path.basename(sent?.kind === 'submit' ? sent.image : '')).toBe('print.png');
+    expect(pinned).toEqual({ submit: { ...sent, image: '/tmp/print.png' } });
+  });
+
   it('answers a malformed request with a validation error', async () => {
     const res = await post(buildApp(), '/jobs', { photoId: 'photo-1' });
     expect(res.status).toBe(400);
+  });
+
+  it('refuses a photo placed off the page', async () => {
+    const res = await post(buildApp(), '/jobs', {
+      ...REQUEST,
+      job: { ...REQUEST.job, place: { x: 400, y: 40, width: 2285, height: 3428 } },
+    });
+    expect(res.status).toBe(400);
+    expect(renders).toEqual([]);
+  });
+
+  it('refuses a printer id that names no queue', async () => {
+    const res = await buildApp().request(
+      `${AT}/printers/${encodeURIComponent('cups:Canon PRO')}/capabilities`,
+    );
+    expect(res.status).toBe(400);
+    expect(commands).toEqual([]);
+  });
+
+  it('refuses a job id that is not one', async () => {
+    for (const jobId of ['nope', '-1', '1.5', String(2 ** 31)]) {
+      const res = await buildApp().request(
+        `${AT}/printers/${encodeURIComponent(PRINTER)}/jobs/${jobId}`,
+      );
+      expect(res.status).toBe(400);
+    }
+    expect(commands).toEqual([]);
+  });
+
+  it('reads a printer reply that does not parse as the printer being unavailable', async () => {
+    outcomes.job = { state: 'on fire', reasons: [] };
+    const res = await buildApp().request(`${AT}/printers/${encodeURIComponent(PRINTER)}/jobs/42`);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      error: { message: "the printer's reply couldn't be read" },
+    });
+  });
+
+  it('keeps the paper sizes that parse and drops the rest', async () => {
+    const a4 = {
+      key: 'iso_a4_210x297mm',
+      name: null,
+      widthMm: 210,
+      heightMm: 297,
+      margins: { top: 3, right: 3, bottom: 3, left: 3 },
+      borderless: false,
+    };
+    outcomes.capabilities = {
+      media: [a4, { ...a4, key: 'broken', widthMm: -1 }],
+      defaultMedia: null,
+      mediaTypes: [],
+      defaultMediaType: null,
+      resolutionsDpi: [300],
+      copiesMax: 99,
+      colour: { transports: [], profiles: [] },
+    };
+    const res = await buildApp().request(
+      `${AT}/printers/${encodeURIComponent(PRINTER)}/capabilities`,
+    );
+    expect(((await res.json()) as { media: unknown[] }).media).toEqual([a4]);
+  });
+
+  it('answers at once while two questions to the same printer are still pending', async () => {
+    const answers: (() => void)[] = [];
+    const service = new PrintService(
+      () =>
+        new Promise((resolve) => answers.push(() => resolve({ state: 'completed', reasons: [] }))),
+      profilesDir(),
+      async () => undefined,
+    );
+    const first = service.job(PRINTER, 1);
+    const second = service.job(PRINTER, 2);
+    await expect(service.job(PRINTER, 3)).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+    const other = service.job('cups:Office', 4);
+    for (const answer of answers.splice(0)) answer();
+    await Promise.all([first, second, other]);
+    const after = service.job(PRINTER, 5);
+    answers[0]?.();
+    expect(await after).toEqual({ state: 'completed', reasons: [] });
   });
 
   it('passes on what a printer that refused said', async () => {

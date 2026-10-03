@@ -41,7 +41,7 @@ export const printingApi = {
     );
     return new Uint8Array(bytes);
   },
-  submit: async (print: PrintRequest): Promise<number> =>
+  submit: async (print: PrintRequest): Promise<number | null> =>
     (
       await request(
         PrintJobIdSchema,

@@ -9,6 +9,8 @@ import {
 import { REWINDOW_QUIET_MS } from '../../stage/raw_edit_presenter';
 import type { PrintTarget } from '../../local_decode/local_open';
 import { regionOf } from '../../../photos/viewer/zoom_pan';
+import { PrintPresenter } from '../print_presenter';
+import { PrintStore } from '../print_store';
 import {
   DEFAULT_PRINT_SCENE,
   ENVIRONMENT_LIGHTING,
@@ -549,6 +551,45 @@ describe('the printer', () => {
     await editor.presenter.print.chooseProof({ kind: 'printer', id: 'cups:Office' });
     expect(editor.print.proof.target).toEqual({ kind: 'adobe-rgb' });
     expect(editor.print.profiled).toBe(false);
+  });
+
+  test('a profile the module cannot use proofs on generic paper and says so', async () => {
+    editor.presenter.setSoftProof('print');
+    await drawnBy(editor);
+    editor.decoder.refusesPrintTarget = true;
+    await editor.presenter.print.chooseProof({ kind: 'file', name: 'Satin PRO-200.icc' });
+    expect(editor.print.proofError).toBeNull();
+    await drawnBy(editor);
+    expect(editor.print.proof).toEqual({
+      source: { kind: 'generic' },
+      target: { kind: 'adobe-rgb' },
+    });
+    expect(editor.print.profiled).toBe(false);
+    expect(editor.print.proofError).toBe(
+      "This profile can't be used, so the soft proof shows generic paper.",
+    );
+  });
+
+  test('a proof that cannot be fetched says so and keeps the last proof', async () => {
+    const store = new PrintStore();
+    const presenter = new PrintPresenter(
+      store,
+      () => {},
+      null,
+      { list: () => Promise.resolve([]), bytes: () => Promise.reject(new Error('gone')) },
+      {
+        printers: () => Promise.resolve([]),
+        capabilities: () => Promise.reject(new Error('offline')),
+        profile: () => Promise.reject(new Error('offline')),
+      },
+    );
+    await presenter.chooseProof({ kind: 'file', name: 'Satin PRO-200.icc' });
+    expect(store.proofError).toBe("We couldn't read this profile.");
+    await presenter.chooseProof({ kind: 'printer', id: 'cups:PRO-200' });
+    expect(store.proofError).toBe("We couldn't reach this printer.");
+    await presenter.chooseProof({ kind: 'generic' });
+    expect(store.proofError).toBeNull();
+    expect(store.proof.source).toEqual({ kind: 'generic' });
   });
 
   test('a proof chosen and then replaced before it arrived is not the one kept', async () => {

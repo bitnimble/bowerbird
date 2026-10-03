@@ -346,11 +346,18 @@ class Open {
             ask.proof.intent,
             ask.proof.displayPeakNits ?? undefined,
           );
-        if (ask.printTarget != null)
-          editor.setPrintTarget(
-            ask.printTarget.kind,
-            ask.printTarget.kind === 'profile' ? ask.printTarget.icc : undefined,
-          );
+        let printTargetRefused = false;
+        if (ask.printTarget != null) {
+          try {
+            editor.setPrintTarget(
+              ask.printTarget.kind,
+              ask.printTarget.kind === 'profile' ? ask.printTarget.icc : undefined,
+            );
+          } catch {
+            editor.setPrintTarget('adobe-rgb');
+            printTargetRefused = true;
+          }
+        }
         if (ask.print != null) await printEnvironment(ask.print.environment);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
@@ -365,7 +372,7 @@ class Open {
             ? ((await editor.heldLoupe()) as Uint8Array<ArrayBuffer> | undefined)
             : undefined;
         return {
-          value: { stage: stage ?? null, loupe: loupe ?? null },
+          value: { stage: stage ?? null, loupe: loupe ?? null, printTargetRefused },
           transfer: [stage?.buffer, loupe?.buffer].filter((buffer) => buffer != null),
         };
       }

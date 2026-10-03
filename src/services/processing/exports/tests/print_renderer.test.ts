@@ -17,11 +17,14 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function renderer(renderPrint: ProcessingService['renderPrint']): PrintRenderer {
+function renderer(
+  renderPrint: ProcessingService['renderPrint'],
+  recipe: unknown = fileRecipe('photo.arw'),
+): PrintRenderer {
   return new PrintRenderer(
     {
       locate: () => ({
-        photo: { id: 'photo', recipe: fileRecipe('photo.arw') },
+        photo: { id: 'photo', recipe },
         library: { id: 'prints', root_path: root },
       }),
     } as unknown as PhotoRenditionService,
@@ -75,4 +78,15 @@ test('a device print carries the profile, and is refused without one', async () 
     prints.renderPrint('photo', { ...target, space: 'device' }, '/tmp/out.png'),
   ).rejects.toThrow('printer profile');
   expect(asked).toHaveLength(1);
+});
+
+test('a panorama is refused before anything renders', async () => {
+  const asked: Parameters<ProcessingService['renderPrint']>[] = [];
+  const panorama = { kind: 'panorama', sources: [{ photoId: 'left' }, { photoId: 'right' }] };
+  await expect(
+    renderer(async (...args) => {
+      asked.push(args);
+    }, panorama).renderPrint('photo', target, '/tmp/out.png'),
+  ).rejects.toThrow("panoramas and other merges can't be printed yet");
+  expect(asked).toEqual([]);
 });

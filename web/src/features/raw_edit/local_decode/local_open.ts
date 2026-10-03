@@ -130,6 +130,8 @@ export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() })
 export const TickedSchema = z.object({
   stage: BytesSchema.nullable(),
   loupe: BytesSchema.nullable(),
+  /** Whether the print target this tick carried could not be used, so Adobe RGB stands in for it. */
+  printTargetRefused: z.boolean(),
 });
 export type Ticked = z.infer<typeof TickedSchema>;
 

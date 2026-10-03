@@ -139,8 +139,8 @@ const PRINTS = typeof navigator !== 'undefined' && canPrint();
 
 function sendable(option: Option<Send>, composite: boolean): boolean {
   if (option.value === 'share') return SHAREABLE;
-  if (option.value === 'print') return PRINTS;
-  // A composite has no RAW of its own to open.
+  // A composite has no RAW of its own to open or print.
+  if (option.value === 'print') return PRINTS && !composite;
   if (option.value === 'openWith') return OPENS_WITH && !composite;
   if (option.value === 'reveal') return canRevealFile() && !composite;
   return true;

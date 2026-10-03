@@ -123,7 +123,7 @@ export class PrintDialogStore {
         media: media.key,
         mediaType: settings.mediaType,
         borderless: settings.margin === 'borderless',
-        copies: Math.min(described.copiesMax, settings.copies),
+        copies: settings.copies,
         resolutionDpi: dpi,
         page: layout.page,
         place: layout.place,

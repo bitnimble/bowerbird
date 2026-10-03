@@ -23,7 +23,8 @@ import {
   type PrintMotionEnvironment,
   type PrintTilt,
 } from './print_motion';
-import type { PrintProof, PrintStore, ProofSource } from './print_store';
+import { PrintPanelStrings as strings } from './print_panel.strings';
+import { GENERIC_PROOF, type PrintProof, type PrintStore, type ProofSource } from './print_store';
 
 export type PrinterProfileSource = {
   list(): Promise<string[]>;
@@ -125,13 +126,31 @@ export class PrintPresenter {
   @action.bound
   chooseProof = async (source: ProofSource): Promise<void> => {
     this.wantedProof = source;
+    this.store.proofError = null;
     let target: PrintTarget;
     try {
       target = await this.targetOf(source);
     } catch {
+      this.proofFailed(source);
       return;
     }
     this.gotProof({ source, target });
+  };
+
+  /** The module couldn't use `target`, and proofs on generic paper in its place. */
+  @action.bound
+  refusedTarget = (target: PrintTarget): void => {
+    if (this.store.proof.target !== target) return;
+    this.wantedProof = null;
+    this.store.proof = GENERIC_PROOF;
+    this.store.proofError = strings.profileRefused();
+  };
+
+  @action.bound
+  private proofFailed = (source: ProofSource): void => {
+    if (source !== this.wantedProof) return;
+    this.store.proofError =
+      source.kind === 'printer' ? strings.printerUnreachable() : strings.profileUnreadable();
   };
 
   private async targetOf(source: ProofSource): Promise<PrintTarget> {

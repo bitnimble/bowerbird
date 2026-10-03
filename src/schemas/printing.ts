@@ -77,9 +77,23 @@ export const PrinterCapabilitiesSchema = z.object({
 });
 export type PrinterCapabilities = z.infer<typeof PrinterCapabilitiesSchema>;
 
-export const PrinterIccSchema = z.object({ icc: z.base64() });
+export const PrinterIdSchema = z
+  .string()
+  .regex(/^(?:cups:[^/#?\s\p{Cc}]+|windows:[^\p{Cc}]+)$/u, 'not a printer');
 
-export const PrintJobIdSchema = z.object({ jobId: z.number().int() });
+export const PRINT_JOB_ID_MAX = 2 ** 31 - 1;
+export const PRINT_COPIES_MAX = 999;
+
+export const PrinterIccSchema = z.object({ icc: z.string() });
+
+/** Null where the spooler took the print without saying which job it became. */
+export const PrintJobIdSchema = z.object({
+  jobId: z.number().int().min(0).max(PRINT_JOB_ID_MAX).nullable(),
+});
+
+/** Carried in the error details of a submit whose printer never confirmed it, so the print may still arrive. */
+export const PrintUnconfirmedSchema = z.object({ printUnconfirmed: z.literal(true) });
+export type PrintUnconfirmed = z.infer<typeof PrintUnconfirmedSchema>;
 
 export const PrintJobStateSchema = z.object({
   state: z.enum(['pending', 'held', 'processing', 'stopped', 'canceled', 'aborted', 'completed']),
@@ -87,7 +101,11 @@ export const PrintJobStateSchema = z.object({
 });
 export type PrintJobState = z.infer<typeof PrintJobStateSchema>;
 
-export const PrintReplySchema = z.object({ ok: z.boolean(), error: z.string().optional() });
+export const PrintReplySchema = z.object({
+  ok: z.boolean(),
+  error: z.string().optional(),
+  kind: z.enum(['invalid', 'missing', 'unavailable']).optional(),
+});
 
 /** A printer's own profile, read through the spooler, or an ICC file the reader added. */
 export const ProfileRefSchema = z.object({
@@ -133,20 +151,26 @@ const PlaceSchema = z.object({
 
 export const PrintRequestSchema = z.object({
   photoId: z.string(),
-  printer: z.string(),
+  printer: PrinterIdSchema,
   colour: ColourPathSchema,
   intent: RenderingIntentSchema,
   quarterTurns: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
-  job: z.object({
-    name: z.string(),
-    media: z.string(),
-    mediaType: z.string().nullable(),
-    borderless: z.boolean(),
-    copies: z.number().int().positive(),
-    resolutionDpi: z.number().int().positive(),
-    page: z.object({ widthPx: PageEdgeSchema, heightPx: PageEdgeSchema }),
-    place: PlaceSchema,
-  }),
+  job: z
+    .object({
+      name: z.string().max(255),
+      media: z.string(),
+      mediaType: z.string().nullable(),
+      borderless: z.boolean(),
+      copies: z.number().int().min(1).max(PRINT_COPIES_MAX),
+      resolutionDpi: z.number().int().positive(),
+      page: z.object({ widthPx: PageEdgeSchema, heightPx: PageEdgeSchema }),
+      place: PlaceSchema,
+    })
+    .refine(
+      ({ page, place }) =>
+        place.x + place.width <= page.widthPx && place.y + place.height <= page.heightPx,
+      { message: 'the photo is placed off the page', path: ['place'] },
+    ),
 });
 export type PrintRequest = z.infer<typeof PrintRequestSchema>;
 

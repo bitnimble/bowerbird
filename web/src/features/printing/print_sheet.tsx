@@ -30,7 +30,7 @@ export const PrintSheet = observer(function PrintSheet(): JSX.Element | null {
         {...stylex.props(styles.picture)}
         src={sheet.url}
         alt={sheet.name}
-        onLoad={() => void printing.sheetLoaded()}
+        onLoad={() => void printing.sheetLoaded(sheet.url)}
       />
     </div>,
     document.body,

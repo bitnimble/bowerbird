@@ -96,7 +96,7 @@ describe('printLayout', () => {
       }),
     ).toEqual({
       page: { widthPx: 2480, heightPx: 3508 },
-      place: { x: 97, y: 40, width: 2285, height: 3428 },
+      place: { x: 98, y: 41, width: 2284, height: 3426 },
       quarterTurns: 1,
     });
   });
@@ -112,9 +112,90 @@ describe('printLayout', () => {
       }),
     ).toEqual({
       page: { widthPx: 2480, heightPx: 3508 },
-      place: { x: 118, y: 118, width: 2244, height: 3272 },
+      place: { x: 119, y: 119, width: 2242, height: 3270 },
       quarterTurns: 1,
     });
+  });
+
+  test('fill with a portrait photo on portrait paper stays unturned', () => {
+    expect(
+      printLayout({
+        media: A4,
+        margin: 'minimum',
+        fit: 'fill',
+        dpi: 300,
+        photo: { width: 4000, height: 6000 },
+      }),
+    ).toEqual({
+      page: { widthPx: 2480, heightPx: 3508 },
+      place: { x: 41, y: 41, width: 2398, height: 3426 },
+      quarterTurns: 0,
+    });
+  });
+
+  test('asymmetric printer margins inset each side by its own', () => {
+    expect(
+      printLayout({
+        media: { ...A4, margins: { top: 3, right: 5, bottom: 12.7, left: 3 } },
+        margin: 'minimum',
+        fit: 'fit',
+        dpi: 300,
+        photo: { width: 1000, height: 1000 },
+      }),
+    ).toEqual({
+      page: { widthPx: 2480, heightPx: 3508 },
+      place: { x: 36, y: 505, width: 2384, height: 2384 },
+      quarterTurns: 0,
+    });
+  });
+
+  test('a margin narrower than the printer on one side keeps the printer there', () => {
+    expect(
+      printLayout({
+        media: { ...A4, margins: { top: 3, right: 3, bottom: 12.7, left: 3 } },
+        margin: 5,
+        fit: 'fill',
+        dpi: 300,
+        photo: { width: 4000, height: 6000 },
+      }).place,
+    ).toEqual({ x: 60, y: 60, width: 2360, height: 3298 });
+  });
+
+  test('a landscape photo on 4 x 6 with wide margins turns and centres', () => {
+    expect(
+      printLayout({
+        media: FOUR_BY_SIX,
+        margin: 25,
+        fit: 'fit',
+        dpi: 300,
+        photo: { width: 6000, height: 4000 },
+      }),
+    ).toEqual({
+      page: { widthPx: 1200, heightPx: 1800 },
+      place: { x: 296, y: 444, width: 608, height: 912 },
+      quarterTurns: 1,
+    });
+  });
+
+  test('margins wider than the paper still leave a place on the page', () => {
+    for (const margins of [
+      { top: 200, right: 3, bottom: 200, left: 3 },
+      { top: 3, right: 150, bottom: 3, left: 150 },
+    ]) {
+      for (const fit of ['fit', 'fill'] as const) {
+        const { page, place } = printLayout({
+          media: { ...A4, margins },
+          margin: 'minimum',
+          fit,
+          dpi: 300,
+          photo: { width: 6000, height: 4000 },
+        });
+        expect(place.width).toBeGreaterThan(0);
+        expect(place.height).toBeGreaterThan(0);
+        expect(place.x + place.width).toBeLessThanOrEqual(page.widthPx);
+        expect(place.y + place.height).toBeLessThanOrEqual(page.heightPx);
+      }
+    }
   });
 
   test('a portrait 3:2 photo borderless on 4 x 6 fills the sheet unturned', () => {
@@ -156,6 +237,13 @@ describe('marginChoices', () => {
         margins: { top: 3, right: 3, bottom: 12.7, left: 3 },
       }),
     ).toEqual(['minimum', 15, 20, 25]);
+  });
+
+  test('drops steps that leave less than half the short edge to print on', () => {
+    expect(marginChoices(FOUR_BY_SIX)).toEqual(['borderless', 'minimum', 5, 10, 15, 20, 25]);
+    expect(
+      marginChoices({ ...FOUR_BY_SIX, key: 'oe_photo-l_3.5x5in', widthMm: 89, heightMm: 127 }),
+    ).toEqual(['borderless', 'minimum', 5, 10, 15, 20]);
   });
 });
 
