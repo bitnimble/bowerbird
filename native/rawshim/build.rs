@@ -16,6 +16,7 @@ fn main() {
     // deleted and cost every native test run two minutes of rebuild.
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
+    println!("cargo:rerun-if-env-changed=CLANG_PATH");
 
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     shaders(&out);

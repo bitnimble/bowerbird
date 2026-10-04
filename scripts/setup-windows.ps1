@@ -115,6 +115,14 @@ if ($env:LIBCLANG_PATH -ne $llvmBin) {
   $env:LIBCLANG_PATH = $llvmBin
   Skip "LIBCLANG_PATH set to $llvmBin"
 }
+# bindgen asks this clang for the system include directories; without one, libclang finds no
+# stddef.h. LLVM's installer leaves it off PATH.
+$clang = Join-Path $llvmBin 'clang.exe'
+if ($env:CLANG_PATH -ne $clang) {
+  [Environment]::SetEnvironmentVariable('CLANG_PATH', $clang, 'User')
+  $env:CLANG_PATH = $clang
+  Skip "CLANG_PATH set to $clang"
+}
 
 Step 'WebView2 runtime'
 if (@($WebView2Keys | Where-Object { Test-Path $_ }).Count -gt 0) {
@@ -124,7 +132,15 @@ if (@($WebView2Keys | Where-Object { Test-Path $_ }).Count -gt 0) {
 }
 
 Step 'rustup'
-if (Has 'rustup') { Skip 'already installed' } else { Winget-Install 'Rustlang.Rustup' @('--silent') }
+if (Has 'rustup') {
+  Skip 'already installed'
+} else {
+  Winget-Install 'Rustlang.Rustup' @('--silent')
+  # Refresh-Path doesn't find rustup straight after its install; a second run of this did.
+  $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+  $env:Path = "$(Join-Path $cargoHome 'bin');$env:Path"
+  if (-not (Has 'rustup')) { throw "rustup installed, but $cargoHome\bin has no rustup.exe." }
+}
 
 $root = $null
 if ($PSScriptRoot) {
