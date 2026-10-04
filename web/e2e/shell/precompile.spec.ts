@@ -10,8 +10,8 @@ test('a first visit precompiles every pipeline before the app opens, once per ve
 }) => {
   test.setTimeout(180_000);
   await page.goto(route(PathSegment.settings()));
-  await expect(page.getByRole('heading', { name: 'Preparing the editor' })).toBeVisible();
-  await expect(page.getByRole('progressbar', { name: 'Preparing the editor' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Preparing Bowerbird' })).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: 'Preparing Bowerbird' })).toBeVisible();
 
   await expect(page.getByRole('navigation', { name: 'Sidebar' })).toBeVisible({ timeout: 120_000 });
   // The app opens after a minute even while compiling carries on, and only a finished compile is remembered.
@@ -23,11 +23,11 @@ test('a first visit precompiles every pipeline before the app opens, once per ve
 
   await page.reload();
   await expect(page.getByRole('navigation', { name: 'Sidebar' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Preparing the editor' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Preparing Bowerbird' })).toHaveCount(0);
 });
 
 test('a device that precompiled an older version precompiles again', async ({ page }) => {
   await page.addInitScript((key) => localStorage.setItem(key, '0.0.1'), PRECOMPILED_KEY);
   await page.goto(route(PathSegment.settings()));
-  await expect(page.getByRole('heading', { name: 'Preparing the editor' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Preparing Bowerbird' })).toBeVisible();
 });
