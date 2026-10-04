@@ -88,13 +88,13 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
     assert_eq!((out_w, out_h), (width, height));
 
     let table = coding.table();
-    let white = coding.white_level(false);
+    let white = rawshim::transfer::FULL_SCALE;
     for (at, sample) in samples.iter().enumerate() {
         let pixel = at / 3;
         let colour: [f64; 3] = std::array::from_fn(|channel| {
             f64::from(table[usize::from(codes[pixel * 3 + channel]) * 3 + channel]) * white
         });
-        let want = rawshim::hdr_fit::in_gamut(colour)[at % 3].clamp(0.0, 65535.0);
+        let want = rawshim::hdr_fit::in_gamut(colour)[at % 3].max(0.0);
         assert!(
             (f64::from(*sample) - want).abs() <= 1.0 + stored_within(want),
             "sample {at}: code {} became {sample}, and the host says {want}",
@@ -103,8 +103,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
     }
 }
 
-/// A 10-bit PQ picture puts diffuse white a fixed distance below the top and carries highlights
-/// above it, which is the whole reason the scale is not 65535 for one.
+/// A 10-bit PQ picture puts diffuse white at full scale and carries highlights above it.
 #[test]
 fn a_pq_picture_keeps_its_headroom() {
     let Some(gpu) = rawshim::gpu::device() else {
@@ -127,20 +126,42 @@ fn a_pq_picture_keeps_its_headroom() {
         Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
-    let white = 65535.0 / rawshim::transfer::HDR_HEADROOM;
+    let white = rawshim::transfer::FULL_SCALE;
     assert!(
-        (f64::from(samples[0]) - white).abs() < 60.0,
+        (f64::from(samples[0]) - white).abs() < 0.0075 * white,
         "white landed at {}",
         samples[0]
     );
-    // 1000 nits is a little under five times 203, and the headroom is eight, so it is carried
-    // rather than clipped.
     let ratio = f64::from(samples[3]) / f64::from(samples[0]);
     assert!(
         (ratio - 1000.0 / 203.0).abs() < 0.05,
         "1000 nits came back at {ratio}x white"
     );
-    assert!(samples[3] < 65535.0, "and it did not reach the ceiling");
+}
+
+/// The brightest a PQ master can state, ten thousand nits, is carried rather than clipped.
+#[test]
+fn a_pq_picture_carries_its_whole_range() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the PQ range was not run.");
+        return;
+    };
+    let coding = Coding::of(Primaries::REC2020, Curve::Pq, 10);
+    let codes = vec![1023u16; 3];
+    let picture = Picture::upload(gpu, codes, 1, 1, coding, Orientation::Normal, None).unwrap();
+    let (samples, _, _) = whole(&picture).expect("the pass runs");
+    let ratio = f64::from(samples[0]) / rawshim::transfer::FULL_SCALE;
+    assert!(
+        (ratio - 10_000.0 / 203.0).abs() < 0.01 * ratio,
+        "10000 nits came back at {ratio}x white"
+    );
+    assert_eq!(
+        picture
+            .peak_level()
+            .map(|peak| peak.raw() / rawshim::transfer::FULL_SCALE),
+        Some(Curve::Pq.light(1.0).raw()),
+        "and the picture states it as its peak"
+    );
 }
 
 /// The primaries conversion, which is the failure that renders: a transposed row is a colour
@@ -368,11 +389,9 @@ fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
     .unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
-    // A gain-mapped base is put on the HDR scale, so the unlifted pixel sits at its own light
-    // times that scale rather than at 65535.
-    let base = 128.0 / 255.0 * (65535.0 / rawshim::transfer::HDR_HEADROOM);
+    let base = 128.0 / 255.0 * rawshim::transfer::FULL_SCALE;
     assert!(
-        (f64::from(samples[0]) - base).abs() < 60.0,
+        (f64::from(samples[0]) - base).abs() < 0.015 * base,
         "the unlifted pixel is {}",
         samples[0]
     );
@@ -481,7 +500,7 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
         (apple / iso - 2.5 / 2.0).abs() < 0.01,
         "Apple {apple} against ISO {iso}"
     );
-    let base = 64.0 / 255.0 * (65535.0 / rawshim::transfer::HDR_HEADROOM);
+    let base = 64.0 / 255.0 * rawshim::transfer::FULL_SCALE;
     assert!(
         (apple / base - 2.5).abs() < 0.02,
         "Apple's half recovery came back at {}x",
@@ -536,28 +555,76 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
     let recovery = 32768.0f64 / 65535.0;
     let log_gain =
         f64::from(min) + (f64::from(max) - f64::from(min)) * recovery.powf(1.0 / f64::from(gamma));
+    // In units of diffuse white.
+    let got = f64::from(samples[0]) / rawshim::transfer::FULL_SCALE;
     let base = f64::from(base_code) / 65535.0;
-    let want = ((base + f64::from(offset_base)) * log_gain.exp2() - f64::from(offset_alternate))
-        * (65535.0 / rawshim::transfer::HDR_HEADROOM);
+    let want = (base + f64::from(offset_base)) * log_gain.exp2() - f64::from(offset_alternate);
     assert!(
-        (f64::from(samples[0]) - want).abs() < 40.0,
-        "the lifted pixel is {} where the terms give {want}",
-        samples[0],
+        (got - want).abs() < 0.005,
+        "the lifted pixel is {got} where the terms give {want}",
     );
     // And the two failures this is guarding against, named so the tolerance cannot swallow them:
     // an inverted gamma, and the offsets swapped.
     let inverted =
         f64::from(min) + (f64::from(max) - f64::from(min)) * recovery.powf(f64::from(gamma));
-    let wrong = ((base + f64::from(offset_base)) * inverted.exp2() - f64::from(offset_alternate))
-        * (65535.0 / rawshim::transfer::HDR_HEADROOM);
+    let wrong = (base + f64::from(offset_base)) * inverted.exp2() - f64::from(offset_alternate);
     assert!(
-        (want - wrong).abs() > 400.0,
+        (want - wrong).abs() > 0.05,
         "the test cannot tell an inverted gamma apart"
     );
-    let swapped = ((base + f64::from(offset_alternate)) * log_gain.exp2() - f64::from(offset_base))
-        * (65535.0 / rawshim::transfer::HDR_HEADROOM);
+    let swapped = (base + f64::from(offset_alternate)) * log_gain.exp2() - f64::from(offset_base);
     assert!(
-        (want - swapped).abs() > 100.0,
+        (want - swapped).abs() > 0.012,
         "the test cannot tell swapped offsets apart"
     );
+}
+
+/// The peak a gain-mapped picture states is what its top code draws at under a full map, offsets
+/// and all: a composite of these rolls off from it.
+#[test]
+fn a_gain_maps_stated_peak_is_its_brightest_pixel() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the gain map peak was not run.");
+        return;
+    };
+    let coding = Coding::of(Primaries::REC2020, Curve::Linear, 8);
+    let iso = Reconstruction::Iso {
+        min: [0.0; 3],
+        max: [1.0, 3.0, 2.0],
+        gamma: [1.0; 3],
+        offset_base: [0.05; 3],
+        offset_alternate: [0.02; 3],
+    };
+    for (name, terms) in [
+        ("ISO", iso),
+        ("Apple", Reconstruction::Apple { headroom: 4.0 }),
+    ] {
+        let map = GainMap {
+            samples: vec![65535; 3],
+            width: 1,
+            height: 1,
+            last: 65535.0,
+            terms,
+        };
+        let picture = Picture::upload(
+            gpu,
+            vec![255; 3],
+            1,
+            1,
+            coding,
+            Orientation::Normal,
+            Some(map),
+        )
+        .unwrap();
+        let (samples, _, _) = whole(&picture).expect("the pass runs");
+        let drawn = samples.iter().copied().fold(0.0f32, f32::max);
+        let peak = picture
+            .peak_level()
+            .expect("integer samples state a top")
+            .raw();
+        assert!(
+            (f64::from(drawn) / peak - 1.0).abs() < 0.005,
+            "{name} draws its top at {drawn} and states {peak}"
+        );
+    }
 }

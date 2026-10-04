@@ -185,6 +185,11 @@ impl Held {
         self.picture.white_level()
     }
 
+    /// The brightest level the file can state ([`crate::linearise::Picture::peak_level`]).
+    pub fn peak_level(&self) -> Option<crate::light::Light<crate::light::Level>> {
+        self.picture.peak_level()
+    }
+
     /// One window of it, as the scene-linear frame every stage below a decode reads.
     ///
     /// **The Detail amounts are not arguments here, and that is the point.** GALOSH is fitted to a

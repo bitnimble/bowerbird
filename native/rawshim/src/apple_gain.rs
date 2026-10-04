@@ -138,8 +138,7 @@ mod tests {
         assert!((stops(0.5, 0.0) - 1.8).abs() < 1e-9);
         assert!((stops(0.5, 0.01) - 1.6).abs() < 1e-9);
         assert!((stops(0.5, 1.0) - 1.5).abs() < 1e-9);
-        // maker33 at one or above: the deeper pair, at most 3 stops, which is the 8x this
-        // pipeline's own container is built for (`transfer::HDR_HEADROOM`).
+        // maker33 at one or above: the deeper pair, at most 3 stops.
         assert!((stops(1.0, 0.0) - 3.0).abs() < 1e-9);
         assert!((stops(1.0, 0.01) - 2.3).abs() < 1e-9);
         assert!((stops(1.0, 8.0) - (-0.121)).abs() < 1e-9);

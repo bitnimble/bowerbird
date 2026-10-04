@@ -1647,37 +1647,24 @@ pub(crate) async fn camera_picture(
     .ok_or_else(|| format!("{path}'s embedded JPEG could not be read onto the device"))
 }
 
-/// The level diffuse white sits at in [`camera_picture`]'s frames, which is what a composite of
-/// them is coded against.
-///
-/// **A finished picture is not measured for a white, it is asked.** The camera decided where white
-/// went when it wrote the JPEG, and a quantile of that picture is a second opinion about a decision
-/// already taken: `composite_job::camera_levels` has what coding one against the other does.
-///
-/// The frame's own coding, not a constant, because the level depends on whether the container had
-/// to make room above white: an sRGB JPEG puts white at full scale, and one carrying a gain map
-/// puts it a headroom below.
+/// The brightest level [`camera_picture`]'s frames can hold, which is where a composite of them
+/// rolls off from: full scale for an SDR picture, above it for an HDR transfer or a gain map.
 ///
 /// With `composite_job`, which is the only caller and is the server's half: the browser opens one
 /// photograph and composites a window of a canvas, and never asks what a whole one is coded
 /// against.
 #[cfg(feature = "renditions")]
-pub(crate) fn camera_white(path: &str) -> Result<crate::light::Light<crate::light::Level>, String> {
+pub(crate) fn camera_peak(path: &str) -> Result<crate::light::Light<crate::light::Level>, String> {
     if crate::decode_rendered::is_rendered(path) {
-        // ponytail: a whole decode for one scalar. Every answer here is a function of the file's
-        // headers - the transfer, and whether a gain map rides with it - so a set of finished
-        // pictures pays a full-size decode each to learn two flags. The fix if that ever reads as
-        // slow is a coding read that stops at the headers, shared with `decode_rendered::read` so
-        // there is still one place that decides what a file's transfer is; what is not the fix is
-        // assuming sRGB here, which is three stops out on a gain-mapped JPEG.
+        // ponytail: whole decode for a header answer; a header-only coding read if it shows. Never
+        // assume sRGB here: three stops out on a gain-mapped JPEG.
         let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;
-        return Ok(crate::decode_rendered::hold(&bytes)?.white_level());
+        return crate::decode_rendered::hold(&bytes)?
+            .peak_level()
+            .ok_or_else(|| format!("{path} states no brightest level"));
     }
-    // What `camera_picture` states about a camera's own preview: eight bits of sRGB, and no gain
-    // map, since the lift is not read out of a preview.
-    Ok(crate::light::Light::measured(
-        crate::transfer::Coding::srgb(8).white_level(false),
-    ))
+    // A camera's preview: eight bits of sRGB, and no gain map.
+    Ok(crate::light::Light::measured(crate::transfer::FULL_SCALE))
 }
 
 /// Whether any source of this panorama reaches this window at all.

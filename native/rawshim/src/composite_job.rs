@@ -508,23 +508,20 @@ fn whole_levels(
 /// with its 98th percentile at 0.96 where the picture the viewer opens leaves it at 0.83 - a sky
 /// with its modelling flattened out of the top.
 ///
-/// The peak is full scale, which is where a finished picture's highlights stop. So nothing rolls
-/// off for an SDR target and a gain-mapped source rolls off from its own headroom, both of which
-/// are what the container says rather than anything measured.
-///
-/// The lowest white where the sources disagree - a set of one body and one format has one white,
-/// and if two of them do not then the canvas has no scale on which both are the picture they were;
-/// the lowest is the one on which neither clips.
+/// White is full scale, where every finished picture's diffuse white lands. The peak is the
+/// brightest any source's container can hold, so an SDR set rolls off nothing and a gain-mapped
+/// source rolls off from its own headroom: what the files say rather than anything measured.
 fn camera_levels(
     files: &[crate::composite_tile::SourceFile<'_>],
 ) -> Result<crate::tone::Anchored, String> {
-    let mut white = crate::light::Light::measured(f64::MAX);
+    let white = crate::light::Light::measured(crate::transfer::FULL_SCALE);
+    let mut peak = white;
     for file in files {
-        white = white.min(crate::composite_tile::camera_white(file.path)?);
+        peak = peak.max(crate::composite_tile::camera_peak(file.path)?);
     }
     Ok(crate::tone::Levels {
         white,
-        peak: crate::light::Light::measured(crate::transfer::FULL_SCALE),
+        peak,
         // Unmeasured, like the two above: nothing walked a histogram for this canvas, so the low
         // tone pair sit where a picture with black in it puts them.
         floor: None,

@@ -12,21 +12,7 @@
 //! calls for an answer that has at most 65536 distinct results - and a shader spelling the curve
 //! itself disagrees with this one in the last bit, over the frame every rendition is built from.
 
-/// How far above reference white the scene-linear frame can go before it clips.
-///
-/// **Three stops, because that is what a RAW's metered exposure actually leaves.** The pipeline's
-/// currency is a linear `u16`, so a scale is a trade between shadow resolution and highlight
-/// headroom, and PQ's own range would spend it all on the second: BT.2408 puts reference white at
-/// 203 nits of 10000, so honouring the whole curve would put diffuse white at level 1337 and leave
-/// an 8-bit shadow step below the first level. A RAW's diffuse white sits a few stops under sensor
-/// saturation - the same shape, arrived at from the other end - and matching it is what lets one
-/// grade read both.
-///
-/// The cost is stated: a capture graded for a 4000-nit master clips at 1624. Everything above
-/// that was going through `frame.slang`'s roll-off into a display peak far below it.
-pub const HDR_HEADROOM: f64 = 8.0;
-
-/// The top of a frame's sample container: what a `u16` holds.
+/// The level a finished picture's diffuse white lands on; its highlights sit above it.
 pub const FULL_SCALE: f64 = 65535.0;
 
 /// BT.2408's reference white, which is what an HDR signal's diffuse white is coded at.
@@ -85,14 +71,6 @@ impl Curve {
             }
             Curve::Linear => code,
         })
-    }
-
-    /// Whether this curve can carry anything above diffuse white.
-    ///
-    /// The scale follows from it: an SDR picture's brightest code *is* white, so giving it
-    /// headroom would only throw resolution away, where an HDR one's would clip without.
-    pub fn carries_highlights(self) -> bool {
-        matches!(self, Curve::Pq | Curve::Hlg)
     }
 }
 
@@ -400,17 +378,6 @@ impl Coding {
         })
     }
 
-    /// The level reference white lands on, which is full scale unless the picture can go above it.
-    ///
-    /// `lifted` is what can take a picture past its transfer's white: a gain map, or a DNG's
-    /// floating-point samples.
-    pub fn white_level(&self, lifted: bool) -> f64 {
-        match self.curve.carries_highlights() || lifted {
-            true => FULL_SCALE / HDR_HEADROOM,
-            false => FULL_SCALE,
-        }
-    }
-
     /// The table `linearise.slang` indexes by code value and channel, `code * 3 + channel`: every
     /// code this depth can take, as the light it stands for with diffuse white at 1.0.
     ///
@@ -420,7 +387,7 @@ impl Coding {
     ///
     /// **Relative rather than on the frame's scale**, because the gain map is applied between the
     /// two and ISO 21496-1's offsets are in units of diffuse white. The shader's one multiply by
-    /// [`Coding::white_level`] is what puts it on the scale.
+    /// [`FULL_SCALE`] is what puts it on the scale.
     ///
     /// Sized to the depth rather than to 65536 always: a JPEG's table is 768 floats, and the
     /// alternative is three quarters of a megabyte uploaded per photograph to hold 255 answers.
@@ -727,12 +694,5 @@ mod tests {
         out.extend_from_slice(&table);
         out.extend_from_slice(&body);
         out
-    }
-
-    #[test]
-    fn a_gain_mapped_sdr_base_is_given_the_headroom_it_is_about_to_use() {
-        let sdr = Coding::srgb(8);
-        assert_eq!(sdr.white_level(false), 65535.0);
-        assert_eq!(sdr.white_level(true), 65535.0 / HDR_HEADROOM);
     }
 }

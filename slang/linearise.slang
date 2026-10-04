@@ -52,9 +52,8 @@ struct Params {
     /// removes a branch from every pixel here.
     uint gain_width;
     uint gain_height;
-    /// Reference white's level, which is 65535 for a picture with no highlights above it and
-    /// `65535 / HDR_HEADROOM` for one that has (`transfer::Coding::white_level`).
-    float white_level;
+    /// Nonzero where `codes` holds an `f32` a sample rather than two `u16` codes a word.
+    uint float_samples;
     /// The gain map's own full-scale code, which is its coded depth rather than the picture's.
     float gain_last;
     /// `GAIN_ISO` or `GAIN_APPLE`, which are different curves and not different constants.
@@ -75,8 +74,6 @@ struct Params {
     /// A floating-point sample's light is `sample * sample_scale + sample_offset`, `w` unused.
     float4 sample_scale;
     float4 sample_offset;
-    /// Nonzero where `codes` holds an `f32` a sample rather than two `u16` codes a word.
-    uint float_samples;
     /// The rectangle of the raster `codes` holds, which is all of it for a picture held on the
     /// device and the rows one band reads for one held on the host.
     uint strip_left;
@@ -211,15 +208,8 @@ float3 light_of(uint2 at)
 
 /// One destination sample: its output pixel's light, through the primaries and onto the scale.
 ///
-/// **All three rows, then the triple brought inside the container as a whole**, which is
-/// `assemble.slang`'s `coloured` exactly and for the reason `prelude.slang` records: a channel
-/// clamped where it happened to cross leaves the two that had not crossed keeping their heads
-/// above it, and the highlight turns a different colour. That is not an edge case here - an HDR
-/// picture's scale puts the ceiling at `HDR_HEADROOM` times diffuse white, which a gain-mapped
-/// specular or a master above 1624 nits reaches routinely, and `in_gamut` is what a source whose
-/// primaries reach outside Rec.2020 needs at the other end.
-///
-/// The cost is two dot products a sample, which is what the RAW path already pays.
+/// All three rows, then the triple brought inside Rec.2020 as a whole (`in_gamut`), for a source
+/// whose primaries reach outside it.
 uint sample_of(uint sample)
 {
     let pixel = sample / 3;
@@ -232,18 +222,15 @@ uint sample_of(uint sample)
         params.orientation);
 
     let light = light_of(at);
-    // Levels, because that is what `bits_of` stores: `white_level` is diffuse white's own level and
-    // the picture's ceiling is full scale. `Level` is not `IStandard` for that reason, so both come
-    // in `measured`.
     let rec2020 = measured<Level>(float3(
         dot(params.row0.xyz, light),
         dot(params.row1.xyz, light),
-        dot(params.row2.xyz, light)) * params.white_level);
-    let held = within(in_gamut(rec2020), measured<Level>(FULL_SCALE)).v;
+        dot(params.row2.xyz, light)) * FULL_SCALE);
+    let held = in_gamut(rec2020).v;
     float value = held.r;
     if (channel == 1) { value = held.g; }
     if (channel == 2) { value = held.b; }
-    return bits_of(clamp(value, 0.0, FULL_SCALE));
+    return bits_of(max(value, 0.0));
 }
 
 [shader("compute")]

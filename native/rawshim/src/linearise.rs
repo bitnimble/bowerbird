@@ -126,14 +126,23 @@ impl GainMap {
             && reaches
     }
 
-    /// Whether the transfer's own ceiling has to make room for this map, which is what
-    /// `transfer::Coding::white_level` asks.
-    ///
-    /// Both arms reach at most `transfer::HDR_HEADROOM`: Apple's mapping clamps at three stops by
-    /// construction, and an ISO map beyond that is brought inside the container by `within` rather
-    /// than by moving diffuse white, since where white sits is what makes two files comparable.
-    pub fn lifts(&self) -> bool {
-        self.does_anything()
+    /// The brightest any channel at `base` can come out, in units of diffuse white.
+    fn brightest(&self, base: f64) -> f64 {
+        match &self.terms {
+            Reconstruction::Iso {
+                min,
+                max,
+                offset_base,
+                offset_alternate,
+                ..
+            } => (0..3)
+                .map(|c| {
+                    let gain = f64::from(min[c].max(max[c])).exp2();
+                    (base + f64::from(offset_base[c])) * gain - f64::from(offset_alternate[c])
+                })
+                .fold(base, f64::max),
+            Reconstruction::Apple { headroom } => base * f64::from(*headroom).max(1.0),
+        }
     }
 }
 
@@ -356,10 +365,8 @@ impl Picture {
         Picture::built(gpu, samples, crop, coding, table, upright, None)
     }
 
-    /// The same stored as floating point.
-    ///
-    /// Lifted, so white sits `HDR_HEADROOM` below the top: a float sample past the white level is
-    /// highlight the file kept, where a count past it is a clipped photosite.
+    /// The same stored as floating point: a float sample past the white level is highlight the
+    /// file kept, where a count past it is a clipped photosite.
     pub fn camera_float(
         gpu: &'static crate::gpu::Gpu,
         samples: Vec<f32>,
@@ -407,11 +414,22 @@ impl Picture {
     /// The level this picture's diffuse white sits at in the frames it produces.
     ///
     /// **A finished picture states its white where a RAW's has to be measured**, which is the whole
-    /// difference between grading one and grading the other: the transfer says where white is, and
-    /// the gain map says whether the container had to make room above it.
+    /// difference between grading one and grading the other.
     pub fn white_level(&self) -> crate::light::Light<crate::light::Level> {
-        let lifted = self.terms.is_some() || self.samples.float.is_some();
-        crate::light::Light::measured(self.coding.white_level(lifted))
+        crate::light::Light::measured(crate::transfer::FULL_SCALE)
+    }
+
+    /// The brightest level the file can state: its transfer's top code, through the gain map at
+    /// full recovery. Unbounded for floating-point samples, which state no top.
+    pub fn peak_level(&self) -> Option<crate::light::Light<crate::light::Level>> {
+        if self.samples.float.is_some() {
+            return None;
+        }
+        let base = self.coding.curve.light(1.0).raw();
+        let top = self.terms.as_ref().map_or(base, |map| map.brightest(base));
+        Some(crate::light::Light::measured(
+            crate::transfer::FULL_SCALE * top.max(1.0),
+        ))
     }
 
     /// The picture's size the way a reader sees it, which is the stored size with a quarter turn
@@ -607,12 +625,11 @@ impl Picture {
         ] {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
-        let white = self.white_level().raw() as f32;
         let last = self.terms.as_ref().map_or(1.0, |it| it.last.max(1.0));
-        bytes.extend_from_slice(&white.to_le_bytes());
+        // `uint`s in the float run rather than words above, which would leave the `float4`s below
+        // starting off a sixteen-byte boundary.
+        bytes.extend_from_slice(&u32::from(self.samples.float.is_some()).to_le_bytes());
         bytes.extend_from_slice(&last.to_le_bytes());
-        // A `uint` in the float run rather than a thirteenth word above, which would leave the
-        // `float4`s below starting off a sixteen-byte boundary.
         bytes.extend_from_slice(&self.gain_mode().to_le_bytes());
         bytes.extend_from_slice(&self.apple_headroom().to_le_bytes());
         // The gain map's terms, and a run of neutral ones where there is no map or where Apple's
@@ -650,12 +667,12 @@ impl Picture {
         // The struct's size rounds up to its sixteen-byte alignment, which the last three words
         // are padding to.
         for word in [
-            u32::from(self.samples.float.is_some()),
             strip.left as u32,
             strip.top as u32,
             strip.width as u32,
             words.0 as u32,
             words.1 as u32,
+            0,
             0,
             0,
         ] {

@@ -28,10 +28,13 @@ public float level_of(uint bits)
     return f16tof32(bits) * FULL_SCALE;
 }
 
+/// Saturating at the largest finite half, so light past it is stored bright rather than infinite.
 public uint bits_of(float level)
 {
-    return f32tof16(level / FULL_SCALE);
+    return f32tof16(min(level / FULL_SCALE, LARGEST_HALF));
 }
+
+static const float LARGEST_HALF = 65504.0;
 
 /// The sensor's full scale, in the levels a scene-linear sample is counted in.
 public static const float FULL_SCALE = 65535.0;

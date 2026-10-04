@@ -61,12 +61,13 @@ pub fn level_of_bits(bits: u16) -> f32 {
     half::f16::from_bits(bits).to_f32() * FULL_SCALE
 }
 
+/// Saturating at the largest finite half, as `packed.slang`'s `bits_of` does.
 pub fn bits_of_level(level: f32) -> u16 {
-    half::f16::from_f32(level / FULL_SCALE).to_bits()
+    half::f16::from_f32((level / FULL_SCALE).min(half::f16::MAX.to_f32())).to_bits()
 }
 
 /// The sensor's full scale, in the levels a scene-linear sample is counted in.
-pub const FULL_SCALE: f32 = 65535.0;
+pub const FULL_SCALE: f32 = crate::transfer::FULL_SCALE as f32;
 
 pub fn levels_of(samples: &[u16]) -> Vec<f32> {
     samples.iter().map(|&bits| level_of_bits(bits)).collect()

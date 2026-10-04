@@ -154,8 +154,8 @@ void fit_scan()
     // A frame with too few distinct levels to reach a mark falls back to the end of the range it
     // was looking for, which is what the mark meant on such a frame anyway.
     let top = level_of(peak < 0 ? highest : uint(peak));
-    // Held to what the sensor recorded: a reconstructed highlight runs past full scale, and white
-    // following it there would darken every frame with a blown sun in it.
+    // Held to full scale: a RAW's reconstructed highlight runs past it, and white following it there
+    // would darken every frame with a blown sun in it. A finished picture states its white there.
     let recorded = min(top, FULL_SCALE);
     let anchor = min(white < 0 ? top : level_of(uint(white)), FULL_SCALE);
     // On a night frame the quantile lands on the dark ground, four stops and more under the

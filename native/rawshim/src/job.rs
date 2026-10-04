@@ -643,12 +643,12 @@ pub(crate) struct Base {
     /// Whether what this base measured describes the photograph, and so is worth filing under it.
     ///
     /// **False for a composite of the cameras' own pictures**, whose every measurement is of what
-    /// the bodies printed rather than of the canvas: its white is the transfer's white and its peak
-    /// is full scale, both by construction (`composite_job::camera_levels`). Filed under the row, they
-    /// would be read straight back by the next composite *of the photographs*, which is keyed on
-    /// the quantile and the reference white - identical across the two arms. And the grid tile is
-    /// the arm a merge runs first, so the camera's peak would be the first thing ever filed and
-    /// every later render of that canvas would roll off against it.
+    /// the bodies printed rather than of the canvas: its white is full scale and its peak the
+    /// brightest its files state, both by construction (`composite_job::camera_levels`). Filed
+    /// under the row, they would be read straight back by the next composite *of the photographs*,
+    /// which is keyed on the quantile and the reference white - identical across the two arms. And
+    /// the grid tile is the arm a merge runs first, so the camera's peak would be the first thing
+    /// ever filed and every later render of that canvas would roll off against it.
     pub(crate) describes_the_photograph: bool,
 }
 

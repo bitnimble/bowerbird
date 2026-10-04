@@ -1800,7 +1800,6 @@ impl Held {
                 .await?
             }
         };
-
         lap("demosaic, colour, crop, orient");
 
         Some(Frame {
@@ -2910,7 +2909,7 @@ mod tests {
             &pollster::block_on(resident.into_host()).expect("the frame reads back"),
         );
 
-        let white = 65535.0 / crate::transfer::HDR_HEADROOM;
+        let white = crate::transfer::FULL_SCALE;
         for (at, sample) in samples.iter().enumerate() {
             let want = [0.25, 1.0, 4.0, 0.0][at / 3] * white;
             assert!(
