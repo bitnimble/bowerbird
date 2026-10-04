@@ -161,6 +161,14 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 bun run build:app
 ```
 
+To run it without installing, skip the installer and start it from the checkout. It uses the
+installed app's catalogue.
+
+```
+bun run build:app --no-bundle
+bun run app
+```
+
 ## development formatting
 
 Install Prettier with `bun install` and rustfmt with `rustup component add rustfmt`.
