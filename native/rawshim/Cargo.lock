@@ -1603,6 +1603,7 @@ dependencies = [
  "avif_planes",
  "bindgen",
  "bytemuck",
+ "cc",
  "crc32fast",
  "fast_image_resize",
  "flate2",

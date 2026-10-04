@@ -361,6 +361,7 @@ fn server_bindings(include: &Path) -> bindgen::Bindings {
     let builder = bindgen::Builder::default()
         .header("wrapper.h")
         .clang_arg(format!("-I{}", include.display()))
+        .clang_args(msvc_includes())
         // A C enum is `int` under MSVC and `unsigned` elsewhere, so a bare constant that
         // type-checks against a `uint32_t` here fails only on Windows. As a newtype, it fails here.
         .default_enum_style(bindgen::EnumVariation::NewType {
@@ -371,6 +372,29 @@ fn server_bindings(include: &Path) -> bindgen::Bindings {
     jxl_functions(avif_functions(builder))
         .generate()
         .expect("bindgen failed against the pinned libavif and libjxl headers")
+}
+
+/// The MSVC and Windows SDK header directories, as `cl.exe` would be given them, for an MSVC
+/// target built on Windows; nothing elsewhere.
+fn msvc_includes() -> Vec<String> {
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
+        return Vec::new();
+    }
+    let target = env::var("TARGET").expect("TARGET");
+    // libclang's own search for the SDK found no stdlib.h on a machine whose vcpkg build had
+    // just compiled against it; cc's is the one every C dependency here already builds with.
+    let Some(cl) = cc::windows_registry::find_tool(&target, "cl.exe") else {
+        return Vec::new();
+    };
+    cl.env()
+        .iter()
+        .filter(|(name, _)| {
+            name.to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("INCLUDE"))
+        })
+        .flat_map(|(_, paths)| env::split_paths(paths).collect::<Vec<_>>())
+        .flat_map(|path| ["-isystem".to_owned(), path.display().to_string()])
+        .collect()
 }
 
 /// libavif and libjxl, and the six libraries under them, from the tree `get:codecs` built, linked

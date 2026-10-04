@@ -303,6 +303,9 @@ wasm-bindgen-futures = "0.4.58"
 
 [build-dependencies]
 bindgen = "0.72"
+# For its MSVC discovery, which hands bindgen the Windows SDK's headers (`build.rs`). Already in
+# the tree under the codecs' build crates, so nothing new enters it.
+cc = "1.4"
 
 [dev-dependencies]
 # The WGSL front end wgpu already carries, taken directly so `wgsl_call_shapes.rs` can walk the
