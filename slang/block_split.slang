@@ -32,6 +32,56 @@ public float3 split_space(float3 nits, float reference)
     return log2(max(nits, float3(0.0)) + float3(SPLIT_FLOOR * reference));
 }
 
+/// Two-means rounds after the seeds.
+public static const int SETTLE = 1;
+
+/// Lightness, red against green and blue against yellow, orthonormal in `split_space`.
+static const float3 SEED_AXES[3] = {
+    float3(0.57735027, 0.57735027, 0.57735027),
+    float3(0.70710678, -0.70710678, 0.0),
+    float3(0.40824829, 0.40824829, -0.81649658),
+};
+
+/// Where two-means starts, gathered in one walk over a block: the pixels at either end of each of
+/// `SEED_AXES`, their projection in `.a`. The farthest-apart pair seeds the halves.
+public struct Seeds {
+    float4 low[3];
+    float4 high[3];
+}
+
+public void seeds_begin(out Seeds s)
+{
+    for (int k = 0; k < 3; k++) {
+        s.low[k] = float4(0.0, 0.0, 0.0, 1e30);
+        s.high[k] = float4(0.0, 0.0, 0.0, -1e30);
+    }
+}
+
+/// `v` in `split_space`.
+public void seeds_add(inout Seeds s, float3 v)
+{
+    for (int k = 0; k < 3; k++) {
+        let t = dot(v, SEED_AXES[k]);
+        if (t < s.low[k].a) { s.low[k] = float4(v, t); }
+        if (t > s.high[k].a) { s.high[k] = float4(v, t); }
+    }
+}
+
+public void seeds_pick(Seeds s, out float3 first, out float3 second)
+{
+    first = s.low[0].rgb;
+    second = s.high[0].rgb;
+    var apart = length(second - first);
+    for (int k = 1; k < 3; k++) {
+        let d = length(s.high[k].rgb - s.low[k].rgb);
+        if (d > apart) {
+            apart = d;
+            first = s.low[k].rgb;
+            second = s.high[k].rgb;
+        }
+    }
+}
+
 /// How far the split is trusted, 0 for the box mean and 1 for each half on its own.
 public float split_weight(float separation, float spread, float smaller, float block)
 {
@@ -40,15 +90,15 @@ public float split_weight(float separation, float spread, float smaller, float b
         * smoothstep(HELD_FROM * block, HELD_BY * block, smaller);
 }
 
-/// The mean `pixel` is read at, from one cell's two texels: the first half's mean and share of
-/// the block, the second's mean and `split_weight`.
+/// The mean a pixel is read at, from one cell's two texels: the first half's mean and share of
+/// the block, the second's mean and `split_weight`. `pixel` is in `split_space`.
 public float3 mean_for(float4 first, float4 second, float3 pixel, float reference)
 {
     let box = first.a * first.rgb + (1.0 - first.a) * second.rgb;
     if (second.a <= 0.0) { return box; }
     let a = split_space(first.rgb, reference);
     let axis = split_space(second.rgb, reference) - a;
-    let along = dot(split_space(pixel, reference) - a, axis) / max(dot(axis, axis), 1e-6);
+    let along = dot(pixel - a, axis) / max(dot(axis, axis), 1e-6);
     let own = lerp(first.rgb, second.rgb, smoothstep(0.25, 0.75, along));
     return lerp(box, own, second.a);
 }

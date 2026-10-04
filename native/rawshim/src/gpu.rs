@@ -1683,7 +1683,6 @@ impl Gpu {
             "mean_frame",
             &[
                 (1, Binding::Storage { read_only: true }),
-                (12, Binding::Storage { read_only: true }),
                 (19, Binding::Written),
                 (20, Binding::Uniform),
             ],
@@ -3232,8 +3231,8 @@ impl Gpu {
     }
 
     /// The frame's nits at the fit's own footprint (`mean_frame.slang`), where
-    /// `matched_nits` reads the lattice. Built by a dispatch over the frame's own buffer
-    /// and the grade's own decode table, once per upload.
+    /// `matched_nits` reads the lattice. Built by a dispatch over the frame's own buffer,
+    /// once per upload.
     ///
     /// One black texel where the grade carries no colour: `matched_nits` is the only
     /// reader and `matched` gates it off, so a neutral upload skips the whole-frame pass.
@@ -3281,10 +3280,6 @@ impl Gpu {
                     resource: samples.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 12,
-                    resource: self.nits_of_code.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
                     binding: 19,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
@@ -3298,7 +3293,7 @@ impl Gpu {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
             pass.set_pipeline(&self.mean_pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(cells.0, cells.1, 1);
+            pass.dispatch_workgroups(cells.0.div_ceil(8), cells.1.div_ceil(8), 1);
         }
         recording.submit();
         texture

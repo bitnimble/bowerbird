@@ -9,7 +9,12 @@
 pub const READS_OVERRIDES: &[(&str, &[&str])] = &[
     (
         "assemble.wgsl",
-        &["assemble_rec2020", "assemble_halved", "assemble_thirded"],
+        &[
+            "assemble_rec2020",
+            "assemble_blown",
+            "assemble_halved",
+            "assemble_thirded",
+        ],
     ),
     ("correspond.wgsl", &["correspond"]),
     ("frame.wgsl", &["fs"]),

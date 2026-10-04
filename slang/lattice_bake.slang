@@ -5,6 +5,10 @@
 // chroma-to-lightness terms. Generators add where kernels overlap and the sum is exponentiated
 // per texel, so half of a hue rotation is half the angle rather than a straight line through
 // grey. However many kernels there are, a pixel reads the same four texels.
+//
+// Two passes: `sum` adds a kernel set's generators per texel, and `bake` exponentiates up to two
+// such sums, each scaled. A map at another strength, or joined to another, is a new scale on sums
+// already taken, so the fit's strength search pays for the kernels once.
 import light;
 import prelude;
 import index_space;
@@ -23,17 +27,27 @@ struct Params {
     float level_low;
     float level_top;
     float surround_top;
+    /// What `bake` multiplies each of `first_sum` and `second_sum` by.
+    float first_scale;
+    float second_scale;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
 /// `KERNEL_WORDS` floats a kernel: centre, reach, generator, chroma-to-lightness.
 [vk::binding(0, 0)] StructuredBuffer<float> kernels;
+/// `SUM_WORDS` floats a texel: the summed generator, then the summed chroma-to-lightness pair.
+[vk::binding(3, 0)] RWStructuredBuffer<float> sum_out;
+[vk::binding(4, 0)] StructuredBuffer<float> first_sum;
+[vk::binding(5, 0)] StructuredBuffer<float> second_sum;
 /// `(a, b, c, d)`: the corrected chroma pair's 2x2.
 [vk::image_format("rgba16f")]
 [vk::binding(1, 0)] WTexture3D<float4> chroma_out;
 /// `(e, f, g - 1, 0)`: the tint each chroma axis takes from lightness, and the lightness gain.
 [vk::image_format("rgba16f")]
 [vk::binding(2, 0)] WTexture3D<float4> luma_out;
+
+/// `lattice::SUM_WORDS`.
+static const uint SUM_WORDS = 9;
 
 /// `hdr_fit::KERNEL_WORDS`.
 static const uint KERNEL_WORDS = 17;
@@ -143,9 +157,14 @@ bool touches(uint k, float4 low, float4 high)
     return turns < reach.x;
 }
 
+uint texel_of(uint3 id)
+{
+    return (id.z * pc.chroma_texels + id.y) * pc.hue_texels + id.x;
+}
+
 [shader("compute")]
 [numthreads(4, 4, 4)]
-void bake(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
+void sum(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
 {
     let depth = pc.level_texels * pc.surround_texels;
     let inside = id.x < pc.hue_texels && id.y < pc.chroma_texels && id.z < depth;
@@ -206,10 +225,41 @@ void bake(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_
             0.0, 0.0, kernels[base + 6]);
         to_lightness += w * float2(kernels[k * KERNEL_WORDS + TO_LIGHTNESS], kernels[k * KERNEL_WORDS + TO_LIGHTNESS + 1]);
     }
+    let out = texel_of(id) * SUM_WORDS;
+    sum_out[out] = g[0].x;
+    sum_out[out + 1] = g[0].y;
+    sum_out[out + 2] = g[1].x;
+    sum_out[out + 3] = g[1].y;
+    sum_out[out + 4] = g[0].z;
+    sum_out[out + 5] = g[1].z;
+    sum_out[out + 6] = g[2].z;
+    sum_out[out + 7] = to_lightness.x;
+    sum_out[out + 8] = to_lightness.y;
+}
+
+/// Word `w` of texel `t`'s generator, both sums at their scales.
+float summed(uint t, uint w)
+{
+    return pc.first_scale * first_sum[t + w] + pc.second_scale * second_sum[t + w];
+}
+
+[shader("compute")]
+[numthreads(4, 4, 4)]
+void bake(uint3 id: SV_DispatchThreadID)
+{
+    let depth = pc.level_texels * pc.surround_texels;
+    if (id.x >= pc.hue_texels || id.y >= pc.chroma_texels || id.z >= depth) { return; }
+    let t = texel_of(id) * SUM_WORDS;
+    let g = float3x3(
+        summed(t, 0), summed(t, 1), summed(t, 4),
+        summed(t, 2), summed(t, 3), summed(t, 5),
+        0.0, 0.0, summed(t, 6));
+    let to_lightness = float2(summed(t, 7), summed(t, 8));
     let a = exponential(g);
 
     // The chroma-to-lightness pair is read off the colour this texel stands for, so it folds into
     // the lightness gain here rather than costing the grade a third volume.
+    let at = place_of(id);
     let colour = rendered_of(opponent_at(at), pc.space).v;
     let l = dot(LUMA, colour);
     let gain = a[2].z

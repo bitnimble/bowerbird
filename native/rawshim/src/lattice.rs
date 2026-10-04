@@ -198,11 +198,42 @@ pub struct MapShape {
     pub space: IndexSpace,
 }
 
+/// Floats a texel of [`Summed`] holds, as `lattice_bake.slang`'s `sum` writes them.
+const SUM_WORDS: usize = 9;
+
+/// A kernel set's generators summed per texel over `axes`, once a device has asked: shared by
+/// every map that scales or joins the set, so its kernels are walked once.
+struct Summed {
+    kernels: Vec<Kernel>,
+    axes: LutAxes,
+    on: std::sync::OnceLock<(u64, crate::gpu::Buffer)>,
+}
+
+impl Summed {
+    fn new(kernels: Vec<Kernel>, axes: LutAxes) -> std::sync::Arc<Summed> {
+        std::sync::Arc::new(Summed {
+            kernels,
+            axes,
+            on: std::sync::OnceLock::new(),
+        })
+    }
+
+    fn buffer(&self, gpu: &Gpu) -> crate::gpu::Buffer {
+        let (on, buffer) = self.on.get_or_init(|| (gpu.id(), sum(gpu, self)));
+        match *on == gpu.id() {
+            true => buffer.clone(),
+            false => sum(gpu, self),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ChromaMap {
     space: IndexSpace,
     kernels: Vec<Kernel>,
     axes: LutAxes,
+    /// What the bake exponentiates: one or two summed kernel sets, each scaled.
+    terms: Vec<(std::sync::Arc<Summed>, f64)>,
     /// The volumes this map bakes to, once a device has asked, and that device's `Gpu::id`.
     /// Shared by clones, which are the same map; a changed map is a new value and bakes afresh.
     baked: std::sync::Arc<std::sync::OnceLock<(u64, (Texture, Texture))>>,
@@ -260,10 +291,22 @@ impl ChromaMap {
 
     /// Kernels whose generators are too small to change a texel are left out.
     pub fn new(space: IndexSpace, kernels: Vec<Kernel>, axes: LutAxes) -> ChromaMap {
+        let kernels: Vec<Kernel> = kernels.into_iter().filter(|k| !k.negligible()).collect();
+        let terms = vec![(Summed::new(kernels.clone(), axes), 1.0)];
+        ChromaMap::baking(space, kernels, axes, terms)
+    }
+
+    fn baking(
+        space: IndexSpace,
+        kernels: Vec<Kernel>,
+        axes: LutAxes,
+        terms: Vec<(std::sync::Arc<Summed>, f64)>,
+    ) -> ChromaMap {
         ChromaMap {
             space,
             kernels: kernels.into_iter().filter(|k| !k.negligible()).collect(),
             axes,
+            terms,
             baked: Default::default(),
         }
     }
@@ -292,13 +335,26 @@ impl ChromaMap {
                 ..*k
             })
             .collect();
-        ChromaMap::new(self.space, kernels, self.axes)
+        let terms = self
+            .terms
+            .iter()
+            .map(|(summed, by)| (summed.clone(), by * strength))
+            .collect();
+        ChromaMap::baking(self.space, kernels, self.axes, terms)
     }
 
     /// Both maps' kernels in one, read over this one's axes.
     pub fn joined(&self, other: &ChromaMap) -> ChromaMap {
-        let kernels = self.kernels.iter().chain(&other.kernels).copied().collect();
-        ChromaMap::new(self.space, kernels, self.axes)
+        let kernels: Vec<Kernel> = self.kernels.iter().chain(&other.kernels).copied().collect();
+        let theirs = match other.axes == self.axes {
+            true => other.terms.clone(),
+            false => vec![(Summed::new(other.kernels.clone(), self.axes), 1.0)],
+        };
+        let mut terms: Vec<_> = self.terms.iter().cloned().chain(theirs).collect();
+        if terms.len() > 2 {
+            terms = vec![(Summed::new(kernels.clone(), self.axes), 1.0)];
+        }
+        ChromaMap::baking(self.space, kernels, self.axes, terms)
     }
 
     pub fn shape(&self) -> MapShape {
@@ -497,8 +553,10 @@ fn square_root(a: M3) -> Option<M3> {
 }
 
 pub(crate) struct BakeKernel {
-    layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::ComputePipeline,
+    sum_layout: wgpu::BindGroupLayout,
+    sum: wgpu::ComputePipeline,
+    bake_layout: wgpu::BindGroupLayout,
+    bake: wgpu::ComputePipeline,
 }
 
 impl BakeKernel {
@@ -529,76 +587,67 @@ impl BakeKernel {
             },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("lattice_bake"),
-            entries: &[
-                buffer(0, wgpu::BufferBindingType::Storage { read_only: true }),
+        let read = wgpu::BufferBindingType::Storage { read_only: true };
+        let pipeline = |entries: &[wgpu::BindGroupLayoutEntry], entry: &str| {
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(entry),
+                entries,
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(entry),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            (layout, pipeline)
+        };
+        let (sum_layout, sum) = pipeline(
+            &[
+                buffer(0, read),
+                buffer(3, wgpu::BufferBindingType::Storage { read_only: false }),
+                buffer(20, wgpu::BufferBindingType::Uniform),
+            ],
+            "sum",
+        );
+        let (bake_layout, bake) = pipeline(
+            &[
+                buffer(4, read),
+                buffer(5, read),
                 storage(1),
                 storage(2),
                 buffer(20, wgpu::BufferBindingType::Uniform),
             ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("lattice_bake"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("lattice_bake"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("bake"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        BakeKernel { layout, pipeline }
+            "bake",
+        );
+        BakeKernel {
+            sum_layout,
+            sum,
+            bake_layout,
+            bake,
+        }
     }
 }
 
-fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
-    let size = wgpu::Extent3d {
-        width: HUE_TEXELS as u32,
-        height: CHROMA_TEXELS as u32,
-        // Lightness and surround packed into depth, surround-major: `correct` samples one surround
-        // slab at a time, so hardware filtering never crosses the seam between them.
-        depth_or_array_layers: (LEVEL_TEXELS * SURROUND_TEXELS) as u32,
-    };
-    let volume = |label: &'static str| {
-        gpu.own_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D3,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        })
-    };
-    let (chroma, luma) = (volume("chroma"), volume("chroma_luma"));
-    let mut recording = gpu.record();
-    recording.holding_texture(&chroma);
-    recording.holding_texture(&luma);
-    let mut words: Vec<u8> = map
-        .kernels
-        .iter()
-        .flat_map(|k| k.words())
-        .flat_map(|v| v.to_ne_bytes())
-        .collect();
-    if words.is_empty() {
-        words.resize(KERNEL_WORDS * 4, 0);
-    }
-    let kernels = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("lattice kernels"),
-        contents: &words,
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let axes = map.axes;
+const SIZE: wgpu::Extent3d = wgpu::Extent3d {
+    width: HUE_TEXELS as u32,
+    height: CHROMA_TEXELS as u32,
+    // Lightness and surround packed into depth, surround-major: `correct` samples one surround
+    // slab at a time, so hardware filtering never crosses the seam between them.
+    depth_or_array_layers: (LEVEL_TEXELS * SURROUND_TEXELS) as u32,
+};
+
+/// `lattice_bake.slang`'s `Params`.
+fn params(kernels: usize, space: IndexSpace, axes: LutAxes, scales: [f64; 2]) -> Vec<u8> {
     let mut push: Vec<u8> = [
-        map.kernels.len() as u32,
-        map.space.word(),
+        kernels as u32,
+        space.word(),
         HUE_TEXELS as u32,
         CHROMA_TEXELS as u32,
         LEVEL_TEXELS as u32,
@@ -612,24 +661,137 @@ fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
         axes.level_low,
         axes.level_top,
         axes.surround_top,
+        scales[0],
+        scales[1],
     ] {
         push.extend((v as f32).to_ne_bytes());
     }
-    push.resize(48, 0);
+    push
+}
+
+fn dispatch(
+    recording: &mut crate::gpu::Recording<'_>,
+    pipeline: &wgpu::ComputePipeline,
+    group: &wgpu::BindGroup,
+) {
+    let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, group, &[]);
+    pass.dispatch_workgroups(
+        SIZE.width.div_ceil(4),
+        SIZE.height.div_ceil(4),
+        SIZE.depth_or_array_layers.div_ceil(4),
+    );
+}
+
+fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
+    let texels = (SIZE.width * SIZE.height * SIZE.depth_or_array_layers) as usize;
+    let out = gpu.own_buffer(&wgpu::BufferDescriptor {
+        label: Some("lattice sums"),
+        size: (texels * SUM_WORDS * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let mut recording = gpu.record();
+    recording.holding(&out);
+    let mut words: Vec<u8> = summed
+        .kernels
+        .iter()
+        .flat_map(|k| k.words())
+        .flat_map(|v| v.to_ne_bytes())
+        .collect();
+    if words.is_empty() {
+        words.resize(KERNEL_WORDS * 4, 0);
+    }
+    let kernels = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("lattice kernels"),
+        contents: &words,
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("lattice_bake push"),
-        contents: &push,
+        contents: &params(
+            summed.kernels.len(),
+            IndexSpace::Jzazbz,
+            summed.axes,
+            [0.0; 2],
+        ),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let built = gpu.lattice_bake();
+    let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("lattice_bake sum"),
+        layout: &built.sum_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: kernels.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: out.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
+        ],
+    });
+    dispatch(&mut recording, &built.sum, &group);
+    recording.submit();
+    out
+}
+
+fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
+    let volume = |label: &'static str| {
+        gpu.own_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: SIZE,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    };
+    let (first, first_scale) = &map.terms[0];
+    let first = first.buffer(gpu);
+    let (second, second_scale) = match map.terms.get(1) {
+        Some((summed, by)) => (summed.buffer(gpu), *by),
+        None => (first.clone(), 0.0),
+    };
+    let (chroma, luma) = (volume("chroma"), volume("chroma_luma"));
+    let mut recording = gpu.record();
+    recording.holding_texture(&chroma);
+    recording.holding_texture(&luma);
+    recording.holding(&first);
+    recording.holding(&second);
+    let push = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("lattice_bake push"),
+        contents: &params(
+            map.kernels.len(),
+            map.space,
+            map.axes,
+            [*first_scale, second_scale],
+        ),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let (chroma_view, luma_view) = (chroma.view(), luma.view());
     let built = gpu.lattice_bake();
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("lattice_bake"),
-        layout: &built.layout,
+        layout: &built.bake_layout,
         entries: &[
             wgpu::BindGroupEntry {
-                binding: 0,
-                resource: kernels.as_entire_binding(),
+                binding: 4,
+                resource: first.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: second.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -645,16 +807,7 @@ fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
             },
         ],
     });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&built.pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(
-            size.width.div_ceil(4),
-            size.height.div_ceil(4),
-            size.depth_or_array_layers.div_ceil(4),
-        );
-    }
+    dispatch(&mut recording, &built.bake, &group);
     recording.submit();
     (chroma, luma)
 }

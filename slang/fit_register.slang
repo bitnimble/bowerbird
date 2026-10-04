@@ -12,9 +12,6 @@ import block_split;
 import prelude;
 import px;
 
-/// Two-means rounds after the seeds, as `mean_frame.slang` settles its blocks.
-static const int SETTLE = 3;
-
 struct Params {
     int width;
     int height;
@@ -54,21 +51,6 @@ float3 split_at(int x, int y, int dx, int dy)
     return split_space(rgb_at(ours, x + dx, y + dy), 1.0);
 }
 
-/// Our tap about `(x, y)` furthest from `from`.
-float3 furthest(int x, int y, float3 from)
-{
-    var best = from;
-    var far = -1.0;
-    for (int dy = -pc.sample; dy <= pc.sample; dy++) {
-        for (int dx = -pc.sample; dx <= pc.sample; dx++) {
-            let v = split_at(x, y, dx, dy);
-            let d = length(v - from);
-            if (d > far) { far = d; best = v; }
-        }
-    }
-    return best;
-}
-
 /// A matched location's two colours, ours about `(x, y)` and the camera's about `(cx, cy)`.
 ///
 /// The box mean around it, or, where our taps hold two colours (`block_split.slang`), the mean of
@@ -79,14 +61,16 @@ float3 furthest(int x, int y, float3 from)
 void sample_at(int x, int y, int cx, int cy, out float3 mine, out float3 target)
 {
     let taps = float((2 * pc.sample + 1) * (2 * pc.sample + 1));
-    var centre = float3(0.0);
+    Seeds seeds;
+    seeds_begin(seeds);
     for (int dy = -pc.sample; dy <= pc.sample; dy++) {
         for (int dx = -pc.sample; dx <= pc.sample; dx++) {
-            centre += split_at(x, y, dx, dy);
+            seeds_add(seeds, split_at(x, y, dx, dy));
         }
     }
-    var first = furthest(x, y, centre / taps);
-    var second = furthest(x, y, first);
+    float3 first;
+    float3 second;
+    seeds_pick(seeds, first, second);
 
     var ours_by_half = float3x3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var theirs_by_half = float3x3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
@@ -117,8 +101,12 @@ void sample_at(int x, int y, int cx, int cy, out float3 mine, out float3 target)
         }
         counts = float2(into_first.a, into_second.a);
         if (round == SETTLE) { break; }
-        if (into_first.a > 0.0) { first = into_first.rgb / into_first.a; }
-        if (into_second.a > 0.0) { second = into_second.rgb / into_second.a; }
+        let next_first = into_first.a > 0.0 ? into_first.rgb / into_first.a : first;
+        let next_second = into_second.a > 0.0 ? into_second.rgb / into_second.a : second;
+        // Settled: every later round would repeat this one exactly.
+        if (all(next_first == first) && all(next_second == second)) { break; }
+        first = next_first;
+        second = next_second;
     }
 
     mine = (ours_by_half[0] + ours_by_half[1]) / taps;

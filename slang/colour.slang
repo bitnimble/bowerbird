@@ -285,19 +285,20 @@ float4 cell_at(Texture2D<float4> cells, float2 at, uint step)
         f.y);
 }
 
-float3 mean_tap(int2 cell, float3 pixel)
+float3 mean_tap(int2 cell, float3 split)
 {
     return mean_for(
         mean_frame.Load(int3(cell.x * 2, cell.y, 0)),
         mean_frame.Load(int3(cell.x * 2 + 1, cell.y, 0)),
-        pixel,
+        split,
         edit.reference);
 }
 
 /// `cell_at` over `mean_frame`'s two texels a block, each block's taken at the half `pixel`
 /// belongs to (`block_split.slang`).
-float3 mean_at(float2 at, uint step, float3 pixel)
+float3 mean_at(float2 at, uint step, float3 nits)
 {
+    let pixel = split_space(nits, edit.reference);
     uint wide;
     uint tall;
     mean_frame.GetDimensions(wide, tall);

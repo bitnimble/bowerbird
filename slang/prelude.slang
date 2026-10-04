@@ -44,9 +44,14 @@ public Light<Pq> pq<D : INits>(Light<D> nits)
 
 public Light<D> pq_inv<D : INits>(Light<Pq> signal)
 {
-    let e = pow(clamp(signal.v, 0.0, 1.0), 1.0 / PQ_M2);
-    return measured<D>(
-        PQ_MAX_NITS * pow(max(e - PQ_C1, 0.0) / (PQ_C2 - PQ_C3 * e), 1.0 / PQ_M1));
+    return measured<D>(pq_inv_nits(signal.v));
+}
+
+/// `pq_inv` unwrapped, for a caller under a loop: Metal drops a struct returned there.
+public float pq_inv_nits(float signal)
+{
+    let e = pow(clamp(signal, 0.0, 1.0), 1.0 / PQ_M2);
+    return PQ_MAX_NITS * pow(max(e - PQ_C1, 0.0) / (PQ_C2 - PQ_C3 * e), 1.0 / PQ_M1);
 }
 
 /// A colour's luminance, which is a light in the same domain the colour is.

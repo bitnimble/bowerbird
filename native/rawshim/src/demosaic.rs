@@ -30,10 +30,15 @@ pub struct Rcd {
     planes: wgpu::BindGroupLayout,
     pipelines: Vec<wgpu::ComputePipeline>,
     assemble_layout: wgpu::BindGroupLayout,
+    /// The pairs `assemble_rec2020` leaves for `assemble_blown`, and the dispatch that walks them.
+    blown_layout: wgpu::BindGroupLayout,
     assemble: wgpu::ComputePipeline,
     /// The same entry point compiled for a 6x6 period, which is the one thing the two patterns
     /// share a walk over.
     assemble_xtrans: wgpu::ComputePipeline,
+    blown_args: wgpu::ComputePipeline,
+    assemble_blown: wgpu::ComputePipeline,
+    assemble_blown_xtrans: wgpu::ComputePipeline,
     /// One pipeline per reduction factor: the block's side is a generic in the shader so both walks
     /// unroll, which as a uniform they did not.
     assemble_halved: wgpu::ComputePipeline,
@@ -159,41 +164,63 @@ impl Rcd {
                 storage(3, true),
             ],
         });
+        let blown_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("assemble blown"),
+            entries: &[storage(0, false), storage(1, false)],
+        });
         let assemble_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("assemble"),
                 bind_group_layouts: &[Some(&frame), Some(&assemble_layout)],
                 ..Default::default()
             });
-        let assembling = |entry: &str, cfa: &crate::cfa::Cfa| {
+        let listing_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("assemble listing"),
+                bind_group_layouts: &[Some(&frame), Some(&assemble_layout), Some(&blown_layout)],
+                ..Default::default()
+            });
+        let assembling = |entry: &str, cfa: &crate::cfa::Cfa, layout: &wgpu::PipelineLayout| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
-                layout: Some(&assemble_pipeline_layout),
+                layout: Some(layout),
                 module: &assemble_module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &cfa.constants(),
+                    constants: crate::wgsl_overrides::for_entry(
+                        "assemble.wgsl",
+                        entry,
+                        &cfa.constants(),
+                    ),
                     ..Default::default()
                 },
                 cache: None,
             })
         };
-        // The only entry point either pattern reaches, so it is the only one compiled twice. The
-        // two reduced walks are each one pattern's by construction: a 2x2 site is Bayer's and the
-        // 3x3 window is X-Trans's.
+        // The only entry points either pattern reaches, so the only ones compiled twice. The two
+        // reduced walks are each one pattern's by construction: a 2x2 site is Bayer's and the 3x3
+        // window is X-Trans's.
         let xtrans = crate::cfa::Cfa::new(6, 6, &[1; 36])?;
-        let assemble = assembling("assemble_rec2020", &bayer);
-        let assemble_xtrans = assembling("assemble_rec2020", &xtrans);
-        let assemble_halved = assembling("assemble_halved", &bayer);
-        let assemble_thirded = assembling("assemble_thirded", &xtrans);
+        let listing = &listing_pipeline_layout;
+        let assemble = assembling("assemble_rec2020", &bayer, listing);
+        let assemble_xtrans = assembling("assemble_rec2020", &xtrans, listing);
+        let blown_args = assembling("blown_args", &bayer, listing);
+        let assemble_blown = assembling("assemble_blown", &bayer, listing);
+        let assemble_blown_xtrans = assembling("assemble_blown", &xtrans, listing);
+        let assemble_halved = assembling("assemble_halved", &bayer, &assemble_pipeline_layout);
+        let assemble_thirded = assembling("assemble_thirded", &xtrans, &assemble_pipeline_layout);
 
         Some(Rcd {
             frame,
             planes,
             pipelines,
             assemble_layout,
+            blown_layout,
             assemble,
             assemble_xtrans,
+            blown_args,
+            assemble_blown,
+            assemble_blown_xtrans,
             assemble_halved,
             assemble_thirded,
         })
@@ -332,6 +359,21 @@ impl Placement {
                 (grid.rows as u32).div_ceil(PATCH).max(1),
             ),
             None => crate::base::groups(self.words().len()),
+        }
+    }
+
+    /// The same for `assemble.slang`'s pair-owned walk: a pair of pixels is three words, and the
+    /// span's pairs run from the one holding its first word to the one holding its last.
+    fn pair_dispatch(&self) -> (u32, u32) {
+        match self.word_grid() {
+            Some(grid) => (
+                ((grid.across / 3) as u32).div_ceil(PATCH).max(1),
+                (grid.rows as u32).div_ceil(PATCH).max(1),
+            ),
+            None => {
+                let words = self.words();
+                crate::base::groups((words.end - 1) / 3 - words.start / 3 + 1)
+            }
         }
     }
 
@@ -570,21 +612,83 @@ pub async fn demosaic_settled_into(
             },
         ],
     });
-    {
+    let (x, y) = at.pair_dispatch();
+    let blown = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("assemble blown"),
+        size: 16,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    // Its own buffer: the blown pass binds `blown` read-write, which no dispatch may also read its
+    // arguments from.
+    let blown_dispatch = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("assemble blown dispatch"),
+        size: 12,
+        usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let blown_pairs = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("assemble blown pairs"),
+        size: (u64::from(x) * u64::from(y) * 64 * 4).max(4),
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    recording.encoder().clear_buffer(&blown, 0, None);
+    let blown_group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("assemble blown"),
+        layout: &rcd.blown_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: blown.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: blown_pairs.as_entire_binding(),
+            },
+        ],
+    });
+    let bayer = cfa.is_bayer();
+    for (pipeline, dispatch) in [
+        (
+            if bayer {
+                &rcd.assemble
+            } else {
+                &rcd.assemble_xtrans
+            },
+            Some((x, y)),
+        ),
+        (&rcd.blown_args, Some((1, 1))),
+        (
+            if bayer {
+                &rcd.assemble_blown
+            } else {
+                &rcd.assemble_blown_xtrans
+            },
+            None,
+        ),
+    ] {
+        if dispatch.is_none() {
+            recording
+                .encoder()
+                .copy_buffer_to_buffer(&blown, 0, &blown_dispatch, 0, 12);
+        }
         let mut pass = recording
             .encoder()
             .begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("assemble"),
                 timestamp_writes: None,
             });
-        pass.set_pipeline(match cfa.is_bayer() {
-            true => &rcd.assemble,
-            false => &rcd.assemble_xtrans,
-        });
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, shape_group, &[]);
         pass.set_bind_group(1, &assemble_group, &[]);
-        let (x, y) = at.dispatch();
-        pass.dispatch_workgroups(x, y, 1);
+        pass.set_bind_group(2, &blown_group, &[]);
+        match dispatch {
+            Some((x, y)) => pass.dispatch_workgroups(x, y, 1),
+            None => pass.dispatch_workgroups_indirect(&blown_dispatch, 0),
+        }
     }
 
     // **One submit per tile, and that is load-bearing.** A word at the tile's own edge holds one

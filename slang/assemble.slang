@@ -4,18 +4,15 @@
 // RCD leaves interleaved `f32` RGB in the sensor's own primaries; what a frame is measured and graded
 // in is Rec.2020 half-float levels (`packed::level_of`), upright, cropped to the readable area.
 //
-// **Indexed by destination word, not by pixel, and that is the whole design.** Three samples a pixel
-// and two samples a word means a tile's destination row rarely begins on a word boundary, so its
-// first and last word are half this tile's and half its neighbour's - and once the orientation folds
-// in, a source row maps to an output *column*, so one word can hold samples from two different rows
-// of the same tile. Owning the word rather than the pixel makes both go away: no two invocations in
-// a dispatch touch the same word, whatever the orientation. Where a word straddles the tile's own
-// edge the other half is read and put back, which is safe because tiles submit as separate passes
-// and the neighbour's write has already landed.
-//
-// The cost is that a source pixel can be fetched by two words - the matrix arithmetic is unchanged,
-// each sample being computed exactly once, and the second fetch is the neighbouring invocation's
-// cache line.
+// **Indexed by destination, not by source pixel, and that is the whole design.** Three samples a
+// pixel and two samples a word means a tile's destination row rarely begins on a word boundary, so
+// its first and last word are half this tile's and half its neighbour's - and once the orientation
+// folds in, a source row maps to an output *column*, so one word can hold samples from two different
+// rows of the same tile. Owning whole words - a pixel pair's three (`owned_pair`), or one on the
+// reduced walk (`owned_word`) - makes both go away: no two invocations in a dispatch touch the same
+// word, whatever the orientation. Where a word straddles the tile's own edge the other half is read
+// and put back, which is safe because tiles submit as separate passes and the neighbour's write has
+// already landed.
 //
 // The matrix is the sensor's own, from the file (`camera_to_rec2020`), and not the fitted camera
 // match - that one is the grade's and lives in `colour.slang`. Two different 3x3s, at two different
@@ -115,6 +112,14 @@ import packed;
 [vk::binding(2, 1)] RWStructuredBuffer<uint> out_frame;
 /// The colour of the light around each clipped highlight, as `highlight_field.slang` filled it.
 [vk::binding(3, 1)] StructuredBuffer<float4> highlight;
+/// The pairs `assemble_rec2020` left for `assemble_blown`: `[BLOWN_COUNT]` of them, and `[0..2]`
+/// the indirect dispatch `blown_args` writes to walk them.
+[vk::binding(0, 2)] RWStructuredBuffer<Atomic<uint> > blown;
+[vk::binding(1, 2)] RWStructuredBuffer<uint> blown_pairs;
+
+static const uint BLOWN_COUNT = 3;
+/// Workgroups along `x` of `assemble_blown`'s dispatch, under the 65535 a dimension allows.
+static const uint BLOWN_ACROSS = 32768;
 
 /// Which source pixel a destination sample comes from, and which channel of it: `(x, y, channel)`,
 /// with `w` zero where the sample is not this tile's to write.
@@ -467,40 +472,125 @@ void put(uint word, uint2 low, uint2 high)
     out_frame[word] = held;
 }
 
-/// One word of the destination frame.
+/// A pixel no well under which is near its ceiling, which reconstruction leaves as RCD read it:
+/// false, and nothing written to `held`, for one that needs `pixel_of`.
+bool unclipped_pixel(uint2 site, out float3 held)
+{
+    let fill = fills_at(site.x, site.y);
+    held = float3(0.0);
+    if (max(fill.r, max(fill.g, fill.b)) >= BLOWN_FROM) { return false; }
+    let base = wide_at<Sensor>(site.x, site.y, measured<Sensor>(params.stride)) * 3;
+    held = rec2020_of(float3(rgb[base], rgb[base + 1], rgb[base + 2]));
+    return true;
+}
+
+/// Which pair of destination pixels this invocation owns, or `~0u` where it owns none: pair `p` is
+/// pixels `2p` and `2p + 1`, which are words `3p` to `3p + 2`.
 ///
-/// Dispatched over the words this tile can reach, which is the span between its first and last
-/// destination sample - a rectangle in the output, so the span is contiguous even when the tile's
-/// own rows are not.
+/// **A pair rather than a word, so every pixel is computed once.** The middle of a pair's three
+/// words holds a sample of each pixel, and a word-owned walk computed both pixels again there.
+///
+/// Where the host chose a grid the tile's rows start and end on whole pairs (`word_grid` asks that
+/// both edges be whole words, which on three samples a pixel is an even pixel); along the span,
+/// the pairs at either end are shared with the next tile and `put` keeps its half.
+uint owned_pair(uint3 group, uint3 local, uint3 id)
+{
+    if (params.tile_across == 0) {
+        return linear(id) + params.first_word / 3;
+    }
+    let across = group.x * PATCH + local.x % PATCH;
+    let down = group.y * PATCH + local.x / PATCH;
+    if (across >= params.tile_across / 3 || down >= params.tile_rows) { return ~0u; }
+    return (params.tile_row + down) * (params.out_width / 2) + params.tile_word / 3 + across;
+}
+
+/// A pair's three words, off its two pixels as `source_for` placed them; `start` is its first
+/// sample.
+void put_pair(uint start, uint samples, uint4 a, float3 held_a, uint4 b, float3 held_b)
+{
+    [ForceUnroll]
+    for (uint k = 0; k < 3; k++) {
+        let word = start / 2 + k;
+        if (word * 2 >= samples) { return; }
+        var halves = uint2[2](uint2(0, 0), uint2(0, 0));
+        [ForceUnroll]
+        for (uint half = 0; half < 2; half++) {
+            let s = k * 2 + half;
+            let first = s < 3;
+            if (start + s >= samples || (first ? a.w : b.w) == 0) { continue; }
+            halves[half] = uint2(channel_of(first ? held_a : held_b, s % 3), 1);
+        }
+        put(word - params.base_word, halves[0], halves[1]);
+    }
+}
+
+/// One pair of destination pixels, where neither is near clip; any other pair is listed for
+/// `assemble_blown`.
+///
+/// **Two passes, so this one compiles without the reconstruction.** Its registers would cost every
+/// pixel occupancy, though few pixels run it.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void assemble_rec2020(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
 {
-    let word = owned_word(group, local, id);
+    let pair = owned_pair(group, local, id);
     let samples = wide<Drawn>(params.out_width * params.out_height) * 3;
-    if (word == ~0u || word * 2 >= samples) { return; }
+    if (pair == ~0u) { return; }
+    let start = times(pair, 6);
+    if (start >= samples) { return; }
 
-    let a = source_for(word * 2);
+    let a = source_for(start);
     var b = uint4(0, 0, 0, 0);
-    if (word * 2 + 1 < samples) { b = source_for(word * 2 + 1); }
+    if (start + 3 < samples) { b = source_for(start + 3); }
+    var held_a = float3(0.0);
+    var held_b = float3(0.0);
+    if (a.w != 0 && !unclipped_pixel(a.xy, held_a)) { listed(pair); return; }
+    if (b.w != 0 && !unclipped_pixel(b.xy, held_b)) { listed(pair); return; }
+    put_pair(start, samples, a, held_a, b, held_b);
+}
 
-    var low = uint2(0, 0);
-    var high = uint2(0, 0);
-    if (a.w != 0) {
-        let held = pixel_of(a.xy);
-        low = uint2(channel_of(held, a.z), 1);
-        // The same pixel two times in three, and then its whole reconstruction is already here.
-        if (b.w != 0 && b.x == a.x && b.y == a.y) { high = uint2(channel_of(held, b.z), 1); }
-    }
-    if (high.y == 0 && b.w != 0) { high = uint2(channel_of(pixel_of(b.xy), b.z), 1); }
-    put(word - params.base_word, low, high);
+void listed(uint pair)
+{
+    blown_pairs[blown[BLOWN_COUNT].add(1)] = pair;
+}
+
+/// `assemble_blown`'s dispatch, off how many pairs `assemble_rec2020` listed.
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void blown_args()
+{
+    let groups = (blown[BLOWN_COUNT].load() + 63) / 64;
+    blown[0].store(min(groups, BLOWN_ACROSS));
+    blown[1].store((groups + BLOWN_ACROSS - 1) / BLOWN_ACROSS);
+    blown[2].store(1);
+}
+
+/// One listed pair, reconstructed.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void assemble_blown(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
+{
+    let index = (group.y * blown[0].load() + group.x) * 64 + local.x;
+    if (index >= blown[BLOWN_COUNT].load()) { return; }
+    let pair = blown_pairs[index];
+    let samples = wide<Drawn>(params.out_width * params.out_height) * 3;
+
+    let start = times(pair, 6);
+    let a = source_for(start);
+    var b = uint4(0, 0, 0, 0);
+    if (start + 3 < samples) { b = source_for(start + 3); }
+    var held_a = float3(0.0);
+    var held_b = float3(0.0);
+    if (a.w != 0) { held_a = pixel_of(a.xy); }
+    if (b.w != 0) { held_b = pixel_of(b.xy); }
+    put_pair(start, samples, a, held_a, b, held_b);
 }
 
 /// The same word, off the mosaic, for a frame that skips the demosaic.
 ///
-/// A copy of the loop above differing in its fetch, for `reduce.slang`'s reason: the arithmetic that
-/// can be wrong - `source_for`, `channel_of` and `put` - is shared, and the two walks sit adjacent
-/// to be edited in pairs.
+/// Owned by the word, so a source pixel at a word boundary is fetched twice: the reduced fetch is
+/// a handful of photosites. The arithmetic that can be wrong - `source_for` and `channel_of` - is
+/// shared with `assemble_rec2020`.
 ///
 /// One walk for both factors, instantiated twice: what differs between a Bayer sensor's half and an
 /// X-Trans sensor's third is the block's side and nothing else, so the body is written once and the
