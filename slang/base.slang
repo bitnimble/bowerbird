@@ -4,10 +4,8 @@
 // is evaluated once per level in `f64` rather than once per sample in `f32` - `coded` below says
 // what the difference is worth. `colour` reads the same curve back through its own table.
 //
-// **The frame is `u16` packed two to a word**, which is the layout the editor holds and the one a
-// rendition reads back. Kept rather than
-// widened to `f32` because these stages are pointwise or local and none of them needs the range:
-// widening doubles a 361MB frame at 61MP for arithmetic that rounds back to `u16` anyway.
+// **The frame is sixteen bits packed two to a word** (`packed`): half-float levels in, PQ codes
+// out, which is the layout the editor holds and the one a rendition reads back.
 import lanes;
 import packed;
 
@@ -23,20 +21,18 @@ struct Params {
 [vk::binding(1, 0)] RWStructuredBuffer<uint> frame;
 [vk::binding(2, 0)] StructuredBuffer<uint> curve;
 
-/// One level, coded.
+/// One level's half-float bits, coded.
 ///
-/// **A lookup rather than the curve, for `condition`'s reason.** The domain is a `u16`, so it
+/// **A lookup rather than the curve, for `condition`'s reason.** The domain is sixteen bits, so it
 /// is 65536 entries and the host can evaluate ST 2084 into them in `f64` once. Evaluating `pq` here
-/// instead is `f32` per sample, and the two answers differ by a count on a fifth of a real frame -
-/// which, once the coding had one implementation and it was this one, would have moved every
-/// rendition's pixels by that much for nothing. `tone::pq` fills it; `params.scale` is folded in
-/// there too, so this is the whole of the arithmetic.
+/// instead is `f32` per sample, and the two answers differ by a count on a fifth of a real frame.
+/// `tone::pq` fills it; `params.scale` is folded in there too, so this is the whole of the
+/// arithmetic.
 ///
-/// Two entries to a word, packed as the frame is: 65536 `u16` rather than 65536 `f32`, since what
-/// comes out is a code and not a signal.
-uint coded(uint level)
+/// Two entries to a word, packed as the frame is, since what comes out is a code and not a signal.
+uint coded(uint bits)
 {
-    return half_of(curve[level / 2], level);
+    return half_of(curve[bits / 2], bits);
 }
 
 /// Phase 1: scene-linear levels to normalised PQ, in place.

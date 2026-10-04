@@ -45,11 +45,9 @@ pub(crate) fn channels(pixels: &Pixels) -> Vec<Channel> {
                     .skip(c)
                     .step_by(3)
                     .for_each(|v| visit(u32::from(*v))),
-                Pixels::Sixteen(data) => data
-                    .iter()
-                    .skip(c)
-                    .step_by(3)
-                    .for_each(|v| visit(u32::from(*v))),
+                Pixels::Sixteen(data) => data.iter().skip(c).step_by(3).for_each(|&bits| {
+                    visit(crate::resident::level_of_bits(bits).round().max(0.0) as u32)
+                }),
                 Pixels::Resident(_) => panic!("{ON_THE_DEVICE}"),
             }
             Channel {
@@ -62,12 +60,6 @@ pub(crate) fn channels(pixels: &Pixels) -> Vec<Channel> {
 }
 
 /// The frame's bytes in native order, for a digest.
-///
-/// Copied rather than cast. Viewing a `&[u16]` as `&[u8]` needs `align_to` or a
-/// crate, and this is a debug path where an allocation costs nothing anybody waits
-/// for - so it buys the module out of needing `unsafe` at all, which is the point
-/// of the exercise. Native order, so the digest sees exactly the bytes the old
-/// byte-buffer did and a pin regenerated against it compares the same thing.
 pub(crate) fn to_bytes(pixels: &Pixels) -> Vec<u8> {
     match pixels {
         Pixels::Eight(data) => data.clone(),
@@ -814,8 +806,6 @@ mod tests {
 
     #[test]
     fn sixteen_bit_samples_digest_as_their_native_bytes() {
-        // The digest has to see the same bytes the old byte-buffer did, or every pin
-        // regenerated against it would be comparing a different thing.
         let frame = Frame::new(1, 1, Pixels::Sixteen(vec![0x0102, 0x0304, 0x0506]));
         let expected: Vec<u8> = [0x0102u16, 0x0304, 0x0506]
             .iter()

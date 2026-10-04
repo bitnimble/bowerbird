@@ -747,6 +747,9 @@ pub struct Detail {
     /// Which filter those two positions drive, which is a choice and not a strength.
     #[serde(default)]
     pub denoiser: Denoiser,
+    /// The Highlight recovery slider, 0 to 100; unset is 100.
+    #[serde(default)]
+    pub highlight_recovery: Option<f64>,
 }
 
 /// The filter the Detail panel drives.
@@ -775,6 +778,7 @@ impl Detail {
             luminance: Some(luminance),
             colour: Some(colour),
             denoiser: Denoiser::Galosh,
+            highlight_recovery: None,
         }
     }
 
@@ -788,7 +792,13 @@ impl Detail {
         luminance: None,
         colour: None,
         denoiser: Denoiser::Galosh,
+        highlight_recovery: None,
     };
+
+    /// How much colour a reconstructed highlight keeps.
+    pub fn colouring(&self) -> crate::highlight::Colouring {
+        crate::highlight::Colouring::at(self.highlight_recovery.unwrap_or(100.0) / 100.0)
+    }
 
     /// Whether either half is still a measurement rather than a number.
     pub fn needs_a_fit(&self) -> bool {
@@ -2399,6 +2409,26 @@ mod tests {
             serde_json::to_value(chosen).expect("writes")["denoiser"],
             serde_json::json!("pmrid"),
         );
+    }
+
+    #[test]
+    fn highlight_recovery_colours_reading_highlights_first_then_blown_ones() {
+        let pair = |detail: Detail| {
+            let colouring = detail.colouring();
+            (colouring.reading, colouring.blown)
+        };
+        let at = |amount: f64| {
+            pair(Detail {
+                highlight_recovery: Some(amount),
+                ..Detail::AUTO
+            })
+        };
+        assert_eq!(pair(Detail::AUTO), (1.0, 1.0));
+        assert_eq!(at(100.0), (1.0, 1.0));
+        assert_eq!(at(75.0), (1.0, 0.5));
+        assert_eq!(at(50.0), (1.0, 0.0));
+        assert_eq!(at(25.0), (0.5, 0.0));
+        assert_eq!(at(0.0), (0.0, 0.0));
     }
 
     #[test]

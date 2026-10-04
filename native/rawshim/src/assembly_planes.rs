@@ -215,8 +215,18 @@ mod tests {
             ceiling: [1.0; 3],
         };
         let (_shape, shapes) = crate::demosaic::shape_group(gpu, rcd, &cfa, &uploaded, 0);
+        let field = crate::highlight::measure(gpu, &uploaded, &cfa, colour.ceiling)
+            .expect("the highlight field");
         pollster::block_on(crate::demosaic::demosaic_into(
-            gpu, rcd, &uploaded, &cfa, &at, colour, &frame, &shapes,
+            gpu,
+            rcd,
+            &uploaded,
+            &cfa,
+            &at,
+            colour,
+            field.seen(),
+            &frame,
+            &shapes,
         ))
         .expect("the demosaic runs");
         let demosaiced = pollster::block_on(crate::demosaic::read_frame(gpu, &frame, SIDE * SIDE))
@@ -234,14 +244,18 @@ mod tests {
         ] {
             let small = crate::base::resize_scene(gpu, base, &resident, (out, out))
                 .expect("the resize runs");
-            let codes = pollster::block_on(small.host()).expect("the plane reads back");
+            let samples = pollster::block_on(small.host()).expect("the plane reads back");
             // Past RCD's own margin, which is border-filled rather than reconstructed.
             let skip = (crate::demosaic::MARGIN as usize * out).div_ceil(SIDE) + 2;
             let mut levels = Vec::new();
             let mut plain = Vec::new();
             for y in skip..out - skip {
                 for x in skip..out - skip {
-                    let sample = |c: usize| f64::from(codes[(y * out + x) * 3 + c]) / 65535.0;
+                    let sample = |c: usize| {
+                        f64::from(crate::resident::level_of_bits(
+                            samples[(y * out + x) * 3 + c],
+                        )) / f64::from(crate::resident::FULL_SCALE)
+                    };
                     let (r, g, b) = (sample(0), sample(1), sample(2));
                     let luma = weights[0] * r + weights[1] * g + weights[2] * b;
                     // `level()`'s own reading, chroma term and all.

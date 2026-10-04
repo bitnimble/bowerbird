@@ -18,6 +18,7 @@ export const RawEditPanelStrings = {
   // The denoise's colour half. Not `groupColour`, which is the vibrance and
   // saturation panel: renaming one must not rename the other.
   colour: () => 'Colour',
+  highlightRecovery: () => 'Highlight recovery',
   sharpening: () => 'Sharpening',
   sensitivity: () => 'Sensitivity',
   intensity: () => 'Intensity',
@@ -32,7 +33,7 @@ export const RawEditPanelStrings = {
 
   noWhiteBalanceMode: () => '-',
   noCameraNeutral: () => 'Camera white balance unavailable for this file',
-  noMosaic: () => 'Denoise unavailable for developed photos',
+  noMosaic: () => 'Denoise and highlight recovery unavailable for developed photos',
   // Said of the sensor rather than of the photograph: every frame from this body answers the same
   // way, and a reader who has just watched two sliders disappear wants to know it is the camera.
   noDenoise: () => "Denoise unavailable for this camera's sensor",

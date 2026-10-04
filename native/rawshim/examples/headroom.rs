@@ -15,6 +15,7 @@ mod support;
 
 use rawshim::gpu::Output;
 use rawshim::hdr_args::{Chroma, EncodeOptions};
+use rawshim::resident::level_of_bits;
 
 const REFERENCE_NITS: rawshim::light::Light<rawshim::light::SceneNits> =
     support::GRADE.reference_white_nits;
@@ -118,7 +119,7 @@ fn main() {
     let ceiling = samples.iter().copied().max().unwrap_or(0);
     for p in 0..pixels {
         let v = [samples[p * 3], samples[p * 3 + 1], samples[p * 3 + 2]];
-        let top = f64::from(v[0].max(v[1]).max(v[2])) / white;
+        let top = f64::from(level_of_bits(v[0].max(v[1]).max(v[2]))) / white;
         for (i, at) in [1.0, 2.0, 4.0, 8.0, 16.0].iter().enumerate() {
             if top >= *at {
                 over[i] += 1;
@@ -129,8 +130,9 @@ fn main() {
         }
     }
     println!(
-        "top sample {ceiling} ({:.2}x white); {clipped} pixels flat at it; over white 1x {} 2x {} 4x {} 8x {} 16x {}",
-        f64::from(ceiling) / white,
+        "top sample {:.0} ({:.2}x white); {clipped} pixels flat at it; over white 1x {} 2x {} 4x {} 8x {} 16x {}",
+        level_of_bits(ceiling),
+        f64::from(level_of_bits(ceiling)) / white,
         over[0],
         over[1],
         over[2],
@@ -185,7 +187,7 @@ fn main() {
             continue;
         }
         seen.push((x, y));
-        let scene = [0, 1, 2].map(|c| f64::from(samples[p * 3 + c]) / white);
+        let scene = [0, 1, 2].map(|c| f64::from(level_of_bits(samples[p * 3 + c])) / white);
         let nits = [0, 1, 2].map(|c| {
             let signal =
                 rawshim::light::Light::measured(f64::from(graded[p * 3 + c]) / f64::from(u16::MAX));

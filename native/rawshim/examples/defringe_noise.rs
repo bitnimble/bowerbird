@@ -78,7 +78,7 @@ fn main() {
     };
     // The content with no grain on it, past the matrix, so a noisy reconstruction of the same
     // content can be differenced against it.
-    let quiet = reconstruct_coded(gpu, rcd, &structure, cfa, w, h, matrix);
+    let quiet = reconstruct_matrixed(gpu, rcd, &structure, cfa, w, h, matrix);
     // No copy of `image.rs`'s constants here: they are private, so one printed would go stale with
     // nothing to notice.
     println!(
@@ -125,7 +125,7 @@ fn main() {
 
         // Both sides of `assemble`, over the same grain: what RCD produced, and what the estimate
         // is handed once the camera matrix has remixed it.
-        let coded = reconstruct_coded(gpu, rcd, &mosaic, cfa, w, h, matrix);
+        let coded = reconstruct_matrixed(gpu, rcd, &mosaic, cfa, w, h, matrix);
         let coded_stats = coded.as_ref().map(|plane| Stats::of(plane, w, h));
         // Over the flat arm, which is nothing but reconstructed grain, so this is the stencil's
         // response to noise alone with no picture underneath it to confuse the ratio.
@@ -138,7 +138,7 @@ fn main() {
         // What the grain actually adds to the fit's sums over this content, coupling included,
         // against what the noise measured on its own predicts it should.
         let added = quiet.as_ref().and_then(|clean| {
-            let noisy = reconstruct_coded(gpu, rcd, &structured_mosaic, cfa, w, h, matrix)?;
+            let noisy = reconstruct_matrixed(gpu, rcd, &structured_mosaic, cfa, w, h, matrix)?;
             added_terms(clean, &noisy, w, h)
         });
         let pearson = |stats: &Stats| {
@@ -491,7 +491,7 @@ fn reconstruct(
 /// `demosaic_plane` stops one stage short of `assemble` on purpose, so everything measured through
 /// it is the noise RCD produced rather than the noise the estimate sees. The matrix is a linear map
 /// applied per pixel, so it both rescales each channel's variance and remixes the pairs.
-fn reconstruct_coded(
+fn reconstruct_matrixed(
     gpu: &'static rawshim::gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
     mosaic: &[f32],
@@ -511,21 +511,26 @@ fn reconstruct_coded(
     };
     let into = rawshim::demosaic::frame_buffer(gpu, width * height);
     let (_held, shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
+    let ceiling = [1.0; 3];
+    let field = rawshim::highlight::measure(gpu, &uploaded, cfa, ceiling)?;
     pollster::block_on(rawshim::demosaic::demosaic_into(
         gpu,
         rcd,
         &uploaded,
         cfa,
         &at,
-        rawshim::demosaic::Colour {
-            matrix,
-            ceiling: [1.0; 3],
-        },
+        rawshim::demosaic::Colour { matrix, ceiling },
+        field.seen(),
         &into,
         &shape,
     ))?;
     let samples = pollster::block_on(rawshim::demosaic::read_frame(gpu, &into, width * height))?;
-    Some(samples.iter().map(|&v| f32::from(v) / 65535.0).collect())
+    Some(
+        samples
+            .iter()
+            .map(|&bits| rawshim::resident::level_of_bits(bits) / 65535.0)
+            .collect(),
+    )
 }
 
 fn show(fitted: Option<(f32, f32)>) -> String {
@@ -569,7 +574,7 @@ fn fit(
 ) -> Option<(f32, f32)> {
     let samples: Vec<u16> = plane
         .iter()
-        .map(|&v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16)
+        .map(|&v| rawshim::resident::bits_of_level(v.max(0.0) * 65535.0))
         .collect();
     pollster::block_on(rawshim::base::measure_defocus(
         gpu,

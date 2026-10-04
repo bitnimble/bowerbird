@@ -56,8 +56,8 @@ public interface INits : ILinear, IStandard {}
 
 /// The decode's own scene-linear counts, before the coding.
 ///
-/// **Counts, not a fraction of them** - `fit_scan` reports a `u16` and `Light::COUNT` is one of
-/// them. What `assemble` holds on the way to writing one is `Assembled`.
+/// **Counts of full scale, not a fraction of it** (`packed::level_of`), and past full scale where
+/// a highlight was reconstructed. What `assemble` holds on the way to writing one is `Assembled`.
 ///
 /// Not `IStandard`: the decode scales sensor saturation to full range whatever the photographer
 /// metered, so a level is a fraction of a container rather than a brightness.
@@ -65,9 +65,9 @@ public struct Level : ILinear {}
 
 /// `assemble`'s own working colour: Rec.2020, scene-linear, as a fraction of full scale.
 ///
-/// A `Level` divided by the container it is about to be multiplied back into, which is a
-/// different number for the same light - so it is a different domain, and `within(colour, 1.0)`
-/// there means full scale where the grade's means a display's peak.
+/// A `Level` divided by full scale, which is a different number for the same light - so it is a
+/// different domain, and `within` there is held to multiples of full scale where the grade's is
+/// held to a display's peak.
 public struct Assembled : ILinear, IStandard {}
 
 /// Scene-linear nits, the photograph's own diffuse white anchored at `edit.reference`.

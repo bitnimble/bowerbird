@@ -163,6 +163,7 @@ pub mod hdr_fit;
 pub mod header;
 /// The HEVC bitstream inside a HEIC, into the code values the linearise reads.
 pub mod hevc;
+pub mod highlight;
 pub mod image;
 pub mod job;
 pub mod jpeg;

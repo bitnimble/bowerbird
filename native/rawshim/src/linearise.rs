@@ -751,14 +751,17 @@ mod tests {
         let frame = picture
             .window(gpu, device(gpu), window, crate::view::Scale::Full)
             .expect("the pass runs");
-        let samples = pollster::block_on(frame.into_host()).expect("the frame reads back");
+        let samples = crate::resident::levels_of(
+            &pollster::block_on(frame.into_host()).expect("the frame reads back"),
+        );
 
         assert_eq!(samples.len(), 2 * 3, "the crop is two pixels");
         for (at, sample) in samples.iter().enumerate() {
             let (pixel, channel) = (4 + at / 3, at % 3);
             let want = (0.1 * pixel as f64 + 0.01 * channel as f64) * 65535.0;
+            // Within the half float a level is stored as.
             assert!(
-                (f64::from(*sample) - want).abs() <= 2.0,
+                (f64::from(*sample) - want).abs() <= 2.0 + want / 2048.0,
                 "pixel {pixel} channel {channel}: {sample} against {want}"
             );
         }
@@ -799,7 +802,9 @@ mod tests {
             let frame = picture
                 .window(gpu, device(gpu), window, scale)
                 .expect("the pass runs");
-            let samples = pollster::block_on(frame.into_host()).expect("the frame reads back");
+            let samples = crate::resident::levels_of(
+                &pollster::block_on(frame.into_host()).expect("the frame reads back"),
+            );
             samples
                 .chunks(3)
                 .map(|pixel| f64::from(pixel[0]) / 65535.0 * 20.0)
@@ -886,8 +891,8 @@ mod tests {
     /// **The failure is a flat region, not a wrong pixel.** Clipping where a channel happened to
     /// cross leaves the other two where the matrix put them, so every colour past the edge lands on
     /// the same hue and a gradient through it goes flat. `demosaic`'s
-    /// `the_colour_pass_pulls_a_colour_inside_the_gamut` is the same claim about the RAWs' pass,
-    /// measured on a photograph; this is the rendered family's, which meets it wherever a file
+    /// `a_colour_outside_rec2020_is_brought_in_without_turning` is the same claim about the RAWs'
+    /// pass; this is the rendered family's, which meets it wherever a file
     /// carries wide primaries.
     #[test]
     fn a_colour_outside_rec2020_comes_back_pulled_towards_its_luma() {
@@ -913,7 +918,9 @@ mod tests {
         let frame = picture
             .window(gpu, device(gpu), window, crate::view::Scale::Full)
             .expect("the pass runs");
-        let samples = pollster::block_on(frame.into_host()).expect("the frame reads back");
+        let samples = crate::resident::levels_of(
+            &pollster::block_on(frame.into_host()).expect("the frame reads back"),
+        );
 
         // What the matrix alone gives, before anything holds it inside the primaries.
         let matrix = WIDE.to_rec2020();
@@ -933,7 +940,7 @@ mod tests {
             let want = pulled[channel].clamp(0.0, 1.0) * 65535.0;
             let got = f64::from(samples[channel]);
             assert!(
-                (got - want).abs() <= 2.0,
+                (got - want).abs() <= 2.0 + want / 2048.0,
                 "channel {channel}: {got} against {want}"
             );
         }

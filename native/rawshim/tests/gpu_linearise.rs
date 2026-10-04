@@ -17,20 +17,25 @@ use rawshim::px::{At, Photograph, Rect, Size};
 use rawshim::transfer::{Coding, Curve, Primaries};
 use rawshim::view::Scale;
 
-/// The samples a window comes back as, on the host.
+/// The levels a window comes back as, on the host.
 fn linearised(
     picture: &Picture,
     window: Rect<Photograph>,
     scale: Scale,
-) -> Option<(Vec<u16>, usize, usize)> {
+) -> Option<(Vec<f32>, usize, usize)> {
     let gpu = rawshim::gpu::device()?;
     let frame = picture.window(gpu, rawshim::linearise::device(gpu), window, scale)?;
     let (width, height) = (frame.width, frame.height);
     let samples = pollster::block_on(frame.into_host())?;
-    Some((samples, width, height))
+    Some((rawshim::resident::levels_of(&samples), width, height))
 }
 
-fn whole(picture: &Picture) -> Option<(Vec<u16>, usize, usize)> {
+/// Half a step of the half float a level near `level` is stored as.
+fn stored_within(level: f64) -> f64 {
+    level.abs() / 2048.0
+}
+
+fn whole(picture: &Picture) -> Option<(Vec<f32>, usize, usize)> {
     let size = picture.upright_size();
     linearised(
         picture,
@@ -91,7 +96,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
         });
         let want = rawshim::hdr_fit::in_gamut(colour)[at % 3].clamp(0.0, 65535.0);
         assert!(
-            (f64::from(*sample) - want).abs() <= 1.0,
+            (f64::from(*sample) - want).abs() <= 1.0 + stored_within(want),
             "sample {at}: code {} became {sample}, and the host says {want}",
             codes[at],
         );
@@ -135,7 +140,7 @@ fn a_pq_picture_keeps_its_headroom() {
         (ratio - 1000.0 / 203.0).abs() < 0.05,
         "1000 nits came back at {ratio}x white"
     );
-    assert!(samples[3] < 65535, "and it did not reach the ceiling");
+    assert!(samples[3] < 65535.0, "and it did not reach the ceiling");
 }
 
 /// The primaries conversion, which is the failure that renders: a transposed row is a colour
@@ -169,7 +174,7 @@ fn the_primaries_conversion_is_the_hosts() {
                 * 65535.0;
             let got = f64::from(samples[pixel * 3 + channel]);
             assert!(
-                (got - want).abs() <= 2.0,
+                (got - want).abs() <= 2.0 + stored_within(want),
                 "pixel {pixel} channel {channel}: {got} vs {want}"
             );
         }
@@ -177,7 +182,7 @@ fn the_primaries_conversion_is_the_hosts() {
     // Rec.709 white is Rec.2020 white, which is the identity a primaries conversion has to hold.
     for channel in 0..3 {
         assert!(
-            samples[9 + channel] > 65000,
+            samples[9 + channel] > 65000.0,
             "white came back at {}",
             samples[9 + channel]
         );
@@ -305,9 +310,9 @@ fn a_halved_picture_drops_the_same_edge_whichever_way_up_it_is() {
         // The upright picture's first two columns, averaged, are what output pixel 0 must be -
         // whatever the file's turn is. Column 4 is the one with nowhere to go.
         let whole = whole(&picture).expect("the pass runs");
-        let expected = (u32::from(whole.0[0]) + u32::from(whole.0[3])) / 2;
+        let expected = (whole.0[0] + whole.0[3]) / 2.0;
         assert!(
-            u32::from(samples[0]).abs_diff(expected) < 600,
+            (samples[0] - expected).abs() < 600.0,
             "{turn:?}: halved pixel 0 is {} where columns 0 and 1 average {expected}",
             samples[0],
         );

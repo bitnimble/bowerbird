@@ -285,6 +285,7 @@ export class LoupePresenter {
       denoiseLuminance: doc.luminanceNoise,
       denoiseColour: doc.colourNoise,
       denoiser: this.edit.denoiser,
+      highlightRecovery: doc.highlightRecovery,
       dust: dustSettings(doc),
       adjust: adjustOf(doc),
       levels: this.stage.levels,
@@ -306,13 +307,14 @@ export class LoupePresenter {
    */
   private tileRevision(): string {
     const doc = this.edit.doc;
-    // The dust three ride here beside the Detail pair for the same reason: `rev` only moves when a
+    // The dust three ride here beside the Detail sliders for the same reason: `rev` only moves when a
     // save round-trips, and these change the tile's pixels the moment they are dragged. Without
     // them the magnifier serves a cached tile still carrying a particle the stage has removed.
     const shape =
       doc == null
         ? ''
-        : `${doc.luminanceNoise},${doc.colourNoise},${this.edit.denoiser},${doc.sharpening},${doc.clarity},` +
+        : `${doc.luminanceNoise},${doc.colourNoise},${this.edit.denoiser},${doc.highlightRecovery},` +
+          `${doc.sharpening},${doc.clarity},` +
           `${doc.texture},${doc.dehaze},${doc.dustRemoval},${doc.dustSensitivity},` +
           `${doc.dustIntensity},${JSON.stringify(doc.repairs)}`;
     return `${this.host.photoId()}:${this.edit.rev}:${shape}`;

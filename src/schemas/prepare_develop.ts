@@ -12,6 +12,7 @@ export type PrepareDevelop = Pick<
   | 'luminanceNoise'
   | 'colourNoise'
   | 'denoiser'
+  | 'highlightRecovery'
   | 'sharpening'
   | 'dustRemoval'
   | 'dustSensitivity'

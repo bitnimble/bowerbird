@@ -43,6 +43,8 @@ pub struct TileRequest {
     /// would predict an export it does not resemble.
     #[serde(default)]
     pub denoiser: crate::galosh::Denoiser,
+    #[serde(default)]
+    pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, which correct the mosaic beside the denoise.
     ///
     /// The particles themselves are not here: they are in `photo_analysis`, because they are the
@@ -111,6 +113,7 @@ impl TileRequest {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
+            highlight_recovery: self.highlight_recovery,
         }
     }
 
@@ -933,6 +936,7 @@ mod tests {
             denoise_luminance: Some(20.0),
             denoise_colour: Some(30.0),
             denoiser: crate::galosh::Denoiser::Galosh,
+            highlight_recovery: None,
             dust: Default::default(),
             adjust: crate::gpu::Adjust::none(),
             levels: None,

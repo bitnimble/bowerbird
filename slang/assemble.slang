@@ -1,12 +1,8 @@
 // The demosaiced frame into the camera's colour, cropped, turned upright, and written straight into
 // the frame every stage after the decode reads.
 //
-// **This is where the decode stops crossing the bus.** RCD leaves interleaved `f32` RGB in the
-// sensor's own primaries; what a frame is measured and graded in is Rec.2020 `u16`, upright, cropped
-// to the readable area. Between them sat a 3x3, a quantise, a stitch and a permutation, all on the
-// host - so every tile read back its whole plane, three `f32` a pixel including the halo RCD needed
-// either side of it, and the frame was then assembled and rotated in two more passes over host
-// memory. Doing it here makes the readback the answer instead, once, for the whole frame.
+// RCD leaves interleaved `f32` RGB in the sensor's own primaries; what a frame is measured and graded
+// in is Rec.2020 half-float levels (`packed::level_of`), upright, cropped to the readable area.
 //
 // **Indexed by destination word, not by pixel, and that is the whole design.** Three samples a pixel
 // and two samples a word means a tile's destination row rarely begins on a word boundary, so its
@@ -77,10 +73,19 @@ struct Params {
     /// Bayer site, 3 for the smallest X-Trans window that holds every colour. Zero elsewhere, which
     /// that entry point reads as one.
     uint reduce;
-    /// The rows below align to 16 and the nineteen words above end at 76, so the gap is written
-    /// out rather than left implicit - the host builds these bytes by hand and can only write what
-    /// it can see. `every_uniform_is_the_size_its_shader_reads` holds the two ends together.
+    /// Where the mosaic this dispatch reads starts in the one `highlight` was measured over, and
+    /// that field's cells: how many, and photosites a side in each.
+    uint field_left;
+    uint field_top;
+    uint field_width;
+    uint field_height;
+    uint field_cell;
+    /// How much of the surrounding light's colour a reconstruction keeps, against neutral white:
+    /// where a channel still reads, and where every channel ran out (`highlight::Colouring`).
+    float colour_reading;
+    float colour_blown;
     uint pad0;
+    uint pad1;
     /// Camera RGB to Rec.2020, a row per vector. Three `float4` rather than a `float3x3` because the
     /// host writes these bytes by hand and a matrix's column stride is a rule to get wrong.
     ///
@@ -100,12 +105,16 @@ struct Params {
 // channel's own wells are full. Measured on IMG_0844: at the shoulder of an arc the green
 // photosites are six tenths full and the interpolated green is already at the ceiling, which read
 // as saturation turns fifteen pixels of a real gradient into flat white.
+import clipping;
 import mosaic;
 import orientation;
+import packed;
 
 [vk::binding(0, 1)] ConstantBuffer<Params> params;
 [vk::binding(1, 1)] StructuredBuffer<float> rgb;
 [vk::binding(2, 1)] RWStructuredBuffer<uint> out_frame;
+/// The colour of the light around each clipped highlight, as `highlight_field.slang` filled it.
+[vk::binding(3, 1)] StructuredBuffer<float4> highlight;
 
 /// Which source pixel a destination sample comes from, and which channel of it: `(x, y, channel)`,
 /// with `w` zero where the sample is not this tile's to write.
@@ -130,63 +139,6 @@ uint4 source_for(uint sample)
     return uint4(params.left + inside.x, params.top + inside.y, channel, 1);
 }
 
-/// How near its ceiling a channel counts as having saturated.
-///
-/// **Not equality, because RCD reconstructs a channel from its neighbours** - a green at a red site
-/// is interpolated, so a blown plateau comes back a hair under the value every photosite in it
-/// clipped to and an exact test leaves it unraised. Measured on a flat blown field, that miss is
-/// enough to render the pixel in the illuminant's ratios, which is the whole failure.
-///
-/// Wide rather than tight on purpose: half a percent of the ceiling is within eighty counts of a
-/// 14-bit sensor's saturation, and a photosite that close is blown for every purpose this serves.
-static const float SATURATED_AT = 0.995;
-
-/// Where a photosite is full enough that what it reads stops being taken at face value.
-///
-/// **Everything `reconstructed` does ramps over `BLOWN_FROM` to `SATURATED_AT` rather than
-/// switching at either**, which is what keeps a blown highlight's edge graduated: a well fills
-/// smoothly, so a correction that arrives all at once is an edge the sensor never recorded.
-///
-/// Wide, because the band is the width of the gradient it produces. On IMG_0275 the sun's red fill
-/// falls from 1.0 to 0.55 over about a hundred and twenty pixels, so a band ending at 0.995 and
-/// starting near it puts the whole neutral-to-warm transition inside a dozen of them.
-static const float BLOWN_FROM = 0.75;
-
-/// What a clipped photosite would have read, from the ones beside it that did not.
-///
-/// **The conditioning clips each photosite at its own saturation, so a channel on its ceiling is
-/// one whose silicon ran out - "at least this bright", with no upper bound.** Left there it carries
-/// the ceiling, and the ceilings are the white balance gains, so a pixel with every channel on one
-/// leaves for the matrix in the *illuminant's* ratios and renders as a hue rather than as white.
-/// That is a sun rendering pink.
-///
-/// **A colour a broadband illuminant made has no green-magenta component**, which after white
-/// balance says green is the geometric mean of red and blue. Measured over IMG_0275's sun and its
-/// surround, `g / sqrt(r.b)` runs 0.982 to 1.010 across the middle four fifths of the unclipped
-/// sites. So where one channel clipped the other two say what it was, and the estimate is floored
-/// at the ceiling because a clipped photosite has already proved that much.
-///
-/// **And held to the brightest channel the pixel actually read, which is what two channels can
-/// prove between them.** Not to the clipped channel's own ceiling: the ceilings are the white
-/// balance gains and green's is the lowest on every body here, so a neutral runs green out first
-/// and every blown highlight needs green raised past that ceiling - held there, DSC04519's lit rock
-/// leaves the decode at (0.605, 0.358, 0.68) and the picture is a magenta band a stop and a half
-/// wide around each blown patch.
-///
-/// The top is where the rule's assumption fails rather than where the silicon did. DSC00982's
-/// torch: red and green both on their ceilings, blue at 3.5% of its, and `g²/b` came to six times
-/// the top and made the lamp deep red where the camera renders orange - blue's noise riding that
-/// division into hue that flickered pixel by pixel. There red *is* the top, so the cap holds it
-/// exactly where its own ceiling did.
-///
-/// **A narrow-band emitter is left alone by the floor rather than by the cap.** On IMG_0844's arcs
-/// blue clips by itself, and `g²/r` off a red and green the light barely lit lands far under what
-/// blue already read, so `max` keeps the measurement.
-///
-/// Two clipped leaves the equation a measurement short, and the channel still reading is all there
-/// is to go on: at its own ceiling the pixel is about to have no colour at all, so the estimate
-/// crosses to neutral as it approaches one. Three clipped has nothing left, and neutral is the
-/// honest answer rather than the illuminant's own ratios.
 /// How full each colour's photosites are about a place in the mosaic, as a fraction of its ceiling.
 ///
 /// The 3x3, which holds at least one site of every colour whatever phase it is centred on, and
@@ -208,9 +160,8 @@ float3 fills_at(uint x, uint y)
     float3 seen = float3(0.0);
     // Every site but the plane's own border has all nine of its neighbours, so the test each would
     // otherwise carry is one test for the nine, and the loop unrolls without a `continue` in it.
-    // **What it no longer does is fold the parities away.** On a 2x2 pattern `dy` of -1 and +1 land
-    // on the same row phase, so nine sites resolved to four reads of the pattern; a 6x6 period has
-    // no such coincidence and every site is asked for its own colour.
+    // Every site asks the pattern for its own colour: `dy` of -1 and +1 share a row phase only on a
+    // 2x2 period, never on a 6x6 one.
     if (x >= 1u && y >= 1u && x + 1u < params.stride && y + 1u < rows) {
         [ForceUnroll]
         for (int dy = -1; dy <= 1; dy = dy + 1) {
@@ -243,47 +194,135 @@ float3 fills_at(uint x, uint y)
     return (sum / max(seen, float3(1.0))) / max(ceiling, float3(1e-6));
 }
 
-/// `fill` is how full each colour's wells are under this pixel, as a fraction of its ceiling: the
-/// one quantity comparable across channels whose ceilings differ and, unlike a count of how many
-/// crossed, one that moves continuously. The caller's, because the two walks know it differently -
-/// see `pixel_of_reduced`, which has it exactly and for free.
-float3 reconstructed(float3 camera, float3 fill)
+/// The colour share of the light around a place in this dispatch's mosaic
+/// (`highlight_field.slang`'s `estimates`), bilinear between the field's cell centres.
+float3 light_around(float2 at)
+{
+    let cells = (at + float2(params.field_left, params.field_top)) / float(params.field_cell) - 0.5;
+    let base = int2(floor(cells));
+    let t = cells - float2(base);
+    var share = float4(0.0);
+    [ForceUnroll]
+    for (int dy = 0; dy < 2; dy++) {
+        [ForceUnroll]
+        for (int dx = 0; dx < 2; dx++) {
+            let x = clamp(base.x + dx, 0, int(params.field_width) - 1);
+            let y = clamp(base.y + dy, 0, int(params.field_height) - 1);
+            let w = (dx == 0 ? 1.0 - t.x : t.x) * (dy == 0 ? 1.0 - t.y : t.y);
+            share += w * highlight[uint(y) * params.field_width + uint(x)];
+        }
+    }
+    return share.rgb;
+}
+
+/// How far under the light that clips every channel a pixel's handover from `colour_reading` to
+/// `colour_blown` begins, measured on the least-full channel: a channel's own last quarter is
+/// crossed in one pixel on a steep edge.
+static const Stops WHITENS_OVER = { 1.5 };
+
+/// What a clipped photosite would have read. `fill` is each colour's wells under this pixel as a
+/// fraction of its ceiling.
+///
+/// Every strength ramps on a fill: a branch on a count of clipped channels draws a ring.
+float3 reconstructed(float3 camera, float3 fill, float2 at)
+{
+    let hi = max(fill.r, max(fill.g, fill.b));
+    if (hi < BLOWN_FROM) { return camera; }
+    let around = light_around(at);
+    let gone = running_out(fill);
+    // Off the photosites once a channel runs out: RCD interpolates a run-out channel from green and
+    // green from it, a scale pattern the wells never had.
+    let ceiling = float3(params.row0.w, params.row1.w, params.row2.w);
+    let wells = lerp(camera, fill * ceiling, smoothstep(0.0, 0.5, max(gone.r, max(gone.g, gone.b))));
+    let reading = 1.0 - gone;
+    let measured = smoothstep(0.0, 0.5, reading.r + reading.g + reading.b);
+    let lo = min(fill.r, min(fill.g, fill.b));
+    let toward_clip = smoothstep(-WHITENS_OVER.s, 0.0, log2(max(lo, 1e-6)));
+    let kept = lerp(params.colour_reading, params.colour_blown * vivid(around), toward_clip);
+    let neutral = broadband(wells, fill);
+    let lit = lit_like(wells, gone, measured, around) * luma_of(neutral);
+    return lerp(neutral, fitted(neutral, lit), kept);
+}
+
+static const float VIVID_FROM = 0.6;
+static const float VIVID_TO = 1.4;
+
+float vivid(float3 share)
+{
+    let unit = to_rec2020(share) / max(luma_of(share), 1e-6);
+    // Distance from white at unit luma: a lamp's orange is near, a pink light far.
+    return smoothstep(VIVID_FROM, VIVID_TO, length(unit - 1.0));
+}
+
+/// Of sensor full scale.
+static const Gain HEADROOM = { 8.0 };
+
+/// `lit` pulled toward `neutral` at the same luma until no channel passes `HEADROOM`. Luma, not the
+/// brightest channel: held there, an orange blown face reads darker than the rock beside it.
+float3 fitted(float3 neutral, float3 lit)
+{
+    let from = to_rec2020(neutral);
+    let toward = to_rec2020(lit) - from;
+    let room = (float3(HEADROOM.g) - from) / max(toward, float3(1e-6));
+    let t = clamp(min(toward.r > 0.0 ? room.r : 1.0, min(toward.g > 0.0 ? room.g : 1.0, toward.b > 0.0 ? room.b : 1.0)), 0.0, 1.0);
+    return lerp(neutral, lit, t);
+}
+
+float3 to_rec2020(float3 camera)
+{
+    return float3(dot(params.row0.xyz, camera), dot(params.row1.xyz, camera), dot(params.row2.xyz, camera));
+}
+
+/// The light around's hue, fitted to the channels still reading, at unit luma. A clipped channel
+/// only proved "at least this bright", so it is raised to the light's colour and never lowered.
+float3 lit_like(float3 camera, float3 gone, float measured, float3 around)
+{
+    let edge = 1e-6;
+    let reading = 1.0 - gone;
+    let share = max(around, float3(edge));
+    // A filling channel reads low before it reads clipped - some photosites in its 3x3 have run out
+    // - so the scale leans on channels well under their ceilings; proportional, a nine-tenths green
+    // sits under red and blue on a blown neutral as magenta.
+    let trusted = reading * reading;
+    let read_scale = dot(trusted * camera, share) / max(dot(trusted * share, share), edge);
+    let read_lit = lerp(camera, max(camera, read_scale * share), smoothstep(0.0, 0.5, gone));
+    let unit = lerp(share / max(luma_of(share), edge), read_lit / max(luma_of(read_lit), edge), measured);
+    return unit / max(luma_of(unit), edge);
+}
+
+float luma_of(float3 camera)
+{
+    return dot(LUMA, to_rec2020(camera));
+}
+
+/// The pixel alone, assuming broadband light: after white balance green is the geometric mean of
+/// red and blue, so two channels say what a clipped third was.
+///
+/// Capped at the brightest channel read, or a noisy low blue turns `g²/b` into a deep red torch.
+/// Raised to the brightest still reading, not left at the clipped ceiling: green's is lowest, so a
+/// blown neutral rings magenta. All three gone is neutral; the illuminant's ratios render a sun pink.
+float3 broadband(float3 camera, float3 fill)
 {
     let edge = 1e-6;
     let hi = max(fill.r, max(fill.g, fill.b));
-    if (hi < BLOWN_FROM) { return camera; }
     let lo = min(fill.r, min(fill.g, fill.b));
     let mid = fill.r + fill.g + fill.b - hi - lo;
-
-    // **Every strength below is a ramp on a fill and none is a branch on a count.** A photosite
-    // does not stop reading at a threshold; it runs out. Switching a channel's estimate on the
-    // count of clipped channels is what puts an edge in a picture - on IMG_0275 the second channel
-    // leaves while the first is only four fifths of the way into its own ramp, and the two branches
-    // disagree by a fifth of the correction across one pixel, which is a ring around the sun that
-    // the sensor's own smooth fall never had.
     let top = max(camera.r, max(camera.g, camera.b));
     let zero_tint = min(float3(
         camera.g * camera.g / max(camera.b, edge),
         sqrt(max(camera.r * camera.b, 0.0)),
         camera.g * camera.g / max(camera.r, edge)), top);
-    let running_out = smoothstep(BLOWN_FROM, SATURATED_AT, fill);
-    let estimated = lerp(camera, max(camera, zero_tint), running_out);
+    let gone = running_out(fill);
+    let estimated = lerp(camera, max(camera, zero_tint), gone);
     // Two clipped channels tie the zero-tint estimates to their ceilings. Normalize the remaining
     // channel weights so a partly clipped blue cannot leave a blue ring around a neutral light.
-    let left = 1.0 - running_out;
+    let left = 1.0 - gone;
     let still = dot(camera, left) / max(left.r + left.g + left.b, edge);
-    let held = lerp(estimated, max(estimated, float3(still)),
-        running_out * smoothstep(BLOWN_FROM, SATURATED_AT, mid));
-
-    // Two channels gone leaves the equation a measurement short and the third is all there is, so
-    // the pull to neutral follows the *second* fill - which is exactly the one whose crossing used
-    // to be the seam.
-    //
-    // The lowest fill gates it, and that is what keeps a saturated light out of it: a magenta whose
-    // red and blue have both run out still has a green photosite a third full, and a green that
-    // full flatly contradicts the neutral the pull would impose. Around the sun the same term is
-    // the one channel still reading and it sits at 0.97, so the pull arrives in full.
-    let blown = smoothstep(BLOWN_FROM, SATURATED_AT, mid) * smoothstep(BLOWN_FROM, SATURATED_AT, lo);
+    let held = lerp(estimated, max(estimated, float3(still)), gone * running_out(float3(mid)).x);
+    // The pull to neutral follows the *second* fill, and the lowest gates it: a magenta whose red
+    // and blue have both run out still has a green photosite a third full, which flatly contradicts
+    // the neutral the pull would impose.
+    let blown = running_out(float3(mid)).x * running_out(float3(lo)).x;
     return lerp(held, float3(top), blown);
 }
 
@@ -297,25 +336,21 @@ float3 reconstructed(float3 camera, float3 fill)
 /// flattening the one that crossed.
 float3 rec2020_of(float3 camera)
 {
-    // A fraction of full scale, which is the ceiling below and what `channel_of`'s `* 65535`
-    // turns back into a count.
+    // A fraction of full scale, which `channel_of` stores as a level.
     let rec2020 = measured<Assembled>(float3(
         dot(params.row0.xyz, camera),
         dot(params.row1.xyz, camera),
         dot(params.row2.xyz, camera)));
-    return within(in_gamut(rec2020), exactly<Assembled>(1.0)).v;
+    return within(in_gamut(rec2020), exactly<Assembled>(HEADROOM.g)).v;
 }
 
-/// One of those three as a `u16` count.
-///
-/// Truncated, not rounded, because the host pass this replaces truncated: `as u16` on a clamped
-/// `f32`. A round here would move a fifth of every fixture by a count for no reason anyone asked for.
+/// One of those three as a scene-linear sample (`packed::bits_of`).
 uint channel_of(float3 held, uint channel)
 {
     float value = held.r;
     if (channel == 1) { value = held.g; }
     if (channel == 2) { value = held.b; }
-    return uint(clamp(value * 65535.0, 0.0, 65535.0));
+    return bits_of(max(value, 0.0) * FULL_SCALE);
 }
 
 /// One pixel of the destination, in Rec.2020, off the plane RCD reconstructed.
@@ -323,9 +358,8 @@ uint channel_of(float3 held, uint channel)
 /// A *pixel* and not a sample, because the two samples of a destination word are the same pixel's
 /// two out of three times: three samples to a pixel and two to a word, so only the word that
 /// straddles a pixel boundary has two of these to do. Everything here is per pixel - a nine-tap
-/// fill, a clipping correction and a 3x3 through a gamut map - and taking it per sample did all of
-/// it twice for a channel each. Measured on RADV over the three bench fixtures in sequence, which
-/// is what the budget records, the 61MP frame's reduced walk went from 118ms to 71 against 105.7.
+/// fill, a clipping correction and a 3x3 through a gamut map - and taking it per sample would do all
+/// of it twice for a channel each.
 float3 pixel_of(uint2 site)
 {
     let base = wide_at<Sensor>(site.x, site.y, measured<Sensor>(params.stride)) * 3;
@@ -333,7 +367,9 @@ float3 pixel_of(uint2 site)
     // beside a blown stroke the neighbours RCD reconstructs from are the blown ones, so the plane
     // reports a channel at its ceiling well before that channel's own wells are full.
     let camera = reconstructed(
-        float3(rgb[base], rgb[base + 1], rgb[base + 2]), fills_at(site.x, site.y));
+        float3(rgb[base], rgb[base + 1], rgb[base + 2]),
+        fills_at(site.x, site.y),
+        float2(site) + 0.5);
     return rec2020_of(camera);
 }
 
@@ -353,10 +389,8 @@ float3 pixel_of(uint2 site)
 /// Every sample of a colour averaged, rather than the last one kept: Bayer's two greens are the same
 /// colour sampled twice and taking one would throw away half the luminance the sensor spends half its
 /// photosites collecting. On X-Trans a 3x3 holds five of them, and the argument is the same one.
-/// **`SIDE` is a generic and not a uniform, and the bench is why.** As a runtime loop bound this
-/// stopped unrolling, and the route it serves is the one a 61MP grid tile takes: measured, the
-/// demosaic stage went from 105ms to 227ms against a budget of 105.7. One body, two instantiations,
-/// both flat.
+/// **`SIDE` is a generic and not a uniform, and the bench is why.** As a runtime loop bound it does
+/// not unroll, and this is the route a 61MP grid tile takes. One body, two instantiations, both flat.
 float3 pixel_of_reduced<let SIDE : int>(uint2 at)
 {
     let side = SIDE;
@@ -366,9 +400,8 @@ float3 pixel_of_reduced<let SIDE : int>(uint2 at)
     float3 counts = float3(0.0);
     // **Off one base index, a row at a time.** Spelled as `sy * stride + sx` per site the block's
     // reads are four independent addresses the compiler has to prove adjacent before it can fetch
-    // them together; the walk this replaced took `top`, `top + 1`, `top + stride` and read two
-    // dwords at a time. On an adapter whose memory is the system's that is the difference between
-    // two fetches a pixel and four.
+    // them together. On an adapter whose memory is the system's that is two fetches a pixel against
+    // four.
     let top = times(uint(at.y), uint(side)) * params.stride + times(uint(at.x), uint(side));
     [ForceUnroll]
     for (int dy = 0; dy < side; dy = dy + 1) {
@@ -390,11 +423,11 @@ float3 pixel_of_reduced<let SIDE : int>(uint2 at)
     // **The block's own means are the fill, so this route never calls `fills_at`.** That function
     // exists because an interpolated plane cannot say how full the wells under it were; these are
     // the wells, read directly, and dividing by the ceiling is the whole of the conversion. It is
-    // the better answer as well as the free one - a 3x3 centred on the block would carry sites the
-    // output pixel is not made of - and it is most of what the route costs: measured on the 61MP
-    // fixture alone on RADV, the nine reads and nine colour lookups it replaces were 57ms of 168.
+    // the better answer as well as the free one: a 3x3 centred on the block would carry sites the
+    // output pixel is not made of.
     let ceiling = float3(params.row0.w, params.row1.w, params.row2.w);
-    return rec2020_of(reconstructed(camera, camera / max(ceiling, float3(1e-6))));
+    let centre = (float2(at) + 0.5) * float(side);
+    return rec2020_of(reconstructed(camera, camera / max(ceiling, float3(1e-6)), centre));
 }
 
 /// The side of the square of destination words one workgroup owns.

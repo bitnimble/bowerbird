@@ -110,6 +110,14 @@ export const DETAIL: readonly SliderSpec[] = [
     measured: true,
   },
   {
+    key: 'highlightRecovery',
+    label: RawEditPanelStrings.highlightRecovery(),
+    min: 0,
+    max: 100,
+    step: 1,
+    neutral: 100,
+  },
+  {
     key: 'sharpening',
     label: RawEditPanelStrings.sharpening(),
     min: 0,

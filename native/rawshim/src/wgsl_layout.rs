@@ -161,6 +161,12 @@ mod tests {
                 crate::cfa::shape_block(),
             ),
             (
+                "highlight_field.wgsl",
+                "Field",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/highlight_field.wgsl")).to_string(),
+                crate::highlight::params_block(),
+            ),
+            (
                 "lslcd.wgsl",
                 "Params",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/lslcd.wgsl")).to_string(),

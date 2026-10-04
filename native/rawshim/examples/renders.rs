@@ -1,7 +1,7 @@
 //! What the editor shows, which is what a rendition ships, from the same RAW, without a browser.
 //!
 //! ```text
-//! renders <raw> <out-dir> [--detail N|auto] [--denoiser galosh|pmrid] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
+//! renders <raw> <out-dir> [--detail N|auto] [--highlight-recovery 0-100] [--denoiser galosh|pmrid] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
 //!         [--as-export] [--defocus r,b] [--phases 2|4|8|16] [--pool 0|1]
 //!         [--chroma-detail 0|1] [--reach N] [--ratio-floor N]
 //!         [--ev N] [--edge N]
@@ -154,7 +154,7 @@ fn rendition(
     detail: rawshim::galosh::Detail,
     edge: usize,
     stages: Stages<'_>,
-) -> (Vec<u8>, usize, usize) {
+) -> (Vec<u8>, usize, usize, Vec<u16>) {
     let opened = support::Open {
         detail,
         strengths: Strengths {
@@ -176,7 +176,11 @@ fn rendition(
 }
 
 /// The rendition's tail: cut and grade the opened frame, with the stages' overrides.
-fn graded(opened: &support::Opened, edge: usize, stages: Stages<'_>) -> (Vec<u8>, usize, usize) {
+fn graded(
+    opened: &support::Opened,
+    edge: usize,
+    stages: Stages<'_>,
+) -> (Vec<u8>, usize, usize, Vec<u16>) {
     let options = options(edge, stages);
     let frame = &opened.frame;
     let gpu = rawshim::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
@@ -403,7 +407,12 @@ fn graded(opened: &support::Opened, edge: usize, stages: Stages<'_>) -> (Vec<u8>
         Domain::Pq => (v >> 8) as u8,
         Domain::Linear => (f32::from(*v) / to_white * 255.0).min(255.0) as u8,
     };
-    (coded.iter().map(byte).collect(), cut.width, cut.height)
+    (
+        coded.iter().map(byte).collect(),
+        cut.width,
+        cut.height,
+        coded,
+    )
 }
 
 fn main() {
@@ -586,6 +595,10 @@ fn main() {
             "--colour" => {
                 detail.colour = Some(args.next().expect("a number").parse().expect("a number"));
             }
+            "--highlight-recovery" => {
+                detail.highlight_recovery =
+                    Some(args.next().expect("0 to 100").parse().expect("0 to 100"));
+            }
             // Which filter those positions drive, which is a document's choice and so is here
             // rather than a build of its own.
             "--denoiser" => {
@@ -679,7 +692,7 @@ fn main() {
             said(detail.colour),
         );
         let started = std::time::Instant::now();
-        let (data, width, height) = rendition(&path, detail, edge, stages);
+        let (data, width, height, codes) = rendition(&path, detail, edge, stages);
         eprintln!("  {width}x{height} in {}ms", started.elapsed().as_millis());
         let whole = rawshim::rgb::RgbRef {
             width,
@@ -838,11 +851,20 @@ fn main() {
             }
             let shown = greyscale(magnify(cut, crop_zoom()));
             write(&format!("{out}/{name}-{x}-{y}.avif"), shown.as_ref(), file);
+            if stages.domain == Domain::Pq {
+                write_pq(
+                    &format!("{out}/{name}-{x}-{y}-pq.avif"),
+                    &codes,
+                    width,
+                    (*x, *y, *side),
+                );
+            }
         }
     }
 }
 
 fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> rawshim::rgb::Rgb {
+    let side = side.min(image.width).min(image.height);
     let x = x.min(image.width.saturating_sub(side));
     let y = y.min(image.height.saturating_sub(side));
     let mut data = vec![0u8; side * side * 3];
@@ -1704,7 +1726,7 @@ fn sweep_grid(
                 None => (amount, colour.unwrap_or(amount)),
             },
         };
-        let (data, width, height) = rendition(
+        let (data, width, height, _) = rendition(
             path,
             rawshim::galosh::Detail::at(pair.0, pair.1).using(denoiser),
             edge,
@@ -1808,6 +1830,37 @@ fn channel_means(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
     sum.map(|total| total / (image.width * image.height) as f64)
 }
 
+/// The crop's own sixteen-bit codes as the HDR still a rendition is, tagged PQ Rec.2020, where
+/// [`write`]'s file is their high byte in an sRGB container.
+fn write_pq(path: &str, codes: &[u16], width: usize, (x, y, side): (usize, usize, usize)) {
+    let height = codes.len() / 3 / width;
+    let side = side.min(width).min(height);
+    let (x, y) = (
+        x.min(width.saturating_sub(side)),
+        y.min(height.saturating_sub(side)),
+    );
+    let cut: Vec<u16> = (y..y + side)
+        .flat_map(|row| &codes[(row * width + x) * 3..(row * width + x + side) * 3])
+        .copied()
+        .collect();
+    let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
+    let still = rawshim::avif::StillOptions {
+        cicp: rawshim::avif::Cicp {
+            primaries,
+            transfer,
+            matrix,
+        },
+        format: Chroma::Yuv444.avif_format(),
+        quantizer: CROP_QUANTIZER,
+        speed: CROP_SPEED,
+        light: None,
+    };
+    let file = rawshim::avif::encode_still(std::borrow::Cow::Owned(cut), side, side, &still)
+        .expect("the crop encodes");
+    std::fs::write(path, file).expect("the crop writes");
+    eprintln!("    wrote {path}");
+}
+
 fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
     rawshim::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
@@ -1822,7 +1875,7 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>, file: File) {
     eprintln!("    wrote {path}");
 
     // **And a JPEG beside it**, because the AVIF is the thing under test and not a thing to look
-    // at: it is HDR, tagged PQ, and most viewers either refuse it or tone-map it themselves - so
+    // at: in the PQ domain it holds PQ codes' high byte tagged sRGB (`write_pq` is the HDR one) - so
     // the one format that answers "does this edge look right" is the one anything opens. Quality
     // high enough that what it adds is under what the AVIF beside it already did.
     //

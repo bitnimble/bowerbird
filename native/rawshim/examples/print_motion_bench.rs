@@ -37,6 +37,7 @@ fn main() -> Result<(), String> {
             denoise_luminance: None,
             denoise_colour: None,
             denoiser: rawshim::galosh::Denoiser::Galosh,
+            highlight_recovery: None,
             dust: Default::default(),
             repairs: Vec::new(),
             stated_white: false,

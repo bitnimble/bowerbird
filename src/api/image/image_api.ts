@@ -81,6 +81,7 @@ const PrepareDevelopSchema = EditDocSchema.pick({
   luminanceNoise: true,
   colourNoise: true,
   denoiser: true,
+  highlightRecovery: true,
   sharpening: true,
   dustRemoval: true,
   dustSensitivity: true,

@@ -50,7 +50,7 @@ struct Params {
 
 float sample_at(uint at)
 {
-    return float(half_of(frame[at / 2], at));
+    return level_of(half_of(frame[at / 2], at));
 }
 
 /// `image::luma709`, normalised the same way round: the weights sum first and the divide comes
@@ -58,7 +58,7 @@ float sample_at(uint at)
 float luma_at(uint x, uint y)
 {
     let p = wide_at<Drawn>(x, y, measured<Drawn>(params.width)) * 3;
-    return dot(params.luma, float3(sample_at(p), sample_at(p + 1), sample_at(p + 2))) / 65535.0;
+    return dot(params.luma, float3(sample_at(p), sample_at(p + 1), sample_at(p + 2))) / FULL_SCALE;
 }
 
 /// Where the profile first crosses a level, in samples from `x`, or -1 where it does not.

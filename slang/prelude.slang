@@ -243,7 +243,7 @@ public static const float GAMUT_FLOOR = 0.02;
 /// left a mauve patch through the brightest cloud, the two channels that had not crossed
 /// keeping their heads above the one that had.
 ///
-/// Generic for `in_gamut`'s reason: `assemble` brings an `Assembled` inside full scale where the
+/// Generic for `in_gamut`'s reason: `assemble` brings an `Assembled` inside its headroom where the
 /// grade brings `DisplayNits` inside a display's peak, and the ceiling has to be a light of
 /// whichever the colour is - which is the whole of what a bare `float` let the two confuse.
 public Colour<D> within<D : ILinear>(Colour<D> nits, Light<D> ceiling)

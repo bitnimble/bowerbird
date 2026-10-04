@@ -444,12 +444,13 @@ mod tests {
         // and the clamp above white are all exercised rather than one flat level.
         let (width, height) = (64usize, 48usize);
         let mut samples = vec![0u16; width * height * 3];
+        let stored = |level: usize| crate::resident::bits_of_level((level % 60000) as f32);
         for y in 0..height {
             for x in 0..width {
                 let i = (y * width + x) * 3;
-                samples[i] = ((x * 900 + y * 40) % 60000) as u16;
-                samples[i + 1] = ((x * 37 + y * 700) % 60000) as u16;
-                samples[i + 2] = ((x * y * 13) % 60000) as u16;
+                samples[i] = stored(x * 900 + y * 40);
+                samples[i + 1] = stored(x * 37 + y * 700);
+                samples[i + 2] = stored(x * y * 13);
             }
         }
         let resident = crate::resident::Resident::upload(gpu, &samples, width, height);

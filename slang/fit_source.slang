@@ -37,24 +37,25 @@ struct Params {
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
-/// The frame's own u16 samples, interleaved RGB, two to a word.
+/// The frame's own scene-linear samples, interleaved RGB, two to a word (`packed::level_of`).
 [vk::binding(0, 0)] StructuredBuffer<uint> frame;
 /// Interleaved RGB, in the raw magnitudes the host's `Plane` carries at this point.
 [vk::binding(1, 0)] RWStructuredBuffer<float> plane;
-/// One bin per `u16` level, counting the brightest channel of each sampled pixel.
+/// One bin per sample bit pattern, counting the brightest channel of each sampled pixel.
 [vk::binding(2, 0)] RWStructuredBuffer<Atomic<uint> > histogram;
-/// Diffuse white, the frame's top end and its bottom end, in `u16` levels, in that order.
+/// Diffuse white, the frame's top end and its bottom end, in levels, in that order.
 [vk::binding(3, 0)] RWStructuredBuffer<float> levels;
 /// The plane as the geometry search reads it: interleaved f32 RGB, sRGB primaries and transfer,
 /// 0..1. `fit_grids.slang` takes this as its unpacked source.
 [vk::binding(4, 0)] RWStructuredBuffer<float> render;
 
-/// One bin per level a `u16` sample can take, which is what the host sizes the histogram to.
+/// One bin per bit pattern a sample can take, which is what the host sizes the histogram to. A
+/// positive half's bits order as its value does, so the walk up the bins is a walk up the levels.
 static const uint LEVEL_BINS = 65536;
 
 float sample_at(int index)
 {
-    return float(half_of(frame[index >> 1], uint(index)));
+    return level_of(half_of(frame[index >> 1], uint(index)));
 }
 
 /// A box average, deliberately not a filtered resize: both sides of the pair get the same one
@@ -115,7 +116,7 @@ void fit_levels(uint3 id: SV_DispatchThreadID)
     if (int(id.x) >= pc.counted) { return; }
     let i = int(wide<Drawn>(spread_index(id.x, uint(pc.pixels), uint(pc.counted))) * 3);
     let brightest = max(sample_at(i), max(sample_at(i + 1), sample_at(i + 2)));
-    histogram[uint(brightest)].add(1);
+    histogram[bits_of(max(brightest, 0.0))].add(1);
 }
 
 /// The walk up the bins `fit_levels` counted, for the three levels the grade is placed against.
@@ -152,15 +153,18 @@ void fit_scan()
     }
     // A frame with too few distinct levels to reach a mark falls back to the end of the range it
     // was looking for, which is what the mark meant on such a frame anyway.
-    let top = peak < 0 ? float(highest) : float(peak);
-    let anchor = white < 0 ? top : float(white);
+    let top = level_of(peak < 0 ? highest : uint(peak));
+    // Held to what the sensor recorded: a reconstructed highlight runs past full scale, and white
+    // following it there would darken every frame with a blown sun in it.
+    let recorded = min(top, FULL_SCALE);
+    let anchor = min(white < 0 ? top : level_of(uint(white)), FULL_SCALE);
     // On a night frame the quantile lands on the dark ground, four stops and more under the
     // lights; anchoring there pushed a frame 24x and the camera match could not bring it back.
-    levels[0] = max(anchor, top / pc.white_floor_under_peak);
+    levels[0] = max(anchor, recorded / pc.white_floor_under_peak);
     levels[1] = top;
     // Zero for a histogram with nothing in it, which is the only way the mark goes unreached: the
     // walk sees every sampled pixel, and the mark is a share of that same count.
-    levels[2] = bottom < 0 ? 0.0 : float(bottom);
+    levels[2] = bottom < 0 ? 0.0 : level_of(uint(bottom));
 }
 
 /// The plane as an 8-bit-grid sRGB render, which is what the geometry search compares against the

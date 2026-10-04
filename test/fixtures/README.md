@@ -1,6 +1,6 @@
 # Where the fixtures came from
 
-RAWs and snapshots use Git LFS (`.gitattributes`). Run `git lfs pull` before fixture suites.
+RAWs, snapshots and mosaics use Git LFS (`.gitattributes`). Run `git lfs pull` before fixture suites.
 
 ## AFXT2721.RAF
 
@@ -80,3 +80,11 @@ Approved crop only, cut the same way from project-owned Sony ILCE-7CR frame DSC0
 1248×704 undenoised conditioned photosites from sensor `6400,1300`, lamp-lit rock whose blown
 patches run red and green out with blue still reading. No metadata. Row-major little-endian f32,
 RGGB. `demosaic.rs`'s `A7CR_COLOUR` carries the body's matrix and ceilings.
+
+## mosaics/painted-beams.f32
+
+Approved crop only, cut the same way from project-owned Sony ILCE-7CR frame DSC05443: upright
+1280×704 undenoised conditioned photosites from sensor `5900,3990`, a temple's painted eave brackets,
+carved phoenix and beam medallions - small saturated reds, blues and greens a few pixels across, the
+fine colour detail a chroma stage can blur. No metadata. Row-major little-endian f32, RGGB.
+`demosaic.rs`'s `BEAMS_COLOUR` carries the frame's matrix and ceilings.

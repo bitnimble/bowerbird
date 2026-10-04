@@ -894,6 +894,7 @@ impl HeldRaw {
         luminance: Option<f64>,
         colour: Option<f64>,
         denoiser: &str,
+        highlight_recovery: f64,
         sharpen: f64,
         dust_enabled: bool,
         dust_sensitivity: f64,
@@ -909,6 +910,7 @@ impl HeldRaw {
             luminance,
             colour,
             denoiser: denoiser_of(denoiser)?,
+            highlight_recovery: Some(highlight_recovery),
         };
         // The photograph's own fit where one was measured, which is what a region would be
         // denoised at too - never a fit of whatever this amount happens to produce.
@@ -1227,6 +1229,7 @@ impl HeldRaw {
         luminance: Option<f64>,
         colour: Option<f64>,
         denoiser: &str,
+        highlight_recovery: f64,
         sharpen: f64,
         dust_enabled: bool,
         dust_sensitivity: f64,
@@ -1251,6 +1254,7 @@ impl HeldRaw {
             luminance,
             colour,
             denoiser_of(denoiser)?,
+            highlight_recovery,
             sharpen,
             dust,
             top,
@@ -1347,6 +1351,7 @@ impl HeldRaw {
         luminance: Option<f64>,
         colour: Option<f64>,
         denoiser: crate::galosh::Denoiser,
+        highlight_recovery: f64,
         sharpen: f64,
         dust: crate::dust::Settings,
         top: usize,
@@ -1375,6 +1380,7 @@ impl HeldRaw {
             denoise_luminance: luminance,
             denoise_colour: colour,
             denoiser,
+            highlight_recovery: Some(highlight_recovery),
             // The photograph's particles reach this through the analysis, as its noise and its lens
             // already do; what is here is only what the reader asked be done with them.
             dust,

@@ -1458,7 +1458,9 @@ mod tests {
         let (left, top, _, _) = request.window.raw();
         for y in 0..ACROSS {
             for c in 0..ACROSS * 3 {
-                theirs += f64::from(source[((top + y) * wide + left) * 3 + c]);
+                theirs += f64::from(crate::resident::level_of_bits(
+                    source[((top + y) * wide + left) * 3 + c],
+                ));
             }
         }
         let (ours, theirs) = (mean(ours, coded.len()), mean(theirs, coded.len()));

@@ -66,6 +66,7 @@ function open(
     unifiedSigma: 1,
     darkRef: [0, 0, 0, 0],
   },
+  mosaic = true,
 ): {
   calls: { name: string; value: unknown }[];
   stage: StageStore;
@@ -87,6 +88,7 @@ function open(
   // have fallen back to, so a row reading one of those fails here.
   stage.detail = status === 'live' ? [24, 76] : null;
   stage.noiseFit = noiseFit;
+  stage.mosaic = mosaic;
   const { presenter, calls } = recording();
   render(
     <RawEditPanel
@@ -125,6 +127,17 @@ describe('the edit panel', () => {
     expect(screen.queryByRole('slider', { name: 'Luminance' })).toBeNull();
     expect(screen.queryByRole('slider', { name: 'Colour' })).toBeNull();
     expect(screen.getByText("Denoise unavailable for this camera's sensor")).not.toBeNull();
+    expect(screen.getByRole('slider', { name: 'Highlight recovery' })).not.toBeNull();
+    expect(screen.getByRole('slider', { name: 'Sharpening' })).not.toBeNull();
+  });
+
+  test('drops every mosaic slider but the sharpen on a developed photo', () => {
+    open({}, null, false, 'live', undefined, false);
+    expect(screen.queryByRole('slider', { name: 'Luminance' })).toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Highlight recovery' })).toBeNull();
+    expect(
+      screen.getByText('Denoise and highlight recovery unavailable for developed photos'),
+    ).not.toBeNull();
     expect(screen.getByRole('slider', { name: 'Sharpening' })).not.toBeNull();
   });
 

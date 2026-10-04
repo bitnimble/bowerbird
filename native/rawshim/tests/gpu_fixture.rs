@@ -68,13 +68,17 @@ fn scene() -> Vec<u16> {
                 true => (ramp + edge + 12000.0, ramp * 0.35, ramp * 0.2),
                 false => (ramp + edge, ramp + edge * 0.9, ramp + edge * 0.8),
             };
-            let clamp = |v: f64| v.clamp(0.0, 65535.0) as u16;
-            samples[at] = clamp(r + noise);
-            samples[at + 1] = clamp(g + noise * 0.8);
-            samples[at + 2] = clamp(b + noise * 1.1);
+            samples[at] = stored(r + noise);
+            samples[at + 1] = stored(g + noise * 0.8);
+            samples[at + 2] = stored(b + noise * 1.1);
         }
     }
     samples
+}
+
+/// A scene-linear sample at `level`, held under full scale as a sensor's would be.
+fn stored(level: f64) -> u16 {
+    rawshim::resident::bits_of_level(level.clamp(0.0, 65535.0) as f32)
 }
 
 fn levels(
@@ -812,7 +816,7 @@ fn banded(haze: f64) -> Vec<u16> {
             let wave = 2500.0 * (x as f64 * std::f64::consts::TAU / 16.0).sin();
             let checker = 1500.0 * (((x + y) % 2) as f64 * 2.0 - 1.0);
             let scene = (ramp + wave + checker) * (1.0 - haze) + 45000.0 * haze;
-            let level = scene.clamp(0.0, 65535.0) as u16;
+            let level = stored(scene);
             let at = (y * BANDED + x) * 3;
             samples[at] = level;
             samples[at + 1] = level;
@@ -863,7 +867,7 @@ fn split_ground() -> Vec<u16> {
             let ground = if x < BANDED / 2 { 3750.0 } else { 30000.0 };
             // The same ratio either side, so the texture is the same number of stops on both.
             let ripple = 1.0 + 0.08 * (((x + y) % 2) as f64 * 2.0 - 1.0);
-            let level = (ground * ripple).clamp(0.0, 65535.0) as u16;
+            let level = stored(ground * ripple);
             let at = (y * BANDED + x) * 3;
             samples[at] = level;
             samples[at + 1] = level;
@@ -914,7 +918,7 @@ fn clarity_leaves_the_finest_band_to_texture() {
             let level = (16000.0 + 6000.0 * wave) * checker;
             let at = (y * WIDE + x) * 3;
             for c in 0..3 {
-                frame[at + c] = level.clamp(0.0, 65535.0) as u16;
+                frame[at + c] = stored(level);
             }
         }
     }
@@ -1082,13 +1086,13 @@ fn three_grounds() -> Vec<u16> {
         for x in 0..BANDED {
             // Four stops under the midtone band, which is where the trees in the scene this
             // was reported against sit.
-            let level = if y == 0 {
+            let level = stored(if y == 0 {
                 60000.0
             } else if y < BANDED / 2 {
                 8000.0
             } else {
                 500.0
-            } as u16;
+            });
             let at = (y * BANDED + x) * 3;
             samples[at] = level;
             samples[at + 1] = level;
@@ -1177,7 +1181,7 @@ fn four_grounds() -> Vec<u16> {
     let mut samples = vec![0u16; BANDED * BANDED * 3];
     for y in 0..BANDED {
         for x in 0..BANDED {
-            let level = if y < BANDED / 10 {
+            let level = stored(if y < BANDED / 10 {
                 white
             } else if y < BANDED * 2 / 5 {
                 white * 0.18
@@ -1185,7 +1189,7 @@ fn four_grounds() -> Vec<u16> {
                 white / 16.0
             } else {
                 white / 45.0
-            } as u16;
+            });
             let at = (y * BANDED + x) * 3;
             samples[at] = level;
             samples[at + 1] = level;
@@ -1282,7 +1286,7 @@ fn hazed_grounds(haze: f64) -> Vec<u16> {
             } else {
                 white / 45.0
             };
-            let level = lifted(scene) as u16;
+            let level = stored(lifted(scene));
             let at = (y * BANDED + x) * 3;
             samples[at] = level;
             samples[at + 1] = level;
@@ -1408,7 +1412,7 @@ fn hard_edge(haze: f64) -> Vec<u16> {
             };
             // The anchor is the fixed point either way, so the frame's white does not move and
             // `haze` is exactly how far its floor comes up.
-            let level = (scene * (1.0 - haze) + EDGE_WHITE * haze) as u16;
+            let level = stored(scene * (1.0 - haze) + EDGE_WHITE * haze);
             let at = (y * EDGE_WIDE + x) * 3;
             samples[at] = level;
             samples[at + 1] = level;
@@ -1933,8 +1937,8 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
     let frame: Vec<u16> = (0..width * height)
         .flat_map(|at| {
             let (x, y) = (at % width, at / width);
-            let value = ((x * 271 + y * 733) % 60_000 + 2_000) as u16;
-            [value, value / 2, value / 3]
+            let value = ((x * 271 + y * 733) % 60_000 + 2_000) as f64;
+            [stored(value), stored(value / 2.0), stored(value / 3.0)]
         })
         .collect();
 

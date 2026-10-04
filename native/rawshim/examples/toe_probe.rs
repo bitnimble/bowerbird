@@ -81,7 +81,9 @@ fn main() {
             let mut seen = 0usize;
             for row in y0..y1.max(y0 + 1) {
                 for col in x0..x1.max(x0 + 1) {
-                    total += f64::from(samples[(row * frame.width + col) * 3 + 1]);
+                    total += f64::from(rawshim::resident::level_of_bits(
+                        samples[(row * frame.width + col) * 3 + 1],
+                    ));
                     seen += 1;
                 }
             }

@@ -1,22 +1,16 @@
-// How far the frame's own chroma reaches, on each of the lattice's two axes, taken over every pixel
-// of the sharp plane where the plane already is.
+// How far the frame's own chroma reaches, taken over every pixel of the sharp plane where the plane
+// already is.
 //
 // The gather is a sample per pixel with the lens's falloff lifted in - `hdr_fit::chroma_span` has
 // why the sharp plane rather than the pairs, and why the falloff has to be on. Building those
-// samples on the host and reading the whole evaluated plane back to take two percentiles of it is
-// 27MB each way on a 1616x1077 plane, to answer with four numbers.
+// samples on the host and reading the whole evaluated plane back to take a percentile of it is
+// 27MB each way on a 1616x1077 plane, to answer with one number.
 //
-// The percentiles are selected rather than binned, as `fit_pairs.slang`'s ceiling is and for the
-// same reason - they size the lattice a stored match carries. A chroma difference is signed, so the
-// bit patterns need one more step than the ceiling's did: a float's sign bit makes its pattern sort
-// backwards, and `ordered` flips the negatives whole and sets the positives' top bit so the two
-// halves land either side of each other in unsigned order.
-//
-// Both of an axis's percentiles come off one histogram, which is why the passes carry two ranks: the
-// distribution is the same one, and only where a walk of it stops differs.
+// The percentile is selected rather than binned, as `fit_pairs.slang`'s ceiling is and for the same
+// reason - it sizes the lattice a stored match carries. `ordered` maps a float's bits to a word whose
+// unsigned order is the float's own, so the selection walks bit patterns.
 
 import px;
-import times;
 import light;
 import index_space;
 
@@ -27,13 +21,12 @@ struct Params {
     int falloff;
     /// Half the plane's diagonal, which the radius bucket is a fraction of.
     float half;
-    /// What this dispatch ranks: 0 is the opponent chroma, 1 its lightness.
-    int axis;
-    /// The two ranks being looked for, as whole samples.
-    int low_rank;
-    int high_rank;
+    /// The rank being looked for, as whole samples.
+    int rank;
     /// `index_space`'s space the lattice is indexed in.
     uint space;
+    int pad0;
+    int pad1;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -45,25 +38,19 @@ struct Params {
 [vk::binding(2, 0)] RWStructuredBuffer<float> samples;
 /// What the model made of them: chroma, luma, chroma, luma per sample.
 [vk::binding(3, 0)] StructuredBuffer<float> evaluated;
-/// Per axis: the high half's buckets, then a low half for each of the two ranks.
+/// The high half's buckets, then the low half of the one bucket the rank fell in.
 [vk::binding(4, 0)] RWStructuredBuffer<Atomic<uint> > histogram;
-/// Per axis and rank: the bucket it fell in, how many sat below it, and the answer's bits.
+/// The bucket the rank fell in, how many sat below it, and the answer's bits.
 [vk::binding(5, 0)] RWStructuredBuffer<uint> marks;
 
 static const uint HALF_BINS = 65536;
-/// One high half and one low half per rank.
-static const uint AXIS_BINS = 3 * HALF_BINS;
-/// A bucket, a running count, and the picked value.
-static const uint PER_RANK = 3;
-static const uint MARKS_PER_AXIS = 2 * PER_RANK;
 
-/// What this sample carries on the axis being ranked, in the space the lattice is indexed in.
-float spread_of(int k)
+/// This sample's opponent chroma, in the space the lattice is indexed in.
+float chroma_of(int k)
 {
     let at = k * 4;
     let colour = measured<Rendered>(float3(evaluated[at], evaluated[at + 1], evaluated[at + 2]));
-    let opponent = opponent_of(colour, pc.space).v;
-    return pc.axis == 0 ? length(opponent.yz) : opponent.x;
+    return length(opponent_of(colour, pc.space).v.yz);
 }
 
 /// A float's bits, reordered so that unsigned comparison is the float's own.
@@ -112,7 +99,7 @@ void fit_span_high(uint3 id: SV_DispatchThreadID)
 {
     let k = int(id.x);
     if (k >= pc.width * pc.height) { return; }
-    histogram[uint(pc.axis) * AXIS_BINS + (ordered(spread_of(k)) >> 16)].add(1);
+    histogram[ordered(chroma_of(k)) >> 16].add(1);
 }
 
 /// Lanes that walk a half's buckets together, each a contiguous share of them.
@@ -142,8 +129,6 @@ bool passed(uint lane, uint from, uint seen, uint rank, out uint bucket, out uin
     }
     GroupMemoryBarrierWithGroupSync();
     var run = shares[lane];
-    // Before the next call writes `shares` over what this one is still reading.
-    GroupMemoryBarrierWithGroupSync();
     if (rank < run || run + total <= rank) { return false; }
     for (uint b = 0u; b < SHARE; b++) {
         let count = histogram[first + b].load();
@@ -157,22 +142,16 @@ bool passed(uint lane, uint from, uint seen, uint rank, out uint bucket, out uin
     return false;
 }
 
-/// Which bucket each rank fell in, and how many samples sat below it.
+/// Which bucket the rank fell in, and how many samples sat below it.
 [shader("compute")]
 [numthreads(WALKERS, 1, 1)]
 void fit_span_pick(uint3 id: SV_GroupThreadID)
 {
-    let bins = uint(pc.axis) * AXIS_BINS;
-    let base = uint(pc.axis) * MARKS_PER_AXIS;
-    let ranks = uint2(uint(pc.low_rank), uint(pc.high_rank));
-    for (uint r = 0; r < 2; r++) {
-        uint bucket;
-        uint below;
-        if (passed(id.x, bins, 0u, ranks[r], bucket, below)) {
-            let at = base + times(r, PER_RANK);
-            marks[at] = bucket;
-            marks[at + 1] = below;
-        }
+    uint bucket;
+    uint below;
+    if (passed(id.x, 0u, 0u, uint(pc.rank), bucket, below)) {
+        marks[0] = bucket;
+        marks[1] = below;
     }
 }
 
@@ -182,13 +161,9 @@ void fit_span_low(uint3 id: SV_DispatchThreadID)
 {
     let k = int(id.x);
     if (k >= pc.width * pc.height) { return; }
-    let bins = uint(pc.axis) * AXIS_BINS;
-    let base = uint(pc.axis) * MARKS_PER_AXIS;
-    let word = ordered(spread_of(k));
-    for (uint r = 0; r < 2; r++) {
-        if ((word >> 16) == marks[base + times(r, PER_RANK)]) {
-            histogram[bins + (r + 1) * HALF_BINS + (word & 0xffffu)].add(1);
-        }
+    let word = ordered(chroma_of(k));
+    if ((word >> 16) == marks[0]) {
+        histogram[HALF_BINS + (word & 0xffffu)].add(1);
     }
 }
 
@@ -196,16 +171,9 @@ void fit_span_low(uint3 id: SV_DispatchThreadID)
 [numthreads(WALKERS, 1, 1)]
 void fit_span_finish(uint3 id: SV_GroupThreadID)
 {
-    let bins = uint(pc.axis) * AXIS_BINS;
-    let base = uint(pc.axis) * MARKS_PER_AXIS;
-    let ranks = uint2(uint(pc.low_rank), uint(pc.high_rank));
-    for (uint r = 0; r < 2; r++) {
-        let at = base + times(r, PER_RANK);
-        let seen = marks[at + 1];
-        uint low;
-        uint below;
-        if (passed(id.x, bins + (r + 1) * HALF_BINS, seen, ranks[r], low, below)) {
-            marks[at + 2] = unordered((marks[at] << 16) | low);
-        }
+    uint low;
+    uint below;
+    if (passed(id.x, HALF_BINS, marks[1], uint(pc.rank), low, below)) {
+        marks[2] = unordered((marks[0] << 16) | low);
     }
 }

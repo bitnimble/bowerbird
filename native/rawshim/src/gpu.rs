@@ -6476,10 +6476,10 @@ mod tests {
         let mut frame: Vec<u16> = (0..width * height * 3)
             .map(|i| {
                 let (x, y) = ((i / 3) % width, (i / 3) / width);
-                match (x / 8 + y / 8) % 2 == 0 {
-                    true => 26000,
-                    false => 1200,
-                }
+                crate::resident::bits_of_level(match (x / 8 + y / 8) % 2 == 0 {
+                    true => 26000.0,
+                    false => 1200.0,
+                })
             })
             .collect();
         // Coded and anchored as every other caller hands a frame over, so the dark squares grade
@@ -6646,7 +6646,9 @@ mod tests {
                 // a grey frame would agree between the two hosts however wrong both were.
                 let (x, y) = ((i / 3) % width, (i / 3) / width);
                 let channel = i % 3;
-                (6000.0 + 4000.0 * ((x + y * 2 + channel * 7) % 11) as f64) as u16
+                crate::resident::bits_of_level(
+                    6000.0 + 4000.0 * ((x + y * 2 + channel * 7) % 11) as f32,
+                )
             })
             .collect();
         let levels = crate::hdr::levels_of(gpu, &frame, width, height, 0.995).expect("levels");

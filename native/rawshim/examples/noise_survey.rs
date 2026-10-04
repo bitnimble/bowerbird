@@ -122,13 +122,14 @@ fn main() {
         rawshim::decode_frame_denoised(path, 0, detail, Default::default())
     };
     let deviation = |a: &[u16], b: &[u16]| {
-        let (mut total, mut worst) = (0u64, 0u32);
-        for (x, y) in a.iter().zip(b) {
-            let off = u32::from(x.abs_diff(*y));
-            total += u64::from(off);
+        let (mut total, mut worst) = (0f64, 0f32);
+        for (&x, &y) in a.iter().zip(b) {
+            let off =
+                (rawshim::resident::level_of_bits(x) - rawshim::resident::level_of_bits(y)).abs();
+            total += f64::from(off);
             worst = worst.max(off);
         }
-        (total as f64 / a.len() as f64, worst)
+        (total / a.len() as f64, worst)
     };
 
     println!(
@@ -162,8 +163,8 @@ fn main() {
         let (half_mean, half_worst) = deviation(a, h);
         let (quarter_mean, quarter_worst) = deviation(a, q);
         println!(
-            "{std:>10.5}  {skip_mean:>9.2} {skip_worst:>8}  {half_mean:>9.2} {half_worst:>8}  \
-             {quarter_mean:>9.2} {quarter_worst:>8}  {}",
+            "{std:>10.5}  {skip_mean:>9.2} {skip_worst:>8.0}  {half_mean:>9.2} {half_worst:>8.0}  \
+             {quarter_mean:>9.2} {quarter_worst:>8.0}  {}",
             path.rsplit('/').next().unwrap_or(path),
         );
     }

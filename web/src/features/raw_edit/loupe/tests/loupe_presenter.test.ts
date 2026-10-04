@@ -181,6 +181,7 @@ describe('the loupe', () => {
       ...neutralEdits(),
       luminanceNoise: 55,
       colourNoise: 65,
+      highlightRecovery: 35,
       sharpening: 70,
       clarity: 40,
     };
@@ -208,6 +209,7 @@ describe('the loupe', () => {
     expect(request.frame).toEqual([4000, 3000]);
     expect(request.denoiseLuminance).toBe(55);
     expect(request.denoiseColour).toBe(65);
+    expect(request.highlightRecovery).toBe(35);
     // The sharpen comes off the document rather than the open, since the reader can move it
     // between the two; the defringe is the library's and rides through untouched.
     expect(request.strengths).toEqual({ sharpen: 0.7, defringe: 0.5 });

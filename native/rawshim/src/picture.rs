@@ -244,6 +244,7 @@ fn windowed(
         denoise_luminance: job.denoise_luminance,
         denoise_colour: job.denoise_colour,
         denoiser: job.denoiser,
+        highlight_recovery: job.highlight_recovery,
         dust: job.dust,
         adjust: job.adjust.clone(),
         levels: None,

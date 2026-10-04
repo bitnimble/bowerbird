@@ -54,6 +54,28 @@ pub fn runs(
         .collect()
 }
 
+/// A scene-linear sample's level, in counts of the sensor's full scale, off its bits: a half float
+/// of the level over full scale, so recovered light past the clip has somewhere to go. A coded
+/// frame's samples are PQ codes and never come through here. `packed.slang`'s `level_of`.
+pub fn level_of_bits(bits: u16) -> f32 {
+    half::f16::from_bits(bits).to_f32() * FULL_SCALE
+}
+
+pub fn bits_of_level(level: f32) -> u16 {
+    half::f16::from_f32(level / FULL_SCALE).to_bits()
+}
+
+/// The sensor's full scale, in the levels a scene-linear sample is counted in.
+pub const FULL_SCALE: f32 = 65535.0;
+
+pub fn levels_of(samples: &[u16]) -> Vec<f32> {
+    samples.iter().map(|&bits| level_of_bits(bits)).collect()
+}
+
+pub fn samples_of_levels(levels: impl IntoIterator<Item = f32>) -> Vec<u16> {
+    levels.into_iter().map(bits_of_level).collect()
+}
+
 /// A mapped readback as the samples it holds, which on these targets is the same bytes.
 ///
 /// **A frame is hundreds of megabytes, so this is a reinterpret rather than a conversion.** At

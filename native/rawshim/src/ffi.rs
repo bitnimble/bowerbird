@@ -165,9 +165,9 @@ unsafe fn replied(result: Result<job::Outcome, String>, out: *mut u8, out_cap: u
 /// How much of a prepared picture's buffer the header may take, before the samples.
 ///
 /// Read once by the caller ([`bb_prepare_header_cap`]) so the two sides cannot disagree about
-/// where the samples start. The header is a few hundred bytes plus the analysis blob, which is
-/// about 5kB and bounded by the dust list.
-pub const PREPARE_HEADER_CAP: usize = 256 * 1024;
+/// where the samples start. The header is a few hundred bytes plus the analysis blob, as JSON of up
+/// to four characters a byte, and the blob is bounded by the largest lattice a stored one may hold.
+pub const PREPARE_HEADER_CAP: usize = 256 * 1024 + 4 * 2 * crate::photo_analysis::MAX_KERNEL_WORDS;
 
 /// One picture of a recipe, coded, for a client that will grade it itself.
 ///

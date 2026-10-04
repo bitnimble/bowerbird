@@ -103,6 +103,7 @@ export class QualityCheckApi {
             denoiseLuminance: null,
             denoiseColour: null,
             denoiser: library.denoiser,
+            highlightRecovery: 100,
             // Off, for the same reason: this page compares quantizers, and a correction that
             // removed a few discs from whichever photograph was chosen is a second variable.
             dust: dustSettings(undefined),

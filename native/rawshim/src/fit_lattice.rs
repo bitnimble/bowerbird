@@ -3,9 +3,9 @@
 //! `slang/fit_lattice.slang` is the arithmetic. What crosses back is `NODE_WORDS` sums a node,
 //! which the host reads into `ChromaMoments`.
 //!
-//! **A pair lands on sixteen nodes, so this needed a compaction the other folds did not.** The
-//! landings are binned by their cell in pair order, cut into slices of `SLICE`, and a thread per
-//! (slice, corner) then walks one slice for one of the nodes it reaches.
+//! A pair lands on sixteen nodes, so the landings are binned by their cell in pair order, cut into
+//! slices of `SLICE`, and a thread per (slice, corner) walks one slice for one of the nodes it
+//! reaches.
 
 /// Sums a node carries, which `fit_lattice.slang` states for itself.
 pub(crate) const NODE_WORDS: usize = 35;

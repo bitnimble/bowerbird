@@ -52,6 +52,8 @@ bool is_green_site(int r, int c)
 static const int REACH_FIELD = 4;  // E_d, from h_d at +-1 along d
 static const int REACH_GREEN = 5;  // stage C, and the refined t* it takes
 static const int REACH_CHROMA = 7; // stage E, from green at +-2 diagonal
+static const int REACH_FINAL = 10; // stage F, from red/blue at +-3
+static const int REACH_QUIET = 2;  // `assemble`'s smoothing, past stage F
 
 // ---------------------------------------------------------------------------
 // Stage A and D: the directional blend fields (§3)
@@ -322,9 +324,7 @@ void chroma_at_greens(uint3 gid : SV_DispatchThreadID)
     let c = int(gid.x);
     let r = int(gid.y);
     if (gid.x >= shape.width || gid.y >= shape.height) { return; }
-    // The last stage, so its reach is the frame's own margin - the border fill owns everything
-    // outside, and there is nothing after this to read what it writes.
-    if (!is_green_site(r, c) || !interior(r, c, int(shape.margin))) { return; }
+    if (!is_green_site(r, c) || !interior(r, c, REACH_FINAL)) { return; }
 
     // The same axis field stage C used, refined the same way, computed once for both channels.
     let t = refine_axis(r, c);
@@ -337,19 +337,77 @@ void chroma_at_greens(uint3 gid : SV_DispatchThreadID)
 // Border fill and output assembly (§8, §10)
 // ---------------------------------------------------------------------------
 
+/// How far green may differ from the centre's, as a share of the brighter, before a neighbour's
+/// colour stops counting.
+static const float QUIET_EDGE = 0.15;
+
+static const int QUIET_GROUP = 8;
+static const int QUIET_TILE = QUIET_GROUP + 2 * REACH_QUIET;
+/// A tile row's stride: a power of two, so no lane multiplies by twelve (`times.slang`).
+static const int QUIET_STRIDE = 16;
+
+groupshared float tile_green[QUIET_TILE * QUIET_STRIDE];
+groupshared float tile_red[QUIET_TILE * QUIET_STRIDE];
+groupshared float tile_blue[QUIET_TILE * QUIET_STRIDE];
+
+/// The planes, with the colour differences smoothed at the finest scales red and blue are sampled
+/// at. Red and blue land on one site in four, so structure at a period of 4 or 2 pixels in either is
+/// past what its own sites resolve, and RCD draws it as scales. `[1 2 2 2 1]` is zero at both
+/// periods and passes everything coarser; a tap whose green is far from the centre's counts for
+/// little, so colour stays on its own side of an edge.
+///
+/// **An addition after RCD, not the specification's §8**, which keeps each sampled channel as the
+/// mosaic had it: this rewrites red and blue at their own sites too.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void assemble(uint3 gid : SV_DispatchThreadID)
+void assemble(uint3 gid : SV_DispatchThreadID, uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
 {
+    let top = int(group.y) * QUIET_GROUP - REACH_QUIET;
+    let left = int(group.x) * QUIET_GROUP - REACH_QUIET;
+    for (int i = int(lane); i < QUIET_TILE * QUIET_TILE; i += QUIET_GROUP * QUIET_GROUP) {
+        let ty = i / QUIET_TILE;
+        let tx = i % QUIET_TILE;
+        let slot = ty * QUIET_STRIDE + tx;
+        if (interior(top + ty, left + tx, REACH_FINAL)) {
+            let at = idx(top + ty, left + tx);
+            let g = green[at];
+            tile_green[slot] = g;
+            tile_red[slot] = red[at] - g;
+            tile_blue[slot] = blue[at] - g;
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     let c = int(gid.x);
     let r = int(gid.y);
     if (gid.x >= shape.width || gid.y >= shape.height) { return; }
     let at = idx(r, c);
 
-    // The frame's margin, which is exactly where the last stage stopped writing.
+    // Never under the last stage's reach plus this one's, whatever margin a caller asked for: every
+    // tap below must land where the tile was loaded.
     float3 out;
-    if (interior(r, c, int(shape.margin))) {
-        out = float3(red[at], green[at], blue[at]);
+    if (interior(r, c, max(int(shape.margin), REACH_FINAL + REACH_QUIET))) {
+        let ty = r - top;
+        let tx = c - left;
+        let g0 = tile_green[ty * QUIET_STRIDE + tx];
+        float taps[5] = { 1.0, 2.0, 2.0, 2.0, 1.0 };
+        var red_minus = 0.0;
+        var blue_minus = 0.0;
+        var weights = 0.0;
+        [ForceUnroll]
+        for (int dy = -REACH_QUIET; dy <= REACH_QUIET; dy++) {
+            [ForceUnroll]
+            for (int dx = -REACH_QUIET; dx <= REACH_QUIET; dx++) {
+                let slot = (ty + dy) * QUIET_STRIDE + tx + dx;
+                let g = tile_green[slot];
+                let apart = (g - g0) / (QUIET_EDGE * max(max(g, g0), 0.0) + EPS);
+                let w = taps[dy + REACH_QUIET] * taps[dx + REACH_QUIET] * exp(-apart * apart);
+                red_minus += w * tile_red[slot];
+                blue_minus += w * tile_blue[slot];
+                weights += w;
+            }
+        }
+        out = float3(g0 + red_minus / weights, g0, g0 + blue_minus / weights);
     } else {
         out = filled_margin(r, c);
     }

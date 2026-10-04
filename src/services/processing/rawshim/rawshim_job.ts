@@ -18,8 +18,8 @@ export interface JobOutcome {
    * What this job measured that the caller did not already have, to keep against the photo.
    *
    * Undefined where the job was given everything, so this means "new, store it" rather than "here
-   * it is again". About 5KB, and it saves the next render, rebuild, editor open and loupe tile
-   * most of a second each.
+   * it is again". Tens of kilobytes, and it saves the next render, rebuild, editor open and loupe
+   * tile most of a second each.
    */
   photoAnalysis?: Uint8Array;
   /** The catalogue's fields, where the job asked for them. */
@@ -31,11 +31,11 @@ export interface JobOutcome {
 
 // Big enough for any reply the job produces. Two things in one are variable-length and both
 // are bytes rendered as a JSON array, which costs up to four characters each: the stacking
-// descriptor at 2.6kB (~16kB rendered) and the photo analysis at 5kB (~20kB). Sized generously
-// rather than exactly because the cost of being wrong is a second call - which re-renders the
-// *reply*, not the job - and the cost of being generous is one allocation per photo that never
-// leaves this function.
-const REPLY_CAPACITY = 128 * 1024;
+// descriptor at 2.6kB (~16kB rendered) and the photo analysis, whose chroma lattice runs to about
+// 100kB on a busy frame (~400kB rendered). Sized generously rather than exactly because the cost of
+// being wrong is a second call - which re-renders the *reply*, not the job - and the cost of being
+// generous is one allocation per photo that never leaves this function.
+const REPLY_CAPACITY = 512 * 1024;
 
 /**
  * Builds every rendition one job names, and returns what came back.

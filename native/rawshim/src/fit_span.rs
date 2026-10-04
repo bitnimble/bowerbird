@@ -1,17 +1,13 @@
-//! How far this frame's chroma reaches on each of the lattice's axes.
+//! How far this frame's chroma reaches on the lattice's chroma axis.
 //!
 //! `slang/fit_span.slang` is the arithmetic: a sample per pixel of the sharp plane, the colour
-//! model over them, and an exact rank taken twice on each axis. What crosses back is four floats,
-//! rather than a sample per pixel up and the whole evaluated plane down again.
+//! model over them, and an exact rank of their chroma. What crosses back is one float, rather than
+//! a sample per pixel up and the whole evaluated plane down again.
 
 /// Buckets each half of a selection counts into.
 const HALF_BINS: usize = 65536;
-/// One high half and one low half per rank, per axis.
-const AXIS_BINS: usize = 3 * HALF_BINS;
 /// A bucket, a running count, and the picked value.
-const PER_RANK: usize = 3;
-const MARKS_PER_AXIS: usize = 2 * PER_RANK;
-/// Where in a rank's marks the answer lands.
+const MARKS: usize = 3;
 const PICKED: usize = 2;
 
 pub(crate) struct Kernels {
@@ -119,7 +115,6 @@ pub(crate) fn lifted(
         plane,
         falloff.is_some(),
         0,
-        [0, 0],
         crate::lattice::IndexSpace::Jzazbz,
     );
     let (evaluated, histogram, marks) = (held("unused"), held("unused"), held("unused"));
@@ -175,8 +170,7 @@ fn describing(
     gpu: &'static crate::gpu::Gpu,
     plane: &crate::hdr_fit::Source,
     falloff: bool,
-    axis: usize,
-    ranks: [usize; 2],
+    rank: usize,
     space: crate::lattice::IndexSpace,
 ) -> crate::gpu::Buffer {
     let (cx, cy) = (plane.width as f64 / 2.0, plane.height as f64 / 2.0);
@@ -186,10 +180,10 @@ fn describing(
         (plane.height as i32).to_ne_bytes(),
         i32::from(falloff).to_ne_bytes(),
         (half as f32).to_ne_bytes(),
-        (axis as i32).to_ne_bytes(),
-        (ranks[0] as i32).to_ne_bytes(),
-        (ranks[1] as i32).to_ne_bytes(),
+        (rank as i32).to_ne_bytes(),
         space.word().to_ne_bytes(),
+        0i32.to_ne_bytes(),
+        0i32.to_ne_bytes(),
     ]
     .concat();
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -199,15 +193,15 @@ fn describing(
     })
 }
 
-/// Both ranks of the opponent chroma and lightness `space` gives each sample: `[axis][rank]`, over
-/// `evaluated`, which is the model's output over every pixel of `plane` as [`lifted`].
-pub(crate) async fn spans(
+/// The opponent chroma `space` gives the sample at `rank`, over `evaluated`, which is the model's
+/// output over every pixel of `plane` as [`lifted`].
+pub(crate) async fn ranked_chroma(
     gpu: &'static crate::gpu::Gpu,
     evaluated: &crate::gpu::Buffer,
     plane: &crate::hdr_fit::Source,
-    ranks: [usize; 2],
+    rank: usize,
     space: crate::lattice::IndexSpace,
-) -> Option<[[f64; 2]; 2]> {
+) -> Option<f64> {
     let pixels = plane.width * plane.height;
     let held = |label, words: usize, usage| {
         gpu.own_buffer(&wgpu::BufferDescriptor {
@@ -219,87 +213,77 @@ pub(crate) async fn spans(
     };
     let storage = wgpu::BufferUsages::STORAGE;
     // Zeroed by the driver, which the counting relies on.
-    let histogram = held("fit span histogram", 2 * AXIS_BINS, storage);
+    let histogram = held("fit span histogram", 2 * HALF_BINS, storage);
     let marks = held(
         "fit span marks",
-        2 * MARKS_PER_AXIS,
+        MARKS,
         storage | wgpu::BufferUsages::COPY_SRC,
     );
     let built = kernels(gpu);
     let idle = held("unused", 1, storage);
     let no_gains = held("unused gains", 1, storage);
-    let pushes: Vec<crate::gpu::Buffer> = (0..2)
-        .map(|axis| describing(gpu, plane, false, axis, ranks, space))
-        .collect();
+    let push = describing(gpu, plane, false, rank, space);
 
     // The ranking reads what the model wrote, so the bind group points at that rather than at the
     // samples the gather filled - the two are the same shape and the second overwrites nothing.
-    let ranking: Vec<wgpu::BindGroup> = pushes
-        .iter()
-        .map(|push| {
-            gpu.bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("fit_span rank"),
-                layout: &built.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: plane.buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: no_gains.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: idle.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: evaluated.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: histogram.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: marks.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 20,
-                        resource: push.as_entire_binding(),
-                    },
-                ],
-            })
-        })
-        .collect();
+    let ranking = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("fit_span rank"),
+        layout: &built.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: plane.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: no_gains.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: idle.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: evaluated.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: histogram.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: marks.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 20,
+                resource: push.as_entire_binding(),
+            },
+        ],
+    });
 
     let mut recording = gpu.record();
     let over_samples = (pixels as u32).div_ceil(64);
     // A pass each, which is what orders them: every step reads what the step before it wrote.
-    for axis in 0..2 {
-        for (pipeline, dispatch) in [
-            (&built.high, over_samples),
-            (&built.pick, 1),
-            (&built.low, over_samples),
-            (&built.finish, 1),
-        ] {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &ranking[axis], &[]);
-            pass.dispatch_workgroups(dispatch, 1, 1);
-        }
+    for (pipeline, dispatch) in [
+        (&built.high, over_samples),
+        (&built.pick, 1),
+        (&built.low, over_samples),
+        (&built.finish, 1),
+    ] {
+        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &ranking, &[]);
+        pass.dispatch_workgroups(dispatch, 1, 1);
     }
-    let words = 2 * MARKS_PER_AXIS;
     let out = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit span out"),
-        size: (words * 4) as u64,
+        size: (MARKS * 4) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     recording
         .encoder()
-        .copy_buffer_to_buffer(&marks, 0, &out, 0, (words * 4) as u64);
+        .copy_buffer_to_buffer(&marks, 0, &out, 0, (MARKS * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &out, |mapped| {
@@ -309,30 +293,21 @@ pub(crate) async fn spans(
             .collect::<Vec<u32>>()
     })
     .await?;
-    Some(std::array::from_fn(|axis| {
-        std::array::from_fn(|rank| {
-            let at = axis * MARKS_PER_AXIS + rank * PER_RANK + PICKED;
-            f64::from(f32::from_bits(read[at]))
-        })
-    }))
+    Some(f64::from(f32::from_bits(read[PICKED])))
 }
 
 #[cfg(test)]
 mod tests {
-    /// The shape of the buffers the host allocates and the shader indexes, which each states for
-    /// itself. A value that moved on one side reads a rank out of another rank's marks - a span
-    /// that is wrong rather than absent, so nothing downstream would report it.
+    /// The bucket count the host allocates for and the shader indexes, which each states for itself.
+    /// A value that moved on one side walks the low half off the end of the high one - a span that
+    /// is wrong rather than absent, so nothing downstream would report it.
     #[test]
     fn the_shader_marks_the_buckets_the_host_allocates() {
         const SOURCE: &str = include_str!("../../../slang/fit_span.slang");
-        for line in [
-            format!("static const uint HALF_BINS = {};", super::HALF_BINS),
-            format!("static const uint PER_RANK = {};", super::PER_RANK),
-        ] {
-            assert!(
-                SOURCE.contains(&line),
-                "fit_span.slang does not say `{line}`"
-            );
-        }
+        let line = format!("static const uint HALF_BINS = {};", super::HALF_BINS);
+        assert!(
+            SOURCE.contains(&line),
+            "fit_span.slang does not say `{line}`"
+        );
     }
 }

@@ -263,16 +263,9 @@ pub struct HdrColour {
 /// the holdout by region does not fix it: a lattice memorises *colours*, and the same lawn and
 /// the same skin sit on both sides of any partition of one photograph, so no split makes a
 /// held-out pair an unseen colour. The whole render against the camera is the only measure that
-/// sees this, and `examples/sweep` reports it.
-///
-/// **Two things about measuring this that cost a while to learn.** A cast has to be pooled
-/// over pixels of *similar colour*, not over a neighbourhood: on IMG_8789, pooled spatially, a
-/// uniformly finer grid scored better at every window from 4px to 64px, because a window on
-/// that frame is mostly lawn and the lawn genuinely improved, so the bird bath drowns in it. And
-/// the pooling has to be inside a class rather than across the frame, or a green cast on the
-/// neutrals and a warm one on the saturates cancel and the number reads clean. The eye agrees with
-/// the classed measure and not with the spatial one: side by side at 1:1, the finer grid's bird
-/// bath was the greener.
+/// sees this, and `examples/sweep` reports it, pooling a cast over pixels of similar colour and
+/// inside a class: pooled spatially or across the frame, a large improved region drowns a small
+/// worsened one, and opposite casts in two classes cancel.
 pub(crate) const MAP_HUE: usize = 12;
 /// Chroma rings out from grey, which is a node of its own shared by every hue.
 pub(crate) const MAP_RINGS: usize = 4;
@@ -282,10 +275,8 @@ const FINE_HUE: usize = 24;
 const FINE_RINGS: usize = 8;
 /// The share of the fine grid's correction its kept kernels carry (`NodeGrid::carrying`).
 ///
-/// Measured over the Nick library: the whole grid is ~3400 kernels a frame, and this keeps ~800 of
-/// them at the whole grid's quality. Lower costs quality quickly, because the tail is many thin
-/// nodes that each matter little and together a third of the fine pass's gain: 0.97 keeps ~330
-/// and gives up half the fine pass's perceptual ΔE.
+/// Lower costs quality quickly: the tail is many thin kernels that each matter little and together
+/// carry a third of the fine pass's gain.
 const FINE_CARRIED: f64 = 0.9997;
 /// Levels from black to the fitted ceiling, in Jz (`LatticeAxes::of`).
 ///
@@ -626,6 +617,13 @@ impl NodeGrid {
     ///
     /// Each node counts by how much landed on it (`seen`, per node): a level no pair reached
     /// holds the prior, and counted like the rest it draws the cubic through itself.
+    ///
+    /// **Between levels with evidence, and not past them.** The cubic is written back over every
+    /// level, so a column's end beyond its last evidence would take the cubic's extrapolation - at
+    /// the top of the axis, where the camera clips and almost nothing lands, that turned a faint
+    /// pink at four times white cyan. Each level keeps its trended correction by the lesser of the
+    /// strongest evidence at or below it and at or above it, over the column's strongest, so a gap
+    /// between seen levels fills and an end past them falls back to uncorrected.
     fn level_trended(&self, seen: &[f64]) -> NodeGrid {
         let (l, s) = (self.shape.level, self.shape.surround);
         let area = self.shape.hue * (self.shape.rings + 1);
@@ -633,13 +631,29 @@ impl NodeGrid {
             let x = z as f64 / (l - 1) as f64 - 0.5;
             [1.0, x, x * x, x * x * x]
         };
+        // Experiment, off by default: hold the last well-seen level's correction past the evidence
+        // instead of fading it to uncorrected.
+        let hold = std::env::var("BOWERBIRD_LATTICE_HOLD").is_ok();
         let mut nodes = self.nodes.clone();
         for si in 0..s {
             for at in 0..area {
                 let index = |z: usize| (si * l + z) * area + at;
-                let weight = |z: usize| {
-                    seen[index(z)] / (seen[index(z)] + MAP_CONFIDENCE) + UNSEEN_LEVEL_WEIGHT
-                };
+                let confidence = |z: usize| seen[index(z)] / (seen[index(z)] + MAP_CONFIDENCE);
+                let weight = |z: usize| confidence(z) + UNSEEN_LEVEL_WEIGHT;
+                let strongest = (0..l).map(confidence).fold(0.0, f64::max);
+                let bracketed: Vec<f64> = (0..l)
+                    .map(|z| {
+                        let below = (0..=z).map(confidence).fold(0.0, f64::max);
+                        let above = (z..l).map(confidence).fold(0.0, f64::max);
+                        match strongest > 0.0 {
+                            true => below.min(above) / strongest,
+                            false => 0.0,
+                        }
+                    })
+                    .collect();
+                let evidenced = |z: &usize| confidence(*z) >= 0.5 * strongest;
+                let first = (0..l).find(evidenced).unwrap_or(0);
+                let last = (0..l).rev().find(evidenced).unwrap_or(l - 1);
                 let mut normal = [0.0f64; 16];
                 for z in 0..l {
                     let basis = powers(z);
@@ -661,8 +675,16 @@ impl NodeGrid {
                         continue;
                     };
                     for z in 0..l {
+                        let trended = |z: usize| -> f64 {
+                            powers(z).iter().zip(&cubic).map(|(p, k)| p * k).sum()
+                        };
+                        if hold {
+                            nodes[index(z)][ch] = trended(z.clamp(first, last));
+                            continue;
+                        }
+                        let uncorrected = UNCORRECTED_NODE[ch];
                         nodes[index(z)][ch] =
-                            powers(z).iter().zip(&cubic).map(|(p, k)| p * k).sum();
+                            uncorrected + (trended(z) - uncorrected) * bracketed[z];
                     }
                 }
             }
@@ -4519,15 +4541,9 @@ async fn chroma_span(
         return Some(widest.sqrt());
     }
     let quantile = |q: f64| ((samples as f64 * q) as usize).min(samples - 1);
-    let picked = crate::fit_span::spans(
-        gpu,
-        evaluated,
-        sharp,
-        [quantile(0.001), quantile(0.999)],
-        space,
-    )
-    .await?;
-    Some(picked[0][1].clamp(widest / 16.0, widest).sqrt())
+    let picked =
+        crate::fit_span::ranked_chroma(gpu, evaluated, sharp, quantile(0.999), space).await?;
+    Some(picked.clamp(widest / 16.0, widest).sqrt())
 }
 
 /// The surround in both the places that read it: the device, where every probe gathers it beside
@@ -7503,6 +7519,33 @@ mod tests {
     }
 
     #[test]
+    fn the_level_trend_stops_at_the_last_level_reached() {
+        let reached = MAP_LEVEL - 3;
+        let cubic = |z: usize| {
+            let x = z as f64 / (MAP_LEVEL - 1) as f64;
+            0.9 - 0.4 * x + 0.7 * x * x - 0.5 * x * x * x
+        };
+        let map = grid_of(|[_, _, z, _]| [cubic(z), 0.0, 0.0, cubic(z), 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let shape = map.shape;
+        let seen: Vec<f64> = (0..shape.nodes())
+            .map(|n| match shape.place(n)[2] < reached {
+                true => 1e4,
+                false => 0.0,
+            })
+            .collect();
+        let trended = map.level_trended(&seen);
+        for z in reached..MAP_LEVEL {
+            let kept = trended.nodes[shape.index([0, 1, z, 0])][0];
+            assert!(
+                (kept - UNCORRECTED_NODE[0]).abs() < 1e-9,
+                "level {z} past the evidence took {kept}"
+            );
+        }
+        let inside = trended.nodes[shape.index([0, 1, reached / 2, 0])][0];
+        assert!((inside - cubic(reached / 2)).abs() < 1e-9, "{inside}");
+    }
+
+    #[test]
     fn the_level_trend_keeps_a_cubic_it_was_handed() {
         let cubic = |z: usize| {
             let x = z as f64 / (MAP_LEVEL - 1) as f64;
@@ -8705,40 +8748,34 @@ mod tests {
             crate::lattice::IndexSpace::Jzazbz,
             crate::lattice::IndexSpace::Ictcp,
         ] {
-            let picked = pollster::block_on(crate::fit_span::spans(
-                gpu,
-                &evaluated.buffer,
-                &plane,
-                ranks,
-                space,
-            ))
-            .expect("ranked");
-            for axis in 0..2 {
-                let mut spread: Vec<f64> = read
-                    .iter()
-                    .map(|m| {
-                        let [lightness, a, b] = space.opponent_of(
-                            [m[0], m[1], m[2]]
-                                .map(|v| Light::<crate::light::Rendered>::measured(f64::from(v))),
-                        );
-                        match axis {
-                            0 => a.hypot(b),
-                            _ => lightness,
-                        }
-                    })
-                    .collect();
-                spread.sort_by(f64::total_cmp);
-                for (rank, at) in ranks.iter().enumerate() {
-                    // The device ranks its own `f32` reading of each sample, the host its `f64`
-                    // one, and both transfers raise to a power near a hundred, which multiplies
-                    // `f32`'s rounding.
-                    assert!(
-                        (picked[axis][rank] - spread[*at]).abs() < 1e-5,
-                        "{space:?} axis {axis} rank {at}: {} against {}",
-                        picked[axis][rank],
-                        spread[*at]
+            let mut chroma: Vec<f64> = read
+                .iter()
+                .map(|m| {
+                    let [_, a, b] = space.opponent_of(
+                        [m[0], m[1], m[2]]
+                            .map(|v| Light::<crate::light::Rendered>::measured(f64::from(v))),
                     );
-                }
+                    a.hypot(b)
+                })
+                .collect();
+            chroma.sort_by(f64::total_cmp);
+            for at in ranks {
+                let picked = pollster::block_on(crate::fit_span::ranked_chroma(
+                    gpu,
+                    &evaluated.buffer,
+                    &plane,
+                    at,
+                    space,
+                ))
+                .expect("ranked");
+                // The device ranks its own `f32` reading of each sample, the host its `f64` one,
+                // and both transfers raise to a power near a hundred, which multiplies `f32`'s
+                // rounding.
+                assert!(
+                    (picked - chroma[at]).abs() < 1e-5,
+                    "{space:?} rank {at}: {picked} against {}",
+                    chroma[at]
+                );
             }
         }
     }

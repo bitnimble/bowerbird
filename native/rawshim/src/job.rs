@@ -165,6 +165,8 @@ pub struct Job {
     /// was a choice, so a library rendered before this reads the same.
     #[serde(default)]
     pub denoiser: crate::galosh::Denoiser,
+    #[serde(default)]
+    pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, on the job for the same reason the pair above is:
     /// the correction is on the mosaic, inside the one decode every target is cut from.
     #[serde(default)]
@@ -273,6 +275,7 @@ impl Job {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
+            highlight_recovery: self.highlight_recovery,
         }
     }
 
@@ -1052,6 +1055,7 @@ impl Base {
                 denoise_luminance: job.denoise_luminance,
                 denoise_colour: job.denoise_colour,
                 denoiser: job.denoiser,
+                highlight_recovery: job.highlight_recovery,
                 dust: job.dust,
                 adjust: job.adjust.clone(),
                 levels: Some(levels),
@@ -1179,6 +1183,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         denoise_luminance: job.denoise_luminance,
         denoise_colour: job.denoise_colour,
         denoiser: job.denoiser,
+        highlight_recovery: job.highlight_recovery,
         dust: job.dust,
         adjust: job.adjust.clone(),
         levels: job.levels,
@@ -1695,6 +1700,7 @@ pub(crate) async fn graded_bands(
             denoise_luminance: job.denoise_luminance,
             denoise_colour: job.denoise_colour,
             denoiser: job.denoiser,
+            highlight_recovery: job.highlight_recovery,
             dust: job.dust,
             adjust: job.adjust.clone(),
             levels: None,

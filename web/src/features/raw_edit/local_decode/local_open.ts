@@ -59,6 +59,7 @@ export type LocalPrepare = {
   luminance: number | null;
   colour: number | null;
   denoiser: Denoiser;
+  highlightRecovery: number;
   sharpen: number;
   dust: DustSettings;
   /**
@@ -90,6 +91,7 @@ export type LocalTileRequest = {
   denoiseLuminance: number | null;
   denoiseColour: number | null;
   denoiser: Denoiser;
+  highlightRecovery: number;
   dust: DustSettings;
   /** Read for the presence three alone: how far past the tile the guided filter reaches. */
   adjust: JobAdjust;
@@ -150,6 +152,7 @@ const PrepareCrossingSchema = z.object({
   luminance: z.number().nullable(),
   colour: z.number().nullable(),
   denoiser: DenoiserSchema,
+  highlightRecovery: z.number(),
   sharpen: z.number(),
   dust: DustSettingsSchema,
   repairs: JsonSchema,

@@ -307,6 +307,7 @@ describe('a slider reaching the picture', () => {
       luminance: neutral.luminanceNoise,
       colour: neutral.colourNoise,
       denoiser: 'pmrid',
+      highlightRecovery: neutral.highlightRecovery,
       sharpen: neutral.sharpening / 100,
       dust: {
         enabled: neutral.dustRemoval,
@@ -346,6 +347,7 @@ describe('a slider reaching the picture', () => {
         luminance: 60,
         colour: 20,
         denoiser: 'galosh',
+        highlightRecovery: 100,
         sharpen: 0.5,
         dust: { enabled: true, sensitivity: 0.25, intensity: 1 },
         repairs: [],
@@ -384,17 +386,23 @@ describe('a slider reaching the picture', () => {
     expect(asked().length).toBe(ran + 3);
     expect(asked().at(-1)?.sharpen).toBe(0.9);
 
+    // The highlight colouring is in the demosaic, so it re-prepares like the denoise does.
+    presenter.settle({ highlightRecovery: 30 });
+    await settled();
+    expect(asked().length).toBe(ran + 4);
+    expect(asked().at(-1)?.highlightRecovery).toBe(30);
+
     // Which filter runs is a re-prepare like the amounts are, and not a word in the tick's uniform.
     presenter.setDenoiser('pmrid');
     await settled();
-    expect(asked().length).toBe(ran + 4);
+    expect(asked().length).toBe(ran + 5);
     expect(asked().at(-1)?.denoiser).toBe('pmrid');
 
     // And nothing is asked for twice: settling the same positions again is the picture the frame
     // already holds, which must not cost a second re-prepare.
     presenter.settle({ dustRemoval: true, dustSensitivity: 80, dustIntensity: 60 });
     await settled();
-    expect(asked().length).toBe(ran + 4);
+    expect(asked().length).toBe(ran + 5);
   });
 
   test("an edit naming no denoiser runs its library's, until the reader picks one", async () => {

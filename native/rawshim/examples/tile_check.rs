@@ -93,7 +93,11 @@ fn main() {
 
     // The tile against the same rectangle of the whole frame. Both have been through the same
     // orientation, so a tile that landed where it was asked for reads the same samples.
-    let mut worst = 0u32;
+    let (a, b) = (
+        rawshim::resident::levels_of(a),
+        rawshim::resident::levels_of(b),
+    );
+    let mut worst = 0f32;
     let mut total = 0f64;
     let mut counted = 0u64;
     for row in 0..cut.height {
@@ -105,7 +109,7 @@ fn main() {
             for channel in 0..3 {
                 let from = (fy * whole.width + fx) * 3 + channel;
                 let to = (row * cut.width + col) * 3 + channel;
-                let delta = u32::from(a[from].abs_diff(b[to]));
+                let delta = (a[from] - b[to]).abs();
                 worst = worst.max(delta);
                 total += f64::from(delta);
                 counted += 1;
@@ -116,11 +120,10 @@ fn main() {
         println!("the tile does not overlap the frame at all - the coordinates are wrong");
         return;
     }
-    // In the 16-bit samples the frame is carried in, so a few hundred is the demosaic seeing a
-    // different neighbourhood at the tile's edge and tens of thousands is the wrong part of the
-    // photograph.
+    // In sensor counts of 65535, so a few hundred is the demosaic seeing a different
+    // neighbourhood at the tile's edge and tens of thousands is the wrong part of the photograph.
     println!(
-        "mean {:.1}  worst {worst}  over {counted} samples",
+        "mean {:.1}  worst {worst:.0}  over {counted} samples",
         total / counted as f64
     );
 }

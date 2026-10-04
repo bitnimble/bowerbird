@@ -1,10 +1,7 @@
-//! The decode without LibRaw: rawler reads the sensor, and everything after that is ours.
+//! The decode: rawler reads the sensor, and everything after that is ours.
 //!
-//! LibRaw's `dcraw_process` did four things in one call - black subtraction, white balance, the
-//! demosaic and the camera-to-output matrix. Only the demosaic was ever difficult, and it now
-//! lives in `demosaic.rs`; the other three are arithmetic over coefficients rawler already carries
-//! on its `RawImage`, so this module is mostly a matter of getting them in the right order and
-//! the right space.
+//! Black subtraction, white balance and the camera-to-output matrix are arithmetic over
+//! coefficients rawler carries on its `RawImage`; the demosaic lives in `demosaic.rs`.
 
 use crate::frame::{Frame, Pixels};
 use crate::orientation::{code as orientation_code, orient, unoriented_rect as as_sensor_rect};
@@ -220,6 +217,7 @@ pub(crate) async fn decode_tile_source(
         halo,
         crate::px::Span::exact(0),
         dust,
+        Demosaiced::Here,
     )
     .await?
     {
@@ -240,6 +238,7 @@ pub(crate) async fn decode_tile_source(
                 &region.cfa,
                 region.crop,
                 region.colour,
+                region.seen()?,
                 orientation_code(region.upright),
             )
             .await?
@@ -281,6 +280,7 @@ pub(crate) async fn decode_shifted_tile(
         halo,
         crate::px::Span::exact(reference_extra),
         crate::dust::Known::Off,
+        Demosaiced::Here,
     )
     .await?
     else {
@@ -334,6 +334,7 @@ pub(crate) async fn decode_shifted_tile(
             halo,
             crate::pixel_shift_align::MARGIN,
             crate::dust::Known::Off,
+            Demosaiced::ByTheReference,
         )
         .await?
         else {
@@ -376,6 +377,7 @@ pub(crate) async fn decode_shifted_tile(
         &reference.cfa,
         reference.crop,
         reference.colour,
+        reference.seen()?,
         orientation_code(reference.upright),
         &|recording, rgb, window| {
             merged.settle(
@@ -403,10 +405,22 @@ enum Region {
     Linear(Frame),
 }
 
+/// Whether a region's own pixels are demosaiced, which is what its highlight field is for.
+#[derive(Clone, Copy, PartialEq)]
+enum Demosaiced {
+    Here,
+    /// A burst frame merged onto the reference's photosites.
+    ByTheReference,
+}
+
 /// One window's region of the sensor, conditioned, cleaned and denoised: everything a decode does
 /// before the demosaic.
 struct RegionMosaic {
     mosaic: crate::condition::Mosaic,
+    highlight: Option<crate::highlight::Field>,
+    /// Where `mosaic` starts inside the wider region `highlight` was measured over.
+    highlight_at: crate::px::At<crate::px::Sensor>,
+    colouring: crate::highlight::Colouring,
     origin: crate::px::At<crate::px::Sensor>,
     photograph_origin: crate::px::At<crate::px::Sensor>,
     cfa: crate::cfa::Cfa,
@@ -420,6 +434,15 @@ struct RegionMosaic {
 }
 
 impl RegionMosaic {
+    fn seen(&self) -> Option<crate::highlight::Seen<'_>> {
+        Some(
+            self.highlight
+                .as_ref()?
+                .seen_from(self.highlight_at)
+                .coloured(self.colouring),
+        )
+    }
+
     async fn reduced(
         &self,
         gpu: &'static crate::gpu::Gpu,
@@ -440,6 +463,7 @@ impl RegionMosaic {
             crop,
             self.mosaic.width,
             self.colour,
+            self.seen()?,
             orientation,
             &self.cfa,
         )
@@ -475,6 +499,7 @@ async fn region_mosaic(
     halo: usize,
     extra: crate::px::Span<crate::px::Sensor>,
     dust: crate::dust::Known<'_>,
+    demosaiced: Demosaiced,
 ) -> Option<Region> {
     // The window in the photograph's own pixels, which is the only space this function speaks.
     let window = view.window.raw();
@@ -544,9 +569,27 @@ async fn region_mosaic(
     if right <= left || bottom <= top {
         return None;
     }
+    // Wider again for the highlight field alone, which only the frame's own grid and reach make the
+    // frame's (`highlight::reach`); the stages after it run over the region above.
+    let (field_left, field_top, field_w, field_h) = match demosaiced {
+        Demosaiced::ByTheReference => (left, top, span_w, span_h),
+        Demosaiced::Here => {
+            let field_reach = crate::highlight::reach(&cfa);
+            let grid = crate::highlight::grid(&cfa);
+            let (field_left, field_top) = (
+                left.saturating_sub(field_reach) / grid * grid,
+                top.saturating_sub(field_reach) / grid * grid,
+            );
+            let (field_w, field_h) = cfa.align_extent(
+                (right + field_reach).min(frame_w) - field_left,
+                (bottom + field_reach).min(frame_h) - field_top,
+            );
+            (field_left, field_top, field_w, field_h)
+        }
+    };
     let region = rawler::imgop::Rect::new(
-        rawler::imgop::Point::new(left, top),
-        rawler::imgop::Dim2::new(right - left, bottom - top),
+        rawler::imgop::Point::new(field_left, field_top),
+        rawler::imgop::Dim2::new(field_w, field_h),
     );
 
     let held = crate::raw_cache::region(source, &params, region, || {
@@ -563,18 +606,41 @@ async fn region_mosaic(
         return None;
     }
 
-    // The region's own mosaic, lifted out of the tile-aligned rectangle the decode actually covered.
+    // A rectangle of the sensor, lifted out of the tile-aligned rectangle the decode actually covered.
+    let lift = |left: usize, top: usize, width: usize, height: usize| -> Vec<u16> {
+        let mut window = vec![0u16; width * height];
+        for row in 0..height {
+            let from = (top - decoded.p.y + row) * image.width + (left - decoded.p.x);
+            window[row * width..(row + 1) * width].copy_from_slice(&samples[from..from + width]);
+        }
+        window
+    };
     let (region_w, region_h) = (right - left, bottom - top);
-    let mut window = vec![0u16; region_w * region_h];
-    for row in 0..region_h {
-        let from = (top - decoded.p.y + row) * image.width + (left - decoded.p.x);
-        window[row * region_w..(row + 1) * region_w]
-            .copy_from_slice(&samples[from..from + region_w]);
-    }
 
     let cfa = cfa_of(image)?;
     let gpu = crate::gpu::device();
-    let mut mosaic = condition(gpu, &window, region_w, region_h, image, &cfa)?;
+    let field_mosaic = condition(
+        gpu,
+        &lift(field_left, field_top, field_w, field_h),
+        field_w,
+        field_h,
+        image,
+        &cfa,
+    )?;
+    let highlight = match demosaiced {
+        Demosaiced::ByTheReference => None,
+        Demosaiced::Here => Some(crate::highlight::measure(
+            gpu?,
+            &field_mosaic,
+            &cfa,
+            channel_ceilings(image),
+        )?),
+    };
+    assert!(field_left <= left && left + region_w <= field_left + field_w);
+    assert!(field_top <= top && top + region_h <= field_top + field_h);
+    let mut mosaic =
+        field_mosaic.window(gpu?, left - field_left, top - field_top, region_w, region_h);
+    drop(field_mosaic);
 
     // The photograph's own particles, offset into this region. A region cannot search for its own -
     // `Known` has no way to ask - because the gates read the frame's texture floor, so a tile that
@@ -627,6 +693,9 @@ async fn region_mosaic(
     Some(Region::Mosaic(RegionMosaic {
         as_shot: as_shot_of(gpu?, image).await,
         mosaic,
+        highlight,
+        highlight_at: crate::px::At::exact(left - field_left, top - field_top),
+        colouring: detail.colouring(),
         origin: crate::px::At::exact(left, top),
         photograph_origin: crate::px::At::exact(origin.0, origin.1),
         cfa,
@@ -847,6 +916,9 @@ impl Held {
 pub struct Held {
     mosaic: crate::condition::Mosaic,
     sensor: Sensor,
+    /// Measured off the mosaic as it was conditioned, before any dust or denoise, so the frame and
+    /// every window cut from it reconstruct their highlights from the same light.
+    highlight: crate::highlight::Field,
 }
 
 /// The decode as far as the mosaic, from bytes a caller is already holding.
@@ -1220,15 +1292,18 @@ async fn hold(
     let crop = (crop.0, crop.1, whole_sites(crop.2), whole_sites(crop.3));
 
     let (aperture, diagonal_mm) = optics_of(decoder, source, params);
+    let colour = colour_of(&image)?;
+    let highlight = crate::highlight::measure(gpu?, &mosaic, &cfa, colour.ceiling)?;
 
     Some(Held {
         mosaic,
+        highlight,
         sensor: Sensor {
             width,
             height,
             cfa,
             crop,
-            colour: colour_of(&image)?,
+            colour,
             upright,
             as_shot: as_shot_of(gpu?, &image).await,
             aperture,
@@ -1409,7 +1484,7 @@ impl Held {
         // against a different neighbourhood and the band stops being the frame. Costs the few
         // rows it can add to two sides, which are halo either way.
         // And a whole period with it, which the lattice alone only happens to give for a pattern
-        // whose period divides it. See `decode_region`'s copy of this.
+        // whose period divides it. See `region_mosaic`'s copy of this.
         let (lattice_x, lattice_y) = crate::galosh::lattice(&cfa);
         let (left, top) = (
             (origin.0 + tile.left).saturating_sub(reach) / lattice_x * lattice_x,
@@ -1444,6 +1519,10 @@ impl Held {
             tile.height.min(region_h - inset.1),
         );
         let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
+        let seen = self
+            .highlight
+            .seen_from(crate::px::At::exact(left, top))
+            .coloured(detail.colouring());
         let halving =
             scale.halves() && region_crop.0 % 2 == 0 && region_crop.1 % 2 == 0 && cfa.is_bayer();
         let built = if halving {
@@ -1460,6 +1539,7 @@ impl Held {
                 crop,
                 region_w,
                 colour,
+                seen,
                 orientation_code(upright),
                 &cfa,
             )
@@ -1472,6 +1552,7 @@ impl Held {
                 &cfa,
                 region_crop,
                 colour,
+                seen,
                 orientation_code(upright),
             )
             .await
@@ -1510,6 +1591,7 @@ impl Held {
         Held {
             mosaic: copy,
             sensor: self.sensor.clone(),
+            highlight: self.highlight.clone(),
         }
         .into_frame(detail, at_least_long_edge, false, fit, dust, report)
         .await
@@ -1649,19 +1731,11 @@ impl Held {
         // Reduced where the caller said a smaller frame would do, or asked for it outright, which
         // skips the demosaic.
         //
-        // **No longer gated on the crop's origin, and that is a consequence of the kernel reading
-        // colours rather than assuming them.** The old test was `crop % 2 == 0`, and its reason was
-        // colour: a 2x2 block taken from an odd row holds the same four colours in a different
-        // arrangement, and a kernel that assigned red from a fixed corner read the one next door.
-        // `pixel_of_reduced` asks `colour_at` for every photosite it touches, so the arrangement
-        // stops mattering - any 2x2 of a Bayer pattern holds one of each, and any 3x3 of an X-Trans
-        // one does too (`every_three_by_three_window_holds_every_colour`).
-        //
-        // What is left is framing: the origin floors to a whole block, so the picture can start up
-        // to `by - 1` photosites above where the crop says. That is two thirds of one pixel of a
-        // frame at a third of the sensor, and it is what let this run at all on real files - the
-        // X-T3 fixture crops at row 13, which is on no multiple of six, and every Fuji frame would
-        // otherwise have taken the demosaic at every size.
+        // **Any crop origin reduces.** `pixel_of_reduced` asks `colour_at` for every photosite it
+        // touches, and any 2x2 of a Bayer pattern or 3x3 of an X-Trans one holds every colour
+        // (`every_three_by_three_window_holds_every_colour`). The origin floors to a whole block,
+        // so the picture can start up to `by - 1` photosites above the crop: two thirds of a pixel
+        // at a third of the sensor. The X-T3 fixture crops at row 13, on no multiple of six.
         //
         // **The factor is the sensor's and the decision is the caller's.** A Bayer 2x2 holds every
         // colour and an X-Trans 3x3 is the smallest window that does, so a Fuji frame reduces by
@@ -1704,6 +1778,7 @@ impl Held {
                     crop,
                     width,
                     colour,
+                    self.highlight.seen().coloured(detail.colouring()),
                     orientation_code(upright),
                     &cfa,
                 )
@@ -1719,6 +1794,7 @@ impl Held {
                     &cfa,
                     crop,
                     colour,
+                    self.highlight.seen().coloured(detail.colouring()),
                     orientation_code(upright),
                 )
                 .await?
@@ -1903,10 +1979,9 @@ async fn denoise_in_tiles(
     fit: crate::galosh::NoiseFit,
     halo: usize,
 ) {
-    // `galosh`'s own, which rounds each region's origin to the shrinkage's grid. This had the same
-    // geometry without that rounding, and so denoised every rendition against a neighbourhood the
-    // whole-frame answer never uses - `pass12` shrinks inside a tile indexed from the region
-    // origin, so a region off the grid shifts the tiling under every pixel in it.
+    // `galosh`'s own, which rounds each region's origin to the shrinkage's grid: `pass12` shrinks
+    // inside a tile indexed from the region origin, so a region off the grid shifts the tiling under
+    // every pixel and denoises against a neighbourhood the whole-frame answer never uses.
     crate::galosh::denoise_in_tiles(
         gpu,
         kernels,
@@ -1949,6 +2024,7 @@ async fn reduced_into(
     crop: (usize, usize, usize, usize),
     stride: usize,
     colour: crate::demosaic::Colour,
+    seen: crate::highlight::Seen<'_>,
     orientation: u32,
     cfa: &crate::cfa::Cfa,
 ) -> Option<crate::resident::Resident> {
@@ -1979,6 +2055,7 @@ async fn reduced_into(
                 mosaic,
                 &at,
                 colour,
+                seen,
                 frame.buffer(),
                 &shape_group,
             )
@@ -2015,6 +2092,7 @@ async fn demosaic_in_tiles(
     cfa: &crate::cfa::Cfa,
     crop: (usize, usize, usize, usize),
     colour: crate::demosaic::Colour,
+    seen: crate::highlight::Seen<'_>,
     orientation: u32,
 ) -> Option<crate::resident::Resident> {
     demosaic_settled_in_tiles(
@@ -2024,6 +2102,7 @@ async fn demosaic_in_tiles(
         cfa,
         crop,
         colour,
+        seen,
         orientation,
         &|_, _, _| (),
     )
@@ -2044,15 +2123,13 @@ async fn demosaic_settled_in_tiles(
     cfa: &crate::cfa::Cfa,
     crop: (usize, usize, usize, usize),
     colour: crate::demosaic::Colour,
+    seen: crate::highlight::Seen<'_>,
     orientation: u32,
     settle: &Settle<'_>,
 ) -> Option<crate::resident::Resident> {
     let (width, height) = (mosaic.width, mosaic.height);
     let (crop_left, crop_top, crop_w, crop_h) = crop;
 
-    // One buffer for the whole upright frame, written into by every tile and handed on where it is.
-    // The stitch and the quarter turn were both host passes over the frame before this - 366MB of
-    // allocation each at 61MP, and the turn single-threaded.
     let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize), stride: usize| {
         crate::demosaic::Placement {
             stride: crate::px::Span::exact(stride),
@@ -2071,11 +2148,9 @@ async fn demosaic_settled_in_tiles(
     for (ty0, ty1) in spans(crop_h) {
         for (tx0, tx1) in spans(crop_w) {
             // **Grown in the sensor's coordinates and clamped to the sensor, not to the crop.**
-            // The crop is inset from the readable area, so there is real mosaic outside it, and
-            // the whole-frame demosaic this replaces read that: it ran over everything and was
-            // cropped afterwards. Clamping the halo to the crop instead border-fills the frame's
-            // own edge, which came out as the first six samples of a pinned render moving and
-            // nothing else in the row.
+            // The crop is inset from the readable area, so there is real mosaic outside it.
+            // Clamping the halo to the crop border-fills the frame's own edge instead, moving the
+            // first six samples of a pinned render's rows.
             let (sx0, sy0) = (crop_left + tx0, crop_top + ty0);
             let (sx1, sy1) = (crop_left + tx1, crop_top + ty1);
             let (period_w, period_h) = cfa.period();
@@ -2120,6 +2195,7 @@ async fn demosaic_settled_in_tiles(
                 cfa,
                 &at,
                 colour,
+                seen.inside(crate::px::At::exact(left, top)),
                 frame.buffer(),
                 &shape_group,
                 |recording, rgb| settle(recording, rgb, (left, top, region_w, region_h)),
@@ -2138,13 +2214,8 @@ const RCD_MARGIN: usize = crate::demosaic::MARGIN as usize;
 /// **A half site at the far edge has nothing to reconstruct from.** The demosaic reads 2x2, and the
 /// region grown around the last tile is rounded back to an even extent so its own origin stays on a
 /// site - so where the readable area is an odd number of pixels across, that final column falls
-/// outside every tile's inner rectangle and is never written. It came back black, in a frame that
-/// claimed to be a pixel wider than it had reconstructed. Trimmed here instead, so the frame is one
-/// line smaller and entirely a picture.
-///
-/// Only the extent moves; the origin does not, so the framing a camera match is fitted against is
-/// the framing it always was. Sensors that declare a `crop_area` are almost all even already and
-/// nothing about them changes.
+/// outside every tile's inner rectangle and is never written, leaving a black column. Only the
+/// extent moves; the origin, which a camera match is fitted against, stays.
 fn whole_sites(extent: usize) -> usize {
     extent & !1
 }
@@ -2369,15 +2440,6 @@ fn stated_only(image: &rawler::RawImage) -> bool {
     !image.clean_make.eq_ignore_ascii_case("canon")
 }
 
-/// Set by the comparison harness to render the stated level and the sensor's cap from one process,
-/// which is the only way to search a frame for where the choice between them matters.
-static STATED_WHITE_LEVEL: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-pub fn use_stated_white_level(on: bool) {
-    STATED_WHITE_LEVEL.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
 /// The largest value this sensor can report, in raw counts.
 ///
 /// **The one place a white level is decided**, and everything that needs one asks here: the whole
@@ -2411,10 +2473,7 @@ pub fn use_stated_white_level(on: bool) {
 /// pixel noise and nothing else, so the file's figure is better trusted.
 pub fn saturation_of(image: &rawler::RawImage) -> f32 {
     let reported = image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16;
-    // The seam the pictures in the log were compared with, and the only way to render both
-    // choices from one process.
     let stated = stated_only(image)
-        || STATED_WHITE_LEVEL.load(std::sync::atomic::Ordering::Relaxed)
         || std::env::var("BOWERBIRD_WHITE_LEVEL").is_ok_and(|value| value == "stated");
     if stated {
         return f32::from(reported);
@@ -2847,7 +2906,9 @@ mod tests {
         let crate::frame::Pixels::Resident(resident) = frame.pixels else {
             panic!("not on the device")
         };
-        let samples = pollster::block_on(resident.into_host()).expect("the frame reads back");
+        let samples = crate::resident::levels_of(
+            &pollster::block_on(resident.into_host()).expect("the frame reads back"),
+        );
 
         let white = 65535.0 / crate::transfer::HDR_HEADROOM;
         for (at, sample) in samples.iter().enumerate() {

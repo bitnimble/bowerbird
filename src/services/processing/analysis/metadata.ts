@@ -104,6 +104,7 @@ async function withTile(filePath: string, stage: TileStage): Promise<RawHeader> 
       denoiseLuminance: 0,
       denoiseColour: 0,
       denoiser: 'galosh',
+      highlightRecovery: 100,
       dust: dustSettings(undefined),
       sharpen: 0,
       defringe: 0,

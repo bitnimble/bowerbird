@@ -176,5 +176,6 @@ fn request() -> rawshim::edit::EditRequest {
         denoise_luminance: Some(0.0),
         denoise_colour: Some(0.0),
         denoiser: rawshim::galosh::Denoiser::Galosh,
+        highlight_recovery: None,
     }
 }

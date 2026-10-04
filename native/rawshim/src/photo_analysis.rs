@@ -52,7 +52,7 @@ const SECTION_MAX: usize = 1 << 22;
 
 /// A stored lattice longer than this many kernel words is corrupt: a fit emits a few thousand
 /// kernels at most, which is the coarse grid's and the fine grid's nodes together.
-const MAX_KERNEL_WORDS: usize = crate::lattice::KERNEL_WORDS * 16384;
+pub(crate) const MAX_KERNEL_WORDS: usize = crate::lattice::KERNEL_WORDS * 16384;
 
 #[derive(Clone, Default)]
 pub struct PhotoAnalysis {
@@ -498,10 +498,9 @@ fn section(out: &mut Vec<u8>, kind: u8, body: impl FnOnce(&mut Vec<u8>)) {
 /// The camera match: the curves and the lattice the shader reads, and the lens they were fitted
 /// through.
 ///
-/// The lattice's kernels are stored as `f16`: their generators to the precision the bake's
-/// `rgba16float` output holds anyway, their places and reaches to a part in a thousand of an axis. The tone curves are read from `r32float` and stay
-/// `f32`: a curve feeding an HDR grade is exactly where a thousandth of an error shows up as a band
-/// in a smooth sky.
+/// The lattice's kernels are stored as `f16`, the precision the bake's `rgba16float` output holds
+/// anyway. The tone curves stay `f32`: a curve feeding an HDR grade is exactly where a thousandth of
+/// an error shows up as a band in a smooth sky.
 fn put_match(out: &mut Vec<u8>, matched: &HdrMatch) {
     match &matched.colour {
         None => out.push(0),

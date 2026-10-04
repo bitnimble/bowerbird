@@ -51,6 +51,8 @@ pub struct EditRequest {
     /// was a choice.
     #[serde(default)]
     pub denoiser: crate::galosh::Denoiser,
+    #[serde(default)]
+    pub highlight_recovery: Option<f64>,
     /// The dust panel's switch and two sliders, which correct the mosaic where the denoise does.
     ///
     /// Here for the same reason the Detail pair is: the shadow is one number per photosite while the
@@ -73,6 +75,7 @@ impl EditRequest {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
             denoiser: self.denoiser,
+            highlight_recovery: self.highlight_recovery,
         }
     }
 
@@ -148,8 +151,8 @@ pub struct PreparedHeader {
     /// fit above: it is read over the whole frame, so a loupe tile fitting its own is corrected by
     /// whatever its window's edges say, and neighbouring tiles by different amounts.
     pub defocus: (f32, f32),
-    /// What is known about the photograph, to keep beside it. About 5kB, and it is most of a
-    /// second off every later open, render and loupe tile.
+    /// What is known about the photograph, to keep beside it. Tens of kilobytes, mostly the
+    /// chroma lattice, and it is most of a second off every later open, render and loupe tile.
     ///
     /// **Two callers fill it differently, and each has a reason.** A tab's own open reports only
     /// what it *gained* over what it was handed, so presence means "this is new" and the page can
@@ -506,6 +509,7 @@ pub async fn from_frame(
                 denoise_luminance: request.denoise_luminance,
                 denoise_colour: request.denoise_colour,
                 denoiser: request.denoiser,
+                highlight_recovery: request.highlight_recovery,
                 // Off, and it has to be: this window is handed a frame the decode already
                 // corrected, so asking again would divide every shadow out twice and leave a bright
                 // disc where a dark one was. Spelled rather than defaulted, because the default is

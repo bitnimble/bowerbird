@@ -3,10 +3,6 @@
 //! ```text
 //! half_bench <raw>...
 //! ```
-//!
-//! LibRaw could unpack at half resolution when the caller only wanted a small rendition, and this
-//! is the measurement of what replacing it cost: the same request, served by decoding the whole
-//! frame and fitting afterwards.
 
 /// The long edge a full rendition asks for, which is what makes a 61MP frame a candidate for
 /// halving and a 24MP one not.
@@ -23,7 +19,10 @@ fn main() {
         // colours next door, and comes out plausible, sharp and green.
         let mean = |frame: &rawshim::frame::Frame| -> f64 {
             frame.samples16().map_or(0.0, |s| {
-                s.iter().map(|v| f64::from(*v)).sum::<f64>() / s.len() as f64
+                s.iter()
+                    .map(|&bits| f64::from(rawshim::resident::level_of_bits(bits)))
+                    .sum::<f64>()
+                    / s.len() as f64
             })
         };
 

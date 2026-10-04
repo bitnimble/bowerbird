@@ -75,6 +75,7 @@ fn main() {
         denoise_luminance: None,
         denoise_colour: None,
         denoiser: rawshim::galosh::Denoiser::Galosh,
+        highlight_recovery: None,
         dust: Default::default(),
         adjust: rawshim::gpu::Adjust::none(),
         levels: Some(measured.levels),

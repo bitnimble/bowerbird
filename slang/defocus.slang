@@ -71,7 +71,7 @@ struct Params {
 
 float sample_at(uint at)
 {
-    return float(half_of(frame[at / 2], at));
+    return level_of(half_of(frame[at / 2], at));
 }
 
 /// `image::luma_of`, normalised the same way round: the weights sum first and the divide comes
@@ -79,7 +79,7 @@ float sample_at(uint at)
 float luma_at(uint x, uint y)
 {
     let p = wide_at<Drawn>(x, y, measured<Drawn>(params.width)) * 3;
-    return dot(params.luma, float3(sample_at(p), sample_at(p + 1), sample_at(p + 2))) / 65535.0;
+    return dot(params.luma, float3(sample_at(p), sample_at(p + 1), sample_at(p + 2))) / FULL_SCALE;
 }
 
 /// One segment of one sampled row, binned by radius.
@@ -118,8 +118,8 @@ void defocus_bins(uint3 id : SV_DispatchThreadID)
             + luma_at(x, y + 1) - 4.0 * here;
         let p = wide_at<Drawn>(x, y, width) * 3;
         // Against luma rather than against green, as the correction is applied.
-        let red = sample_at(p) / 65535.0 - here;
-        let blue = sample_at(p + 2) / 65535.0 - here;
+        let red = sample_at(p) / FULL_SCALE - here;
+        let blue = sample_at(p + 2) / FULL_SCALE - here;
         let dx = float(x) - params.cx;
         let bin = min(uint((dx * dx + dy * dy) / params.half_squared * float(BINS)), BINS - 1);
         cross_red[bin] += curvature * red;
@@ -160,10 +160,10 @@ void defocus_residuals(uint3 id : SV_DispatchThreadID)
         float sum = 0.0;
         for (uint yy = y0; yy <= y1; yy++) {
             for (uint xx = x0; xx <= x1; xx++) {
-                sum += sample_at(wide_at<Drawn>(xx, yy, width) * 3 + channel) / 65535.0;
+                sum += sample_at(wide_at<Drawn>(xx, yy, width) * 3 + channel) / FULL_SCALE;
             }
         }
-        let residual = abs(sample_at(pixel * 3 + channel) / 65535.0 - sum / window);
+        let residual = abs(sample_at(pixel * 3 + channel) / FULL_SCALE - sum / window);
         let slot = min(uint(residual / params.noise_max * float(NOISE_BINS)), NOISE_BINS - 1);
         residuals[channel * NOISE_BINS + slot].add(1);
     }

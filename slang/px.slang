@@ -28,10 +28,11 @@
 //   rendition size, which is what the colour smoothing did - and what the descriptor window did
 //   the moment a burst began searching on half the plane a pan does.
 //   Print frame borders use a share of the photo's short edge, identical on all four sides.
-// - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*`, `galosh`'s windows,
-//   `galosh/reconstruct_bayer`'s `HALO`, `defocus.slang`'s
-//   `STRIDE` and `pixel_shift_align.slang`'s tile, patch, search and outlier reaches. A photosite is a photosite, so a count of them is a
-//   quantity and `exact` takes it.
+// - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*` and `QUIET_*` tile, `galosh`'s windows,
+//   `galosh/reconstruct_bayer`'s `HALO`, `defocus.slang`'s `STRIDE`, `highlight::CELL_SITES`
+//   (`highlight_field.slang`'s `cell_sites`) and `pixel_shift_align.slang`'s tile, patch, search
+//   and outlier reaches. A photosite is a photosite, so a count of them is a quantity and `exact`
+//   takes it.
 // - *Scale-exact by construction.* `chroma_smooth`'s `SIGMA` and `REACH` in texels of a grid that
 //   is itself a share, `detail`'s `DETAIL_LONG` at 512, `patch_stats`'s `PATCH` on the fit's own
 //   1280 plane. A working plane of fixed size has fixed pixels, so constants in it are safe.

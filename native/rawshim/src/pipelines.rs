@@ -11,6 +11,7 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::dust::device(gpu);
     crate::dust_find::device(gpu);
     crate::galosh::device(gpu);
+    crate::highlight::device(gpu);
     crate::linearise::device(gpu);
     crate::lslcd::device(gpu);
     crate::planes::kernel(gpu);

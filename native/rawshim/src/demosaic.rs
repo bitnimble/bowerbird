@@ -10,9 +10,10 @@
 
 /// Pixels at the frame edge that RCD does not write, filled by a cheap interpolation instead.
 ///
-/// The specification's reach analysis composes to exactly this: the low-pass reaches 1, the
-/// directional kernel 3, its energy 4, the refinement 5, and the two chroma stages 7 and 10.
-pub const MARGIN: u32 = 10;
+/// The specification's reach analysis composes to 10: the low-pass reaches 1, the directional
+/// kernel 3, its energy 4, the refinement 5, and the two chroma stages 7 and 10. `assemble`'s
+/// colour smoothing reads 2 past that.
+pub const MARGIN: u32 = 12;
 
 const STAGES: [&str; 7] = [
     "seed",
@@ -155,6 +156,7 @@ impl Rcd {
                 },
                 storage(1, true),
                 storage(2, false),
+                storage(3, true),
             ],
         });
         let assemble_pipeline_layout =
@@ -195,6 +197,11 @@ impl Rcd {
             assemble_halved,
             assemble_thirded,
         })
+    }
+
+    /// `mosaic.slang`'s group 0, for another pass over the same mosaic.
+    pub(crate) fn frame_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.frame
     }
 }
 
@@ -381,7 +388,7 @@ pub struct Colour {
 /// `Params` in `assemble.slang`: the named words, the padding that rounds them to a 16-byte
 /// boundary, and three rows, each carrying a channel's ceiling in its fourth lane.
 ///
-/// The one place the two spaces meet a shader, which reads them as eleven undifferentiated `u32`.
+/// The one place the two spaces meet a shader, which reads them as undifferentiated words.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Assemble {
@@ -408,11 +415,20 @@ struct Assemble {
     /// Photosites a side in the block one output pixel is read from, which only `assemble_reduced`
     /// reads: 2 for a Bayer site, 3 for the smallest X-Trans window holding every colour.
     reduce: u32,
-    pad: u32,
+    /// Where the mosaic this dispatch reads starts in the one its highlight field was measured
+    /// over, and that field's cells.
+    field_left: u32,
+    field_top: u32,
+    field_width: u32,
+    field_height: u32,
+    field_cell: u32,
+    colour_reading: f32,
+    colour_blown: f32,
+    pad: [u32; 2],
     rows: [[f32; 4]; 3],
 }
 
-fn assemble_params(at: &Placement, colour: Colour) -> Assemble {
+fn assemble_params(at: &Placement, colour: Colour, seen: crate::highlight::Seen<'_>) -> Assemble {
     let (out_width, out_height) = at.out();
     let (crop_left, crop_top, crop_w, crop_h) = at.crop.raw();
     let (dest_x, dest_y) = at.dest.raw();
@@ -445,7 +461,14 @@ fn assemble_params(at: &Placement, colour: Colour) -> Assemble {
         tile_across: grid.map_or(0, |g| g.across) as u32,
         tile_rows: grid.map_or(0, |g| g.rows) as u32,
         reduce: at.reduce,
-        pad: 0,
+        field_left: seen.origin.x.raw() as u32,
+        field_top: seen.origin.y.raw() as u32,
+        field_width: seen.field.width as u32,
+        field_height: seen.field.height as u32,
+        field_cell: seen.field.cell.raw() as u32,
+        colour_reading: seen.colouring.reading,
+        colour_blown: seen.colouring.blown,
+        pad: [0; 2],
         rows,
     }
 }
@@ -466,12 +489,13 @@ fn assemble_params(at: &Placement, colour: Colour) -> Assemble {
 /// `cfa` is the sensor's 2x2 pattern read row-major from the top-left of the frame, with 0 red,
 /// 1 green and 2 blue. Bayer only: a pattern that is not two greens on a diagonal is refused,
 /// because every stage here pairs rows and columns into 2x2 sites.
-/// `into` is the whole oriented frame, packed two `u16` to a word, and this tile writes its own
-/// rectangle of it. The caller allocates it once for every tile and reads it back once at the end -
-/// which is the point, the stitch and the quarter turn having both been host passes over the whole
-/// frame before this.
+/// `into` is the whole oriented frame, two half-float samples to a word, and this tile writes its
+/// own rectangle of it. The caller allocates it once for every tile and reads it back once at the
+/// end.
 ///
-/// A pixel on all three of `colour`'s ceilings has no colour left and comes back neutral.
+/// A pixel on all three of `colour`'s ceilings takes the colour of the light around it, as much of
+/// it as `seen`'s `Colouring` keeps.
+#[allow(clippy::too_many_arguments)]
 pub async fn demosaic_into(
     gpu: &'static crate::gpu::Gpu,
     rcd: &Rcd,
@@ -479,6 +503,7 @@ pub async fn demosaic_into(
     cfa: &crate::cfa::Cfa,
     at: &Placement,
     colour: Colour,
+    seen: crate::highlight::Seen<'_>,
     into: &crate::gpu::Buffer,
     shape_group: &wgpu::BindGroup,
 ) -> Option<()> {
@@ -489,6 +514,7 @@ pub async fn demosaic_into(
         cfa,
         at,
         colour,
+        seen,
         into,
         shape_group,
         |_, _| (),
@@ -506,6 +532,7 @@ pub async fn demosaic_settled_into(
     cfa: &crate::cfa::Cfa,
     at: &Placement,
     colour: Colour,
+    seen: crate::highlight::Seen<'_>,
     into: &crate::gpu::Buffer,
     shape_group: &wgpu::BindGroup,
     settle: impl FnOnce(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer),
@@ -518,7 +545,7 @@ pub async fn demosaic_settled_into(
 
     let assemble_params = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("assemble params"),
-        contents: bytemuck::bytes_of(&assemble_params(at, colour)),
+        contents: bytemuck::bytes_of(&assemble_params(at, colour, seen)),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let assemble_group = gpu.bind_group(&wgpu::BindGroupDescriptor {
@@ -536,6 +563,10 @@ pub async fn demosaic_settled_into(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Buffer(at.binding(into)),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: seen.field.buffer.as_entire_binding(),
             },
         ],
     });
@@ -565,10 +596,8 @@ pub async fn demosaic_settled_into(
 
 /// The reduced frame, read straight off the mosaic, with no demosaic between.
 ///
-/// **The last place the mosaic came back whole.** A frame no larger than the sensor over
-/// `at.reduce` needs no interpolation - a block that side already carries every colour - so this
-/// route skipped RCD, and to skip it the mosaic was pulled to the host and collapsed there: 244MB at
-/// 61MP, the largest single readback in the crate, on the path a grid tile takes 99 times in 100.
+/// A frame no larger than the sensor over `at.reduce` needs no interpolation: a block that side
+/// already carries every colour.
 ///
 /// The factor is the pattern's: 2 for a Bayer site, 3 for the smallest X-Trans window that holds
 /// every colour. What the caller chooses is whether to reduce at all.
@@ -581,6 +610,7 @@ pub async fn reduce_into(
     mosaic: &crate::condition::Mosaic,
     at: &Placement,
     colour: Colour,
+    seen: crate::highlight::Seen<'_>,
     into: &crate::gpu::Buffer,
     shape_group: &wgpu::BindGroup,
 ) -> Option<()> {
@@ -588,7 +618,7 @@ pub async fn reduce_into(
     recording.holding(into);
     let params = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("reduce params"),
-        contents: bytemuck::bytes_of(&assemble_params(at, colour)),
+        contents: bytemuck::bytes_of(&assemble_params(at, colour, seen)),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
@@ -608,6 +638,10 @@ pub async fn reduce_into(
             wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Buffer(at.binding(into)),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: seen.field.buffer.as_entire_binding(),
             },
         ],
     });
@@ -734,12 +768,9 @@ fn record(
 /// The same two bindings whichever demosaic ran and whichever entry point reads them next, which is
 /// what lets one pattern layer serve RCD, the demultiplexing and the assembly.
 ///
-/// **Built once per region and held across its tiles, which is not tidiness.** Built per tile it
-/// was a buffer and a descriptor set allocated for every one of them, and on the route that is a
-/// single cheap dispatch apiece - the reduced read, which a grid tile takes - that CPU work is not
-/// hidden behind any GPU work. Measured on the integrated adapter, per tile it cost a 61MP render
-/// 198ms against a 105.7ms budget while the discrete card, whose driver allocates these far more
-/// cheaply, was inside budget throughout.
+/// **Build once per region and hold it across its tiles.** On the reduced read a grid tile takes,
+/// each tile is one cheap dispatch, so a per-tile buffer and descriptor set is CPU work nothing
+/// hides: on the integrated adapter that costs a 61MP render 198ms against a 105.7ms budget.
 ///
 /// The buffer comes back with the group because it has to outlive it, and a recording's would not:
 /// each tile submits its own.
@@ -885,6 +916,8 @@ fn record_rcd(
 
 #[cfg(test)]
 mod tests {
+    use crate::highlight::Colouring;
+
     /// The patch the host counts workgroups in, against the one the shader folds its lanes into.
     ///
     /// **Disagreeing here is a torn frame rather than a failure.** The host decides how many
@@ -1091,22 +1124,34 @@ mod tests {
             ceiling: [1.0; 3],
         };
         let (_shape, group) = super::shape_group(gpu, rcd, &cfa, &uploaded, super::MARGIN);
+        let field = crate::highlight::measure(gpu, &uploaded, &cfa, colour.ceiling)
+            .expect("the highlight field");
         pollster::block_on(super::demosaic_into(
-            gpu, rcd, &uploaded, &cfa, &at, colour, &frame, &group,
+            gpu,
+            rcd,
+            &uploaded,
+            &cfa,
+            &at,
+            colour,
+            field.seen(),
+            &frame,
+            &group,
         ))
         .expect("the demosaic runs");
-        let out = pollster::block_on(super::read_frame(gpu, &frame, out_w * out_h))
-            .expect("the frame reads back");
+        let out = crate::resident::levels_of(
+            &pollster::block_on(super::read_frame(gpu, &frame, out_w * out_h))
+                .expect("the frame reads back"),
+        );
 
         assert_eq!(
             out.len(),
             crop.2 * crop.3 * 3,
             "the crop's own size comes back"
         );
-        let want: Vec<u16> = (0..3)
+        let want: Vec<f32> = (0..3)
             .map(|channel| {
                 let value: f32 = (0..3).map(|c| matrix[channel][c] * level(c)).sum();
-                (value * 65535.0).clamp(0.0, 65535.0) as u16
+                value * 65535.0
             })
             .collect();
         // Away from the frame's edge, where RCD's own margin is border-filled rather than
@@ -1115,9 +1160,9 @@ mod tests {
         for pixel in 0..crop.2 * crop.3 {
             let got = [out[pixel * 3], out[pixel * 3 + 1], out[pixel * 3 + 2]];
             for channel in 0..3 {
-                let off = i32::from(got[channel]) - i32::from(want[channel]);
+                let off = f64::from(got[channel] - want[channel]);
                 assert!(
-                    off.abs() <= 2,
+                    off.abs() <= 2.0 + stored_within(f64::from(want[channel])),
                     "pixel {pixel} channel {channel} is {} against {}, over a flat field",
                     got[channel],
                     want[channel],
@@ -1130,7 +1175,7 @@ mod tests {
             want[0] > want[1] && want[1] > want[2],
             "the fixture's channels are distinct"
         );
-        assert!(want[2] > 0, "the fixture is not black");
+        assert!(want[2] > 0.0, "the fixture is not black");
     }
 
     /// A pixel blown in all three channels comes back neutral; one with a channel still reading
@@ -1168,14 +1213,14 @@ mod tests {
         };
 
         let at = flat_field(gpu, rcd, colour, ceiling);
-        let spread = i32::from(at.iter().copied().max().unwrap())
-            - i32::from(at.iter().copied().min().unwrap());
+        let spread = at.iter().copied().fold(f32::MIN, f32::max)
+            - at.iter().copied().fold(f32::MAX, f32::min);
         assert!(
-            spread <= 2,
+            spread <= 2.0,
             "a pixel on all three ceilings came back {at:?}, which is the illuminant's own ratios"
         );
         assert!(
-            at[0] > 60000,
+            at[0] > 60000.0,
             "the blown pixel is not neutral by being dark: {at:?}"
         );
 
@@ -1183,7 +1228,7 @@ mod tests {
         // photosite never came close, which the clip must not walk to white.
         let at = flat_field(gpu, rcd, colour, [ceiling[0], ceiling[1] / 3.0, ceiling[2]]);
         assert!(
-            at[1] * 2 < at[0] && at[1] * 2 < at[2],
+            at[1] * 2.0 < at[0] && at[1] * 2.0 < at[2],
             "a magenta light with green to spare came back {at:?}"
         );
     }
@@ -1309,10 +1354,13 @@ mod tests {
         let want: [f64; 3] = crate::hdr_fit::in_gamut(m).map(|v| v * 65535.0);
 
         let got = flat_field(gpu, rcd, colour, level);
-        assert!(got[2] > 0, "blue lands on the floor, not on zero: {got:?}");
+        assert!(
+            got[2] > 0.0,
+            "blue lands on the floor, not on zero: {got:?}"
+        );
         for c in 0..3 {
             assert!(
-                (f64::from(got[c]) - want[c]).abs() <= 2.0,
+                (f64::from(got[c]) - want[c]).abs() <= 2.0 + stored_within(want[c]),
                 "channel {c} came back {} against {:.1} - {got:?} for {want:?}",
                 got[c],
                 want[c]
@@ -1320,7 +1368,7 @@ mod tests {
         }
         let (got_luma, l) = (luma(got.map(f64::from)), luma(m));
         assert!(
-            (got_luma - l * 65535.0).abs() <= 3.0,
+            (got_luma - l * 65535.0).abs() <= 3.0 + stored_within(l * 65535.0),
             "luma moved: {got_luma} against {}",
             l * 65535.0
         );
@@ -1331,9 +1379,9 @@ mod tests {
         );
     }
 
-    /// IMG_0275's sun, where `reconstructed` was tuned: the disc is blown in every channel and has
-    /// to come back white rather than in the illuminant's pink, and the falloff around it keeps its
-    /// warmth without a magenta ring where the second channel runs out.
+    /// IMG_0275's sun, where `reconstructed` was tuned. The disc, blown in every channel, comes back
+    /// white rather than in the illuminant's pink, and the falloff keeps its warmth without a
+    /// magenta ring where the second channel runs out.
     #[test]
     fn the_sun_comes_back_white_at_its_disc() {
         let Some(gpu) = crate::gpu::device() else {
@@ -1342,13 +1390,20 @@ mod tests {
         let Some(rcd) = super::device(gpu) else {
             return;
         };
-        let window = RealWindow::read(gpu, rcd, "sun-disc", (768, 640), R8_COLOUR);
-        let census = window.census();
-        census.blown_is_neutral("the sun's disc", 100_000);
-        census.nothing_near_clipping_is_magenta("the sun");
+        let window = RealWindow::read(
+            gpu,
+            rcd,
+            "sun-disc",
+            (768, 640),
+            R8_COLOUR,
+            Colouring::DEFAULT,
+        );
         window
             .snapshot(gpu)
             .check("highlights/sun-disc", WINDOW_TOLERANCE);
+        let census = window.census();
+        census.blown_is_neutral("the sun's disc", 100_000);
+        census.nothing_near_clipping_is_magenta("the sun");
     }
 
     /// DSC04519's lamp-lit rock, where red and green run out with blue still reading: left at
@@ -1361,13 +1416,37 @@ mod tests {
         let Some(rcd) = super::device(gpu) else {
             return;
         };
-        let window = RealWindow::read(gpu, rcd, "lit-rock", (1248, 704), A7CR_COLOUR);
-        let census = window.census();
-        census.blown_is_neutral("the rock's blown patches", 100_000);
-        census.nothing_near_clipping_is_magenta("the rock");
-        window
+        let read =
+            |colouring| RealWindow::read(gpu, rcd, "lit-rock", (1248, 704), A7CR_COLOUR, colouring);
+        read(Colouring::DEFAULT)
             .snapshot(gpu)
             .check("highlights/lit-rock", WINDOW_TOLERANCE);
+        // The lamp's tint stays faintly on the blown face by default, so neutral is read with none.
+        let census = read(Colouring::at(0.5)).census();
+        census.blown_is_neutral("the rock's blown patches", 100_000);
+        census.nothing_near_clipping_is_magenta("the rock");
+    }
+
+    /// DSC05443's painted temple beams: saturated colour a few pixels across, which a demosaic or a
+    /// chroma stage that blurs colour past what the sensor resolved washes out.
+    #[test]
+    fn painted_beams_keep_their_fine_colour() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
+        RealWindow::read(
+            gpu,
+            rcd,
+            "painted-beams",
+            (1280, 704),
+            BEAMS_COLOUR,
+            Colouring::DEFAULT,
+        )
+        .snapshot(gpu)
+        .check("demosaic/painted-beams", WINDOW_TOLERANCE);
     }
 
     const WINDOW_TOLERANCE: crate::snapshot::Tolerance = crate::snapshot::Tolerance {
@@ -1393,6 +1472,11 @@ mod tests {
         ceiling: [0.60524476, 0.35804197, 1.0],
     };
 
+    const BEAMS_COLOUR: super::Colour = super::Colour {
+        ceiling: [1.0, 0.35629785, 0.5588031],
+        ..A7CR_COLOUR
+    };
+
     /// A window of a real photograph's conditioned mosaic (`examples/mosaic_crop.rs`), RGGB from its
     /// origin, through the demosaic and the colour pass, inset past RCD's margin.
     struct RealWindow {
@@ -1413,34 +1497,30 @@ mod tests {
             name: &str,
             (w, h): (usize, usize),
             colour: super::Colour,
+            colouring: crate::highlight::Colouring,
         ) -> RealWindow {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join(format!("../../test/fixtures/mosaics/{name}.f32"));
             let bytes = std::fs::read(path).expect("the window's mosaic");
-            assert_eq!(bytes.len(), w * h * 4);
+            assert_eq!(
+                bytes.len(),
+                w * h * 4,
+                "{name}.f32 is the wrong size; an LFS pointer needs `git lfs pull`"
+            );
             let mosaic: Vec<f32> = bytes
                 .chunks_exact(4)
                 .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
                 .collect();
-            let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
-            let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
             let (width, height) = (w - 2 * Self::INSET, h - 2 * Self::INSET);
-            let at = super::Placement {
-                stride: crate::px::Span::exact(w),
-                crop: crate::px::Rect::exact(Self::INSET, Self::INSET, width, height),
-                dest: crate::px::At::ORIGIN,
-                frame: crate::px::Size::exact(width, height),
-                orientation: 0,
-                reduce: 1,
-            };
-            let frame = super::frame_buffer(gpu, width * height);
-            let (_shape, group) = super::shape_group(gpu, rcd, &cfa, &uploaded, super::MARGIN);
-            pollster::block_on(super::demosaic_into(
-                gpu, rcd, &uploaded, &cfa, &at, colour, &frame, &group,
-            ))
-            .expect("the demosaic runs");
-            let rgb = pollster::block_on(super::read_frame(gpu, &frame, width * height))
-                .expect("it reads back");
+            let rgb = demosaiced(
+                gpu,
+                rcd,
+                &mosaic,
+                (w, h),
+                (Self::INSET, Self::INSET, width, height),
+                colour,
+                colouring,
+            );
             RealWindow {
                 mosaic,
                 stride: w,
@@ -1454,7 +1534,7 @@ mod tests {
         /// How full each colour's photosites are about an output pixel, as `assemble.slang`'s
         /// `fills_at` measures it.
         fn fill(&self, x: usize, y: usize) -> [f32; 3] {
-            let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
+            let cfa = rggb();
             let (mx, my) = (x + Self::INSET, y + Self::INSET);
             let mut sum = [0.0f32; 3];
             let mut seen = [0.0f32; 3];
@@ -1470,7 +1550,7 @@ mod tests {
 
         fn pixel(&self, x: usize, y: usize) -> [f64; 3] {
             let at = (y * self.width + x) * 3;
-            [0, 1, 2].map(|c| f64::from(self.rgb[at + c]))
+            [0, 1, 2].map(|c| f64::from(crate::resident::level_of_bits(self.rgb[at + c])))
         }
 
         fn census(&self) -> Census {
@@ -1566,14 +1646,40 @@ mod tests {
         rcd: &'static super::Rcd,
         colour: super::Colour,
         level: [f32; 3],
-    ) -> [u16; 3] {
+    ) -> [f32; 3] {
         let (w, h) = (64usize, 48usize);
-        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap();
         let crop = (8usize, 8usize, 24usize, 16usize);
+        let cfa = &rggb();
         let mosaic: Vec<f32> = (0..h)
             .flat_map(|r| (0..w).map(move |c| level[cfa.colour_at(r, c) as usize]))
             .collect();
-        let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+        let samples = demosaiced(
+            gpu,
+            rcd,
+            &mosaic,
+            (w, h),
+            crop,
+            colour,
+            crate::highlight::Colouring::DEFAULT,
+        );
+        middle_of(&samples, crop.2, crop.3)
+    }
+
+    fn rggb() -> crate::cfa::Cfa {
+        crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap()
+    }
+
+    /// `crop` of an RGGB `mosaic` through the demosaic and the colour pass, unturned, as stored.
+    fn demosaiced(
+        gpu: &'static crate::gpu::Gpu,
+        rcd: &'static super::Rcd,
+        mosaic: &[f32],
+        (w, h): (usize, usize),
+        crop: (usize, usize, usize, usize),
+        colour: super::Colour,
+        colouring: crate::highlight::Colouring,
+    ) -> Vec<u16> {
+        let uploaded = crate::condition::Mosaic::upload(gpu, mosaic, w, h);
         let at = super::Placement {
             stride: crate::px::Span::exact(w),
             crop: crate::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
@@ -1583,15 +1689,94 @@ mod tests {
             reduce: 1,
         };
         let frame = super::frame_buffer(gpu, crop.2 * crop.3);
+        let cfa = rggb();
         let (_shape, group) = super::shape_group(gpu, rcd, &cfa, &uploaded, super::MARGIN);
+        let field = crate::highlight::measure(gpu, &uploaded, &cfa, colour.ceiling)
+            .expect("the highlight field");
         pollster::block_on(super::demosaic_into(
-            gpu, rcd, &uploaded, &cfa, &at, colour, &frame, &group,
+            gpu,
+            rcd,
+            &uploaded,
+            &cfa,
+            &at,
+            colour,
+            field.seen().coloured(colouring),
+            &frame,
+            &group,
         ))
         .expect("the demosaic runs");
-        let samples = pollster::block_on(super::read_frame(gpu, &frame, crop.2 * crop.3))
-            .expect("it reads back");
-        let middle = ((crop.3 / 2) * crop.2 + crop.2 / 2) * 3;
-        [samples[middle], samples[middle + 1], samples[middle + 2]]
+        pollster::block_on(super::read_frame(gpu, &frame, crop.2 * crop.3)).expect("it reads back")
+    }
+
+    fn middle_of(samples: &[u16], width: usize, height: usize) -> [f32; 3] {
+        let middle = ((height / 2) * width + width / 2) * 3;
+        std::array::from_fn(|c| crate::resident::level_of_bits(samples[middle + c]))
+    }
+
+    /// A disc blown in every channel borrows a vivid surround's colour and comes back white under a
+    /// pale one, at the default Highlight recovery.
+    #[test]
+    fn a_blown_disc_takes_a_vivid_lights_colour_and_not_a_pale_ones() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(rcd) = super::device(gpu) else {
+            return;
+        };
+        let pink = blown_disc(gpu, rcd, [0.9, 0.18, 0.63]);
+        assert!(
+            pink[1] < 0.5 * pink[0] && pink[1] < 0.5 * pink[2],
+            "under a pink light the disc came back {pink:?}"
+        );
+        let cream = blown_disc(gpu, rcd, [0.9, 0.81, 0.72]);
+        let spread = (cream[0].max(cream[1]).max(cream[2]) - cream[0].min(cream[1]).min(cream[2]))
+            / cream[0].max(cream[1]).max(cream[2]);
+        assert!(
+            spread <= 0.02,
+            "under a cream light the disc came back {cream:?}"
+        );
+    }
+
+    /// The middle pixel of a disc on every ceiling, inside a flat `surround`, through the demosaic
+    /// and the colour pass at the identity.
+    fn blown_disc(
+        gpu: &'static crate::gpu::Gpu,
+        rcd: &'static super::Rcd,
+        surround: [f32; 3],
+    ) -> [f32; 3] {
+        let side = 256usize;
+        let cfa = &rggb();
+        let centre = side as f32 / 2.0;
+        let mosaic: Vec<f32> = (0..side)
+            .flat_map(|r| {
+                (0..side).map(move |c| {
+                    let (dx, dy) = (c as f32 - centre, r as f32 - centre);
+                    match dx * dx + dy * dy < 40.0 * 40.0 {
+                        true => 1.0,
+                        false => surround[cfa.colour_at(r, c) as usize],
+                    }
+                })
+            })
+            .collect();
+        let inner = side - 2 * RealWindow::INSET;
+        let samples = demosaiced(
+            gpu,
+            rcd,
+            &mosaic,
+            (side, side),
+            (RealWindow::INSET, RealWindow::INSET, inner, inner),
+            super::Colour {
+                matrix: IDENTITY_F32,
+                ceiling: [1.0; 3],
+            },
+            crate::highlight::Colouring::DEFAULT,
+        );
+        middle_of(&samples, inner, inner)
+    }
+
+    /// Half a step of the half float a level near `level` is stored as: what storing it can move it.
+    fn stored_within(level: f64) -> f64 {
+        level.abs() / 2048.0
     }
 
     /// Every orientation, against the permutation `orient_for_test` does on the host.
@@ -1626,27 +1811,18 @@ mod tests {
         // Inset from the edge so RCD's own margin is not the thing being compared.
         let crop = (16usize, 16usize, 48usize, 24usize);
         let identity = super::Colour {
-            matrix: [[1.0f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            matrix: IDENTITY_F32,
             ceiling: [1.0; 3],
         };
-        let unturned = {
-            let at = super::Placement {
-                stride: crate::px::Span::exact(w),
-                crop: crate::px::Rect::exact(crop.0, crop.1, crop.2, crop.3),
-                dest: crate::px::At::ORIGIN,
-                frame: crate::px::Size::exact(crop.2, crop.3),
-                orientation: 0,
-                reduce: 1,
-            };
-            let frame = super::frame_buffer(gpu, crop.2 * crop.3);
-            let (_shape, group) = super::shape_group(gpu, rcd, &cfa, &uploaded, super::MARGIN);
-            pollster::block_on(super::demosaic_into(
-                gpu, rcd, &uploaded, &cfa, &at, identity, &frame, &group,
-            ))
-            .expect("the demosaic runs");
-            pollster::block_on(super::read_frame(gpu, &frame, crop.2 * crop.3))
-                .expect("it reads back")
-        };
+        let unturned = demosaiced(
+            gpu,
+            rcd,
+            &mosaic,
+            (w, h),
+            crop,
+            identity,
+            crate::highlight::Colouring::DEFAULT,
+        );
 
         for orientation in 1..8u32 {
             let at = super::Placement {
@@ -1660,8 +1836,18 @@ mod tests {
             let (out_w, out_h) = at.out();
             let frame = super::frame_buffer(gpu, out_w * out_h);
             let (_shape, group) = super::shape_group(gpu, rcd, &cfa, &uploaded, super::MARGIN);
+            let field = crate::highlight::measure(gpu, &uploaded, &cfa, identity.ceiling)
+                .expect("the highlight field");
             pollster::block_on(super::demosaic_into(
-                gpu, rcd, &uploaded, &cfa, &at, identity, &frame, &group,
+                gpu,
+                rcd,
+                &uploaded,
+                &cfa,
+                &at,
+                identity,
+                field.seen(),
+                &frame,
+                &group,
             ))
             .expect("the demosaic runs");
             let turned = pollster::block_on(super::read_frame(gpu, &frame, out_w * out_h))

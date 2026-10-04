@@ -232,18 +232,18 @@ uint sample_of(uint sample)
         params.orientation);
 
     let light = light_of(at);
-    // Counts, because that is what this writes: `white_level` is diffuse white's own count and the
-    // container's ceiling is full scale. `Level` is not `IStandard` for that reason, so both come
+    // Levels, because that is what `bits_of` stores: `white_level` is diffuse white's own level and
+    // the picture's ceiling is full scale. `Level` is not `IStandard` for that reason, so both come
     // in `measured`.
     let rec2020 = measured<Level>(float3(
         dot(params.row0.xyz, light),
         dot(params.row1.xyz, light),
         dot(params.row2.xyz, light)) * params.white_level);
-    let held = within(in_gamut(rec2020), measured<Level>(65535.0)).v;
+    let held = within(in_gamut(rec2020), measured<Level>(FULL_SCALE)).v;
     float value = held.r;
     if (channel == 1) { value = held.g; }
     if (channel == 2) { value = held.b; }
-    return uint(clamp(value, 0.0, 65535.0));
+    return bits_of(clamp(value, 0.0, FULL_SCALE));
 }
 
 [shader("compute")]

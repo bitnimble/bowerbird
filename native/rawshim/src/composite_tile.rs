@@ -2231,7 +2231,9 @@ mod tests {
                 reference,
             );
             let table = crate::base::coding_curve(coded, reference);
-            let sample = (f64::from(neutral_ceiling) * f64::from(u16::MAX)).round() as usize;
+            let sample = usize::from(crate::resident::bits_of_level(
+                neutral_ceiling * f32::from(u16::MAX),
+            ));
             let code = u16::from_le_bytes([table[sample * 2], table[sample * 2 + 1]]);
             let signal = Light::measured(f64::from(code) / f64::from(u16::MAX));
             let light = crate::tone::pq_inv::<SceneNits>(signal).raw() / ceiling;

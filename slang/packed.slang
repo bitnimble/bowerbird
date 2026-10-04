@@ -1,8 +1,8 @@
-// Two `u16` to a word, low half first, which is how every frame buffer in this pipeline is held.
+// Two sixteen-bit samples to a word, low half first: half floats in a scene-linear frame, PQ codes
+// in a coded one.
 //
-// The frame stays packed from the coding to the draw: a sample is sixteen bits and the smallest
-// thing a shader can address is thirty-two, so widening it would double a 361MB frame at 61MP for
-// arithmetic that rounds back into `u16` anyway.
+// A sample is sixteen bits and the smallest thing a shader can address is thirty-two, so widening
+// it would double a 361MB frame at 61MP for arithmetic that rounds back to sixteen bits anyway.
 module packed;
 
 import px;
@@ -16,6 +16,29 @@ import px;
 public uint half_of(uint word, uint at)
 {
     return select((at & 1) == 0, word & 0xffff, word >> 16);
+}
+
+/// A scene-linear sample's level, in counts of the sensor's full scale, off its half.
+///
+/// **A half float of the level over full scale, not a count**, so light past the clip that the
+/// highlight reconstruction recovers has somewhere to go. A coded frame's halves are PQ codes and
+/// never come through here. `resident::level_of_bits` is the host's.
+public float level_of(uint bits)
+{
+    return f16tof32(bits) * FULL_SCALE;
+}
+
+public uint bits_of(float level)
+{
+    return f32tof16(level / FULL_SCALE);
+}
+
+/// The sensor's full scale, in the levels a scene-linear sample is counted in.
+public static const float FULL_SCALE = 65535.0;
+
+public uint3 bits_of(float3 level)
+{
+    return uint3(bits_of(level.r), bits_of(level.g), bits_of(level.b));
 }
 
 /// The pixel pair starting at even pixel `first` of a frame three codes to a pixel: its three words,

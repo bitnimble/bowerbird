@@ -152,7 +152,7 @@ export const JobSchema = z.object({
    */
   photoAnalysis: z.array(z.number()).optional(),
   /**
-   * The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
+   * The Detail panel's sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
    *
    * Positions rather than strengths, and carried unconverted for the same reason the
    * exposure below is: the denoise that reads them is on the far side, and a number
@@ -164,6 +164,7 @@ export const JobSchema = z.object({
   denoiseLuminance: z.number().nullable(),
   denoiseColour: z.number().nullable(),
   denoiser: DenoiserSchema.default('galosh'),
+  highlightRecovery: z.number(),
   /**
    * Collapse each Bayer quad into one pixel rather than interpolating it.
    *

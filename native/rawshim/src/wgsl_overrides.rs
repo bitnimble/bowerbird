@@ -15,6 +15,7 @@ pub const READS_OVERRIDES: &[(&str, &[&str])] = &[
     ("frame.wgsl", &["fs"]),
     ("galosh/lpixel_lh_den_fused.wgsl", &["lpixel_lh_den_fused"]),
     ("galosh/pass12.wgsl", &["pass12"]),
+    ("highlight_field.wgsl", &["field_seed"]),
     ("lslcd.wgsl", &["modulate_h", "assemble"]),
     (
         "rcd.wgsl",

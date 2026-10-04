@@ -135,7 +135,7 @@ export class StageStore {
   }
 
   /**
-   * Whether the Detail sliders can do anything to this photograph.
+   * Whether the denoise sliders can do anything to this photograph.
    *
    * **A measured fit is the whole of what the denoise needs, so its absence is the honest test.**
    * GALOSH separates colour from luma over one period of the pattern, so a sensor whose period does

@@ -60,6 +60,7 @@ function asJob(doc: EditDoc, libraryDenoiser: Denoiser): FromDocument {
     denoiseLuminance: doc.luminanceNoise,
     denoiseColour: doc.colourNoise,
     denoiser: doc.denoiser ?? libraryDenoiser,
+    highlightRecovery: doc.highlightRecovery,
     // A position on a 0..100 track on this side and a fraction of the deconvolution on the
     // other; the shader's own gain is what the top of that track is worth.
     sharpen: doc.sharpening / 100,

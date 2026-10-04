@@ -472,14 +472,22 @@ fn light_of_code(gpu: &crate::gpu::Gpu) -> crate::gpu::Buffer {
     })
 }
 
-/// The same table for a frame the coding has not reached: the ramp, since a level *is* its light.
+/// The same table for a frame the coding has not reached: each sample's own level, by its bits
+/// (`resident::level_of_bits`), as a fraction of full scale.
 ///
-/// Normalised the same way, so `code_of_light`'s search over it lands back on the level it came
+/// Normalised the same way, so `code_of_light`'s search over it lands back on the sample it came
 /// from and a flat field survives the round trip.
 fn light_of_level(gpu: &crate::gpu::Gpu) -> crate::gpu::Buffer {
+    let largest = half::f16::MAX.to_bits();
     let mut bytes = Vec::with_capacity((u16::MAX as usize + 1) * 4);
-    for level in 0..=u16::MAX {
-        bytes.extend_from_slice(&(f32::from(level) / f32::from(u16::MAX)).to_le_bytes());
+    for bits in 0..=u16::MAX {
+        // Past the largest finite half are infinity, NaNs and the negatives, which no writer
+        // stores; saturated, so the search's table stays ascending.
+        let light = match bits <= largest {
+            true => crate::resident::level_of_bits(bits) / crate::resident::FULL_SCALE,
+            false => f32::MAX,
+        };
+        bytes.extend_from_slice(&light.to_le_bytes());
     }
     gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("light of level"),
@@ -1343,7 +1351,7 @@ fn defringe_into(
     // `vec3f` is padded to four words, and the `full` after it lands in the hole rather than past
     // it - which is the same layout the shader declares and not a coincidence worth relying on
     // silently.
-    params.extend_from_slice(&f32::from(u16::MAX).to_le_bytes());
+    params.extend_from_slice(&crate::resident::FULL_SCALE.to_le_bytes());
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("defringe params"),
         contents: &params,
@@ -1685,7 +1693,8 @@ pub async fn encode_base(
     read
 }
 
-/// What `coded` in `base.slang` looks up: every level a `u16` can hold, coded, two to a word.
+/// What `coded` in `base.slang` looks up: every sample a scene-linear frame can hold, by its bits
+/// (`resident::level_of_bits`), coded, two to a word.
 ///
 /// **Evaluated here rather than in the shader, and `condition.rs` gives the argument.** The domain
 /// is 65536 entries, which is a quarter of a megabyte and a fraction of a millisecond; evaluating
@@ -1696,11 +1705,15 @@ pub(crate) fn coding_curve(
     levels: crate::tone::Anchored,
     reference_white_nits: crate::light::Light<crate::light::SceneNits>,
 ) -> Vec<u8> {
-    // Nits per level, hoisted out of the loop: `pq` takes the scene's own nits, and one multiply
-    // per entry is what the table has always been evaluated as.
     let scale = reference_white_nits.raw() / levels.white.raw();
     let mut out = Vec::with_capacity((u16::MAX as usize + 1) * 2);
-    for level in 0..=u16::MAX {
+    for bits in 0..=u16::MAX {
+        let level = crate::resident::level_of_bits(bits);
+        let level = if level.is_nan() {
+            0.0
+        } else {
+            level.clamp(0.0, f32::MAX)
+        };
         let nits =
             crate::light::Light::<crate::light::SceneNits>::measured(f64::from(level) * scale);
         let coded = (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round();
@@ -2988,7 +3001,10 @@ mod tests {
         // the frame is tall rather than wide.
         let (w, h) = (64usize, 1024usize);
         let (low, high) = (40.0f32 * 257.0, 200.0f32 * 257.0);
-        let frame = blurred_edge(w, h, low, high);
+        // A scene-linear frame, which is what the estimator reads.
+        let frame = crate::resident::samples_of_levels(
+            blurred_edge(w, h, low, high).into_iter().map(f32::from),
+        );
 
         // The same step through the same taps, and the crossings the shader goes looking for.
         let taps = crate::image::gaussian(
@@ -3499,12 +3515,8 @@ mod tests {
             .collect();
         let taps = crate::image::gaussian(0.7, crate::image::DECONVOLVE_RADIUS);
         let soft = blur(&plane, w, h, &taps);
-        let mut samples = vec![0u16; w * h * 3];
-        for (i, value) in soft.iter().enumerate() {
-            for c in 0..3 {
-                samples[i * 3 + c] = *value as u16;
-            }
-        }
+        let samples =
+            crate::resident::samples_of_levels(soft.iter().flat_map(|value| [value.trunc(); 3]));
 
         let sigma = crate::image::SharpenSigma {
             composed: 0.6,
@@ -3782,8 +3794,9 @@ mod tests {
             return;
         };
 
-        // Odd, so the tail that shares its word with nothing is exercised rather than assumed.
-        let levels: Vec<u16> = (0..=u16::MAX).chain(std::iter::once(0)).collect();
+        // Every sample a frame can hold, and odd, so the tail that shares its word with nothing is
+        // exercised rather than assumed.
+        let samples: Vec<u16> = (0..=u16::MAX).chain(std::iter::once(0)).collect();
         let anchored = crate::tone::Levels {
             white: Light::measured(8133.0),
             peak: Light::measured(13783.0),
@@ -3792,15 +3805,21 @@ mod tests {
         .anchored();
 
         let scale = REFERENCE.raw() / anchored.white.raw();
-        let theirs: Vec<u16> = levels
+        let theirs: Vec<u16> = samples
             .iter()
-            .map(|level| {
-                let nits = Light::<SceneNits>::measured(f64::from(*level) * scale);
+            .map(|&bits| {
+                let level = crate::resident::level_of_bits(bits);
+                let level = if level.is_nan() {
+                    0.0
+                } else {
+                    level.clamp(0.0, f32::MAX)
+                };
+                let nits = Light::<SceneNits>::measured(f64::from(level) * scale);
                 (crate::tone::pq(nits).raw() * f64::from(u16::MAX)).round() as u16
             })
             .collect();
 
-        let mut mine = levels.clone();
+        let mut mine = samples.clone();
         pollster::block_on(super::encode_base(
             gpu, base, &mut mine, anchored, REFERENCE,
         ))
@@ -3820,7 +3839,7 @@ mod tests {
             "the shader and the table disagree by {worst} counts"
         );
         // And it is a coding rather than a copy, which a bound alone would let through.
-        assert_ne!(theirs, levels, "the table left the frame as it found it");
+        assert_ne!(theirs, samples, "the table left the frame as it found it");
     }
 
     /// [`super::full_scale_light`] against the coding it is the inverse of: code a full-scale
@@ -3841,8 +3860,8 @@ mod tests {
             }
             .anchored();
             let coded = super::coding_curve(anchored, REFERENCE);
-            let last = coded.len() - 2;
-            let code = u16::from_le_bytes([coded[last], coded[last + 1]]);
+            let full = usize::from(crate::resident::bits_of_level(f32::from(u16::MAX))) * 2;
+            let code = u16::from_le_bytes([coded[full], coded[full + 1]]);
             let signal = Light::measured(f64::from(code) / f64::from(u16::MAX));
             let read = crate::tone::pq_inv::<SceneNits>(signal).raw() / ceiling;
             let mine = f64::from(super::full_scale_light(anchored, REFERENCE));
@@ -3924,6 +3943,7 @@ mod tests {
     /// Away from black, because dividing by the local luma is what lets a pixel at two counts
     /// report a ratio of one.
     fn fringe(frame: &[u16], width: usize, height: usize) -> (f64, f64) {
+        let frame = crate::resident::levels_of(frame);
         let luma_at = |x: usize, y: usize| -> f64 {
             let at = (y * width + x) * 3;
             0.2126 * f64::from(frame[at])
@@ -3989,7 +4009,7 @@ mod tests {
         for at in 0..width * height {
             for (channel, plane) in [&red, &green, &blue].iter().enumerate() {
                 let value = plane[at] + noise() * amplitude;
-                out[at * 3 + channel] = value.round().clamp(0.0, f64::from(u16::MAX)) as u16;
+                out[at * 3 + channel] = crate::resident::bits_of_level(value.max(0.0) as f32);
             }
         }
         out
@@ -4233,18 +4253,20 @@ mod tests {
             }
         }
 
-        let scene = resized_scene(gpu, base, &src, (w, h), (2, 2)).expect("a scene downscale");
+        let linear = crate::resident::samples_of_levels(src.iter().map(|&v| f32::from(v)));
+        let scene = resized_scene(gpu, base, &linear, (w, h), (2, 2)).expect("a scene downscale");
         let mean = (u32::from(dark) + u32::from(light)) / 2;
-        for (at, sample) in scene.iter().enumerate() {
+        for (at, sample) in crate::resident::levels_of(&scene).iter().enumerate() {
+            // Within what the half float a level is stored as can move it.
             assert!(
-                sample.abs_diff(mean as u16) <= 1,
+                (sample - mean as f32).abs() <= 1.0 + mean as f32 / 2048.0,
                 "sample {at} came back {sample}, not the mean {mean}",
             );
         }
 
-        // The same numbers read as PQ: 8000 and 16000 stand for 0.56 and 4.73 nits there, so the
-        // brighter tap is eight times the light its code suggests and the mean lands at about
-        // 13330 - two thirds of the way up rather than half.
+        // The same numbers read as PQ codes: 8000 and 16000 stand for 0.56 and 4.73 nits there,
+        // so the brighter tap is eight times the light its code suggests and the mean lands at
+        // about 13330 - two thirds of the way up rather than half.
         let coded = resized(gpu, base, &src, (w, h), (2, 2)).expect("a coded downscale");
         assert!(
             coded[0] > mean as u16 + 1000,
@@ -4498,9 +4520,10 @@ mod tests {
 
         let (width, height) = (192usize, 128usize);
         let plane = |x: f64, y: f64| 8_000.0 + 200.0 * x + 100.0 * y;
-        let frame: Vec<u16> = (0..width * height)
-            .flat_map(|at| [plane((at % width) as f64, (at / width) as f64).round() as u16; 3])
-            .collect();
+        let frame = crate::resident::samples_of_levels(
+            (0..width * height)
+                .flat_map(|at| [plane((at % width) as f64, (at / width) as f64) as f32; 3]),
+        );
 
         let unit = crate::image::SPLINE_UNIT;
         let lens = crate::fit::Lens {
@@ -4576,7 +4599,8 @@ mod tests {
                     // has it: an integer is a pixel's centre.
                     let sx = full_w / 2.0 - 0.5 + ox * ratio;
                     let sy = full_h / 2.0 - 0.5 + oy * ratio;
-                    fused[(y * out.0 + x) * 3 + c] = plane(sx, sy).round() as u16;
+                    fused[(y * out.0 + x) * 3 + c] =
+                        crate::resident::bits_of_level(plane(sx, sy) as f32);
                 }
             }
         }
@@ -4610,9 +4634,10 @@ mod tests {
         let mean = total as f64 / counted as f64;
         eprintln!("staged against fused: mean {mean:.2} counts of 65535, worst {worst}");
         // Of 65535, on a plane climbing 200 counts a pixel: half a pixel of drift anywhere in the
-        // mapping is a hundred counts here and nowhere near these.
+        // mapping is a hundred counts here and nowhere near these. The rest is the half float
+        // rounding the reference where the staged route rounds the frame.
         assert!(
-            mean < 1.5,
+            mean < 2.5,
             "the two routes differ by a mean of {mean:.2} counts"
         );
         assert!(worst < 12, "the two routes differ by up to {worst} counts");
@@ -4622,8 +4647,8 @@ mod tests {
     ///
     /// **Bit-equal, unlike every other test here, and it has to be.** The others hold a shader
     /// against a CPU that computes the same thing differently; this holds the same shaders on the
-    /// same data against themselves, and every stage writes u16 back into the same packed buffer -
-    /// so the readbacks the chain deletes were copies, not roundings. A count of difference is a
+    /// same data against themselves, and every stage writes sixteen bits back into the same packed
+    /// buffer, so a readback between stages is a copy, not a rounding. A count of difference is a
     /// bug in the plumbing.
     ///
     /// Both branches, because which buffer holds the answer is what the warp's absence changes.
@@ -4637,17 +4662,17 @@ mod tests {
         };
 
         let (width, height) = (257usize, 181);
-        let frame = edged(width, height);
+        let frame =
+            crate::resident::samples_of_levels(edged(width, height).into_iter().map(f32::from));
         let levels = crate::tone::Levels {
             white: Light::measured(8133.0),
             peak: Light::measured(13783.0),
             floor: None,
         }
         .anchored();
-        // The strengths `prepare` takes, and the pair it will measure for itself - off the frame as
-        // it arrives, which is linear, since that is where the correction now happens. Taken here
-        // the same way so the staged side is the same arithmetic rather than a number chosen to
-        // agree with it.
+        // The strengths `prepare` takes, and the pair it will measure for itself off the linear
+        // frame as it arrives. Taken here the same way so the staged side is the same arithmetic
+        // rather than a number chosen to agree with it.
         let strengths = crate::image::Strengths {
             sharpen: 0.0,
             defringe: 1.0,
@@ -4817,7 +4842,9 @@ mod tests {
             for channel in 0..3 {
                 let value =
                     smooth[at] + softness[channel] * curvature[at] + sigmas[channel] * normal();
-                out.push((value * 65535.0).clamp(0.0, 65535.0) as u16);
+                out.push(crate::resident::bits_of_level(
+                    (value * 65535.0).clamp(0.0, 65535.0).trunc(),
+                ));
             }
         }
         out

@@ -1,11 +1,8 @@
 // The chroma lattice's moments, accumulated where the pairs already are.
 //
-// **This one could not be a straight substitution like `fit_moments`.** A pair does not land on
-// one accumulator, it lands on the sixteen corners of its cell, and there are thousands of nodes of
-// `NODE_WORDS` sums. No thread can hold a private copy of that, and WGSL has no float atomic - so
-// the pairs are binned by the cell they fall in first, and the fold then reads each cell once per
-// corner it feeds. Every landing is visited the sixteen times it was always going to reach, rather
-// than scattered into sixteen places at once.
+// A pair lands on the sixteen corners of its cell, and there are thousands of nodes of `NODE_WORDS`
+// sums. No thread can hold a private copy of that, and WGSL has no float atomic - so the pairs are
+// binned by the cell they fall in first, and the fold then reads each cell once per corner it feeds.
 //
 // **A thread is a (slice, corner): `SLICE` landings of one cell, fed to one of its corners.** A
 // cell's run is as long as its share of the frame, and a dark frame puts most of its pairs in one

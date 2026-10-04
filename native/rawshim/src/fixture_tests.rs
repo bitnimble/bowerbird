@@ -240,6 +240,7 @@ fn tile_job(
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
         denoiser: crate::galosh::Denoiser::Galosh,
+        highlight_recovery: None,
         // Off: a tile of this job is compared against a whole render of it, and a correction
         // the whole render detected for itself is not one a tile can be handed here.
         dust: crate::dust::Settings {
@@ -433,10 +434,10 @@ mod decode_geometry {
         assert_eq!(frame.height, header.height as usize);
 
         let host = pollster::block_on(frame.to_host()).expect("the frame reads back");
-        let samples = host.samples16().expect("sixteen-bit samples");
+        let samples = crate::resident::levels_of(host.samples16().expect("sixteen-bit samples"));
         let mut sums = [0f64; 3];
-        let mut highs = [0u16; 3];
-        let mut lows = [u16::MAX; 3];
+        let mut highs = [0f32; 3];
+        let mut lows = [f32::MAX; 3];
         for pixel in samples.chunks_exact(3) {
             for (channel, value) in pixel.iter().enumerate() {
                 sums[channel] += f64::from(*value);
@@ -513,7 +514,10 @@ mod decode_geometry {
             let data = frame.samples16().expect("a 16-bit decode");
             let lit = |x: usize, y: usize| {
                 let i = (y * frame.width + x) * 3;
-                u32::from(data[i]) + u32::from(data[i + 1]) + u32::from(data[i + 2]) > 24
+                crate::resident::levels_of(&data[i..i + 3])
+                    .iter()
+                    .sum::<f32>()
+                    > 24.0
             };
             let (mid_x, mid_y) = (frame.width / 2, frame.height / 2);
             for (x, y, edge) in [
@@ -704,7 +708,11 @@ mod decode_geometry {
         let roughness = |frame: &crate::frame::Frame| {
             let samples = frame.samples16().expect("16-bit");
             let (x0, y0, side) = (2078usize, 1020, 64);
-            let at = |x: usize, y: usize| f64::from(samples[(y * frame.width + x) * 3 + 1]);
+            let at = |x: usize, y: usize| {
+                f64::from(crate::resident::level_of_bits(
+                    samples[(y * frame.width + x) * 3 + 1],
+                ))
+            };
             let (mut sum, mut step) = (0.0, 0.0);
             for y in y0..y0 + side {
                 for x in x0..x0 + side {
@@ -760,7 +768,11 @@ mod decode_geometry {
         let white = levels.white.raw();
 
         let (x0, y0, side) = (2030usize, 980usize, 64usize);
-        let blue = |x: usize, y: usize| f64::from(samples[(y * frame.width + x) * 3 + 2]);
+        let blue = |x: usize, y: usize| {
+            f64::from(crate::resident::level_of_bits(
+                samples[(y * frame.width + x) * 3 + 2],
+            ))
+        };
         let mut sum = 0.0;
         let mut step = 0.0;
         let mut seen = 0.0;
@@ -855,12 +867,13 @@ mod decode_geometry {
             let mut total = 0.0f64;
             // The green channel, which every position of an X-Trans period has something to say
             // about.
-            for (at, value) in samples.iter().enumerate().skip(1).step_by(3) {
+            for (at, &bits) in samples.iter().enumerate().skip(1).step_by(3) {
                 let pixel = at / 3;
                 let slot = (pixel / width) % 6 * 6 + (pixel % width) % 6;
-                sums[slot] += *value as f64;
+                let value = f64::from(crate::resident::level_of_bits(bits));
+                sums[slot] += value;
                 counts[slot] += 1.0;
-                total += *value as f64;
+                total += value;
             }
             let n: f64 = counts.iter().sum();
             let mean = total / n;
@@ -1063,6 +1076,7 @@ mod decode_geometry {
             denoise_luminance: Some(40.0),
             denoise_colour: Some(40.0),
             denoiser: crate::galosh::Denoiser::Galosh,
+            highlight_recovery: None,
             // **On, and that is the point of it being on here.** The frame corrects from that list
             // and the bands are handed it through the analysis; a band that looked for its own, or
             // that was handed coordinates in the wrong space, would divide a shadow out of the
@@ -1131,6 +1145,7 @@ mod decode_geometry {
                     denoise_luminance: request.denoise_luminance,
                     denoise_colour: request.denoise_colour,
                     denoiser: request.denoiser,
+                    highlight_recovery: request.highlight_recovery,
                     dust: request.dust,
                     adjust: crate::gpu::Adjust::none(),
                     levels: Some(crate::tone::Levels {
@@ -1920,7 +1935,7 @@ mod loupe_tile {
     /// gather. Only then the graded output, which adds the geometry and the grade itself. A single
     /// end-to-end assertion says "something moved" and leaves half the pipeline to search.
     ///
-    /// Close and not exact, and `ROUTE_COUNTS` says why the difference between the two is a
+    /// Close and not exact, and `ROUTE_STEPS` says why the difference between the two is a
     /// coordinate's last bit rather than anything about the picture.
     #[test]
     fn a_render_that_decoded_only_its_crop_is_the_one_that_decoded_everything() {
@@ -2118,8 +2133,8 @@ mod loupe_tile {
             (read.2, read.3),
         );
         assert!(
-            worst <= ROUTE_COUNTS,
-            "the restricted decode's frame is not the whole decode's frame: {worst} counts",
+            worst <= ROUTE_STEPS,
+            "the restricted decode's frame is not the whole decode's frame: {worst} steps",
         );
 
         // And then the picture, which adds the geometry and the grade.
@@ -2131,7 +2146,7 @@ mod loupe_tile {
         let mut outliers = 0usize;
         for (a, b) in reference.iter().zip(&restricted) {
             let off = a.abs_diff(*b);
-            if off > ROUTE_COUNTS {
+            if off > ROUTE_NEAR_CODES {
                 outliers += 1;
             }
             if off > worst {
@@ -2145,7 +2160,7 @@ mod loupe_tile {
         );
         assert!(
             outliers <= ROUTE_OUTLIERS,
-            "{outliers} samples of {} are past {ROUTE_COUNTS} codes, which is a picture that moved \
+            "{outliers} samples of {} are past {ROUTE_NEAR_CODES} codes, which is a picture that moved \
              rather than a handful that crossed something",
             reference.len(),
         );
@@ -2245,7 +2260,7 @@ mod loupe_tile {
         let mut outliers = 0usize;
         for (a, b) in whole.iter().zip(&stitched) {
             let off = a.abs_diff(*b);
-            outliers += usize::from(off > ROUTE_COUNTS);
+            outliers += usize::from(off > ROUTE_NEAR_CODES);
             worst = worst.max(off);
         }
         assert!(
@@ -2254,31 +2269,34 @@ mod loupe_tile {
         );
         assert!(
             outliers <= ROUTE_OUTLIERS,
-            "{outliers} samples of {} are past {ROUTE_COUNTS} codes",
+            "{outliers} samples of {} are past {ROUTE_NEAR_CODES} codes",
             whole.len(),
         );
     }
 
-    /// What the two routes may differ by, per sample, in the 16-bit scene-linear frame.
+    /// What the two routes may differ by, per sample, in steps of the scene-linear frame's half
+    /// float: a step is a relative 1/1024 at most.
     ///
     /// **The one thing that is not the same arithmetic on the two routes is where it is measured
     /// from.** Every whole-frame quantity is handed to the window rather than measured off it, so
     /// the two ask `warp.slang` for the same source position - and then subtract a different
-    /// `params.origin` from it in f32, which rounds differently. Measured on the 3080: one count
-    /// in the frame. Zero is not available, and a run that read zero was reading one compiler's
-    /// FMA contraction.
-    const ROUTE_COUNTS: u16 = 8;
+    /// `params.origin` from it in f32, which rounds differently. Zero is not available, and a run
+    /// that read zero was reading one compiler's FMA contraction.
+    const ROUTE_STEPS: u16 = 8;
 
     /// The same, for the picture - which is a different unit and cannot take the same number.
     ///
-    /// **PQ is steep in the shadows, so one scene-linear count is tens of codes down there.** The
-    /// frames above agree to a single count; what the grade does with that count depends on where
-    /// the pixel sits, and a deep shadow is where the curve spends most of its range. Measured on
-    /// the 3080: 43 codes at a code of 10595, on one sample of 11.6 million.
+    /// **PQ is steep in the shadows, so one scene-linear step is tens of codes down there.** What
+    /// the grade does with a step depends on where the pixel sits, and a deep shadow is where the
+    /// curve spends most of its range. Measured on the 3080: 43 codes at a code of 10595, on one
+    /// sample of 11.6 million.
     const ROUTE_CODES: u16 = 64;
 
-    /// How many samples may be past [`ROUTE_COUNTS`] in the picture before the difference is the
-    /// picture rather than a handful of pixels.
+    /// Codes past which a picture sample counts toward [`ROUTE_OUTLIERS`].
+    const ROUTE_NEAR_CODES: u16 = 8;
+
+    /// How many samples may be past [`ROUTE_NEAR_CODES`] in the picture before the difference is
+    /// the picture rather than a handful of pixels.
     ///
     /// **The maximum alone cannot tell those apart**, and it is the wrong one to trust: a route
     /// that shifted every pixel by a little would pass a generous ceiling, and this is what refuses
@@ -2501,6 +2519,11 @@ mod halving {
 mod a_halved_frame_is_the_same_picture {
     use super::*;
 
+    fn frame_mean(frame: &crate::frame::Frame) -> f64 {
+        let levels = crate::resident::levels_of(frame.samples16().expect("16-bit"));
+        levels.iter().map(|&level| f64::from(level)).sum::<f64>() / levels.len() as f64
+    }
+
     #[test]
     fn on_both_bodies() {
         for path in [sony(), canon()] {
@@ -2516,11 +2539,7 @@ mod a_halved_frame_is_the_same_picture {
                 path.display(),
             );
 
-            let mean = |frame: &crate::frame::Frame| -> f64 {
-                let samples = frame.samples16().expect("16-bit");
-                samples.iter().map(|v| f64::from(*v)).sum::<f64>() / samples.len() as f64
-            };
-            let (full, small) = (mean(&whole), mean(&halved));
+            let (full, small) = (frame_mean(&whole), frame_mean(&halved));
             assert!(
                 (small - full).abs() / full < 0.01,
                 "{}: the halved frame means {small} against the full frame's {full}, which is a \
@@ -2561,11 +2580,7 @@ mod a_halved_frame_is_the_same_picture {
             smaller.height
         );
 
-        let mean = |frame: &crate::frame::Frame| -> f64 {
-            let samples = frame.samples16().expect("16-bit");
-            samples.iter().map(|v| f64::from(*v)).sum::<f64>() / samples.len() as f64
-        };
-        let (full, small) = (mean(&whole), mean(&smaller));
+        let (full, small) = (frame_mean(&whole), frame_mean(&smaller));
         assert!(
             (small - full).abs() / full < 0.01,
             "the reduced frame means {small} against the full frame's {full}, which is a different \
@@ -4231,6 +4246,7 @@ mod pictures {
                 denoise_luminance: Some(0.0),
                 denoise_colour: Some(0.0),
                 denoiser: crate::galosh::Denoiser::Galosh,
+                highlight_recovery: None,
                 dust: Default::default(),
                 repairs: Vec::new(),
                 stated_white: false,
@@ -4391,6 +4407,7 @@ mod one_open_at_a_time {
             denoise_luminance: Some(20.0),
             denoise_colour: Some(30.0),
             denoiser: crate::galosh::Denoiser::Galosh,
+            highlight_recovery: None,
         }
     }
 
@@ -4702,10 +4719,11 @@ mod tone_domain {
 
         let mut total = vec![0.0f64; BANDS];
         let mut count = vec![0u64; BANDS];
+        let scene_levels = crate::resident::levels_of(&samples);
         for i in (0..flat.len()).step_by(3) {
-            let scene = (0.2627 * f64::from(samples[i])
-                + 0.6780 * f64::from(samples[i + 1])
-                + 0.0593 * f64::from(samples[i + 2]))
+            let scene = (0.2627 * f64::from(scene_levels[i])
+                + 0.6780 * f64::from(scene_levels[i + 1])
+                + 0.0593 * f64::from(scene_levels[i + 2]))
                 / levels.white.raw();
             let was = f64::from(flat[i]);
             if scene <= 0.0 || was <= 0.0 {
@@ -4941,10 +4959,11 @@ mod tone_domain {
             },
         );
 
+        let scene_levels = crate::resident::levels_of(&samples);
         let luma = |i: usize| {
-            (0.2627 * f64::from(samples[i])
-                + 0.6780 * f64::from(samples[i + 1])
-                + 0.0593 * f64::from(samples[i + 2]))
+            (0.2627 * f64::from(scene_levels[i])
+                + 0.6780 * f64::from(scene_levels[i + 1])
+                + 0.0593 * f64::from(scene_levels[i + 2]))
                 / levels.white.raw()
         };
         let step = crate::gpu::detail_step(width.max(height)) as usize;

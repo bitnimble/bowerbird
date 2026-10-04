@@ -24,7 +24,7 @@ struct Params {
     uint height;
     float k_red;
     float k_blue;
-    /// `image::LUMA`, and `full` is what a sample's range is - 65535 for the `u16` frame.
+    /// `image::LUMA`, and `full` is the sensor's full scale in levels (`packed::level_of`).
     float3 luma;
     float full;
 };
@@ -35,19 +35,19 @@ struct Params {
 
 float sample_at(uint at)
 {
-    return float(half_of(frame[at / 2], at));
+    return level_of(half_of(frame[at / 2], at));
 }
 
-uint3 level_of(float3 value)
+uint3 stored(float3 value)
 {
-    return uint3(round(clamp(value, 0.0, params.full)));
+    return bits_of(max(value, float3(0.0)));
 }
 
 /// Phase 1: luma, into a plane of its own.
 ///
 /// **Its own pass, and its own plane, because the correction reads neighbours.** The transform is
 /// luma-preserving in exact arithmetic, so reading luma back out of a half-written frame would
-/// almost work - but the frame is `u16` and every write rounds, so the curvature would be taken
+/// almost work - but the frame is halves and every write rounds, so the curvature would be taken
 /// from a mixture of rounded and unrounded neighbours and the answer would depend on which
 /// invocation ran first. The CPU takes every Laplacian from one unmodified plane; so does this.
 [shader("compute")]
@@ -113,5 +113,5 @@ void defringe_apply(uint3 id : SV_DispatchThreadID)
         b = corrected(first + 1);
     }
 
-    store_pair(frame, wide<Drawn>(first), level_of(a), level_of(b), paired, true);
+    store_pair(frame, wide<Drawn>(first), stored(a), stored(b), paired, true);
 }

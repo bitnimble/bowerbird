@@ -27,34 +27,21 @@ fn main() {
         (plain.width, plain.height),
         (denoised.width, denoised.height)
     );
-    let before = plain.samples16().expect("16-bit");
-    let after = denoised.samples16().expect("16-bit");
+    let before = rawshim::resident::levels_of(plain.samples16().expect("16-bit"));
+    let after = rawshim::resident::levels_of(denoised.samples16().expect("16-bit"));
+    let apart = || before.iter().zip(&after).map(|(a, b)| (a - b).abs());
 
-    let moved = before.iter().zip(after).filter(|(a, b)| a != b).count();
-    let mean = before
-        .iter()
-        .zip(after)
-        .map(|(a, b)| f64::from(a.abs_diff(*b)))
-        .sum::<f64>()
-        / before.len() as f64;
-    let worst = before
-        .iter()
-        .zip(after)
-        .map(|(a, b)| a.abs_diff(*b))
-        .max()
-        .unwrap_or(0);
+    let moved = apart().filter(|&d| d > 0.0).count();
+    let mean = apart().map(f64::from).sum::<f64>() / before.len() as f64;
+    let worst = apart().fold(0.0f32, f32::max);
     // How many samples move by a lot, which separates "it removed speckle" from "it is
     // wrong": an isolated hot pixel is exactly what a denoise should flatten, and there
     // should be very few of them.
-    let large = before
-        .iter()
-        .zip(after)
-        .filter(|(a, b)| a.abs_diff(**b) > 6553)
-        .count();
+    let large = apart().filter(|&d| d > 6553.0).count();
 
     // The noise in a flat patch, as the mean absolute difference from a 3x3 box mean. What
     // the denoise is for is this number falling.
-    let roughness = |frame: &[u16], width: usize, x0: usize, y0: usize| -> f64 {
+    let roughness = |frame: &[f32], width: usize, x0: usize, y0: usize| -> f64 {
         let at = |x: usize, y: usize| f64::from(frame[(y * width + x) * 3 + 1]);
         let mut total = 0.0;
         let mut counted = 0.0;
@@ -77,7 +64,7 @@ fn main() {
     println!("{}x{}", plain.width, plain.height);
     println!("  decode           {plain_ms}ms plain, {denoised_ms}ms denoised");
     println!(
-        "  samples moved    {:.1}% (mean {mean:.1} counts, worst {worst})",
+        "  samples moved    {:.1}% (mean {mean:.1} counts, worst {worst:.0})",
         100.0 * moved as f64 / before.len() as f64,
     );
     println!(
@@ -86,7 +73,7 @@ fn main() {
     );
     println!(
         "  local roughness  {:.1} -> {:.1}",
-        roughness(before, plain.width, x0, y0),
-        roughness(after, plain.width, x0, y0),
+        roughness(&before, plain.width, x0, y0),
+        roughness(&after, plain.width, x0, y0),
     );
 }

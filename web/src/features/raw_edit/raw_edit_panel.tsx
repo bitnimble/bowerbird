@@ -508,7 +508,11 @@ export const RawEditPanel = observer(function RawEditPanel({
         <>
           {stage.mosaic && stage.denoises && <DenoiserChoice edit={edit} presenter={presenter} />}
           {sliders(
-            DETAIL.filter((spec) => (stage.mosaic && stage.denoises) || spec.key === 'sharpening'),
+            DETAIL.filter(
+              (spec) =>
+                (stage.mosaic && (stage.denoises || spec.key === 'highlightRecovery')) ||
+                spec.key === 'sharpening',
+            ),
           )}
           {!stage.mosaic && (
             <Text variant="muted" as="p">

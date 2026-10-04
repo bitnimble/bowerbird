@@ -248,10 +248,8 @@ pub async fn fit_all_from_preview(
 
 /// A decode carried as far as it can go without knowing the exposure.
 ///
-/// Fit to size and measured. A one-shot rendition gathers the lens inside the grade; an
-/// editor materialises the warp into this buffer once (`apply_lens`) and re-grades on
-/// every slider tick, which is the whole reason they are a value rather than a phase of
-/// `graded`.
+/// An editor materialises the warp into this buffer once (`apply_lens`) and re-grades on every
+/// slider tick, which is the whole reason they are a value rather than a phase of `graded`.
 pub struct Prepared {
     pub samples: Vec<u16>,
     pub width: usize,
@@ -261,10 +259,7 @@ pub struct Prepared {
     pub levels: tone::Levels,
 }
 
-/// The downscale, on the device the pipeline requires anyway (DESIGN 2.1).
-///
-/// Here rather than spelled at each of the three callers, and refusing rather than falling back:
-/// there is one resize and it is a shader.
+/// The downscale of a coded frame, on the device the pipeline requires anyway (DESIGN 2.1).
 fn shrink(samples: &[u16], source: (usize, usize), out: (usize, usize)) -> Option<Vec<u16>> {
     let gpu = crate::gpu::device()?;
     let base = crate::base::device(gpu)?;
@@ -313,45 +308,6 @@ pub fn levels_of(
     let levels = pollster::block_on(crate::fit_source::levels(gpu, &frame, quantile));
     frame.reclaim();
     levels
-}
-
-/// [`prepare`] against levels the caller has already read.
-///
-/// The levels are the photo's, not the target's: they are read off the *unresized* decode, and
-/// a job cutting several sizes off one photo would otherwise measure the same frame once per
-/// rendition for the same answer.
-pub fn prepare_with(
-    source: &Source<'_>,
-    fit_to: Option<(usize, usize)>,
-    levels: tone::Levels,
-) -> Prepared {
-    // Fit before grading, not after. zscale would have done the same resize in the
-    // same linear light, but only once the whole frame had been graded - so a 61MP
-    // decode was tone-mapped in full to produce a 3840px rendition and 15/16 of that
-    // work was thrown away. After the resize because the lens model is in normalised
-    // radii, so warping 61MP to make a 3840px rendition is the same picture for
-    // sixteen times the work.
-    let fitted = fit_to.and_then(|(width, height)| {
-        shrink(
-            source.samples,
-            (source.width, source.height),
-            (width, height),
-        )
-    });
-    let (width, height) = match (fitted.is_some(), fit_to) {
-        (true, Some(size)) => size,
-        _ => (source.width, source.height),
-    };
-
-    // One owned buffer for the whole chain. Only a frame that needed no resize has to
-    // be copied out of the caller's decode, which this must not write to.
-    let samples = fitted.unwrap_or_else(|| source.samples.to_vec());
-    Prepared {
-        samples,
-        width,
-        height,
-        levels,
-    }
 }
 
 /// Everything `encode` does up to the point of handing bytes to ffmpeg.

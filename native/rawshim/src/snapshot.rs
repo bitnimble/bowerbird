@@ -143,9 +143,9 @@ impl Snapshot {
             // A full-scale photosite is the full-scale level `encode_base` codes from.
             let level = (values[y * width + x] * f32::from(u16::MAX))
                 .round()
-                .clamp(0.0, f32::from(u16::MAX)) as u16;
+                .clamp(0.0, f32::from(u16::MAX));
             let mut pixel = [0u16; 3];
-            pixel[usize::from(cfa.colour_at(y, x))] = level;
+            pixel[usize::from(cfa.colour_at(y, x))] = crate::resident::bits_of_level(level);
             pixel
         });
         let coded = code_scene(gpu, cut, anchoring);

@@ -37,7 +37,7 @@ impl std::ops::Deref for OnDevice<'_> {
 pub enum Pixels {
     /// 8-bit sRGB, three channels.
     Eight(Vec<u8>),
-    /// 16-bit scene-linear, three channels.
+    /// Half-float scene-linear, three channels, as `resident::level_of_bits` reads them.
     Sixteen(Vec<u16>),
     /// The same, still in VRAM where the demosaic wrote it.
     ///
@@ -184,40 +184,10 @@ impl Frame {
         }
     }
 
-    /// The 8-bit samples, borrowed mutably. None for a 16-bit frame.
-    pub fn rgb8_mut(&mut self) -> Option<&mut [u8]> {
-        match &mut self.pixels {
-            Pixels::Eight(data) => Some(data),
-            Pixels::Sixteen(_) | Pixels::Resident(_) => None,
-        }
-    }
-
     /// The 16-bit samples, borrowed. None for an 8-bit frame, and for one still on the device -
     /// [`Frame::to_host`] is what brings that one within reach.
     pub fn samples16(&self) -> Option<&[u16]> {
         match &self.pixels {
-            Pixels::Sixteen(data) => Some(data),
-            Pixels::Eight(_) | Pixels::Resident(_) => None,
-        }
-    }
-
-    /// The 16-bit samples, borrowed mutably, for a stage that transforms in place.
-    ///
-    /// The grade and the PQ transfer are both sample-for-sample at the same index,
-    /// so they write into the frame rather than allocating beside it (10.7).
-    pub fn samples16_mut(&mut self) -> Option<&mut [u16]> {
-        match &mut self.pixels {
-            Pixels::Sixteen(data) => Some(data),
-            Pixels::Eight(_) | Pixels::Resident(_) => None,
-        }
-    }
-
-    /// Takes the 16-bit samples, consuming the frame.
-    ///
-    /// For the last reader, which wants the samples and the size and not a `Frame` around them:
-    /// holding one as well keeps a whole decode resident across the longest stage of the job.
-    pub fn into_samples16(self) -> Option<Vec<u16>> {
-        match self.pixels {
             Pixels::Sixteen(data) => Some(data),
             Pixels::Eight(_) | Pixels::Resident(_) => None,
         }
@@ -263,14 +233,6 @@ impl Frame {
         };
         Some(self)
     }
-
-    /// Whether the frame holds as many samples as its dimensions claim.
-    ///
-    /// Checked where a frame is built from something outside this module, so a short
-    /// buffer is one clear failure rather than a panic somewhere downstream.
-    pub fn is_consistent(&self) -> bool {
-        self.pixels.len() == self.width * self.height * 3
-    }
 }
 
 #[cfg(test)]
@@ -289,13 +251,5 @@ mod tests {
         let sixteen = Frame::new(2, 2, Pixels::Sixteen(vec![0u16; 12]));
         assert!(sixteen.rgb8().is_none());
         assert!(sixteen.samples16().is_some());
-    }
-
-    #[test]
-    fn a_short_buffer_is_reported_rather_than_trusted() {
-        assert!(Frame::new(2, 2, Pixels::Eight(vec![0u8; 12])).is_consistent());
-        assert!(!Frame::new(2, 2, Pixels::Eight(vec![0u8; 11])).is_consistent());
-        assert!(Frame::new(2, 2, Pixels::Sixteen(vec![0u16; 12])).is_consistent());
-        assert!(!Frame::new(2, 2, Pixels::Sixteen(vec![0u16; 11])).is_consistent());
     }
 }

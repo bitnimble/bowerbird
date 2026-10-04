@@ -35,7 +35,7 @@ fn main() {
     let levels = opened.measured.levels.anchored();
     let white = levels.white.raw();
     println!(
-        "{}x{}  white {white:.0}  peak {:.0}  (of {})",
+        "{}x{}  white {white:.0}  peak {:.0}  (sensor full scale {})",
         frame.width,
         frame.height,
         levels.peak.raw(),
@@ -49,7 +49,7 @@ fn main() {
             for x in wx..(wx + ww).min(frame.width) {
                 let at = (y * frame.width + x) * 3;
                 for c in 0..3 {
-                    sum[c] += f64::from(samples[at + c]);
+                    sum[c] += f64::from(rawshim::resident::level_of_bits(samples[at + c]));
                 }
                 seen += 1.0;
             }

@@ -80,6 +80,7 @@ async function render(
     cameraMatch: matchCamera ? 'lensAndColour' : 'none',
     dust: { enabled: false, sensitivity: 0.5, intensity: 1 },
     denoiser: 'galosh',
+    highlightRecovery: 100,
     repairs: [],
     // Unedited: this measures what the camera match does, so a
     // reader's would be a second variable in it.

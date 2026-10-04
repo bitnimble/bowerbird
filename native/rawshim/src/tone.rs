@@ -21,7 +21,8 @@ use crate::light::{Gain, Level, Light, Nits, Pq, SceneNits, Stops};
 
 const MAX: usize = 65535;
 
-/// One bin per level a `u16` sample can take, which is what `fit_source` sizes its buffer to.
+/// One bin per bit pattern a half-float sample can take, which is what `fit_source` sizes its
+/// buffer to.
 pub(crate) const LEVEL_BINS: usize = MAX + 1;
 
 // SMPTE ST 2084.
@@ -430,8 +431,14 @@ mod tests {
     fn frame(levels: impl IntoIterator<Item = usize>) -> Vec<u16> {
         levels
             .into_iter()
-            .flat_map(|level| [level as u16; 3])
+            .flat_map(|level| [crate::resident::bits_of_level(level as f32); 3])
             .collect()
+    }
+
+    fn stored(level: f32) -> Light<Level> {
+        Light::measured(f64::from(crate::resident::level_of_bits(
+            crate::resident::bits_of_level(level),
+        )))
     }
 
     fn scanned(gpu: &'static crate::gpu::Gpu, samples: &[u16], quantile: f64) -> Levels {
@@ -462,7 +469,7 @@ mod tests {
         };
         let night = frame((0..10_000).map(|i| if i % 10 == 0 { 40_000 } else { 400 }));
         let out = scanned(gpu, &night, 0.9);
-        let lit = Light::<Level>::measured(40_000.0);
+        let lit = stored(40_000.0);
         assert_eq!(out.peak, lit);
         assert_eq!(out.white, lit / WHITE_FLOOR_UNDER_PEAK);
 
@@ -475,6 +482,30 @@ mod tests {
             "the quantile itself, got {:?}",
             out.white
         );
+    }
+
+    #[test]
+    fn a_reconstructed_sun_past_full_scale_leaves_diffuse_white_alone() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let sun = 8 * usize::from(u16::MAX);
+        let out = scanned(
+            gpu,
+            &frame((0..10_000).map(|i| if i % 100 == 0 { sun } else { 20_000 })),
+            0.9,
+        );
+        assert_eq!(out.peak, stored(sun as f32));
+        assert_eq!(out.white, stored(20_000.0));
+
+        // A sun so large the quantile lands on it: white holds at what the sensor recorded.
+        let out = scanned(
+            gpu,
+            &frame((0..10_000).map(|i| if i % 5 == 0 { sun } else { 20_000 })),
+            0.9,
+        );
+        assert_eq!(out.peak, stored(sun as f32));
+        assert_eq!(out.white, stored(f32::from(u16::MAX)));
     }
 
     /// The bin count is on both sides - the host sizes the buffer with it, the walk bounds itself
