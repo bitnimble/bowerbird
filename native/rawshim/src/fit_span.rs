@@ -110,13 +110,7 @@ pub(crate) fn lifted(
         contents: &gains,
         usage: storage,
     });
-    let push = describing(
-        gpu,
-        plane,
-        falloff.is_some(),
-        0,
-        crate::lattice::IndexSpace::Jzazbz,
-    );
+    let push = describing(gpu, plane, falloff.is_some(), 0);
     let (evaluated, histogram, marks) = (held("unused"), held("unused"), held("unused"));
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fit_span gather"),
@@ -171,7 +165,6 @@ fn describing(
     plane: &crate::hdr_fit::Source,
     falloff: bool,
     rank: usize,
-    space: crate::lattice::IndexSpace,
 ) -> crate::gpu::Buffer {
     let (cx, cy) = (plane.width as f64 / 2.0, plane.height as f64 / 2.0);
     let half = (cx * cx + cy * cy).sqrt().max(1.0);
@@ -181,7 +174,7 @@ fn describing(
         i32::from(falloff).to_ne_bytes(),
         (half as f32).to_ne_bytes(),
         (rank as i32).to_ne_bytes(),
-        space.word().to_ne_bytes(),
+        0i32.to_ne_bytes(),
         0i32.to_ne_bytes(),
         0i32.to_ne_bytes(),
     ]
@@ -193,14 +186,13 @@ fn describing(
     })
 }
 
-/// The opponent chroma `space` gives the sample at `rank`, over `evaluated`, which is the model's
-/// output over every pixel of `plane` as [`lifted`].
+/// The ZCAM chroma of the sample at `rank`, over `evaluated`, which is the model's output over
+/// every pixel of `plane` as [`lifted`].
 pub(crate) async fn ranked_chroma(
     gpu: &'static crate::gpu::Gpu,
     evaluated: &crate::gpu::Buffer,
     plane: &crate::hdr_fit::Source,
     rank: usize,
-    space: crate::lattice::IndexSpace,
 ) -> Option<f64> {
     let pixels = plane.width * plane.height;
     let held = |label, words: usize, usage| {
@@ -222,7 +214,7 @@ pub(crate) async fn ranked_chroma(
     let built = kernels(gpu);
     let idle = held("unused", 1, storage);
     let no_gains = held("unused gains", 1, storage);
-    let push = describing(gpu, plane, false, rank, space);
+    let push = describing(gpu, plane, false, rank);
 
     // The ranking reads what the model wrote, so the bind group points at that rather than at the
     // samples the gather filled - the two are the same shape and the second overwrites nothing.

@@ -98,7 +98,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
     f_push(&mut words, 1.0); // reference: nits per unit, so the peak comes back in units of it
     f_push(&mut words, 1.0); // peak
     f_push(&mut words, 0.0); // exposure, in stops: none of it, so the probe sees the base curve
-    words.push(0); // pad0
+    words.push(0); // output: PQ
     words.push(1); // matched
     f_push(&mut words, colour.saturation as f32);
     words.push(u32::from(colour.chroma.is_some()));
@@ -107,7 +107,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
     words.push(shape.map_or(2, |s| s.hue_count as u32));
     words.push(shape.map_or(2, |s| s.chroma_count as u32));
     words.push(shape.map_or(2, |s| s.level_count as u32));
-    words.push(shape.map_or(0, |s| s.space.word()));
+    words.push(0); // spare
     f_push(&mut words, shape.map_or(1.0, |s| s.chroma_scale as f32));
     f_push(&mut words, shape.map_or(0.0, |s| s.level_low as f32));
     f_push(&mut words, shape.map_or(1.0, |s| s.level_scale as f32));
@@ -115,8 +115,8 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
     words.push(1); // row_stride
     words.push(peak_samples);
     // WGSL puts a `vec2f` on a multiple of eight, and the scalars above end on 92. The
-    // struct does not name this word - `pad0` earlier is a different one, named because it
-    // is reusable - so it has to be written here or every field after it lands short.
+    // struct does not name this word, so it has to be written here or every field after it
+    // lands short.
     words.push(0);
     for _ in 0..6 {
         f_push(&mut words, 0.0); // region_origin, region_size, canvas_size

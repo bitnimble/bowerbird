@@ -21,7 +21,6 @@ struct Params {
     int pairs;
     int block;
     int blocks;
-    uint space;
     /// Nodes along hue, chroma, lightness and neighbourhood.
     int hue_nodes;
     int chroma_nodes;
@@ -32,6 +31,7 @@ struct Params {
     float level_low;
     float level_scale;
     float neighbourhood_scale;
+    int pad;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -155,7 +155,7 @@ void lat_land(uint3 id: SV_DispatchThreadID)
     let ours = m.w;
     let theirs = dot(LUMA, t.xyz);
     let at = lattice_at(
-        opponent_of(measured<Rendered>(indexed[k].xyz), pc.space), neighbourhood[k]);
+        opponent_of(measured<Rendered>(indexed[k].xyz)), neighbourhood[k]);
     float4 fraction;
     let cell = cell_at(at, fraction);
 

@@ -32,7 +32,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 22;
+const VERSION: u8 = 23;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -1021,12 +1021,11 @@ pub(crate) mod tests {
                 // At storage precision, as every map a fit hands out is.
                 chroma: Some(
                     ChromaMap::new(
-                        crate::lattice::IndexSpace::Jzazbz,
                         kernels,
                         crate::lattice::LutAxes {
-                            chroma_top: 0.21,
+                            chroma_top: 4.3,
                             level_low: 0.0,
-                            level_top: 0.37,
+                            level_top: 138.0,
                             neighbourhood_top: 1.1,
                         },
                     )

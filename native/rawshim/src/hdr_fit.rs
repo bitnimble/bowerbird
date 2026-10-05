@@ -278,7 +278,7 @@ const FINE_RINGS: usize = 8;
 /// Lower costs quality quickly: the tail is many thin kernels that each matter little and together
 /// carry a third of the fine pass's gain.
 const FINE_CARRIED: f64 = 0.9997;
-/// Levels from black to the fitted ceiling, in Jz (`LatticeAxes::of`).
+/// Levels from black to the fitted ceiling, in ZCAM lightness (`LatticeAxes::of`).
 ///
 /// **Five looks better than this and renders worse, which is the trap `MAP_HUE` describes.**
 /// Held-out `delta_e` preferred five by half a point and more on a Cartesian grid, bracketed on
@@ -354,7 +354,6 @@ impl GridShape {
 /// rather than all of it clamping onto the top level plane.
 #[derive(Clone, Copy, Debug)]
 struct LatticeAxes {
-    space: crate::lattice::IndexSpace,
     chroma_top: f64,
     level_low: f64,
     level_top: f64,
@@ -362,12 +361,11 @@ struct LatticeAxes {
 }
 
 impl LatticeAxes {
-    fn of(colour: &HdrColour, space: crate::lattice::IndexSpace, chroma_top: f64) -> LatticeAxes {
+    fn of(colour: &HdrColour, chroma_top: f64) -> LatticeAxes {
         LatticeAxes {
-            space,
             chroma_top,
-            level_low: space.lightness_of_neutral(Light::ZERO),
-            level_top: space.lightness_of_neutral(Light::measured(colour.ceiling)),
+            level_low: crate::lattice::lightness_of_neutral(Light::ZERO),
+            level_top: crate::lattice::lightness_of_neutral(Light::measured(colour.ceiling)),
             neighbourhood_top: colour.ceiling.sqrt(),
         }
     }
@@ -385,7 +383,6 @@ impl LatticeAxes {
     fn grid(&self, shape: GridShape) -> crate::fit_lattice::Grid {
         let gaps = self.gaps(shape);
         crate::fit_lattice::Grid {
-            space: self.space,
             nodes: [shape.hue, shape.rings + 1, shape.level, shape.neighbourhood],
             chroma_scale: 1.0 / gaps[1],
             level_low: self.level_low,
@@ -552,7 +549,7 @@ impl NodeGrid {
     }
 
     fn map(&self, narrowed_by: Option<&ChromaMoments>) -> ChromaMap {
-        ChromaMap::new(self.axes.space, self.kernels(narrowed_by), self.axes.lut())
+        ChromaMap::new(self.kernels(narrowed_by), self.axes.lut())
     }
 
     /// Each node keeping the share of its correction that `judged`, pixels it was not fitted from,
@@ -4546,16 +4543,14 @@ async fn chroma_span(
     gpu: &'static crate::gpu::Gpu,
     sharp: &Source,
     evaluated: &crate::gpu::Buffer,
-    space: crate::lattice::IndexSpace,
 ) -> Option<f64> {
-    let widest = space.chroma_of(crate::lattice::WHITE_RED);
+    let widest = crate::lattice::chroma_of(crate::lattice::WHITE_RED);
     let samples = sharp.pixels();
     if samples < MIN_SPAN_SAMPLES {
         return Some(widest.sqrt());
     }
     let quantile = |q: f64| ((samples as f64 * q) as usize).min(samples - 1);
-    let picked =
-        crate::fit_span::ranked_chroma(gpu, evaluated, sharp, quantile(0.999), space).await?;
+    let picked = crate::fit_span::ranked_chroma(gpu, evaluated, sharp, quantile(0.999)).await?;
     Some(picked.clamp(widest / 16.0, widest).sqrt())
 }
 
@@ -5735,12 +5730,10 @@ async fn fitted_lattice(
     // running the whole time. That one needed the model constrained (`fit_curves`), not
     // measured better.
     let mut lap = crate::clock::laps("  lattice ");
-    let space = crate::lattice::IndexSpace::chosen();
     let looked_up = sharp.evaluated(gpu, colour, &on.lifted);
     let axes = LatticeAxes::of(
         colour,
-        space,
-        chroma_span(gpu, &sharp.wide, &looked_up.buffer, space).await?,
+        chroma_span(gpu, &sharp.wide, &looked_up.buffer).await?,
     );
     lap("span");
     let (bare, unmapped) = cost(colour).await?;
@@ -7435,14 +7428,11 @@ mod tests {
     }
 
     fn test_axes() -> LatticeAxes {
-        let space = crate::lattice::IndexSpace::Jzazbz;
         LatticeAxes {
-            space,
-            chroma_top: space
-                .chroma_of([Light::measured(0.6), Light::ZERO, Light::ZERO])
+            chroma_top: crate::lattice::chroma_of([Light::measured(0.6), Light::ZERO, Light::ZERO])
                 .sqrt(),
-            level_low: space.lightness_of_neutral(Light::ZERO),
-            level_top: space.lightness_of_neutral(Light::measured(1.0)),
+            level_low: crate::lattice::lightness_of_neutral(Light::ZERO),
+            level_top: crate::lattice::lightness_of_neutral(Light::measured(1.0)),
             neighbourhood_top: 1.0,
         }
     }
@@ -7465,7 +7455,7 @@ mod tests {
         rendered: [f64; 3],
         neighbourhood: f64,
     ) -> Vec<(usize, f64, [f64; 4])> {
-        let [lightness, a, b] = axes.space.opponent_of(rendered.map(Light::measured));
+        let [lightness, a, b] = crate::lattice::opponent_of(rendered.map(Light::measured));
         let turn = b.atan2(a) / std::f64::consts::TAU;
         let at = [
             turn - turn.floor(),
@@ -7809,7 +7799,7 @@ mod tests {
             {
                 // Signed sums can cancel to near nothing, so the floor scales with the weight of
                 // every pair that reached the node: one grazing it lands on the tent's steep
-                // edge, where Jz's 134th power turns `f32` rounding into a share a tenth off.
+                // edge, where ZCAM's 134th power turns `f32` rounding into a share a tenth off.
                 let allowed = 1e-3 * want.abs() + 2e-3 * touched[node];
                 assert!(
                     (got - want).abs() <= allowed,
@@ -8777,39 +8767,33 @@ mod tests {
         );
         let ranks = [7, plane.pixels() - 13];
         let read = pollster::block_on(evaluated.read(gpu)).expect("read");
-        for space in [
-            crate::lattice::IndexSpace::Jzazbz,
-            crate::lattice::IndexSpace::Ictcp,
-        ] {
-            let mut chroma: Vec<f64> = read
-                .iter()
-                .map(|m| {
-                    let [_, a, b] = space.opponent_of(
-                        [m[0], m[1], m[2]]
-                            .map(|v| Light::<crate::light::Rendered>::measured(f64::from(v))),
-                    );
-                    a.hypot(b)
-                })
-                .collect();
-            chroma.sort_by(f64::total_cmp);
-            for at in ranks {
-                let picked = pollster::block_on(crate::fit_span::ranked_chroma(
-                    gpu,
-                    &evaluated.buffer,
-                    &plane,
-                    at,
-                    space,
-                ))
-                .expect("ranked");
-                // The device ranks its own `f32` reading of each sample, the host its `f64` one,
-                // and both transfers raise to a power near a hundred, which multiplies `f32`'s
-                // rounding.
-                assert!(
-                    (picked - chroma[at]).abs() < 1e-5,
-                    "{space:?} rank {at}: {picked} against {}",
-                    chroma[at]
-                );
-            }
+        let mut chroma: Vec<f64> = read
+            .iter()
+            .map(|m| {
+                crate::lattice::chroma_of(
+                    [m[0], m[1], m[2]]
+                        .map(|v| Light::<crate::light::Rendered>::measured(f64::from(v))),
+                )
+            })
+            .collect();
+        chroma.sort_by(f64::total_cmp);
+        for at in ranks {
+            let picked = pollster::block_on(crate::fit_span::ranked_chroma(
+                gpu,
+                &evaluated.buffer,
+                &plane,
+                at,
+            ))
+            .expect("ranked");
+            // The device ranks its own `f32` reading of each sample, the host its `f64` one,
+            // and the transfer raises to a power near a hundred, which multiplies `f32`'s
+            // rounding. Chroma's 0.74 power of the opponent length then spreads that over a
+            // near-neutral sample: 1e-5 of length is 0.3% of the chroma at the low rank.
+            assert!(
+                (picked - chroma[at]).abs() < 5e-3 * chroma[at],
+                "rank {at}: {picked} against {}",
+                chroma[at]
+            );
         }
     }
 
@@ -8844,19 +8828,13 @@ mod tests {
             &HdrColour::identity(),
             &sharp.lifted(searching()),
         );
-        let space = crate::lattice::IndexSpace::Jzazbz;
-        let top = pollster::block_on(chroma_span(
-            searching(),
-            &sharp.wide,
-            &looked_up.buffer,
-            space,
-        ))
-        .expect("the device evaluates the model");
-        let reached = space.chroma_of(red.map(Light::measured)).sqrt();
+        let top = pollster::block_on(chroma_span(searching(), &sharp.wide, &looked_up.buffer))
+            .expect("the device evaluates the model");
+        let reached = crate::lattice::chroma_of(red.map(Light::measured)).sqrt();
         // The axis ends on the frame's own colour to the f32 the device measured it in, so an ulp
         // is not a miss.
         assert!(
-            reached <= top + 1e-5 && top <= reached + 1e-3,
+            reached <= top * (1.0 + 2e-4) && top <= reached * (1.0 + 3e-3),
             "the axis reaches {top:.4}, the frame's own colour sits at {reached:.4}",
         );
     }
@@ -8897,11 +8875,17 @@ mod tests {
             [0.1, 0.3, 0.6, 0.3],
         ];
         let axes = ChromaMap::identity().axes();
+        let span = axes.level_top - axes.level_low;
         let bumpy = ChromaMap::with_kernels(
             (0..6)
                 .map(|hue| crate::lattice::Kernel {
-                    centre: [hue as f64 / 6.0, axes.chroma_top / 2.0, 0.08, 0.0],
-                    reach: [1.0 / 6.0, axes.chroma_top / 2.0, 0.1, 0.0],
+                    centre: [
+                        hue as f64 / 6.0,
+                        axes.chroma_top / 2.0,
+                        axes.level_low + 0.5 * span,
+                        0.0,
+                    ],
+                    reach: [1.0 / 6.0, axes.chroma_top / 2.0, 0.6 * span, 0.0],
                     generator: [0.1 * (hue % 3) as f64, 0.05, -0.05, 0.08, 0.01, -0.01, 0.02],
                     to_lightness: [0.03, -0.02],
                 })

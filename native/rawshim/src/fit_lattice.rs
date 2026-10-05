@@ -101,7 +101,6 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
 
 /// The grid a landing is made on, as the shader reads it.
 pub(crate) struct Grid {
-    pub space: crate::lattice::IndexSpace,
     /// Nodes along hue, chroma, lightness and neighbourhood.
     pub nodes: [usize; 4],
     /// Node gaps per unit of chroma, lightness and neighbourhood, and where lightness starts.
@@ -189,7 +188,6 @@ pub(crate) async fn moments(
         pairs as i32,
         BLOCK as i32,
         blocks as i32,
-        grid.space.word() as i32,
         hue as i32,
         chroma as i32,
         level as i32,
@@ -206,6 +204,7 @@ pub(crate) async fn moments(
     ] {
         block.extend((v as f32).to_ne_bytes());
     }
+    block.extend(0i32.to_ne_bytes());
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_lattice push"),
         contents: &block,

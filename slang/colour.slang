@@ -207,7 +207,7 @@ float texel_at(float t, uint texels)
 /// slab at a time with the blend done here, so hardware filtering never blends across the seam.
 float3 correct(float3 index, float neighbourhood, float level, float d0, float d2)
 {
-    let at = lattice_at(opponent_of(measured<Rendered>(index), edit.index_space), neighbourhood);
+    let at = lattice_at(opponent_of(measured<Rendered>(index)), neighbourhood);
     // The hue axis carries a last texel that copies the first, so a turn of 1 is the same place
     // as 0 and the clamp sampler wraps without a sampler of its own.
     let tx = (at.x * float(edit.hue_count - 1) + 0.5) / float(edit.hue_count);

@@ -42,11 +42,12 @@ public struct Edit {
     public uint curve_bins;
     public float trust_ceiling;
     /// The baked lattice's texels per axis and how a lattice coordinate maps onto them
-    /// (`lattice::MapShape`), and which opponent space it is indexed in.
+    /// (`lattice::MapShape`).
     public uint hue_count;
     public uint chroma_count;
     public uint level_count;
-    public uint index_space;
+    /// Unused, and holding its place: every later field is written and patched by position.
+    public uint spare;
     public float chroma_scale;
     public float level_low;
     public float level_scale;
@@ -68,7 +69,7 @@ public struct Edit {
     /// The photographer's own adjustments, on Camera Raw's -100..100 scales
     /// (`EditDocSchema`). Zero is no change, which is what an unedited photo carries.
     ///
-    /// Appended after `pad` rather than placed among the scalars above: everything from
+    /// Appended after `intent` rather than placed among the scalars above: everything from
     /// `region_origin` on is `float2`, and the layout puts those on a multiple of eight, so
     /// inserting a scalar earlier moves every field after it and the binding comes back
     /// rejected. Growing the tail moves nothing.

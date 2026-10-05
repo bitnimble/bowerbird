@@ -23,10 +23,9 @@ struct Params {
     float half;
     /// The rank being looked for, as whole samples.
     int rank;
-    /// `index_space`'s space the lattice is indexed in.
-    uint space;
     int pad0;
     int pad1;
+    int pad2;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -50,7 +49,7 @@ float chroma_of(int k)
 {
     let at = k * 4;
     let colour = measured<Rendered>(float3(evaluated[at], evaluated[at + 1], evaluated[at + 2]));
-    return length(opponent_of(colour, pc.space).v.yz);
+    return length(opponent_of(colour).v.yz);
 }
 
 /// A float's bits, reordered so that unsigned comparison is the float's own.

@@ -15,7 +15,6 @@ import index_space;
 
 struct Params {
     uint kernels;
-    uint space;
     /// Hue holds one more than its bins, the last a copy of the first, so the wrap needs no
     /// sampler of its own.
     uint hue_texels;
@@ -30,6 +29,7 @@ struct Params {
     /// What `bake` multiplies each of `first_sum` and `second_sum` by.
     float first_scale;
     float second_scale;
+    uint pad;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -261,7 +261,7 @@ void bake(uint3 id: SV_DispatchThreadID)
     // The chroma-to-lightness pair is read off the colour this texel stands for, so it folds into
     // the lightness gain here rather than costing the grade a third volume.
     let at = place_of(id);
-    let colour = rendered_of(opponent_at(at), pc.space).v;
+    let colour = rendered_of(opponent_at(at)).v;
     let l = dot(LUMA, colour);
     let gain = a[2].z
         + to_lightness.x * chromaticity(colour.r - l, l, LUMA.r)

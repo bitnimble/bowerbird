@@ -4762,7 +4762,7 @@ const EDIT_FIELDS: &[&str] = &[
     "hue_count",
     "chroma_count",
     "level_count",
-    "index_space",
+    "spare",
     "chroma_scale",
     "level_low",
     "level_scale",
@@ -4910,7 +4910,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(shape.map_or(2, |s| s.hue_count as u32));
     w.push(shape.map_or(2, |s| s.chroma_count as u32));
     w.push(shape.map_or(2, |s| s.level_count as u32));
-    w.push(shape.map_or(0, |s| s.space.word()));
+    w.push(0);
     f(&mut w, shape.map_or(1.0, |s| s.chroma_scale));
     f(&mut w, shape.map_or(0.0, |s| s.level_low));
     f(&mut w, shape.map_or(1.0, |s| s.level_scale));

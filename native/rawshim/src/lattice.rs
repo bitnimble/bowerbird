@@ -12,8 +12,8 @@ use crate::light::{Light, Rendered};
 /// Floats a kernel occupies on the device, as `lattice_bake.slang` reads them.
 pub const KERNEL_WORDS: usize = 17;
 
-/// Words ahead of the kernels in [`ChromaMap::words`]: the space and the four axis ends.
-pub const HEAD_WORDS: usize = 5;
+/// Words ahead of the kernels in [`ChromaMap::words`]: the four axis ends.
+pub const HEAD_WORDS: usize = 4;
 
 /// Texels along the baked volumes' axes. Hue carries one more than its bins: the last is a copy
 /// of the first, so the wrap needs no sampler of its own.
@@ -28,106 +28,107 @@ pub const WHITE_RED: [Light<Rendered>; 3] = [Light::measured(1.0), Light::ZERO, 
 /// Generator magnitude below which a kernel changes nothing a half float can hold.
 const NEGLIGIBLE: f64 = 1e-4;
 
-/// Where the lattice is indexed (`index_space.slang`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IndexSpace {
-    Jzazbz,
-    Ictcp,
+/// A rendered colour as ZCAM sees it, as `index_space.slang`'s `opponent_of` has it: lightness,
+/// then chroma laid along its hue.
+pub fn opponent_of(rendered: [Light<Rendered>; 3]) -> [f64; 3] {
+    let zcam = Zcam::pinned();
+    let [m, a, b] = coded_cones(rendered.map(|v| v.raw() * INDEX_WHITE_NITS));
+    let lightness = zcam.lightness(m - ZCAM_EPSILON);
+    let ab = a.hypot(b);
+    if ab == 0.0 {
+        return [lightness, 0.0, 0.0];
+    }
+    let hue = [a / ab, b / ab];
+    let chroma = zcam.chroma(ab, hue);
+    [lightness, chroma * hue[0], chroma * hue[1]]
 }
 
-impl IndexSpace {
-    /// `BOWERBIRD_LATTICE_SPACE=ictcp` fits in ICtCp, for comparing the two.
-    pub fn chosen() -> IndexSpace {
-        match std::env::var("BOWERBIRD_LATTICE_SPACE").as_deref() {
-            Ok("ictcp") => IndexSpace::Ictcp,
-            _ => IndexSpace::Jzazbz,
+/// The lightness a neutral at `level` of `Rendered` takes.
+pub fn lightness_of_neutral(level: Light<Rendered>) -> f64 {
+    opponent_of([level; 3])[0]
+}
+
+/// The chroma of a colour, which sizes how far the lattice's chroma axis reaches.
+pub fn chroma_of(rendered: [Light<Rendered>; 3]) -> f64 {
+    let [_, a, b] = opponent_of(rendered);
+    a.hypot(b)
+}
+
+/// The coded M cone, which is ZCAM's `Iz` before its offset, and the two opponent axes.
+fn coded_cones(nits: [f64; 3]) -> [f64; 3] {
+    let apply = |m: &[[f64; 3]; 3], v: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|r| (0..3).map(|c| m[r][c] * v[c]).sum())
+    };
+    let coded = |nits: f64| {
+        let y = (nits.max(0.0) / 10000.0).powf(PQ_M1);
+        ((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y)).powf(ZCAM_P)
+    };
+    apply(&LMS_TO_IAB, apply(&R2020_TO_LMS, nits).map(coded))
+}
+
+/// ZCAM under the viewing conditions the lattice is indexed in, reduced to what `index_space.slang`
+/// holds: the white's `Iz`, lightness's exponent on `Iz`, and the factor on chroma.
+#[derive(Clone, Copy, Debug)]
+struct Zcam {
+    white_iz: f64,
+    lightness_exponent: f64,
+    chroma_scale: f64,
+}
+
+impl Zcam {
+    fn pinned() -> Zcam {
+        let white_iz = coded_cones([INDEX_WHITE_NITS; 3])[0] - ZCAM_EPSILON;
+        let background = ZCAM_BACKGROUND.sqrt();
+        // Adapted to the background.
+        let adapting = INDEX_WHITE_NITS * ZCAM_BACKGROUND;
+        let luminance_level = 0.171 * adapting.cbrt() * (1.0 - (-48.0 / 9.0 * adapting).exp());
+        let lightness_exponent = 1.6 * ZCAM_SURROUND / background.powf(0.12);
+        let white_brightness = 2700.0
+            * white_iz.powf(lightness_exponent)
+            * ZCAM_SURROUND.powf(2.2)
+            * background.sqrt()
+            * luminance_level.powf(0.2);
+        Zcam {
+            white_iz,
+            lightness_exponent,
+            chroma_scale: 1e4 * luminance_level.powf(0.2)
+                / (background.powf(0.1) * white_iz.powf(0.78) * white_brightness),
         }
     }
 
-    pub fn word(self) -> u32 {
-        match self {
-            IndexSpace::Jzazbz => 0,
-            IndexSpace::Ictcp => 1,
-        }
+    fn lightness(&self, iz: f64) -> f64 {
+        100.0 * (iz.max(0.0) / self.white_iz).powf(self.lightness_exponent)
     }
 
-    pub fn from_word(word: u32) -> Option<IndexSpace> {
-        match word {
-            0 => Some(IndexSpace::Jzazbz),
-            1 => Some(IndexSpace::Ictcp),
-            _ => None,
-        }
-    }
-
-    /// A rendered colour's lightness and two opponent axes, as `index_space.slang`'s
-    /// `opponent_of` has them: for sizing the lattice's axes off a handful of colours.
-    pub fn opponent_of(self, rendered: [Light<Rendered>; 3]) -> [f64; 3] {
-        let coded = |nits: f64, p: f64| {
-            let y = (nits.max(0.0) / 10000.0).powf(PQ_M1);
-            ((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y)).powf(p)
-        };
-        let apply = |m: &[[f64; 3]; 3], v: [f64; 3]| -> [f64; 3] {
-            std::array::from_fn(|r| (0..3).map(|c| m[r][c] * v[c]).sum())
-        };
-        let nits = rendered.map(|v| v.raw() * INDEX_WHITE_NITS);
-        match self {
-            IndexSpace::Ictcp => apply(
-                &ICTCP_LMS_TO_ITP,
-                apply(&R2020_TO_ICTCP_LMS, nits).map(|v| coded(v, PQ_M2)),
-            ),
-            IndexSpace::Jzazbz => {
-                let iab = apply(
-                    &JZ_LMS_TO_IAB,
-                    apply(&R2020_TO_JZ_LMS, nits).map(|v| coded(v, JZ_P)),
-                );
-                let jz = (1.0 + JZ_D) * iab[0] / (1.0 + JZ_D * iab[0]) - JZ_D0;
-                [jz, iab[1], iab[2]]
-            }
-        }
-    }
-
-    /// The lightness a neutral at `level` of `Rendered` takes.
-    pub fn lightness_of_neutral(self, level: Light<Rendered>) -> f64 {
-        self.opponent_of([level; 3])[0]
-    }
-
-    /// The chroma of a colour, which sizes how far the lattice's chroma axis reaches.
-    pub fn chroma_of(self, rendered: [Light<Rendered>; 3]) -> f64 {
-        let [_, a, b] = self.opponent_of(rendered);
-        a.hypot(b)
+    /// `ab` the opponent axes' length, `hue` their direction.
+    fn chroma(&self, ab: f64, hue: [f64; 2]) -> f64 {
+        let (sin, cos) = ZCAM_HUE_OFFSET_DEGREES.to_radians().sin_cos();
+        let eccentricity = 1.015 + cos * hue[0] - sin * hue[1];
+        self.chroma_scale * ab.powf(0.74) * eccentricity.powf(0.068)
     }
 }
 
-/// `index_space.slang`'s constants, which `hdr_fit`'s `the_span_picks_the_samples_a_sort_would`
-/// holds to the shader's in both spaces.
-pub const INDEX_WHITE_NITS: f64 = 203.0;
+const INDEX_WHITE_NITS: f64 = 203.0;
+/// BT.2100's reference viewing environment is dim.
+const ZCAM_SURROUND: f64 = 0.59;
+/// ZCAM's `Yb / Yw`.
+const ZCAM_BACKGROUND: f64 = 0.2;
+const ZCAM_EPSILON: f64 = 3.7035226210190005e-11;
+const ZCAM_HUE_OFFSET_DEGREES: f64 = 89.038;
 const PQ_M1: f64 = 0.1593017578125;
-const PQ_M2: f64 = 78.84375;
 const PQ_C1: f64 = 0.8359375;
 const PQ_C2: f64 = 18.8515625;
 const PQ_C3: f64 = 18.6875;
-const JZ_P: f64 = 134.034375;
-const JZ_D: f64 = -0.56;
-const JZ_D0: f64 = 1.6295499532821566e-11;
-const R2020_TO_JZ_LMS: [[f64; 3]; 3] = [
+const ZCAM_P: f64 = 134.034375;
+const R2020_TO_LMS: [[f64; 3]; 3] = [
     [0.530003576, 0.355703633, 0.086089990],
     [0.289388269, 0.525394823, 0.157481505],
     [0.091098083, 0.147587582, 0.734233807],
 ];
-const JZ_LMS_TO_IAB: [[f64; 3]; 3] = [
-    [0.5, 0.5, 0.0],
+const LMS_TO_IAB: [[f64; 3]; 3] = [
+    [0.0, 1.0, 0.0],
     [3.524000000, -4.066708000, 0.542708000],
     [0.199076000, 1.096799000, -1.295875000],
-];
-const R2020_TO_ICTCP_LMS: [[f64; 3]; 3] = [
-    [0.412109375, 0.523925781, 0.063964844],
-    [0.166748047, 0.720458984, 0.112792969],
-    [0.024169922, 0.075439453, 0.900390625],
-];
-const ICTCP_LMS_TO_ITP: [[f64; 3]; 3] = [
-    [0.5, 0.5, 0.0],
-    [1.613769531, -3.323486328, 1.709716797],
-    [4.378173828, -4.245605469, -0.132568359],
 ];
 
 /// One place's correction.
@@ -195,7 +196,6 @@ pub struct MapShape {
     pub level_low: f64,
     pub level_scale: f64,
     pub neighbourhood_scale: f64,
-    pub space: IndexSpace,
 }
 
 /// Floats a texel of [`Summed`] holds, as `lattice_bake.slang`'s `sum` writes them.
@@ -229,7 +229,6 @@ impl Summed {
 
 #[derive(Clone)]
 pub struct ChromaMap {
-    space: IndexSpace,
     kernels: Vec<Kernel>,
     axes: LutAxes,
     /// What the bake exponentiates: one or two summed kernel sets, each scaled.
@@ -241,14 +240,13 @@ pub struct ChromaMap {
 
 impl PartialEq for ChromaMap {
     fn eq(&self, other: &ChromaMap) -> bool {
-        self.space == other.space && self.kernels == other.kernels && self.axes == other.axes
+        self.kernels == other.kernels && self.axes == other.axes
     }
 }
 
 impl std::fmt::Debug for ChromaMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChromaMap")
-            .field("space", &self.space)
             .field("kernels", &self.kernels.len())
             .field("axes", &self.axes)
             .finish()
@@ -258,14 +256,12 @@ impl std::fmt::Debug for ChromaMap {
 impl ChromaMap {
     /// The map that changes nothing, for a caller with no fit yet.
     pub fn identity() -> ChromaMap {
-        let space = IndexSpace::Jzazbz;
         ChromaMap::new(
-            space,
             Vec::new(),
             LutAxes {
-                chroma_top: space.chroma_of(WHITE_RED).sqrt(),
-                level_low: space.lightness_of_neutral(Light::ZERO),
-                level_top: space.lightness_of_neutral(Light::measured(1.0)),
+                chroma_top: chroma_of(WHITE_RED).sqrt(),
+                level_low: lightness_of_neutral(Light::ZERO),
+                level_top: lightness_of_neutral(Light::measured(1.0)),
                 neighbourhood_top: 1.0,
             },
         )
@@ -285,34 +281,27 @@ impl ChromaMap {
 
     /// `kernels` over the identity's axes, for fixtures and tests.
     pub fn with_kernels(kernels: Vec<Kernel>) -> ChromaMap {
-        let identity = ChromaMap::identity();
-        ChromaMap::new(identity.space, kernels, identity.axes)
+        ChromaMap::new(kernels, ChromaMap::identity().axes)
     }
 
     /// Kernels whose generators are too small to change a texel are left out.
-    pub fn new(space: IndexSpace, kernels: Vec<Kernel>, axes: LutAxes) -> ChromaMap {
+    pub fn new(kernels: Vec<Kernel>, axes: LutAxes) -> ChromaMap {
         let kernels: Vec<Kernel> = kernels.into_iter().filter(|k| !k.negligible()).collect();
         let terms = vec![(Summed::new(kernels.clone(), axes), 1.0)];
-        ChromaMap::baking(space, kernels, axes, terms)
+        ChromaMap::baking(kernels, axes, terms)
     }
 
     fn baking(
-        space: IndexSpace,
         kernels: Vec<Kernel>,
         axes: LutAxes,
         terms: Vec<(std::sync::Arc<Summed>, f64)>,
     ) -> ChromaMap {
         ChromaMap {
-            space,
             kernels: kernels.into_iter().filter(|k| !k.negligible()).collect(),
             axes,
             terms,
             baked: Default::default(),
         }
-    }
-
-    pub fn space(&self) -> IndexSpace {
-        self.space
     }
 
     pub fn kernels(&self) -> &[Kernel] {
@@ -340,7 +329,7 @@ impl ChromaMap {
             .iter()
             .map(|(summed, by)| (summed.clone(), by * strength))
             .collect();
-        ChromaMap::baking(self.space, kernels, self.axes, terms)
+        ChromaMap::baking(kernels, self.axes, terms)
     }
 
     /// Both maps' kernels in one, read over this one's axes.
@@ -354,7 +343,7 @@ impl ChromaMap {
         if terms.len() > 2 {
             terms = vec![(Summed::new(kernels.clone(), self.axes), 1.0)];
         }
-        ChromaMap::baking(self.space, kernels, self.axes, terms)
+        ChromaMap::baking(kernels, self.axes, terms)
     }
 
     pub fn shape(&self) -> MapShape {
@@ -369,14 +358,12 @@ impl ChromaMap {
             level_scale: (LEVEL_TEXELS - 1) as f64 / (axes.level_top - axes.level_low).max(1e-6),
             neighbourhood_scale: (NEIGHBOURHOOD_TEXELS - 1) as f64
                 / axes.neighbourhood_top.max(1e-6),
-            space: self.space,
         }
     }
 
-    /// The map as words: `HEAD_WORDS` of space and axes, then the kernels.
+    /// The map as words: `HEAD_WORDS` of axes, then the kernels.
     pub fn words(&self) -> Vec<f64> {
         let mut out = vec![
-            f64::from(self.space.word()),
             self.axes.chroma_top,
             self.axes.level_low,
             self.axes.level_top,
@@ -393,18 +380,17 @@ impl ChromaMap {
         if rest.len() % KERNEL_WORDS != 0 {
             return None;
         }
-        let space = IndexSpace::from_word(head[0] as u32)?;
         let axes = LutAxes {
-            chroma_top: head[1],
-            level_low: head[2],
-            level_top: head[3],
-            neighbourhood_top: head[4],
+            chroma_top: head[0],
+            level_low: head[1],
+            level_top: head[2],
+            neighbourhood_top: head[3],
         };
         let kernels = rest
             .chunks_exact(KERNEL_WORDS)
             .map(Kernel::from_words)
             .collect();
-        Some(ChromaMap::new(space, kernels, axes))
+        Some(ChromaMap::new(kernels, axes))
     }
 
     /// This map as a sidecar hands it back: the head in `f32` and the kernels in `f16`.
@@ -434,22 +420,37 @@ impl ChromaMap {
 /// An operator on `(d0, d2, l)` as its generator: `[a, b, c, d, e, f, g]` for the matrix
 /// `[[a, b, e], [c, d, f], [0, 0, g]]`, logged.
 ///
-/// Inverse scaling and squaring: square roots until the matrix is near the identity, the log's
-/// series there, then doubled back. A matrix with no real log - a node solved to a reflection -
-/// falls back to its first-order generator, `A - I`.
+/// A matrix with no real log - a node solved to a reflection - keeps half the share of its
+/// correction that has one, along the straight way from the identity to it.
 pub fn generator_of(node: [f64; 7]) -> [f64; 7] {
     let a = matrix_of(node);
-    let first_order = sub(a, IDENTITY);
+    if let Some(log) = log_of(a) {
+        return node_of(log);
+    }
+    let toward = |share: f64| add(IDENTITY, scale(sub(a, IDENTITY), share));
+    let (mut has, mut lacks) = (0.0, 1.0);
+    for _ in 0..40 {
+        let share = (has + lacks) / 2.0;
+        match log_of(toward(share)) {
+            Some(_) => has = share,
+            None => lacks = share,
+        }
+    }
+    // Where the log runs out, the eigenvalue heading through zero is zero: one chroma direction
+    // flattened to nothing. Halfway, it is a half.
+    node_of(log_of(toward(has / 2.0)).unwrap_or([[0.0; 3]; 3]))
+}
+
+/// Inverse scaling and squaring: square roots until the matrix is near the identity, the log's
+/// series there, then doubled back.
+fn log_of(a: M3) -> Option<M3> {
     let mut x = a;
     let mut halvings = 0;
     while norm(sub(x, IDENTITY)) > 0.25 {
         if halvings == 24 {
-            return node_of(first_order);
+            return None;
         }
-        match square_root(x) {
-            Some(root) => x = root,
-            None => return node_of(first_order),
-        }
+        x = square_root(x)?;
         halvings += 1;
     }
     let y = sub(x, IDENTITY);
@@ -461,10 +462,7 @@ pub fn generator_of(node: [f64; 7]) -> [f64; 7] {
         term = mul(term, y);
     }
     let out = scale(log, (1u64 << halvings) as f64);
-    match out.iter().flatten().all(|v| v.is_finite()) {
-        true => node_of(out),
-        false => node_of(first_order),
-    }
+    out.iter().flatten().all(|v| v.is_finite()).then_some(out)
 }
 
 /// [`generator_of`] undone: the operator a generator exponentiates to, as the bake computes it.
@@ -645,10 +643,9 @@ const SIZE: wgpu::Extent3d = wgpu::Extent3d {
 };
 
 /// `lattice_bake.slang`'s `Params`.
-fn params(kernels: usize, space: IndexSpace, axes: LutAxes, scales: [f64; 2]) -> Vec<u8> {
+fn params(kernels: usize, axes: LutAxes, scales: [f64; 2]) -> Vec<u8> {
     let mut push: Vec<u8> = [
         kernels as u32,
-        space.word(),
         HUE_TEXELS as u32,
         CHROMA_TEXELS as u32,
         LEVEL_TEXELS as u32,
@@ -667,6 +664,7 @@ fn params(kernels: usize, space: IndexSpace, axes: LutAxes, scales: [f64; 2]) ->
     ] {
         push.extend((v as f32).to_ne_bytes());
     }
+    push.extend(0u32.to_ne_bytes());
     push
 }
 
@@ -711,12 +709,7 @@ fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
     });
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("lattice_bake push"),
-        contents: &params(
-            summed.kernels.len(),
-            IndexSpace::Jzazbz,
-            summed.axes,
-            [0.0; 2],
-        ),
+        contents: &params(summed.kernels.len(), summed.axes, [0.0; 2]),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let built = gpu.lattice_bake();
@@ -772,12 +765,7 @@ fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
     recording.holding(&second);
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("lattice_bake push"),
-        contents: &params(
-            map.kernels.len(),
-            map.space,
-            map.axes,
-            [*first_scale, second_scale],
-        ),
+        contents: &params(map.kernels.len(), map.axes, [*first_scale, second_scale]),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let (chroma_view, luma_view) = (chroma.view(), luma.view());
@@ -843,6 +831,26 @@ mod tests {
         }
     }
 
+    /// A dark node from a night frame, solved to a reflection: its first-order generator
+    /// exponentiates past what the bake's half floats hold.
+    #[test]
+    fn a_reflection_keeps_half_the_share_of_it_that_has_a_log() {
+        let node = [-14.4, -1.63, 202.0, 23.1, 0.0, 0.0, 1.0];
+        let identity = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+        let back = operator_of(generator_of(node));
+        // The 2x2's eigenvalues are 9.0726 and -0.37256; the second reaches zero at a share of
+        // 1 / 1.37256.
+        let share = back[2] / node[2];
+        assert!((share - 0.5 / 1.37256).abs() < 1e-4, "kept {share} of it");
+        for k in 0..7 {
+            let want = identity[k] + share * (node[k] - identity[k]);
+            assert!(
+                (back[k] - want).abs() < 1e-4 * want.abs().max(1.0),
+                "{back:?} is not on the way to {node:?}"
+            );
+        }
+    }
+
     #[test]
     fn half_a_rotation_turns_half_the_angle() {
         let quarter = generator_of([0.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
@@ -856,17 +864,16 @@ mod tests {
     #[test]
     fn a_map_reads_back_from_its_words() {
         let map = ChromaMap::new(
-            IndexSpace::Ictcp,
             vec![Kernel {
-                centre: [0.25, 0.1, 0.12, 0.5],
-                reach: [1.0 / 12.0, 0.05, 0.03, 0.4],
+                centre: [0.25, 2.1, 42.0, 0.5],
+                reach: [1.0 / 12.0, 0.7, 11.0, 0.4],
                 generator: [0.1, 0.02, -0.01, 0.05, 0.003, -0.002, 0.04],
                 to_lightness: [0.01, -0.02],
             }],
             LutAxes {
-                chroma_top: 0.2,
+                chroma_top: 4.2,
                 level_low: 0.0,
-                level_top: 0.35,
+                level_top: 135.0,
                 neighbourhood_top: 1.1,
             },
         )
@@ -913,7 +920,171 @@ mod tests {
             .collect();
         let map = ChromaMap::with_kernels(kernels);
         let (chroma, _) = map.baked(gpu);
+        let texels = read_volume(gpu, &chroma);
 
+        let tent = |d: f64, reach: f64| -> f64 {
+            if reach <= 0.0 {
+                return 1.0;
+            }
+            let u = 1.0 - (d.abs() / reach).min(1.0);
+            u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
+        };
+        let mut worst: f64 = 0.0;
+        for (texel, got) in texels.iter().enumerate() {
+            let at = place_of(axes, texel);
+            let mut sum = [0.0; 7];
+            for k in map.kernels() {
+                let mut turns = (at[0] - k.centre[0]).abs();
+                turns = turns.min(1.0 - turns);
+                if k.centre[1] < k.reach[1] {
+                    turns *= (at[1] / k.centre[1].max(1e-6)).clamp(0.0, 1.0);
+                }
+                let w = tent(turns, k.reach[0])
+                    * (1..4)
+                        .map(|a| tent(at[a] - k.centre[a], k.reach[a]))
+                        .product::<f64>();
+                for (s, g) in sum.iter_mut().zip(k.generator) {
+                    *s += w * g;
+                }
+            }
+            let want = operator_of(sum);
+            for (got, want) in got.iter().zip(&want[..4]) {
+                let off = (got - want).abs() / want.abs().max(1.0);
+                worst = if off <= worst { worst } else { off };
+            }
+        }
+        assert!(
+            worst < 2e-3,
+            "a texel is {worst} off the sum over every kernel"
+        );
+    }
+
+    /// A lightness term with nothing else, reaching everywhere: each texel's gain is the term at
+    /// the colour that texel stands for, which only the shader's `rendered_of` can have found.
+    #[test]
+    fn the_bake_reads_each_texel_at_the_colour_it_stands_for() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let to_lightness = [0.5, -0.3];
+        let map = ChromaMap::new(
+            vec![Kernel {
+                centre: [0.0; 4],
+                reach: [0.0; 4],
+                generator: [0.0; 7],
+                to_lightness,
+            }],
+            LutAxes {
+                chroma_top: 4.6,
+                level_top: lightness_of_neutral(Light::measured(6.0)),
+                ..ChromaMap::identity().axes
+            },
+        );
+        let (_, luma) = map.baked(gpu);
+        let texels = read_volume(gpu, &luma);
+        let chromaticity = |d: f64, level: f64, weight: f64| match level <= 0.0 {
+            true => 0.0,
+            false => (d / level).clamp(-1.0, 1.0 / weight - 1.0),
+        };
+        let luma = crate::hdr_fit::LUMA;
+        let mut worst: (f64, usize) = (0.0, 0);
+        for (texel, got) in texels.iter().enumerate() {
+            let colour = rendered_of(opponent_at(place_of(map.axes, texel)));
+            let l: f64 = colour.iter().zip(luma).map(|(c, w)| c * w).sum();
+            let want = to_lightness[0] * chromaticity(colour[0] - l, l, luma[0])
+                + to_lightness[1] * chromaticity(colour[2] - l, l, luma[2]);
+            let off = (got[2] - want).abs() / want.abs().max(0.25);
+            if !(off <= worst.0) {
+                worst = (off, texel);
+            }
+        }
+        // SwiftShader's `pow` is looser: a near-black texel far outside the gamut reads 1% off.
+        assert!(
+            worst.0 < 2e-2,
+            "texel {} at {:?} is {} off",
+            worst.1,
+            place_of(map.axes, worst.1),
+            worst.0
+        );
+    }
+
+    #[test]
+    fn zcam_reads_back_the_colour_it_was_given() {
+        for colour in [
+            [0.18, 0.18, 0.18],
+            [0.9, 0.1, 0.05],
+            [0.05, 0.6, 0.2],
+            [0.1, 0.2, 0.95],
+            [3.5, 2.0, 0.4],
+            [0.002, 0.001, 0.003],
+        ] {
+            let back = rendered_of(opponent_of(colour.map(Light::measured)));
+            for (got, want) in back.iter().zip(colour) {
+                assert!(
+                    (got - want).abs() < 1e-9 * want.max(1.0),
+                    "{colour:?} came back {back:?}"
+                );
+            }
+        }
+    }
+
+    /// `index_space.slang`'s `opponent_at`.
+    fn opponent_at([turn, root_chroma, lightness, _]: [f64; 4]) -> [f64; 3] {
+        let (sin, cos) = (turn * std::f64::consts::TAU).sin_cos();
+        let chroma = root_chroma * root_chroma;
+        [lightness, chroma * cos, chroma * sin]
+    }
+
+    /// `opponent_of` undone, through the matrices' own inverses where the shader solves for the
+    /// cones.
+    fn rendered_of([lightness, x, y]: [f64; 3]) -> [f64; 3] {
+        let zcam = Zcam::pinned();
+        let iz = zcam.white_iz * (lightness.max(0.0) / 100.0).powf(1.0 / zcam.lightness_exponent);
+        let chroma = x.hypot(y);
+        let hue = match chroma > 0.0 {
+            true => [x / chroma, y / chroma],
+            false => [1.0, 0.0],
+        };
+        let (sin, cos) = ZCAM_HUE_OFFSET_DEGREES.to_radians().sin_cos();
+        let eccentricity = 1.015 + cos * hue[0] - sin * hue[1];
+        let ab = (chroma / (zcam.chroma_scale * eccentricity.powf(0.068))).powf(50.0 / 37.0);
+        let apply = |m: M3, v: [f64; 3]| -> [f64; 3] {
+            std::array::from_fn(|r| (0..3).map(|c| m[r][c] * v[c]).sum())
+        };
+        let uncoded = |code: f64| {
+            let e = code.max(0.0).powf(1.0 / ZCAM_P);
+            10000.0 * ((e - PQ_C1).max(0.0) / (PQ_C2 - PQ_C3 * e)).powf(1.0 / PQ_M1)
+        };
+        let cones = apply(
+            inverse(LMS_TO_IAB).expect("invertible"),
+            [iz + ZCAM_EPSILON, ab * hue[0], ab * hue[1]],
+        );
+        apply(
+            inverse(R2020_TO_LMS).expect("invertible"),
+            cones.map(uncoded),
+        )
+        .map(|nits| nits / INDEX_WHITE_NITS)
+    }
+
+    /// Texel `texel`'s place in lattice coordinates, as `lattice_bake.slang`'s `place_of` has it.
+    fn place_of(axes: LutAxes, texel: usize) -> [f64; 4] {
+        let (x, y, z) = (
+            texel % HUE_TEXELS,
+            (texel / HUE_TEXELS) % CHROMA_TEXELS,
+            texel / (HUE_TEXELS * CHROMA_TEXELS),
+        );
+        let (level, neighbourhood) = (z % LEVEL_TEXELS, z / LEVEL_TEXELS);
+        [
+            x as f64 / (HUE_TEXELS - 1) as f64,
+            axes.chroma_top * y as f64 / (CHROMA_TEXELS - 1) as f64,
+            axes.level_low
+                + (axes.level_top - axes.level_low) * level as f64 / (LEVEL_TEXELS - 1) as f64,
+            axes.neighbourhood_top * neighbourhood as f64 / (NEIGHBOURHOOD_TEXELS - 1) as f64,
+        ]
+    }
+
+    /// Every texel of a baked volume, hue fastest.
+    fn read_volume(gpu: &Gpu, volume: &Texture) -> Vec<[f64; 4]> {
         let depth = LEVEL_TEXELS * NEIGHBOURHOOD_TEXELS;
         let row = (HUE_TEXELS * 8).next_multiple_of(256);
         let mut recording = gpu.record();
@@ -925,7 +1096,7 @@ mod tests {
         });
         recording.encoder().copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &chroma,
+                texture: volume,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -938,70 +1109,73 @@ mod tests {
                     rows_per_image: Some(CHROMA_TEXELS as u32),
                 },
             },
-            chroma.size(),
+            volume.size(),
         );
         recording.submit();
-        let texels = pollster::block_on(crate::gpu::read_back(gpu, &staged, |b| b.to_vec()))
+        let bytes = pollster::block_on(crate::gpu::read_back(gpu, &staged, |b| b.to_vec()))
             .expect("read back");
-
-        let tent = |d: f64, reach: f64| -> f64 {
-            if reach <= 0.0 {
-                return 1.0;
-            }
-            let u = 1.0 - (d.abs() / reach).min(1.0);
-            u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
-        };
-        let mut worst: f64 = 0.0;
-        for z in 0..depth {
-            for y in 0..CHROMA_TEXELS {
-                for x in 0..HUE_TEXELS {
-                    let (level, neighbourhood) = (z % LEVEL_TEXELS, z / LEVEL_TEXELS);
-                    let at = [
-                        x as f64 / (HUE_TEXELS - 1) as f64,
-                        axes.chroma_top * y as f64 / (CHROMA_TEXELS - 1) as f64,
-                        axes.level_low + span[2] * level as f64 / (LEVEL_TEXELS - 1) as f64,
-                        axes.neighbourhood_top * neighbourhood as f64
-                            / (NEIGHBOURHOOD_TEXELS - 1) as f64,
-                    ];
-                    let mut sum = [0.0; 7];
-                    for k in map.kernels() {
-                        let mut turns = (at[0] - k.centre[0]).abs();
-                        turns = turns.min(1.0 - turns);
-                        if k.centre[1] < k.reach[1] {
-                            turns *= (at[1] / k.centre[1].max(1e-6)).clamp(0.0, 1.0);
-                        }
-                        let w = tent(turns, k.reach[0])
-                            * (1..4)
-                                .map(|a| tent(at[a] - k.centre[a], k.reach[a]))
-                                .product::<f64>();
-                        for (s, g) in sum.iter_mut().zip(k.generator) {
-                            *s += w * g;
-                        }
-                    }
-                    let want = operator_of(sum);
-                    let at = (z * CHROMA_TEXELS + y) * row + x * 8;
-                    for (c, want) in want[..4].iter().enumerate() {
-                        let got = f64::from(half::f16::from_le_bytes([
-                            texels[at + 2 * c],
-                            texels[at + 2 * c + 1],
-                        ]));
-                        worst = worst.max((got - want).abs() / want.abs().max(1.0));
-                    }
-                }
-            }
-        }
-        assert!(
-            worst < 2e-3,
-            "a texel is {worst} off the sum over every kernel"
-        );
+        (0..HUE_TEXELS * CHROMA_TEXELS * depth)
+            .map(|texel| {
+                let (x, rows) = (texel % HUE_TEXELS, texel / HUE_TEXELS);
+                let at = rows * row + x * 8;
+                std::array::from_fn(|c| {
+                    f64::from(half::f16::from_le_bytes([
+                        bytes[at + 2 * c],
+                        bytes[at + 2 * c + 1],
+                    ]))
+                })
+            })
+            .collect()
     }
 
     #[test]
-    fn white_sits_where_each_space_puts_it() {
-        // Jzazbz puts 100 nits of D65 near 0.167 lightness; ICtCp's I at 203 nits is PQ of 203.
-        let jz = IndexSpace::Jzazbz.lightness_of_neutral(Light::measured(100.0 / INDEX_WHITE_NITS));
-        assert!((jz - 0.167).abs() < 0.01, "{jz}");
-        let i = IndexSpace::Ictcp.lightness_of_neutral(Light::measured(1.0));
-        assert!((i - 0.58).abs() < 0.01, "{i}");
+    fn diffuse_white_is_a_hundred_and_hdr_sits_above_it() {
+        let white = lightness_of_neutral(Light::measured(1.0));
+        assert!((white - 100.0).abs() < 1e-9, "{white}");
+        let black = lightness_of_neutral(Light::ZERO);
+        assert!(black.abs() < 1e-6, "{black}");
+        let peak = lightness_of_neutral(Light::measured(4.0));
+        assert!(peak > 130.0, "{peak}");
+        let grey = chroma_of([Light::measured(0.18); 3]);
+        assert!(grey < 0.5, "a neutral reads {grey} of chroma");
+    }
+
+    #[test]
+    fn the_shader_holds_the_hosts_zcam_constants() {
+        const SOURCE: &str = include_str!("../../../slang/index_space.slang");
+        let declared = |name: &str| -> f64 {
+            let from = SOURCE
+                .find(&format!("float {name} = "))
+                .unwrap_or_else(|| panic!("index_space.slang does not declare {name}"))
+                + name.len()
+                + 9;
+            SOURCE[from..SOURCE[from..].find(';').expect("a ;") + from]
+                .parse()
+                .expect("a float")
+        };
+        let zcam = Zcam::pinned();
+        let (sin, cos) = ZCAM_HUE_OFFSET_DEGREES.to_radians().sin_cos();
+        let wrong: Vec<String> = [
+            ("INDEX_WHITE_NITS", INDEX_WHITE_NITS),
+            ("ZCAM_P", ZCAM_P),
+            ("ZCAM_EPSILON", ZCAM_EPSILON),
+            ("ZCAM_WHITE_IZ", zcam.white_iz),
+            ("ZCAM_LIGHTNESS_EXPONENT", zcam.lightness_exponent),
+            ("ZCAM_CHROMA_SCALE", zcam.chroma_scale),
+            ("ZCAM_HUE_COS", cos),
+            ("ZCAM_HUE_SIN", sin),
+        ]
+        .into_iter()
+        .filter(|(name, want)| (declared(name) - want).abs() > 1e-7 * want.abs())
+        .map(|(name, want)| format!("{name} = {want:.9}"))
+        .collect();
+        assert!(wrong.is_empty(), "index_space.slang should say {wrong:?}");
+        let entries = R2020_TO_LMS.iter().chain(&LMS_TO_IAB).flatten();
+        for v in entries.filter(|v| v.abs() != 0.0 && v.abs() != 1.0 && **v != 0.5) {
+            assert!(
+                SOURCE.contains(&format!("{v:.9}")),
+                "index_space.slang does not hold {v:.9}"
+            );
+        }
     }
 }
