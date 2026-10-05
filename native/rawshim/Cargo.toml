@@ -164,7 +164,7 @@ rawler = { path = "../vendor/dnglab/rawler" }
 lensdb = { path = "../lensdb", optional = true }
 heif = { path = "../heif" }
 fast_image_resize = "6.1.0"
-# The f16 the detail and surround textures and the jacobian readback are held in. Conversion
+# The f16 the detail and neighbourhood textures and the jacobian readback are held in. Conversion
 # only - no feature of it is wanted.
 half = { version = "2.7.1", default-features = false }
 # libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the

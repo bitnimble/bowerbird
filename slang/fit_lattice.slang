@@ -22,16 +22,16 @@ struct Params {
     int block;
     int blocks;
     uint space;
-    /// Nodes along hue, chroma, lightness and surround.
+    /// Nodes along hue, chroma, lightness and neighbourhood.
     int hue_nodes;
     int chroma_nodes;
     int level_nodes;
-    int surround_nodes;
+    int neighbourhood_nodes;
     /// Node gaps per unit of each lattice coordinate, and where lightness starts.
     float chroma_scale;
     float level_low;
     float level_scale;
-    float surround_scale;
+    float neighbourhood_scale;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -39,8 +39,8 @@ struct Params {
 [vk::binding(0, 0)] StructuredBuffer<float4> through;
 /// Per pair, the camera's rendering in the render's own linear Rec.2020.
 [vk::binding(1, 0)] StructuredBuffer<float4> target;
-/// Per pair, the surround its neighbourhood carries.
-[vk::binding(2, 0)] StructuredBuffer<float> surround;
+/// Per pair, how bright its neighbourhood is.
+[vk::binding(2, 0)] StructuredBuffer<float> neighbourhood;
 /// Per pair, the weight its hue bucket earned it.
 [vk::binding(3, 0)] StructuredBuffer<float> weights;
 /// Per landing: the cell it fell in, then the eleven floats a node reads off it.
@@ -72,10 +72,11 @@ static const int REACH_WORDS = 26;
 /// Landings one gathering thread walks at most.
 static const int SLICE = 256;
 
-int nodes() { return pc.hue_nodes * pc.chroma_nodes * pc.level_nodes * pc.surround_nodes; }
+int nodes() { return pc.hue_nodes * pc.chroma_nodes * pc.level_nodes * pc.neighbourhood_nodes; }
 int cells()
 {
-    return pc.hue_nodes * (pc.chroma_nodes - 1) * (pc.level_nodes - 1) * (pc.surround_nodes - 1);
+    return pc.hue_nodes * (pc.chroma_nodes - 1) * (pc.level_nodes - 1)
+        * (pc.neighbourhood_nodes - 1);
 }
 
 /// Where the cells' ends, in landings and in slices, start in `counts`.
@@ -112,7 +113,7 @@ int cell_toward(int node, int which)
     let cz = z - ((which >> 2) & 1);
     let cs = s - ((which >> 3) & 1);
     let inside = cr >= 0 && cr < pc.chroma_nodes - 1 && cz >= 0 && cz < pc.level_nodes - 1
-        && cs >= 0 && cs < pc.surround_nodes - 1;
+        && cs >= 0 && cs < pc.neighbourhood_nodes - 1;
     return inside ? cell_index(ch, cr, cz, cs) : -1;
 }
 
@@ -138,7 +139,7 @@ int cell_at(float4 at, out float4 fraction)
     int s;
     axis_at(at.y, pc.chroma_nodes, 0.0, pc.chroma_scale, r, fraction.y);
     axis_at(at.z, pc.level_nodes, pc.level_low, pc.level_scale, z, fraction.z);
-    axis_at(at.w, pc.surround_nodes, 0.0, pc.surround_scale, s, fraction.w);
+    axis_at(at.w, pc.neighbourhood_nodes, 0.0, pc.neighbourhood_scale, s, fraction.w);
     return cell_index(h, r, z, s);
 }
 
@@ -153,7 +154,8 @@ void lat_land(uint3 id: SV_DispatchThreadID)
     let t = target[k];
     let ours = m.w;
     let theirs = dot(LUMA, t.xyz);
-    let at = lattice_at(opponent_of(measured<Rendered>(indexed[k].xyz), pc.space), surround[k]);
+    let at = lattice_at(
+        opponent_of(measured<Rendered>(indexed[k].xyz), pc.space), neighbourhood[k]);
     float4 fraction;
     let cell = cell_at(at, fraction);
 

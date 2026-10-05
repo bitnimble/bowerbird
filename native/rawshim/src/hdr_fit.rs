@@ -164,25 +164,25 @@ pub fn srgb_eotf(level: u8) -> f64 {
 }
 
 /// The frame's own light at arm's length: a small luma plane of the whole photograph,
-/// blurred as `surround_plane` blurs, in the render's scene-linear units.
+/// blurred as `neighbourhood_plane` blurs, in the render's scene-linear units.
 ///
-/// This is what the lattice's surround axis reads at grade time. It travels with the
+/// This is what the lattice's neighbourhood axis reads at grade time. It travels with the
 /// colour because the lattice is unusable without it - a map fitted against a
 /// neighbourhood and read against none lands every conditioned correction on the wrong
 /// slab - and because a loupe tile cannot compute it: the blur spans the photograph and
 /// a tile only holds its window.
 #[derive(Clone, PartialEq)]
-pub struct SurroundThumb {
+pub struct NeighbourhoodThumb {
     pub width: usize,
     pub height: usize,
     /// `f16`-quantised at the fit, so a stored match compares equal to a fresh one.
     pub data: Vec<f64>,
 }
 
-impl SurroundThumb {
+impl NeighbourhoodThumb {
     /// No thumb, for a colour with no lattice to read one.
-    pub fn none() -> SurroundThumb {
-        SurroundThumb {
+    pub fn none() -> NeighbourhoodThumb {
+        NeighbourhoodThumb {
             width: 0,
             height: 0,
             data: Vec::new(),
@@ -224,8 +224,8 @@ pub struct HdrColour {
     /// None is not a failure - it is the model this had before there was a chroma axis,
     /// and a frame with too little colour to fit one is better served by it.
     pub chroma: Option<ChromaMap>,
-    /// The surround the map above reads; empty whenever `chroma` is `None`.
-    pub surround: SurroundThumb,
+    /// The neighbourhood the map above reads; empty whenever `chroma` is `None`.
+    pub neighbourhood: NeighbourhoodThumb,
     /// The hue-balanced CIEDE2000 the fit scores itself by, on pairs it was not fitted from,
     /// with the cast term of `folded` in it.
     ///
@@ -291,7 +291,7 @@ const FINE_CARRIED: f64 = 0.9997;
 /// strength and the fit ships without one - so the axis has a floor as well as a cost.
 pub(crate) const MAP_LEVEL: usize = 9;
 
-/// Nodes along the surround axis: the pixel's own neighbourhood brightness, at arm's
+/// Nodes along the neighbourhood axis: the pixel's own neighbourhood brightness, at arm's
 /// length, which is the one thing the camera's rendering reads that no colour can carry.
 ///
 /// Measured before believed: at identical `(d0, d2, level)` coordinates on one frame, the
@@ -299,18 +299,18 @@ pub(crate) const MAP_LEVEL: usize = 9;
 /// 0.597 where the same colour sits in a dark corner - its local tone mapping conditions
 /// on the neighbourhood, so a model indexed by colour alone must average the two and
 /// paints the transition a colour the camera never printed. Three nodes, because the
-/// effect is first-order in the surround: what it needs is to tell "dark against light"
+/// effect is first-order in the neighbourhood: what it needs is to tell "dark against light"
 /// from "dark against dark", not to resolve the neighbourhood finely.
-pub(crate) const MAP_SURROUND: usize = 3;
+pub(crate) const MAP_NEIGHBOURHOOD: usize = 3;
 
 /// The polar grid a lattice is fitted on (`fit_lattice.slang`): nodes around the hue circle,
-/// rings of chroma out from grey, lightness, and the surround.
+/// rings of chroma out from grey, lightness, and the neighbourhood.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct GridShape {
     hue: usize,
     rings: usize,
     level: usize,
-    surround: usize,
+    neighbourhood: usize,
 }
 
 impl GridShape {
@@ -318,18 +318,18 @@ impl GridShape {
         hue: MAP_HUE,
         rings: MAP_RINGS,
         level: MAP_LEVEL,
-        surround: MAP_SURROUND,
+        neighbourhood: MAP_NEIGHBOURHOOD,
     };
     const FINE: GridShape = GridShape {
         hue: FINE_HUE,
         rings: FINE_RINGS,
         level: MAP_LEVEL,
-        surround: MAP_SURROUND,
+        neighbourhood: MAP_NEIGHBOURHOOD,
     };
 
     /// Grey is a ring of `hue` nodes that are one place; the fit merges them (`merged_grey`).
     fn nodes(&self) -> usize {
-        self.hue * (self.rings + 1) * self.level * self.surround
+        self.hue * (self.rings + 1) * self.level * self.neighbourhood
     }
 
     fn index(&self, [h, r, z, s]: [usize; 4]) -> usize {
@@ -350,7 +350,7 @@ impl GridShape {
 /// Where a frame's lattice sits, in lattice coordinates (`index_space.slang`'s `lattice_at`).
 ///
 /// The chroma reach is the frame's own, so its nodes are spent on colours it contains; the
-/// lightness and surround reach its ceiling, so the stretch above diffuse white is addressable
+/// lightness and neighbourhood reach its ceiling, so the stretch above diffuse white is addressable
 /// rather than all of it clamping onto the top level plane.
 #[derive(Clone, Copy, Debug)]
 struct LatticeAxes {
@@ -358,7 +358,7 @@ struct LatticeAxes {
     chroma_top: f64,
     level_low: f64,
     level_top: f64,
-    surround_top: f64,
+    neighbourhood_top: f64,
 }
 
 impl LatticeAxes {
@@ -368,7 +368,7 @@ impl LatticeAxes {
             chroma_top,
             level_low: space.lightness_of_neutral(Light::ZERO),
             level_top: space.lightness_of_neutral(Light::measured(colour.ceiling)),
-            surround_top: colour.ceiling.sqrt(),
+            neighbourhood_top: colour.ceiling.sqrt(),
         }
     }
 
@@ -378,7 +378,7 @@ impl LatticeAxes {
             1.0 / shape.hue as f64,
             self.chroma_top / shape.rings as f64,
             (self.level_top - self.level_low) / (shape.level - 1) as f64,
-            self.surround_top / (shape.surround - 1) as f64,
+            self.neighbourhood_top / (shape.neighbourhood - 1) as f64,
         ]
     }
 
@@ -386,11 +386,11 @@ impl LatticeAxes {
         let gaps = self.gaps(shape);
         crate::fit_lattice::Grid {
             space: self.space,
-            nodes: [shape.hue, shape.rings + 1, shape.level, shape.surround],
+            nodes: [shape.hue, shape.rings + 1, shape.level, shape.neighbourhood],
             chroma_scale: 1.0 / gaps[1],
             level_low: self.level_low,
             level_scale: 1.0 / gaps[2],
-            surround_scale: 1.0 / gaps[3],
+            neighbourhood_scale: 1.0 / gaps[3],
         }
     }
 
@@ -399,7 +399,7 @@ impl LatticeAxes {
             chroma_top: self.chroma_top,
             level_low: self.level_low,
             level_top: self.level_top,
-            surround_top: self.surround_top,
+            neighbourhood_top: self.neighbourhood_top,
         }
     }
 }
@@ -625,7 +625,7 @@ impl NodeGrid {
     /// strongest evidence at or below it and at or above it, over the column's strongest, so a gap
     /// between seen levels fills and an end past them falls back to uncorrected.
     fn level_trended(&self, seen: &[f64]) -> NodeGrid {
-        let (l, s) = (self.shape.level, self.shape.surround);
+        let (l, s) = (self.shape.level, self.shape.neighbourhood);
         let area = self.shape.hue * (self.shape.rings + 1);
         let powers = |z: usize| {
             let x = z as f64 / (l - 1) as f64 - 0.5;
@@ -1147,7 +1147,7 @@ impl HdrColour {
             matrix: IDENTITY,
             saturation: 1.0,
             chroma: None,
-            surround: SurroundThumb::none(),
+            neighbourhood: NeighbourhoodThumb::none(),
             delta_e: 0.0,
             exposure: crate::light::Stops::ZERO,
             curve: crate::light::IDENTITY_CURVE.to_vec(),
@@ -1303,8 +1303,8 @@ fn probe_grade(colour: &HdrColour) -> crate::gpu::Grade<'_> {
 
 /// The colour model at each of `samples`, up to `stage`, left on the device.
 ///
-/// A sample is `(r, g, b, surround)`: the scene colour with diffuse white at 1.0, and the
-/// neighbourhood's brightness the lattice reads beside it (`surround_plane`).
+/// A sample is `(r, g, b, neighbourhood)`: the scene colour with diffuse white at 1.0, and the
+/// neighbourhood's brightness the lattice reads beside it (`neighbourhood_plane`).
 pub fn evaluate(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
@@ -1481,15 +1481,16 @@ impl Source {
     }
 }
 
-/// `(r, g, b, surround)` at each of `at`'s pixels of `plane`, as [`evaluate_over`] reads them.
+/// `(r, g, b, neighbourhood)` at each of `at`'s pixels of `plane`, as [`evaluate_over`] reads them.
 ///
-/// `surround` is `None` for every probe below the lattice, which never reads the fourth component.
+/// `neighbourhood` is `None` for every probe below the lattice, which never reads the fourth
+/// component.
 fn gathered(
     gpu: &'static crate::gpu::Gpu,
     plane: &Source,
     at: &crate::gpu::Buffer,
     count: usize,
-    surround: Option<&crate::gpu::Buffer>,
+    neighbourhood: Option<&crate::gpu::Buffer>,
 ) -> crate::gpu::Buffer {
     let samples = gpu.own_buffer(&wgpu::BufferDescriptor {
         label: Some("fit gather samples"),
@@ -1503,14 +1504,14 @@ fn gathered(
     let mut recording = gpu.record();
     recording.holding(&plane.buffer);
     recording.holding(at);
-    if let Some(surround) = surround {
-        recording.holding(surround);
+    if let Some(neighbourhood) = neighbourhood {
+        recording.holding(neighbourhood);
     }
     let idle = unused_buffer(&mut recording);
     let block: Vec<u8> = [
         count as i32,
         plane.pixels() as i32,
-        i32::from(surround.is_some()),
+        i32::from(neighbourhood.is_some()),
         0,
     ]
     .iter()
@@ -1536,7 +1537,7 @@ fn gathered(
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: surround.unwrap_or(&idle).as_entire_binding(),
+                resource: neighbourhood.unwrap_or(&idle).as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
@@ -2068,7 +2069,7 @@ impl Judges {
     fn new(
         gpu: &'static crate::gpu::Gpu,
         render: &Source,
-        surround: &crate::gpu::Buffer,
+        neighbourhood: &crate::gpu::Buffer,
         [held, frame]: [&Pairs; 2],
         wides: &[WideSample],
     ) -> Judges {
@@ -2076,13 +2077,25 @@ impl Judges {
         let wide_hue: Vec<f64> = wides.iter().map(|s| s.hue).collect();
         let populations: [(crate::gpu::Buffer, usize, &[[f64; 3]], &[f64]); 3] = [
             (
-                gathered(gpu, render, &held.indices, held.at.len(), Some(surround)),
+                gathered(
+                    gpu,
+                    render,
+                    &held.indices,
+                    held.at.len(),
+                    Some(neighbourhood),
+                ),
                 held.at.len(),
                 &held.target,
                 &held.balance,
             ),
             (
-                gathered(gpu, render, &frame.indices, frame.at.len(), Some(surround)),
+                gathered(
+                    gpu,
+                    render,
+                    &frame.indices,
+                    frame.at.len(),
+                    Some(neighbourhood),
+                ),
                 frame.at.len(),
                 &frame.target,
                 &frame.balance,
@@ -2538,8 +2551,8 @@ async fn neutral_pull(
     if (pairs.greys.len() as u64) < MIN_GREY {
         return None;
     }
-    // Surround of zero, because this runs inside the rounds, before any lattice exists - with
-    // `chroma` still `None` the surround is never read.
+    // Neighbourhood of zero, because this runs inside the rounds, before any lattice exists - with
+    // `chroma` still `None` the neighbourhood is never read.
     let samples = gathered(gpu, plane, &pairs.grey_indices, pairs.greys.len(), None);
     let mut ours = [0.0f64; 3];
     for v in evaluate_over(gpu, colour, &samples, pairs.greys.len(), Stage::Full)
@@ -2898,7 +2911,7 @@ impl<'a> SaturationPairs<'a> {
     fn over(
         gpu: &'static crate::gpu::Gpu,
         render: &Source,
-        surround: Option<&crate::gpu::Buffer>,
+        neighbourhood: Option<&crate::gpu::Buffer>,
         pairs: &'a Pairs,
     ) -> SaturationPairs<'a> {
         let sample = pairs.every(gpu, SWEEP_STRIDE);
@@ -2913,9 +2926,9 @@ impl<'a> SaturationPairs<'a> {
             )
         };
         SaturationPairs {
-            gathered: gathered(gpu, render, &pairs.indices, pairs.at.len(), surround),
+            gathered: gathered(gpu, render, &pairs.indices, pairs.at.len(), neighbourhood),
             scoring: scoring(pairs, 1),
-            sample_gathered: gathered(gpu, render, &sample.indices, sample.at.len(), surround),
+            sample_gathered: gathered(gpu, render, &sample.indices, sample.at.len(), neighbourhood),
             // Neutral and the sweep's steps.
             sample_scoring: scoring(&sample, SATURATION_SWEEP + 2),
             sample,
@@ -3123,7 +3136,7 @@ impl ChromaMoments {
     /// Grey's nodes, one per hue, given what all of them saw: they are one place, so they are one
     /// node, and every hue's copy solves to the same answer.
     fn merged_grey(mut self, shape: GridShape) -> ChromaMoments {
-        for s in 0..shape.surround {
+        for s in 0..shape.neighbourhood {
             for z in 0..shape.level {
                 let at = |h: usize| shape.index([h, 0, z, s]);
                 let mut total = ChromaMoments::empty(1);
@@ -4546,9 +4559,9 @@ async fn chroma_span(
     Some(picked.clamp(widest / 16.0, widest).sqrt())
 }
 
-/// The surround in both the places that read it: the device, where every probe gathers it beside
-/// the colour, and the host, where the thumb the grade carries is sampled out of it.
-struct Surround {
+/// The neighbourhood in both the places that read it: the device, where every probe gathers it
+/// beside the colour, and the host, where the thumb the grade carries is sampled out of it.
+struct Neighbourhood {
     buffer: crate::gpu::Buffer,
     of: Vec<f64>,
 }
@@ -4556,7 +4569,7 @@ struct Surround {
 /// The neighbourhood's brightness at every fit-grid pixel, in the render's own
 /// scene-linear units: the luma, box-blurred to about a tenth of the frame.
 ///
-/// This is the surround the lattice's fourth axis reads (`MAP_SURROUND`), and the grade
+/// This is the neighbourhood the lattice's fourth axis reads (`MAP_NEIGHBOURHOOD`), and the grade
 /// computes the same quantity from the frame it holds - a blur this wide is indifferent
 /// to which of the two pipelines' frames it came from.
 ///
@@ -4565,12 +4578,12 @@ struct Surround {
 /// transition band is where every supervision gate drops its samples, so sharpening its
 /// coordinate only concentrates the model's untaught answer there. What the transition
 /// needs is teachers, not a finer address.
-async fn surround_plane(
+async fn neighbourhood_plane(
     gpu: &'static crate::gpu::Gpu,
     render: &Source,
     width: usize,
     height: usize,
-) -> Option<Surround> {
+) -> Option<Neighbourhood> {
     let mut recording = gpu.record();
     let source = crate::fit::Sampled {
         buffer: render.buffer.clone(),
@@ -4591,7 +4604,7 @@ async fn surround_plane(
             .collect::<Vec<f64>>()
     })
     .await?;
-    Some(Surround {
+    Some(Neighbourhood {
         buffer: plane.buffer,
         of,
     })
@@ -4613,7 +4626,7 @@ struct WideSample {
     v: [f64; 3],
     t: [f64; 3],
     hue: f64,
-    /// The neighbourhood's brightness at this sample, from the frame's surround plane.
+    /// The neighbourhood's brightness at this sample, from the frame's neighbourhood plane.
     s: f64,
 }
 
@@ -4622,11 +4635,11 @@ async fn wide_samples(
     gpu: &'static crate::gpu::Gpu,
     sharp: &Sharp,
     resident: &Wide,
-    // The fit grid, which every wide pixel's weight and surround are read at.
+    // The fit grid, which every wide pixel's weight and neighbourhood are read at.
     (fit_wide, fit_tall): (usize, usize),
     weights: &[f64],
     census: &HueCensus,
-    surround: &[f64],
+    neighbourhood: &[f64],
     ceiling: f64,
 ) -> Vec<WideSample> {
     let (wide, target) = (&sharp.wide, &sharp.camera);
@@ -4744,7 +4757,7 @@ async fn wide_samples(
                 v,
                 t,
                 hue,
-                s: surround[fit_at],
+                s: neighbourhood[fit_at],
             })
         })
         .collect();
@@ -4807,36 +4820,42 @@ impl ChromaMoments {
 }
 
 /// One population the lattice is taught from or judged on, as `fit_lattice.slang` reads it: what
-/// each sample is, what the camera made of it, its surround and its hue weight. On the device, and
-/// the same for every colour the lattice is fitted under.
+/// each sample is, what the camera made of it, its neighbourhood and its hue weight. On the device,
+/// and the same for every colour the lattice is fitted under.
 struct Landed {
     samples: crate::gpu::Buffer,
     target: crate::gpu::Buffer,
-    surround: crate::gpu::Buffer,
+    neighbourhood: crate::gpu::Buffer,
     hue: crate::gpu::Buffer,
     count: usize,
 }
 
 impl Landed {
-    /// What goes up is a surround and a hue weight per pair, the two things indexed by pixel
+    /// What goes up is a neighbourhood and a hue weight per pair, the two things indexed by pixel
     /// rather than by pair, which is half what a full evaluated sample would cost coming down, and
     /// an upload rather than a stall.
     fn pairs(
         gpu: &'static crate::gpu::Gpu,
         render: &Source,
-        surround: &Surround,
+        neighbourhood: &Neighbourhood,
         pairs: &Pairs,
         weights: &[f64],
         census: &HueCensus,
     ) -> Landed {
         let count = pairs.at.len();
         Landed {
-            samples: gathered(gpu, render, &pairs.indices, count, Some(&surround.buffer)),
-            target: pairs.linear_on(gpu).clone(),
-            surround: floats_on(
+            samples: gathered(
                 gpu,
-                "fit lattice surround",
-                (0..count).map(|k| surround.of[pairs.at[k]]),
+                render,
+                &pairs.indices,
+                count,
+                Some(&neighbourhood.buffer),
+            ),
+            target: pairs.linear_on(gpu).clone(),
+            neighbourhood: floats_on(
+                gpu,
+                "fit lattice neighbourhood",
+                (0..count).map(|k| neighbourhood.of[pairs.at[k]]),
             ),
             hue: floats_on(
                 gpu,
@@ -4872,7 +4891,7 @@ impl Landed {
                 "fit wide target",
                 wides.iter().flat_map(|s| [s.t[0], s.t[1], s.t[2], 0.0]),
             ),
-            surround: floats_on(gpu, "fit wide surround", wides.iter().map(|s| s.s)),
+            neighbourhood: floats_on(gpu, "fit wide neighbourhood", wides.iter().map(|s| s.s)),
             hue: floats_on(gpu, "fit wide hue", wides.iter().map(|s| s.hue)),
             count: wides.len(),
         }
@@ -4904,7 +4923,7 @@ impl Landed {
             &through,
             &indexed,
             &self.target,
-            &self.surround,
+            &self.neighbourhood,
             &self.hue,
             self.count,
             grid,
@@ -4931,13 +4950,20 @@ async fn lattice_moments(
     through: &crate::gpu::Buffer,
     indexed: &crate::gpu::Buffer,
     target: &crate::gpu::Buffer,
-    surround: &crate::gpu::Buffer,
+    neighbourhood: &crate::gpu::Buffer,
     weights: &crate::gpu::Buffer,
     count: usize,
     grid: &crate::fit_lattice::Grid,
 ) -> Option<ChromaMoments> {
     let nodes = crate::fit_lattice::moments(
-        gpu, through, indexed, target, surround, weights, count, grid,
+        gpu,
+        through,
+        indexed,
+        target,
+        neighbourhood,
+        weights,
+        count,
+        grid,
     )
     .await?;
 
@@ -5281,8 +5307,8 @@ async fn fit_colour(
         _ => (source, sharp),
     };
 
-    let surround = surround_plane(gpu, &source, width, height).await?;
-    lap("surround");
+    let neighbourhood = neighbourhood_plane(gpu, &source, width, height).await?;
+    lap("neighbourhood");
     // Fitted on one half of the wide samples and judged on the other, exactly as the
     // pairs are split - and judged on *both* held populations together, with a voice
     // each rather than a vote per sample. The pairs alone cannot see the content the
@@ -5296,7 +5322,7 @@ async fn fit_colour(
         (width, height),
         &map_balance,
         &census,
-        &surround.of,
+        &neighbourhood.of,
         model.ceiling,
     )
     .await;
@@ -5319,7 +5345,13 @@ async fn fit_colour(
     // taught on the pairs, so a node they never reached extrapolates onto the pixels they left
     // out - on an orange-lit stairwell that doubled the blue on every dark wall, which no held-out
     // pair can object to because none of them is a dark wall.
-    let judges = Judges::new(gpu, &source, &surround.buffer, [&held, &frame], &wide_held);
+    let judges = Judges::new(
+        gpu,
+        &source,
+        &neighbourhood.buffer,
+        [&held, &frame],
+        &wide_held,
+    );
 
     // Every matrix candidate is judged with the lattice it would carry, since the lattice mends
     // locally what a 3x3 cannot, and a matrix that serves a frame's commonest colours by turning a
@@ -5359,7 +5391,7 @@ async fn fit_colour(
     };
 
     let landed =
-        |pairs: &Pairs| Landed::pairs(gpu, &source, &surround, pairs, &map_balance, &census);
+        |pairs: &Pairs| Landed::pairs(gpu, &source, &neighbourhood, pairs, &map_balance, &census);
     let lattice = Lattice {
         sharp,
         lifted: sharp.lifted(gpu),
@@ -5414,7 +5446,7 @@ async fn fit_colour(
             .stored(),
     );
     lap("matrix and lattice");
-    // The map reads the surround at grade time, so its thumb travels with it.
+    // The map reads the neighbourhood at grade time, so its thumb travels with it.
     let step = 16usize;
     let (tw, th) = ((width / step).max(1), (height / step).max(1));
     let mut data = Vec::with_capacity(tw * th);
@@ -5424,10 +5456,10 @@ async fn fit_colour(
             // centres; a corner sample would hand it every value half a cell early.
             let at = (y * step + step / 2).min(height - 1) * width
                 + (x * step + step / 2).min(width - 1);
-            data.push(f64::from(half::f16::from_f64(surround.of[at])));
+            data.push(f64::from(half::f16::from_f64(neighbourhood.of[at])));
         }
     }
-    colour.surround = SurroundThumb {
+    colour.neighbourhood = NeighbourhoodThumb {
         width: tw,
         height: th,
         data,
@@ -5444,7 +5476,7 @@ async fn fit_colour(
     }
     lap("camera tone");
     if let Some(saturation) =
-        global_saturation(gpu, &colour, &source, &surround.buffer, &frame).await
+        global_saturation(gpu, &colour, &source, &neighbourhood.buffer, &frame).await
     {
         colour.saturation = saturation;
     }
@@ -5458,11 +5490,11 @@ async fn global_saturation(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
     source: &Source,
-    surround: &crate::gpu::Buffer,
+    neighbourhood: &crate::gpu::Buffer,
     frame: &Pairs,
 ) -> Option<f64> {
     let count = frame.at.len();
-    let samples = gathered(gpu, source, &frame.indices, count, Some(surround));
+    let samples = gathered(gpu, source, &frame.indices, count, Some(neighbourhood));
     let matched = evaluate_over(gpu, colour, &samples, count, Stage::Full)
         .read(gpu)
         .await?;
@@ -5487,7 +5519,7 @@ async fn global_saturation(
         grey_target: [0.0; 3],
         linear: std::cell::OnceCell::new(),
     };
-    let over = SaturationPairs::over(gpu, source, Some(surround), &rendered);
+    let over = SaturationPairs::over(gpu, source, Some(neighbourhood), &rendered);
     fitted_saturation(gpu, colour, &over, Stage::CameraTone).await
 }
 
@@ -5797,7 +5829,7 @@ async fn fit_model(
         matrix: IDENTITY,
         saturation: 1.0,
         chroma: None,
-        surround: SurroundThumb::none(),
+        neighbourhood: NeighbourhoodThumb::none(),
         delta_e: f64::INFINITY,
         exposure: crate::light::Stops::ZERO,
         curve: crate::light::IDENTITY_CURVE.to_vec(),
@@ -7411,11 +7443,11 @@ mod tests {
                 .sqrt(),
             level_low: space.lightness_of_neutral(Light::ZERO),
             level_top: space.lightness_of_neutral(Light::measured(1.0)),
-            surround_top: 1.0,
+            neighbourhood_top: 1.0,
         }
     }
 
-    /// A coarse grid whose node at each `[hue, ring, level, surround]` is `f`'s.
+    /// A coarse grid whose node at each `[hue, ring, level, neighbourhood]` is `f`'s.
     fn grid_of(f: impl Fn([usize; 4]) -> [f64; NODE_VALUES]) -> NodeGrid {
         let shape = GridShape::COARSE;
         NodeGrid {
@@ -7431,7 +7463,7 @@ mod tests {
         axes: LatticeAxes,
         shape: GridShape,
         rendered: [f64; 3],
-        surround: f64,
+        neighbourhood: f64,
     ) -> Vec<(usize, f64, [f64; 4])> {
         let [lightness, a, b] = axes.space.opponent_of(rendered.map(Light::measured));
         let turn = b.atan2(a) / std::f64::consts::TAU;
@@ -7439,7 +7471,7 @@ mod tests {
             turn - turn.floor(),
             a.hypot(b).sqrt(),
             lightness,
-            surround.max(0.0).sqrt(),
+            neighbourhood.max(0.0).sqrt(),
         ];
         let grid = axes.grid(shape);
         let axis = |value: f64, nodes: usize, low: f64, scale: f64| {
@@ -7453,7 +7485,7 @@ mod tests {
             (h, turns - h as f64),
             axis(at[1], shape.rings + 1, 0.0, grid.chroma_scale),
             axis(at[2], shape.level, grid.level_low, grid.level_scale),
-            axis(at[3], shape.surround, 0.0, grid.surround_scale),
+            axis(at[3], shape.neighbourhood, 0.0, grid.neighbourhood_scale),
         ];
         (0..16)
             .map(|which| {
@@ -7583,7 +7615,7 @@ mod tests {
         });
         let kernels = grid.kernels(None);
         let greys: Vec<_> = kernels.iter().filter(|k| k.centre[1] == 0.0).collect();
-        assert_eq!(greys.len(), MAP_LEVEL * MAP_SURROUND);
+        assert_eq!(greys.len(), MAP_LEVEL * MAP_NEIGHBOURHOOD);
         assert!(greys.iter().all(|k| k.reach[0] == 0.0));
     }
 
@@ -7661,7 +7693,8 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             (seed >> 33) as f64 / (1u64 << 31) as f64
         };
-        let (mut through, mut target, mut surround, mut weight) = (vec![], vec![], vec![], vec![]);
+        let (mut through, mut target, mut neighbourhood, mut weight) =
+            (vec![], vec![], vec![], vec![]);
         for k in 0..5000 {
             // The dark cluster holds one hue: near grey, a cluster scattered round it in every
             // direction lands on every hue's cell.
@@ -7677,7 +7710,7 @@ mod tests {
             let luma = LUMA[0] * m[0] + LUMA[1] * m[1] + LUMA[2] * m[2];
             through.push([m[0] as f32, m[1] as f32, m[2] as f32, luma as f32]);
             target.push([m[0] * 1.1, m[1], m[2] * 0.9]);
-            surround.push(level * next());
+            neighbourhood.push(level * next());
             weight.push(0.5 + next());
         }
         let upload = |label, bytes: Vec<u8>| {
@@ -7706,7 +7739,7 @@ mod tests {
                 "target",
                 floats(&mut target.iter().flat_map(|t| [t[0], t[1], t[2], 1.0])),
             ),
-            &upload("surround", floats(&mut surround.iter().copied())),
+            &upload("neighbourhood", floats(&mut neighbourhood.iter().copied())),
             &upload("weight", floats(&mut weight.iter().copied())),
             through.len(),
             &axes.grid(shape),
@@ -7721,7 +7754,7 @@ mod tests {
             let (d0, d2) = (m0 - ours, m2 - ours);
             let reached = [target[k][0] - theirs, target[k][2] - theirs];
             let residual = (reached[0] - d0).hypot(reached[1] - d2) + (theirs - ours).abs();
-            for (node, share, offset) in landing(axes, shape, [m0, m1, m2], surround[k]) {
+            for (node, share, offset) in landing(axes, shape, [m0, m1, m2], neighbourhood[k]) {
                 host.land(
                     &[node; 16],
                     &{
@@ -7751,7 +7784,7 @@ mod tests {
         // Compared as the fit reads them, grey merged across hue: a near-grey pair's hue is
         // `atan2` of two `f32` differences, so which hue's grey node it lands on is noise.
         let (host, device) = (host.merged_grey(shape), device.merged_grey(shape));
-        for s in 0..shape.surround {
+        for s in 0..shape.neighbourhood {
             for z in 0..shape.level {
                 let grey: Vec<usize> = (0..shape.hue).map(|h| shape.index([h, 0, z, s])).collect();
                 let total: f64 = grey.iter().map(|&n| touched[n]).sum();
@@ -8197,7 +8230,7 @@ mod tests {
         HdrColour::identity()
     }
 
-    /// What `gathered` would take off a host plane, with a surround of zero, in the width
+    /// What `gathered` would take off a host plane, with a neighbourhood of zero, in the width
     /// `through` takes.
     fn samples_of_f64(render: &Plane, at: &[usize]) -> Vec<[f64; 4]> {
         at.iter()
@@ -8834,8 +8867,8 @@ mod tests {
         let gpu = searching();
         let frame = Pairs::over(gpu, &render, &render);
         let source = source_of(gpu, &render);
-        let surround = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("fit surround test"),
+        let neighbourhood = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("fit neighbourhood test"),
             contents: &vec![0u8; render.width * render.height * 4],
             usage: wgpu::BufferUsages::STORAGE,
         });
@@ -8844,9 +8877,14 @@ mod tests {
                 chroma: Some(ChromaMap::from_saturation(want)),
                 ..identity_colour()
             };
-            let found =
-                pollster::block_on(global_saturation(gpu, &matched, &source, &surround, &frame))
-                    .expect("the device scores");
+            let found = pollster::block_on(global_saturation(
+                gpu,
+                &matched,
+                &source,
+                &neighbourhood,
+                &frame,
+            ))
+            .expect("the device scores");
             assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
         }
     }
@@ -9155,9 +9193,9 @@ mod tests {
         //
         // Lit by the match's own balance first, as the grade lights a frame before the match.
         //
-        // At the level's own surround, because a flat sky's neighbourhood is itself - and it is
-        // where the chart's pairs taught the map. Zero would read the one surround slab no pair
-        // of this chart reached.
+        // At the level's own neighbourhood, because a flat sky's neighbourhood is itself - and it
+        // is where the chart's pairs taught the map. Zero would read the one neighbourhood slab no
+        // pair of this chart reached.
         let levels = [0.4, 0.5, 0.6];
         let greys = Plane {
             width: levels.len(),

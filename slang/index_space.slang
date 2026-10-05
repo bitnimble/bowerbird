@@ -96,17 +96,17 @@ public Colour<Rendered> rendered_of(Colour<Opponent> colour, uint space)
     return measured<Rendered>(nits / INDEX_WHITE_NITS);
 }
 
-/// Where an opponent colour and a surround sit in the lattice's own coordinates: hue in turns,
-/// then the square roots of chroma, lightness as it is, and the square root of the surround.
+/// Where an opponent colour and a neighbourhood sit in the lattice's own coordinates: hue in turns,
+/// then the square roots of chroma, lightness as it is, and the square root of the neighbourhood.
 ///
 /// The roots put nodes where a frame's colours mass, near neutral and in the shadows; lightness
 /// needs none, both spaces having coded it already.
-public float4 lattice_at(Colour<Opponent> colour, float surround)
+public float4 lattice_at(Colour<Opponent> colour, float neighbourhood)
 {
     let chroma = length(colour.v.yz);
     var turn = atan2(colour.v.z, colour.v.y) / TAU;
     turn = turn - floor(turn);
-    return float4(turn, sqrt(chroma), colour.v.x, sqrt(max(surround, 0.0)));
+    return float4(turn, sqrt(chroma), colour.v.x, sqrt(max(neighbourhood, 0.0)));
 }
 
 /// The opponent colour at a place in lattice coordinates, which is `lattice_at` undone.

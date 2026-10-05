@@ -13,9 +13,9 @@ struct Params {
     int count;
     /// Pixels across the plane, which the indices are into.
     int pixels;
-    /// Zero where the caller wants a surround of zero rather than the plane beside it - every
+    /// Zero where the caller wants a neighbourhood of zero rather than the plane beside it - every
     /// probe below the lattice, which never reads the fourth component.
-    int surrounded;
+    int has_neighbourhood;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -23,9 +23,9 @@ struct Params {
 [vk::binding(0, 0)] StructuredBuffer<float> plane;
 /// One pixel index a sample.
 [vk::binding(1, 0)] StructuredBuffer<uint> at;
-/// One float a pixel of the plane, or a stub where `pc.surrounded` is zero.
-[vk::binding(2, 0)] StructuredBuffer<float> surround;
-/// Four floats a sample: the colour, then the surround.
+/// One float a pixel of the plane, or a stub where `pc.has_neighbourhood` is zero.
+[vk::binding(2, 0)] StructuredBuffer<float> neighbourhood;
+/// Four floats a sample: the colour, then the neighbourhood.
 [vk::binding(3, 0)] RWStructuredBuffer<float> samples;
 
 [shader("compute")]
@@ -43,5 +43,5 @@ void fit_gather(uint3 id: SV_DispatchThreadID)
     samples[k * 4] = plane[i];
     samples[k * 4 + 1] = plane[i + 1];
     samples[k * 4 + 2] = plane[i + 2];
-    samples[k * 4 + 3] = pc.surrounded != 0 ? surround[p] : 0.0;
+    samples[k * 4 + 3] = pc.has_neighbourhood != 0 ? neighbourhood[p] : 0.0;
 }

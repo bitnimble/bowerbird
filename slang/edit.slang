@@ -187,18 +187,18 @@ public struct Edit {
     public uint window_left;
     public uint window_top;
 
-    /// The chroma lattice's surround axis, and where to read its thumb.
+    /// The chroma lattice's neighbourhood axis, and where to read its thumb.
     ///
     /// A window of its own rather than `window_left`/`photo_width`: a loupe tile applies no
     /// geometry, so those stay zero there, while the thumb is the photograph's and has to be
     /// read in its UV whatever piece of it this frame is.
-    public uint surround_count;
-    public float surround_scale;
-    public uint has_surround;
-    public uint surround_left;
-    public uint surround_top;
-    public uint surround_photo_width;
-    public uint surround_photo_height;
+    public uint neighbourhood_count;
+    public float neighbourhood_scale;
+    public uint has_neighbourhood;
+    public uint neighbourhood_left;
+    public uint neighbourhood_top;
+    public uint neighbourhood_photo_width;
+    public uint neighbourhood_photo_height;
     /// Whether a `mean_frame` was built beside the frame, so the lattice can be read at
     /// the neighbourhood the fit taught. Clear only for the probes, which have no frame.
     public uint has_mean;

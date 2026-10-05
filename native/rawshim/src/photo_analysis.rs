@@ -570,10 +570,10 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
             for value in kernels {
                 out.extend_from_slice(&f16::from_f64(*value).to_le_bytes());
             }
-            // The surround the map reads, which a loupe tile cannot compute for itself.
-            put_u32(out, colour.surround.width as u32);
-            put_u32(out, colour.surround.height as u32);
-            for value in &colour.surround.data {
+            // The neighbourhood the map reads, which a loupe tile cannot compute for itself.
+            put_u32(out, colour.neighbourhood.width as u32);
+            put_u32(out, colour.neighbourhood.height as u32);
+            for value in &colour.neighbourhood.data {
                 out.extend_from_slice(&f16::from_f64(*value).to_le_bytes());
             }
         }
@@ -644,8 +644,8 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
         }),
     };
 
-    let (chroma, surround) = match at.u8()? {
-        0 => (None, crate::hdr_fit::SurroundThumb::none()),
+    let (chroma, neighbourhood) = match at.u8()? {
+        0 => (None, crate::hdr_fit::NeighbourhoodThumb::none()),
         _ => {
             let count = at.u32()? as usize;
             if count > MAX_KERNEL_WORDS {
@@ -672,7 +672,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
             }
             (
                 Some(map),
-                crate::hdr_fit::SurroundThumb {
+                crate::hdr_fit::NeighbourhoodThumb {
                     width,
                     height,
                     data,
@@ -700,7 +700,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
         curve,
         illuminant,
         chroma,
-        surround,
+        neighbourhood,
     }))
 }
 
@@ -1027,12 +1027,12 @@ pub(crate) mod tests {
                             chroma_top: 0.21,
                             level_low: 0.0,
                             level_top: 0.37,
-                            surround_top: 1.1,
+                            neighbourhood_top: 1.1,
                         },
                     )
                     .stored(),
                 ),
-                surround: crate::hdr_fit::SurroundThumb {
+                neighbourhood: crate::hdr_fit::NeighbourhoodThumb {
                     width: 8,
                     height: 5,
                     data: (0..40)
@@ -1163,14 +1163,20 @@ pub(crate) mod tests {
         assert_eq!(is_colour.chroma, was_colour.chroma);
         assert!((is_colour.ceiling - was_colour.ceiling).abs() < 1e-3);
         assert_eq!(
-            (is_colour.surround.width, is_colour.surround.height),
-            (was_colour.surround.width, was_colour.surround.height),
+            (
+                is_colour.neighbourhood.width,
+                is_colour.neighbourhood.height
+            ),
+            (
+                was_colour.neighbourhood.width,
+                was_colour.neighbourhood.height
+            ),
         );
         for (read, wrote) in is_colour
-            .surround
+            .neighbourhood
             .data
             .iter()
-            .zip(&was_colour.surround.data)
+            .zip(&was_colour.neighbourhood.data)
         {
             assert!((read - wrote).abs() < 1e-3, "{read} against {wrote}");
         }
@@ -1220,7 +1226,8 @@ pub(crate) mod tests {
     ///
     /// This fixture's cost is the fixed part: the chroma lattice at 1900 kernels of 17 `f16`,
     /// about what a fit keeps on a typical frame and up to half again on a busy one, the curves at 768
-    /// `f32`, the particles at 22 `f32` each. A real fit adds the surround thumb at its own grid.
+    /// `f32`, the particles at 22 `f32` each. A real fit adds the neighbourhood thumb at its own
+    /// grid.
     ///
     /// The two are checked apart because they scale differently: the first is a constant per
     /// photograph and the second is however dirty the glass was.

@@ -85,7 +85,7 @@ fn model() -> HdrColour {
 ///
 /// Written here rather than taken from `gpu::Grade` because `peak_samples` is what the scan is
 /// asked against, and a grade derives it from the frame rather than taking it.
-fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
+fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());
     let shape = shape.as_ref();
     let mut words: Vec<u32> = Vec::new();
@@ -155,13 +155,16 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
     words.push(1); // photo_height
     words.push(0); // window_left
     words.push(0); // window_top
-    words.push(shape.map_or(2, |s| s.surround_count as u32));
-    f_push(&mut words, shape.map_or(1.0, |s| s.surround_scale as f32));
-    words.push(u32::from(surround != 0.0)); // has_surround
-    words.push(0); // surround_left
-    words.push(0); // surround_top
-    words.push(1); // surround_photo_width
-    words.push(1); // surround_photo_height
+    words.push(shape.map_or(2, |s| s.neighbourhood_count as u32));
+    f_push(
+        &mut words,
+        shape.map_or(1.0, |s| s.neighbourhood_scale as f32),
+    );
+    words.push(u32::from(neighbourhood != 0.0)); // has_neighbourhood
+    words.push(0); // neighbourhood_left
+    words.push(0); // neighbourhood_top
+    words.push(1); // neighbourhood_photo_width
+    words.push(1); // neighbourhood_photo_height
     words.push(0); // has_mean
     words.push(1); // mean_block: unread with the mean off, and never zero
     words.push(0); // has_smoothed

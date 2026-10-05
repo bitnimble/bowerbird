@@ -148,7 +148,7 @@ pub struct Prepared {
     /// The photograph the window is a piece of, which is the scale the presence sliders read at.
     pub photograph: (usize, usize),
     /// Where the window starts in that photograph, which is where the grade reads the
-    /// surround thumb.
+    /// neighbourhood thumb.
     pub origin: (usize, usize),
     /// The longitudinal aberration the defringe took off, measured here where the caller had none
     /// to hand. Whole-frame, so what a window is *given* it must hand on rather than refit.
@@ -187,7 +187,7 @@ impl Prepared {
             ..scene.gpu_grade(self.width, self.height, output)
         }
         .within(self.photograph)
-        .surrounded(
+        .neighbourhood_windowed(
             Size::exact(self.photograph.0, self.photograph.1),
             At::exact(self.origin.0, self.origin.1),
         )

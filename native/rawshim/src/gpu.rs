@@ -2192,7 +2192,7 @@ struct ChromaModelInputs<'a> {
     curves: &'a wgpu::TextureView,
     chroma: &'a wgpu::TextureView,
     chroma_luma: &'a wgpu::TextureView,
-    surround: &'a wgpu::TextureView,
+    neighbourhood: &'a wgpu::TextureView,
     mean: &'a wgpu::TextureView,
     detail: &'a wgpu::TextureView,
 }
@@ -2394,11 +2394,11 @@ pub struct Grade<'a> {
     /// **None is the whole picture**, which is the editor and every rendition that had no crop to
     /// decode less of - so the common case says nothing rather than repeating the frame's own size.
     pub window: Option<Window>,
-    /// Where this frame sits in the photograph for the surround thumb alone: a loupe
+    /// Where this frame sits in the photograph for the neighbourhood thumb alone: a loupe
     /// tile applies no geometry - `window` stays `None` there - but the thumb is the
     /// photograph's and has to be read in its UV. `None` falls back to `window`, then to
     /// the frame being the whole picture.
-    pub surround_window: Option<Window>,
+    pub neighbourhood_window: Option<Window>,
     /// What a draw is showing, where this grade is being drawn rather than encoded.
     ///
     /// None everywhere a rendition runs - `encode` reads none of these fields - and the words go
@@ -2492,7 +2492,7 @@ impl<'a> Grade<'a> {
             output: Output::Pq,
             geometry: crate::image::Geometry::none(),
             window: None,
-            surround_window: None,
+            neighbourhood_window: None,
             canvas: None,
             intent: Intent::Perceptual,
             print_blur: crate::px::Extent::measured(0.0),
@@ -2563,16 +2563,16 @@ impl<'a> Grade<'a> {
             .map_or((self.width, self.height), |w| w.photograph.raw())
     }
 
-    /// The same grade with the surround thumb read at this frame's place in the
+    /// The same grade with the neighbourhood thumb read at this frame's place in the
     /// photograph - the loupe tile's half of [`Grade::windowed`], which it cannot use
     /// because a tile applies no geometry.
-    pub fn surrounded(
+    pub fn neighbourhood_windowed(
         self,
         photograph: crate::px::Size<crate::px::Drawn>,
         origin: crate::px::At<crate::px::Drawn>,
     ) -> Grade<'a> {
         Grade {
-            surround_window: Some(Window { photograph, origin }),
+            neighbourhood_window: Some(Window { photograph, origin }),
             ..self
         }
     }
@@ -2851,7 +2851,7 @@ pub struct Uploaded<'a> {
     curves: wgpu::TextureView,
     chroma: wgpu::TextureView,
     chroma_luma: wgpu::TextureView,
-    surround: wgpu::TextureView,
+    neighbourhood: wgpu::TextureView,
     mean: wgpu::TextureView,
     /// The camera's own chroma blur, and the illuminant it was built under.
     ///
@@ -3117,7 +3117,7 @@ impl Gpu {
         let matrix = buffer(&matrix, wgpu::BufferUsages::STORAGE);
 
         let (chroma, chroma_luma) = self.lattice(described);
-        let surround = self.surround(described);
+        let neighbourhood = self.neighbourhood(described);
         let mean = self.mean_frame(&samples, grade);
         let curves = self.curves(described);
         let pyramid = self.own_texture(&wgpu::TextureDescriptor {
@@ -3157,7 +3157,7 @@ impl Gpu {
                 curves: &view(&curves),
                 chroma: &view(&chroma),
                 chroma_luma: &view(&chroma_luma),
-                surround: &view(&surround),
+                neighbourhood: &view(&neighbourhood),
                 mean: &view(&mean),
                 detail: &detail_absent,
             },
@@ -3181,7 +3181,7 @@ impl Gpu {
             curves: view(&curves),
             chroma: view(&chroma),
             chroma_luma: view(&chroma_luma),
-            surround: view(&surround),
+            neighbourhood: view(&neighbourhood),
             mean: view(&mean),
             chroma_smoothed: std::cell::RefCell::new((
                 Illuminant::of(grade),
@@ -3203,7 +3203,7 @@ impl Gpu {
                 curves,
                 chroma,
                 chroma_luma,
-                surround,
+                neighbourhood,
                 mean,
                 pyramid,
                 absent_texture,
@@ -3394,7 +3394,7 @@ impl Gpu {
                 },
                 wgpu::BindGroupEntry {
                     binding: 17,
-                    resource: wgpu::BindingResource::TextureView(bound.surround),
+                    resource: wgpu::BindingResource::TextureView(bound.neighbourhood),
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
@@ -3497,12 +3497,12 @@ impl Gpu {
         })
     }
 
-    /// The surround thumb as a texture the grade samples per pixel, in photograph UV.
+    /// The neighbourhood thumb as a texture the grade samples per pixel, in photograph UV.
     ///
     /// One black texel where the colour carries none, so the bind group keeps its shape;
-    /// the shader gates on `has_surround` and never reads it there.
-    fn surround(&self, colour: &HdrColour) -> Texture {
-        let thumb = &colour.surround;
+    /// the shader gates on `has_neighbourhood` and never reads it there.
+    fn neighbourhood(&self, colour: &HdrColour) -> Texture {
+        let thumb = &colour.neighbourhood;
         let (width, height, data): (usize, usize, Vec<u8>) = match thumb.data.is_empty() {
             true => (1, 1, vec![0, 0]),
             false => (
@@ -3513,7 +3513,7 @@ impl Gpu {
         };
         self.own_texture_with_data(
             &wgpu::TextureDescriptor {
-                label: Some("surround"),
+                label: Some("neighbourhood"),
                 size: wgpu::Extent3d {
                     width: width as u32,
                     height: height as u32,
@@ -3926,7 +3926,7 @@ impl Uploaded<'_> {
                     curves: &self.curves,
                     chroma: &self.chroma,
                     chroma_luma: &self.chroma_luma,
-                    surround: &self.surround,
+                    neighbourhood: &self.neighbourhood,
                     mean: &self.mean,
                     detail: &self.detail_absent,
                 },
@@ -4043,7 +4043,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 17,
-                    resource: wgpu::BindingResource::TextureView(&self.surround),
+                    resource: wgpu::BindingResource::TextureView(&self.neighbourhood),
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
@@ -4259,7 +4259,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 17,
-                    resource: wgpu::BindingResource::TextureView(&self.surround),
+                    resource: wgpu::BindingResource::TextureView(&self.neighbourhood),
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
@@ -4555,7 +4555,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 17,
-                    resource: wgpu::BindingResource::TextureView(&self.surround),
+                    resource: wgpu::BindingResource::TextureView(&self.neighbourhood),
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
@@ -4813,13 +4813,13 @@ const EDIT_FIELDS: &[&str] = &[
     "photo_height",
     "window_left",
     "window_top",
-    "surround_count",
-    "surround_scale",
-    "has_surround",
-    "surround_left",
-    "surround_top",
-    "surround_photo_width",
-    "surround_photo_height",
+    "neighbourhood_count",
+    "neighbourhood_scale",
+    "has_neighbourhood",
+    "neighbourhood_left",
+    "neighbourhood_top",
+    "neighbourhood_photo_width",
+    "neighbourhood_photo_height",
     "has_mean",
     "mean_block",
     "has_smoothed",
@@ -4998,18 +4998,18 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(photo_height as u32);
     w.push(origin.0 as u32);
     w.push(origin.1 as u32);
-    // The surround axis and where to read its thumb. A separate window from `window`,
+    // The neighbourhood axis and where to read its thumb. A separate window from `window`,
     // because a loupe tile applies no geometry - `window` must stay `None` there - while
     // the thumb is still the photograph's and has to be read in its UV.
-    w.push(shape.map_or(2, |s| s.surround_count as u32));
-    f(&mut w, shape.map_or(1.0, |s| s.surround_scale));
+    w.push(shape.map_or(2, |s| s.neighbourhood_count as u32));
+    f(&mut w, shape.map_or(1.0, |s| s.neighbourhood_scale));
     w.push(u32::from(
-        matched && colour.chroma.is_some() && !colour.surround.data.is_empty(),
+        matched && colour.chroma.is_some() && !colour.neighbourhood.data.is_empty(),
     ));
-    let surround_window = grade.surround_window.or(grade.window);
-    let s_origin = surround_window.map_or((0, 0), |s| s.origin.raw());
+    let neighbourhood_window = grade.neighbourhood_window.or(grade.window);
+    let s_origin = neighbourhood_window.map_or((0, 0), |s| s.origin.raw());
     let (s_width, s_height) =
-        surround_window.map_or((grade.width, grade.height), |s| s.photograph.raw());
+        neighbourhood_window.map_or((grade.width, grade.height), |s| s.photograph.raw());
     w.push(s_origin.0 as u32);
     w.push(s_origin.1 as u32);
     w.push(s_width.max(1) as u32);
@@ -5105,7 +5105,7 @@ fn mean_grid(grade: &Grade<'_>) -> (u32, (u32, u32), (u32, u32)) {
 /// frame's offset inside its first cell, and how many cells cover it.
 fn grid_for(grade: &Grade<'_>, block: u32) -> ((u32, u32), (u32, u32)) {
     let origin = grade
-        .surround_window
+        .neighbourhood_window
         .or(grade.window)
         .map_or((0, 0), |w| w.origin.raw());
     let phase = (origin.0 as u32 % block, origin.1 as u32 % block);

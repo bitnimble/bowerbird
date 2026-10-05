@@ -42,9 +42,9 @@ import block_split;
 [vk::binding(3, 0)] Texture3D<float4> chroma;
 [vk::binding(4, 0)] StructuredBuffer<float> matrix;
 [vk::binding(10, 0)] Texture3D<float4> chroma_luma;
-// The frame's own light at arm's length (`hdr_fit::SurroundThumb`), spanning the whole
-// photograph, which is what the lattice's surround axis reads.
-[vk::binding(17, 0)] Texture2D<float> surround_map;
+// The frame's own light at arm's length (`hdr_fit::NeighbourhoodThumb`), spanning the whole
+// photograph, which is what the lattice's neighbourhood axis reads.
+[vk::binding(17, 0)] Texture2D<float> neighbourhood_map;
 // The frame's nits at the fit's own footprint, two halves a block (`mean_frame.slang`), where
 // the lattice is read so the correction meets colours the fit actually taught.
 [vk::binding(19, 0)] Texture2D<float4> mean_frame;
@@ -203,20 +203,20 @@ float texel_at(float t, uint texels)
 /// acts on. The fit taught every kernel on a supervision block's *mean*, so the read happens at
 /// the neighbourhood's colour while the correction lands on the pixel's own.
 ///
-/// The surround axis is packed into the volumes' depth, surround-major, and sampled one slab at a
-/// time with the blend done here, so hardware filtering never blends across the seam.
-float3 correct(float3 index, float surround, float level, float d0, float d2)
+/// The neighbourhood axis is packed into the volumes' depth, neighbourhood-major, and sampled one
+/// slab at a time with the blend done here, so hardware filtering never blends across the seam.
+float3 correct(float3 index, float neighbourhood, float level, float d0, float d2)
 {
-    let at = lattice_at(opponent_of(measured<Rendered>(index), edit.index_space), surround);
+    let at = lattice_at(opponent_of(measured<Rendered>(index), edit.index_space), neighbourhood);
     // The hue axis carries a last texel that copies the first, so a turn of 1 is the same place
     // as 0 and the clamp sampler wraps without a sampler of its own.
     let tx = (at.x * float(edit.hue_count - 1) + 0.5) / float(edit.hue_count);
     let ty = texel_at(at.y * edit.chroma_scale, edit.chroma_count);
     let tz = min(max((at.z - edit.level_low) * edit.level_scale, 0.0), float(edit.level_count - 1));
-    let ts = min(max(at.w * edit.surround_scale, 0.0), float(edit.surround_count - 1));
-    let slab = min(uint(ts), edit.surround_count - 2);
+    let ts = min(max(at.w * edit.neighbourhood_scale, 0.0), float(edit.neighbourhood_count - 1));
+    let slab = min(uint(ts), edit.neighbourhood_count - 2);
     let fs = ts - float(slab);
-    let depth = float(edit.level_count * edit.surround_count);
+    let depth = float(edit.level_count * edit.neighbourhood_count);
     let near = float3(tx, ty, (float(slab * edit.level_count) + tz + 0.5) / depth);
     let far = float3(tx, ty, (float((slab + 1) * edit.level_count) + tz + 0.5) / depth);
 
@@ -240,17 +240,17 @@ float3 correct(float3 index, float surround, float level, float d0, float d2)
 /// rather than from a `uv`, which each route would have normalised by its own frame size.
 float2 photo_at(float2 at)
 {
-    return at + float2(float(edit.surround_left), float(edit.surround_top));
+    return at + float2(float(edit.neighbourhood_left), float(edit.neighbourhood_top));
 }
 
 /// The neighbourhood's brightness at a place in the frame, from the photograph's own
-/// thumb (`hdr_fit::SurroundThumb`), in the same scene-linear units the fit read it in.
-public float surround_of(float2 at)
+/// thumb (`hdr_fit::NeighbourhoodThumb`), in the same scene-linear units the fit read it in.
+public float neighbourhood_of(float2 at)
 {
-    if (edit.has_surround == 0) { return 0.0; }
+    if (edit.has_neighbourhood == 0) { return 0.0; }
     let uv = photo_at(at)
-        / float2(float(edit.surround_photo_width), float(edit.surround_photo_height));
-    return surround_map.SampleLevel(bilinear, uv, 0.0);
+        / float2(float(edit.neighbourhood_photo_width), float(edit.neighbourhood_photo_height));
+    return neighbourhood_map.SampleLevel(bilinear, uv, 0.0);
 }
 
 /// One texel of a photograph-anchored cell grid, read where the pixel actually sits.
@@ -272,7 +272,7 @@ float4 cell_at(Texture2D<float4> cells, float2 at, uint step)
     uint tall;
     cells.GetDimensions(wide, tall);
     let scaled = photo_at(at) / float(step) - float2(0.5);
-    let ours = float2(float(edit.surround_left / step), float(edit.surround_top / step));
+    let ours = float2(float(edit.neighbourhood_left / step), float(edit.neighbourhood_top / step));
     let local = scaled - ours;
     let low = floor(local);
     let f = local - low;
@@ -303,7 +303,7 @@ float3 mean_at(float2 at, uint step, float3 nits)
     uint tall;
     mean_frame.GetDimensions(wide, tall);
     let scaled = photo_at(at) / float(step) - float2(0.5);
-    let ours = float2(float(edit.surround_left / step), float(edit.surround_top / step));
+    let ours = float2(float(edit.neighbourhood_left / step), float(edit.neighbourhood_top / step));
     let local = scaled - ours;
     let low = floor(local);
     let f = local - low;
@@ -318,14 +318,14 @@ float3 mean_at(float2 at, uint step, float3 nits)
 
 /// What happens around the grey axis, given a colour the matrix has already been through, and
 /// the neighbourhood's colour through the same stages - where the lattice is read.
-public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, float surround)
+public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, float neighbourhood)
 {
     let l = dot(LUMA, m.v);
     if (edit.has_chroma == 0) {
         if (edit.saturation == 1.0) { return m; }
         return measured<Rendered>(float3(l) + (m.v - float3(l)) * edit.saturation);
     }
-    let d = correct(at.v, surround, l, m.v.r - l, m.v.b - l);
+    let d = correct(at.v, neighbourhood, l, m.v.r - l, m.v.b - l);
     // The middle channel is not free: LUMA . d is zero by construction, so the two
     // coordinates carried through the map determine the third.
     let dg = -(LUMA.r * d.x + LUMA.b * d.y) / LUMA.g;
@@ -486,7 +486,7 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
         let moved = log2(max(by_mean / max(m, float3(1e-6)), float3(1e-6)));
         m *= exp2(clamp(moved, float3(-MEAN_MOVES_BY.s), float3(MEAN_MOVES_BY.s)));
     }
-    return finish_chroma(measured<Rendered>(m), measured<Rendered>(index), surround_of(at));
+    return finish_chroma(measured<Rendered>(m), measured<Rendered>(index), neighbourhood_of(at));
 }
 
 /// The neutral arm: one shared curve, so channel ratios survive whatever the input.

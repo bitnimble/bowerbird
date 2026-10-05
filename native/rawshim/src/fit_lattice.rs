@@ -102,13 +102,13 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
 /// The grid a landing is made on, as the shader reads it.
 pub(crate) struct Grid {
     pub space: crate::lattice::IndexSpace,
-    /// Nodes along hue, chroma, lightness and surround.
+    /// Nodes along hue, chroma, lightness and neighbourhood.
     pub nodes: [usize; 4],
-    /// Node gaps per unit of chroma, lightness and surround, and where lightness starts.
+    /// Node gaps per unit of chroma, lightness and neighbourhood, and where lightness starts.
     pub chroma_scale: f64,
     pub level_low: f64,
     pub level_scale: f64,
-    pub surround_scale: f64,
+    pub neighbourhood_scale: f64,
 }
 
 impl Grid {
@@ -132,7 +132,7 @@ pub(crate) async fn moments(
     through: &crate::gpu::Buffer,
     indexed: &crate::gpu::Buffer,
     target: &crate::gpu::Buffer,
-    surround: &crate::gpu::Buffer,
+    neighbourhood: &crate::gpu::Buffer,
     weights: &crate::gpu::Buffer,
     pairs: usize,
     grid: &Grid,
@@ -148,7 +148,7 @@ pub(crate) async fn moments(
     recording.holding(through);
     recording.holding(indexed);
     recording.holding(target);
-    recording.holding(surround);
+    recording.holding(neighbourhood);
     recording.holding(weights);
     let mut buffer = |label: &'static str, words: usize, usage: wgpu::BufferUsages| {
         recording.buffer(&wgpu::BufferDescriptor {
@@ -184,7 +184,7 @@ pub(crate) async fn moments(
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
 
-    let [hue, chroma, level, surround_nodes] = grid.nodes;
+    let [hue, chroma, level, neighbourhood_nodes] = grid.nodes;
     let mut block = [
         pairs as i32,
         BLOCK as i32,
@@ -193,7 +193,7 @@ pub(crate) async fn moments(
         hue as i32,
         chroma as i32,
         level as i32,
-        surround_nodes as i32,
+        neighbourhood_nodes as i32,
     ]
     .iter()
     .flat_map(|v| v.to_ne_bytes())
@@ -202,7 +202,7 @@ pub(crate) async fn moments(
         grid.chroma_scale,
         grid.level_low,
         grid.level_scale,
-        grid.surround_scale,
+        grid.neighbourhood_scale,
     ] {
         block.extend((v as f32).to_ne_bytes());
     }
@@ -225,7 +225,7 @@ pub(crate) async fn moments(
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: surround.as_entire_binding(),
+                resource: neighbourhood.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 3,

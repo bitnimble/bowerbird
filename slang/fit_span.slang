@@ -34,7 +34,7 @@ struct Params {
 [vk::binding(0, 0)] StructuredBuffer<float> plane;
 /// `fit::Gain::at` per radius bucket, 256 of them.
 [vk::binding(1, 0)] StructuredBuffer<float> gains;
-/// Four floats a sample, as `fit_model.slang` reads them: the colour, then a surround of zero.
+/// Four floats a sample, as `fit_model.slang` reads them: the colour, then a neighbourhood of zero.
 [vk::binding(2, 0)] RWStructuredBuffer<float> samples;
 /// What the model made of them: chroma, luma, chroma, luma per sample.
 [vk::binding(3, 0)] StructuredBuffer<float> evaluated;

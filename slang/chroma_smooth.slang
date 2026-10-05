@@ -79,7 +79,7 @@ void model(uint3 id : SV_DispatchThreadID)
     // the frame this dispatch is over (`gpu::chroma_shrink`), and `Output` has no `exact` - so a
     // constant four here would not compile, which is the whole of what the module is for.
     let shrink = measured<Output>(max(edit.chroma_shrink, 1u));
-    let phase = uint2(edit.surround_left % shrink.n, edit.surround_top % shrink.n);
+    let phase = uint2(edit.neighbourhood_left % shrink.n, edit.neighbourhood_top % shrink.n);
     let cells = uint2(
         (edit.width + phase.x + shrink.n - 1) / shrink.n,
         (edit.height + phase.y + shrink.n - 1) / shrink.n);

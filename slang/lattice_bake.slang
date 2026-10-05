@@ -21,12 +21,12 @@ struct Params {
     uint hue_texels;
     uint chroma_texels;
     uint level_texels;
-    uint surround_texels;
+    uint neighbourhood_texels;
     /// `lattice::LutAxes`.
     float chroma_top;
     float level_low;
     float level_top;
-    float surround_top;
+    float neighbourhood_top;
     /// What `bake` multiplies each of `first_sum` and `second_sum` by.
     float first_scale;
     float second_scale;
@@ -74,8 +74,8 @@ float weight_of(uint k, float4 at)
         kernels[base + REACH], kernels[base + REACH + 1], kernels[base + REACH + 2], kernels[base + REACH + 3]);
     let chroma = tent(at.y - centre.y, reach.y);
     let level = tent(at.z - centre.z, reach.z);
-    let surround = tent(at.w - centre.w, reach.w);
-    let rest = chroma * level * surround;
+    let neighbourhood = tent(at.w - centre.w, reach.w);
+    let rest = chroma * level * neighbourhood;
     if (rest <= 0.0) { return 0.0; }
     var turns = abs(at.x - centre.x);
     turns = min(turns, 1.0 - turns);
@@ -118,16 +118,17 @@ groupshared uint lane_counts[LANES];
 groupshared uint listed[LISTED];
 groupshared uint listed_count;
 
-/// The lattice place texel `id` stands for, its depth unpacked into lightness and surround.
+/// The lattice place texel `id` stands for, its depth unpacked into lightness and neighbourhood.
 float4 place_of(uint3 id)
 {
     let level_at = id.z % pc.level_texels;
-    let surround_at = id.z / pc.level_texels;
+    let neighbourhood_at = id.z / pc.level_texels;
     return float4(
         float(id.x) / float(pc.hue_texels - 1),
         pc.chroma_top * float(id.y) / float(max(pc.chroma_texels - 1, 1u)),
         lerp(pc.level_low, pc.level_top, float(level_at) / float(max(pc.level_texels - 1, 1u))),
-        pc.surround_top * float(surround_at) / float(max(pc.surround_texels - 1, 1u)));
+        pc.neighbourhood_top * float(neighbourhood_at)
+            / float(max(pc.neighbourhood_texels - 1, 1u)));
 }
 
 bool spans(float centre, float reach, float low, float high)
@@ -166,10 +167,10 @@ uint texel_of(uint3 id)
 [numthreads(4, 4, 4)]
 void sum(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
 {
-    let depth = pc.level_texels * pc.surround_texels;
+    let depth = pc.level_texels * pc.neighbourhood_texels;
     let inside = id.x < pc.hue_texels && id.y < pc.chroma_texels && id.z < depth;
 
-    // Lightness wraps inside depth, so a group straddling two surrounds spans every level.
+    // Lightness wraps inside depth, so a group straddling two neighbourhoods spans every level.
     let first = group * SIDE;
     let last = min(first + uint3(SIDE - 1), uint3(pc.hue_texels, pc.chroma_texels, depth) - 1);
     var low = place_of(first);
@@ -247,7 +248,7 @@ float summed(uint t, uint w)
 [numthreads(4, 4, 4)]
 void bake(uint3 id: SV_DispatchThreadID)
 {
-    let depth = pc.level_texels * pc.surround_texels;
+    let depth = pc.level_texels * pc.neighbourhood_texels;
     if (id.x >= pc.hue_texels || id.y >= pc.chroma_texels || id.z >= depth) { return; }
     let t = texel_of(id) * SUM_WORDS;
     let g = float3x3(

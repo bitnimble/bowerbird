@@ -234,7 +234,7 @@ bytes a pixel standing on a word boundary only for an even count.
 **Three things above `prepared` must change for windows:**
 
 - The stage's draw is a whole-frame grade today (`window: None`). A windowed frame needs the
-  `within`/`surrounded` plumbing the loupe arm uses _and_ the reader's geometry, which
+  `within`/`neighbourhood_windowed` plumbing the loupe arm uses _and_ the reader's geometry, which
   `Prepared::grade` deliberately does not apply. That combination - a window, a canvas region and
   a geometry at once - is exercised nowhere in the tree and needs a test of its own.
 - The pyramid is not optional: `gpu::present` and `draw_into` take a `&Pyramid`, so a window

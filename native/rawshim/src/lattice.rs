@@ -2,9 +2,9 @@
 //! volumes `colour.slang`'s `correct` samples (`slang/lattice_bake.slang`).
 //!
 //! A kernel is a place in the lattice's coordinates (`index_space.slang`'s `lattice_at`: hue in
-//! turns, the square root of chroma, lightness, the square root of the surround), how far it reaches
-//! along each axis, and the operator it applies there as a generator. Where kernels overlap their
-//! generators add, and the bake exponentiates the sum per texel.
+//! turns, the square root of chroma, lightness, the square root of the neighbourhood), how far it
+//! reaches along each axis, and the operator it applies there as a generator. Where kernels overlap
+//! their generators add, and the bake exponentiates the sum per texel.
 
 use crate::gpu::{Gpu, Texture};
 use crate::light::{Light, Rendered};
@@ -20,7 +20,7 @@ pub const HEAD_WORDS: usize = 5;
 pub const HUE_TEXELS: usize = 73;
 pub const CHROMA_TEXELS: usize = 25;
 pub const LEVEL_TEXELS: usize = 33;
-pub const SURROUND_TEXELS: usize = 3;
+pub const NEIGHBOURHOOD_TEXELS: usize = 3;
 
 /// Rec.2020's own red at diffuse white, the most chroma a lattice axis needs to reach.
 pub const WHITE_RED: [Light<Rendered>; 3] = [Light::measured(1.0), Light::ZERO, Light::ZERO];
@@ -133,7 +133,7 @@ const ICTCP_LMS_TO_ITP: [[f64; 3]; 3] = [
 /// One place's correction.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Kernel {
-    /// Hue in turns, √chroma, lightness, √surround.
+    /// Hue in turns, √chroma, lightness, √neighbourhood.
     pub centre: [f64; 4],
     /// Along the same axes. Zero on an axis the kernel does not depend on.
     pub reach: [f64; 4],
@@ -182,7 +182,7 @@ pub struct LutAxes {
     pub chroma_top: f64,
     pub level_low: f64,
     pub level_top: f64,
-    pub surround_top: f64,
+    pub neighbourhood_top: f64,
 }
 
 /// The constants `colour.slang`'s `correct` reads the baked volumes with.
@@ -190,11 +190,11 @@ pub struct MapShape {
     pub hue_count: usize,
     pub chroma_count: usize,
     pub level_count: usize,
-    pub surround_count: usize,
+    pub neighbourhood_count: usize,
     pub chroma_scale: f64,
     pub level_low: f64,
     pub level_scale: f64,
-    pub surround_scale: f64,
+    pub neighbourhood_scale: f64,
     pub space: IndexSpace,
 }
 
@@ -266,7 +266,7 @@ impl ChromaMap {
                 chroma_top: space.chroma_of(WHITE_RED).sqrt(),
                 level_low: space.lightness_of_neutral(Light::ZERO),
                 level_top: space.lightness_of_neutral(Light::measured(1.0)),
-                surround_top: 1.0,
+                neighbourhood_top: 1.0,
             },
         )
     }
@@ -363,11 +363,12 @@ impl ChromaMap {
             hue_count: HUE_TEXELS,
             chroma_count: CHROMA_TEXELS,
             level_count: LEVEL_TEXELS,
-            surround_count: SURROUND_TEXELS,
+            neighbourhood_count: NEIGHBOURHOOD_TEXELS,
             chroma_scale: (CHROMA_TEXELS - 1) as f64 / axes.chroma_top.max(1e-6),
             level_low: axes.level_low,
             level_scale: (LEVEL_TEXELS - 1) as f64 / (axes.level_top - axes.level_low).max(1e-6),
-            surround_scale: (SURROUND_TEXELS - 1) as f64 / axes.surround_top.max(1e-6),
+            neighbourhood_scale: (NEIGHBOURHOOD_TEXELS - 1) as f64
+                / axes.neighbourhood_top.max(1e-6),
             space: self.space,
         }
     }
@@ -379,7 +380,7 @@ impl ChromaMap {
             self.axes.chroma_top,
             self.axes.level_low,
             self.axes.level_top,
-            self.axes.surround_top,
+            self.axes.neighbourhood_top,
         ];
         for kernel in &self.kernels {
             out.extend(kernel.words().map(f64::from));
@@ -397,7 +398,7 @@ impl ChromaMap {
             chroma_top: head[1],
             level_low: head[2],
             level_top: head[3],
-            surround_top: head[4],
+            neighbourhood_top: head[4],
         };
         let kernels = rest
             .chunks_exact(KERNEL_WORDS)
@@ -638,9 +639,9 @@ impl BakeKernel {
 const SIZE: wgpu::Extent3d = wgpu::Extent3d {
     width: HUE_TEXELS as u32,
     height: CHROMA_TEXELS as u32,
-    // Lightness and surround packed into depth, surround-major: `correct` samples one surround
-    // slab at a time, so hardware filtering never crosses the seam between them.
-    depth_or_array_layers: (LEVEL_TEXELS * SURROUND_TEXELS) as u32,
+    // Lightness and neighbourhood packed into depth, neighbourhood-major: `correct` samples one
+    // neighbourhood slab at a time, so hardware filtering never crosses the seam between them.
+    depth_or_array_layers: (LEVEL_TEXELS * NEIGHBOURHOOD_TEXELS) as u32,
 };
 
 /// `lattice_bake.slang`'s `Params`.
@@ -651,7 +652,7 @@ fn params(kernels: usize, space: IndexSpace, axes: LutAxes, scales: [f64; 2]) ->
         HUE_TEXELS as u32,
         CHROMA_TEXELS as u32,
         LEVEL_TEXELS as u32,
-        SURROUND_TEXELS as u32,
+        NEIGHBOURHOOD_TEXELS as u32,
     ]
     .iter()
     .flat_map(|v| v.to_ne_bytes())
@@ -660,7 +661,7 @@ fn params(kernels: usize, space: IndexSpace, axes: LutAxes, scales: [f64; 2]) ->
         axes.chroma_top,
         axes.level_low,
         axes.level_top,
-        axes.surround_top,
+        axes.neighbourhood_top,
         scales[0],
         scales[1],
     ] {
@@ -866,7 +867,7 @@ mod tests {
                 chroma_top: 0.2,
                 level_low: 0.0,
                 level_top: 0.35,
-                surround_top: 1.1,
+                neighbourhood_top: 1.1,
             },
         )
         .stored();
@@ -892,7 +893,7 @@ mod tests {
             1.0,
             axes.chroma_top,
             axes.level_top - axes.level_low,
-            axes.surround_top,
+            axes.neighbourhood_top,
         ];
         let kernels: Vec<Kernel> = (0..600)
             .map(|k| Kernel {
@@ -900,7 +901,7 @@ mod tests {
                     next(),
                     axes.chroma_top * next(),
                     axes.level_low + span[2] * next(),
-                    axes.surround_top * next(),
+                    axes.neighbourhood_top * next(),
                 ],
                 reach: std::array::from_fn(|axis| match (k + axis) % 7 {
                     0 => 0.0,
@@ -913,7 +914,7 @@ mod tests {
         let map = ChromaMap::with_kernels(kernels);
         let (chroma, _) = map.baked(gpu);
 
-        let depth = LEVEL_TEXELS * SURROUND_TEXELS;
+        let depth = LEVEL_TEXELS * NEIGHBOURHOOD_TEXELS;
         let row = (HUE_TEXELS * 8).next_multiple_of(256);
         let mut recording = gpu.record();
         let staged = recording.buffer(&wgpu::BufferDescriptor {
@@ -954,12 +955,13 @@ mod tests {
         for z in 0..depth {
             for y in 0..CHROMA_TEXELS {
                 for x in 0..HUE_TEXELS {
-                    let (level, surround) = (z % LEVEL_TEXELS, z / LEVEL_TEXELS);
+                    let (level, neighbourhood) = (z % LEVEL_TEXELS, z / LEVEL_TEXELS);
                     let at = [
                         x as f64 / (HUE_TEXELS - 1) as f64,
                         axes.chroma_top * y as f64 / (CHROMA_TEXELS - 1) as f64,
                         axes.level_low + span[2] * level as f64 / (LEVEL_TEXELS - 1) as f64,
-                        axes.surround_top * surround as f64 / (SURROUND_TEXELS - 1) as f64,
+                        axes.neighbourhood_top * neighbourhood as f64
+                            / (NEIGHBOURHOOD_TEXELS - 1) as f64,
                     ];
                     let mut sum = [0.0; 7];
                     for k in map.kernels() {
