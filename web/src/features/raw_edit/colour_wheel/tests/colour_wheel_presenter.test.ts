@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { WHEEL_RIM, drawnBy, openEditor, type Editor } from '../../stage/tests/raw_edit_harness';
+import type { FieldArrow } from '../colour_wheel_store';
 
 let editor: Editor;
 
@@ -114,7 +115,46 @@ describe('the colour wheel', () => {
     expect(editor.edit.doc?.colourNodes[0]).toMatchObject({ chroma: 20, chromaReach: 6 });
   });
 
-  test("draws the wheel's edge against this display's peak, and again when it changes", async () => {
+  test("reads the photo's colours and the profile only once either is shown, each on its own", async () => {
+    editor.decoder.wheelMoves = ([lightness = 0, a = 0, b = 0]) => [lightness, b, -a, 1];
+    wheel().attach(fakeCanvas());
+    await settled();
+    await settled();
+    expect(editor.decoder.wheelProbes).toHaveLength(0);
+    expect(editor.colourWheel.channelDots).toEqual([]);
+    expect(editor.colourWheel.channelField).toEqual([]);
+
+    wheel().setShowDots(true);
+    await settled();
+    expect(editor.decoder.wheelProbes).toHaveLength(1);
+    expect(editor.colourWheel.channelDots).toHaveLength(1);
+    expect(editor.colourWheel.channelField).toEqual([]);
+
+    wheel().setShowField(true);
+    wheel().setShowDots(false);
+    await settled();
+    expect(editor.decoder.wheelProbes).toHaveLength(1);
+    expect(editor.colourWheel.channelDots).toEqual([]);
+    expect(editor.colourWheel.channelField.length).toBeGreaterThan(0);
+
+    // Hidden through a profile change, then shown: read once more, and never the old answer.
+    wheel().setShowField(false);
+    expect(editor.colourWheel.field).toEqual([]);
+    editor.decoder.wheelMoves = (place) => place;
+    editor.presenter.settle({ colourProfile: 'none' });
+    await settled();
+    expect(editor.decoder.wheelProbes).toHaveLength(1);
+    wheel().setShowField(true);
+    expect(editor.colourWheel.channelField).toEqual([]);
+    await settled();
+    expect(editor.decoder.wheelProbes).toHaveLength(2);
+    const turned = ({ from, to }: FieldArrow): number =>
+      Math.abs(((from.hue - to.hue + 540) % 360) - 180);
+    expect(editor.colourWheel.field.length).toBeGreaterThan(0);
+    expect(Math.max(...editor.colourWheel.field.map(turned))).toBeLessThan(1e-3);
+  });
+
+  test("draws the wheel's edge against this display's peak", async () => {
     const original = globalThis.matchMedia;
     globalThis.matchMedia = ((query: string) => ({
       matches: query === '(dynamic-range: high)',
@@ -123,12 +163,13 @@ describe('the colour wheel', () => {
       editor.device.displayPeakNits = 1600;
       wheel().attach(fakeCanvas());
       await settled();
+      // Only Settings changes it, with the editor closed.
       editor.device.displayPeakNits = 1000;
       await settled();
     } finally {
       globalThis.matchMedia = original;
     }
-    expect(editor.decoder.wheelPeaks).toEqual([1600, 1000]);
+    expect(editor.decoder.wheelPeaks).toEqual([1600]);
   });
 
   test('darkens the wheel around the selected edit, following it as it moves', async () => {
@@ -155,6 +196,8 @@ describe('the colour wheel', () => {
     // midtones, one in the darks and one the probe weighted to nothing.
     editor.decoder.wheelMoves = ([lightness = 0, a = 0, b = 0]) => [lightness, b, -a, 1];
     editor.decoder.wheelDots = [55, 4, -3, 1, 30, 1, 1, 1, 56, 9, 9, 0];
+    wheel().setShowDots(true);
+    wheel().setShowField(true);
     const canvas = fakeCanvas();
     wheel().attach(canvas);
     await settled();

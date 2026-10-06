@@ -86,6 +86,23 @@ test("the reach handles step from the keyboard, and a full circle's hue edges ar
   expect(screen.getAllByRole('slider', { name: 'Hue range' })).toHaveLength(1);
 });
 
+test("the options menu shows the photo's colours and the profile's arrows, each off at first", async () => {
+  const editor = await open();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Colour wheel options' }));
+  });
+  const colours = screen.getByRole('menuitemcheckbox', { name: 'Show photo colours' });
+  const arrows = screen.getByRole('menuitemcheckbox', { name: 'Show profile arrows' });
+  expect(colours.getAttribute('aria-checked')).toBe('false');
+  expect(arrows.getAttribute('aria-checked')).toBe('false');
+
+  await act(async () => {
+    fireEvent.click(colours);
+  });
+  expect(editor.colourWheel.showDots).toBe(true);
+  expect(editor.colourWheel.showField).toBe(false);
+});
+
 test('a press outside the rim adds nothing', async () => {
   const editor = await open();
   fireEvent.pointerDown(wheel(), { ...press, clientX: 2, clientY: 2 });
@@ -125,7 +142,7 @@ test('the channels say which hold edits, and each shows only its own', async () 
   fireEvent.click(screen.getByRole('radio', { name: 'Lights' }));
   fireEvent.pointerDown(wheel(), { ...press, ...at(200, 10) });
 
-  screen.getByRole('radio', { name: 'Lights has colour edits', checked: true });
+  screen.getByRole('radio', { name: 'Lights (edited)', checked: true });
   fireEvent.click(screen.getByRole('radio', { name: 'Shadows' }));
   expect(screen.queryByRole('button', { name: /Colour edit at hue/ })).toBeNull();
   expect(editor.colourWheel.channel).toBe(10);

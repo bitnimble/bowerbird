@@ -40,6 +40,10 @@ export class ColourWheelStore {
 
   @observable.ref accessor field: readonly FieldArrow[] = [];
 
+  @observable accessor showDots = false;
+
+  @observable accessor showField = false;
+
   @computed get nodes(): readonly ColourNode[] {
     return this.edit.doc?.colourNodes ?? [];
   }
@@ -59,12 +63,14 @@ export class ColourWheelStore {
   }
 
   @computed get channelDots(): readonly Dot[] {
+    if (!this.showDots) return [];
     if (this.channel == null) return this.dots;
     const channel = this.channel;
     return this.dots.filter((dot) => nearestChannel(dot.lightness) === channel);
   }
 
   @computed get channelField(): readonly FieldArrow[] {
+    if (!this.showField) return [];
     const lightness = lightnessOf(this.channel);
     const strongest = new Map<number, { arrow: FieldArrow; push: number }>();
     for (const arrow of this.field) {

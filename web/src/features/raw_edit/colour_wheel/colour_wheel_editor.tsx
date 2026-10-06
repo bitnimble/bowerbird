@@ -1,9 +1,14 @@
 import * as stylex from '@stylexjs/stylex';
+import { MoveUpRight, Sparkles } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Fragment, useCallback, useEffect, useRef } from 'react';
 import { COLOUR_NODES_MAX, type ColourNode } from '../../../../../src/schemas/photo_edits';
 import { Button } from '../../../ui/button';
+import { MenuCheckItem } from '../../../ui/check_menu';
 import { focusRing } from '../../../ui/focus_ring';
+import { ICON } from '../../../ui/icon';
+import { menuSection } from '../../../ui/menu_section';
+import { OverflowMenu } from '../../../ui/overflow_menu';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
 import { Tooltip } from '../../../ui/tooltip';
@@ -91,10 +96,35 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
     <div {...stylex.props(styles.editor)}>
       <div {...stylex.props(styles.header)}>
         <h3 {...stylex.props(styles.heading)}>{strings.heading()}</h3>
-        <ResetButton
-          label={strings.reset()}
-          reset={disabled || store.nodes.length === 0 ? null : presenter.removeAll}
-        />
+        <div {...stylex.props(styles.headerActions)}>
+          <OverflowMenu
+            label={strings.options()}
+            sections={[
+              menuSection({
+                content: (
+                  <>
+                    <MenuCheckItem
+                      icon={<Sparkles size={ICON} />}
+                      label={strings.showPhotoColours()}
+                      checked={store.showDots}
+                      onCheckedChange={presenter.setShowDots}
+                    />
+                    <MenuCheckItem
+                      icon={<MoveUpRight size={ICON} />}
+                      label={strings.showProfileArrows()}
+                      checked={store.showField}
+                      onCheckedChange={presenter.setShowField}
+                    />
+                  </>
+                ),
+              }),
+            ]}
+          />
+          <ResetButton
+            label={strings.reset()}
+            reset={disabled || store.nodes.length === 0 ? null : presenter.removeAll}
+          />
+        </div>
       </div>
       <Channels store={store} presenter={presenter} />
       <div {...stylex.props(styles.wheel)}>

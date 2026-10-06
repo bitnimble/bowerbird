@@ -1,6 +1,9 @@
 export const ColourWheelStrings = {
   heading: () => 'Colour edits',
   reset: () => 'Reset colour edits',
+  options: () => 'Colour wheel options',
+  showPhotoColours: () => 'Show photo colours',
+  showProfileArrows: () => 'Show profile arrows',
   wheel: () => 'Colour wheel',
   lightness: () => 'Lightness',
   // A lightness the wheel edits colours at, not the Light panel's tone sliders of the same names.
@@ -10,7 +13,7 @@ export const ColourWheelStrings = {
   lights: () => 'Lights',
   highlights: () => 'Highlights',
   all: () => 'All',
-  channelEdited: (channel: string) => `${channel} has colour edits`,
+  channelEdited: (channel: string) => `${channel} (edited)`,
   edit: (hue: number) => `Colour edit at hue ${Math.round(hue)}°`,
   outputColour: () => 'Output colour',
   outputHue: () => 'Output hue',

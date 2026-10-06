@@ -10,6 +10,7 @@ export const styles = stylex.create({
     marginBottom: '6px',
   },
   heading: { margin: 0, color: color.bone, fontSize: size.controlText, fontWeight: 500 },
+  headerActions: { display: 'flex', alignItems: 'center', gap: '4px' },
   channels: {
     display: 'flex',
     justifyContent: 'space-between',

@@ -93,12 +93,9 @@ export class ColourWheelPresenter {
         { fireImmediately: true },
       ),
       reaction(
-        () =>
-          this.attached
-            ? { channel: this.store.channel, displayPeak: this.host.displayPeak() }
-            : null,
+        () => (this.attached ? { channel: this.store.channel } : null),
         (drawing) => {
-          if (drawing != null) this.unlessClosed(this.draw(drawing.channel, drawing.displayPeak));
+          if (drawing != null) this.unlessClosed(this.draw(drawing.channel));
         },
         { equals: comparer.structural },
       ),
@@ -115,7 +112,8 @@ export class ColourWheelPresenter {
       reaction(
         () => {
           const doc = this.edit.doc;
-          return this.attached && this.store.drawn != null && !this.stage.repreparing
+          const shown = this.store.showDots || this.store.showField;
+          return shown && this.attached && this.store.drawn != null && !this.stage.repreparing
             ? JSON.stringify([
                 doc?.colourProfile,
                 doc?.temperature,
@@ -144,6 +142,18 @@ export class ColourWheelPresenter {
     this.store.channel = channel;
     const selected = this.store.selectedNode;
     if (selected == null || !inChannel(selected, channel)) this.store.selectedIndex = null;
+  }
+
+  @action.bound
+  setShowDots(on: boolean): void {
+    this.store.showDots = on;
+    this.forgetUnshown();
+  }
+
+  @action.bound
+  setShowField(on: boolean): void {
+    this.store.showField = on;
+    this.forgetUnshown();
   }
 
   @action.bound
@@ -265,11 +275,11 @@ export class ColourWheelPresenter {
     if (!this.closed) this.setAttached();
   }
 
-  private async draw(channel: Channel, displayPeak: number | null): Promise<void> {
+  private async draw(channel: Channel): Promise<void> {
     const drawn = await this.host.local()?.decoder.drawWheel({
       lightness: lightnessOf(channel),
       edgeAt: channel == null ? [...CHANNELS] : [channel],
-      displayPeak,
+      displayPeak: this.host.displayPeak(),
       selected: this.store.selectedNode,
     });
     if (this.closed || drawn == null || this.store.channel !== channel) return;
@@ -318,6 +328,14 @@ export class ColourWheelPresenter {
   private forgetPhoto(): void {
     this.store.selectedIndex = null;
     this.store.drawn = null;
+    this.store.dots = [];
+    this.store.field = [];
+  }
+
+  private forgetUnshown(): void {
+    if (this.store.showDots || this.store.showField) return;
+    // Hidden, the probe stops following the edits: what it read would come back stale.
+    this.probesAsked += 1;
     this.store.dots = [];
     this.store.field = [];
   }
