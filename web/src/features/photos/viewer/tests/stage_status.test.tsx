@@ -8,7 +8,7 @@ registerDom();
 const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 const { arriveAt, arriveDetailAt, failDecodeOf, fileOf, forgetFrames, holdDecodeOf, holdDetailOf } =
   await import('./stage_frames');
-const { PhotoStage } = await import('../photo_stage');
+const { LOADING_NOTICE_MS, PhotoStage } = await import('../photo_stage');
 const { PhotoStageStrings } = await import('../photo_stage.strings');
 
 afterEach(() => {
@@ -21,6 +21,10 @@ async function arrive(source: string): Promise<void> {
     arriveAt(source);
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+}
+
+async function wait(ms: number): Promise<void> {
+  await act(() => new Promise((resolve) => setTimeout(resolve, ms)));
 }
 
 const RAW = 'raw.avif';
@@ -44,9 +48,21 @@ function stage(
   );
 }
 
+test('a frame that arrives quickly is never called loading', async () => {
+  holdDecodeOf(RAW);
+  render(stage(null));
+  await wait(LOADING_NOTICE_MS / 2);
+  expect(screen.queryByRole('status')).toBeNull();
+
+  await arrive(RAW);
+  await wait(LOADING_NOTICE_MS);
+  expect(screen.queryByRole('status')).toBeNull();
+});
+
 test('a frame still arriving is a wait, and then nothing to say', async () => {
   holdDecodeOf(RAW);
   render(stage(null));
+  await wait(LOADING_NOTICE_MS + 50);
   const pill = screen.getByRole('status');
   expect(pill.textContent).toBe(PhotoStageStrings.loading());
   expect(pill.getAttribute('aria-busy')).toBe('true');
@@ -99,7 +115,7 @@ test('zoomed in, a rendition waiting on its detail is a wait', async () => {
   });
 
   rerender(stage(null, [RAW, JPEG], JPEG));
-  await act(async () => {});
+  await wait(LOADING_NOTICE_MS + 50);
   expect(screen.getByRole('status').textContent).toBe(PhotoStageStrings.loading());
 
   await act(async () => arriveDetailAt(JPEG));

@@ -46,6 +46,8 @@ const STALE_FRAME_MS = 500;
 // that, stack triage's flip stalls on every press.
 const RETIRED_FRAMES = 3;
 
+export const LOADING_NOTICE_MS = 200;
+
 const STEP_MS = 150;
 const STEP_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
 const ARRIVING_SCALE = 0.975;
@@ -807,11 +809,20 @@ export function PhotoStage({
   // Unzoomed, a swap's detail layer turns sharp in its first effect; counted as a wait, the
   // pill flashed for that one commit over a frame already on screen.
   const loading = waiting && (arrived == null || zoomed);
+  const [loadingLong, setLoadingLong] = useState(false);
+  useEffect(() => {
+    if (!loading) {
+      setLoadingLong(false);
+      return;
+    }
+    const timer = setTimeout(() => setLoadingLong(true), LOADING_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
   const notice =
     status ??
     (unreadable
       ? { label: PhotoStageStrings.frameUnreadable(), busy: false }
-      : loading
+      : loading && loadingLong
         ? { label: PhotoStageStrings.loading(), busy: true }
         : null);
 
