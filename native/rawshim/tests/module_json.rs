@@ -84,6 +84,33 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     // Off the default, which a dropped field would quietly read as.
     assert!(adjust.camera_balance);
     assert_eq!(adjust.colour_profile, rawshim::gpu::ColourProfile::None);
+    assert_eq!(
+        adjust.colour_nodes,
+        vec![
+            rawshim::lattice::ColourNode {
+                hue: 41.5,
+                chroma: 12.25,
+                lightness: Some(55.0),
+                target_hue: 47.0,
+                target_chroma: 9.5,
+                target_lightness: 60.0,
+                hue_reach: 30.0,
+                chroma_reach: 8.0,
+                lightness_reach: 20.0,
+            },
+            rawshim::lattice::ColourNode {
+                hue: 220.0,
+                chroma: 3.5,
+                lightness: None,
+                target_hue: 205.0,
+                target_chroma: 4.75,
+                target_lightness: 52.0,
+                hue_reach: 15.0,
+                chroma_reach: 2.5,
+                lightness_reach: 0.0,
+            },
+        ]
+    );
 }
 
 #[test]

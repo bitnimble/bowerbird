@@ -9,12 +9,20 @@
 // derives: `the_primaries_match_the_host` for the gamut rotations,
 // `the_cone_matrices_are_what_they_are_derived_from` for the Bradford three.
 module primaries;
+import light;
 
 /// Rec.2020 to Display P3, both D65, applied in linear light. Rows sum to 1.
 public static const float3x3 R2020_TO_P3 = float3x3(
      1.343578,  -0.282180,  -0.061399,
     -0.065297,   1.075788,  -0.010490,
      0.002822,  -0.019598,   1.016777);
+
+/// What an extended-range canvas takes: Display P3 over the browser's own reference white,
+/// which is a constant rather than this target's peak (§7.1).
+public Colour<P3Linear> on_the_canvas(Colour<DisplayNits> nits, float sdr_white)
+{
+    return measured<P3Linear>(mul(R2020_TO_P3, nits.v) / sdr_white);
+}
 
 /// Rec.2020 to sRGB.
 ///

@@ -40,6 +40,7 @@ pub fn build_every_pipeline(gpu: &'static Gpu) {
     crate::hdr_fit::stats_device(gpu);
     crate::hdr_fit::warp_device(gpu);
     gpu.lattice_bake();
+    gpu.colour_wheel();
 }
 
 #[cfg(test)]

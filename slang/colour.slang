@@ -42,6 +42,9 @@ import block_split;
 [vk::binding(3, 0)] Texture3D<float4> chroma;
 [vk::binding(4, 0)] StructuredBuffer<float> matrix;
 [vk::binding(10, 0)] Texture3D<float4> chroma_luma;
+/// The reader's colour edits, baked as the match's lattice is (`lattice::ChromaMap::of_nodes`).
+[vk::binding(11, 0)] Texture3D<float4> nodes;
+[vk::binding(15, 0)] Texture3D<float4> nodes_luma;
 // The frame's own light at arm's length (`hdr_fit::NeighbourhoodThumb`), spanning the whole
 // photograph, which is what the lattice's neighbourhood axis reads.
 [vk::binding(17, 0)] Texture2D<float> neighbourhood_map;
@@ -197,7 +200,48 @@ float texel_at(float t, uint texels)
     return (min(max(t, 0.0), float(texels - 1)) + 0.5) / float(texels);
 }
 
-/// The lattice's correction: the corrected chroma pair, then the corrected lightness.
+/// How a baked lattice's volumes are laid out (`lattice::MapShape`).
+struct Volumes
+{
+    uint hue_count;
+    uint chroma_count;
+    uint level_count;
+    uint neighbourhood_count;
+    float chroma_scale;
+    float level_low;
+    float level_scale;
+    float neighbourhood_scale;
+}
+
+Volumes matched_volumes()
+{
+    Volumes v;
+    v.hue_count = edit.hue_count;
+    v.chroma_count = edit.chroma_count;
+    v.level_count = edit.level_count;
+    v.neighbourhood_count = edit.neighbourhood_count;
+    v.chroma_scale = edit.chroma_scale;
+    v.level_low = edit.level_low;
+    v.level_scale = edit.level_scale;
+    v.neighbourhood_scale = edit.neighbourhood_scale;
+    return v;
+}
+
+Volumes node_volumes()
+{
+    Volumes v;
+    v.hue_count = edit.node_hue_count;
+    v.chroma_count = edit.node_chroma_count;
+    v.level_count = edit.node_level_count;
+    v.neighbourhood_count = edit.node_neighbourhood_count;
+    v.chroma_scale = edit.node_chroma_scale;
+    v.level_low = edit.node_level_low;
+    v.level_scale = edit.node_level_scale;
+    v.neighbourhood_scale = edit.node_neighbourhood_scale;
+    return v;
+}
+
+/// A lattice's correction: the corrected chroma pair, then the corrected lightness.
 ///
 /// `index` is where the lattice is read; `level`, `d0` and `d2` are what the operator found there
 /// acts on. The fit taught every kernel on a supervision block's *mean*, so the read happens at
@@ -205,27 +249,33 @@ float texel_at(float t, uint texels)
 ///
 /// The neighbourhood axis is packed into the volumes' depth, neighbourhood-major, and sampled one
 /// slab at a time with the blend done here, so hardware filtering never blends across the seam.
-float3 correct(float3 index, float neighbourhood, float level, float d0, float d2)
+float3 correct(
+    Texture3D<float4> pair,
+    Texture3D<float4> luma,
+    Volumes shape,
+    float3 index,
+    float neighbourhood,
+    float level,
+    float d0,
+    float d2)
 {
     let at = lattice_at(opponent_of(measured<Rendered>(index)), neighbourhood);
     // The hue axis carries a last texel that copies the first, so a turn of 1 is the same place
     // as 0 and the clamp sampler wraps without a sampler of its own.
-    let tx = (at.x * float(edit.hue_count - 1) + 0.5) / float(edit.hue_count);
-    let ty = texel_at(at.y * edit.chroma_scale, edit.chroma_count);
-    let tz = min(max((at.z - edit.level_low) * edit.level_scale, 0.0), float(edit.level_count - 1));
-    let ts = min(max(at.w * edit.neighbourhood_scale, 0.0), float(edit.neighbourhood_count - 1));
-    let slab = min(uint(ts), edit.neighbourhood_count - 2);
+    let tx = (at.x * float(shape.hue_count - 1) + 0.5) / float(shape.hue_count);
+    let ty = texel_at(at.y * shape.chroma_scale, shape.chroma_count);
+    let tz = min(max((at.z - shape.level_low) * shape.level_scale, 0.0), float(shape.level_count - 1));
+    let ts = min(max(at.w * shape.neighbourhood_scale, 0.0), float(shape.neighbourhood_count - 1));
+    let slab = min(uint(ts), shape.neighbourhood_count - 2);
     let fs = ts - float(slab);
-    let depth = float(edit.level_count * edit.neighbourhood_count);
-    let near = float3(tx, ty, (float(slab * edit.level_count) + tz + 0.5) / depth);
-    let far = float3(tx, ty, (float((slab + 1) * edit.level_count) + tz + 0.5) / depth);
+    let depth = float(shape.level_count * shape.neighbourhood_count);
+    let near = float3(tx, ty, (float(slab * shape.level_count) + tz + 0.5) / depth);
+    let far = float3(tx, ty, (float((slab + 1) * shape.level_count) + tz + 0.5) / depth);
 
-    let cell = lerp(chroma.SampleLevel(bilinear, near, 0.0),
-                    chroma.SampleLevel(bilinear, far, 0.0), fs);
+    let cell = lerp(pair.SampleLevel(bilinear, near, 0.0), pair.SampleLevel(bilinear, far, 0.0), fs);
     // The lightness gain is stored as its deviation from 1: half floats carry a fixed relative
     // precision, and 1.02 spends it on the 1 where 0.02 spends it on the part that matters.
-    let rest = lerp(chroma_luma.SampleLevel(bilinear, near, 0.0),
-                    chroma_luma.SampleLevel(bilinear, far, 0.0), fs);
+    let rest = lerp(luma.SampleLevel(bilinear, near, 0.0), luma.SampleLevel(bilinear, far, 0.0), fs);
     return float3(
         cell.x * d0 + cell.y * d2 + rest.r * level,
         cell.z * d0 + cell.w * d2 + rest.g * level,
@@ -316,6 +366,37 @@ float3 mean_at(float2 at, uint step, float3 nits)
         f.y);
 }
 
+/// One half of a block of `mean_frame` (`block_split.slang`): the half's mean nits, and its share of
+/// the block for the first half or the split's weight for the second.
+public float4 mean_half(uint2 cell, uint which)
+{
+    return mean_frame.Load(int3(int(cell.x * 2 + which), int(cell.y), 0));
+}
+
+/// How many blocks `mean_frame` holds across and down.
+public uint2 mean_cells()
+{
+    uint wide;
+    uint tall;
+    mean_frame.GetDimensions(wide, tall);
+    return uint2(wide / 2, tall);
+}
+
+/// A neighbourhood's mean through the match up to its lattice, which is where the lattice reads it.
+Colour<Rendered> matched_index(Colour<SceneNits> mean)
+{
+    return apply_matrix(curves_at(lit_as_matched(mean), gain(1.0)));
+}
+
+/// Where the reader's colour edits are read for a neighbourhood whose mean is `mean`, at `at`: the
+/// mean through the whole match, or on the neutral arm the mean as it is shown.
+public Colour<Rendered> edits_index(Colour<SceneNits> mean, float2 at)
+{
+    if (edit.matched == 0) { return measured<Rendered>(lit_by_reader(mean).v / edit.reference); }
+    let index = matched_index(mean);
+    return finish_chroma(index, index, neighbourhood_of(at));
+}
+
 /// What happens around the grey axis, given a colour the matrix has already been through, and
 /// the neighbourhood's colour through the same stages - where the lattice is read.
 public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, float neighbourhood)
@@ -325,7 +406,22 @@ public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, f
         if (edit.saturation == 1.0) { return m; }
         return measured<Rendered>(float3(l) + (m.v - float3(l)) * edit.saturation);
     }
-    let d = correct(at.v, neighbourhood, l, m.v.r - l, m.v.b - l);
+    let shape = matched_volumes();
+    return rebuilt(correct(chroma, chroma_luma, shape, at.v, neighbourhood, l, m.v.r - l, m.v.b - l));
+}
+
+/// The reader's own colour edits (`lattice::ColourNode`), on a colour the match has finished,
+/// read at `at`: the neighbourhood's colour through the same match, as the match itself is read.
+public Colour<Rendered> moved_by_reader(Colour<Rendered> m, Colour<Rendered> at)
+{
+    if (edit.has_nodes == 0) { return m; }
+    let l = dot(LUMA, m.v);
+    return rebuilt(correct(nodes, nodes_luma, node_volumes(), at.v, 0.0, l, m.v.r - l, m.v.b - l));
+}
+
+/// A colour back from what `correct` hands out.
+Colour<Rendered> rebuilt(float3 d)
+{
     // The middle channel is not free: LUMA . d is zero by construction, so the two
     // coordinates carried through the map determine the third.
     let dg = -(LUMA.r * d.x + LUMA.b * d.y) / LUMA.g;
@@ -389,7 +485,8 @@ public Light<Scene> base_luma(Colour<SceneNits> nits)
 /// different ways - a raster index, a canvas position, a kept candidate.
 public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
 {
-    var matched = matched_scene(nits, at).v;
+    Colour<Rendered> read_at;
+    var matched = matched_scene_read(nits, at, read_at).v;
     // Own encoded luma, the neighbourhood's encoded chroma (`chroma_smooth.slang`): after the
     // whole model, so the blur flattens only what the camera flattens, and before the
     // exposure and the sliders, which the neighbourhood was encoded without.
@@ -408,8 +505,10 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
                           float3(-CHROMA_MOVES_BY), float3(CHROMA_MOVES_BY));
         matched = pow(max(luma + mine + moved, float3(0.0)), float3(CHROMA_GAMMA));
     }
-    let rendered = measured<Rendered>(matched);
-    var graded = matched;
+    // After the smoothing, which would otherwise pull an edited colour back towards its
+    // neighbourhood's unedited one.
+    let rendered = moved_by_reader(measured<Rendered>(matched), read_at);
+    var graded = rendered.v;
     if (!sliders_at_camera()) {
         // Back to the scene and through the sliders there, which is the whole of why they read
         // the same on a frame the fit landed on and one it declined.
@@ -429,6 +528,14 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
 /// The match, scene-relative: everything of `matched_nits` that depends on the frame and the
 /// fit alone, which is what `chroma_smooth.slang` encodes.
 public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
+{
+    Colour<Rendered> read_at;
+    return matched_scene_read(nits, at, read_at);
+}
+
+/// `matched_scene`, and where the reader's colour edits are read: the neighbourhood's colour through
+/// the same match (`moved_by_reader`).
+Colour<Rendered> matched_scene_read(Colour<SceneNits> nits, float2 at, out Colour<Rendered> read_at)
 {
     // **The curve takes the light the reader asked for; the lattice is read where it was
     // fitted.** Those are two different jobs and the balance belongs on only one of them. A tone
@@ -468,7 +575,7 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
         let mean_lit = lit_by_reader(mean);
         // The index off the frame as the fit saw it, the value off the light the reader asked
         // for - the same split as above, one texel out.
-        index = apply_matrix(curves_at(lit_as_matched(mean), gain(1.0))).v;
+        index = matched_index(mean).v;
         let curved = curves_at(mean_lit, gain(1.0)).v;
         // **The ratio is a first-order expansion about the mean, and nothing here bounds how far
         // it is carried.** Over a block's own texture it is a percent or two and it is what makes
@@ -486,7 +593,12 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
         let moved = log2(max(by_mean / max(m, float3(1e-6)), float3(1e-6)));
         m *= exp2(clamp(moved, float3(-MEAN_MOVES_BY.s), float3(MEAN_MOVES_BY.s)));
     }
-    return finish_chroma(measured<Rendered>(m), measured<Rendered>(index), neighbourhood_of(at));
+    let neighbourhood = neighbourhood_of(at);
+    read_at = measured<Rendered>(m);
+    if (edit.has_nodes != 0) {
+        read_at = finish_chroma(measured<Rendered>(index), measured<Rendered>(index), neighbourhood);
+    }
+    return finish_chroma(measured<Rendered>(m), measured<Rendered>(index), neighbourhood);
 }
 
 /// The neutral arm: one shared curve, so channel ratios survive whatever the input.
@@ -521,7 +633,17 @@ public Colour<DisplayNits> neutral_unrolled(Colour<SceneNits> nits, float2 at)
     // `source_level` rather than being measured, so a highlight lift can push past it. What
     // catches that is `display_nits`' clamp - the top of the range rather than a curve into
     // it. Worth knowing before reaching for a big lift on a frame whose fit declined.
-    let exposed = lit_by_reader(nits).v * gain_of(stops(edit.exposure)).g / edit.reference;
+    var lit = lit_by_reader(nits).v / edit.reference;
+    if (edit.has_nodes != 0) {
+        // This arm renders nothing, so the scene over its reference is the colour it shows, and
+        // that is what the reader's edits move - read at the neighbourhood, as on the matched arm.
+        var read_at = lit;
+        if (edit.has_mean != 0) {
+            read_at = edits_index(measured<SceneNits>(mean_at(at, max(edit.mean_block, 1u), nits.v)), at).v;
+        }
+        lit = moved_by_reader(measured<Rendered>(lit), measured<Rendered>(read_at)).v;
+    }
+    let exposed = lit * gain_of(stops(edit.exposure)).g;
     Colour<Scene> scene;
     adjusted(measured<Scene>(exposed), base_luma(nits), at, scene);
     // **Scene nits taken as display nits, which is what having no tone curve means.** This arm's

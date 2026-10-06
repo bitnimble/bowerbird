@@ -37,6 +37,8 @@ import { proofPanels } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
 import { MobileEditPanels, type MobileEditPanel } from './mobile_edit_panels';
 import { ToneCurveEditor } from './tone_curve/tone_curve_editor';
+import { ColourWheelEditor } from './colour_wheel/colour_wheel_editor';
+import type { ColourWheelStore } from './colour_wheel/colour_wheel_store';
 
 const COLOUR_PROFILES: Option<ColourProfile>[] = [
   { value: 'none', label: RawEditPanelStrings.colourProfileNone() },
@@ -382,6 +384,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   crop,
   keystone,
   repair,
+  colourWheel,
   print,
   presenter,
   mobile = false,
@@ -392,6 +395,7 @@ export const RawEditPanel = observer(function RawEditPanel({
   crop: CropStore;
   keystone: KeystoneStore;
   repair: RepairStore;
+  colourWheel: ColourWheelStore;
   print: PrintStore;
   presenter: RawEditPresenter;
   mobile?: boolean;
@@ -499,6 +503,7 @@ export const RawEditPanel = observer(function RawEditPanel({
         <>
           <ColourProfileChoice edit={edit} presenter={presenter} />
           {sliders(COLOUR)}
+          <ColourWheelEditor store={colourWheel} stage={stage} presenter={presenter.colourWheel} />
         </>,
       ),
       panelGroup('effects', RawEditPanelStrings.groupEffects(), sliders(EFFECTS)),

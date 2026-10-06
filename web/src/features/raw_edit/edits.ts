@@ -6,7 +6,7 @@
 // the first tick: a black stage and a `failed` panel. `tests/module_json.test.ts` is the pin.
 
 import { z } from 'zod';
-import type { ColourProfile, ToneCurve } from '../../../../src/schemas/photo_edits';
+import type { ColourNode, ColourProfile, ToneCurve } from '../../../../src/schemas/photo_edits';
 import { RenderingIntentSchema } from '../../../../src/schemas/rendering_intent';
 
 /** The window on the output a tick draws, in output pixels: what pan and zoom move. */
@@ -40,6 +40,7 @@ export interface EditAdjust {
   /** Whether a null half is the camera match's illuminant rather than the camera's own. */
   cameraBalance: boolean;
   colourProfile: ColourProfile;
+  colourNodes: readonly ColourNode[];
 }
 
 /**

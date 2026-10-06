@@ -22,6 +22,8 @@ import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
 import { RepairPresenter } from '../repair/repair_presenter';
+import { ColourWheelPresenter } from '../colour_wheel/colour_wheel_presenter';
+import type { ColourWheelStore } from '../colour_wheel/colour_wheel_store';
 import { EditPresenter } from '../edit/edit_presenter';
 import type { EditStore } from '../edit/edit_store';
 import {
@@ -132,6 +134,7 @@ export class RawEditPresenter {
   readonly print: PrintPresenter;
   /** The repair tool, which the panel and the stage drive directly. */
   readonly repair: RepairPresenter;
+  readonly colourWheel: ColourWheelPresenter;
 
   constructor(
     private readonly editStore: EditStore,
@@ -139,6 +142,7 @@ export class RawEditPresenter {
     cropStore: CropStore,
     private readonly keystoneStore: KeystoneStore,
     repairStore: RepairStore,
+    colourWheelStore: ColourWheelStore,
     loupeStore: LoupeStore,
     private readonly printStore: PrintStore,
     private readonly device: DeviceSettingsStore,
@@ -192,6 +196,11 @@ export class RawEditPresenter {
       closeKeystone: () => this.keystone.closeForSibling(),
       showGeometry: () => this.showGeometry(),
       fail: (why) => this.fail(why),
+    });
+    this.colourWheel = new ColourWheelPresenter(colourWheelStore, editStore, stage, {
+      local: () => this.local,
+      preview: (patch) => this.preview(patch),
+      settle: (patch) => this.settle(patch),
     });
     this.edit = new EditPresenter(editStore, this, this.repair);
   }
@@ -998,6 +1007,7 @@ export class RawEditPresenter {
     this.rewindowing?.abort();
     this.rewindowing = null;
     this.repair.close();
+    this.colourWheel.close();
     this.edit.close();
 
     this.closed = true;

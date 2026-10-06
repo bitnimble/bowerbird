@@ -54,16 +54,136 @@ pub fn chroma_of(rendered: [Light<Rendered>; 3]) -> f64 {
     a.hypot(b)
 }
 
+/// Inverse of [`opponent_of`].
+pub fn rendered_of([lightness, x, y]: [f64; 3]) -> [Light<Rendered>; 3] {
+    let zcam = Zcam::pinned();
+    let iz = zcam.white_iz * (lightness.max(0.0) / 100.0).powf(1.0 / zcam.lightness_exponent);
+    let chroma = x.hypot(y);
+    let hue = match chroma > 0.0 {
+        true => [x / chroma, y / chroma],
+        false => [1.0, 0.0],
+    };
+    let ab = (chroma / (zcam.chroma_scale * eccentricity(hue).powf(0.068))).powf(50.0 / 37.0);
+    let uncoded = |code: f64| {
+        let e = code.max(0.0).powf(1.0 / ZCAM_P);
+        10000.0 * ((e - PQ_C1).max(0.0) / (PQ_C2 - PQ_C3 * e)).powf(1.0 / PQ_M1)
+    };
+    let cones = apply(
+        inverse(LMS_TO_IAB).expect("invertible"),
+        [iz + ZCAM_EPSILON, ab * hue[0], ab * hue[1]],
+    );
+    apply(
+        inverse(R2020_TO_LMS).expect("invertible"),
+        cones.map(uncoded),
+    )
+    .map(|nits| Light::measured(nits / INDEX_WHITE_NITS))
+}
+
 /// The coded M cone, which is ZCAM's `Iz` before its offset, and the two opponent axes.
 fn coded_cones(nits: [f64; 3]) -> [f64; 3] {
-    let apply = |m: &[[f64; 3]; 3], v: [f64; 3]| -> [f64; 3] {
-        std::array::from_fn(|r| (0..3).map(|c| m[r][c] * v[c]).sum())
-    };
     let coded = |nits: f64| {
         let y = (nits.max(0.0) / 10000.0).powf(PQ_M1);
         ((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y)).powf(ZCAM_P)
     };
-    apply(&LMS_TO_IAB, apply(&R2020_TO_LMS, nits).map(coded))
+    apply(LMS_TO_IAB, apply(R2020_TO_LMS, nits).map(coded))
+}
+
+fn apply(m: M3, v: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|r| (0..3).map(|c| m[r][c] * v[c]).sum())
+}
+
+/// ZCAM's `e_z`, for `hue` a unit direction in the opponent plane.
+fn eccentricity(hue: [f64; 2]) -> f64 {
+    let (sin, cos) = ZCAM_HUE_OFFSET_DEGREES.to_radians().sin_cos();
+    1.015 + cos * hue[0] - sin * hue[1]
+}
+
+/// ZCAM, hue in degrees.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColourNode {
+    pub hue: f64,
+    pub chroma: f64,
+    /// None reaches every lightness, and is solved at [`ANY_LIGHTNESS_AT`].
+    pub lightness: Option<f64>,
+    pub target_hue: f64,
+    pub target_chroma: f64,
+    pub target_lightness: f64,
+    pub hue_reach: f64,
+    /// Outward from `chroma`. The tent is even in √chroma, so it reaches less inward.
+    pub chroma_reach: f64,
+    pub lightness_reach: f64,
+}
+
+/// Where a node reaching every lightness reads its target lightness against.
+pub const ANY_LIGHTNESS_AT: f64 = 55.0;
+
+pub const MOST_NODES: usize = 32;
+
+const TINT_BELOW: f64 = 0.02;
+const LEAST_REACH: f64 = 1e-3;
+
+impl ColourNode {
+    /// The kernel taking this node's colour exactly onto its target.
+    pub fn kernel(&self) -> Kernel {
+        let level = self.lightness.unwrap_or(ANY_LIGHTNESS_AT);
+        let rendered = |lightness: f64, chroma: f64, hue: f64| {
+            let (sin, cos) = hue.to_radians().sin_cos();
+            rendered_of([lightness, chroma * cos, chroma * sin]).map(Light::raw)
+        };
+        let from = rendered(level, self.chroma, self.hue);
+        let to = rendered(self.target_lightness, self.target_chroma, self.target_hue);
+        let luma =
+            |c: [f64; 3]| -> f64 { c.iter().zip(crate::hdr_fit::LUMA).map(|(c, w)| c * w).sum() };
+        let (lit, lit_to) = (luma(from), luma(to));
+        let pair = [from[0] - lit, from[2] - lit];
+        let pair_to = [to[0] - lit_to, to[2] - lit_to];
+        let operator = match lit > 0.0 {
+            false => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            true if pair[0].hypot(pair[1]) > TINT_BELOW * lit => {
+                let scale = pair_to[0].hypot(pair_to[1]) / pair[0].hypot(pair[1]);
+                let turn = pair_to[1].atan2(pair_to[0]) - pair[1].atan2(pair[0]);
+                let (sin, cos) = turn.sin_cos();
+                [
+                    scale * cos,
+                    -scale * sin,
+                    scale * sin,
+                    scale * cos,
+                    0.0,
+                    0.0,
+                    lit_to / lit,
+                ]
+            }
+            true => [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                (pair_to[0] - pair[0]) / lit,
+                (pair_to[1] - pair[1]) / lit,
+                lit_to / lit,
+            ],
+        };
+        Kernel {
+            centre: [
+                (self.hue / 360.0).rem_euclid(1.0),
+                self.chroma.max(0.0).sqrt(),
+                level,
+                0.0,
+            ],
+            // A zero reach is the bake's "every place on this axis"; only lightness may mean that.
+            reach: [
+                (self.hue_reach / 360.0).max(LEAST_REACH),
+                ((self.chroma + self.chroma_reach).max(0.0).sqrt() - self.chroma.max(0.0).sqrt())
+                    .max(LEAST_REACH),
+                self.lightness
+                    .map_or(0.0, |_| self.lightness_reach.max(LEAST_REACH)),
+                0.0,
+            ],
+            generator: generator_of(operator),
+            to_lightness: [0.0; 2],
+        }
+    }
 }
 
 /// ZCAM under the viewing conditions the lattice is indexed in, reduced to what `index_space.slang`
@@ -102,9 +222,7 @@ impl Zcam {
 
     /// `ab` the opponent axes' length, `hue` their direction.
     fn chroma(&self, ab: f64, hue: [f64; 2]) -> f64 {
-        let (sin, cos) = ZCAM_HUE_OFFSET_DEGREES.to_radians().sin_cos();
-        let eccentricity = 1.015 + cos * hue[0] - sin * hue[1];
-        self.chroma_scale * ab.powf(0.74) * eccentricity.powf(0.068)
+        self.chroma_scale * ab.powf(0.74) * eccentricity(hue).powf(0.068)
     }
 }
 
@@ -206,6 +324,9 @@ const SUM_WORDS: usize = 9;
 struct Summed {
     kernels: Vec<Kernel>,
     axes: LutAxes,
+    /// Whether the generators are first solved so each kernel's centre takes its own operator
+    /// (`lattice_bake.slang`'s `interpolate`).
+    interpolating: bool,
     on: std::sync::OnceLock<(u64, crate::gpu::Buffer)>,
 }
 
@@ -214,6 +335,7 @@ impl Summed {
         std::sync::Arc::new(Summed {
             kernels,
             axes,
+            interpolating: false,
             on: std::sync::OnceLock::new(),
         })
     }
@@ -277,6 +399,39 @@ impl ChromaMap {
             generator: [log, 0.0, 0.0, log, 0.0, 0.0, 0.0],
             to_lightness: [0.0; 2],
         }])
+    }
+
+    pub fn of_nodes(nodes: &[ColourNode]) -> ChromaMap {
+        let primary = |c: usize| -> f64 {
+            chroma_of(std::array::from_fn(|k| match k == c {
+                true => Light::measured(1.0),
+                false => Light::ZERO,
+            }))
+        };
+        let axes = LutAxes {
+            chroma_top: (0..3).map(primary).fold(0.0, f64::max).sqrt(),
+            level_low: lightness_of_neutral(Light::ZERO),
+            level_top: lightness_of_neutral(Light::measured(10000.0 / INDEX_WHITE_NITS)),
+            neighbourhood_top: 1.0,
+        };
+        // Unfiltered: a node asked to change nothing still holds its colour against its neighbours.
+        let kernels: Vec<Kernel> = nodes
+            .iter()
+            .take(MOST_NODES)
+            .map(ColourNode::kernel)
+            .collect();
+        let summed = std::sync::Arc::new(Summed {
+            kernels: kernels.clone(),
+            axes,
+            interpolating: true,
+            on: std::sync::OnceLock::new(),
+        });
+        ChromaMap {
+            kernels,
+            axes,
+            terms: vec![(summed, 1.0)],
+            baked: Default::default(),
+        }
     }
 
     /// `kernels` over the identity's axes, for fixtures and tests.
@@ -552,6 +707,8 @@ fn square_root(a: M3) -> Option<M3> {
 }
 
 pub(crate) struct BakeKernel {
+    interpolate_layout: wgpu::BindGroupLayout,
+    interpolate: wgpu::ComputePipeline,
     sum_layout: wgpu::BindGroupLayout,
     sum: wgpu::ComputePipeline,
     bake_layout: wgpu::BindGroupLayout,
@@ -607,6 +764,14 @@ impl BakeKernel {
             });
             (layout, pipeline)
         };
+        let (interpolate_layout, interpolate) = pipeline(
+            &[
+                buffer(0, read),
+                buffer(6, wgpu::BufferBindingType::Storage { read_only: false }),
+                buffer(20, wgpu::BufferBindingType::Uniform),
+            ],
+            "interpolate",
+        );
         let (sum_layout, sum) = pipeline(
             &[
                 buffer(0, read),
@@ -626,6 +791,8 @@ impl BakeKernel {
             "bake",
         );
         BakeKernel {
+            interpolate_layout,
+            interpolate,
             sum_layout,
             sum,
             bake_layout,
@@ -713,6 +880,41 @@ fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let built = gpu.lattice_bake();
+    let kernels = match summed.interpolating && !summed.kernels.is_empty() {
+        false => kernels,
+        true => {
+            let solved = recording.buffer(&wgpu::BufferDescriptor {
+                label: Some("lattice solved kernels"),
+                size: words.len() as u64,
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("lattice_bake interpolate"),
+                layout: &built.interpolate_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: kernels.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: solved.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: push.as_entire_binding(),
+                    },
+                ],
+            });
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_pipeline(&built.interpolate);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+            drop(pass);
+            solved
+        }
+    };
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("lattice_bake sum"),
         layout: &built.sum_layout,
@@ -808,11 +1010,119 @@ mod tests {
     #[test]
     fn the_host_reads_a_kernel_as_the_bake_does() {
         const SOURCE: &str = include_str!("../../../slang/lattice_bake.slang");
-        let line = format!("static const uint KERNEL_WORDS = {KERNEL_WORDS};");
-        assert!(
-            SOURCE.contains(&line),
-            "lattice_bake.slang does not say `{line}`"
-        );
+        for line in [
+            format!("static const uint KERNEL_WORDS = {KERNEL_WORDS};"),
+            format!("static const uint MOST_NODES = {MOST_NODES};"),
+        ] {
+            assert!(
+                SOURCE.contains(&line),
+                "lattice_bake.slang does not say `{line}`"
+            );
+        }
+    }
+
+    #[test]
+    fn the_page_holds_the_hosts_node_limits() {
+        for (file, source, line) in [
+            (
+                "colour_wheel.ts",
+                include_str!("../../../web/src/features/raw_edit/colour_wheel/colour_wheel.ts"),
+                format!("export const ANY_LIGHTNESS_AT = {ANY_LIGHTNESS_AT};"),
+            ),
+            (
+                "photo_edits.ts",
+                include_str!("../../../src/schemas/photo_edits.ts"),
+                format!("export const COLOUR_NODES_MAX = {MOST_NODES};"),
+            ),
+        ] {
+            assert!(source.contains(&line), "{file} does not say `{line}`");
+        }
+    }
+
+    #[test]
+    fn a_node_reaching_nothing_reaches_its_own_place_alone() {
+        let node = ColourNode {
+            hue: 120.0,
+            chroma: 10.0,
+            lightness: Some(30.0),
+            target_hue: 140.0,
+            target_chroma: 10.0,
+            target_lightness: 30.0,
+            hue_reach: 0.0,
+            chroma_reach: 0.0,
+            lightness_reach: 0.0,
+        };
+        assert!(node.kernel().reach[..3].iter().all(|&reach| reach > 0.0));
+        let anywhere = ColourNode {
+            lightness: None,
+            ..node
+        };
+        assert_eq!(anywhere.kernel().reach[2], 0.0);
+    }
+
+    #[test]
+    fn overlapping_nodes_each_land_on_their_own_target() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let axes = ChromaMap::of_nodes(&[]).axes;
+        // On texels, so the baked operator there is read without interpolating.
+        let (level_at, chroma_at) = (7, 12);
+        let lightness = axes.level_low
+            + (axes.level_top - axes.level_low) * level_at as f64 / (LEVEL_TEXELS - 1) as f64;
+        let root_chroma = axes.chroma_top * chroma_at as f64 / (CHROMA_TEXELS - 1) as f64;
+        let chroma = root_chroma * root_chroma;
+        let hue_of = |texel: usize| 360.0 * texel as f64 / (HUE_TEXELS - 1) as f64;
+        let node = |hue_texel: usize, target: [f64; 3]| ColourNode {
+            hue: hue_of(hue_texel),
+            chroma,
+            lightness: Some(lightness),
+            target_hue: target[0],
+            target_chroma: target[1],
+            target_lightness: target[2],
+            hue_reach: 40.0,
+            chroma_reach: 6.0,
+            lightness_reach: 30.0,
+        };
+        let nodes = [
+            node(48, [hue_of(48) + 15.0, chroma, lightness]),
+            node(50, [hue_of(50), chroma * 0.5, lightness + 5.0]),
+        ];
+        let (pair, luma) = ChromaMap::of_nodes(&nodes).baked(gpu);
+        let (pair, luma) = (read_volume(gpu, &pair), read_volume(gpu, &luma));
+        let at = |lightness: f64, chroma: f64, hue: f64| {
+            let (sin, cos) = hue.to_radians().sin_cos();
+            raw_rendered_of([lightness, chroma * cos, chroma * sin])
+        };
+        for (n, hue_texel) in nodes.iter().zip([48, 50]) {
+            let texel = (level_at * CHROMA_TEXELS + chroma_at) * HUE_TEXELS + hue_texel;
+            let ([a, b, c, d], [e, f, g, _]) = (pair[texel], luma[texel]);
+            let from = at(lightness, chroma, n.hue);
+            let l: f64 = from
+                .iter()
+                .zip(crate::hdr_fit::LUMA)
+                .map(|(c, w)| c * w)
+                .sum();
+            let (d0, d2) = (from[0] - l, from[2] - l);
+            let lit = (g + 1.0) * l;
+            let (r, bl) = (lit + a * d0 + b * d2 + e * l, lit + c * d0 + d * d2 + f * l);
+            let got = [
+                r,
+                (lit - crate::hdr_fit::LUMA[0] * r - crate::hdr_fit::LUMA[2] * bl)
+                    / crate::hdr_fit::LUMA[1],
+                bl,
+            ];
+            let want = at(n.target_lightness, n.target_chroma, n.target_hue);
+            let off = got
+                .iter()
+                .zip(want)
+                .map(|(got, want)| (got - want).abs())
+                .fold(0.0, f64::max);
+            assert!(
+                off < 4e-3 * want.iter().fold(0.0, |m: f64, v| m.max(v.abs())),
+                "{n:?} gave {got:?}, wanted {want:?}"
+            );
+        }
     }
 
     #[test]
@@ -989,7 +1299,7 @@ mod tests {
         let luma = crate::hdr_fit::LUMA;
         let mut worst: (f64, usize) = (0.0, 0);
         for (texel, got) in texels.iter().enumerate() {
-            let colour = rendered_of(opponent_at(place_of(map.axes, texel)));
+            let colour = raw_rendered_of(opponent_at(place_of(map.axes, texel)));
             let l: f64 = colour.iter().zip(luma).map(|(c, w)| c * w).sum();
             let want = to_lightness[0] * chromaticity(colour[0] - l, l, luma[0])
                 + to_lightness[1] * chromaticity(colour[2] - l, l, luma[2]);
@@ -1018,7 +1328,7 @@ mod tests {
             [3.5, 2.0, 0.4],
             [0.002, 0.001, 0.003],
         ] {
-            let back = rendered_of(opponent_of(colour.map(Light::measured)));
+            let back = raw_rendered_of(opponent_of(colour.map(Light::measured)));
             for (got, want) in back.iter().zip(colour) {
                 assert!(
                     (got - want).abs() < 1e-9 * want.max(1.0),
@@ -1035,35 +1345,62 @@ mod tests {
         [lightness, chroma * cos, chroma * sin]
     }
 
-    /// `opponent_of` undone, through the matrices' own inverses where the shader solves for the
-    /// cones.
-    fn rendered_of([lightness, x, y]: [f64; 3]) -> [f64; 3] {
-        let zcam = Zcam::pinned();
-        let iz = zcam.white_iz * (lightness.max(0.0) / 100.0).powf(1.0 / zcam.lightness_exponent);
-        let chroma = x.hypot(y);
-        let hue = match chroma > 0.0 {
-            true => [x / chroma, y / chroma],
-            false => [1.0, 0.0],
+    fn raw_rendered_of(opponent: [f64; 3]) -> [f64; 3] {
+        rendered_of(opponent).map(Light::raw)
+    }
+
+    #[test]
+    fn a_node_moves_its_colour_onto_its_target() {
+        let node = |hue, chroma, lightness, target: [f64; 3]| ColourNode {
+            hue,
+            chroma,
+            lightness,
+            target_hue: target[0],
+            target_chroma: target[1],
+            target_lightness: target[2],
+            hue_reach: 30.0,
+            chroma_reach: 4.0,
+            lightness_reach: 25.0,
         };
-        let (sin, cos) = ZCAM_HUE_OFFSET_DEGREES.to_radians().sin_cos();
-        let eccentricity = 1.015 + cos * hue[0] - sin * hue[1];
-        let ab = (chroma / (zcam.chroma_scale * eccentricity.powf(0.068))).powf(50.0 / 37.0);
-        let apply = |m: M3, v: [f64; 3]| -> [f64; 3] {
-            std::array::from_fn(|r| (0..3).map(|c| m[r][c] * v[c]).sum())
-        };
-        let uncoded = |code: f64| {
-            let e = code.max(0.0).powf(1.0 / ZCAM_P);
-            10000.0 * ((e - PQ_C1).max(0.0) / (PQ_C2 - PQ_C3 * e)).powf(1.0 / PQ_M1)
-        };
-        let cones = apply(
-            inverse(LMS_TO_IAB).expect("invertible"),
-            [iz + ZCAM_EPSILON, ab * hue[0], ab * hue[1]],
-        );
-        apply(
-            inverse(R2020_TO_LMS).expect("invertible"),
-            cones.map(uncoded),
-        )
-        .map(|nits| nits / INDEX_WHITE_NITS)
+        for node in [
+            node(240.0, 12.0, Some(55.0), [215.0, 18.0, 50.0]),
+            node(30.0, 8.0, Some(80.0), [30.0, 3.0, 80.0]),
+            node(120.0, 0.3, Some(30.0), [60.0, 6.0, 35.0]),
+            node(300.0, 10.0, None, [330.0, 10.0, 60.0]),
+            node(0.0, 5.0, Some(110.0), [0.0, 5.0, 110.0]),
+        ] {
+            let at = |lightness: f64, chroma: f64, hue: f64| {
+                let (sin, cos) = hue.to_radians().sin_cos();
+                raw_rendered_of([lightness, chroma * cos, chroma * sin])
+            };
+            let from = at(
+                node.lightness.unwrap_or(ANY_LIGHTNESS_AT),
+                node.chroma,
+                node.hue,
+            );
+            let want = at(node.target_lightness, node.target_chroma, node.target_hue);
+            let [a, b, c, d, e, f, g] = operator_of(node.kernel().generator);
+            let l: f64 = from
+                .iter()
+                .zip(crate::hdr_fit::LUMA)
+                .map(|(c, w)| c * w)
+                .sum();
+            let (d0, d2) = (from[0] - l, from[2] - l);
+            let lit = g * l;
+            let (r, bl) = (lit + a * d0 + b * d2 + e * l, lit + c * d0 + d * d2 + f * l);
+            let got = [
+                r,
+                (lit - crate::hdr_fit::LUMA[0] * r - crate::hdr_fit::LUMA[2] * bl)
+                    / crate::hdr_fit::LUMA[1],
+                bl,
+            ];
+            for (got, want) in got.iter().zip(want) {
+                assert!(
+                    (got - want).abs() < 1e-6,
+                    "{node:?} gave {got:?}, wanted {want:?}"
+                );
+            }
+        }
     }
 
     /// Texel `texel`'s place in lattice coordinates, as `lattice_bake.slang`'s `place_of` has it.

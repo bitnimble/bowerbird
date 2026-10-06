@@ -46,8 +46,8 @@ public struct Edit {
     public uint hue_count;
     public uint chroma_count;
     public uint level_count;
-    /// Unused, and holding its place: every later field is written and patched by position.
-    public uint spare;
+    /// Whether the reader has made colour edits (`colour::moved_by_reader`).
+    public uint has_nodes;
     public float chroma_scale;
     public float level_low;
     public float level_scale;
@@ -252,6 +252,16 @@ public struct Edit {
     /// pulled no neutral.
     public float matched_temperature;
     public float matched_tint;
+    /// The reader's colour edits' volumes (`lattice::ChromaMap::of_nodes`), as `hue_count` and the
+    /// fields beside it shape the match's.
+    public uint node_hue_count;
+    public uint node_chroma_count;
+    public uint node_level_count;
+    public uint node_neighbourhood_count;
+    public float node_chroma_scale;
+    public float node_level_low;
+    public float node_level_scale;
+    public float node_neighbourhood_scale;
 };
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;

@@ -118,6 +118,7 @@ pub struct HeldRaw {
     loupe: std::cell::RefCell<Option<crate::gpu::Stage>>,
     /// The canvas the last repair thumbnail was drawn onto, kept until the page has copied it out.
     thumbnail: std::cell::RefCell<Option<crate::gpu::Stage>>,
+    wheel: std::cell::RefCell<Option<crate::gpu::Stage>>,
     /// The rendition tile under the glass, where one has been built for where it is pointing.
     tile: std::cell::RefCell<Option<Tiled>>,
     /// The tiles of the picture this open is holding, newest use last.
@@ -414,6 +415,7 @@ impl HeldRaw {
             stage: std::cell::RefCell::new(None),
             loupe: std::cell::RefCell::new(None),
             thumbnail: std::cell::RefCell::new(None),
+            wheel: std::cell::RefCell::new(None),
             tile: std::cell::RefCell::new(None),
             held_tiles: std::cell::RefCell::new(Vec::new()),
             shown: std::cell::Cell::new(None),
@@ -1911,6 +1913,95 @@ impl HeldRaw {
         );
         drop(under);
         drawn
+    }
+
+    #[wasm_bindgen(js_name = attachWheel)]
+    pub fn attach_wheel(&self, canvas: web_sys::OffscreenCanvas, side: u32) -> Result<(), JsValue> {
+        self.attach(&self.wheel, Some(canvas), side, side)
+    }
+
+    #[wasm_bindgen(js_name = drawWheel)]
+    pub fn draw_wheel(&self, lightness: f64) -> Result<(), JsValue> {
+        let gpu = crate::gpu::device()
+            .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
+        let wheel = self.wheel.borrow();
+        let Some(stage) = wheel.as_ref() else {
+            return Ok(());
+        };
+        let backdrop = crate::gpu::colour_wheel::Backdrop {
+            lightness,
+            side: stage.size().0,
+            reference: self.reference_nits().raw(),
+        };
+        crate::gpu::colour_wheel::present_backdrop(gpu, stage, &backdrop);
+        refused()
+    }
+
+    #[wasm_bindgen(js_name = wheelChroma)]
+    pub fn wheel_chroma(&self) -> f64 {
+        crate::gpu::colour_wheel::wheel_chroma()
+    }
+
+    #[wasm_bindgen(js_name = wheelEdge)]
+    pub fn wheel_edge(&self, lightness: f64) -> Vec<f64> {
+        let reference = self.reference_nits();
+        let headroom = self
+            .display_peak
+            .get()
+            .map_or(1.0, |peak| peak.raw() / reference.raw());
+        crate::gpu::colour_wheel::displayable(lightness, headroom)
+    }
+
+    /// The photograph's colours where colour edits read them, then where the profile takes each of
+    /// `places`: fours of ZCAM lightness, opponent pair and weight, `places` flattened the same way.
+    #[wasm_bindgen(js_name = probeWheel)]
+    pub async fn probe_wheel(&self, places: Vec<f32>) -> Result<Vec<f32>, JsValue> {
+        let places: Vec<crate::gpu::colour_wheel::Place> = places
+            .chunks_exact(4)
+            .map(|p| [p[0], p[1], p[2], p[3]])
+            .collect();
+        let probing = {
+            let held = self.drawing.borrow();
+            let Some(drawing) = held.as_ref() else {
+                return Err(JsValue::from_str("rawshim: no photograph is open to probe"));
+            };
+            let (w, h) = drawing.picture();
+            let grade = crate::gpu::Grade {
+                photograph_long: crate::px::Span::measured(w.max(h)),
+                colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
+                adjust: self.adjust.borrow().clone(),
+                as_shot: drawing.as_shot,
+                window: drawing.placed,
+                ..crate::gpu::Grade::new(
+                    drawing.width,
+                    drawing.height,
+                    drawing.levels,
+                    drawing.reference_nits,
+                    crate::light::Light::at_diffuse_white(drawing.reference_nits),
+                )
+            };
+            drawing.uploaded.probing(&grade, &places)
+        };
+        let probed = probing
+            .read()
+            .await
+            .ok_or_else(|| JsValue::from_str("rawshim: the colour probe could not be read back"))?;
+        Ok(probed
+            .scatter
+            .iter()
+            .chain(&probed.field)
+            .flatten()
+            .copied()
+            .collect())
+    }
+
+    fn reference_nits(&self) -> crate::light::Light<crate::light::SceneNits> {
+        self.drawing
+            .borrow()
+            .as_ref()
+            .map_or(self.request.grade.reference_white_nits, |d| {
+                d.reference_nits
+            })
     }
 
     /// The reader's sliders, as `gpu::Adjust` JSON. Kept rather than passed per tick: a drag moves

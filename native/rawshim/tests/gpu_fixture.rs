@@ -272,6 +272,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         tint: Some(-6.0),
         camera_balance: true,
         colour_profile: rawshim::gpu::ColourProfile::Matched,
+        colour_nodes: Vec::new(),
     };
     let cases = [
         // As it arrives on a photo nobody has edited, which is also the state the frame's own
@@ -963,28 +964,51 @@ fn graded_frame(
     height: usize,
     adjust: rawshim::gpu::Adjust,
 ) -> Vec<u16> {
-    let grade = SHIPPED;
+    graded_frame_as(gpu, frame, width, height, adjust, None)
+}
+
+/// `graded_frame` through the matched arm where `colour` is given.
+fn graded_frame_as(
+    gpu: &'static rawshim::gpu::Gpu,
+    frame: Vec<u16>,
+    width: usize,
+    height: usize,
+    adjust: rawshim::gpu::Adjust,
+    colour: Option<&HdrColour>,
+) -> Vec<u16> {
     let mut samples = frame;
-    let levels = levels(gpu, &samples, width, height, grade.white_quantile);
-    rawshim::hdr::code_base(&mut samples, levels.anchored(), grade.reference_white_nits);
-    gpu.encode(
-        &samples,
-        &rawshim::gpu::Grade {
-            adjust,
-            // A daylight baseline, so the balance test has something to move away from. The
-            // presence test leaves the pair unset, where this is not read at all.
-            //
-            // The tint is off zero on purpose: a camera's neutral is never exactly on the
-            // Planckian locus, and a baseline that was would let a host standing a missing
-            // tint up as zero pass by coincidence.
-            as_shot: Some(rawshim::white_balance::Illuminant {
-                temperature: 5500.0,
-                tint: 12.0,
-            }),
-            output: rawshim::gpu::Output::Rolled,
-            ..rawshim::gpu::Grade::new(width, height, levels, grade.reference_white_nits, DISPLAY)
-        },
-    )
+    let grade = coded_grade(gpu, &mut samples, width, height, adjust, colour);
+    gpu.encode(&samples, &grade)
+}
+
+/// `samples` coded as the shipped grade codes them, and that grade.
+fn coded_grade<'a>(
+    gpu: &'static rawshim::gpu::Gpu,
+    samples: &mut [u16],
+    width: usize,
+    height: usize,
+    adjust: rawshim::gpu::Adjust,
+    colour: Option<&'a HdrColour>,
+) -> rawshim::gpu::Grade<'a> {
+    let grade = SHIPPED;
+    let levels = levels(gpu, samples, width, height, grade.white_quantile);
+    rawshim::hdr::code_base(samples, levels.anchored(), grade.reference_white_nits);
+    rawshim::gpu::Grade {
+        adjust,
+        colour,
+        // A daylight baseline, so the balance test has something to move away from. The
+        // presence test leaves the pair unset, where this is not read at all.
+        //
+        // The tint is off zero on purpose: a camera's neutral is never exactly on the
+        // Planckian locus, and a baseline that was would let a host standing a missing
+        // tint up as zero pass by coincidence.
+        as_shot: Some(rawshim::white_balance::Illuminant {
+            temperature: 5500.0,
+            tint: 12.0,
+        }),
+        output: rawshim::gpu::Output::Rolled,
+        ..rawshim::gpu::Grade::new(width, height, levels, grade.reference_white_nits, DISPLAY)
+    }
 }
 
 /// Shadows lifts a region without stretching the texture inside it, which is the whole of what
@@ -1619,6 +1643,187 @@ fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone()
         (warmed - was).abs() < was * 0.06,
         "a 2500K move took the mean luma from {was:.0} to {warmed:.0}, which is an exposure",
     );
+}
+
+#[test]
+fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the colour edits were not run.");
+        return;
+    };
+    let frame = blue_beside_red();
+    let [_, a, b] = rawshim::lattice::opponent_of(BLUE.map(|v| Light::measured(v / 20000.0)));
+    let greyed = rawshim::gpu::Adjust {
+        colour_nodes: vec![rawshim::lattice::ColourNode {
+            hue: b.atan2(a).to_degrees(),
+            chroma: a.hypot(b),
+            lightness: None,
+            target_hue: b.atan2(a).to_degrees(),
+            target_chroma: 0.0,
+            target_lightness: rawshim::lattice::ANY_LIGHTNESS_AT,
+            hue_reach: 45.0,
+            chroma_reach: 40.0,
+            lightness_reach: 0.0,
+        }],
+        ..rawshim::gpu::Adjust::none()
+    };
+    let identity = HdrColour::identity();
+    for (arm, colour) in [("neutral", None), ("matched", Some(&identity))] {
+        let graded = |adjust: rawshim::gpu::Adjust| {
+            graded_frame_as(
+                gpu,
+                frame.clone(),
+                PATCHES_SIDE,
+                PATCHES_SIDE,
+                adjust,
+                colour,
+            )
+        };
+        let (plain, edited) = (graded(rawshim::gpu::Adjust::none()), graded(greyed.clone()));
+        assert_eq!(
+            patch_interior(&edited, false),
+            patch_interior(&plain, false),
+            "{arm}: the edit reached the red patch"
+        );
+        let (was, now) = (
+            blue_over_red(&patch_interior(&plain, true)),
+            blue_over_red(&patch_interior(&edited, true)),
+        );
+        assert!(
+            now < was * 0.3,
+            "{arm}: the blue patch kept {now:.3} of its {was:.3} blue against red"
+        );
+    }
+}
+
+#[test]
+fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the colour probe was not run.");
+        return;
+    };
+    let frame = blue_beside_red();
+    let [_, a, b] = rawshim::lattice::opponent_of(BLUE.map(|v| Light::measured(v / 20000.0)));
+    let blue_hue = b.atan2(a).to_degrees();
+    let identity = HdrColour::identity();
+    let places = [[55.0, 6.0, -3.0, 0.0], [80.0, -2.0, 9.0, 0.0]];
+    for (arm, colour) in [("neutral", None), ("matched", Some(&identity))] {
+        let mut samples = frame.clone();
+        let grade = coded_grade(
+            gpu,
+            &mut samples,
+            PATCHES_SIDE,
+            PATCHES_SIDE,
+            rawshim::gpu::Adjust::none(),
+            colour,
+        );
+        let uploaded = gpu.upload(&samples, &grade, &gpu.scene_peak());
+        let probed = pollster::block_on(uploaded.colour_probe(&grade, &places))
+            .expect("the probe read back");
+        for (place, moved) in places.iter().zip(&probed.field) {
+            for k in 0..3 {
+                assert!(
+                    (moved[k] - place[k]).abs() < 0.05,
+                    "{arm}: an identity profile moved {place:?} to {moved:?}"
+                );
+            }
+        }
+        let hue_off = |p: &[f32; 4]| {
+            let off =
+                (f64::from(p[2]).atan2(f64::from(p[1])).to_degrees() - blue_hue).rem_euclid(360.0);
+            off.min(360.0 - off)
+        };
+        let dot = probed
+            .scatter
+            .iter()
+            .filter(|p| p[3] > 0.5)
+            .min_by(|p, q| hue_off(p).total_cmp(&hue_off(q)))
+            .expect("a dot");
+        assert!(
+            hue_off(dot) < 20.0,
+            "{arm}: no dot near the blue patch's hue: {dot:?}"
+        );
+        let (hue, chroma) = (
+            f64::from(dot[2])
+                .atan2(f64::from(dot[1]))
+                .to_degrees()
+                .rem_euclid(360.0),
+            f64::from(dot[1]).hypot(f64::from(dot[2])),
+        );
+        let greyed = rawshim::gpu::Adjust {
+            colour_nodes: vec![rawshim::lattice::ColourNode {
+                hue,
+                chroma,
+                lightness: Some(f64::from(dot[0])),
+                target_hue: hue,
+                target_chroma: 0.0,
+                target_lightness: f64::from(dot[0]),
+                hue_reach: 40.0,
+                chroma_reach: 8.0,
+                lightness_reach: 25.0,
+            }],
+            ..rawshim::gpu::Adjust::none()
+        };
+        let graded = |adjust: rawshim::gpu::Adjust| {
+            graded_frame_as(
+                gpu,
+                frame.clone(),
+                PATCHES_SIDE,
+                PATCHES_SIDE,
+                adjust,
+                colour,
+            )
+        };
+        let (was, now) = (
+            blue_over_red(&patch_interior(&graded(rawshim::gpu::Adjust::none()), true)),
+            blue_over_red(&patch_interior(&graded(greyed), true)),
+        );
+        assert!(
+            now.abs() < was * 0.05,
+            "{arm}: the blue patch kept {now:.4} of its {was:.4} blue against red"
+        );
+    }
+}
+
+const PATCHES_SIDE: usize = 128;
+const BLUE: [f64; 3] = [6000.0, 9000.0, 20000.0];
+const RED: [f64; 3] = [20000.0, 7000.0, 6000.0];
+
+fn blue_beside_red() -> Vec<u16> {
+    let mut frame = vec![0u16; PATCHES_SIDE * PATCHES_SIDE * 3];
+    for y in 0..PATCHES_SIDE {
+        for x in 0..PATCHES_SIDE {
+            let patch = if x < PATCHES_SIDE / 2 { BLUE } else { RED };
+            for c in 0..3 {
+                frame[(y * PATCHES_SIDE + x) * 3 + c] = stored(patch[c]);
+            }
+        }
+    }
+    frame
+}
+
+/// One patch's pixels away from the seam, where a block's mean holds both patches.
+fn patch_interior(out: &[u16], left: bool) -> Vec<[f64; 3]> {
+    const SIDE: usize = PATCHES_SIDE;
+    (16..SIDE - 16)
+        .flat_map(|y| {
+            let xs = if left {
+                8..SIDE / 2 - 16
+            } else {
+                SIDE / 2 + 16..SIDE - 8
+            };
+            xs.map(move |x| (y * SIDE + x) * 3)
+        })
+        .map(|at| std::array::from_fn(|c| f64::from(out[at + c])))
+        .collect()
+}
+
+fn blue_over_red(pixels: &[[f64; 3]]) -> f64 {
+    pixels
+        .iter()
+        .map(|p| (p[2] - p[0]) / p.iter().sum::<f64>().max(1.0))
+        .sum::<f64>()
+        / pixels.len() as f64
 }
 
 /// Texture, clarity and dehaze, each against what it claims to do.

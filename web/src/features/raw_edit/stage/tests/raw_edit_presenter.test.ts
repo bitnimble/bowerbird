@@ -126,6 +126,7 @@ describe('a slider reaching the picture', () => {
       tint: null,
       cameraBalance: false,
       colourProfile: 'matched',
+      colourNodes: [],
     });
   });
 
@@ -1404,6 +1405,7 @@ describe('leaving the editor', () => {
       crop,
       keystone,
       editor.repair,
+      editor.colourWheel,
       loupe,
       editor.print,
       editor.device,

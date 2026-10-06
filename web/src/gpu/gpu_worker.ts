@@ -256,6 +256,22 @@ class Open {
       case 'releaseLoupe':
         this.drawing().releaseLoupe();
         return { value: null };
+      case 'attachWheel':
+        this.drawing().attachWheel(ask.canvas, ask.side);
+        return { value: null };
+      case 'drawWheel': {
+        const editor = this.drawing();
+        editor.drawWheel(ask.lightness);
+        return {
+          value: { chroma: editor.wheelChroma(), edge: [...editor.wheelEdge(ask.lightness)] },
+        };
+      }
+      case 'probeWheel': {
+        const value = (await this.drawing().probeWheel(
+          new Float32Array(ask.places),
+        )) as Float32Array<ArrayBuffer>;
+        return { value, transfer: [value.buffer] };
+      }
       case 'holdTile':
         return { value: JSON.parse(await this.drawing().holdTile(ask.request)) };
       case 'releaseTile':

@@ -7,6 +7,7 @@ import {
   BlobSchema,
   BytesSchema,
   crossing,
+  FloatsSchema,
   JsonSchema,
   NothingSchema,
   PointsSchema,
@@ -14,6 +15,7 @@ import {
   ShownSchema,
   TickedSchema,
   TileKeepSchema,
+  WheelDrawnSchema,
   type LocalOpen,
   type LocalPrepare,
   type LocalTileRequest,
@@ -21,6 +23,7 @@ import {
   type OpenStage,
   type Ticked,
   type TileKeep,
+  type WheelDrawn,
 } from './local_open';
 import { gpuThread } from '../../../gpu/gpu_thread';
 
@@ -190,6 +193,20 @@ export class LocalDecoder {
 
   releaseLoupe(): Promise<void> {
     return this.nothing({ kind: 'releaseLoupe' });
+  }
+
+  /** The colour wheel's canvas, `side` square, transferred as `attach`'s are. */
+  attachWheel(canvas: OffscreenCanvas, side: number): Promise<void> {
+    return this.nothing({ kind: 'attachWheel', canvas, side }, [canvas]);
+  }
+
+  drawWheel(lightness: number): Promise<WheelDrawn> {
+    return this.ask(WheelDrawnSchema, { kind: 'drawWheel', lightness });
+  }
+
+  /** Laid out as `HeldRaw::probe_wheel` answers. */
+  probeWheel(places: number[]): Promise<Float32Array<ArrayBuffer>> {
+    return this.ask(FloatsSchema, { kind: 'probeWheel', places });
   }
 
   /** One rendition tile, built and kept for the glass to draw instead of the editor's frame. */

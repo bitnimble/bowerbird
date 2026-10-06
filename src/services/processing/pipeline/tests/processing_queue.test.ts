@@ -189,6 +189,7 @@ describe('ProcessingService.processUnprocessed', () => {
       tint: -6,
       cameraBalance: false,
       colourProfile: 'matched',
+      colourNodes: [],
     });
     // And on both jobs, so the tile and the full view cannot disagree about the picture.
     expect(posted[1]?.adjust).toEqual(posted[0]?.adjust);

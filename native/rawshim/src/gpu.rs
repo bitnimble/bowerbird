@@ -22,6 +22,7 @@
 
 use crate::hdr_fit::{self, HdrColour};
 
+pub mod colour_wheel;
 mod print_environment;
 mod print_surface;
 
@@ -287,6 +288,7 @@ pub struct Gpu {
     print_environment: PipelineCell<print_environment::Pipelines>,
     print_material: PipelineCell<PrintMaterial>,
     lattice_bake: PipelineCell<crate::lattice::BakeKernel>,
+    colour_wheel: PipelineCell<colour_wheel::Pipelines>,
     identity_lattice: PipelineCell<(Texture, Texture)>,
     id: u64,
     pack_layout: wgpu::BindGroupLayout,
@@ -1204,6 +1206,11 @@ impl Gpu {
             .get_or_init(|| crate::lattice::BakeKernel::new(self.describing()))
     }
 
+    pub(crate) fn colour_wheel(&self) -> &colour_wheel::Pipelines {
+        self.colour_wheel
+            .get_or_init(|| colour_wheel::Pipelines::new(&self.device))
+    }
+
     /// Distinct for every device this process opens, so a resource cached against one is never
     /// handed to another.
     pub fn id(&self) -> u64 {
@@ -1810,6 +1817,7 @@ impl Gpu {
             print_environment: PipelineCell::new(),
             print_material: PipelineCell::new(),
             lattice_bake: PipelineCell::new(),
+            colour_wheel: PipelineCell::new(),
             identity_lattice: PipelineCell::new(),
             id: {
                 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1903,7 +1911,7 @@ impl Gpu {
 
 /// What `encodeLayout` names on the client, in one list so the layout and the bind group
 /// cannot drift apart.
-const ENCODE_BINDINGS: [(u32, Binding); 16] = [
+const ENCODE_BINDINGS: [(u32, Binding); 18] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -1914,9 +1922,11 @@ const ENCODE_BINDINGS: [(u32, Binding); 16] = [
     (7, Binding::Sampler),
     (9, Binding::Pyramid),
     (10, Binding::Volume),
+    (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
     (14, Binding::Storage { read_only: true }),
+    (15, Binding::Volume),
     (17, Binding::Detail),
     (19, Binding::Detail),
     (21, Binding::Detail),
@@ -1924,7 +1934,7 @@ const ENCODE_BINDINGS: [(u32, Binding); 16] = [
 
 /// `drawLayout` on the client: `ENCODE_BINDINGS` without the buffer the encode writes, and seen by
 /// the fragment stage rather than by a compute one.
-const DRAW_BINDINGS: [(u32, Binding); 15] = [
+const DRAW_BINDINGS: [(u32, Binding); 17] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -1934,9 +1944,11 @@ const DRAW_BINDINGS: [(u32, Binding); 15] = [
     (7, Binding::Sampler),
     (9, Binding::Pyramid),
     (10, Binding::Volume),
+    (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
     (14, Binding::Storage { read_only: true }),
+    (15, Binding::Volume),
     (17, Binding::Detail),
     (19, Binding::Detail),
     (21, Binding::Detail),
@@ -1945,6 +1957,11 @@ const DRAW_BINDINGS: [(u32, Binding); 15] = [
 /// What the canvas holds, and what a native draw renders into: extended-range float, because the
 /// values the fragment shader writes are display nits over an SDR white and go past one.
 const CANVAS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// Measured, not assumed (`docs/raw-edit-gpu.md` §7.1): swept against a real PQ AVIF of the same
+/// pixels, Chrome and Safari both match at 203. The *browser's* constant rather than
+/// `reference_nits`, which a library is free to move, so never read it off the grade.
+const CANVAS_WHITE_NITS: f64 = 203.0;
 
 /// The gamut and the tone mapping every canvas the editor draws on is configured with.
 ///
@@ -2216,7 +2233,7 @@ const CHROMA_MODEL_BINDINGS: [(u32, Binding); 14] = [
     (22, Binding::Written),
 ];
 
-const PEAK_BINDINGS: [(u32, Binding); 16] = [
+const PEAK_BINDINGS: [(u32, Binding); 18] = [
     (0, Binding::Uniform),
     (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
@@ -2227,9 +2244,11 @@ const PEAK_BINDINGS: [(u32, Binding); 16] = [
     (7, Binding::Sampler),
     (8, Binding::Storage { read_only: false }),
     (10, Binding::Volume),
+    (11, Binding::Volume),
     (12, Binding::Storage { read_only: true }),
     (13, Binding::Detail),
     (14, Binding::Storage { read_only: true }),
+    (15, Binding::Volume),
     (17, Binding::Detail),
     (19, Binding::Detail),
     (21, Binding::Detail),
@@ -2643,6 +2662,7 @@ pub struct Adjust {
     /// document still awaiting the match, which has no numbers to state yet.
     pub camera_balance: bool,
     pub colour_profile: ColourProfile,
+    pub colour_nodes: Vec<crate::lattice::ColourNode>,
 }
 
 /// A chroma gain on the Saturation slider's scale, where 0 leaves chroma alone and -100 is grey, in
@@ -2725,8 +2745,9 @@ impl Adjust {
         let illuminant = colour.and_then(|c| c.illuminant);
         let balance_at_camera = match (self.temperature, self.tint) {
             (None, None) => self.camera_balance || illuminant.is_none(),
-            (Some(temperature), Some(tint)) => illuminant
-                .is_some_and(|i| i.temperature == temperature && i.tint == tint),
+            (Some(temperature), Some(tint)) => {
+                illuminant.is_some_and(|i| i.temperature == temperature && i.tint == tint)
+            }
             _ => false,
         };
         Adjust {
@@ -2831,6 +2852,31 @@ impl Illuminant {
     }
 }
 
+struct NodeVolumes {
+    nodes: Vec<crate::lattice::ColourNode>,
+    pair: (Texture, wgpu::TextureView),
+    luma: (Texture, wgpu::TextureView),
+}
+
+impl NodeVolumes {
+    fn of(gpu: &Gpu, nodes: &[crate::lattice::ColourNode]) -> NodeVolumes {
+        // `has_nodes` keeps the grade from reading these when there are none.
+        let (pair, luma) = match nodes.is_empty() {
+            true => gpu.identity_volumes(),
+            false => crate::lattice::ChromaMap::of_nodes(nodes).baked(gpu),
+        };
+        NodeVolumes {
+            nodes: nodes.to_vec(),
+            pair: (pair.clone(), pair.view()),
+            luma: (luma.clone(), luma.view()),
+        }
+    }
+}
+
+fn wants_mean(grade: &Grade<'_>) -> bool {
+    grade.matched().is_some() || !grade.adjust.colour_nodes.is_empty()
+}
+
 pub struct Uploaded<'a> {
     gpu: &'a Gpu,
     print_albedo: std::cell::RefCell<Option<(f32, Buffer)>>,
@@ -2852,7 +2898,9 @@ pub struct Uploaded<'a> {
     chroma: wgpu::TextureView,
     chroma_luma: wgpu::TextureView,
     neighbourhood: wgpu::TextureView,
-    mean: wgpu::TextureView,
+    /// Whether this is `mean_frame` yet, or the black texel standing in until a grade reads it.
+    mean: std::cell::RefCell<(bool, Texture, wgpu::TextureView)>,
+    nodes: std::cell::RefCell<NodeVolumes>,
     /// The camera's own chroma blur, and the illuminant it was built under.
     ///
     /// **Rebuilt when the reader moves the balance, because it encodes `matched_scene` and the
@@ -3118,7 +3166,10 @@ impl Gpu {
 
         let (chroma, chroma_luma) = self.lattice(described);
         let neighbourhood = self.neighbourhood(described);
-        let mean = self.mean_frame(&samples, grade);
+        let mean = match wants_mean(grade) {
+            true => self.mean_frame(&samples, grade),
+            false => self.black_texel("mean_frame"),
+        };
         let curves = self.curves(described);
         let pyramid = self.own_texture(&wgpu::TextureDescriptor {
             label: Some("pyramid"),
@@ -3182,7 +3233,8 @@ impl Gpu {
             chroma: view(&chroma),
             chroma_luma: view(&chroma_luma),
             neighbourhood: view(&neighbourhood),
-            mean: view(&mean),
+            mean: std::cell::RefCell::new((wants_mean(grade), mean.clone(), view(&mean))),
+            nodes: std::cell::RefCell::new(NodeVolumes::of(self, &grade.adjust.colour_nodes)),
             chroma_smoothed: std::cell::RefCell::new((
                 Illuminant::of(grade),
                 chroma_smoothed.clone(),
@@ -3204,7 +3256,6 @@ impl Gpu {
                 chroma,
                 chroma_luma,
                 neighbourhood,
-                mean,
                 pyramid,
                 absent_texture,
             ]),
@@ -3223,23 +3274,20 @@ impl Gpu {
     pub fn lattice(&self, colour: &HdrColour) -> (Texture, Texture) {
         match &colour.chroma {
             Some(map) => map.baked(self),
-            None => self
-                .identity_lattice
-                .get_or_init(|| crate::lattice::ChromaMap::identity().baked(self))
-                .clone(),
+            None => self.identity_volumes(),
         }
+    }
+
+    fn identity_volumes(&self) -> (Texture, Texture) {
+        self.identity_lattice
+            .get_or_init(|| crate::lattice::ChromaMap::identity().baked(self))
+            .clone()
     }
 
     /// The frame's nits at the fit's own footprint (`mean_frame.slang`), where
     /// `matched_nits` reads the lattice. Built by a dispatch over the frame's own buffer,
     /// once per upload.
-    ///
-    /// One black texel where the grade carries no colour: `matched_nits` is the only
-    /// reader and `matched` gates it off, so a neutral upload skips the whole-frame pass.
     fn mean_frame(&self, samples: &Buffer, grade: &Grade<'_>) -> Texture {
-        if grade.matched().is_none() {
-            return self.black_texel("mean_frame");
-        }
         let (block, phase, cells) = mean_grid(grade);
         let size = wgpu::Extent3d {
             width: cells.0 * 2,
@@ -3927,7 +3975,7 @@ impl Uploaded<'_> {
                     chroma: &self.chroma,
                     chroma_luma: &self.chroma_luma,
                     neighbourhood: &self.neighbourhood,
-                    mean: &self.mean,
+                    mean: &self.mean_for(grade),
                     detail: &self.detail_absent,
                 },
             );
@@ -3938,6 +3986,29 @@ impl Uploaded<'_> {
             *self.chroma_smoothed.borrow_mut() = (wanted, rebuilt, view);
         }
         std::cell::Ref::map(self.chroma_smoothed.borrow(), |held| &held.2)
+    }
+
+    /// `mean_frame` for this grade, built now if the upload had no reader for it and this grade
+    /// does: an editor opened on a frame with no match, and then given colour edits.
+    fn mean_for(&self, grade: &Grade<'_>) -> std::cell::Ref<'_, wgpu::TextureView> {
+        self.mean_if(grade, wants_mean(grade))
+    }
+
+    fn mean_if(&self, grade: &Grade<'_>, wanted: bool) -> std::cell::Ref<'_, wgpu::TextureView> {
+        if !self.mean.borrow().0 && wanted {
+            let built = self.gpu.mean_frame(&self.samples, grade);
+            let view = built.view();
+            *self.mean.borrow_mut() = (true, built, view);
+        }
+        std::cell::Ref::map(self.mean.borrow(), |held| &held.2)
+    }
+
+    /// The reader's colour edits for this grade, baked again only when they changed.
+    fn nodes_for(&self, grade: &Grade<'_>) -> std::cell::Ref<'_, NodeVolumes> {
+        if self.nodes.borrow().nodes != grade.adjust.colour_nodes {
+            *self.nodes.borrow_mut() = NodeVolumes::of(self.gpu, &grade.adjust.colour_nodes);
+        }
+        self.nodes.borrow()
     }
 
     /// The blur for this grade, built the first time one asks for it.
@@ -3985,6 +4056,8 @@ impl Uploaded<'_> {
         // written after them puts the roll-off knee at the peak of a colour nobody sees.
         self.gpu.build_balance(&mut recording, edits, balance);
         let smoothed = self.chroma_smoothed_for(grade);
+        let mean = self.mean_for(grade);
+        let nodes = self.nodes_for(grade);
         let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("peak"),
             layout: &self.gpu.peak_layout,
@@ -4030,6 +4103,14 @@ impl Uploaded<'_> {
                     resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&nodes.pair.1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::TextureView(&nodes.luma.1),
+                },
+                wgpu::BindGroupEntry {
                     binding: 12,
                     resource: self.gpu.nits_of_code.as_entire_binding(),
                 },
@@ -4047,7 +4128,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
-                    resource: wgpu::BindingResource::TextureView(&self.mean),
+                    resource: wgpu::BindingResource::TextureView(&mean),
                 },
                 wgpu::BindGroupEntry {
                     binding: 21,
@@ -4201,6 +4282,8 @@ impl Uploaded<'_> {
         let (edits, balance) = self.written(grade, described);
         self.gpu.build_balance(&mut recording, edits, balance);
         let smoothed = self.chroma_smoothed_for(grade);
+        let mean = self.mean_for(grade);
+        let nodes = self.nodes_for(grade);
         let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("encode"),
             layout: &self.gpu.layout,
@@ -4246,6 +4329,14 @@ impl Uploaded<'_> {
                     resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&nodes.pair.1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::TextureView(&nodes.luma.1),
+                },
+                wgpu::BindGroupEntry {
                     binding: 12,
                     resource: self.gpu.nits_of_code.as_entire_binding(),
                 },
@@ -4263,7 +4354,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
-                    resource: wgpu::BindingResource::TextureView(&self.mean),
+                    resource: wgpu::BindingResource::TextureView(&mean),
                 },
                 wgpu::BindGroupEntry {
                     binding: 21,
@@ -4500,6 +4591,8 @@ impl Uploaded<'_> {
         let (edits, balance) = self.written(grade, described);
         self.gpu.build_balance(recording, edits, balance);
         let smoothed = self.chroma_smoothed_for(grade);
+        let mean = self.mean_for(grade);
+        let nodes = self.nodes_for(grade);
         let level = pyramid.view();
         let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("draw"),
@@ -4542,6 +4635,14 @@ impl Uploaded<'_> {
                     resource: wgpu::BindingResource::TextureView(&self.chroma_luma),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&nodes.pair.1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::TextureView(&nodes.luma.1),
+                },
+                wgpu::BindGroupEntry {
                     binding: 12,
                     resource: self.gpu.nits_of_code.as_entire_binding(),
                 },
@@ -4559,7 +4660,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
-                    resource: wgpu::BindingResource::TextureView(&self.mean),
+                    resource: wgpu::BindingResource::TextureView(&mean),
                 },
                 wgpu::BindGroupEntry {
                     binding: 21,
@@ -4762,7 +4863,7 @@ const EDIT_FIELDS: &[&str] = &[
     "hue_count",
     "chroma_count",
     "level_count",
-    "spare",
+    "has_nodes",
     "chroma_scale",
     "level_low",
     "level_scale",
@@ -4838,6 +4939,14 @@ const EDIT_FIELDS: &[&str] = &[
     "band_rows",
     "matched_temperature",
     "matched_tint",
+    "node_hue_count",
+    "node_chroma_count",
+    "node_level_count",
+    "node_neighbourhood_count",
+    "node_chroma_scale",
+    "node_level_low",
+    "node_level_scale",
+    "node_neighbourhood_scale",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -4910,18 +5019,11 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(shape.map_or(2, |s| s.hue_count as u32));
     w.push(shape.map_or(2, |s| s.chroma_count as u32));
     w.push(shape.map_or(2, |s| s.level_count as u32));
-    w.push(0);
+    w.push(u32::from(!grade.adjust.colour_nodes.is_empty()));
     f(&mut w, shape.map_or(1.0, |s| s.chroma_scale));
     f(&mut w, shape.map_or(0.0, |s| s.level_low));
     f(&mut w, shape.map_or(1.0, |s| s.level_scale));
-    // sdr_white: BT.2408 reference white, and the divisor an extended-range canvas needs.
-    //
-    // Measured rather than assumed (`docs/raw-edit-gpu.md` §7.1): swept against a real PQ AVIF
-    // of the same pixels, Chrome and Safari both match at 203. It is the *browser's* constant
-    // rather than `reference_nits`, which a library is free to move - which is why it is a
-    // literal here and not read off the grade, and why it lived on the client until the client
-    // stopped building its own uniform.
-    f(&mut w, 203.0);
+    f(&mut w, CANVAS_WHITE_NITS); // sdr_white
     let (stride, rows) = sampled_rows(grade.width, grade.height);
     w.push(stride); // row_stride
     w.push(grade.width as u32 * rows); // peak_samples
@@ -5060,6 +5162,15 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     let matched_illuminant = grade.colour.and_then(|c| c.illuminant);
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.temperature));
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.tint));
+    let nodes = crate::lattice::ChromaMap::of_nodes(&[]).shape();
+    w.push(nodes.hue_count as u32);
+    w.push(nodes.chroma_count as u32);
+    w.push(nodes.level_count as u32);
+    w.push(nodes.neighbourhood_count as u32);
+    f(&mut w, nodes.chroma_scale);
+    f(&mut w, nodes.level_low);
+    f(&mut w, nodes.level_scale);
+    f(&mut w, nodes.neighbourhood_scale);
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was

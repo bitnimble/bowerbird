@@ -5,6 +5,7 @@ import { RenditionSchema, RenditionSourceSchema } from './common';
 import type { DustSettings } from './dust_settings';
 import {
   CameraToneSchema,
+  ColourNodeSchema,
   ColourProfileSchema,
   DenoiserSchema,
   RepairSchema,
@@ -89,6 +90,7 @@ export const JobAdjustSchema = z.object({
   /** Whether a null pair is the camera match's illuminant rather than the camera's own. */
   cameraBalance: z.boolean(),
   colourProfile: ColourProfileSchema,
+  colourNodes: z.array(ColourNodeSchema),
 });
 export type JobAdjust = z.infer<typeof JobAdjustSchema>;
 

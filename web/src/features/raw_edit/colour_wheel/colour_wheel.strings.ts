@@ -1,0 +1,23 @@
+export const ColourWheelStrings = {
+  heading: () => 'Colour edits',
+  reset: () => 'Reset colour edits',
+  wheel: () => 'Colour wheel',
+  lightness: () => 'Lightness',
+  shadows: () => 'Shadows',
+  darks: () => 'Darks',
+  midtones: () => 'Midtones',
+  lights: () => 'Lights',
+  highlights: () => 'Highlights',
+  all: () => 'All',
+  channelEdited: (channel: string) => `${channel}, edited`,
+  edit: (hue: number) => `Colour edit at hue ${Math.round(hue)}°`,
+  newColour: () => 'New colour',
+  hue: () => 'Hue',
+  // The edited colour's own, apart from the Saturation slider that moves the whole photo.
+  saturation: () => 'Saturation',
+  hueRange: () => 'Hue range',
+  saturationRange: () => 'Saturation range',
+  lightnessRange: () => 'Lightness range',
+  remove: () => 'Remove colour edit',
+  hint: () => 'Select a colour on the wheel to edit it.',
+};

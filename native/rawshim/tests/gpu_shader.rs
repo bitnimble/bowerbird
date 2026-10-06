@@ -107,7 +107,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
     words.push(shape.map_or(2, |s| s.hue_count as u32));
     words.push(shape.map_or(2, |s| s.chroma_count as u32));
     words.push(shape.map_or(2, |s| s.level_count as u32));
-    words.push(0); // spare
+    words.push(0); // has_nodes
     f_push(&mut words, shape.map_or(1.0, |s| s.chroma_scale as f32));
     f_push(&mut words, shape.map_or(0.0, |s| s.level_low as f32));
     f_push(&mut words, shape.map_or(1.0, |s| s.level_scale as f32));
@@ -189,6 +189,15 @@ fn uniform(colour: &HdrColour, peak_samples: u32, neighbourhood: f32) -> Vec<u8>
     words.push(1); // band_rows: the one output row
     f_push(&mut words, 0.0); // matched_temperature: no balance of the match's own
     f_push(&mut words, 0.0); // matched_tint
+    let nodes = ChromaMap::of_nodes(&[]).shape();
+    words.push(nodes.hue_count as u32);
+    words.push(nodes.chroma_count as u32);
+    words.push(nodes.level_count as u32);
+    words.push(nodes.neighbourhood_count as u32);
+    f_push(&mut words, nodes.chroma_scale as f32);
+    f_push(&mut words, nodes.level_low as f32);
+    f_push(&mut words, nodes.level_scale as f32);
+    f_push(&mut words, nodes.neighbourhood_scale as f32);
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
     // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
     while words.len() % 4 != 0 {

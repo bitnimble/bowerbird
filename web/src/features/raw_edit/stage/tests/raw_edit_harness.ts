@@ -13,6 +13,7 @@ import type {
 } from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
+import { ColourWheelStore } from '../../colour_wheel/colour_wheel_store';
 import type { PrinterProfileSource } from '../../print/print_presenter';
 import { PrintStore } from '../../print/print_store';
 import type { PrintScene } from '../../print/print_scene';
@@ -347,6 +348,31 @@ export class FakeDecoder {
     return Promise.resolve(new Blob([new Uint8Array(1)], { type: 'image/png' }));
   }
 
+  wheelSide: number | null = null;
+  readonly wheelDrawnAt: number[] = [];
+  readonly wheelProbes: number[][] = [];
+  /** What a probe answers: one dot per block, then each place moved as `wheelMoves` says. */
+  wheelDots: number[] = [55, 4, -3, 1];
+  wheelMoves = (place: number[]): number[] => place;
+
+  attachWheel(_canvas: OffscreenCanvas, side: number): Promise<void> {
+    this.wheelSide = side;
+    return Promise.resolve();
+  }
+
+  drawWheel(lightness: number): Promise<{ chroma: number; edge: number[] }> {
+    this.wheelDrawnAt.push(lightness);
+    return Promise.resolve({ chroma: 40, edge: Array.from({ length: 360 }, () => 30) });
+  }
+
+  probeWheel(places: number[]): Promise<Float32Array<ArrayBuffer>> {
+    this.wheelProbes.push(places);
+    const moved: number[] = [];
+    for (let at = 0; at < places.length; at += 4)
+      moved.push(...this.wheelMoves(places.slice(at, at + 4)));
+    return Promise.resolve(new Float32Array([...this.wheelDots, ...moved]));
+  }
+
   /** The key every close kept the stage under, which the next open adopts. */
   readonly keptUnder: (number | null)[] = [];
 
@@ -366,6 +392,7 @@ export type Editor = {
   crop: CropStore;
   keystone: KeystoneStore;
   repair: RepairStore;
+  colourWheel: ColourWheelStore;
   loupe: LoupeStore;
   print: PrintStore;
   device: DeviceSettingsStore;
@@ -403,6 +430,7 @@ export function openEditor(): Editor {
   const crop = new CropStore(stage, edit);
   const keystone = new KeystoneStore(stage, edit, crop);
   const repair = new RepairStore(edit, keystone);
+  const colourWheel = new ColourWheelStore(edit);
   const loupe = new LoupeStore(crop, keystone, repair);
   const print = new PrintStore();
   const device = new DeviceSettingsStore();
@@ -419,6 +447,7 @@ export function openEditor(): Editor {
     crop,
     keystone,
     repair,
+    colourWheel,
     loupe,
     print,
     device,
@@ -429,6 +458,7 @@ export function openEditor(): Editor {
       crop,
       keystone,
       repair,
+      colourWheel,
       loupe,
       print,
       device,

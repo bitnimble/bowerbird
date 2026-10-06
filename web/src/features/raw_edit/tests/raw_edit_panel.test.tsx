@@ -16,6 +16,7 @@ import { CropStore } from '../crop/crop_store';
 import { EditStore } from '../edit/edit_store';
 import { KeystoneStore } from '../keystone/keystone_store';
 import { RepairStore } from '../repair/repair_store';
+import { ColourWheelStore } from '../colour_wheel/colour_wheel_store';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
 import { StageStore } from '../stage/stage_store';
 
@@ -47,6 +48,7 @@ function recording(): { presenter: RawEditPresenter; calls: { name: string; valu
     clearKeystone: record('clearKeystone'),
     setCropToFit: record('setCropToFit'),
     print: {},
+    colourWheel: { key: 'wheel', attach: () => {} },
   } as unknown as RawEditPresenter;
   return { presenter, calls };
 }
@@ -97,6 +99,7 @@ function open(
       crop={crop}
       keystone={keystone}
       repair={repair}
+      colourWheel={new ColourWheelStore(edit)}
       print={new PrintStore()}
       presenter={presenter}
     />,
@@ -253,6 +256,7 @@ describe('the edit panel', () => {
           crop={crop}
           keystone={keystone}
           repair={repair}
+          colourWheel={new ColourWheelStore(edit)}
           print={print}
           presenter={recording().presenter}
         />,

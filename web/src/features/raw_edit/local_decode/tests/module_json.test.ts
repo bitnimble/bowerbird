@@ -90,6 +90,30 @@ describe('what a tick carries', () => {
       tint: null,
       cameraBalance: true,
       colourProfile: 'none',
+      colourNodes: [
+        {
+          hue: 41.5,
+          chroma: 12.25,
+          lightness: 55,
+          targetHue: 47,
+          targetChroma: 9.5,
+          targetLightness: 60,
+          hueReach: 30,
+          chromaReach: 8,
+          lightnessReach: 20,
+        },
+        {
+          hue: 220,
+          chroma: 3.5,
+          lightness: null,
+          targetHue: 205,
+          targetChroma: 4.75,
+          targetLightness: 52,
+          hueReach: 15,
+          chromaReach: 2.5,
+          lightnessReach: 0,
+        },
+      ],
     };
     expect(adjust).toEqual(sample.adjust);
   });

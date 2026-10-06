@@ -30,6 +30,7 @@ export function adjustOf(doc: EditDoc): JobAdjust {
     tint: doc.tint,
     cameraBalance: doc.awaitsCameraMatch,
     colourProfile: doc.colourProfile,
+    colourNodes: doc.colourNodes,
   };
 }
 

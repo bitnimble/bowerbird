@@ -243,13 +243,6 @@ float4 vs(uint i : SV_VertexID) : SV_Position
     return float4(corners[i], 0.0, 1.0);
 }
 
-/// What an extended-range canvas takes: Display P3 over the browser's own reference white,
-/// which is a constant rather than this target's peak (§7.1).
-Colour<P3Linear> on_the_canvas(Colour<DisplayNits> nits)
-{
-    return measured<P3Linear>(mul(R2020_TO_P3, nits.v) / edit.sdr_white);
-}
-
 /// The same picture through what an sRGB rendition can hold, and back out to the canvas.
 ///
 /// `Signal` then `SrgbLinear`, which is the pair `coded_at` crosses for the file itself, in that
@@ -281,7 +274,7 @@ float4 fs(float4 pos : SV_Position) : SV_Target
 {
     let scene = covered(pos.xy);
     let at = frame_at(pos.xy);
-    if (edit.output != OUTPUT_SRGB) { return float4(srgb_oetf_signed(on_the_canvas(display_nits(scene, at)).v), 1.0); }
+    if (edit.output != OUTPUT_SRGB) { return float4(srgb_oetf_signed(on_the_canvas(display_nits(scene, at), edit.sdr_white).v), 1.0); }
     return float4(srgb_oetf_signed(proofed(srgb_share(scene, at)).v), 1.0);
 }
 
@@ -379,7 +372,7 @@ float4 fs_print_flat(float4 pos : SV_Position) : SV_Target
     let shape = float2(float(edit.output_width), float(edit.output_height));
     if (any(pixel < float2(0.0)) || any(pixel > shape)) { return float4(0.0, 0.0, 0.0, 1.0); }
     let reflectance = print_reflectance(print_ink(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)), false);
-    return float4(srgb_oetf_signed(on_the_canvas(measured<DisplayNits>(reflectance * edit.peak)).v), 1.0);
+    return float4(srgb_oetf_signed(on_the_canvas(measured<DisplayNits>(reflectance * edit.peak), edit.sdr_white).v), 1.0);
 }
 
 bool print_inked(PrintHit hit)
@@ -495,7 +488,7 @@ Colour<DisplayNits> print_scene_nits(float2 pos)
 float4 fs_print(float4 pos : SV_Position) : SV_Target
 {
     let nits = print_displayed(print_nits(pos.xy));
-    return float4(srgb_oetf_signed(on_the_canvas(nits).v), 1.0);
+    return float4(srgb_oetf_signed(on_the_canvas(nits, edit.sdr_white).v), 1.0);
 }
 
 [shader("fragment")]

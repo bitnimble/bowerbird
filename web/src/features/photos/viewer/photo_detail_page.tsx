@@ -27,6 +27,7 @@ import { EditStore } from '../../raw_edit/edit/edit_store';
 import { KeystoneStore } from '../../raw_edit/keystone/keystone_store';
 import { LoupeStore } from '../../raw_edit/loupe/loupe_store';
 import { RepairStore } from '../../raw_edit/repair/repair_store';
+import { ColourWheelStore } from '../../raw_edit/colour_wheel/colour_wheel_store';
 import { PrintStore } from '../../raw_edit/print/print_store';
 import { PrintControls } from '../../raw_edit/print/print_controls';
 import { RawEditPresenter } from '../../raw_edit/stage/raw_edit_presenter';
@@ -78,6 +79,7 @@ type EditVisit = {
   crop: CropStore;
   keystone: KeystoneStore;
   repair: RepairStore;
+  colourWheel: ColourWheelStore;
   loupe: LoupeStore;
   print: PrintStore;
 };
@@ -203,6 +205,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       crop,
       keystone,
       repair,
+      colourWheel: new ColourWheelStore(edit),
       loupe: new LoupeStore(crop, keystone, repair),
       print: new PrintStore(),
     };
@@ -228,6 +231,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       visit.crop,
       visit.keystone,
       visit.repair,
+      visit.colourWheel,
       visit.loupe,
       visit.print,
       device,
@@ -397,6 +401,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             crop={session.crop}
             keystone={session.keystone}
             repair={session.repair}
+            colourWheel={session.colourWheel}
             print={session.print}
             presenter={session.presenter}
             mobile={mobile || touch}

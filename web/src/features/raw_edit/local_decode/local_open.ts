@@ -127,6 +127,14 @@ export const TickedSchema = z.object({
 });
 export type Ticked = z.infer<typeof TickedSchema>;
 
+/** The colour wheel at one lightness: its rim's chroma, and the displayable chroma per degree of hue. */
+export const WheelDrawnSchema = z.object({ chroma: z.number(), edge: z.array(z.number()) });
+export type WheelDrawn = z.infer<typeof WheelDrawnSchema>;
+
+export const FloatsSchema = z.custom<Float32Array<ArrayBuffer>>(
+  (value) => value instanceof Float32Array && value.buffer instanceof ArrayBuffer,
+);
+
 /** `open_stage::Stage`, as the module reports each one beginning. */
 export const OpenStageSchema = z.enum([
   'decoding',
@@ -201,6 +209,10 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     height: z.number(),
   }),
   z.object({ kind: z.literal('releaseLoupe') }),
+  z.object({ kind: z.literal('attachWheel'), canvas: CanvasSchema, side: z.number() }),
+  z.object({ kind: z.literal('drawWheel'), lightness: z.number() }),
+  /** ZCAM lightness, opponent pair and weight, flattened, for the profile's push at each. */
+  z.object({ kind: z.literal('probeWheel'), places: z.array(z.number()) }),
   z.object({ kind: z.literal('holdTile'), request: JsonSchema }),
   z.object({ kind: z.literal('releaseTile') }),
   z.object({ kind: z.literal('analysis') }),

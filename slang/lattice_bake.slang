@@ -39,6 +39,8 @@ struct Params {
 [vk::binding(3, 0)] RWStructuredBuffer<float> sum_out;
 [vk::binding(4, 0)] StructuredBuffer<float> first_sum;
 [vk::binding(5, 0)] StructuredBuffer<float> second_sum;
+/// `kernels`, each generator replaced by `interpolate`.
+[vk::binding(6, 0)] RWStructuredBuffer<float> solved;
 /// `(a, b, c, d)`: the corrected chroma pair's 2x2.
 [vk::image_format("rgba16f")]
 [vk::binding(1, 0)] WTexture3D<float4> chroma_out;
@@ -236,6 +238,62 @@ void sum(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_G
     sum_out[out + 6] = g[2].z;
     sum_out[out + 7] = to_lightness.x;
     sum_out[out + 8] = to_lightness.y;
+}
+
+/// `lattice::MOST_NODES`.
+static const uint MOST_NODES = 32;
+static const uint GENERATOR_WORDS = 7;
+/// On the normal equations' diagonal: two kernels at nearly one place with different moves would
+/// otherwise solve to huge opposite generators.
+static const float RIDGE = 1e-4;
+
+groupshared float reached[MOST_NODES][MOST_NODES];
+groupshared float normal[MOST_NODES][MOST_NODES];
+groupshared float moved[MOST_NODES][GENERATOR_WORDS];
+
+/// Generators whose sum at each kernel's own centre is the generator that kernel was given, so
+/// overlapping kernels each still take their own colour exactly where they were asked to.
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void interpolate()
+{
+    let n = min(pc.kernels, MOST_NODES);
+    for (uint i = 0; i < n; i++) {
+        let base = i * KERNEL_WORDS + CENTRE;
+        let at = float4(kernels[base], kernels[base + 1], kernels[base + 2], kernels[base + 3]);
+        for (uint j = 0; j < n; j++) { reached[i][j] = weight_of(j, at); }
+    }
+    for (uint i = 0; i < n; i++) {
+        for (uint j = 0; j < n; j++) {
+            var sum = i == j ? RIDGE : 0.0;
+            for (uint k = 0; k < n; k++) { sum += reached[k][i] * reached[k][j]; }
+            normal[i][j] = sum;
+        }
+        for (uint w = 0; w < GENERATOR_WORDS; w++) {
+            var sum = 0.0;
+            for (uint k = 0; k < n; k++) { sum += reached[k][i] * kernels[k * KERNEL_WORDS + GENERATOR + w]; }
+            moved[i][w] = sum;
+        }
+    }
+    for (uint p = 0; p < n; p++) {
+        for (uint r = p + 1; r < n; r++) {
+            let f = normal[r][p] / normal[p][p];
+            for (uint c = p; c < n; c++) { normal[r][c] -= f * normal[p][c]; }
+            for (uint w = 0; w < GENERATOR_WORDS; w++) { moved[r][w] -= f * moved[p][w]; }
+        }
+    }
+    for (uint q = n; q > 0; q--) {
+        let p = q - 1;
+        for (uint w = 0; w < GENERATOR_WORDS; w++) {
+            var sum = moved[p][w];
+            for (uint c = p + 1; c < n; c++) { sum -= normal[p][c] * moved[c][w]; }
+            moved[p][w] = sum / normal[p][p];
+        }
+    }
+    for (uint k = 0; k < n; k++) {
+        for (uint w = 0; w < KERNEL_WORDS; w++) { solved[k * KERNEL_WORDS + w] = kernels[k * KERNEL_WORDS + w]; }
+        for (uint w = 0; w < GENERATOR_WORDS; w++) { solved[k * KERNEL_WORDS + GENERATOR + w] = moved[k][w]; }
+    }
 }
 
 /// Word `w` of texel `t`'s generator, both sums at their scales.

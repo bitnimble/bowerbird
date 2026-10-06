@@ -125,6 +125,29 @@ export const RepairSchema: z.ZodType<Repair> = z.object({
 });
 export type { Repair };
 
+export const COLOUR_NODES_MAX = 32;
+const HueSchema = z.number().min(0).max(360);
+const ChromaSchema = z.number().min(0).max(100);
+const LightnessSchema = z.number().min(0).max(300);
+
+/**
+ * A colour the reader moved, in ZCAM lightness, chroma and hue degrees (`lattice::ColourNode`):
+ * what it reaches is moved with it, fading out by the reaches. A null lightness reaches every one.
+ */
+export const ColourNodeSchema = z.object({
+  hue: HueSchema,
+  chroma: ChromaSchema,
+  lightness: LightnessSchema.nullable(),
+  targetHue: HueSchema,
+  targetChroma: ChromaSchema,
+  targetLightness: LightnessSchema,
+  hueReach: z.number().min(0).max(180),
+  /** Outward from `chroma`. */
+  chromaReach: ChromaSchema,
+  lightnessReach: LightnessSchema,
+});
+export type ColourNode = z.infer<typeof ColourNodeSchema>;
+
 export const EditDocSchema = z
   .object({
     // A number with a default, not `z.literal(1)`. A literal rejects a document
@@ -156,6 +179,7 @@ export const EditDocSchema = z
     // renaming it *here* would cost the import its identity mapping instead.
     saturation: z.number().int().min(-100).max(100).default(0),
     colourProfile: ColourProfileSchema.default('matched'),
+    colourNodes: z.array(ColourNodeSchema).max(COLOUR_NODES_MAX).default([]),
     /**
      * Set on a document a merge wrote, until the camera match fills in its exposure, saturation
      * and curve: meanwhile each of the three still at its default renders as the camera's.

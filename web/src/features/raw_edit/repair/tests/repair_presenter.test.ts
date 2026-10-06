@@ -19,6 +19,7 @@ import {
 } from '../../stage/tests/raw_edit_harness';
 import { MOVED_SOLVE_QUIET_MS } from '../repair_presenter';
 import { RepairStore } from '../repair_store';
+import { ColourWheelStore } from '../../colour_wheel/colour_wheel_store';
 import { PrintStore } from '../../print/print_store';
 import { DeviceSettingsStore } from '../../../settings/device_settings_store';
 
@@ -84,6 +85,7 @@ function rememberedRepair(): RepairStore {
     nextCrop,
     nextKeystone,
     nextRepair,
+    new ColourWheelStore(nextEdit),
     nextLoupe,
     new PrintStore(),
     new DeviceSettingsStore(),
