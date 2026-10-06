@@ -1697,6 +1697,60 @@ fn a_colour_edit_moves_what_it_reaches_and_nothing_else() {
 }
 
 #[test]
+fn a_colour_edit_turns_a_colour_to_the_hue_it_names() {
+    let Some(gpu) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so the colour edits were not run.");
+        return;
+    };
+    let frame = blue_beside_red();
+    let hue_of = |c: [f64; 3]| {
+        let [_, a, b] = rawshim::lattice::opponent_of(c.map(Light::measured));
+        (b.atan2(a).to_degrees().rem_euclid(360.0), a.hypot(b))
+    };
+    let (hue, chroma) = hue_of(RED.map(|v| v / 20000.0));
+    const TURNED_TO: f64 = 140.0;
+    let turned = rawshim::gpu::Adjust {
+        colour_nodes: vec![rawshim::lattice::ColourNode {
+            hue,
+            chroma,
+            lightness: None,
+            target_hue: TURNED_TO,
+            target_chroma: chroma,
+            target_lightness: rawshim::lattice::ANY_LIGHTNESS_AT,
+            hue_reach: 40.0,
+            chroma_reach: 20.0,
+            lightness_reach: 0.0,
+        }],
+        ..rawshim::gpu::Adjust::none()
+    };
+    let identity = HdrColour::identity();
+    for (arm, colour) in [("neutral", None), ("matched", Some(&identity))] {
+        let graded = |adjust: rawshim::gpu::Adjust| {
+            graded_frame_as(
+                gpu,
+                frame.clone(),
+                PATCHES_SIDE,
+                PATCHES_SIDE,
+                adjust,
+                colour,
+            )
+        };
+        let mean = |pixels: Vec<[f64; 3]>| -> [f64; 3] {
+            std::array::from_fn(|c| pixels.iter().map(|p| p[c]).sum::<f64>() / pixels.len() as f64)
+        };
+        let was = mean(patch_interior(&graded(rawshim::gpu::Adjust::none()), false));
+        let now = mean(patch_interior(&graded(turned.clone()), false));
+        let (was_hue, _) = hue_of(was);
+        let (now_hue, _) = hue_of(now);
+        let off = (now_hue - TURNED_TO).rem_euclid(360.0);
+        assert!(
+            off.min(360.0 - off) < 10.0,
+            "{arm}: red at hue {was_hue:.0} asked to turn to {TURNED_TO} came out at {now_hue:.0}"
+        );
+    }
+}
+
+#[test]
 fn a_node_on_a_photographs_dot_moves_that_colour_to_its_target() {
     let Some(gpu) = rawshim::gpu::device() else {
         eprintln!("SKIPPED: no adapter answered, so the colour probe was not run.");

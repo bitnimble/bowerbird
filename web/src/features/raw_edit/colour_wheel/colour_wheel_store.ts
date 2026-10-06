@@ -1,7 +1,19 @@
 import { computed, observable } from 'mobx';
 import type { ColourNode } from '../../../../../src/schemas/photo_edits';
 import type { EditStore } from '../edit/edit_store';
-import { type Channel, type Hued, inChannel, lightnessOf, nearestChannel } from './colour_wheel';
+import type { WheelDrawn } from '../local_decode/local_open';
+import {
+  type Channel,
+  type Hued,
+  channelOf,
+  inChannel,
+  lightnessOf,
+  nearestChannel,
+  opponent,
+} from './colour_wheel';
+
+const FIELD_SECTORS = 12;
+const FIELD_LEAST_SHARE = 0.2;
 
 /** Where the profile takes one place on the wheel, at a channel's lightness. */
 export interface FieldArrow {
@@ -18,12 +30,11 @@ export interface Dot extends Hued {
 export class ColourWheelStore {
   constructor(private readonly edit: EditStore) {}
 
-  @observable accessor channel: Channel = 55;
+  @observable accessor channel: Channel = null;
 
   @observable accessor selectedIndex: number | null = null;
 
-  /** The chroma at the wheel's rim, and the displayable chroma at each degree, at the channel. */
-  @observable.ref accessor drawn: { chroma: number; edge: readonly number[] } | null = null;
+  @observable.ref accessor drawn: WheelDrawn | null = null;
 
   @observable.ref accessor dots: readonly Dot[] = [];
 
@@ -44,7 +55,7 @@ export class ColourWheelStore {
   }
 
   @computed get edited(): ReadonlySet<Channel> {
-    return new Set(this.nodes.map((node) => node.lightness));
+    return new Set(this.nodes.map(channelOf));
   }
 
   @computed get channelDots(): readonly Dot[] {
@@ -55,6 +66,22 @@ export class ColourWheelStore {
 
   @computed get channelField(): readonly FieldArrow[] {
     const lightness = lightnessOf(this.channel);
-    return this.field.filter((arrow) => arrow.lightness === lightness);
+    const strongest = new Map<number, { arrow: FieldArrow; push: number }>();
+    for (const arrow of this.field) {
+      if (arrow.lightness !== lightness) continue;
+      const sector = Math.floor(arrow.from.hue / (360 / FIELD_SECTORS)) % FIELD_SECTORS;
+      const push = pushOf(arrow);
+      if (push > (strongest.get(sector)?.push ?? 0)) strongest.set(sector, { arrow, push });
+    }
+    const most = Math.max(0, ...[...strongest.values()].map(({ push }) => push));
+    return [...strongest.values()]
+      .filter(({ push }) => push >= most * FIELD_LEAST_SHARE)
+      .map(({ arrow }) => arrow);
   }
+}
+
+function pushOf({ from, to }: FieldArrow): number {
+  const [a, b] = opponent(from);
+  const [toA, toB] = opponent(to);
+  return Math.hypot(toA - a, toB - b);
 }

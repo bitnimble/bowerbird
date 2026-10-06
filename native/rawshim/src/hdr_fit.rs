@@ -4537,14 +4537,14 @@ fn sampled_at_found(
 ///
 /// Taken from a percentile so a single outlier cannot stretch the grid, floored so a frame of
 /// snow and sky cannot collapse the axis onto its own noise, and capped at the chroma of
-/// Rec.2020's own red at diffuse white: past it live only colours the camera clipped on, where no
-/// node has data and the edge hold is the answer anyway.
+/// Rec.2020's widest primary at diffuse white: past it live only colours the camera clipped on,
+/// where no node has data and the edge hold is the answer anyway.
 async fn chroma_span(
     gpu: &'static crate::gpu::Gpu,
     sharp: &Source,
     evaluated: &crate::gpu::Buffer,
 ) -> Option<f64> {
-    let widest = crate::lattice::chroma_of(crate::lattice::WHITE_RED);
+    let widest = crate::lattice::widest_chroma();
     let samples = sharp.pixels();
     if samples < MIN_SPAN_SAMPLES {
         return Some(widest.sqrt());
@@ -8785,10 +8785,8 @@ mod tests {
                 at,
             ))
             .expect("ranked");
-            // The device ranks its own `f32` reading of each sample, the host its `f64` one,
-            // and the transfer raises to a power near a hundred, which multiplies `f32`'s
-            // rounding. Chroma's 0.74 power of the opponent length then spreads that over a
-            // near-neutral sample: 1e-5 of length is 0.3% of the chroma at the low rank.
+            // f32 device vs f64 host through a ~100th-power transfer, then chroma's 0.74 power
+            // near neutral.
             assert!(
                 (picked - chroma[at]).abs() < 5e-3 * chroma[at],
                 "rank {at}: {picked} against {}",

@@ -1920,10 +1920,17 @@ impl HeldRaw {
         self.attach(&self.wheel, Some(canvas), side, side)
     }
 
+    /// `selected` is a `lattice::ColourNode` as JSON.
     #[wasm_bindgen(js_name = drawWheel)]
-    pub fn draw_wheel(&self, lightness: f64) -> Result<(), JsValue> {
+    pub fn draw_wheel(&self, lightness: f64, selected: Option<String>) -> Result<(), JsValue> {
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
+        let selected = selected
+            .map(|node| serde_json::from_str(&node))
+            .transpose()
+            .map_err(|e| {
+                JsValue::from_str(&format!("rawshim: this colour node is malformed: {e}"))
+            })?;
         let wheel = self.wheel.borrow();
         let Some(stage) = wheel.as_ref() else {
             return Ok(());
@@ -1931,7 +1938,8 @@ impl HeldRaw {
         let backdrop = crate::gpu::colour_wheel::Backdrop {
             lightness,
             side: stage.size().0,
-            reference: self.reference_nits().raw(),
+            reference: self.reference_nits(),
+            selected,
         };
         crate::gpu::colour_wheel::present_backdrop(gpu, stage, &backdrop);
         refused()
@@ -1942,14 +1950,11 @@ impl HeldRaw {
         crate::gpu::colour_wheel::wheel_chroma()
     }
 
+    /// `display_peak` in nits, none for a display showing nothing past SDR white.
     #[wasm_bindgen(js_name = wheelEdge)]
-    pub fn wheel_edge(&self, lightness: f64) -> Vec<f64> {
-        let reference = self.reference_nits();
-        let headroom = self
-            .display_peak
-            .get()
-            .map_or(1.0, |peak| peak.raw() / reference.raw());
-        crate::gpu::colour_wheel::displayable(lightness, headroom)
+    pub fn wheel_edge(&self, lightnesses: Vec<f64>, display_peak: Option<f64>) -> Vec<f64> {
+        let headroom = display_peak.map_or(1.0, |peak| peak / self.reference_nits().raw());
+        crate::gpu::colour_wheel::widest_displayable(&lightnesses, headroom)
     }
 
     /// The photograph's colours where colour edits read them, then where the profile takes each of

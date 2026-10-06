@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import type { DustSettings } from '../../../../../src/schemas/dust_settings';
-import { type Denoiser, DenoiserSchema, type Repair } from '../../../../../src/schemas/photo_edits';
+import {
+  type ColourNode,
+  type Denoiser,
+  DenoiserSchema,
+  type Repair,
+} from '../../../../../src/schemas/photo_edits';
 import {
   DustSettingsSchema,
   type JobAdjust,
@@ -131,6 +136,13 @@ export type Ticked = z.infer<typeof TickedSchema>;
 export const WheelDrawnSchema = z.object({ chroma: z.number(), edge: z.array(z.number()) });
 export type WheelDrawn = z.infer<typeof WheelDrawnSchema>;
 
+export interface WheelDrawing {
+  lightness: number;
+  edgeAt: number[];
+  displayPeak: number | null;
+  selected: ColourNode | null;
+}
+
 export const FloatsSchema = z.custom<Float32Array<ArrayBuffer>>(
   (value) => value instanceof Float32Array && value.buffer instanceof ArrayBuffer,
 );
@@ -210,9 +222,20 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('releaseLoupe') }),
   z.object({ kind: z.literal('attachWheel'), canvas: CanvasSchema, side: z.number() }),
-  z.object({ kind: z.literal('drawWheel'), lightness: z.number() }),
+  z.object({
+    kind: z.literal('drawWheel'),
+    lightness: z.number(),
+    edgeAt: z.array(z.number()),
+    displayPeak: z.number().nullable(),
+    selected: z.string().nullable(),
+  }),
+  z.object({
+    kind: z.literal('shadeWheel'),
+    lightness: z.number(),
+    selected: z.string().nullable(),
+  }),
   /** ZCAM lightness, opponent pair and weight, flattened, for the profile's push at each. */
-  z.object({ kind: z.literal('probeWheel'), places: z.array(z.number()) }),
+  z.object({ kind: z.literal('probeWheel'), places: z.array(z.number()), adjust: z.string() }),
   z.object({ kind: z.literal('holdTile'), request: JsonSchema }),
   z.object({ kind: z.literal('releaseTile') }),
   z.object({ kind: z.literal('analysis') }),

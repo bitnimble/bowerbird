@@ -46,7 +46,6 @@ public struct Edit {
     public uint hue_count;
     public uint chroma_count;
     public uint level_count;
-    /// Whether the reader has made colour edits (`colour::moved_by_reader`).
     public uint has_nodes;
     public float chroma_scale;
     public float level_low;

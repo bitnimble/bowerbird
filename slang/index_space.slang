@@ -11,16 +11,15 @@ import prelude;
 /// Diffuse white of `Rendered`, in the nits ZCAM is defined over: BT.2408's reference white.
 public static const float INDEX_WHITE_NITS = 203.0;
 
-/// Rec.2020 to Jzazbz's cone space, which ZCAM shares, through XYZ and the `b`/`g` blue
-/// correction, and back.
+/// `lattice::R2020_TO_LMS`, and back.
 public static const float3x3 R2020_TO_LMS = float3x3(
-    0.530003576, 0.355703633, 0.086089990,
+    0.530258488, 0.355874713, 0.086131396,
     0.289388269, 0.525394823, 0.157481505,
-    0.091098083, 0.147587582, 0.734233807);
+    0.091036765, 0.147488240, 0.733739592);
 public static const float3x3 LMS_TO_R2020 = float3x3(
-    2.990669997, -2.049742417, 0.088976794,
-    -1.634525136, 3.145628209, -0.483036886,
-    -0.042505112, -0.377983217, 1.448019175);
+    2.989232288, -2.049742414, 0.089036725,
+    -1.633739368, 3.145628206, -0.483362238,
+    -0.042484682, -0.377983214, 1.448994496);
 /// The coded cones to `Iz`, before `ZCAM_EPSILON`, and the two opponent axes.
 public static const float3x3 LMS_TO_IAB = float3x3(
     0.0, 1.0, 0.0,

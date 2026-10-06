@@ -81,6 +81,9 @@ struct Stages<'a> {
     shadows: f64,
     texture: f64,
     clarity: f64,
+    nodes: &'a [rawshim::lattice::ColourNode],
+    /// The colour wheel's dots under this rectangle, as fractions of the frame.
+    probe: Option<[f64; 4]>,
     /// The fitted curves' slope, expanded about their own middle. A regression whose predictor
     /// carries noise reports a slope biased toward flat, and the curves have no de-attenuation
     /// where the lattice has one, so this asks whether that is what the tone deficit is.
@@ -333,6 +336,7 @@ fn graded(
                 rawshim::gpu::ColourProfile::Matched
             },
             camera_balance: true,
+            colour_nodes: stages.nodes.to_vec(),
             ..rawshim::gpu::Adjust::none()
         },
         // The frame's own, as `job::run` carries it: without it the neutral arm white-balances
@@ -348,7 +352,55 @@ fn graded(
         intent: stages.intent,
         ..scene.gpu_grade(cut.width, cut.height, output)
     };
+    let mut dots = Vec::new();
+    if let Some([x0, y0, x1, y1]) = stages.probe {
+        let uploaded = hdr::upload_cut(gpu, &cut, &grade);
+        let probed = pollster::block_on(uploaded.colour_probe(&grade, &[])).expect("the probe");
+        let across = rawshim::gpu::colour_wheel::DOTS_ACROSS;
+        let down = probed.scatter.len() / across;
+        for (k, [lightness, a, b, _]) in probed.scatter.iter().enumerate() {
+            let (x, y) = (
+                (k % across) as f64 / across as f64,
+                (k / across) as f64 / down as f64,
+            );
+            if x >= x0 && x < x1 && y >= y0 && y < y1 {
+                // Cell centres, as `colour_probe.slang`'s `scatter` reads them.
+                let pixel = (
+                    ((k % across) as f64 + 0.5) * cut.width as f64 / across as f64,
+                    ((k / across) as f64 + 0.5) * cut.height as f64 / down as f64,
+                );
+                dots.push((x, y, pixel, [*lightness, *a, *b].map(f64::from)));
+            }
+        }
+    }
     let mut coded = hdr::encode_cut(gpu, &cut, &grade);
+    let hue_chroma = |[_, a, b]: [f64; 3]| (b.atan2(a).to_degrees().rem_euclid(360.0), a.hypot(b));
+    for (x, y, (px, py), dot) in dots {
+        let (hue, chroma) = hue_chroma(dot);
+        let mut line = format!(
+            "  dot {x:.2},{y:.2} lightness {:.1} hue {hue:.0} chroma {chroma:.1}",
+            dot[0]
+        );
+        if stages.domain == Domain::Pq {
+            let at = (py as usize * cut.width + px as usize) * 3;
+            let shown = std::array::from_fn(|c| {
+                let signal =
+                    rawshim::light::Light::measured(f64::from(coded[at + c]) / f64::from(u16::MAX));
+                let nits: rawshim::light::Light<rawshim::light::DisplayNits> =
+                    rawshim::tone::pq_inv(signal);
+                rawshim::light::Light::measured(
+                    nits.raw() / options.grade.reference_white_nits.raw(),
+                )
+            });
+            let shown = rawshim::lattice::opponent_of(shown);
+            let (hue, chroma) = hue_chroma(shown);
+            line += &format!(
+                " | shown lightness {:.1} hue {hue:.0} chroma {chroma:.1}",
+                shown[0]
+            );
+        }
+        eprintln!("{line}");
+    }
     if stages.domain == Domain::Pq {
         // What `job::run` reads to pick this still's chroma, so a render here says which way a
         // rendition of it would have gone.
@@ -448,6 +500,8 @@ fn main() {
         shadows: 0.0,
         texture: 0.0,
         clarity: 0.0,
+        nodes: &[],
+        probe: None,
         curve_gain: 1.0,
         defocus: None,
         ev: None,
@@ -608,6 +662,21 @@ fn main() {
                     "pmrid" => rawshim::galosh::Denoiser::Pmrid,
                     other => panic!("{other} is not a denoiser"),
                 });
+            }
+            "--nodes" => {
+                let nodes: Vec<rawshim::lattice::ColourNode> =
+                    serde_json::from_str(&args.next().expect("a JSON array of colour nodes"))
+                        .expect("colour nodes as the document holds them");
+                stages.nodes = Box::leak(nodes.into_boxed_slice());
+            }
+            "--probe" => {
+                let n: Vec<f64> = args
+                    .next()
+                    .expect("x0,y0,x1,y1 as fractions")
+                    .split(',')
+                    .map(|v| v.parse().expect("a number"))
+                    .collect();
+                stages.probe = Some(n.try_into().expect("four fractions, x0,y0,x1,y1"));
             }
             "--crop" => {
                 let spec = args.next().expect("x,y,side");

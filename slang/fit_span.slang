@@ -35,7 +35,7 @@ struct Params {
 [vk::binding(1, 0)] StructuredBuffer<float> gains;
 /// Four floats a sample, as `fit_model.slang` reads them: the colour, then a neighbourhood of zero.
 [vk::binding(2, 0)] RWStructuredBuffer<float> samples;
-/// What the model made of them: chroma, luma, chroma, luma per sample.
+/// What the model made of them: the colour, then its luma, per sample.
 [vk::binding(3, 0)] StructuredBuffer<float> evaluated;
 /// The high half's buckets, then the low half of the one bucket the rank fell in.
 [vk::binding(4, 0)] RWStructuredBuffer<Atomic<uint> > histogram;

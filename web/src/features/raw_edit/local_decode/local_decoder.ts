@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type Repair, RepairSchema } from '../../../../../src/schemas/photo_edits';
+import { type ColourNode, type Repair, RepairSchema } from '../../../../../src/schemas/photo_edits';
 import { type Job as RenditionCommand } from '../../../../../src/schemas/jobs';
 import type { EditAdjust, EditGeometry, Proof, Region } from '../edits';
 import type { PrintScene } from '../print/print_scene';
@@ -23,6 +23,7 @@ import {
   type OpenStage,
   type Ticked,
   type TileKeep,
+  type WheelDrawing,
   type WheelDrawn,
 } from './local_open';
 import { gpuThread } from '../../../gpu/gpu_thread';
@@ -200,13 +201,30 @@ export class LocalDecoder {
     return this.nothing({ kind: 'attachWheel', canvas, side }, [canvas]);
   }
 
-  drawWheel(lightness: number): Promise<WheelDrawn> {
-    return this.ask(WheelDrawnSchema, { kind: 'drawWheel', lightness });
+  /**
+   * The wheel drawn at `lightness`, darkened where `selected` does not reach, with the widest edge
+   * a display peaking at `displayPeak` nits (null for SDR) shows at any of `edgeAt`.
+   */
+  drawWheel(wheel: WheelDrawing): Promise<WheelDrawn> {
+    return this.ask(WheelDrawnSchema, {
+      kind: 'drawWheel',
+      ...wheel,
+      selected: wheel.selected == null ? null : JSON.stringify(wheel.selected),
+    });
+  }
+
+  /** `drawWheel` again for another `selected`, its edge unchanged. */
+  shadeWheel(lightness: number, selected: ColourNode | null): Promise<void> {
+    return this.nothing({
+      kind: 'shadeWheel',
+      lightness,
+      selected: selected == null ? null : JSON.stringify(selected),
+    });
   }
 
   /** Laid out as `HeldRaw::probe_wheel` answers. */
-  probeWheel(places: number[]): Promise<Float32Array<ArrayBuffer>> {
-    return this.ask(FloatsSchema, { kind: 'probeWheel', places });
+  probeWheel(places: number[], adjust: EditAdjust): Promise<Float32Array<ArrayBuffer>> {
+    return this.ask(FloatsSchema, { kind: 'probeWheel', places, adjust: JSON.stringify(adjust) });
   }
 
   /** One rendition tile, built and kept for the glass to draw instead of the editor's frame. */

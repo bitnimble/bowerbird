@@ -12,6 +12,7 @@
 import light;
 import prelude;
 import index_space;
+import kernel_reach;
 
 struct Params {
     uint kernels;
@@ -30,6 +31,8 @@ struct Params {
     float first_scale;
     float second_scale;
     uint pad;
+    /// Every kernel's `kernel_reach::fall` width along each axis, zero for the whole reach.
+    float4 feather;
 };
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
 
@@ -58,15 +61,6 @@ static const uint REACH = 4;
 static const uint GENERATOR = 8;
 static const uint TO_LIGHTNESS = 15;
 
-/// Perlin's smootherstep tent: one at the centre, nothing at the reach, and neighbours a reach
-/// apart sum to one. `fit_lattice.slang` lands pairs under the same weights.
-float tent(float distance, float reach)
-{
-    if (reach <= 0.0) { return 1.0; }
-    let u = 1.0 - min(abs(distance) / reach, 1.0);
-    return u * u * u * (u * (u * 6.0 - 15.0) + 10.0);
-}
-
 /// How much of kernel `k` reaches lattice place `at`.
 float weight_of(uint k, float4 at)
 {
@@ -74,17 +68,7 @@ float weight_of(uint k, float4 at)
     let centre = float4(kernels[base], kernels[base + 1], kernels[base + 2], kernels[base + 3]);
     let reach = float4(
         kernels[base + REACH], kernels[base + REACH + 1], kernels[base + REACH + 2], kernels[base + REACH + 3]);
-    let chroma = tent(at.y - centre.y, reach.y);
-    let level = tent(at.z - centre.z, reach.z);
-    let neighbourhood = tent(at.w - centre.w, reach.w);
-    let rest = chroma * level * neighbourhood;
-    if (rest <= 0.0) { return 0.0; }
-    var turns = abs(at.x - centre.x);
-    turns = min(turns, 1.0 - turns);
-    // A kernel reaching grey would otherwise take a different value there from each hue: fading
-    // its hue distance to nothing as chroma does makes grey one place again.
-    if (centre.y < reach.y) { turns *= clamp(at.y / max(centre.y, 1e-6), 0.0, 1.0); }
-    return rest * tent(turns, reach.x);
+    return kernel_weight(centre, reach, pc.feather, at);
 }
 
 float3x3 exponential(float3x3 g)
@@ -243,9 +227,9 @@ void sum(uint3 id: SV_DispatchThreadID, uint3 group: SV_GroupID, uint lane: SV_G
 /// `lattice::MOST_NODES`.
 static const uint MOST_NODES = 32;
 static const uint GENERATOR_WORDS = 7;
-/// On the normal equations' diagonal: two kernels at nearly one place with different moves would
-/// otherwise solve to huge opposite generators.
-static const float RIDGE = 1e-4;
+/// How hard each solved generator is held to the one its kernel was given: two kernels at nearly
+/// one place with different moves would otherwise solve to huge opposite generators.
+static const float RIDGE = 3e-3;
 
 groupshared float reached[MOST_NODES][MOST_NODES];
 groupshared float normal[MOST_NODES][MOST_NODES];
@@ -270,7 +254,7 @@ void interpolate()
             normal[i][j] = sum;
         }
         for (uint w = 0; w < GENERATOR_WORDS; w++) {
-            var sum = 0.0;
+            var sum = RIDGE * kernels[i * KERNEL_WORDS + GENERATOR + w];
             for (uint k = 0; k < n; k++) { sum += reached[k][i] * kernels[k * KERNEL_WORDS + GENERATOR + w]; }
             moved[i][w] = sum;
         }
@@ -294,6 +278,19 @@ void interpolate()
         for (uint w = 0; w < KERNEL_WORDS; w++) { solved[k * KERNEL_WORDS + w] = kernels[k * KERNEL_WORDS + w]; }
         for (uint w = 0; w < GENERATOR_WORDS; w++) { solved[k * KERNEL_WORDS + GENERATOR + w] = moved[k][w]; }
     }
+}
+
+/// The reader's colour edits (`lattice::ColourNode::kernel`), summed but not exponentiated: each
+/// is a move in ZCAM's opponent plane rather than a generator, so half of one is half the move.
+[shader("compute")]
+[numthreads(4, 4, 4)]
+void bake_moves(uint3 id: SV_DispatchThreadID)
+{
+    let depth = pc.level_texels * pc.neighbourhood_texels;
+    if (id.x >= pc.hue_texels || id.y >= pc.chroma_texels || id.z >= depth) { return; }
+    let t = texel_of(id) * SUM_WORDS;
+    chroma_out.Store(id, float4(first_sum[t], first_sum[t + 1], first_sum[t + 2], first_sum[t + 3]));
+    luma_out.Store(id, float4(first_sum[t + 4], 0.0, 0.0, 0.0));
 }
 
 /// Word `w` of texel `t`'s generator, both sums at their scales.

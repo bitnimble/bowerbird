@@ -1958,9 +1958,8 @@ const DRAW_BINDINGS: [(u32, Binding); 17] = [
 /// values the fragment shader writes are display nits over an SDR white and go past one.
 const CANVAS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// Measured, not assumed (`docs/raw-edit-gpu.md` §7.1): swept against a real PQ AVIF of the same
-/// pixels, Chrome and Safari both match at 203. The *browser's* constant rather than
-/// `reference_nits`, which a library is free to move, so never read it off the grade.
+/// Browsers' SDR white on an extended-range canvas (`docs/raw-edit-gpu.md` §7.1); never
+/// `reference_nits`, which a library may move.
 const CANVAS_WHITE_NITS: f64 = 203.0;
 
 /// The gamut and the tone mapping every canvas the editor draws on is configured with.
@@ -2860,7 +2859,6 @@ struct NodeVolumes {
 
 impl NodeVolumes {
     fn of(gpu: &Gpu, nodes: &[crate::lattice::ColourNode]) -> NodeVolumes {
-        // `has_nodes` keeps the grade from reading these when there are none.
         let (pair, luma) = match nodes.is_empty() {
             true => gpu.identity_volumes(),
             false => crate::lattice::ChromaMap::of_nodes(nodes).baked(gpu),
@@ -2873,10 +2871,6 @@ impl NodeVolumes {
     }
 }
 
-fn wants_mean(grade: &Grade<'_>) -> bool {
-    grade.matched().is_some() || !grade.adjust.colour_nodes.is_empty()
-}
-
 pub struct Uploaded<'a> {
     gpu: &'a Gpu,
     print_albedo: std::cell::RefCell<Option<(f32, Buffer)>>,
@@ -2885,7 +2879,7 @@ pub struct Uploaded<'a> {
     printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
     print_surface: std::cell::RefCell<print_surface::Cached>,
     peak_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    peak_cached: std::cell::RefCell<Option<(u64, Vec<u32>)>>,
+    peak_cached: std::cell::RefCell<Option<(u64, Vec<u32>, Vec<crate::lattice::ColourNode>)>>,
     width: usize,
     height: usize,
     /// For the editor this is the `Resident`'s own frame, shared rather than copied.
@@ -2898,8 +2892,7 @@ pub struct Uploaded<'a> {
     chroma: wgpu::TextureView,
     chroma_luma: wgpu::TextureView,
     neighbourhood: wgpu::TextureView,
-    /// Whether this is `mean_frame` yet, or the black texel standing in until a grade reads it.
-    mean: std::cell::RefCell<(bool, Texture, wgpu::TextureView)>,
+    mean: wgpu::TextureView,
     nodes: std::cell::RefCell<NodeVolumes>,
     /// The camera's own chroma blur, and the illuminant it was built under.
     ///
@@ -3166,10 +3159,7 @@ impl Gpu {
 
         let (chroma, chroma_luma) = self.lattice(described);
         let neighbourhood = self.neighbourhood(described);
-        let mean = match wants_mean(grade) {
-            true => self.mean_frame(&samples, grade),
-            false => self.black_texel("mean_frame"),
-        };
+        let mean = self.mean_frame(&samples, grade);
         let curves = self.curves(described);
         let pyramid = self.own_texture(&wgpu::TextureDescriptor {
             label: Some("pyramid"),
@@ -3233,7 +3223,7 @@ impl Gpu {
             chroma: view(&chroma),
             chroma_luma: view(&chroma_luma),
             neighbourhood: view(&neighbourhood),
-            mean: std::cell::RefCell::new((wants_mean(grade), mean.clone(), view(&mean))),
+            mean: view(&mean),
             nodes: std::cell::RefCell::new(NodeVolumes::of(self, &grade.adjust.colour_nodes)),
             chroma_smoothed: std::cell::RefCell::new((
                 Illuminant::of(grade),
@@ -3256,6 +3246,7 @@ impl Gpu {
                 chroma,
                 chroma_luma,
                 neighbourhood,
+                mean,
                 pyramid,
                 absent_texture,
             ]),
@@ -3287,7 +3278,13 @@ impl Gpu {
     /// The frame's nits at the fit's own footprint (`mean_frame.slang`), where
     /// `matched_nits` reads the lattice. Built by a dispatch over the frame's own buffer,
     /// once per upload.
+    ///
+    /// One black texel where the grade carries no colour: `matched_nits` is the only
+    /// reader and `matched` gates it off, so a neutral upload skips the whole-frame pass.
     fn mean_frame(&self, samples: &Buffer, grade: &Grade<'_>) -> Texture {
+        if grade.matched().is_none() {
+            return self.black_texel("mean_frame");
+        }
         let (block, phase, cells) = mean_grid(grade);
         let size = wgpu::Extent3d {
             width: cells.0 * 2,
@@ -3924,19 +3921,26 @@ impl Uploaded<'_> {
         let revision = self
             .peak_revision
             .load(std::sync::atomic::Ordering::Relaxed);
+        let nodes = &grade.adjust.colour_nodes;
         if self
             .peak_cached
             .borrow()
             .as_ref()
-            .is_some_and(|cached| cached.0 == revision && cached.1 == words)
+            .is_some_and(|cached| cached.0 == revision && cached.1 == words && cached.2 == *nodes)
         {
             return;
         }
-        self.peak_passes(grade, PeakRoute::KeptCandidates);
+        // A colour edit can lift a pixel the candidates were collected without past them.
+        let route = match nodes.is_empty() {
+            true => PeakRoute::KeptCandidates,
+            false => PeakRoute::WholeSample,
+        };
+        self.peak_passes(grade, route);
         *self.peak_cached.borrow_mut() = Some((
             self.peak_revision
                 .load(std::sync::atomic::Ordering::Relaxed),
             words,
+            nodes.clone(),
         ));
     }
 
@@ -3975,7 +3979,7 @@ impl Uploaded<'_> {
                     chroma: &self.chroma,
                     chroma_luma: &self.chroma_luma,
                     neighbourhood: &self.neighbourhood,
-                    mean: &self.mean_for(grade),
+                    mean: &self.mean,
                     detail: &self.detail_absent,
                 },
             );
@@ -3988,22 +3992,6 @@ impl Uploaded<'_> {
         std::cell::Ref::map(self.chroma_smoothed.borrow(), |held| &held.2)
     }
 
-    /// `mean_frame` for this grade, built now if the upload had no reader for it and this grade
-    /// does: an editor opened on a frame with no match, and then given colour edits.
-    fn mean_for(&self, grade: &Grade<'_>) -> std::cell::Ref<'_, wgpu::TextureView> {
-        self.mean_if(grade, wants_mean(grade))
-    }
-
-    fn mean_if(&self, grade: &Grade<'_>, wanted: bool) -> std::cell::Ref<'_, wgpu::TextureView> {
-        if !self.mean.borrow().0 && wanted {
-            let built = self.gpu.mean_frame(&self.samples, grade);
-            let view = built.view();
-            *self.mean.borrow_mut() = (true, built, view);
-        }
-        std::cell::Ref::map(self.mean.borrow(), |held| &held.2)
-    }
-
-    /// The reader's colour edits for this grade, baked again only when they changed.
     fn nodes_for(&self, grade: &Grade<'_>) -> std::cell::Ref<'_, NodeVolumes> {
         if self.nodes.borrow().nodes != grade.adjust.colour_nodes {
             *self.nodes.borrow_mut() = NodeVolumes::of(self.gpu, &grade.adjust.colour_nodes);
@@ -4056,7 +4044,6 @@ impl Uploaded<'_> {
         // written after them puts the roll-off knee at the peak of a colour nobody sees.
         self.gpu.build_balance(&mut recording, edits, balance);
         let smoothed = self.chroma_smoothed_for(grade);
-        let mean = self.mean_for(grade);
         let nodes = self.nodes_for(grade);
         let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("peak"),
@@ -4128,7 +4115,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
-                    resource: wgpu::BindingResource::TextureView(&mean),
+                    resource: wgpu::BindingResource::TextureView(&self.mean),
                 },
                 wgpu::BindGroupEntry {
                     binding: 21,
@@ -4282,7 +4269,6 @@ impl Uploaded<'_> {
         let (edits, balance) = self.written(grade, described);
         self.gpu.build_balance(&mut recording, edits, balance);
         let smoothed = self.chroma_smoothed_for(grade);
-        let mean = self.mean_for(grade);
         let nodes = self.nodes_for(grade);
         let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("encode"),
@@ -4354,7 +4340,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
-                    resource: wgpu::BindingResource::TextureView(&mean),
+                    resource: wgpu::BindingResource::TextureView(&self.mean),
                 },
                 wgpu::BindGroupEntry {
                     binding: 21,
@@ -4591,7 +4577,6 @@ impl Uploaded<'_> {
         let (edits, balance) = self.written(grade, described);
         self.gpu.build_balance(recording, edits, balance);
         let smoothed = self.chroma_smoothed_for(grade);
-        let mean = self.mean_for(grade);
         let nodes = self.nodes_for(grade);
         let level = pyramid.view();
         let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
@@ -4660,7 +4645,7 @@ impl Uploaded<'_> {
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,
-                    resource: wgpu::BindingResource::TextureView(&mean),
+                    resource: wgpu::BindingResource::TextureView(&self.mean),
                 },
                 wgpu::BindGroupEntry {
                     binding: 21,

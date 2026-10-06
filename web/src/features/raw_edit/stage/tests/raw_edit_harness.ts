@@ -10,6 +10,8 @@ import type {
   LocalTileRequest,
   Ticked,
   TileKeep,
+  WheelDrawing,
+  WheelDrawn,
 } from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
@@ -20,13 +22,15 @@ import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
 import { EditSurface } from '../edit_surface';
 import { DeviceSettingsStore } from '../../../settings/device_settings_store';
-import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
+import { type ColourNode, neutralEdits } from '../../../../../../src/schemas/photo_edits';
 import { readPreparedHeader } from '../../../../../../src/schemas/prepared';
 import type { Repair } from '../../../../../../src/schemas/stored_grid';
 import { MemoryStorage } from '../../../../test_storage';
 
 /** The window a held tile's rectangle sits at inside it, as the module answers `holdTile`. */
 export const KEEP: TileKeep = { left: 44, top: 44, width: 512, height: 512 };
+
+export const WHEEL_RIM = 40;
 
 /** The library's grade, as an open carries it. */
 export const GRADE = { referenceWhiteNits: 203, whiteQuantile: 0.995 };
@@ -349,23 +353,37 @@ export class FakeDecoder {
   }
 
   wheelSide: number | null = null;
+  wheelsAttached = 0;
   readonly wheelDrawnAt: number[] = [];
+  readonly wheelEdgesAt: number[][] = [];
+  readonly wheelPeaks: (number | null)[] = [];
+  /** The node each wheel draw darkened around, in order. */
+  readonly wheelShadedBy: (ColourNode | null)[] = [];
   readonly wheelProbes: number[][] = [];
-  /** What a probe answers: one dot per block, then each place moved as `wheelMoves` says. */
+  /** What a probe answers: the dots, then each place moved as `wheelMoves` says. */
   wheelDots: number[] = [55, 4, -3, 1];
   wheelMoves = (place: number[]): number[] => place;
 
   attachWheel(_canvas: OffscreenCanvas, side: number): Promise<void> {
     this.wheelSide = side;
+    this.wheelsAttached += 1;
     return Promise.resolve();
   }
 
-  drawWheel(lightness: number): Promise<{ chroma: number; edge: number[] }> {
+  drawWheel({ lightness, edgeAt, displayPeak, selected }: WheelDrawing): Promise<WheelDrawn> {
     this.wheelDrawnAt.push(lightness);
-    return Promise.resolve({ chroma: 40, edge: Array.from({ length: 360 }, () => 30) });
+    this.wheelEdgesAt.push([...edgeAt]);
+    this.wheelPeaks.push(displayPeak);
+    this.wheelShadedBy.push(selected);
+    return Promise.resolve({ chroma: WHEEL_RIM, edge: Array.from({ length: 360 }, () => 30) });
   }
 
-  probeWheel(places: number[]): Promise<Float32Array<ArrayBuffer>> {
+  shadeWheel(_lightness: number, selected: ColourNode | null): Promise<void> {
+    this.wheelShadedBy.push(selected);
+    return Promise.resolve();
+  }
+
+  probeWheel(places: number[], _adjust: EditAdjust): Promise<Float32Array<ArrayBuffer>> {
     this.wheelProbes.push(places);
     const moved: number[] = [];
     for (let at = 0; at < places.length; at += 4)

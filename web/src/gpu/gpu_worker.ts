@@ -261,13 +261,21 @@ class Open {
         return { value: null };
       case 'drawWheel': {
         const editor = this.drawing();
-        editor.drawWheel(ask.lightness);
+        editor.drawWheel(ask.lightness, ask.selected ?? undefined);
         return {
-          value: { chroma: editor.wheelChroma(), edge: [...editor.wheelEdge(ask.lightness)] },
+          value: {
+            chroma: editor.wheelChroma(),
+            edge: [...editor.wheelEdge(new Float64Array(ask.edgeAt), ask.displayPeak ?? undefined)],
+          },
         };
       }
+      case 'shadeWheel':
+        this.drawing().drawWheel(ask.lightness, ask.selected ?? undefined);
+        return { value: null };
       case 'probeWheel': {
-        const value = (await this.drawing().probeWheel(
+        const editor = this.drawing();
+        editor.setAdjust(ask.adjust);
+        const value = (await editor.probeWheel(
           new Float32Array(ask.places),
         )) as Float32Array<ArrayBuffer>;
         return { value, transfer: [value.buffer] };

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { drawnBy, openEditor, type Editor } from '../../stage/tests/raw_edit_harness';
+import { WHEEL_RIM, drawnBy, openEditor, type Editor } from '../../stage/tests/raw_edit_harness';
 
 let editor: Editor;
 
@@ -89,33 +89,112 @@ describe('the colour wheel', () => {
     expect(editor.colourWheel.shown.map(({ index }) => index)).toEqual([0]);
   });
 
+  test('a press lets go of the selected edit, and adds one only with none selected', () => {
+    wheel().press({ hue: 40, chroma: 10 });
+    expect(editor.edit.doc?.colourNodes).toHaveLength(1);
+    expect(editor.colourWheel.selectedIndex).toBe(0);
+    wheel().press({ hue: 200, chroma: 10 });
+    expect(editor.edit.doc?.colourNodes).toHaveLength(1);
+    expect(editor.colourWheel.selectedIndex).toBeNull();
+    wheel().press(null);
+    wheel().press({ hue: 200, chroma: 10 });
+    expect(editor.edit.doc?.colourNodes).toHaveLength(2);
+  });
+
+  test("holds a dragged edit's outer saturation edge at the rim, and gives its range back", async () => {
+    wheel().attach(fakeCanvas());
+    await settled();
+    await settled();
+    wheel().add({ hue: 0, chroma: 10 });
+    wheel().beginDrag(0);
+    wheel().drag(0, 'source', { hue: 0, chroma: 45 });
+    expect(editor.edit.doc?.colourNodes[0]).toMatchObject({ chroma: WHEEL_RIM, chromaReach: 0 });
+    wheel().drag(0, 'source', { hue: 0, chroma: 20 });
+    wheel().endDrag();
+    expect(editor.edit.doc?.colourNodes[0]).toMatchObject({ chroma: 20, chromaReach: 6 });
+  });
+
+  test("draws the wheel's edge against this display's peak, and again when it changes", async () => {
+    const original = globalThis.matchMedia;
+    globalThis.matchMedia = ((query: string) => ({
+      matches: query === '(dynamic-range: high)',
+    })) as typeof matchMedia;
+    try {
+      editor.device.displayPeakNits = 1600;
+      wheel().attach(fakeCanvas());
+      await settled();
+      editor.device.displayPeakNits = 1000;
+      await settled();
+    } finally {
+      globalThis.matchMedia = original;
+    }
+    expect(editor.decoder.wheelPeaks).toEqual([1600, 1000]);
+  });
+
+  test('darkens the wheel around the selected edit, following it as it moves', async () => {
+    wheel().attach(fakeCanvas());
+    await settled();
+    await settled();
+    wheel().add({ hue: 120, chroma: 10 });
+    await settled();
+    expect(editor.decoder.wheelShadedBy.at(-1)).toMatchObject({ hue: 120, chroma: 10 });
+
+    wheel().beginDrag(0);
+    wheel().drag(0, 'hueReach', { hue: 160, chroma: 10 });
+    await settled();
+    expect(editor.decoder.wheelShadedBy.at(-1)).toMatchObject({ hue: 120, hueReach: 40 });
+
+    wheel().endDrag();
+    wheel().select(null);
+    await settled();
+    expect(editor.decoder.wheelShadedBy.at(-1)).toBeNull();
+  });
+
   test('hands its canvas over once, draws at the channel, and reads the photograph and profile', async () => {
-    // A profile that turns every colour a quarter clockwise, over three blocks: one in the
+    // A profile that turns every colour a quarter clockwise, over three dots: one in the
     // midtones, one in the darks and one the probe weighted to nothing.
     editor.decoder.wheelMoves = ([lightness = 0, a = 0, b = 0]) => [lightness, b, -a, 1];
     editor.decoder.wheelDots = [55, 4, -3, 1, 30, 1, 1, 1, 56, 9, 9, 0];
-    wheel().attach(fakeCanvas());
+    const canvas = fakeCanvas();
+    wheel().attach(canvas);
     await settled();
+    wheel().attach(canvas);
+    await settled();
+    expect(editor.decoder.wheelsAttached).toBe(1);
     expect(editor.decoder.wheelSide).toBe(512);
+    expect(editor.colourWheel.channel).toBeNull();
     expect(editor.decoder.wheelDrawnAt).toEqual([55]);
+    expect(editor.decoder.wheelEdgesAt).toEqual([[10, 30, 55, 80, 110]]);
     await settled();
     expect(editor.decoder.wheelProbes).toHaveLength(1);
+    const midtone = { lightness: 55, hue: expect.closeTo(323.13, 1), chroma: expect.closeTo(5, 4) };
     expect(editor.colourWheel.channelDots).toEqual([
-      { lightness: 55, hue: expect.closeTo(323.13, 1), chroma: expect.closeTo(5, 4) },
+      midtone,
+      { lightness: 30, hue: expect.closeTo(45, 1), chroma: expect.closeTo(Math.SQRT2, 4) },
     ]);
-    const [arrow] = editor.colourWheel.channelField;
-    expect(arrow?.lightness).toBe(55);
-    expect(arrow?.from.hue).toBeCloseTo(0, 3);
-    expect(arrow?.to.hue).toBeCloseTo(270, 3);
+
+    wheel().selectChannel(55);
+    await settled();
+    expect(editor.decoder.wheelDrawnAt).toEqual([55, 55]);
+    expect(editor.decoder.wheelEdgesAt.at(-1)).toEqual([55]);
+    expect(editor.colourWheel.channelDots).toEqual([midtone]);
+    const arrows = editor.colourWheel.channelField;
+    expect(new Set(arrows.map(({ from }) => Math.floor(from.hue / 30))).size).toBe(12);
+    for (const { lightness, from, to } of arrows) {
+      expect(lightness).toBe(55);
+      expect(from.chroma).toBeCloseTo(0.85 * WHEEL_RIM, 3);
+      expect((from.hue - to.hue + 360) % 360).toBeCloseTo(90, 3);
+    }
 
     wheel().selectChannel(80);
     await settled();
-    expect(editor.decoder.wheelDrawnAt).toEqual([55, 80]);
+    expect(editor.decoder.wheelDrawnAt).toEqual([55, 55, 80]);
     expect(editor.colourWheel.channelDots).toEqual([]);
     expect(editor.colourWheel.channelField.every(({ lightness }) => lightness === 80)).toBe(true);
 
     wheel().attach(fakeCanvas());
     await settled();
-    expect(editor.decoder.wheelDrawnAt).toEqual([55, 80, 80]);
+    expect(editor.decoder.wheelsAttached).toBe(2);
+    expect(editor.decoder.wheelDrawnAt).toEqual([55, 55, 80, 80]);
   });
 });

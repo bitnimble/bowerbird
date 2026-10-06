@@ -1,10 +1,12 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useCallback, useEffect, useRef } from 'react';
-import type { ColourNode } from '../../../../../src/schemas/photo_edits';
+import { Fragment, useCallback, useEffect, useRef } from 'react';
+import { COLOUR_NODES_MAX, type ColourNode } from '../../../../../src/schemas/photo_edits';
+import { Button } from '../../../ui/button';
 import { focusRing } from '../../../ui/focus_ring';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
+import { Tooltip } from '../../../ui/tooltip';
 import { EditControl, ResetButton } from '../edit_control';
 import { reading } from '../edit_sliders';
 import { RawEditPanelStrings } from '../raw_edit_panel.strings';
@@ -12,36 +14,51 @@ import { styles as panelStyles } from '../raw_edit_panel.stylex';
 import type { StageStore } from '../stage/stage_store';
 import {
   CHANNELS,
-  CHROMA_REACH,
-  HUE_REACH,
   LIGHTNESS_REACH,
-  MOST_HUE_REACH,
   type Channel,
+  LEAST_HUE_REACH,
+  MOST_HUE_REACH,
   type Hued,
   type Point,
+  type Reach,
+  chromaReached,
   edgePath,
   huedAt,
   lightnessOf,
   pointOf,
   reachPath,
+  reachesEveryHue,
 } from './colour_wheel';
 import { ColourWheelStrings as strings } from './colour_wheel.strings';
 import { type ColourWheelPresenter, type Handle, WHEEL_SIDE } from './colour_wheel_presenter';
 import type { ColourWheelStore } from './colour_wheel_store';
 import { styles } from './colour_wheel_editor.stylex';
 
-const CHANNEL_NAMES: { channel: Channel; name: () => string }[] = [
-  { channel: CHANNELS[0], name: strings.shadows },
-  { channel: CHANNELS[1], name: strings.darks },
-  { channel: CHANNELS[2], name: strings.midtones },
-  { channel: CHANNELS[3], name: strings.lights },
-  { channel: CHANNELS[4], name: strings.highlights },
-  { channel: null, name: strings.all },
+const CHANNEL_POTS: { channel: Channel; name: () => string; pot: stylex.StyleXStyles }[] = [
+  { channel: null, name: strings.all, pot: styles.all },
+  { channel: CHANNELS[0], name: strings.shadows, pot: styles.shadows },
+  { channel: CHANNELS[1], name: strings.darks, pot: styles.darks },
+  { channel: CHANNELS[2], name: strings.midtones, pot: styles.midtones },
+  { channel: CHANNELS[3], name: strings.lights, pot: styles.lights },
+  { channel: CHANNELS[4], name: strings.highlights, pot: styles.highlights },
 ];
 
 const MOST_TARGET_LIGHTNESS = 150;
 const MOST_LIGHTNESS_REACH = 60;
-const SHORTEST_FIELD_ARROW = 0.01;
+const FIELD_HEAD = 0.04;
+const SHORTEST_FIELD_ARROW = 2 * FIELD_HEAD;
+const NODE_RADIUS = 0.045;
+const TARGET_RADIUS = 0.04;
+const HANDLE_GRAB = 0.05;
+const REACH_STEPS: Record<Reach, number> = { hueReach: 1, chromaReach: 0.5 };
+const KEY_DIRECTIONS: Partial<Record<string, number>> = {
+  ArrowUp: 1,
+  ArrowRight: 1,
+  ArrowDown: -1,
+  ArrowLeft: -1,
+};
+const TWO_WAY =
+  'M-0.045 0 H0.045 M-0.045 0 l0.018 -0.016 M-0.045 0 l0.018 0.016 M0.045 0 l-0.018 -0.016 M0.045 0 l-0.018 0.016';
 
 type Drag = {
   index: number;
@@ -102,7 +119,7 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
         />
       ) : (
         <Text variant="muted" as="p" style={styles.hint}>
-          {strings.hint()}
+          {store.nodes.length >= COLOUR_NODES_MAX ? strings.full(COLOUR_NODES_MAX) : strings.hint()}
         </Text>
       )}
     </div>
@@ -118,25 +135,33 @@ const Channels = observer(function Channels({
 }): JSX.Element {
   return (
     <div {...stylex.props(styles.channels)} role="radiogroup" aria-label={strings.lightness()}>
-      {CHANNEL_NAMES.map(({ channel, name }) => {
+      {CHANNEL_POTS.map(({ channel, name, pot }) => {
         const edited = store.edited.has(channel);
+        const label = edited ? strings.channelEdited(name()) : name();
+        const pick = (
+          <Tooltip label={label}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={store.channel === channel}
+              aria-label={label}
+              {...stylex.props(
+                styles.pot,
+                pot,
+                store.channel === channel && styles.potChosen,
+                focusRing.ring,
+              )}
+              onClick={() => presenter.selectChannel(channel)}
+            >
+              <span {...stylex.props(styles.dot, edited && styles.dotShown)} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        );
         return (
-          <button
-            key={channel ?? 'all'}
-            type="button"
-            role="radio"
-            aria-checked={store.channel === channel}
-            aria-label={edited ? strings.channelEdited(name()) : name()}
-            {...stylex.props(
-              styles.channel,
-              focusRing.ring,
-              store.channel === channel && styles.channelChosen,
-            )}
-            onClick={() => presenter.selectChannel(channel)}
-          >
-            {name()}
-            <span {...stylex.props(styles.dot, edited && styles.dotShown)} aria-hidden="true" />
-          </button>
+          <Fragment key={channel ?? 'all'}>
+            {pick}
+            {channel == null && <span {...stylex.props(styles.divider)} aria-hidden="true" />}
+          </Fragment>
         );
       })}
     </div>
@@ -246,7 +271,7 @@ const Overlay = observer(function Overlay({
       onPointerDown={(event) => {
         if (!event.isPrimary || event.button !== 0 || disabled || drag.current != null) return;
         const point = pointAt(event, event.currentTarget.getBoundingClientRect());
-        if (Math.hypot(point.x, point.y) <= 1) presenter.add(huedAt(point, rim));
+        presenter.press(Math.hypot(point.x, point.y) <= 1 ? huedAt(point, rim) : null);
       }}
       onPointerMove={(event) => {
         const active = drag.current;
@@ -263,7 +288,7 @@ const Overlay = observer(function Overlay({
         <marker
           id="colour-wheel-head"
           viewBox="0 0 10 10"
-          refX="8"
+          refX="10"
           refY="5"
           markerWidth="4"
           markerHeight="4"
@@ -271,13 +296,33 @@ const Overlay = observer(function Overlay({
         >
           <path d="M0 0 L10 5 L0 10 Z" {...stylex.props(styles.head)} />
         </marker>
+        <marker
+          id="colour-wheel-field-head"
+          viewBox="0 0 10 10"
+          refX="10"
+          refY="5"
+          markerUnits="userSpaceOnUse"
+          markerWidth={FIELD_HEAD}
+          markerHeight={FIELD_HEAD}
+          orient="auto-start-reverse"
+        >
+          <path d="M0 0 L10 5 L0 10 Z" {...stylex.props(styles.fieldHead)} />
+        </marker>
       </defs>
       <path d={edgePath(store.drawn?.edge ?? [], rim)} {...stylex.props(styles.edge)} />
       {store.channelField.map(({ from, to }, index) => {
         const [a, b] = [place(from), place(to)];
         if (Math.hypot(b.x - a.x, b.y - a.y) < SHORTEST_FIELD_ARROW) return null;
         return (
-          <line key={index} x1={a.x} y1={a.y} x2={b.x} y2={b.y} {...stylex.props(styles.field)} />
+          <line
+            key={index}
+            x1={a.x}
+            y1={a.y}
+            x2={b.x}
+            y2={b.y}
+            markerEnd="url(#colour-wheel-field-head)"
+            {...stylex.props(styles.field)}
+          />
         );
       })}
       {store.shown.map(({ node, index }) => {
@@ -315,6 +360,7 @@ const Overlay = observer(function Overlay({
           rim={rim}
           disabled={disabled}
           start={start}
+          step={presenter.stepReach}
         />
       )}
     </svg>
@@ -327,42 +373,126 @@ function Selected({
   rim,
   disabled,
   start,
+  step,
 }: {
   node: ColourNode;
   index: number;
   rim: number;
   disabled: boolean;
   start: (event: React.PointerEvent<SVGElement>, index: number, handle: Handle) => void;
+  step: (index: number, reach: Reach, by: number) => void;
 }): JSX.Element {
   const from = pointOf(node, rim);
   const to = pointOf({ hue: node.targetHue, chroma: node.targetChroma }, rim);
-  const outer = pointOf({ hue: node.hue, chroma: node.chroma + node.chromaReach }, rim);
-  const side = pointOf({ hue: node.hue + node.hueReach, chroma: node.chroma }, rim);
-  const handle = (point: Point, label: string, kind: Handle): JSX.Element => (
-    <circle
-      cx={point.x}
-      cy={point.y}
-      {...stylex.props(styles.handle, kind === 'target' && styles.target)}
-      role="img"
-      aria-label={label}
-      tabIndex={-1}
-      onPointerDown={(event) => start(event, index, kind)}
-    />
-  );
+  const reached = chromaReached(node);
+  const edgeMiddle = (reached.inner + reached.outer) / 2;
+  const sides = [
+    { side: 'after', hue: node.hue + node.hueReach },
+    { side: 'before', hue: node.hue - node.hueReach },
+  ].slice(0, reachesEveryHue(node) ? 1 : 2);
+  const handle = { index, disabled, start, step };
   return (
     <g aria-disabled={disabled}>
       <path d={reachPath(node, rim)} {...stylex.props(styles.reach)} />
-      <line
-        x1={from.x}
-        y1={from.y}
-        x2={to.x}
-        y2={to.y}
-        markerEnd="url(#colour-wheel-head)"
-        {...stylex.props(styles.arrow)}
+      <Arrow from={from} to={to} />
+      <TwoWay
+        {...handle}
+        at={pointOf({ hue: node.hue, chroma: reached.outer }, rim)}
+        turn={-node.hue}
+        label={strings.saturationRange()}
+        reach="chromaReach"
+        value={node.chromaReach}
+        range={{ min: 0, max: rim }}
       />
-      {handle(outer, strings.saturationRange(), 'chromaReach')}
-      {node.hueReach < MOST_HUE_REACH && handle(side, strings.hueRange(), 'hueReach')}
-      {handle(to, strings.newColour(), 'target')}
+      {sides.map(({ side, hue }) => (
+        <TwoWay
+          key={side}
+          {...handle}
+          at={pointOf({ hue, chroma: edgeMiddle }, rim)}
+          turn={90 - hue}
+          label={strings.hueRange()}
+          reach="hueReach"
+          value={node.hueReach}
+          range={{ min: LEAST_HUE_REACH, max: MOST_HUE_REACH }}
+        />
+      ))}
+      <circle
+        cx={to.x}
+        cy={to.y}
+        r={TARGET_RADIUS}
+        {...stylex.props(styles.target)}
+        role="img"
+        aria-label={strings.outputColour()}
+        onPointerDown={(event) => start(event, index, 'target')}
+      />
+    </g>
+  );
+}
+
+function Arrow({ from, to }: { from: Point; to: Point }): JSX.Element | null {
+  const apart = Math.hypot(to.x - from.x, to.y - from.y);
+  if (apart <= NODE_RADIUS + TARGET_RADIUS) return null;
+  const short = (gap: number): Point => ({
+    x: to.x - ((to.x - from.x) / apart) * gap,
+    y: to.y - ((to.y - from.y) / apart) * gap,
+  });
+  const tail = short(apart - NODE_RADIUS);
+  const tip = short(TARGET_RADIUS);
+  return (
+    <line
+      x1={tail.x}
+      y1={tail.y}
+      x2={tip.x}
+      y2={tip.y}
+      markerEnd="url(#colour-wheel-head)"
+      {...stylex.props(styles.arrow)}
+    />
+  );
+}
+
+function TwoWay({
+  index,
+  disabled,
+  start,
+  step,
+  at,
+  turn,
+  label,
+  reach,
+  value,
+  range,
+}: {
+  index: number;
+  disabled: boolean;
+  start: (event: React.PointerEvent<SVGElement>, index: number, handle: Handle) => void;
+  step: (index: number, reach: Reach, by: number) => void;
+  at: Point;
+  turn: number;
+  label: string;
+  reach: Reach;
+  value: number;
+  range: { min: number; max: number };
+}): JSX.Element {
+  return (
+    <g
+      transform={`translate(${at.x} ${at.y}) rotate(${turn})`}
+      {...stylex.props(focusRing.ring)}
+      role="slider"
+      tabIndex={disabled ? -1 : 0}
+      aria-label={label}
+      aria-valuenow={value}
+      aria-valuemin={range.min}
+      aria-valuemax={range.max}
+      onPointerDown={(event) => start(event, index, reach)}
+      onKeyDown={(event) => {
+        const direction = KEY_DIRECTIONS[event.key];
+        if (disabled || direction == null) return;
+        event.preventDefault();
+        step(index, reach, direction * REACH_STEPS[reach] * (event.shiftKey ? 10 : 1));
+      }}
+    >
+      <circle r={HANDLE_GRAB} {...stylex.props(styles.grab)} />
+      <path d={TWO_WAY} {...stylex.props(styles.twoWay)} />
     </g>
   );
 }
@@ -422,28 +552,8 @@ const NodeControls = observer(function NodeControls({
       </EditControl>
     );
   };
-  const chroma = { min: 0, max: Math.round(rim), step: 0.1 };
   return (
     <div {...stylex.props(styles.controls)}>
-      <Text as="span" style={styles.subheading}>
-        {strings.newColour()}
-      </Text>
-      {row(strings.hue(), 'targetHue', { min: 0, max: 360, step: 1 }, node.hue, '°')}
-      {row(strings.saturation(), 'targetChroma', chroma, node.chroma)}
-      {row(
-        strings.lightness(),
-        'targetLightness',
-        { min: 0, max: MOST_TARGET_LIGHTNESS, step: 1 },
-        lightnessOf(node.lightness),
-      )}
-      {row(
-        strings.hueRange(),
-        'hueReach',
-        { min: 1, max: MOST_HUE_REACH, step: 1 },
-        HUE_REACH,
-        '°',
-      )}
-      {row(strings.saturationRange(), 'chromaReach', chroma, CHROMA_REACH)}
       {node.lightness != null &&
         row(
           strings.lightnessRange(),
@@ -451,14 +561,22 @@ const NodeControls = observer(function NodeControls({
           { min: 0, max: MOST_LIGHTNESS_REACH, step: 1 },
           LIGHTNESS_REACH,
         )}
-      <button
-        type="button"
-        {...stylex.props(styles.remove, focusRing.ring)}
-        disabled={disabled}
-        onClick={() => presenter.remove(index)}
-      >
+      {row(strings.outputHue(), 'targetHue', { min: 0, max: 360, step: 1 }, node.hue, '°')}
+      {row(
+        strings.outputSaturation(),
+        'targetChroma',
+        { min: 0, max: Math.round(rim), step: 0.1 },
+        node.chroma,
+      )}
+      {row(
+        strings.outputLightness(),
+        'targetLightness',
+        { min: 0, max: MOST_TARGET_LIGHTNESS, step: 1 },
+        lightnessOf(node.lightness),
+      )}
+      <Button style={styles.remove} disabled={disabled} onClick={() => presenter.remove(index)}>
         {strings.remove()}
-      </button>
+      </Button>
     </div>
   );
 });

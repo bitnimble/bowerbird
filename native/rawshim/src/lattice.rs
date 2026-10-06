@@ -22,8 +22,17 @@ pub const CHROMA_TEXELS: usize = 25;
 pub const LEVEL_TEXELS: usize = 33;
 pub const NEIGHBOURHOOD_TEXELS: usize = 3;
 
-/// Rec.2020's own red at diffuse white, the most chroma a lattice axis needs to reach.
-pub const WHITE_RED: [Light<Rendered>; 3] = [Light::measured(1.0), Light::ZERO, Light::ZERO];
+/// The chroma of Rec.2020's widest primary at diffuse white, the most a lattice axis needs to reach.
+pub fn widest_chroma() -> f64 {
+    (0..3)
+        .map(|c| {
+            chroma_of(std::array::from_fn(|k| match k == c {
+                true => Light::measured(1.0),
+                false => Light::ZERO,
+            }))
+        })
+        .fold(0.0, f64::max)
+}
 
 /// Generator magnitude below which a kernel changes nothing a half float can hold.
 const NEGLIGIBLE: f64 = 1e-4;
@@ -32,7 +41,7 @@ const NEGLIGIBLE: f64 = 1e-4;
 /// then chroma laid along its hue.
 pub fn opponent_of(rendered: [Light<Rendered>; 3]) -> [f64; 3] {
     let zcam = Zcam::pinned();
-    let [m, a, b] = coded_cones(rendered.map(|v| v.raw() * INDEX_WHITE_NITS));
+    let [m, a, b] = iab_of(rendered.map(|v| v.raw() * INDEX_WHITE_NITS));
     let lightness = zcam.lightness(m - ZCAM_EPSILON);
     let ab = a.hypot(b);
     if ab == 0.0 {
@@ -48,7 +57,6 @@ pub fn lightness_of_neutral(level: Light<Rendered>) -> f64 {
     opponent_of([level; 3])[0]
 }
 
-/// The chroma of a colour, which sizes how far the lattice's chroma axis reaches.
 pub fn chroma_of(rendered: [Light<Rendered>; 3]) -> f64 {
     let [_, a, b] = opponent_of(rendered);
     a.hypot(b)
@@ -79,8 +87,8 @@ pub fn rendered_of([lightness, x, y]: [f64; 3]) -> [Light<Rendered>; 3] {
     .map(|nits| Light::measured(nits / INDEX_WHITE_NITS))
 }
 
-/// The coded M cone, which is ZCAM's `Iz` before its offset, and the two opponent axes.
-fn coded_cones(nits: [f64; 3]) -> [f64; 3] {
+/// `Iz` still carrying `ZCAM_EPSILON`, `az`, `bz`.
+fn iab_of(nits: [f64; 3]) -> [f64; 3] {
     let coded = |nits: f64| {
         let y = (nits.max(0.0) / 10000.0).powf(PQ_M1);
         ((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y)).powf(ZCAM_P)
@@ -109,60 +117,58 @@ pub struct ColourNode {
     pub target_hue: f64,
     pub target_chroma: f64,
     pub target_lightness: f64,
+    /// Each reach is where the node moves a colour half as far as its own, in the middle of
+    /// [`NODE_FEATHER`].
     pub hue_reach: f64,
-    /// Outward from `chroma`. The tent is even in √chroma, so it reaches less inward.
+    /// Outward from `chroma`. The fall is even in √chroma, so it reaches less inward.
     pub chroma_reach: f64,
     pub lightness_reach: f64,
 }
 
-/// Where a node reaching every lightness reads its target lightness against.
+/// What a node's weight falls from one to nothing over, along each lattice axis, whatever its
+/// reach: hue in turns, √chroma, lightness, √neighbourhood.
+pub const NODE_FEATHER: [f64; 4] = [12.0 / 360.0, 0.35, 10.0, 0.0];
+
+/// Where a weight that is half at `half` and falls over `feather` reaches nothing: a reach too
+/// short for the whole feather falls over all of itself, a tent.
+fn fallen(half: f64, feather: f64) -> f64 {
+    half + feather.min(2.0 * half) / 2.0
+}
+
 pub const ANY_LIGHTNESS_AT: f64 = 55.0;
 
 pub const MOST_NODES: usize = 32;
 
-const TINT_BELOW: f64 = 0.02;
-const LEAST_REACH: f64 = 1e-3;
+const TURNS_FROM_CHROMA: f64 = 2.0;
 
 impl ColourNode {
-    /// The kernel taking this node's colour exactly onto its target.
-    pub fn kernel(&self) -> Kernel {
+    /// The kernel taking this node's colour exactly onto its target, over `axes`, as
+    /// `colour.slang`'s `moved_by_reader` reads it: `[u_re, u_im, d_a, d_b, u_lightness, 0, 0]`,
+    /// moving `(J, z)` to `(J (1 + u_lightness), z + u z + d)`.
+    pub fn kernel(&self, axes: &LutAxes) -> Kernel {
         let level = self.lightness.unwrap_or(ANY_LIGHTNESS_AT);
-        let rendered = |lightness: f64, chroma: f64, hue: f64| {
+        let opponent = |chroma: f64, hue: f64| {
             let (sin, cos) = hue.to_radians().sin_cos();
-            rendered_of([lightness, chroma * cos, chroma * sin]).map(Light::raw)
+            [chroma * cos, chroma * sin]
         };
-        let from = rendered(level, self.chroma, self.hue);
-        let to = rendered(self.target_lightness, self.target_chroma, self.target_hue);
-        let luma =
-            |c: [f64; 3]| -> f64 { c.iter().zip(crate::hdr_fit::LUMA).map(|(c, w)| c * w).sum() };
-        let (lit, lit_to) = (luma(from), luma(to));
-        let pair = [from[0] - lit, from[2] - lit];
-        let pair_to = [to[0] - lit_to, to[2] - lit_to];
-        let operator = match lit > 0.0 {
-            false => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
-            true if pair[0].hypot(pair[1]) > TINT_BELOW * lit => {
-                let scale = pair_to[0].hypot(pair_to[1]) / pair[0].hypot(pair[1]);
-                let turn = pair_to[1].atan2(pair_to[0]) - pair[1].atan2(pair[0]);
-                let (sin, cos) = turn.sin_cos();
+        let z = opponent(self.chroma, self.hue);
+        let to = opponent(self.target_chroma, self.target_hue);
+        // A multiple of the pair cannot move a near-grey colour, so there the move is an offset.
+        let t = (self.chroma / TURNS_FROM_CHROMA).clamp(0.0, 1.0);
+        let turned = t * t * (3.0 - 2.0 * t);
+        let ratio = match z[0].hypot(z[1]) > 0.0 {
+            true => {
+                let size = z[0] * z[0] + z[1] * z[1];
                 [
-                    scale * cos,
-                    -scale * sin,
-                    scale * sin,
-                    scale * cos,
-                    0.0,
-                    0.0,
-                    lit_to / lit,
+                    (to[0] * z[0] + to[1] * z[1]) / size - 1.0,
+                    (to[1] * z[0] - to[0] * z[1]) / size,
                 ]
             }
-            true => [
-                1.0,
-                0.0,
-                0.0,
-                1.0,
-                (pair_to[0] - pair[0]) / lit,
-                (pair_to[1] - pair[1]) / lit,
-                lit_to / lit,
-            ],
+            false => [0.0; 2],
+        };
+        let lightness = match level > 0.0 {
+            true => self.target_lightness / level - 1.0,
+            false => 0.0,
         };
         Kernel {
             centre: [
@@ -171,23 +177,35 @@ impl ColourNode {
                 level,
                 0.0,
             ],
-            // A zero reach is the bake's "every place on this axis"; only lightness may mean that.
+            // At least a texel each, or a node between two texels reaches neither.
             reach: [
-                (self.hue_reach / 360.0).max(LEAST_REACH),
-                ((self.chroma + self.chroma_reach).max(0.0).sqrt() - self.chroma.max(0.0).sqrt())
-                    .max(LEAST_REACH),
-                self.lightness
-                    .map_or(0.0, |_| self.lightness_reach.max(LEAST_REACH)),
+                fallen(self.hue_reach / 360.0, NODE_FEATHER[0]).max(1.0 / (HUE_TEXELS - 1) as f64),
+                fallen(
+                    (self.chroma + self.chroma_reach).max(0.0).sqrt() - self.chroma.max(0.0).sqrt(),
+                    NODE_FEATHER[1],
+                )
+                .max(axes.chroma_top / (CHROMA_TEXELS - 1) as f64),
+                self.lightness.map_or(0.0, |_| {
+                    fallen(self.lightness_reach, NODE_FEATHER[2])
+                        .max((axes.level_top - axes.level_low) / (LEVEL_TEXELS - 1) as f64)
+                }),
                 0.0,
             ],
-            generator: generator_of(operator),
+            generator: [
+                turned * ratio[0],
+                turned * ratio[1],
+                (1.0 - turned) * (to[0] - z[0]),
+                (1.0 - turned) * (to[1] - z[1]),
+                lightness,
+                0.0,
+                0.0,
+            ],
             to_lightness: [0.0; 2],
         }
     }
 }
 
-/// ZCAM under the viewing conditions the lattice is indexed in, reduced to what `index_space.slang`
-/// holds: the white's `Iz`, lightness's exponent on `Iz`, and the factor on chroma.
+/// ZCAM at the lattice's pinned viewing conditions, as `index_space.slang` holds it.
 #[derive(Clone, Copy, Debug)]
 struct Zcam {
     white_iz: f64,
@@ -197,15 +215,15 @@ struct Zcam {
 
 impl Zcam {
     fn pinned() -> Zcam {
-        let white_iz = coded_cones([INDEX_WHITE_NITS; 3])[0] - ZCAM_EPSILON;
+        let white_iz = iab_of([INDEX_WHITE_NITS; 3])[0] - ZCAM_EPSILON;
         let background = ZCAM_BACKGROUND.sqrt();
-        // Adapted to the background.
-        let adapting = INDEX_WHITE_NITS * ZCAM_BACKGROUND;
-        let luminance_level = 0.171 * adapting.cbrt() * (1.0 - (-48.0 / 9.0 * adapting).exp());
-        let lightness_exponent = 1.6 * ZCAM_SURROUND / background.powf(0.12);
+        let adapting_luminance = INDEX_WHITE_NITS * ZCAM_BACKGROUND;
+        let luminance_level =
+            0.171 * adapting_luminance.cbrt() * (1.0 - (-48.0 / 9.0 * adapting_luminance).exp());
+        let lightness_exponent = 1.6 * ZCAM_DIM_SURROUND / background.powf(0.12);
         let white_brightness = 2700.0
             * white_iz.powf(lightness_exponent)
-            * ZCAM_SURROUND.powf(2.2)
+            * ZCAM_DIM_SURROUND.powf(2.2)
             * background.sqrt()
             * luminance_level.powf(0.2);
         Zcam {
@@ -227,8 +245,8 @@ impl Zcam {
 }
 
 const INDEX_WHITE_NITS: f64 = 203.0;
-/// BT.2100's reference viewing environment is dim.
-const ZCAM_SURROUND: f64 = 0.59;
+/// BT.2100's reference viewing environment.
+const ZCAM_DIM_SURROUND: f64 = 0.59;
 /// ZCAM's `Yb / Yw`.
 const ZCAM_BACKGROUND: f64 = 0.2;
 const ZCAM_EPSILON: f64 = 3.7035226210190005e-11;
@@ -238,10 +256,12 @@ const PQ_C1: f64 = 0.8359375;
 const PQ_C2: f64 = 18.8515625;
 const PQ_C3: f64 = 18.6875;
 const ZCAM_P: f64 = 134.034375;
+/// Jzazbz's cones with the long and short rows scaled to the middle one's white, so every neutral
+/// lands on the lattice's grey axis at every lightness.
 const R2020_TO_LMS: [[f64; 3]; 3] = [
-    [0.530003576, 0.355703633, 0.086089990],
+    [0.530258488, 0.355874713, 0.086131396],
     [0.289388269, 0.525394823, 0.157481505],
-    [0.091098083, 0.147587582, 0.734233807],
+    [0.091036765, 0.147488240, 0.733739592],
 ];
 const LMS_TO_IAB: [[f64; 3]; 3] = [
     [0.0, 1.0, 0.0],
@@ -304,6 +324,18 @@ pub struct LutAxes {
     pub neighbourhood_top: f64,
 }
 
+impl LutAxes {
+    /// Every chroma a display primary has and every lightness PQ codes.
+    pub fn of_nodes() -> LutAxes {
+        LutAxes {
+            chroma_top: widest_chroma().sqrt(),
+            level_low: lightness_of_neutral(Light::ZERO),
+            level_top: lightness_of_neutral(Light::measured(10000.0 / INDEX_WHITE_NITS)),
+            neighbourhood_top: 1.0,
+        }
+    }
+}
+
 /// The constants `colour.slang`'s `correct` reads the baked volumes with.
 pub struct MapShape {
     pub hue_count: usize,
@@ -324,9 +356,8 @@ const SUM_WORDS: usize = 9;
 struct Summed {
     kernels: Vec<Kernel>,
     axes: LutAxes,
-    /// Whether the generators are first solved so each kernel's centre takes its own operator
-    /// (`lattice_bake.slang`'s `interpolate`).
-    interpolating: bool,
+    /// [`ColourNode::kernel`]s: solved to land exactly at their centres, and baked unexponentiated.
+    moves: bool,
     on: std::sync::OnceLock<(u64, crate::gpu::Buffer)>,
 }
 
@@ -335,7 +366,7 @@ impl Summed {
         std::sync::Arc::new(Summed {
             kernels,
             axes,
-            interpolating: false,
+            moves: false,
             on: std::sync::OnceLock::new(),
         })
     }
@@ -381,7 +412,7 @@ impl ChromaMap {
         ChromaMap::new(
             Vec::new(),
             LutAxes {
-                chroma_top: chroma_of(WHITE_RED).sqrt(),
+                chroma_top: widest_chroma().sqrt(),
                 level_low: lightness_of_neutral(Light::ZERO),
                 level_top: lightness_of_neutral(Light::measured(1.0)),
                 neighbourhood_top: 1.0,
@@ -402,28 +433,17 @@ impl ChromaMap {
     }
 
     pub fn of_nodes(nodes: &[ColourNode]) -> ChromaMap {
-        let primary = |c: usize| -> f64 {
-            chroma_of(std::array::from_fn(|k| match k == c {
-                true => Light::measured(1.0),
-                false => Light::ZERO,
-            }))
-        };
-        let axes = LutAxes {
-            chroma_top: (0..3).map(primary).fold(0.0, f64::max).sqrt(),
-            level_low: lightness_of_neutral(Light::ZERO),
-            level_top: lightness_of_neutral(Light::measured(10000.0 / INDEX_WHITE_NITS)),
-            neighbourhood_top: 1.0,
-        };
+        let axes = LutAxes::of_nodes();
         // Unfiltered: a node asked to change nothing still holds its colour against its neighbours.
         let kernels: Vec<Kernel> = nodes
             .iter()
             .take(MOST_NODES)
-            .map(ColourNode::kernel)
+            .map(|node| node.kernel(&axes))
             .collect();
         let summed = std::sync::Arc::new(Summed {
             kernels: kernels.clone(),
             axes,
-            interpolating: true,
+            moves: true,
             on: std::sync::OnceLock::new(),
         });
         ChromaMap {
@@ -591,13 +611,11 @@ pub fn generator_of(node: [f64; 7]) -> [f64; 7] {
             None => lacks = share,
         }
     }
-    // Where the log runs out, the eigenvalue heading through zero is zero: one chroma direction
-    // flattened to nothing. Halfway, it is a half.
+    // At `has` an eigenvalue reaches zero, flattening a chroma direction; back off to half.
     node_of(log_of(toward(has / 2.0)).unwrap_or([[0.0; 3]; 3]))
 }
 
-/// Inverse scaling and squaring: square roots until the matrix is near the identity, the log's
-/// series there, then doubled back.
+/// Inverse scaling and squaring.
 fn log_of(a: M3) -> Option<M3> {
     let mut x = a;
     let mut halvings = 0;
@@ -713,6 +731,7 @@ pub(crate) struct BakeKernel {
     sum: wgpu::ComputePipeline,
     bake_layout: wgpu::BindGroupLayout,
     bake: wgpu::ComputePipeline,
+    bake_moves: wgpu::ComputePipeline,
 }
 
 impl BakeKernel {
@@ -780,16 +799,15 @@ impl BakeKernel {
             ],
             "sum",
         );
-        let (bake_layout, bake) = pipeline(
-            &[
-                buffer(4, read),
-                buffer(5, read),
-                storage(1),
-                storage(2),
-                buffer(20, wgpu::BufferBindingType::Uniform),
-            ],
-            "bake",
-        );
+        let baking = [
+            buffer(4, read),
+            buffer(5, read),
+            storage(1),
+            storage(2),
+            buffer(20, wgpu::BufferBindingType::Uniform),
+        ];
+        let (bake_layout, bake) = pipeline(&baking, "bake");
+        let (_, bake_moves) = pipeline(&baking, "bake_moves");
         BakeKernel {
             interpolate_layout,
             interpolate,
@@ -797,6 +815,7 @@ impl BakeKernel {
             sum,
             bake_layout,
             bake,
+            bake_moves,
         }
     }
 }
@@ -810,7 +829,7 @@ const SIZE: wgpu::Extent3d = wgpu::Extent3d {
 };
 
 /// `lattice_bake.slang`'s `Params`.
-fn params(kernels: usize, axes: LutAxes, scales: [f64; 2]) -> Vec<u8> {
+fn params(kernels: usize, axes: LutAxes, scales: [f64; 2], feather: [f64; 4]) -> Vec<u8> {
     let mut push: Vec<u8> = [
         kernels as u32,
         HUE_TEXELS as u32,
@@ -832,6 +851,9 @@ fn params(kernels: usize, axes: LutAxes, scales: [f64; 2]) -> Vec<u8> {
         push.extend((v as f32).to_ne_bytes());
     }
     push.extend(0u32.to_ne_bytes());
+    for v in feather {
+        push.extend((v as f32).to_ne_bytes());
+    }
     push
 }
 
@@ -876,11 +898,19 @@ fn sum(gpu: &Gpu, summed: &Summed) -> crate::gpu::Buffer {
     });
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("lattice_bake push"),
-        contents: &params(summed.kernels.len(), summed.axes, [0.0; 2]),
+        contents: &params(
+            summed.kernels.len(),
+            summed.axes,
+            [0.0; 2],
+            match summed.moves {
+                true => NODE_FEATHER,
+                false => [0.0; 4],
+            },
+        ),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let built = gpu.lattice_bake();
-    let kernels = match summed.interpolating && !summed.kernels.is_empty() {
+    let kernels = match summed.moves && !summed.kernels.is_empty() {
         false => kernels,
         true => {
             let solved = recording.buffer(&wgpu::BufferDescriptor {
@@ -967,7 +997,12 @@ fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
     recording.holding(&second);
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("lattice_bake push"),
-        contents: &params(map.kernels.len(), map.axes, [*first_scale, second_scale]),
+        contents: &params(
+            map.kernels.len(),
+            map.axes,
+            [*first_scale, second_scale],
+            [0.0; 4],
+        ),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let (chroma_view, luma_view) = (chroma.view(), luma.view());
@@ -998,7 +1033,11 @@ fn bake(gpu: &Gpu, map: &ChromaMap) -> (Texture, Texture) {
             },
         ],
     });
-    dispatch(&mut recording, &built.bake, &group);
+    let pipeline = match map.terms[0].0.moves {
+        true => &built.bake_moves,
+        false => &built.bake,
+    };
+    dispatch(&mut recording, pipeline, &group);
     recording.submit();
     (chroma, luma)
 }
@@ -1040,24 +1079,77 @@ mod tests {
     }
 
     #[test]
-    fn a_node_reaching_nothing_reaches_its_own_place_alone() {
+    fn a_node_reaching_nothing_still_moves_its_own_colour() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
         let node = ColourNode {
-            hue: 120.0,
+            hue: 122.5,
             chroma: 10.0,
-            lightness: Some(30.0),
-            target_hue: 140.0,
+            lightness: Some(32.0),
+            target_hue: 142.5,
             target_chroma: 10.0,
-            target_lightness: 30.0,
+            target_lightness: 32.0,
             hue_reach: 0.0,
             chroma_reach: 0.0,
             lightness_reach: 0.0,
         };
-        assert!(node.kernel().reach[..3].iter().all(|&reach| reach > 0.0));
+        let (pair, _) = ChromaMap::of_nodes(std::slice::from_ref(&node)).baked(gpu);
+        let most = read_volume(gpu, &pair)
+            .iter()
+            .map(|[re, im, _, _]| im.atan2(1.0 + re).to_degrees().abs())
+            .fold(0.0, f64::max);
+        assert!(
+            most > 5.0,
+            "the node turned no texel past {most:.1} degrees"
+        );
         let anywhere = ColourNode {
             lightness: None,
             ..node
         };
-        assert_eq!(anywhere.kernel().reach[2], 0.0);
+        assert_eq!(anywhere.kernel(&LutAxes::of_nodes()).reach[2], 0.0);
+    }
+
+    #[test]
+    fn a_node_moves_its_whole_reach_fully_and_falls_to_half_at_its_edge() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let axes = ChromaMap::of_nodes(&[]).axes;
+        let (level_at, chroma_at, hue_at) = (7, 12, 36);
+        let root_chroma = axes.chroma_top * chroma_at as f64 / (CHROMA_TEXELS - 1) as f64;
+        let hue_of = |texel: usize| 360.0 * texel as f64 / (HUE_TEXELS - 1) as f64;
+        let node = ColourNode {
+            hue: hue_of(hue_at),
+            chroma: root_chroma * root_chroma,
+            lightness: Some(
+                axes.level_low
+                    + (axes.level_top - axes.level_low) * level_at as f64
+                        / (LEVEL_TEXELS - 1) as f64,
+            ),
+            target_hue: hue_of(hue_at) + 10.0,
+            target_chroma: root_chroma * root_chroma,
+            target_lightness: 60.0,
+            // The edge three texels round; the plateau ends half the feather short of it.
+            hue_reach: hue_of(3),
+            chroma_reach: 6.0,
+            lightness_reach: 15.0,
+        };
+        assert!(hue_of(1) < hue_of(3) - 180.0 * NODE_FEATHER[0]);
+        let (pair, luma) = ChromaMap::of_nodes(std::slice::from_ref(&node)).baked(gpu);
+        let (pair, luma) = (read_volume(gpu, &pair), read_volume(gpu, &luma));
+        let row = (level_at * CHROMA_TEXELS + chroma_at) * HUE_TEXELS;
+        let at = |hue_texel: usize| move_at(&pair, &luma, row + hue_texel);
+        let own = at(hue_at);
+        for (texel, share) in [(hue_at + 1, 1.0), (hue_at + 3, 0.5), (hue_at + 5, 0.0)] {
+            let got = at(texel);
+            for w in 0..5 {
+                assert!(
+                    (got[w] - share * own[w]).abs() < 1e-2 * own[w].abs().max(1e-2),
+                    "texel {texel} word {w}: {got:?}, wanted {share} of {own:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1080,49 +1172,67 @@ mod tests {
             target_hue: target[0],
             target_chroma: target[1],
             target_lightness: target[2],
-            hue_reach: 40.0,
-            chroma_reach: 6.0,
-            lightness_reach: 30.0,
+            hue_reach: 20.0,
+            chroma_reach: 2.8,
+            lightness_reach: 15.0,
         };
         let nodes = [
             node(48, [hue_of(48) + 15.0, chroma, lightness]),
-            node(50, [hue_of(50), chroma * 0.5, lightness + 5.0]),
+            node(52, [hue_of(52), chroma * 0.5, lightness + 5.0]),
         ];
         let (pair, luma) = ChromaMap::of_nodes(&nodes).baked(gpu);
         let (pair, luma) = (read_volume(gpu, &pair), read_volume(gpu, &luma));
-        let at = |lightness: f64, chroma: f64, hue: f64| {
-            let (sin, cos) = hue.to_radians().sin_cos();
-            raw_rendered_of([lightness, chroma * cos, chroma * sin])
-        };
-        for (n, hue_texel) in nodes.iter().zip([48, 50]) {
+        for (n, hue_texel) in nodes.iter().zip([48, 52]) {
             let texel = (level_at * CHROMA_TEXELS + chroma_at) * HUE_TEXELS + hue_texel;
-            let ([a, b, c, d], [e, f, g, _]) = (pair[texel], luma[texel]);
-            let from = at(lightness, chroma, n.hue);
-            let l: f64 = from
-                .iter()
-                .zip(crate::hdr_fit::LUMA)
-                .map(|(c, w)| c * w)
-                .sum();
-            let (d0, d2) = (from[0] - l, from[2] - l);
-            let lit = (g + 1.0) * l;
-            let (r, bl) = (lit + a * d0 + b * d2 + e * l, lit + c * d0 + d * d2 + f * l);
-            let got = [
-                r,
-                (lit - crate::hdr_fit::LUMA[0] * r - crate::hdr_fit::LUMA[2] * bl)
-                    / crate::hdr_fit::LUMA[1],
-                bl,
-            ];
-            let want = at(n.target_lightness, n.target_chroma, n.target_hue);
+            let got = moved(
+                move_at(&pair, &luma, texel),
+                opponent(lightness, chroma, n.hue),
+            );
+            let want = opponent(n.target_lightness, n.target_chroma, n.target_hue);
             let off = got
                 .iter()
                 .zip(want)
                 .map(|(got, want)| (got - want).abs())
                 .fold(0.0, f64::max);
-            assert!(
-                off < 4e-3 * want.iter().fold(0.0, |m: f64, v| m.max(v.abs())),
-                "{n:?} gave {got:?}, wanted {want:?}"
-            );
+            assert!(off < 0.1, "{n:?} gave {got:?}, wanted {want:?}");
         }
+    }
+
+    #[test]
+    fn nodes_at_nearly_one_colour_asking_opposite_turns_stay_within_their_turns() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let node = |hue: f64, turn: f64| ColourNode {
+            hue,
+            chroma: 12.0,
+            lightness: None,
+            target_hue: hue + turn,
+            target_chroma: 12.0,
+            target_lightness: ANY_LIGHTNESS_AT,
+            hue_reach: 40.0,
+            chroma_reach: 8.0,
+            lightness_reach: 0.0,
+        };
+        let (pair, luma) = ChromaMap::of_nodes(&[node(100.0, 20.0), node(104.0, -20.0)]).baked(gpu);
+        let (pair, luma) = (read_volume(gpu, &pair), read_volume(gpu, &luma));
+        let axes = LutAxes::of_nodes();
+        let most = (0..pair.len())
+            .map(|texel| {
+                let at = opponent_at(place_of(axes, texel));
+                let to = moved(move_at(&pair, &luma, texel), at);
+                let turn = (to[2].atan2(to[1]) - at[2].atan2(at[1])).to_degrees();
+                let turn = (turn + 180.0).rem_euclid(360.0) - 180.0;
+                match at[1].hypot(at[2]) > 1.0 {
+                    true => turn.abs(),
+                    false => 0.0,
+                }
+            })
+            .fold(0.0, f64::max);
+        assert!(
+            most < 60.0,
+            "a texel turns {most:.0} degrees for edits asking 20"
+        );
     }
 
     #[test]
@@ -1141,8 +1251,7 @@ mod tests {
         }
     }
 
-    /// A dark node from a night frame, solved to a reflection: its first-order generator
-    /// exponentiates past what the bake's half floats hold.
+    /// A dark node from a night frame, solved to a reflection.
     #[test]
     fn a_reflection_keeps_half_the_share_of_it_that_has_a_log() {
         let node = [-14.4, -1.63, 202.0, 23.1, 0.0, 0.0, 1.0];
@@ -1368,39 +1477,68 @@ mod tests {
             node(120.0, 0.3, Some(30.0), [60.0, 6.0, 35.0]),
             node(300.0, 10.0, None, [330.0, 10.0, 60.0]),
             node(0.0, 5.0, Some(110.0), [0.0, 5.0, 110.0]),
+            node(120.0, 9.0, None, [301.0, 12.0, 55.0]),
         ] {
-            let at = |lightness: f64, chroma: f64, hue: f64| {
-                let (sin, cos) = hue.to_radians().sin_cos();
-                raw_rendered_of([lightness, chroma * cos, chroma * sin])
-            };
-            let from = at(
+            let from = opponent(
                 node.lightness.unwrap_or(ANY_LIGHTNESS_AT),
                 node.chroma,
                 node.hue,
             );
-            let want = at(node.target_lightness, node.target_chroma, node.target_hue);
-            let [a, b, c, d, e, f, g] = operator_of(node.kernel().generator);
-            let l: f64 = from
-                .iter()
-                .zip(crate::hdr_fit::LUMA)
-                .map(|(c, w)| c * w)
-                .sum();
-            let (d0, d2) = (from[0] - l, from[2] - l);
-            let lit = g * l;
-            let (r, bl) = (lit + a * d0 + b * d2 + e * l, lit + c * d0 + d * d2 + f * l);
-            let got = [
-                r,
-                (lit - crate::hdr_fit::LUMA[0] * r - crate::hdr_fit::LUMA[2] * bl)
-                    / crate::hdr_fit::LUMA[1],
-                bl,
-            ];
+            let want = opponent(node.target_lightness, node.target_chroma, node.target_hue);
+            let generator = node.kernel(&LutAxes::of_nodes()).generator;
+            let got = moved(std::array::from_fn(|k| generator[k]), from);
             for (got, want) in got.iter().zip(want) {
                 assert!(
-                    (got - want).abs() < 1e-6,
+                    (got - want).abs() < 1e-9,
                     "{node:?} gave {got:?}, wanted {want:?}"
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_partly_reached_colour_moves_continuously_as_the_target_crosses_the_far_side() {
+        let node = |target_hue: f64| ColourNode {
+            hue: 120.0,
+            chroma: 9.0,
+            lightness: None,
+            target_hue,
+            target_chroma: 12.0,
+            target_lightness: ANY_LIGHTNESS_AT,
+            hue_reach: 30.0,
+            chroma_reach: 6.0,
+            lightness_reach: 0.0,
+        };
+        let half_of = |target_hue: f64| {
+            let generator = node(target_hue).kernel(&LutAxes::of_nodes()).generator;
+            moved(
+                std::array::from_fn(|k| generator[k] / 2.0),
+                opponent(ANY_LIGHTNESS_AT, 9.0, 120.0),
+            )
+        };
+        let (before, after) = (half_of(299.5), half_of(300.5));
+        let apart = (before[1] - after[1]).hypot(before[2] - after[2]);
+        assert!(apart < 0.2, "half a move went from {before:?} to {after:?}");
+    }
+
+    fn opponent(lightness: f64, chroma: f64, hue: f64) -> [f64; 3] {
+        let (sin, cos) = hue.to_radians().sin_cos();
+        [lightness, chroma * cos, chroma * sin]
+    }
+
+    /// `colour.slang`'s `moved_by_reader`, by a kernel's move words or a texel of its volumes.
+    fn moved(by: [f64; 5], [lightness, a, b]: [f64; 3]) -> [f64; 3] {
+        [
+            lightness * (1.0 + by[4]),
+            a + by[0] * a - by[1] * b + by[2],
+            b + by[0] * b + by[1] * a + by[3],
+        ]
+    }
+
+    /// Texel `texel`'s move from a node map's two volumes.
+    fn move_at(pair: &[[f64; 4]], luma: &[[f64; 4]], texel: usize) -> [f64; 5] {
+        let [a, b, c, d] = pair[texel];
+        [a, b, c, d, luma[texel][0]]
     }
 
     /// Texel `texel`'s place in lattice coordinates, as `lattice_bake.slang`'s `place_of` has it.
@@ -1473,8 +1611,10 @@ mod tests {
         assert!(black.abs() < 1e-6, "{black}");
         let peak = lightness_of_neutral(Light::measured(4.0));
         assert!(peak > 130.0, "{peak}");
-        let grey = chroma_of([Light::measured(0.18); 3]);
-        assert!(grey < 0.5, "a neutral reads {grey} of chroma");
+        for level in [0.01, 0.18, 1.0, 20.0] {
+            let grey = chroma_of([Light::measured(level); 3]);
+            assert!(grey < 0.01, "a neutral at {level} reads {grey} of chroma");
+        }
     }
 
     #[test]
@@ -1507,7 +1647,12 @@ mod tests {
         .map(|(name, want)| format!("{name} = {want:.9}"))
         .collect();
         assert!(wrong.is_empty(), "index_space.slang should say {wrong:?}");
-        let entries = R2020_TO_LMS.iter().chain(&LMS_TO_IAB).flatten();
+        let back = inverse(R2020_TO_LMS).expect("invertible");
+        let entries = R2020_TO_LMS
+            .iter()
+            .chain(&back)
+            .chain(&LMS_TO_IAB)
+            .flatten();
         for v in entries.filter(|v| v.abs() != 0.0 && v.abs() != 1.0 && **v != 0.5) {
             assert!(
                 SOURCE.contains(&format!("{v:.9}")),

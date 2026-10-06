@@ -201,6 +201,8 @@ export class RawEditPresenter {
       local: () => this.local,
       preview: (patch) => this.preview(patch),
       settle: (patch) => this.settle(patch),
+      fail: (why) => this.fail(why),
+      displayPeak: () => displayPeakNits(this.device.displayPeakNits),
     });
     this.edit = new EditPresenter(editStore, this, this.repair);
   }

@@ -1,5 +1,3 @@
-//! The colour wheel `lattice::ColourNode`s are edited on.
-
 use super::{Binding, Buffer, Grade, Recording, Uploaded};
 
 /// Places, as ZCAM lightness and opponent pair, and a weight.
@@ -13,8 +11,11 @@ pub(crate) struct Pipelines {
     field: wgpu::ComputePipeline,
 }
 
-const PROBE_BINDINGS: [(u32, Binding); 12] = [
+pub const DOTS_ACROSS: usize = 64;
+
+const PROBE_BINDINGS: [(u32, Binding); 14] = [
     (0, Binding::Uniform),
+    (1, Binding::Storage { read_only: true }),
     (2, Binding::Curves),
     (3, Binding::Volume),
     (4, Binding::Storage { read_only: true }),
@@ -24,6 +25,7 @@ const PROBE_BINDINGS: [(u32, Binding); 12] = [
     (14, Binding::Storage { read_only: true }),
     (17, Binding::Detail),
     (19, Binding::Detail),
+    (21, Binding::Detail),
     (23, Binding::Storage { read_only: true }),
     (24, Binding::Storage { read_only: false }),
 ];
@@ -107,13 +109,19 @@ impl Pipelines {
 }
 
 /// The wheel at one lightness, as `colour_wheel.slang`'s `Wheel` holds it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Backdrop {
     pub lightness: f64,
     pub side: u32,
-    /// Diffuse white, in nits.
-    pub reference: f64,
+    pub reference: crate::light::Light<crate::light::SceneNits>,
+    /// Darkens what this node does not reach, by as much as it does not.
+    pub selected: Option<crate::lattice::ColourNode>,
 }
+
+const UNREACHED_SHADE: f64 = 0.8;
+
+/// `colour_wheel_editor.tsx`'s `TARGET_RADIUS`, the ring the output colour is drawn inside.
+const OUTPUT_RADIUS: f64 = 0.04;
 
 pub fn wheel_chroma() -> f64 {
     crate::lattice::ChromaMap::of_nodes(&[])
@@ -158,6 +166,15 @@ pub fn displayable(lightness: f64, headroom: f64) -> Vec<f64> {
         .collect()
 }
 
+/// Per whole degree of hue, the furthest [`displayable`] reaches at any of `lightnesses`.
+pub fn widest_displayable(lightnesses: &[f64], headroom: f64) -> Vec<f64> {
+    lightnesses
+        .iter()
+        .map(|&lightness| displayable(lightness, headroom))
+        .reduce(|widest, edge| widest.iter().zip(edge).map(|(a, b)| a.max(b)).collect())
+        .unwrap_or_default()
+}
+
 impl super::Gpu {
     /// `target` is `CANVAS_FORMAT`, `side` square.
     pub fn draw_backdrop(
@@ -166,16 +183,35 @@ impl super::Gpu {
         target: &wgpu::TextureView,
         backdrop: &Backdrop,
     ) {
+        let kernel = backdrop
+            .selected
+            .as_ref()
+            .map(|node| node.kernel(&crate::lattice::LutAxes::of_nodes()));
         let words: Vec<u8> = [
             backdrop.lightness,
             wheel_chroma(),
             f64::from(backdrop.side),
-            backdrop.reference,
+            backdrop.reference.raw(),
             super::CANVAS_WHITE_NITS,
+            kernel.as_ref().map_or(0.0, |_| UNREACHED_SHADE),
+            0.0,
+            0.0,
         ]
-        .iter()
-        .flat_map(|v| (*v as f32).to_le_bytes())
-        .chain([0u8; 12])
+        .into_iter()
+        .chain(kernel.map_or([0.0; 8], |k| {
+            std::array::from_fn(|i| if i < 4 { k.centre[i] } else { k.reach[i - 4] })
+        }))
+        .chain(backdrop.selected.as_ref().map_or([0.0; 4], |node| {
+            let (sin, cos) = node.target_hue.to_radians().sin_cos();
+            [
+                node.target_lightness,
+                node.target_chroma * cos,
+                node.target_chroma * sin,
+                OUTPUT_RADIUS,
+            ]
+        }))
+        .chain(crate::lattice::NODE_FEATHER)
+        .flat_map(|v| (v as f32).to_le_bytes())
         .collect();
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("colour wheel"),
@@ -237,7 +273,7 @@ pub fn present_backdrop(gpu: &super::Gpu, stage: &super::Stage, backdrop: &Backd
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Probed {
-    /// Two per block: each half's mean weighted by its share, or the whole mean and a zero.
+    /// A grid of pixels, `DOTS_ACROSS` to a row, each as the reader's colour edits key it.
     pub scatter: Vec<Place>,
     /// Where the profile takes each asked place.
     pub field: Vec<Place>,
@@ -283,11 +319,11 @@ impl Uploaded<'static> {
         let mut recording = gpu.record();
         let (edits, balance) = self.written(grade, described);
         gpu.build_balance(&mut recording, edits, balance);
-        let mean = self.mean_if(grade, true);
-        let cells = {
-            let size = self.mean.borrow().1.size();
-            (size.width / 2 * size.height) as usize
-        };
+        let smoothed = self.chroma_smoothed_for(grade);
+        let down = (DOTS_ACROSS as f64 * self.height as f64 / self.width as f64)
+            .round()
+            .max(1.0) as usize;
+        let dots = DOTS_ACROSS * down;
         let place_bytes: Vec<u8> = match places.is_empty() {
             true => vec![0; 16],
             false => places
@@ -317,7 +353,7 @@ impl Uploaded<'static> {
             });
             (out, staged, size)
         };
-        let scattered = answers(&mut recording, cells * 2);
+        let scattered = answers(&mut recording, dots);
         let fielded = answers(&mut recording, places.len());
         let built = gpu.colour_wheel();
         let group = |out: &Buffer| {
@@ -328,6 +364,10 @@ impl Uploaded<'static> {
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: edits.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.samples.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -363,7 +403,11 @@ impl Uploaded<'static> {
                     },
                     wgpu::BindGroupEntry {
                         binding: 19,
-                        resource: wgpu::BindingResource::TextureView(&mean),
+                        resource: wgpu::BindingResource::TextureView(&self.mean),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 21,
+                        resource: wgpu::BindingResource::TextureView(&smoothed),
                     },
                     wgpu::BindGroupEntry {
                         binding: 23,
@@ -381,7 +425,7 @@ impl Uploaded<'static> {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
             pass.set_pipeline(&built.scatter);
             pass.set_bind_group(0, &scatter_group, &[]);
-            pass.dispatch_workgroups((cells as u32).div_ceil(64), 1, 1);
+            pass.dispatch_workgroups((dots as u32).div_ceil(64), 1, 1);
             if !places.is_empty() {
                 pass.set_pipeline(&built.field);
                 pass.set_bind_group(0, &field_group, &[]);
@@ -396,7 +440,7 @@ impl Uploaded<'static> {
         recording.submit();
         Probing {
             gpu,
-            scatter: (scattered.1, cells * 2),
+            scatter: (scattered.1, dots),
             field: (fielded.1, places.len()),
         }
     }
@@ -406,17 +450,28 @@ impl Uploaded<'static> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_backdrop_draws_each_place_at_its_colour() {
-        let Some(gpu) = crate::gpu::device() else {
-            return;
-        };
-        const SIDE: u32 = 32;
-        let backdrop = Backdrop {
+    const SIDE: u32 = 32;
+
+    fn backdrop(selected: Option<crate::lattice::ColourNode>) -> Backdrop {
+        Backdrop {
             lightness: 70.0,
             side: SIDE,
-            reference: 203.0,
-        };
+            reference: crate::light::Light::measured(203.0),
+            selected,
+        }
+    }
+
+    /// The opponent pair the backdrop draws at pixel `(x, y)`.
+    fn out_at(x: u32, y: u32) -> [f64; 2] {
+        let (half, top) = (f64::from(SIDE) / 2.0, wheel_chroma());
+        [
+            (f64::from(x) + 0.5 - half) / half * top,
+            (half - f64::from(y) - 0.5) / half * top,
+        ]
+    }
+
+    /// Each pixel's coded P3, row by row.
+    fn drawn(gpu: &'static crate::gpu::Gpu, backdrop: &Backdrop) -> Vec<[f64; 3]> {
         let target = gpu.own_texture(&wgpu::TextureDescriptor {
             label: Some("wheel"),
             size: wgpu::Extent3d {
@@ -434,7 +489,7 @@ mod tests {
         let row = (SIDE as usize * 8).next_multiple_of(256);
         let mut recording = gpu.record();
         recording.holding_texture(&target);
-        gpu.draw_backdrop(&mut recording, &target.view(), &backdrop);
+        gpu.draw_backdrop(&mut recording, &target.view(), backdrop);
         let staged = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("wheel readback"),
             size: (row * SIDE as usize) as u64,
@@ -461,35 +516,169 @@ mod tests {
         recording.submit();
         let bytes = pollster::block_on(crate::gpu::read_back(gpu, &staged, |b| b.to_vec()))
             .expect("read back");
-        let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
-        let (half, top) = (f64::from(SIDE) / 2.0, wheel_chroma());
+        (0..SIDE as usize * SIDE as usize)
+            .map(|i| {
+                let at = (i / SIDE as usize) * row + (i % SIDE as usize) * 8;
+                std::array::from_fn(|c| {
+                    f64::from(half::f16::from_le_bytes([
+                        bytes[at + 2 * c],
+                        bytes[at + 2 * c + 1],
+                    ]))
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_backdrop_draws_each_place_at_its_colour() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let backdrop = backdrop(None);
+        let pixels = drawn(gpu, &backdrop);
         for (x, y) in [(16, 16), (30, 16), (16, 2), (5, 27), (24, 9)] {
-            let out = [
-                (x as f64 + 0.5 - half) / half * top,
-                (half - y as f64 - 0.5) / half * top,
-            ];
-            let rendered = crate::lattice::rendered_of([backdrop.lightness, out[0], out[1]])
-                .map(crate::light::Light::raw);
-            let at = y * row + x * 8;
-            for (c, weights) in to_p3.iter().enumerate() {
-                let p3: f64 = weights.iter().zip(rendered).map(|(m, v)| m * v).sum();
-                // `prelude.slang`'s `srgb_oetf_signed`, which carries past one.
-                let v = p3.abs();
-                let encoded = match v <= 0.0031308 {
-                    true => 12.92 * v,
-                    false => 1.055 * v.powf(1.0 / 2.4) - 0.055,
-                };
-                let want = p3.signum() * encoded;
-                let got = f64::from(half::f16::from_le_bytes([
-                    bytes[at + 2 * c],
-                    bytes[at + 2 * c + 1],
-                ]));
-                assert!(
-                    (got - want).abs() < 4e-3 * want.abs().max(1.0),
-                    "({x}, {y}) channel {c}: drew {got}, wanted {want}"
-                );
-            }
+            let got = pixels[(y * SIDE + x) as usize];
+            assert_drawn(got, coded_at(backdrop.lightness, out_at(x, y)), (x, y));
         }
+    }
+
+    /// The canvas's coded P3 for a colour at `lightness` and opponent pair `out`.
+    fn coded_at(lightness: f64, out: [f64; 2]) -> [f64; 3] {
+        let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
+        let rendered =
+            crate::lattice::rendered_of([lightness, out[0], out[1]]).map(crate::light::Light::raw);
+        std::array::from_fn(|c| {
+            let p3: f64 = to_p3[c].iter().zip(rendered).map(|(m, v)| m * v).sum();
+            // `prelude.slang`'s `srgb_oetf_signed`, which carries past one.
+            let v = p3.abs();
+            let encoded = match v <= 0.0031308 {
+                true => 12.92 * v,
+                false => 1.055 * v.powf(1.0 / 2.4) - 0.055,
+            };
+            p3.signum() * encoded
+        })
+    }
+
+    fn assert_drawn(got: [f64; 3], want: [f64; 3], at: (u32, u32)) {
+        for c in 0..3 {
+            assert!(
+                (got[c] - want[c]).abs() < 4e-3 * want[c].abs().max(1.0),
+                "{at:?} channel {c}: drew {}, wanted {}",
+                got[c],
+                want[c]
+            );
+        }
+    }
+
+    #[test]
+    fn a_selected_node_darkens_what_it_does_not_reach() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let (x, y) = (24, 9);
+        let [a, b] = out_at(x, y);
+        let node = crate::lattice::ColourNode {
+            hue: b.atan2(a).to_degrees().rem_euclid(360.0),
+            chroma: a.hypot(b),
+            lightness: None,
+            target_hue: 0.0,
+            target_chroma: 0.0,
+            target_lightness: 55.0,
+            hue_reach: 30.0,
+            chroma_reach: 6.0,
+            lightness_reach: 0.0,
+        };
+        let plain = drawn(gpu, &backdrop(None));
+        let shaded = drawn(gpu, &backdrop(Some(node)));
+        let share = |x: u32, y: u32| {
+            let at = (y * SIDE + x) as usize;
+            shaded[at][1] / plain[at][1]
+        };
+        // Two pixels off is well inside its reach, short of the feather: undarkened as well.
+        for (x, y) in [(x, y), (x - 2, y)] {
+            assert!(
+                (share(x, y) - 1.0).abs() < 2e-3,
+                "({x}, {y}): {}",
+                share(x, y)
+            );
+        }
+        let unreached = 1.0 - UNREACHED_SHADE;
+        assert!((share(5, 27) - unreached).abs() < 2e-3, "{}", share(5, 27));
+    }
+
+    #[test]
+    fn the_output_colour_is_drawn_undarkened_inside_its_ring() {
+        const EDITOR: &str = include_str!(
+            "../../../../web/src/features/raw_edit/colour_wheel/colour_wheel_editor.tsx"
+        );
+        let line = format!("const TARGET_RADIUS = {OUTPUT_RADIUS};");
+        assert!(
+            EDITOR.contains(&line),
+            "colour_wheel_editor.tsx does not say `{line}`"
+        );
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let ([a, b], [ta, tb]) = (out_at(24, 9), out_at(8, 8));
+        let node = crate::lattice::ColourNode {
+            hue: b.atan2(a).to_degrees().rem_euclid(360.0),
+            chroma: a.hypot(b),
+            lightness: None,
+            target_hue: tb.atan2(ta).to_degrees(),
+            target_chroma: ta.hypot(tb),
+            target_lightness: 40.0,
+            hue_reach: 15.0,
+            chroma_reach: 3.0,
+            lightness_reach: 0.0,
+        };
+        let plain = drawn(gpu, &backdrop(None));
+        let shaded = drawn(gpu, &backdrop(Some(node)));
+        assert_drawn(
+            shaded[(8 * SIDE + 8) as usize],
+            coded_at(40.0, [ta, tb]),
+            (8, 8),
+        );
+        // The next pixel out is past the ring, back on the darkened wheel.
+        let beside = (8 * SIDE + 9) as usize;
+        let unreached = 1.0 - UNREACHED_SHADE;
+        assert!((shaded[beside][1] / plain[beside][1] - unreached).abs() < 2e-3);
+    }
+
+    #[test]
+    fn a_nodes_hue_reach_is_where_it_moves_half_as_far() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        // Mirrored across the axis, so one sits on the other's hue edge at its own chroma.
+        let ([a, b], edge) = (out_at(24, 12), (24, 19));
+        let hue = b.atan2(a).to_degrees();
+        let node = crate::lattice::ColourNode {
+            hue,
+            chroma: a.hypot(b),
+            lightness: None,
+            target_hue: 0.0,
+            target_chroma: 0.0,
+            target_lightness: 55.0,
+            hue_reach: 2.0 * hue,
+            chroma_reach: 1.0,
+            lightness_reach: 0.0,
+        };
+        let plain = drawn(gpu, &backdrop(None));
+        let shaded = drawn(gpu, &backdrop(Some(node)));
+        let at = (edge.1 * SIDE + edge.0) as usize;
+        let share = shaded[at][1] / plain[at][1];
+        let half = 1.0 - UNREACHED_SHADE * 0.5;
+        assert!((share - half).abs() < 2e-3, "{share}, wanted {half}");
+    }
+
+    #[test]
+    fn the_probe_lays_out_its_dots_as_the_host_reads_them() {
+        const SOURCE: &str = include_str!("../../../../slang/colour_probe.slang");
+        let line = format!("static const uint DOTS_ACROSS = {DOTS_ACROSS};");
+        assert!(
+            SOURCE.contains(&line),
+            "colour_probe.slang does not say `{line}`"
+        );
     }
 
     #[test]
@@ -500,5 +689,19 @@ mod tests {
             let edge = displayable(lightness, 4.9);
             assert!(edge.iter().all(|c| *c > 0.0), "{lightness}: {edge:?}");
         }
+    }
+
+    #[test]
+    fn every_lightness_together_reaches_as_far_as_any_one_does() {
+        let (dark, light) = (displayable(15.0, 4.9), displayable(110.0, 4.9));
+        for widest in [
+            widest_displayable(&[15.0, 110.0], 4.9),
+            widest_displayable(&[110.0, 15.0], 4.9),
+        ] {
+            for degree in 0..360 {
+                assert_eq!(widest[degree], dark[degree].max(light[degree]), "{degree}");
+            }
+        }
+        assert_ne!(dark, light);
     }
 }

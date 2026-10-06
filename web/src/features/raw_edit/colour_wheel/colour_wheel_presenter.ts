@@ -1,4 +1,6 @@
-import { action, observable, reaction, type IReactionDisposer } from 'mobx';
+import { action, comparer, observable, reaction, type IReactionDisposer } from 'mobx';
+import { adjustOf } from '../../../../../src/schemas/edit_adjust';
+import { describe } from '../../../errors';
 import { newId } from '../../../../../src/schemas/id';
 import {
   COLOUR_NODES_MAX,
@@ -6,19 +8,23 @@ import {
   type EditDoc,
 } from '../../../../../src/schemas/photo_edits';
 import type { EditStore } from '../edit/edit_store';
+import type { WheelDrawn } from '../local_decode/local_open';
 import type { LocalSource } from '../local_decode/open_photo';
 import type { StageStore } from '../stage/stage_store';
 import {
   CHANNELS,
   type Channel,
   type Hued,
+  type Reach,
   chromaReachTo,
   hueReachTo,
   hued,
+  inChannel,
   lightnessOf,
   movedSource,
   movedTarget,
   nodeAt,
+  steppedReach,
 } from './colour_wheel';
 import type { ColourWheelStore, Dot, FieldArrow } from './colour_wheel_store';
 
@@ -26,13 +32,38 @@ export interface ColourWheelHost {
   local: () => LocalSource | null;
   preview: (patch: Partial<EditDoc>) => void;
   settle: (patch: Partial<EditDoc>) => void;
+  fail: (why: string) => void;
+  /** `displayPeakNits`, which the wheel's edge is drawn against. */
+  displayPeak: () => number | null;
 }
 
-export type Handle = 'source' | 'target' | 'hueReach' | 'chromaReach';
+/** Runs one piece of work at a time, and of what arrives meanwhile only the latest. */
+class Latest {
+  private busy = false;
+  private next: (() => Promise<void>) | null = null;
+
+  async run(work: () => Promise<void>): Promise<void> {
+    if (this.busy) {
+      this.next = work;
+      return;
+    }
+    this.busy = true;
+    try {
+      await work();
+    } finally {
+      this.busy = false;
+    }
+    const next = this.next;
+    this.next = null;
+    if (next != null) await this.run(next);
+  }
+}
+
+export type Handle = 'source' | 'target' | Reach;
 
 export const WHEEL_SIDE = 512;
-const FIELD_HUES = 18;
-const FIELD_RINGS = [0.3, 0.6, 0.9];
+const FIELD_HUES = 36;
+const FIELD_RINGS = [0.45, 0.65, 0.85];
 
 export class ColourWheelPresenter {
   /** Keys the backdrop's canvas to this photo's open: a transferred canvas cannot be transferred again. */
@@ -42,6 +73,8 @@ export class ColourWheelPresenter {
   private atDragStart: readonly ColourNode[] | null = null;
   private closed = false;
   private probesAsked = 0;
+  private readonly shading = new Latest();
+  private readonly probing = new Latest();
   private readonly disposers: IReactionDisposer[];
 
   constructor(
@@ -60,10 +93,24 @@ export class ColourWheelPresenter {
         { fireImmediately: true },
       ),
       reaction(
-        () => (this.attached ? lightnessOf(this.store.channel) : null),
-        (lightness) => {
-          if (lightness != null) this.unlessClosed(this.draw(lightness));
+        () =>
+          this.attached
+            ? { channel: this.store.channel, displayPeak: this.host.displayPeak() }
+            : null,
+        (drawing) => {
+          if (drawing != null) this.unlessClosed(this.draw(drawing.channel, drawing.displayPeak));
         },
+        { equals: comparer.structural },
+      ),
+      reaction(
+        () =>
+          this.attached && this.store.drawn != null ? { node: this.store.selectedNode } : null,
+        (shading) => {
+          if (shading != null) {
+            this.unlessClosed(this.shading.run(() => this.shade(shading.node)));
+          }
+        },
+        { equals: comparer.structural },
       ),
       reaction(
         () => {
@@ -79,7 +126,7 @@ export class ColourWheelPresenter {
             : null;
         },
         (key) => {
-          if (key != null) this.unlessClosed(this.probe());
+          if (key != null) this.unlessClosed(this.probing.run(() => this.probe()));
         },
       ),
     ];
@@ -95,7 +142,8 @@ export class ColourWheelPresenter {
   @action.bound
   selectChannel(channel: Channel): void {
     this.store.channel = channel;
-    if (this.store.selectedNode?.lightness !== channel) this.store.selectedIndex = null;
+    const selected = this.store.selectedNode;
+    if (selected == null || !inChannel(selected, channel)) this.store.selectedIndex = null;
   }
 
   @action.bound
@@ -103,10 +151,18 @@ export class ColourWheelPresenter {
     this.store.selectedIndex = index;
   }
 
+  /** `at` null is a press off the wheel. */
+  @action.bound
+  press(at: Hued | null): void {
+    const letGo = this.store.selectedNode != null;
+    this.store.selectedIndex = null;
+    if (!letGo && at != null) this.add(at);
+  }
+
   @action.bound
   add(at: Hued): void {
     if (this.store.nodes.length >= COLOUR_NODES_MAX) return;
-    const nodes = [...this.store.nodes, nodeAt(at, this.store.channel)];
+    const nodes = [...this.store.nodes, nodeAt(at, this.store.channel, this.rim)];
     this.host.settle({ colourNodes: nodes });
     this.store.selectedIndex = nodes.length - 1;
   }
@@ -134,6 +190,15 @@ export class ColourWheelPresenter {
   }
 
   @action.bound
+  stepReach(index: number, reach: Reach, by: number): void {
+    const node = this.store.nodes[index];
+    if (node == null) return;
+    this.host.settle({
+      colourNodes: this.patched(index, steppedReach(node, reach, by, this.rim)),
+    });
+  }
+
+  @action.bound
   beginDrag(index: number): void {
     this.atDragStart = this.store.nodes;
     this.store.selectedIndex = index;
@@ -144,10 +209,10 @@ export class ColourWheelPresenter {
     const node = this.store.nodes[index];
     if (node == null || this.atDragStart == null) return;
     const moved: Record<Handle, () => ColourNode> = {
-      source: () => movedSource(node, at),
+      source: () => movedSource(this.atDragStart?.[index] ?? node, at, this.rim),
       target: () => movedTarget(node, at),
       hueReach: () => ({ ...node, hueReach: hueReachTo(node, at) }),
-      chromaReach: () => ({ ...node, chromaReach: chromaReachTo(node, at) }),
+      chromaReach: () => ({ ...node, chromaReach: chromaReachTo(node, at, this.rim) }),
     };
     this.host.preview({ colourNodes: this.patched(index, moved[handle]()) });
   }
@@ -175,6 +240,11 @@ export class ColourWheelPresenter {
     for (const dispose of this.disposers) dispose();
   }
 
+  /** The wheel's rim, which nothing is held inside until the wheel is drawn. */
+  private get rim(): number {
+    return this.store.drawn?.chroma ?? Number.POSITIVE_INFINITY;
+  }
+
   private patched(index: number, patch: Partial<ColourNode>): ColourNode[] {
     return this.store.nodes.map((node, at) => (at === index ? { ...node, ...patch } : node));
   }
@@ -182,7 +252,7 @@ export class ColourWheelPresenter {
   /** Closing the editor closes the decoder, which rejects whatever it was still asked. */
   private unlessClosed(work: Promise<void>): void {
     work.catch((error: unknown) => {
-      if (!this.closed) throw error;
+      if (!this.closed) this.host.fail(describe(error));
     });
   }
 
@@ -195,10 +265,19 @@ export class ColourWheelPresenter {
     if (!this.closed) this.setAttached();
   }
 
-  private async draw(lightness: number): Promise<void> {
-    const drawn = await this.host.local()?.decoder.drawWheel(lightness);
-    if (this.closed || drawn == null || lightnessOf(this.store.channel) !== lightness) return;
+  private async draw(channel: Channel, displayPeak: number | null): Promise<void> {
+    const drawn = await this.host.local()?.decoder.drawWheel({
+      lightness: lightnessOf(channel),
+      edgeAt: channel == null ? [...CHANNELS] : [channel],
+      displayPeak,
+      selected: this.store.selectedNode,
+    });
+    if (this.closed || drawn == null || this.store.channel !== channel) return;
     this.setDrawn(drawn);
+  }
+
+  private async shade(node: ColourNode | null): Promise<void> {
+    await this.host.local()?.decoder.shadeWheel(lightnessOf(this.store.channel), node);
   }
 
   private async probe(): Promise<void> {
@@ -215,8 +294,11 @@ export class ColourWheelPresenter {
         }),
       ),
     );
+    const doc = this.edit.doc;
+    if (doc == null) return;
     const answers = await local.decoder.probeWheel(
       places.flatMap(({ lightness, a, b }) => [lightness, a, b, 1]),
+      adjustOf(doc),
     );
     if (this.closed || asked !== this.probesAsked) return;
     const word = (at: number): number => answers[at] ?? 0;
@@ -246,7 +328,7 @@ export class ColourWheelPresenter {
   }
 
   @action.bound
-  private setDrawn(drawn: { chroma: number; edge: readonly number[] }): void {
+  private setDrawn(drawn: WheelDrawn): void {
     this.store.drawn = drawn;
   }
 

@@ -290,7 +290,7 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
     for (uint at = from; at < to; at++) {
         let base = times(int(ordered[int(at)]), LANDING_WORDS);
         let f = float4(landed[base + 1], landed[base + 2], landed[base + 3], landed[base + 4]);
-        // The bake's smootherstep tent (`lattice_bake.slang`), so a node is solved under the
+        // The bake's smootherstep tent (`kernel_reach.slang`), so a node is solved under the
         // weights it renders with.
         let eased = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
         let w = lerp(float4(1.0) - eased, eased, side);

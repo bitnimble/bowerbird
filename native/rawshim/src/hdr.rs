@@ -403,14 +403,22 @@ pub fn encode_cut(
     cut: &Cut,
     grade: &crate::gpu::Grade<'_>,
 ) -> Vec<u16> {
+    upload_cut(gpu, cut, grade).encode(grade)
+}
+
+pub fn upload_cut(
+    gpu: &'static crate::gpu::Gpu,
+    cut: &Cut,
+    grade: &crate::gpu::Grade<'_>,
+) -> crate::gpu::Uploaded<'static> {
     let peak = gpu.scene_peak();
     match cut.resident() {
-        Some(frame) => gpu.upload_resident(frame, grade, &peak).encode(grade),
+        Some(frame) => gpu.upload_resident(frame, grade, &peak),
         None => {
             let samples = cut
                 .host_samples()
                 .expect("a cut holds one frame or the other");
-            gpu.upload(samples, grade, &peak).encode(grade)
+            gpu.upload(samples, grade, &peak)
         }
     }
 }

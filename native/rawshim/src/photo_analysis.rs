@@ -32,7 +32,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 23;
+const VERSION: u8 = 24;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -1224,7 +1224,7 @@ pub(crate) mod tests {
     /// What one photograph costs on disk, so the number is measured rather than remembered.
     ///
     /// This fixture's cost is the fixed part: the chroma lattice at 1900 kernels of 17 `f16`,
-    /// about what a fit keeps on a typical frame and up to half again on a busy one, the curves at 768
+    /// more than a fit keeps on a typical frame and about what it keeps on a busy one, the curves at 768
     /// `f32`, the particles at 22 `f32` each. A real fit adds the neighbourhood thumb at its own
     /// grid.
     ///

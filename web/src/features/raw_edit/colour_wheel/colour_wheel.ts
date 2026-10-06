@@ -10,10 +10,10 @@ export type Channel = number | null;
 export const ANY_LIGHTNESS_AT = 55;
 
 export const MOST_HUE_REACH = 180;
-export const HUE_REACH = 30;
-export const CHROMA_REACH = 6;
+const HUE_REACH = 30;
+const CHROMA_REACH = 6;
 export const LIGHTNESS_REACH = 20;
-const LEAST_HUE_REACH = 1;
+export const LEAST_HUE_REACH = 5;
 
 /** A place on the wheel: hue in degrees, chroma in ZCAM units. */
 export interface Hued {
@@ -31,8 +31,12 @@ export function lightnessOf(channel: Channel): number {
   return channel ?? ANY_LIGHTNESS_AT;
 }
 
+export function channelOf(node: ColourNode): Channel {
+  return node.lightness == null ? null : nearestChannel(node.lightness);
+}
+
 export function inChannel(node: ColourNode, channel: Channel): boolean {
-  return node.lightness === channel;
+  return channelOf(node) === channel;
 }
 
 export function nearestChannel(lightness: number): number {
@@ -42,9 +46,9 @@ export function nearestChannel(lightness: number): number {
 }
 
 /** A node at `at` in `channel`, moving nothing yet. */
-export function nodeAt(at: Hued, channel: Channel): ColourNode {
+export function nodeAt(at: Hued, channel: Channel, rim: number): ColourNode {
   const hue = tidy(wrapped(at.hue));
-  const chroma = tidy(at.chroma);
+  const chroma = tidy(Math.min(at.chroma, rim));
   return {
     hue,
     chroma,
@@ -53,23 +57,22 @@ export function nodeAt(at: Hued, channel: Channel): ColourNode {
     targetChroma: chroma,
     targetLightness: lightnessOf(channel),
     hueReach: HUE_REACH,
-    chromaReach: CHROMA_REACH,
+    chromaReach: tidy(Math.min(CHROMA_REACH, rim - chroma)),
     lightnessReach: channel == null ? 0 : LIGHTNESS_REACH,
   };
 }
 
-/** `node` taken to `to`, its target carried along so the move it makes stays the same. */
-export function movedSource(node: ColourNode, to: Hued): ColourNode {
-  const [a, b] = opponent({ hue: node.hue, chroma: node.chroma });
-  const [toA, toB] = opponent(to);
-  const [targetA, targetB] = opponent({ hue: node.targetHue, chroma: node.targetChroma });
-  const target = hued(targetA + toA - a, targetB + toB - b);
+/**
+ * `start`, as a drag began, taken to `to`: its saturation range as it was, short of whatever would
+ * cross the rim.
+ */
+export function movedSource(start: ColourNode, to: Hued, rim: number): ColourNode {
+  const chroma = tidy(Math.min(to.chroma, rim));
   return {
-    ...node,
+    ...start,
     hue: tidy(wrapped(to.hue)),
-    chroma: tidy(to.chroma),
-    targetHue: tidy(target.hue),
-    targetChroma: tidy(target.chroma),
+    chroma,
+    chromaReach: tidy(Math.min(start.chromaReach, rim - chroma)),
   };
 }
 
@@ -77,13 +80,37 @@ export function movedTarget(node: ColourNode, to: Hued): ColourNode {
   return { ...node, targetHue: tidy(wrapped(to.hue)), targetChroma: tidy(to.chroma) };
 }
 
+export type Reach = 'hueReach' | 'chromaReach';
+
 export function hueReachTo(node: ColourNode, at: Hued): number {
-  const apart = Math.abs(wrapped(at.hue - node.hue + 180) - 180);
-  return tidy(Math.min(Math.max(apart, LEAST_HUE_REACH), MOST_HUE_REACH));
+  return heldHueReach(Math.abs(wrapped(at.hue - node.hue + 180) - 180));
 }
 
-export function chromaReachTo(node: ColourNode, at: Hued): number {
-  return tidy(Math.max(at.chroma - node.chroma, 0));
+export function chromaReachTo(node: ColourNode, at: Hued, rim: number): number {
+  return heldChromaReach(node, at.chroma - node.chroma, rim);
+}
+
+export function steppedReach(
+  node: ColourNode,
+  reach: Reach,
+  by: number,
+  rim: number,
+): Partial<ColourNode> {
+  return reach === 'hueReach'
+    ? { hueReach: heldHueReach(node.hueReach + by) }
+    : { chromaReach: heldChromaReach(node, node.chromaReach + by, rim) };
+}
+
+export function reachesEveryHue(node: ColourNode): boolean {
+  return node.hueReach >= MOST_HUE_REACH;
+}
+
+function heldHueReach(reach: number): number {
+  return tidy(Math.min(Math.max(reach, LEAST_HUE_REACH), MOST_HUE_REACH));
+}
+
+function heldChromaReach(node: ColourNode, reach: number, rim: number): number {
+  return tidy(Math.max(Math.min(reach, rim - node.chroma), 0));
 }
 
 export function opponent({ hue, chroma }: Hued): [number, number] {
@@ -107,15 +134,20 @@ export function huedAt(point: Point, rim: number): Hued {
 }
 
 /**
- * The outline of what a node reaches: its hue either side, and its chroma out by its reach and in
- * by as much in square-root chroma, the lattice's own axis.
+ * The chroma a node reaches: out by its reach, and in by as much in square-root chroma, the
+ * lattice's own axis.
  */
-export function reachPath(node: ColourNode, rim: number): string {
+export function chromaReached(node: ColourNode): { inner: number; outer: number } {
   const root = Math.sqrt(node.chroma);
-  const rootReach = Math.sqrt(node.chroma + node.chromaReach) - root;
   const outer = node.chroma + node.chromaReach;
-  const inner = Math.max(root - rootReach, 0) ** 2;
-  if (node.hueReach >= MOST_HUE_REACH) {
+  const rootReach = Math.sqrt(outer) - root;
+  return { inner: Math.max(root - rootReach, 0) ** 2, outer };
+}
+
+/** The outline of what a node reaches: its hue either side, and its chroma reached. */
+export function reachPath(node: ColourNode, rim: number): string {
+  const { inner, outer } = chromaReached(node);
+  if (reachesEveryHue(node)) {
     return [circle(outer, rim), inner > 0 ? circle(inner, rim) : ''].join(' ');
   }
   const from = node.hue - node.hueReach;

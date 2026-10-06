@@ -130,10 +130,7 @@ const HueSchema = z.number().min(0).max(360);
 const ChromaSchema = z.number().min(0).max(100);
 const LightnessSchema = z.number().min(0).max(300);
 
-/**
- * A colour the reader moved, in ZCAM lightness, chroma and hue degrees (`lattice::ColourNode`):
- * what it reaches is moved with it, fading out by the reaches. A null lightness reaches every one.
- */
+/** ZCAM lightness, chroma, hue in degrees (`lattice::ColourNode`). Null lightness reaches every lightness. */
 export const ColourNodeSchema = z.object({
   hue: HueSchema,
   chroma: ChromaSchema,
