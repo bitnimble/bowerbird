@@ -798,19 +798,28 @@ export function PhotoStage({
   }, [keyboard, toggleFullscreen, zoom, reset]);
 
   const transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-  // Still opaque under whatever replaced them. Not the frame on screen, which the
-  // hold may name when a promotion left it where it was; and not one being asked
-  // for again, since one source is one element and it has no raster to offer - the
-  // hold is dropped rather than duplicated, which costs nothing, because the frames
-  // it was covering are still what is on screen.
   // The reader asked for a frame that cannot be drawn, and something else is on screen in
   // its place. Said rather than left to look like a picker that does nothing: the stage
   // holds every rendition it has painted, so the stand-in is a real picture of the same
   // photograph and there is nothing about it that reads as a failure.
   const unreadable = chosen != null && failed.has(chosen);
+  const waiting = !ready && !unreadable;
+  // Unzoomed, a swap's detail layer turns sharp in its first effect; counted as a wait, the
+  // pill flashed for that one commit over a frame already on screen.
+  const loading = waiting && (arrived == null || zoomed);
   const notice =
-    status ?? (unreadable ? { label: PhotoStageStrings.frameUnreadable(), busy: false } : null);
+    status ??
+    (unreadable
+      ? { label: PhotoStageStrings.frameUnreadable(), busy: false }
+      : loading
+        ? { label: PhotoStageStrings.loading(), busy: true }
+        : null);
 
+  // Still opaque under whatever replaced them. Not the frame on screen, which the
+  // hold may name when a promotion left it where it was; and not one being asked
+  // for again, since one source is one element and it has no raster to offer - the
+  // hold is dropped rather than duplicated, which costs nothing, because the frames
+  // it was covering are still what is on screen.
   const covering = [...new Set([...retiring.of.keys(), fading?.frame])].filter(
     (source): source is string =>
       source != null && source !== visible && !incoming.includes(source),
@@ -924,7 +933,7 @@ export function PhotoStage({
         )}
         role="region"
         aria-label={PhotoStageStrings.stage()}
-        aria-busy={!ready && !unreadable}
+        aria-busy={waiting}
         {...handlers}
       >
         {/* A frame that failed replaces the incoming one, not the picture already

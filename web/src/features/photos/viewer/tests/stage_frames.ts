@@ -23,6 +23,7 @@ interface Frame {
 const decoded = new Map<string, Frame>();
 const pending = new Map<string, () => void>();
 const slow = new Set<string>();
+const broken = new Set<string>();
 const files = new Map<string, { width: number; height: number }>();
 const pendingDetail = new Map<string, () => void>();
 const slowDetail = new Set<string>();
@@ -33,6 +34,10 @@ export const released: string[] = [];
 /** Holds this source's decode open until [`arriveAt`], for the tests about when a step moves. */
 export function holdDecodeOf(source: string): void {
   slow.add(source);
+}
+
+export function failDecodeOf(source: string): void {
+  broken.add(source);
 }
 
 export function arriveAt(source: string): void {
@@ -68,6 +73,7 @@ export function forgetFrames(): void {
   decoded.clear();
   pending.clear();
   slow.clear();
+  broken.clear();
   files.clear();
   pendingDetail.clear();
   slowDetail.clear();
@@ -82,8 +88,12 @@ void mock.module('../stage_bitmaps', () => ({
     _whole = false,
     activity: RequestActivity = 'interactive',
   ): Promise<Frame> =>
-    new Promise<Frame>((resolve) => {
+    new Promise<Frame>((resolve, reject) => {
       activities.set(source, activity);
+      if (broken.has(source)) {
+        reject(new Error(`no file at ${source}`));
+        return;
+      }
       const settle = (): void => {
         const file = files.get(source) ?? { width: 4, height: 3 };
         const frame: Frame = {
