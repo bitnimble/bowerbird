@@ -1437,6 +1437,11 @@ impl Held {
         self.sensor.crop
     }
 
+    /// The conditioning's gains by colour, R, G and B, which PMRID divides back out.
+    pub fn ceilings(&self) -> [f32; 3] {
+        self.sensor.colour.ceiling
+    }
+
     /// Which way up the file says the picture goes, which the crop above is named before.
     pub fn upright(&self) -> rawler::decoders::Orientation {
         self.sensor.upright
