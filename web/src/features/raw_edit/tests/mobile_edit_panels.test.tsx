@@ -184,7 +184,7 @@ describe('mobile edit panels', () => {
     const presenter = new MobileEditPanelsPresenter(store);
     const rectangle = { left: 10, top: 400, width: 300, height: 60 };
     presenter.begin('exposure', rectangle);
-    expect(store.activeSlider).toBeNull();
+    expect(store.isolated).toBeNull();
     presenter.toggle('light');
     presenter.begin('exposure', rectangle);
     presenter.begin('saturation', rectangle);
@@ -192,14 +192,14 @@ describe('mobile edit panels', () => {
     presenter.close();
     expect(presenter.navigate('light', ['light', 'color'], 'ArrowRight')).toBeNull();
     presenter.end('saturation');
-    expect(store.activeSlider?.id).toBe('exposure');
+    expect(store.isolated?.id).toBe('exposure');
     expect(store.selectedId).toBe('light');
     expect(store.expanded).toBe(true);
     presenter.end('exposure');
-    expect(store.activeSlider).toBeNull();
+    expect(store.isolated).toBeNull();
     presenter.begin('exposure', rectangle);
     presenter.dispose();
-    expect(store.activeSlider).toBeNull();
+    expect(store.isolated).toBeNull();
     expect(store.expanded).toBe(false);
   });
 });

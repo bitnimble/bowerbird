@@ -19,7 +19,7 @@ export const styles = stylex.create({
     overflow: 'hidden',
     borderRadius: size.radius,
     backgroundColor: color.field,
-    touchAction: 'none',
+    touchAction: 'pan-y',
   },
   dragging: { cursor: 'pointer' },
   grid: {

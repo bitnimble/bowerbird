@@ -54,7 +54,7 @@ struct Params {
 /// `lattice::SUM_WORDS`.
 static const uint SUM_WORDS = 9;
 
-/// `hdr_fit::KERNEL_WORDS`.
+/// `lattice::KERNEL_WORDS`.
 static const uint KERNEL_WORDS = 17;
 static const uint CENTRE = 0;
 static const uint REACH = 4;
@@ -290,7 +290,7 @@ void bake_moves(uint3 id: SV_DispatchThreadID)
     if (id.x >= pc.hue_texels || id.y >= pc.chroma_texels || id.z >= depth) { return; }
     let t = texel_of(id) * SUM_WORDS;
     chroma_out.Store(id, float4(first_sum[t], first_sum[t + 1], first_sum[t + 2], first_sum[t + 3]));
-    luma_out.Store(id, float4(first_sum[t + 4], 0.0, 0.0, 0.0));
+    luma_out.Store(id, float4(first_sum[t + 4], first_sum[t + 5], first_sum[t + 6], 0.0));
 }
 
 /// Word `w` of texel `t`'s generator, both sums at their scales.

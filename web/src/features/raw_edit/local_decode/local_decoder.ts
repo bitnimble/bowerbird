@@ -202,8 +202,8 @@ export class LocalDecoder {
   }
 
   /**
-   * The wheel drawn at `lightness`, darkened where `selected` does not reach, with the widest edge
-   * a display peaking at `displayPeak` nits (null for SDR) shows at any of `edgeAt`.
+   * The wheel drawn at `lightness`, darkened where `selected` does not reach, with the edge a
+   * display peaking at `displayPeak` nits (null for SDR) shows at each of `edgeAt`.
    */
   drawWheel(wheel: WheelDrawing): Promise<WheelDrawn> {
     return this.ask(WheelDrawnSchema, {

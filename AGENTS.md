@@ -141,13 +141,13 @@ Use Prettier with `.prettierrc.json` for supported source and text files, and ru
 limited to files deliberately selected for the task. Defer formatting hooks and CI enforcement
 until the full formatting pass. Avoid unrelated formatting changes in feature diffs.
 
-- Selected Prettier files: `bunx --no-install prettier --write path/to/file.ts`.
-  Replace `--write` with `--check` to check without writing.
-- Selected Rust files: `rustfmt --edition 2024 --config-path rustfmt.toml path/to/file.rs`.
-  Use the edition declared in the crate's `Cargo.toml`; add `--check` to check without writing.
+- Selected files: `bun run format path/to/file.ts path/to/file.rs`; `bun run format:check` with
+  paths checks without writing. Files only, never directories or vendored code. Rust files go to
+  rustfmt at their crate's edition, one file each (a path given to rustfmt itself also formats
+  every module it declares), the rest to Prettier. Never call `prettier` or `rustfmt` directly.
 - One Rust crate: `bun run scripts/cargo.ts fmt --manifest-path native/heif/Cargo.toml`.
   Add `--check` to check without writing. Keep `--all` off, since it includes local vendored dependencies.
-- Full formatting pass: `bun run format`; full check: `bun run format:check`.
+- Full formatting pass: `bun run format` without paths; full check: `bun run format:check`.
   `format:prettier` and `format:rust` run each formatter separately; their `:check` variants only check.
 
 `scripts/format-rust.ts` covers the owned Rust crates, including the desktop shell and local

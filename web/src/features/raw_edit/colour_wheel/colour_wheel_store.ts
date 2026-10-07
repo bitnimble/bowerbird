@@ -3,6 +3,7 @@ import type { ColourNode } from '../../../../../src/schemas/photo_edits';
 import type { EditStore } from '../edit/edit_store';
 import type { WheelDrawn } from '../local_decode/local_open';
 import {
+  CHANNELS,
   type Channel,
   type Hued,
   channelOf,
@@ -43,6 +44,15 @@ export class ColourWheelStore {
   @observable accessor showDots = false;
 
   @observable accessor showField = false;
+
+  @observable accessor showEdge = true;
+
+  /** Per degree of hue, the chroma this display shows at the channel, or at any channel for All. */
+  @computed get edge(): readonly number[] {
+    const edges = this.drawn?.edges ?? [];
+    if (this.channel != null) return edges[CHANNELS.findIndex((at) => at === this.channel)] ?? [];
+    return (edges[0] ?? []).map((_, degree) => Math.max(...edges.map((edge) => edge[degree] ?? 0)));
+  }
 
   @computed get nodes(): readonly ColourNode[] {
     return this.edit.doc?.colourNodes ?? [];

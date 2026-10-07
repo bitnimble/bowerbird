@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, type ReactNode } from '
 import { useLocation, useNavigate } from 'react-router-dom';
 import { buttonStyles } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
-import { SliderIsolationContext } from '../../ui/slider_isolation';
+import { IsolationContext } from '../../ui/isolation';
 import { color, size } from '../../ui/tokens.stylex';
 import { editSheet } from './edit_sheet.stylex';
 import { MobileEditPanelsStrings as S } from './mobile_edit_panels.strings';
@@ -92,7 +92,8 @@ const styles = stylex.create({
     transitionDelay: '0s',
   },
   adjusting: {
-    opacity: 0,
+    // Visibility, which a child can take back, so a control drawn in place stays seen.
+    visibility: 'hidden',
     pointerEvents: 'none',
   },
 });
@@ -120,11 +121,11 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({
   useEffect(() => presenter.dispose, [presenter]);
   const selected = panels.find((panel) => panel.id === store.selectedId);
   const expanded = store.expanded && selected != null;
-  const active = store.activeSlider;
+  const active = store.isolated;
   const tabbableId = selected?.id ?? panels[0]?.id;
   useBackCloses(expanded, presenter.close);
   return (
-    <SliderIsolationContext.Provider value={{ active, begin: presenter.begin, end: presenter.end }}>
+    <IsolationContext.Provider value={{ active, begin: presenter.begin, end: presenter.end }}>
       <div
         {...stylex.props(styles.root)}
         onKeyDown={(event) => {
@@ -208,7 +209,7 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({
           </div>
         )}
       </div>
-    </SliderIsolationContext.Provider>
+    </IsolationContext.Provider>
   );
 });
 

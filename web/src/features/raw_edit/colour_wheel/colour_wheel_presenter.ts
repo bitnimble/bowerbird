@@ -103,9 +103,7 @@ export class ColourWheelPresenter {
         () =>
           this.attached && this.store.drawn != null ? { node: this.store.selectedNode } : null,
         (shading) => {
-          if (shading != null) {
-            this.unlessClosed(this.shading.run(() => this.shade(shading.node)));
-          }
+          if (shading != null) this.unlessClosed(this.shading.run(() => this.shade()));
         },
         { equals: comparer.structural },
       ),
@@ -154,6 +152,11 @@ export class ColourWheelPresenter {
   setShowField(on: boolean): void {
     this.store.showField = on;
     this.forgetUnshown();
+  }
+
+  @action.bound
+  setShowEdge(on: boolean): void {
+    this.store.showEdge = on;
   }
 
   @action.bound
@@ -278,7 +281,7 @@ export class ColourWheelPresenter {
   private async draw(channel: Channel): Promise<void> {
     const drawn = await this.host.local()?.decoder.drawWheel({
       lightness: lightnessOf(channel),
-      edgeAt: channel == null ? [...CHANNELS] : [channel],
+      edgeAt: [...CHANNELS],
       displayPeak: this.host.displayPeak(),
       selected: this.store.selectedNode,
     });
@@ -286,23 +289,33 @@ export class ColourWheelPresenter {
     this.setDrawn(drawn);
   }
 
-  private async shade(node: ColourNode | null): Promise<void> {
-    await this.host.local()?.decoder.shadeWheel(lightnessOf(this.store.channel), node);
+  private async shade(): Promise<void> {
+    // One present a frame: a drag changes the edit far faster, and presenting the wheel's canvas
+    // at that rate wedged Chrome on macOS inside the worker's `queue.submit`.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (this.closed) return;
+    await this.host
+      .local()
+      ?.decoder.shadeWheel(lightnessOf(this.store.channel), this.store.selectedNode);
   }
 
   private async probe(): Promise<void> {
-    const rim = this.store.drawn?.chroma;
+    const edges = this.store.drawn?.edges;
     const local = this.host.local();
-    if (rim == null || local == null) return;
+    if (edges == null || local == null) return;
     this.probesAsked += 1;
     const asked = this.probesAsked;
-    const places = CHANNELS.flatMap((lightness) =>
-      FIELD_RINGS.flatMap((ring) =>
-        Array.from({ length: FIELD_HUES }, (_, step) => {
-          const turn = (2 * Math.PI * step) / FIELD_HUES;
-          return { lightness, a: ring * rim * Math.cos(turn), b: ring * rim * Math.sin(turn) };
-        }),
-      ),
+    const places = CHANNELS.flatMap((lightness, channel) =>
+      Array.from({ length: FIELD_HUES }, (_, step) => (360 * step) / FIELD_HUES).flatMap((hue) => {
+        const edge = edges[channel]?.[Math.round(hue) % 360] ?? 0;
+        if (edge <= 0) return [];
+        const turn = (Math.PI * hue) / 180;
+        return FIELD_RINGS.map((ring) => ({
+          lightness,
+          a: ring * edge * Math.cos(turn),
+          b: ring * edge * Math.sin(turn),
+        }));
+      }),
     );
     const doc = this.edit.doc;
     if (doc == null) return;

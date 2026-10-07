@@ -392,9 +392,11 @@ public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, f
     return rebuilt(correct(chroma, chroma_luma, shape, at.v, neighbourhood, l, m.v.r - l, m.v.b - l));
 }
 
-/// The reader's colour edits (`lattice::ColourNode`) on `m`, keyed on `m` itself: in ZCAM's
-/// opponent plane, the pair times one plus the volume's complex `(x, y)` plus its `(z, w)`, and the
-/// lightness times one plus the second volume's `x`.
+/// Chroma where a colour moves half by its node's turn, half by its offset. A grey's hue is noise,
+/// so a turn would scatter it.
+static const float TURNED_HALF_AT = 5.0;
+
+/// The reader's colour edits (`lattice::ColourNode`) on `m`, keyed on `m` itself.
 public Colour<Rendered> moved_by_reader(Colour<Rendered> m)
 {
     if (edit.has_nodes == 0) { return m; }
@@ -403,10 +405,18 @@ public Colour<Rendered> moved_by_reader(Colour<Rendered> m)
     float4 rest;
     cells_at(nodes, nodes_luma, node_volumes(), lattice_at(exactly<Opponent>(o), 0.0), move, rest);
     // Out of every node's reach the round trip through ZCAM would still move the last bits.
-    if (all(move == float4(0.0)) && rest.x == 0.0) { return m; }
+    if (all(move == float4(0.0)) && all(rest.xyz == float3(0.0))) { return m; }
+    // `ColourNode::kernel`'s words: `move` is the turn's `a` then the offset, `rest` the lightness
+    // gain then the turn's `b`, the pair going to `z + h (a z + b z / |z|) + (1 - h) offset`.
     let z = o.yz;
-    let turned = z + float2(move.x * z.x - move.y * z.y, move.x * z.y + move.y * z.x) + move.zw;
-    return rendered_of(exactly<Opponent>(float3(o.x * (1.0 + rest.x), turned)));
+    let size = dot(z, z);
+    let chroma = sqrt(size);
+    let along = chroma > 0.0 ? z / chroma : float2(0.0);
+    let turn = float2(move.x * z.x - move.y * z.y, move.x * z.y + move.y * z.x)
+        + float2(rest.y * along.x - rest.z * along.y, rest.y * along.y + rest.z * along.x);
+    let turned_share = size / (size + TURNED_HALF_AT * TURNED_HALF_AT);
+    let moved = z + turned_share * turn + (1.0 - turned_share) * move.zw;
+    return rendered_of(exactly<Opponent>(float3(o.x * (1.0 + rest.x), moved)));
 }
 
 /// The colour `moved_by_reader` is handed, on whichever arm `edit.matched` picks.

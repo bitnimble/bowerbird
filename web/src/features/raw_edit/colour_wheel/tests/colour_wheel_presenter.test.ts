@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { WHEEL_RIM, drawnBy, openEditor, type Editor } from '../../stage/tests/raw_edit_harness';
+import {
+  WHEEL_RIM,
+  drawnBy,
+  openEditor,
+  runFrames,
+  wheelEdge,
+  type Editor,
+} from '../../stage/tests/raw_edit_harness';
 import type { FieldArrow } from '../colour_wheel_store';
 
 let editor: Editor;
@@ -172,23 +179,47 @@ describe('the colour wheel', () => {
     expect(editor.decoder.wheelPeaks).toEqual([1600]);
   });
 
+  const framed = async (): Promise<void> => {
+    runFrames();
+    await settled();
+  };
+
   test('darkens the wheel around the selected edit, following it as it moves', async () => {
     wheel().attach(fakeCanvas());
     await settled();
     await settled();
     wheel().add({ hue: 120, chroma: 10 });
-    await settled();
+    await framed();
     expect(editor.decoder.wheelShadedBy.at(-1)).toMatchObject({ hue: 120, chroma: 10 });
 
     wheel().beginDrag(0);
     wheel().drag(0, 'hueReach', { hue: 160, chroma: 10 });
-    await settled();
+    await framed();
     expect(editor.decoder.wheelShadedBy.at(-1)).toMatchObject({ hue: 120, hueReach: 40 });
 
     wheel().endDrag();
     wheel().select(null);
-    await settled();
+    await framed();
     expect(editor.decoder.wheelShadedBy.at(-1)).toBeNull();
+  });
+
+  test('presents the darkened wheel once a frame however fast an edit is dragged', async () => {
+    wheel().attach(fakeCanvas());
+    await settled();
+    await settled();
+    wheel().add({ hue: 120, chroma: 10 });
+    await framed();
+    const before = editor.decoder.wheelShadedBy.length;
+
+    wheel().beginDrag(0);
+    for (const hue of [150, 155, 160, 165, 170]) {
+      wheel().drag(0, 'hueReach', { hue, chroma: 10 });
+      await settled();
+    }
+    expect(editor.decoder.wheelShadedBy).toHaveLength(before);
+    await framed();
+    expect(editor.decoder.wheelShadedBy).toHaveLength(before + 1);
+    expect(editor.decoder.wheelShadedBy.at(-1)).toMatchObject({ hueReach: 50 });
   });
 
   test('hands its canvas over once, draws at the channel, and reads the photograph and profile', async () => {
@@ -207,9 +238,12 @@ describe('the colour wheel', () => {
     expect(editor.decoder.wheelSide).toBe(512);
     expect(editor.colourWheel.channel).toBeNull();
     expect(editor.decoder.wheelDrawnAt).toEqual([55]);
-    expect(editor.decoder.wheelEdgesAt).toEqual([[10, 30, 55, 80, 110]]);
+    expect(editor.colourWheel.edge[200]).toBe(wheelEdge(110, 200));
     await settled();
     expect(editor.decoder.wheelProbes).toHaveLength(1);
+    // Five channels, three rings, and 36 hues less the one this display shows nothing at.
+    expect(editor.decoder.wheelProbes[0]).toHaveLength(5 * 3 * 35 * 4);
+    expect(editor.colourWheel.field.some(({ from }) => Math.round(from.hue) === 90)).toBe(false);
     const midtone = { lightness: 55, hue: expect.closeTo(323.13, 1), chroma: expect.closeTo(5, 4) };
     expect(editor.colourWheel.channelDots).toEqual([
       midtone,
@@ -219,13 +253,13 @@ describe('the colour wheel', () => {
     wheel().selectChannel(55);
     await settled();
     expect(editor.decoder.wheelDrawnAt).toEqual([55, 55]);
-    expect(editor.decoder.wheelEdgesAt.at(-1)).toEqual([55]);
+    expect(editor.colourWheel.edge[200]).toBe(wheelEdge(55, 200));
     expect(editor.colourWheel.channelDots).toEqual([midtone]);
     const arrows = editor.colourWheel.channelField;
     expect(new Set(arrows.map(({ from }) => Math.floor(from.hue / 30))).size).toBe(12);
     for (const { lightness, from, to } of arrows) {
       expect(lightness).toBe(55);
-      expect(from.chroma).toBeCloseTo(0.85 * WHEEL_RIM, 3);
+      expect(from.chroma).toBeCloseTo(0.85 * wheelEdge(55, Math.round(from.hue) % 360), 3);
       expect((from.hue - to.hue + 360) % 360).toBeCloseTo(90, 3);
     }
 

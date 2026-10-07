@@ -1,10 +1,13 @@
 import { Slider as BaseSlider } from '@base-ui-components/react/slider';
 import * as stylex from '@stylexjs/stylex';
-import { type PointerEvent, useContext, useEffect, useId, useRef } from 'react';
+import { type PointerEvent, useContext, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { focusRing } from './focus_ring';
+import { hapticTick } from './haptics';
+import { useHoldScroll } from './hold_scroll';
 import { SliderStrings } from './slider.strings';
-import { SliderIsolationContext } from './slider_isolation';
+import { IsolationContext } from './isolation';
+import { TouchDrag } from './touch_drag';
 import { color, font, size } from './tokens.stylex';
 
 const DISABLED = '[data-disabled]';
@@ -27,7 +30,7 @@ const styles = stylex.create({
     alignItems: 'center',
     height: '100%',
     cursor: 'pointer',
-    touchAction: 'none',
+    touchAction: 'pan-y',
   },
   track: {
     position: 'relative',
@@ -75,6 +78,7 @@ const styles = stylex.create({
     position: 'fixed',
     zIndex: 70,
     pointerEvents: 'none',
+    opacity: 0.5,
     color: color.bone,
     backgroundColor: color.bower,
     borderRadius: size.radius,
@@ -200,11 +204,14 @@ export function Slider({
   const from = share(origin ?? 0);
   const to = share(value);
   const id = useId();
-  const isolation = useContext(SliderIsolationContext);
+  const isolation = useContext(IsolationContext);
   const endIsolation = isolation?.end;
   const active = isolation?.active;
   const isolated = active?.id === id ? active : null;
   const pointer = useRef<number | null>(null);
+  const [touch] = useState(() => new TouchDrag());
+  const root = useRef<HTMLDivElement>(null);
+  const thumb = useRef<HTMLDivElement>(null);
 
   useEffect(
     () => () => {
@@ -213,6 +220,19 @@ export function Slider({
     },
     [endIsolation, id],
   );
+
+  useEffect(() => {
+    const element = root.current;
+    if (element == null) return;
+    // Base UI starts a drag from its control's own touchstart; `touch` decides that instead.
+    const withhold = (event: TouchEvent): void => event.stopPropagation();
+    element.addEventListener('touchstart', withhold, { capture: true, passive: true });
+    return () => {
+      element.removeEventListener('touchstart', withhold, { capture: true });
+      touch.forget();
+    };
+  }, [touch]);
+  useHoldScroll(root, () => touch.dragging);
 
   const finishIsolation = (event: PointerEvent<HTMLDivElement>): void => {
     if (pointer.current !== event.pointerId) return;
@@ -234,28 +254,65 @@ export function Slider({
     return () => observer.disconnect();
   }, []);
 
-  const held = (next: number, { reason, event }: { reason: string; event: Event }): number => {
-    if (reason !== 'drag' && reason !== 'track-press') return next;
+  const snapped = (next: number, finger: boolean): number => {
     // Before the first observation there is no width to be a pixel of, and a snap window of
     // infinity would pin the control to its landmark.
     if (across.current === 0) return next;
-    const finger = 'touches' in event || ('pointerType' in event && event.pointerType === 'touch');
     const within = ((max - min) / across.current) * SNAP_PIXELS[finger ? 'touch' : 'mouse'];
     return snap?.find((at) => Math.abs(next - at) < within) ?? next;
+  };
+
+  // Base UI only ever moves for a mouse or pen: touches are `pressedByTouch`'s.
+  const held = (next: number, { reason }: { reason: string }): number =>
+    reason === 'drag' || reason === 'track-press' ? snapped(next, false) : next;
+
+  const pressedByTouch = (event: PointerEvent<HTMLDivElement>): void => {
+    // Withheld from Base UI, which would move the value on this press even if it becomes a scroll.
+    event.stopPropagation();
+    const track = control.current?.getBoundingClientRect();
+    if (disabled || !event.isPrimary || track == null) return;
+    const { left, top, width, height } = event.currentTarget.getBoundingClientRect();
+    const { pointerId } = event;
+    const onThumb = event.target instanceof Node && thumb.current?.contains(event.target) === true;
+    touch.down(
+      pointerId,
+      event.clientX,
+      event.clientY,
+      { from: value, min, max, step, left: track.left, width: track.width, onThumb },
+      {
+        start: () => {
+          hapticTick();
+          if (isolation == null) return;
+          pointer.current = pointerId;
+          isolation.begin(id, { left, top, width, height });
+        },
+        change: (next) => onChange(snapped(next, true)),
+        commit: (next) => onCommit?.(snapped(next, true)),
+      },
+    );
+  };
+
+  const released = (event: PointerEvent<HTMLDivElement>): void => {
+    touch.end(event.pointerId);
+    finishIsolation(event);
   };
 
   return (
     <>
       <BaseSlider.Root
         {...stylex.props(styles.root, style)}
+        ref={root}
         value={value}
         min={min}
         max={max}
         step={step}
         disabled={disabled}
         onPointerDownCapture={(event) => {
+          if (event.pointerType === 'touch') {
+            pressedByTouch(event);
+            return;
+          }
           if (
-            isolation == null ||
             disabled ||
             event.button !== 0 ||
             !event.isPrimary ||
@@ -263,12 +320,15 @@ export function Slider({
             pointer.current != null
           )
             return;
+          hapticTick();
+          if (isolation == null) return;
           const { left, top, width, height } = event.currentTarget.getBoundingClientRect();
           pointer.current = event.pointerId;
           isolation.begin(id, { left, top, width, height });
         }}
-        onPointerUp={finishIsolation}
-        onPointerCancel={finishIsolation}
+        onPointerMove={(event) => touch.move(event.pointerId, event.clientX, event.clientY)}
+        onPointerUp={released}
+        onPointerCancel={released}
         onLostPointerCapture={finishIsolation}
         onValueChange={(next, details) => {
           if (typeof next === 'number') onChange(held(next, details));
@@ -283,6 +343,7 @@ export function Slider({
             {/* On the thumb, which is what carries the range input: the control around it is a
                 plain div, so a name left there reaches nothing that announces a value. */}
             <BaseSlider.Thumb
+              ref={thumb}
               {...stylex.props(styles.thumb, focusRing.within)}
               aria-label={label}
               getAriaValueText={valueText == null ? undefined : (_formatted, at) => valueText(at)}

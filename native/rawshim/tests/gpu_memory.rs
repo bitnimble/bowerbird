@@ -154,4 +154,39 @@ fn every_stage_hands_its_working_planes_back() {
         // and they are per-`Uploaded` rather than per-device, so they have to go with this one.
         let _ = uploaded.encode(&grade);
     });
+
+    // The editor holds let-go buffers for the whole visit, so a drag must also leave that pool where
+    // it found it.
+    rawshim::gpu::hold_buffers();
+    let uploaded = gpu.upload(&frame, &grade, &peak);
+    let mut dragged = grade.clone();
+    let mut tick = 0.0;
+    let mut drag = || {
+        for _ in 0..20 {
+            tick += 1.0;
+            dragged.adjust.colour_nodes = vec![rawshim::lattice::ColourNode {
+                hue: 200.0 + tick,
+                chroma: 8.0,
+                lightness: None,
+                target_hue: 120.0,
+                target_chroma: 30.0,
+                target_lightness: rawshim::lattice::ANY_LIGHTNESS_AT,
+                hue_reach: 30.0,
+                chroma_reach: 6.0,
+                lightness_reach: 0.0,
+            }];
+            let _ = uploaded.encode(&dragged);
+        }
+    };
+    drag();
+    let kept = rawshim::gpu::kept_bytes();
+    gives_it_back("colour edit drag", &mut drag);
+    let kept_after = rawshim::gpu::kept_bytes();
+    rawshim::gpu::release_buffers();
+    assert_eq!(
+        kept_after,
+        kept,
+        "a drag grew the editor's kept buffers by {} bytes",
+        kept_after.saturating_sub(kept),
+    );
 }

@@ -262,10 +262,11 @@ class Open {
       case 'drawWheel': {
         const editor = this.drawing();
         editor.drawWheel(ask.lightness, ask.selected ?? undefined);
+        const edges = editor.wheelEdges(new Float64Array(ask.edgeAt), ask.displayPeak ?? undefined);
         return {
           value: {
             chroma: editor.wheelChroma(),
-            edge: [...editor.wheelEdge(new Float64Array(ask.edgeAt), ask.displayPeak ?? undefined)],
+            edges: ask.edgeAt.map((_, at) => [...edges.subarray(at * 360, (at + 1) * 360)]),
           },
         };
       }

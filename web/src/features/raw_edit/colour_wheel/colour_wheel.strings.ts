@@ -2,8 +2,9 @@ export const ColourWheelStrings = {
   heading: () => 'Colour edits',
   reset: () => 'Reset colour edits',
   options: () => 'Colour wheel options',
+  showDisplayGamut: () => 'Show my display gamut',
   showPhotoColours: () => 'Show photo colours',
-  showProfileArrows: () => 'Show profile arrows',
+  showProfileChanges: () => 'Show colour profile changes',
   wheel: () => 'Colour wheel',
   lightness: () => 'Lightness',
   // A lightness the wheel edits colours at, not the Light panel's tone sliders of the same names.
@@ -23,6 +24,5 @@ export const ColourWheelStrings = {
   saturationRange: () => 'Saturation range',
   lightnessRange: () => 'Lightness range',
   remove: () => 'Remove colour edit',
-  hint: () => 'Select a colour on the wheel to edit it.',
   full: (most: number) => `You can add up to ${most} colour edits.`,
 };

@@ -1,41 +1,52 @@
 import { afterEach, expect, test } from 'bun:test';
-import type { SliderIsolation, SliderIsolationRectangle } from '../slider_isolation';
+import type { Isolation, IsolationRectangle } from '../isolation';
 import { registerDom } from '../../test_dom';
 
 registerDom();
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 const { Slider } = await import('../slider');
-const { SliderIsolationContext } = await import('../slider_isolation');
+const { IsolationContext } = await import('../isolation');
 
 afterEach(cleanup);
 
 function pointer(
   element: HTMLElement,
   type: string,
-  options: { id?: number; primary?: boolean; button?: number } = {},
+  options: {
+    id?: number;
+    primary?: boolean;
+    button?: number;
+    touch?: boolean;
+    x?: number;
+    y?: number;
+  } = {},
 ): void {
   const event = new MouseEvent(type, {
     bubbles: true,
     button: options.button ?? 0,
     buttons: type === 'pointerdown' ? 1 : 0,
+    clientX: options.x ?? 0,
+    clientY: options.y ?? 0,
   });
   Object.defineProperties(event, {
     pointerId: { value: options.id ?? 7 },
     isPrimary: { value: options.primary ?? true },
-    pointerType: { value: 'mouse' },
+    pointerType: { value: options.touch === true ? 'touch' : 'mouse' },
   });
   fireEvent(element, event);
 }
 
 function fixture(): {
-  isolation: SliderIsolation;
-  starts: SliderIsolationRectangle[];
+  isolation: Isolation;
+  starts: IsolationRectangle[];
   ends: string[];
   content: (value?: number, disabled?: boolean) => JSX.Element;
+  changes: number[];
 } {
-  const starts: SliderIsolationRectangle[] = [];
+  const starts: IsolationRectangle[] = [];
+  const changes: number[] = [];
   const ends: string[] = [];
-  const isolation: SliderIsolation = {
+  const isolation: Isolation = {
     active: null,
     begin: (id, rectangle) => {
       starts.push(rectangle);
@@ -50,19 +61,20 @@ function fixture(): {
     isolation,
     starts,
     ends,
+    changes,
     content: (value = 50, disabled = false) => (
-      <SliderIsolationContext.Provider value={{ ...isolation }}>
+      <IsolationContext.Provider value={{ ...isolation }}>
         <Slider
           label="Exposure"
           value={value}
           min={0}
           max={100}
           step={1}
-          onChange={() => {}}
+          onChange={(at) => changes.push(at)}
           valueText={(at) => `${at}%`}
           disabled={disabled}
         />
-      </SliderIsolationContext.Provider>
+      </IsolationContext.Provider>
     ),
   };
 }
@@ -117,4 +129,33 @@ test('unmount ends isolation and disabled or secondary presses never begin it', 
   expect(state.starts).toHaveLength(1);
   view.unmount();
   expect(state.isolation.active).toBeNull();
+});
+
+test("a touch never reaches the control's own touch handling", () => {
+  render(fixture().content());
+  const range = screen.getByRole('slider', { name: 'Exposure' });
+  let reached = false;
+  range.addEventListener('touchstart', () => {
+    reached = true;
+  });
+  range.dispatchEvent(new Event('touchstart', { bubbles: true }));
+  expect(reached).toBe(false);
+});
+
+test('a touch swiping down the slider leaves it to scroll, and one dragging sideways moves it', () => {
+  const state = fixture();
+  render(state.content());
+  const range = screen.getByRole('slider', { name: 'Exposure' });
+  pointer(range, 'pointerdown', { touch: true, x: 100, y: 10 });
+  pointer(range, 'pointermove', { touch: true, x: 102, y: 40 });
+  pointer(range, 'pointercancel', { touch: true });
+  expect(state.starts).toEqual([]);
+  expect(state.changes).toEqual([]);
+
+  pointer(range, 'pointerdown', { touch: true, x: 100, y: 10 });
+  pointer(range, 'pointermove', { touch: true, x: 130, y: 12 });
+  expect(state.starts).toHaveLength(1);
+  expect(state.changes).toEqual([65]);
+  pointer(range, 'pointerup', { touch: true, x: 130, y: 12 });
+  expect(state.ends).toHaveLength(1);
 });

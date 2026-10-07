@@ -1,6 +1,8 @@
 import * as stylex from '@stylexjs/stylex';
 import { color, size } from '../../../ui/tokens.stylex';
 
+const COARSE = '@media (pointer: coarse)';
+
 export const styles = stylex.create({
   editor: { paddingTop: '8px' },
   header: {
@@ -60,7 +62,7 @@ export const styles = stylex.create({
     height: '100%',
   },
   backdrop: { borderRadius: '50%', backgroundColor: color.field },
-  overlay: { overflow: 'visible', touchAction: 'none' },
+  overlay: { overflow: 'visible', touchAction: 'pan-y' },
   disabled: { opacity: 0.4 },
   edge: {
     fill: 'none',
@@ -100,8 +102,7 @@ export const styles = stylex.create({
     stroke: color.bone,
     strokeWidth: '2px',
     vectorEffect: 'non-scaling-stroke',
-    cursor: 'pointer',
-    outline: 'none',
+    pointerEvents: 'none',
   },
   nodeChosen: { fill: color.satin },
   target: {
@@ -109,9 +110,16 @@ export const styles = stylex.create({
     stroke: color.ink,
     strokeWidth: '1px',
     vectorEffect: 'non-scaling-stroke',
-    cursor: 'grab',
+    pointerEvents: 'none',
   },
-  grab: { fill: 'transparent', cursor: 'grab' },
+  grab: {
+    r: { default: '0.05px', [COARSE]: '0.14px' },
+    fill: 'transparent',
+    cursor: 'grab',
+    outline: 'none',
+  },
+  shown: { visibility: 'visible', opacity: 0.5 },
+  clipped: (clip: string) => ({ clipPath: clip, visibility: 'visible', opacity: 0.5 }),
   twoWay: {
     fill: 'none',
     stroke: color.bone,

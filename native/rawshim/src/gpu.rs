@@ -699,6 +699,11 @@ pub fn buffers_reused() -> u64 {
     kept_buffers(|kept| kept.reused)
 }
 
+/// Bytes of let-go buffers waiting for the next of their shape, which [`live_bytes`] does not count.
+pub fn kept_bytes() -> u64 {
+    kept_buffers(|kept| kept.bytes)
+}
+
 /// Ends one [`hold_buffers`]; the last frees every buffer kept.
 pub fn release_buffers() {
     kept_buffers(|kept| {
@@ -1995,7 +2000,7 @@ pub struct Stage {
 
 #[cfg(target_arch = "wasm32")]
 enum StageTarget {
-    Surface(wgpu::Surface<'static>),
+    Surface(wgpu::Surface<'static>, web_sys::OffscreenCanvas),
     /// A texture of this module's, which [`Gpu::rgb9e5`] reads back for a canvas the page draws
     /// itself: WebKit caps what a transferred canvas may show at 1000 nits over 203.
     Held(Option<Texture>),
@@ -2015,10 +2020,10 @@ impl Stage {
     ) -> Option<Stage> {
         let surface = gpu
             .instance
-            .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas))
+            .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas.clone()))
             .ok()?;
         let mut held = Stage {
-            target: StageTarget::Surface(surface),
+            target: StageTarget::Surface(surface, canvas),
             width: 0,
             height: 0,
         };
@@ -2047,7 +2052,7 @@ impl Stage {
             return;
         }
         match &mut self.target {
-            StageTarget::Surface(surface) => surface.configure(
+            StageTarget::Surface(surface, _) => surface.configure(
                 &gpu.device,
                 &wgpu::SurfaceConfiguration {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -2090,7 +2095,29 @@ impl Stage {
     pub fn drawn(&self) -> Option<Texture> {
         match &self.target {
             StageTarget::Held(texture) => texture.clone(),
-            StageTarget::Surface(_) => None,
+            StageTarget::Surface(..) => None,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    type CanvasContext;
+    #[wasm_bindgen(method)]
+    fn unconfigure(this: &CanvasContext);
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for Stage {
+    fn drop(&mut self) {
+        use wasm_bindgen::JsCast;
+        // wgpu's web surface drops as a no-op: the context would hold its swap images until the
+        // worker's GC finds the canvas, which an editor reopening its wheel outruns on a phone.
+        if let StageTarget::Surface(_, canvas) = &self.target
+            && let Ok(Some(context)) = canvas.get_context("webgpu")
+        {
+            context.unchecked_into::<CanvasContext>().unconfigure();
         }
     }
 }
@@ -2110,7 +2137,7 @@ pub fn present(
 ) {
     use wgpu::CurrentSurfaceTexture::{Suboptimal, Success};
     let surface = match &stage.target {
-        StageTarget::Surface(surface) => surface,
+        StageTarget::Surface(surface, _) => surface,
         StageTarget::Held(texture) => {
             let Some(texture) = texture else { return };
             let mut recording = uploaded.gpu.record();

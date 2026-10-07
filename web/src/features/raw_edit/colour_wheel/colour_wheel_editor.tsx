@@ -1,12 +1,15 @@
 import * as stylex from '@stylexjs/stylex';
-import { MoveUpRight, Sparkles } from 'lucide-react';
+import { ChartScatter, CircleDashed, MoveUpRight } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { Fragment, useCallback, useEffect, useRef } from 'react';
+import { Fragment, useCallback, useContext, useEffect, useId, useRef } from 'react';
 import { COLOUR_NODES_MAX, type ColourNode } from '../../../../../src/schemas/photo_edits';
 import { Button } from '../../../ui/button';
 import { MenuCheckItem } from '../../../ui/check_menu';
 import { focusRing } from '../../../ui/focus_ring';
 import { ICON } from '../../../ui/icon';
+import { hapticTick } from '../../../ui/haptics';
+import { useHoldScroll } from '../../../ui/hold_scroll';
+import { IsolationContext } from '../../../ui/isolation';
 import { menuSection } from '../../../ui/menu_section';
 import { OverflowMenu } from '../../../ui/overflow_menu';
 import { Slider } from '../../../ui/slider';
@@ -50,11 +53,11 @@ const CHANNEL_POTS: { channel: Channel; name: () => string; pot: stylex.StyleXSt
 
 const MOST_TARGET_LIGHTNESS = 150;
 const MOST_LIGHTNESS_REACH = 60;
+const TAP_SLOP = 8;
 const FIELD_HEAD = 0.04;
 const SHORTEST_FIELD_ARROW = 2 * FIELD_HEAD;
 const NODE_RADIUS = 0.045;
 const TARGET_RADIUS = 0.04;
-const HANDLE_GRAB = 0.05;
 const REACH_STEPS: Record<Reach, number> = { hueReach: 1, chromaReach: 0.5 };
 const KEY_DIRECTIONS: Partial<Record<string, number>> = {
   ArrowUp: 1,
@@ -92,6 +95,9 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
   const disabled = !stage.editable;
   const rim = store.drawn?.chroma ?? null;
   const selected = store.selectedNode;
+  const isolationId = useId();
+  const clipId = `colour-wheel-reach${isolationId.replace(/[^\w-]/g, '')}`;
+  const isolated = useContext(IsolationContext)?.active?.id === isolationId;
   return (
     <div {...stylex.props(styles.editor)}>
       <div {...stylex.props(styles.header)}>
@@ -104,14 +110,20 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
                 content: (
                   <>
                     <MenuCheckItem
-                      icon={<Sparkles size={ICON} />}
+                      icon={<CircleDashed size={ICON} />}
+                      label={strings.showDisplayGamut()}
+                      checked={store.showEdge}
+                      onCheckedChange={presenter.setShowEdge}
+                    />
+                    <MenuCheckItem
+                      icon={<ChartScatter size={ICON} />}
                       label={strings.showPhotoColours()}
                       checked={store.showDots}
                       onCheckedChange={presenter.setShowDots}
                     />
                     <MenuCheckItem
                       icon={<MoveUpRight size={ICON} />}
-                      label={strings.showProfileArrows()}
+                      label={strings.showProfileChanges()}
                       checked={store.showField}
                       onCheckedChange={presenter.setShowField}
                     />
@@ -131,12 +143,23 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
         <canvas
           key={presenter.key}
           ref={presenter.attach}
-          {...stylex.props(styles.layer, styles.backdrop)}
+          {...stylex.props(
+            styles.layer,
+            styles.backdrop,
+            isolated && styles.clipped(`url(#${clipId})`),
+          )}
           aria-hidden="true"
         />
-        <Dots store={store} rim={rim} />
+        {store.showDots && <Dots store={store} rim={rim} />}
         {rim != null && (
-          <Overlay store={store} presenter={presenter} rim={rim} disabled={disabled} />
+          <Overlay
+            store={store}
+            presenter={presenter}
+            rim={rim}
+            disabled={disabled}
+            isolationId={isolationId}
+            clipId={clipId}
+          />
         )}
       </div>
       {selected != null && store.selectedIndex != null && rim != null ? (
@@ -148,9 +171,11 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
           disabled={disabled}
         />
       ) : (
-        <Text variant="muted" as="p" style={styles.hint}>
-          {store.nodes.length >= COLOUR_NODES_MAX ? strings.full(COLOUR_NODES_MAX) : strings.hint()}
-        </Text>
+        store.nodes.length >= COLOUR_NODES_MAX && (
+          <Text variant="muted" as="p" style={styles.hint}>
+            {strings.full(COLOUR_NODES_MAX)}
+          </Text>
+        )
       )}
     </div>
   );
@@ -234,13 +259,24 @@ const Overlay = observer(function Overlay({
   presenter,
   rim,
   disabled,
+  isolationId,
+  clipId,
 }: {
   store: ColourWheelStore;
   presenter: ColourWheelPresenter;
   rim: number;
   disabled: boolean;
+  isolationId: string;
+  clipId: string;
 }): JSX.Element {
+  const isolation = useContext(IsolationContext);
+  const isolated = isolation?.active?.id === isolationId;
+  const endIsolation = isolation?.end;
+  useEffect(() => () => endIsolation?.(isolationId), [endIsolation, isolationId]);
   const drag = useRef<Drag | null>(null);
+  const overlay = useRef<SVGSVGElement>(null);
+  useHoldScroll(overlay, () => drag.current != null);
+  const tap = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const at = (event: React.PointerEvent, bounds: DOMRect): Hued =>
     huedAt(pointAt(event, bounds), rim);
   const start = (event: React.PointerEvent<SVGElement>, index: number, handle: Handle): void => {
@@ -250,27 +286,30 @@ const Overlay = observer(function Overlay({
       return;
     event.preventDefault();
     presenter.beginDrag(index);
-    drag.current = {
-      index,
-      handle,
-      pointerId: event.pointerId,
-      svg,
-      bounds: svg.getBoundingClientRect(),
-    };
+    const bounds = svg.getBoundingClientRect();
+    drag.current = { index, handle, pointerId: event.pointerId, svg, bounds };
     try {
       svg.setPointerCapture(event.pointerId);
     } catch {
       drag.current = null;
       presenter.cancelDrag();
+      return;
     }
+    const { left, top, width, height } = bounds;
+    hapticTick();
+    isolation?.begin(isolationId, { left, top, width, height });
   };
-  const release = useCallback((pointerId: number): boolean => {
-    const active = drag.current;
-    if (active == null || active.pointerId !== pointerId) return false;
-    drag.current = null;
-    if (active.svg.hasPointerCapture(pointerId)) active.svg.releasePointerCapture(pointerId);
-    return true;
-  }, []);
+  const release = useCallback(
+    (pointerId: number): boolean => {
+      const active = drag.current;
+      if (active == null || active.pointerId !== pointerId) return false;
+      drag.current = null;
+      if (active.svg.hasPointerCapture(pointerId)) active.svg.releasePointerCapture(pointerId);
+      endIsolation?.(isolationId);
+      return true;
+    },
+    [endIsolation, isolationId],
+  );
   const cancel = useCallback(
     (pointerId: number): void => {
       if (release(pointerId)) presenter.cancelDrag();
@@ -293,15 +332,20 @@ const Overlay = observer(function Overlay({
   const place = (hued: Hued): Point => pointOf(hued, rim);
   return (
     <svg
+      ref={overlay}
       viewBox="-1 -1 2 2"
-      {...stylex.props(styles.layer, styles.overlay, disabled && styles.disabled)}
+      {...stylex.props(
+        styles.layer,
+        styles.overlay,
+        disabled && styles.disabled,
+        isolated && styles.shown,
+      )}
       role="group"
       aria-label={strings.wheel()}
       aria-disabled={disabled}
       onPointerDown={(event) => {
         if (!event.isPrimary || event.button !== 0 || disabled || drag.current != null) return;
-        const point = pointAt(event, event.currentTarget.getBoundingClientRect());
-        presenter.press(Math.hypot(point.x, point.y) <= 1 ? huedAt(point, rim) : null);
+        tap.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
       }}
       onPointerMove={(event) => {
         const active = drag.current;
@@ -309,9 +353,21 @@ const Overlay = observer(function Overlay({
         presenter.drag(active.index, active.handle, at(event, active.bounds));
       }}
       onPointerUp={(event) => {
-        if (release(event.pointerId)) presenter.endDrag();
+        if (release(event.pointerId)) {
+          presenter.endDrag();
+          return;
+        }
+        const pressed = tap.current;
+        tap.current = null;
+        if (pressed == null || pressed.pointerId !== event.pointerId) return;
+        if (Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > TAP_SLOP) return;
+        const point = pointAt(event, event.currentTarget.getBoundingClientRect());
+        presenter.press(Math.hypot(point.x, point.y) <= 1 ? huedAt(point, rim) : null);
       }}
-      onPointerCancel={(event) => cancel(event.pointerId)}
+      onPointerCancel={(event) => {
+        tap.current = null;
+        cancel(event.pointerId);
+      }}
       onLostPointerCapture={(event) => cancel(event.pointerId)}
     >
       <defs>
@@ -338,9 +394,20 @@ const Overlay = observer(function Overlay({
         >
           <path d="M0 0 L10 5 L0 10 Z" {...stylex.props(styles.fieldHead)} />
         </marker>
+        {selected != null && (
+          <clipPath id={clipId} clipPathUnits="objectBoundingBox">
+            <path
+              d={reachPath(selected, rim)}
+              transform="translate(0.5 0.5) scale(0.5)"
+              clipRule="evenodd"
+            />
+          </clipPath>
+        )}
       </defs>
-      <path d={edgePath(store.drawn?.edge ?? [], rim)} {...stylex.props(styles.edge)} />
-      {store.channelField.map(({ from, to }, index) => {
+      {!isolated && store.showEdge && (
+        <path d={edgePath(store.edge, rim)} {...stylex.props(styles.edge)} />
+      )}
+      {(isolated ? [] : store.channelField).map(({ from, to }, index) => {
         const [a, b] = [place(from), place(to)];
         if (Math.hypot(b.x - a.x, b.y - a.y) < SHORTEST_FIELD_ARROW) return null;
         return (
@@ -358,12 +425,12 @@ const Overlay = observer(function Overlay({
       {store.shown.map(({ node, index }) => {
         const { x, y } = place(node);
         const chosen = index === store.selectedIndex;
+        if (isolated && !chosen) return null;
         return (
-          <circle
+          <g
             key={index}
-            cx={x}
-            cy={y}
-            {...stylex.props(styles.node, chosen && styles.nodeChosen, focusRing.ring)}
+            transform={`translate(${x} ${y})`}
+            {...stylex.props(focusRing.ring)}
             role="button"
             tabIndex={disabled ? -1 : 0}
             aria-label={strings.edit(node.hue)}
@@ -379,7 +446,10 @@ const Overlay = observer(function Overlay({
                 presenter.remove(index);
               }
             }}
-          />
+          >
+            <circle {...stylex.props(styles.grab)} />
+            <circle {...stylex.props(styles.node, chosen && styles.nodeChosen)} />
+          </g>
         );
       })}
       {/* Over the nodes: a new edit's target starts on its own node, and must be grabbable there. */}
@@ -446,15 +516,15 @@ function Selected({
           range={{ min: LEAST_HUE_REACH, max: MOST_HUE_REACH }}
         />
       ))}
-      <circle
-        cx={to.x}
-        cy={to.y}
-        r={TARGET_RADIUS}
-        {...stylex.props(styles.target)}
+      <g
+        transform={`translate(${to.x} ${to.y})`}
         role="img"
         aria-label={strings.outputColour()}
         onPointerDown={(event) => start(event, index, 'target')}
-      />
+      >
+        <circle {...stylex.props(styles.grab)} />
+        <circle r={TARGET_RADIUS} {...stylex.props(styles.target)} />
+      </g>
     </g>
   );
 }
@@ -521,7 +591,7 @@ function TwoWay({
         step(index, reach, direction * REACH_STEPS[reach] * (event.shiftKey ? 10 : 1));
       }}
     >
-      <circle r={HANDLE_GRAB} {...stylex.props(styles.grab)} />
+      <circle {...stylex.props(styles.grab)} />
       <path d={TWO_WAY} {...stylex.props(styles.twoWay)} />
     </g>
   );

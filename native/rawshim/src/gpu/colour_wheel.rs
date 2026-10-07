@@ -166,15 +166,6 @@ pub fn displayable(lightness: f64, headroom: f64) -> Vec<f64> {
         .collect()
 }
 
-/// Per whole degree of hue, the furthest [`displayable`] reaches at any of `lightnesses`.
-pub fn widest_displayable(lightnesses: &[f64], headroom: f64) -> Vec<f64> {
-    lightnesses
-        .iter()
-        .map(|&lightness| displayable(lightness, headroom))
-        .reduce(|widest, edge| widest.iter().zip(edge).map(|(a, b)| a.max(b)).collect())
-        .unwrap_or_default()
-}
-
 impl super::Gpu {
     /// `target` is `CANVAS_FORMAT`, `side` square.
     pub fn draw_backdrop(
@@ -259,7 +250,7 @@ pub fn present_backdrop(gpu: &super::Gpu, stage: &super::Stage, backdrop: &Backd
             gpu.draw_backdrop(&mut recording, &texture.view(), backdrop);
             recording.submit();
         }
-        super::StageTarget::Surface(surface) => {
+        super::StageTarget::Surface(surface, _) => {
             let (Success(image) | Suboptimal(image)) = surface.get_current_texture() else {
                 return;
             };
@@ -689,19 +680,5 @@ mod tests {
             let edge = displayable(lightness, 4.9);
             assert!(edge.iter().all(|c| *c > 0.0), "{lightness}: {edge:?}");
         }
-    }
-
-    #[test]
-    fn every_lightness_together_reaches_as_far_as_any_one_does() {
-        let (dark, light) = (displayable(15.0, 4.9), displayable(110.0, 4.9));
-        for widest in [
-            widest_displayable(&[15.0, 110.0], 4.9),
-            widest_displayable(&[110.0, 15.0], 4.9),
-        ] {
-            for degree in 0..360 {
-                assert_eq!(widest[degree], dark[degree].max(light[degree]), "{degree}");
-            }
-        }
-        assert_ne!(dark, light);
     }
 }

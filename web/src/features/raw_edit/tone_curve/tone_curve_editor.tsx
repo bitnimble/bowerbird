@@ -9,6 +9,7 @@ import {
   type ToneCurvePoints,
 } from '../../../../../src/schemas/photo_edits';
 import { focusRing } from '../../../ui/focus_ring';
+import { useHoldScroll } from '../../../ui/hold_scroll';
 import type { EditStore } from '../edit/edit_store';
 import { ResetButton } from '../edit_control';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
@@ -49,6 +50,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
 }): JSX.Element {
   const plot = useRef<SVGSVGElement>(null);
   const drag = useRef<Drag | null>(null);
+  useHoldScroll(plot, () => drag.current != null);
   const lastPressed = useRef<number | null>(null);
   const hoverBounds = useRef<DOMRect | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);

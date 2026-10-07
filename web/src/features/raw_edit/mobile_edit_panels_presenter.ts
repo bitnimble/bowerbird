@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import type { SliderIsolationRectangle } from '../../ui/slider_isolation';
+import type { IsolationRectangle } from '../../ui/isolation';
 import type { MobileEditPanelsStore } from './mobile_edit_panels_store';
 
 export class MobileEditPanelsPresenter {
@@ -7,14 +7,14 @@ export class MobileEditPanelsPresenter {
 
   @action.bound
   toggle = (id: string): void => {
-    if (this.store.activeSlider != null) return;
+    if (this.store.isolated != null) return;
     this.store.expanded = this.store.selectedId !== id || !this.store.expanded;
     this.store.selectedId = id;
   };
 
   @action.bound
   navigate = (id: string, ids: readonly string[], key: string): string | null => {
-    if (this.store.activeSlider != null || ids.length === 0) return null;
+    if (this.store.isolated != null || ids.length === 0) return null;
     const index = ids.indexOf(id);
     const next =
       key === 'ArrowRight'
@@ -34,24 +34,24 @@ export class MobileEditPanelsPresenter {
 
   @action.bound
   close = (): void => {
-    if (this.store.activeSlider != null) return;
+    if (this.store.isolated != null) return;
     this.store.expanded = false;
   };
 
   @action.bound
-  begin = (id: string, rectangle: SliderIsolationRectangle): void => {
-    if (!this.store.expanded || this.store.activeSlider != null) return;
-    this.store.activeSlider = { id, rectangle };
+  begin = (id: string, rectangle: IsolationRectangle): void => {
+    if (!this.store.expanded || this.store.isolated != null) return;
+    this.store.isolated = { id, rectangle };
   };
 
   @action.bound
   end = (id: string): void => {
-    if (this.store.activeSlider?.id === id) this.store.activeSlider = null;
+    if (this.store.isolated?.id === id) this.store.isolated = null;
   };
 
   @action.bound
   dispose = (): void => {
-    this.store.activeSlider = null;
+    this.store.isolated = null;
     this.store.expanded = false;
   };
 }

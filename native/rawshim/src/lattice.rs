@@ -139,12 +139,9 @@ pub const ANY_LIGHTNESS_AT: f64 = 55.0;
 
 pub const MOST_NODES: usize = 32;
 
-const TURNS_FROM_CHROMA: f64 = 2.0;
-
 impl ColourNode {
     /// The kernel taking this node's colour exactly onto its target, over `axes`, as
-    /// `colour.slang`'s `moved_by_reader` reads it: `[u_re, u_im, d_a, d_b, u_lightness, 0, 0]`,
-    /// moving `(J, z)` to `(J (1 + u_lightness), z + u z + d)`.
+    /// `colour.slang`'s `moved_by_reader` reads it: `[a_re, a_im, d_a, d_b, u_lightness, b_re, b_im]`.
     pub fn kernel(&self, axes: &LutAxes) -> Kernel {
         let level = self.lightness.unwrap_or(ANY_LIGHTNESS_AT);
         let opponent = |chroma: f64, hue: f64| {
@@ -153,19 +150,8 @@ impl ColourNode {
         };
         let z = opponent(self.chroma, self.hue);
         let to = opponent(self.target_chroma, self.target_hue);
-        // A multiple of the pair cannot move a near-grey colour, so there the move is an offset.
-        let t = (self.chroma / TURNS_FROM_CHROMA).clamp(0.0, 1.0);
-        let turned = t * t * (3.0 - 2.0 * t);
-        let ratio = match z[0].hypot(z[1]) > 0.0 {
-            true => {
-                let size = z[0] * z[0] + z[1] * z[1];
-                [
-                    (to[0] * z[0] + to[1] * z[1]) / size - 1.0,
-                    (to[1] * z[0] - to[0] * z[1]) / size,
-                ]
-            }
-            false => [0.0; 2],
-        };
+        let turn = opponent(1.0, self.target_hue - self.hue);
+        let added = self.target_chroma - self.chroma;
         let lightness = match level > 0.0 {
             true => self.target_lightness / level - 1.0,
             false => 0.0,
@@ -192,13 +178,13 @@ impl ColourNode {
                 0.0,
             ],
             generator: [
-                turned * ratio[0],
-                turned * ratio[1],
-                (1.0 - turned) * (to[0] - z[0]),
-                (1.0 - turned) * (to[1] - z[1]),
+                turn[0] - 1.0,
+                turn[1],
+                to[0] - z[0],
+                to[1] - z[1],
                 lightness,
-                0.0,
-                0.0,
+                added * turn[0],
+                added * turn[1],
             ],
             to_lightness: [0.0; 2],
         }
@@ -276,8 +262,9 @@ pub struct Kernel {
     pub centre: [f64; 4],
     /// Along the same axes. Zero on an axis the kernel does not depend on.
     pub reach: [f64; 4],
-    /// The operator's matrix log, on `(d0, d2, l)`: the 2x2 `[a, b, c, d]`, the tint each chroma
-    /// axis takes from lightness `[e, f]`, and the lightness term `g`.
+    /// A fitted kernel's operator as its matrix log, on `(d0, d2, l)`: the 2x2 `[a, b, c, d]`, the
+    /// tint each chroma axis takes from lightness `[e, f]`, and the lightness term `g`. A colour
+    /// edit's holds its move instead ([`ColourNode::kernel`]).
     pub generator: [f64; 7],
     /// Lightness per unit chromaticity on each chroma axis, added to the lightness gain.
     pub to_lightness: [f64; 2],
@@ -1052,6 +1039,11 @@ mod tests {
         for line in [
             format!("static const uint KERNEL_WORDS = {KERNEL_WORDS};"),
             format!("static const uint MOST_NODES = {MOST_NODES};"),
+            format!("static const uint SUM_WORDS = {SUM_WORDS};"),
+            format!(
+                "static const uint GENERATOR_WORDS = {};",
+                Kernel::from_words(&[0.0; KERNEL_WORDS]).generator.len()
+            ),
         ] {
             assert!(
                 SOURCE.contains(&line),
@@ -1143,7 +1135,7 @@ mod tests {
         let own = at(hue_at);
         for (texel, share) in [(hue_at + 1, 1.0), (hue_at + 3, 0.5), (hue_at + 5, 0.0)] {
             let got = at(texel);
-            for w in 0..5 {
+            for w in 0..7 {
                 assert!(
                     (got[w] - share * own[w]).abs() < 1e-2 * own[w].abs().max(1e-2),
                     "texel {texel} word {w}: {got:?}, wanted {share} of {own:?}"
@@ -1486,7 +1478,7 @@ mod tests {
             );
             let want = opponent(node.target_lightness, node.target_chroma, node.target_hue);
             let generator = node.kernel(&LutAxes::of_nodes()).generator;
-            let got = moved(std::array::from_fn(|k| generator[k]), from);
+            let got = moved(generator, from);
             for (got, want) in got.iter().zip(want) {
                 assert!(
                     (got - want).abs() < 1e-9,
@@ -1521,24 +1513,87 @@ mod tests {
         assert!(apart < 0.2, "half a move went from {before:?} to {after:?}");
     }
 
+    #[test]
+    fn the_grade_turns_a_colour_from_the_chroma_the_host_does() {
+        const SOURCE: &str = include_str!("../../../slang/colour.slang");
+        let line = format!("static const float TURNED_HALF_AT = {TURNED_HALF_AT:.1};");
+        assert!(SOURCE.contains(&line), "colour.slang does not say `{line}`");
+    }
+
+    #[test]
+    fn a_grey_in_reach_moves_by_the_nodes_offset_whatever_its_hue() {
+        let node = ColourNode {
+            hue: 315.0,
+            chroma: 7.0,
+            lightness: None,
+            target_hue: 135.0,
+            target_chroma: 38.0,
+            target_lightness: ANY_LIGHTNESS_AT,
+            hue_reach: 60.0,
+            chroma_reach: 6.0,
+            lightness_reach: 0.0,
+        };
+        let generator = node.kernel(&LutAxes::of_nodes()).generator;
+        let got = moved(generator, opponent(ANY_LIGHTNESS_AT, 0.0, 0.0));
+        let from = opponent(ANY_LIGHTNESS_AT, 7.0, 315.0);
+        let to = opponent(ANY_LIGHTNESS_AT, 38.0, 135.0);
+        for k in 1..3 {
+            assert!((got[k] - (to[k] - from[k])).abs() < 1e-9, "{got:?}");
+        }
+    }
+
+    #[test]
+    fn a_vivid_colour_beside_a_node_keeps_its_hue_apart_and_takes_the_chroma_change() {
+        let node = ColourNode {
+            hue: 100.0,
+            chroma: 60.0,
+            lightness: None,
+            target_hue: 130.0,
+            target_chroma: 90.0,
+            target_lightness: ANY_LIGHTNESS_AT,
+            hue_reach: 40.0,
+            chroma_reach: 10.0,
+            lightness_reach: 0.0,
+        };
+        let generator = node.kernel(&LutAxes::of_nodes()).generator;
+        let [_, a, b] = moved(generator, opponent(ANY_LIGHTNESS_AT, 60.0, 110.0));
+        let hue = b.atan2(a).to_degrees();
+        assert!((hue - 140.0).abs() < 0.5, "turned to {hue}");
+        assert!((a.hypot(b) - 90.0).abs() < 0.5, "chroma {}", a.hypot(b));
+    }
+
     fn opponent(lightness: f64, chroma: f64, hue: f64) -> [f64; 3] {
         let (sin, cos) = hue.to_radians().sin_cos();
         [lightness, chroma * cos, chroma * sin]
     }
 
+    /// `colour.slang`'s.
+    const TURNED_HALF_AT: f64 = 5.0;
+
     /// `colour.slang`'s `moved_by_reader`, by a kernel's move words or a texel of its volumes.
-    fn moved(by: [f64; 5], [lightness, a, b]: [f64; 3]) -> [f64; 3] {
+    fn moved(by: [f64; 7], [lightness, a, b]: [f64; 3]) -> [f64; 3] {
+        let chroma = a.hypot(b);
+        let (along_a, along_b) = match chroma > 0.0 {
+            true => (a / chroma, b / chroma),
+            false => (0.0, 0.0),
+        };
+        let turn = [
+            by[0] * a - by[1] * b + by[5] * along_a - by[6] * along_b,
+            by[0] * b + by[1] * a + by[5] * along_b + by[6] * along_a,
+        ];
+        let share = chroma * chroma / (chroma * chroma + TURNED_HALF_AT * TURNED_HALF_AT);
         [
             lightness * (1.0 + by[4]),
-            a + by[0] * a - by[1] * b + by[2],
-            b + by[0] * b + by[1] * a + by[3],
+            a + share * turn[0] + (1.0 - share) * by[2],
+            b + share * turn[1] + (1.0 - share) * by[3],
         ]
     }
 
-    /// Texel `texel`'s move from a node map's two volumes.
-    fn move_at(pair: &[[f64; 4]], luma: &[[f64; 4]], texel: usize) -> [f64; 5] {
+    /// Texel `texel`'s move from a node map's two volumes, in a kernel's word order.
+    fn move_at(pair: &[[f64; 4]], luma: &[[f64; 4]], texel: usize) -> [f64; 7] {
         let [a, b, c, d] = pair[texel];
-        [a, b, c, d, luma[texel][0]]
+        let [lightness, turn_a, turn_b, _] = luma[texel];
+        [a, b, c, d, lightness, turn_a, turn_b]
     }
 
     /// Texel `texel`'s place in lattice coordinates, as `lattice_bake.slang`'s `place_of` has it.

@@ -32,6 +32,13 @@ export const KEEP: TileKeep = { left: 44, top: 44, width: 512, height: 512 };
 
 export const WHEEL_RIM = 40;
 
+/**
+ * The displayable chroma the fake decoder answers, widest at the lightest and at the last hues, and
+ * none at all at 90°.
+ */
+export const wheelEdge = (lightness: number, degree: number): number =>
+  degree === 90 ? 0 : lightness / 4 + degree / 36;
+
 /** The library's grade, as an open carries it. */
 export const GRADE = { referenceWhiteNits: 203, whiteQuantile: 0.995 };
 
@@ -355,7 +362,6 @@ export class FakeDecoder {
   wheelSide: number | null = null;
   wheelsAttached = 0;
   readonly wheelDrawnAt: number[] = [];
-  readonly wheelEdgesAt: number[][] = [];
   readonly wheelPeaks: (number | null)[] = [];
   /** The node each wheel draw darkened around, in order. */
   readonly wheelShadedBy: (ColourNode | null)[] = [];
@@ -372,10 +378,12 @@ export class FakeDecoder {
 
   drawWheel({ lightness, edgeAt, displayPeak, selected }: WheelDrawing): Promise<WheelDrawn> {
     this.wheelDrawnAt.push(lightness);
-    this.wheelEdgesAt.push([...edgeAt]);
     this.wheelPeaks.push(displayPeak);
     this.wheelShadedBy.push(selected);
-    return Promise.resolve({ chroma: WHEEL_RIM, edge: Array.from({ length: 360 }, () => 30) });
+    return Promise.resolve({
+      chroma: WHEEL_RIM,
+      edges: edgeAt.map((at) => Array.from({ length: 360 }, (_, degree) => wheelEdge(at, degree))),
+    });
   }
 
   shadeWheel(_lightness: number, selected: ColourNode | null): Promise<void> {

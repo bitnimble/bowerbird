@@ -132,8 +132,11 @@ export const TickedSchema = z.object({
 });
 export type Ticked = z.infer<typeof TickedSchema>;
 
-/** The colour wheel at one lightness: its rim's chroma, and the displayable chroma per degree of hue. */
-export const WheelDrawnSchema = z.object({ chroma: z.number(), edge: z.array(z.number()) });
+/** The colour wheel's rim chroma, and per lightness asked the displayable chroma per degree of hue. */
+export const WheelDrawnSchema = z.object({
+  chroma: z.number(),
+  edges: z.array(z.array(z.number())),
+});
 export type WheelDrawn = z.infer<typeof WheelDrawnSchema>;
 
 export interface WheelDrawing {

@@ -1738,6 +1738,8 @@ impl HeldRaw {
     ) -> Result<(), JsValue> {
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
+        // Before the new one configures: the old one's drop unconfigures its canvas's context.
+        drop(into.take());
         let stage = match canvas {
             Some(canvas) => {
                 crate::gpu::Stage::attach(gpu, canvas, width, height).ok_or_else(|| {
@@ -1950,11 +1952,15 @@ impl HeldRaw {
         crate::gpu::colour_wheel::wheel_chroma()
     }
 
-    /// `display_peak` in nits, none for a display showing nothing past SDR white.
-    #[wasm_bindgen(js_name = wheelEdge)]
-    pub fn wheel_edge(&self, lightnesses: Vec<f64>, display_peak: Option<f64>) -> Vec<f64> {
+    /// 360 degrees of displayable chroma per lightness, one after another. `display_peak` in nits,
+    /// none for a display showing nothing past SDR white.
+    #[wasm_bindgen(js_name = wheelEdges)]
+    pub fn wheel_edges(&self, lightnesses: Vec<f64>, display_peak: Option<f64>) -> Vec<f64> {
         let headroom = display_peak.map_or(1.0, |peak| peak / self.reference_nits().raw());
-        crate::gpu::colour_wheel::widest_displayable(&lightnesses, headroom)
+        lightnesses
+            .iter()
+            .flat_map(|&lightness| crate::gpu::colour_wheel::displayable(lightness, headroom))
+            .collect()
     }
 
     /// The photograph's colours where colour edits read them, then where the profile takes each of
