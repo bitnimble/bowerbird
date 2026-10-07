@@ -8,24 +8,21 @@ answer to compare with. Input, bilinear, each of `--weights` with grain, origina
 Colours are white-balanced camera RGB with no colour matrix: good for judging detail, not colour."""
 
 import argparse
-import struct
-import zlib
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 
+from training.metrics import psnr
 from training.mosaic import bilinear, demosaic, pack, pack_rgb, stabilise
 from training.pmrid import Pmrid
+from training.preview import panels, write_png
 from upscaler.calibrate import stored
 from upscaler.degrade import low
 from upscaler.grain import grained
 from upscaler.model import load, upscaled
-from upscaler.train import psnr
 
 MARGIN = 32
-GAP = 8
 
 
 def main() -> None:
@@ -101,31 +98,6 @@ def parse_args() -> argparse.Namespace:
 def corner(text: str) -> tuple[int, int]:
     top, left = (int(v) for v in text.split(","))
     return top, left
-
-
-def panels(images: list[torch.Tensor], scale: float) -> np.ndarray:
-    rows = [srgb(image[0] * scale) for image in images]
-    gap = np.full((rows[0].shape[0], GAP, 3), 255, np.uint8)
-    return np.concatenate([part for row in rows for part in (row, gap)][:-1], 1)
-
-
-def srgb(rgb: torch.Tensor) -> np.ndarray:
-    light = rgb.clamp(0, 1).permute(1, 2, 0).numpy()
-    coded = np.where(light <= 0.0031308, 12.92 * light, 1.055 * light ** (1 / 2.4) - 0.055)
-    return np.round(coded * 255).astype(np.uint8)
-
-
-def write_png(path: Path, rgb: np.ndarray) -> None:
-    height, width, _ = rgb.shape
-
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-
-    rows = b"".join(b"\0" + rgb[row].tobytes() for row in range(height))
-    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    path.write_bytes(
-        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
-    )
 
 
 if __name__ == "__main__":

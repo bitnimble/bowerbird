@@ -9,7 +9,9 @@ import torch.nn.functional as F
 
 from training.crops import DEFAULT_CACHE, isos, prepare, sources
 from training.export import export
+from training.metrics import detail, psnr, spectrum_loss
 from training.mosaic import STABILISER_FLOOR, bilinear, pack, pack_rgb, stabilise
+from training.patches import PatchPairs, make_pairs
 from training.runtime import (
     cuda,
     load_resume,
@@ -20,9 +22,8 @@ from training.runtime import (
     stop_on_signals,
     warmup_cosine,
 )
-from upscaler.data import Pairs
 from upscaler.model import Upscaler
-from upscaler.pairs import make_pairs
+from upscaler.pairs import INPUTS
 
 GRAD_CLIP = 1.0
 VALIDATION_EVERY = 2000
@@ -30,7 +31,8 @@ VALIDATION_CROPS = 64
 LOG_EVERY = 100
 HIGH_ISO = 1600
 INPUT_NYQUIST = 0.25
-"""In cycles per target-plane pixel."""
+"""In cycles per target-plane pixel: past it, the outer three quarters of each plane's spectrum,
+lies what only the upscale can put there."""
 
 
 class Planes(NamedTuple):
@@ -48,16 +50,16 @@ def main() -> None:
 
     raws = sources(args.data)
     prepare(raws, args.cache, args.prepare_workers)
-    make_pairs(args.cache, raws, args.prepare_workers)
+    make_pairs(args.cache, raws, args.prepare_workers, INPUTS)
     device, bf16 = cuda()
 
-    train_set = Pairs(args.cache, raws, validation=False)
+    train_set = PatchPairs(args.cache, raws, False, INPUTS)
     if len(train_set) < args.batch:
         raise SystemExit(f"{len(train_set)} usable crops under {args.cache}, fewer than a batch")
     iso = isos(args.data)
     validation_sets = {
-        f"ISO under {HIGH_ISO}": Pairs(args.cache, raws, True, lambda s: iso.get(s, 0) < HIGH_ISO),
-        f"ISO {HIGH_ISO} and over": Pairs(args.cache, raws, True, lambda s: iso.get(s, 0) >= HIGH_ISO),
+        f"ISO under {HIGH_ISO}": PatchPairs(args.cache, raws, True, INPUTS, lambda s: iso.get(s, 0) < HIGH_ISO),
+        f"ISO {HIGH_ISO} and over": PatchPairs(args.cache, raws, True, INPUTS, lambda s: iso.get(s, 0) >= HIGH_ISO),
     }
     sizes = ", ".join(f"{len(pairs)} {name}" for name, pairs in validation_sets.items())
     say(f"{len(train_set)} training crops, validation crops: {sizes}, bf16={bf16}")
@@ -141,11 +143,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def spectrum_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """L1 between amplitude spectra, blind to phase."""
-    return F.l1_loss(torch.fft.rfft2(predicted, norm="ortho").abs(), torch.fft.rfft2(target, norm="ortho").abs())
-
-
 def planes(low: torch.Tensor, high: torch.Tensor) -> Planes:
     return Planes(low=stabilise(pack(low.float())), high=stabilise(pack(high.float())))
 
@@ -158,12 +155,13 @@ class Validation(NamedTuple):
     """The targets' `detail`."""
 
 
-def validation_set(pairs: Pairs, device: torch.device) -> Validation:
+def validation_set(pairs: PatchPairs, device: torch.device) -> Validation:
     chosen = np.linspace(0, len(pairs) - 1, min(VALIDATION_CROPS, len(pairs))).astype(int)
     lows, highs = zip(*(pairs[int(i)] for i in chosen))
     low, high = torch.stack(lows).to(device).float(), torch.stack(highs).to(device)
     batch = planes(low, high)
-    return Validation(batch, psnr(F.mse_loss(stabilise(pack_rgb(bilinear(low))), batch.high)), detail(batch.high))
+    classical = psnr(F.mse_loss(stabilise(pack_rgb(bilinear(low))), batch.high))
+    return Validation(batch, classical, detail(batch.high, INPUT_NYQUIST))
 
 
 @torch.no_grad()
@@ -176,21 +174,8 @@ def validate(model: torch.nn.Module, validation: Validation, bf16: bool) -> tupl
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
             predicted = model(low.contiguous(memory_format=torch.channels_last))
         squared_error += F.mse_loss(predicted.float(), high, reduction="sum")
-        predicted_detail += detail(predicted.float())
+        predicted_detail += detail(predicted.float(), INPUT_NYQUIST)
     return psnr(squared_error / validation.planes.high.numel()), float(predicted_detail / validation.detail)
-
-
-def detail(batch: torch.Tensor) -> torch.Tensor:
-    """Amplitude summed over the frequencies past the input's Nyquist limit, the outer three
-    quarters of each plane's spectrum, which only the upscale can put there."""
-    spectrum = torch.fft.rfft2(batch, norm="ortho").abs()
-    across = torch.fft.fftfreq(batch.shape[-2], device=batch.device).abs()[:, None]
-    along = torch.fft.rfftfreq(batch.shape[-1], device=batch.device)[None, :]
-    return spectrum[..., torch.maximum(across, along) > INPUT_NYQUIST].sum()
-
-
-def psnr(mse: torch.Tensor) -> float:
-    return float(-10 * torch.log10(mse))
 
 
 if __name__ == "__main__":

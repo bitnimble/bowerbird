@@ -1,14 +1,11 @@
-import hashlib
-import json
-import math
 from pathlib import Path
 from typing import NamedTuple
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from training.export import load_exported
 from training.mosaic import STABILISER_FLOOR, pack, stabilise, unpack, unstabilise
 
 
@@ -37,21 +34,13 @@ class Loaded(NamedTuple):
 
 def load(weights: Path) -> Loaded:
     """The exported weights in the folder `weights`."""
-    plan = json.loads((weights / "weights.json").read_text())
+    exported = load_exported(weights)
+    plan = exported.plan
     if plan["stabiliser_floor"] != STABILISER_FLOOR:
         raise SystemExit(f"{weights} was trained with a stabiliser floor of {plan['stabiliser_floor']}")
-    blob = (weights / "weights.bin").read_bytes()
-    floats = np.frombuffer(blob, "<f4").copy()
-    if floats.size != plan["floats"]:
-        raise SystemExit(f"{weights} holds {floats.size} floats where its manifest has {plan['floats']}")
     net = Upscaler(plan["channels"], plan["blocks"])
-    net.load_state_dict(
-        {
-            t["name"]: torch.from_numpy(floats[t["offset"] : t["offset"] + math.prod(t["shape"])].reshape(t["shape"]))
-            for t in plan["tensors"]
-        }
-    )
-    return Loaded(net, plan, hashlib.sha256(blob).hexdigest())
+    net.load_state_dict(exported.state)
+    return Loaded(net, plan, exported.digest)
 
 
 def upscaled(net: Upscaler, mosaic: torch.Tensor) -> torch.Tensor:
