@@ -87,6 +87,8 @@ def main() -> None:
                 with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
                     predicted = model(batch.low.contiguous(memory_format=torch.channels_last))
                 loss = F.l1_loss(predicted.float(), batch.high)
+                if args.texture:
+                    loss = loss + args.texture * spectrum_loss(predicted.float(), batch.high)
 
                 optimiser.zero_grad(set_to_none=True)
                 loss.backward()
@@ -105,8 +107,11 @@ def main() -> None:
                     started, losses = time.monotonic(), []
                 if step % VALIDATION_EVERY == 0 or step == args.steps:
                     for name, validation in validations.items():
-                        ours = validate(model, validation.planes, bf16)
-                        say(f"step {step} validation {name}: PSNR {ours:.3f} dB, bilinear {validation.bilinear:.3f} dB")
+                        ours, share = validate(model, validation.planes, bf16)
+                        say(
+                            f"step {step} validation {name}: PSNR {ours:.3f} dB, bilinear {validation.bilinear:.3f} dB,"
+                            f" detail {share:.0%} of the target's"
+                        )
                     save()
                 if step >= args.steps:
                     break
@@ -125,9 +130,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--channels", type=int, default=48)
     parser.add_argument("--blocks", type=int, default=16)
     parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--texture", type=float, default=0, help="weight of the amplitude spectrum loss")
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--prepare-workers", type=int, default=3, help="each holds a PMRID server")
     return parser.parse_args()
+
+
+def spectrum_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """L1 between amplitude spectra. Blind to phase, so it rewards texture as strong as the target's
+    even where the network can't place it, which an L1 on pixels averages away."""
+    return F.l1_loss(torch.fft.rfft2(predicted, norm="ortho").abs(), torch.fft.rfft2(target, norm="ortho").abs())
 
 
 def planes(low: torch.Tensor, high: torch.Tensor) -> Planes:
@@ -150,14 +162,25 @@ def validation_set(pairs: Pairs, device: torch.device) -> Validation:
 
 
 @torch.no_grad()
-def validate(model: torch.nn.Module, validation: Planes, bf16: bool) -> float:
+def validate(model: torch.nn.Module, validation: Planes, bf16: bool) -> tuple[float, float]:
+    """PSNR, and the predicted detail as a share of the target's."""
     squared_error = torch.zeros((), device=validation.low.device)
+    predicted_detail, target_detail = torch.zeros_like(squared_error), detail(validation.high)
     for low, high in zip(validation.low.split(8), validation.high.split(8)):
         torch.compiler.cudagraph_mark_step_begin()
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
             predicted = model(low.contiguous(memory_format=torch.channels_last))
         squared_error += F.mse_loss(predicted.float(), high, reduction="sum")
-    return psnr(squared_error / validation.high.numel())
+        predicted_detail += detail(predicted.float())
+    return psnr(squared_error / validation.high.numel()), float(predicted_detail / target_detail)
+
+
+def detail(planes: torch.Tensor) -> torch.Tensor:
+    """Amplitude summed over the upper half of each plane's frequencies."""
+    spectrum = torch.fft.rfft2(planes, norm="ortho").abs()
+    across = torch.fft.fftfreq(planes.shape[-2], device=planes.device).abs()[:, None]
+    along = torch.fft.rfftfreq(planes.shape[-1], device=planes.device)[None, :]
+    return spectrum[..., torch.maximum(across, along) > 0.25].sum()
 
 
 def psnr(mse: torch.Tensor) -> float:

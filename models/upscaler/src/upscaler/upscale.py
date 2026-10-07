@@ -1,8 +1,9 @@
 """Part of a RAW upscaled by trained weights beside bilinear, as PNGs to look at.
 
-`native.png`: the photo's own mosaic at 2x, as the editor would use it. Original, bilinear, model.
+`native.png`: the photo's own mosaic at 2x, as the editor would use it. Original, bilinear, model,
+model with grain.
 `synthetic.png`: the same area made half size as in training, then upscaled back, so there is an
-answer to compare with. Input, bilinear, model, original.
+answer to compare with. Input, bilinear, model, model with grain, original.
 
 Colours are white-balanced camera RGB with no colour matrix: good for judging detail, not colour."""
 
@@ -20,6 +21,7 @@ import torch.nn.functional as F
 from training.mosaic import STABILISER_FLOOR, demosaic, pack, pack_rgb, stabilise, unpack
 from training.pmrid import Pmrid
 from upscaler.degrade import low
+from upscaler.grain import grained
 from upscaler.model import Upscaler
 
 MARGIN = 32
@@ -46,15 +48,19 @@ def main() -> None:
         original = demosaic(region)[inside]
         scale = 1 / float(original.amax(1).flatten().quantile(0.995))
         doubled = (..., slice(2 * MARGIN, 2 * (MARGIN + size)), slice(2 * MARGIN, 2 * (MARGIN + size)))
+        gains = torch.from_numpy(opened.gains)
+        high = upscaled(net, region.to(device)).cpu()
+        torch.manual_seed(1)
         native = [
             F.interpolate(original, scale_factor=2, mode="nearest"),
             F.interpolate(demosaic(region), scale_factor=2, mode="bilinear", align_corners=False)[doubled],
-            demosaic(upscaled(net, region.to(device)).cpu())[doubled],
+            demosaic(high)[doubled],
+            demosaic(grained(region, high, gains, opened.fit))[doubled],
         ]
         write_png(args.out / "native.png", panels(native, scale))
 
         torch.manual_seed(0)
-        noisy = low(region, torch.from_numpy(opened.gains), opened.fit)
+        noisy = low(region, gains, opened.fit)
         small = torch.from_numpy(pmrid.denoise(noisy[:, 0].numpy(), opened.gains, opened.fit))[:, None]
         half = (..., slice(MARGIN // 2, (MARGIN + size) // 2), slice(MARGIN // 2, (MARGIN + size) // 2))
         bilinear = F.interpolate(demosaic(small), scale_factor=2, mode="bilinear", align_corners=False)
@@ -67,6 +73,7 @@ def main() -> None:
             F.interpolate(demosaic(small)[half], scale_factor=2, mode="nearest"),
             bilinear[inside],
             demosaic(ours)[inside],
+            demosaic(grained(small, ours, gains, opened.fit))[inside],
             original,
         ]
         write_png(args.out / "synthetic.png", panels(synthetic, scale))
