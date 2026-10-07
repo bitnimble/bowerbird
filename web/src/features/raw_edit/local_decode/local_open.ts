@@ -237,6 +237,8 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     lightness: z.number(),
     selected: z.string().nullable(),
   }),
+  /** ZCAM lightness, hue and chroma, flattened. */
+  z.object({ kind: z.literal('wheelSwatches'), colours: z.array(z.number()) }),
   /** ZCAM lightness, opponent pair and weight, flattened, for the profile's push at each. */
   z.object({ kind: z.literal('probeWheel'), places: z.array(z.number()), adjust: z.string() }),
   z.object({ kind: z.literal('holdTile'), request: JsonSchema }),
@@ -292,6 +294,8 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     geometry: JsonSchema.nullable(),
     proof: ProofSchema.nullable(),
     print: PrintSceneSchema.nullable(),
+    /** The colour edit whose reach the stage shows, as `lattice::ColourNode` JSON, and how strongly. */
+    reachMask: z.object({ node: z.string(), strength: z.number() }).nullable(),
     /** The ICC profile a print is proofed through, sent only when it changes: absent keeps the last. */
     printerProfile: BytesSchema.nullable().optional(),
     /**

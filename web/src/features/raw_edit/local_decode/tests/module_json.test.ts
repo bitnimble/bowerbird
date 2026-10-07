@@ -59,10 +59,30 @@ describe('what a tick carries', () => {
           geometry: null,
           proof: null,
           print: null,
+          reachMask: null,
           stage: null,
         }),
       ).toMatchObject({ kind: 'tick', ev });
     }
+  });
+
+  test('carries the reach mask as a colour node the module reads, and its strength', () => {
+    const node = JSON.stringify(sample.adjust.colourNodes[0]);
+    expect(
+      OpenAskSchema.parse({
+        kind: 'tick',
+        ev: null,
+        drawStage: true,
+        region: null,
+        loupe: null,
+        adjust: null,
+        geometry: null,
+        proof: null,
+        print: null,
+        reachMask: { node, strength: 0.5 },
+        stage: null,
+      }),
+    ).toMatchObject({ reachMask: { node, strength: 0.5 } });
   });
 
   test('names every slider as the module reads it', () => {

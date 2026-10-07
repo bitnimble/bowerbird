@@ -35,6 +35,8 @@ export interface ColourWheelHost {
   fail: (why: string) => void;
   /** `displayPeakNits`, which the wheel's edge is drawn against. */
   displayPeak: () => number | null;
+  /** Whether the stage darkens what the selected edit does not reach. */
+  showReach: (shown: boolean) => void;
 }
 
 /** Runs one piece of work at a time, and of what arrives meanwhile only the latest. */
@@ -50,6 +52,9 @@ class Latest {
     this.busy = true;
     try {
       await work();
+    } catch (error) {
+      this.next = null;
+      throw error;
     } finally {
       this.busy = false;
     }
@@ -60,6 +65,11 @@ class Latest {
 }
 
 export type Handle = 'source' | 'target' | Reach;
+
+/** The colour an edit reads: ZCAM lightness, hue and chroma. */
+function sourceOf(node: ColourNode): [number, number, number] {
+  return [lightnessOf(node.lightness), node.hue, node.chroma];
+}
 
 export const WHEEL_SIDE = 512;
 const FIELD_HUES = 36;
@@ -75,6 +85,7 @@ export class ColourWheelPresenter {
   private probesAsked = 0;
   private readonly shading = new Latest();
   private readonly probing = new Latest();
+  private readonly swatching = new Latest();
   private readonly disposers: IReactionDisposer[];
 
   constructor(
@@ -104,6 +115,13 @@ export class ColourWheelPresenter {
           this.attached && this.store.drawn != null ? { node: this.store.selectedNode } : null,
         (shading) => {
           if (shading != null) this.unlessClosed(this.shading.run(() => this.shade()));
+        },
+        { equals: comparer.structural },
+      ),
+      reaction(
+        () => (this.attached ? this.store.nodes.map(sourceOf) : null),
+        (keys) => {
+          if (keys != null) this.unlessClosed(this.swatching.run(() => this.swatch()));
         },
         { equals: comparer.structural },
       ),
@@ -203,6 +221,15 @@ export class ColourWheelPresenter {
   }
 
   @action.bound
+  resetTarget(index: number): void {
+    const node = this.store.nodes[index];
+    if (node == null) return;
+    this.host.settle({
+      colourNodes: this.patched(index, { targetHue: node.hue, targetChroma: node.chroma }),
+    });
+  }
+
+  @action.bound
   stepReach(index: number, reach: Reach, by: number): void {
     const node = this.store.nodes[index];
     if (node == null) return;
@@ -212,9 +239,10 @@ export class ColourWheelPresenter {
   }
 
   @action.bound
-  beginDrag(index: number): void {
+  beginDrag(index: number, handle: Handle): void {
     this.atDragStart = this.store.nodes;
     this.store.selectedIndex = index;
+    if (handle === 'source') this.host.showReach(true);
   }
 
   @action.bound
@@ -234,6 +262,7 @@ export class ColourWheelPresenter {
   endDrag(): void {
     const atDragStart = this.atDragStart;
     this.atDragStart = null;
+    this.host.showReach(false);
     if (atDragStart != null && atDragStart !== this.store.nodes) {
       this.host.settle({ colourNodes: [...this.store.nodes] });
     }
@@ -243,6 +272,7 @@ export class ColourWheelPresenter {
   cancelDrag(): void {
     const atDragStart = this.atDragStart;
     this.atDragStart = null;
+    this.host.showReach(false);
     if (atDragStart != null && atDragStart !== this.store.nodes) {
       this.host.preview({ colourNodes: [...atDragStart] });
     }
@@ -297,6 +327,19 @@ export class ColourWheelPresenter {
     await this.host
       .local()
       ?.decoder.shadeWheel(lightnessOf(this.store.channel), this.store.selectedNode);
+  }
+
+  private async swatch(): Promise<void> {
+    const sources = this.store.nodes.map(sourceOf);
+    if (sources.length === 0) {
+      this.setSwatches([]);
+      return;
+    }
+    const coded = await this.host.local()?.decoder.wheelSwatches(sources.flat());
+    if (this.closed || coded == null) return;
+    this.setSwatches(
+      sources.map((_, at) => `color(display-p3 ${coded.slice(at * 3, at * 3 + 3).join(' ')})`),
+    );
   }
 
   private async probe(): Promise<void> {
@@ -361,6 +404,11 @@ export class ColourWheelPresenter {
   @action.bound
   private setDrawn(drawn: WheelDrawn): void {
     this.store.drawn = drawn;
+  }
+
+  @action.bound
+  private setSwatches(swatches: readonly string[]): void {
+    this.store.swatches = swatches;
   }
 
   @action.bound

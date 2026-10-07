@@ -274,8 +274,10 @@ float4 fs(float4 pos : SV_Position) : SV_Target
 {
     let scene = covered(pos.xy);
     let at = frame_at(pos.xy);
-    if (edit.output != OUTPUT_SRGB) { return float4(srgb_oetf_signed(on_the_canvas(display_nits(scene, at), edit.sdr_white).v), 1.0); }
-    return float4(srgb_oetf_signed(proofed(srgb_share(scene, at)).v), 1.0);
+    float3 shown;
+    if (edit.output != OUTPUT_SRGB) { shown = on_the_canvas(display_nits(scene, at), edit.sdr_white).v; }
+    else { shown = proofed(srgb_share(scene, at)).v; }
+    return float4(srgb_oetf_signed(shown * (1.0 - edit.reach_mask * (1.0 - reach_kept))), 1.0);
 }
 
 float3 print_sample(float2 at, float lod)

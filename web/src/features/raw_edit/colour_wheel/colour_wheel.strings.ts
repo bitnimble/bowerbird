@@ -23,6 +23,6 @@ export const ColourWheelStrings = {
   hueRange: () => 'Hue range',
   saturationRange: () => 'Saturation range',
   lightnessRange: () => 'Lightness range',
-  remove: () => 'Remove colour edit',
+  remove: () => 'Remove',
   full: (most: number) => `You can add up to ${most} colour edits.`,
 };

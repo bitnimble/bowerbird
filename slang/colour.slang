@@ -29,6 +29,7 @@ import light;
 import px;
 import index_space;
 import block_split;
+import kernel_reach;
 
 // The frame stays as it arrived: interleaved RGB `u16` of normalised PQ, three to a pixel, in
 // the buffer it was uploaded into. Not a texture, and not padded to four components - that
@@ -396,14 +397,26 @@ public Colour<Rendered> finish_chroma(Colour<Rendered> m, Colour<Rendered> at, f
 /// so a turn would scatter it.
 static const float TURNED_HALF_AT = 5.0;
 
+/// How much of the colour `moved_by_reader` last keyed on `edit.reach_mask`'s edit reaches, for the
+/// stage's draw to darken by after the grade: read there, the peak pass never sees the mask.
+public static float reach_kept = 1.0;
+
 /// The reader's colour edits (`lattice::ColourNode`) on `m`, keyed on `m` itself.
 public Colour<Rendered> moved_by_reader(Colour<Rendered> m)
 {
     if (edit.has_nodes == 0) { return m; }
     let o = opponent_of(m).v;
+    let at = lattice_at(exactly<Opponent>(o), 0.0);
+    if (edit.reach_mask > 0.0) {
+        reach_kept = kernel_weight(
+            float4(edit.mask_centre_0, edit.mask_centre_1, edit.mask_centre_2, edit.mask_centre_3),
+            float4(edit.mask_reach_0, edit.mask_reach_1, edit.mask_reach_2, edit.mask_reach_3),
+            float4(edit.mask_feather_0, edit.mask_feather_1, edit.mask_feather_2, edit.mask_feather_3),
+            at);
+    }
     float4 move;
     float4 rest;
-    cells_at(nodes, nodes_luma, node_volumes(), lattice_at(exactly<Opponent>(o), 0.0), move, rest);
+    cells_at(nodes, nodes_luma, node_volumes(), at, move, rest);
     // Out of every node's reach the round trip through ZCAM would still move the last bits.
     if (all(move == float4(0.0)) && all(rest.xyz == float3(0.0))) { return m; }
     // `ColourNode::kernel`'s words: `move` is the turn's `a` then the offset, `rest` the lightness

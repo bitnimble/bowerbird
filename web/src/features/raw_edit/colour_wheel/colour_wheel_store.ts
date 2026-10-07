@@ -15,6 +15,7 @@ import {
 
 const FIELD_SECTORS = 12;
 const FIELD_LEAST_SHARE = 0.2;
+const MOST_MARKS = 3;
 
 /** Where the profile takes one place on the wheel, at a channel's lightness. */
 export interface FieldArrow {
@@ -47,6 +48,12 @@ export class ColourWheelStore {
 
   @observable accessor showEdge = true;
 
+  /**
+   * Each edit's source colour as CSS, by index. As they were when last read: a dragged edit keeps
+   * its last colour until the next arrives.
+   */
+  @observable.ref accessor swatches: readonly string[] = [];
+
   /** Per degree of hue, the chroma this display shows at the channel, or at any channel for All. */
   @computed get edge(): readonly number[] {
     const edges = this.drawn?.edges ?? [];
@@ -68,8 +75,21 @@ export class ColourWheelStore {
     return this.selectedIndex == null ? null : (this.nodes[this.selectedIndex] ?? null);
   }
 
-  @computed get edited(): ReadonlySet<Channel> {
-    return new Set(this.nodes.map(channelOf));
+  /** Per channel, the source colours of the edits moving colour furthest, most first. */
+  @computed get marks(): ReadonlyMap<Channel, readonly string[]> {
+    const marks = new Map<Channel, { node: ColourNode; index: number }[]>();
+    for (const [index, node] of this.nodes.entries()) {
+      marks.set(channelOf(node), [...(marks.get(channelOf(node)) ?? []), { node, index }]);
+    }
+    return new Map(
+      [...marks].map(([channel, edits]) => [
+        channel,
+        edits
+          .sort((a, b) => changeOf(b.node) - changeOf(a.node))
+          .slice(0, MOST_MARKS)
+          .flatMap(({ index }) => this.swatches[index] ?? []),
+      ]),
+    );
   }
 
   @computed get channelDots(): readonly Dot[] {
@@ -94,6 +114,12 @@ export class ColourWheelStore {
       .filter(({ push }) => push >= most * FIELD_LEAST_SHARE)
       .map(({ arrow }) => arrow);
   }
+}
+
+function changeOf(node: ColourNode): number {
+  const [a, b] = opponent(node);
+  const [toA, toB] = opponent({ hue: node.targetHue, chroma: node.targetChroma });
+  return Math.hypot(toA - a, toB - b, node.targetLightness - lightnessOf(node.lightness));
 }
 
 function pushOf({ from, to }: FieldArrow): number {

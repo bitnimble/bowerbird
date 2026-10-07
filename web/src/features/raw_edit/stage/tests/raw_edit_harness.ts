@@ -13,6 +13,7 @@ import type {
   WheelDrawing,
   WheelDrawn,
 } from '../../local_decode/local_open';
+import type { ReachMask } from '../../local_decode/local_decoder';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
 import { ColourWheelStore } from '../../colour_wheel/colour_wheel_store';
@@ -71,6 +72,8 @@ export class FakeDecoder {
   /** The printer profile held, and how many times one was handed over. */
   printerProfile: Uint8Array<ArrayBuffer> | null = null;
   printerProfileSends = 0;
+  /** The reach mask each tick carried, in order. */
+  readonly reachMasks: (ReachMask | null)[] = [];
 
   /**
    * Every frame asked for: the window it read, the picture that window is on, and the canvas
@@ -109,9 +112,11 @@ export class FakeDecoder {
     geometry: EditGeometry | null;
     proof: Proof | null;
     print: PrintScene | null;
+    reachMask: ReachMask | null;
     printerProfile?: Uint8Array<ArrayBuffer> | null;
     stage: { width: number; height: number } | null;
   }): Promise<Ticked> {
+    this.reachMasks.push(tick.reachMask);
     if (tick.adjust != null) this.adjust = tick.adjust;
     if (tick.geometry != null) this.geometry = tick.geometry;
     if (tick.proof != null) this.proof = tick.proof;
@@ -389,6 +394,16 @@ export class FakeDecoder {
   shadeWheel(_lightness: number, selected: ColourNode | null): Promise<void> {
     this.wheelShadedBy.push(selected);
     return Promise.resolve();
+  }
+
+  /** Each colour's hue, chroma and lightness, scaled into a code. */
+  wheelSwatches(colours: number[]): Promise<number[]> {
+    const swatches: number[] = [];
+    for (let at = 0; at < colours.length; at += 3) {
+      const [lightness = 0, hue = 0, chroma = 0] = colours.slice(at, at + 3);
+      swatches.push(hue / 360, chroma / 100, lightness / 100);
+    }
+    return Promise.resolve(swatches);
   }
 
   probeWheel(places: number[], _adjust: EditAdjust): Promise<Float32Array<ArrayBuffer>> {

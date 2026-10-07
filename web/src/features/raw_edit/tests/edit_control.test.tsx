@@ -83,3 +83,29 @@ test('a shut control shows its value as text', () => {
   expect(screen.queryByRole('textbox')).toBeNull();
   expect(screen.getByText('+0.50 EV')).toBeTruthy();
 });
+
+function resettable(): { resets: () => number; slider: HTMLElement } {
+  let resets = 0;
+  render(
+    <EditControl label="Exposure" value="+1.00" reset={() => (resets += 1)}>
+      <div role="slider" aria-label="Exposure" aria-valuenow={1} />
+    </EditControl>,
+  );
+  return { resets: () => resets, slider: screen.getByRole('slider', { name: 'Exposure' }) };
+}
+
+test('a double click with a mouse or pen puts the control back', () => {
+  const { resets, slider } = resettable();
+  for (const pointerType of ['mouse', 'pen']) {
+    fireEvent.pointerDown(slider, { pointerType });
+    fireEvent.doubleClick(slider);
+  }
+  expect(resets()).toBe(2);
+});
+
+test('a double tap leaves the control where it is', () => {
+  const { resets, slider } = resettable();
+  fireEvent.pointerDown(slider, { pointerType: 'touch' });
+  fireEvent.doubleClick(slider);
+  expect(resets()).toBe(0);
+});

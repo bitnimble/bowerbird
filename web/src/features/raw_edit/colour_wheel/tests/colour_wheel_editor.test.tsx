@@ -205,6 +205,28 @@ test("a new edit's colour is dragged off its own node, which it is drawn over", 
   });
 });
 
+test("a double press on the edit's colour puts it back on the colour it edits", async () => {
+  const editor = await open();
+  const svg = wheel();
+  tap(svg, at(0, 20));
+  fireEvent.pointerDown(screen.getByRole('img', { name: 'Output colour' }), {
+    ...press,
+    ...at(0, 20),
+  });
+  fireEvent.pointerMove(svg, { ...press, ...at(90, 10) });
+  fireEvent.pointerUp(svg, press);
+  const pressOutput = (): void => {
+    fireEvent.pointerDown(screen.getByRole('img', { name: 'Output colour' }), press);
+    fireEvent.pointerUp(svg, press);
+  };
+  pressOutput();
+  expect(editor.edit.doc?.colourNodes[0]?.targetHue).toBeCloseTo(90, 0);
+  pressOutput();
+  const node = editor.edit.doc?.colourNodes[0];
+  expect(node).toMatchObject({ hue: 0, targetHue: 0, chroma: expect.closeTo(20, 0) });
+  expect(node?.targetChroma).toBe(node?.chroma ?? Number.NaN);
+});
+
 test('the channels say which hold edits, and each shows only its own', async () => {
   const editor = await open();
   fireEvent.click(screen.getByRole('radio', { name: 'Lights' }));
@@ -219,7 +241,7 @@ test('the channels say which hold edits, and each shows only its own', async () 
 test('removing the colour edit takes it out of the document', async () => {
   const editor = await open();
   tap(wheel(), at(300, 15));
-  fireEvent.click(screen.getByRole('button', { name: 'Remove colour edit' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
   expect(editor.edit.doc?.colourNodes).toEqual([]);
   expect(screen.queryByRole('button', { name: /Colour edit at hue/ })).toBeNull();
 });

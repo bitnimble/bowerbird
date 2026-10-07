@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { ChartScatter, CircleDashed, MoveUpRight } from 'lucide-react';
+import { ChartScatter, CircleDashed, MoveUpRight, Trash2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Fragment, useCallback, useContext, useEffect, useId, useRef } from 'react';
 import { COLOUR_NODES_MAX, type ColourNode } from '../../../../../src/schemas/photo_edits';
@@ -54,6 +54,7 @@ const CHANNEL_POTS: { channel: Channel; name: () => string; pot: stylex.StyleXSt
 const MOST_TARGET_LIGHTNESS = 150;
 const MOST_LIGHTNESS_REACH = 60;
 const TAP_SLOP = 8;
+const DOUBLE_PRESS_MS = 400;
 const FIELD_HEAD = 0.04;
 const SHORTEST_FIELD_ARROW = 2 * FIELD_HEAD;
 const NODE_RADIUS = 0.045;
@@ -191,8 +192,8 @@ const Channels = observer(function Channels({
   return (
     <div {...stylex.props(styles.channels)} role="radiogroup" aria-label={strings.lightness()}>
       {CHANNEL_POTS.map(({ channel, name, pot }) => {
-        const edited = store.edited.has(channel);
-        const label = edited ? strings.channelEdited(name()) : name();
+        const marks = store.marks.get(channel);
+        const label = marks != null ? strings.channelEdited(name()) : name();
         const pick = (
           <Tooltip label={label}>
             <button
@@ -208,7 +209,11 @@ const Channels = observer(function Channels({
               )}
               onClick={() => presenter.selectChannel(channel)}
             >
-              <span {...stylex.props(styles.dot, edited && styles.dotShown)} aria-hidden="true" />
+              <span {...stylex.props(styles.marks)} aria-hidden="true">
+                {marks?.map((swatch, at) => (
+                  <span key={at} {...stylex.props(styles.mark, styles.swatch(swatch))} />
+                ))}
+              </span>
             </button>
           </Tooltip>
         );
@@ -277,6 +282,7 @@ const Overlay = observer(function Overlay({
   const overlay = useRef<SVGSVGElement>(null);
   useHoldScroll(overlay, () => drag.current != null);
   const tap = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const targetPressed = useRef<{ index: number; at: number; x: number; y: number } | null>(null);
   const at = (event: React.PointerEvent, bounds: DOMRect): Hued =>
     huedAt(pointAt(event, bounds), rim);
   const start = (event: React.PointerEvent<SVGElement>, index: number, handle: Handle): void => {
@@ -285,7 +291,16 @@ const Overlay = observer(function Overlay({
     if (!event.isPrimary || event.button !== 0 || disabled || drag.current != null || svg == null)
       return;
     event.preventDefault();
-    presenter.beginDrag(index);
+    if (handle === 'target') {
+      const last = targetPressed.current;
+      targetPressed.current = { index, at: event.timeStamp, x: event.clientX, y: event.clientY };
+      if (last?.index === index && event.timeStamp - last.at < DOUBLE_PRESS_MS) {
+        targetPressed.current = null;
+        presenter.resetTarget(index);
+        return;
+      }
+    }
+    presenter.beginDrag(index, handle);
     const bounds = svg.getBoundingClientRect();
     drag.current = { index, handle, pointerId: event.pointerId, svg, bounds };
     try {
@@ -350,6 +365,13 @@ const Overlay = observer(function Overlay({
       onPointerMove={(event) => {
         const active = drag.current;
         if (active == null || active.pointerId !== event.pointerId) return;
+        const pressed = targetPressed.current;
+        if (
+          pressed != null &&
+          Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > TAP_SLOP
+        ) {
+          targetPressed.current = null;
+        }
         presenter.drag(active.index, active.handle, at(event, active.bounds));
       }}
       onPointerUp={(event) => {
@@ -448,7 +470,7 @@ const Overlay = observer(function Overlay({
             }}
           >
             <circle {...stylex.props(styles.grab)} />
-            <circle {...stylex.props(styles.node, chosen && styles.nodeChosen)} />
+            <circle r={NODE_RADIUS} {...stylex.props(styles.node, chosen && styles.nodeChosen)} />
           </g>
         );
       })}
@@ -674,7 +696,13 @@ const NodeControls = observer(function NodeControls({
         { min: 0, max: MOST_TARGET_LIGHTNESS, step: 1 },
         lightnessOf(node.lightness),
       )}
-      <Button style={styles.remove} disabled={disabled} onClick={() => presenter.remove(index)}>
+      <Button
+        variant="danger"
+        style={styles.remove}
+        disabled={disabled}
+        onClick={() => presenter.remove(index)}
+      >
+        <Trash2 size={ICON} aria-hidden="true" />
         {strings.remove()}
       </Button>
     </div>

@@ -150,6 +150,7 @@ pub struct HeldRaw {
     display_peak: std::cell::Cell<Option<crate::light::Light<crate::light::DisplayNits>>>,
     print: std::cell::Cell<Option<crate::print::Scene>>,
     printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
+    reach_mask: std::cell::RefCell<Option<crate::gpu::ReachMask>>,
     /// What the open last answered with, whichever way the picture arrived.
     ///
     /// Kept for the tiles a finer window is assembled from, which take their camera match and
@@ -429,6 +430,7 @@ impl HeldRaw {
             display_peak: std::cell::Cell::new(None),
             print: std::cell::Cell::new(None),
             printer: std::cell::RefCell::new(None),
+            reach_mask: std::cell::RefCell::new(None),
             header: std::cell::RefCell::new(String::new()),
         }
     }
@@ -1963,6 +1965,15 @@ impl HeldRaw {
             .collect()
     }
 
+    /// Threes of ZCAM lightness, hue in degrees and chroma, each as `colour_wheel::swatch` codes it.
+    #[wasm_bindgen(js_name = wheelSwatches)]
+    pub fn wheel_swatches(&self, colours: Vec<f64>) -> Vec<f64> {
+        colours
+            .chunks_exact(3)
+            .flat_map(|c| crate::gpu::colour_wheel::swatch(c[0], c[1], c[2]))
+            .collect()
+    }
+
     /// The photograph's colours where colour edits read them, then where the profile takes each of
     /// `places`: fours of ZCAM lightness, opponent pair and weight, `places` flattened the same way.
     #[wasm_bindgen(js_name = probeWheel)]
@@ -2108,6 +2119,19 @@ impl HeldRaw {
         Ok(())
     }
 
+    /// The colour edit whose reach the stage shows, as `lattice::ColourNode` JSON, and how strongly.
+    #[wasm_bindgen(js_name = setReachMask)]
+    pub fn set_reach_mask(&self, node: Option<String>, strength: f64) -> Result<(), JsValue> {
+        let node = node
+            .map(|node| serde_json::from_str(&node))
+            .transpose()
+            .map_err(|e| {
+                JsValue::from_str(&format!("rawshim: this colour node is malformed: {e}"))
+            })?;
+        *self.reach_mask.borrow_mut() = node.map(|node| crate::gpu::ReachMask { node, strength });
+        Ok(())
+    }
+
     /// The reader's crop, straighten and turn, as `image::Geometry` JSON.
     #[wasm_bindgen(js_name = setGeometry)]
     pub fn set_geometry(&self, geometry: &str) -> Result<(), JsValue> {
@@ -2204,11 +2228,8 @@ impl HeldRaw {
         };
         let (picture_w, picture_h) = drawing.picture();
         let adjust = self.adjust.borrow().clone();
-        let print = if std::ptr::eq(onto, &self.stage) {
-            self.print.get()
-        } else {
-            None
-        };
+        let on_stage = std::ptr::eq(onto, &self.stage);
+        let print = if on_stage { self.print.get() } else { None };
         let grade = crate::gpu::Grade {
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
@@ -2222,6 +2243,11 @@ impl HeldRaw {
             // An sRGB proof's. A print scene's own reaches the draw through `draw_with_print`,
             // which overrides this for the pigment it grades.
             intent: proofed_intent,
+            reach_mask: if on_stage {
+                self.reach_mask.borrow().clone()
+            } else {
+                None
+            },
             ..crate::gpu::Grade::new(
                 width,
                 height,

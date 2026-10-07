@@ -166,6 +166,31 @@ pub fn displayable(lightness: f64, headroom: f64) -> Vec<f64> {
         .collect()
 }
 
+/// The colour at ZCAM `lightness`, `hue` in degrees and `chroma`, as coded Display P3, scaled until
+/// its brightest component is diffuse white: a shadow's colour is otherwise near black.
+pub fn swatch(lightness: f64, hue: f64, chroma: f64) -> [f64; 3] {
+    let (sin, cos) = hue.to_radians().sin_cos();
+    let rendered = crate::lattice::rendered_of([lightness, chroma * cos, chroma * sin])
+        .map(crate::light::Light::raw);
+    let p3 = crate::transfer::Primaries::DISPLAY_P3
+        .from_rec2020()
+        .map(|row| {
+            row.iter()
+                .zip(rendered)
+                .map(|(m, c)| m * c)
+                .sum::<f64>()
+                .max(0.0)
+        });
+    let brightest = p3.into_iter().fold(f64::MIN_POSITIVE, f64::max);
+    p3.map(|v| {
+        let v = v / brightest;
+        match v <= 0.0031308 {
+            true => 12.92 * v,
+            false => 1.055 * v.powf(1.0 / 2.4) - 0.055,
+        }
+    })
+}
+
 impl super::Gpu {
     /// `target` is `CANVAS_FORMAT`, `side` square.
     pub fn draw_backdrop(
@@ -670,6 +695,31 @@ mod tests {
             SOURCE.contains(&line),
             "colour_probe.slang does not say `{line}`"
         );
+    }
+
+    #[test]
+    fn a_swatch_is_its_colour_at_white() {
+        for lightness in [10.0, 100.0] {
+            let grey = swatch(lightness, 0.0, 0.0);
+            assert!(grey.iter().all(|c| (c - 1.0).abs() < 1e-3), "{grey:?}");
+        }
+        let (hue, chroma) = (30.0_f64, 10.0);
+        let [a, b] = [
+            chroma * hue.to_radians().cos(),
+            chroma * hue.to_radians().sin(),
+        ];
+        let coded = coded_at(55.0, [a, b]);
+        let brightest = (0..3)
+            .max_by(|&i, &j| coded[i].total_cmp(&coded[j]))
+            .unwrap();
+        for lightness in [10.0, 55.0, 110.0] {
+            let shown = swatch(lightness, hue, chroma);
+            assert!(
+                (shown[brightest] - 1.0).abs() < 1e-9,
+                "{lightness}: {shown:?}"
+            );
+            assert!(shown.iter().any(|c| *c < 0.9), "{lightness}: {shown:?}");
+        }
     }
 
     #[test]

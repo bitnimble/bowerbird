@@ -2456,6 +2456,16 @@ pub struct Grade<'a> {
     pub print_blur: crate::px::Extent<crate::px::Output>,
     /// The output rows an encode writes. None writes every row.
     pub band: Option<Band>,
+    /// Only the stage's draw reads it; None everywhere else.
+    pub reach_mask: Option<ReachMask>,
+}
+
+/// One colour edit's reach shown on the stage: what it does not reach, taken towards black.
+#[derive(Clone, Debug)]
+pub struct ReachMask {
+    pub node: crate::lattice::ColourNode,
+    /// 0 draws the picture as it is, 1 draws what the edit does not reach black.
+    pub strength: f64,
 }
 
 /// A run of whole output rows.
@@ -2542,6 +2552,7 @@ impl<'a> Grade<'a> {
             intent: Intent::Perceptual,
             print_blur: crate::px::Extent::measured(0.0),
             band: None,
+            reach_mask: None,
         }
     }
 
@@ -3941,6 +3952,8 @@ impl Uploaded<'_> {
         let words = uniform_words(
             &Grade {
                 canvas: None,
+                // The peak never reads it; a fading mask would measure the peak again every tick.
+                reach_mask: None,
                 ..grade.clone()
             },
             grade.matched().unwrap_or(&self.identity),
@@ -4959,6 +4972,19 @@ const EDIT_FIELDS: &[&str] = &[
     "node_level_low",
     "node_level_scale",
     "node_neighbourhood_scale",
+    "reach_mask",
+    "mask_centre_0",
+    "mask_centre_1",
+    "mask_centre_2",
+    "mask_centre_3",
+    "mask_reach_0",
+    "mask_reach_1",
+    "mask_reach_2",
+    "mask_reach_3",
+    "mask_feather_0",
+    "mask_feather_1",
+    "mask_feather_2",
+    "mask_feather_3",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -5183,6 +5209,16 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, nodes.level_low);
     f(&mut w, nodes.level_scale);
     f(&mut w, nodes.neighbourhood_scale);
+    let mask = grade.reach_mask.as_ref();
+    f(&mut w, mask.map_or(0.0, |m| m.strength.clamp(0.0, 1.0)));
+    let kernel = mask.map(|m| m.node.kernel(&crate::lattice::LutAxes::of_nodes()));
+    for axes in kernel.map_or([[0.0; 4]; 3], |k| {
+        [k.centre, k.reach, crate::lattice::NODE_FEATHER]
+    }) {
+        for value in axes {
+            f(&mut w, value);
+        }
+    }
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was
@@ -6004,6 +6040,85 @@ mod tests {
                 shows, ships,
                 "the draw put row {row}'s spike at {shows}, not {ships}"
             );
+        }
+    }
+
+    #[test]
+    fn the_reach_mask_darkens_what_the_edit_does_not_reach() {
+        let Some(gpu) = super::device() else { return };
+        let Some(base) = crate::base::device(gpu) else {
+            return;
+        };
+        let side = 64usize;
+        let frame: Vec<u16> = [9000u16, 12000, 15000].repeat(side * side);
+        let colour = crate::hdr_fit::HdrColour::identity();
+        let node = |chroma: f64, chroma_reach: f64, hue_reach: f64| crate::lattice::ColourNode {
+            hue: 0.0,
+            chroma,
+            lightness: None,
+            target_hue: 0.0,
+            target_chroma: chroma,
+            target_lightness: crate::lattice::ANY_LIGHTNESS_AT,
+            hue_reach,
+            chroma_reach,
+            lightness_reach: 0.0,
+        };
+        let everywhere = node(0.0, crate::gpu::colour_wheel::wheel_chroma(), 180.0);
+        let nowhere = node(40.0, 0.5, 5.0);
+        let drawn_with = |mask: Option<super::ReachMask>| {
+            let grade = super::Grade {
+                colour: Some(&colour),
+                output: super::Output::Rolled,
+                adjust: super::Adjust {
+                    colour_nodes: vec![everywhere.clone(), nowhere.clone()],
+                    ..super::Adjust::none()
+                },
+                canvas: Some(super::Canvas {
+                    region: (0.0, 0.0, side as f64, side as f64),
+                    size: crate::px::Size::measured(side, side),
+                    max_lod: 0,
+                }),
+                reach_mask: mask,
+                ..super::Grade::new(
+                    side,
+                    side,
+                    crate::tone::Levels {
+                        white: Light::measured(1.0),
+                        peak: Light::measured(1.0),
+                        floor: None,
+                    },
+                    Light::exactly(203.0),
+                    Light::exactly(1000.0),
+                )
+            };
+            let peak = gpu.scene_peak();
+            let uploaded = gpu.upload(&frame, &grade, &peak);
+            let pyramid = crate::base::pyramid(gpu, base, &frame, (side, side)).expect("a pyramid");
+            let drawn = uploaded.draw(&grade, &pyramid);
+            let middle = (side / 2 * side + side / 2) * 4;
+            [drawn[middle], drawn[middle + 1], drawn[middle + 2]]
+        };
+        let masked = |node: &crate::lattice::ColourNode, strength: f64| {
+            drawn_with(Some(super::ReachMask {
+                node: node.clone(),
+                strength,
+            }))
+        };
+        let plain = drawn_with(None);
+        assert!(plain.iter().all(|v| *v > 0.01), "{plain:?}");
+        assert_eq!(masked(&everywhere, 1.0), plain);
+        assert_eq!(masked(&nowhere, 1.0), [0.0; 3]);
+        let linear = |coded: f32| {
+            let v = f64::from(coded);
+            match v <= 0.04045 {
+                true => v / 12.92,
+                false => ((v + 0.055) / 1.055).powf(2.4),
+            }
+        };
+        let half = masked(&nowhere, 0.5);
+        for c in 0..3 {
+            let share = linear(half[c]) / linear(plain[c]);
+            assert!((share - 0.5).abs() < 2e-3, "{half:?} against {plain:?}");
         }
     }
 

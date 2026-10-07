@@ -49,7 +49,7 @@ describe('the colour wheel', () => {
     wheel().add({ hue: 0, chroma: 10 });
     const before = editor.edit.doc?.colourNodes;
 
-    wheel().beginDrag(0);
+    wheel().beginDrag(0, 'target');
     wheel().drag(0, 'target', { hue: 90, chroma: 5 });
     wheel().drag(0, 'target', { hue: 120, chroma: 8 });
     await drawnBy(editor);
@@ -61,10 +61,47 @@ describe('the colour wheel', () => {
     wheel().cancelDrag();
     expect(editor.edit.doc?.colourNodes).toEqual(before ?? []);
 
-    wheel().beginDrag(0);
+    wheel().beginDrag(0, 'hueReach');
     wheel().drag(0, 'hueReach', { hue: 45, chroma: 10 });
     wheel().endDrag();
     expect(editor.edit.doc?.colourNodes[0]?.hueReach).toBe(45);
+  });
+
+  test('puts an edit back on the colour it edits', () => {
+    wheel().add({ hue: 30, chroma: 12 });
+    wheel().settleNode(0, { targetHue: 200, targetChroma: 3, targetLightness: 70 });
+    wheel().resetTarget(0);
+    expect(editor.edit.doc?.colourNodes[0]).toMatchObject({
+      targetHue: 30,
+      targetChroma: 12,
+      targetLightness: 70,
+    });
+  });
+
+  test('darkens what the edit does not reach while its colour is dragged, and lets go after', async () => {
+    wheel().add({ hue: 30, chroma: 12 });
+    await drawnBy(editor);
+
+    wheel().beginDrag(0, 'target');
+    wheel().drag(0, 'target', { hue: 90, chroma: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await drawnBy(editor);
+    expect(editor.decoder.reachMasks.at(-1)).toBeNull();
+    wheel().endDrag();
+
+    wheel().beginDrag(0, 'source');
+    wheel().drag(0, 'source', { hue: 60, chroma: 12 });
+    await drawnBy(editor);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await drawnBy(editor);
+    await drawnBy(editor);
+    expect(editor.decoder.reachMasks.at(-1)).toMatchObject({ node: { hue: 60 }, strength: 1 });
+
+    wheel().endDrag();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await drawnBy(editor);
+    await drawnBy(editor);
+    expect(editor.decoder.reachMasks.at(-1)).toBeNull();
   });
 
   test('sets the new colour and the reach from the sliders', () => {
@@ -91,10 +128,27 @@ describe('the colour wheel', () => {
     wheel().selectChannel(null);
     wheel().add({ hue: 200, chroma: 4 });
     expect(editor.colourWheel.shown.map(({ index }) => index)).toEqual([1]);
-    expect([...editor.colourWheel.edited]).toEqual([80, null]);
+    expect([...editor.colourWheel.marks.keys()]).toEqual([80, null]);
     wheel().selectChannel(80);
     expect(editor.colourWheel.selectedIndex).toBeNull();
     expect(editor.colourWheel.shown.map(({ index }) => index)).toEqual([0]);
+  });
+
+  test('marks each channel with the colours of the 3 edits that move colour furthest', async () => {
+    wheel().attach(fakeCanvas());
+    await settled();
+    await settled();
+    wheel().selectChannel(80);
+    for (const [at, hue] of [0, 90, 180, 270].entries()) {
+      wheel().add({ hue, chroma: 10 });
+      wheel().settleNode(at, { targetChroma: 10 + [2, 8, 0, 5][at]! });
+    }
+    await settled();
+    expect(editor.colourWheel.marks.get(80)).toEqual([
+      'color(display-p3 0.25 0.1 0.8)',
+      'color(display-p3 0.75 0.1 0.8)',
+      'color(display-p3 0 0.1 0.8)',
+    ]);
   });
 
   test('a press lets go of the selected edit, and adds one only with none selected', () => {
@@ -114,7 +168,7 @@ describe('the colour wheel', () => {
     await settled();
     await settled();
     wheel().add({ hue: 0, chroma: 10 });
-    wheel().beginDrag(0);
+    wheel().beginDrag(0, 'source');
     wheel().drag(0, 'source', { hue: 0, chroma: 45 });
     expect(editor.edit.doc?.colourNodes[0]).toMatchObject({ chroma: WHEEL_RIM, chromaReach: 0 });
     wheel().drag(0, 'source', { hue: 0, chroma: 20 });
@@ -192,7 +246,7 @@ describe('the colour wheel', () => {
     await framed();
     expect(editor.decoder.wheelShadedBy.at(-1)).toMatchObject({ hue: 120, chroma: 10 });
 
-    wheel().beginDrag(0);
+    wheel().beginDrag(0, 'hueReach');
     wheel().drag(0, 'hueReach', { hue: 160, chroma: 10 });
     await framed();
     expect(editor.decoder.wheelShadedBy.at(-1)).toMatchObject({ hue: 120, hueReach: 40 });
@@ -211,7 +265,7 @@ describe('the colour wheel', () => {
     await framed();
     const before = editor.decoder.wheelShadedBy.length;
 
-    wheel().beginDrag(0);
+    wheel().beginDrag(0, 'hueReach');
     for (const hue of [150, 155, 160, 165, 170]) {
       wheel().drag(0, 'hueReach', { hue, chroma: 10 });
       await settled();

@@ -282,7 +282,14 @@ impl Uploaded<'_> {
         grade: &Grade<'_>,
         pyramid: &crate::base::Pyramid,
     ) -> Texture {
-        let words = uniform_words(grade, grade.matched().unwrap_or(&self.identity));
+        let words = uniform_words(
+            // The pigment never reads it; a fading mask would lay the pigment down again every tick.
+            &Grade {
+                reach_mask: None,
+                ..grade.clone()
+            },
+            grade.matched().unwrap_or(&self.identity),
+        );
         let peak_revision = self
             .peak_revision
             .load(std::sync::atomic::Ordering::Relaxed);

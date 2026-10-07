@@ -58,8 +58,18 @@ export function EditControl({
   typing?: Typing | null;
   children: React.ReactNode;
 }): JSX.Element {
+  const pressedBy = useRef<string | null>(null);
   return (
-    <div {...stylex.props(styles.control)} onDoubleClick={reset ?? undefined}>
+    <div
+      {...stylex.props(styles.control)}
+      onPointerDownCapture={(event) => {
+        pressedBy.current = event.pointerType;
+      }}
+      // A double tap is a `dblclick` too on Chrome for Android.
+      onDoubleClick={() => {
+        if (pressedBy.current !== 'touch') reset?.();
+      }}
+    >
       <div {...stylex.props(styles.head)}>
         {/* Body rather than `label`: the group's own title wears that. */}
         <Text as="span" style={styles.name}>

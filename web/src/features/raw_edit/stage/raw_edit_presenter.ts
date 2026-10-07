@@ -1,5 +1,6 @@
 import { action } from 'mobx';
 import {
+  type ColourNode,
   type ColourProfile,
   type Denoiser,
   type EditDoc,
@@ -42,6 +43,7 @@ import { LoupePresenter } from '../loupe/loupe_presenter';
 import type { LoupeStore } from '../loupe/loupe_store';
 import { PreparePresenter } from './prepare_presenter';
 import type { EditSurface } from './edit_surface';
+import { Fade } from './fade';
 import { SUPERSAMPLE, stageResolution } from './stage_resolution';
 import { type PreparedHeader, readPreparedHeader } from '../../../../../src/schemas/prepared';
 import type { EditAdjust, Region } from '../edits';
@@ -54,6 +56,7 @@ import { PrintPresenter, type PrinterProfileSource } from '../print/print_presen
 import { printDisplaySize } from '../print/print_scene';
 
 const SOFT_PROOF_KEY = 'bowerbird.edit.softProof';
+const REACH_FADE_MS = 100;
 
 /** How long a pan or a zoom may be still before a finer window of the picture is fetched. */
 export const REWINDOW_QUIET_MS = 220;
@@ -142,7 +145,7 @@ export class RawEditPresenter {
     cropStore: CropStore,
     private readonly keystoneStore: KeystoneStore,
     repairStore: RepairStore,
-    colourWheelStore: ColourWheelStore,
+    private readonly colourWheelStore: ColourWheelStore,
     loupeStore: LoupeStore,
     private readonly printStore: PrintStore,
     private readonly device: DeviceSettingsStore,
@@ -203,6 +206,7 @@ export class RawEditPresenter {
       settle: (patch) => this.settle(patch),
       fail: (why) => this.fail(why),
       displayPeak: () => displayPeakNits(this.device.displayPeakNits),
+      showReach: (shown) => this.showReach(shown),
     });
     this.edit = new EditPresenter(editStore, this, this.repair);
   }
@@ -1041,6 +1045,13 @@ export class RawEditPresenter {
     this.pump();
   }
 
+  private showReach(shown: boolean): void {
+    const target = shown ? 1 : 0;
+    if (this.reachShown.target === target) return;
+    this.reachShown.toward(target, performance.now());
+    this.request();
+  }
+
   /**
    * The same, for the glass: the window it should magnify next.
    *
@@ -1070,9 +1081,14 @@ export class RawEditPresenter {
       const profile = this.printStore.printerProfile;
       const profileChanged = profile !== this.sentProfile;
       this.sentProfile = profile;
+      const reach = this.reachShown.at(performance.now());
+      // Held through the fade out: a press off the wheel lets go of the edit as the drag ends.
+      const reached = reach > 0 ? (this.colourWheelStore.selectedNode ?? this.reachShownFor) : null;
+      this.reachShownFor = reached;
       this.drawing = true;
       const landed = (error?: unknown): void => {
         this.drawing = false;
+        if (reach !== this.reachShown.target) this.pending = true;
         // **A refused command is reported here or nowhere.** A validation error rejects nothing
         // on the device: the dispatch is dropped and the chain runs on, so the reader is told
         // `live` over a canvas that is black or confidently wrong. The module keeps the first one
@@ -1110,6 +1126,7 @@ export class RawEditPresenter {
             displayPeakNits: displayPeakNits(this.device.displayPeakNits),
           },
           print,
+          reachMask: reached == null ? null : { node: reached, strength: reach },
           ...(profileChanged ? { printerProfile: profile?.bytes ?? null } : {}),
           stage,
         })
@@ -1162,6 +1179,9 @@ export class RawEditPresenter {
 
   /** Whether a tick is on the GPU and has not come back. */
   private drawing = false;
+  private readonly reachShown = new Fade(REACH_FADE_MS);
+  /** The edit whose reach the last tick showed. */
+  private reachShownFor: ColourNode | null = null;
   private framedSurface = false;
 
   /**

@@ -28,6 +28,13 @@ import {
 } from './local_open';
 import { gpuThread } from '../../../gpu/gpu_thread';
 
+/** A colour edit whose reach the stage shows, by taking what it does not reach towards black. */
+export interface ReachMask {
+  node: ColourNode;
+  /** 0 draws the photo as it is, 1 draws what the edit does not reach black. */
+  strength: number;
+}
+
 /**
  * One photograph opened on the GPU thread (`gpu_thread.ts`), and everything asked of it.
  *
@@ -222,6 +229,11 @@ export class LocalDecoder {
     });
   }
 
+  /** Coded Display P3 threes, one for each of `colours`' ZCAM lightness, hue and chroma. */
+  wheelSwatches(colours: number[]): Promise<number[]> {
+    return this.ask(z.array(z.number()), { kind: 'wheelSwatches', colours });
+  }
+
   /** Laid out as `HeldRaw::probe_wheel` answers. */
   probeWheel(places: number[], adjust: EditAdjust): Promise<Float32Array<ArrayBuffer>> {
     return this.ask(FloatsSchema, { kind: 'probeWheel', places, adjust: JSON.stringify(adjust) });
@@ -397,6 +409,7 @@ export class LocalDecoder {
     geometry: EditGeometry | null;
     proof: Proof | null;
     print: PrintScene | null;
+    reachMask: ReachMask | null;
     printerProfile?: Uint8Array<ArrayBuffer> | null;
     stage: { width: number; height: number } | null;
   }): Promise<Ticked> {
@@ -410,6 +423,10 @@ export class LocalDecoder {
       geometry: tick.geometry == null ? null : JSON.stringify(tick.geometry),
       proof: tick.proof,
       print: tick.print,
+      reachMask:
+        tick.reachMask == null
+          ? null
+          : { node: JSON.stringify(tick.reachMask.node), strength: tick.reachMask.strength },
       printerProfile: tick.printerProfile,
       stage: tick.stage,
     });

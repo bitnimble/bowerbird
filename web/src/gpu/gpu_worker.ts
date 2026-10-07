@@ -273,6 +273,8 @@ class Open {
       case 'shadeWheel':
         this.drawing().drawWheel(ask.lightness, ask.selected ?? undefined);
         return { value: null };
+      case 'wheelSwatches':
+        return { value: [...this.drawing().wheelSwatches(new Float64Array(ask.colours))] };
       case 'probeWheel': {
         const editor = this.drawing();
         editor.setAdjust(ask.adjust);
@@ -376,6 +378,7 @@ class Open {
           editor.setPrinterProfile(ask.printerProfile ?? undefined);
         if (ask.print != null) await printEnvironment(ask.print.environment);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
+        editor.setReachMask(ask.reachMask?.node, ask.reachMask?.strength ?? 0);
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
         await finishDraw();
