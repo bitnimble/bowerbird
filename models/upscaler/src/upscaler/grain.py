@@ -5,26 +5,31 @@ noise its input still holds after the editor's denoise."""
 import torch
 import torch.nn.functional as F
 
-from training.mosaic import add_noise, demosaic, pack, pack_rgb, unpack
+from training.mosaic import add_noise, demosaic, noise_variance, pack_rgb, raw_planes, unpack
 
-# Held-out photos' true strength over the estimate: median 2.5, quartiles 1.9 to 3.8, flat across ISO.
-CALIBRATION = 2.5
+CHI_SQUARED_1_MEDIAN = 0.455
 
 
-def grained(small: torch.Tensor, high: torch.Tensor, gains: torch.Tensor, fit: dict | None) -> torch.Tensor:
-    """`high`, the upscale of `small`, with grain added. Draws from the global RNG."""
+def grained(
+    small: torch.Tensor, high: torch.Tensor, gains: torch.Tensor, fit: dict | None, calibration: float
+) -> torch.Tensor:
+    """`high`, the upscale of `small`, with grain added. `calibration` is the weights' own, from
+    `calibrate`. Draws from the global RNG."""
     if fit is None:
         return high
-    back = unpack(pack_rgb(F.avg_pool2d(demosaic(high), 2)))
-    strength = CALIBRATION * kept(small, back, gains, fit)
+    strength = calibration * estimate(small, high, gains, fit)
     return add_noise(high, gains, strength * fit["alpha"], strength * fit["sigmaSq"])
 
 
+def estimate(small: torch.Tensor, high: torch.Tensor, gains: torch.Tensor, fit: dict) -> float:
+    """The share of the fit's noise `small` holds over `high` brought back to its size. Biased low,
+    since the upscale carries some of the noise through."""
+    return kept(small, unpack(pack_rgb(F.avg_pool2d(demosaic(high), 2))), gains, fit)
+
+
 def kept(noisy: torch.Tensor, clean: torch.Tensor, gains: torch.Tensor, fit: dict) -> float:
-    """How much of the sensor's noise variance `noisy` holds over `clean`, robust to edges."""
-    planes = gains[[0, 1, 1, 2], None, None]
-    level = (pack(clean) / planes).clamp(min=0)
-    variance = (fit["alpha"] / float(gains[1])) * level + fit["sigmaSq"] / float(gains[1]) ** 2
-    residual = pack(noisy - clean) / planes
-    # Median of a chi-squared variable with 1 degree of freedom: turns the median ratio into a mean.
-    return float((residual**2 / variance).median()) / 0.455
+    """The share of the fit's noise variance `noisy` holds over `clean`, robust to edges."""
+    level = raw_planes(clean, gains)
+    variance = noise_variance(level, gains, fit["alpha"], fit["sigmaSq"])
+    residual = raw_planes(noisy, gains) - level
+    return float((residual**2 / variance).median()) / CHI_SQUARED_1_MEDIAN

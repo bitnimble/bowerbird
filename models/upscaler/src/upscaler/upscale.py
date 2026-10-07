@@ -32,7 +32,11 @@ def main() -> None:
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda")
-    net = load(args.weights).to(device).eval()
+    net, plan = load(args.weights)
+    net = net.to(device).eval()
+    if "grain_calibration" not in plan:
+        raise SystemExit(f"{args.weights} has no grain calibration: run `calibrate` on it")
+    calibration = plan["grain_calibration"]
     pmrid = Pmrid(args.out / ".scratch")
     opened = pmrid.open(args.raw)
     mosaic = torch.from_numpy(opened.mosaic)[None, None]
@@ -55,7 +59,7 @@ def main() -> None:
             F.interpolate(original, scale_factor=2, mode="nearest"),
             F.interpolate(demosaic(region), scale_factor=2, mode="bilinear", align_corners=False)[doubled],
             demosaic(high)[doubled],
-            demosaic(grained(region, high, gains, opened.fit))[doubled],
+            demosaic(grained(region, high, gains, opened.fit, calibration))[doubled],
         ]
         write_png(args.out / "native.png", panels(native, scale))
 
@@ -69,11 +73,12 @@ def main() -> None:
         for name, guess in (("bilinear", stabilise(pack_rgb(bilinear))), ("model", stabilise(pack(ours)))):
             error = F.mse_loss(guess[half], target)
             print(f"synthetic {name}: PSNR {float(-10 * torch.log10(error)):.2f} dB")
+        torch.manual_seed(1)
         synthetic = [
             F.interpolate(demosaic(small)[half], scale_factor=2, mode="nearest"),
             bilinear[inside],
             demosaic(ours)[inside],
-            demosaic(grained(small, ours, gains, opened.fit))[inside],
+            demosaic(grained(small, ours, gains, opened.fit, calibration))[inside],
             original,
         ]
         write_png(args.out / "synthetic.png", panels(synthetic, scale))
@@ -93,7 +98,8 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def load(weights: Path) -> Upscaler:
+def load(weights: Path) -> tuple[Upscaler, dict]:
+    """The network, and the plan it was exported with."""
     plan = json.loads((weights / "weights.json").read_text())
     if plan["stabiliser_floor"] != STABILISER_FLOOR:
         raise SystemExit(f"{weights} was trained with a stabiliser floor of {plan['stabiliser_floor']}")
@@ -105,7 +111,7 @@ def load(weights: Path) -> Upscaler:
             for t in plan["tensors"]
         }
     )
-    return net
+    return net, plan
 
 
 def upscaled(net: Upscaler, mosaic: torch.Tensor) -> torch.Tensor:

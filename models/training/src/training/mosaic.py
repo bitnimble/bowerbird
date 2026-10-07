@@ -83,8 +83,18 @@ def add_noise(mosaic: torch.Tensor, gains: torch.Tensor, alpha: float, sigma_sq:
     """The noise of the sensor GALOSH fitted, whose green reads variance `alpha * s + sigma_sq` in
     conditioned units, added to (B, 1, H, W) mosaics conditioned with R, G, B `gains`. Draws from
     the global RNG."""
-    planes = gains[[0, 1, 1, 2], None, None]
+    raw = raw_planes(mosaic, gains)
+    noise = torch.randn_like(raw) * noise_variance(raw, gains, alpha, sigma_sq).sqrt()
+    return unpack((raw + noise) * gains[[0, 1, 1, 2], None, None])
+
+
+def raw_planes(mosaic: torch.Tensor, gains: torch.Tensor) -> torch.Tensor:
+    """Packed planes with the conditioning's gains divided back out."""
+    return pack(mosaic) / gains[[0, 1, 1, 2], None, None]
+
+
+def noise_variance(raw: torch.Tensor, gains: torch.Tensor, alpha: float, sigma_sq: float) -> torch.Tensor:
+    """The fitted noise's variance at each of `raw_planes`' levels."""
     green = float(gains[1])
-    raw = pack(mosaic) / planes
-    variance = (alpha / green) * raw.clamp(min=0) + sigma_sq / green**2
-    return unpack((raw + torch.randn_like(raw) * variance.sqrt()) * planes)
+    # A fit can read no read noise at all, which leaves black with none and a ratio over it infinite.
+    return ((alpha / green) * raw.clamp(min=0) + sigma_sq / green**2).clamp(min=1e-12)
