@@ -67,3 +67,11 @@ Android links `rawshim` with `default-features = false`; wasm uses `--no-default
 Neither links C or `lensdb`, so the `lensdb` LGPL-3 discussion excludes them. They use rawler
 for RAW, WGSL demosaic/grade and Rust JPEG codecs. `src-tauri` itself does not link `rawshim`;
 it starts the bundled server that loads it.
+
+## Model weights
+
+- **PMRID** (MegEngine/PMRID, commit `8ebb9e8`) - Apache-2.0. The denoiser's weights, fetched
+  by `get:pmrid`, embedded in every native `rawshim` and served to the browser as
+  `pmrid_weights.<hash>.bin`. Apache-2.0 §4(a) asks that a copy of the licence travel with
+  them; upstream has no NOTICE. Releases bundle no licence texts yet, so this is open, as is
+  the BSD notice libavif and libjxl ask of a binary.
