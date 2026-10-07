@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--channels", type=int, default=48)
     parser.add_argument("--blocks", type=int, default=16)
     parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--workers", type=int, default=6)
+    parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--prepare-workers", type=int, default=3, help="each holds a PMRID server")
     args = parser.parse_args()
     if args.patch % 4 or not 0 < args.patch <= CROP:
