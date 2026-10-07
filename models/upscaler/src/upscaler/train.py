@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from training.crops import CROP, DEFAULT_CACHE, isos, prepare, sources
+from training.crops import DEFAULT_CACHE, isos, prepare, sources
 from training.export import export
 from training.mosaic import STABILISER_FLOOR, demosaic, pack, pack_rgb, stabilise
 from training.runtime import (
@@ -49,13 +49,13 @@ def main() -> None:
     make_pairs(args.cache, raws, args.prepare_workers)
     device, bf16 = cuda()
 
-    train_set = Pairs(args.cache, raws, validation=False, patch=args.patch)
+    train_set = Pairs(args.cache, raws, validation=False)
     if len(train_set) == 0:
         raise SystemExit(f"no usable crops under {args.cache}")
     iso = isos(args.data)
     validation_sets = {
-        f"ISO under {HIGH_ISO}": Pairs(args.cache, raws, True, args.patch, lambda s: iso.get(s, 0) < HIGH_ISO),
-        f"ISO {HIGH_ISO} and over": Pairs(args.cache, raws, True, args.patch, lambda s: iso.get(s, 0) >= HIGH_ISO),
+        f"ISO under {HIGH_ISO}": Pairs(args.cache, raws, True, lambda s: iso.get(s, 0) < HIGH_ISO),
+        f"ISO {HIGH_ISO} and over": Pairs(args.cache, raws, True, lambda s: iso.get(s, 0) >= HIGH_ISO),
     }
     sizes = ", ".join(f"{len(pairs)} {name}" for name, pairs in validation_sets.items())
     say(f"{len(train_set)} training crops, validation crops: {sizes}, bf16={bf16}")
@@ -122,16 +122,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--steps", type=int, default=300_000)
     parser.add_argument("--batch", type=int, default=32)
-    parser.add_argument("--patch", type=int, default=256, help="target mosaic side, divisible by 4")
     parser.add_argument("--channels", type=int, default=48)
     parser.add_argument("--blocks", type=int, default=16)
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--prepare-workers", type=int, default=3, help="each holds a PMRID server")
-    args = parser.parse_args()
-    if args.patch % 4 or not 0 < args.patch <= CROP:
-        parser.error(f"--patch must be divisible by 4 and at most {CROP}")
-    return args
+    return parser.parse_args()
 
 
 def planes(low: torch.Tensor, high: torch.Tensor) -> Planes:
