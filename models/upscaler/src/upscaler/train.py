@@ -9,15 +9,15 @@ import torch.nn.functional as F
 
 from training.crops import DEFAULT_CACHE, isos, prepare, sources
 from training.export import export
-from training.mosaic import STABILISER_FLOOR, demosaic, pack, pack_rgb, stabilise
+from training.mosaic import STABILISER_FLOOR, bilinear, pack, pack_rgb, stabilise
 from training.runtime import (
     cuda,
-    exit_on_signals,
     load_resume,
     loader,
     logger,
     save_resume,
     step_unless_nonfinite,
+    stop_on_signals,
     warmup_cosine,
 )
 from upscaler.data import Pairs
@@ -29,6 +29,8 @@ VALIDATION_EVERY = 2000
 VALIDATION_CROPS = 64
 LOG_EVERY = 100
 HIGH_ISO = 1600
+INPUT_NYQUIST = 0.25
+"""In cycles per target-plane pixel."""
 
 
 class Planes(NamedTuple):
@@ -42,7 +44,7 @@ def main() -> None:
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     say = logger(args.out / "train.log")
-    exit_on_signals()
+    stop_on_signals()
 
     raws = sources(args.data)
     prepare(raws, args.cache, args.prepare_workers)
@@ -50,8 +52,8 @@ def main() -> None:
     device, bf16 = cuda()
 
     train_set = Pairs(args.cache, raws, validation=False)
-    if len(train_set) == 0:
-        raise SystemExit(f"no usable crops under {args.cache}")
+    if len(train_set) < args.batch:
+        raise SystemExit(f"{len(train_set)} usable crops under {args.cache}, fewer than a batch")
     iso = isos(args.data)
     validation_sets = {
         f"ISO under {HIGH_ISO}": Pairs(args.cache, raws, True, lambda s: iso.get(s, 0) < HIGH_ISO),
@@ -65,7 +67,8 @@ def main() -> None:
     optimiser = torch.optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.99), fused=True)
     schedule = torch.optim.lr_scheduler.LambdaLR(optimiser, warmup_cosine(args.steps))
     resume = args.out / "resume.pt"
-    step = load_resume(resume, net, optimiser, schedule)
+    settings = {name: getattr(args, name) for name in ("steps", "batch", "channels", "blocks", "lr", "texture")}
+    step = load_resume(resume, net, optimiser, schedule, settings)
     if step:
         say(f"resumed at step {step}")
 
@@ -73,46 +76,48 @@ def main() -> None:
     validations = {name: validation_set(pairs, device) for name, pairs in validation_sets.items() if len(pairs)}
 
     def save() -> None:
-        save_resume(resume, net, optimiser, schedule, step)
+        save_resume(resume, net, optimiser, schedule, step, settings)
         plan = {"channels": args.channels, "blocks": args.blocks, "stabiliser_floor": STABILISER_FLOOR}
         export(net, plan, args.out)
 
-    started, losses = time.monotonic(), []
+    started, pixel_losses, texture_losses = time.monotonic(), [], []
     skipped = torch.zeros((), dtype=torch.int64, device=device)
     try:
         while step < args.steps:
-            for low, high in batches:
+            for given, wanted in batches:
                 torch.compiler.cudagraph_mark_step_begin()
-                batch = planes(low.to(device, non_blocking=True), high.to(device, non_blocking=True))
+                batch = planes(given.to(device, non_blocking=True), wanted.to(device, non_blocking=True))
                 with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
                     predicted = model(batch.low.contiguous(memory_format=torch.channels_last))
-                loss = F.l1_loss(predicted.float(), batch.high)
-                if args.texture:
-                    loss = loss + args.texture * spectrum_loss(predicted.float(), batch.high)
+                pixel_loss = F.l1_loss(predicted.float(), batch.high)
+                texture_loss = spectrum_loss(predicted.float(), batch.high) if args.texture else torch.zeros_like(pixel_loss)
 
                 optimiser.zero_grad(set_to_none=True)
-                loss.backward()
-                skipped += step_unless_nonfinite(optimiser, net.parameters(), GRAD_CLIP)
+                (pixel_loss + args.texture * texture_loss).backward()
+                skipped_now = step_unless_nonfinite(optimiser, net.parameters(), GRAD_CLIP)
+                skipped += skipped_now
                 schedule.step()
                 step += 1
-                losses.append(loss.detach())
+                pixel_losses.append(torch.where(skipped_now, torch.nan, pixel_loss.detach()))
+                texture_losses.append(torch.where(skipped_now, torch.nan, texture_loss.detach()))
 
                 if step % LOG_EVERY == 0:
                     rate = LOG_EVERY / (time.monotonic() - started)
-                    mean = torch.stack(losses).mean().item()
+                    texture = f" texture {torch.stack(texture_losses).nanmean().item():.5f}" if args.texture else ""
                     say(
-                        f"step {step} loss {mean:.5f} lr {schedule.get_last_lr()[0]:.2e} {rate:.1f} it/s"
-                        f" skipped {skipped.item()}"
+                        f"step {step} loss {torch.stack(pixel_losses).nanmean().item():.5f}{texture}"
+                        f" lr {schedule.get_last_lr()[0]:.2e} {rate:.1f} it/s skipped {skipped.item()}"
                     )
-                    started, losses = time.monotonic(), []
+                    started, pixel_losses, texture_losses = time.monotonic(), [], []
                 if step % VALIDATION_EVERY == 0 or step == args.steps:
                     for name, validation in validations.items():
-                        ours, share = validate(model, validation.planes, bf16)
+                        ours, share = validate(model, validation, bf16)
                         say(
                             f"step {step} validation {name}: PSNR {ours:.3f} dB, bilinear {validation.bilinear:.3f} dB,"
                             f" detail {share:.0%} of the target's"
                         )
                     save()
+                    started = time.monotonic()
                 if step >= args.steps:
                     break
     except KeyboardInterrupt:
@@ -137,8 +142,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def spectrum_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """L1 between amplitude spectra. Blind to phase, so it rewards texture as strong as the target's
-    even where the network can't place it, which an L1 on pixels averages away."""
+    """L1 between amplitude spectra, blind to phase."""
     return F.l1_loss(torch.fft.rfft2(predicted, norm="ortho").abs(), torch.fft.rfft2(target, norm="ortho").abs())
 
 
@@ -150,37 +154,39 @@ class Validation(NamedTuple):
     planes: Planes
     bilinear: float
     """PSNR of the input demosaiced, upscaled bilinearly and mosaiced again: the classical answer."""
+    detail: torch.Tensor
+    """The targets' `detail`."""
 
 
 def validation_set(pairs: Pairs, device: torch.device) -> Validation:
     chosen = np.linspace(0, len(pairs) - 1, min(VALIDATION_CROPS, len(pairs))).astype(int)
     lows, highs = zip(*(pairs[int(i)] for i in chosen))
     low, high = torch.stack(lows).to(device).float(), torch.stack(highs).to(device)
-    upscaled = F.interpolate(demosaic(low), scale_factor=2, mode="bilinear", align_corners=False)
     batch = planes(low, high)
-    return Validation(batch, psnr(F.mse_loss(stabilise(pack_rgb(upscaled)), batch.high)))
+    return Validation(batch, psnr(F.mse_loss(stabilise(pack_rgb(bilinear(low))), batch.high)), detail(batch.high))
 
 
 @torch.no_grad()
-def validate(model: torch.nn.Module, validation: Planes, bf16: bool) -> tuple[float, float]:
+def validate(model: torch.nn.Module, validation: Validation, bf16: bool) -> tuple[float, float]:
     """PSNR, and the predicted detail as a share of the target's."""
-    squared_error = torch.zeros((), device=validation.low.device)
-    predicted_detail, target_detail = torch.zeros_like(squared_error), detail(validation.high)
-    for low, high in zip(validation.low.split(8), validation.high.split(8)):
+    squared_error = torch.zeros((), device=validation.detail.device)
+    predicted_detail = torch.zeros_like(squared_error)
+    for low, high in zip(validation.planes.low.split(8), validation.planes.high.split(8)):
         torch.compiler.cudagraph_mark_step_begin()
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
             predicted = model(low.contiguous(memory_format=torch.channels_last))
         squared_error += F.mse_loss(predicted.float(), high, reduction="sum")
         predicted_detail += detail(predicted.float())
-    return psnr(squared_error / validation.high.numel()), float(predicted_detail / target_detail)
+    return psnr(squared_error / validation.planes.high.numel()), float(predicted_detail / validation.detail)
 
 
-def detail(planes: torch.Tensor) -> torch.Tensor:
-    """Amplitude summed over the upper half of each plane's frequencies."""
-    spectrum = torch.fft.rfft2(planes, norm="ortho").abs()
-    across = torch.fft.fftfreq(planes.shape[-2], device=planes.device).abs()[:, None]
-    along = torch.fft.rfftfreq(planes.shape[-1], device=planes.device)[None, :]
-    return spectrum[..., torch.maximum(across, along) > 0.25].sum()
+def detail(batch: torch.Tensor) -> torch.Tensor:
+    """Amplitude summed over the frequencies past the input's Nyquist limit, the outer three
+    quarters of each plane's spectrum, which only the upscale can put there."""
+    spectrum = torch.fft.rfft2(batch, norm="ortho").abs()
+    across = torch.fft.fftfreq(batch.shape[-2], device=batch.device).abs()[:, None]
+    along = torch.fft.rfftfreq(batch.shape[-1], device=batch.device)[None, :]
+    return spectrum[..., torch.maximum(across, along) > INPUT_NYQUIST].sum()
 
 
 def psnr(mse: torch.Tensor) -> float:

@@ -69,6 +69,16 @@ def stabilise(light: torch.Tensor) -> torch.Tensor:
     return torch.sqrt(torch.clamp(light + STABILISER_FLOOR, min=0)) - math.sqrt(STABILISER_FLOOR)
 
 
+def unstabilise(stabilised: torch.Tensor) -> torch.Tensor:
+    return (stabilised + math.sqrt(STABILISER_FLOOR)).clamp(min=0) ** 2 - STABILISER_FLOOR
+
+
+def bilinear(mosaic: torch.Tensor) -> torch.Tensor:
+    """(B, 1, H, W) mosaics demosaiced and upscaled 2x bilinearly to (B, 3, 2H, 2W): the classical
+    answer an upscale is measured against."""
+    return F.interpolate(demosaic(mosaic), scale_factor=2, mode="bilinear", align_corners=False)
+
+
 def demosaic(mosaic: torch.Tensor) -> torch.Tensor:
     responses = F.conv2d(F.pad(mosaic, (2, 2, 2, 2), mode="reflect"), _MHC.to(mosaic))
     phases = F.pixel_unshuffle(responses, 2).unflatten(1, (5, 4))

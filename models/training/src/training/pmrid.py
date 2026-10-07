@@ -39,8 +39,12 @@ class Pmrid:
         if not SERVER.exists():
             raise SystemExit(f"{SERVER} is missing; build it from {REPOSITORY} with `{BUILD}`")
         scratch.mkdir(parents=True, exist_ok=True)
-        self.scratch = scratch / str(os.getpid())
-        self.process = subprocess.Popen(
+        self.exchange = scratch / str(os.getpid())
+        """The file samples travel to and from the server in."""
+        self.process = self.spawn()
+
+    def spawn(self) -> subprocess.Popen[str]:
+        return subprocess.Popen(
             [SERVER],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -52,10 +56,11 @@ class Pmrid:
 
     def open(self, path: Path) -> Opened:
         """Raises `Unreadable` for a file the editor can't decode or whose CFA isn't Bayer."""
-        reply = self.ask({"open": str(path), "out": str(self.scratch)})
-        mosaic = take(self.scratch, reply["height"], reply["width"])
+        reply = self.ask({"open": str(path), "out": str(self.exchange)})
         if sorted(reply["cfa"]) != RGGB:
+            self.exchange.unlink()
             raise Unreadable(f"{path} has a CFA of {reply['cfa']}")
+        mosaic = take(self.exchange, reply["height"], reply["width"])
         red_y, red_x = divmod(reply["cfa"].index(0), 2)
         height, width = ((n - o) // 2 * 2 for n, o in zip(mosaic.shape, (red_y, red_x)))
         return Opened(
@@ -64,16 +69,14 @@ class Pmrid:
             fit=reply["fit"],
         )
 
-    def denoise(self, mosaics: np.ndarray, gains: np.ndarray, fit: dict | None) -> np.ndarray:
+    def denoise(self, mosaics: np.ndarray, gains: np.ndarray, fit: dict) -> np.ndarray:
         """Each of a stack of RGGB mosaics, (N, H, W), denoised against the photo's own fit."""
-        if fit is None:
-            return mosaics
         count, height, width = mosaics.shape
-        np.ascontiguousarray(mosaics, "<f4").tofile(self.scratch)
+        np.ascontiguousarray(mosaics, "<f4").tofile(self.exchange)
         self.ask(
             {
-                "denoise": str(self.scratch),
-                "out": str(self.scratch),
+                "denoise": str(self.exchange),
+                "out": str(self.exchange),
                 "width": width,
                 "height": height,
                 "cfa": RGGB,
@@ -81,9 +84,19 @@ class Pmrid:
                 "fit": fit,
             }
         )
-        return take(self.scratch, count, height, width)
+        return take(self.exchange, count, height, width)
 
     def ask(self, request: dict) -> dict:
+        """Retries once: usually the GPU ran out of memory while other workers held large frames,
+        or the server died, in which case it starts again."""
+        try:
+            return self.ask_once(request)
+        except (RuntimeError, OSError):
+            if self.process.poll() is not None:
+                self.process = self.spawn()
+            return self.ask_once(request)
+
+    def ask_once(self, request: dict) -> dict:
         assert self.process.stdin is not None and self.process.stdout is not None
         self.process.stdin.write(json.dumps(request) + "\n")
         self.process.stdin.flush()

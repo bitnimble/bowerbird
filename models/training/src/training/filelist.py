@@ -14,6 +14,7 @@ from typing import BinaryIO
 import rawpy
 
 from training.crops import sources
+from training.pmrid import REPOSITORY
 
 BURST_GAP_SECONDS = 2.0
 
@@ -37,8 +38,10 @@ def main() -> None:
     parser.add_argument("--max-iso", type=float, default=float("inf"))
     parser.add_argument("--workers", type=int, default=32)
     args = parser.parse_args()
-    if not args.out.name.startswith("filelist") or args.out.suffix != ".csv":
-        parser.error("--out must be named filelist*.csv, which git ignores: it lists private paths")
+    out = args.out.resolve()
+    ignored = out.name.startswith("filelist") and out.suffix == ".csv" and REPOSITORY / "models" in out.parents
+    if REPOSITORY in out.parents and not ignored:
+        parser.error("--out must be a filelist*.csv under models/, which git ignores: it lists private paths")
 
     raws = [p for root in args.roots for p in sources(root) if "Bin" not in p.relative_to(root).parts]
     print(f"{len(raws)} RAW files", flush=True)

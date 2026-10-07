@@ -1,8 +1,9 @@
 """Measures a set of weights' grain calibration on the held-out crops, where the targets show the true
-noise, and writes it into their `weights.json` as `grain_calibration`. Rerun after every training."""
+noise, and writes it into their `weights.json` with the digest of the weights it belongs to."""
 
 import argparse
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -13,7 +14,9 @@ from training.crops import DEFAULT_CACHE, sources
 from training.files import write_atomic
 from upscaler.data import Pairs
 from upscaler.grain import estimate, kept
-from upscaler.upscale import load, upscaled
+from upscaler.model import Loaded, load, upscaled
+
+CPU_THREADS = 2
 
 
 def main() -> None:
@@ -22,9 +25,10 @@ def main() -> None:
     parser.add_argument("--weights", type=Path, default=Path("runs/wide"), help="folder of weights.json and .bin")
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     args = parser.parse_args()
+    torch.set_num_threads(CPU_THREADS)
 
-    net, _ = load(args.weights)
-    net = net.cuda().eval()
+    loaded = load(args.weights)
+    net = loaded.net.cuda().eval()
     pairs = Pairs(args.cache, sources(args.data), validation=True)
     by_photo: dict[Path, list[int]] = defaultdict(list)
     for index, (targets_path, _, _) in enumerate(pairs.items):
@@ -33,25 +37,26 @@ def main() -> None:
     ratios = []
     for targets_path, indices in by_photo.items():
         record = json.loads(targets_path.with_suffix(".json").read_text())
-        if record["fit"] is None:
-            continue
         gains = torch.tensor(record["gains"])
-        truths, guesses = [], []
-        for index in indices:
-            small, high = (t[None].float() for t in pairs[index])
-            with torch.no_grad():
-                ours = upscaled(net, small.cuda()).cpu()
-            truths.append(kept(high, ours, gains, record["fit"]))
-            guesses.append(estimate(small, ours, gains, record["fit"]))
-        ratios.append(np.median(truths) / np.median(guesses))
+        small, high = (torch.stack(batch).float() for batch in zip(*(pairs[index] for index in indices)))
+        with torch.no_grad():
+            ours = upscaled(net, small.cuda()).cpu()
+        ratios.append(kept(high, ours, gains, record["fit"]) / estimate(small, ours, gains, record["fit"]))
 
-    calibration = float(np.median(ratios))
+    calibration = float(np.median(ratios)) if ratios else math.nan
+    if not math.isfinite(calibration):
+        raise SystemExit(f"no calibration from {len(ratios)} held-out photos under {args.cache}")
     quartiles = np.percentile(ratios, [25, 75])
     print(f"{len(ratios)} photos: calibration {calibration:.2f}, quartiles {quartiles[0]:.2f} to {quartiles[1]:.2f}")
-    manifest = args.weights / "weights.json"
-    plan = json.loads(manifest.read_text())
-    plan["grain_calibration"] = calibration
-    write_atomic(manifest, lambda f: f.write((json.dumps(plan, indent=2) + "\n").encode()))
+    plan = {**loaded.plan, "grain_calibration": calibration, "grain_weights_sha256": loaded.digest}
+    write_atomic(args.weights / "weights.json", lambda f: f.write((json.dumps(plan, indent=2) + "\n").encode()))
+
+
+def stored(loaded: Loaded) -> float:
+    """The calibration `main` measured for exactly these weights."""
+    if loaded.plan.get("grain_weights_sha256") != loaded.digest:
+        raise SystemExit("these weights have no grain calibration of their own: run `calibrate` on them")
+    return loaded.plan["grain_calibration"]
 
 
 if __name__ == "__main__":

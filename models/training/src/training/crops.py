@@ -45,8 +45,9 @@ def isos(data: Path) -> dict[str, float]:
 
 def prepare(raws: list[Path], cache: Path, workers: int) -> None:
     cache.mkdir(parents=True, exist_ok=True)
-    pending = [p for p in raws if not (cache / f"{key(p)}.json").exists()]
-    print(f"prepare: {len(raws)} RAW files, {len(pending)} not yet cached", flush=True)
+    present = [p for p in raws if p.exists()]
+    pending = [p for p in present if not (cache / f"{key(p)}.json").exists()]
+    print(f"prepare: {len(raws)} RAW files, {len(raws) - len(present)} missing, {len(pending)} not yet cached", flush=True)
     outcomes = each_with_pmrid(prepare_one, [(p, cache) for p in pending], workers, cache / ".scratch")
     for done, outcome in enumerate(outcomes, 1):
         if done % 50 == 0 or done == len(pending):
@@ -63,19 +64,21 @@ def prepare_one(job: tuple[Path, Path]) -> str:
     name = key(path)
     record: dict[str, object] = {"source": str(path), "crops": 0}
     try:
-        try:
-            opened = pmrid().open(path)
-        except RuntimeError:
-            # Usually the GPU out of memory while other workers held large frames.
-            opened = pmrid().open(path)
+        opened = pmrid().open(path)
     except Unreadable as error:
         record["skipped"] = str(error)
+    except RuntimeError as error:
+        return f"failed, left for the next run: {error}"
     else:
-        corners = sharp_crops(opened)
-        if corners:
-            crops = np.stack([opened.mosaic[y : y + CROP, x : x + CROP] for y, x in corners])
-            write_atomic(cache / f"{name}.npy", lambda f: np.save(f, crops.astype(np.float16)))
-        record.update(crops=len(corners), corners=corners, gains=opened.gains.tolist(), fit=opened.fit)
+        if opened.fit is None:
+            # Undenoised, so its targets would hold the noise its inputs are made without.
+            record["skipped"] = "no usable noise fit"
+        else:
+            corners = sharp_crops(opened)
+            if corners:
+                crops = np.stack([opened.mosaic[y : y + CROP, x : x + CROP] for y, x in corners])
+                write_atomic(cache / f"{name}.npy", lambda f: np.save(f, crops.astype(np.float16)))
+            record.update(crops=len(corners), corners=corners, gains=opened.gains.tolist(), fit=opened.fit)
     write_atomic(cache / f"{name}.json", lambda f: f.write(json.dumps(record).encode()))
     return "skipped" if "skipped" in record else f"{record['crops']} crops"
 

@@ -7,9 +7,7 @@ import torch
 from torch.utils.data import Dataset
 
 from training.crops import records
-from upscaler.pairs import CENTRE, PATCH, PLACES, VARIANTS, patches_of
-
-HALF = PATCH // 2
+from upscaler.pairs import CENTRE, HALF, PATCH, PLACES, VARIANTS, complete, patches_of
 
 
 class Pairs(Dataset):
@@ -29,7 +27,7 @@ class Pairs(Dataset):
         self.items = [
             (*patches_of(path), crop)
             for path, record in records(cache, raws, validation)
-            if keep(record["source"]) and patches_of(path)[1].exists()
+            if keep(record["source"]) and complete(path, record["crops"])
             for crop in range(record["crops"])
         ]
 
@@ -44,11 +42,11 @@ class Pairs(Dataset):
             rng = np.random.default_rng()
             place, variant, transpose = int(rng.integers(PLACES)), int(rng.integers(VARIANTS)), bool(rng.integers(2))
         patch = crop * PLACES + place
-        high = read(targets_path, patch * PATCH * PATCH, PATCH * PATCH).reshape(PATCH, PATCH)
-        low = read(inputs_path, (patch * VARIANTS + variant) * HALF * HALF, HALF * HALF).reshape(HALF, HALF)
+        target = read(targets_path, patch * PATCH * PATCH, PATCH * PATCH).reshape(PATCH, PATCH)
+        given = read(inputs_path, (patch * VARIANTS + variant) * HALF * HALF, HALF * HALF).reshape(HALF, HALF)
         if transpose:
-            low, high = low.T, high.T
-        return torch.from_numpy(np.array(low, order="C"))[None], torch.from_numpy(np.array(high, order="C"))[None]
+            given, target = given.T, target.T
+        return torch.from_numpy(np.array(given, order="C"))[None], torch.from_numpy(np.array(target, order="C"))[None]
 
 
 def read(path: Path, first: int, count: int) -> np.ndarray:

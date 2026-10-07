@@ -8,8 +8,6 @@ answer to compare with. Input, bilinear, model, model with grain, original.
 Colours are white-balanced camera RGB with no colour matrix: good for judging detail, not colour."""
 
 import argparse
-import json
-import math
 import struct
 import zlib
 from pathlib import Path
@@ -18,11 +16,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from training.mosaic import STABILISER_FLOOR, demosaic, pack, pack_rgb, stabilise, unpack
+from training.mosaic import bilinear, demosaic, pack, pack_rgb, stabilise
 from training.pmrid import Pmrid
+from upscaler.calibrate import stored
 from upscaler.degrade import low
 from upscaler.grain import grained
-from upscaler.model import Upscaler
+from upscaler.model import load, upscaled
+from upscaler.train import psnr
 
 MARGIN = 32
 GAP = 8
@@ -32,16 +32,16 @@ def main() -> None:
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda")
-    net, plan = load(args.weights)
-    net = net.to(device).eval()
-    if "grain_calibration" not in plan:
-        raise SystemExit(f"{args.weights} has no grain calibration: run `calibrate` on it")
-    calibration = plan["grain_calibration"]
+    loaded = load(args.weights)
+    calibration = stored(loaded)
+    net = loaded.net.to(device).eval()
     pmrid = Pmrid(args.out / ".scratch")
     opened = pmrid.open(args.raw)
     mosaic = torch.from_numpy(opened.mosaic)[None, None]
     height, width = opened.mosaic.shape
     size = args.size
+    if min(height, width) < size + 2 * MARGIN:
+        raise SystemExit(f"{args.raw} is {width}x{height}, too small for --size {size}")
     y, x = args.at or ((height - size) // 2, (width - size) // 2)
     y, x = (min(max(v // 4 * 4, MARGIN), limit - size - MARGIN) // 4 * 4 for v, limit in ((y, height), (x, width)))
     region = mosaic[..., y - MARGIN : y + size + MARGIN, x - MARGIN : x + size + MARGIN]
@@ -57,32 +57,35 @@ def main() -> None:
         torch.manual_seed(1)
         native = [
             F.interpolate(original, scale_factor=2, mode="nearest"),
-            F.interpolate(demosaic(region), scale_factor=2, mode="bilinear", align_corners=False)[doubled],
+            bilinear(region)[doubled],
             demosaic(high)[doubled],
             demosaic(grained(region, high, gains, opened.fit, calibration))[doubled],
         ]
         write_png(args.out / "native.png", panels(native, scale))
+        print(f"wrote {args.out / 'native.png'}")
+        if opened.fit is None:
+            print("no synthetic view: the photo has no usable noise fit to make its input with")
+            return
 
         torch.manual_seed(0)
         noisy = low(region, gains, opened.fit)
         small = torch.from_numpy(pmrid.denoise(noisy[:, 0].numpy(), opened.gains, opened.fit))[:, None]
         half = (..., slice(MARGIN // 2, (MARGIN + size) // 2), slice(MARGIN // 2, (MARGIN + size) // 2))
-        bilinear = F.interpolate(demosaic(small), scale_factor=2, mode="bilinear", align_corners=False)
+        classical = bilinear(small)
         ours = upscaled(net, small.to(device)).cpu()
         target = stabilise(pack(region))[half]
-        for name, guess in (("bilinear", stabilise(pack_rgb(bilinear))), ("model", stabilise(pack(ours)))):
-            error = F.mse_loss(guess[half], target)
-            print(f"synthetic {name}: PSNR {float(-10 * torch.log10(error)):.2f} dB")
+        for name, guess in (("bilinear", stabilise(pack_rgb(classical))), ("model", stabilise(pack(ours)))):
+            print(f"synthetic {name}: PSNR {psnr(F.mse_loss(guess[half], target)):.2f} dB")
         torch.manual_seed(1)
         synthetic = [
             F.interpolate(demosaic(small)[half], scale_factor=2, mode="nearest"),
-            bilinear[inside],
+            classical[inside],
             demosaic(ours)[inside],
             demosaic(grained(small, ours, gains, opened.fit, calibration))[inside],
             original,
         ]
         write_png(args.out / "synthetic.png", panels(synthetic, scale))
-    print(f"wrote {args.out / 'native.png'} and {args.out / 'synthetic.png'}")
+    print(f"wrote {args.out / 'synthetic.png'}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("raw", type=Path)
     parser.add_argument("--weights", type=Path, default=Path("runs/wide"), help="folder of weights.json and .bin")
     parser.add_argument("--out", type=Path, default=Path("runs/upscaled"))
-    parser.add_argument("--at", type=lambda s: tuple(int(v) for v in s.split(",")), help="top,left in the mosaic")
+    parser.add_argument("--at", type=corner, help="top,left in the mosaic")
     parser.add_argument("--size", type=int, default=256, help="mosaic side to upscale, divisible by 4")
     args = parser.parse_args()
     if args.size % 4:
@@ -98,25 +101,9 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def load(weights: Path) -> tuple[Upscaler, dict]:
-    """The network, and the plan it was exported with."""
-    plan = json.loads((weights / "weights.json").read_text())
-    if plan["stabiliser_floor"] != STABILISER_FLOOR:
-        raise SystemExit(f"{weights} was trained with a stabiliser floor of {plan['stabiliser_floor']}")
-    floats = np.fromfile(weights / "weights.bin", "<f4")
-    net = Upscaler(plan["channels"], plan["blocks"])
-    net.load_state_dict(
-        {
-            t["name"]: torch.from_numpy(floats[t["offset"] : t["offset"] + math.prod(t["shape"])].reshape(t["shape"]))
-            for t in plan["tensors"]
-        }
-    )
-    return net, plan
-
-
-def upscaled(net: Upscaler, mosaic: torch.Tensor) -> torch.Tensor:
-    root = math.sqrt(STABILISER_FLOOR)
-    return unpack((net(stabilise(pack(mosaic))) + root) ** 2 - STABILISER_FLOOR)
+def corner(text: str) -> tuple[int, int]:
+    top, left = (int(v) for v in text.split(","))
+    return top, left
 
 
 def panels(images: list[torch.Tensor], scale: float) -> np.ndarray:

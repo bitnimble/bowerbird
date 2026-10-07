@@ -22,6 +22,8 @@ def main() -> None:
     limit = args.max_gb * 2**30
 
     child = subprocess.Popen(command, preexec_fn=lambda: die_with_parent(0))
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, lambda number, _: child.send_signal(number))
     peak = 0
     while child.poll() is None:
         tree = descendants(child.pid)

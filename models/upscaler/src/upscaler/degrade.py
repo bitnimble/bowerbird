@@ -10,13 +10,11 @@ BLUR_SIGMA_MIN = 0.3
 BLUR_SIGMA_MAX = 1.6
 
 
-def low(mosaic: torch.Tensor, gains: torch.Tensor, fit: dict | None) -> torch.Tensor:
+def low(mosaic: torch.Tensor, gains: torch.Tensor, fit: dict) -> torch.Tensor:
     """(B, 1, H, W) RGGB mosaics of one photo to what a sensor of twice the pitch would record of the
-    same scenes, (B, 1, H/2, W/2), with the photo's own noise where it had a fit."""
+    same scenes, (B, 1, H/2, W/2), with the photo's own noise."""
     scene = blur(demosaic(mosaic))
     recorded = unpack(pack_rgb(F.avg_pool2d(scene, 2)))
-    if fit is None:
-        return recorded
     return add_noise(recorded, gains, fit["alpha"], fit["sigmaSq"])
 
 

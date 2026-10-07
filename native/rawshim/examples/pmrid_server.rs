@@ -1,5 +1,6 @@
-//! PMRID for a model trainer in another process: RAWs decoded, dust-removed and denoised as the
-//! editor does at AUTO, and mosaics the trainer made denoised against a fit it hands over.
+//! PMRID for a model trainer in another process: RAWs decoded and dust-removed as the editor does,
+//! then denoised by PMRID at the editor's AUTO amounts, and mosaics the trainer made denoised
+//! against a fit it hands over.
 //!
 //! One JSON request a line on stdin, one JSON reply a line on stdout. Samples travel as files of
 //! little-endian `f32`, row-major, since a 61MP frame is a quarter of a gigabyte.
@@ -22,26 +23,26 @@
 
 use std::io::{BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use rawshim::galosh::{Denoiser, Detail, NoiseFit};
 
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum Request {
-    Open {
-        open: String,
-        out: String,
-    },
-    Denoise {
-        denoise: String,
-        out: String,
-        width: usize,
-        height: usize,
-        cfa: [u32; 4],
-        gains: [f32; 3],
-        fit: NoiseFit,
-    },
+    Open { open: String, out: String },
+    Denoise(Denoise),
+}
+
+#[derive(serde::Deserialize)]
+struct Denoise {
+    denoise: String,
+    out: String,
+    width: usize,
+    height: usize,
+    cfa: [u32; 4],
+    gains: [f32; 3],
+    fit: NoiseFit,
 }
 
 enum Failed {
@@ -51,57 +52,41 @@ enum Failed {
 
 const DETAIL: Detail = Detail::AUTO.using(Denoiser::Pmrid);
 
-static PANICKED_IN_DECODER: AtomicBool = AtomicBool::new(false);
+/// Where the last panic was and what it said, set by the hook and taken by the request it ended.
+static PANICKED: Mutex<Option<(bool, String)>> = Mutex::new(None);
 
 fn main() {
     let gpu = rawshim::gpu::device().expect("an adapter");
     let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels built");
     let network = rawshim::pmrid::device(gpu).expect("the network built");
-    // A panic in rawler is the file's fault (it panics on corrupt files under overflow checks);
-    // one anywhere else, such as the GPU running out of memory, is worth retrying.
     let report = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        if info
+        // A panic in rawler is the file's fault (it panics on corrupt files under overflow checks);
+        // one anywhere else, such as the GPU running out of memory, is worth retrying.
+        let in_decoder = info
             .location()
-            .is_some_and(|at| at.file().contains("rawler"))
-        {
-            PANICKED_IN_DECODER.store(true, Ordering::Relaxed);
-        }
+            .is_some_and(|at| at.file().contains("dnglab/rawler/"));
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|text| text.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        *PANICKED.lock().unwrap_or_else(|e| e.into_inner()) = Some((in_decoder, message));
         report(info);
     }));
     let mut stdout = std::io::stdout().lock();
     for line in std::io::stdin().lock().lines() {
         let line = line.expect("stdin");
-        PANICKED_IN_DECODER.store(false, Ordering::Relaxed);
         let reply = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Open { open, out }) => catch_unwind(AssertUnwindSafe(|| {
                 opened(gpu, kernels, network, &open, &out)
             }))
-            .unwrap_or_else(|_| match PANICKED_IN_DECODER.load(Ordering::Relaxed) {
-                true => Err(Failed::Unreadable(format!("decoding {open} panicked"))),
-                false => Err(Failed::Error(format!("opening {open} panicked"))),
-            }),
-            Ok(Request::Denoise {
-                denoise,
-                out,
-                width,
-                height,
-                cfa,
-                gains,
-                fit,
-            }) => catch_unwind(AssertUnwindSafe(|| {
-                denoised(
-                    gpu,
-                    network,
-                    &denoise,
-                    &out,
-                    (width, height),
-                    cfa,
-                    gains,
-                    fit,
-                )
-            }))
-            .unwrap_or_else(|_| Err(Failed::Error(format!("denoising {denoise} panicked")))),
+            .unwrap_or_else(|_| Err(panicked(&format!("opening {open}")))),
+            Ok(Request::Denoise(request)) => {
+                catch_unwind(AssertUnwindSafe(|| denoised(gpu, network, &request)))
+                    .unwrap_or_else(|_| Err(panicked(&format!("denoising {}", request.denoise))))
+            }
             Err(why) => Err(Failed::Error(format!("not a request: {why}"))),
         };
         let reply = reply.unwrap_or_else(|failed| match failed {
@@ -110,6 +95,17 @@ fn main() {
         });
         writeln!(stdout, "{reply}").expect("stdout");
         stdout.flush().expect("stdout");
+    }
+}
+
+fn panicked(doing: &str) -> Failed {
+    let taken = PANICKED.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let (in_decoder, message) = taken.unwrap_or_default();
+    let why = format!("{doing} panicked: {message}");
+    if in_decoder {
+        Failed::Unreadable(why)
+    } else {
+        Failed::Error(why)
     }
 }
 
@@ -129,32 +125,27 @@ fn opened(
         }
         Err(why) => return Err(Failed::Unreadable(format!("{path}: {why}"))),
     };
+    drop(bytes);
     let cfa = held.cfa();
-    if cfa.period() != (2, 2) {
+    if !cfa.is_bayer() {
         return Err(Failed::Unreadable(format!("{path} is not Bayer")));
     }
     let mut mosaic = held.device_mosaic().duplicate(gpu);
+    let (left, top, width, height) = held.crop();
+    if width == 0 || height == 0 || left + width > mosaic.width || top + height > mosaic.height {
+        return Err(Failed::Unreadable(format!(
+            "{path}'s picture area falls outside its mosaic"
+        )));
+    }
     let dust = rawshim::dust::Settings::default().wanted(None);
     pollster::block_on(rawshim::dust::run(gpu, &mosaic, &held.glass(), &dust));
     let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa));
-    // The editor's decision: a fit that came back wrong leaves the photograph undenoised.
     let usable = fit.usable();
     if usable {
         filter(gpu, network, &mut mosaic, &cfa, held.ceilings(), fit);
     }
-    let samples = pollster::block_on(mosaic.read(gpu))
-        .ok_or_else(|| Failed::Error("the mosaic did not read back".into()))?;
-
-    let (left, top, width, height) = held.crop();
-    let (width, height) = (width / 2 * 2, height / 2 * 2);
-    let stride = mosaic.width;
-    let picture: Vec<f32> = (top..top + height)
-        .flat_map(|row| {
-            samples[row * stride + left..row * stride + left + width]
-                .iter()
-                .copied()
-        })
-        .collect();
+    let picture = pollster::block_on(mosaic.window(gpu, left, top, width, height).read(gpu))
+        .ok_or_else(|| Failed::Error("the picture did not read back".into()))?;
     write(out, &picture)?;
     let at_origin = [(0, 0), (0, 1), (1, 0), (1, 1)].map(|(r, c)| cfa.colour_at(top + r, left + c));
     Ok(serde_json::json!({
@@ -166,39 +157,60 @@ fn opened(
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn denoised(
     gpu: &'static rawshim::gpu::Gpu,
     network: &rawshim::pmrid::Pmrid,
-    path: &str,
-    out: &str,
-    (width, height): (usize, usize),
-    cfa: [u32; 4],
-    gains: [f32; 3],
-    fit: NoiseFit,
+    request: &Denoise,
 ) -> Result<serde_json::Value, Failed> {
-    let cfa =
-        rawshim::cfa::Cfa::bayer(cfa).ok_or_else(|| Failed::Error("not a Bayer pattern".into()))?;
-    if !fit.usable() {
+    let cfa = rawshim::cfa::Cfa::bayer(request.cfa)
+        .filter(rawshim::cfa::Cfa::is_bayer)
+        .ok_or_else(|| Failed::Error("not a Bayer pattern".into()))?;
+    if !request
+        .gains
+        .iter()
+        .all(|gain| gain.is_finite() && *gain > 0.0)
+    {
+        return Err(Failed::Error(format!("gains of {:?}", request.gains)));
+    }
+    if !request.fit.usable() {
         return Err(Failed::Error("the fit is not usable".into()));
     }
-    let samples = read(path)?;
-    let size = width * height;
+    let samples = read(&request.denoise)?;
+    let size = request.width * request.height;
     if size == 0 || samples.len() % size != 0 {
         return Err(Failed::Error(format!(
-            "{path} is not a stack of {width}x{height} mosaics"
+            "{} is not a stack of {}x{} mosaics",
+            request.denoise, request.width, request.height
         )));
     }
+    let _arenas = Arenas::held();
     let mut filtered = Vec::with_capacity(samples.len());
     for one in samples.chunks_exact(size) {
-        let mut mosaic = rawshim::condition::Mosaic::upload(gpu, one, width, height);
-        filter(gpu, network, &mut mosaic, &cfa, gains, fit);
+        let mut mosaic =
+            rawshim::condition::Mosaic::upload(gpu, one, request.width, request.height);
+        filter(gpu, network, &mut mosaic, &cfa, request.gains, request.fit);
         let read = pollster::block_on(mosaic.read(gpu))
             .ok_or_else(|| Failed::Error("a mosaic did not read back".into()))?;
         filtered.extend(read);
     }
-    write(out, &filtered)?;
+    write(&request.out, &filtered)?;
     Ok(serde_json::json!({}))
+}
+
+/// PMRID's arenas kept from one mosaic of a stack to the next, released however the stack ends.
+struct Arenas;
+
+impl Arenas {
+    fn held() -> Self {
+        rawshim::pmrid::hold_arenas();
+        Arenas
+    }
+}
+
+impl Drop for Arenas {
+    fn drop(&mut self) {
+        rawshim::pmrid::release_arenas();
+    }
 }
 
 fn filter(

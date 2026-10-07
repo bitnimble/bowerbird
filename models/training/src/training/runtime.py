@@ -3,7 +3,6 @@
 import math
 import os
 import signal
-import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
@@ -28,10 +27,22 @@ def cuda() -> tuple[torch.device, bool]:
     return torch.device("cuda"), torch.cuda.get_device_capability()[0] >= 8
 
 
-def exit_on_signals() -> None:
-    """SIGTERM and SIGHUP exit through `SystemExit`, so DataLoader workers are joined."""
-    for stop in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(stop, lambda *_: sys.exit(1))
+STOPPING = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+def stop_on_signals() -> None:
+    """SIGINT, SIGTERM and SIGHUP all raise `KeyboardInterrupt` once, so a trainer saves and its
+    workers are joined."""
+
+    def stop(*_: object) -> None:
+        # A signal to the process group also arrives forwarded by `capped`; a second interrupt
+        # would land in the middle of saving.
+        for number in STOPPING:
+            signal.signal(number, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    for number in STOPPING:
+        signal.signal(number, stop)
 
 
 def logger(path: Path) -> Callable[[str], None]:
@@ -87,6 +98,7 @@ def save_resume(
     optimiser: torch.optim.Optimizer,
     schedule: torch.optim.lr_scheduler.LRScheduler,
     step: int,
+    settings: dict[str, object],
 ) -> None:
     state = {
         "net": net.state_dict(),
@@ -94,6 +106,7 @@ def save_resume(
         "schedule": schedule.state_dict(),
         "rng": torch.cuda.get_rng_state(),
         "step": step,
+        "settings": settings,
     }
     write_atomic(path, lambda f: torch.save(state, f))
 
@@ -103,11 +116,17 @@ def load_resume(
     net: torch.nn.Module,
     optimiser: torch.optim.Optimizer,
     schedule: torch.optim.lr_scheduler.LRScheduler,
+    settings: dict[str, object],
 ) -> int:
-    """The step `path` was saved at, with everything restored; 0 when there is nothing to resume."""
+    """The step `path` was saved at, with everything restored; 0 when there is nothing to resume.
+    Refuses `settings` other than those it was saved with, which resuming would silently mix."""
     if not path.exists():
         return 0
     state = torch.load(path, map_location="cuda")
+    saved = state.get("settings", settings)
+    changed = sorted(name for name in settings if saved.get(name) != settings[name])
+    if changed:
+        raise SystemExit(f"{path} was saved with " + ", ".join(f"{name} {saved.get(name)}" for name in changed))
     net.load_state_dict(state["net"])
     optimiser.load_state_dict(state["optimiser"])
     schedule.load_state_dict(state["schedule"])
