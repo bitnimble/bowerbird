@@ -4,16 +4,16 @@ import json
 import multiprocessing
 import os
 import subprocess
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TypeVar
 
 import numpy as np
 
 T = TypeVar("T")
-R = TypeVar("R")
 
 REPOSITORY = Path(__file__).resolve().parents[4]
 SERVER = REPOSITORY / "native" / "rawshim" / "target" / "quick" / "examples" / "pmrid_server"
@@ -57,9 +57,6 @@ class Pmrid:
     def open(self, path: Path) -> Opened:
         """Raises `Unreadable` for a file the editor can't decode or whose CFA isn't Bayer."""
         reply = self.ask({"open": str(path), "out": str(self.exchange)})
-        if sorted(reply["cfa"]) != RGGB:
-            self.exchange.unlink()
-            raise Unreadable(f"{path} has a CFA of {reply['cfa']}")
         mosaic = take(self.exchange, reply["height"], reply["width"])
         red_y, red_x = divmod(reply["cfa"].index(0), 2)
         height, width = ((n - o) // 2 * 2 for n, o in zip(mosaic.shape, (red_y, red_x)))
@@ -87,14 +84,20 @@ class Pmrid:
         return take(self.exchange, count, height, width)
 
     def ask(self, request: dict) -> dict:
-        """Retries once: usually the GPU ran out of memory while other workers held large frames,
-        or the server died, in which case it starts again."""
         try:
             return self.ask_once(request)
-        except (RuntimeError, OSError):
+        except OSError:
+            self.restart()
+        except RuntimeError:
+            # Usually the GPU ran out of memory while other workers held large frames.
             if self.process.poll() is not None:
-                self.process = self.spawn()
-            return self.ask_once(request)
+                self.restart()
+        return self.ask_once(request)
+
+    def restart(self) -> None:
+        self.process.kill()
+        self.process.wait()
+        self.process = self.spawn()
 
     def ask_once(self, request: dict) -> dict:
         assert self.process.stdin is not None and self.process.stdout is not None
@@ -119,17 +122,38 @@ _server: Pmrid | None = None
 
 
 def pmrid() -> Pmrid:
-    """This worker's server, inside `each_with_pmrid`."""
     assert _server is not None, "only inside each_with_pmrid"
     return _server
 
 
-def each_with_pmrid(work: Callable[[T], R], jobs: list[T], workers: int, scratch: Path) -> Iterator[R]:
-    """`work` over `jobs`, in order, in worker processes that each hold a server."""
+def each_with_pmrid(work: Callable[[T], str], jobs: list[T], workers: int, scratch: Path, label: str) -> None:
+    """`work` over `jobs` in worker processes that each hold a server, printing progress under
+    `label`. A job whose `work` raises is printed and left for the next run."""
+    if not jobs:
+        return
+    scratch.mkdir(parents=True, exist_ok=True)
+    for leftover in scratch.iterdir():
+        if not Path(f"/proc/{leftover.name}").exists():
+            leftover.unlink(missing_ok=True)
     # Spawned, not forked: a forked child would share the parent's CUDA and OpenMP state.
     context = multiprocessing.get_context("spawn")
+    failed = 0
     with ProcessPoolExecutor(workers, mp_context=context, initializer=_start, initargs=(scratch,)) as pool:
-        yield from pool.map(work, jobs)
+        for done, (ok, outcome) in enumerate(pool.map(partial(_attempt, work), jobs), 1):
+            if not ok:
+                failed += 1
+                print(f"{label}: {outcome}", flush=True)
+            elif done % 50 == 0 or done == len(jobs):
+                print(f"{label}: {done}/{len(jobs)} ({outcome})", flush=True)
+    if failed:
+        print(f"{label}: {failed} of {len(jobs)} failed, left for the next run", flush=True)
+
+
+def _attempt(work: Callable[[T], str], job: T) -> tuple[bool, str]:
+    try:
+        return True, work(job)
+    except Exception as error:
+        return False, f"{job} failed: {error!r}"
 
 
 def _start(scratch: Path) -> None:

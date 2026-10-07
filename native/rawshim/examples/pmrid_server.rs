@@ -52,8 +52,8 @@ enum Failed {
 
 const DETAIL: Detail = Detail::AUTO.using(Denoiser::Pmrid);
 
-/// Where the last panic was and what it said, set by the hook and taken by the request it ended.
-static PANICKED: Mutex<Option<(bool, String)>> = Mutex::new(None);
+/// What the last panic said, set by the hook and taken by the request it ended.
+static PANICKED: Mutex<Option<String>> = Mutex::new(None);
 
 fn main() {
     let gpu = rawshim::gpu::device().expect("an adapter");
@@ -61,18 +61,13 @@ fn main() {
     let network = rawshim::pmrid::device(gpu).expect("the network built");
     let report = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // A panic in rawler is the file's fault (it panics on corrupt files under overflow checks);
-        // one anywhere else, such as the GPU running out of memory, is worth retrying.
-        let in_decoder = info
-            .location()
-            .is_some_and(|at| at.file().contains("dnglab/rawler/"));
         let message = info
             .payload()
             .downcast_ref::<&str>()
             .map(|text| text.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_default();
-        *PANICKED.lock().unwrap_or_else(|e| e.into_inner()) = Some((in_decoder, message));
+        *PANICKED.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
         report(info);
     }));
     let mut stdout = std::io::stdout().lock();
@@ -82,10 +77,16 @@ fn main() {
             Ok(Request::Open { open, out }) => catch_unwind(AssertUnwindSafe(|| {
                 opened(gpu, kernels, network, &open, &out)
             }))
-            .unwrap_or_else(|_| Err(panicked(&format!("opening {open}")))),
+            .unwrap_or_else(|_| Err(Failed::Error(panicked(&format!("opening {open}"))))),
             Ok(Request::Denoise(request)) => {
-                catch_unwind(AssertUnwindSafe(|| denoised(gpu, network, &request)))
-                    .unwrap_or_else(|_| Err(panicked(&format!("denoising {}", request.denoise))))
+                catch_unwind(AssertUnwindSafe(|| denoised(gpu, network, &request))).unwrap_or_else(
+                    |_| {
+                        Err(Failed::Error(panicked(&format!(
+                            "denoising {}",
+                            request.denoise
+                        ))))
+                    },
+                )
             }
             Err(why) => Err(Failed::Error(format!("not a request: {why}"))),
         };
@@ -98,15 +99,9 @@ fn main() {
     }
 }
 
-fn panicked(doing: &str) -> Failed {
-    let taken = PANICKED.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let (in_decoder, message) = taken.unwrap_or_default();
-    let why = format!("{doing} panicked: {message}");
-    if in_decoder {
-        Failed::Unreadable(why)
-    } else {
-        Failed::Error(why)
-    }
+fn panicked(doing: &str) -> String {
+    let message = PANICKED.lock().unwrap_or_else(|e| e.into_inner()).take();
+    format!("{doing} panicked: {}", message.unwrap_or_default())
 }
 
 fn opened(
@@ -118,7 +113,12 @@ fn opened(
 ) -> Result<serde_json::Value, Failed> {
     let bytes = std::fs::read(path)
         .map_err(|why| Failed::Error(format!("could not read {path}: {why}")))?;
-    let held = match pollster::block_on(rawshim::decode_rawler::open_bytes(&bytes)) {
+    // rawler panics on corrupt files under overflow checks: the file's fault, unlike a panic later.
+    let decoded = catch_unwind(AssertUnwindSafe(|| {
+        pollster::block_on(rawshim::decode_rawler::open_bytes(&bytes))
+    }))
+    .map_err(|_| Failed::Unreadable(panicked(&format!("decoding {path}"))))?;
+    let held = match decoded {
         Ok(rawshim::decode::Held::Mosaic(held)) => held,
         Ok(rawshim::decode::Held::Rendered(_)) => {
             return Err(Failed::Unreadable(format!("{path} has no mosaic")));

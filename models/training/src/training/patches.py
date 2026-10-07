@@ -8,6 +8,7 @@ own name, at its own scale."""
 
 import json
 import os
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -17,7 +18,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from training.crops import CROP, records
+from training.crops import CROP, isos, prepare, records, sources
 from training.files import write_atomic
 from training.pmrid import each_with_pmrid
 
@@ -26,32 +27,55 @@ PATCH = CROP // 2
 GRID = 3
 PLACES = GRID * GRID
 CENTRE = PLACES // 2
+STRIDE = (CROP - PATCH) // (GRID - 1)
+HIGH_ISO = 1600
 
 
 @dataclass(frozen=True)
 class Inputs:
-    """One model's inputs. `make` turns a photo's (crops, CROP, CROP) targets and its record into
-    (crops, variants, CROP / scale, CROP / scale) inputs; it runs in a worker holding a PMRID
-    server, seeded by the photo, and a `RuntimeError` from it leaves the photo for the next run.
-    It must be a module-level function, since the workers are spawned."""
+    """One model's inputs. `make` turns a photo's float16 (crops, CROP, CROP) targets and its record
+    into (crops, variants, CROP / scale, CROP / scale) inputs; it runs in a worker holding a PMRID
+    server, seeded by the photo and `name`, and an exception from it leaves the photo for the next
+    run. It must be a module-level function, since the workers are spawned."""
 
     name: str
+    """Change it whenever `make` changes: inputs already made are never made again."""
     variants: int
     scale: int
     make: Callable[[np.ndarray, dict], np.ndarray]
+
+    def __post_init__(self) -> None:
+        if STRIDE % (2 * self.scale):
+            raise ValueError(f"patches {STRIDE} apart lose the RGGB phase at 1 / {self.scale} scale")
 
     @property
     def side(self) -> int:
         return PATCH // self.scale
 
     def path(self, record_path: Path) -> Path:
-        """Raw `<f2` (crops, PLACES, variants, side, side), written after the targets."""
+        """Raw `<f2` (crops, PLACES, variants, side, side)."""
         return record_path.with_suffix(f".{self.name}-inputs")
 
 
 def targets_of(record_path: Path) -> Path:
     """Raw `<f2` (crops, PLACES, PATCH, PATCH)."""
     return record_path.with_suffix(".targets")
+
+
+def datasets(data: Path, cache: Path, workers: int, inputs: Inputs, batch: int) -> tuple["PatchPairs", dict[str, "PatchPairs"]]:
+    """The training pairs of the RAW files `data` names, cached and made first where they aren't,
+    and the held-out pairs by ISO."""
+    raws = sources(data)
+    prepare(raws, cache, workers)
+    make_pairs(cache, raws, workers, inputs)
+    train_set = PatchPairs(cache, raws, False, inputs)
+    if len(train_set) < batch:
+        raise SystemExit(f"{len(train_set)} usable crops under {cache}, fewer than a batch")
+    iso = isos(data)
+    return train_set, {
+        f"ISO under {HIGH_ISO}": PatchPairs(cache, raws, True, inputs, lambda s: iso.get(s, 0) < HIGH_ISO),
+        f"ISO {HIGH_ISO} and over": PatchPairs(cache, raws, True, inputs, lambda s: iso.get(s, 0) >= HIGH_ISO),
+    }
 
 
 def make_pairs(cache: Path, raws: list[Path], workers: int, inputs: Inputs) -> None:
@@ -62,23 +86,21 @@ def make_pairs(cache: Path, raws: list[Path], workers: int, inputs: Inputs) -> N
         if not complete(path, record["crops"], inputs)
     ]
     print(f"pairs: {len(jobs)} photos without {inputs.name} inputs", flush=True)
-    made = each_with_pmrid(partial(make_one, inputs=inputs), jobs, workers, cache / ".scratch")
-    for done, outcome in enumerate(made, 1):
-        if done % 50 == 0 or done == len(jobs):
-            print(f"pairs: {done}/{len(jobs)} ({outcome})", flush=True)
+    each_with_pmrid(partial(make_one, inputs=inputs), jobs, workers, cache / ".scratch", "pairs")
 
 
 def make_one(record_path: Path, inputs: Inputs) -> str:
     torch.set_num_threads(2)
-    torch.manual_seed(int(record_path.stem[:8], 16))
+    seed = int(record_path.stem[:8], 16) ^ zlib.crc32(inputs.name.encode())
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     record = json.loads(record_path.read_text())
     targets = np.load(record_path.with_suffix(".npy"))
-    try:
-        made = inputs.make(targets, record)
-    except RuntimeError as error:
-        return f"failed, left for the next run: {error}"
-    corners = range(0, CROP - PATCH + 1, (CROP - PATCH) // (GRID - 1))
-    places = [(y, x) for y in corners for x in corners]
+    made = inputs.make(targets, record)
+    size = CROP // inputs.scale
+    if made.shape != (len(targets), inputs.variants, size, size):
+        raise ValueError(f"{inputs.name} made {made.shape} from {targets.shape}")
+    places = [(y, x) for y in range(0, CROP - PATCH + 1, STRIDE) for x in range(0, CROP - PATCH + 1, STRIDE)]
     if not complete_targets(record_path, record["crops"]):
         target_patches = np.stack([targets[:, y : y + PATCH, x : x + PATCH] for y, x in places], 1)
         write_atomic(targets_of(record_path), lambda f: f.write(target_patches.astype("<f2").tobytes()))
@@ -94,7 +116,6 @@ def complete_targets(record_path: Path, crops: int) -> bool:
 
 
 def complete(record_path: Path, crops: int, inputs: Inputs) -> bool:
-    """Whether the photo's patch files are there, at the sizes its record's crops make."""
     path = inputs.path(record_path)
     return (
         path.exists()
@@ -136,8 +157,7 @@ class PatchPairs(Dataset):
         if self.validation:
             place, variant, transpose = CENTRE, 0, False
         else:
-            rng = np.random.default_rng()
-            place, variant, transpose = int(rng.integers(PLACES)), int(rng.integers(variants)), bool(rng.integers(2))
+            place, variant, transpose = (int(torch.randint(n, ())) for n in (PLACES, variants, 2))
         patch = crop * PLACES + place
         target = read(targets_path, patch * PATCH * PATCH, PATCH * PATCH).reshape(PATCH, PATCH)
         given = read(inputs_path, (patch * variants + variant) * side * side, side * side).reshape(side, side)

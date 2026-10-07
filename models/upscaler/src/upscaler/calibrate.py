@@ -14,7 +14,7 @@ from training.crops import DEFAULT_CACHE, sources
 from training.files import write_atomic
 from training.patches import PatchPairs
 from upscaler.grain import estimate, kept
-from upscaler.model import Loaded, load, upscaled
+from upscaler.model import load, upscaled
 from upscaler.pairs import INPUTS
 
 CPU_THREADS = 2
@@ -51,13 +51,6 @@ def main() -> None:
     print(f"{len(ratios)} photos: calibration {calibration:.2f}, quartiles {quartiles[0]:.2f} to {quartiles[1]:.2f}")
     plan = {**loaded.plan, "grain_calibration": calibration, "grain_weights_sha256": loaded.digest}
     write_atomic(args.weights / "weights.json", lambda f: f.write((json.dumps(plan, indent=2) + "\n").encode()))
-
-
-def stored(loaded: Loaded) -> float:
-    """The calibration `main` measured for exactly these weights."""
-    if loaded.plan.get("grain_weights_sha256") != loaded.digest:
-        raise SystemExit("these weights have no grain calibration of their own: run `calibrate` on them")
-    return loaded.plan["grain_calibration"]
 
 
 if __name__ == "__main__":

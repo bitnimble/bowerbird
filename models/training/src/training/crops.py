@@ -48,10 +48,7 @@ def prepare(raws: list[Path], cache: Path, workers: int) -> None:
     present = [p for p in raws if p.exists()]
     pending = [p for p in present if not (cache / f"{key(p)}.json").exists()]
     print(f"prepare: {len(raws)} RAW files, {len(raws) - len(present)} missing, {len(pending)} not yet cached", flush=True)
-    outcomes = each_with_pmrid(prepare_one, [(p, cache) for p in pending], workers, cache / ".scratch")
-    for done, outcome in enumerate(outcomes, 1):
-        if done % 50 == 0 or done == len(pending):
-            print(f"prepare: {done}/{len(pending)} ({outcome})", flush=True)
+    each_with_pmrid(prepare_one, [(p, cache) for p in pending], workers, cache / ".scratch", "prepare")
 
 
 def key(path: Path) -> str:
@@ -67,8 +64,6 @@ def prepare_one(job: tuple[Path, Path]) -> str:
         opened = pmrid().open(path)
     except Unreadable as error:
         record["skipped"] = str(error)
-    except RuntimeError as error:
-        return f"failed, left for the next run: {error}"
     else:
         if opened.fit is None:
             # Undenoised, so its targets would hold the noise its inputs are made without.
@@ -110,12 +105,14 @@ def sharp_crops(opened: Opened) -> list[tuple[int, int]]:
 
 
 def records(cache: Path, raws: list[Path], validation: bool) -> Iterator[tuple[Path, dict]]:
-    """Each cached photo of `raws` with crops, on its side of the validation split, as the path of
-    its record and the record. Its crops are the record's path with `.npy` for a suffix."""
-    wanted = {str(p) for p in raws}
+    """Each cached photo of `raws`, as the file is now, with crops, on its side of the validation
+    split, as the path of its record and the record. Its crops are the record's path with `.npy` for
+    a suffix."""
+    current = {key(p) for p in raws if p.exists()}
     for record_path in sorted(cache.glob("*.json")):
+        if record_path.stem not in current:
+            continue
         record = json.loads(record_path.read_text())
-        source = record["source"]
-        held_out = int(hashlib.sha1(source.encode()).hexdigest(), 16) % VALIDATION_ONE_IN == 0
-        if record["crops"] and held_out == validation and source in wanted:
+        held_out = int(hashlib.sha1(record["source"].encode()).hexdigest(), 16) % VALIDATION_ONE_IN == 0
+        if record["crops"] and held_out == validation:
             yield record_path, record

@@ -17,10 +17,9 @@ from training.metrics import psnr
 from training.mosaic import bilinear, demosaic, pack, pack_rgb, stabilise
 from training.pmrid import Pmrid
 from training.preview import panels, write_png
-from upscaler.calibrate import stored
 from upscaler.degrade import low
 from upscaler.grain import grained
-from upscaler.model import load, upscaled
+from upscaler.model import load, stored, upscaled
 
 MARGIN = 32
 

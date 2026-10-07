@@ -53,6 +53,10 @@ name = "sweep"
 required-features = ["renditions"]
 
 [[example]]
+name = "upscale_sharpen"
+required-features = ["renditions"]
+
+[[example]]
 name = "matches"
 required-features = ["renditions"]
 

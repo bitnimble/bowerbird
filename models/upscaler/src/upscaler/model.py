@@ -43,6 +43,13 @@ def load(weights: Path) -> Loaded:
     return Loaded(net, plan, exported.digest)
 
 
+def stored(loaded: Loaded) -> float:
+    """The grain calibration `calibrate` measured for exactly these weights."""
+    if loaded.plan.get("grain_weights_sha256") != loaded.digest:
+        raise SystemExit("these weights have no grain calibration of their own: run `calibrate` on them")
+    return loaded.plan["grain_calibration"]
+
+
 def upscaled(net: Upscaler, mosaic: torch.Tensor) -> torch.Tensor:
     """(B, 1, H, W) RGGB mosaics to (B, 1, 2H, 2W)."""
     return unpack(unstabilise(net(stabilise(pack(mosaic)))))

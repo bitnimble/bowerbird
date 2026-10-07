@@ -63,8 +63,19 @@ fn main() {
         sigma.composed
     );
 
+    let defringe = match opened.measured.defringe {
+        // `Done` means the open's own frame; these mosaics are demosaiced afresh, fringes and all.
+        rawshim::base::Defringe::Done(pair) => rawshim::base::Defringe::Take(pair),
+        other => other,
+    };
+
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     let bytes = std::fs::read(mosaics).expect("the mosaics");
+    assert!(
+        width * height > 0 && bytes.len() % (width * height * 4) == 0,
+        "{} bytes is no stack of {width} x {height} f32 mosaics",
+        bytes.len()
+    );
     let samples: Vec<f32> = bytes
         .chunks_exact(4)
         .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
@@ -85,7 +96,7 @@ fn main() {
                 rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
                 rawshim::image::SharpenNoise::NONE,
                 &rawshim::fit::Lens::none(),
-                opened.measured.defringe,
+                defringe,
                 frame.noise,
                 frame.matrix,
             ))

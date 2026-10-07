@@ -11,6 +11,8 @@ from pathlib import Path
 
 POLL_SECONDS = 2.0
 COUNTED = ("Pss_Anon", "Pss_Shmem", "SwapPss")
+STOPPING = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+PR_SET_PDEATHSIG = 1
 
 
 def main() -> None:
@@ -21,8 +23,8 @@ def main() -> None:
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     limit = args.max_gb * 2**30
 
-    child = subprocess.Popen(command, preexec_fn=lambda: die_with_parent(0))
-    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    child = subprocess.Popen(command, start_new_session=True, preexec_fn=lambda: die_with_parent(0))
+    for number in STOPPING:
         signal.signal(number, lambda number, _: child.send_signal(number))
     peak = 0
     while child.poll() is None:
@@ -31,11 +33,7 @@ def main() -> None:
         peak = max(peak, used)
         if used > limit:
             print(f"capped: {used / 2**30:.2f} GiB is over {args.max_gb:g} GiB, killing", file=sys.stderr, flush=True)
-            for pid in tree:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            os.killpg(child.pid, signal.SIGKILL)
             child.wait()
             sys.exit(137)
         time.sleep(POLL_SECONDS)
@@ -46,7 +44,7 @@ def main() -> None:
 def die_with_parent(_worker_id: int) -> None:
     """A `worker_init_fn` or `preexec_fn`: SIGKILL this process when its parent dies."""
     if sys.platform == "linux":
-        ctypes.CDLL("libc.so.6").prctl(1, signal.SIGKILL)  # PR_SET_PDEATHSIG
+        ctypes.CDLL("libc.so.6").prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
 
 
 def descendants(root: int) -> list[int]:

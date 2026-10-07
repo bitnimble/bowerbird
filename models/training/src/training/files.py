@@ -9,6 +9,8 @@ def write_atomic(path: Path, write: Callable[[BinaryIO], object]) -> None:
     try:
         with temporary.open("wb") as f:
             write(f)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
