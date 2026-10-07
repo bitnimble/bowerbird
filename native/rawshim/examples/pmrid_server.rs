@@ -22,6 +22,7 @@
 
 use std::io::{BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rawshim::galosh::{Denoiser, Detail, NoiseFit};
 
@@ -50,19 +51,36 @@ enum Failed {
 
 const DETAIL: Detail = Detail::AUTO.using(Denoiser::Pmrid);
 
+static PANICKED_IN_DECODER: AtomicBool = AtomicBool::new(false);
+
 fn main() {
     let gpu = rawshim::gpu::device().expect("an adapter");
     let kernels = rawshim::galosh::device(gpu).expect("the GALOSH kernels built");
     let network = rawshim::pmrid::device(gpu).expect("the network built");
+    // A panic in rawler is the file's fault (it panics on corrupt files under overflow checks);
+    // one anywhere else, such as the GPU running out of memory, is worth retrying.
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if info
+            .location()
+            .is_some_and(|at| at.file().contains("rawler"))
+        {
+            PANICKED_IN_DECODER.store(true, Ordering::Relaxed);
+        }
+        report(info);
+    }));
     let mut stdout = std::io::stdout().lock();
     for line in std::io::stdin().lock().lines() {
         let line = line.expect("stdin");
+        PANICKED_IN_DECODER.store(false, Ordering::Relaxed);
         let reply = match serde_json::from_str::<Request>(&line) {
-            // rawler panics on some corrupt files under overflow checks.
             Ok(Request::Open { open, out }) => catch_unwind(AssertUnwindSafe(|| {
                 opened(gpu, kernels, network, &open, &out)
             }))
-            .unwrap_or_else(|_| Err(Failed::Unreadable(format!("decoding {open} panicked")))),
+            .unwrap_or_else(|_| match PANICKED_IN_DECODER.load(Ordering::Relaxed) {
+                true => Err(Failed::Unreadable(format!("decoding {open} panicked"))),
+                false => Err(Failed::Error(format!("opening {open} panicked"))),
+            }),
             Ok(Request::Denoise {
                 denoise,
                 out,

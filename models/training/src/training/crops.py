@@ -63,7 +63,11 @@ def prepare_one(job: tuple[Path, Path]) -> str:
     name = key(path)
     record: dict[str, object] = {"source": str(path), "crops": 0}
     try:
-        opened = pmrid().open(path)
+        try:
+            opened = pmrid().open(path)
+        except RuntimeError:
+            # Usually the GPU out of memory while other workers held large frames.
+            opened = pmrid().open(path)
     except Unreadable as error:
         record["skipped"] = str(error)
     else:
