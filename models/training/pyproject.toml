@@ -1,0 +1,19 @@
+[project]
+name = "training"
+version = "0.1.0"
+description = "What every model trained on the RAW library shares"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=2",
+  "rawpy>=0.24",
+  # 2.12 dropped cu128 wheels.
+  "torch>=2.9,<2.12",
+]
+
+[project.scripts]
+capped = "training.capped:main"
+filelist = "training.filelist:main"
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"

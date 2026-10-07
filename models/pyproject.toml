@@ -1,0 +1,12 @@
+[tool.uv.workspace]
+members = ["training", "upscaler"]
+
+# The wheel's CUDA major must be one the host driver runs: 570 drivers stop at CUDA 12.8.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+training = { workspace = true }
