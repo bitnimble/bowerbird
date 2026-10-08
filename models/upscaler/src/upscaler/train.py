@@ -32,6 +32,7 @@ def main() -> None:
     parser.add_argument("--texture", type=float, default=0, help="weight of the amplitude spectrum loss")
     parser.add_argument("--edges", type=float, default=0, help="weight of the edge loss")
     parser.add_argument("--targets", choices=TARGETS, default="plain")
+    parser.set_defaults(batch=8)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     say = logger(args.out / "train.log")

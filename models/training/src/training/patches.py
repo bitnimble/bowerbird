@@ -1,7 +1,7 @@
 """Training pairs as record-sized patches: each model's inputs and targets made once from the cached
 crops, and both stored as 3 x 3 overlapping patches half a patch apart, each target a 128KB ZFS
-record, so a training sample costs 1 disk read of its target and 1 of its input. A coarser grid
-would leave photosites a network never sees with their full context.
+record. A sample is a whole crop, its 4 corner patches: a network sees each photosite with its
+full context only away from a sample's edges, which a quarter of a crop mostly isn't.
 
 Each kind of input and of target sits beside the crops under its own name, shared by every model
 that trains on it."""
@@ -27,7 +27,7 @@ PATCH = CROP // 2
 """Target side."""
 GRID = 3
 PLACES = GRID * GRID
-CENTRE = PLACES // 2
+CORNERS = (0, GRID - 1, PLACES - GRID, PLACES - 1)
 STRIDE = (CROP - PATCH) // (GRID - 1)
 HIGH_ISO = 1600
 
@@ -132,8 +132,8 @@ def complete(record_path: Path, crops: int, inputs: Inputs, targets: Targets) ->
 
 
 class PatchPairs(Dataset):
-    """(1, side, side) inputs and their (1, PATCH, PATCH) targets. Validation takes each crop's centre
-    patch and its first input, so it is the same every time.
+    """Whole crops, (1, 2 side, 2 side) inputs and their (1, CROP, CROP) targets, put together from the
+    4 corner patches. Validation takes each crop's first input, so it is the same every time.
 
     Never flipped: restoring RGGB after a flip needs an odd shift on each side, and an odd shift of
     an input at half scale is an even shift of its target, so the pair would no longer line up."""
@@ -163,15 +163,21 @@ class PatchPairs(Dataset):
         targets_path, inputs_path, crop = self.items[index]
         variants, side = self.inputs.variants, self.inputs.side
         if self.validation:
-            place, variant, transpose = CENTRE, 0, False
+            variant, transpose = 0, False
         else:
-            place, variant, transpose = (int(torch.randint(n, ())) for n in (PLACES, variants, 2))
-        patch = crop * PLACES + place
-        target = read(targets_path, patch * PATCH * PATCH, PATCH * PATCH).reshape(PATCH, PATCH)
-        given = read(inputs_path, (patch * variants + variant) * side * side, side * side).reshape(side, side)
+            variant, transpose = (int(torch.randint(n, ())) for n in (variants, 2))
+        patches = [crop * PLACES + place for place in CORNERS]
+        target = tiled([read(targets_path, patch * PATCH * PATCH, PATCH * PATCH) for patch in patches], PATCH)
+        given = tiled([read(inputs_path, (patch * variants + variant) * side * side, side * side) for patch in patches], side)
         if transpose:
             given, target = given.T, target.T
         return torch.from_numpy(np.array(given, order="C"))[None], torch.from_numpy(np.array(target, order="C"))[None]
+
+
+def tiled(corners: list[np.ndarray], side: int) -> np.ndarray:
+    """Top-left, top-right, bottom-left and bottom-right patches of `side`, as one square twice that."""
+    top_left, top_right, bottom_left, bottom_right = (corner.reshape(side, side) for corner in corners)
+    return np.block([[top_left, top_right], [bottom_left, bottom_right]])
 
 
 def read(path: Path, first: int, count: int) -> np.ndarray:
