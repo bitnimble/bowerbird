@@ -65,9 +65,10 @@ class Pmrid:
             env={**os.environ, "CARGO_MANIFEST_DIR": str(REPOSITORY / "native" / "rawshim")},
         )
 
-    def open(self, path: Path) -> Opened:
-        """Raises `Unreadable` for a file the editor can't decode or whose CFA isn't Bayer."""
-        reply = self.ask({"open": str(path), "out": str(self.exchange)})
+    def open(self, path: Path, noisy: bool = False) -> Opened:
+        """Raises `Unreadable` for a file the editor can't decode or whose CFA isn't Bayer. A `noisy`
+        mosaic skips the denoise."""
+        reply = self.ask({"open": str(path), "out": str(self.exchange), "noisy": noisy})
         mosaic = take(self.exchange, reply["height"], reply["width"])
         red_y, red_x = divmod(reply["cfa"].index(0), 2)
         height, width = ((n - o) // 2 * 2 for n, o in zip(mosaic.shape, (red_y, red_x)))

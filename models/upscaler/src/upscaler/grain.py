@@ -1,7 +1,7 @@
 """Grain put back over an upscale: the network averages away noise and texture it can't predict, so its
 output is cleaner than the photo it came from. The grain follows the photo's own noise fit, at the
-strength of the noise its input still holds after the editor's denoise times the weights'
-calibration, which makes up for the noise the network carries through and the texture it smooths."""
+strength of the noise its input holds times the weights' calibration, which makes up for the noise
+the network carries through and the texture it smooths."""
 
 import torch
 import torch.nn.functional as F

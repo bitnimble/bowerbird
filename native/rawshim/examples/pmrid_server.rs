@@ -6,8 +6,9 @@
 //! little-endian `f32`, row-major, since a 61MP frame is a quarter of a gigabyte.
 //!
 //! ```text
-//! {"open": "<raw>", "out": "<file>"}
-//!   writes the picture area, conditioned, dust-removed and denoised, cropped to even sides
+//! {"open": "<raw>", "out": "<file>", "noisy": bool?}
+//!   writes the picture area, conditioned, dust-removed and, unless `noisy`, denoised, cropped to
+//!   even sides
 //!   -> {"width": w, "height": h, "cfa": [4 colours from its top-left], "gains": [r, g, b], "fit": NoiseFit|null}
 //! {"denoise": "<file>", "out": "<file>", "width": w, "height": h, "cfa": [..], "gains": [..], "fit": NoiseFit}
 //!   denoises each of the file's stacked w x h mosaics on its own
@@ -44,10 +45,17 @@ use rawshim::light::Light;
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum Request {
-    Open { open: String, out: String },
+    Open {
+        open: String,
+        out: String,
+        #[serde(default)]
+        noisy: bool,
+    },
     Denoise(Denoise),
     Sharpen(Sharpen),
-    Measure { measure: String },
+    Measure {
+        measure: String,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -122,8 +130,8 @@ fn main() {
     for line in std::io::stdin().lock().lines() {
         let line = line.expect("stdin");
         let reply = match serde_json::from_str::<Request>(&line) {
-            Ok(Request::Open { open, out }) => catch_unwind(AssertUnwindSafe(|| {
-                opened(gpu, kernels, network, &open, &out)
+            Ok(Request::Open { open, out, noisy }) => catch_unwind(AssertUnwindSafe(|| {
+                opened(gpu, kernels, network, &open, &out, noisy)
             }))
             .unwrap_or_else(|_| Err(Failed::Error(panicked(&format!("opening {open}"))))),
             Ok(Request::Denoise(request)) => {
@@ -170,6 +178,7 @@ fn opened(
     network: &rawshim::pmrid::Pmrid,
     path: &str,
     out: &str,
+    noisy: bool,
 ) -> Result<serde_json::Value, Failed> {
     let bytes = std::fs::read(path)
         .map_err(|why| Failed::Error(format!("could not read {path}: {why}")))?;
@@ -201,7 +210,7 @@ fn opened(
     pollster::block_on(rawshim::dust::run(gpu, &mosaic, &held.glass(), &dust));
     let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &mosaic, &cfa));
     let usable = fit.usable();
-    if usable {
+    if usable && !noisy {
         filter(gpu, network, &mut mosaic, &cfa, held.ceilings(), fit);
     }
     let picture = pollster::block_on(mosaic.window(gpu, left, top, width, height).read(gpu))

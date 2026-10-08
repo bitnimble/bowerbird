@@ -6,6 +6,9 @@ of `--weights`.
 answer to compare with. Input, bilinear, each of `--weights`, the original, then the original as
 each other kind of target the weights were trained on shows it.
 
+The weights take the mosaic undenoised, as they're trained to; the input, the original and bilinear
+are denoised by PMRID, as the editor's Fast shows them.
+
 Every panel is the editor's own demosaic and coding. Bilinear is sharpened as the editor does by
 default, each set of weights is grained and sharpened by its `look`, and the input and the original
 are unsharpened."""
@@ -39,13 +42,15 @@ def main() -> None:
     pmrid = serve(args.out / ".scratch")
     opened = pmrid.open(args.raw)
     mosaic = torch.from_numpy(opened.mosaic)[None, None]
+    noisy_mosaic = torch.from_numpy(pmrid.open(args.raw, noisy=True).mosaic)[None, None]
     height, width = opened.mosaic.shape
     size = args.size
     if min(height, width) < size + 2 * MARGIN:
         raise SystemExit(f"{args.raw} is {width}x{height}, too small for --size {size}")
     y, x = args.at or ((height - size) // 2, (width - size) // 2)
     y, x = (min(max(v // 4 * 4, MARGIN), limit - size - MARGIN) // 4 * 4 for v, limit in ((y, height), (x, width)))
-    region = mosaic[..., y - MARGIN : y + size + MARGIN, x - MARGIN : x + size + MARGIN]
+    window = (..., slice(y - MARGIN, y + size + MARGIN), slice(x - MARGIN, x + size + MARGIN))
+    region, noisy_region = mosaic[window], noisy_mosaic[window]
     inside = (..., slice(MARGIN, MARGIN + size), slice(MARGIN, MARGIN + size))
     print(f"{height}x{width} mosaic, {size}x{size} at {y},{x}, ISO fit {'yes' if opened.fit else 'none'}")
 
@@ -62,8 +67,8 @@ def main() -> None:
         ]
         for _, net, seen, _ in models:
             torch.manual_seed(1)
-            high = upscaled(net, region.to(device)).cpu()
-            native.append(shown(grained(region, high, gains, opened.fit, seen.grain), record, seen.sharpen, 2)[doubled])
+            high = upscaled(net, noisy_region.to(device)).cpu()
+            native.append(shown(grained(noisy_region, high, gains, opened.fit, seen.grain), record, seen.sharpen, 2)[doubled])
         write_png(args.out / "native.png", panels(native, scale))
         print(f"wrote {args.out / 'native.png'}")
         if opened.fit is None:
@@ -82,10 +87,10 @@ def main() -> None:
         shown_small = from_rec2020(editor_light(small[:, 0].numpy(), record).plain)[half]
         synthetic = [F.interpolate(shown_small, scale_factor=2, mode="nearest"), shown(classical, record)[inside]]
         for weights, net, seen, kind in models:
-            ours = upscaled(net, small.to(device)).cpu()
+            ours = upscaled(net, noisy.to(device)).cpu()
             print(f"synthetic {weights} against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(ours))[half], targets[kind])):.2f} dB")
             torch.manual_seed(1)
-            synthetic.append(shown(grained(small, ours, gains, opened.fit, seen.grain), record, seen.sharpen)[inside])
+            synthetic.append(shown(grained(noisy, ours, gains, opened.fit, seen.grain), record, seen.sharpen)[inside])
         synthetic += [original] + ([from_rec2020(chain.sharpened)[inside]] if "sharpened" in kinds else [])
         write_png(args.out / "synthetic.png", panels(synthetic, scale))
     print(f"wrote {args.out / 'synthetic.png'}")
