@@ -1,5 +1,6 @@
-"""Each cached crop's low-resolution inputs: recorded by a sensor of twice the pitch, given the
-photo's own noise and blur, and left noisy, since the upscaler denoises as it upscales."""
+"""Each cached crop's low-resolution inputs: recorded by a noiseless sensor of twice the pitch, with
+the photo's own blur. Training adds the photo's own noise to each batch afresh, and leaves it, since
+the upscaler denoises as it upscales."""
 
 from pathlib import Path
 
@@ -8,18 +9,17 @@ import torch
 
 from training.patches import Inputs
 from training.targets import measured
-from upscaler.degrade import low
+from upscaler.degrade import recorded
 
 VARIANTS = 2
 
 
-def low_inputs(crops: np.ndarray, record: dict) -> np.ndarray:
-    gains = torch.from_numpy(np.asarray(record["gains"], np.float32))
+def recorded_inputs(crops: np.ndarray, record: dict) -> np.ndarray:
     capture_blur = measured(Path(record["source"]))["capture_blur"]
     mosaics = torch.from_numpy(crops.astype(np.float32))[:, None]
     with torch.no_grad():
-        variants = [low(mosaics, gains, record["fit"], capture_blur)[:, 0].numpy() for _ in range(VARIANTS)]
+        variants = [recorded(mosaics, capture_blur)[:, 0].numpy() for _ in range(VARIANTS)]
     return np.stack(variants, 1)
 
 
-INPUTS = Inputs("upscaler-joint", VARIANTS, 2, low_inputs)
+INPUTS = Inputs("upscaler-recorded", VARIANTS, 2, recorded_inputs)

@@ -89,22 +89,33 @@ def demosaic(mosaic: torch.Tensor) -> torch.Tensor:
     return F.pixel_shuffle(torch.cat(channels, 1), 2)
 
 
-def add_noise(mosaic: torch.Tensor, gains: torch.Tensor, alpha: float, sigma_sq: float) -> torch.Tensor:
+Fit = float | torch.Tensor
+"""A noise fit's term: one for the whole batch, or (B,), one per mosaic."""
+
+
+def add_noise(mosaic: torch.Tensor, gains: torch.Tensor, alpha: Fit, sigma_sq: Fit) -> torch.Tensor:
     """The noise of the sensor GALOSH fitted, whose green reads variance `alpha * s + sigma_sq` in
-    conditioned units, added to (B, 1, H, W) mosaics conditioned with R, G, B `gains`. Draws from
-    the global RNG."""
+    conditioned units, added to (B, 1, H, W) mosaics conditioned with R, G, B `gains`, (3,) or
+    (B, 3). Draws from the global RNG."""
     raw = raw_planes(mosaic, gains)
     noise = torch.randn_like(raw) * noise_variance(raw, gains, alpha, sigma_sq).sqrt()
-    return unpack((raw + noise) * gains[[0, 1, 1, 2], None, None])
+    return unpack((raw + noise) * plane_gains(gains, raw))
 
 
 def raw_planes(mosaic: torch.Tensor, gains: torch.Tensor) -> torch.Tensor:
     """Packed planes with the conditioning's gains divided back out."""
-    return pack(mosaic) / gains[[0, 1, 1, 2], None, None]
+    planes = pack(mosaic)
+    return planes / plane_gains(gains, planes)
 
 
-def noise_variance(raw: torch.Tensor, gains: torch.Tensor, alpha: float, sigma_sq: float) -> torch.Tensor:
+def noise_variance(raw: torch.Tensor, gains: torch.Tensor, alpha: Fit, sigma_sq: Fit) -> torch.Tensor:
     """The fitted noise's variance at each of `raw_planes`' levels."""
-    green = float(gains[1])
+    green = plane_gains(gains, raw)[:, 1:2]
+    alpha, sigma_sq = (torch.as_tensor(term, dtype=raw.dtype, device=raw.device).reshape(-1, 1, 1, 1) for term in (alpha, sigma_sq))
     # A fit can read no read noise at all, which leaves black with none and a ratio over it infinite.
     return ((alpha / green) * raw.clamp(min=0) + sigma_sq / green**2).clamp(min=1e-12)
+
+
+def plane_gains(gains: torch.Tensor, planes: torch.Tensor) -> torch.Tensor:
+    """(3,) or (B, 3) R, G, B gains as (1 or B, 4, 1, 1), to scale `pack`'s planes by."""
+    return gains.to(planes).reshape(-1, 3)[:, [0, 1, 1, 2], None, None]

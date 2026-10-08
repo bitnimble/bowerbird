@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from training.metrics import detail, edge_loss, psnr, spectrum_loss
-from training.mosaic import STABILISER_FLOOR, bilinear, pack, pack_rgb, stabilise
+from training.mosaic import STABILISER_FLOOR, add_noise, bilinear, pack, pack_rgb, stabilise
 from training.patches import PatchPairs, datasets
 from training.runtime import Forward, arguments, cuda, loader, logger, predictions, stop_on_signals, train
 from training.targets import TARGETS
@@ -45,8 +45,10 @@ def main() -> None:
     say(f"{len(train_set)} training crops, validation crops: {sizes}, bf16={bf16}")
     validations = {name: validation_set(pairs, device) for name, pairs in validation_sets.items() if len(pairs)}
 
-    def objective(forward: Forward, given: torch.Tensor, wanted: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        batch = planes(given, wanted)
+    def objective(
+        forward: Forward, given: torch.Tensor, wanted: torch.Tensor, sensors: torch.Tensor
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        batch = planes(noisy(given.float(), sensors), wanted)
         predicted = forward(batch.low)
         terms = {"loss": F.l1_loss(predicted, batch.high)}
         if args.texture:
@@ -85,6 +87,12 @@ def planes(low: torch.Tensor, high: torch.Tensor) -> Planes:
     return Planes(low=stabilise(pack(low.float())), high=stabilise(pack(high.float())))
 
 
+def noisy(recorded: torch.Tensor, sensors: torch.Tensor) -> torch.Tensor:
+    """Each of the (B, 1, h, w) `recorded` mosaics with fresh noise of its photo's sensor, a row of
+    the (B, 5) `sensors` as `patches.sensor` lays it out."""
+    return add_noise(recorded, sensors[:, :3], sensors[:, 3], sensors[:, 4])
+
+
 class Validation(NamedTuple):
     planes: Planes
     bilinear: float
@@ -95,8 +103,10 @@ class Validation(NamedTuple):
 
 def validation_set(pairs: PatchPairs, device: torch.device) -> Validation:
     chosen = np.linspace(0, len(pairs) - 1, min(VALIDATION_CROPS, len(pairs))).astype(int)
-    lows, highs = zip(*(pairs[int(i)] for i in chosen))
-    low, high = torch.stack(lows).to(device).float(), torch.stack(highs).to(device)
+    recorded, high, sensors = (torch.stack(batch).to(device) for batch in zip(*(pairs[int(i)] for i in chosen)))
+    with torch.random.fork_rng(devices=[device]):
+        torch.manual_seed(0)
+        low = noisy(recorded.float(), sensors)
     batch = planes(low, high)
     classical = psnr(F.mse_loss(stabilise(pack_rgb(bilinear(low))), batch.high))
     return Validation(batch, classical, detail(batch.high, INPUT_NYQUIST))

@@ -133,7 +133,8 @@ def complete(record_path: Path, crops: int, inputs: Inputs, targets: Targets) ->
 
 class PatchPairs(Dataset):
     """Whole crops, (1, 2 side, 2 side) inputs and their (1, CROP, CROP) targets, put together from the
-    4 corner patches. Validation takes each crop's first input, so it is the same every time.
+    4 corner patches, and the photo's `sensor`. Validation takes each crop's first input, so it is
+    the same every time.
 
     Never flipped: restoring RGGB after a flip needs an odd shift on each side, and an odd shift of
     an input at half scale is an even shift of its target, so the pair would no longer line up."""
@@ -150,7 +151,7 @@ class PatchPairs(Dataset):
         self.validation = validation
         self.inputs = inputs
         self.items = [
-            (targets.path(path), inputs.path(path), crop)
+            (targets.path(path), inputs.path(path), crop, sensor(record))
             for path, record in records(cache, raws, validation)
             if keep(record["source"]) and complete(path, record["crops"], inputs, targets)
             for crop in range(record["crops"])
@@ -159,8 +160,8 @@ class PatchPairs(Dataset):
     def __len__(self) -> int:
         return len(self.items)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        targets_path, inputs_path, crop = self.items[index]
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        targets_path, inputs_path, crop, of_sensor = self.items[index]
         variants, side = self.inputs.variants, self.inputs.side
         if self.validation:
             variant, transpose = 0, False
@@ -171,7 +172,16 @@ class PatchPairs(Dataset):
         given = tiled([read(inputs_path, (patch * variants + variant) * side * side, side * side) for patch in patches], side)
         if transpose:
             given, target = given.T, target.T
-        return torch.from_numpy(np.array(given, order="C"))[None], torch.from_numpy(np.array(target, order="C"))[None]
+        return (
+            torch.from_numpy(np.array(given, order="C"))[None],
+            torch.from_numpy(np.array(target, order="C"))[None],
+            torch.tensor(of_sensor),
+        )
+
+
+def sensor(record: dict) -> tuple[float, ...]:
+    """R, G, B gains, then the noise fit's `alpha` and `sigmaSq`."""
+    return (*record["gains"], record["fit"]["alpha"], record["fit"]["sigmaSq"])
 
 
 def tiled(corners: list[np.ndarray], side: int) -> np.ndarray:

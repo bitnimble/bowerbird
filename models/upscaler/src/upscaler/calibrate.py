@@ -6,22 +6,20 @@ detail the upscale missed, which grain can't stand in for."""
 import argparse
 import json
 import math
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from training.crops import DEFAULT_CACHE, sources
+from training.crops import DEFAULT_CACHE, records, sources
 from training.files import write_atomic
 from training.mosaic import add_noise, stabilise
-from training.patches import PatchPairs
 from training.pmrid import serve
-from training.targets import PLAIN, editor_light
+from training.targets import PLAIN, editor_light, measured
+from upscaler.degrade import low
 from upscaler.grain import estimate
 from upscaler.model import load, upscaled
-from upscaler.pairs import INPUTS
 
 CPU_THREADS = 2
 FLAT_SHARE = 0.25
@@ -38,19 +36,16 @@ def main() -> None:
     loaded = load(args.weights)
     net = loaded.net.cuda().eval()
     serve(args.cache / ".scratch")
-    pairs = PatchPairs(args.cache, sources(args.data), True, INPUTS, PLAIN)
-    by_photo: dict[Path, list[int]] = defaultdict(list)
-    for index, (targets_path, _, _) in enumerate(pairs.items):
-        by_photo[targets_path].append(index)
 
     # Weights trained toward the editor's sharpen already carry it, so the editor shows them unsharpened.
     sharpened_by_editor = loaded.plan["targets"] == PLAIN.name
     ratios = []
-    for targets_path, indices in by_photo.items():
-        record = json.loads(targets_path.with_suffix(".json").read_text())
+    for record_path, record in records(args.cache, sources(args.data), True):
         gains, fit = torch.tensor(record["gains"]), record["fit"]
-        small, original = (torch.stack(batch).float() for batch in zip(*(pairs[index] for index in indices)))
+        original = torch.from_numpy(np.load(record_path.with_suffix(".npy")).astype(np.float32))[:, None]
+        torch.manual_seed(0)
         with torch.no_grad():
+            small = low(original, gains, fit, measured(Path(record["source"]))["capture_blur"])
             ours = upscaled(net, small.cuda()).cpu()
         torch.manual_seed(0)
         unit_grain = add_noise(ours, gains, fit["alpha"], fit["sigmaSq"])

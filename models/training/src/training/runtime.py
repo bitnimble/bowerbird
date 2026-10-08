@@ -1,6 +1,7 @@
 """The GPU, arguments, data loading, training loop and checkpoints every trainer here shares."""
 
 import argparse
+import copy
 import math
 import os
 import signal
@@ -17,6 +18,7 @@ from training.export import export
 from training.files import write_atomic
 
 GRAD_CLIP = 1.0
+AVERAGE_DECAY = 0.999
 LOG_EVERY = 100
 VALIDATION_EVERY = 2000
 VALIDATION_CHUNK = 8
@@ -93,7 +95,7 @@ def loader(dataset: Dataset, batch: int, workers: int) -> DataLoader:
 def train(
     net: torch.nn.Module,
     batches: DataLoader,
-    objective: Callable[[Forward, torch.Tensor, torch.Tensor], tuple[torch.Tensor, dict[str, torch.Tensor]]],
+    objective: Callable[..., tuple[torch.Tensor, dict[str, torch.Tensor]]],
     validate: Callable[[Forward, int], None],
     *,
     steps: int,
@@ -104,37 +106,45 @@ def train(
     out: Path,
     say: Callable[[str], None],
 ) -> None:
-    """Trains `net`, on the GPU, for `steps`, resuming from `out` and exporting `plan` and the weights
-    there at each validation and on a stopping signal. `objective` gives the loss to step on and the
-    terms to log, from batches of (input, target); `settings` must be the same to resume."""
+    """Trains `net`, on the GPU, for `steps`, resuming from `out` and exporting `plan` and the
+    weights' moving average there at each validation and on a stopping signal. `objective` gives the
+    loss to step on and the terms to log, from the tensors of a batch; `validate` sees the average.
+    `settings` must be the same to resume."""
     device = next(net.parameters()).device
     model = torch.compile(net, mode="reduce-overhead")
+    average = copy.deepcopy(net).requires_grad_(False)
     optimiser = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.99), fused=True)
     schedule = torch.optim.lr_scheduler.LambdaLR(optimiser, warmup_cosine(steps))
     resume = out / "resume.pt"
-    step = load_resume(resume, net, optimiser, schedule, settings)
+    step = load_resume(resume, net, average, optimiser, schedule, settings)
     if step:
         say(f"resumed at step {step}")
+    trained, averaged = list(net.parameters()), list(average.parameters())
 
     def forward(given: torch.Tensor) -> torch.Tensor:
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
             return model(given.contiguous(memory_format=torch.channels_last)).float()
 
+    def forward_averaged(given: torch.Tensor) -> torch.Tensor:
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16):
+            return average(given.contiguous(memory_format=torch.channels_last)).float()
+
     def save() -> None:
-        save_resume(resume, net, optimiser, schedule, step, settings)
-        export(net, plan, out)
+        save_resume(resume, net, average, optimiser, schedule, step, settings)
+        export(average, plan, out)
 
     started, terms = time.monotonic(), []
     skipped = torch.zeros((), dtype=torch.int64, device=device)
     try:
         while step < steps:
-            for given, wanted in batches:
+            for batch in batches:
                 torch.compiler.cudagraph_mark_step_begin()
-                loss, logged = objective(forward, given.to(device, non_blocking=True), wanted.to(device, non_blocking=True))
+                loss, logged = objective(forward, *(tensor.to(device, non_blocking=True) for tensor in batch))
                 optimiser.zero_grad(set_to_none=True)
                 loss.backward()
-                skipped_now = step_unless_nonfinite(optimiser, net.parameters(), GRAD_CLIP)
+                skipped_now = step_unless_nonfinite(optimiser, trained, GRAD_CLIP)
                 skipped += skipped_now
+                torch._foreach_lerp_(averaged, trained, 1 - AVERAGE_DECAY)
                 step += 1
                 schedule.step()
                 terms.append(torch.where(skipped_now, torch.nan, torch.stack([t.detach() for t in logged.values()])))
@@ -146,7 +156,7 @@ def train(
                     say(f"step {step} {shown} lr {schedule.get_last_lr()[0]:.2e} {rate:.1f} it/s skipped {skipped.item()}")
                     started, terms = time.monotonic(), []
                 if step % VALIDATION_EVERY == 0 or step == steps:
-                    validate(forward, step)
+                    validate(forward_averaged, step)
                     save()
                     started, terms = time.monotonic(), []
                 if step >= steps:
@@ -191,6 +201,7 @@ def step_unless_nonfinite(
 def save_resume(
     path: Path,
     net: torch.nn.Module,
+    average: torch.nn.Module,
     optimiser: torch.optim.Optimizer,
     schedule: torch.optim.lr_scheduler.LRScheduler,
     step: int,
@@ -198,6 +209,7 @@ def save_resume(
 ) -> None:
     state = {
         "net": net.state_dict(),
+        "average": average.state_dict(),
         "optimiser": optimiser.state_dict(),
         "schedule": schedule.state_dict(),
         "step": step,
@@ -209,6 +221,7 @@ def save_resume(
 def load_resume(
     path: Path,
     net: torch.nn.Module,
+    average: torch.nn.Module,
     optimiser: torch.optim.Optimizer,
     schedule: torch.optim.lr_scheduler.LRScheduler,
     settings: dict[str, object],
@@ -223,6 +236,7 @@ def load_resume(
     if changed:
         raise SystemExit(f"{path} was saved with " + ", ".join(f"{name} {saved.get(name)}" for name in changed))
     net.load_state_dict(state["net"])
+    average.load_state_dict(state["average"])
     optimiser.load_state_dict(state["optimiser"])
     schedule.load_state_dict(state["schedule"])
     return state["step"]

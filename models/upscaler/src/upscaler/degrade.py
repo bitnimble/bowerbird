@@ -11,12 +11,16 @@ MIN_ADDED_BLUR = 0.3
 
 
 def low(mosaic: torch.Tensor, gains: torch.Tensor, fit: dict, capture_blur: float | None) -> torch.Tensor:
-    """(B, 1, H, W) RGGB mosaics of one photo to what a sensor of twice the pitch would record of the
-    same scenes, (B, 1, H/2, W/2), with the photo's own noise and, in its own pixels, the photo's
-    `capture_blur` (sigma in sensor pixels, as the editor measures it; None for a typical lens)."""
+    """`recorded`, with the photo's own noise."""
+    return add_noise(recorded(mosaic, capture_blur), gains, fit["alpha"], fit["sigmaSq"])
+
+
+def recorded(mosaic: torch.Tensor, capture_blur: float | None) -> torch.Tensor:
+    """(B, 1, H, W) RGGB mosaics of one photo to what a noiseless sensor of twice the pitch would
+    record of the same scenes, (B, 1, H/2, W/2), with, in its own pixels, the photo's `capture_blur`
+    (sigma in sensor pixels, as the editor measures it; None for a typical lens)."""
     scene = blur(demosaic(mosaic), added_blur(capture_blur))
-    recorded = unpack(pack_rgb(F.avg_pool2d(scene, 2)))
-    return add_noise(recorded, gains, fit["alpha"], fit["sigmaSq"])
+    return unpack(pack_rgb(F.avg_pool2d(scene, 2)))
 
 
 def added_blur(capture_blur: float | None) -> float:
