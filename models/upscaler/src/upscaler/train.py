@@ -30,7 +30,7 @@ from training.runtime import (
     train,
 )
 from training.targets import TARGETS
-from upscaler.model import Upscaler
+from upscaler.model import build
 from upscaler.pairs import INPUTS
 
 VALIDATION_CROPS = 64
@@ -52,7 +52,8 @@ class Planes(NamedTuple):
 def main() -> None:
     parser = arguments("Train the 2x RAW mosaic upscaler.")
     parser.add_argument("--channels", type=int, default=48)
-    parser.add_argument("--blocks", type=int, default=16)
+    parser.add_argument("--blocks", type=int, default=16, help="the plain body's; the multiscale body's are fixed")
+    parser.add_argument("--arch", choices=("plain", "multiscale"), default="plain")
     parser.add_argument("--texture", type=float, default=0, help="weight of the amplitude spectrum loss")
     parser.add_argument("--edges", type=float, default=0, help="weight of the edge loss")
     parser.add_argument("--targets", choices=TARGETS, default="plain")
@@ -90,8 +91,10 @@ def main() -> None:
                 f" detail {share:.0%} of the target's"
             )
 
+    plan = {"channels": args.channels, "stabiliser": FIT_STABILISER, "targets": args.targets}
+    plan |= {"arch": "multiscale"} if args.arch == "multiscale" else {"blocks": args.blocks}
     train(
-        Upscaler(args.channels, args.blocks).to(device, memory_format=torch.channels_last),
+        build(plan).to(device, memory_format=torch.channels_last),
         loader(train_set, args.batch, args.workers),
         objective,
         validate,
@@ -99,9 +102,10 @@ def main() -> None:
         lr=args.lr,
         bf16=bf16,
         settings={
-            name: getattr(args, name) for name in ("steps", "batch", "channels", "blocks", "lr", "texture", "edges", "targets")
+            name: getattr(args, name)
+            for name in ("steps", "batch", "channels", "blocks", "arch", "lr", "texture", "edges", "targets")
         },
-        plan={"channels": args.channels, "blocks": args.blocks, "stabiliser": FIT_STABILISER, "targets": args.targets},
+        plan=plan,
         out=args.out,
         say=say,
     )

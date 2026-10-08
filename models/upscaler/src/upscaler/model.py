@@ -20,6 +20,8 @@ from training.mosaic import (
 
 
 PRELU_INITIAL_SLOPE = 0.25
+MULTISCALE_ENCODER_BLOCKS = (2, 3, 4)
+MULTISCALE_DECODER_BLOCKS = (2, 2)
 
 
 class Upscaler(nn.Module):
@@ -27,26 +29,73 @@ class Upscaler(nn.Module):
 
     def __init__(self, channels: int, blocks: int) -> None:
         super().__init__()
-        layers: list[nn.Module] = [nn.Conv2d(4, channels, 3, padding=1), nn.PReLU(channels, PRELU_INITIAL_SLOPE)]
-        for _ in range(blocks):
-            layers += [nn.Conv2d(channels, channels, 3, padding=1), nn.PReLU(channels, PRELU_INITIAL_SLOPE)]
-        layers.append(nn.Conv2d(channels, 4 * 4, 3, padding=1))
-        self.body = nn.Sequential(*layers)
-        convs = [layer for layer in layers if isinstance(layer, nn.Conv2d)]
-        # Torch's default init shrinks the signal about 5.6x a layer under PReLU's 0.25: past 16 layers
-        # the body's output and gradient vanish and it never leaves the residual.
-        for conv in convs[:-1]:
-            nn.init.kaiming_normal_(conv.weight, a=PRELU_INITIAL_SLOPE, nonlinearity="leaky_relu")
-            nn.init.zeros_(conv.bias)
-        nn.init.zeros_(convs[-1].weight)
-        nn.init.zeros_(convs[-1].bias)
+        self.body = nn.Sequential(*stage(4, channels, blocks), nn.Conv2d(channels, 4 * 4, 3, padding=1))
+        initialise(self, zeroed=[self.body[-1]])
 
     def forward(self, planes: torch.Tensor) -> torch.Tensor:
         return F.pixel_shuffle(self.body(planes), 2) + F.interpolate(planes, scale_factor=2, mode="nearest")
 
 
+class MultiScale(nn.Module):
+    """`Upscaler`'s mapping, through a body at full, half and quarter plane resolution, `channels` wide
+    at full and doubling at each halving; h and w must be multiples of 4."""
+
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        widths = [channels * 2**level for level in range(len(MULTISCALE_ENCODER_BLOCKS))]
+        self.encoders = nn.ModuleList(
+            nn.Sequential(*stage(given, width, blocks))
+            for given, width, blocks in zip([4, *widths[:-1]], widths, MULTISCALE_ENCODER_BLOCKS)
+        )
+        self.rises = nn.ModuleList(nn.Conv2d(widths[level + 1], widths[level], 1) for level in range(len(widths) - 1))
+        self.decoders = nn.ModuleList(
+            nn.Sequential(*stage(width, width, blocks - 1)) for width, blocks in zip(widths, MULTISCALE_DECODER_BLOCKS)
+        )
+        self.out = nn.Conv2d(channels, 4 * 4, 3, padding=1)
+        initialise(self, zeroed=[*self.rises, self.out])
+
+    def forward(self, planes: torch.Tensor) -> torch.Tensor:
+        levels = []
+        features = planes
+        for level, encoder in enumerate(self.encoders):
+            features = encoder(F.avg_pool2d(features, 2) if level else features)
+            levels.append(features)
+        for level in reversed(range(len(self.rises))):
+            risen = F.interpolate(self.rises[level](features), scale_factor=2, mode="bilinear", align_corners=False)
+            features = self.decoders[level](levels[level] + risen)
+        return F.pixel_shuffle(self.out(features), 2) + F.interpolate(planes, scale_factor=2, mode="nearest")
+
+
+def stage(given: int, width: int, blocks: int) -> list[nn.Module]:
+    """A conv from `given` channels to `width`, then `blocks` more at `width`, each under a PReLU."""
+    layers: list[nn.Module] = []
+    for channels in [given] + [width] * blocks:
+        layers += [nn.Conv2d(channels, width, 3, padding=1), nn.PReLU(width, PRELU_INITIAL_SLOPE)]
+    return layers
+
+
+def initialise(net: nn.Module, zeroed: list[nn.Conv2d]) -> None:
+    """Kaiming for PReLU on every conv but `zeroed`, which start at zero so the net starts as the
+    nearest-neighbour residual."""
+    for conv in net.modules():
+        if not isinstance(conv, nn.Conv2d):
+            continue
+        # Torch's default init shrinks the signal about 5.6x a layer under PReLU's 0.25: past 16 layers
+        # the body's output and gradient vanish and it never leaves the residual.
+        nn.init.kaiming_normal_(conv.weight, a=PRELU_INITIAL_SLOPE, nonlinearity="leaky_relu")
+        nn.init.zeros_(conv.bias)
+    for conv in zeroed:
+        nn.init.zeros_(conv.weight)
+
+
+def build(plan: dict) -> nn.Module:
+    if plan.get("arch") == "multiscale":
+        return MultiScale(plan["channels"])
+    return Upscaler(plan["channels"], plan["blocks"])
+
+
 class Loaded(NamedTuple):
-    net: Upscaler
+    net: nn.Module
     plan: dict
     """`weights.json` as exported, plus whatever `calibrate` added."""
     digest: str
@@ -61,7 +110,7 @@ def load(weights: Path) -> Loaded:
         raise SystemExit(f"{weights} was trained with a stabiliser floor of {plan['stabiliser_floor']}")
     if "stabiliser" in plan and plan["stabiliser"] != FIT_STABILISER:
         raise SystemExit(f"{weights} was trained with a stabiliser of {plan['stabiliser']}")
-    net = Upscaler(plan["channels"], plan["blocks"])
+    net = build(plan)
     net.load_state_dict(exported.state)
     return Loaded(net, plan, exported.digest)
 
@@ -95,6 +144,6 @@ def stabiliser(plan: dict, gains: torch.Tensor, fit: dict | None) -> Stabiliser:
     return fit_stabiliser(gains, fit["alpha"], fit["sigmaSq"])
 
 
-def upscaled(net: Upscaler, mosaic: torch.Tensor, under: Stabiliser) -> torch.Tensor:
+def upscaled(net: nn.Module, mosaic: torch.Tensor, under: Stabiliser) -> torch.Tensor:
     """(B, 1, H, W) RGGB mosaics to (B, 1, 2H, 2W)."""
     return unpack(unstabilised(net(stabilised(pack(mosaic), under)), under))
