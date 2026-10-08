@@ -308,7 +308,9 @@ pass it to Tauri as `--config`; manifests carry no separate version.
 **`bun run release` cuts one**: on a clean tree on `main` it writes the next patch version into
 `VERSION` - or the semver version it is given, or `0.0.0-<hash>` for a commit hash - commits it,
 and tags the commit `v<VERSION>`; `git push --follow-tags` then starts the workflow, which runs
-on a push to `main` that changes `VERSION`. GitHub restores caches from the current ref and
+on a push to `main` that changes `VERSION`. That push must carry the tag: a ruleset lets only
+the repository's admin create `v*` tags, so the workflow cannot make one and `plan` fails without
+it. GitHub restores caches from the current ref and
 `main`; distinct release tags cannot share entries they save. Running on `main` lets each
 release reuse caches saved by earlier releases.
 

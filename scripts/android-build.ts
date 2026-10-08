@@ -251,7 +251,6 @@ if (dist) {
   console.error(`[android-build] apk: ${apk}`);
 }
 
-/** Play refuses an app whose libraries a 16 KB page device cannot map. */
 function assertPageAligned(archive: string): void {
   const scratch = mkdtempSync(join(tmpdir(), 'bb-page-size-'));
   try {
@@ -260,18 +259,20 @@ function assertPageAligned(archive: string): void {
       path.endsWith('.so'),
     );
     for (const library of libraries) {
-      const headers = spawnSync(join(ndk.bin, 'llvm-readelf'), ['-lW', join(scratch, library)], {
+      const readelf = spawnSync(join(ndk.bin, 'llvm-readelf'), ['-lW', join(scratch, library)], {
         encoding: 'utf8',
-      }).stdout;
-      const smallest = Math.min(
-        ...headers
-          .split('\n')
-          .filter((line) => line.trim().startsWith('LOAD'))
-          .map((line) => Number(line.trim().split(/\s+/).at(-1))),
-      );
-      if (!(smallest >= ANDROID_PAGE_SIZE)) {
+      });
+      const aligns =
+        readelf.status === 0
+          ? readelf.stdout
+              .split('\n')
+              .filter((line) => line.trim().startsWith('LOAD'))
+              .map((line) => Number(line.trim().split(/\s+/).at(-1)))
+          : [];
+      if (aligns.length === 0 || aligns.some((align) => !(align >= ANDROID_PAGE_SIZE))) {
         console.error(
-          `[android-build] ${library} in ${archive} is aligned to ${smallest} bytes, not ${ANDROID_PAGE_SIZE}`,
+          `[android-build] ${library} in ${archive} has LOAD alignments [${aligns.join(', ')}], ` +
+            `not all ${ANDROID_PAGE_SIZE} or more${readelf.stderr ? `: ${readelf.stderr}` : ''}`,
         );
         process.exit(1);
       }

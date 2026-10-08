@@ -375,7 +375,7 @@ const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {
   );
 });
 
-const UpdateSettings = observer(function UpdateSettings(): JSX.Element | null {
+export const UpdateSettings = observer(function UpdateSettings(): JSX.Element | null {
   const store = useUpdatesStore();
   const { updates } = usePresenters();
   const status = store.status;

@@ -47,7 +47,12 @@ jobs:
           set -euo pipefail
           tag="v$(tr -d '[:space:]' < VERSION)"
           tagged=$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" | sort -k2 | tail -n1 | cut -f1)
-          if [ -n "$tagged" ] && [ "$tagged" != "$GITHUB_SHA" ]; then
+          # The `v*` tag ruleset refuses this workflow's token, so `publish` cannot make the tag itself.
+          if [ -z "$tagged" ]; then
+            echo "::error::$tag was not pushed: cut releases with \`bun run release\` and \`git push --follow-tags\`"
+            exit 1
+          fi
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
             echo "::error::$tag is on $tagged, not on the commit this push built ($GITHUB_SHA): push the release commit on its own"
             exit 1
           fi

@@ -1,4 +1,4 @@
-// Uploads a signed AAB to a Play track and rolls it out there, through one Play Developer API edit.
+// Uploads a signed AAB to a Play track through one Play Developer API edit.
 //
 //   PLAY_ACCESS_TOKEN=... bun run scripts/play-upload.ts <package> <aab> <track>
 import { argv, env } from 'node:process';
