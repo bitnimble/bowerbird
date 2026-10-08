@@ -1,7 +1,7 @@
-"""Training pairs as record-sized patches: each model's inputs and targets made once from the cached
-crops, and both stored as 3 x 3 overlapping patches half a patch apart, each target a 128KB ZFS
-record. A sample is a whole crop, its 4 corner patches: a network sees each photosite with its
-full context only away from a sample's edges, which a quarter of a crop mostly isn't.
+"""Training pairs as whole crops: each model's inputs and targets made once from the cached crops and
+stored crop after crop, so a sample costs 1 disk read of its target and 1 of its input. A sample is
+a whole crop because a network sees each photosite with its full context only away from a sample's
+edges.
 
 Each kind of input and of target sits beside the crops under its own name, shared by every model
 that trains on it."""
@@ -23,12 +23,6 @@ from training.files import write_atomic
 from training.pmrid import each_with_pmrid
 from training.targets import Targets
 
-PATCH = CROP // 2
-"""Target side."""
-GRID = 3
-PLACES = GRID * GRID
-CORNERS = (0, GRID - 1, PLACES - GRID, PLACES - 1)
-STRIDE = (CROP - PATCH) // (GRID - 1)
 HIGH_ISO = 1600
 
 
@@ -45,34 +39,30 @@ class Inputs:
     scale: int
     make: Callable[[np.ndarray, dict], np.ndarray]
 
-    def __post_init__(self) -> None:
-        if STRIDE % (2 * self.scale):
-            raise ValueError(f"patches {STRIDE} apart lose the RGGB phase at 1 / {self.scale} scale")
-
     @property
     def side(self) -> int:
-        return PATCH // self.scale
+        return CROP // self.scale
 
     def path(self, record_path: Path) -> Path:
-        """Raw `<f2` (crops, PLACES, variants, side, side)."""
-        return record_path.with_suffix(f".{self.name}-inputs")
+        """Raw `<f2` (crops, variants, side, side)."""
+        return record_path.with_suffix(f".{self.name}-input-crops")
 
 
 def datasets(
     data: Path, cache: Path, workers: int, inputs: Inputs, targets: Targets, batch: int
-) -> tuple["PatchPairs", dict[str, "PatchPairs"]]:
+) -> tuple["CropPairs", dict[str, "CropPairs"]]:
     """The training pairs of the RAW files `data` names, cached and made first where they aren't,
     and the held-out pairs by ISO."""
     raws = sources(data)
     prepare(raws, cache, workers)
     make_pairs(cache, raws, workers, inputs, targets)
-    train_set = PatchPairs(cache, raws, False, inputs, targets)
+    train_set = CropPairs(cache, raws, False, inputs, targets)
     if len(train_set) < batch:
         raise SystemExit(f"{len(train_set)} usable crops under {cache}, fewer than a batch")
     iso = isos(data)
     return train_set, {
-        f"ISO under {HIGH_ISO}": PatchPairs(cache, raws, True, inputs, targets, lambda s: iso.get(s, 0) < HIGH_ISO),
-        f"ISO {HIGH_ISO} and over": PatchPairs(cache, raws, True, inputs, targets, lambda s: iso.get(s, 0) >= HIGH_ISO),
+        f"ISO under {HIGH_ISO}": CropPairs(cache, raws, True, inputs, targets, lambda s: iso.get(s, 0) < HIGH_ISO),
+        f"ISO {HIGH_ISO} and over": CropPairs(cache, raws, True, inputs, targets, lambda s: iso.get(s, 0) >= HIGH_ISO),
     }
 
 
@@ -91,23 +81,18 @@ def make_one(record_path: Path, inputs: Inputs, targets: Targets) -> str:
     torch.set_num_threads(2)
     record = json.loads(record_path.read_text())
     crops = np.load(record_path.with_suffix(".npy"))
-    places = [(y, x) for y in range(0, CROP - PATCH + 1, STRIDE) for x in range(0, CROP - PATCH + 1, STRIDE)]
     if not complete_targets(record_path, record["crops"], targets):
         seed(record_path, targets.name)
         made = targets.make(crops, record)
         if made.shape != crops.shape:
             raise ValueError(f"{targets.name} made {made.shape} from {crops.shape}")
-        target_patches = np.stack([made[:, y : y + PATCH, x : x + PATCH] for y, x in places], 1)
-        write_atomic(targets.path(record_path), lambda f: f.write(target_patches.astype("<f2").tobytes()))
+        write_atomic(targets.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
     if not complete_inputs(record_path, record["crops"], inputs):
         seed(record_path, inputs.name)
         made = inputs.make(crops, record)
-        size = CROP // inputs.scale
-        if made.shape != (len(crops), inputs.variants, size, size):
+        if made.shape != (len(crops), inputs.variants, inputs.side, inputs.side):
             raise ValueError(f"{inputs.name} made {made.shape} from {crops.shape}")
-        side, scale = inputs.side, inputs.scale
-        input_patches = np.stack([made[:, :, y // scale : y // scale + side, x // scale : x // scale + side] for y, x in places], 1)
-        write_atomic(inputs.path(record_path), lambda f: f.write(input_patches.astype("<f2").tobytes()))
+        write_atomic(inputs.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
     return record_path.stem
 
 
@@ -119,22 +104,21 @@ def seed(record_path: Path, name: str) -> None:
 
 def complete_targets(record_path: Path, crops: int, targets: Targets) -> bool:
     path = targets.path(record_path)
-    return path.exists() and path.stat().st_size == crops * PLACES * PATCH * PATCH * 2
+    return path.exists() and path.stat().st_size == crops * CROP * CROP * 2
 
 
 def complete_inputs(record_path: Path, crops: int, inputs: Inputs) -> bool:
     path = inputs.path(record_path)
-    return path.exists() and path.stat().st_size == crops * PLACES * inputs.variants * inputs.side**2 * 2
+    return path.exists() and path.stat().st_size == crops * inputs.variants * inputs.side**2 * 2
 
 
 def complete(record_path: Path, crops: int, inputs: Inputs, targets: Targets) -> bool:
     return complete_inputs(record_path, crops, inputs) and complete_targets(record_path, crops, targets)
 
 
-class PatchPairs(Dataset):
-    """Whole crops, (1, 2 side, 2 side) inputs and their (1, CROP, CROP) targets, put together from the
-    4 corner patches, and the photo's `sensor`. Validation takes each crop's first input, so it is
-    the same every time.
+class CropPairs(Dataset):
+    """(1, side, side) inputs, their (1, CROP, CROP) targets, and the photo's `sensor`. Validation
+    takes each crop's first input, so it is the same every time.
 
     Never flipped: restoring RGGB after a flip needs an odd shift on each side, and an odd shift of
     an input at half scale is an even shift of its target, so the pair would no longer line up."""
@@ -167,9 +151,8 @@ class PatchPairs(Dataset):
             variant, transpose = 0, False
         else:
             variant, transpose = (int(torch.randint(n, ())) for n in (variants, 2))
-        patches = [crop * PLACES + place for place in CORNERS]
-        target = tiled([read(targets_path, patch * PATCH * PATCH, PATCH * PATCH) for patch in patches], PATCH)
-        given = tiled([read(inputs_path, (patch * variants + variant) * side * side, side * side) for patch in patches], side)
+        target = read(targets_path, crop * CROP * CROP, CROP * CROP).reshape(CROP, CROP)
+        given = read(inputs_path, (crop * variants + variant) * side * side, side * side).reshape(side, side)
         if transpose:
             given, target = given.T, target.T
         return (
@@ -182,12 +165,6 @@ class PatchPairs(Dataset):
 def sensor(record: dict) -> tuple[float, ...]:
     """R, G, B gains, then the noise fit's `alpha` and `sigmaSq`."""
     return (*record["gains"], record["fit"]["alpha"], record["fit"]["sigmaSq"])
-
-
-def tiled(corners: list[np.ndarray], side: int) -> np.ndarray:
-    """Top-left, top-right, bottom-left and bottom-right patches of `side`, as one square twice that."""
-    top_left, top_right, bottom_left, bottom_right = (corner.reshape(side, side) for corner in corners)
-    return np.block([[top_left, top_right], [bottom_left, bottom_right]])
 
 
 def read(path: Path, first: int, count: int) -> np.ndarray:

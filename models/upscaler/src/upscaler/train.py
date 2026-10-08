@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from training.metrics import detail, edge_loss, psnr, spectrum_loss
 from training.mosaic import STABILISER_FLOOR, add_noise, bilinear, pack, pack_rgb, stabilise
-from training.patches import PatchPairs, datasets
+from training.pairs import CropPairs, datasets
 from training.runtime import Forward, arguments, cuda, loader, logger, predictions, stop_on_signals, train
 from training.targets import TARGETS
 from upscaler.model import Upscaler
@@ -101,7 +101,7 @@ class Validation(NamedTuple):
     """The targets' `detail`."""
 
 
-def validation_set(pairs: PatchPairs, device: torch.device) -> Validation:
+def validation_set(pairs: CropPairs, device: torch.device) -> Validation:
     chosen = np.linspace(0, len(pairs) - 1, min(VALIDATION_CROPS, len(pairs))).astype(int)
     recorded, high, sensors = (torch.stack(batch).to(device) for batch in zip(*(pairs[int(i)] for i in chosen)))
     with torch.random.fork_rng(devices=[device]):

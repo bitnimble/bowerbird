@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from training.patches import Inputs
+from training.pairs import Inputs
 from training.targets import measured
 from upscaler.degrade import recorded
 
@@ -16,9 +16,9 @@ VARIANTS = 2
 
 def recorded_inputs(crops: np.ndarray, record: dict) -> np.ndarray:
     capture_blur = measured(Path(record["source"]))["capture_blur"]
-    mosaics = torch.from_numpy(crops.astype(np.float32))[:, None]
+    mosaics = torch.from_numpy(crops.astype(np.float32))[:, None].cuda()
     with torch.no_grad():
-        variants = [recorded(mosaics, capture_blur)[:, 0].numpy() for _ in range(VARIANTS)]
+        variants = [recorded(mosaics, capture_blur)[:, 0].cpu().numpy() for _ in range(VARIANTS)]
     return np.stack(variants, 1)
 
 

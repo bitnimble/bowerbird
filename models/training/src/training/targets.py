@@ -33,8 +33,8 @@ class Targets:
     make: Callable[[np.ndarray, dict], np.ndarray]
 
     def path(self, record_path: Path) -> Path:
-        """Raw `<f2` (crops, PLACES, PATCH, PATCH)."""
-        return record_path.with_suffix(f".{self.name}-targets")
+        """Raw `<f2` (crops, CROP, CROP)."""
+        return record_path.with_suffix(f".{self.name}-target-crops")
 
 
 def plain(crops: np.ndarray, record: dict) -> np.ndarray:
