@@ -12,7 +12,6 @@ from training.pmrid import pmrid
 
 MEASURABLE = 0.01
 MIN_MEASURABLE_SITES = 10_000
-MAX_SPREAD = 0.01
 UNFAITHFUL_SHARE = 0.1
 UNFAITHFUL_FLOOR = 2e-3
 SHARPEN_REACH = 8
@@ -58,13 +57,10 @@ def sharpened(crops: np.ndarray, record: dict) -> np.ndarray:
     measurable = unclipped & (crops > MEASURABLE)
     if measurable.sum() < MIN_MEASURABLE_SITES:
         raise ValueError(f"{measurable.sum()} sites bright enough to measure the chain by")
-    ratios = crops[measurable] / plain_sites[measurable]
-    scale = np.median(ratios)
-    spread = np.median(np.abs(ratios / scale - 1))
-    if not spread < MAX_SPREAD:
-        raise ValueError(f"the chain's plain light is {spread:.1e} off the crops")
+    scale = np.median(crops[measurable] / plain_sites[measurable])
     off = np.abs(crops - scale * plain_sites)
-    # Clipped photosites and light past the coding's peak have no faithful sharpen to carry over.
+    # Clipped photosites, light past the coding's peak and colours outside Rec.2020, which the chain
+    # clamps, have no faithful sharpen to carry over.
     unfaithful = ~unclipped | ((off > UNFAITHFUL_SHARE * crops + UNFAITHFUL_FLOOR) & (crops > 0))
     near = F.max_pool2d(torch.from_numpy(unfaithful).float()[:, None], 2 * SHARPEN_REACH + 1, 1, SHARPEN_REACH)
     kept = near[:, 0].numpy() == 0
