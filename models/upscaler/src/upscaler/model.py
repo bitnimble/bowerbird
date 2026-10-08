@@ -43,11 +43,24 @@ def load(weights: Path) -> Loaded:
     return Loaded(net, plan, exported.digest)
 
 
-def stored(loaded: Loaded) -> float:
-    """The grain calibration `calibrate` measured for exactly these weights."""
+class Look(NamedTuple):
+    grain: float
+    """Strength for `grain.grained`."""
+    sharpen: float | None
+    """The editor's sharpen over the upscale; None for its default."""
+
+
+LOOKS = {"plain": (1.0, None), "sharpened": (0.25, 0.25)}
+"""By the kind of target the weights trained toward, the share of their calibrated grain variance and
+the sharpen they're shown with, chosen by eye."""
+
+
+def look(loaded: Loaded) -> Look:
+    """How these weights' upscale is shown, from the grain calibration `calibrate` measured for them."""
     if loaded.plan.get("grain_weights_sha256") != loaded.digest:
         raise SystemExit("these weights have no grain calibration of their own: run `calibrate` on them")
-    return loaded.plan["grain_calibration"]
+    share, sharpen = LOOKS[loaded.plan["targets"]]
+    return Look(share * loaded.plan["grain_calibration"], sharpen)
 
 
 def upscaled(net: Upscaler, mosaic: torch.Tensor) -> torch.Tensor:

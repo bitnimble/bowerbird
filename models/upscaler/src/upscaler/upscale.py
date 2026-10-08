@@ -1,13 +1,14 @@
 """Part of a RAW upscaled by trained weights beside bilinear, as PNGs to look at.
 
 `native.png`: the photo's own mosaic at 2x, as the editor would use it. Original, bilinear, then each
-of `--weights` with grain.
+of `--weights`.
 `synthetic.png`: the same area made half size as in training, then upscaled back, so there is an
-answer to compare with. Input, bilinear, each of `--weights` with grain, the original, then the
-original as each other kind of target the weights were trained on shows it.
+answer to compare with. Input, bilinear, each of `--weights`, the original, then the original as
+each other kind of target the weights were trained on shows it.
 
-Every panel is the editor's own demosaic and coding of that mosaic, unsharpened unless it's the
-sharpened original."""
+Every panel is the editor's own demosaic and coding. Bilinear is sharpened as the editor does by
+default, each set of weights is grained and sharpened by its `look`, and the input and the original
+are unsharpened."""
 
 import argparse
 from pathlib import Path
@@ -22,7 +23,7 @@ from training.preview import from_rec2020, panels, write_png
 from training.targets import TARGETS, editor_light
 from upscaler.degrade import low
 from upscaler.grain import grained
-from upscaler.model import load, stored, upscaled
+from upscaler.model import load, look, upscaled
 
 MARGIN = 32
 
@@ -34,7 +35,7 @@ def main() -> None:
     models = []
     for weights in args.weights:
         loaded = load(weights)
-        models.append((weights, loaded.net.to(device).eval(), stored(loaded), loaded.plan["targets"]))
+        models.append((weights, loaded.net.to(device).eval(), look(loaded), loaded.plan["targets"]))
     pmrid = serve(args.out / ".scratch")
     opened = pmrid.open(args.raw)
     mosaic = torch.from_numpy(opened.mosaic)[None, None]
@@ -55,13 +56,11 @@ def main() -> None:
         chain = editor_light(region[:, 0].numpy(), record)
         original = from_rec2020(chain.plain)[inside]
         scale = 1 / float(original.amax(1).flatten().quantile(0.995))
-        larger = [unpack(pack_rgb(bilinear(region)))]
-        for _, net, calibration, _ in models:
+        native = [F.interpolate(original, scale_factor=2, mode="nearest"), shown(unpack(pack_rgb(bilinear(region))), record)[doubled]]
+        for _, net, seen, _ in models:
             torch.manual_seed(1)
             high = upscaled(net, region.to(device)).cpu()
-            larger.append(grained(region, high, gains, opened.fit, calibration))
-        larger_light = from_rec2020(editor_light(torch.cat(larger)[:, 0].numpy(), record).plain)[doubled]
-        native = [F.interpolate(original, scale_factor=2, mode="nearest"), *larger_light.split(1)]
+            native.append(shown(grained(region, high, gains, opened.fit, seen.grain), record, seen.sharpen)[doubled])
         write_png(args.out / "native.png", panels(native, scale))
         print(f"wrote {args.out / 'native.png'}")
         if opened.fit is None:
@@ -77,18 +76,21 @@ def main() -> None:
         classical = unpack(pack_rgb(bilinear(small)))
         for kind, target in targets.items():
             print(f"synthetic bilinear against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(classical))[half], target)):.2f} dB")
-        same_size = [classical]
-        for weights, net, calibration, kind in models:
+        shown_small = from_rec2020(editor_light(small[:, 0].numpy(), record).plain)[half]
+        synthetic = [F.interpolate(shown_small, scale_factor=2, mode="nearest"), shown(classical, record)[inside]]
+        for weights, net, seen, kind in models:
             ours = upscaled(net, small.to(device)).cpu()
             print(f"synthetic {weights} against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(ours))[half], targets[kind])):.2f} dB")
             torch.manual_seed(1)
-            same_size.append(grained(small, ours, gains, opened.fit, calibration))
-        shown_small = from_rec2020(editor_light(small[:, 0].numpy(), record).plain)[half]
-        synthetic = [F.interpolate(shown_small, scale_factor=2, mode="nearest")]
-        synthetic += from_rec2020(editor_light(torch.cat(same_size)[:, 0].numpy(), record).plain)[inside].split(1)
+            synthetic.append(shown(grained(small, ours, gains, opened.fit, seen.grain), record, seen.sharpen)[inside])
         synthetic += [original] + ([from_rec2020(chain.sharpened)[inside]] if "sharpened" in kinds else [])
         write_png(args.out / "synthetic.png", panels(synthetic, scale))
     print(f"wrote {args.out / 'synthetic.png'}")
+
+
+def shown(mosaics: torch.Tensor, record: dict, sharpen: float | None = None) -> torch.Tensor:
+    """(B, 1, H, W) mosaics as the editor shows them, sharpened at `sharpen`, its default unless given."""
+    return from_rec2020(editor_light(mosaics[:, 0].numpy(), record, sharpen).sharpened)
 
 
 def parse_args() -> argparse.Namespace:
