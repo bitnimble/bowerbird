@@ -6,7 +6,8 @@ of `--weights` with grain.
 answer to compare with. Input, bilinear, each of `--weights` with grain, the original, then the
 original as each other kind of target the weights were trained on shows it.
 
-Colours are white-balanced camera RGB with no colour matrix: good for judging detail, not colour."""
+Every panel is the editor's own demosaic and coding of that mosaic, unsharpened unless it's the
+sharpened original."""
 
 import argparse
 from pathlib import Path
@@ -15,10 +16,10 @@ import torch
 import torch.nn.functional as F
 
 from training.metrics import psnr
-from training.mosaic import bilinear, demosaic, pack, pack_rgb, stabilise
+from training.mosaic import bilinear, pack, pack_rgb, stabilise, unpack
 from training.pmrid import serve
-from training.preview import panels, write_png
-from training.targets import TARGETS
+from training.preview import from_rec2020, panels, write_png
+from training.targets import TARGETS, editor_light
 from upscaler.degrade import low
 from upscaler.grain import grained
 from upscaler.model import load, stored, upscaled
@@ -47,16 +48,20 @@ def main() -> None:
     inside = (..., slice(MARGIN, MARGIN + size), slice(MARGIN, MARGIN + size))
     print(f"{height}x{width} mosaic, {size}x{size} at {y},{x}, ISO fit {'yes' if opened.fit else 'none'}")
 
+    record = {"source": str(args.raw), "gains": opened.gains.tolist()}
+    doubled = (..., slice(2 * MARGIN, 2 * (MARGIN + size)), slice(2 * MARGIN, 2 * (MARGIN + size)))
+    gains = torch.from_numpy(opened.gains)
     with torch.no_grad():
-        original = demosaic(region)[inside]
+        chain = editor_light(region[:, 0].numpy(), record)
+        original = from_rec2020(chain.plain)[inside]
         scale = 1 / float(original.amax(1).flatten().quantile(0.995))
-        doubled = (..., slice(2 * MARGIN, 2 * (MARGIN + size)), slice(2 * MARGIN, 2 * (MARGIN + size)))
-        gains = torch.from_numpy(opened.gains)
-        native = [F.interpolate(original, scale_factor=2, mode="nearest"), bilinear(region)[doubled]]
+        larger = [unpack(pack_rgb(bilinear(region)))]
         for _, net, calibration, _ in models:
             torch.manual_seed(1)
             high = upscaled(net, region.to(device)).cpu()
-            native.append(demosaic(grained(region, high, gains, opened.fit, calibration))[doubled])
+            larger.append(grained(region, high, gains, opened.fit, calibration))
+        larger_light = from_rec2020(editor_light(torch.cat(larger)[:, 0].numpy(), record).plain)[doubled]
+        native = [F.interpolate(original, scale_factor=2, mode="nearest"), *larger_light.split(1)]
         write_png(args.out / "native.png", panels(native, scale))
         print(f"wrote {args.out / 'native.png'}")
         if opened.fit is None:
@@ -67,20 +72,21 @@ def main() -> None:
         noisy = low(region, gains, opened.fit)
         small = torch.from_numpy(pmrid.denoise(noisy[:, 0].numpy(), opened.gains, opened.fit))[:, None]
         half = (..., slice(MARGIN // 2, (MARGIN + size) // 2), slice(MARGIN // 2, (MARGIN + size) // 2))
-        record = {"source": str(args.raw), "gains": opened.gains.tolist()}
         kinds = ["plain"] + sorted({kind for *_, kind in models} - {"plain"})
-        originals = {kind: torch.from_numpy(TARGETS[kind].make(region[0].numpy(), record))[None] for kind in kinds}
-        targets = {kind: stabilise(pack(original))[half] for kind, original in originals.items()}
-        classical = bilinear(small)
+        targets = {kind: stabilise(pack(torch.from_numpy(TARGETS[kind].make(region[0].numpy(), record))[None]))[half] for kind in kinds}
+        classical = unpack(pack_rgb(bilinear(small)))
         for kind, target in targets.items():
-            print(f"synthetic bilinear against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack_rgb(classical))[half], target)):.2f} dB")
-        synthetic = [F.interpolate(demosaic(small)[half], scale_factor=2, mode="nearest"), classical[inside]]
+            print(f"synthetic bilinear against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(classical))[half], target)):.2f} dB")
+        same_size = [classical]
         for weights, net, calibration, kind in models:
             ours = upscaled(net, small.to(device)).cpu()
             print(f"synthetic {weights} against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(ours))[half], targets[kind])):.2f} dB")
             torch.manual_seed(1)
-            synthetic.append(demosaic(grained(small, ours, gains, opened.fit, calibration))[inside])
-        synthetic += [demosaic(original)[inside] for original in originals.values()]
+            same_size.append(grained(small, ours, gains, opened.fit, calibration))
+        shown_small = from_rec2020(editor_light(small[:, 0].numpy(), record).plain)[half]
+        synthetic = [F.interpolate(shown_small, scale_factor=2, mode="nearest")]
+        synthetic += from_rec2020(editor_light(torch.cat(same_size)[:, 0].numpy(), record).plain)[inside].split(1)
+        synthetic += [original] + ([from_rec2020(chain.sharpened)[inside]] if "sharpened" in kinds else [])
         write_png(args.out / "synthetic.png", panels(synthetic, scale))
     print(f"wrote {args.out / 'synthetic.png'}")
 

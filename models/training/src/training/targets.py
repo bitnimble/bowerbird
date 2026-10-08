@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from training.pmrid import pmrid
+from training.pmrid import Sharpened, pmrid
 
 MEASURABLE = 0.01
 MIN_MEASURABLE_SITES = 10_000
@@ -42,15 +42,13 @@ def sharpened(crops: np.ndarray, record: dict) -> np.ndarray:
     back to the mosaic through the camera matrix."""
     crops = crops.astype(np.float32)
     gains = np.asarray(record["gains"], np.float32)
-    # Mirrored, which keeps the RGGB phase, so the demosaic and the sharpen meet no edge inside a crop.
-    padded = np.pad(crops, ((0, 0), (MIRRORED, MIRRORED), (MIRRORED, MIRRORED)), mode="reflect")
-    chain = pmrid().sharpen(Path(record["source"]), padded, gains)
+    chain = editor_light(crops, record)
     _, height, width = crops.shape
     channel = np.tile(CHANNEL_OF_SITE, (height // 2, width // 2))
     rows, columns = np.indices((height, width))
     inverse = np.linalg.inv(chain.matrix).T
-    plain_sites = (chain.plain @ inverse)[:, rows + MIRRORED, columns + MIRRORED, channel]
-    sharpened_sites = (chain.sharpened @ inverse)[:, rows + MIRRORED, columns + MIRRORED, channel]
+    plain_sites = (chain.plain @ inverse)[:, rows, columns, channel]
+    sharpened_sites = (chain.sharpened @ inverse)[:, rows, columns, channel]
     # The demosaic and the coding scale light by a constant of the photo's, a median so that light
     # past the coding's peak can't pull it.
     unclipped = crops < 0.9 * gains[channel]
@@ -65,6 +63,16 @@ def sharpened(crops: np.ndarray, record: dict) -> np.ndarray:
     near = F.max_pool2d(torch.from_numpy(unfaithful).float()[:, None], 2 * SHARPEN_REACH + 1, 1, SHARPEN_REACH)
     kept = near[:, 0].numpy() == 0
     return crops + kept * scale * (sharpened_sites - plain_sites)
+
+
+def editor_light(mosaics: np.ndarray, record: dict) -> Sharpened:
+    """(N, H, W) RGGB mosaics of the photo through the rest of the editor's chain, plain and sharpened."""
+    gains = np.asarray(record["gains"], np.float32)
+    # Mirrored, which keeps the RGGB phase, so the demosaic and the sharpen meet no edge inside a crop.
+    padded = np.pad(mosaics.astype(np.float32), ((0, 0), (MIRRORED, MIRRORED), (MIRRORED, MIRRORED)), mode="reflect")
+    chain = pmrid().sharpen(Path(record["source"]), padded, gains)
+    inside = (slice(None), slice(MIRRORED, -MIRRORED), slice(MIRRORED, -MIRRORED))
+    return Sharpened(chain.plain[inside], chain.sharpened[inside], chain.matrix, chain.sigma)
 
 
 PLAIN = Targets("plain", plain)

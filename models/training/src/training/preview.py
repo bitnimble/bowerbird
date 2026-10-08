@@ -8,6 +8,14 @@ import numpy as np
 import torch
 
 GAP = 8
+REC2020_TO_SRGB = torch.tensor(
+    [[1.6605, -0.5876, -0.0728], [-0.1246, 1.1329, -0.0083], [-0.0182, -0.1006, 1.1187]]
+)
+
+
+def from_rec2020(light: np.ndarray) -> torch.Tensor:
+    """(N, H, W, 3) Rec.2020 light, as `targets.editor_light` gives it, as (N, 3, H, W) linear sRGB."""
+    return (torch.from_numpy(np.ascontiguousarray(light)) @ REC2020_TO_SRGB.T).permute(0, 3, 1, 2)
 
 
 def panels(images: list[torch.Tensor], scale: float) -> np.ndarray:
