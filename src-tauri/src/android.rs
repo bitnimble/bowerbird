@@ -70,5 +70,8 @@ pub(crate) fn environment(command: &mut Command, data: &Path) -> Result<(), Stri
         .env("TMPDIR", tmp)
         .env("HOME", data)
         .env("BOWERBIRD_PLATFORM", "android-arm64");
+    if let Some(updates) = option_env!("BOWERBIRD_UPDATE_URL") {
+        command.env("BOWERBIRD_UPDATE_URL", updates);
+    }
     Ok(())
 }

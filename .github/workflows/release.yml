@@ -448,6 +448,8 @@ jobs:
     needs: [plan, platform-tests]
     if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-22.04
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
     permissions:
       contents: read
       actions: read
@@ -525,7 +527,7 @@ jobs:
           key: gradle-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/tauri.android.conf.json') }}
           restore-keys: gradle-
       - uses: ./.github/actions/wasm-pkg
-      - run: bun run build:android
+      - run: bun run build:android --play
       - if: env.SAVE_CACHES == 'true' && steps.gradle-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
@@ -534,18 +536,22 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
-      # Gradle leaves the release APK unsigned, and Android will not install one. With a
-      # keystore in the repository's secrets this signs it; without, the unsigned APK is
-      # published as it is, for somebody to sign themselves.
-      - name: Sign the APK
+      # Gradle leaves the release APK and AAB unsigned, and Android will not install one. With a
+      # keystore in the repository's secrets this signs both; without, the unsigned APK is
+      # published as it is, for somebody to sign themselves. This key is also Play's app signing
+      # key, given to the Play Console as an existing key, so a Play install and the GitHub APK
+      # can update each other; a key Play generated instead would make them refuse to.
+      - name: Sign the APK and AAB
+        id: sign
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -eu
-          mkdir -p dist/android-arm64
+          mkdir -p dist/android-arm64 play
           apk=$(find src-tauri/gen/android -name '*release*.apk' | head -n1)
+          aab=$(find src-tauri/gen/android -name '*release*.aab' | head -n1)
           version=$(tr -d '[:space:]' < VERSION)
           out="dist/android-arm64/Bowerbird_${version}_android-arm64.apk"
           if [ -z "${KEYSTORE:-}" ]; then
@@ -555,14 +561,60 @@ jobs:
           fi
           echo "$KEYSTORE" | base64 -d > /tmp/release.jks
           tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort | tail -n1)
-          "$tools/apksigner" sign --ks /tmp/release.jks --ks-pass "pass:$KEYSTORE_PASSWORD" \
+          "$tools/apksigner" sign --ks /tmp/release.jks --ks-pass env:KEYSTORE_PASSWORD \
             --ks-key-alias "$KEY_ALIAS" --out "$out" "$apk"
+          jarsigner -keystore /tmp/release.jks -storepass:env KEYSTORE_PASSWORD \
+            -signedjar "play/Bowerbird_${version}.aab" "$aab" "$KEY_ALIAS"
           rm -f /tmp/release.jks
+          echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v6
         with:
           name: dist-android-arm64-installer
           path: dist/
+      # Outside `dist-*`, so `publish` leaves it off the GitHub release.
+      - if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: play-aab
+          path: play/
+
+  # Its own job so the `play` environment's required reviewer holds back only the upload. The
+  # workload identity pool hands a token only to a run in that environment, on `main`.
+  play:
+    needs: [plan, android]
+    # Tauri derives the version code from `VERSION`, which a prerelease's `0.0.0-<hash>` would send
+    # backwards, and Play refuses a code lower than one it has.
+    if: needs.android.outputs.signed == 'true' && needs.plan.outputs.tag != '' && !contains(needs.plan.outputs.tag, '-') && vars.PLAY_SERVICE_ACCOUNT != ''
+    runs-on: ubuntu-latest
+    environment: play
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            scripts/play-upload.ts
+            .bun-version
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/download-artifact@v7
+        with:
+          name: play-aab
+          path: play
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.PLAY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+      - run: bun run scripts/play-upload.ts dev.kumo.bowerbird play/*.aab internal
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
 
   # After the jobs that save, which do so in their post steps: the repository holds 10GB of cache
   # and evicts the least recently used, and the entries that would push out are the live ones.

@@ -15,6 +15,7 @@ restoreApiAfterTests();
 function status(current: string, newer: string[], canInstall = true): UpdateStatus {
   return {
     current,
+    checks: true,
     newer: newer.map((version) => ({
       version,
       tag: `v${version}`,

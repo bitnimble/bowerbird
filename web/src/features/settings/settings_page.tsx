@@ -390,19 +390,23 @@ const UpdateSettings = observer(function UpdateSettings(): JSX.Element | null {
         <SettingRow
           label={UpdatesStrings.version()}
           hint={
-            store.failure ??
-            (status.checked_at == null
-              ? UpdatesStrings.neverChecked()
-              : UpdatesStrings.lastChecked(relativeTime(status.checked_at)))
+            !status.checks
+              ? undefined
+              : (store.failure ??
+                (status.checked_at == null
+                  ? UpdatesStrings.neverChecked()
+                  : UpdatesStrings.lastChecked(relativeTime(status.checked_at))))
           }
         >
           {available == null ? (
             <>
               <Text variant="mono">{status.current}</Text>
-              <Button disabled={store.checking} onClick={() => void updates.check(true)}>
-                <RefreshCw size={ICON} />
-                {store.checking ? UpdatesStrings.checking() : UpdatesStrings.checkNow()}
-              </Button>
+              {status.checks && (
+                <Button disabled={store.checking} onClick={() => void updates.check(true)}>
+                  <RefreshCw size={ICON} />
+                  {store.checking ? UpdatesStrings.checking() : UpdatesStrings.checkNow()}
+                </Button>
+              )}
             </>
           ) : (
             // The same dialog the sidebar's badge opens: what is in a release is the thing

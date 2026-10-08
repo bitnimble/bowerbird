@@ -116,6 +116,7 @@ export class UpdateService {
     const newer = this.newerReleases();
     return {
       current: VERSION,
+      checks: this.source.releases != null,
       newer,
       can_install: updatesHome() != null && newer.length > 0,
       install_hint: this.installHint(newer[0]),

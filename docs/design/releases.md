@@ -188,7 +188,7 @@ earlier would show a blank screen while the server restarts.
 | linux-x86_64   | nothing, paused | -            | -                         |
 | macos-arm64    | dmg             | yes          | yes                       |
 | windows-x86_64 | NSIS installer  | yes          | yes                       |
-| android-arm64  | apk             | yes          | **no**                    |
+| android-arm64  | apk, Play aab   | yes          | **no**                    |
 | docker-x86_64  | ghcr image      | yes          | no, `docker compose pull` |
 
 **The Linux desktop is paused, and the container is not.** A server reaches Linux through the
@@ -287,6 +287,13 @@ on this device to act on, and the server starts with watching and the daily scan
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system
 installer takes it from there.
+
+**The Play build checks for no updates.** Play forbids an app updating itself any other way, so
+`android-build.ts --play` compiles its AAB with `BOWERBIRD_UPDATE_URL` empty, which the shell
+hands the server, and Settings shows the version without a check button. Both are signed with one
+key, given to the Play Console as the app signing key, so either install updates the other. `release.yml`'s
+`play` job uploads the AAB to the internal track, behind the `play` environment's reviewer, with a
+token from Google's workload identity federation rather than a stored key.
 
 ### 23.8 Versions
 

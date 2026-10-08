@@ -1,4 +1,4 @@
-// Build the Android APK, unsigned; `release.yml` signs it.
+// Build the Android APK, and with `--play` the Play Store's AAB, unsigned; `release.yml` signs both.
 //
 // The app starts its own server as the desktop does (`src-tauri/src/android.rs`), so this builds
 // everything that server runs on for the phone first: the codecs, `librawshim`, and Bun with its
@@ -52,19 +52,29 @@ run('bun', ['run', 'get:android-runtime']);
 run('bun', ['run', 'build'], join(repoRoot, 'web'));
 run('bun', ['run', 'scripts/build-sidecar.ts', '--target', ANDROID_TARGET]);
 
-const config = JSON.stringify({ version: VERSION });
-run('bun', [
-  'x',
-  '@tauri-apps/cli',
-  'android',
-  'build',
-  '--target',
-  'aarch64',
-  '--apk',
-  '--config',
-  config,
-  ...process.argv.slice(2),
-]);
+const play = process.argv.includes('--play');
+const passed = process.argv.slice(2).filter((arg) => arg !== '--play');
+const tauriBuild = (format: '--apk' | '--aab', extra = {}): void =>
+  run(
+    'bun',
+    [
+      'x',
+      '@tauri-apps/cli',
+      'android',
+      'build',
+      '--target',
+      'aarch64',
+      format,
+      '--config',
+      JSON.stringify({ version: VERSION }),
+      ...passed,
+    ],
+    repoRoot,
+    extra,
+  );
+tauriBuild('--apk');
+// Play forbids an app updating itself other than through Play, so its build checks for none.
+if (play) tauriBuild('--aab', { BOWERBIRD_UPDATE_URL: '' });
 
 /**
  * What the generated project gets wrong for an app whose page is its own local server's.

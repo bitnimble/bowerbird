@@ -35,6 +35,7 @@ for (const by of ['BOWERBIRD_UPDATE_URL', 'BOWERBIRD_UPDATE_REPO'] as const) {
     expect(calls).toEqual([]);
     expect(status.newer).toEqual([]);
     expect(status.checked_at).toBeNull();
+    expect(status.checks).toBe(false);
   });
 
   test(`${by} empty: a forced check asks nobody either`, async () => {
