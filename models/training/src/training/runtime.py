@@ -144,7 +144,9 @@ def train(
                 loss.backward()
                 skipped_now = step_unless_nonfinite(optimiser, trained, GRAD_CLIP)
                 skipped += skipped_now
-                torch._foreach_lerp_(averaged, trained, 1 - AVERAGE_DECAY)
+                # Without no_grad, each step's lerp chains an autograd node onto the last: ~30KB a step.
+                with torch.no_grad():
+                    torch._foreach_lerp_(averaged, trained, 1 - AVERAGE_DECAY)
                 step += 1
                 schedule.step()
                 terms.append(torch.where(skipped_now, torch.nan, torch.stack([t.detach() for t in logged.values()])))
