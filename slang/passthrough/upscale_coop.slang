@@ -27,8 +27,6 @@ struct Step {
     uint inner_top;
     uint inner_width;
     uint inner_height;
-    float floor;
-    float floor_root;
 };
 
 [vk::push_constant] ConstantBuffer<Step> step;

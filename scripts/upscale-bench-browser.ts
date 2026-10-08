@@ -1,12 +1,13 @@
 // The upscaler's WGSL arms in Chromium's WebGPU, as a page would run them.
 //
 //   bun run scripts/upscale-bench-browser.ts <weights dir> time [repeats]
-//   bun run scripts/upscale-bench-browser.ts <weights dir> check <mosaic.f32> <width> <height> <out dir>
+//   bun run scripts/upscale-bench-browser.ts <weights dir> check <mosaic.f32> <width> <height> <r,g,b> <alpha,sigma_sq> <out dir>
 //
 // Needs `bun run build:wasm`. Serves the package and the weights to a blank page opened with the
 // e2e suite's GPU flags. `time` prints each arm's milliseconds over a 24MP and a 61MP frame, the
-// upload left out; `check` writes each arm's answer as `<out dir>/browser-<arm>.f32`, which
-// `models/upscaler`'s `upscaler.device_check` holds against torch.
+// upload left out; `check` writes each arm's answer, under the photo's conditioning gains and noise
+// fit, as `<out dir>/browser-<arm>.f32`, which `models/upscaler`'s `upscaler.device_check` holds
+// against torch.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -22,6 +23,9 @@ const FRAMES: [string, number, number][] = [
   ['24MP', 6000, 4000],
   ['61MP', 9504, 6336],
 ];
+/** What `time` stabilises under, as `examples/upscale_bench.rs` does. */
+const TIMED_GAINS = [0.5, 1, 0.7];
+const TIMED_NOISE: [number, number] = [1e-4, 1e-6];
 
 /** `UpscaleTrial` as the package exports it, and what the page keeps of it between evaluations. */
 interface Trial {
@@ -38,6 +42,9 @@ interface Held {
         mosaic: Float32Array,
         width: number,
         height: number,
+        gains: Float32Array,
+        alpha: number,
+        sigmaSq: number,
         half: boolean,
         pixels: number,
       ): Promise<Trial>;
@@ -54,7 +61,7 @@ interface Adapter {
 const [weights, mode, ...rest] = process.argv.slice(2);
 if (weights == null || (mode !== 'time' && mode !== 'check')) {
   console.error(
-    'upscale-bench-browser <weights dir> time [repeats] | check <mosaic.f32> <width> <height> <out dir>',
+    'upscale-bench-browser <weights dir> time [repeats] | check <mosaic.f32> <width> <height> <r,g,b> <alpha,sigma_sq> <out dir>',
   );
   process.exit(2);
 }
@@ -118,7 +125,7 @@ try {
     for (const [name, width, height] of FRAMES) {
       for (const [half, pixels] of arms) {
         const times = await page.evaluate(
-          async ({ width, height, half, pixels, repeats }) => {
+          async ({ width, height, gains, noise, half, pixels, repeats }) => {
             const held = globalThis as unknown as Held;
             const mosaic = new Float32Array(width * height);
             for (let i = 0; i < mosaic.length; i++)
@@ -129,6 +136,9 @@ try {
               mosaic,
               width,
               height,
+              new Float32Array(gains),
+              noise[0],
+              noise[1],
               half,
               pixels,
             );
@@ -143,7 +153,7 @@ try {
             trial.free();
             return times.sort((a, b) => a - b);
           },
-          { width, height, half, pixels, repeats },
+          { width, height, gains: TIMED_GAINS, noise: TIMED_NOISE, half, pixels, repeats },
         );
         const arm = `${half ? 'half' : 'float'}-${pixels}`;
         const [best, median] = [times.at(0), times.at(times.length >> 1)];
@@ -153,16 +163,25 @@ try {
       }
     }
   } else {
-    const [input, width, height, out] = [rest[0], Number(rest[1]), Number(rest[2]), rest[3]];
-    if (input == null || out == null) {
-      console.error('check <mosaic.f32> <width> <height> <out dir>');
+    const [input, width, height, gainsText, noiseText, out] = [
+      rest[0],
+      Number(rest[1]),
+      Number(rest[2]),
+      rest[3],
+      rest[4],
+      rest[5],
+    ];
+    if (input == null || gainsText == null || noiseText == null || out == null) {
+      console.error('check <mosaic.f32> <width> <height> <r,g,b> <alpha,sigma_sq> <out dir>');
       process.exit(2);
     }
+    const gains = gainsText.split(',').map(Number);
+    const noise = noiseText.split(',').map(Number);
     mkdirSync(out, { recursive: true });
     const mosaic = Array.from(new Float32Array(readFileSync(input).buffer.slice(0)));
     for (const [half, pixels] of arms) {
       const answer: number[] = await page.evaluate(
-        async ({ mosaic, width, height, half, pixels }) => {
+        async ({ mosaic, width, height, gains, noise, half, pixels }) => {
           const held = globalThis as unknown as Held;
           const trial = await held.rawshim.UpscaleTrial.open(
             held.manifest,
@@ -170,6 +189,9 @@ try {
             new Float32Array(mosaic),
             width,
             height,
+            new Float32Array(gains),
+            noise[0] ?? 0,
+            noise[1] ?? 0,
             half,
             pixels,
           );
@@ -178,7 +200,7 @@ try {
           trial.free();
           return answer;
         },
-        { mosaic, width, height, half, pixels },
+        { mosaic, width, height, gains, noise, half, pixels },
       );
       const path = join(out, `browser-${half ? 'half' : 'float'}-${pixels}.f32`);
       writeFileSync(path, new Float32Array(answer));

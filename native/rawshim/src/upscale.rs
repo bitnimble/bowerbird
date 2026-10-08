@@ -110,8 +110,51 @@ struct Step {
     inner_top: u32,
     inner_width: u32,
     inner_height: u32,
-    floor: f32,
-    floor_root: f32,
+    /// A uniform struct's size rounds up to 16 bytes in WGSL.
+    _pad: [u32; 2],
+}
+
+/// What a photo's planes go through before the network reads them and after it writes them, from
+/// [`Upscaler::stabiliser`]: `Stabilising` in `slang/upscale.slang`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Stabiliser {
+    floors: [f32; 4],
+    roots: [f32; 4],
+    scales: [f32; 4],
+}
+
+/// How the weights' `weights.json` says they were stabilised: `models/training`'s
+/// `fixed_stabiliser` or `fit_stabiliser`.
+enum Stabilising {
+    Fixed(f32),
+    Fit {
+        reference_alpha: f32,
+        max_scale: f32,
+        min_floor: f32,
+        max_floor: f32,
+    },
+}
+
+impl Stabilising {
+    fn read(manifest: &serde_json::Value) -> Result<Stabilising, String> {
+        if let Some(floor) = manifest["stabiliser_floor"].as_f64() {
+            return Ok(Stabilising::Fixed(floor as f32));
+        }
+        let fit = &manifest["stabiliser"];
+        let number = |name: &str| {
+            fit[name]
+                .as_f64()
+                .map(|n| n as f32)
+                .ok_or(format!("the manifest's stabiliser has no {name}"))
+        };
+        Ok(Stabilising::Fit {
+            reference_alpha: number("reference_alpha")?,
+            max_scale: number("max_scale")?,
+            min_floor: number("min_floor")?,
+            max_floor: number("max_floor")?,
+        })
+    }
 }
 
 struct Layer {
@@ -138,7 +181,7 @@ const WINOGRAD_G: [[f32; 3]; 4] = [
 pub struct Upscaler {
     arm: Arm,
     layers: Vec<Layer>,
-    floor: f32,
+    stabilising: Stabilising,
     weights: crate::gpu::Buffer,
     layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
@@ -182,9 +225,7 @@ impl Upscaler {
     ) -> Result<Option<Upscaler>, String> {
         let manifest: serde_json::Value =
             serde_json::from_str(manifest).map_err(|e| format!("the manifest: {e}"))?;
-        let floor = manifest["stabiliser_floor"]
-            .as_f64()
-            .ok_or("the manifest has no stabiliser_floor")? as f32;
+        let stabilising = Stabilising::read(&manifest)?;
         let floats: Vec<f32> = weights
             .chunks_exact(4)
             .map(|word| f32::from_le_bytes(word.try_into().expect("four")))
@@ -248,6 +289,18 @@ impl Upscaler {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<Stabiliser>() as u64
+                        ),
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -285,7 +338,7 @@ impl Upscaler {
         Ok(Some(Upscaler {
             arm,
             layers,
-            floor,
+            stabilising,
             weights: held,
             pack: pipeline("pack"),
             convs: [
@@ -319,6 +372,44 @@ impl Upscaler {
         self.arm
     }
 
+    /// What a photo's planes go through, from its R, G, B conditioning `gains` and its `noise`;
+    /// weights trained on the noise fail without it.
+    pub fn stabiliser(
+        &self,
+        gains: [f32; 3],
+        noise: Option<crate::galosh::NoiseModel>,
+    ) -> Result<Stabiliser, String> {
+        let (floors, scales) = match self.stabilising {
+            Stabilising::Fixed(floor) => ([floor; 4], [1.0; 4]),
+            Stabilising::Fit {
+                reference_alpha,
+                max_scale,
+                min_floor,
+                max_floor,
+            } => {
+                let noise =
+                    noise.ok_or("these weights take the photo's noise fit, and it has none")?;
+                let [red, green, blue] = gains;
+                let mut floors = [0.0; 4];
+                let mut scales = [0.0; 4];
+                for (c, gain) in [red, green, green, blue].into_iter().enumerate() {
+                    let a =
+                        (noise.alpha * gain / green).max(reference_alpha / (max_scale * max_scale));
+                    let b = noise.sigma_sq * gain * gain / (green * green);
+                    // Floored below by 3 standard deviations of read noise, so black's noise isn't clamped away.
+                    floors[c] = (b / a).max(3.0 * b.sqrt()).clamp(min_floor, max_floor);
+                    scales[c] = (reference_alpha / a).sqrt();
+                }
+                (floors, scales)
+            }
+        };
+        Ok(Stabiliser {
+            floors,
+            roots: floors.map(f32::sqrt),
+            scales,
+        })
+    }
+
     /// The network's reach in packed pixels, which each tile is grown by.
     fn reach(&self) -> usize {
         self.layers.len()
@@ -326,7 +417,9 @@ impl Upscaler {
 
     /// `mosaic`, a `width` by `height` RGGB mosaic of `f32`, upscaled into `into`, `2 * width` by
     /// `2 * height` of them ([`answer_bytes`]), in tiles of at most `tile` packed pixels a side or
-    /// as large as fit. Recorded and submitted, not waited for.
+    /// as large as fit, under the photo's own [`Upscaler::stabiliser`]. Recorded and submitted,
+    /// not waited for.
+    #[allow(clippy::too_many_arguments)]
     pub fn upscale(
         &self,
         gpu: &'static crate::gpu::Gpu,
@@ -335,6 +428,7 @@ impl Upscaler {
         height: usize,
         into: &crate::gpu::Buffer,
         tile: Option<usize>,
+        stabiliser: &Stabiliser,
     ) -> Result<(), String> {
         if width % 2 != 0 || height % 2 != 0 || width == 0 || height == 0 {
             return Err(format!("a {width}x{height} mosaic is not whole RGGB quads"));
@@ -413,8 +507,6 @@ impl Upscaler {
                     inner_top: reach as u32,
                     inner_width: tw.min(pw - tx * tw) as u32,
                     inner_height: th.min(ph - ty * th) as u32,
-                    floor: self.floor,
-                    floor_root: self.floor.sqrt(),
                     ..Default::default()
                 };
                 steps.push(base);
@@ -443,6 +535,11 @@ impl Upscaler {
             contents: &bytes,
             usage: wgpu::BufferUsages::UNIFORM,
         });
+        let stabilising = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("upscale stabiliser"),
+            contents: bytemuck::bytes_of(stabiliser),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
         let group =
             |given: &crate::gpu::Buffer, made: &crate::gpu::Buffer, planes: &crate::gpu::Buffer| {
@@ -464,6 +561,7 @@ impl Upscaler {
                                 size: wgpu::BufferSize::new(std::mem::size_of::<Step>() as u64),
                             }),
                         },
+                        entry(7, &stabilising),
                     ],
                 })
             };

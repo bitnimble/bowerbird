@@ -1,15 +1,23 @@
 //! The 2x upscaler on this device, every arm it offers.
 //!
 //! ```text
-//! upscale_bench <weights dir> check <mosaic.f32> <width> <height> <out dir> [tile]
+//! upscale_bench <weights dir> check <mosaic.f32> <width> <height> <r,g,b> <alpha,sigma_sq> <out dir> [tile]
 //! upscale_bench <weights dir> time [repeats] [tile]
 //! ```
 //!
 //! `check` writes each arm's answer as `<out dir>/<arm>.f32` for `models/upscaler` to hold against
-//! torch. `time` upscales a 24MP and a 61MP frame and prints each arm's milliseconds, the answer's
-//! allocation and the upload left out.
+//! torch, the photo's conditioning gains and noise fit given. `time` upscales a 24MP and a 61MP
+//! frame and prints each arm's milliseconds, the answer's allocation and the upload left out.
 
+use rawshim::galosh::NoiseModel;
 use rawshim::upscale::{Arm, Upscaler, answer_bytes};
+
+/// What `time` stabilises under: a middling photo's, which costs what any other does.
+const TIMED_GAINS: [f32; 3] = [0.5, 1.0, 0.7];
+const TIMED_NOISE: NoiseModel = NoiseModel {
+    alpha: 1e-4,
+    sigma_sq: 1e-6,
+};
 
 const ARMS: [Arm; 10] = [
     Arm::Winograd,
@@ -37,7 +45,7 @@ const FRAMES: [(&str, usize, usize); 2] = [("24MP", 6000, 4000), ("61MP", 9504, 
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "upscale_bench <weights dir> check <mosaic.f32> <width> <height> <out dir> [tile]\n\
+    let usage = "upscale_bench <weights dir> check <mosaic.f32> <width> <height> <r,g,b> <alpha,sigma_sq> <out dir> [tile]\n\
                  upscale_bench <weights dir> time [repeats] [tile]";
     let (Some(weights), Some(mode)) = (args.get(1), args.get(2)) else {
         eprintln!("{usage}");
@@ -61,18 +69,30 @@ fn main() {
 
     match mode.as_str() {
         "check" => {
-            let (Some(input), Some(width), Some(height), Some(out)) =
-                (args.get(3), number(4), number(5), args.get(6))
-            else {
+            let (Some(input), Some(width), Some(height), Some(gains), Some(noise), Some(out)) = (
+                args.get(3),
+                number(4),
+                number(5),
+                args.get(6).map(|text| floats::<3>(text)),
+                args.get(7).map(|text| floats::<2>(text)),
+                args.get(8),
+            ) else {
                 eprintln!("{usage}");
                 std::process::exit(2);
+            };
+            let noise = NoiseModel {
+                alpha: noise[0],
+                sigma_sq: noise[1],
             };
             let samples = std::fs::read(input).expect("the mosaic");
             let mosaic = upload(gpu, &samples);
             for upscaler in arms() {
                 let into = answer(gpu, width, height);
+                let stabiliser = upscaler
+                    .stabiliser(gains, Some(noise))
+                    .expect("a stabiliser");
                 upscaler
-                    .upscale(gpu, &mosaic, width, height, &into, number(7))
+                    .upscale(gpu, &mosaic, width, height, &into, number(9), &stabiliser)
                     .expect("an upscale");
                 let read = read(gpu, &into);
                 let path = std::path::Path::new(out).join(format!("{}.f32", named(upscaler.arm())));
@@ -89,9 +109,12 @@ fn main() {
                 let mosaic = upload(gpu, bytemuck::cast_slice(&samples));
                 let into = answer(gpu, width, height);
                 for upscaler in arms() {
+                    let stabiliser = upscaler
+                        .stabiliser(TIMED_GAINS, Some(TIMED_NOISE))
+                        .expect("a stabiliser");
                     let run = || {
                         upscaler
-                            .upscale(gpu, &mosaic, width, height, &into, number(4))
+                            .upscale(gpu, &mosaic, width, height, &into, number(4), &stabiliser)
                             .expect("an upscale");
                         gpu.block_until_done();
                     };
@@ -119,6 +142,16 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+fn floats<const N: usize>(text: &str) -> [f32; N] {
+    let parsed: Vec<f32> = text
+        .split(',')
+        .map(|n| n.parse().expect("a number"))
+        .collect();
+    parsed
+        .try_into()
+        .unwrap_or_else(|_| panic!("{N} comma-separated numbers"))
 }
 
 fn upload(gpu: &rawshim::gpu::Gpu, bytes: &[u8]) -> rawshim::gpu::Buffer {

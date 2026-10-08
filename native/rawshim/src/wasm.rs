@@ -2346,6 +2346,7 @@ impl HeldRaw {
 #[wasm_bindgen]
 pub struct UpscaleTrial {
     upscaler: crate::upscale::Upscaler,
+    stabiliser: crate::upscale::Stabiliser,
     mosaic: crate::gpu::Buffer,
     into: crate::gpu::Buffer,
     width: usize,
@@ -2354,14 +2355,19 @@ pub struct UpscaleTrial {
 
 #[wasm_bindgen]
 impl UpscaleTrial {
-    /// `export`'s `weights.json` and `weights.bin`, over a `width` by `height` RGGB `mosaic`, on
-    /// `Arm::Half` where `half` and `Arm::Float` otherwise, each thread `pixels` of a row.
+    /// `export`'s `weights.json` and `weights.bin`, over a `width` by `height` RGGB `mosaic` whose
+    /// photo has R, G, B conditioning `gains` and noise `alpha` and `sigma_sq`, on `Arm::Half` where
+    /// `half` and `Arm::Float` otherwise, each thread `pixels` of a row.
+    #[allow(clippy::too_many_arguments)]
     pub async fn open(
         manifest: String,
         weights: Vec<u8>,
         mosaic: Vec<f32>,
         width: usize,
         height: usize,
+        gains: Vec<f32>,
+        alpha: f32,
+        sigma_sq: f32,
         half: bool,
         pixels: usize,
     ) -> Result<UpscaleTrial, JsValue> {
@@ -2376,6 +2382,12 @@ impl UpscaleTrial {
         let upscaler = crate::upscale::Upscaler::new(gpu, &manifest, &weights, arm)
             .map_err(|e| JsValue::from_str(&e))?
             .ok_or_else(|| JsValue::from_str(&format!("rawshim: {arm:?} is not on this device")))?;
+        let gains: [f32; 3] = gains
+            .try_into()
+            .map_err(|_| JsValue::from_str("rawshim: gains are R, G and B"))?;
+        let stabiliser = upscaler
+            .stabiliser(gains, Some(crate::galosh::NoiseModel { alpha, sigma_sq }))
+            .map_err(|e| JsValue::from_str(&e))?;
         let mut recording = gpu.record();
         let held = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("upscale trial mosaic"),
@@ -2391,6 +2403,7 @@ impl UpscaleTrial {
         recording.submit();
         Ok(UpscaleTrial {
             upscaler,
+            stabiliser,
             mosaic: held,
             into,
             width,
@@ -2404,7 +2417,15 @@ impl UpscaleTrial {
             .await
             .ok_or("rawshim: no device")?;
         self.upscaler
-            .upscale(gpu, &self.mosaic, self.width, self.height, &self.into, None)
+            .upscale(
+                gpu,
+                &self.mosaic,
+                self.width,
+                self.height,
+                &self.into,
+                None,
+                &self.stabiliser,
+            )
             .map_err(|e| JsValue::from_str(&e))?;
         crate::gpu::finished(gpu)
             .await

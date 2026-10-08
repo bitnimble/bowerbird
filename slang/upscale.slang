@@ -27,8 +27,14 @@ struct Step {
     uint inner_top;
     uint inner_width;
     uint inner_height;
-    float floor;
-    float floor_root;
+};
+
+/// What the network reads a plane `c` of light `x` as: (sqrt(x + floors[c]) - roots[c]) * scales[c],
+/// `models/training`'s `Stabiliser`.
+struct Stabilising {
+    float4 floors;
+    float4 roots;
+    float4 scales;
 };
 
 #ifndef STORED
@@ -44,6 +50,7 @@ typealias Stored = STORED;
 [vk::binding(4, 0)] StructuredBuffer<float> mosaic;
 [vk::binding(5, 0)] RWStructuredBuffer<float> upscaled;
 [vk::binding(6, 0)] ConstantBuffer<Step> step;
+[vk::binding(7, 0)] ConstantBuffer<Stabilising> stabilising;
 
 /// A region pixel's place in a tensor, past the ring.
 uint ringed(uint x, uint y)
@@ -71,7 +78,7 @@ void pack(uint3 at : SV_DispatchThreadID)
             let mx = uint(int(at.x) + step.left) * 2 + c % 2;
             let my = uint(int(at.y) + step.top) * 2 + c / 2;
             let light = mosaic[my * step.frame_width * 2 + mx];
-            value = sqrt(max(light + step.floor, 0.0)) - step.floor_root;
+            value = (sqrt(max(light + stabilising.floors[c], 0.0)) - stabilising.roots[c]) * stabilising.scales[c];
         }
         made[cell + c] = Stored(value);
     }
@@ -225,8 +232,8 @@ void leave(uint3 at : SV_DispatchThreadID)
         let plane = float(planes[times(cell, step.planes_channels) + c]);
         for (uint sub = 0; sub < 4; sub++) {
             let stabilised = float(given[cell * 16 + c * 4 + sub]) + plane;
-            let root = max(stabilised + step.floor_root, 0.0);
-            let light = root * root - step.floor;
+            let root = max(stabilised / stabilising.scales[c] + stabilising.roots[c], 0.0);
+            let light = root * root - stabilising.floors[c];
             let px = (fx * 2 + sub % 2) * 2 + c % 2;
             let py = (fy * 2 + sub / 2) * 2 + c / 2;
             upscaled[py * out_width + px] = light;
