@@ -5,6 +5,8 @@ const spin = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
 
 const styles = stylex.create({
   spinner: {
+    // global.css stops every animation under reduced motion, leaving a frozen arc
+    display: { default: 'block', '@media (prefers-reduced-motion: reduce)': 'none' },
     width: '26px',
     height: '26px',
     borderWidth: '2px',
