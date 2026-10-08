@@ -4622,6 +4622,9 @@ async fn wide_samples(
     let Some(admitted) = crate::fit_wide::admit(gpu, &planes).await else {
         return Vec::new();
     };
+    if admitted.at.is_empty() {
+        return Vec::new();
+    }
     // **A search per tile, not per admitted pixel** (`WIDE_TILE`). Gathered tile-major here so
     // the probes go to the device as one batch; the gather itself keeps the row-major order the
     // gate wrote, which is the order every moment is summed in.
