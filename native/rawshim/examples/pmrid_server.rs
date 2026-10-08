@@ -12,6 +12,12 @@
 //! {"denoise": "<file>", "out": "<file>", "width": w, "height": h, "cfa": [..], "gains": [..], "fit": NoiseFit}
 //!   denoises each of the file's stacked w x h mosaics on its own
 //!   -> {}
+//! {"sharpen": "<raw>", "mosaics": "<file>", "out": "<file>", "width": w, "height": h, "gains": [..]}
+//!   takes each of the file's stacked w x h RGGB mosaics through the rest of the editor's chain for
+//!   the photo unedited, with its own measured levels, blur, defringe and noise, as `support::cut`
+//!   does a whole frame; writes each twice, plain (demosaiced and coded) then defringed and
+//!   capture-sharpened, as Rec.2020 light over reference white, interleaved RGB
+//!   -> {"matrix": camera to Rec.2020, "sigma": the sharpen's}
 //! ```
 //!
 //! `NoiseFit` is `galosh::NoiseFit` as serde writes it: `alpha`, `sigmaSq`, `unifiedSigma`,
@@ -21,17 +27,31 @@
 //! Launch it with `CARGO_MANIFEST_DIR` set, as cargo would: `gpu::leave` otherwise lets NVIDIA's
 //! driver fault at exit.
 
+mod support;
+
 use std::io::{BufRead, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
 use rawshim::galosh::{Denoiser, Detail, NoiseFit};
+use rawshim::light::Light;
 
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum Request {
     Open { open: String, out: String },
     Denoise(Denoise),
+    Sharpen(Sharpen),
+}
+
+#[derive(serde::Deserialize)]
+struct Sharpen {
+    sharpen: String,
+    mosaics: String,
+    out: String,
+    width: usize,
+    height: usize,
+    gains: [f32; 3],
 }
 
 #[derive(serde::Deserialize)]
@@ -87,6 +107,14 @@ fn main() {
                         ))))
                     },
                 )
+            }
+            Ok(Request::Sharpen(request)) => {
+                catch_unwind(AssertUnwindSafe(|| sharpened(gpu, &request))).unwrap_or_else(|_| {
+                    Err(Failed::Error(panicked(&format!(
+                        "sharpening for {}",
+                        request.sharpen
+                    ))))
+                })
             }
             Err(why) => Err(Failed::Error(format!("not a request: {why}"))),
         };
@@ -195,6 +223,134 @@ fn denoised(
     }
     write(&request.out, &filtered)?;
     Ok(serde_json::json!({}))
+}
+
+fn sharpened(
+    gpu: &'static rawshim::gpu::Gpu,
+    request: &Sharpen,
+) -> Result<serde_json::Value, Failed> {
+    let (width, height) = (request.width, request.height);
+    let samples = read(&request.mosaics)?;
+    let size = width * height;
+    if width < 3 || height < 3 || samples.len() % size != 0 {
+        return Err(Failed::Error(format!(
+            "{} is not a stack of {width}x{height} mosaics",
+            request.mosaics
+        )));
+    }
+    let opened = support::Open::shipped(&request.sharpen, 0)
+        .run()
+        .ok_or_else(|| Failed::Error(format!("{} did not open", request.sharpen)))?;
+    let frame = &opened.frame;
+    let base = rawshim::base::device(gpu).ok_or_else(|| Failed::Error("no base kernels".into()))?;
+    let rcd = rawshim::demosaic::device(gpu)
+        .ok_or_else(|| Failed::Error("no demosaic kernels".into()))?;
+    let matrix = frame
+        .matrix
+        .ok_or_else(|| Failed::Error(format!("{} has no camera matrix", request.sharpen)))?;
+    let levels = opened.measured.levels.anchored();
+    let white = support::GRADE.reference_white_nits;
+    let sensor_long = frame.width.max(frame.height) * frame.reduced.max(1);
+    let capture = opened
+        .measured
+        .blur
+        .map(|blur| blur * frame.reduced.max(1) as f32);
+    let sigma = rawshim::image::deconvolve_split(capture, sensor_long, sensor_long);
+    let noise = rawshim::base::sharpen_noise(
+        levels,
+        white,
+        frame.noise,
+        frame.matrix,
+        frame.wb_gains,
+        frame.reduced,
+    )
+    .at(
+        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
+        rawshim::px::Span::<rawshim::px::Drawn>::exact(sensor_long),
+    );
+    let defringe = match opened.measured.defringe {
+        // `Done` means the open's own frame; these mosaics are demosaiced afresh, fringes and all.
+        rawshim::base::Defringe::Done(pair) => rawshim::base::Defringe::Take(pair),
+        other => other,
+    };
+    let plain = (rawshim::base::Defringe::Take((0.0, 0.0)), 0.0);
+    let shipped = (defringe, support::STRENGTHS.sharpen);
+
+    let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let mut light = Vec::with_capacity(samples.len() * 6);
+    for mosaic in samples.chunks_exact(size) {
+        let demosaiced = demosaic(gpu, rcd, mosaic, &cfa, width, height, matrix, request.gains)?;
+        for (defringe, amount) in [plain, shipped] {
+            let resident = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
+            let (prepared, _) = pollster::block_on(rawshim::base::prepare(
+                gpu,
+                base,
+                resident,
+                rawshim::base::Gather::frame(rawshim::px::Size::exact(width, height)),
+                levels,
+                white,
+                support::STRENGTHS.before_the_fit(),
+                rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
+                rawshim::image::SharpenNoise::NONE,
+                &rawshim::fit::Lens::none(),
+                defringe,
+                frame.noise,
+                frame.matrix,
+            ))
+            .ok_or_else(|| Failed::Error("the coding did not run".into()))?;
+            let size = rawshim::hdr_args::Size {
+                width: width as u32,
+                height: height as u32,
+            };
+            let coded = rawshim::hdr::Cut::from_base(prepared, None, size, amount, sigma, noise)
+                .into_samples();
+            light.extend(coded[..width * height * 3].iter().map(|&code| {
+                let nits = rawshim::tone::pq_inv::<rawshim::light::SceneNits>(Light::measured(
+                    f64::from(code) / f64::from(u16::MAX),
+                ));
+                (nits.raw() / white.raw()) as f32
+            }));
+        }
+    }
+    write(&request.out, &light)?;
+    Ok(serde_json::json!({ "matrix": matrix, "sigma": sigma.composed }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn demosaic(
+    gpu: &'static rawshim::gpu::Gpu,
+    rcd: &'static rawshim::demosaic::Rcd,
+    mosaic: &[f32],
+    cfa: &rawshim::cfa::Cfa,
+    width: usize,
+    height: usize,
+    matrix: [[f32; 3]; 3],
+    ceiling: [f32; 3],
+) -> Result<Vec<u16>, Failed> {
+    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let at = rawshim::demosaic::Placement {
+        stride: rawshim::px::Span::exact(width),
+        crop: rawshim::px::Rect::exact(0, 0, width, height),
+        dest: rawshim::px::At::ORIGIN,
+        frame: rawshim::px::Size::exact(width, height),
+        orientation: 0,
+        reduce: 1,
+    };
+    let into = rawshim::demosaic::frame_buffer(gpu, width * height);
+    let (_held, shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
+    pollster::block_on(rawshim::demosaic::demosaic_into(
+        gpu,
+        rcd,
+        &uploaded,
+        cfa,
+        &at,
+        rawshim::demosaic::Colour { matrix, ceiling },
+        &into,
+        &shape,
+    ))
+    .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
+    pollster::block_on(rawshim::demosaic::read_frame(gpu, &into, width * height))
+        .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))
 }
 
 /// PMRID's arenas kept from one mosaic of a stack to the next, released however the stack ends.

@@ -3,7 +3,8 @@
 `native.png`: the photo's own mosaic at 2x, as the editor would use it. Original, bilinear, then each
 of `--weights` with grain.
 `synthetic.png`: the same area made half size as in training, then upscaled back, so there is an
-answer to compare with. Input, bilinear, each of `--weights` with grain, original.
+answer to compare with. Input, bilinear, each of `--weights` with grain, the original, then the
+original as each other kind of target the weights were trained on shows it.
 
 Colours are white-balanced camera RGB with no colour matrix: good for judging detail, not colour."""
 
@@ -15,8 +16,9 @@ import torch.nn.functional as F
 
 from training.metrics import psnr
 from training.mosaic import bilinear, demosaic, pack, pack_rgb, stabilise
-from training.pmrid import Pmrid
+from training.pmrid import serve
 from training.preview import panels, write_png
+from training.targets import TARGETS
 from upscaler.degrade import low
 from upscaler.grain import grained
 from upscaler.model import load, stored, upscaled
@@ -31,8 +33,8 @@ def main() -> None:
     models = []
     for weights in args.weights:
         loaded = load(weights)
-        models.append((weights, loaded.net.to(device).eval(), stored(loaded)))
-    pmrid = Pmrid(args.out / ".scratch")
+        models.append((weights, loaded.net.to(device).eval(), stored(loaded), loaded.plan["targets"]))
+    pmrid = serve(args.out / ".scratch")
     opened = pmrid.open(args.raw)
     mosaic = torch.from_numpy(opened.mosaic)[None, None]
     height, width = opened.mosaic.shape
@@ -51,7 +53,7 @@ def main() -> None:
         doubled = (..., slice(2 * MARGIN, 2 * (MARGIN + size)), slice(2 * MARGIN, 2 * (MARGIN + size)))
         gains = torch.from_numpy(opened.gains)
         native = [F.interpolate(original, scale_factor=2, mode="nearest"), bilinear(region)[doubled]]
-        for _, net, calibration in models:
+        for _, net, calibration, _ in models:
             torch.manual_seed(1)
             high = upscaled(net, region.to(device)).cpu()
             native.append(demosaic(grained(region, high, gains, opened.fit, calibration))[doubled])
@@ -65,16 +67,20 @@ def main() -> None:
         noisy = low(region, gains, opened.fit)
         small = torch.from_numpy(pmrid.denoise(noisy[:, 0].numpy(), opened.gains, opened.fit))[:, None]
         half = (..., slice(MARGIN // 2, (MARGIN + size) // 2), slice(MARGIN // 2, (MARGIN + size) // 2))
+        record = {"source": str(args.raw), "gains": opened.gains.tolist()}
+        kinds = ["plain"] + sorted({kind for *_, kind in models} - {"plain"})
+        originals = {kind: torch.from_numpy(TARGETS[kind].make(region[0].numpy(), record))[None] for kind in kinds}
+        targets = {kind: stabilise(pack(original))[half] for kind, original in originals.items()}
         classical = bilinear(small)
-        target = stabilise(pack(region))[half]
-        print(f"synthetic bilinear: PSNR {psnr(F.mse_loss(stabilise(pack_rgb(classical))[half], target)):.2f} dB")
+        for kind, target in targets.items():
+            print(f"synthetic bilinear against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack_rgb(classical))[half], target)):.2f} dB")
         synthetic = [F.interpolate(demosaic(small)[half], scale_factor=2, mode="nearest"), classical[inside]]
-        for weights, net, calibration in models:
+        for weights, net, calibration, kind in models:
             ours = upscaled(net, small.to(device)).cpu()
-            print(f"synthetic {weights}: PSNR {psnr(F.mse_loss(stabilise(pack(ours))[half], target)):.2f} dB")
+            print(f"synthetic {weights} against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(ours))[half], targets[kind])):.2f} dB")
             torch.manual_seed(1)
             synthetic.append(demosaic(grained(small, ours, gains, opened.fit, calibration))[inside])
-        synthetic.append(original)
+        synthetic += [demosaic(original)[inside] for original in originals.values()]
         write_png(args.out / "synthetic.png", panels(synthetic, scale))
     print(f"wrote {args.out / 'synthetic.png'}")
 

@@ -13,6 +13,7 @@ import torch
 from training.crops import DEFAULT_CACHE, sources
 from training.files import write_atomic
 from training.patches import PatchPairs
+from training.targets import TARGETS
 from upscaler.grain import estimate, kept
 from upscaler.model import load, upscaled
 from upscaler.pairs import INPUTS
@@ -30,7 +31,7 @@ def main() -> None:
 
     loaded = load(args.weights)
     net = loaded.net.cuda().eval()
-    pairs = PatchPairs(args.cache, sources(args.data), True, INPUTS)
+    pairs = PatchPairs(args.cache, sources(args.data), True, INPUTS, TARGETS[loaded.plan["targets"]])
     by_photo: dict[Path, list[int]] = defaultdict(list)
     for index, (targets_path, _, _) in enumerate(pairs.items):
         by_photo[targets_path].append(index)

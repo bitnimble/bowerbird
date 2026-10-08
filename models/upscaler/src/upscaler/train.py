@@ -4,10 +4,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from training.metrics import detail, psnr, spectrum_loss
+from training.metrics import detail, edge_loss, psnr, spectrum_loss
 from training.mosaic import STABILISER_FLOOR, bilinear, pack, pack_rgb, stabilise
 from training.patches import PatchPairs, datasets
 from training.runtime import Forward, arguments, cuda, loader, logger, predictions, stop_on_signals, train
+from training.targets import TARGETS
 from upscaler.model import Upscaler
 from upscaler.pairs import INPUTS
 
@@ -29,12 +30,15 @@ def main() -> None:
     parser.add_argument("--channels", type=int, default=48)
     parser.add_argument("--blocks", type=int, default=16)
     parser.add_argument("--texture", type=float, default=0, help="weight of the amplitude spectrum loss")
+    parser.add_argument("--edges", type=float, default=0, help="weight of the edge loss")
+    parser.add_argument("--targets", choices=TARGETS, default="plain")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     say = logger(args.out / "train.log")
     stop_on_signals()
 
-    train_set, validation_sets = datasets(args.data, args.cache, args.prepare_workers, INPUTS, args.batch)
+    targets = TARGETS[args.targets]
+    train_set, validation_sets = datasets(args.data, args.cache, args.prepare_workers, INPUTS, targets, args.batch)
     device, bf16 = cuda()
     sizes = ", ".join(f"{len(pairs)} {name}" for name, pairs in validation_sets.items())
     say(f"{len(train_set)} training crops, validation crops: {sizes}, bf16={bf16}")
@@ -43,11 +47,13 @@ def main() -> None:
     def objective(forward: Forward, given: torch.Tensor, wanted: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         batch = planes(given, wanted)
         predicted = forward(batch.low)
-        pixel_loss = F.l1_loss(predicted, batch.high)
-        if not args.texture:
-            return pixel_loss, {"loss": pixel_loss}
-        texture_loss = spectrum_loss(predicted, batch.high)
-        return pixel_loss + args.texture * texture_loss, {"loss": pixel_loss, "texture": texture_loss}
+        terms = {"loss": F.l1_loss(predicted, batch.high)}
+        if args.texture:
+            terms["texture"] = spectrum_loss(predicted, batch.high)
+        if args.edges:
+            terms["edges"] = edge_loss(predicted, batch.high)
+        weights = {"loss": 1.0, "texture": args.texture, "edges": args.edges}
+        return sum(weights[name] * term for name, term in terms.items()), terms
 
     def validate(forward: Forward, step: int) -> None:
         for name, validation in validations.items():
@@ -65,8 +71,10 @@ def main() -> None:
         steps=args.steps,
         lr=args.lr,
         bf16=bf16,
-        settings={name: getattr(args, name) for name in ("steps", "batch", "channels", "blocks", "lr", "texture")},
-        plan={"channels": args.channels, "blocks": args.blocks, "stabiliser_floor": STABILISER_FLOOR},
+        settings={
+            name: getattr(args, name) for name in ("steps", "batch", "channels", "blocks", "lr", "texture", "edges", "targets")
+        },
+        plan={"channels": args.channels, "blocks": args.blocks, "stabiliser_floor": STABILISER_FLOOR, "targets": args.targets},
         out=args.out,
         say=say,
     )

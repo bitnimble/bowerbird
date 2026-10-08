@@ -53,7 +53,7 @@ name = "sweep"
 required-features = ["renditions"]
 
 [[example]]
-name = "upscale_sharpen"
+name = "pmrid_server"
 required-features = ["renditions"]
 
 [[example]]

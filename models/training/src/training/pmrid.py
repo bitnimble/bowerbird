@@ -34,6 +34,17 @@ class Opened:
     """GALOSH's `NoiseFit`, or None where it was unusable and nothing was denoised."""
 
 
+@dataclass
+class Sharpened:
+    plain: np.ndarray
+    """(N, H, W, 3) Rec.2020 light over reference white, demosaiced and coded."""
+    sharpened: np.ndarray
+    """The same, defringed and capture-sharpened as the editor does an unedited photo."""
+    matrix: np.ndarray
+    """Camera to Rec.2020."""
+    sigma: float
+
+
 class Pmrid:
     def __init__(self, scratch: Path) -> None:
         if not SERVER.exists():
@@ -83,6 +94,23 @@ class Pmrid:
         )
         return take(self.exchange, count, height, width)
 
+    def sharpen(self, raw: Path, mosaics: np.ndarray, gains: np.ndarray) -> "Sharpened":
+        """A stack of the photo's RGGB mosaics, (N, H, W), through the rest of the editor's chain."""
+        count, height, width = mosaics.shape
+        np.ascontiguousarray(mosaics, "<f4").tofile(self.exchange)
+        reply = self.ask(
+            {
+                "sharpen": str(raw),
+                "mosaics": str(self.exchange),
+                "out": str(self.exchange),
+                "width": width,
+                "height": height,
+                "gains": gains.tolist(),
+            }
+        )
+        light = take(self.exchange, count, 2, height, width, 3)
+        return Sharpened(light[:, 0], light[:, 1], np.asarray(reply["matrix"], np.float32), reply["sigma"])
+
     def ask(self, request: dict) -> dict:
         try:
             return self.ask_once(request)
@@ -122,7 +150,14 @@ _server: Pmrid | None = None
 
 
 def pmrid() -> Pmrid:
-    assert _server is not None, "only inside each_with_pmrid"
+    assert _server is not None, "only inside each_with_pmrid or after serve"
+    return _server
+
+
+def serve(scratch: Path) -> Pmrid:
+    """Starts this process's server, the one `pmrid` answers with."""
+    global _server
+    _server = Pmrid(scratch)
     return _server
 
 
@@ -138,7 +173,7 @@ def each_with_pmrid(work: Callable[[T], str], jobs: list[T], workers: int, scrat
     # Spawned, not forked: a forked child would share the parent's CUDA and OpenMP state.
     context = multiprocessing.get_context("spawn")
     failed = 0
-    with ProcessPoolExecutor(workers, mp_context=context, initializer=_start, initargs=(scratch,)) as pool:
+    with ProcessPoolExecutor(workers, mp_context=context, initializer=serve, initargs=(scratch,)) as pool:
         for done, (ok, outcome) in enumerate(pool.map(partial(_attempt, work), jobs), 1):
             if not ok:
                 failed += 1
@@ -154,11 +189,6 @@ def _attempt(work: Callable[[T], str], job: T) -> tuple[bool, str]:
         return True, work(job)
     except Exception as error:
         return False, f"{job} failed: {error!r}"
-
-
-def _start(scratch: Path) -> None:
-    global _server
-    _server = Pmrid(scratch)
 
 
 def take(path: Path, *shape: int) -> np.ndarray:
