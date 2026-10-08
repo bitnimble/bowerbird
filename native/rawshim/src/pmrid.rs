@@ -498,7 +498,7 @@ enum Matrix {
 
 /// The device a cooperative multiply needs: the kernel handed to the driver as it stands, the
 /// instruction itself, the shape pushed with each dispatch, and `half` to hold the matrices in.
-fn tensor_features() -> wgpu::Features {
+pub(crate) fn tensor_features() -> wgpu::Features {
     wgpu::Features::EXPERIMENTAL_COOPERATIVE_MATRIX
         | wgpu::Features::PASSTHROUGH_SHADERS
         | wgpu::Features::IMMEDIATES

@@ -234,6 +234,7 @@ pub mod tone;
 /// What a delivered picture's code values mean: somebody else's transfer, in somebody else's
 /// primaries, undone into the light the pipeline grades.
 pub mod transfer;
+pub mod upscale;
 pub mod view;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]

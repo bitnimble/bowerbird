@@ -2340,3 +2340,98 @@ impl HeldRaw {
         self.analysis_bytes()
     }
 }
+
+/// The 2x upscaler over one mosaic held on the page's device, for measuring the WGSL arms in a
+/// browser (`scripts/upscale-bench-browser.ts`).
+#[wasm_bindgen]
+pub struct UpscaleTrial {
+    upscaler: crate::upscale::Upscaler,
+    mosaic: crate::gpu::Buffer,
+    into: crate::gpu::Buffer,
+    width: usize,
+    height: usize,
+}
+
+#[wasm_bindgen]
+impl UpscaleTrial {
+    /// `export`'s `weights.json` and `weights.bin`, over a `width` by `height` RGGB `mosaic`, on
+    /// `Arm::Half` where `half` and `Arm::Float` otherwise, each thread `pixels` of a row.
+    pub async fn open(
+        manifest: String,
+        weights: Vec<u8>,
+        mosaic: Vec<f32>,
+        width: usize,
+        height: usize,
+        half: bool,
+        pixels: usize,
+    ) -> Result<UpscaleTrial, JsValue> {
+        needs_webgpu().await?;
+        let gpu = crate::gpu::page_device()
+            .await
+            .ok_or("rawshim: no device")?;
+        let arm = match half {
+            true => crate::upscale::Arm::Half { pixels },
+            false => crate::upscale::Arm::Float { pixels },
+        };
+        let upscaler = crate::upscale::Upscaler::new(gpu, &manifest, &weights, arm)
+            .map_err(|e| JsValue::from_str(&e))?
+            .ok_or_else(|| JsValue::from_str(&format!("rawshim: {arm:?} is not on this device")))?;
+        let mut recording = gpu.record();
+        let held = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("upscale trial mosaic"),
+            contents: bytemuck::cast_slice(&mosaic),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let into = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("upscale trial answer"),
+            size: crate::upscale::answer_bytes(width, height),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        recording.submit();
+        Ok(UpscaleTrial {
+            upscaler,
+            mosaic: held,
+            into,
+            width,
+            height,
+        })
+    }
+
+    /// One upscale, resolved once the device has finished it.
+    pub async fn run(&self) -> Result<(), JsValue> {
+        let gpu = crate::gpu::page_device()
+            .await
+            .ok_or("rawshim: no device")?;
+        self.upscaler
+            .upscale(gpu, &self.mosaic, self.width, self.height, &self.into, None)
+            .map_err(|e| JsValue::from_str(&e))?;
+        crate::gpu::finished(gpu)
+            .await
+            .ok_or("rawshim: the device did not finish")?;
+        Ok(())
+    }
+
+    /// The last [`UpscaleTrial::run`]'s answer.
+    pub async fn answer(&self) -> Result<Vec<f32>, JsValue> {
+        let gpu = crate::gpu::page_device()
+            .await
+            .ok_or("rawshim: no device")?;
+        let mut recording = gpu.record();
+        let staging = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("upscale trial read"),
+            size: self.into.size(),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&self.into, 0, &staging, 0, self.into.size());
+        recording.submit();
+        crate::gpu::read_back(gpu, &staging, |bytes| {
+            bytemuck::cast_slice::<u8, f32>(bytes).to_vec()
+        })
+        .await
+        .ok_or_else(|| JsValue::from_str("rawshim: the answer did not read back"))
+    }
+}
