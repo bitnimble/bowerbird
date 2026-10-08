@@ -67,32 +67,40 @@ def datasets(
 
 
 def make_pairs(cache: Path, raws: list[Path], workers: int, inputs: Inputs, targets: Targets) -> None:
-    jobs = [
+    held = [record for split in (False, True) for record in records(cache, raws, split)]
+    without_targets = [path for path, record in held if not complete_targets(path, record["crops"], targets)]
+    print(f"pairs: {len(without_targets)} photos without {targets.name} targets", flush=True)
+    each_with_pmrid(partial(make_targets, targets=targets), without_targets, workers, cache / ".scratch", "targets")
+    without_inputs = [
         path
-        for split in (False, True)
-        for path, record in records(cache, raws, split)
-        if not complete(path, record["crops"], inputs, targets)
+        for path, record in held
+        if complete_targets(path, record["crops"], targets) and not complete_inputs(path, record["crops"], inputs)
     ]
-    print(f"pairs: {len(jobs)} photos without {inputs.name} inputs or {targets.name} targets", flush=True)
-    each_with_pmrid(partial(make_one, inputs=inputs, targets=targets), jobs, workers, cache / ".scratch", "pairs")
+    print(f"pairs: {len(without_inputs)} photos without {inputs.name} inputs", flush=True)
+    # One worker: inputs may be made on the GPU, and each worker's CUDA context costs gigabytes of host memory.
+    each_with_pmrid(partial(make_inputs, inputs=inputs), without_inputs, 1, cache / ".scratch", "inputs")
 
 
-def make_one(record_path: Path, inputs: Inputs, targets: Targets) -> str:
+def make_targets(record_path: Path, targets: Targets) -> str:
     torch.set_num_threads(2)
     record = json.loads(record_path.read_text())
     crops = np.load(record_path.with_suffix(".npy"))
-    if not complete_targets(record_path, record["crops"], targets):
-        seed(record_path, targets.name)
-        made = targets.make(crops, record)
-        if made.shape != crops.shape:
-            raise ValueError(f"{targets.name} made {made.shape} from {crops.shape}")
-        write_atomic(targets.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
-    if not complete_inputs(record_path, record["crops"], inputs):
-        seed(record_path, inputs.name)
-        made = inputs.make(crops, record)
-        if made.shape != (len(crops), inputs.variants, inputs.side, inputs.side):
-            raise ValueError(f"{inputs.name} made {made.shape} from {crops.shape}")
-        write_atomic(inputs.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
+    seed(record_path, targets.name)
+    made = targets.make(crops, record)
+    if made.shape != crops.shape:
+        raise ValueError(f"{targets.name} made {made.shape} from {crops.shape}")
+    write_atomic(targets.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
+    return record_path.stem
+
+
+def make_inputs(record_path: Path, inputs: Inputs) -> str:
+    record = json.loads(record_path.read_text())
+    crops = np.load(record_path.with_suffix(".npy"))
+    seed(record_path, inputs.name)
+    made = inputs.make(crops, record)
+    if made.shape != (len(crops), inputs.variants, inputs.side, inputs.side):
+        raise ValueError(f"{inputs.name} made {made.shape} from {crops.shape}")
+    write_atomic(inputs.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
     return record_path.stem
 
 
