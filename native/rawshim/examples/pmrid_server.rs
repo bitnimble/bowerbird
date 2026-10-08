@@ -12,11 +12,16 @@
 //! {"denoise": "<file>", "out": "<file>", "width": w, "height": h, "cfa": [..], "gains": [..], "fit": NoiseFit}
 //!   denoises each of the file's stacked w x h mosaics on its own
 //!   -> {}
-//! {"sharpen": "<raw>", "mosaics": "<file>", "out": "<file>", "width": w, "height": h, "gains": [..]}
+//! {"measure": "<raw>"}
+//!   opens the RAW whole for what the chain below needs of it: matrix, levels, blur, noise, defringe
+//!   -> Measured
+//! {"sharpen": "<raw>", "mosaics": "<file>", "out": "<file>", "width": w, "height": h, "gains": [..],
+//!  "measured": Measured?, "amount": sharpen?}
 //!   takes each of the file's stacked w x h RGGB mosaics through the rest of the editor's chain for
-//!   the photo unedited, with its own measured levels, blur, defringe and noise, as `support::cut`
-//!   does a whole frame; writes each twice, plain (demosaiced and coded) then defringed and
-//!   capture-sharpened, as Rec.2020 light over reference white, interleaved RGB
+//!   the photo unedited, as `support::cut` does a whole frame, measuring the RAW unless `measured`
+//!   is given; writes each twice, plain (demosaiced and coded) then defringed and capture-sharpened
+//!   at `amount`, the editor's default unless given, as Rec.2020 light over reference white,
+//!   interleaved RGB
 //!   -> {"matrix": camera to Rec.2020, "sigma": the sharpen's}
 //! ```
 //!
@@ -42,6 +47,7 @@ enum Request {
     Open { open: String, out: String },
     Denoise(Denoise),
     Sharpen(Sharpen),
+    Measure { measure: String },
 }
 
 #[derive(serde::Deserialize)]
@@ -52,6 +58,22 @@ struct Sharpen {
     width: usize,
     height: usize,
     gains: [f32; 3],
+    measured: Option<Measured>,
+    amount: Option<f64>,
+}
+
+/// What the rest of the chain needs of a photo that only opening it whole can measure.
+#[derive(serde::Deserialize, serde::Serialize)]
+struct Measured {
+    matrix: [[f32; 3]; 3],
+    levels: rawshim::tone::Levels,
+    /// Gaussian sigma in the sensor's pixels.
+    capture_blur: Option<f32>,
+    sensor_long: usize,
+    noise: Option<NoiseFit>,
+    wb_gains: [f32; 3],
+    reduced: usize,
+    defringe: Option<(f32, f32)>,
 }
 
 #[derive(serde::Deserialize)]
@@ -116,6 +138,10 @@ fn main() {
                     ))))
                 })
             }
+            Ok(Request::Measure { measure }) => catch_unwind(AssertUnwindSafe(|| {
+                measured(&measure).map(|found| serde_json::json!(found))
+            }))
+            .unwrap_or_else(|_| Err(Failed::Error(panicked(&format!("measuring {measure}"))))),
             Err(why) => Err(Failed::Error(format!("not a request: {why}"))),
         };
         let reply = reply.unwrap_or_else(|failed| match failed {
@@ -238,43 +264,39 @@ fn sharpened(
             request.mosaics
         )));
     }
-    let opened = support::Open::shipped(&request.sharpen, 0)
-        .run()
-        .ok_or_else(|| Failed::Error(format!("{} did not open", request.sharpen)))?;
-    let frame = &opened.frame;
+    let measured = match &request.measured {
+        Some(given) => given,
+        None => &measured(&request.sharpen)?,
+    };
     let base = rawshim::base::device(gpu).ok_or_else(|| Failed::Error("no base kernels".into()))?;
     let rcd = rawshim::demosaic::device(gpu)
         .ok_or_else(|| Failed::Error("no demosaic kernels".into()))?;
-    let matrix = frame
-        .matrix
-        .ok_or_else(|| Failed::Error(format!("{} has no camera matrix", request.sharpen)))?;
-    let levels = opened.measured.levels.anchored();
+    let matrix = measured.matrix;
+    let levels = measured.levels.anchored();
     let white = support::GRADE.reference_white_nits;
-    let sensor_long = frame.width.max(frame.height) * frame.reduced.max(1);
-    let capture = opened
-        .measured
-        .blur
-        .map(|blur| blur * frame.reduced.max(1) as f32);
-    let sigma = rawshim::image::deconvolve_split(capture, sensor_long, sensor_long);
+    let sensor_long = measured.sensor_long;
+    let sigma = rawshim::image::deconvolve_split(measured.capture_blur, sensor_long, sensor_long);
     let noise = rawshim::base::sharpen_noise(
         levels,
         white,
-        frame.noise,
-        frame.matrix,
-        frame.wb_gains,
-        frame.reduced,
+        measured.noise,
+        Some(matrix),
+        measured.wb_gains,
+        measured.reduced,
     )
     .at(
         rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
         rawshim::px::Span::<rawshim::px::Drawn>::exact(sensor_long),
     );
-    let defringe = match opened.measured.defringe {
-        // `Done` means the open's own frame; these mosaics are demosaiced afresh, fringes and all.
-        rawshim::base::Defringe::Done(pair) => rawshim::base::Defringe::Take(pair),
-        other => other,
-    };
+    let defringe = measured.defringe.map_or(
+        rawshim::base::Defringe::Measure,
+        rawshim::base::Defringe::Take,
+    );
     let plain = (rawshim::base::Defringe::Take((0.0, 0.0)), 0.0);
-    let shipped = (defringe, support::STRENGTHS.sharpen);
+    let shipped = (
+        defringe,
+        request.amount.unwrap_or(support::STRENGTHS.sharpen),
+    );
 
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     let mut light = Vec::with_capacity(samples.len() * 6);
@@ -294,8 +316,8 @@ fn sharpened(
                 rawshim::image::SharpenNoise::NONE,
                 &rawshim::fit::Lens::none(),
                 defringe,
-                frame.noise,
-                frame.matrix,
+                measured.noise,
+                Some(matrix),
             ))
             .ok_or_else(|| Failed::Error("the coding did not run".into()))?;
             let size = rawshim::hdr_args::Size {
@@ -314,6 +336,30 @@ fn sharpened(
     }
     write(&request.out, &light)?;
     Ok(serde_json::json!({ "matrix": matrix, "sigma": sigma.composed }))
+}
+
+fn measured(path: &str) -> Result<Measured, Failed> {
+    let opened = support::Open::shipped(path, 0)
+        .run()
+        .ok_or_else(|| Failed::Error(format!("{path} did not open")))?;
+    let frame = &opened.frame;
+    let reduced = frame.reduced.max(1);
+    Ok(Measured {
+        matrix: frame
+            .matrix
+            .ok_or_else(|| Failed::Error(format!("{path} has no camera matrix")))?,
+        levels: opened.measured.levels,
+        capture_blur: opened.measured.blur.map(|blur| blur * reduced as f32),
+        sensor_long: frame.width.max(frame.height) * reduced,
+        noise: frame.noise,
+        wb_gains: frame.wb_gains,
+        reduced: frame.reduced,
+        defringe: match opened.measured.defringe {
+            // `Done` means the open's own frame; mosaics sharpened later are demosaiced afresh.
+            rawshim::base::Defringe::Done(pair) | rawshim::base::Defringe::Take(pair) => Some(pair),
+            rawshim::base::Defringe::Measure => None,
+        },
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

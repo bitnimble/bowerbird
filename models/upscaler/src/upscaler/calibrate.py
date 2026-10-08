@@ -1,7 +1,7 @@
 """Measures a set of weights' grain calibration on the held-out crops, and writes it into their
 `weights.json` with the digest of the weights it belongs to. The grain is matched to the original's
-texture where the picture is flat, as the editor renders both: anywhere else the original also
-holds detail the upscale missed, which grain can't stand in for."""
+texture where the picture is flat, as the editor shows both: anywhere else the original also holds
+detail the upscale missed, which grain can't stand in for."""
 
 import argparse
 import json
@@ -15,10 +15,10 @@ import torch.nn.functional as F
 
 from training.crops import DEFAULT_CACHE, sources
 from training.files import write_atomic
-from training.mosaic import add_noise, pack, raw_planes, stabilise
+from training.mosaic import add_noise, stabilise
 from training.patches import PatchPairs
 from training.pmrid import serve
-from training.targets import PLAIN, SHARPENED
+from training.targets import PLAIN, editor_light
 from upscaler.grain import estimate
 from upscaler.model import load, upscaled
 from upscaler.pairs import INPUTS
@@ -43,7 +43,9 @@ def main() -> None:
     for index, (targets_path, _, _) in enumerate(pairs.items):
         by_photo[targets_path].append(index)
 
-    ratios, unmeasured = [], 0
+    # Weights trained toward the editor's sharpen already carry it, so the editor shows them unsharpened.
+    sharpened_by_editor = loaded.plan["targets"] == PLAIN.name
+    ratios = []
     for targets_path, indices in by_photo.items():
         record = json.loads(targets_path.with_suffix(".json").read_text())
         gains, fit = torch.tensor(record["gains"]), record["fit"]
@@ -52,18 +54,14 @@ def main() -> None:
             ours = upscaled(net, small.cuda()).cpu()
         torch.manual_seed(0)
         unit_grain = add_noise(ours, gains, fit["alpha"], fit["sigmaSq"])
-        try:
-            shown = rendered(torch.cat([original, ours, unit_grain]), record)
-        except ValueError:
-            unmeasured += 1
-            continue
-        shown_original, shown_ours, shown_grain = shown.split(len(ours))
+        chain = editor_light(torch.cat([original, ours, unit_grain])[:, 0].numpy(), record)
+        count = len(ours)
+        shown_original = rgb(chain.sharpened[:count])
+        shown_ours, shown_grain = rgb((chain.sharpened if sharpened_by_editor else chain.plain)[count:]).split(count)
         flat = flattest(shown_ours)
-        ours_texture = texture(shown_ours, gains, flat)
-        needed = (texture(shown_original, gains, flat) - ours_texture) / (texture(shown_grain, gains, flat) - ours_texture)
+        ours_texture = texture(shown_ours, flat)
+        needed = (texture(shown_original, flat) - ours_texture) / (texture(shown_grain, flat) - ours_texture)
         ratios.append(needed / estimate(small, ours, gains, fit))
-    if unmeasured:
-        print(f"{unmeasured} photos too dark to render")
 
     calibration = float(np.median(ratios)) if ratios else math.nan
     if not math.isfinite(calibration):
@@ -74,23 +72,21 @@ def main() -> None:
     write_atomic(args.weights / "weights.json", lambda f: f.write((json.dumps(plan, indent=2) + "\n").encode()))
 
 
-def rendered(mosaics: torch.Tensor, record: dict) -> torch.Tensor:
-    """(B, 1, H, W) mosaics of one photo as the editor renders it unedited, defringed and sharpened."""
-    return torch.from_numpy(SHARPENED.make(mosaics[:, 0].numpy(), record))[:, None]
+def rgb(light: np.ndarray) -> torch.Tensor:
+    return torch.from_numpy(np.ascontiguousarray(light)).permute(0, 3, 1, 2)
 
 
-def flattest(mosaics: torch.Tensor) -> torch.Tensor:
-    """Which plane sites lie in the flattest `FLAT_SHARE` of `mosaics`, by their neighbouring differences."""
-    planes = stabilise(pack(mosaics))
-    slope = planes.diff(dim=-1)[..., :-1, :].abs() + planes.diff(dim=-2)[..., :, :-1].abs()
+def flattest(light: torch.Tensor) -> torch.Tensor:
+    """Which pixels of (B, 3, H, W) light lie in its flattest `FLAT_SHARE`, by neighbouring differences."""
+    level = stabilise(light.mean(1, keepdim=True))
+    slope = level.diff(dim=-1)[..., :-1, :].abs() + level.diff(dim=-2)[..., :, :-1].abs()
     slope = F.pad(slope, (0, 1, 0, 1), mode="replicate")
-    return slope <= slope.flatten().quantile(FLAT_SHARE)
+    return (slope <= slope.flatten().quantile(FLAT_SHARE)).expand_as(light)
 
 
-def texture(mosaics: torch.Tensor, gains: torch.Tensor, where: torch.Tensor) -> float:
-    """The median squared departure of each plane site from its 3 x 3 mean, over `where`."""
-    planes = raw_planes(mosaics, gains)
-    return float((planes - F.avg_pool2d(planes, 3, 1, 1, count_include_pad=False))[where].pow(2).median())
+def texture(light: torch.Tensor, where: torch.Tensor) -> float:
+    """The median squared departure of each pixel's channels from their 3 x 3 mean, over `where`."""
+    return float((light - F.avg_pool2d(light, 3, 1, 1, count_include_pad=False))[where].pow(2).median())
 
 
 if __name__ == "__main__":

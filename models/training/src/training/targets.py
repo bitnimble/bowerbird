@@ -1,5 +1,6 @@
 """What a model is trained to produce from the cached crops."""
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,8 +9,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from training.crops import DEFAULT_CACHE, key
+from training.files import write_atomic
 from training.pmrid import Sharpened, pmrid
 
+MEASUREMENTS = DEFAULT_CACHE.parent / "editor-measurements"
 MEASURABLE = 0.01
 MIN_MEASURABLE_SITES = 10_000
 UNFAITHFUL_SHARE = 0.1
@@ -65,14 +69,27 @@ def sharpened(crops: np.ndarray, record: dict) -> np.ndarray:
     return crops + kept * scale * (sharpened_sites - plain_sites)
 
 
-def editor_light(mosaics: np.ndarray, record: dict) -> Sharpened:
-    """(N, H, W) RGGB mosaics of the photo through the rest of the editor's chain, plain and sharpened."""
+def editor_light(mosaics: np.ndarray, record: dict, amount: float | None = None) -> Sharpened:
+    """(N, H, W) RGGB mosaics of the photo through the rest of the editor's chain, plain and sharpened
+    at `amount`, the editor's default unless given."""
     gains = np.asarray(record["gains"], np.float32)
+    source = Path(record["source"])
     # Mirrored, which keeps the RGGB phase, so the demosaic and the sharpen meet no edge inside a crop.
     padded = np.pad(mosaics.astype(np.float32), ((0, 0), (MIRRORED, MIRRORED), (MIRRORED, MIRRORED)), mode="reflect")
-    chain = pmrid().sharpen(Path(record["source"]), padded, gains)
+    chain = pmrid().sharpen(source, padded, gains, measured(source), amount)
     inside = (slice(None), slice(MIRRORED, -MIRRORED), slice(MIRRORED, -MIRRORED))
     return Sharpened(chain.plain[inside], chain.sharpened[inside], chain.matrix, chain.sigma)
+
+
+def measured(source: Path) -> dict:
+    """The server's `measure` of the RAW, kept on disk: it opens the photo whole, a second or more."""
+    path = MEASUREMENTS / f"{key(source)}.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    found = pmrid().measure(source)
+    MEASUREMENTS.mkdir(parents=True, exist_ok=True)
+    write_atomic(path, lambda f: f.write(json.dumps(found).encode()))
+    return found
 
 
 PLAIN = Targets("plain", plain)
