@@ -20,7 +20,7 @@ from training.metrics import psnr
 from training.mosaic import bilinear, pack, pack_rgb, stabilise, unpack
 from training.pmrid import serve
 from training.preview import from_rec2020, panels, write_png
-from training.targets import TARGETS, editor_light
+from training.targets import TARGETS, editor_light, measured
 from upscaler.degrade import low
 from upscaler.grain import grained
 from upscaler.model import load, look, upscaled
@@ -56,11 +56,14 @@ def main() -> None:
         chain = editor_light(region[:, 0].numpy(), record)
         original = from_rec2020(chain.plain)[inside]
         scale = 1 / float(original.amax(1).flatten().quantile(0.995))
-        native = [F.interpolate(original, scale_factor=2, mode="nearest"), shown(unpack(pack_rgb(bilinear(region))), record)[doubled]]
+        native = [
+            F.interpolate(original, scale_factor=2, mode="nearest"),
+            shown(unpack(pack_rgb(bilinear(region))), record, scale=2)[doubled],
+        ]
         for _, net, seen, _ in models:
             torch.manual_seed(1)
             high = upscaled(net, region.to(device)).cpu()
-            native.append(shown(grained(region, high, gains, opened.fit, seen.grain), record, seen.sharpen)[doubled])
+            native.append(shown(grained(region, high, gains, opened.fit, seen.grain), record, seen.sharpen, 2)[doubled])
         write_png(args.out / "native.png", panels(native, scale))
         print(f"wrote {args.out / 'native.png'}")
         if opened.fit is None:
@@ -68,7 +71,7 @@ def main() -> None:
             return
 
         torch.manual_seed(0)
-        noisy = low(region, gains, opened.fit)
+        noisy = low(region, gains, opened.fit, measured(args.raw)["capture_blur"])
         small = torch.from_numpy(pmrid.denoise(noisy[:, 0].numpy(), opened.gains, opened.fit))[:, None]
         half = (..., slice(MARGIN // 2, (MARGIN + size) // 2), slice(MARGIN // 2, (MARGIN + size) // 2))
         kinds = ["plain"] + sorted({kind for *_, kind in models} - {"plain"})
@@ -88,9 +91,10 @@ def main() -> None:
     print(f"wrote {args.out / 'synthetic.png'}")
 
 
-def shown(mosaics: torch.Tensor, record: dict, sharpen: float | None = None) -> torch.Tensor:
-    """(B, 1, H, W) mosaics as the editor shows them, sharpened at `sharpen`, its default unless given."""
-    return from_rec2020(editor_light(mosaics[:, 0].numpy(), record, sharpen).sharpened)
+def shown(mosaics: torch.Tensor, record: dict, sharpen: float | None = None, scale: int = 1) -> torch.Tensor:
+    """(B, 1, H, W) mosaics, `scale` pixels to each photosite of the photo, as the editor shows them,
+    sharpened at `sharpen`, its default unless given."""
+    return from_rec2020(editor_light(mosaics[:, 0].numpy(), record, sharpen, scale).sharpened)
 
 
 def parse_args() -> argparse.Namespace:

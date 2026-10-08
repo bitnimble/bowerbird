@@ -99,11 +99,17 @@ class Pmrid:
         return self.ask({"measure": str(raw)})
 
     def sharpen(
-        self, raw: Path, mosaics: np.ndarray, gains: np.ndarray, measured: dict | None = None, amount: float | None = None
+        self,
+        raw: Path,
+        mosaics: np.ndarray,
+        gains: np.ndarray,
+        measured: dict | None = None,
+        amount: float | None = None,
+        scale: int = 1,
     ) -> "Sharpened":
         """A stack of the photo's RGGB mosaics, (N, H, W), through the rest of the editor's chain, the
         sharpen at `amount`, the editor's default unless given. Measures the photo unless `measured`
-        is `measure`'s answer for it."""
+        is `measure`'s answer for it. `scale` is the mosaics' pixels per photosite of the photo."""
         count, height, width = mosaics.shape
         np.ascontiguousarray(mosaics, "<f4").tofile(self.exchange)
         reply = self.ask(
@@ -116,6 +122,7 @@ class Pmrid:
                 "gains": gains.tolist(),
                 "measured": measured,
                 "amount": amount,
+                "scale": scale,
             }
         )
         light = take(self.exchange, count, 2, height, width, 3)

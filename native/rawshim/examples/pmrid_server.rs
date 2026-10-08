@@ -60,6 +60,8 @@ struct Sharpen {
     gains: [f32; 3],
     measured: Option<Measured>,
     amount: Option<f64>,
+    /// The mosaics' pixels per photosite of the photo, 2 for a 2x upscale; 1 unless given.
+    scale: Option<usize>,
 }
 
 /// What the rest of the chain needs of a photo that only opening it whole can measure.
@@ -274,8 +276,12 @@ fn sharpened(
     let matrix = measured.matrix;
     let levels = measured.levels.anchored();
     let white = support::GRADE.reference_white_nits;
-    let sensor_long = measured.sensor_long;
-    let sigma = rawshim::image::deconvolve_split(measured.capture_blur, sensor_long, sensor_long);
+    // An upscale is a sensor of `scale` times the photosites, the same blur spanning `scale` times
+    // as many of them.
+    let scale = request.scale.unwrap_or(1);
+    let sensor_long = measured.sensor_long * scale;
+    let capture_blur = measured.capture_blur.map(|blur| blur * scale as f32);
+    let sigma = rawshim::image::deconvolve_split(capture_blur, sensor_long, sensor_long);
     let noise = rawshim::base::sharpen_noise(
         levels,
         white,

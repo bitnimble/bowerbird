@@ -5,32 +5,42 @@ import torch.nn.functional as F
 
 from training.mosaic import add_noise, demosaic, pack_rgb, unpack
 
-BLUR_TAPS = 9
-BLUR_SIGMA_MIN = 0.3
-BLUR_SIGMA_MAX = 1.6
+TYPICAL_CAPTURE_BLUR = 0.88
+BLUR_JITTER = 0.2
+MIN_ADDED_BLUR = 0.3
 
 
-def low(mosaic: torch.Tensor, gains: torch.Tensor, fit: dict) -> torch.Tensor:
+def low(mosaic: torch.Tensor, gains: torch.Tensor, fit: dict, capture_blur: float | None) -> torch.Tensor:
     """(B, 1, H, W) RGGB mosaics of one photo to what a sensor of twice the pitch would record of the
-    same scenes, (B, 1, H/2, W/2), with the photo's own noise."""
-    scene = blur(demosaic(mosaic))
+    same scenes, (B, 1, H/2, W/2), with the photo's own noise and, in its own pixels, the photo's
+    `capture_blur` (sigma in sensor pixels, as the editor measures it; None for a typical lens)."""
+    scene = blur(demosaic(mosaic), added_blur(capture_blur))
     recorded = unpack(pack_rgb(F.avg_pool2d(scene, 2)))
     return add_noise(recorded, gains, fit["alpha"], fit["sigmaSq"])
 
 
-def blur(rgb: torch.Tensor) -> torch.Tensor:
+def added_blur(capture_blur: float | None) -> float:
+    capture = TYPICAL_CAPTURE_BLUR if capture_blur is None else capture_blur
+    # The same blur spans twice as many of these pixels, 4 capture^2, of which the photo already holds
+    # capture^2 and the 2 x 2 pooling adds a quarter.
+    return math.sqrt(max(3 * capture**2 - 0.25, MIN_ADDED_BLUR**2))
+
+
+def blur(rgb: torch.Tensor, sigma: float) -> torch.Tensor:
     batch, channels, height, width = rgb.shape
-    kernels = gaussian_kernels(batch, rgb.device).repeat_interleave(channels, 0)
-    padded = F.pad(rgb.reshape(1, batch * channels, height, width), (BLUR_TAPS // 2,) * 4, mode="reflect")
+    reach = math.ceil(3 * sigma * (1 + BLUR_JITTER))
+    kernels = gaussian_kernels(batch, sigma, reach, rgb.device).repeat_interleave(channels, 0)
+    padded = F.pad(rgb.reshape(1, batch * channels, height, width), (reach,) * 4, mode="reflect")
     return F.conv2d(padded, kernels.to(rgb.dtype), groups=batch * channels).reshape(rgb.shape)
 
 
-def gaussian_kernels(count: int, device: torch.device) -> torch.Tensor:
-    sigma_x = BLUR_SIGMA_MIN + (BLUR_SIGMA_MAX - BLUR_SIGMA_MIN) * torch.rand(count, device=device)
-    sigma_y = BLUR_SIGMA_MIN + (BLUR_SIGMA_MAX - BLUR_SIGMA_MIN) * torch.rand(count, device=device)
+def gaussian_kernels(count: int, sigma: float, reach: int, device: torch.device) -> torch.Tensor:
+    """`count` (1, 2 reach + 1, 2 reach + 1) kernels, each axis's sigma within `BLUR_JITTER` of `sigma`
+    and turned at random."""
+    sigma_x, sigma_y = (sigma * (1 + BLUR_JITTER * (2 * torch.rand(count, device=device) - 1)) for _ in range(2))
     angle = math.pi * torch.rand(count, device=device)
     cos, sin = torch.cos(angle), torch.sin(angle)
-    offsets = torch.arange(BLUR_TAPS, device=device, dtype=torch.float32) - BLUR_TAPS // 2
+    offsets = torch.arange(-reach, reach + 1, device=device, dtype=torch.float32)
     y, x = torch.meshgrid(offsets, offsets, indexing="ij")
     along = cos[:, None, None] * x + sin[:, None, None] * y
     across = -sin[:, None, None] * x + cos[:, None, None] * y
