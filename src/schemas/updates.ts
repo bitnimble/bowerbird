@@ -55,6 +55,8 @@ export type ReleaseNote = z.infer<typeof ReleaseNoteSchema>;
 
 export const UpdateStatusSchema = z.object({
   current: z.string(),
+  /** False where update checking is turned off, as in a Play Store build. */
+  checks: z.boolean(),
   /** Everything newer than `current`, newest first, so the dialog is cumulative. */
   newer: z.array(ReleaseNoteSchema),
   /** Whether this install can apply an update to itself, rather than only point at one. */

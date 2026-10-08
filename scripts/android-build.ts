@@ -1,4 +1,4 @@
-// Build the Android APK, unsigned; `release.yml` signs it.
+// Build the Android APK, and with `--play` the Play Store's AAB, unsigned; `release.yml` signs both.
 //
 // The app starts its own server as the desktop does (`src-tauri/src/android.rs`), so this builds
 // everything that server runs on for the phone first: the codecs, `librawshim`, and Bun with its
@@ -10,10 +10,18 @@
 import { spawnSync } from 'node:child_process';
 import { ensureIcons, writeAndroidIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { ANDROID_TARGET, androidNdk } from './android-ndk.ts';
+import { ANDROID_PAGE_SIZE, ANDROID_TARGET, androidNdk } from './android-ndk.ts';
 
 let ndk: ReturnType<typeof androidNdk>;
 try {
@@ -52,19 +60,29 @@ run('bun', ['run', 'get:android-runtime']);
 run('bun', ['run', 'build'], join(repoRoot, 'web'));
 run('bun', ['run', 'scripts/build-sidecar.ts', '--target', ANDROID_TARGET]);
 
-const config = JSON.stringify({ version: VERSION });
-run('bun', [
-  'x',
-  '@tauri-apps/cli',
-  'android',
-  'build',
-  '--target',
-  'aarch64',
-  '--apk',
-  '--config',
-  config,
-  ...process.argv.slice(2),
-]);
+const play = process.argv.includes('--play');
+const passed = process.argv.slice(2).filter((arg) => arg !== '--play');
+const tauriBuild = (format: '--apk' | '--aab', extra = {}): void =>
+  run(
+    'bun',
+    [
+      'x',
+      '@tauri-apps/cli',
+      'android',
+      'build',
+      '--target',
+      'aarch64',
+      format,
+      '--config',
+      JSON.stringify({ version: VERSION }),
+      ...passed,
+    ],
+    repoRoot,
+    extra,
+  );
+tauriBuild('--apk');
+// Play forbids an app updating itself other than through Play, so its build checks for none.
+if (play) tauriBuild('--aab', { BOWERBIRD_UPDATE_URL: '' });
 
 /**
  * What the generated project gets wrong for an app whose page is its own local server's.
@@ -220,6 +238,10 @@ if (chosen.length > 1) {
 // wherever this happens to be running.
 const dist = process.env.BOWERBIRD_ANDROID_DIST_DIR?.trim();
 const apk = chosen[0]!;
+assertPageAligned(apk);
+if (play) {
+  assertPageAligned(join(outputs, '..', 'bundle', 'universalRelease', 'app-universal-release.aab'));
+}
 if (dist) {
   mkdirSync(resolve(dist), { recursive: true });
   const out = join(resolve(dist), 'Bowerbird.apk');
@@ -227,6 +249,37 @@ if (dist) {
   console.error(`[android-build] apk, signed with the debug key: ${out}`);
 } else {
   console.error(`[android-build] apk: ${apk}`);
+}
+
+function assertPageAligned(archive: string): void {
+  const scratch = mkdtempSync(join(tmpdir(), 'bb-page-size-'));
+  try {
+    run('unzip', ['-q', '-o', archive, '*.so', '-d', scratch]);
+    const libraries = readdirSync(scratch, { recursive: true, encoding: 'utf8' }).filter((path) =>
+      path.endsWith('.so'),
+    );
+    for (const library of libraries) {
+      const readelf = spawnSync(join(ndk.bin, 'llvm-readelf'), ['-lW', join(scratch, library)], {
+        encoding: 'utf8',
+      });
+      const aligns =
+        readelf.status === 0
+          ? readelf.stdout
+              .split('\n')
+              .filter((line) => line.trim().startsWith('LOAD'))
+              .map((line) => Number(line.trim().split(/\s+/).at(-1)))
+          : [];
+      if (aligns.length === 0 || aligns.some((align) => !(align >= ANDROID_PAGE_SIZE))) {
+        console.error(
+          `[android-build] ${library} in ${archive} has LOAD alignments [${aligns.join(', ')}], ` +
+            `not all ${ANDROID_PAGE_SIZE} or more${readelf.stderr ? `: ${readelf.stderr}` : ''}`,
+        );
+        process.exit(1);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /** The key Android Studio signs debug builds with, made the way it makes it where it is missing. */

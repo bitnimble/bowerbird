@@ -56,11 +56,11 @@ and web clients use its REST API. This repo's web client has a separate build/de
 
 ### NPM Dependencies
 
-| Package           | Purpose                                                                                    |
-| ----------------- | ------------------------------------------------------------------------------------------ |
-| `hono`            | Web server and routing                                                                     |
-| `zod`             | Schema validation (v4)                                                                     |
-| `@parcel/watcher` | Filesystem watching (§9.8); native, with prebuilt bindings for every platform this runs on |
+| Package           | Purpose                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `hono`            | Web server and routing                                                                   |
+| `zod`             | Schema validation (v4)                                                                   |
+| `@parcel/watcher` | Filesystem watching (§9.8); native, prebuilt for every platform this runs on but Android |
 
 Pixel processing lives in `native/rawshim` (§10.4): compiled rawler fork and `lensdb`,
 libavif/libjxl for `renditions`, Rust and Slang elsewhere. No image-processing package.

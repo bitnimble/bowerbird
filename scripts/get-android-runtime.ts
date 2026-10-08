@@ -9,13 +9,20 @@
 // package installer unpacked from there, and it unpacks nothing not named `lib*.so`.
 //
 // `libsql` publishes no Android build, so it is compiled from the tag of the version installed
-// beside the bundle; Bun and the watcher publish theirs, refused unless they hash to the pins.
+// beside the bundle. The watcher's is linked for 4 KB pages, which Play refuses, so it is compiled
+// from the source `bun install` put beside the bundle. Bun's is refused unless it hashes to the pin.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ANDROID_ABI, ANDROID_API, ANDROID_TARGET, androidNdk } from './android-ndk';
+import {
+  ANDROID_ABI,
+  ANDROID_API,
+  ANDROID_PAGE_SIZE_LINK_ARG,
+  ANDROID_TARGET,
+  androidNdk,
+} from './android-ndk';
 import { alreadyPinned, fetchPinned, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
 
 const NAME = 'android-runtime';
@@ -31,12 +38,35 @@ const BUN_SHA256: Record<string, string> = {
 const LIBSQL_COMMITS: Record<string, string> = {
   '0.5.29': '55bee86d1c284f1ddf2b9e280e870d2b6cef884a',
 };
+const NODE_API_HEADERS = {
+  version: '1.9.0',
+  sha512:
+    '2oNILP4jXwRB4ywnYKjVk1YyJ96n2D4EOVJO6S3oYZ5PtbJrw3Yt9TpAuX3nBLMuzn74rnfGQrv13pS9vC+YiA==',
+};
+/** `binding.gyp`'s sources for Linux and Android. */
+const WATCHER_SOURCES = [
+  'binding.cc',
+  'Watcher.cc',
+  'Backend.cc',
+  'DirTree.cc',
+  'Glob.cc',
+  'Debounce.cc',
+  'watchman/BSER.cc',
+  'watchman/WatchmanBackend.cc',
+  'shared/BruteForceBackend.cc',
+  'linux/InotifyBackend.cc',
+  'unix/legacy.cc',
+];
 
 async function main(): Promise<void> {
   const BUN_VERSION = text('.bun-version').trim();
   const LIBSQL_VERSION = installedVersion('libsql');
-  const WATCHER_VERSION = installedVersion('@parcel/watcher');
-  const WATCHER_INTEGRITY = lockedIntegrity(`@parcel/watcher-android-arm64@${WATCHER_VERSION}`);
+  const WATCHER_INTEGRITY = lockedIntegrity(
+    `@parcel/watcher@${installedVersion('@parcel/watcher')}`,
+  );
+  const ADDON_API_INTEGRITY = lockedIntegrity(
+    `node-addon-api@${installedVersion('node-addon-api')}`,
+  );
   const bunSha256 = BUN_SHA256[BUN_VERSION];
   if (bunSha256 == null) {
     throw new Error(
@@ -52,7 +82,7 @@ async function main(): Promise<void> {
   const recipe = pin(BUN_VERSION, [
     bunSha256,
     `libsql ${LIBSQL_VERSION} ${libsqlCommit}`,
-    `watcher ${WATCHER_VERSION} ${WATCHER_INTEGRITY}`,
+    `watcher ${WATCHER_INTEGRITY} ${ADDON_API_INTEGRITY} ${NODE_API_HEADERS.sha512}`,
     text(import.meta.path),
     text('scripts/android-ndk.ts'),
     text('.android-ndk-version'),
@@ -67,15 +97,15 @@ async function main(): Promise<void> {
       bunSha256,
       'hex',
     );
-    const watcher = await download(
-      `https://registry.npmjs.org/@parcel/watcher-android-arm64/-/watcher-android-arm64-${WATCHER_VERSION}.tgz`,
+    const headers = await download(
+      `https://registry.npmjs.org/node-api-headers/-/node-api-headers-${NODE_API_HEADERS.version}.tgz`,
       'sha512',
-      WATCHER_INTEGRITY,
+      NODE_API_HEADERS.sha512,
       'base64',
     );
     makeOnce(home, recipe, rebuild, () => {
       unpackInto(home, 'bun.zip', bun, ['unzip', '-q'], 'bun-linux-aarch64-android/bun', RUNTIME);
-      unpackInto(home, 'watcher.tgz', watcher, ['tar', 'xzf'], 'package/watcher.node', WATCHER);
+      buildWatcher(home, headers);
       buildLibsql(home, libsqlCommit);
     });
   }
@@ -109,6 +139,40 @@ function unpackInto(
     writeFileSync(join(scratch, archive), bytes);
     run(unpacker[0]!, [...unpacker.slice(1), archive], scratch);
     copyFileSync(join(scratch, inside), join(home, as));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+function buildWatcher(home: string, headers: Buffer): void {
+  const scratch = mkdtempSync(join(tmpdir(), 'bb-watcher-'));
+  try {
+    writeFileSync(join(scratch, 'headers.tgz'), headers);
+    run('tar', ['xzf', 'headers.tgz'], scratch);
+    const { bin } = androidNdk();
+    const source = join(ROOT, 'node_modules', '@parcel', 'watcher', 'src');
+    run(
+      join(bin, `${ANDROID_TARGET}${ANDROID_API}-clang++`),
+      [
+        '-shared',
+        '-fPIC',
+        '-O3',
+        '-s',
+        '-std=c++17',
+        '-fstack-protector-strong',
+        '-DNAPI_DISABLE_CPP_EXCEPTIONS',
+        '-DWATCHMAN',
+        '-DINOTIFY',
+        '-DBRUTE_FORCE',
+        `-I${join(ROOT, 'node_modules', 'node-addon-api')}`,
+        `-I${join(scratch, 'package', 'include')}`,
+        ANDROID_PAGE_SIZE_LINK_ARG,
+        ...WATCHER_SOURCES.map((file) => join(source, file)),
+        '-o',
+        join(home, WATCHER),
+      ],
+      scratch,
+    );
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -158,7 +222,7 @@ function installedVersion(name: string): string {
 /** The lockfile's own hash for a package, so the tarball is held to what `bun install` would be. */
 function lockedIntegrity(spec: string): string {
   const quoted = spec.replaceAll(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-  const found = new RegExp(`\\["${quoted}", "", \\{[^}]*\\}, "sha512-([^"]+)"\\]`).exec(
+  const found = new RegExp(`\\["${quoted}", "", \\{[^\\n]*\\}, "sha512-([^"]+)"\\]`).exec(
     text('bun.lock'),
   );
   if (found?.[1] == null) throw new Error(`bun.lock holds no integrity for ${spec}`);

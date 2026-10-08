@@ -188,7 +188,7 @@ earlier would show a blank screen while the server restarts.
 | linux-x86_64   | nothing, paused | -            | -                         |
 | macos-arm64    | dmg             | yes          | yes                       |
 | windows-x86_64 | NSIS installer  | yes          | yes                       |
-| android-arm64  | apk             | yes          | **no**                    |
+| android-arm64  | apk, Play aab   | yes          | **no**                    |
 | docker-x86_64  | ghcr image      | yes          | no, `docker compose pull` |
 
 **The Linux desktop is paused, and the container is not.** A server reaches Linux through the
@@ -267,7 +267,10 @@ the executables, so a fresh install and an in-place update resolve alike.
 The platform maps code only from the native library directory its package installer fills, and
 only from files named `lib*.so`, so Bun's own Android build ships as `libbun.so`, beside
 `librawshim.so` and the two native addons, `libsql` (compiled from its tag, since it publishes no
-Android build) and Parcel's watcher (`get:android-runtime`). The Gradle project is patched to
+Android build) and Parcel's watcher (compiled from the installed package's source, since its
+Android build is linked for 4 KB pages), both by `get:android-runtime`. Play refuses a library a
+16 KB page device cannot map, so every one links with `ANDROID_PAGE_SIZE_LINK_ARG` and
+`android-build.ts` fails a build whose APK or AAB holds one aligned to less. The Gradle project is patched to
 extract them on install and to allow cleartext to `127.0.0.1` alone (`android-build.ts`), and
 `build-sidecar.ts` fails the build on any of them needing a library outside the NDK's stable set
 and what ships beside them: the codecs' libc++ is the NDK's static one, and Parcel's watcher
@@ -288,6 +291,13 @@ on this device to act on, and the server starts with watching and the daily scan
 code loaded from the data directory, so the dialog offers the download and the system
 installer takes it from there.
 
+**The Play build checks for no updates.** Play forbids an app updating itself any other way, so
+`android-build.ts --play` compiles its AAB with `BOWERBIRD_UPDATE_URL` empty, which the shell
+hands the server, and Settings shows the version without a check button. Both are signed with one
+key, given to the Play Console as the app signing key, so either install updates the other. `release.yml`'s
+`play` job uploads the AAB to the internal track, behind the `play` environment's reviewer, with a
+token from Google's workload identity federation rather than a stored key.
+
 ### 23.8 Versions
 
 **Root `VERSION` is the sole version source.** `src/version.ts` imports it for server
@@ -298,7 +308,9 @@ pass it to Tauri as `--config`; manifests carry no separate version.
 **`bun run release` cuts one**: on a clean tree on `main` it writes the next patch version into
 `VERSION` - or the semver version it is given, or `0.0.0-<hash>` for a commit hash - commits it,
 and tags the commit `v<VERSION>`; `git push --follow-tags` then starts the workflow, which runs
-on a push to `main` that changes `VERSION`. GitHub restores caches from the current ref and
+on a push to `main` that changes `VERSION`. That push must carry the tag: a ruleset lets only
+the repository's admin create `v*` tags, so the workflow cannot make one and `plan` fails without
+it. GitHub restores caches from the current ref and
 `main`; distinct release tags cannot share entries they save. Running on `main` lets each
 release reuse caches saved by earlier releases.
 
