@@ -448,8 +448,6 @@ jobs:
     needs: [plan, platform-tests]
     if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-22.04
-    outputs:
-      signed: ${{ steps.sign.outputs.signed }}
     permissions:
       contents: read
       actions: read
@@ -536,11 +534,40 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
-      # Gradle leaves the release APK and AAB unsigned, and Android will not install one. With a
-      # keystore in the repository's secrets this signs both; without, the unsigned APK is
-      # published as it is, for somebody to sign themselves. This key is also Play's app signing
-      # key, given to the Play Console as an existing key, so a Play install and the GitHub APK
-      # can update each other; a key Play generated instead would make them refuse to.
+      - name: Stage the unsigned APK and AAB
+        run: |
+          set -eu
+          mkdir -p unsigned
+          version=$(tr -d '[:space:]' < VERSION)
+          cp "$(find src-tauri/gen/android -name '*release*.apk' | head -n1)" \
+            "unsigned/Bowerbird_${version}_android-arm64.apk"
+          cp "$(find src-tauri/gen/android -name '*release*.aab' | head -n1)" \
+            "unsigned/Bowerbird_${version}.aab"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: android-unsigned
+          path: unsigned/
+
+  # Signing is its own job because everything the build ran, from `bun install` to every crate's
+  # `build.rs` to Gradle's plugins, could leave a wrapper on PATH that reads the key as it is used.
+  # Here only the runner image touches it, and `android-signing` gives its secrets to `main` alone.
+  #
+  # The key is also Play's app signing key, given to the Play Console as an existing key, so a Play
+  # install and the GitHub APK update each other; a key Play generated would make them refuse to.
+  # Without the secrets the unsigned APK is published as it is, for somebody to sign themselves.
+  sign:
+    needs: [android]
+    runs-on: ubuntu-latest
+    environment: android-signing
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: android-unsigned
+          path: unsigned
       - name: Sign the APK and AAB
         id: sign
         env:
@@ -550,24 +577,20 @@ jobs:
         run: |
           set -eu
           mkdir -p dist/android-arm64 play
-          apk=$(find src-tauri/gen/android -name '*release*.apk' | head -n1)
-          aab=$(find src-tauri/gen/android -name '*release*.aab' | head -n1)
-          version=$(tr -d '[:space:]' < VERSION)
-          out="dist/android-arm64/Bowerbird_${version}_android-arm64.apk"
+          mv unsigned/*.apk dist/android-arm64/
           if [ -z "${KEYSTORE:-}" ]; then
             echo "no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK"
-            cp "$apk" "$out"
             exit 0
           fi
-          echo "$KEYSTORE" | base64 -d > /tmp/release.jks
-          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort | tail -n1)
-          "$tools/apksigner" sign --ks /tmp/release.jks --ks-pass env:KEYSTORE_PASSWORD \
-            --ks-key-alias "$KEY_ALIAS" --out "$out" "$apk"
-          jarsigner -keystore /tmp/release.jks -storepass:env KEYSTORE_PASSWORD \
-            -signedjar "play/Bowerbird_${version}.aab" "$aab" "$KEY_ALIAS"
-          rm -f /tmp/release.jks
+          mv unsigned/*.aab play/
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n1)
+          "$tools/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" dist/android-arm64/*.apk
+          "$JAVA_HOME/bin/jarsigner" -keystore "$RUNNER_TEMP/release.jks" \
+            -storepass:env KEYSTORE_PASSWORD play/*.aab "$KEY_ALIAS"
+          rm -f "$RUNNER_TEMP/release.jks"
           echo "signed=true" >> "$GITHUB_OUTPUT"
-
       - uses: actions/upload-artifact@v6
         with:
           name: dist-android-arm64-installer
@@ -582,10 +605,10 @@ jobs:
   # Its own job so the `play` environment's required reviewer holds back only the upload. The
   # workload identity pool hands a token only to a run in that environment, on `main`.
   play:
-    needs: [plan, android]
+    needs: [plan, sign]
     # Tauri derives the version code from `VERSION`, which a prerelease's `0.0.0-<hash>` would send
     # backwards, and Play refuses a code lower than one it has.
-    if: needs.android.outputs.signed == 'true' && needs.plan.outputs.tag != '' && !contains(needs.plan.outputs.tag, '-') && vars.PLAY_SERVICE_ACCOUNT != ''
+    if: needs.sign.outputs.signed == 'true' && needs.plan.outputs.tag != '' && !contains(needs.plan.outputs.tag, '-') && vars.PLAY_SERVICE_ACCOUNT != ''
     runs-on: ubuntu-latest
     environment: play
     permissions:
@@ -644,7 +667,7 @@ jobs:
   # so a platform whose build failed is simply absent from it - and an install of that
   # platform is told there is nothing for it rather than handed a 404.
   publish:
-    needs: [plan, platform-tests, docker, desktop, android]
+    needs: [plan, platform-tests, docker, desktop, sign]
     # A platform that failed to build should not hold the release back; what it must not
     # do is appear in the manifest, which it cannot, having uploaded nothing.
     if: ${{ always() && needs.platform-tests.result == 'success' && needs.plan.outputs.tag != '' }}
