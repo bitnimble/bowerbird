@@ -26,7 +26,7 @@ from training.preview import from_rec2020, panels, write_png
 from training.targets import TARGETS, editor_light, measured
 from upscaler.degrade import low
 from upscaler.grain import grained
-from upscaler.model import load, look, upscaled
+from upscaler.model import load, look, stabiliser, upscaled
 
 MARGIN = 32
 
@@ -38,7 +38,7 @@ def main() -> None:
     models = []
     for weights in args.weights:
         loaded = load(weights)
-        models.append((weights, loaded.net.to(device).eval(), look(loaded), loaded.plan["targets"]))
+        models.append((weights, loaded.net.to(device).eval(), look(loaded), loaded.plan))
     pmrid = serve(args.out / ".scratch")
     opened = pmrid.open(args.raw)
     mosaic = torch.from_numpy(opened.mosaic)[None, None]
@@ -65,9 +65,9 @@ def main() -> None:
             F.interpolate(original, scale_factor=2, mode="nearest"),
             shown(unpack(pack_rgb(bilinear(region))), record, scale=2)[doubled],
         ]
-        for _, net, seen, _ in models:
+        for _, net, seen, plan in models:
             torch.manual_seed(1)
-            high = upscaled(net, noisy_region.to(device)).cpu()
+            high = upscaled(net, noisy_region.to(device), stabiliser(plan, gains, opened.fit)).cpu()
             native.append(shown(grained(noisy_region, high, gains, opened.fit, seen.grain), record, seen.sharpen, 2)[doubled])
         write_png(args.out / "native.png", panels(native, scale))
         print(f"wrote {args.out / 'native.png'}")
@@ -79,15 +79,16 @@ def main() -> None:
         noisy = low(region, gains, opened.fit, measured(args.raw)["capture_blur"])
         small = torch.from_numpy(pmrid.denoise(noisy[:, 0].numpy(), opened.gains, opened.fit))[:, None]
         half = (..., slice(MARGIN // 2, (MARGIN + size) // 2), slice(MARGIN // 2, (MARGIN + size) // 2))
-        kinds = ["plain"] + sorted({kind for *_, kind in models} - {"plain"})
+        kinds = ["plain"] + sorted({plan["targets"] for *_, plan in models} - {"plain"})
         targets = {kind: stabilise(pack(torch.from_numpy(TARGETS[kind].make(region[0].numpy(), record))[None]))[half] for kind in kinds}
         classical = unpack(pack_rgb(bilinear(small)))
         for kind, target in targets.items():
             print(f"synthetic bilinear against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(classical))[half], target)):.2f} dB")
         shown_small = from_rec2020(editor_light(small[:, 0].numpy(), record).plain)[half]
         synthetic = [F.interpolate(shown_small, scale_factor=2, mode="nearest"), shown(classical, record)[inside]]
-        for weights, net, seen, kind in models:
-            ours = upscaled(net, noisy.to(device)).cpu()
+        for weights, net, seen, plan in models:
+            kind = plan["targets"]
+            ours = upscaled(net, noisy.to(device), stabiliser(plan, gains, opened.fit)).cpu()
             print(f"synthetic {weights} against {kind}: PSNR {psnr(F.mse_loss(stabilise(pack(ours))[half], targets[kind])):.2f} dB")
             torch.manual_seed(1)
             synthetic.append(shown(grained(noisy, ours, gains, opened.fit, seen.grain), record, seen.sharpen)[inside])

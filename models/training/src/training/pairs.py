@@ -8,6 +8,7 @@ that trains on it."""
 
 import json
 import os
+import random
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from training.pmrid import each_with_pmrid
 from training.targets import Targets
 
 HIGH_ISO = 1600
+CLEAN_ISO = 400
 
 
 @dataclass(frozen=True)
@@ -52,18 +54,44 @@ def datasets(
     data: Path, cache: Path, workers: int, inputs: Inputs, targets: Targets, batch: int
 ) -> tuple["CropPairs", dict[str, "CropPairs"]]:
     """The training pairs of the RAW files `data` names, cached and made first where they aren't,
-    and the held-out pairs by ISO."""
+    and the held-out pairs.
+
+    Targets are the photos at `CLEAN_ISO` or under, whose texture no denoise has taken, each given the
+    noise of a photo drawn from every ISO. Held out: those photos with the noise of photos under and
+    over `HIGH_ISO`, and the photos over it with their own noise, whose targets are denoised."""
     raws = sources(data)
     prepare(raws, cache, workers)
     make_pairs(cache, raws, workers, inputs, targets)
-    train_set = CropPairs(cache, raws, False, inputs, targets)
+    iso = isos(data)
+
+    def clean(source: str) -> bool:
+        return iso.get(source, 0) <= CLEAN_ISO
+
+    def high(source: str) -> bool:
+        return iso.get(source, 0) >= HIGH_ISO
+
+    low_noises = noise_fits(cache, raws, lambda s: not high(s))
+    high_noises = noise_fits(cache, raws, high)
+    if not low_noises or not high_noises:
+        raise SystemExit(f"{len(low_noises)} photos under ISO {HIGH_ISO} and {len(high_noises)} over it to draw noise from")
+    train_set = CropPairs(cache, raws, False, inputs, targets, clean, low_noises + high_noises)
     if len(train_set) < batch:
         raise SystemExit(f"{len(train_set)} usable crops under {cache}, fewer than a batch")
-    iso = isos(data)
     return train_set, {
-        f"ISO under {HIGH_ISO}": CropPairs(cache, raws, True, inputs, targets, lambda s: iso.get(s, 0) < HIGH_ISO),
-        f"ISO {HIGH_ISO} and over": CropPairs(cache, raws, True, inputs, targets, lambda s: iso.get(s, 0) >= HIGH_ISO),
+        f"ISO under {HIGH_ISO}": CropPairs(cache, raws, True, inputs, targets, clean, low_noises),
+        f"ISO {HIGH_ISO} and over": CropPairs(cache, raws, True, inputs, targets, clean, high_noises),
+        f"real ISO {HIGH_ISO} and over": CropPairs(cache, raws, True, inputs, targets, high),
     }
+
+
+def noise_fits(cache: Path, raws: list[Path], keep: Callable[[str], bool]) -> list[tuple[float, float]]:
+    """The `alpha` and `sigmaSq` of each cached photo `keep` admits, on both sides of the split."""
+    return [
+        (record["fit"]["alpha"], record["fit"]["sigmaSq"])
+        for split in (False, True)
+        for _, record in records(cache, raws, split)
+        if keep(record["source"])
+    ]
 
 
 def make_pairs(cache: Path, raws: list[Path], workers: int, inputs: Inputs, targets: Targets) -> None:
@@ -125,8 +153,9 @@ def complete(record_path: Path, crops: int, inputs: Inputs, targets: Targets) ->
 
 
 class CropPairs(Dataset):
-    """(1, side, side) inputs, their (1, CROP, CROP) targets, and the photo's `sensor`. Validation
-    takes each crop's first input, so it is the same every time.
+    """(1, side, side) inputs, their (1, CROP, CROP) targets, and the photo's `sensor`, its noise
+    drawn from `noises` where given. Validation takes each crop's first input and the same draw, so
+    it is the same every time.
 
     Never flipped: restoring RGGB after a flip needs an odd shift on each side, and an odd shift of
     an input at half scale is an even shift of its target, so the pair would no longer line up."""
@@ -139,9 +168,11 @@ class CropPairs(Dataset):
         inputs: Inputs,
         targets: Targets,
         keep: Callable[[str], bool] = lambda _: True,
+        noises: list[tuple[float, float]] | None = None,
     ) -> None:
         self.validation = validation
         self.inputs = inputs
+        self.noises = noises
         self.items = [
             (targets.path(path), inputs.path(path), crop, sensor(record))
             for path, record in records(cache, raws, validation)
@@ -163,6 +194,9 @@ class CropPairs(Dataset):
         given = read(inputs_path, (crop * variants + variant) * side * side, side * side).reshape(side, side)
         if transpose:
             given, target = given.T, target.T
+        if self.noises is not None:
+            drawn = random.Random(index).randrange(len(self.noises)) if self.validation else int(torch.randint(len(self.noises), ()))
+            of_sensor = (*of_sensor[:3], *self.noises[drawn])
         return (
             torch.from_numpy(np.array(given, order="C"))[None],
             torch.from_numpy(np.array(target, order="C"))[None],

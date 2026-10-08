@@ -6,7 +6,17 @@ import torch.nn.functional as F
 from torch import nn
 
 from training.export import load_exported
-from training.mosaic import STABILISER_FLOOR, pack, stabilise, unpack, unstabilise
+from training.mosaic import (
+    FIT_STABILISER,
+    STABILISER_FLOOR,
+    Stabiliser,
+    fit_stabiliser,
+    fixed_stabiliser,
+    pack,
+    stabilised,
+    unpack,
+    unstabilised,
+)
 
 
 class Upscaler(nn.Module):
@@ -36,8 +46,10 @@ def load(weights: Path) -> Loaded:
     """The exported weights in the folder `weights`."""
     exported = load_exported(weights)
     plan = exported.plan
-    if plan["stabiliser_floor"] != STABILISER_FLOOR:
+    if "stabiliser_floor" in plan and plan["stabiliser_floor"] != STABILISER_FLOOR:
         raise SystemExit(f"{weights} was trained with a stabiliser floor of {plan['stabiliser_floor']}")
+    if "stabiliser" in plan and plan["stabiliser"] != FIT_STABILISER:
+        raise SystemExit(f"{weights} was trained with a stabiliser of {plan['stabiliser']}")
     net = Upscaler(plan["channels"], plan["blocks"])
     net.load_state_dict(exported.state)
     return Loaded(net, plan, exported.digest)
@@ -63,6 +75,15 @@ def look(loaded: Loaded) -> Look:
     return Look(share * loaded.plan["grain_calibration"], sharpen)
 
 
-def upscaled(net: Upscaler, mosaic: torch.Tensor) -> torch.Tensor:
+def stabiliser(plan: dict, gains: torch.Tensor, fit: dict | None) -> Stabiliser:
+    """What weights exported with `plan` take a photo's planes through, from its noise `fit`."""
+    if "stabiliser_floor" in plan:
+        return fixed_stabiliser(plan["stabiliser_floor"])
+    if fit is None:
+        raise ValueError("these weights take the photo's noise fit, and it has none")
+    return fit_stabiliser(gains, fit["alpha"], fit["sigmaSq"])
+
+
+def upscaled(net: Upscaler, mosaic: torch.Tensor, under: Stabiliser) -> torch.Tensor:
     """(B, 1, H, W) RGGB mosaics to (B, 1, 2H, 2W)."""
-    return unpack(unstabilise(net(stabilise(pack(mosaic)))))
+    return unpack(unstabilised(net(stabilised(pack(mosaic), under)), under))

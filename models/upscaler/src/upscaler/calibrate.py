@@ -19,7 +19,7 @@ from training.pmrid import serve
 from training.targets import PLAIN, editor_light, measured
 from upscaler.degrade import low
 from upscaler.grain import estimate
-from upscaler.model import load, upscaled
+from upscaler.model import load, stabiliser, upscaled
 
 CPU_THREADS = 2
 FLAT_SHARE = 0.25
@@ -46,7 +46,7 @@ def main() -> None:
         torch.manual_seed(0)
         with torch.no_grad():
             small = low(original, gains, fit, measured(Path(record["source"]))["capture_blur"])
-            ours = upscaled(net, small.cuda()).cpu()
+            ours = upscaled(net, small.cuda(), stabiliser(loaded.plan, gains, fit)).cpu()
         torch.manual_seed(0)
         unit_grain = add_noise(ours, gains, fit["alpha"], fit["sigmaSq"])
         chain = editor_light(torch.cat([original, ours, unit_grain])[:, 0].numpy(), record)

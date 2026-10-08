@@ -5,9 +5,30 @@ import torch
 import torch.nn.functional as F
 
 from training.metrics import detail, edge_loss, psnr, spectrum_loss
-from training.mosaic import STABILISER_FLOOR, add_noise, bilinear, pack, pack_rgb, stabilise
+from training.mosaic import (
+    FIT_STABILISER,
+    Stabiliser,
+    add_noise,
+    bilinear,
+    fit_stabiliser,
+    pack,
+    pack_rgb,
+    stabilise,
+    stabilised,
+    unstabilised,
+)
 from training.pairs import CropPairs, datasets
-from training.runtime import Forward, arguments, cuda, loader, logger, predictions, stop_on_signals, train
+from training.runtime import (
+    VALIDATION_CHUNK,
+    Forward,
+    arguments,
+    cuda,
+    loader,
+    logger,
+    predictions,
+    stop_on_signals,
+    train,
+)
 from training.targets import TARGETS
 from upscaler.model import Upscaler
 from upscaler.pairs import INPUTS
@@ -20,9 +41,12 @@ lies what only the upscale can put there."""
 
 class Planes(NamedTuple):
     low: torch.Tensor
-    """(B, 4, h, w) stabilised planes of the input mosaics."""
+    """(B, 4, h, w) planes of the input mosaics, under `stabiliser`."""
     high: torch.Tensor
-    """(B, 4, 2h, 2w) stabilised planes of the target mosaics."""
+    """(B, 4, 2h, 2w) planes of the target mosaics, `stabilise`d: where the loss is measured, the same
+    for every ISO."""
+    stabiliser: Stabiliser
+    """Each input's own, from its noise."""
 
 
 def main() -> None:
@@ -48,8 +72,8 @@ def main() -> None:
     def objective(
         forward: Forward, given: torch.Tensor, wanted: torch.Tensor, sensors: torch.Tensor
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        batch = planes(noisy(given.float(), sensors), wanted)
-        predicted = forward(batch.low)
+        batch = planes(noisy(given.float(), sensors), wanted, sensors)
+        predicted = comparable(forward(batch.low), batch.stabiliser)
         terms = {"loss": F.l1_loss(predicted, batch.high)}
         if args.texture:
             terms["texture"] = spectrum_loss(predicted, batch.high)
@@ -77,19 +101,25 @@ def main() -> None:
         settings={
             name: getattr(args, name) for name in ("steps", "batch", "channels", "blocks", "lr", "texture", "edges", "targets")
         },
-        plan={"channels": args.channels, "blocks": args.blocks, "stabiliser_floor": STABILISER_FLOOR, "targets": args.targets},
+        plan={"channels": args.channels, "blocks": args.blocks, "stabiliser": FIT_STABILISER, "targets": args.targets},
         out=args.out,
         say=say,
     )
 
 
-def planes(low: torch.Tensor, high: torch.Tensor) -> Planes:
-    return Planes(low=stabilise(pack(low.float())), high=stabilise(pack(high.float())))
+def planes(low: torch.Tensor, high: torch.Tensor, sensors: torch.Tensor) -> Planes:
+    stabiliser = fit_stabiliser(sensors[:, :3], sensors[:, 3], sensors[:, 4])
+    return Planes(stabilised(pack(low.float()), stabiliser), stabilise(pack(high.float())), stabiliser)
+
+
+def comparable(predicted: torch.Tensor, stabiliser: Stabiliser) -> torch.Tensor:
+    """The network's planes, under its input's stabiliser, as `Planes.high` holds the targets'."""
+    return stabilise(unstabilised(predicted, stabiliser))
 
 
 def noisy(recorded: torch.Tensor, sensors: torch.Tensor) -> torch.Tensor:
     """Each of the (B, 1, h, w) `recorded` mosaics with fresh noise of its photo's sensor, a row of
-    the (B, 5) `sensors` as `patches.sensor` lays it out."""
+    the (B, 5) `sensors` as `pairs.sensor` lays it out."""
     return add_noise(recorded, sensors[:, :3], sensors[:, 3], sensors[:, 4])
 
 
@@ -107,7 +137,7 @@ def validation_set(pairs: CropPairs, device: torch.device) -> Validation:
     with torch.random.fork_rng(devices=[device]):
         torch.manual_seed(0)
         low = noisy(recorded.float(), sensors)
-    batch = planes(low, high)
+    batch = planes(low, high, sensors)
     classical = psnr(F.mse_loss(stabilise(pack_rgb(bilinear(low))), batch.high))
     return Validation(batch, classical, detail(batch.high, INPUT_NYQUIST))
 
@@ -116,7 +146,14 @@ def measure(forward: Forward, validation: Validation) -> tuple[float, float]:
     """PSNR, and the predicted detail as a share of the target's."""
     squared_error = torch.zeros((), device=validation.detail.device)
     predicted_detail = torch.zeros_like(squared_error)
-    for predicted, high in predictions(forward, validation.planes.low, validation.planes.high):
+    stabiliser = validation.planes.stabiliser
+    chunks = zip(
+        predictions(forward, validation.planes.low, validation.planes.high),
+        stabiliser.floors.split(VALIDATION_CHUNK),
+        stabiliser.scales.split(VALIDATION_CHUNK),
+    )
+    for (predicted, high), floors, scales in chunks:
+        predicted = comparable(predicted, Stabiliser(floors, scales))
         squared_error += F.mse_loss(predicted, high, reduction="sum")
         predicted_detail += detail(predicted, INPUT_NYQUIST)
     return psnr(squared_error / validation.planes.high.numel()), float(predicted_detail / validation.detail)

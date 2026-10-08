@@ -1,6 +1,7 @@
 """Operations on batches of conditioned RGGB mosaics, (B, 1, H, W) with H and W even."""
 
 import math
+from typing import NamedTuple
 
 import torch
 import torch.nn.functional as F
@@ -65,6 +66,52 @@ def pack_rgb(rgb: torch.Tensor) -> torch.Tensor:
     )
 
 
+Fit = float | torch.Tensor
+"""A noise fit's term: one for the whole batch, or (B,), one per mosaic."""
+
+FIT_STABILISER = {"reference_alpha": 1e-4, "max_scale": 4.0, "min_floor": 2e-4, "max_floor": 2e-2}
+"""How `fit_stabiliser` takes a noise fit to each plane's floor and scale; weights record it."""
+
+
+class Stabiliser(NamedTuple):
+    """Each plane's floor and scale, (1 or B, 4, 1, 1): `stabilised` takes light x to
+    (sqrt(x + floor) - sqrt(floor)) * scale."""
+
+    floors: torch.Tensor
+    scales: torch.Tensor
+
+
+def fixed_stabiliser(floor: float) -> Stabiliser:
+    return Stabiliser(torch.full((1, 4, 1, 1), floor), torch.ones(1, 4, 1, 1))
+
+
+def fit_stabiliser(gains: torch.Tensor, alpha: Fit, sigma_sq: Fit) -> Stabiliser:
+    """The stabiliser under which the noise of `add_noise`'s fit has the same spread at every level and
+    every ISO: each plane's variance a x + b is floored at the read noise, and scaled to the variance
+    `reference_alpha` x. `gains` are (3,) or (B, 3)."""
+    gains = gains.float().reshape(-1, 3)
+    per_plane = gains[:, [0, 1, 1, 2]]
+    green = gains[:, 1:2]
+    alpha, sigma_sq = (torch.as_tensor(term, dtype=torch.float32, device=gains.device).reshape(-1, 1) for term in (alpha, sigma_sq))
+    settings = FIT_STABILISER
+    a = (alpha * per_plane / green).clamp(min=settings["reference_alpha"] / settings["max_scale"] ** 2)
+    b = sigma_sq * per_plane**2 / green**2
+    # Floored below by 3 standard deviations of read noise, so black's noise isn't clamped away.
+    floors = torch.maximum(b / a, 3 * b.sqrt()).clamp(settings["min_floor"], settings["max_floor"])
+    scales = (settings["reference_alpha"] / a).sqrt()
+    return Stabiliser(floors.reshape(-1, 4, 1, 1), scales.reshape(-1, 4, 1, 1))
+
+
+def stabilised(planes: torch.Tensor, stabiliser: Stabiliser) -> torch.Tensor:
+    floors, scales = stabiliser.floors.to(planes), stabiliser.scales.to(planes)
+    return (torch.sqrt(torch.clamp(planes + floors, min=0)) - floors.sqrt()) * scales
+
+
+def unstabilised(stabilised_planes: torch.Tensor, stabiliser: Stabiliser) -> torch.Tensor:
+    floors, scales = stabiliser.floors.to(stabilised_planes), stabiliser.scales.to(stabilised_planes)
+    return (stabilised_planes / scales + floors.sqrt()).clamp(min=0) ** 2 - floors
+
+
 def stabilise(light: torch.Tensor) -> torch.Tensor:
     return torch.sqrt(torch.clamp(light + STABILISER_FLOOR, min=0)) - math.sqrt(STABILISER_FLOOR)
 
@@ -87,10 +134,6 @@ def demosaic(mosaic: torch.Tensor) -> torch.Tensor:
         for of_phase in _RESPONSE_OF_PHASE
     ]
     return F.pixel_shuffle(torch.cat(channels, 1), 2)
-
-
-Fit = float | torch.Tensor
-"""A noise fit's term: one for the whole batch, or (B,), one per mosaic."""
 
 
 def add_noise(mosaic: torch.Tensor, gains: torch.Tensor, alpha: Fit, sigma_sq: Fit) -> torch.Tensor:
