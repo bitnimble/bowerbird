@@ -9,7 +9,6 @@
 // the prefiltered ones first: blur is a poor answer to misregistration but it is a bounded one,
 // where a sharp read at an unverified location is not.
 import block_split;
-import prelude;
 import px;
 
 struct Params {
@@ -115,9 +114,7 @@ void sample_at(int x, int y, int cx, int cy, out float3 mine, out float3 target)
     let trusted = split_weight(
         length(first - second), sqrt(scatter / taps), min(counts.x, counts.y),
         float(2 * pc.sample + 1));
-    let axis = second - first;
-    let along = dot(split_at(x, y, 0, 0) - first, axis) / max(dot(axis, axis), 1e-6);
-    let own = smoothstep(0.25, 0.75, along);
+    let own = second_half(split_at(x, y, 0, 0), first, second);
     mine = lerp(mine, lerp(ours_by_half[0] / counts.x, ours_by_half[1] / counts.y, own), trusted);
     target = lerp(
         target, lerp(theirs_by_half[0] / counts.x, theirs_by_half[1] / counts.y, own), trusted);

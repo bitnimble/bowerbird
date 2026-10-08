@@ -8,7 +8,7 @@
 // curve extrapolable, which is what lets the camera's rendering stop at diffuse white and
 // BT.2390 take over above it (10.7.1).
 
-use crate::lattice::ChromaMap;
+use crate::lattice::{ChromaMap, LutAxes};
 use crate::light::Light;
 use crate::parallel::*;
 use crate::px::TUNED_ON;
@@ -266,9 +266,9 @@ pub struct HdrColour {
 /// sees this, and `examples/sweep` reports it, pooling a cast over pixels of similar colour and
 /// inside a class: pooled spatially or across the frame, a large improved region drowns a small
 /// worsened one, and opposite casts in two classes cancel.
-pub(crate) const MAP_HUE: usize = 12;
+const MAP_HUE: usize = 12;
 /// Chroma rings out from grey, which is a node of its own shared by every hue.
-pub(crate) const MAP_RINGS: usize = 4;
+const MAP_RINGS: usize = 4;
 /// The grid fitted on what the coarse one left: twice the hues and rings, so a correction one
 /// tight colour asks for has kernels small enough to stay on it.
 const FINE_HUE: usize = 24;
@@ -278,7 +278,7 @@ const FINE_RINGS: usize = 8;
 /// Lower costs quality quickly: the tail is many thin kernels that each matter little and together
 /// carry a third of the fine pass's gain.
 const FINE_CARRIED: f64 = 0.9997;
-/// Levels from black to the fitted ceiling, in ZCAM lightness (`LatticeAxes::of`).
+/// Levels from black to the fitted ceiling, in ZCAM lightness (`LutAxes::of`).
 ///
 /// **Five looks better than this and renders worse, which is the trap `MAP_HUE` describes.**
 /// Held-out `delta_e` preferred five by half a point and more on a Cartesian grid, bracketed on
@@ -289,7 +289,7 @@ const FINE_CARRIED: f64 = 0.9997;
 ///
 /// Below four there is no lattice at all rather than a smaller one - the map is worth none of its
 /// strength and the fit ships without one - so the axis has a floor as well as a cost.
-pub(crate) const MAP_LEVEL: usize = 9;
+const MAP_LEVEL: usize = 9;
 
 /// Nodes along the neighbourhood axis: the pixel's own neighbourhood brightness, at arm's
 /// length, which is the one thing the camera's rendering reads that no colour can carry.
@@ -301,7 +301,7 @@ pub(crate) const MAP_LEVEL: usize = 9;
 /// paints the transition a colour the camera never printed. Three nodes, because the
 /// effect is first-order in the neighbourhood: what it needs is to tell "dark against light"
 /// from "dark against dark", not to resolve the neighbourhood finely.
-pub(crate) const MAP_NEIGHBOURHOOD: usize = 3;
+const MAP_NEIGHBOURHOOD: usize = 3;
 
 /// The polar grid a lattice is fitted on (`fit_lattice.slang`): nodes around the hue circle,
 /// rings of chroma out from grey, lightness, and the neighbourhood.
@@ -347,22 +347,12 @@ impl GridShape {
     }
 }
 
-/// Where a frame's lattice sits, in lattice coordinates (`index_space.slang`'s `lattice_at`).
-///
-/// The chroma reach is the frame's own, so its nodes are spent on colours it contains; the
-/// lightness and neighbourhood reach its ceiling, so the stretch above diffuse white is addressable
-/// rather than all of it clamping onto the top level plane.
-#[derive(Clone, Copy, Debug)]
-struct LatticeAxes {
-    chroma_top: f64,
-    level_low: f64,
-    level_top: f64,
-    neighbourhood_top: f64,
-}
-
-impl LatticeAxes {
-    fn of(colour: &HdrColour, chroma_top: f64) -> LatticeAxes {
-        LatticeAxes {
+impl LutAxes {
+    /// The chroma reach is the frame's own, so its nodes are spent on colours it contains; the
+    /// lightness and neighbourhood reach its ceiling, so the stretch above diffuse white is
+    /// addressable rather than all of it clamping onto the top level plane.
+    fn of(colour: &HdrColour, chroma_top: f64) -> LutAxes {
+        LutAxes {
             chroma_top,
             level_low: crate::lattice::lightness_of_neutral(Light::ZERO),
             level_top: crate::lattice::lightness_of_neutral(Light::measured(colour.ceiling)),
@@ -390,15 +380,6 @@ impl LatticeAxes {
             neighbourhood_scale: 1.0 / gaps[3],
         }
     }
-
-    fn lut(&self) -> crate::lattice::LutAxes {
-        crate::lattice::LutAxes {
-            chroma_top: self.chroma_top,
-            level_low: self.level_low,
-            level_top: self.level_top,
-            neighbourhood_top: self.neighbourhood_top,
-        }
-    }
 }
 
 /// A lattice as the fit solves it: one operator per node of a grid, emitted as kernels.
@@ -420,7 +401,7 @@ impl LatticeAxes {
 #[derive(Clone)]
 struct NodeGrid {
     shape: GridShape,
-    axes: LatticeAxes,
+    axes: LutAxes,
     /// Per node, in `GridShape::index` order. `NODE_VALUES` describes what is in one.
     nodes: Vec<[f64; NODE_VALUES]>,
 }
@@ -457,7 +438,7 @@ struct NodeGrid {
 /// Without `e` and `f` the render loses 0.045 on three fixtures and DSC02981's map stops paying
 /// for itself, shipping with none. Without `h` and `i` three fixtures gain
 /// 0.023 - and forty-three real frames lose 0.006 and 0.022, which is the answer that counts.
-pub const NODE_VALUES: usize = 9;
+const NODE_VALUES: usize = 9;
 
 const UNCORRECTED_NODE: [f64; NODE_VALUES] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
@@ -465,7 +446,7 @@ const UNCORRECTED_NODE: [f64; NODE_VALUES] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
 const NARROWEST_REACH: f64 = 0.5;
 
 impl NodeGrid {
-    fn identity(shape: GridShape, axes: LatticeAxes) -> NodeGrid {
+    fn identity(shape: GridShape, axes: LutAxes) -> NodeGrid {
         NodeGrid {
             shape,
             axes,
@@ -549,7 +530,7 @@ impl NodeGrid {
     }
 
     fn map(&self, narrowed_by: Option<&ChromaMoments>) -> ChromaMap {
-        ChromaMap::new(self.kernels(narrowed_by), self.axes.lut())
+        ChromaMap::new(self.kernels(narrowed_by), self.axes)
     }
 
     /// Each node keeping the share of its correction that `judged`, pixels it was not fitted from,
@@ -595,10 +576,7 @@ impl NodeGrid {
                 })
             })
             .collect();
-        NodeGrid {
-            nodes,
-            ..self.clone()
-        }
+        NodeGrid { nodes, ..*self }
     }
 
     /// The lattice with each level profile projected onto a cubic.
@@ -686,10 +664,7 @@ impl NodeGrid {
                 }
             }
         }
-        NodeGrid {
-            nodes,
-            ..self.clone()
-        }
+        NodeGrid { nodes, ..*self }
     }
 }
 
@@ -1466,6 +1441,7 @@ pub async fn read_plane(gpu: &'static crate::gpu::Gpu, plane: &Source) -> Option
 }
 
 /// A plane where the passes that read it are: interleaved f32 RGB, never on the host.
+#[derive(Clone)]
 pub struct Source {
     pub buffer: crate::gpu::Buffer,
     pub width: usize,
@@ -2619,7 +2595,10 @@ impl Rescored {
 
     /// For the ridge candidates and the identity beside them.
     fn of_candidates(gpu: &'static crate::gpu::Gpu, pairs: &Pairs) -> Rescored {
-        let probes = RIDGE_CANDIDATES.len() + 1;
+        Rescored::of(gpu, pairs, RIDGE_CANDIDATES.len() + 1)
+    }
+
+    fn of(gpu: &'static crate::gpu::Gpu, pairs: &Pairs, probes: usize) -> Rescored {
         Rescored::new(
             gpu,
             pairs.at.len(),
@@ -2713,7 +2692,7 @@ async fn scored_on_matrices(
     let probes: Vec<crate::fit_score::Probe> = candidates
         .iter()
         .map(|matrix| crate::fit_score::Probe {
-            matrix: compose3(&pairs.to_srgb, matrix),
+            matrix: multiply(&pairs.to_srgb, matrix),
             saturation: 1.0,
         })
         .collect();
@@ -2721,11 +2700,6 @@ async fn scored_on_matrices(
         .partials(&crate::fit_score::Shape::Matrix, &probes)
         .await?;
     Some(partials.into_iter().map(folded).collect())
-}
-
-/// `a` after `b`, as one matrix.
-fn compose3(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
-    std::array::from_fn(|r| std::array::from_fn(|c| (0..3).map(|k| a[r][k] * b[k][c]).sum()))
 }
 
 /// A 3x3 inverse, by solving the matrix against each basis vector. None when singular.
@@ -2912,22 +2886,12 @@ impl<'a> SaturationPairs<'a> {
         pairs: &'a Pairs,
     ) -> SaturationPairs<'a> {
         let sample = pairs.every(gpu, SWEEP_STRIDE);
-        let scoring = |pairs: &Pairs, probes: usize| {
-            Rescored::new(
-                gpu,
-                pairs.at.len(),
-                &pairs.target,
-                &pairs.balance,
-                &pairs.to_srgb,
-                probes,
-            )
-        };
         SaturationPairs {
             gathered: gathered(gpu, render, &pairs.indices, pairs.at.len(), neighbourhood),
-            scoring: scoring(pairs, 1),
+            scoring: Rescored::of(gpu, pairs, 1),
             sample_gathered: gathered(gpu, render, &sample.indices, sample.at.len(), neighbourhood),
             // Neutral and the sweep's steps.
-            sample_scoring: scoring(&sample, SATURATION_SWEEP + 2),
+            sample_scoring: Rescored::of(gpu, &sample, SATURATION_SWEEP + 2),
             sample,
             pairs,
         }
@@ -2973,12 +2937,7 @@ async fn scored_on(scoring: &crate::fit_score::Scoring, sweep: &[f64]) -> Option
 /// follows it, and a frame of snow and sky gets back the map that changes nothing, without a
 /// cliff between them.
 ///
-/// Low, and it has to be read against the weights rather than as a pair count. It was 400
-/// when the wide pass contributed a flat 0.25 per sample and the pairs carried a hue
-/// balance, so the two were on different scales and a small saturated object arrived at its
-/// node with a weight in the tens - it kept a few percent of its own answer and the node
-/// solved to the surroundings. With both sides weighted alike, the same object arrives with
-/// enough to be believed, and this is what "enough" now means.
+/// Low, and it has to be read against the weights rather than as a pair count.
 const MAP_CONFIDENCE: f64 = 2.0;
 
 /// What a level node no pair reached still counts for in its profile's cubic. Above zero so a
@@ -4717,9 +4676,8 @@ async fn wide_samples(
         .collect();
 
     // **Then every pixel, about its own tile's answer.** The tile says where to look and this
-    // says what is actually there, so the pass keeps the per-pixel rejection it has always had -
-    // the earlier shape of this, which took the tile's offset as each pixel's answer outright,
-    // carried pixels whose content matches at no offset and cost DSC02981 a tenth of a deltaE.
+    // says what is actually there: taking the tile's offset as each pixel's answer outright
+    // carries pixels whose content matches at no offset, and costs DSC02981 a tenth of a deltaE.
     let about: Vec<[i32; 2]> = admitted
         .at
         .iter()
@@ -4998,7 +4956,7 @@ async fn lattice_moments(
 ///
 /// Solved rather than searched: with the nodes fixed and the interpolation linear in
 /// them, matching our chroma to the camera's is a weighted least squares per node.
-fn fitted_chroma(axes: LatticeAxes, shape: GridShape, moments: &ChromaMoments) -> Option<NodeGrid> {
+fn fitted_chroma(axes: LutAxes, shape: GridShape, moments: &ChromaMoments) -> Option<NodeGrid> {
     let ChromaMoments {
         ata,
         atb,
@@ -5290,11 +5248,7 @@ async fn fit_colour(
         (Some(from), Some(to)) => {
             lit_sharp = Sharp {
                 wide: rebalanced(gpu, &sharp.wide, from, to),
-                camera: Source {
-                    buffer: sharp.camera.buffer.clone(),
-                    width: sharp.camera.width,
-                    height: sharp.camera.height,
-                },
+                camera: sharp.camera.clone(),
                 falloff: sharp.falloff,
             };
             (rebalanced(gpu, &source, from, to), &lit_sharp)
@@ -5549,7 +5503,7 @@ struct FittedLattice {
     map: Option<ChromaMap>,
     score: Score,
     wide_weight: f64,
-    axes: LatticeAxes,
+    axes: LutAxes,
 }
 
 /// The moments a grid is taught and judged from, landed once for every rung of the ladder.
@@ -5590,7 +5544,7 @@ impl Taught {
     /// was solved from.
     fn grid(
         &self,
-        axes: LatticeAxes,
+        axes: LutAxes,
         shape: GridShape,
         wide_weight: f64,
     ) -> Option<(NodeGrid, ChromaMoments)> {
@@ -5731,7 +5685,7 @@ async fn fitted_lattice(
     // measured better.
     let mut lap = crate::clock::laps("  lattice ");
     let looked_up = sharp.evaluated(gpu, colour, &on.lifted);
-    let axes = LatticeAxes::of(
+    let axes = LutAxes::of(
         colour,
         chroma_span(gpu, &sharp.wide, &looked_up.buffer).await?,
     );
@@ -5819,14 +5773,8 @@ async fn fit_model(
         curves,
         ceiling,
         anchor,
-        matrix: IDENTITY,
-        saturation: 1.0,
-        chroma: None,
-        neighbourhood: NeighbourhoodThumb::none(),
         delta_e: f64::INFINITY,
-        exposure: crate::light::Stops::ZERO,
-        curve: crate::light::IDENTITY_CURVE.to_vec(),
-        illuminant: None,
+        ..HdrColour::identity()
     };
     lap("curves");
 
@@ -6464,8 +6412,7 @@ pub fn levelled_source(
 /// of a scan at once, and a round trip per candidate was most of what it cost.
 ///
 /// The planes stay on the device because the objective that reads them is
-/// `slang/fit_objective.slang`. They came back as 8-bit levels when it was `fit::pairs`, which
-/// walked both grids on the host for each candidate in turn.
+/// `slang/fit_objective.slang`.
 pub(crate) fn warped_planes(
     gpu: &'static crate::gpu::Gpu,
     source: &crate::gpu::Buffer,
@@ -6761,11 +6708,7 @@ pub async fn correspondence_at(
         width: render.width,
         height: render.height,
     };
-    let theirs = Source {
-        buffer: preview.buffer.clone(),
-        width: preview.width,
-        height: preview.height,
-    };
+    let theirs = preview.clone();
     let FitPlanes {
         sharp, resident, ..
     } = prepared_planes(gpu, &ours, 1.0, theirs, lens).await?;
@@ -7427,8 +7370,8 @@ mod tests {
         assert!(tint < 1e-3, "lightness alone produced colour bias {tint}");
     }
 
-    fn test_axes() -> LatticeAxes {
-        LatticeAxes {
+    fn test_axes() -> LutAxes {
+        LutAxes {
             chroma_top: crate::lattice::chroma_of([Light::measured(0.6), Light::ZERO, Light::ZERO])
                 .sqrt(),
             level_low: crate::lattice::lightness_of_neutral(Light::ZERO),
@@ -7450,7 +7393,7 @@ mod tests {
     /// Where `fit_lattice.slang` lands a rendered colour: the sixteen nodes about it, each one's
     /// share, and the sample's offset from each in node gaps.
     fn landing(
-        axes: LatticeAxes,
+        axes: LutAxes,
         shape: GridShape,
         rendered: [f64; 3],
         neighbourhood: f64,

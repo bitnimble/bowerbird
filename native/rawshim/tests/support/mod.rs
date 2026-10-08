@@ -1,8 +1,9 @@
-//! The fixtures every analysis test is written against. One place, so that "a bright patch" and
+//! The fixtures the tests here are written against. One place, so that "a bright patch" and
 //! "the noise it sits in" mean the same thing in every test that says them.
 #![allow(dead_code)]
 
 use rawshim::gpu::{self, Gpu};
+use rawshim::lattice::{ChromaMap, Kernel, generator_of};
 use rawshim::light::{Light, SceneNits};
 use rawshim::resident::Resident;
 use rawshim::tone;
@@ -212,4 +213,47 @@ pub fn centre(size: (usize, usize)) -> usize {
 
 pub fn at(size: (usize, usize), x: usize, y: usize) -> usize {
     y * size.0 + x
+}
+
+/// Kernels on a 6 hue, 2 ring, 3 level grid, every operator off its identity.
+pub fn fixture_lattice() -> ChromaMap {
+    let axes = ChromaMap::identity().axes();
+    let level_gap = (axes.level_top - axes.level_low) / 2.0;
+    let mut kernels = Vec::new();
+    for hue in 0..6 {
+        for ring in 1..=2 {
+            for level in 0..3 {
+                let (x, y, z) = (hue as f64 * 0.8, ring as f64 * 1.5, level as f64);
+                let scale = 1.04 + 0.03 * x - 0.02 * y + 0.05 * z;
+                let skew = 0.02 * (x - y);
+                // The lightness gain, off 1 at every kernel and varying on every axis, so a reader
+                // that dropped it or packed it in the wrong slot cannot answer correctly. Weakly on
+                // the level axis: a gain that varies with level moves the measured peak off the
+                // exposure as the slider carries a pixel onto another kernel.
+                let lift = 1.0 + 0.015 * (x - 2.0) - 0.01 * (y - 2.0) + 0.004 * z;
+                kernels.push(Kernel {
+                    centre: [
+                        hue as f64 / 6.0,
+                        axes.chroma_top * ring as f64 / 3.0,
+                        axes.level_low + level_gap * z,
+                        0.0,
+                    ],
+                    reach: [1.0 / 6.0, axes.chroma_top / 3.0, level_gap, 0.0],
+                    // The fifth and sixth, small and of both signs, so a reader that dropped them
+                    // or packed them in the wrong slot tints the neutrals.
+                    generator: generator_of([
+                        scale,
+                        skew,
+                        -skew,
+                        scale * 0.98,
+                        0.004 * (x - 2.0),
+                        -0.003 * (y - 2.0),
+                        lift,
+                    ]),
+                    to_lightness: [0.05 * (x - 2.0), -0.04 * (y - 2.0)],
+                });
+            }
+        }
+    }
+    ChromaMap::with_kernels(kernels)
 }

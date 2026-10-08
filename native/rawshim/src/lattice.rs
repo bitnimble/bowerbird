@@ -8,6 +8,7 @@
 
 use crate::gpu::{Gpu, Texture};
 use crate::light::{Light, Rendered};
+use crate::tone;
 
 /// Floats a kernel occupies on the device, as `lattice_bake.slang` reads them.
 pub const KERNEL_WORDS: usize = 17;
@@ -74,7 +75,7 @@ pub fn rendered_of([lightness, x, y]: [f64; 3]) -> [Light<Rendered>; 3] {
     let ab = (chroma / (zcam.chroma_scale * eccentricity(hue).powf(0.068))).powf(50.0 / 37.0);
     let uncoded = |code: f64| {
         let e = code.max(0.0).powf(1.0 / ZCAM_P);
-        10000.0 * ((e - PQ_C1).max(0.0) / (PQ_C2 - PQ_C3 * e)).powf(1.0 / PQ_M1)
+        10000.0 * ((e - tone::C1).max(0.0) / (tone::C2 - tone::C3 * e)).powf(1.0 / tone::M1)
     };
     let cones = apply(
         inverse(LMS_TO_IAB).expect("invertible"),
@@ -90,8 +91,8 @@ pub fn rendered_of([lightness, x, y]: [f64; 3]) -> [Light<Rendered>; 3] {
 /// `Iz` still carrying `ZCAM_EPSILON`, `az`, `bz`.
 fn iab_of(nits: [f64; 3]) -> [f64; 3] {
     let coded = |nits: f64| {
-        let y = (nits.max(0.0) / 10000.0).powf(PQ_M1);
-        ((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y)).powf(ZCAM_P)
+        let y = (nits.max(0.0) / 10000.0).powf(tone::M1);
+        ((tone::C1 + tone::C2 * y) / (1.0 + tone::C3 * y)).powf(ZCAM_P)
     };
     apply(LMS_TO_IAB, apply(R2020_TO_LMS, nits).map(coded))
 }
@@ -237,10 +238,6 @@ const ZCAM_DIM_SURROUND: f64 = 0.59;
 const ZCAM_BACKGROUND: f64 = 0.2;
 const ZCAM_EPSILON: f64 = 3.7035226210190005e-11;
 const ZCAM_HUE_OFFSET_DEGREES: f64 = 89.038;
-const PQ_M1: f64 = 0.1593017578125;
-const PQ_C1: f64 = 0.8359375;
-const PQ_C2: f64 = 18.8515625;
-const PQ_C3: f64 = 18.6875;
 const ZCAM_P: f64 = 134.034375;
 /// Jzazbz's cones with the long and short rows scaled to the middle one's white, so every neutral
 /// lands on the lattice's grey axis at every lightness.
@@ -319,6 +316,20 @@ impl LutAxes {
             level_low: lightness_of_neutral(Light::ZERO),
             level_top: lightness_of_neutral(Light::measured(10000.0 / INDEX_WHITE_NITS)),
             neighbourhood_top: 1.0,
+        }
+    }
+
+    pub fn shape(&self) -> MapShape {
+        MapShape {
+            hue_count: HUE_TEXELS,
+            chroma_count: CHROMA_TEXELS,
+            level_count: LEVEL_TEXELS,
+            neighbourhood_count: NEIGHBOURHOOD_TEXELS,
+            chroma_scale: (CHROMA_TEXELS - 1) as f64 / self.chroma_top.max(1e-6),
+            level_low: self.level_low,
+            level_scale: (LEVEL_TEXELS - 1) as f64 / (self.level_top - self.level_low).max(1e-6),
+            neighbourhood_scale: (NEIGHBOURHOOD_TEXELS - 1) as f64
+                / self.neighbourhood_top.max(1e-6),
         }
     }
 }
@@ -509,18 +520,7 @@ impl ChromaMap {
     }
 
     pub fn shape(&self) -> MapShape {
-        let axes = self.axes;
-        MapShape {
-            hue_count: HUE_TEXELS,
-            chroma_count: CHROMA_TEXELS,
-            level_count: LEVEL_TEXELS,
-            neighbourhood_count: NEIGHBOURHOOD_TEXELS,
-            chroma_scale: (CHROMA_TEXELS - 1) as f64 / axes.chroma_top.max(1e-6),
-            level_low: axes.level_low,
-            level_scale: (LEVEL_TEXELS - 1) as f64 / (axes.level_top - axes.level_low).max(1e-6),
-            neighbourhood_scale: (NEIGHBOURHOOD_TEXELS - 1) as f64
-                / axes.neighbourhood_top.max(1e-6),
-        }
+        self.axes.shape()
     }
 
     /// The map as words: `HEAD_WORDS` of axes, then the kernels.
@@ -1107,7 +1107,7 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
-        let axes = ChromaMap::of_nodes(&[]).axes;
+        let axes = LutAxes::of_nodes();
         let (level_at, chroma_at, hue_at) = (7, 12, 36);
         let root_chroma = axes.chroma_top * chroma_at as f64 / (CHROMA_TEXELS - 1) as f64;
         let hue_of = |texel: usize| 360.0 * texel as f64 / (HUE_TEXELS - 1) as f64;
@@ -1149,7 +1149,7 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
-        let axes = ChromaMap::of_nodes(&[]).axes;
+        let axes = LutAxes::of_nodes();
         // On texels, so the baked operator there is read without interpolating.
         let (level_at, chroma_at) = (7, 12);
         let lightness = axes.level_low

@@ -74,7 +74,7 @@ export const styles = stylex.create({
     paddingInline: '4px',
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: { default: color.slate, ':hover': '#39404f' },
+    borderColor: { default: color.slate, ':hover': color.slateLight },
     borderRadius: size.radius,
     backgroundColor: { default: 'transparent', ':hover': color.slate, ':focus': color.field },
     color: { default: color.boneDim, ':focus': color.bone },

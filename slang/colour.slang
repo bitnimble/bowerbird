@@ -317,7 +317,8 @@ public float neighbourhood_of(float2 at)
     return neighbourhood_map.SampleLevel(bilinear, uv, 0.0);
 }
 
-/// One texel of a photograph-anchored cell grid, read where the pixel actually sits.
+/// The two cells either side of `at` on each axis of a photograph-anchored cell grid whose last
+/// cell is `last`, and the fraction between them.
 ///
 /// **Bilinear by hand, off the photograph's own coordinate.** Two things stop the hardware
 /// doing this. Its coordinate is normalised by the texture, and a window's grid holds fewer
@@ -330,19 +331,27 @@ public float neighbourhood_of(float2 at)
 /// then is the window's own offset taken off - as a whole number of cells, which is exact and
 /// leaves the fraction between the taps identical. Both routes then blend the same two cells by
 /// the same weight; only the indices differ, and `Load` takes them as they are.
+void cell_taps(float2 at, uint step, int2 last, out int2 a, out int2 b, out float2 f)
+{
+    let scaled = photo_at(at) / float(step) - float2(0.5);
+    let ours = float2(float(edit.neighbourhood_left / step), float(edit.neighbourhood_top / step));
+    let local = scaled - ours;
+    let low = floor(local);
+    f = local - low;
+    a = clamp(int2(low), int2(0), last);
+    b = clamp(int2(low) + int2(1), int2(0), last);
+}
+
+/// One texel of a photograph-anchored cell grid, read where the pixel actually sits.
 float4 cell_at(Texture2D<float4> cells, float2 at, uint step)
 {
     uint wide;
     uint tall;
     cells.GetDimensions(wide, tall);
-    let scaled = photo_at(at) / float(step) - float2(0.5);
-    let ours = float2(float(edit.neighbourhood_left / step), float(edit.neighbourhood_top / step));
-    let local = scaled - ours;
-    let low = floor(local);
-    let f = local - low;
-    let last = int2(int(wide) - 1, int(tall) - 1);
-    let a = clamp(int2(low), int2(0), last);
-    let b = clamp(int2(low) + int2(1), int2(0), last);
+    int2 a;
+    int2 b;
+    float2 f;
+    cell_taps(at, step, int2(int(wide) - 1, int(tall) - 1), a, b, f);
     return lerp(
         lerp(cells.Load(int3(a, 0)), cells.Load(int3(b.x, a.y, 0)), f.x),
         lerp(cells.Load(int3(a.x, b.y, 0)), cells.Load(int3(b, 0)), f.x),
@@ -366,14 +375,10 @@ float3 mean_at(float2 at, uint step, float3 nits)
     uint wide;
     uint tall;
     mean_frame.GetDimensions(wide, tall);
-    let scaled = photo_at(at) / float(step) - float2(0.5);
-    let ours = float2(float(edit.neighbourhood_left / step), float(edit.neighbourhood_top / step));
-    let local = scaled - ours;
-    let low = floor(local);
-    let f = local - low;
-    let last = int2(int(wide / 2) - 1, int(tall) - 1);
-    let a = clamp(int2(low), int2(0), last);
-    let b = clamp(int2(low) + int2(1), int2(0), last);
+    int2 a;
+    int2 b;
+    float2 f;
+    cell_taps(at, step, int2(int(wide / 2) - 1, int(tall) - 1), a, b, f);
     return lerp(
         lerp(mean_tap(a, pixel), mean_tap(int2(b.x, a.y), pixel), f.x),
         lerp(mean_tap(int2(a.x, b.y), pixel), mean_tap(b, pixel), f.x),

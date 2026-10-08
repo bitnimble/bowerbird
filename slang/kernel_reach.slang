@@ -1,6 +1,17 @@
 // How much of a lattice kernel reaches a place: the weight its operator is summed under.
 module kernel_reach;
 
+/// Smootherstep of `u`, already in 0 to 1.
+float smoother(float u)
+{
+    return u * u * u * (u * (u * 6.0 - 15.0) + 10.0);
+}
+
+public float4 smoother(float4 u)
+{
+    return u * u * u * (u * (u * 6.0 - 15.0) + 10.0);
+}
+
 /// One at the centre, nothing at the reach, easing by smootherstep over the last `feather` of it.
 /// A zero feather spans the whole reach, where neighbours a reach apart sum to one, which
 /// `fit_lattice.slang` lands pairs under.
@@ -10,7 +21,7 @@ public float fall(float distance, float reach, float feather)
     let u = feather > 0.0
         ? clamp((reach - abs(distance)) / min(feather, reach), 0.0, 1.0)
         : 1.0 - min(abs(distance) / reach, 1.0);
-    return u * u * u * (u * (u * 6.0 - 15.0) + 10.0);
+    return smoother(u);
 }
 
 /// `centre`, `reach`, `feather` and `at` in `lattice_at`'s coordinates.

@@ -138,6 +138,11 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   });
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   const panel = page.getByRole('tabpanel', { name: 'Light', exact: true });
+  const panelEvenHidden = page.getByRole('tabpanel', {
+    name: 'Light',
+    exact: true,
+    includeHidden: true,
+  });
   await expect(panel).toHaveCSS('opacity', '1');
   await expect(panel).toHaveCSS('position', 'fixed');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
@@ -167,7 +172,7 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
   const isolated = page.getByRole('region', { name: 'Adjusting Exposure', exact: true });
   await expect(isolated).toBeVisible();
-  await expect(panel).toHaveCSS('opacity', '0');
+  await expect(panelEvenHidden).toHaveCSS('visibility', 'hidden');
   await expect(page.getByRole('button', { name: 'Close edit panel' })).toBeVisible();
   await expect(isolated).toContainText('EV');
   await expect(isolated).toHaveCSS('position', 'fixed');
@@ -178,19 +183,17 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   });
   await expect.poll(() => slider.getAttribute('aria-valuenow')).not.toBe(value);
   await expect(isolated).toBeVisible();
-  await expect(panel).toHaveCSS('opacity', '0');
+  await expect(panelEvenHidden).toHaveCSS('visibility', 'hidden');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect(isolated).toHaveCount(0);
-  await expect(panel).toHaveCSS('opacity', '1');
+  await expect(panel).toHaveCSS('visibility', 'visible');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
   expect(
     await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents')),
   ).toEqual([]);
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   await expect(panel).not.toBeVisible();
-  await expect(
-    page.getByRole('tabpanel', { name: 'Light', exact: true, includeHidden: true }),
-  ).toHaveCSS('visibility', 'hidden');
+  await expect(panelEvenHidden).toHaveCSS('visibility', 'hidden');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
   await cdp.detach();
 });

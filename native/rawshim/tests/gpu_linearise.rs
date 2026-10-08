@@ -14,6 +14,7 @@ use rawler::decoders::Orientation;
 use rawshim::light::{Light, SceneNits};
 use rawshim::linearise::{GainMap, Picture, Reconstruction};
 use rawshim::px::{At, Photograph, Rect, Size};
+use rawshim::resident::stored_within;
 use rawshim::transfer::{Coding, Curve, Primaries};
 use rawshim::view::Scale;
 
@@ -28,11 +29,6 @@ fn linearised(
     let (width, height) = (frame.width, frame.height);
     let samples = pollster::block_on(frame.into_host())?;
     Some((rawshim::resident::levels_of(&samples), width, height))
-}
-
-/// Half a step of the half float a level near `level` is stored as.
-fn stored_within(level: f64) -> f64 {
-    level.abs() / 2048.0
 }
 
 fn whole(picture: &Picture) -> Option<(Vec<f32>, usize, usize)> {

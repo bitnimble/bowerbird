@@ -118,7 +118,7 @@ export const styles = stylex.create({
     outline: 'none',
   },
   shown: { visibility: 'visible', opacity: 0.5 },
-  clipped: (clip: string) => ({ clipPath: clip, visibility: 'visible', opacity: 0.5 }),
+  clipped: (clip: string) => ({ clipPath: clip }),
   twoWay: {
     fill: 'none',
     stroke: color.bone,
@@ -127,7 +127,6 @@ export const styles = stylex.create({
     vectorEffect: 'non-scaling-stroke',
     pointerEvents: 'none',
   },
-  fieldHead: { fill: color.bone },
   hint: { marginTop: '8px' },
   controls: { marginTop: '8px' },
   remove: { marginTop: '6px' },

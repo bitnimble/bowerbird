@@ -66,6 +66,11 @@ pub fn bits_of_level(level: f32) -> u16 {
     half::f16::from_f32((level / FULL_SCALE).min(half::f16::MAX.to_f32())).to_bits()
 }
 
+/// Half a step of the half float a level near `level` is stored as: what storing it can move it.
+pub fn stored_within(level: f64) -> f64 {
+    level.abs() / 2048.0
+}
+
 /// The sensor's full scale, in the levels a scene-linear sample is counted in.
 pub const FULL_SCALE: f32 = crate::transfer::FULL_SCALE as f32;
 

@@ -137,10 +137,6 @@ function safeJson(text: string): unknown {
 
 let opened: DeviceStorage = new BrowserStorage();
 
-export function deviceStorage(): DeviceStorage {
-  return opened;
-}
-
 /** Before the first render, since preferences are read as the page's state is built. */
 export async function openDeviceStorage(): Promise<void> {
   const invoke = shellInvoke();
@@ -166,7 +162,7 @@ const FileAnswerSchema = z.object({
 });
 
 /** Answers a worker's {@link PortedFiles}, which has no shell of its own to ask. */
-export function serveFiles(port: MessagePort, files: () => DeviceFiles = deviceStorage): void {
+export function serveFiles(port: MessagePort, files: () => DeviceFiles = () => opened): void {
   port.onmessage = async (event: MessageEvent<unknown>) => {
     const parsed = FileAskSchema.safeParse(event.data);
     if (!parsed.success) {

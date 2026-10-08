@@ -4257,9 +4257,9 @@ mod tests {
         let scene = resized_scene(gpu, base, &linear, (w, h), (2, 2)).expect("a scene downscale");
         let mean = (u32::from(dark) + u32::from(light)) / 2;
         for (at, sample) in crate::resident::levels_of(&scene).iter().enumerate() {
-            // Within what the half float a level is stored as can move it.
             assert!(
-                (sample - mean as f32).abs() <= 1.0 + mean as f32 / 2048.0,
+                (sample - mean as f32).abs()
+                    <= 1.0 + crate::resident::stored_within(f64::from(mean)) as f32,
                 "sample {at} came back {sample}, not the mean {mean}",
             );
         }

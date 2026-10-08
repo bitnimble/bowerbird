@@ -124,10 +124,7 @@ const UNREACHED_SHADE: f64 = 0.8;
 const OUTPUT_RADIUS: f64 = 0.04;
 
 pub fn wheel_chroma() -> f64 {
-    crate::lattice::ChromaMap::of_nodes(&[])
-        .axes()
-        .chroma_top
-        .powi(2)
+    crate::lattice::LutAxes::of_nodes().chroma_top.powi(2)
 }
 
 /// Per whole degree of hue, the chroma Display P3 shows out to at `lightness`, with no component
@@ -137,12 +134,9 @@ pub fn displayable(lightness: f64, headroom: f64) -> Vec<f64> {
     let top = wheel_chroma();
     let shown = |chroma: f64, hue: f64| {
         let (sin, cos) = hue.to_radians().sin_cos();
-        let rendered = crate::lattice::rendered_of([lightness, chroma * cos, chroma * sin])
-            .map(crate::light::Light::raw);
-        to_p3.iter().all(|row| {
-            let v: f64 = row.iter().zip(rendered).map(|(m, c)| m * c).sum();
-            (-1e-9..=headroom).contains(&v)
-        })
+        p3_of(&to_p3, [lightness, chroma * cos, chroma * sin])
+            .iter()
+            .all(|v| (-1e-9..=headroom).contains(v))
     };
     (0..360)
         .map(|degree| {
@@ -170,24 +164,23 @@ pub fn displayable(lightness: f64, headroom: f64) -> Vec<f64> {
 /// its brightest component is diffuse white: a shadow's colour is otherwise near black.
 pub fn swatch(lightness: f64, hue: f64, chroma: f64) -> [f64; 3] {
     let (sin, cos) = hue.to_radians().sin_cos();
-    let rendered = crate::lattice::rendered_of([lightness, chroma * cos, chroma * sin])
-        .map(crate::light::Light::raw);
-    let p3 = crate::transfer::Primaries::DISPLAY_P3
-        .from_rec2020()
-        .map(|row| {
-            row.iter()
-                .zip(rendered)
-                .map(|(m, c)| m * c)
-                .sum::<f64>()
-                .max(0.0)
-        });
+    let p3 = p3_of(
+        &crate::transfer::Primaries::DISPLAY_P3.from_rec2020(),
+        [lightness, chroma * cos, chroma * sin],
+    )
+    .map(|v| v.max(0.0));
     let brightest = p3.into_iter().fold(f64::MIN_POSITIVE, f64::max);
-    p3.map(|v| {
-        let v = v / brightest;
-        match v <= 0.0031308 {
-            true => 12.92 * v,
-            false => 1.055 * v.powf(1.0 / 2.4) - 0.055,
-        }
+    p3.map(|v| crate::hdr_fit::srgb_oetf(v / brightest))
+}
+
+fn p3_of(to_p3: &[[f64; 3]; 3], opponent: [f64; 3]) -> [f64; 3] {
+    let rendered = crate::lattice::rendered_of(opponent).map(crate::light::Light::raw);
+    std::array::from_fn(|r| {
+        to_p3[r]
+            .iter()
+            .zip(rendered)
+            .map(|(m, c)| m * c)
+            .sum::<f64>()
     })
 }
 
@@ -561,10 +554,7 @@ mod tests {
     /// The canvas's coded P3 for a colour at `lightness` and opponent pair `out`.
     fn coded_at(lightness: f64, out: [f64; 2]) -> [f64; 3] {
         let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
-        let rendered =
-            crate::lattice::rendered_of([lightness, out[0], out[1]]).map(crate::light::Light::raw);
-        std::array::from_fn(|c| {
-            let p3: f64 = to_p3[c].iter().zip(rendered).map(|(m, v)| m * v).sum();
+        p3_of(&to_p3, [lightness, out[0], out[1]]).map(|p3| {
             // `prelude.slang`'s `srgb_oetf_signed`, which carries past one.
             let v = p3.abs();
             let encoded = match v <= 0.0031308 {

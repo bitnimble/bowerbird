@@ -406,7 +406,7 @@ enum Region {
 }
 
 /// Whether a region's own pixels are demosaiced, which is what its highlight field is for.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 enum Demosaiced {
     Here,
     /// A burst frame merged onto the reference's photosites.
@@ -1750,6 +1750,7 @@ impl Held {
             at_least_long_edge > 0 && (width.max(height) / by) as u32 >= at_least_long_edge;
         let reduces = by > 1 && (would_serve || force_half);
         report(crate::open_stage::Stage::Demosaicing);
+        let seen = self.highlight.seen().coloured(detail.colouring());
 
         // **The sensor reads in its own orientation; the photograph has another one.** LibRaw
         // applies this from `sizes.flip` and hands back an upright frame, so this must too - and
@@ -1778,7 +1779,7 @@ impl Held {
                     crop,
                     width,
                     colour,
-                    self.highlight.seen().coloured(detail.colouring()),
+                    seen,
                     orientation_code(upright),
                     &cfa,
                 )
@@ -1794,7 +1795,7 @@ impl Held {
                     &cfa,
                     crop,
                     colour,
-                    self.highlight.seen().coloured(detail.colouring()),
+                    seen,
                     orientation_code(upright),
                 )
                 .await?

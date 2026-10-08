@@ -179,7 +179,7 @@ export const SettingsStrings = {
   retryDiskUsage: () => 'Try again',
   diskSpaceLimit: () => 'Disk space limit',
   diskSpaceLimitHint: () =>
-    'Bowerbird deletes the least recently viewed renditions above the specified limit.',
+    'Bowerbird deletes the least recently viewed renditions above this limit.',
   watchDebounce: () => 'Scan delay after a change',
   watchPollInterval: () => 'Network library scan interval',
   watchPollIntervalHint: () => 'Bowerbird checks network drives for changes at this interval.',

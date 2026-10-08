@@ -5200,7 +5200,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     let matched_illuminant = grade.colour.and_then(|c| c.illuminant);
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.temperature));
     f(&mut w, matched_illuminant.map_or(0.0, |i| i.tint));
-    let nodes = crate::lattice::ChromaMap::of_nodes(&[]).shape();
+    let nodes = crate::lattice::LutAxes::of_nodes().shape();
     w.push(nodes.hue_count as u32);
     w.push(nodes.chroma_count as u32);
     w.push(nodes.level_count as u32);

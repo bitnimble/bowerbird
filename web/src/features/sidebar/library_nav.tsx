@@ -33,13 +33,14 @@ const styles = stylex.create({
 export const LibraryNav = observer(function LibraryNav(): JSX.Element {
   const libraries = useLibrariesStore();
   const replication = useReplicationStore();
+  const thin = isThinShell();
 
   if (libraries.libraries.length === 0) {
     return (
       <SidebarSection>
         <SectionLabel>{SettingsStrings.libraries()}</SectionLabel>
         <SidebarLink to={route(PathSegment.settings())} icon={Settings}>
-          {isThinShell() ? AddReplicaStrings.title() : LibraryNavStrings.addALibrary()}
+          {thin ? AddReplicaStrings.title() : LibraryNavStrings.addALibrary()}
         </SidebarLink>
       </SidebarSection>
     );
@@ -53,7 +54,7 @@ export const LibraryNav = observer(function LibraryNav(): JSX.Element {
           <SidebarRow
             end
             to={route(PathSegment.libraries(), library.id)}
-            tooltip={isThinShell() ? undefined : library.root_path}
+            tooltip={thin ? undefined : library.root_path}
             icon={Library}
             name={libraryLabel(library)}
             count={library.photo_count}

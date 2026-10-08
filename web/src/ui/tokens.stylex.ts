@@ -5,6 +5,7 @@ export const color = stylex.defineVars({
   bower: '#0b0d11',
   slate: '#232833',
   slateSoft: '#1a1e26',
+  slateLight: '#39404f',
   satin: '#4c7df0',
   glass: '#7fd4e8',
   bone: '#e8e4da',

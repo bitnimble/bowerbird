@@ -29,6 +29,7 @@ import {
   deviceName,
   everyPairing,
   forgetPairedPeer,
+  isReadOnly,
   linkLibrary,
   markReplicated,
   pairedPeers,
@@ -165,7 +166,7 @@ export class ReplicationService {
     }
     assertPaired(this.db, request.library_id, request.peer_id);
     // A writable side imports originals the read-only side can never take.
-    const readOnly = this.library(request.library_id).read_only !== 0;
+    const readOnly = isReadOnly(this.db, request.library_id);
     if (readOnly !== request.read_only) {
       throw new AppError(
         'READ_ONLY',

@@ -26,11 +26,11 @@ const MAX: usize = 65535;
 pub(crate) const LEVEL_BINS: usize = MAX + 1;
 
 // SMPTE ST 2084.
-const M1: f64 = 2610.0 / 16384.0;
+pub(crate) const M1: f64 = 2610.0 / 16384.0;
 const M2: f64 = (2523.0 / 4096.0) * 128.0;
-const C1: f64 = 3424.0 / 4096.0;
-const C2: f64 = (2413.0 / 4096.0) * 32.0;
-const C3: f64 = (2392.0 / 4096.0) * 32.0;
+pub(crate) const C1: f64 = 3424.0 / 4096.0;
+pub(crate) const C2: f64 = (2413.0 / 4096.0) * 32.0;
+pub(crate) const C3: f64 = (2392.0 / 4096.0) * 32.0;
 const PQ_MAX_NITS: f64 = 10000.0;
 
 /// SMPTE ST 2084, forward.

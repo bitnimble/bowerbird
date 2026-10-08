@@ -63,23 +63,23 @@ function draw(size: number, layer: Layer = 'tile'): Uint8Array {
   const SAMPLES = 4;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const sum = [0, 0, 0, 0];
+      const sum: [number, number, number, number] = [0, 0, 0, 0];
       for (let sy = 0; sy < SAMPLES; sy++) {
         for (let sx = 0; sx < SAMPLES; sx++) {
           const colour = colourAt(x + (sx + 0.5) / SAMPLES, y + (sy + 0.5) / SAMPLES);
           if (colour == null) continue;
-          sum[0]! += colour[0];
-          sum[1]! += colour[1];
-          sum[2]! += colour[2];
-          sum[3]! += 1;
+          sum[0] += colour[0];
+          sum[1] += colour[1];
+          sum[2] += colour[2];
+          sum[3] += 1;
         }
       }
-      const covered = sum[3]!;
+      const covered = sum[3];
       if (covered === 0) continue;
       const at = (y * size + x) * 4;
-      pixels[at] = Math.round(sum[0]! / covered);
-      pixels[at + 1] = Math.round(sum[1]! / covered);
-      pixels[at + 2] = Math.round(sum[2]! / covered);
+      pixels[at] = Math.round(sum[0] / covered);
+      pixels[at + 1] = Math.round(sum[1] / covered);
+      pixels[at + 2] = Math.round(sum[2] / covered);
       pixels[at + 3] = Math.round((255 * covered) / (SAMPLES * SAMPLES));
     }
   }

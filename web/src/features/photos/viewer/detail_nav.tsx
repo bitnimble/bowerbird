@@ -68,6 +68,7 @@ import { isComposite, mergeEditPath, triagePath } from '../photos_store';
 import { renditionLabel } from '../renditions';
 import { DetailRating } from './detail_rating';
 import type { DetailMode } from './detail_mode';
+import { fetchOriginalRefusal } from './detail_labels';
 import { nameOf, useStep } from './detail_navigation';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { styles } from './photo_detail_page.stylex';
@@ -199,6 +200,7 @@ function actions({
   /** A row composed out of others, which is the only kind that has a merge to go back into. */
   merged: boolean;
 }): Option<Action>[] {
+  const refusal = fetchOriginalRefusal(readOnly, unreachable);
   return [
     // There has to be something here to open, and for a photograph that is its own file: the
     // pictures on this screen may have come from a peer's renditions (§7.9). A composite is
@@ -222,13 +224,9 @@ function actions({
           ) : (
             <HardDriveDownload size={ICON} />
           ),
-          disabled: fetchingOriginal || readOnly || unreachable,
+          disabled: fetchingOriginal || refusal != null,
           keepsMenuOpen: true,
-          ...(readOnly
-            ? { tooltip: BulkBarStrings.libraryIsReadOnly() }
-            : unreachable
-              ? { tooltip: PhotoDetailStrings.stateOnUnreachableDeviceHint() }
-              : {}),
+          ...(refusal == null ? {} : { tooltip: refusal }),
         },
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather

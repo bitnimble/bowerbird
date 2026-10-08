@@ -21,9 +21,9 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { ANDROID_PAGE_SIZE, ANDROID_TARGET, androidNdk } from './android-ndk.ts';
+import { ANDROID_PAGE_SIZE, ANDROID_TARGET, androidNdk, type AndroidNdk } from './android-ndk.ts';
 
-let ndk: ReturnType<typeof androidNdk>;
+let ndk: AndroidNdk;
 try {
   ndk = androidNdk();
 } catch (missing) {
@@ -35,7 +35,12 @@ const env: Record<string, string> = {
   ...ndk.env,
 };
 
-function run(command: string, args: string[], cwd = repoRoot, extra = {}): void {
+function run(
+  command: string,
+  args: string[],
+  cwd = repoRoot,
+  extra: Record<string, string> = {},
+): void {
   const done = spawnSync(command, args, { stdio: 'inherit', env: { ...env, ...extra }, cwd });
   if (done.status !== 0) process.exit(done.status ?? 1);
 }
@@ -62,7 +67,7 @@ run('bun', ['run', 'scripts/build-sidecar.ts', '--target', ANDROID_TARGET]);
 
 const play = process.argv.includes('--play');
 const passed = process.argv.slice(2).filter((arg) => arg !== '--play');
-const tauriBuild = (format: '--apk' | '--aab', extra = {}): void =>
+const tauriBuild = (format: '--apk' | '--aab', extra: Record<string, string> = {}): void =>
   run(
     'bun',
     [

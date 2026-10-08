@@ -4679,6 +4679,11 @@ mod tone_domain {
         -(1.0 + percent / 100.0).log2() / stops
     }
 
+    fn scene_luma(levels: &[f32], i: usize) -> f64 {
+        let [r, g, b] = crate::hdr_fit::LUMA;
+        r * f64::from(levels[i]) + g * f64::from(levels[i + 1]) + b * f64::from(levels[i + 2])
+    }
+
     /// Mean change in graded counts, indexed by scene depth.
     ///
     /// Binned off the source rather than either grade, so a slider is measured
@@ -4721,10 +4726,7 @@ mod tone_domain {
         let mut count = vec![0u64; BANDS];
         let scene_levels = crate::resident::levels_of(&samples);
         for i in (0..flat.len()).step_by(3) {
-            let scene = (0.2627 * f64::from(scene_levels[i])
-                + 0.6780 * f64::from(scene_levels[i + 1])
-                + 0.0593 * f64::from(scene_levels[i + 2]))
-                / levels.white.raw();
+            let scene = scene_luma(&scene_levels, i) / levels.white.raw();
             let was = f64::from(flat[i]);
             if scene <= 0.0 || was <= 0.0 {
                 continue;
@@ -4960,12 +4962,7 @@ mod tone_domain {
         );
 
         let scene_levels = crate::resident::levels_of(&samples);
-        let luma = |i: usize| {
-            (0.2627 * f64::from(scene_levels[i])
-                + 0.6780 * f64::from(scene_levels[i + 1])
-                + 0.0593 * f64::from(scene_levels[i + 2]))
-                / levels.white.raw()
-        };
+        let luma = |i: usize| scene_luma(&scene_levels, i) / levels.white.raw();
         let step = crate::gpu::detail_step(width.max(height)) as usize;
         let tiles = width.div_ceil(step);
         let mut block = vec![0.0f64; tiles * height.div_ceil(step)];

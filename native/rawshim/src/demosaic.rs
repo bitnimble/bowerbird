@@ -1021,6 +1021,7 @@ fn record_rcd(
 #[cfg(test)]
 mod tests {
     use crate::highlight::Colouring;
+    use crate::resident::stored_within;
 
     /// The patch the host counts workgroups in, against the one the shader folds its lanes into.
     ///
@@ -1876,11 +1877,6 @@ mod tests {
             crate::highlight::Colouring::DEFAULT,
         );
         middle_of(&samples, inner, inner)
-    }
-
-    /// Half a step of the half float a level near `level` is stored as: what storing it can move it.
-    fn stored_within(level: f64) -> f64 {
-        level.abs() / 2048.0
     }
 
     /// Every orientation, against the permutation `orient_for_test` does on the host.

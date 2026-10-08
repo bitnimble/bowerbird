@@ -236,47 +236,44 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
               </Field>
             )}
 
-            {picked.read_only && (
+            {(picked.read_only || !thin) && (
               <Field>
                 <Text variant="label" as="span">
                   {AddReplicaStrings.originals()}
                 </Text>
-                <Text variant="mono" as="p">
-                  {AddReplicaStrings.readOnlyHere()}
-                </Text>
-              </Field>
-            )}
-
-            {!thin && !picked.read_only && (
-              <Field>
-                <Text variant="label" as="span">
-                  {AddReplicaStrings.originals()}
-                </Text>
-                <Row as="label">
-                  <input
-                    {...stylex.props(focusRing.ring)}
-                    type="checkbox"
-                    aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
-                    checked={keepOriginals}
-                    onChange={(e) => setKeepOriginals(e.currentTarget.checked)}
-                  />
-                  <Text as="span">{SyncedDevicesStrings.keepOriginalsOnThisDevice()}</Text>
-                </Row>
-                <Text variant="mono" as="p">
-                  {keepOriginals
-                    ? SyncedDevicesStrings.keepsOriginals()
-                    : SyncedDevicesStrings.catalogueOnly()}
-                </Text>
-                <Row as="label">
-                  <input
-                    {...stylex.props(focusRing.ring)}
-                    type="checkbox"
-                    aria-label={SyncedDevicesStrings.autoTransferOriginals()}
-                    checked={autoTransferOriginals}
-                    onChange={(e) => setAutoTransferOriginals(e.currentTarget.checked)}
-                  />
-                  <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
-                </Row>
+                {picked.read_only ? (
+                  <Text variant="mono" as="p">
+                    {AddReplicaStrings.readOnlyHere()}
+                  </Text>
+                ) : (
+                  <>
+                    <Row as="label">
+                      <input
+                        {...stylex.props(focusRing.ring)}
+                        type="checkbox"
+                        aria-label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
+                        checked={keepOriginals}
+                        onChange={(e) => setKeepOriginals(e.currentTarget.checked)}
+                      />
+                      <Text as="span">{SyncedDevicesStrings.keepOriginalsOnThisDevice()}</Text>
+                    </Row>
+                    <Text variant="mono" as="p">
+                      {keepOriginals
+                        ? SyncedDevicesStrings.keepsOriginals()
+                        : SyncedDevicesStrings.catalogueOnly()}
+                    </Text>
+                    <Row as="label">
+                      <input
+                        {...stylex.props(focusRing.ring)}
+                        type="checkbox"
+                        aria-label={SyncedDevicesStrings.autoTransferOriginals()}
+                        checked={autoTransferOriginals}
+                        onChange={(e) => setAutoTransferOriginals(e.currentTarget.checked)}
+                      />
+                      <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
+                    </Row>
+                  </>
+                )}
               </Field>
             )}
 

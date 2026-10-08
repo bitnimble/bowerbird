@@ -83,7 +83,7 @@ void balance()
     let asked_tint = select((edit.balance_set & 2) != 0, edit.tint, unset_tint);
     written(0, balanced_to(asked_temperature, asked_tint));
     written(
-        12,
+        MATCH_BALANCE_AT,
         balanced_to(
             select(matched, edit.matched_temperature, edit.as_shot_temperature),
             select(matched, edit.matched_tint, edit.as_shot_tint)));

@@ -1,6 +1,7 @@
 import type React from 'react';
 import { type PhotoDetail } from '../../../../../src/schemas/photos';
 import { captureDateTime } from '../../../api/dates';
+import { BulkBarStrings } from '../grid/bulk_bar.strings';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 
 // Stands in for a field until the detail fetch lands, so every panel is its
@@ -44,4 +45,10 @@ export function takenLabel(iso: string | null, offset: string | null): string {
   return offset == null
     ? wallClock
     : PhotoDetailStrings.taken(wallClock, offset.replace(/:00$/, ''));
+}
+
+export function fetchOriginalRefusal(readOnly: boolean, unreachable: boolean): string | undefined {
+  if (readOnly) return BulkBarStrings.libraryIsReadOnly();
+  if (unreachable) return PhotoDetailStrings.stateOnUnreachableDeviceHint();
+  return undefined;
 }

@@ -30,7 +30,7 @@ export const buttonStyles = stylex.create({
     backgroundColor: color.slateSoft,
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderColor: { default: color.slate, [HOVER]: '#39404f' },
+    borderColor: { default: color.slate, [HOVER]: color.slateLight },
     borderRadius: size.radius,
     paddingBlock: 0,
     paddingInline: '10px',
@@ -53,7 +53,7 @@ export const buttonStyles = stylex.create({
   },
   primary: {
     backgroundColor: { default: color.satin, [HOVER]: '#6791f4' },
-    borderColor: { default: color.satin, [HOVER]: '#39404f' },
+    borderColor: { default: color.satin, [HOVER]: color.slateLight },
     color: { default: INK_ON_SATIN, [HOVER]: color.bone },
     fontWeight: 600,
   },
@@ -62,7 +62,7 @@ export const buttonStyles = stylex.create({
   },
   ghost: {
     backgroundColor: 'transparent',
-    borderColor: { default: 'transparent', [HOVER]: '#39404f' },
+    borderColor: { default: 'transparent', [HOVER]: color.slateLight },
     color: { default: color.boneDim, [HOVER]: color.bone },
   },
   holdsBadge: {

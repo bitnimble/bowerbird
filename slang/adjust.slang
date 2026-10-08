@@ -347,7 +347,7 @@ public Colour<SceneNits> balanced(Colour<SceneNits> colour)
 /// The frame rebalanced to the illuminant the camera match was fitted under.
 public Colour<SceneNits> match_balanced(Colour<SceneNits> colour)
 {
-    return balanced_by(12, colour);
+    return balanced_by(MATCH_BALANCE_AT, colour);
 }
 
 Colour<SceneNits> balanced_by(int at, Colour<SceneNits> colour)

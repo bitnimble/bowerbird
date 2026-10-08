@@ -280,4 +280,7 @@ public struct Edit {
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;
 
+/// After the reader's own matrix at 0.
+public static const int MATCH_BALANCE_AT = 12;
+
 public uint at(uint x, uint y) { return y * edit.width + x; }

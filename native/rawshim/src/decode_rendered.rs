@@ -180,11 +180,6 @@ impl Held {
         self.picture.upright_size()
     }
 
-    /// The level diffuse white lands on in the frames [`Held::window`] produces.
-    pub fn white_level(&self) -> crate::light::Light<crate::light::Level> {
-        self.picture.white_level()
-    }
-
     /// The brightest level the file can state ([`crate::linearise::Picture::peak_level`]).
     pub fn peak_level(&self) -> Option<crate::light::Light<crate::light::Level>> {
         self.picture.peak_level()
@@ -239,10 +234,11 @@ impl Held {
                 .camera
                 .as_ref()
                 .map_or([1.0; 3], |camera| camera.ceiling),
-            // A linear DNG's white is a quantile of its scene, as a RAW's is.
+            // A finished picture states its white at full scale; a linear DNG's is a quantile of
+            // its scene, as a RAW's is.
             stated_white: match self.camera {
                 Some(_) => None,
-                None => Some(self.white_level()),
+                None => Some(crate::light::Light::measured(crate::transfer::FULL_SCALE)),
             },
         })
     }

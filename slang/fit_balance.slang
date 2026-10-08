@@ -1,8 +1,6 @@
 // A fit plane as the camera match's balance lights it, through the grade's own `lit_by_reader`, so
 // what the fit is taught on is what the grade hands the match.
-import prelude;
 import colour;
-import edit;
 import lanes;
 import light;
 import px;

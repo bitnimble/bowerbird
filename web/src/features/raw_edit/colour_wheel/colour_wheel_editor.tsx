@@ -147,6 +147,7 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
           {...stylex.props(
             styles.layer,
             styles.backdrop,
+            isolated && styles.shown,
             isolated && styles.clipped(`url(#${clipId})`),
           )}
           aria-hidden="true"
@@ -414,7 +415,7 @@ const Overlay = observer(function Overlay({
           markerHeight={FIELD_HEAD}
           orient="auto-start-reverse"
         >
-          <path d="M0 0 L10 5 L0 10 Z" {...stylex.props(styles.fieldHead)} />
+          <path d="M0 0 L10 5 L0 10 Z" {...stylex.props(styles.head)} />
         </marker>
         {selected != null && (
           <clipPath id={clipId} clipPathUnits="objectBoundingBox">

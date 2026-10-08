@@ -1,6 +1,5 @@
 // The colour wheel's view of a photograph, in ZCAM lightness and opponent pair.
 import light;
-import prelude;
 import edit;
 import colour;
 import index_space;

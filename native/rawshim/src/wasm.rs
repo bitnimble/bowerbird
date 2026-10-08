@@ -539,6 +539,12 @@ fn repair_of(json: &str) -> Result<crate::repair::Repair, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("rawshim: this repair is malformed: {e}")))
 }
 
+fn colour_node_of(json: Option<String>) -> Result<Option<crate::lattice::ColourNode>, JsValue> {
+    json.map(|node| serde_json::from_str(&node))
+        .transpose()
+        .map_err(|e| JsValue::from_str(&format!("rawshim: this colour node is malformed: {e}")))
+}
+
 /// A framed reply's halves: the header, the text it was read from, and the samples past it.
 ///
 /// The text comes back so the page can be handed the description it already has rather than a
@@ -1929,12 +1935,7 @@ impl HeldRaw {
     pub fn draw_wheel(&self, lightness: f64, selected: Option<String>) -> Result<(), JsValue> {
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
-        let selected = selected
-            .map(|node| serde_json::from_str(&node))
-            .transpose()
-            .map_err(|e| {
-                JsValue::from_str(&format!("rawshim: this colour node is malformed: {e}"))
-            })?;
+        let selected = colour_node_of(selected)?;
         let wheel = self.wheel.borrow();
         let Some(stage) = wheel.as_ref() else {
             return Ok(());
@@ -2122,12 +2123,7 @@ impl HeldRaw {
     /// The colour edit whose reach the stage shows, as `lattice::ColourNode` JSON, and how strongly.
     #[wasm_bindgen(js_name = setReachMask)]
     pub fn set_reach_mask(&self, node: Option<String>, strength: f64) -> Result<(), JsValue> {
-        let node = node
-            .map(|node| serde_json::from_str(&node))
-            .transpose()
-            .map_err(|e| {
-                JsValue::from_str(&format!("rawshim: this colour node is malformed: {e}"))
-            })?;
+        let node = colour_node_of(node)?;
         *self.reach_mask.borrow_mut() = node.map(|node| crate::gpu::ReachMask { node, strength });
         Ok(())
     }

@@ -411,14 +411,6 @@ impl Picture {
         }
     }
 
-    /// The level this picture's diffuse white sits at in the frames it produces.
-    ///
-    /// **A finished picture states its white where a RAW's has to be measured**, which is the whole
-    /// difference between grading one and grading the other.
-    pub fn white_level(&self) -> crate::light::Light<crate::light::Level> {
-        crate::light::Light::measured(crate::transfer::FULL_SCALE)
-    }
-
     /// The brightest level the file can state: its transfer's top code, through the gain map at
     /// full recovery. Unbounded for floating-point samples, which state no top.
     pub fn peak_level(&self) -> Option<crate::light::Light<crate::light::Level>> {
@@ -776,9 +768,8 @@ mod tests {
         for (at, sample) in samples.iter().enumerate() {
             let (pixel, channel) = (4 + at / 3, at % 3);
             let want = (0.1 * pixel as f64 + 0.01 * channel as f64) * 65535.0;
-            // Within the half float a level is stored as.
             assert!(
-                (f64::from(*sample) - want).abs() <= 2.0 + want / 2048.0,
+                (f64::from(*sample) - want).abs() <= 2.0 + crate::resident::stored_within(want),
                 "pixel {pixel} channel {channel}: {sample} against {want}"
             );
         }
@@ -957,7 +948,7 @@ mod tests {
             let want = pulled[channel].clamp(0.0, 1.0) * 65535.0;
             let got = f64::from(samples[channel]);
             assert!(
-                (got - want).abs() <= 2.0 + want / 2048.0,
+                (got - want).abs() <= 2.0 + crate::resident::stored_within(want),
                 "channel {channel}: {got} against {want}"
             );
         }

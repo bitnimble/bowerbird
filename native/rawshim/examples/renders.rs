@@ -933,9 +933,7 @@ fn main() {
 }
 
 fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> rawshim::rgb::Rgb {
-    let side = side.min(image.width).min(image.height);
-    let x = x.min(image.width.saturating_sub(side));
-    let y = y.min(image.height.saturating_sub(side));
+    let (x, y, side) = fitted((x, y, side), image.width, image.height);
     let mut data = vec![0u8; side * side * 3];
     for row in 0..side {
         let from = ((y + row) * image.width + x) * 3;
@@ -947,6 +945,19 @@ fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, side: usize) -> raws
         height: side,
         data,
     }
+}
+
+fn fitted(
+    (x, y, side): (usize, usize, usize),
+    width: usize,
+    height: usize,
+) -> (usize, usize, usize) {
+    let side = side.min(width).min(height);
+    (
+        x.min(width.saturating_sub(side)),
+        y.min(height.saturating_sub(side)),
+        side,
+    )
 }
 
 /// How many octaves of scale the noise is reported across.
@@ -1903,11 +1914,7 @@ fn channel_means(image: rawshim::rgb::RgbRef<'_>) -> [f64; 3] {
 /// [`write`]'s file is their high byte in an sRGB container.
 fn write_pq(path: &str, codes: &[u16], width: usize, (x, y, side): (usize, usize, usize)) {
     let height = codes.len() / 3 / width;
-    let side = side.min(width).min(height);
-    let (x, y) = (
-        x.min(width.saturating_sub(side)),
-        y.min(height.saturating_sub(side)),
-    );
+    let (x, y, side) = fitted((x, y, side), width, height);
     let cut: Vec<u16> = (y..y + side)
         .flat_map(|row| &codes[(row * width + x) * 3..(row * width + x + side) * 3])
         .copied()

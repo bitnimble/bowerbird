@@ -90,15 +90,24 @@ public float split_weight(float separation, float spread, float smaller, float b
         * smoothstep(HELD_FROM * block, HELD_BY * block, smaller);
 }
 
+/// How far `pixel` lies towards `second` from `first`, eased: 0 in the first half, 1 in the
+/// second. All three in `split_space`.
+public float second_half(float3 pixel, float3 first, float3 second)
+{
+    let axis = second - first;
+    let along = dot(pixel - first, axis) / max(dot(axis, axis), 1e-6);
+    return smoothstep(0.25, 0.75, along);
+}
+
 /// The mean a pixel is read at, from one cell's two texels: the first half's mean and share of
 /// the block, the second's mean and `split_weight`. `pixel` is in `split_space`.
 public float3 mean_for(float4 first, float4 second, float3 pixel, float reference)
 {
     let box = first.a * first.rgb + (1.0 - first.a) * second.rgb;
     if (second.a <= 0.0) { return box; }
-    let a = split_space(first.rgb, reference);
-    let axis = split_space(second.rgb, reference) - a;
-    let along = dot(pixel - a, axis) / max(dot(axis, axis), 1e-6);
-    let own = lerp(first.rgb, second.rgb, smoothstep(0.25, 0.75, along));
+    let own = lerp(
+        first.rgb,
+        second.rgb,
+        second_half(pixel, split_space(first.rgb, reference), split_space(second.rgb, reference)));
     return lerp(box, own, second.a);
 }

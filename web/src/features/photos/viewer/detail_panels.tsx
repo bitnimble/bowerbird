@@ -26,7 +26,6 @@ import { Text } from '../../../ui/text';
 import { Tooltip } from '../../../ui/tooltip';
 import { AlbumsPageStrings } from '../../albums/albums_page.strings';
 import { ShootPhotosStrings } from '../../shoots/shoot_photos_page.strings';
-import { BulkBarStrings } from '../grid/bulk_bar.strings';
 import type { Row as MetaRow } from './edit_rows';
 import { EditsPanel } from './edits_panel';
 import { MetaPanel } from './meta_panel';
@@ -34,6 +33,7 @@ import { DetailRating } from './detail_rating';
 import {
   PENDING,
   bodyLabel,
+  fetchOriginalRefusal,
   pendingUntil,
   shutterLabel,
   stageLabel,
@@ -461,6 +461,7 @@ export const RemoteOriginal = observer(function RemoteOriginal({
     );
   }
 
+  const refusal = fetchOriginalRefusal(readOnly, unreachable);
   return (
     <>
       {unreachable
@@ -468,14 +469,8 @@ export const RemoteOriginal = observer(function RemoteOriginal({
         : PhotoDetailStrings.stateOnSyncedDevice()}
       <Button
         variant="ghost"
-        disabled={readOnly || unreachable}
-        tooltip={
-          readOnly
-            ? BulkBarStrings.libraryIsReadOnly()
-            : unreachable
-              ? PhotoDetailStrings.stateOnUnreachableDeviceHint()
-              : undefined
-        }
+        disabled={refusal != null}
+        tooltip={refusal}
         onClick={() => void replication.fetchOriginal(photoId)}
       >
         <HardDriveDownload size={ICON} />

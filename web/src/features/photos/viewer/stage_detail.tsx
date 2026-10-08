@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   canvasSizeFor,
   decodeDetail,
@@ -176,7 +176,7 @@ export function StageDetail({
   }
 
   if (!wanted) return null;
-  const placed = (patch: Region): React.CSSProperties => ({
+  const placed = (patch: Region): CSSProperties => ({
     left: `${(box.width - natural.width * fit) / 2 + patch.x * fit}px`,
     top: `${(box.height - natural.height * fit) / 2 + patch.y * fit}px`,
     width: `${patch.width * fit}px`,
@@ -236,7 +236,7 @@ interface Draw {
 }
 
 /** Painted once, as it mounts: a different picture is a different element. */
-function DetailCanvas({ style, draw }: { style: React.CSSProperties; draw?: Draw }): JSX.Element {
+function DetailCanvas({ style, draw }: { style: CSSProperties; draw?: Draw }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const handCanvas = useStageCanvas(canvasRef);
 

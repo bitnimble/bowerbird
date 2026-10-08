@@ -248,9 +248,10 @@ export class ColourWheelPresenter {
   @action.bound
   drag(index: number, handle: Handle, at: Hued): void {
     const node = this.store.nodes[index];
-    if (node == null || this.atDragStart == null) return;
+    const atDragStart = this.atDragStart;
+    if (node == null || atDragStart == null) return;
     const moved: Record<Handle, () => ColourNode> = {
-      source: () => movedSource(this.atDragStart?.[index] ?? node, at, this.rim),
+      source: () => movedSource(atDragStart[index] ?? node, at, this.rim),
       target: () => movedTarget(node, at),
       hueReach: () => ({ ...node, hueReach: hueReachTo(node, at) }),
       chromaReach: () => ({ ...node, chromaReach: chromaReachTo(node, at, this.rim) }),
