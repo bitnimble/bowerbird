@@ -10,10 +10,18 @@
 import { spawnSync } from 'node:child_process';
 import { ensureIcons, writeAndroidIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { ANDROID_TARGET, androidNdk } from './android-ndk.ts';
+import { ANDROID_PAGE_SIZE, ANDROID_TARGET, androidNdk } from './android-ndk.ts';
 
 let ndk: ReturnType<typeof androidNdk>;
 try {
@@ -230,6 +238,10 @@ if (chosen.length > 1) {
 // wherever this happens to be running.
 const dist = process.env.BOWERBIRD_ANDROID_DIST_DIR?.trim();
 const apk = chosen[0]!;
+assertPageAligned(apk);
+if (play) {
+  assertPageAligned(join(outputs, '..', 'bundle', 'universalRelease', 'app-universal-release.aab'));
+}
 if (dist) {
   mkdirSync(resolve(dist), { recursive: true });
   const out = join(resolve(dist), 'Bowerbird.apk');
@@ -237,6 +249,36 @@ if (dist) {
   console.error(`[android-build] apk, signed with the debug key: ${out}`);
 } else {
   console.error(`[android-build] apk: ${apk}`);
+}
+
+/** Play refuses an app whose libraries a 16 KB page device cannot map. */
+function assertPageAligned(archive: string): void {
+  const scratch = mkdtempSync(join(tmpdir(), 'bb-page-size-'));
+  try {
+    run('unzip', ['-q', '-o', archive, '*.so', '-d', scratch]);
+    const libraries = readdirSync(scratch, { recursive: true, encoding: 'utf8' }).filter((path) =>
+      path.endsWith('.so'),
+    );
+    for (const library of libraries) {
+      const headers = spawnSync(join(ndk.bin, 'llvm-readelf'), ['-lW', join(scratch, library)], {
+        encoding: 'utf8',
+      }).stdout;
+      const smallest = Math.min(
+        ...headers
+          .split('\n')
+          .filter((line) => line.trim().startsWith('LOAD'))
+          .map((line) => Number(line.trim().split(/\s+/).at(-1))),
+      );
+      if (!(smallest >= ANDROID_PAGE_SIZE)) {
+        console.error(
+          `[android-build] ${library} in ${archive} is aligned to ${smallest} bytes, not ${ANDROID_PAGE_SIZE}`,
+        );
+        process.exit(1);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /** The key Android Studio signs debug builds with, made the way it makes it where it is missing. */

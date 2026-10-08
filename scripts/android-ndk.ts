@@ -9,8 +9,9 @@ export const ANDROID_TARGET = 'aarch64-linux-android';
 /** The app's `minSdk`, which the NDK's compiler wrappers are named for. */
 export const ANDROID_API = 24;
 export const ANDROID_ABI = 'arm64-v8a';
+export const ANDROID_PAGE_SIZE = 16384;
 /** Play refuses an app whose libraries cannot load on a 16 KB page device; r27 links for 4 KB. */
-export const ANDROID_PAGE_SIZE_LINK_ARG = '-Wl,-z,max-page-size=16384';
+export const ANDROID_PAGE_SIZE_LINK_ARG = `-Wl,-z,max-page-size=${ANDROID_PAGE_SIZE}`;
 
 export interface AndroidNdk {
   ndk: string;

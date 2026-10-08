@@ -267,7 +267,10 @@ the executables, so a fresh install and an in-place update resolve alike.
 The platform maps code only from the native library directory its package installer fills, and
 only from files named `lib*.so`, so Bun's own Android build ships as `libbun.so`, beside
 `librawshim.so` and the two native addons, `libsql` (compiled from its tag, since it publishes no
-Android build) and Parcel's watcher (`get:android-runtime`). The Gradle project is patched to
+Android build) and Parcel's watcher (compiled from the installed package's source, since its
+Android build is linked for 4 KB pages), both by `get:android-runtime`. Play refuses a library a
+16 KB page device cannot map, so every one links with `ANDROID_PAGE_SIZE_LINK_ARG` and
+`android-build.ts` fails a build whose APK or AAB holds one aligned to less. The Gradle project is patched to
 extract them on install and to allow cleartext to `127.0.0.1` alone (`android-build.ts`), and
 `build-sidecar.ts` fails the build on any of them needing a library outside the NDK's stable set
 and what ships beside them: the codecs' libc++ is the NDK's static one, and Parcel's watcher

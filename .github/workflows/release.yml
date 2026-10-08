@@ -557,6 +557,8 @@ jobs:
   # Without the secrets the unsigned APK is published as it is, for somebody to sign themselves.
   sign:
     needs: [android]
+    # The environment refuses any other branch, which would fail the run after the build.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: android-signing
     outputs:
@@ -579,7 +581,7 @@ jobs:
           mkdir -p dist/android-arm64 play
           mv unsigned/*.apk dist/android-arm64/
           if [ -z "${KEYSTORE:-}" ]; then
-            echo "no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK"
+            echo "::warning::no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK, nothing to Play"
             exit 0
           fi
           mv unsigned/*.aab play/
