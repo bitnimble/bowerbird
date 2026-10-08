@@ -54,6 +54,15 @@ impl Arm {
     }
 }
 
+/// What [`Upscaler::fastest`] tries, in order. A 24MP frame on an RTX 3080 is 92ms on the first, 359
+/// on the second and 501 on the third, 471 of them in Chromium; Winograd's 115 lost to the matrix
+/// units' own rate, and is kept for an Apple GPU, whose matrices run on its lanes.
+const FASTEST_FIRST: [Arm; 3] = [
+    Arm::MatrixNarrow { rows: 4 },
+    Arm::Half { pixels: 8 },
+    Arm::Float { pixels: 8 },
+];
+
 /// The channels between the first layer and the last, which are the only widths the kernels have.
 const CHANNELS: usize = 48;
 /// The input's planes, and what the last layer's channels shuffle into.
@@ -138,6 +147,13 @@ pub struct Upscaler {
     leave: wgpu::ComputePipeline,
     coop: Option<Coop>,
     held: Mutex<Option<Tensors>>,
+}
+
+/// `slang/supersample.slang`, which takes the demosaic of an upscale back to the photo's size:
+/// Sharpen's Quality.
+pub struct Supersample {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
 }
 
 struct Coop {
@@ -282,6 +298,21 @@ impl Upscaler {
             coop,
             held: Mutex::new(None),
         }))
+    }
+
+    /// The network on the fastest arm this device runs, by `examples/upscale_bench.rs` on an RTX 3080
+    /// and in Chromium: the matrix units, then `half` WGSL, then `float`.
+    pub fn fastest(
+        gpu: &'static crate::gpu::Gpu,
+        manifest: &str,
+        weights: &[u8],
+    ) -> Result<Upscaler, String> {
+        for arm in FASTEST_FIRST {
+            if let Some(built) = Upscaler::new(gpu, manifest, weights, arm)? {
+                return Ok(built);
+            }
+        }
+        Err("no arm of the upscaler runs on this device".into())
     }
 
     pub fn arm(&self) -> Arm {
@@ -540,6 +571,88 @@ impl Upscaler {
             a: tensor("upscale a", CHANNELS),
             b: tensor("upscale b", CHANNELS),
         }
+    }
+}
+
+impl Supersample {
+    pub fn new(gpu: &crate::gpu::Gpu) -> Supersample {
+        let device = gpu.describing();
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("supersample"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/supersample.wgsl")).into(),
+            ),
+        });
+        let buffer = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("halving"),
+            entries: &[
+                buffer(0, wgpu::BufferBindingType::Uniform),
+                buffer(1, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer(2, wgpu::BufferBindingType::Storage { read_only: false }),
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("halving"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("halve_lanczos"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("halve_lanczos"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Supersample { layout, pipeline }
+    }
+
+    /// `frame`, a demosaic at twice the photo's resolution, at the photo's own through Lanczos-3 in
+    /// its linear light.
+    pub fn halved(
+        &self,
+        gpu: &'static crate::gpu::Gpu,
+        frame: &crate::resident::Resident,
+    ) -> crate::resident::Resident {
+        let out = (frame.width / 2, frame.height / 2);
+        let smaller = crate::resident::Resident::empty(gpu, out.0, out.1);
+        let mut recording = gpu.record();
+        recording.holding(frame.buffer());
+        recording.holding(smaller.buffer());
+        let sizes = [frame.width, frame.height, out.0, out.1].map(|n| n as u32);
+        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("halving"),
+            contents: bytemuck::cast_slice(&sizes),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("halving"),
+            layout: &self.layout,
+            entries: &[
+                entry(0, &uniform),
+                entry(1, frame.buffer()),
+                entry(2, smaller.buffer()),
+            ],
+        });
+        {
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            let (x, y) = crate::base::groups((out.0 * out.1).div_ceil(2));
+            pass.dispatch_workgroups(x, y, 1);
+        }
+        recording.submit();
+        smaller
     }
 }
 

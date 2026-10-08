@@ -33,7 +33,8 @@
 //   (`highlight_field.slang`'s `cell_sites`) and `pixel_shift_align.slang`'s tile, patch, search
 //   and outlier reaches. A photosite is a photosite, so a count of them is a quantity and `exact`
 //   takes it. `upscale.slang`'s 3x3 taps and `upscale.rs`'s reach of one packed pixel a layer are
-//   the same: the network was trained on photosites.
+//   the same: the network was trained on photosites. So is `supersample.slang`'s `REACH`,
+//   Lanczos-3 over the demosaic of the upscale, two of its pixels a photosite.
 // - *Scale-exact by construction.* `chroma_smooth`'s `SIGMA` and `REACH` in texels of a grid that
 //   is itself a share, `detail`'s `DETAIL_LONG` at 512, `patch_stats`'s `PATCH` on the fit's own
 //   1280 plane. A working plane of fixed size has fixed pixels, so constants in it are safe.

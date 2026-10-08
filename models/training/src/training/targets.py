@@ -69,15 +69,20 @@ def sharpened(crops: np.ndarray, record: dict) -> np.ndarray:
     return crops + kept * scale * (sharpened_sites - plain_sites)
 
 
-def editor_light(mosaics: np.ndarray, record: dict, amount: float | None = None, scale: int = 1) -> Sharpened:
+def editor_light(
+    mosaics: np.ndarray, record: dict, amount: float | None = None, scale: int = 1, supersampled: bool = False
+) -> Sharpened:
     """(N, H, W) RGGB mosaics of the photo, `scale` pixels to each of its photosites, through the rest
-    of the editor's chain, plain and sharpened at `amount`, the editor's default unless given."""
+    of the editor's chain, plain and sharpened at `amount`, the editor's default unless given.
+    `supersampled` mosaics are 2x upscales the chain takes back to (H / 2, W / 2), as Sharpen's
+    Quality does."""
     gains = np.asarray(record["gains"], np.float32)
     source = Path(record["source"])
     # Mirrored, which keeps the RGGB phase, so the demosaic and the sharpen meet no edge inside a crop.
     padded = np.pad(mosaics.astype(np.float32), ((0, 0), (MIRRORED, MIRRORED), (MIRRORED, MIRRORED)), mode="reflect")
-    chain = pmrid().sharpen(source, padded, gains, measured(source), amount, scale)
-    inside = (slice(None), slice(MIRRORED, -MIRRORED), slice(MIRRORED, -MIRRORED))
+    chain = pmrid().sharpen(source, padded, gains, measured(source), amount, scale, supersampled)
+    margin = MIRRORED // 2 if supersampled else MIRRORED
+    inside = (slice(None), slice(margin, -margin), slice(margin, -margin))
     return Sharpened(chain.plain[inside], chain.sharpened[inside], chain.matrix, chain.sigma)
 
 

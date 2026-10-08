@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! upscale_bench <weights dir> check <mosaic.f32> <width> <height> <out dir> [tile]
-//! upscale_bench <weights dir> time [tile] [repeats]
+//! upscale_bench <weights dir> time [repeats] [tile]
 //! ```
 //!
 //! `check` writes each arm's answer as `<out dir>/<arm>.f32` for `models/upscaler` to hold against
@@ -38,7 +38,7 @@ const FRAMES: [(&str, usize, usize); 2] = [("24MP", 6000, 4000), ("61MP", 9504, 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let usage = "upscale_bench <weights dir> check <mosaic.f32> <width> <height> <out dir> [tile]\n\
-                 upscale_bench <weights dir> time [tile] [repeats]";
+                 upscale_bench <weights dir> time [repeats] [tile]";
     let (Some(weights), Some(mode)) = (args.get(1), args.get(2)) else {
         eprintln!("{usage}");
         std::process::exit(2);
@@ -47,16 +47,16 @@ fn main() {
     let folder = std::path::Path::new(weights);
     let manifest = std::fs::read_to_string(folder.join("weights.json")).expect("weights.json");
     let bytes = std::fs::read(folder.join("weights.bin")).expect("weights.bin");
-    let arms: Vec<Upscaler> = ARMS
-        .iter()
-        .filter_map(|&arm| {
+    // One at a time: each holds its tile's tensors, and every arm's at once exceeds a 10GB card.
+    let arms = || {
+        ARMS.iter().filter_map(|&arm| {
             let built = Upscaler::new(gpu, &manifest, &bytes, arm).expect("the network");
             if built.is_none() {
                 println!("{}: not on this device", named(arm));
             }
             built
         })
-        .collect();
+    };
     let number = |at: usize| args.get(at).map(|n| n.parse::<usize>().expect("a count"));
 
     match mode.as_str() {
@@ -69,7 +69,7 @@ fn main() {
             };
             let samples = std::fs::read(input).expect("the mosaic");
             let mosaic = upload(gpu, &samples);
-            for upscaler in &arms {
+            for upscaler in arms() {
                 let into = answer(gpu, width, height);
                 upscaler
                     .upscale(gpu, &mosaic, width, height, &into, number(7))
@@ -81,17 +81,17 @@ fn main() {
             }
         }
         "time" => {
-            let repeats = number(4).unwrap_or(5);
+            let repeats = number(3).unwrap_or(5);
             for (name, width, height) in FRAMES {
                 let samples: Vec<f32> = (0..width * height)
                     .map(|i| ((i as u32).wrapping_mul(2654435761) >> 8) as f32 / (1 << 24) as f32)
                     .collect();
                 let mosaic = upload(gpu, bytemuck::cast_slice(&samples));
                 let into = answer(gpu, width, height);
-                for upscaler in &arms {
+                for upscaler in arms() {
                     let run = || {
                         upscaler
-                            .upscale(gpu, &mosaic, width, height, &into, number(3))
+                            .upscale(gpu, &mosaic, width, height, &into, number(4))
                             .expect("an upscale");
                         gpu.block_until_done();
                     };

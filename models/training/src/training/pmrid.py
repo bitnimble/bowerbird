@@ -106,10 +106,13 @@ class Pmrid:
         measured: dict | None = None,
         amount: float | None = None,
         scale: int = 1,
+        supersampled: bool = False,
     ) -> "Sharpened":
         """A stack of the photo's RGGB mosaics, (N, H, W), through the rest of the editor's chain, the
         sharpen at `amount`, the editor's default unless given. Measures the photo unless `measured`
-        is `measure`'s answer for it. `scale` is the mosaics' pixels per photosite of the photo."""
+        is `measure`'s answer for it. `scale` is the mosaics' pixels per photosite of the photo.
+        `supersampled` mosaics are 2x upscales, demosaiced and taken back to (H / 2, W / 2) before
+        the coding, as Sharpen's Quality does."""
         count, height, width = mosaics.shape
         np.ascontiguousarray(mosaics, "<f4").tofile(self.exchange)
         reply = self.ask(
@@ -123,9 +126,11 @@ class Pmrid:
                 "measured": measured,
                 "amount": amount,
                 "scale": scale,
+                "supersampled": supersampled,
             }
         )
-        light = take(self.exchange, count, 2, height, width, 3)
+        shrink = 2 if supersampled else 1
+        light = take(self.exchange, count, 2, height // shrink, width // shrink, 3)
         return Sharpened(light[:, 0], light[:, 1], np.asarray(reply["matrix"], np.float32), reply["sigma"])
 
     def ask(self, request: dict) -> dict:

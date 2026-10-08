@@ -62,6 +62,10 @@ struct Sharpen {
     amount: Option<f64>,
     /// The mosaics' pixels per photosite of the photo, 2 for a 2x upscale; 1 unless given.
     scale: Option<usize>,
+    /// The mosaics are a 2x upscale to demosaic and take back to the photo's size before the
+    /// coding, as Sharpen's Quality does; the sharpen then meets the photo's own pixels.
+    #[serde(default)]
+    supersampled: bool,
 }
 
 /// What the rest of the chain needs of a photo that only opening it whole can measure.
@@ -305,11 +309,23 @@ fn sharpened(
     );
 
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
+    let supersample = request
+        .supersampled
+        .then(|| rawshim::upscale::Supersample::new(gpu));
+    let (out_width, out_height) = match supersample {
+        Some(_) => (width / 2, height / 2),
+        None => (width, height),
+    };
     let mut light = Vec::with_capacity(samples.len() * 6);
     for mosaic in samples.chunks_exact(size) {
         let demosaiced = demosaic(gpu, rcd, mosaic, &cfa, width, height, matrix, request.gains)?;
         for (defringe, amount) in [plain, shipped] {
-            let resident = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
+            let uploaded = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
+            let resident = match &supersample {
+                Some(supersample) => supersample.halved(gpu, &uploaded),
+                None => uploaded,
+            };
+            let (width, height) = (out_width, out_height);
             let (prepared, _) = pollster::block_on(rawshim::base::prepare(
                 gpu,
                 base,
