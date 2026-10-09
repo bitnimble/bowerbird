@@ -33,7 +33,7 @@ class Targets:
     make: Callable[[np.ndarray, dict], np.ndarray]
 
     def path(self, record_path: Path) -> Path:
-        """Raw `<f2` (crops, CROP, CROP)."""
+        """`packed`, a (CROP, CROP) chunk for each crop."""
         return record_path.with_suffix(f".{self.name}-target-crops")
 
 

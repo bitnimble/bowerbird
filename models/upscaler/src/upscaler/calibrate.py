@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from training.crops import DEFAULT_CACHE, records, sources
+from training.crops import DEFAULT_CACHE, crops_of, records, sources
 from training.files import write_atomic
 from training.mosaic import add_noise, stabilise
 from training.pmrid import serve
@@ -42,7 +42,7 @@ def main() -> None:
     ratios = []
     for record_path, record in records(args.cache, sources(args.data), True):
         gains, fit = torch.tensor(record["gains"]), record["fit"]
-        original = torch.from_numpy(np.load(record_path.with_suffix(".npy")).astype(np.float32))[:, None]
+        original = torch.from_numpy(crops_of(record_path).astype(np.float32))[:, None]
         torch.manual_seed(0)
         with torch.no_grad():
             small = low(original, gains, fit, measured(Path(record["source"]))["capture_blur"])

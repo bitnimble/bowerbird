@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from training.crops import DEFAULT_CACHE
+from training.crops import DEFAULT_CACHE, crops_of
 from training.metrics import psnr
 from training.mosaic import stabilise
 from training.pmrid import REPOSITORY
@@ -32,7 +32,7 @@ def main() -> None:
     parser.add_argument("weights", type=Path, nargs="?", default=Path("runs/sharp-edges"))
     args = parser.parse_args()
     weights = args.weights.resolve()
-    crop = np.load(DEFAULT_CACHE / f"{args.stem}.npy")[args.crop].astype(np.float32)
+    crop = crops_of(DEFAULT_CACHE / f"{args.stem}.json")[args.crop].astype(np.float32)
     record = json.loads((DEFAULT_CACHE / f"{args.stem}.json").read_text())
     height, width = crop.shape
     loaded = load(weights)

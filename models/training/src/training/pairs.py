@@ -1,5 +1,5 @@
 """Training pairs as whole crops: each model's inputs and targets made once from the cached crops and
-stored crop after crop, so a sample costs 1 disk read of its target and 1 of its input. A sample is
+stored crop after crop, each `packed` on its own, so a sample reads its target and input alone. A sample is
 a whole crop because a network sees each photosite with its full context only away from a sample's
 edges.
 
@@ -7,7 +7,6 @@ Each kind of input and of target sits beside the crops under its own name, share
 that trains on it."""
 
 import json
-import os
 import random
 import zlib
 from collections.abc import Callable
@@ -19,8 +18,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from training.crops import CROP, isos, prepare, records, sources
-from training.files import write_atomic
+from training import packed
+from training.crops import CROP, crops_of, isos, prepare, records, sources
 from training.pmrid import each_with_pmrid
 from training.targets import Targets
 
@@ -46,7 +45,7 @@ class Inputs:
         return CROP // self.scale
 
     def path(self, record_path: Path) -> Path:
-        """Raw `<f2` (crops, variants, side, side)."""
+        """`packed`, a (side, side) chunk for each variant of each crop, crop after crop."""
         return record_path.with_suffix(f".{self.name}-input-crops")
 
 
@@ -122,23 +121,23 @@ def make_pairs(
 def make_targets(record_path: Path, targets: Targets) -> str:
     torch.set_num_threads(2)
     record = json.loads(record_path.read_text())
-    crops = np.load(record_path.with_suffix(".npy"))
+    crops = crops_of(record_path)
     seed(record_path, targets.name)
     made = targets.make(crops, record)
     if made.shape != crops.shape:
         raise ValueError(f"{targets.name} made {made.shape} from {crops.shape}")
-    write_atomic(targets.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
+    packed.write(targets.path(record_path), made)
     return record_path.stem
 
 
 def make_inputs(record_path: Path, inputs: Inputs) -> str:
     record = json.loads(record_path.read_text())
-    crops = np.load(record_path.with_suffix(".npy"))
+    crops = crops_of(record_path)
     seed(record_path, inputs.name)
     made = inputs.make(crops, record)
     if made.shape != (len(crops), inputs.variants, inputs.side, inputs.side):
         raise ValueError(f"{inputs.name} made {made.shape} from {crops.shape}")
-    write_atomic(inputs.path(record_path), lambda f: f.write(made.astype("<f2").tobytes()))
+    packed.write(inputs.path(record_path), made.reshape(-1, inputs.side, inputs.side))
     return record_path.stem
 
 
@@ -150,12 +149,12 @@ def seed(record_path: Path, name: str) -> None:
 
 def complete_targets(record_path: Path, crops: int, targets: Targets) -> bool:
     path = targets.path(record_path)
-    return path.exists() and path.stat().st_size == crops * CROP * CROP * 2
+    return path.exists() and packed.count(path) == crops
 
 
 def complete_inputs(record_path: Path, crops: int, inputs: Inputs) -> bool:
     path = inputs.path(record_path)
-    return path.exists() and path.stat().st_size == crops * inputs.variants * inputs.side**2 * 2
+    return path.exists() and packed.count(path) == crops * inputs.variants
 
 
 def complete(record_path: Path, crops: int, inputs: Inputs, targets: Targets) -> bool:
@@ -200,8 +199,8 @@ class CropPairs(Dataset):
             variant, transpose = 0, False
         else:
             variant, transpose = (int(torch.randint(n, ())) for n in (variants, 2))
-        target = read(targets_path, crop * CROP * CROP, CROP * CROP).reshape(CROP, CROP)
-        given = read(inputs_path, (crop * variants + variant) * side * side, side * side).reshape(side, side)
+        target = packed.read(targets_path, crop).reshape(CROP, CROP)
+        given = packed.read(inputs_path, crop * variants + variant).reshape(side, side)
         if transpose:
             given, target = given.T, target.T
         if self.noises is not None:
@@ -217,12 +216,3 @@ class CropPairs(Dataset):
 def sensor(record: dict) -> tuple[float, ...]:
     """R, G, B gains, then the noise fit's `alpha` and `sigmaSq`."""
     return (*record["gains"], record["fit"]["alpha"], record["fit"]["sigmaSq"])
-
-
-def read(path: Path, first: int, count: int) -> np.ndarray:
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        data = os.pread(fd, count * 2, first * 2)
-    finally:
-        os.close(fd)
-    return np.frombuffer(data, "<f2")

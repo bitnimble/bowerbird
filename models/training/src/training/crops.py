@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from training import packed
 from training.files import write_atomic
 from training.metrics import detail
 from training.mosaic import pack, stabilise
@@ -92,8 +93,7 @@ def prepare_one(job: tuple[Path, Path, bool]) -> str:
         else:
             corners = sharp_crops(opened, None if uncapped else CAPPED_CROPS)
             if corners:
-                crops = np.stack([opened.mosaic[y : y + CROP, x : x + CROP] for y, x in corners])
-                write_atomic(cache / f"{name}.npy", lambda f: np.save(f, crops.astype(np.float16)))
+                packed.write(cache / f"{name}.crops", np.stack([opened.mosaic[y : y + CROP, x : x + CROP] for y, x in corners]))
             record.update(crops=len(corners), corners=corners, gains=opened.gains.tolist(), fit=opened.fit)
     write_atomic(cache / f"{name}.json", lambda f: f.write(json.dumps(record).encode()))
     return "skipped" if "skipped" in record else f"{record['crops']} crops"
@@ -120,8 +120,7 @@ def sharp_crops(opened: Opened, limit: int | None) -> list[tuple[int, int]]:
 
 def records(cache: Path, raws: list[Path], validation: bool) -> Iterator[tuple[Path, dict]]:
     """Each cached photo of `raws`, as the file is now, with crops, on its side of the validation
-    split, as the path of its record and the record. Its crops are the record's path with `.npy` for
-    a suffix."""
+    split, as the path of its record and the record; `crops_of` reads its crops."""
     current = {key(p) for p in raws if p.exists()}
     for record_path in sorted(cache.glob("*.json")):
         if record_path.stem not in current:
@@ -130,3 +129,8 @@ def records(cache: Path, raws: list[Path], validation: bool) -> Iterator[tuple[P
         held_out = int(hashlib.sha1(record["source"].encode()).hexdigest(), 16) % VALIDATION_ONE_IN == 0
         if record["crops"] and held_out == validation:
             yield record_path, record
+
+
+def crops_of(record_path: Path) -> np.ndarray:
+    """The cached photo's float16 (crops, CROP, CROP) crops."""
+    return packed.read_all(record_path.with_suffix(".crops")).reshape(-1, CROP, CROP)

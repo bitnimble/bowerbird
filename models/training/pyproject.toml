@@ -8,6 +8,7 @@ dependencies = [
   "rawpy>=0.24",
   # 2.12 dropped cu128 wheels.
   "torch>=2.9,<2.12",
+  "zstandard>=0.25.0",
 ]
 
 [project.scripts]
