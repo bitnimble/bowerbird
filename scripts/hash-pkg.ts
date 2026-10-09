@@ -18,10 +18,13 @@ import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const pkg = join(import.meta.dir, '..', 'native', 'rawshim', 'pkg');
-const weightsFrom = join(import.meta.dir, '..', 'native', 'rawshim', '.pmrid', 'weights.bin');
 const wasmPlain = 'rawshim_bg.wasm';
 const gluePlain = 'rawshim.js';
-const weightsPlain = 'pmrid_weights.js';
+/** Each network the module can be handed, and the name its URL is exported as. */
+const NETWORKS = [
+  { name: 'pmrid', exported: 'pmridWeightsUrl' },
+  { name: 'upscaler', exported: 'upscalerWeightsUrl' },
+];
 const environmentsFrom = join(import.meta.dir, '..', 'native', 'rawshim', '.environments');
 const environmentsPlain = 'print_environments.js';
 const ENVIRONMENTS = ['studio', 'meadow', 'hotel'];
@@ -55,21 +58,27 @@ await writeFile(
   `${forwards}\nexport * from './${glueHashed}';\nexport { default } from './${glueHashed}';\n`,
 );
 
-// PMRID's weights beside the module rather than inside it, hashed for the same reason and cached
-// for a better one: they are four megabytes that change when the network does, which is never,
+// The networks' weights beside the module rather than inside it, hashed for the same reason and
+// cached for a better one: they are megabytes that change when the network does, which is never,
 // where the module's name changes with every line of Rust. A reader who leaves the Detail panel on
 // GALOSH never fetches them at all (`pmrid::weights`).
-const weights = await readFile(weightsFrom);
-const weightsHashed = `pmrid_weights.${hashOf(weights)}.bin`;
-await writeFile(join(pkg, weightsHashed), weights);
-await writeFile(
-  join(pkg, weightsPlain),
-  `${forwards}\nexport const pmridWeightsUrl = new URL('./${weightsHashed}', import.meta.url).href;\n`,
-);
-await writeFile(
-  join(pkg, 'pmrid_weights.d.ts'),
-  `${forwards}\nexport const pmridWeightsUrl: string;\n`,
-);
+const weightsHashed: string[] = [];
+for (const { name, exported } of NETWORKS) {
+  const weights = await readFile(
+    join(import.meta.dir, '..', 'native', 'rawshim', `.${name}`, 'weights.bin'),
+  );
+  const hashed = `${name}_weights.${hashOf(weights)}.bin`;
+  weightsHashed.push(hashed);
+  await writeFile(join(pkg, hashed), weights);
+  await writeFile(
+    join(pkg, `${name}_weights.js`),
+    `${forwards}\nexport const ${exported} = new URL('./${hashed}', import.meta.url).href;\n`,
+  );
+  await writeFile(
+    join(pkg, `${name}_weights.d.ts`),
+    `${forwards}\nexport const ${exported}: string;\n`,
+  );
+}
 
 // The print preview's environments, on the same terms as the weights: six megabytes each, fetched
 // only for the one a reader picks.
@@ -97,7 +106,7 @@ for (const entry of await readdir(pkg)) {
   const stale =
     (/^rawshim_bg\.[0-9a-f]{12}\.wasm$/.test(entry) && entry !== wasmHashed) ||
     (/^rawshim\.[0-9a-f]{12}\.js$/.test(entry) && entry !== glueHashed) ||
-    (/^pmrid_weights\.[0-9a-f]{12}\.bin$/.test(entry) && entry !== weightsHashed) ||
+    (/^[a-z]+_weights\.[0-9a-f]{12}\.bin$/.test(entry) && !weightsHashed.includes(entry)) ||
     (/^print_environment_[a-z]+\.[0-9a-f]{12}\.hdr$/.test(entry) &&
       !Object.values(environmentsHashed).includes(entry));
   if (stale) {
@@ -116,13 +125,12 @@ if (!Array.isArray(manifest.files)) {
 manifest.files = manifest.files.map((entry) => (entry === wasmPlain ? wasmHashed : entry));
 manifest.files.push(
   glueHashed,
-  weightsPlain,
-  'pmrid_weights.d.ts',
-  weightsHashed,
+  ...NETWORKS.flatMap(({ name }) => [`${name}_weights.js`, `${name}_weights.d.ts`]),
+  ...weightsHashed,
   environmentsPlain,
   'print_environments.d.ts',
   ...Object.values(environmentsHashed),
 );
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
-console.log(`pkg: ${glueHashed}, ${wasmHashed}, ${weightsHashed}`);
+console.log(`pkg: ${glueHashed}, ${wasmHashed}, ${weightsHashed.join(', ')}`);

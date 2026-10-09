@@ -5,20 +5,16 @@
 //
 // Needs `bun run build:wasm`. Serves the package and the weights to a blank page opened with the
 // e2e suite's GPU flags. `time` prints each arm's milliseconds over a 24MP and a 61MP frame, the
-// upload left out; `check` writes each arm's answer, under the photo's conditioning gains and noise
-// fit, as `<out dir>/browser-<arm>.f32`, which `models/upscaler`'s `upscaler.device_check` holds
-// against torch.
+// upload left out; `check` writes each arm's answer without grain, under the photo's conditioning
+// gains and noise fit, as `<out dir>/browser-<arm>.f32`, which `models/upscaler`'s
+// `upscaler.device_check` holds against torch.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 
-const ARMS: [boolean, number][] = [
-  [true, 4],
-  [true, 8],
-  [false, 4],
-  [false, 8],
-];
+/** Whether each arm runs in `half`. */
+const ARMS = [true, false];
 const FRAMES: [string, number, number][] = [
   ['24MP', 6000, 4000],
   ['61MP', 9504, 6336],
@@ -46,7 +42,6 @@ interface Held {
         alpha: number,
         sigmaSq: number,
         half: boolean,
-        pixels: number,
       ): Promise<Trial>;
     };
   };
@@ -109,7 +104,7 @@ try {
     ];
   });
   console.log(`adapter: ${adapter}, shader-f16 ${f16}`);
-  const arms = ARMS.filter(([half]) => f16 || !half);
+  const arms = ARMS.filter((half) => f16 || !half);
   await page.evaluate(async () => {
     const at: string = '/pkg/rawshim.js';
     const rawshim = await import(at);
@@ -123,9 +118,9 @@ try {
   if (mode === 'time') {
     const repeats = Number(rest[0] ?? 5);
     for (const [name, width, height] of FRAMES) {
-      for (const [half, pixels] of arms) {
+      for (const half of arms) {
         const times = await page.evaluate(
-          async ({ width, height, gains, noise, half, pixels, repeats }) => {
+          async ({ width, height, gains, noise, half, repeats }) => {
             const held = globalThis as unknown as Held;
             const mosaic = new Float32Array(width * height);
             for (let i = 0; i < mosaic.length; i++)
@@ -140,7 +135,6 @@ try {
               noise[0],
               noise[1],
               half,
-              pixels,
             );
             await trial.run();
             await trial.run();
@@ -153,9 +147,9 @@ try {
             trial.free();
             return times.sort((a, b) => a - b);
           },
-          { width, height, gains: TIMED_GAINS, noise: TIMED_NOISE, half, pixels, repeats },
+          { width, height, gains: TIMED_GAINS, noise: TIMED_NOISE, half, repeats },
         );
-        const arm = `${half ? 'half' : 'float'}-${pixels}`;
+        const arm = half ? 'half' : 'float';
         const [best, median] = [times.at(0), times.at(times.length >> 1)];
         console.log(
           `${name} browser ${arm}: median ${median?.toFixed(1)}ms, best ${best?.toFixed(1)}ms`,
@@ -179,9 +173,9 @@ try {
     const noise = noiseText.split(',').map(Number);
     mkdirSync(out, { recursive: true });
     const mosaic = Array.from(new Float32Array(readFileSync(input).buffer.slice(0)));
-    for (const [half, pixels] of arms) {
+    for (const half of arms) {
       const answer: number[] = await page.evaluate(
-        async ({ mosaic, width, height, gains, noise, half, pixels }) => {
+        async ({ mosaic, width, height, gains, noise, half }) => {
           const held = globalThis as unknown as Held;
           const trial = await held.rawshim.UpscaleTrial.open(
             held.manifest,
@@ -193,16 +187,15 @@ try {
             noise[0] ?? 0,
             noise[1] ?? 0,
             half,
-            pixels,
           );
           await trial.run();
           const answer = Array.from(await trial.answer());
           trial.free();
           return answer;
         },
-        { mosaic, width, height, gains, noise, half, pixels },
+        { mosaic, width, height, gains, noise, half },
       );
-      const path = join(out, `browser-${half ? 'half' : 'float'}-${pixels}.f32`);
+      const path = join(out, `browser-${half ? 'Half' : 'Float'}.f32`);
       writeFileSync(path, new Float32Array(answer));
       console.log(`wrote ${path}`);
     }

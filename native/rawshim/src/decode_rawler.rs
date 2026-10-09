@@ -231,15 +231,19 @@ pub(crate) async fn decode_tile_source(
         false => {
             // One span or many, which `spans` already decides: a tile writes straight into the
             // frame now, so a single-tile region costs nothing that the loop did not.
-            demosaic_in_tiles(
+            demosaic_detailed(
                 gpu,
                 rcd,
                 &region.mosaic,
+                region.origin.raw(),
+                region.frame,
                 &region.cfa,
                 region.crop,
                 region.colour,
                 region.seen()?,
                 orientation_code(region.upright),
+                region.detail,
+                region.noise,
             )
             .await?
         }
@@ -262,6 +266,7 @@ pub(crate) async fn decode_shifted_tile(
     prior: &[crate::pixel_shift::Offset],
     recipe: &crate::composition::Composition,
 ) -> Option<Frame> {
+    let detail = detail.without_upscaler();
     let (first, rest) = sources.split_first()?;
     if rest.len() + 1 != crate::pixel_shift::SHIFTS.len()
         || prior.len() != sources.len()
@@ -420,7 +425,10 @@ struct RegionMosaic {
     highlight: Option<crate::highlight::Field>,
     /// Where `mosaic` starts inside the wider region `highlight` was measured over.
     highlight_at: crate::px::At<crate::px::Sensor>,
-    colouring: crate::highlight::Colouring,
+    /// The sensor's readable area the region is cut from.
+    frame: (usize, usize),
+    /// What the region was denoised for, which the demosaic finishes for the upscaler.
+    detail: crate::galosh::Detail,
     origin: crate::px::At<crate::px::Sensor>,
     photograph_origin: crate::px::At<crate::px::Sensor>,
     cfa: crate::cfa::Cfa,
@@ -439,7 +447,7 @@ impl RegionMosaic {
             self.highlight
                 .as_ref()?
                 .seen_from(self.highlight_at)
-                .coloured(self.colouring),
+                .coloured(self.detail.colouring()),
         )
     }
 
@@ -547,7 +555,7 @@ async fn region_mosaic(
     //
     // Costs the few rows it can add to two sides, which are halo either way.
     let halo = crate::tile_halo(halo);
-    let reach = RCD_MARGIN + halo + extra.raw();
+    let reach = RCD_MARGIN + detailed_halo(crate::gpu::device(), detail, halo) + extra.raw();
     // The pattern off the dummy decode, which is the whole reason that decode happens before this:
     // the region's origin has to land on a whole period as well as on the shrinkage's grid, and
     // which period that is is the file's to say.
@@ -650,17 +658,6 @@ async fn region_mosaic(
         crate::dust::apply(gpu, &mosaic, &dust, (left, top));
     }
 
-    let noise = denoise_over(
-        gpu,
-        &mut mosaic,
-        detail,
-        fit,
-        halo,
-        &cfa,
-        channel_ceilings(image),
-    )
-    .await;
-
     let colour = colour_of(image)?;
     // The tile's place inside the region, which is where the margin that was grown on ends.
     let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
@@ -690,12 +687,24 @@ async fn region_mosaic(
     // and is read; this one is predicted, so a 6x6 pattern takes the demosaic until `Scale` carries
     // a third variant - which needs the CFA's period to reach whoever builds the view.
     let halving = halve && crop.0 % 2 == 0 && crop.1 % 2 == 0 && cfa.is_bayer();
+    let detail = upscalable(detail, &cfa, !halving);
+    let noise = denoise_over(
+        gpu,
+        &mut mosaic,
+        detail,
+        fit,
+        halo,
+        &cfa,
+        channel_ceilings(image),
+    )
+    .await;
     Some(Region::Mosaic(RegionMosaic {
         as_shot: as_shot_of(gpu?, image).await,
         mosaic,
         highlight,
         highlight_at: crate::px::At::exact(left - field_left, top - field_top),
-        colouring: detail.colouring(),
+        frame: (frame_w, frame_h),
+        detail,
         origin: crate::px::At::exact(left, top),
         photograph_origin: crate::px::At::exact(origin.0, origin.1),
         cfa,
@@ -1483,7 +1492,7 @@ impl Held {
         let tile = as_sensor_rect(tile, extent.0, extent.1, upright);
 
         let halo = crate::tile_halo(halo);
-        let reach = RCD_MARGIN + halo;
+        let reach = RCD_MARGIN + detailed_halo(gpu, detail, halo);
         // **Down to `pass12`'s grid, not merely to a CFA site.** The shrinkage tiles from the
         // region's own origin, so a window that starts off that lattice shrinks every pixel
         // against a different neighbourhood and the band stops being the frame. Costs the few
@@ -1514,8 +1523,6 @@ impl Held {
         // bands either side of it.
         crate::dust::apply(gpu?, &mosaic, &dust, (left, top));
 
-        let noise = denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
-
         let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
         let region_crop = (
             inset.0,
@@ -1523,13 +1530,17 @@ impl Held {
             tile.width.min(region_w - inset.0),
             tile.height.min(region_h - inset.1),
         );
+        let halving =
+            scale.halves() && region_crop.0 % 2 == 0 && region_crop.1 % 2 == 0 && cfa.is_bayer();
+        let detail = upscalable(detail, &cfa, !halving);
+
+        let noise = denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
+
         let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
         let seen = self
             .highlight
             .seen_from(crate::px::At::exact(left, top))
             .coloured(detail.colouring());
-        let halving =
-            scale.halves() && region_crop.0 % 2 == 0 && region_crop.1 % 2 == 0 && cfa.is_bayer();
         let built = if halving {
             let crop = (
                 region_crop.0 / 2,
@@ -1550,15 +1561,19 @@ impl Held {
             )
             .await
         } else {
-            demosaic_in_tiles(
+            demosaic_detailed(
                 gpu,
                 rcd,
                 &mosaic,
+                (left, top),
+                (frame_w, frame_h),
                 &cfa,
                 region_crop,
                 colour,
                 seen,
                 orientation_code(upright),
+                detail,
+                noise,
             )
             .await
         };
@@ -1629,6 +1644,31 @@ impl Held {
             ..
         } = self.sensor;
         let mosaic = &mut self.mosaic;
+
+        // Reduced where the caller said a smaller frame would do, or asked for it outright, which
+        // skips the demosaic.
+        //
+        // **Any crop origin reduces.** `pixel_of_reduced` asks `colour_at` for every photosite it
+        // touches, and any 2x2 of a Bayer pattern or 3x3 of an X-Trans one holds every colour
+        // (`every_three_by_three_window_holds_every_colour`). The origin floors to a whole block,
+        // so the picture can start up to `by - 1` photosites above the crop: two thirds of a pixel
+        // at a third of the sensor. The X-T3 fixture crops at row 13, on no multiple of six.
+        //
+        // **The factor is the sensor's and the decision is the caller's.** A Bayer 2x2 holds every
+        // colour and an X-Trans 3x3 is the smallest window that does, so a Fuji frame reduces by
+        // three - and whether a third of the sensor still serves is a different question from
+        // whether half of it would, which is why the divisor is asked for before `would_serve` is.
+        //
+        // Nothing upstream predicts the answer: this route reports the frame it built and the
+        // caller reads its dimensions. The loupe's route cannot say the same - `view::Scale` sizes
+        // the window a caller asked for - so that one still takes the demosaic on a 6x6 pattern.
+        //
+        // Decided ahead of the denoise, which the upscaler leaves to the demosaic this skips.
+        let by = reduction(&cfa).unwrap_or(1);
+        let would_serve =
+            at_least_long_edge > 0 && (width.max(height) / by) as u32 >= at_least_long_edge;
+        let reduces = by > 1 && (would_serve || force_half);
+        let detail = upscalable(detail, &cfa, !reduces);
 
         // **Above the denoise, so the shadow is gone before anything tries to preserve it**, and
         // because the detection's own noise floor is the sensor's rather than what a filter left.
@@ -1711,6 +1751,8 @@ impl Held {
                                         )
                                         .await;
                                     }
+                                    // Denoised as it is upscaled, in the demosaic below.
+                                    crate::galosh::Denoiser::Upscaler => {}
                                 }
                                 Some(measured)
                             }
@@ -1733,27 +1775,6 @@ impl Held {
 
         lap("denoise");
 
-        // Reduced where the caller said a smaller frame would do, or asked for it outright, which
-        // skips the demosaic.
-        //
-        // **Any crop origin reduces.** `pixel_of_reduced` asks `colour_at` for every photosite it
-        // touches, and any 2x2 of a Bayer pattern or 3x3 of an X-Trans one holds every colour
-        // (`every_three_by_three_window_holds_every_colour`). The origin floors to a whole block,
-        // so the picture can start up to `by - 1` photosites above the crop: two thirds of a pixel
-        // at a third of the sensor. The X-T3 fixture crops at row 13, on no multiple of six.
-        //
-        // **The factor is the sensor's and the decision is the caller's.** A Bayer 2x2 holds every
-        // colour and an X-Trans 3x3 is the smallest window that does, so a Fuji frame reduces by
-        // three - and whether a third of the sensor still serves is a different question from
-        // whether half of it would, which is why the divisor is asked for before `would_serve` is.
-        //
-        // Nothing upstream predicts the answer: this route reports the frame it built and the
-        // caller reads its dimensions. The loupe's route cannot say the same - `view::Scale` sizes
-        // the window a caller asked for - so that one still takes the demosaic on a 6x6 pattern.
-        let by = reduction(&cfa).unwrap_or(1);
-        let would_serve =
-            at_least_long_edge > 0 && (width.max(height) / by) as u32 >= at_least_long_edge;
-        let reduces = by > 1 && (would_serve || force_half);
         report(crate::open_stage::Stage::Demosaicing);
         let seen = self.highlight.seen().coloured(detail.colouring());
 
@@ -1793,15 +1814,20 @@ impl Held {
             false => {
                 let (gpu, rcd) =
                     gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-                demosaic_in_tiles(
+                let (frame_w, frame_h) = (mosaic.width, mosaic.height);
+                demosaic_detailed(
                     gpu,
                     rcd,
-                    &mosaic,
+                    mosaic,
+                    (0, 0),
+                    (frame_w, frame_h),
                     &cfa,
                     crop,
                     colour,
                     seen,
                     orientation_code(upright),
+                    detail,
+                    noise,
                 )
                 .await?
             }
@@ -1844,7 +1870,12 @@ pub const RENDER_TILE: usize = 2048;
 /// whole decode down with it. The boundaries are free to move: each tile is computed with the halo
 /// its stage reads through, so where they fall does not change the answer.
 fn spans(total: usize) -> impl Iterator<Item = (usize, usize)> {
-    let count = total.div_ceil(RENDER_TILE).max(1);
+    spans_of(total, RENDER_TILE)
+}
+
+/// [`spans`] for tiles at most `tile` across.
+fn spans_of(total: usize, tile: usize) -> impl Iterator<Item = (usize, usize)> {
+    let count = total.div_ceil(tile).max(1);
     let step = total.div_ceil(count);
     (0..count).map(move |at| (at * step, ((at + 1) * step).min(total)))
 }
@@ -1883,15 +1914,16 @@ async fn denoise_over(
             // 1.51 times its own frame's noise, which is the strength it is then denoised at. So a
             // loupe disagreed with the export it exists to predict, and moved as the reader panned.
             let network = detail.denoiser == crate::galosh::Denoiser::Pmrid;
+            let upscales = detail.denoiser == crate::galosh::Denoiser::Upscaler;
             let measured = match fit {
                 crate::galosh::Fit::Given(fit) => Some(fit),
                 // A tile fitting itself is the case above's cost, not its correctness: it is what a
                 // caller with no frame's fit to hand back gets, and it is what the numbers describe.
                 // Measured by the one filtering run below rather than by a pass of its own.
                 //
-                // Only GALOSH can fold the measurement into its filtering: PMRID needs the numbers
-                // before it reads a photosite, since what they scale is its input.
-                _ if !only && !tiled && !detail.needs_a_fit() && !network => None,
+                // Only GALOSH can fold the measurement into its filtering: the networks need the
+                // numbers before they read a photosite, since what they scale is their input.
+                _ if !only && !tiled && !detail.needs_a_fit() && !network && !upscales => None,
                 // Tiled, the fit has to be taken over the whole region first: measured inside the
                 // filtering run it would be each tile's own statistics, which is the disagreement
                 // above at a smaller scale and against itself. An unset slider needs it ahead of
@@ -1911,6 +1943,8 @@ async fn denoise_over(
                     ));
                     None
                 }
+                // Denoised as it is upscaled, in the demosaic (`demosaic_detailed`).
+                (Some(fit), _) if upscales => Some(fit),
                 // The network tiles itself, and with a halo of its own, so the region's is not
                 // used: what a tile of it needs on every side is the reach of four halvings rather
                 // than of a kernel.
@@ -2112,6 +2146,223 @@ async fn demosaic_in_tiles(
         &|_, _, _| (),
     )
     .await
+}
+
+/// The demosaic a region's Detail asks for: through the upscaler where that is its denoiser and the
+/// frame carries the noise fit it needs, otherwise [`demosaic_in_tiles`]. `origin` is where `mosaic`
+/// lies in the sensor's mosaic, which is `frame` photosites across.
+#[allow(clippy::too_many_arguments)]
+async fn demosaic_detailed(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &'static crate::demosaic::Rcd,
+    mosaic: &crate::condition::Mosaic,
+    origin: (usize, usize),
+    frame: (usize, usize),
+    cfa: &crate::cfa::Cfa,
+    crop: (usize, usize, usize, usize),
+    colour: crate::demosaic::Colour,
+    seen: crate::highlight::Seen<'_>,
+    orientation: u32,
+    detail: crate::galosh::Detail,
+    noise: Option<crate::galosh::NoiseFit>,
+) -> Option<crate::resident::Resident> {
+    if detail.denoiser == crate::galosh::Denoiser::Upscaler && detail.amounts(noise).does_anything()
+    {
+        let upscaler = crate::upscale::device(gpu);
+        let photo = match (upscaler, noise) {
+            (Some(upscaler), Some(fit)) => upscaler
+                .photo(colour.ceiling, cfa, fit.model(), detail.resolved(Some(fit)))
+                .map_err(|why| {
+                    crate::warn(&format!("rawshim: {why}, so this frame was not denoised"))
+                })
+                .ok(),
+            (None, _) => {
+                crate::warn(
+                    "rawshim: the upscaler is not available, so this frame was not denoised",
+                );
+                None
+            }
+            // `declined_galosh` has already said why there is no fit.
+            (_, None) => None,
+        };
+        if let (Some(upscaler), Some(photo)) = (upscaler, photo) {
+            return upscaled_in_tiles(
+                gpu,
+                rcd,
+                upscaler,
+                &photo,
+                mosaic,
+                origin,
+                frame,
+                cfa,
+                crop,
+                colour,
+                seen,
+                orientation,
+            )
+            .await;
+        }
+    }
+    demosaic_in_tiles(gpu, rcd, mosaic, cfa, crop, colour, seen, orientation).await
+}
+
+/// `detail` as a decode that `demosaics` at the sensor's size over `cfa` can carry it out: the
+/// upscaler takes a Bayer mosaic, and only a demosaic has an upscale to take back down.
+fn upscalable(
+    detail: crate::galosh::Detail,
+    cfa: &crate::cfa::Cfa,
+    demosaics: bool,
+) -> crate::galosh::Detail {
+    match demosaics && cfa.is_bayer() {
+        true => detail,
+        false => detail.without_upscaler(),
+    }
+}
+
+/// How far past a tile the demosaic at twice the size and the halving after it read, in the photo's
+/// photosites: RCD's margin and Lanczos-3's six taps, both in pixels of the upscale.
+const HALVING_REACH: usize = (RCD_MARGIN + 6).div_ceil(2);
+
+/// The side of an upscaled tile in the photo's photosites, a quarter of [`RENDER_TILE`]'s area: RCD
+/// over its upscale holds as many planes as over a [`RENDER_TILE`].
+const UPSCALE_TILE: usize = RENDER_TILE / 2;
+
+/// The halo a region read for `detail` needs past its tile: for the upscaler, the network's reach
+/// and [`HALVING_REACH`], each rounded out to a whole site, so that a loupe tile is the whole frame's.
+fn detailed_halo(
+    gpu: Option<&'static crate::gpu::Gpu>,
+    detail: crate::galosh::Detail,
+    halo: usize,
+) -> usize {
+    if detail.denoiser != crate::galosh::Denoiser::Upscaler {
+        return halo;
+    }
+    gpu.and_then(crate::upscale::device)
+        .map_or(halo, |upscaler| {
+            halo.max(upscaler.margin() + HALVING_REACH + 2)
+        })
+}
+
+/// [`demosaic_in_tiles`] through the upscaler: each tile of the crop upscaled from the undenoised
+/// mosaic around it, demosaiced at twice the size and halved back before its colour.
+///
+/// **Every rectangle is in the sensor's own coordinates by the time it reaches the network**, which
+/// cuts its own tiles on the frame's grid, so a tile here, a loupe's region and the whole frame are
+/// one computation wherever their edges fall: what differs at an edge is only ever inside the margin
+/// the next tile owns.
+#[allow(clippy::too_many_arguments)]
+async fn upscaled_in_tiles(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &'static crate::demosaic::Rcd,
+    upscaler: &'static crate::upscale::Upscaler,
+    photo: &crate::upscale::Photo,
+    mosaic: &crate::condition::Mosaic,
+    origin: (usize, usize),
+    frame: (usize, usize),
+    cfa: &crate::cfa::Cfa,
+    crop: (usize, usize, usize, usize),
+    colour: crate::demosaic::Colour,
+    seen: crate::highlight::Seen<'_>,
+    orientation: u32,
+) -> Option<crate::resident::Resident> {
+    let (crop_left, crop_top, crop_w, crop_h) = crop;
+    let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize), stride: usize| {
+        crate::demosaic::Placement {
+            stride: crate::px::Span::exact(stride),
+            crop: crate::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
+            dest: crate::px::At::exact(dest.0, dest.1),
+            frame: crate::px::Size::exact(crop_w, crop_h),
+            orientation,
+            reduce: 1,
+        }
+    };
+    let (out_w, out_h) = placed((0, 0), (0, 0, 1, 1), 1).out();
+    let built = crate::resident::Resident::empty(gpu, out_w, out_h);
+    let margin = upscaler.margin();
+    let (whole_w, whole_h) = (mosaic.width & !1, mosaic.height & !1);
+    let tiles = async {
+        for (ty0, ty1) in spans_of(crop_h, UPSCALE_TILE) {
+            for (tx0, tx1) in spans_of(crop_w, UPSCALE_TILE) {
+                let (sx0, sy0) = (crop_left + tx0, crop_top + ty0);
+                let (sx1, sy1) = (crop_left + tx1, crop_top + ty1);
+                // The tile and what its demosaic reads, on whole 2x2 sites of the region.
+                let left = sx0.saturating_sub(HALVING_REACH) & !1;
+                let top = sy0.saturating_sub(HALVING_REACH) & !1;
+                let right = (sx1 + HALVING_REACH).next_multiple_of(2).min(whole_w);
+                let bottom = (sy1 + HALVING_REACH).next_multiple_of(2).min(whole_h);
+                if right <= left || bottom <= top {
+                    continue;
+                }
+                let (width, height) = (right - left, bottom - top);
+                // And what the network reads past that, as far as the region goes.
+                let (reach_left, reach_top) =
+                    (left.saturating_sub(margin), top.saturating_sub(margin));
+                let reach_right = (right + margin).min(mosaic.width);
+                let reach_bottom = (bottom + margin).min(mosaic.height);
+                let window = mosaic.window(
+                    gpu,
+                    reach_left,
+                    reach_top,
+                    reach_right - reach_left,
+                    reach_bottom - reach_top,
+                );
+                let upscaled = crate::condition::Mosaic::plane(gpu, width * 2, height * 2);
+                upscaler
+                    .upscale(
+                        gpu,
+                        &window.buffer,
+                        crate::upscale::Placement {
+                            window: (
+                                origin.0 + reach_left,
+                                origin.1 + reach_top,
+                                window.width,
+                                window.height,
+                            ),
+                            frame,
+                            rect: (origin.0 + left, origin.1 + top, width, height),
+                        },
+                        &upscaled.buffer,
+                        photo,
+                        None,
+                    )
+                    .map_err(|why| crate::warn(&format!("rawshim: the upscale failed: {why}")))
+                    .ok()?;
+                drop(window);
+                let native = mosaic.window(gpu, left, top, width, height);
+                let (_native_shape, native_group) =
+                    crate::demosaic::shape_group(gpu, rcd, cfa, &native, crate::demosaic::MARGIN);
+                let (_upscaled_shape, upscaled_group) =
+                    crate::demosaic::shape_group(gpu, rcd, cfa, &upscaled, crate::demosaic::MARGIN);
+                let inner = (
+                    sx0 - left,
+                    sy0 - top,
+                    (sx1 - sx0).min(width - (sx0 - left)),
+                    (sy1 - sy0).min(height - (sy0 - top)),
+                );
+                let at = placed((tx0, ty0), inner, width);
+                crate::demosaic::demosaic_halved_into(
+                    gpu,
+                    rcd,
+                    &upscaled,
+                    &upscaled_group,
+                    cfa,
+                    &at,
+                    colour,
+                    seen.inside(crate::px::At::exact(left, top)),
+                    built.buffer(),
+                    &native_group,
+                    |recording, plane| {
+                        upscaler.halve(gpu, recording, plane, (width * 2, height * 2))
+                    },
+                )
+                .await?;
+            }
+        }
+        Some(())
+    };
+    let done = tiles.await;
+    upscaler.release();
+    done.map(|()| built)
 }
 
 /// A tile's RCD plane, and the rectangle of the mosaic it covers as `(left, top, width, height)`.

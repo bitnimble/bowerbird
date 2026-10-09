@@ -191,6 +191,7 @@ jobs:
               "${{ runner.temp }}/docker-mounts/environments": { "target": "/root/.cache", "id": "bowerbird-environments" },
               "${{ runner.temp }}/docker-mounts/slangc": { "target": "/root/.cache", "id": "bowerbird-slangc" },
               "${{ runner.temp }}/docker-mounts/pmrid": { "target": "/root/.cache", "id": "bowerbird-pmrid" },
+              "${{ runner.temp }}/docker-mounts/upscaler": { "target": "/root/.cache", "id": "bowerbird-upscaler" },
               "${{ runner.temp }}/docker-mounts/codecs": { "target": "/root/.cache", "id": "bowerbird-codecs" },
               "${{ runner.temp }}/docker-mounts/bun": { "target": "/root/.bun/install/cache", "id": "bowerbird-bun" },
               "${{ runner.temp }}/docker-mounts/apt-archives": { "target": "/var/cache/apt", "id": "bowerbird-apt-archives" },

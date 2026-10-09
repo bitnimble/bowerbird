@@ -34,6 +34,7 @@ native/rawshim/.codecs
 native/rawshim/.codecs-*
 native/rawshim/.android-runtime
 native/rawshim/.pmrid
+native/rawshim/.upscaler
 native/rawshim/.environments
 native/rawshim/.swiftshader
 native/rawshim/pkg

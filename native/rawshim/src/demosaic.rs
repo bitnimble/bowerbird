@@ -583,6 +583,73 @@ pub async fn demosaic_settled_into(
         mut recording, rgb, ..
     } = record(gpu, rcd, mosaic, cfa, shape_group)?;
     settle(&mut recording, &rgb);
+    assembled(
+        gpu,
+        rcd,
+        recording,
+        &rgb,
+        cfa,
+        at,
+        colour,
+        seen,
+        into,
+        shape_group,
+    )
+    .await
+}
+
+/// RCD over `upscaled`, a tile's mosaic at twice the size, with its plane taken back to the photo's
+/// own size by `halve` before the colour pass: the upscaler's Detail route. `at` and `shape_group`
+/// are the native tile's, whose own photosites say which ran out (`assemble.slang`'s `fills_at`);
+/// `upscaled_shape` is the upscale's.
+#[allow(clippy::too_many_arguments)]
+pub async fn demosaic_halved_into(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &Rcd,
+    upscaled: &crate::condition::Mosaic,
+    upscaled_shape: &wgpu::BindGroup,
+    cfa: &crate::cfa::Cfa,
+    at: &Placement,
+    colour: Colour,
+    seen: crate::highlight::Seen<'_>,
+    into: &crate::gpu::Buffer,
+    shape_group: &wgpu::BindGroup,
+    halve: impl FnOnce(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer) -> crate::gpu::Buffer,
+) -> Option<()> {
+    let Recorded {
+        mut recording, rgb, ..
+    } = record(gpu, rcd, upscaled, cfa, upscaled_shape)?;
+    let halved = halve(&mut recording, &rgb);
+    assembled(
+        gpu,
+        rcd,
+        recording,
+        &halved,
+        cfa,
+        at,
+        colour,
+        seen,
+        into,
+        shape_group,
+    )
+    .await
+}
+
+/// The colour pass over `rgb`, a demosaiced plane `at` describes, recorded after what `recording`
+/// already holds and submitted with it.
+#[allow(clippy::too_many_arguments)]
+async fn assembled(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &Rcd,
+    mut recording: crate::gpu::Recording<'static>,
+    rgb: &crate::gpu::Buffer,
+    cfa: &crate::cfa::Cfa,
+    at: &Placement,
+    colour: Colour,
+    seen: crate::highlight::Seen<'_>,
+    into: &crate::gpu::Buffer,
+    shape_group: &wgpu::BindGroup,
+) -> Option<()> {
     recording.holding(into);
 
     let assemble_params = recording.init(&wgpu::util::BufferInitDescriptor {

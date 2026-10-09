@@ -769,6 +769,9 @@ pub enum Denoiser {
     /// A published network, which brings another sensor's calibration and is worth choosing where
     /// this frame suits it.
     Pmrid,
+    /// Our own network (`crate::upscale`), which denoises the mosaic as it upscales it to twice the
+    /// photosites, demosaiced there and taken back to the photo's size.
+    Upscaler,
 }
 
 impl Detail {
@@ -785,6 +788,16 @@ impl Detail {
     /// The same pair, driving the other filter.
     pub const fn using(self, denoiser: Denoiser) -> Detail {
         Detail { denoiser, ..self }
+    }
+
+    /// What a decode the upscaler cannot serve denoises with: a frame read a 2x2 site to a pixel or
+    /// merged from a pixel-shift burst has no upscale to take back down, and an X-Trans one no
+    /// Bayer mosaic to upscale, so those take GALOSH at the frame's own amounts in its place.
+    pub fn without_upscaler(self) -> Detail {
+        match self.denoiser {
+            Denoiser::Upscaler => Detail::AUTO,
+            _ => self,
+        }
     }
 
     /// Neither, which is what a document that has never been edited holds.
@@ -811,7 +824,9 @@ impl Detail {
     /// resolve to anything the ramp allows, including the zero a clean frame is declined at, so a
     /// decode that skipped GALOSH on this would be deciding the amount by refusing to measure it.
     pub fn could_do_anything(&self) -> bool {
-        self.luminance.unwrap_or(100.0) > 0.0 || self.colour.unwrap_or(100.0) > 0.0
+        self.denoiser == Denoiser::Upscaler
+            || self.luminance.unwrap_or(100.0) > 0.0
+            || self.colour.unwrap_or(100.0) > 0.0
     }
 
     /// The two positions a panel shows for this photograph, 0 to 100.
@@ -824,9 +839,11 @@ impl Detail {
     /// panel shows, what a drag starts from and what the kernels are handed all come through here,
     /// so a ramp answering 75.2 would show 75 and render something else.
     pub fn resolved(&self, fit: Option<NoiseFit>) -> (f64, f64) {
-        let (luma, colour) = match fit {
-            Some(fit) => fit.model().suggested_amounts(),
-            None => (0.0, 0.0),
+        let (luma, colour) = match (self.denoiser, fit) {
+            // All of what the network found: its own answer is what it was trained to give.
+            (Denoiser::Upscaler, _) => (100.0, 100.0),
+            (_, Some(fit)) => fit.model().suggested_amounts(),
+            (_, None) => (0.0, 0.0),
         };
         (
             self.luminance.unwrap_or(luma.round()),

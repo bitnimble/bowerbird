@@ -71,7 +71,7 @@ struct Sharpen {
     /// The mosaics' pixels per photosite of the photo, 2 for a 2x upscale; 1 unless given.
     scale: Option<usize>,
     /// The mosaics are a 2x upscale to demosaic and take back to the photo's size before the
-    /// coding, as Sharpen's Quality does; the sharpen then meets the photo's own pixels.
+    /// coding, as the upscaler denoiser does; the sharpen then meets the photo's own pixels.
     #[serde(default)]
     supersampled: bool,
     /// Renders only this one; both, plain first, unless given.
@@ -333,23 +333,26 @@ fn sharpened(
         .collect();
 
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
-    let supersample = request
+    let halving = request
         .supersampled
-        .then(|| rawshim::upscale::Supersample::new(gpu));
-    let (out_width, out_height) = match supersample {
+        .then(|| rawshim::upscale::Halving::new(gpu));
+    let (out_width, out_height) = match halving {
         Some(_) => (width / 2, height / 2),
         None => (width, height),
     };
+    let colour = rawshim::demosaic::Colour {
+        matrix,
+        ceiling: request.gains,
+    };
     let mut light = Vec::with_capacity(samples.len() * 6);
     for mosaic in samples.chunks_exact(size) {
-        let demosaiced = demosaic(gpu, rcd, mosaic, &cfa, width, height, matrix, request.gains)?;
+        let demosaiced = match &halving {
+            Some(halving) => halved(gpu, rcd, halving, mosaic, &cfa, width, height, colour)?,
+            None => demosaic(gpu, rcd, mosaic, &cfa, width, height, colour)?,
+        };
+        let (width, height) = (out_width, out_height);
         for &(defringe, amount) in &variants {
-            let uploaded = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
-            let resident = match &supersample {
-                Some(supersample) => supersample.halved(gpu, &uploaded),
-                None => uploaded,
-            };
-            let (width, height) = (out_width, out_height);
+            let resident = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
             let (prepared, _) = pollster::block_on(rawshim::base::prepare(
                 gpu,
                 base,
@@ -408,7 +411,60 @@ fn measured(path: &str) -> Result<Measured, Failed> {
     })
 }
 
+/// An upscale demosaiced in the product's order: RCD at its size, halved before the colour pass.
 #[allow(clippy::too_many_arguments)]
+fn halved(
+    gpu: &'static rawshim::gpu::Gpu,
+    rcd: &'static rawshim::demosaic::Rcd,
+    halving: &rawshim::upscale::Halving,
+    mosaic: &[f32],
+    cfa: &rawshim::cfa::Cfa,
+    width: usize,
+    height: usize,
+    colour: rawshim::demosaic::Colour,
+) -> Result<Vec<u16>, Failed> {
+    let upscaled = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
+    let (out_width, out_height) = (width / 2, height / 2);
+    // No photo-sized mosaic crosses, so no photosite reads as clipped for the colour pass's fills.
+    let native = rawshim::condition::Mosaic::plane(gpu, out_width, out_height);
+    let at = whole(out_width, out_height);
+    let into = rawshim::demosaic::frame_buffer(gpu, out_width * out_height);
+    let (_held, upscaled_shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &upscaled, 0);
+    let (_held, native_shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &native, 0);
+    let field = highlight_field(gpu, &native, cfa, colour)?;
+    pollster::block_on(rawshim::demosaic::demosaic_halved_into(
+        gpu,
+        rcd,
+        &upscaled,
+        &upscaled_shape,
+        cfa,
+        &at,
+        colour,
+        field.seen(),
+        &into,
+        &native_shape,
+        |recording, plane| halving.halve(gpu, recording, plane, (width, height)),
+    ))
+    .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
+    pollster::block_on(rawshim::demosaic::read_frame(
+        gpu,
+        &into,
+        out_width * out_height,
+    ))
+    .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))
+}
+
+fn whole(width: usize, height: usize) -> rawshim::demosaic::Placement {
+    rawshim::demosaic::Placement {
+        stride: rawshim::px::Span::exact(width),
+        crop: rawshim::px::Rect::exact(0, 0, width, height),
+        dest: rawshim::px::At::ORIGIN,
+        frame: rawshim::px::Size::exact(width, height),
+        orientation: 0,
+        reduce: 1,
+    }
+}
+
 fn demosaic(
     gpu: &'static rawshim::gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
@@ -416,33 +472,37 @@ fn demosaic(
     cfa: &rawshim::cfa::Cfa,
     width: usize,
     height: usize,
-    matrix: [[f32; 3]; 3],
-    ceiling: [f32; 3],
+    colour: rawshim::demosaic::Colour,
 ) -> Result<Vec<u16>, Failed> {
     let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, width, height);
-    let at = rawshim::demosaic::Placement {
-        stride: rawshim::px::Span::exact(width),
-        crop: rawshim::px::Rect::exact(0, 0, width, height),
-        dest: rawshim::px::At::ORIGIN,
-        frame: rawshim::px::Size::exact(width, height),
-        orientation: 0,
-        reduce: 1,
-    };
+    let at = whole(width, height);
     let into = rawshim::demosaic::frame_buffer(gpu, width * height);
     let (_held, shape) = rawshim::demosaic::shape_group(gpu, rcd, cfa, &uploaded, 0);
+    let field = highlight_field(gpu, &uploaded, cfa, colour)?;
     pollster::block_on(rawshim::demosaic::demosaic_into(
         gpu,
         rcd,
         &uploaded,
         cfa,
         &at,
-        rawshim::demosaic::Colour { matrix, ceiling },
+        colour,
+        field.seen(),
         &into,
         &shape,
     ))
     .ok_or_else(|| Failed::Error("the demosaic did not run".into()))?;
     pollster::block_on(rawshim::demosaic::read_frame(gpu, &into, width * height))
         .ok_or_else(|| Failed::Error("the demosaic did not read back".into()))
+}
+
+fn highlight_field(
+    gpu: &'static rawshim::gpu::Gpu,
+    mosaic: &rawshim::condition::Mosaic,
+    cfa: &rawshim::cfa::Cfa,
+    colour: rawshim::demosaic::Colour,
+) -> Result<rawshim::highlight::Field, Failed> {
+    rawshim::highlight::measure(gpu, mosaic, cfa, colour.ceiling)
+        .ok_or_else(|| Failed::Error("the highlight field was not measured".into()))
 }
 
 /// PMRID's arenas kept from one mosaic of a stack to the next, released however the stack ends.

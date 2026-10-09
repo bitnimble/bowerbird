@@ -22,6 +22,7 @@ const INPUTS = [
   'scripts/vcpkg.ts',
   'scripts/get-slangc.ts',
   'scripts/get-pmrid.ts',
+  'scripts/get-upscaler.ts',
   'scripts/get-environments.ts',
 ];
 

@@ -514,6 +514,12 @@ pub fn hold_pmrid_weights(bytes: Vec<u8>) {
     crate::pmrid::hold_weights(bytes);
 }
 
+/// The upscaler's weights, fetched and handed over as [`hold_pmrid_weights`]'s are.
+#[wasm_bindgen(js_name = holdUpscalerWeights)]
+pub fn hold_upscaler_weights(bytes: Vec<u8>) {
+    crate::upscale::hold_weights(bytes);
+}
+
 /// A print environment's map, which the page fetches before the first scene that names it.
 #[wasm_bindgen(js_name = holdPrintEnvironment)]
 pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
@@ -2346,7 +2352,7 @@ impl HeldRaw {
 #[wasm_bindgen]
 pub struct UpscaleTrial {
     upscaler: crate::upscale::Upscaler,
-    stabiliser: crate::upscale::Stabiliser,
+    photo: crate::upscale::Photo,
     mosaic: crate::gpu::Buffer,
     into: crate::gpu::Buffer,
     width: usize,
@@ -2357,7 +2363,7 @@ pub struct UpscaleTrial {
 impl UpscaleTrial {
     /// `export`'s `weights.json` and `weights.bin`, over a `width` by `height` RGGB `mosaic` whose
     /// photo has R, G, B conditioning `gains` and noise `alpha` and `sigma_sq`, on `Arm::Half` where
-    /// `half` and `Arm::Float` otherwise, each thread `pixels` of a row.
+    /// `half` and `Arm::Float` otherwise. The answer is the network's own, without grain.
     #[allow(clippy::too_many_arguments)]
     pub async fn open(
         manifest: String,
@@ -2369,15 +2375,14 @@ impl UpscaleTrial {
         alpha: f32,
         sigma_sq: f32,
         half: bool,
-        pixels: usize,
     ) -> Result<UpscaleTrial, JsValue> {
         needs_webgpu().await?;
         let gpu = crate::gpu::page_device()
             .await
             .ok_or("rawshim: no device")?;
         let arm = match half {
-            true => crate::upscale::Arm::Half { pixels },
-            false => crate::upscale::Arm::Float { pixels },
+            true => crate::upscale::Arm::Half,
+            false => crate::upscale::Arm::Float,
         };
         let upscaler = crate::upscale::Upscaler::new(gpu, &manifest, &weights, arm)
             .map_err(|e| JsValue::from_str(&e))?
@@ -2385,9 +2390,16 @@ impl UpscaleTrial {
         let gains: [f32; 3] = gains
             .try_into()
             .map_err(|_| JsValue::from_str("rawshim: gains are R, G and B"))?;
-        let stabiliser = upscaler
-            .stabiliser(gains, Some(crate::galosh::NoiseModel { alpha, sigma_sq }))
-            .map_err(|e| JsValue::from_str(&e))?;
+        let rggb = crate::cfa::Cfa::bayer([0, 1, 1, 2]).ok_or("rawshim: RGGB")?;
+        let photo = upscaler
+            .photo(
+                gains,
+                &rggb,
+                crate::galosh::NoiseModel { alpha, sigma_sq },
+                (100.0, 100.0),
+            )
+            .map_err(|e| JsValue::from_str(&e))?
+            .without_grain();
         let mut recording = gpu.record();
         let held = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("upscale trial mosaic"),
@@ -2403,7 +2415,7 @@ impl UpscaleTrial {
         recording.submit();
         Ok(UpscaleTrial {
             upscaler,
-            stabiliser,
+            photo,
             mosaic: held,
             into,
             width,
@@ -2420,11 +2432,14 @@ impl UpscaleTrial {
             .upscale(
                 gpu,
                 &self.mosaic,
-                self.width,
-                self.height,
+                crate::upscale::Placement {
+                    window: (0, 0, self.width, self.height),
+                    frame: (self.width, self.height),
+                    rect: (0, 0, self.width, self.height),
+                },
                 &self.into,
+                &self.photo,
                 None,
-                &self.stabiliser,
             )
             .map_err(|e| JsValue::from_str(&e))?;
         crate::gpu::finished(gpu)

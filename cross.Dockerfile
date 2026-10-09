@@ -46,7 +46,7 @@ RUN --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=loc
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run get:shell \
   && bun run scripts/prune-pinned.ts \
-  && for name in slangc pmrid environments; do \
+  && for name in slangc pmrid upscaler environments; do \
        tree="$(readlink "native/rawshim/.$name")" \
        && rm "native/rawshim/.$name" \
        && cp -a "$tree" "native/rawshim/.$name" || exit 1; \

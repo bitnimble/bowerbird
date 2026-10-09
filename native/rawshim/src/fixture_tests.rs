@@ -1240,7 +1240,15 @@ mod decode_geometry {
     /// the strips step against each other down the frame. That is the failure this pins.
     #[test]
     fn a_band_of_a_held_mosaic_is_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(40.0, 40.0);
+        for detail in [
+            crate::galosh::Detail::at(40.0, 40.0),
+            crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler),
+        ] {
+            a_band_is_the_frame(detail);
+        }
+    }
+
+    fn a_band_is_the_frame(detail: crate::galosh::Detail) {
         assert!(
             detail.could_do_anything(),
             "a band that filters nothing proves nothing"
@@ -1324,7 +1332,8 @@ mod decode_geometry {
             }
             assert_eq!(
                 worst, 0,
-                "the band at row {top} is not what the whole frame decoded to"
+                "{:?}: the band at row {top} is not what the whole frame decoded to",
+                detail.denoiser
             );
         }
     }
@@ -1575,8 +1584,9 @@ mod decode_geometry {
     /// woven with a diagonal cross-hatch. `galosh::lattice` is what this holds.
     #[test]
     fn a_denoised_region_is_the_frame_it_was_cut_from() {
-        let detail = crate::galosh::Detail::at(40.0, 40.0);
-        for path in [sony(), fuji_noisy()] {
+        let galosh = crate::galosh::Detail::at(40.0, 40.0);
+        let upscaler = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
+        for (path, detail) in [(sony(), galosh), (fuji_noisy(), galosh), (sony(), upscaler)] {
             let path = path.to_str().unwrap().to_string();
             let path = path.as_str();
             let whole = crate::decode_frame_denoised(path, 0, detail, Default::default())
@@ -1643,9 +1653,9 @@ mod decode_geometry {
                 }
                 assert_eq!(
                     worst, 0,
-                    "{path}: a {}x{} region at {},{} differs from the frame by {worst} counts over \
-                     {differing} samples",
-                    region.width, region.height, region.left, region.top,
+                    "{path}, {:?}: a {}x{} region at {},{} differs from the frame by {worst} counts \
+                     over {differing} samples",
+                    detail.denoiser, region.width, region.height, region.left, region.top,
                 );
             }
         }

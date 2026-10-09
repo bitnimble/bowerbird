@@ -168,6 +168,7 @@ fn the_page_imports_the_entry_points_this_declares() {
             "renderRendition",
             "finishDraw",
             "holdPmridWeights",
+            "holdUpscalerWeights",
             "holdPrintEnvironment",
             "picturePart",
             "pictureOfOutput",

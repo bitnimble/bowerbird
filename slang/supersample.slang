@@ -1,12 +1,11 @@
-// A demosaiced frame at twice the photo's resolution back to the photo's own, through Lanczos-3:
-// what Sharpen's Quality hands the coding after the upscaler and RCD ran at 2x.
+// RCD's plane of an upscale back to the photo's own resolution, through Lanczos-3: what the colour
+// pass reads in place of a demosaic when the upscaler made the mosaic.
 //
 // In the demosaic's linear light, so a highlight weighs what it is. The kernel is Lanczos-3
 // stretched by 2: twelve taps each way centred between the two source pixels an output pixel
-// covers, mirrored at the frame's edges.
+// covers, mirrored at the plane's edges, which only a tile's halo reaches.
 
 import lanes;
-import packed;
 import px;
 
 struct Halving {
@@ -15,8 +14,8 @@ struct Halving {
 };
 
 [vk::binding(0, 0)] ConstantBuffer<Halving> halving;
-[vk::binding(1, 0)] StructuredBuffer<uint> frame;
-[vk::binding(2, 0)] RWStructuredBuffer<uint> smaller;
+[vk::binding(1, 0)] StructuredBuffer<float> plane;
+[vk::binding(2, 0)] RWStructuredBuffer<float> smaller;
 
 static const int REACH = 6;
 static const float PI = 3.14159265358979;
@@ -37,17 +36,19 @@ int mirrored(int at, int extent)
 
 float3 light_at(int x, int y)
 {
-    let pixel = wide_at<Drawn>(uint(mirrored(x, int(halving.source.x))), uint(mirrored(y, int(halving.source.y))),
-        measured<Drawn>(halving.source.x));
-    let first = pixel * 3;
-    return float3(
-        float(half_of(frame[first / 2], first)),
-        float(half_of(frame[(first + 1) / 2], first + 1)),
-        float(half_of(frame[(first + 2) / 2], first + 2)));
+    let first = wide_at<Sensor>(uint(mirrored(x, int(halving.source.x))), uint(mirrored(y, int(halving.source.y))),
+        measured<Sensor>(halving.source.x)) * 3;
+    return float3(plane[first], plane[first + 1], plane[first + 2]);
 }
 
-float3 halved(uint2 at)
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void halve_lanczos(uint3 id : SV_DispatchThreadID)
 {
+    let at = linear(id);
+    if (at >= halving.size.x * halving.size.y) { return; }
+    let x = at % halving.size.x;
+    let y = at / halving.size.x;
     float weights[2 * REACH];
     float total = 0.0;
     [ForceUnroll]
@@ -55,8 +56,8 @@ float3 halved(uint2 at)
         weights[k] = lanczos3((float(k - REACH) + 0.5) / 2.0);
         total += weights[k];
     }
-    let left = int(at.x) * 2 - REACH + 1;
-    let top = int(at.y) * 2 - REACH + 1;
+    let left = int(x) * 2 - REACH + 1;
+    let top = int(y) * 2 - REACH + 1;
     var sum = float3(0.0);
     for (int j = 0; j < 2 * REACH; j++) {
         var row = float3(0.0);
@@ -65,25 +66,9 @@ float3 halved(uint2 at)
         }
         sum += weights[j] * row;
     }
-    return sum / (total * total);
-}
-
-uint3 codes(float3 light)
-{
-    return uint3(clamp(round(light), float3(0.0), float3(65535.0)));
-}
-
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void halve_lanczos(uint3 id : SV_DispatchThreadID)
-{
-    let pair = linear(id);
-    let pixels = halving.size.x * halving.size.y;
-    let first = pair * 2;
-    if (first >= pixels) { return; }
-    let a = halved(uint2(first % halving.size.x, first / halving.size.x));
-    let paired = first + 1 < pixels;
-    var b = float3(0.0);
-    if (paired) { b = halved(uint2((first + 1) % halving.size.x, (first + 1) / halving.size.x)); }
-    store_pair(smaller, wide<Drawn>(first), codes(a), codes(b), paired, false);
+    let light = sum / (total * total);
+    let out = wide_at<Sensor>(x, y, measured<Sensor>(halving.size.x)) * 3;
+    smaller[out] = light.x;
+    smaller[out + 1] = light.y;
+    smaller[out + 2] = light.z;
 }

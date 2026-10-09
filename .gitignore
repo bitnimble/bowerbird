@@ -191,6 +191,8 @@ native/rawshim/.android-runtime
 native/rawshim/.swiftshader
 # PMRID's published weights, `bun run get:pmrid`.
 native/rawshim/.pmrid
+# The upscaler's weights, `bun run get:upscaler`.
+native/rawshim/.upscaler
 # The print preview's HDR environments, `bun run get:environments`.
 native/rawshim/.environments
 

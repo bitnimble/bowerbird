@@ -1,89 +1,72 @@
-//! The 2x mosaic upscaler of `models/upscaler` on the device.
+//! The 2x mosaic upscaler of `models/upscaler` on the device: the Detail panel's third denoiser.
 //!
-//! A conditioned RGGB mosaic in, the mosaic of a sensor with twice the photosites each way out.
-//! `slang/upscale.slang` packs the input and writes the answer on every arm; the 3x3 layers between
-//! run there too, or on the matrix units through `slang/passthrough/upscale_coop.slang` where the
-//! device reaches them. A browser has no passthrough shader, so a page runs [`Arm::Half`] or
-//! [`Arm::Float`].
+//! A conditioned Bayer mosaic in, still noisy, and the mosaic of a sensor with twice the photosites
+//! each way out, denoised. `slang/upscale.slang` runs the network's every step, and its 3x3 layers
+//! run on the matrix units through `slang/passthrough/upscale_coop.slang` where the device reaches
+//! them. A browser has no passthrough shader, so a page runs [`Arm::Half`] or [`Arm::Float`].
+//!
+//! The net is `MultiScale`: a body at full, half and quarter resolution, joined back up through 1x1
+//! rises, bilinear doublings and skips. A rectangle is cut into tiles, each grown by the network's
+//! reach and placed on the frame's own grid of its coarsest level, so a tile computes what the whole
+//! frame would: every level's region sits where the frame's own pooling put it.
 //!
 //! `examples/upscale_bench.rs` times every arm, and `models/upscaler`'s `upscaler.device_check`
 //! holds each against torch.
-//!
-//! The frame is cut into tiles of one size, each grown by the network's reach so that a tile's
-//! interior sees what the whole frame would: one packed pixel for every 3x3 layer.
 
 use std::sync::Mutex;
 
 /// What the forward pass computes on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Arm {
-    /// The 3x3 layers on the matrix units, accumulated in `float`, over `half` tensors, a
-    /// workgroup `rows` of 64 pixels: 1 or 2.
-    MatrixWide { rows: usize },
-    /// The same, accumulated in `half`, `rows` 1, 2 or 4.
-    MatrixNarrow { rows: usize },
-    /// The 3x3 layers as Winograd's F(2x2, 3x3) on the matrix units, accumulated in `half`.
-    Winograd,
-    /// All of it in WGSL over `half` tensors and in `half` arithmetic, which needs `shader-f16`,
-    /// each thread `pixels` of a row: 4 or 8.
-    Half { pixels: usize },
+    /// The 3x3 layers on the matrix units, accumulated in `half`, over `half` tensors.
+    Matrix,
+    /// All of it in WGSL over `half` tensors and in `half` arithmetic, which needs `shader-f16`.
+    Half,
     /// All of it in WGSL in `float`.
-    Float { pixels: usize },
+    Float,
 }
 
 impl Arm {
+    pub const ALL: [Arm; 3] = [Arm::Matrix, Arm::Half, Arm::Float];
+
     fn on_matrix_units(self) -> bool {
-        !matches!(self, Arm::Half { .. } | Arm::Float { .. })
+        self == Arm::Matrix
     }
 
     /// The pixels a 3x3 layer's workgroup covers, across and down.
     fn tile(self) -> (usize, usize) {
         match self {
-            Arm::MatrixWide { rows } | Arm::MatrixNarrow { rows } => (COOP_WIDE, rows),
-            Arm::Winograd => (WINOGRAD_WIDE, WINOGRAD_TALL),
-            Arm::Half { pixels } | Arm::Float { pixels } => (4 * pixels, WGSL_TALL),
-        }
-    }
-
-    /// The pixels each thread of a WGSL 3x3 layer holds, on the arms with any.
-    fn wgsl_pixels(self) -> usize {
-        match self {
-            Arm::Half { pixels } | Arm::Float { pixels } => pixels,
-            _ => WGSL_PIXELS[0],
+            Arm::Matrix => (COOP_WIDE, COOP_TALL),
+            Arm::Half | Arm::Float => (CONV_WIDE, CONV_TALL),
         }
     }
 }
 
-/// What [`Upscaler::fastest`] tries, in order. A 24MP frame on an RTX 3080 is 92ms on the first, 359
-/// on the second and 501 on the third, 471 of them in Chromium; Winograd's 115 lost to the matrix
-/// units' own rate, and is kept for an Apple GPU, whose matrices run on its lanes.
-const FASTEST_FIRST: [Arm; 3] = [
-    Arm::MatrixNarrow { rows: 4 },
-    Arm::Half { pixels: 8 },
-    Arm::Float { pixels: 8 },
-];
+/// The share of the weights' calibrated grain variance the editor adds over the upscale, chosen by
+/// eye: `models/upscaler`'s `GRAIN_SHARE`.
+const GRAIN_SHARE: f32 = 0.25;
 
-/// The channels between the first layer and the last, which are the only widths the kernels have.
+/// The widths the kernels are compiled for: the full level's, doubling at each halving.
 const CHANNELS: usize = 48;
+const LEVELS: usize = 3;
 /// The input's planes, and what the last layer's channels shuffle into.
 const PLANES: usize = 4;
 const SHUFFLED: usize = PLANES * 4;
 /// The input's planes as the matrix units read them, padded to a whole fragment.
 const MATRIX_PLANES: usize = 16;
+/// The output channels one workgroup of a 3x3 layer carries; wider layers go a slice at a time.
+const OUT_MOST: usize = 48;
 
-/// `pack` and `leave`'s workgroup in `slang/upscale.slang`, the height of its 3x3 layers' tile, and
-/// the pixels a thread of those layers is compiled to hold.
-const WGSL_WIDE: usize = 16;
-const WGSL_TALL: usize = 8;
-const WGSL_PIXELS: [usize; 2] = [4, 8];
-/// `WIDE` in `slang/passthrough/upscale_coop.slang`, and the rows its entry points are compiled
-/// for, by accumulator.
+/// `pack`'s, `leave`'s and the channel steps' workgroup in `slang/upscale.slang`.
+const STEP_WIDE: usize = 16;
+const STEP_TALL: usize = 8;
+/// A WGSL 3x3 layer's tile there, and the matrix units' in `upscale_coop.slang`.
+const CONV_WIDE: usize = 32;
+const CONV_TALL: usize = 8;
 const COOP_WIDE: usize = 64;
-const COOP_ROWS_WIDE: [usize; 2] = [1, 2];
-const COOP_ROWS_NARROW: [usize; 3] = [1, 2, 4];
-/// `WINO_WIDE` and `WINO_TALL` there, in pixels.
-const WINOGRAD_WIDE: usize = 16;
-const WINOGRAD_TALL: usize = 4;
+const COOP_TALL: usize = 4;
+/// Planes a side the coarsest level's pixel covers, which every region's corner sits on.
+const COARSEST: usize = 1 << (LEVELS - 1);
 
 /// `FRAGMENT` there, by backend, as `pmrid`'s kernel has it.
 const SPIRV_FRAGMENT: usize = 16;
@@ -92,7 +75,20 @@ const METAL_FRAGMENT: usize = 8;
 /// The most cells a tensor of a tile may hold.
 const TENSOR_CELLS_MOST: usize = 1 << 28;
 
-/// `Step` in `slang/upscale.slang` and `slang/passthrough/upscale_coop.slang`.
+/// The 3x3 layers the kernels hold, as (in, out, linear), named `conv_{in}_{out}` and
+/// `coop_{in}_{out}`, the first reading the planes padded to [`MATRIX_PLANES`] on the matrix units.
+const CONVS: [(usize, usize, bool); 7] = [
+    (PLANES, CHANNELS, false),
+    (CHANNELS, CHANNELS, false),
+    (CHANNELS, CHANNELS * 2, false),
+    (CHANNELS * 2, CHANNELS * 2, false),
+    (CHANNELS * 2, CHANNELS * 4, false),
+    (CHANNELS * 4, CHANNELS * 4, false),
+    (CHANNELS, SHUFFLED, true),
+];
+
+/// `Step` in `slang/upscale.slang`, whose first nine words `slang/passthrough/upscale_coop.slang`
+/// reads too.
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct Step {
@@ -110,37 +106,60 @@ struct Step {
     inner_top: u32,
     inner_width: u32,
     inner_height: u32,
-    /// A uniform struct's size rounds up to 16 bytes in WGSL.
+    other_width: u32,
+    other_height: u32,
+    other_left: i32,
+    other_top: i32,
+    real_width: u32,
+    real_height: u32,
+    window_left: u32,
+    window_top: u32,
+    window_width: u32,
+    window_height: u32,
+    out_left: u32,
+    out_top: u32,
+    out_width: u32,
+    out_height: u32,
+    channels: u32,
+    out_channels: u32,
     _pad: [u32; 2],
 }
 
-/// What a photo's planes go through before the network reads them and after it writes them, from
-/// [`Upscaler::stabiliser`]: `Stabilising` in `slang/upscale.slang`.
+/// What a photo's planes go through on their way in and out: `Photo` in `slang/upscale.slang`, from
+/// [`Upscaler::photo`].
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Stabiliser {
+pub struct Photo {
     floors: [f32; 4],
     roots: [f32; 4],
     scales: [f32; 4],
+    gains: [f32; 4],
+    positions: [u32; 4],
+    alpha: f32,
+    sigma_sq: f32,
+    grain: f32,
+    luma: f32,
+    colour: f32,
+    _pad: [u32; 3],
 }
 
-/// How the weights' `weights.json` says they were stabilised: `models/training`'s
-/// `fixed_stabiliser` or `fit_stabiliser`.
-enum Stabilising {
-    Fixed(f32),
-    Fit {
-        reference_alpha: f32,
-        max_scale: f32,
-        min_floor: f32,
-        max_floor: f32,
-    },
+impl Photo {
+    /// The network's own answer, for holding against torch, which draws no grain.
+    pub fn without_grain(self) -> Photo {
+        Photo { grain: 0.0, ..self }
+    }
+}
+
+/// `models/training`'s `fit_stabiliser`, as the weights' `weights.json` states it.
+struct Stabilising {
+    reference_alpha: f32,
+    max_scale: f32,
+    min_floor: f32,
+    max_floor: f32,
 }
 
 impl Stabilising {
     fn read(manifest: &serde_json::Value) -> Result<Stabilising, String> {
-        if let Some(floor) = manifest["stabiliser_floor"].as_f64() {
-            return Ok(Stabilising::Fixed(floor as f32));
-        }
         let fit = &manifest["stabiliser"];
         let number = |name: &str| {
             fit[name]
@@ -148,7 +167,7 @@ impl Stabilising {
                 .map(|n| n as f32)
                 .ok_or(format!("the manifest's stabiliser has no {name}"))
         };
-        Ok(Stabilising::Fit {
+        Ok(Stabilising {
             reference_alpha: number("reference_alpha")?,
             max_scale: number("max_scale")?,
             min_floor: number("min_floor")?,
@@ -157,61 +176,152 @@ impl Stabilising {
     }
 }
 
+/// Where a step's tensors live among a tile's: the packed planes, or a level's two working tensors
+/// and the skip it keeps for the way back up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Slot {
+    Planes,
+    A(usize),
+    B(usize),
+    Skip(usize),
+}
+
+impl Slot {
+    /// The working tensor of `level` that is not `self`.
+    fn other(self, level: usize) -> Slot {
+        match self {
+            Slot::A(_) => Slot::B(level),
+            _ => Slot::A(level),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct Layer {
-    input: usize,
-    output: usize,
-    linear: bool,
-    /// Where its taps, `[tap][in][out]`, its biases and its slopes are in the `float` weights.
+    /// Which of [`CONVS`] it is.
+    kind: usize,
+    /// Where its taps, `[tap][in][out]`, its biases and its slopes are in the `float` weights, and
+    /// its fragments in [`Coop::blocks`].
     weights_at: usize,
     bias_at: usize,
     slope_at: usize,
-    /// Where its fragments are in [`Coop::blocks`], directly or Winograd-transformed.
     blocks_at: usize,
-    wino_at: usize,
 }
 
-/// Winograd's F(2x2, 3x3) `G`, which takes a 3x3 of taps to the 4x4 the transformed input meets.
-const WINOGRAD_G: [[f32; 3]; 4] = [
-    [1.0, 0.0, 0.0],
-    [0.5, 0.5, 0.5],
-    [0.5, -0.5, 0.5],
-    [0.0, 0.0, 1.0],
-];
+/// One step of the forward pass, in the order they run.
+#[derive(Clone, Copy)]
+enum Op {
+    Pack,
+    Conv {
+        level: usize,
+        layer: Layer,
+        from: Slot,
+        to: Slot,
+    },
+    /// Into `level` from the one above it.
+    Pool {
+        level: usize,
+        channels: usize,
+        from: Slot,
+        to: Slot,
+    },
+    /// At the coarse `level`, `input` channels to `output`.
+    Rise {
+        level: usize,
+        input: usize,
+        output: usize,
+        weights_at: usize,
+        bias_at: usize,
+        from: Slot,
+        to: Slot,
+    },
+    /// The rise below `level`, doubled, onto that level's skip.
+    Double {
+        level: usize,
+        channels: usize,
+        rise: Slot,
+        skip: Slot,
+        to: Slot,
+    },
+    Leave {
+        from: Slot,
+    },
+}
+
+impl Op {
+    fn level(self) -> usize {
+        match self {
+            Op::Pack | Op::Leave { .. } => 0,
+            Op::Conv { level, .. }
+            | Op::Pool { level, .. }
+            | Op::Rise { level, .. }
+            | Op::Double { level, .. } => level,
+        }
+    }
+}
 
 pub struct Upscaler {
     arm: Arm,
-    layers: Vec<Layer>,
+    ops: Vec<Op>,
+    /// How far the network reads past a tile, in packed pixels, on the coarsest level's grid.
+    reach: usize,
     stabilising: Stabilising,
+    grain: f32,
     weights: crate::gpu::Buffer,
     layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
-    /// `conv_4_48`, `conv_48_48` and `conv_48_16`, each thread the arm's pixels.
-    convs: [wgpu::ComputePipeline; 3],
+    convs: Vec<wgpu::ComputePipeline>,
+    pool: wgpu::ComputePipeline,
+    rise: wgpu::ComputePipeline,
+    double: wgpu::ComputePipeline,
     leave: wgpu::ComputePipeline,
     coop: Option<Coop>,
     held: Mutex<Option<Tensors>>,
+    halving: Halving,
 }
 
-/// `slang/supersample.slang`, which takes the demosaic of an upscale back to the photo's size:
-/// Sharpen's Quality.
-pub struct Supersample {
+/// `slang/supersample.slang`, which takes RCD's plane of an upscale back to the photo's size.
+pub struct Halving {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
 
 struct Coop {
     layout: wgpu::BindGroupLayout,
-    /// `coop_16_48`, `coop_48_48` and `coop_48_16`, accumulated as the arm says.
-    convs: [wgpu::ComputePipeline; 3],
+    convs: Vec<wgpu::ComputePipeline>,
     blocks: crate::gpu::Buffer,
 }
 
-/// A tile's tensors, kept for the next frame cut the same way.
+/// A tile's tensors, kept for the next rectangle whose region fits them.
 struct Tensors {
+    /// The largest region they hold, and the one last laid out in them.
     region: (usize, usize),
+    laid: (usize, usize),
     planes: crate::gpu::Buffer,
-    a: crate::gpu::Buffer,
-    b: crate::gpu::Buffer,
+    /// Each level's A, B and skip.
+    levels: Vec<[crate::gpu::Buffer; 3]>,
+}
+
+impl Tensors {
+    fn of(&self, slot: Slot) -> &crate::gpu::Buffer {
+        match slot {
+            Slot::Planes => &self.planes,
+            Slot::A(level) => &self.levels[level][0],
+            Slot::B(level) => &self.levels[level][1],
+            Slot::Skip(level) => &self.levels[level][2],
+        }
+    }
+}
+
+/// Where a call's mosaic lies and what it asks for, all in the photo's mosaic: `window` is the
+/// buffer handed in as `(left, top, width, height)`, `frame` the whole mosaic's size, and `rect` the
+/// part to upscale, on whole 2x2 sites. The window has to reach [`Upscaler::margin`] past the
+/// rectangle wherever the frame does.
+#[derive(Clone, Copy, Debug)]
+pub struct Placement {
+    pub window: (usize, usize, usize, usize),
+    pub frame: (usize, usize),
+    pub rect: (usize, usize, usize, usize),
 }
 
 impl Upscaler {
@@ -226,25 +336,16 @@ impl Upscaler {
         let manifest: serde_json::Value =
             serde_json::from_str(manifest).map_err(|e| format!("the manifest: {e}"))?;
         let stabilising = Stabilising::read(&manifest)?;
+        let calibration = manifest["grain_calibration"]
+            .as_f64()
+            .ok_or("the manifest has no grain_calibration")?;
         let floats: Vec<f32> = weights
             .chunks_exact(4)
             .map(|word| f32::from_le_bytes(word.try_into().expect("four")))
             .collect();
         let tensors = tensors(&manifest, &floats)?;
-        let compiled = match arm {
-            Arm::MatrixWide { rows } => COOP_ROWS_WIDE.contains(&rows),
-            Arm::MatrixNarrow { rows } => COOP_ROWS_NARROW.contains(&rows),
-            Arm::Half { pixels } | Arm::Float { pixels } => WGSL_PIXELS.contains(&pixels),
-            Arm::Winograd => true,
-        };
-        if !compiled {
-            return Err(format!(
-                "{arm:?} is not a shape the kernels are compiled for"
-            ));
-        }
         let device = gpu.describing();
-        let half = !matches!(arm, Arm::Float { .. });
-        if half && !device.features().contains(wgpu::Features::SHADER_F16) {
+        if arm != Arm::Float && !device.features().contains(wgpu::Features::SHADER_F16) {
             return Ok(None);
         }
         let fragment = match arm.on_matrix_units() {
@@ -254,11 +355,11 @@ impl Upscaler {
             },
             false => SPIRV_FRAGMENT,
         };
-        let (layers, packed, blocks, wino) = lay_out(&tensors, fragment)?;
+        let (ops, packed, blocks) = lay_out(&manifest, &tensors, fragment)?;
 
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("upscale"),
-            source: wgpu::ShaderSource::Wgsl(forward_pass(half).into()),
+            source: wgpu::ShaderSource::Wgsl(forward_pass(arm != Arm::Float).into()),
         });
         let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
             binding,
@@ -270,39 +371,42 @@ impl Upscaler {
             },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("upscale"),
-            entries: &[
-                storage(0, true),
-                storage(1, true),
-                storage(2, false),
-                storage(3, true),
-                storage(4, true),
-                storage(5, false),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Step>() as u64),
+        let layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("upscale"),
+                entries: &[
+                    storage(0, true),
+                    storage(1, true),
+                    storage(2, false),
+                    storage(3, true),
+                    storage(4, true),
+                    storage(5, false),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: true,
+                            min_binding_size: wgpu::BufferSize::new(
+                                std::mem::size_of::<Step>() as u64
+                            ),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Stabiliser>() as u64
-                        ),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(
+                                std::mem::size_of::<Photo>() as u64
+                            ),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("upscale"),
             bind_group_layouts: &[Some(&layout)],
@@ -318,14 +422,13 @@ impl Upscaler {
                 cache: None,
             })
         };
-        let coop = match arm {
-            Arm::Winograd => coop_kernels(gpu, arm, fragment, &wino),
-            _ if arm.on_matrix_units() => coop_kernels(gpu, arm, fragment, &blocks),
-            _ => None,
+        let coop = match arm.on_matrix_units() {
+            true => match coop_kernels(gpu, fragment, &blocks) {
+                Some(coop) => Some(coop),
+                None => return Ok(None),
+            },
+            false => None,
         };
-        if arm.on_matrix_units() && coop.is_none() {
-            return Ok(None);
-        }
 
         let mut recording = gpu.record();
         let held = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -335,32 +438,38 @@ impl Upscaler {
         });
         recording.submit();
 
+        let reach = reach(&ops);
         Ok(Some(Upscaler {
             arm,
-            layers,
+            ops,
+            reach,
             stabilising,
+            grain: GRAIN_SHARE * calibration as f32,
             weights: held,
             pack: pipeline("pack"),
-            convs: [
-                pipeline(&format!("conv_4_48_{}", arm.wgsl_pixels())),
-                pipeline(&format!("conv_48_48_{}", arm.wgsl_pixels())),
-                pipeline(&format!("conv_48_16_{}", arm.wgsl_pixels())),
-            ],
+            convs: CONVS
+                .iter()
+                .map(|(input, output, _)| pipeline(&format!("conv_{input}_{output}")))
+                .collect(),
+            pool: pipeline("pool"),
+            rise: pipeline("rise"),
+            double: pipeline("double_add"),
             leave: pipeline("leave"),
             layout,
             coop,
             held: Mutex::new(None),
+            halving: Halving::new(gpu),
         }))
     }
 
-    /// The network on the fastest arm this device runs, by `examples/upscale_bench.rs` on an RTX 3080
-    /// and in Chromium: the matrix units, then `half` WGSL, then `float`.
+    /// The network on the fastest arm this device runs: the matrix units, then `half` WGSL, then
+    /// `float`.
     pub fn fastest(
         gpu: &'static crate::gpu::Gpu,
         manifest: &str,
         weights: &[u8],
     ) -> Result<Upscaler, String> {
-        for arm in FASTEST_FIRST {
+        for arm in Arm::ALL {
             if let Some(built) = Upscaler::new(gpu, manifest, weights, arm)? {
                 return Ok(built);
             }
@@ -372,82 +481,117 @@ impl Upscaler {
         self.arm
     }
 
-    /// What a photo's planes go through, from its R, G, B conditioning `gains` and its `noise`;
-    /// weights trained on the noise fail without it.
-    pub fn stabiliser(
+    /// How far past a rectangle, in mosaic pixels, the window handed to [`Upscaler::upscale`]
+    /// has to reach for the rectangle to come out as the whole frame's would.
+    pub fn margin(&self) -> usize {
+        self.reach * 2
+    }
+
+    /// What a photo's planes go through, from its R, G, B conditioning `gains`, its Bayer `cfa`, its
+    /// fitted `noise`, and the Detail sliders as `(luminance, colour)`, 0 to 100: how much of what
+    /// the network moved to keep, in the light the 2x2 agrees on and in its colour.
+    pub fn photo(
         &self,
         gains: [f32; 3],
-        noise: Option<crate::galosh::NoiseModel>,
-    ) -> Result<Stabiliser, String> {
-        let (floors, scales) = match self.stabilising {
-            Stabilising::Fixed(floor) => ([floor; 4], [1.0; 4]),
-            Stabilising::Fit {
-                reference_alpha,
-                max_scale,
-                min_floor,
-                max_floor,
-            } => {
-                let noise =
-                    noise.ok_or("these weights take the photo's noise fit, and it has none")?;
-                let [red, green, blue] = gains;
-                let mut floors = [0.0; 4];
-                let mut scales = [0.0; 4];
-                for (c, gain) in [red, green, green, blue].into_iter().enumerate() {
-                    let a =
-                        (noise.alpha * gain / green).max(reference_alpha / (max_scale * max_scale));
-                    let b = noise.sigma_sq * gain * gain / (green * green);
-                    // Floored below by 3 standard deviations of read noise, so black's noise isn't clamped away.
-                    floors[c] = (b / a).max(3.0 * b.sqrt()).clamp(min_floor, max_floor);
-                    scales[c] = (reference_alpha / a).sqrt();
-                }
-                (floors, scales)
-            }
-        };
-        Ok(Stabiliser {
+        cfa: &crate::cfa::Cfa,
+        noise: crate::galosh::NoiseModel,
+        (luminance, colour): (f64, f64),
+    ) -> Result<Photo, String> {
+        let positions = positions(cfa).ok_or("the upscaler takes a Bayer mosaic")?;
+        let [red, green, blue] = gains;
+        let plane_gains = [red, green, green, blue];
+        let &Stabilising {
+            reference_alpha,
+            max_scale,
+            min_floor,
+            max_floor,
+        } = &self.stabilising;
+        let mut floors = [0.0; 4];
+        let mut scales = [0.0; 4];
+        for (c, gain) in plane_gains.into_iter().enumerate() {
+            let a = (noise.alpha * gain / green).max(reference_alpha / (max_scale * max_scale));
+            let b = noise.sigma_sq * gain * gain / (green * green);
+            // Floored below by 3 standard deviations of read noise, so black's noise isn't clamped away.
+            floors[c] = (b / a).max(3.0 * b.sqrt()).clamp(min_floor, max_floor);
+            scales[c] = (reference_alpha / a).sqrt();
+        }
+        Ok(Photo {
             floors,
             roots: floors.map(f32::sqrt),
             scales,
+            gains: plane_gains,
+            positions,
+            alpha: noise.alpha / green,
+            sigma_sq: noise.sigma_sq / (green * green),
+            grain: self.grain,
+            luma: (luminance / 100.0) as f32,
+            colour: (colour / 100.0) as f32,
+            _pad: [0; 3],
         })
     }
 
-    /// The network's reach in packed pixels, which each tile is grown by.
-    fn reach(&self) -> usize {
-        self.layers.len()
-    }
-
-    /// `mosaic`, a `width` by `height` RGGB mosaic of `f32`, upscaled into `into`, `2 * width` by
-    /// `2 * height` of them ([`answer_bytes`]), in tiles of at most `tile` packed pixels a side or
-    /// as large as fit, under the photo's own [`Upscaler::stabiliser`]. Recorded and submitted,
-    /// not waited for.
-    #[allow(clippy::too_many_arguments)]
+    /// `at.rect` of `mosaic`, a window of the photo's conditioned mosaic as `at` places it, upscaled
+    /// into `into`, the mosaic at twice the size over twice the rectangle
+    /// ([`answer_bytes`]), in tiles of at most `tile` packed pixels a side or as large as fit.
+    /// Recorded and submitted, not waited for.
     pub fn upscale(
         &self,
         gpu: &'static crate::gpu::Gpu,
         mosaic: &crate::gpu::Buffer,
-        width: usize,
-        height: usize,
+        at: Placement,
         into: &crate::gpu::Buffer,
+        photo: &Photo,
         tile: Option<usize>,
-        stabiliser: &Stabiliser,
     ) -> Result<(), String> {
-        if width % 2 != 0 || height % 2 != 0 || width == 0 || height == 0 {
-            return Err(format!("a {width}x{height} mosaic is not whole RGGB quads"));
+        let (rect_left, rect_top, rect_width, rect_height) = at.rect;
+        let (window_left, window_top, window_width, window_height) = at.window;
+        if [rect_left, rect_top, rect_width, rect_height]
+            .iter()
+            .any(|n| n % 2 != 0)
+            || rect_width == 0
+            || rect_height == 0
+        {
+            return Err(format!("{:?} is not whole 2x2 sites", at.rect));
         }
-        let (pw, ph) = (width / 2, height / 2);
-        let reach = self.reach();
-        let planes_channels = match self.arm.on_matrix_units() {
-            true => MATRIX_PLANES,
-            false => PLANES,
-        };
-        let cell = match self.arm {
-            Arm::Float { .. } => 4,
-            _ => 2,
-        };
+        if into.size() < answer_bytes(rect_width, rect_height) {
+            return Err(format!("{} bytes cannot hold the answer", into.size()));
+        }
+        let margin = self.margin();
+        let short = window_left > rect_left.saturating_sub(margin)
+            || window_top > rect_top.saturating_sub(margin)
+            || window_left + window_width < (rect_left + rect_width + margin).min(at.frame.0 & !1)
+            || window_top + window_height < (rect_top + rect_height + margin).min(at.frame.1 & !1);
+        if short {
+            return Err(format!(
+                "{:?} does not reach the margin past {:?}",
+                at.window, at.rect
+            ));
+        }
+        let real = (at.frame.0 / 2, at.frame.1 / 2);
+        let padded = (
+            real.0.next_multiple_of(COARSEST),
+            real.1.next_multiple_of(COARSEST),
+        );
+        let wanted = (
+            rect_left / 2,
+            rect_top / 2,
+            (rect_left + rect_width) / 2,
+            (rect_top + rect_height) / 2,
+        );
+        let origin = (
+            wanted.0 / COARSEST * COARSEST,
+            wanted.1 / COARSEST * COARSEST,
+        );
+        let reach = self.reach;
         let region_of = |(tw, th): (usize, usize)| {
             (
-                (tw + 2 * reach).next_multiple_of(COOP_WIDE.max(WGSL_WIDE)),
-                (th + 2 * reach).next_multiple_of(WGSL_TALL),
+                (tw + 2 * reach).next_multiple_of(self.arm.tile().0.max(CONV_WIDE) * COARSEST),
+                (th + 2 * reach).next_multiple_of(CONV_TALL.max(COOP_TALL) * COARSEST),
             )
+        };
+        let cell = match self.arm {
+            Arm::Float => 4,
+            _ => 2,
         };
         let binding = gpu.limits().max_storage_buffer_binding_size as usize;
         let fits = |side: usize| {
@@ -456,7 +600,7 @@ impl Upscaler {
             cells <= TENSOR_CELLS_MOST && cells * cell <= binding
         };
         let most = match tile {
-            Some(asked) => asked,
+            Some(asked) => asked.next_multiple_of(COARSEST),
             None => (1..=64)
                 .rev()
                 .map(|n| n * 64)
@@ -467,64 +611,128 @@ impl Upscaler {
             return Err(format!("a tile of {most} does not fit a binding"));
         }
         let cut = |extent: usize| {
-            let count = extent.div_ceil(most);
-            (count, extent.div_ceil(count))
+            let count = extent.div_ceil(most).max(1);
+            (count, extent.div_ceil(count).next_multiple_of(COARSEST))
         };
-        let ((across, tw), (down, th)) = (cut(pw), cut(ph));
+        let ((across, tw), (down, th)) = (cut(wanted.2 - origin.0), cut(wanted.3 - origin.1));
         let region = region_of((tw, th));
-        if into.size() < answer_bytes(width, height) {
-            return Err(format!("{} bytes cannot hold the answer", into.size()));
-        }
 
         let mut kept = self.held.lock().expect("the tensors' lock");
-        if kept.as_ref().map(|t| t.region) != Some(region) {
-            *kept = Some(self.tensors(gpu, region, planes_channels, cell));
+        let held = kept.as_ref().map_or((0, 0), |t| t.region);
+        if held.0 < region.0 || held.1 < region.1 {
+            *kept = Some(self.tensors(gpu, (held.0.max(region.0), held.1.max(region.1)), cell));
         }
-        let tensors = kept.as_ref().expect("just made");
+        let tensors = kept.as_mut().expect("just made");
+        let relaid = tensors.laid != region;
+        tensors.laid = region;
+        let tensors = &*tensors;
 
         let mut recording = gpu.record();
         recording.holding(mosaic);
         recording.holding(into);
         recording.holding(&self.weights);
-        recording.holding(&tensors.planes);
-        recording.holding(&tensors.a);
-        recording.holding(&tensors.b);
+        let buffers = std::iter::once(&tensors.planes).chain(tensors.levels.iter().flatten());
+        for buffer in buffers {
+            recording.holding(buffer);
+            // Another layout's interior lies where this one's ring of zeros is.
+            if relaid {
+                recording.encoder().clear_buffer(buffer, 0, None);
+            }
+        }
 
-        let stride = (std::mem::size_of::<Step>() as u64)
-            .next_multiple_of(u64::from(gpu.limits().min_uniform_buffer_offset_alignment));
+        let planes_channels = match self.arm.on_matrix_units() {
+            true => MATRIX_PLANES,
+            false => PLANES,
+        };
         let mut steps: Vec<Step> = Vec::new();
         for ty in 0..down {
             for tx in 0..across {
+                let tile_left = origin.0 + tx * tw;
+                let tile_top = origin.1 + ty * th;
+                let left = tile_left as i32 - reach as i32;
+                let top = tile_top as i32 - reach as i32;
+                let inner_left = tile_left.max(wanted.0);
+                let inner_top = tile_top.max(wanted.1);
+                let inner_right = (tile_left + tw).min(wanted.2);
+                let inner_bottom = (tile_top + th).min(wanted.3);
                 let base = Step {
-                    width: region.0 as u32,
-                    height: region.1 as u32,
-                    left: (tx * tw) as i32 - reach as i32,
-                    top: (ty * th) as i32 - reach as i32,
-                    frame_width: pw as u32,
-                    frame_height: ph as u32,
+                    real_width: real.0 as u32,
+                    real_height: real.1 as u32,
                     planes_channels: planes_channels as u32,
-                    inner_left: reach as u32,
-                    inner_top: reach as u32,
-                    inner_width: tw.min(pw - tx * tw) as u32,
-                    inner_height: th.min(ph - ty * th) as u32,
+                    inner_left: (inner_left as i32 - left) as u32,
+                    inner_top: (inner_top as i32 - top) as u32,
+                    inner_width: inner_right.saturating_sub(inner_left) as u32,
+                    inner_height: inner_bottom.saturating_sub(inner_top) as u32,
+                    window_left: window_left as u32,
+                    window_top: window_top as u32,
+                    window_width: window_width as u32,
+                    window_height: window_height as u32,
+                    out_left: (rect_left * 2) as u32,
+                    out_top: (rect_top * 2) as u32,
+                    out_width: (rect_width * 2) as u32,
+                    out_height: (rect_height * 2) as u32,
                     ..Default::default()
                 };
-                steps.push(base);
-                for layer in &self.layers {
-                    steps.push(Step {
-                        weights_at: match self.arm {
-                            Arm::Winograd => layer.wino_at as u32,
-                            Arm::Half { .. } | Arm::Float { .. } => layer.weights_at as u32,
-                            _ => layer.blocks_at as u32,
+                let at_level = |step: Step, level: usize| Step {
+                    width: (region.0 >> level) as u32,
+                    height: (region.1 >> level) as u32,
+                    left: left / (1 << level),
+                    top: top / (1 << level),
+                    frame_width: (padded.0 >> level) as u32,
+                    frame_height: (padded.1 >> level) as u32,
+                    ..step
+                };
+                let with_other = |step: Step, level: usize| Step {
+                    other_width: (region.0 >> level) as u32,
+                    other_height: (region.1 >> level) as u32,
+                    other_left: left / (1 << level),
+                    other_top: top / (1 << level),
+                    ..step
+                };
+                for op in &self.ops {
+                    let step = at_level(base, op.level());
+                    steps.push(match *op {
+                        Op::Pack | Op::Leave { .. } => step,
+                        Op::Conv { layer, .. } => Step {
+                            weights_at: match self.arm {
+                                Arm::Matrix => layer.blocks_at,
+                                _ => layer.weights_at,
+                            } as u32,
+                            bias_at: layer.bias_at as u32,
+                            slope_at: layer.slope_at as u32,
+                            ..step
                         },
-                        bias_at: layer.bias_at as u32,
-                        slope_at: layer.slope_at as u32,
-                        ..base
+                        Op::Pool {
+                            level, channels, ..
+                        } => Step {
+                            channels: channels as u32,
+                            ..with_other(step, level - 1)
+                        },
+                        Op::Rise {
+                            input,
+                            output,
+                            weights_at,
+                            bias_at,
+                            ..
+                        } => Step {
+                            channels: input as u32,
+                            out_channels: output as u32,
+                            weights_at: weights_at as u32,
+                            bias_at: bias_at as u32,
+                            ..step
+                        },
+                        Op::Double {
+                            level, channels, ..
+                        } => Step {
+                            channels: channels as u32,
+                            ..with_other(step, level + 1)
+                        },
                     });
                 }
-                steps.push(base);
             }
         }
+        let stride = (std::mem::size_of::<Step>() as u64)
+            .next_multiple_of(u64::from(gpu.limits().min_uniform_buffer_offset_alignment));
         let mut bytes = vec![0u8; steps.len() * stride as usize];
         for (i, step) in steps.iter().enumerate() {
             bytes[i * stride as usize..][..std::mem::size_of::<Step>()]
@@ -535,145 +743,241 @@ impl Upscaler {
             contents: &bytes,
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let stabilising = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("upscale stabiliser"),
-            contents: bytemuck::bytes_of(stabiliser),
+        let photo = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("upscale photo"),
+            contents: bytemuck::bytes_of(photo),
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        let group =
-            |given: &crate::gpu::Buffer, made: &crate::gpu::Buffer, planes: &crate::gpu::Buffer| {
-                gpu.bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("upscale"),
-                    layout: &self.layout,
-                    entries: &[
-                        entry(0, &self.weights),
-                        entry(1, given),
-                        entry(2, made),
-                        entry(3, planes),
-                        entry(4, mosaic),
-                        entry(5, into),
-                        wgpu::BindGroupEntry {
-                            binding: 6,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: &uniforms,
-                                offset: 0,
-                                size: wgpu::BufferSize::new(std::mem::size_of::<Step>() as u64),
-                            }),
-                        },
-                        entry(7, &stabilising),
-                    ],
-                })
-            };
-        let (planes, a, b) = (&tensors.planes, &tensors.a, &tensors.b);
-        let packing = group(a, planes, b);
-        let first = group(planes, a, planes);
-        let ab = group(a, b, planes);
-        let ba = group(b, a, planes);
-        let coop_groups = self.coop.as_ref().map(|coop| {
-            let group = |given: &crate::gpu::Buffer, made: &crate::gpu::Buffer| {
-                gpu.bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("upscale coop"),
-                    layout: &coop.layout,
-                    entries: &[
-                        entry(0, &coop.blocks),
-                        entry(1, given),
-                        entry(2, made),
-                        entry(3, &self.weights),
-                    ],
-                })
-            };
-            [group(planes, a), group(a, b), group(b, a)]
-        });
+        let group = |given: Slot, made: Slot, aside: Slot| {
+            gpu.bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("upscale"),
+                layout: &self.layout,
+                entries: &[
+                    entry(0, &self.weights),
+                    entry(1, tensors.of(given)),
+                    entry(2, tensors.of(made)),
+                    entry(3, tensors.of(aside)),
+                    entry(4, mosaic),
+                    entry(5, into),
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &uniforms,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(std::mem::size_of::<Step>() as u64),
+                        }),
+                    },
+                    entry(7, &photo),
+                ],
+            })
+        };
+        // A binding may not be read and written at once, so a step that has nothing to set aside
+        // or to read names a tensor it does not write.
+        let groups: Vec<Option<wgpu::BindGroup>> = self
+            .ops
+            .iter()
+            .map(|op| match *op {
+                Op::Pack => Some(group(Slot::A(0), Slot::Planes, Slot::A(0))),
+                Op::Conv { from, to, .. } if self.coop.is_none() => Some(group(from, to, from)),
+                Op::Conv { .. } => None,
+                Op::Pool { from, to, .. } | Op::Rise { from, to, .. } => {
+                    Some(group(from, to, from))
+                }
+                Op::Double { rise, skip, to, .. } => Some(group(rise, to, skip)),
+                Op::Leave { from } => Some(group(from, from.other(0), Slot::Planes)),
+            })
+            .collect();
+        let coop_groups: Vec<Option<wgpu::BindGroup>> = self
+            .ops
+            .iter()
+            .map(|op| match (op, &self.coop) {
+                (Op::Conv { from, to, .. }, Some(coop)) => {
+                    Some(gpu.bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("upscale coop"),
+                        layout: &coop.layout,
+                        entries: &[
+                            entry(0, &coop.blocks),
+                            entry(1, tensors.of(*from)),
+                            entry(2, tensors.of(*to)),
+                            entry(3, &self.weights),
+                        ],
+                    }))
+                }
+                _ => None,
+            })
+            .collect();
 
-        let pack_grid = ((region.0 / WGSL_WIDE) as u32, (region.1 / WGSL_TALL) as u32);
-        let (tile_wide, tile_tall) = self.arm.tile();
-        let layer_grid = ((region.0 / tile_wide) as u32, (region.1 / tile_tall) as u32);
-        let last = self.layers.len() - 1;
         {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            let mut at = 0u32;
-            let mut next = || {
-                let offset = at * stride as u32;
-                at += 1;
-                offset
-            };
-            for step_of_tile in steps.chunks(self.layers.len() + 2) {
-                pass.set_pipeline(&self.pack);
-                pass.set_bind_group(0, &packing, &[next()]);
-                pass.dispatch_workgroups(pack_grid.0, pack_grid.1, 1);
-                for (index, _) in self.layers.iter().enumerate() {
-                    let kind = match index {
-                        0 => 0,
-                        _ if index == last => 2,
-                        _ => 1,
-                    };
-                    let offset = next();
-                    let groups = match index {
-                        0 => 0,
-                        _ if index % 2 == 1 => 1,
-                        _ => 2,
-                    };
-                    match (&self.coop, &coop_groups) {
-                        (Some(coop), Some(coop_groups)) => {
-                            pass.set_pipeline(&coop.convs[kind]);
-                            pass.set_bind_group(0, &coop_groups[groups], &[]);
-                            pass.set_immediates(0, bytemuck::bytes_of(&step_of_tile[index + 1]));
-                            pass.dispatch_workgroups(layer_grid.0, layer_grid.1, 1);
-                        }
-                        _ => {
-                            pass.set_pipeline(&self.convs[kind]);
-                            pass.set_bind_group(0, [&first, &ab, &ba][groups], &[offset]);
-                            pass.dispatch_workgroups(layer_grid.0, layer_grid.1, 1);
-                        }
-                    }
-                }
-                let leaving = step_of_tile[self.layers.len() + 1];
-                let answer = match last % 2 {
-                    1 => &ba,
-                    _ => &ab,
+            for (n, step) in steps.iter().enumerate() {
+                let index = n % self.ops.len();
+                let op = self.ops[index];
+                let offset = (n as u64 * stride) as u32;
+                let level = op.level();
+                let (width, height) = (region.0 >> level, region.1 >> level);
+                let lanes = |quads: usize| {
+                    (
+                        (width * quads).div_ceil(STEP_WIDE) as u32,
+                        height.div_ceil(STEP_TALL) as u32,
+                    )
                 };
-                pass.set_pipeline(&self.leave);
-                pass.set_bind_group(0, answer, &[next()]);
-                pass.dispatch_workgroups(
-                    leaving.inner_width.div_ceil(WGSL_WIDE as u32),
-                    leaving.inner_height.div_ceil(WGSL_TALL as u32),
-                    1,
+                let (x, y, z, pipeline) = match op {
+                    Op::Pack => (
+                        width.div_ceil(STEP_WIDE) as u32,
+                        height.div_ceil(STEP_TALL) as u32,
+                        1,
+                        &self.pack,
+                    ),
+                    Op::Conv { layer, .. } => {
+                        let (_, output, _) = CONVS[layer.kind];
+                        let slices = output.div_ceil(OUT_MOST) as u32;
+                        let (wide, tall) = self.arm.tile();
+                        if let (Some(coop), Some(group)) = (&self.coop, &coop_groups[index]) {
+                            pass.set_pipeline(&coop.convs[layer.kind]);
+                            pass.set_bind_group(0, group, &[]);
+                            pass.set_immediates(0, bytemuck::bytes_of(step));
+                            pass.dispatch_workgroups(
+                                (width / wide) as u32,
+                                (height / tall) as u32,
+                                slices,
+                            );
+                            continue;
+                        }
+                        (
+                            (width / wide) as u32,
+                            (height / tall) as u32,
+                            slices,
+                            &self.convs[layer.kind],
+                        )
+                    }
+                    Op::Pool { channels, .. } => {
+                        let (x, y) = lanes(channels / 4);
+                        (x, y, 1, &self.pool)
+                    }
+                    Op::Rise { output, .. } => {
+                        let (x, y) = lanes(output / 4);
+                        (x, y, 1, &self.rise)
+                    }
+                    Op::Double { channels, .. } => {
+                        let (x, y) = lanes(channels / 4);
+                        (x, y, 1, &self.double)
+                    }
+                    Op::Leave { .. } => {
+                        if step.inner_width == 0 || step.inner_height == 0 {
+                            continue;
+                        }
+                        (
+                            step.inner_width.div_ceil(STEP_WIDE as u32),
+                            step.inner_height.div_ceil(STEP_TALL as u32),
+                            1,
+                            &self.leave,
+                        )
+                    }
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(
+                    0,
+                    groups[index].as_ref().expect("a WGSL step's group"),
+                    &[offset],
                 );
+                pass.dispatch_workgroups(x, y, z);
             }
         }
         recording.submit();
         Ok(())
     }
 
-    fn tensors(
+    /// Frees the tensors [`Upscaler::upscale`] keeps between calls, for a caller done upscaling.
+    pub fn release(&self) {
+        *self.held.lock().expect("the tensors' lock") = None;
+    }
+
+    /// [`Halving::halve`].
+    pub fn halve(
         &self,
         gpu: &crate::gpu::Gpu,
-        region: (usize, usize),
-        planes_channels: usize,
-        cell: usize,
-    ) -> Tensors {
-        let pixels = (region.0 + 2) * (region.1 + 2);
+        recording: &mut crate::gpu::Recording<'static>,
+        plane: &crate::gpu::Buffer,
+        source: (usize, usize),
+    ) -> crate::gpu::Buffer {
+        self.halving.halve(gpu, recording, plane, source)
+    }
+
+    fn tensors(&self, gpu: &crate::gpu::Gpu, region: (usize, usize), cell: usize) -> Tensors {
         let mut recording = gpu.record();
-        let mut tensor = |label: &str, channels: usize| {
+        let mut tensor = |label: &str, level: usize, channels: usize| {
+            let pixels = ((region.0 >> level) + 2) * ((region.1 >> level) + 2);
             recording.buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
                 size: (pixels * channels * cell) as u64,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
         };
+        let planes = tensor("upscale planes", 0, MATRIX_PLANES);
+        let levels = (0..LEVELS)
+            .map(|level| {
+                let channels = CHANNELS << level;
+                [
+                    tensor("upscale a", level, channels),
+                    tensor("upscale b", level, channels),
+                    tensor(
+                        "upscale skip",
+                        level,
+                        if level + 1 < LEVELS { channels } else { 1 },
+                    ),
+                ]
+            })
+            .collect();
         Tensors {
             region,
-            planes: tensor("upscale planes", planes_channels),
-            a: tensor("upscale a", CHANNELS),
-            b: tensor("upscale b", CHANNELS),
+            laid: region,
+            planes,
+            levels,
         }
     }
 }
 
-impl Supersample {
-    pub fn new(gpu: &crate::gpu::Gpu) -> Supersample {
+impl Halving {
+    /// `plane`, RCD's three `f32` a site over a `source` of the upscale, halved into a plane of its
+    /// own through Lanczos-3, recorded into `recording`.
+    pub fn halve(
+        &self,
+        gpu: &crate::gpu::Gpu,
+        recording: &mut crate::gpu::Recording<'static>,
+        plane: &crate::gpu::Buffer,
+        source: (usize, usize),
+    ) -> crate::gpu::Buffer {
+        let out = (source.0 / 2, source.1 / 2);
+        let smaller = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("halved plane"),
+            size: ((out.0 * out.1).max(1) * 3 * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let sizes = [source.0, source.1, out.0, out.1].map(|n| n as u32);
+        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("halving"),
+            contents: bytemuck::cast_slice(&sizes),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("halving"),
+            layout: &self.layout,
+            entries: &[entry(0, &uniform), entry(1, plane), entry(2, &smaller)],
+        });
+        {
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            let (x, y) = crate::base::groups(out.0 * out.1);
+            pass.dispatch_workgroups(x, y, 1);
+        }
+        smaller
+    }
+
+    pub fn new(gpu: &crate::gpu::Gpu) -> Halving {
         let device = gpu.describing();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("supersample"),
@@ -712,51 +1016,110 @@ impl Supersample {
             compilation_options: Default::default(),
             cache: None,
         });
-        Supersample { layout, pipeline }
-    }
-
-    /// `frame`, a demosaic at twice the photo's resolution, at the photo's own through Lanczos-3 in
-    /// its linear light.
-    pub fn halved(
-        &self,
-        gpu: &'static crate::gpu::Gpu,
-        frame: &crate::resident::Resident,
-    ) -> crate::resident::Resident {
-        let out = (frame.width / 2, frame.height / 2);
-        let smaller = crate::resident::Resident::empty(gpu, out.0, out.1);
-        let mut recording = gpu.record();
-        recording.holding(frame.buffer());
-        recording.holding(smaller.buffer());
-        let sizes = [frame.width, frame.height, out.0, out.1].map(|n| n as u32);
-        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("halving"),
-            contents: bytemuck::cast_slice(&sizes),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("halving"),
-            layout: &self.layout,
-            entries: &[
-                entry(0, &uniform),
-                entry(1, frame.buffer()),
-                entry(2, smaller.buffer()),
-            ],
-        });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups((out.0 * out.1).div_ceil(2));
-            pass.dispatch_workgroups(x, y, 1);
-        }
-        recording.submit();
-        smaller
+        Halving { layout, pipeline }
     }
 }
 
-/// The bytes [`Upscaler::upscale`]'s answer for a `width` by `height` mosaic takes.
+/// The plan for walking the weights, embedded on both hosts. The weights themselves are eight
+/// megabytes and are not ([`weights`]).
+const MANIFEST: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/.upscaler/weights.json"
+));
+
+/// The weights as `bun run get:upscaler` installs them: embedded in a rendition's binary and
+/// fetched by a page, as `pmrid::weights` says why.
+#[cfg(not(target_arch = "wasm32"))]
+fn weights() -> Option<&'static [u8]> {
+    Some(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/.upscaler/weights.bin"
+    )))
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WEIGHTS: std::cell::Cell<Option<&'static [u8]>> = const { std::cell::Cell::new(None) };
+    static BUILT: std::cell::Cell<Option<Option<&'static Upscaler>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(target_arch = "wasm32")]
+fn weights() -> Option<&'static [u8]> {
+    WEIGHTS.with(std::cell::Cell::get)
+}
+
+/// What the page fetched, kept for the rest of the tab, leaked for `pmrid::hold_weights`'s reason.
+#[cfg(target_arch = "wasm32")]
+pub fn hold_weights(bytes: Vec<u8>) {
+    WEIGHTS.with(|held| held.set(Some(Box::leak(bytes.into_boxed_slice()))));
+}
+
+/// The network on its fastest arm, built on the first frame that asks for it and kept for the
+/// process.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Upscaler> {
+    static BUILT: std::sync::OnceLock<Option<Upscaler>> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| built(gpu, weights()?)).as_ref()
+}
+
+/// `None` until the page has handed over what it fetched; built once after that.
+#[cfg(target_arch = "wasm32")]
+pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Upscaler> {
+    if let Some(tried) = BUILT.with(std::cell::Cell::get) {
+        return tried;
+    }
+    let made = built(gpu, weights()?).map(|made| &*Box::leak(Box::new(made)));
+    BUILT.with(|held| held.set(Some(made)));
+    made
+}
+
+fn built(gpu: &'static crate::gpu::Gpu, weights: &[u8]) -> Option<Upscaler> {
+    Upscaler::fastest(gpu, MANIFEST, weights)
+        .map_err(|why| crate::warn(&format!("rawshim: the upscaler did not build: {why}")))
+        .ok()
+}
+
+/// The bytes [`Upscaler::upscale`]'s answer for a `width` by `height` rectangle takes.
 pub fn answer_bytes(width: usize, height: usize) -> u64 {
     (width * 2 * height * 2 * std::mem::size_of::<f32>()) as u64
+}
+
+/// Which of a 2x2's positions holds each of the network's planes: red, the green on red's row, the
+/// green on blue's, blue. `None` for a pattern that is not Bayer.
+fn positions(cfa: &crate::cfa::Cfa) -> Option<[u32; 4]> {
+    if !cfa.is_bayer() {
+        return None;
+    }
+    let red = (0..4).find(|&p| cfa.colour_at(p / 2, p % 2) == 0)?;
+    let (row, column) = (red / 2, red % 2);
+    Some([
+        red as u32,
+        (row * 2 + (1 - column)) as u32,
+        ((1 - row) * 2 + column) as u32,
+        ((1 - row) * 2 + (1 - column)) as u32,
+    ])
+}
+
+/// How far a pixel of the answer reads the planes, in packed pixels, rounded out to the coarsest
+/// level's grid: a 3x3 reaches one pixel of its level and a pool or a doubling one more, each
+/// level's pixels twice as wide as the level above.
+fn reach(ops: &[Op]) -> usize {
+    let mut levels = [0usize; LEVELS];
+    for op in ops {
+        match *op {
+            Op::Conv { level, .. } | Op::Pool { level, .. } | Op::Double { level, .. } => {
+                levels[level] += 1
+            }
+            _ => {}
+        }
+    }
+    let reach: usize = levels
+        .iter()
+        .enumerate()
+        .map(|(level, steps)| steps << level)
+        .sum();
+    reach.next_multiple_of(COARSEST)
 }
 
 fn entry<'a>(binding: u32, buffer: &'a crate::gpu::Buffer) -> wgpu::BindGroupEntry<'a> {
@@ -801,122 +1164,201 @@ fn tensors<'a>(
         .collect()
 }
 
-/// The `float` weights the WGSL reads and the fragments the matrix units read, and each layer's
-/// place in them.
+/// The forward pass as steps, the `float` weights the WGSL reads and the fragments the matrix units
+/// read.
 ///
-/// The network is `models/upscaler/src/upscaler/model.py`'s `Upscaler`: `body.N.weight` and
-/// `body.N.bias` of each 3x3 convolution, followed by `body.N+1.weight`, its PReLU's slopes, on
-/// every layer but the last.
+/// The network is `models/upscaler/src/upscaler/model.py`'s `MultiScale`: `encoders.L.N`,
+/// `decoders.L.N`, `rises.L` and `out`, each 3x3 followed by its PReLU's slopes at `N+1` but `out`.
 fn lay_out(
+    manifest: &serde_json::Value,
     tensors: &[(String, Vec<usize>, &[f32])],
     fragment: usize,
-) -> Result<(Vec<Layer>, Vec<f32>, Vec<u16>, Vec<u16>), String> {
-    let named = |name: &str| tensors.iter().find(|(n, _, _)| n == name);
-    let mut layers = Vec::new();
-    let mut packed = Vec::new();
+) -> Result<(Vec<Op>, Vec<f32>, Vec<u16>), String> {
+    let counts = |name: &str| -> Result<Vec<usize>, String> {
+        manifest[name]
+            .as_array()
+            .ok_or(format!("the manifest has no {name}"))?
+            .iter()
+            .map(|n| {
+                n.as_u64()
+                    .map(|n| n as usize)
+                    .ok_or(format!("{name} is not counts"))
+            })
+            .collect()
+    };
+    let encoders = counts("encoder_blocks")?;
+    let decoders = counts("decoder_blocks")?;
+    if manifest["channels"].as_u64() != Some(CHANNELS as u64)
+        || encoders.len() != LEVELS
+        || decoders.len() != LEVELS - 1
+    {
+        return Err(format!(
+            "the kernels hold {LEVELS} levels from {CHANNELS} channels, which this network is not"
+        ));
+    }
+    let named = |name: &str| {
+        tensors
+            .iter()
+            .find(|(n, _, _)| n == name)
+            .map(|(_, shape, values)| (shape.as_slice(), *values))
+            .ok_or(format!("the manifest has no {name}"))
+    };
+    let mut packed: Vec<f32> = Vec::new();
     let mut blocks: Vec<u16> = Vec::new();
-    let mut wino: Vec<u16> = Vec::new();
-    let mut index = 0;
-    while let Some((_, shape, values)) = named(&format!("body.{index}.weight")) {
-        let &[out, input, 3, 3] = shape.as_slice() else {
-            return Err(format!("body.{index} is {shape:?}, not a 3x3 convolution"));
-        };
-        let (_, _, bias) = named(&format!("body.{index}.bias"))
-            .ok_or_else(|| format!("body.{index} has no bias"))?;
-        let slopes = named(&format!("body.{}.weight", index + 1))
-            .filter(|(_, shape, _)| shape.len() == 1)
-            .map(|(_, _, values)| *values);
+    let mut ops = vec![Op::Pack];
 
-        let weights_at = packed.len();
-        for tap in 0..9 {
-            for i in 0..input {
-                for o in 0..out {
-                    packed.push(values[(o * input + i) * 9 + tap]);
+    let conv =
+        |packed: &mut Vec<f32>, blocks: &mut Vec<u16>, prefix: &str, slopes: Option<&str>| {
+            let (shape, values) = named(&format!("{prefix}.weight"))?;
+            let &[output, input, 3, 3] = shape else {
+                return Err(format!("{prefix} is {shape:?}, not a 3x3 convolution"));
+            };
+            let linear = slopes.is_none();
+            let kind = CONVS
+                .iter()
+                .position(|&c| c == (input, output, linear))
+                .ok_or_else(|| format!("no kernel holds {prefix}, {input} to {output}"))?;
+            let (_, bias) = named(&format!("{prefix}.bias"))?;
+            let weights_at = packed.len();
+            for tap in 0..9 {
+                for i in 0..input {
+                    for o in 0..output {
+                        packed.push(values[(o * input + i) * 9 + tap]);
+                    }
                 }
+            }
+            let bias_at = packed.len();
+            packed.extend_from_slice(bias);
+            let slope_at = packed.len();
+            if let Some(slopes) = slopes {
+                packed.extend_from_slice(named(slopes)?.1);
+            }
+            // `float4` reads of a layer's taps want each start on a fourth float.
+            packed.resize(packed.len().next_multiple_of(4), 0.0);
+
+            // The first layer reads the planes as the matrix units are handed them, padded to 16.
+            let deep = input.next_multiple_of(MATRIX_PLANES);
+            let slice = output.min(OUT_MOST);
+            let (depth, across) = (deep / fragment, slice / fragment);
+            let blocks_at = blocks.len();
+            blocks.resize(blocks_at + 9 * deep * output, 0);
+            for tap in 0..9 {
+                for i in 0..input {
+                    for o in 0..output {
+                        let (s, n) = (o / slice, o % slice);
+                        let block = ((s * 9 + tap) * depth + i / fragment) * across + n / fragment;
+                        let at = blocks_at
+                            + block * fragment * fragment
+                            + (i % fragment) * fragment
+                            + n % fragment;
+                        blocks[at] =
+                            half::f16::from_f32(values[(o * input + i) * 9 + tap]).to_bits();
+                    }
+                }
+            }
+            Ok(Layer {
+                kind,
+                weights_at,
+                bias_at,
+                slope_at,
+                blocks_at,
+            })
+        };
+
+    let mut from = Slot::Planes;
+    for (level, &blocks_of) in encoders.iter().enumerate() {
+        if level > 0 {
+            let to = Slot::A(level);
+            ops.push(Op::Pool {
+                level,
+                channels: CHANNELS << (level - 1),
+                from,
+                to,
+            });
+            from = to;
+        }
+        let layers = blocks_of + 1;
+        for n in 0..layers {
+            let layer = conv(
+                &mut packed,
+                &mut blocks,
+                &format!("encoders.{level}.{}", 2 * n),
+                Some(&format!("encoders.{level}.{}.weight", 2 * n + 1)),
+            )?;
+            let to = match (n + 1 == layers, level + 1 < LEVELS) {
+                (true, true) => Slot::Skip(level),
+                _ => from.other(level),
+            };
+            ops.push(Op::Conv {
+                level,
+                layer,
+                from,
+                to,
+            });
+            from = to;
+        }
+    }
+    for level in (0..LEVELS - 1).rev() {
+        let coarse = level + 1;
+        let (shape, values) = named(&format!("rises.{level}.weight"))?;
+        let &[output, input, 1, 1] = shape else {
+            return Err(format!("rises.{level} is {shape:?}, not a 1x1 convolution"));
+        };
+        let (_, bias) = named(&format!("rises.{level}.bias"))?;
+        let weights_at = packed.len();
+        for i in 0..input {
+            for o in 0..output {
+                packed.push(values[o * input + i]);
             }
         }
         let bias_at = packed.len();
         packed.extend_from_slice(bias);
-        let slope_at = packed.len();
-        if let Some(slopes) = slopes {
-            packed.extend_from_slice(slopes);
-        }
-        // `float4` reads of a layer's taps want each start on a fourth float.
         packed.resize(packed.len().next_multiple_of(4), 0.0);
-
-        // The first layer reads the planes as the matrix units are handed them, padded to 16.
-        let deep = input.next_multiple_of(MATRIX_PLANES);
-        let blocks_at = blocks.len();
-        blocks.resize(blocks_at + 9 * deep * out, 0);
-        let (depth, across) = (deep / fragment, out / fragment);
-        for tap in 0..9 {
-            for i in 0..input {
-                for o in 0..out {
-                    let block = (tap * depth + i / fragment) * across + o / fragment;
-                    let at = blocks_at
-                        + block * fragment * fragment
-                        + (i % fragment) * fragment
-                        + o % fragment;
-                    blocks[at] = half::f16::from_f32(values[(o * input + i) * 9 + tap]).to_bits();
-                }
-            }
-        }
-
-        let wino_at = wino.len();
-        wino.resize(wino_at + 16 * deep * out, 0);
-        for i in 0..input {
-            for o in 0..out {
-                let g = |a: usize, b: usize| values[(o * input + i) * 9 + a * 3 + b];
-                let left: [[f32; 3]; 4] = std::array::from_fn(|r| {
-                    std::array::from_fn(|b| (0..3).map(|a| WINOGRAD_G[r][a] * g(a, b)).sum())
-                });
-                for place in 0..16 {
-                    let (r, c) = (place / 4, place % 4);
-                    let u: f32 = (0..3).map(|b| left[r][b] * WINOGRAD_G[c][b]).sum();
-                    let block = (place * depth + i / fragment) * across + o / fragment;
-                    let at = wino_at
-                        + block * fragment * fragment
-                        + (i % fragment) * fragment
-                        + o % fragment;
-                    wino[at] = half::f16::from_f32(u).to_bits();
-                }
-            }
-        }
-
-        layers.push(Layer {
+        let risen = from.other(coarse);
+        ops.push(Op::Rise {
+            level: coarse,
             input,
-            output: out,
-            linear: slopes.is_none(),
+            output,
             weights_at,
             bias_at,
-            slope_at,
-            blocks_at,
-            wino_at,
+            from,
+            to: risen,
         });
-        index += if slopes.is_some() { 2 } else { 1 };
+        from = Slot::A(level);
+        ops.push(Op::Double {
+            level,
+            channels: output,
+            rise: risen,
+            skip: Slot::Skip(level),
+            to: from,
+        });
+        for n in 0..decoders[level] {
+            let layer = conv(
+                &mut packed,
+                &mut blocks,
+                &format!("decoders.{level}.{}", 2 * n),
+                Some(&format!("decoders.{level}.{}.weight", 2 * n + 1)),
+            )?;
+            let to = from.other(level);
+            ops.push(Op::Conv {
+                level,
+                layer,
+                from,
+                to,
+            });
+            from = to;
+        }
     }
-
-    let (Some(head), Some(tail)) = (layers.first(), layers.last()) else {
-        return Err("the manifest has no body.0.weight".into());
-    };
-    let middle_fits = layers[1..layers.len() - 1]
-        .iter()
-        .all(|l| l.input == CHANNELS && l.output == CHANNELS && !l.linear);
-    if head.input != PLANES
-        || head.output != CHANNELS
-        || head.linear
-        || tail.input != CHANNELS
-        || tail.output != SHUFFLED
-        || !tail.linear
-        || !middle_fits
-        || layers.len() < 3
-    {
-        return Err(format!(
-            "the kernels hold {PLANES} to {CHANNELS} channels, {CHANNELS} to {CHANNELS} and \
-             {CHANNELS} to {SHUFFLED}, which this network is not"
-        ));
-    }
-    Ok((layers, packed, blocks, wino))
+    let layer = conv(&mut packed, &mut blocks, "out", None)?;
+    let to = from.other(0);
+    ops.push(Op::Conv {
+        level: 0,
+        layer,
+        from,
+        to,
+    });
+    ops.push(Op::Leave { from: to });
+    Ok((ops, packed, blocks))
 }
 
 /// `slang/upscale.slang` as WGSL, holding its tensors in `half` or in `float`.
@@ -944,7 +1386,7 @@ fn coop_fragment(gpu: &crate::gpu::Gpu) -> Option<usize> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn coop_kernels(gpu: &crate::gpu::Gpu, arm: Arm, fragment: usize, blocks: &[u16]) -> Option<Coop> {
+fn coop_kernels(gpu: &crate::gpu::Gpu, fragment: usize, blocks: &[u16]) -> Option<Coop> {
     let device = gpu.describing();
     let mut handed = wgpu::ShaderModuleDescriptorPassthrough {
         label: Some("upscale coop"),
@@ -964,13 +1406,12 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, arm: Arm, fragment: usize, blocks: &[u16]
         }
         _ => return None,
     }
-    let layers = ["16_48", "48_48", "48_16"];
-    let names = match arm {
-        Arm::MatrixWide { rows } => layers.map(|n| format!("coop_{n}_wide_{rows}")),
-        Arm::MatrixNarrow { rows } => layers.map(|n| format!("coop_{n}_narrow_{rows}")),
-        Arm::Winograd => layers.map(|n| format!("wino_{n}")),
-        Arm::Half { .. } | Arm::Float { .. } => return None,
-    };
+    let names: Vec<String> = CONVS
+        .iter()
+        .map(|&(input, output, _)| {
+            format!("coop_{}_{output}", input.next_multiple_of(MATRIX_PLANES))
+        })
+        .collect();
     let entry_points: Vec<wgpu::PassthroughShaderEntryPoint<'_>> = names
         .iter()
         .map(|name| wgpu::PassthroughShaderEntryPoint {
@@ -1013,16 +1454,19 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, arm: Arm, fragment: usize, blocks: &[u16]
         bind_group_layouts: &[Some(&layout)],
         immediate_size: std::mem::size_of::<Step>() as u32,
     });
-    let convs = names.map(|name| {
-        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(&name),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some(&name),
-            compilation_options: Default::default(),
-            cache: None,
+    let convs = names
+        .iter()
+        .map(|name| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(name),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(name),
+                compilation_options: Default::default(),
+                cache: None,
+            })
         })
-    });
+        .collect();
     let mut recording = gpu.record();
     let blocks = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("upscale coop blocks"),
@@ -1038,11 +1482,100 @@ fn coop_kernels(gpu: &crate::gpu::Gpu, arm: Arm, fragment: usize, blocks: &[u16]
 }
 
 #[cfg(target_arch = "wasm32")]
-fn coop_kernels(
-    _gpu: &crate::gpu::Gpu,
-    _arm: Arm,
-    _fragment: usize,
-    _blocks: &[u16],
-) -> Option<Coop> {
+fn coop_kernels(_gpu: &crate::gpu::Gpu, _fragment: usize, _blocks: &[u16]) -> Option<Coop> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Arm, Placement, Upscaler};
+    use crate::condition::Mosaic;
+
+    /// Any rectangle of a frame, cut into any tiles, upscales to that part of the whole frame's
+    /// answer, grain and all, on every arm: what lets a loupe tile be the rendition.
+    #[test]
+    fn a_rectangle_is_the_whole_frames() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(weights) = super::weights() else {
+            return;
+        };
+        let (width, height) = (520, 392);
+        let gains = [0.5, 1.0, 0.7];
+        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut noise = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / 16777216.0 - 0.5
+        };
+        let frame: Vec<f32> = (0..width * height)
+            .map(|at| {
+                let (x, y) = (at % width, at / width);
+                let edge = if (x / 37 + y / 23) % 2 == 0 {
+                    0.6
+                } else {
+                    0.15
+                };
+                let gain = gains[usize::from(cfa.colour_at(y % 2, x % 2))];
+                (edge + 0.05 * noise()) * gain
+            })
+            .collect();
+        let whole = Mosaic::upload(gpu, &frame, width, height);
+        let noise = crate::galosh::NoiseModel {
+            alpha: 4.121e-4,
+            sigma_sq: 3.494e-6,
+        };
+
+        for arm in Arm::ALL {
+            let Some(upscaler) =
+                Upscaler::new(gpu, super::MANIFEST, weights, arm).expect("the network")
+            else {
+                continue;
+            };
+            let photo = upscaler
+                .photo(gains, &cfa, noise, (100.0, 60.0))
+                .expect("a photo");
+            let upscaled = |rect: (usize, usize, usize, usize), tile: Option<usize>| {
+                let margin = upscaler.margin();
+                let left = rect.0.saturating_sub(margin);
+                let top = rect.1.saturating_sub(margin);
+                let right = (rect.0 + rect.2 + margin).min(width);
+                let bottom = (rect.1 + rect.3 + margin).min(height);
+                let window = whole.window(gpu, left, top, right - left, bottom - top);
+                let into = Mosaic::plane(gpu, rect.2 * 2, rect.3 * 2);
+                let at = Placement {
+                    window: (left, top, window.width, window.height),
+                    frame: (width, height),
+                    rect,
+                };
+                upscaler
+                    .upscale(gpu, &window.buffer, at, &into.buffer, &photo, tile)
+                    .expect("an upscale");
+                pollster::block_on(into.read(gpu)).expect("the answer reads back")
+            };
+            let reference = upscaled((0, 0, width, height), None);
+            for (rect, tile) in [
+                ((0, 0, width, height), Some(64)),
+                ((130, 66, 200, 150), None),
+                ((width - 96, height - 72, 96, 72), Some(32)),
+            ] {
+                let cut = upscaled(rect, tile);
+                let mut worst = 0.0f32;
+                for row in 0..rect.3 * 2 {
+                    for column in 0..rect.2 * 2 {
+                        let from = (rect.1 * 2 + row) * width * 2 + rect.0 * 2 + column;
+                        let off = (reference[from] - cut[row * rect.2 * 2 + column]).abs();
+                        worst = worst.max(off);
+                    }
+                }
+                assert_eq!(
+                    worst, 0.0,
+                    "{arm:?}: {rect:?} in tiles of {tile:?} is not the whole frame's"
+                );
+            }
+        }
+    }
 }

@@ -1,11 +1,11 @@
 //! What a rendition request costs, stage by stage, in a form a ratchet can read.
 //!
 //! ```text
-//! bench_stages <raw>...
+//! bench_stages [--denoiser galosh|pmrid|upscaler] <raw>...
 //! ```
 //!
 //! One line per measurement, `fixture<TAB>stage<TAB>fastest_ms`, and nothing else on stdout.
-//! `scripts/bench.ts` holds those against `test/fixtures/bench.budget.json`.
+//! `scripts/bench.ts` holds those against `test/fixtures/bench.budget.json`, at the default GALOSH.
 //!
 //! **The whole request, not the pipeline's middle.** `job::run` over the command `bb_run_job` is
 //! handed, at the library's shipped settings, so the total is what `rendition built on demand`
@@ -44,9 +44,17 @@ const STAGES: &[(&str, &str, &str)] = &[
 ];
 
 fn main() {
-    let files: Vec<String> = std::env::args().skip(1).collect();
+    let mut files: Vec<String> = std::env::args().skip(1).collect();
+    let denoiser = match files.iter().position(|arg| arg == "--denoiser") {
+        Some(at) if at + 1 < files.len() => {
+            let named = files.remove(at + 1);
+            files.remove(at);
+            named
+        }
+        _ => "galosh".to_string(),
+    };
     if files.is_empty() {
-        eprintln!("bench_stages <raw>...");
+        eprintln!("bench_stages [--denoiser galosh|pmrid|upscaler] <raw>...");
         std::process::exit(2);
     }
     rawshim::clock::record();
@@ -60,7 +68,7 @@ fn main() {
         std::process::exit(1);
     };
     for path in &files {
-        measure(path, &output);
+        measure(path, &output, &denoiser);
     }
 }
 
@@ -79,8 +87,8 @@ fn fastest(taken: Vec<f64>) -> f64 {
     taken.into_iter().fold(f64::INFINITY, f64::min)
 }
 
-fn measure(path: &str, output: &str) {
-    let command = command(path, output);
+fn measure(path: &str, output: &str, denoiser: &str) {
+    let command = command(path, output, denoiser);
     let mut rounds: Vec<Vec<(String, f64)>> = Vec::with_capacity(REPEATS);
     let mut totals: Vec<f64> = Vec::with_capacity(REPEATS);
 
@@ -154,12 +162,13 @@ fn staged(laps: &[(&'static str, String, f64)]) -> Vec<(String, f64)> {
 /// is the shipped configuration and serde's absent-field defaults are not it.
 ///
 /// No `photoAnalysis`, which is what makes the round cold (see the header).
-fn command(raw: &str, output: &str) -> rawshim::job::Job {
+fn command(raw: &str, output: &str, denoiser: &str) -> rawshim::job::Job {
     let json = serde_json::json!({
         "rawFilePath": raw,
         "cameraMatch": "lensAndColour",
         "denoiseLuminance": 20.0,
         "denoiseColour": 30.0,
+        "denoiser": denoiser,
         // On, which is what `dustSettings(undefined)` asks for. Whether the search then runs is
         // the aperture's to say, so `dust` reads zero on a frame shot wide open.
         "dust": { "enabled": true, "sensitivity": 0.25, "intensity": 1.0 },

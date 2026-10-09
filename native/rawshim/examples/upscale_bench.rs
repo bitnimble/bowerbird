@@ -5,12 +5,13 @@
 //! upscale_bench <weights dir> time [repeats] [tile]
 //! ```
 //!
-//! `check` writes each arm's answer as `<out dir>/<arm>.f32` for `models/upscaler` to hold against
-//! torch, the photo's conditioning gains and noise fit given. `time` upscales a 24MP and a 61MP
-//! frame and prints each arm's milliseconds, the answer's allocation and the upload left out.
+//! `check` writes each arm's answer for an RGGB mosaic as `<out dir>/<arm>.f32`, without grain and
+//! at full strength, for `models/upscaler` to hold against torch, the photo's conditioning gains and
+//! noise fit given. `time` upscales a 24MP and a 61MP frame and prints each arm's milliseconds, the
+//! answer's allocation and the upload left out.
 
 use rawshim::galosh::NoiseModel;
-use rawshim::upscale::{Arm, Upscaler, answer_bytes};
+use rawshim::upscale::{Arm, Placement, Upscaler, answer_bytes};
 
 /// What `time` stabilises under: a middling photo's, which costs what any other does.
 const TIMED_GAINS: [f32; 3] = [0.5, 1.0, 0.7];
@@ -19,28 +20,6 @@ const TIMED_NOISE: NoiseModel = NoiseModel {
     sigma_sq: 1e-6,
 };
 
-const ARMS: [Arm; 10] = [
-    Arm::Winograd,
-    Arm::MatrixWide { rows: 1 },
-    Arm::MatrixWide { rows: 2 },
-    Arm::MatrixNarrow { rows: 1 },
-    Arm::MatrixNarrow { rows: 2 },
-    Arm::MatrixNarrow { rows: 4 },
-    Arm::Half { pixels: 4 },
-    Arm::Half { pixels: 8 },
-    Arm::Float { pixels: 4 },
-    Arm::Float { pixels: 8 },
-];
-
-fn named(arm: Arm) -> String {
-    match arm {
-        Arm::MatrixWide { rows } => format!("matrix-wide-{rows}"),
-        Arm::MatrixNarrow { rows } => format!("matrix-narrow-{rows}"),
-        Arm::Winograd => "winograd".into(),
-        Arm::Half { pixels } => format!("half-{pixels}"),
-        Arm::Float { pixels } => format!("float-{pixels}"),
-    }
-}
 const FRAMES: [(&str, usize, usize); 2] = [("24MP", 6000, 4000), ("61MP", 9504, 6336)];
 
 fn main() {
@@ -55,17 +34,23 @@ fn main() {
     let folder = std::path::Path::new(weights);
     let manifest = std::fs::read_to_string(folder.join("weights.json")).expect("weights.json");
     let bytes = std::fs::read(folder.join("weights.bin")).expect("weights.bin");
+    let rggb = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     // One at a time: each holds its tile's tensors, and every arm's at once exceeds a 10GB card.
     let arms = || {
-        ARMS.iter().filter_map(|&arm| {
+        Arm::ALL.iter().filter_map(|&arm| {
             let built = Upscaler::new(gpu, &manifest, &bytes, arm).expect("the network");
             if built.is_none() {
-                println!("{}: not on this device", named(arm));
+                println!("{arm:?}: not on this device");
             }
             built
         })
     };
     let number = |at: usize| args.get(at).map(|n| n.parse::<usize>().expect("a count"));
+    let whole = |width: usize, height: usize| Placement {
+        window: (0, 0, width, height),
+        frame: (width, height),
+        rect: (0, 0, width, height),
+    };
 
     match mode.as_str() {
         "check" => {
@@ -88,14 +73,15 @@ fn main() {
             let mosaic = upload(gpu, &samples);
             for upscaler in arms() {
                 let into = answer(gpu, width, height);
-                let stabiliser = upscaler
-                    .stabiliser(gains, Some(noise))
-                    .expect("a stabiliser");
+                let photo = upscaler
+                    .photo(gains, &rggb, noise, (100.0, 100.0))
+                    .expect("a photo")
+                    .without_grain();
                 upscaler
-                    .upscale(gpu, &mosaic, width, height, &into, number(9), &stabiliser)
+                    .upscale(gpu, &mosaic, whole(width, height), &into, &photo, number(9))
                     .expect("an upscale");
                 let read = read(gpu, &into);
-                let path = std::path::Path::new(out).join(format!("{}.f32", named(upscaler.arm())));
+                let path = std::path::Path::new(out).join(format!("{:?}.f32", upscaler.arm()));
                 std::fs::write(&path, read).expect("the answer");
                 println!("wrote {}", path.display());
             }
@@ -109,12 +95,12 @@ fn main() {
                 let mosaic = upload(gpu, bytemuck::cast_slice(&samples));
                 let into = answer(gpu, width, height);
                 for upscaler in arms() {
-                    let stabiliser = upscaler
-                        .stabiliser(TIMED_GAINS, Some(TIMED_NOISE))
-                        .expect("a stabiliser");
+                    let photo = upscaler
+                        .photo(TIMED_GAINS, &rggb, TIMED_NOISE, (100.0, 100.0))
+                        .expect("a photo");
                     let run = || {
                         upscaler
-                            .upscale(gpu, &mosaic, width, height, &into, number(4), &stabiliser)
+                            .upscale(gpu, &mosaic, whole(width, height), &into, &photo, number(4))
                             .expect("an upscale");
                         gpu.block_until_done();
                     };
@@ -129,8 +115,8 @@ fn main() {
                         .collect();
                     times.sort_by(f64::total_cmp);
                     println!(
-                        "{name} {}: median {:.1}ms, best {:.1}ms",
-                        named(upscaler.arm()),
+                        "{name} {:?}: median {:.1}ms, best {:.1}ms",
+                        upscaler.arm(),
                         times[times.len() / 2],
                         times[0]
                     );
