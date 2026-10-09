@@ -81,10 +81,6 @@ class Stabiliser(NamedTuple):
     scales: torch.Tensor
 
 
-def fixed_stabiliser(floor: float) -> Stabiliser:
-    return Stabiliser(torch.full((1, 4, 1, 1), floor), torch.ones(1, 4, 1, 1))
-
-
 def fit_stabiliser(gains: torch.Tensor, alpha: Fit, sigma_sq: Fit) -> Stabiliser:
     """The stabiliser under which the noise of `add_noise`'s fit has the same spread at every level and
     every ISO: each plane's variance a x + b is floored at the read noise, and scaled to the variance

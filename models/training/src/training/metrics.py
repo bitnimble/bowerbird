@@ -7,11 +7,6 @@ def psnr(mse: torch.Tensor) -> float:
     return float(-10 * torch.log10(mse))
 
 
-def spectrum_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """L1 between amplitude spectra, blind to phase."""
-    return F.l1_loss(torch.fft.rfft2(predicted, norm="ortho").abs(), torch.fft.rfft2(target, norm="ortho").abs())
-
-
 def edge_loss(predicted: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """L1 between neighbouring-pixel differences across and along each plane, so a softened edge
     costs its whole slope."""

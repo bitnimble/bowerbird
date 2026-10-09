@@ -1,6 +1,6 @@
 """Every arm of the device upscaler (`native/rawshim/src/upscale.rs`) held against torch on one cached
-crop: natively through `examples/upscale_bench.rs`, whole and in tiles small enough to cross, and in
-Chromium through `scripts/upscale-bench-browser.ts`.
+crop, without grain and at full strength: natively through `examples/upscale_bench.rs`, whole and in
+tiles small enough to cross, and in Chromium through `scripts/upscale-bench-browser.ts`.
 
     uv run python -m upscaler.device_check <record stem> <crop> [weights dir]
 """
@@ -29,14 +29,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Hold the device upscaler's arms against torch.")
     parser.add_argument("stem", help="a record under the crop cache")
     parser.add_argument("crop", type=int)
-    parser.add_argument("weights", type=Path, nargs="?", default=Path("runs/sharp-edges"))
+    parser.add_argument("weights", type=Path, nargs="?", default=Path("runs/multiscale-data"))
     args = parser.parse_args()
     weights = args.weights.resolve()
     crop = crops_of(DEFAULT_CACHE / f"{args.stem}.json")[args.crop].astype(np.float32)
     record = json.loads((DEFAULT_CACHE / f"{args.stem}.json").read_text())
     height, width = crop.shape
     loaded = load(weights)
-    under = stabiliser(loaded.plan, torch.tensor(record["gains"]), record["fit"])
+    under = stabiliser(torch.tensor(record["gains"]), record["fit"])
     with torch.no_grad():
         reference = upscaled(loaded.net.eval(), torch.from_numpy(crop)[None, None], under)[0, 0]
     print(f"{width}x{height} crop, light {float(reference.min()):.4f} to {float(reference.max()):.4f}")

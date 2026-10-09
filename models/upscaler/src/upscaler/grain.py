@@ -1,34 +1,23 @@
 """Grain put back over an upscale: the network averages away noise and texture it can't predict, so its
-output is cleaner than the photo it came from. The grain follows the photo's own noise fit, at the
-strength of the noise its input holds times the weights' calibration, which makes up for the noise
-the network carries through and the texture it smooths."""
+output is cleaner than the photo it came from. The grain is luma-only, changing each pixel's
+brightness and keeping its colour, at a share of the photo's own noise fit: the weights' calibration
+times the share the editor shows, which makes up for the texture the network smooths."""
 
 import torch
 import torch.nn.functional as F
 
-from training.mosaic import add_noise, demosaic, noise_variance, pack_rgb, plane_gains, raw_planes, unpack
+from training.mosaic import demosaic, noise_variance, pack_rgb, plane_gains, raw_planes, unpack
 
 CHI_SQUARED_1_MEDIAN = 0.455
 SITES_PER_QUAD = 4
 
 
-def grained(
-    small: torch.Tensor,
-    high: torch.Tensor,
-    gains: torch.Tensor,
-    fit: dict | None,
-    calibration: float,
-    luma_only: bool = False,
-) -> torch.Tensor:
-    """`high`, the upscale of `small`, with grain added. `calibration` is the weights' own, from
-    `calibrate`. `luma_only` grain changes each pixel's brightness and keeps its colour. Draws from the
-    global RNG."""
+def grained(high: torch.Tensor, gains: torch.Tensor, fit: dict | None, strength: float) -> torch.Tensor:
+    """The upscale `high` with grain of `strength` times its photo's noise `fit`. Draws from the global
+    RNG."""
     if fit is None:
         return high
-    strength = calibration * estimate(small, high, gains, fit)
-    if luma_only:
-        return add_luma_noise(high, gains, strength * fit["alpha"], strength * fit["sigmaSq"])
-    return add_noise(high, gains, strength * fit["alpha"], strength * fit["sigmaSq"])
+    return add_luma_noise(high, gains, strength * fit["alpha"], strength * fit["sigmaSq"])
 
 
 def add_luma_noise(mosaic: torch.Tensor, gains: torch.Tensor, alpha: float, sigma_sq: float) -> torch.Tensor:

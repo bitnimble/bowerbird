@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from training.metrics import detail, edge_loss, psnr, spectrum_loss
+from training.metrics import detail, edge_loss, psnr
 from training.mosaic import (
     FIT_STABILISER,
     Stabiliser,
@@ -29,7 +29,7 @@ from training.runtime import (
     stop_on_signals,
     train,
 )
-from training.targets import TARGETS
+from training.targets import SHARPENED
 from upscaler.model import build
 from upscaler.pairs import INPUTS
 
@@ -52,21 +52,16 @@ class Planes(NamedTuple):
 def main() -> None:
     parser = arguments("Train the 2x RAW mosaic upscaler.")
     parser.add_argument("--channels", type=int, default=48)
-    parser.add_argument("--blocks", type=int, default=16, help="the plain body's")
-    parser.add_argument("--arch", choices=("plain", "multiscale"), default="plain")
-    parser.add_argument("--encoder", type=counts, default=[2, 3, 4], help="the multiscale body's blocks a level, from full")
-    parser.add_argument("--decoder", type=counts, default=[2, 2], help="the multiscale body's, 1 level fewer")
-    parser.add_argument("--texture", type=float, default=0, help="weight of the amplitude spectrum loss")
-    parser.add_argument("--edges", type=float, default=0, help="weight of the edge loss")
-    parser.add_argument("--targets", choices=TARGETS, default="plain")
-    parser.set_defaults(batch=8)
+    parser.add_argument("--encoder", type=counts, default=[2, 3, 4], help="the body's blocks a level, from full")
+    parser.add_argument("--decoder", type=counts, default=[2, 2], help="the body's, 1 level fewer")
+    parser.add_argument("--edges", type=float, default=1.0, help="weight of the edge loss")
+    parser.set_defaults(batch=8, steps=400_000)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     say = logger(args.out / "train.log")
     stop_on_signals()
 
-    targets = TARGETS[args.targets]
-    train_set, validation_sets = datasets(args.data, args.cache, args.prepare_workers, INPUTS, targets, args.batch)
+    train_set, validation_sets = datasets(args.data, args.cache, args.prepare_workers, INPUTS, SHARPENED, args.batch)
     device, bf16 = cuda()
     sizes = ", ".join(f"{len(pairs)} {name}" for name, pairs in validation_sets.items())
     say(f"{len(train_set)} training crops, validation crops: {sizes}, bf16={bf16}")
@@ -78,11 +73,9 @@ def main() -> None:
         batch = planes(noisy(given.float(), sensors), wanted, sensors)
         predicted = comparable(forward(batch.low), batch.stabiliser)
         terms = {"loss": F.l1_loss(predicted, batch.high)}
-        if args.texture:
-            terms["texture"] = spectrum_loss(predicted, batch.high)
         if args.edges:
             terms["edges"] = edge_loss(predicted, batch.high)
-        weights = {"loss": 1.0, "texture": args.texture, "edges": args.edges}
+        weights = {"loss": 1.0, "edges": args.edges}
         return sum(weights[name] * term for name, term in terms.items()), terms
 
     def validate(forward: Forward, step: int) -> None:
@@ -93,11 +86,13 @@ def main() -> None:
                 f" detail {share:.0%} of the target's"
             )
 
-    plan = {"channels": args.channels, "stabiliser": FIT_STABILISER, "targets": args.targets}
-    if args.arch == "multiscale":
-        plan |= {"arch": "multiscale", "encoder_blocks": args.encoder, "decoder_blocks": args.decoder}
-    else:
-        plan |= {"blocks": args.blocks}
+    plan = {
+        "channels": args.channels,
+        "stabiliser": FIT_STABILISER,
+        "targets": SHARPENED.name,
+        "encoder_blocks": args.encoder,
+        "decoder_blocks": args.decoder,
+    }
     train(
         build(plan).to(device, memory_format=torch.channels_last),
         loader(train_set, args.batch, args.workers),
@@ -108,7 +103,7 @@ def main() -> None:
         bf16=bf16,
         settings={
             name: getattr(args, name)
-            for name in ("steps", "batch", "channels", "blocks", "arch", "encoder", "decoder", "lr", "texture", "edges", "targets")
+            for name in ("steps", "batch", "channels", "encoder", "decoder", "lr", "edges")
         },
         plan=plan,
         out=args.out,

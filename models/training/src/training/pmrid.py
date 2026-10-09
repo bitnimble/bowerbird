@@ -113,7 +113,7 @@ class Pmrid:
         sharpen at `amount`, the editor's default unless given. Measures the photo unless `measured`
         is `measure`'s answer for it. `scale` is the mosaics' pixels per photosite of the photo.
         `supersampled` mosaics are 2x upscales, demosaiced and taken back to (H / 2, W / 2) before
-        the coding, as Sharpen's Quality does."""
+        the coding, as the upscaler denoiser does."""
         light, reply = self.chain(raw, mosaics, gains, measured, amount, scale, supersampled, None)
         return Sharpened(light[:, 0], light[:, 1], np.asarray(reply["matrix"], np.float32), reply["sigma"])
 

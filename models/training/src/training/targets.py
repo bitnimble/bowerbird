@@ -37,10 +37,6 @@ class Targets:
         return record_path.with_suffix(f".{self.name}-target-crops")
 
 
-def plain(crops: np.ndarray, record: dict) -> np.ndarray:
-    return crops
-
-
 def sharpened(crops: np.ndarray, record: dict) -> np.ndarray:
     """The crops as the editor shows the photo unedited: defringed and capture-sharpened, brought
     back to the mosaic through the camera matrix."""
@@ -74,8 +70,8 @@ def editor_light(
 ) -> Sharpened:
     """(N, H, W) RGGB mosaics of the photo, `scale` pixels to each of its photosites, through the rest
     of the editor's chain, plain and sharpened at `amount`, the editor's default unless given.
-    `supersampled` mosaics are 2x upscales the chain takes back to (H / 2, W / 2), as Sharpen's
-    Quality does."""
+    `supersampled` mosaics are 2x upscales the chain takes back to (H / 2, W / 2), as the upscaler
+    denoiser does."""
     gains = np.asarray(record["gains"], np.float32)
     source = Path(record["source"])
     chain = pmrid().sharpen(source, mirrored(mosaics), gains, measured(source), amount, scale, supersampled)
@@ -110,6 +106,4 @@ def measured(source: Path) -> dict:
     return found
 
 
-PLAIN = Targets("plain", plain)
 SHARPENED = Targets("sharpened", sharpened)
-TARGETS = {targets.name: targets for targets in (PLAIN, SHARPENED)}

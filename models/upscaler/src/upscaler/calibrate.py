@@ -16,7 +16,7 @@ from training.crops import DEFAULT_CACHE, crops_of, records, sources
 from training.files import write_atomic
 from training.mosaic import add_noise, stabilise
 from training.pmrid import serve
-from training.targets import PLAIN, editor_shown, measured
+from training.targets import editor_shown, measured
 from upscaler.degrade import low
 from upscaler.grain import estimate
 from upscaler.model import load, stabiliser, upscaled
@@ -29,7 +29,7 @@ SAMPLED_CROPS = 8
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure the grain calibration of trained weights.")
     parser.add_argument("data", type=Path, help="folder of RAW files, or a `filelist` CSV of them")
-    parser.add_argument("--weights", type=Path, default=Path("runs/wide"), help="folder of weights.json and .bin")
+    parser.add_argument("--weights", type=Path, default=Path("runs/multiscale-data"), help="folder of weights.json and .bin")
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     args = parser.parse_args()
     torch.set_num_threads(CPU_THREADS)
@@ -38,8 +38,6 @@ def main() -> None:
     net = loaded.net.cuda().eval()
     serve(args.cache / ".scratch")
 
-    # Weights trained toward the editor's sharpen already carry it, so the editor shows them unsharpened.
-    sharpened_by_editor = loaded.plan["targets"] == PLAIN.name
     ratios = []
     for record_path, record in records(args.cache, sources(args.data), True):
         gains, fit = torch.tensor(record["gains"]), record["fit"]
@@ -50,11 +48,12 @@ def main() -> None:
         torch.manual_seed(0)
         with torch.no_grad():
             small = low(original, gains, fit, measured(Path(record["source"]))["capture_blur"])
-            ours = upscaled(net, small.cuda(), stabiliser(loaded.plan, gains, fit)).cpu()
+            ours = upscaled(net, small.cuda(), stabiliser(gains, fit)).cpu()
         torch.manual_seed(0)
         unit_grain = add_noise(ours, gains, fit["alpha"], fit["sigmaSq"])
         shown_original = rgb(editor_shown(original[:, 0].numpy(), record, True))
-        shown = editor_shown(torch.cat([ours, unit_grain])[:, 0].numpy(), record, sharpened_by_editor)
+        # The weights trained toward the editor's sharpen already carry it.
+        shown = editor_shown(torch.cat([ours, unit_grain])[:, 0].numpy(), record, sharpened=False)
         shown_ours, shown_grain = rgb(shown).split(len(ours))
         flat = flattest(shown_ours)
         ours_texture = texture(shown_ours, flat)

@@ -6,38 +6,22 @@ import torch.nn.functional as F
 from torch import nn
 
 from training.export import load_exported
-from training.mosaic import (
-    FIT_STABILISER,
-    STABILISER_FLOOR,
-    Stabiliser,
-    fit_stabiliser,
-    fixed_stabiliser,
-    pack,
-    stabilised,
-    unpack,
-    unstabilised,
-)
-
+from training.mosaic import FIT_STABILISER, Stabiliser, fit_stabiliser, pack, stabilised, unpack, unstabilised
 
 PRELU_INITIAL_SLOPE = 0.25
 
-
-class Upscaler(nn.Module):
-    """Stabilised RGGB planes (B, 4, h, w) to the planes of a mosaic twice the size, (B, 4, 2h, 2w)."""
-
-    def __init__(self, channels: int, blocks: int) -> None:
-        super().__init__()
-        self.body = nn.Sequential(*stage(4, channels, blocks), nn.Conv2d(channels, 4 * 4, 3, padding=1))
-        initialise(self, zeroed=[self.body[-1]])
-
-    def forward(self, planes: torch.Tensor) -> torch.Tensor:
-        return F.pixel_shuffle(self.body(planes), 2) + F.interpolate(planes, scale_factor=2, mode="nearest")
+GRAIN_SHARE = 0.25
+"""Share of the weights' calibrated grain variance the editor adds."""
+SHARPEN = 0.35
+"""The editor's RL sharpen amount over the upscale. Both chosen by eye; `native/rawshim/src/upscale.rs`
+holds `GRAIN_SHARE` and `src/schemas/sharpening.ts` this, as a slider position."""
 
 
 class MultiScale(nn.Module):
-    """`Upscaler`'s mapping, through a body at a level of plane resolution for each of
-    `encoder_blocks`, halving from full, `channels` wide at full and doubling at each halving; h and w
-    must be multiples of 2 ** (levels - 1). `decoder_blocks` holds one count fewer, from full."""
+    """Stabilised RGGB planes (B, 4, h, w) to the planes of a mosaic twice the size, (B, 4, 2h, 2w),
+    through a body at a level of plane resolution for each of `encoder_blocks`, halving from full,
+    `channels` wide at full and doubling at each halving; h and w must be multiples of
+    2 ** (levels - 1). `decoder_blocks` holds one count fewer, from full."""
 
     def __init__(self, channels: int, encoder_blocks: list[int], decoder_blocks: list[int]) -> None:
         super().__init__()
@@ -89,14 +73,12 @@ def initialise(net: nn.Module, zeroed: list[nn.Conv2d]) -> None:
         nn.init.zeros_(conv.weight)
 
 
-def build(plan: dict) -> nn.Module:
-    if plan.get("arch") == "multiscale":
-        return MultiScale(plan["channels"], plan["encoder_blocks"], plan["decoder_blocks"])
-    return Upscaler(plan["channels"], plan["blocks"])
+def build(plan: dict) -> MultiScale:
+    return MultiScale(plan["channels"], plan["encoder_blocks"], plan["decoder_blocks"])
 
 
 class Loaded(NamedTuple):
-    net: nn.Module
+    net: MultiScale
     plan: dict
     """`weights.json` as exported, plus whatever `calibrate` added."""
     digest: str
@@ -107,44 +89,25 @@ def load(weights: Path) -> Loaded:
     """The exported weights in the folder `weights`."""
     exported = load_exported(weights)
     plan = exported.plan
-    if "stabiliser_floor" in plan and plan["stabiliser_floor"] != STABILISER_FLOOR:
-        raise SystemExit(f"{weights} was trained with a stabiliser floor of {plan['stabiliser_floor']}")
-    if "stabiliser" in plan and plan["stabiliser"] != FIT_STABILISER:
-        raise SystemExit(f"{weights} was trained with a stabiliser of {plan['stabiliser']}")
+    if plan.get("stabiliser") != FIT_STABILISER:
+        raise SystemExit(f"{weights} was trained with a stabiliser of {plan.get('stabiliser')}")
     net = build(plan)
     net.load_state_dict(exported.state)
     return Loaded(net, plan, exported.digest)
 
 
-class Look(NamedTuple):
-    grain: float
-    """Strength for `grain.grained`."""
-    sharpen: float | None
-    """The editor's sharpen over the upscale; None for its default."""
-
-
-LOOKS = {"plain": (1.0, None), "sharpened": (0.25, 0.25)}
-"""By the kind of target the weights trained toward, the share of their calibrated grain variance and
-the sharpen they're shown with, chosen by eye."""
-
-
-def look(loaded: Loaded) -> Look:
-    """How these weights' upscale is shown, from the grain calibration `calibrate` measured for them."""
-    if loaded.plan.get("grain_weights_sha256") != loaded.digest:
-        raise SystemExit("these weights have no grain calibration of their own: run `calibrate` on them")
-    share, sharpen = LOOKS[loaded.plan["targets"]]
-    return Look(share * loaded.plan["grain_calibration"], sharpen)
-
-
-def stabiliser(plan: dict, gains: torch.Tensor, fit: dict | None) -> Stabiliser:
-    """What weights exported with `plan` take a photo's planes through, from its noise `fit`."""
-    if "stabiliser_floor" in plan:
-        return fixed_stabiliser(plan["stabiliser_floor"])
+def stabiliser(gains: torch.Tensor, fit: dict | None) -> Stabiliser:
+    """What the weights take a photo's planes through, from its noise `fit`."""
     if fit is None:
         raise ValueError("these weights take the photo's noise fit, and it has none")
     return fit_stabiliser(gains, fit["alpha"], fit["sigmaSq"])
 
 
-def upscaled(net: nn.Module, mosaic: torch.Tensor, under: Stabiliser) -> torch.Tensor:
-    """(B, 1, H, W) RGGB mosaics to (B, 1, 2H, 2W)."""
-    return unpack(unstabilised(net(stabilised(pack(mosaic), under)), under))
+def upscaled(net: MultiScale, mosaic: torch.Tensor, under: Stabiliser) -> torch.Tensor:
+    """(B, 1, H, W) RGGB mosaics to (B, 1, 2H, 2W). The planes are padded on the right and bottom by
+    edge replication to the net's multiple, as the device pads them."""
+    planes = stabilised(pack(mosaic), under)
+    height, width = planes.shape[-2:]
+    multiple = 2 ** (len(net.encoders) - 1)
+    padded = F.pad(planes, (0, -width % multiple, 0, -height % multiple), mode="replicate")
+    return unpack(unstabilised(net(padded)[..., : 2 * height, : 2 * width], under))
