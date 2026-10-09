@@ -1,14 +1,19 @@
 #!/usr/bin/env bun
-// PMRID's published weights, unpacked into a flat f32 blob and a plan the shader can walk, in the
-// user's cache, which `native/rawshim/.pmrid/` then points at (`pinned.ts` says why it is not in
-// the checkout). `src/pmrid.rs` embeds them, so the crate does not build without them.
+// The denoisers' weights, each in a tree of its own in the user's cache, which
+// `native/rawshim/.pmrid/` and `.upscaler/` then point at (`pinned.ts` says why they are not in
+// the checkout). `src/pmrid.rs` and `src/upscale.rs` embed them, so the crate does not build
+// without them.
 //
-// The checkpoint is a PyTorch zip - `archive/data.pkl` naming storages under `archive/data/`,
-// each a raw little-endian f32 array. We have no Python, so the pickle is not interpreted: the
-// tensors appear in it as a name followed by its storage's id, in the order `state_dict` returns
-// them, and that order is the network's own. Every tensor's shape is known from the architecture
+// PMRID's published checkpoint is unpacked into a flat f32 blob and a plan the shader can walk. It
+// is a PyTorch zip - `archive/data.pkl` naming storages under `archive/data/`, each a raw
+// little-endian f32 array. We have no Python, so the pickle is not interpreted: the tensors appear
+// in it as a name followed by its storage's id, in the order `state_dict` returns them, and that
+// order is the network's own. Every tensor's shape is known from the architecture
 // (`models/net_torch.py`), so a scan for those two strings, paired in order and checked against
 // the shape's element count, recovers the whole of it.
+//
+// The upscaler's are `models/upscaler`'s `export`, fetched as written. `--from <dir>` takes them
+// from a folder instead, held to the same hashes: a training run's own `runs/<name>/`.
 
 import { type Unzipped, unzipSync } from 'fflate';
 import { createHash } from 'node:crypto';
@@ -16,16 +21,24 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { alreadyPinned, fetchPinned, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
 
-const NAME = 'pmrid';
 const CHECKPOINT =
   'https://raw.githubusercontent.com/MegEngine/PMRID/8ebb9e8e96559881dee957f34243933c5beb77dd/models/torch_pretrained.ckp';
 const CHECKPOINT_SHA256 = '9361614f3514d27351d81909f2215c0fdc38619c0288d936b7266485ac106c14';
 // This file's own text too: the unpacking below decides the bytes as much as the checkpoint does.
-const RECIPE = pin(CHECKPOINT, [
+const PMRID_RECIPE = pin(CHECKPOINT, [
   CHECKPOINT_SHA256,
   readFileSync(import.meta.path, 'utf8').replaceAll('\r\n', '\n'),
 ]);
-const HOME = pinnedHome(NAME, RECIPE);
+const PMRID_HOME = pinnedHome('pmrid', PMRID_RECIPE);
+
+const UPSCALER_REPOSITORY = 'https://huggingface.co/bowerbird/upscaler/resolve/main';
+const UPSCALER_FILES = {
+  'weights.json': '300e1488b2b90219f9eeb9d5d937f198f96df5ec8b20315b1e60967b80f757a9',
+  'weights.bin': '85fe4e140ad548293a160b401c213ea3c8f058757661b0ca09701e9ebd60877a',
+} as const;
+const UPSCALER_RECIPE = pin(UPSCALER_REPOSITORY, Object.values(UPSCALER_FILES));
+const UPSCALER_HOME = pinnedHome('upscaler', UPSCALER_RECIPE);
+
 const PICKLE = 'archive/data.pkl';
 const STORAGES = 'archive/data/';
 
@@ -135,19 +148,55 @@ function entry(entries: Unzipped, name: string): Uint8Array {
 }
 
 async function main(): Promise<void> {
-  if (!alreadyPinned(HOME, RECIPE)) {
+  const at = process.argv.indexOf('--from');
+  const from = at === -1 ? null : process.argv[at + 1];
+  if (at !== -1 && from == null)
+    throw new Error("--from needs a folder holding the upscaler's weights.json and weights.bin");
+  await getPmrid();
+  await getUpscaler(from ?? null);
+}
+
+async function getPmrid(): Promise<void> {
+  if (!alreadyPinned(PMRID_HOME, PMRID_RECIPE)) {
     const response = await fetchPinned(CHECKPOINT);
     const checkpoint = new Uint8Array(await response.arrayBuffer());
     const got = createHash('sha256').update(checkpoint).digest('hex');
     if (got !== CHECKPOINT_SHA256)
       throw new Error(`${CHECKPOINT} hashes ${got}, not the pinned ${CHECKPOINT_SHA256}`);
     const unpacked = unpack(checkpoint);
-    makeOnce(HOME, RECIPE, false, () => {
-      for (const [name, bytes] of unpacked) writeFileSync(resolve(HOME, name), bytes);
+    makeOnce(PMRID_HOME, PMRID_RECIPE, false, () => {
+      for (const [name, bytes] of unpacked) writeFileSync(resolve(PMRID_HOME, name), bytes);
     });
   }
-  linkPinned(NAME, HOME);
-  console.log(`pmrid at ${HOME}`);
+  linkPinned('pmrid', PMRID_HOME);
+  console.log(`pmrid at ${PMRID_HOME}`);
+}
+
+type UpscalerFile = keyof typeof UPSCALER_FILES;
+
+async function getUpscaler(from: string | null): Promise<void> {
+  if (!alreadyPinned(UPSCALER_HOME, UPSCALER_RECIPE)) {
+    const fetched = new Map<UpscalerFile, Uint8Array>();
+    for (const name of Object.keys(UPSCALER_FILES) as UpscalerFile[]) {
+      const bytes =
+        from == null
+          ? new Uint8Array(
+              await (await fetchPinned(`${UPSCALER_REPOSITORY}/${name}`)).arrayBuffer(),
+            )
+          : new Uint8Array(readFileSync(resolve(from, name)));
+      const got = createHash('sha256').update(bytes).digest('hex');
+      if (got !== UPSCALER_FILES[name])
+        throw new Error(
+          `${name} from ${from ?? UPSCALER_REPOSITORY} hashes ${got}, not the pinned ${UPSCALER_FILES[name]}`,
+        );
+      fetched.set(name, bytes);
+    }
+    makeOnce(UPSCALER_HOME, UPSCALER_RECIPE, false, () => {
+      for (const [name, bytes] of fetched) writeFileSync(resolve(UPSCALER_HOME, name), bytes);
+    });
+  }
+  linkPinned('upscaler', UPSCALER_HOME);
+  console.log(`upscaler at ${UPSCALER_HOME}`);
 }
 
 function unpack(checkpoint: Uint8Array): Map<string, Uint8Array | string> {

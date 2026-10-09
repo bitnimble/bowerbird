@@ -34,23 +34,24 @@ fn main() {
     .expect("write bindings");
 }
 
-/// PMRID's published weights, which `src/pmrid.rs` embeds.
+/// The denoisers' weights, which `src/pmrid.rs` and `src/upscale.rs` embed.
 ///
 /// Named here so that a tree without them fails at the build saying which command fetches them,
 /// rather than at an `include_bytes!` pointing at a path nobody has heard of. The same reasoning as
 /// the compiler and the codecs: what a photograph looks like is not allowed to depend on which
 /// files happen to be beside the binary.
 fn weights() {
-    let home =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join(".pmrid");
-    for name in ["weights.bin", "weights.json"] {
-        let at = home.join(name);
-        println!("cargo:rerun-if-changed={}", at.display());
-        assert!(
-            at.exists(),
-            "{}: missing. `bun run get:pmrid` unpacks the denoiser's published weights.",
-            at.display(),
-        );
+    let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    for network in [".pmrid", ".upscaler"] {
+        for name in ["weights.bin", "weights.json"] {
+            let at = crate_dir.join(network).join(name);
+            println!("cargo:rerun-if-changed={}", at.display());
+            assert!(
+                at.exists(),
+                "{}: missing. `bun run get:models` fetches the denoisers' weights.",
+                at.display(),
+            );
+        }
     }
 }
 

@@ -12,7 +12,7 @@ from training.files import write_atomic
 
 def export(net: torch.nn.Module, plan: dict[str, object], out: Path) -> None:
     """`weights.bin`, flat little-endian f32, and `weights.json`, `plan` plus where each tensor
-    sits in it: the layout `get:pmrid` writes PMRID's in."""
+    sits in it: the layout `get:models` writes PMRID's in."""
     tensors, blobs, offset = [], [], 0
     for name, tensor in net.state_dict().items():
         values = tensor.detach().float().cpu().numpy().astype("<f4")

@@ -189,9 +189,8 @@ native/rawshim/.codecs-*
 native/rawshim/.android-runtime
 # `bun run get:swiftshader`, wanted only on a machine with no GPU.
 native/rawshim/.swiftshader
-# PMRID's published weights, `bun run get:pmrid`.
+# The denoisers' weights, `bun run get:models`.
 native/rawshim/.pmrid
-# The upscaler's weights, `bun run get:upscaler`.
 native/rawshim/.upscaler
 # The print preview's HDR environments, `bun run get:environments`.
 native/rawshim/.environments

@@ -1,6 +1,6 @@
 //! PMRID on the Bayer mosaic: the learned denoiser, beside GALOSH and chosen instead of it.
 //!
-//! A published network (`slang/pmrid.slang` is its forward pass, `bun run get:pmrid` its weights),
+//! A published network (`slang/pmrid.slang` is its forward pass, `bun run get:models` its weights),
 //! run where GALOSH runs and over the same thing: a conditioned mosaic in [0, 1], filtered in
 //! place. What it predicts is a *residual*, so the two Detail sliders are a blend of what it found
 //! rather than a retrained strength, and the split between them is the one `reap` makes.
@@ -57,7 +57,7 @@ const HALVINGS: usize = 32;
 /// hosts. The weights themselves are four megabytes and are not ([`weights`]).
 const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/.pmrid/weights.json"));
 
-/// The weights as `bun run get:pmrid` unpacks them.
+/// The weights as `bun run get:models` unpacks them.
 ///
 /// **Embedded in a rendition's binary and fetched by a page, which is one network either way.** A
 /// rendition is the picture this application promises, so a machine missing a file beside the

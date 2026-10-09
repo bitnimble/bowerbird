@@ -110,12 +110,12 @@ and pinning macOS deployment target. A vcpkg bump must re-record `encode` rows i
 Linux/macOS prerequisites: compiler, git, pkg-config, python3, zip, unzip, nasm on x86.
 Getter names missing tools; vcpkg fetches cmake/ninja, and everything on Windows.
 
-All seven getters reuse trees only when recipes match (`scripts/pinned.ts`):
+All six getters reuse trees only when recipes match (`scripts/pinned.ts`):
 codecs/compiler record vcpkg commit, files under `native/rawshim/vcpkg/`, getter source;
 driver/maps/upscaler weights record file hashes; PMRID weights record checkpoint hash and getter
 source; `get:android-runtime` (the Android app's Bun and native addons) records their pins and
-versions. `get:environments` supplies print-preview HDR maps, `get:pmrid` and `get:upscaler`
-denoiser weights; `get:shell` runs all three. `get:codecs` also rejects libavif without sharpyuv, whose stub returns
+versions. `get:environments` supplies print-preview HDR maps, `get:models` both denoisers'
+weights (PMRID's and the upscaler's); `get:shell` runs both. `get:codecs` also rejects libavif without sharpyuv, whose stub returns
 `NOT_IMPLEMENTED` for every 4:2:0 encode, including grid tiles.
 
 Trees live in recipe-named directories under `~/.cache/bowerbird/<name>/`, reached through

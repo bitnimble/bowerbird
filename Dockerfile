@@ -164,21 +164,6 @@ RUN --mount=type=cache,id=bowerbird-environments,target=/root/.cache,sharing=loc
   && rm native/rawshim/.environments \
   && cp -a "$tree" native/rawshim/.environments
 
-# The upscaler's weights, which `src/upscale.rs` embeds as `src/pmrid.rs` does PMRID's.
-FROM base AS upscaler
-RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
-  apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates
-COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-upscaler.ts ./scripts/
-RUN --mount=type=cache,id=bowerbird-upscaler,target=/root/.cache,sharing=locked \
-  rm -f /root/.cache/bowerbird/*/*.lock \
-  && bun run scripts/get-upscaler.ts \
-  && bun run scripts/prune-pinned.ts \
-  && tree="$(readlink native/rawshim/.upscaler)" \
-  && rm native/rawshim/.upscaler \
-  && cp -a "$tree" native/rawshim/.upscaler
-
 # The Slang compiler, on the same terms: one stage fetches the pinned build and the three
 # that need it copy the tree, rather than each refetching it. Through vcpkg, like the codecs.
 FROM base AS slangc
@@ -196,11 +181,11 @@ RUN --mount=type=cache,id=bowerbird-slangc,target=/root/.cache,sharing=locked \
   && rm native/rawshim/.slangc \
   && cp -a "$tree" native/rawshim/.slangc
 
-# The denoiser's published weights, which `src/pmrid.rs` embeds - so this is a file the crate does
-# not compile without, on the same terms as the shaders. A stage of its own because the getter
-# unpacks a checkpoint with `fflate`, which is a dev dependency: `deps` installs `--production` and
-# so has none, and the build stage has no `node_modules` at all.
-FROM base AS pmrid
+# The denoisers' weights, which `src/pmrid.rs` and `src/upscale.rs` embed - so these are files the
+# crate does not compile without, on the same terms as the shaders. A stage of its own because the
+# getter unpacks PMRID's checkpoint with `fflate`, which is a dev dependency: `deps` installs
+# `--production` and so has none, and the build stage has no `node_modules` at all.
+FROM base AS models
 RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
   apt-get update \
@@ -209,14 +194,16 @@ COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=locked \
   bun install --frozen-lockfile
-COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-pmrid.ts ./scripts/
-RUN --mount=type=cache,id=bowerbird-pmrid,target=/root/.cache,sharing=locked \
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-models.ts ./scripts/
+RUN --mount=type=cache,id=bowerbird-models,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
-  && bun run scripts/get-pmrid.ts \
+  && bun run scripts/get-models.ts \
   && bun run scripts/prune-pinned.ts \
-  && tree="$(readlink native/rawshim/.pmrid)" \
-  && rm native/rawshim/.pmrid \
-  && cp -a "$tree" native/rawshim/.pmrid
+  && for name in pmrid upscaler; do \
+       tree="$(readlink "native/rawshim/.$name")" \
+       && rm "native/rawshim/.$name" \
+       && cp -a "$tree" "native/rawshim/.$name" || exit 1; \
+     done
 
 # libavif, libjxl and the six libraries under them, static, through the getter a development
 # machine runs: one vcpkg commit fixes every version (`get-codecs.ts`), so the aom a container
@@ -304,8 +291,8 @@ COPY native ./native
 # stage that produces a picture has one implementation and it is these files (§0.4).
 COPY slang ./slang
 COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
-COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
-COPY --from=upscaler /app/native/rawshim/.upscaler ./native/rawshim/.upscaler
+COPY --from=models /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
+COPY --from=models /app/native/rawshim/.upscaler ./native/rawshim/.upscaler
 COPY --from=environments /app/native/rawshim/.environments ./native/rawshim/.environments
 
 FROM rust AS native

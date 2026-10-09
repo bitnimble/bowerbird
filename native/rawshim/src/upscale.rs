@@ -1032,7 +1032,7 @@ const MANIFEST: &str = include_str!(concat!(
     "/.upscaler/weights.json"
 ));
 
-/// The weights as `bun run get:upscaler` installs them: embedded in a rendition's binary and
+/// The weights as `bun run get:models` installs them: embedded in a rendition's binary and
 /// fetched by a page, as `pmrid::weights` says why.
 #[cfg(not(target_arch = "wasm32"))]
 fn weights() -> Option<&'static [u8]> {
