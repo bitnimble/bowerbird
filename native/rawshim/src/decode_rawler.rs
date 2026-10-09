@@ -2166,6 +2166,7 @@ async fn demosaic_detailed(
     detail: crate::galosh::Detail,
     noise: Option<crate::galosh::NoiseFit>,
 ) -> Option<crate::resident::Resident> {
+    // Both sliders at 0 are the input as it was, which is the plain demosaic.
     if detail.denoiser == crate::galosh::Denoiser::Upscaler && detail.amounts(noise).does_anything()
     {
         let upscaler = crate::upscale::device(gpu);

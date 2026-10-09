@@ -11,10 +11,11 @@ from training.mosaic import FIT_STABILISER, Stabiliser, fit_stabiliser, pack, st
 PRELU_INITIAL_SLOPE = 0.25
 
 GRAIN_SHARE = 0.25
-"""Share of the weights' calibrated grain variance the editor adds."""
+"""Share of the weights' calibrated grain variance the editor adds by default: Luminance 75
+(`upscale::LUMINANCE` in `native/rawshim/src/upscale.rs`)."""
 SHARPEN = 0.35
-"""The editor's RL sharpen amount over the upscale. Both chosen by eye; `native/rawshim/src/upscale.rs`
-holds `GRAIN_SHARE` and `src/schemas/sharpening.ts` this, as a slider position."""
+"""The editor's RL sharpen amount over the upscale, `src/schemas/sharpening.ts` as a slider position.
+Both chosen by eye."""
 
 
 class MultiScale(nn.Module):

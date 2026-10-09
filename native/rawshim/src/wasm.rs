@@ -2363,7 +2363,7 @@ pub struct UpscaleTrial {
 impl UpscaleTrial {
     /// `export`'s `weights.json` and `weights.bin`, over a `width` by `height` RGGB `mosaic` whose
     /// photo has R, G, B conditioning `gains` and noise `alpha` and `sigma_sq`, on `Arm::Half` where
-    /// `half` and `Arm::Float` otherwise. The answer is the network's own, without grain.
+    /// `half` and `Arm::Float` otherwise. The answer is the network's own, at Luminance 100, which adds no grain.
     #[allow(clippy::too_many_arguments)]
     pub async fn open(
         manifest: String,
@@ -2398,8 +2398,7 @@ impl UpscaleTrial {
                 crate::galosh::NoiseModel { alpha, sigma_sq },
                 (100.0, 100.0),
             )
-            .map_err(|e| JsValue::from_str(&e))?
-            .without_grain();
+            .map_err(|e| JsValue::from_str(&e))?;
         let mut recording = gpu.record();
         let held = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("upscale trial mosaic"),

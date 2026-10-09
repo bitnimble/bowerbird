@@ -5,8 +5,8 @@
 //! upscale_bench <weights dir> time [repeats] [tile]
 //! ```
 //!
-//! `check` writes each arm's answer for an RGGB mosaic as `<out dir>/<arm>.f32`, without grain and
-//! at full strength, for `models/upscaler` to hold against torch, the photo's conditioning gains and
+//! `check` writes each arm's answer for an RGGB mosaic as `<out dir>/<arm>.f32`, at Luminance
+//! and Colour 100, where it adds no grain, for `models/upscaler` to hold against torch, the photo's conditioning gains and
 //! noise fit given. `time` upscales a 24MP and a 61MP frame and prints each arm's milliseconds, the
 //! answer's allocation and the upload left out.
 
@@ -75,8 +75,7 @@ fn main() {
                 let into = answer(gpu, width, height);
                 let photo = upscaler
                     .photo(gains, &rggb, noise, (100.0, 100.0))
-                    .expect("a photo")
-                    .without_grain();
+                    .expect("a photo");
                 upscaler
                     .upscale(gpu, &mosaic, whole(width, height), &into, &photo, number(9))
                     .expect("an upscale");

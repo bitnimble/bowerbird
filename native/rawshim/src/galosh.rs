@@ -840,8 +840,7 @@ impl Detail {
     /// so a ramp answering 75.2 would show 75 and render something else.
     pub fn resolved(&self, fit: Option<NoiseFit>) -> (f64, f64) {
         let (luma, colour) = match (self.denoiser, fit) {
-            // All of what the network found: its own answer is what it was trained to give.
-            (Denoiser::Upscaler, _) => (100.0, 100.0),
+            (Denoiser::Upscaler, _) => (crate::upscale::LUMINANCE, 100.0),
             (_, Some(fit)) => fit.model().suggested_amounts(),
             (_, None) => (0.0, 0.0),
         };

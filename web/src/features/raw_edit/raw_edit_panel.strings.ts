@@ -94,5 +94,5 @@ export const RawEditPanelStrings = {
   /** The filters by what each is for, here and in a library's render stages. */
   denoiserGalosh: () => 'Fast (GALOSH)',
   denoiserPmrid: () => 'Quality (PMRID)',
-  denoiserUpscaler: () => 'Best (2× upscale)',
+  denoiserUpscaler: () => 'Best',
 };

@@ -42,10 +42,6 @@ impl Arm {
     }
 }
 
-/// The share of the weights' calibrated grain variance the editor adds over the upscale, chosen by
-/// eye: `models/upscaler`'s `GRAIN_SHARE`.
-const GRAIN_SHARE: f32 = 0.25;
-
 /// The widths the kernels are compiled for: the full level's, doubling at each halving.
 const CHANNELS: usize = 48;
 const LEVELS: usize = 3;
@@ -143,11 +139,19 @@ pub struct Photo {
     _pad: [u32; 3],
 }
 
-impl Photo {
-    /// The network's own answer, for holding against torch, which draws no grain.
-    pub fn without_grain(self) -> Photo {
-        Photo { grain: 0.0, ..self }
-    }
+/// The Luminance an unset slider takes: the network's light, with a quarter of the photo's grain.
+pub const LUMINANCE: f64 = 75.0;
+
+/// A Luminance position as how much of the network's light to keep and the share of the photo's
+/// noise variance to add as grain, together leaving `1 - luminance / 100` of its noise.
+///
+/// Below [`LUMINANCE`] the light blends back toward the input, whose own noise comes with it as the
+/// blend's square; grain makes up the rest.
+fn light_of(luminance: f64) -> (f64, f64) {
+    let share = 1.0 - luminance / 100.0;
+    let towards_input = ((LUMINANCE - luminance) / LUMINANCE).clamp(0.0, 1.0);
+    let grain = (share - towards_input * towards_input).max(0.0);
+    (1.0 - towards_input, grain)
 }
 
 /// `models/training`'s `fit_stabiliser`, as the weights' `weights.json` states it.
@@ -266,7 +270,8 @@ pub struct Upscaler {
     /// How far the network reads past a tile, in packed pixels, on the coarsest level's grid.
     reach: usize,
     stabilising: Stabilising,
-    grain: f32,
+    /// The grain, as a share of the photo's noise variance, that looks like all of its noise.
+    calibration: f32,
     weights: crate::gpu::Buffer,
     layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
@@ -444,7 +449,7 @@ impl Upscaler {
             ops,
             reach,
             stabilising,
-            grain: GRAIN_SHARE * calibration as f32,
+            calibration: calibration as f32,
             weights: held,
             pack: pipeline("pack"),
             convs: CONVS
@@ -488,8 +493,9 @@ impl Upscaler {
     }
 
     /// What a photo's planes go through, from its R, G, B conditioning `gains`, its Bayer `cfa`, its
-    /// fitted `noise`, and the Detail sliders as `(luminance, colour)`, 0 to 100: how much of what
-    /// the network moved to keep, in the light the 2x2 agrees on and in its colour.
+    /// fitted `noise`, and the Detail sliders as `(luminance, colour)`, 0 to 100. Luminance is the
+    /// share of the photo's noise left in its light, none at 100 and all of the input's own at 0;
+    /// colour is how much of the colour the network moved to keep.
     pub fn photo(
         &self,
         gains: [f32; 3],
@@ -515,6 +521,7 @@ impl Upscaler {
             floors[c] = (b / a).max(3.0 * b.sqrt()).clamp(min_floor, max_floor);
             scales[c] = (reference_alpha / a).sqrt();
         }
+        let (luma, grain) = light_of(luminance);
         Ok(Photo {
             floors,
             roots: floors.map(f32::sqrt),
@@ -523,8 +530,8 @@ impl Upscaler {
             positions,
             alpha: noise.alpha / green,
             sigma_sq: noise.sigma_sq / (green * green),
-            grain: self.grain,
-            luma: (luminance / 100.0) as f32,
+            grain: self.calibration * grain as f32,
+            luma: luma as f32,
             colour: (colour / 100.0) as f32,
             _pad: [0; 3],
         })
@@ -1491,6 +1498,24 @@ mod tests {
     use super::{Arm, Placement, Upscaler};
     use crate::condition::Mosaic;
 
+    /// 100 is the network's light alone, 75 adds a quarter of the photo's grain, 0 is the input,
+    /// and the noise left in rises with every step down.
+    #[test]
+    fn luminance_runs_from_clean_through_grain_to_the_input() {
+        assert_eq!(super::light_of(100.0), (1.0, 0.0));
+        assert_eq!(super::light_of(75.0), (1.0, 0.25));
+        assert_eq!(super::light_of(0.0), (0.0, 0.0));
+        let left_in = |luminance: f64| {
+            let (luma, grain) = super::light_of(luminance);
+            (1.0 - luma).powi(2) + grain
+        };
+        for step in 0..100 {
+            let luminance = f64::from(step);
+            assert!((left_in(luminance) - (1.0 - luminance / 100.0)).abs() < 1e-12);
+            assert!(left_in(luminance) > left_in(luminance + 1.0));
+        }
+    }
+
     /// Any rectangle of a frame, cut into any tiles, upscales to that part of the whole frame's
     /// answer, grain and all, on every arm: what lets a loupe tile be the rendition.
     #[test]
@@ -1536,7 +1561,7 @@ mod tests {
                 continue;
             };
             let photo = upscaler
-                .photo(gains, &cfa, noise, (100.0, 60.0))
+                .photo(gains, &cfa, noise, (75.0, 60.0))
                 .expect("a photo");
             let upscaled = |rect: (usize, usize, usize, usize), tile: Option<usize>| {
                 let margin = upscaler.margin();
