@@ -1,7 +1,7 @@
-"""Measures a set of weights' grain calibration on the held-out crops, and writes it into their
-`weights.json` with the digest of the weights it belongs to. The grain is matched to the original's
-texture where the picture is flat, as the editor shows both: anywhere else the original also holds
-detail the upscale missed, which grain can't stand in for."""
+"""Measures a set of weights' grain calibration on a random few crops of each held-out photo, and
+writes it into their `weights.json` with the digest of the weights it belongs to. The grain is
+matched to the original's texture where the picture is flat, as the editor shows both: anywhere else
+the original also holds detail the upscale missed, which grain can't stand in for."""
 
 import argparse
 import json
@@ -16,13 +16,14 @@ from training.crops import DEFAULT_CACHE, crops_of, records, sources
 from training.files import write_atomic
 from training.mosaic import add_noise, stabilise
 from training.pmrid import serve
-from training.targets import PLAIN, editor_light, measured
+from training.targets import PLAIN, editor_shown, measured
 from upscaler.degrade import low
 from upscaler.grain import estimate
 from upscaler.model import load, stabiliser, upscaled
 
 CPU_THREADS = 2
 FLAT_SHARE = 0.25
+SAMPLED_CROPS = 8
 
 
 def main() -> None:
@@ -42,17 +43,19 @@ def main() -> None:
     ratios = []
     for record_path, record in records(args.cache, sources(args.data), True):
         gains, fit = torch.tensor(record["gains"]), record["fit"]
-        original = torch.from_numpy(crops_of(record_path).astype(np.float32))[:, None]
+        crops = crops_of(record_path)
+        # Random, not the first: crops are ordered by detail, and the grain is matched where it's flat.
+        sampled = np.sort(np.random.default_rng(0).permutation(len(crops))[:SAMPLED_CROPS])
+        original = torch.from_numpy(crops[sampled].astype(np.float32))[:, None]
         torch.manual_seed(0)
         with torch.no_grad():
             small = low(original, gains, fit, measured(Path(record["source"]))["capture_blur"])
             ours = upscaled(net, small.cuda(), stabiliser(loaded.plan, gains, fit)).cpu()
         torch.manual_seed(0)
         unit_grain = add_noise(ours, gains, fit["alpha"], fit["sigmaSq"])
-        chain = editor_light(torch.cat([original, ours, unit_grain])[:, 0].numpy(), record)
-        count = len(ours)
-        shown_original = rgb(chain.sharpened[:count])
-        shown_ours, shown_grain = rgb((chain.sharpened if sharpened_by_editor else chain.plain)[count:]).split(count)
+        shown_original = rgb(editor_shown(original[:, 0].numpy(), record, True))
+        shown = editor_shown(torch.cat([ours, unit_grain])[:, 0].numpy(), record, sharpened_by_editor)
+        shown_ours, shown_grain = rgb(shown).split(len(ours))
         flat = flattest(shown_ours)
         ours_texture = texture(shown_ours, flat)
         needed = (texture(shown_original, flat) - ours_texture) / (texture(shown_grain, flat) - ours_texture)

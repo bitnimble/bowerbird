@@ -74,6 +74,16 @@ struct Sharpen {
     /// coding, as Sharpen's Quality does; the sharpen then meets the photo's own pixels.
     #[serde(default)]
     supersampled: bool,
+    /// Renders only this one; both, plain first, unless given.
+    #[serde(default)]
+    only: Option<Shown>,
+}
+
+#[derive(serde::Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Shown {
+    Plain,
+    Sharpened,
 }
 
 /// What the rest of the chain needs of a photo that only opening it whole can measure.
@@ -316,6 +326,11 @@ fn sharpened(
         defringe,
         request.amount.unwrap_or(support::STRENGTHS.sharpen),
     );
+    let variants: Vec<_> = [(Shown::Plain, plain), (Shown::Sharpened, shipped)]
+        .into_iter()
+        .filter(|(shown, _)| request.only.is_none_or(|only| only == *shown))
+        .map(|(_, variant)| variant)
+        .collect();
 
     let cfa = rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB");
     let supersample = request
@@ -328,7 +343,7 @@ fn sharpened(
     let mut light = Vec::with_capacity(samples.len() * 6);
     for mosaic in samples.chunks_exact(size) {
         let demosaiced = demosaic(gpu, rcd, mosaic, &cfa, width, height, matrix, request.gains)?;
-        for (defringe, amount) in [plain, shipped] {
+        for &(defringe, amount) in &variants {
             let uploaded = rawshim::resident::Resident::upload(gpu, &demosaiced, width, height);
             let resident = match &supersample {
                 Some(supersample) => supersample.halved(gpu, &uploaded),

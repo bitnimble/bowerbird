@@ -114,6 +114,25 @@ class Pmrid:
         is `measure`'s answer for it. `scale` is the mosaics' pixels per photosite of the photo.
         `supersampled` mosaics are 2x upscales, demosaiced and taken back to (H / 2, W / 2) before
         the coding, as Sharpen's Quality does."""
+        light, reply = self.chain(raw, mosaics, gains, measured, amount, scale, supersampled, None)
+        return Sharpened(light[:, 0], light[:, 1], np.asarray(reply["matrix"], np.float32), reply["sigma"])
+
+    def shown(self, raw: Path, mosaics: np.ndarray, gains: np.ndarray, measured: dict, sharpened: bool) -> np.ndarray:
+        """`sharpen`'s `sharpened`, or its `plain`, alone, for half the work."""
+        light, _ = self.chain(raw, mosaics, gains, measured, None, 1, False, "sharpened" if sharpened else "plain")
+        return light[:, 0]
+
+    def chain(
+        self,
+        raw: Path,
+        mosaics: np.ndarray,
+        gains: np.ndarray,
+        measured: dict | None,
+        amount: float | None,
+        scale: int,
+        supersampled: bool,
+        only: str | None,
+    ) -> tuple[np.ndarray, dict]:
         count, height, width = mosaics.shape
         np.ascontiguousarray(mosaics, "<f4").tofile(self.exchange)
         reply = self.ask(
@@ -128,11 +147,12 @@ class Pmrid:
                 "amount": amount,
                 "scale": scale,
                 "supersampled": supersampled,
+                "only": only,
             }
         )
         shrink = 2 if supersampled else 1
-        light = take(self.exchange, count, 2, height // shrink, width // shrink, 3)
-        return Sharpened(light[:, 0], light[:, 1], np.asarray(reply["matrix"], np.float32), reply["sigma"])
+        variants = 2 if only is None else 1
+        return take(self.exchange, count, variants, height // shrink, width // shrink, 3), reply
 
     def ask(self, request: dict) -> dict:
         try:

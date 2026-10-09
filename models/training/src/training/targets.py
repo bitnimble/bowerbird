@@ -78,12 +78,25 @@ def editor_light(
     Quality does."""
     gains = np.asarray(record["gains"], np.float32)
     source = Path(record["source"])
-    # Mirrored, which keeps the RGGB phase, so the demosaic and the sharpen meet no edge inside a crop.
-    padded = np.pad(mosaics.astype(np.float32), ((0, 0), (MIRRORED, MIRRORED), (MIRRORED, MIRRORED)), mode="reflect")
-    chain = pmrid().sharpen(source, padded, gains, measured(source), amount, scale, supersampled)
-    margin = MIRRORED // 2 if supersampled else MIRRORED
-    inside = (slice(None), slice(margin, -margin), slice(margin, -margin))
+    chain = pmrid().sharpen(source, mirrored(mosaics), gains, measured(source), amount, scale, supersampled)
+    inside = unmirrored(MIRRORED // 2 if supersampled else MIRRORED)
     return Sharpened(chain.plain[inside], chain.sharpened[inside], chain.matrix, chain.sigma)
+
+
+def editor_shown(mosaics: np.ndarray, record: dict, sharpened: bool) -> np.ndarray:
+    """`editor_light`'s `sharpened`, or its `plain`, alone, for half the work."""
+    gains = np.asarray(record["gains"], np.float32)
+    source = Path(record["source"])
+    return pmrid().shown(source, mirrored(mosaics), gains, measured(source), sharpened)[unmirrored(MIRRORED)]
+
+
+def mirrored(mosaics: np.ndarray) -> np.ndarray:
+    # Mirrored, which keeps the RGGB phase, so the demosaic and the sharpen meet no edge inside a crop.
+    return np.pad(mosaics.astype(np.float32), ((0, 0), (MIRRORED, MIRRORED), (MIRRORED, MIRRORED)), mode="reflect")
+
+
+def unmirrored(margin: int) -> tuple[slice, slice, slice]:
+    return (slice(None), slice(margin, -margin), slice(margin, -margin))
 
 
 def measured(source: Path) -> dict:
