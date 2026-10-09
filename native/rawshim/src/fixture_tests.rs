@@ -1661,6 +1661,77 @@ mod decode_geometry {
         }
     }
 
+    /// Under the upscaler a half-size frame is still upscaled, and a half-size region of it is
+    /// that frame's pixels.
+    #[test]
+    fn a_halved_region_under_the_upscaler_is_the_halved_frame() {
+        let detail = crate::galosh::Detail::AUTO.using(crate::galosh::Denoiser::Upscaler);
+        let path = sony().to_str().unwrap().to_string();
+        let path = path.as_str();
+        let whole = crate::decode_frame_denoised(path, 640, detail, Default::default())
+            .expect("the frame decodes");
+        assert_eq!(whole.reduced, 2, "the frame was not halved");
+        let plain = crate::decode_frame_denoised(
+            path,
+            640,
+            crate::galosh::Detail::at(0.0, 0.0),
+            Default::default(),
+        )
+        .expect("the plain frame decodes");
+        let fit = crate::galosh::Fit::Given(whole.noise.expect("the frame fits its noise"));
+        let (width, height) = (whole.width, whole.height);
+        let samples = whole.samples16().expect("a 16-bit decode");
+        assert_ne!(
+            samples,
+            plain.samples16().expect("a 16-bit decode"),
+            "the halved frame skipped the upscaler"
+        );
+
+        for region in [
+            crate::Tile {
+                left: 504,
+                top: 504,
+                width: 512,
+                height: 512,
+            },
+            crate::Tile {
+                left: 2 * width - 1800,
+                top: 2 * height - 1400,
+                width: 1792,
+                height: 1392,
+            },
+        ] {
+            let cut = crate::decode_tile(
+                path,
+                viewing(path, region).at(crate::view::Scale::Half),
+                detail,
+                fit,
+                crate::RENDITION_TILE_HALO,
+            )
+            .expect("the region decodes");
+            let (cut_w, cut_h) = (region.width / 2, region.height / 2);
+            assert_eq!((cut.width, cut.height, cut.reduced), (cut_w, cut_h, 2));
+            let cut = cut.samples16().expect("a 16-bit decode").to_vec();
+
+            let (left, top) = (region.left / 2, region.top / 2);
+            let mut worst = 0u16;
+            for row in 0..cut_h {
+                for column in 0..cut_w {
+                    for channel in 0..3 {
+                        let from = ((top + row) * width + left + column) * 3 + channel;
+                        let to = (row * cut_w + column) * 3 + channel;
+                        worst = worst.max(samples[from].abs_diff(cut[to]));
+                    }
+                }
+            }
+            assert_eq!(
+                worst, 0,
+                "a halved {}x{} region at {},{} differs from the halved frame by {worst} counts",
+                region.width, region.height, region.left, region.top,
+            );
+        }
+    }
+
     /// A tile handed the frame's fit does not measure its own.
     ///
     /// What the loupe is for: the crop is denoised at the photograph's strength, so the magnified

@@ -31,6 +31,8 @@ export const PreparedHeaderSchema = z.object({
    * slider that silently does nothing is worse than one that is not offered.
    */
   mosaic: z.boolean(),
+  /** Whether that mosaic is a Bayer one, which is what the upscaler takes. */
+  upscalable: z.boolean(),
   /**
    * The two Detail positions this open actually filtered at, 0 to 100.
    *

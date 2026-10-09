@@ -74,7 +74,7 @@ pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub pixels: Pixels,
-    /// Photosites a side in the block each pixel was combined off, rather than demosaiced (10.4).
+    /// Photosites a side in the block each pixel stands for (10.4).
     ///
     /// **1, 2 or 3, and not a boolean, because the factor is the sensor's.** A Bayer 2x2 is the
     /// smallest block holding every colour; X-Trans has none, and its smallest is the 3x3. Everything
@@ -135,6 +135,9 @@ pub struct Frame {
     /// The level the file states diffuse white at, for a finished picture; None for a RAW, whose
     /// white is a quantile of its own scene.
     pub stated_white: Option<crate::light::Light<crate::light::Level>>,
+    /// The sensor's colour filter array, for a frame decoded off one; None for a finished picture or
+    /// a linear DNG.
+    pub cfa: Option<crate::cfa::Cfa>,
 }
 
 impl Frame {
@@ -151,6 +154,7 @@ impl Frame {
             neutral_ceiling: 1.0,
             wb_gains: [1.0; 3],
             stated_white: None,
+            cfa: None,
         }
     }
 

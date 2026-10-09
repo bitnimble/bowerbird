@@ -6,6 +6,7 @@ import { buttonProps, buttonStyles } from './button';
 import { ICON } from './icon';
 import { menuStyles } from './menu_styles';
 import type { Option } from './option';
+import { Tooltip } from './tooltip';
 
 export function Select<T extends string>({
   options,
@@ -61,16 +62,18 @@ export function Select<T extends string>({
         >
           <BaseSelect.Popup {...stylex.props(menuStyles.popup)}>
             {options.map((option) => (
-              <BaseSelect.Item
-                key={option.value}
-                value={option.value}
-                {...stylex.props(menuStyles.item)}
-              >
-                <BaseSelect.ItemText>{option.label}</BaseSelect.ItemText>
-                <BaseSelect.ItemIndicator {...stylex.props(menuStyles.check)}>
-                  <Check size={ICON} />
-                </BaseSelect.ItemIndicator>
-              </BaseSelect.Item>
+              <Tooltip key={option.value} label={option.tooltip}>
+                <BaseSelect.Item
+                  value={option.value}
+                  disabled={option.disabled === true}
+                  {...stylex.props(menuStyles.item)}
+                >
+                  <BaseSelect.ItemText>{option.label}</BaseSelect.ItemText>
+                  <BaseSelect.ItemIndicator {...stylex.props(menuStyles.check)}>
+                    <Check size={ICON} />
+                  </BaseSelect.ItemIndicator>
+                </BaseSelect.Item>
+              </Tooltip>
             ))}
           </BaseSelect.Popup>
         </BaseSelect.Positioner>

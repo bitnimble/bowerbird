@@ -61,6 +61,9 @@ export class StageStore {
    */
   @observable accessor mosaic = true;
 
+  /** Whether the upscaler takes this photograph's mosaic, off the prepared header. */
+  @observable accessor upscalable = true;
+
   /**
    * Whether the picture was prepared on the server rather than in this tab.
    *

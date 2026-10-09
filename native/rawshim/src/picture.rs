@@ -187,6 +187,8 @@ pub fn prepared(
     let keep = crate::photo_analysis::encode(&filled);
     let (camera_curve, camera_exposure, camera_saturation, camera_balance) =
         crate::edit::camera_defaults(matched.as_ref().and_then(|m| m.colour.as_ref()));
+    let upscalable =
+        job.composite.is_none() && crate::decode_rawler::upscalable_at(&job.raw_file_path);
 
     Ok(crate::edit::Prepared {
         header: crate::edit::PreparedHeader {
@@ -203,8 +205,9 @@ pub fn prepared(
             // panels stay open though its mosaic stayed here. A composite's assembly takes no dust.
             mosaic: job.composite.is_none()
                 && !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            upscalable,
             as_shot,
-            detail: job.detail().resolved(noise_fit),
+            detail: job.detail().on_bayer(upscalable).resolved(noise_fit),
             camera_curve,
             camera_exposure,
             camera_saturation,
@@ -273,6 +276,7 @@ fn windowed(
         .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
     let (camera_curve, camera_exposure, camera_saturation, camera_balance) =
         crate::edit::camera_defaults(prepared.matched.as_ref().and_then(|m| m.colour.as_ref()));
+    let upscalable = crate::decode_rawler::upscalable_at(&job.raw_file_path);
     Ok(crate::edit::Prepared {
         header: crate::edit::PreparedHeader {
             width: kept_width,
@@ -285,8 +289,9 @@ fn windowed(
             camera_match: job.camera_match,
             matched: prepared.matched.is_some(),
             mosaic: !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            upscalable,
             as_shot: prepared.as_shot,
-            detail: job.detail().resolved(noise_fit),
+            detail: job.detail().on_bayer(upscalable).resolved(noise_fit),
             camera_curve,
             camera_exposure,
             camera_saturation,

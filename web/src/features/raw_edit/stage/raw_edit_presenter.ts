@@ -1259,6 +1259,7 @@ export class RawEditPresenter {
     this.stage.matched = header.matched;
     this.stage.preparedElsewhere = preparedElsewhere;
     this.stage.mosaic = header.mosaic;
+    this.stage.upscalable = header.upscalable;
     this.edit.setAsShot(header.asShot);
     this.stage.noiseFit = header.noiseFit ?? null;
     this.stage.detail = header.detail;

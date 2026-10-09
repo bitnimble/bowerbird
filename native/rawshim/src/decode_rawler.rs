@@ -226,28 +226,7 @@ pub(crate) async fn decode_tile_source(
     };
     let gpu = crate::gpu::device()?;
     let rcd = crate::demosaic::device(gpu)?;
-    let built = match region.halving {
-        true => region.reduced(gpu, rcd).await?,
-        false => {
-            // One span or many, which `spans` already decides: a tile writes straight into the
-            // frame now, so a single-tile region costs nothing that the loop did not.
-            demosaic_detailed(
-                gpu,
-                rcd,
-                &region.mosaic,
-                region.origin.raw(),
-                region.frame,
-                &region.cfa,
-                region.crop,
-                region.colour,
-                region.seen()?,
-                orientation_code(region.upright),
-                region.detail,
-                region.noise,
-            )
-            .await?
-        }
-    };
+    let built = region.built(gpu, rcd).await?;
     Some(region.frame(built))
 }
 
@@ -294,7 +273,7 @@ pub(crate) async fn decode_shifted_tile(
     let gpu = crate::gpu::device()?;
     let rcd = crate::demosaic::device(gpu)?;
     if reference.halving {
-        let built = reference.reduced(gpu, rcd).await?;
+        let built = reference.built(gpu, rcd).await?;
         return Some(reference.frame(built));
     }
     let reference_pyramid = crate::pixel_shift_align::Pyramid::of(gpu, &reference.mosaic);
@@ -451,31 +430,34 @@ impl RegionMosaic {
         )
     }
 
-    async fn reduced(
+    async fn built(
         &self,
         gpu: &'static crate::gpu::Gpu,
         rcd: &'static crate::demosaic::Rcd,
     ) -> Option<crate::resident::Resident> {
-        let crop = self.crop;
-        let crop = (
-            crop.0 / 2,
-            crop.1 / 2,
-            reduced_span(crop.2, 2),
-            reduced_span(crop.3, 2),
-        );
-        let orientation = orientation_code(self.upright);
-        reduced_into(
+        demosaic_at(
             gpu,
             rcd,
             &self.mosaic,
-            crop,
-            self.mosaic.width,
+            self.origin.raw(),
+            self.frame,
+            &self.cfa,
+            self.crop,
             self.colour,
             self.seen()?,
-            orientation,
-            &self.cfa,
+            orientation_code(self.upright),
+            self.detail,
+            self.noise,
+            self.reduced(),
         )
         .await
+    }
+
+    fn reduced(&self) -> usize {
+        match self.halving {
+            true => 2,
+            false => 1,
+        }
     }
 
     fn frame(&self, built: crate::resident::Resident) -> Frame {
@@ -483,10 +465,7 @@ impl RegionMosaic {
             width: built.width,
             height: built.height,
             pixels: Pixels::Resident(built),
-            reduced: match self.halving {
-                true => 2,
-                false => 1,
-            },
+            reduced: self.reduced(),
             as_shot: self.as_shot,
             noise: self.noise,
             // A tile's whole-frame statistics are the photograph's to provide, not this crop's.
@@ -495,6 +474,7 @@ impl RegionMosaic {
             neutral_ceiling: neutral_ceiling_of(self.colour.ceiling),
             wb_gains: self.colour.ceiling,
             stated_white: None,
+            cfa: Some(self.cfa),
         }
     }
 }
@@ -670,7 +650,8 @@ async fn region_mosaic(
     // **Halved where the caller asked for it, which is the same fork `decode_source` takes over a
     // whole frame** - one RGB pixel read straight off each 2x2 site rather than RCD interpolating
     // between them. It is the *demosaic* that goes, not the read and not the denoise: both of those
-    // have already run, at the sensor's own resolution, over this region.
+    // have already run, at the sensor's own resolution, over this region. The upscaler keeps its
+    // demosaic and boxes it down to the same sites (`demosaic_at`).
     //
     // The caller decides, and decides from the *photograph* - whether a 61MP sensor is worth
     // halving for a 4K rendition is a question about the picture, not about whichever rectangle of
@@ -687,7 +668,7 @@ async fn region_mosaic(
     // and is read; this one is predicted, so a 6x6 pattern takes the demosaic until `Scale` carries
     // a third variant - which needs the CFA's period to reach whoever builds the view.
     let halving = halve && crop.0 % 2 == 0 && crop.1 % 2 == 0 && cfa.is_bayer();
-    let detail = upscalable(detail, &cfa, !halving);
+    let detail = detail.on_bayer(cfa.is_bayer());
     let noise = denoise_over(
         gpu,
         &mut mosaic,
@@ -731,7 +712,8 @@ pub fn decode(path: &str, detail: crate::galosh::Detail) -> Option<Frame> {
 /// The frame, halved where the caller's floor allows it.
 ///
 /// `at_least_long_edge` is the smallest long edge that would still serve. Halving a frame whose own
-/// long edge is at least twice that leaves it still large enough, and saves the demosaic outright.
+/// long edge is at least twice that leaves it still large enough, and saves the demosaic outright
+/// except under the upscaler.
 ///
 /// The frame comes back where the demosaic wrote it, on the device; `Frame::to_host` is the reader
 /// that wants samples.
@@ -1530,9 +1512,15 @@ impl Held {
             tile.width.min(region_w - inset.0),
             tile.height.min(region_h - inset.1),
         );
-        let halving =
-            scale.halves() && region_crop.0 % 2 == 0 && region_crop.1 % 2 == 0 && cfa.is_bayer();
-        let detail = upscalable(detail, &cfa, !halving);
+        let reduced = match scale.halves()
+            && region_crop.0 % 2 == 0
+            && region_crop.1 % 2 == 0
+            && cfa.is_bayer()
+        {
+            true => 2,
+            false => 1,
+        };
+        let detail = detail.on_bayer(cfa.is_bayer());
 
         let noise = denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
 
@@ -1541,49 +1529,29 @@ impl Held {
             .highlight
             .seen_from(crate::px::At::exact(left, top))
             .coloured(detail.colouring());
-        let built = if halving {
-            let crop = (
-                region_crop.0 / 2,
-                region_crop.1 / 2,
-                reduced_span(region_crop.2, 2),
-                reduced_span(region_crop.3, 2),
-            );
-            reduced_into(
-                gpu,
-                rcd,
-                &mosaic,
-                crop,
-                region_w,
-                colour,
-                seen,
-                orientation_code(upright),
-                &cfa,
-            )
-            .await
-        } else {
-            demosaic_detailed(
-                gpu,
-                rcd,
-                &mosaic,
-                (left, top),
-                (frame_w, frame_h),
-                &cfa,
-                region_crop,
-                colour,
-                seen,
-                orientation_code(upright),
-                detail,
-                noise,
-            )
-            .await
-        };
+        let built = demosaic_at(
+            gpu,
+            rcd,
+            &mosaic,
+            (left, top),
+            (frame_w, frame_h),
+            &cfa,
+            region_crop,
+            colour,
+            seen,
+            orientation_code(upright),
+            detail,
+            noise,
+            reduced,
+        )
+        .await;
         drop(mosaic);
         let built = built?;
         Some(Frame {
             width: built.width,
             height: built.height,
             pixels: Pixels::Resident(built),
-            reduced: if halving { 2 } else { 1 },
+            reduced,
             as_shot,
             noise,
             // A window is handed the photograph's list rather than finding one, and its sigma for
@@ -1593,6 +1561,7 @@ impl Held {
             neutral_ceiling: neutral_ceiling_of(colour.ceiling),
             wb_gains: colour.ceiling,
             stated_white: None,
+            cfa: Some(cfa),
         })
     }
 
@@ -1646,7 +1615,7 @@ impl Held {
         let mosaic = &mut self.mosaic;
 
         // Reduced where the caller said a smaller frame would do, or asked for it outright, which
-        // skips the demosaic.
+        // skips the demosaic everywhere but under the upscaler (`demosaic_at`).
         //
         // **Any crop origin reduces.** `pixel_of_reduced` asks `colour_at` for every photosite it
         // touches, and any 2x2 of a Bayer pattern or 3x3 of an X-Trans one holds every colour
@@ -1662,13 +1631,14 @@ impl Held {
         // Nothing upstream predicts the answer: this route reports the frame it built and the
         // caller reads its dimensions. The loupe's route cannot say the same - `view::Scale` sizes
         // the window a caller asked for - so that one still takes the demosaic on a 6x6 pattern.
-        //
-        // Decided ahead of the denoise, which the upscaler leaves to the demosaic this skips.
+        let detail = detail.on_bayer(cfa.is_bayer());
         let by = reduction(&cfa).unwrap_or(1);
         let would_serve =
             at_least_long_edge > 0 && (width.max(height) / by) as u32 >= at_least_long_edge;
-        let reduces = by > 1 && (would_serve || force_half);
-        let detail = upscalable(detail, &cfa, !reduces);
+        let reduced = match by > 1 && (would_serve || force_half) {
+            true => by,
+            false => 1,
+        };
 
         // **Above the denoise, so the shadow is gone before anything tries to preserve it**, and
         // because the detection's own noise floor is the sensor's rather than what a filter left.
@@ -1786,62 +1756,34 @@ impl Held {
         // on it.
         //
         // The turn is part of the write the demosaic's tiles make, so what a tile lands is already
-        // where it belongs in the upright frame. Only the reduced path, which skips the demosaic
-        // outright, still turns the frame afterwards.
-        let built = match reduces {
-            true => {
-                let (gpu, rcd) =
-                    gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-                let crop = (
-                    crop.0 / by,
-                    crop.1 / by,
-                    reduced_span(crop.2, by),
-                    reduced_span(crop.3, by),
-                );
-                reduced_into(
-                    gpu,
-                    rcd,
-                    &mosaic,
-                    crop,
-                    width,
-                    colour,
-                    seen,
-                    orientation_code(upright),
-                    &cfa,
-                )
-                .await?
-            }
-            false => {
-                let (gpu, rcd) =
-                    gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-                let (frame_w, frame_h) = (mosaic.width, mosaic.height);
-                demosaic_detailed(
-                    gpu,
-                    rcd,
-                    mosaic,
-                    (0, 0),
-                    (frame_w, frame_h),
-                    &cfa,
-                    crop,
-                    colour,
-                    seen,
-                    orientation_code(upright),
-                    detail,
-                    noise,
-                )
-                .await?
-            }
-        };
+        // where it belongs in the upright frame. Only a reduction read straight off the mosaic,
+        // which skips the demosaic, still turns the frame afterwards.
+        let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
+        let (frame_w, frame_h) = (mosaic.width, mosaic.height);
+        let built = demosaic_at(
+            gpu,
+            rcd,
+            mosaic,
+            (0, 0),
+            (frame_w, frame_h),
+            &cfa,
+            crop,
+            colour,
+            seen,
+            orientation_code(upright),
+            detail,
+            noise,
+            reduced,
+        )
+        .await?;
+
         lap("demosaic, colour, crop, orient");
 
         Some(Frame {
             width: built.width,
             height: built.height,
             pixels: Pixels::Resident(built),
-            reduced: match reduces {
-                true => by,
-                false => 1,
-            },
+            reduced,
             as_shot,
             noise,
             dust: spots,
@@ -1849,6 +1791,7 @@ impl Held {
             neutral_ceiling: neutral_ceiling_of(colour.ceiling),
             wb_gains: colour.ceiling,
             stated_white: None,
+            cfa: Some(cfa),
         })
     }
 }
@@ -2166,9 +2109,7 @@ async fn demosaic_detailed(
     detail: crate::galosh::Detail,
     noise: Option<crate::galosh::NoiseFit>,
 ) -> Option<crate::resident::Resident> {
-    // Both sliders at 0 are the input as it was, which is the plain demosaic.
-    if detail.denoiser == crate::galosh::Denoiser::Upscaler && detail.amounts(noise).does_anything()
-    {
+    if upscales(detail, noise) {
         let upscaler = crate::upscale::device(gpu);
         let photo = match (upscaler, noise) {
             (Some(upscaler), Some(fit)) => upscaler
@@ -2183,7 +2124,6 @@ async fn demosaic_detailed(
                 );
                 None
             }
-            // `declined_galosh` has already said why there is no fit.
             (_, None) => None,
         };
         if let (Some(upscaler), Some(photo)) = (upscaler, photo) {
@@ -2207,17 +2147,74 @@ async fn demosaic_detailed(
     demosaic_in_tiles(gpu, rcd, mosaic, cfa, crop, colour, seen, orientation).await
 }
 
-/// `detail` as a decode that `demosaics` at the sensor's size over `cfa` can carry it out: the
-/// upscaler takes a Bayer mosaic, and only a demosaic has an upscale to take back down.
-fn upscalable(
-    detail: crate::galosh::Detail,
+/// Whether [`demosaic_detailed`] takes the upscaler: without a fit `declined_galosh` has already said
+/// why, and both sliders at 0 are the input as it was, which is the plain demosaic.
+fn upscales(detail: crate::galosh::Detail, noise: Option<crate::galosh::NoiseFit>) -> bool {
+    detail.denoiser == crate::galosh::Denoiser::Upscaler
+        && noise.is_some()
+        && detail.amounts(noise).does_anything()
+}
+
+/// [`demosaic_detailed`], or at `by` > 1 a pixel per `by`x`by` site of `crop`: read straight off the
+/// mosaic, or under the upscaler boxed down from its full-size demosaic over the same sites.
+#[allow(clippy::too_many_arguments)]
+async fn demosaic_at(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &'static crate::demosaic::Rcd,
+    mosaic: &crate::condition::Mosaic,
+    origin: (usize, usize),
+    frame: (usize, usize),
     cfa: &crate::cfa::Cfa,
-    demosaics: bool,
-) -> crate::galosh::Detail {
-    match demosaics && cfa.is_bayer() {
-        true => detail,
-        false => detail.without_upscaler(),
+    crop: (usize, usize, usize, usize),
+    colour: crate::demosaic::Colour,
+    seen: crate::highlight::Seen<'_>,
+    orientation: u32,
+    detail: crate::galosh::Detail,
+    noise: Option<crate::galosh::NoiseFit>,
+    by: usize,
+) -> Option<crate::resident::Resident> {
+    let detailed = |crop| {
+        demosaic_detailed(
+            gpu,
+            rcd,
+            mosaic,
+            origin,
+            frame,
+            cfa,
+            crop,
+            colour,
+            seen,
+            orientation,
+            detail,
+            noise,
+        )
+    };
+    if by == 1 {
+        return detailed(crop).await;
     }
+    let sites = (
+        crop.0 / by,
+        crop.1 / by,
+        reduced_span(crop.2, by),
+        reduced_span(crop.3, by),
+    );
+    if !upscales(detail, noise) {
+        return reduced_into(
+            gpu,
+            rcd,
+            mosaic,
+            sites,
+            mosaic.width,
+            colour,
+            seen,
+            orientation,
+            cfa,
+        )
+        .await;
+    }
+    let full = detailed((sites.0 * by, sites.1 * by, sites.2 * by, sites.3 * by)).await?;
+    let base = crate::base::device(gpu)?;
+    crate::base::resize_scene(gpu, base, &full, (full.width / by, full.height / by))
 }
 
 /// How far past a tile the demosaic at twice the size and the halving after it read, in the photo's
@@ -2859,6 +2856,23 @@ pub fn camera_to_rec2020_at(path: &str) -> Option<[[f32; 3]; 3]> {
         .raw_image(&source, &rawler::decoders::RawDecodeParams::default(), true)
         .ok()?;
     camera_to_rec2020(&image)
+}
+
+/// Whether the file at `path` is a Bayer mosaic, which the upscaler takes, without decoding a
+/// photosite.
+pub fn upscalable_at(path: &str) -> bool {
+    let image = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path))
+        .ok()
+        .and_then(|source| {
+            let decoder = rawler::get_decoder(&source).ok()?;
+            decoder
+                .raw_image(&source, &rawler::decoders::RawDecodeParams::default(), true)
+                .ok()
+        });
+    image
+        .as_ref()
+        .and_then(cfa_of)
+        .is_some_and(|cfa| cfa.is_bayer())
 }
 
 fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {

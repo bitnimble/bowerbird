@@ -790,13 +790,21 @@ impl Detail {
         Detail { denoiser, ..self }
     }
 
-    /// What a decode the upscaler cannot serve denoises with: a frame read a 2x2 site to a pixel or
-    /// merged from a pixel-shift burst has no upscale to take back down, and an X-Trans one no
-    /// Bayer mosaic to upscale, so those take GALOSH at the frame's own amounts in its place.
+    /// What a decode the upscaler cannot serve denoises with: a frame merged from a pixel-shift
+    /// burst has no upscale to take back down, and an X-Trans one no Bayer mosaic to upscale, so
+    /// those take GALOSH at the frame's own amounts in its place.
     pub fn without_upscaler(self) -> Detail {
         match self.denoiser {
             Denoiser::Upscaler => Detail::AUTO,
             _ => self,
+        }
+    }
+
+    /// This as a decode over a mosaic that is or is not a Bayer one carries it out.
+    pub fn on_bayer(self, bayer: bool) -> Detail {
+        match bayer {
+            true => self,
+            false => self.without_upscaler(),
         }
     }
 

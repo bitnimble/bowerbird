@@ -95,4 +95,5 @@ export const RawEditPanelStrings = {
   denoiserGalosh: () => 'Fast (GALOSH)',
   denoiserPmrid: () => 'Quality (PMRID)',
   denoiserUpscaler: () => 'Best',
+  denoiserUpscalerUnavailable: () => 'Not available for X-Trans sensors',
 };

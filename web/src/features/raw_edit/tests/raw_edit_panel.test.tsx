@@ -69,6 +69,7 @@ function open(
     darkRef: [0, 0, 0, 0],
   },
   mosaic = true,
+  upscalable = true,
 ): {
   calls: { name: string; value: unknown }[];
   stage: StageStore;
@@ -91,6 +92,7 @@ function open(
   stage.detail = status === 'live' ? [24, 76] : null;
   stage.noiseFit = noiseFit;
   stage.mosaic = mosaic;
+  stage.upscalable = upscalable;
   const { presenter, calls } = recording();
   render(
     <RawEditPanel
@@ -405,6 +407,23 @@ describe('the edit panel', () => {
     open({ denoiser: 'galosh', sharpening: null });
     expect(screen.getByRole('slider', { name: 'Sharpening' }).getAttribute('aria-valuenow')).toBe(
       '50',
+    );
+  });
+
+  test('offers the upscaler only over a Bayer mosaic', () => {
+    const best = (): HTMLElement => {
+      fireEvent.click(screen.getByRole('combobox', { name: RawEditPanelStrings.denoiser() }));
+      return screen.getByRole('option', { name: RawEditPanelStrings.denoiserUpscaler() });
+    };
+    open();
+    expect(best().getAttribute('aria-disabled')).toBeNull();
+    cleanup();
+
+    open({}, null, false, 'live', undefined, true, false);
+    const option = best();
+    expect(option.getAttribute('aria-disabled')).toBe('true');
+    expect(option.getAttribute('aria-description')).toBe(
+      RawEditPanelStrings.denoiserUpscalerUnavailable(),
     );
   });
 

@@ -349,15 +349,26 @@ const ColourProfileChoice = observer(function ColourProfileChoice({
 
 const DenoiserChoice = observer(function DenoiserChoice({
   edit,
+  stage,
   presenter,
 }: {
   edit: EditStore;
+  stage: StageStore;
   presenter: RawEditPresenter;
 }): JSX.Element {
+  const options = DENOISERS.map((option) =>
+    option.value === 'upscaler' && !stage.upscalable
+      ? {
+          ...option,
+          disabled: true,
+          tooltip: RawEditPanelStrings.denoiserUpscalerUnavailable(),
+        }
+      : option,
+  );
   return (
     <SelectControl
       label={RawEditPanelStrings.denoiser()}
-      options={DENOISERS}
+      options={options}
       value={edit.denoiser}
       onChange={presenter.setDenoiser}
     />
@@ -514,7 +525,9 @@ export const RawEditPanel = observer(function RawEditPanel({
         'detail',
         RawEditPanelStrings.groupDetail(),
         <>
-          {stage.mosaic && stage.denoises && <DenoiserChoice edit={edit} presenter={presenter} />}
+          {stage.mosaic && stage.denoises && (
+            <DenoiserChoice edit={edit} stage={stage} presenter={presenter} />
+          )}
           {sliders(
             DETAIL.filter(
               (spec) =>

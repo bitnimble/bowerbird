@@ -924,6 +924,7 @@ describe('the level a zoom is served at', () => {
         matched: true,
         cameraMatch: 'lensAndColour',
         mosaic: false,
+        upscalable: false,
         asShot: null,
         detail: [0, 0],
         cameraExposure: null,
