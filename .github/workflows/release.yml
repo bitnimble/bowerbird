@@ -642,7 +642,7 @@ jobs:
           service_account: ${{ vars.PLAY_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/androidpublisher
-      - run: bun run scripts/play-upload.ts dev.kumo.bowerbird play/*.aab internal
+      - run: bun run scripts/play-upload.ts photos.bowerbird play/*.aab internal
         env:
           PLAY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
 

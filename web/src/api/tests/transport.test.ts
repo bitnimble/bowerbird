@@ -36,8 +36,8 @@ describe('the app data folder', () => {
   });
 
   test('is what the shell answers', async () => {
-    const shell = shellAnswering('/home/reader/.local/share/dev.kumo.bowerbird');
-    expect(await appDataDir()).toBe('/home/reader/.local/share/dev.kumo.bowerbird');
+    const shell = shellAnswering('/home/reader/.local/share/photos.bowerbird');
+    expect(await appDataDir()).toBe('/home/reader/.local/share/photos.bowerbird');
     await openAppDataDir();
     expect(shell.asked()).toEqual(['app_data_dir', 'open_app_data_dir']);
   });

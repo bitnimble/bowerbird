@@ -1,7 +1,7 @@
 {
   "$schema": "../web/node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Bowerbird",
-  "identifier": "dev.kumo.bowerbird",
+  "identifier": "photos.bowerbird",
   "build": {
     "frontendDist": ["placeholder.html"],
     "beforeBuildCommand": "bun run --cwd web build"
