@@ -12,8 +12,9 @@
 // (`models/net_torch.py`), so a scan for those two strings, paired in order and checked against
 // the shape's element count, recovers the whole of it.
 //
-// The upscaler's are `models/upscaler`'s `export`, fetched as written. `--from <dir>` takes them
-// from a folder instead, held to the same hashes: a training run's own `runs/<name>/`.
+// The upscaler's are `models/upscaler`'s `export`, published as `upscaler.json` and `upscaler.bin`
+// beside the project's other models. `--from <dir>` takes them from a folder as `export` names them
+// instead, held to the same hashes: a training run's own `runs/<name>/`.
 
 import { type Unzipped, unzipSync } from 'fflate';
 import { createHash } from 'node:crypto';
@@ -31,12 +32,22 @@ const PMRID_RECIPE = pin(CHECKPOINT, [
 ]);
 const PMRID_HOME = pinnedHome('pmrid', PMRID_RECIPE);
 
-const UPSCALER_REPOSITORY = 'https://huggingface.co/bowerbird/upscaler/resolve/main';
+const REPOSITORY = 'https://huggingface.co/bitnimble/bowerbird/resolve/main';
+/** Each file of the tree, by the name the repository holds it under and its hash. */
 const UPSCALER_FILES = {
-  'weights.json': '300e1488b2b90219f9eeb9d5d937f198f96df5ec8b20315b1e60967b80f757a9',
-  'weights.bin': '85fe4e140ad548293a160b401c213ea3c8f058757661b0ca09701e9ebd60877a',
+  'weights.json': {
+    remote: 'upscaler.json',
+    sha256: '300e1488b2b90219f9eeb9d5d937f198f96df5ec8b20315b1e60967b80f757a9',
+  },
+  'weights.bin': {
+    remote: 'upscaler.bin',
+    sha256: '85fe4e140ad548293a160b401c213ea3c8f058757661b0ca09701e9ebd60877a',
+  },
 } as const;
-const UPSCALER_RECIPE = pin(UPSCALER_REPOSITORY, Object.values(UPSCALER_FILES));
+const UPSCALER_RECIPE = pin(
+  REPOSITORY,
+  Object.values(UPSCALER_FILES).flatMap(({ remote, sha256 }) => [remote, sha256]),
+);
 const UPSCALER_HOME = pinnedHome('upscaler', UPSCALER_RECIPE);
 
 const PICKLE = 'archive/data.pkl';
@@ -178,17 +189,14 @@ async function getUpscaler(from: string | null): Promise<void> {
   if (!alreadyPinned(UPSCALER_HOME, UPSCALER_RECIPE)) {
     const fetched = new Map<UpscalerFile, Uint8Array>();
     for (const name of Object.keys(UPSCALER_FILES) as UpscalerFile[]) {
+      const { remote, sha256 } = UPSCALER_FILES[name];
+      const source = from == null ? `${REPOSITORY}/${remote}` : resolve(from, name);
       const bytes =
         from == null
-          ? new Uint8Array(
-              await (await fetchPinned(`${UPSCALER_REPOSITORY}/${name}`)).arrayBuffer(),
-            )
-          : new Uint8Array(readFileSync(resolve(from, name)));
+          ? new Uint8Array(await (await fetchPinned(source)).arrayBuffer())
+          : new Uint8Array(readFileSync(source));
       const got = createHash('sha256').update(bytes).digest('hex');
-      if (got !== UPSCALER_FILES[name])
-        throw new Error(
-          `${name} from ${from ?? UPSCALER_REPOSITORY} hashes ${got}, not the pinned ${UPSCALER_FILES[name]}`,
-        );
+      if (got !== sha256) throw new Error(`${source} hashes ${got}, not the pinned ${sha256}`);
       fetched.set(name, bytes);
     }
     makeOnce(UPSCALER_HOME, UPSCALER_RECIPE, false, () => {
