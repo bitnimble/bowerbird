@@ -56,12 +56,11 @@ def datasets(
     """The training pairs of the RAW files `data` names, cached and made first where they aren't,
     and the held-out pairs.
 
-    Targets are the photos at `CLEAN_ISO` or under, whose texture no denoise has taken, each given the
-    noise of a photo drawn from every ISO. Held out: those photos with the noise of photos under and
-    over `HIGH_ISO`, and the photos over it with their own noise, whose targets are denoised."""
+    Targets are every detailed crop of the photos at `CLEAN_ISO` or under, whose texture no denoise
+    has taken, each given the noise of a photo drawn from every ISO. Held out: those photos with the
+    noise of photos under and over `HIGH_ISO`, and the photos over it with their own noise, whose
+    targets are denoised."""
     raws = sources(data)
-    prepare(raws, cache, workers)
-    make_pairs(cache, raws, workers, inputs, targets)
     iso = isos(data)
 
     def clean(source: str) -> bool:
@@ -69,6 +68,9 @@ def datasets(
 
     def high(source: str) -> bool:
         return iso.get(source, 0) >= HIGH_ISO
+
+    prepare(raws, cache, workers, lambda raw: clean(str(raw)))
+    make_pairs(cache, raws, workers, inputs, targets, lambda source, held_out: clean(source) or (held_out and high(source)))
 
     low_noises = noise_fits(cache, raws, lambda s: not high(s))
     high_noises = noise_fits(cache, raws, high)
@@ -94,8 +96,16 @@ def noise_fits(cache: Path, raws: list[Path], keep: Callable[[str], bool]) -> li
     ]
 
 
-def make_pairs(cache: Path, raws: list[Path], workers: int, inputs: Inputs, targets: Targets) -> None:
-    held = [record for split in (False, True) for record in records(cache, raws, split)]
+def make_pairs(
+    cache: Path, raws: list[Path], workers: int, inputs: Inputs, targets: Targets, used: Callable[[str, bool], bool]
+) -> None:
+    """Makes pairs for the cached photos `used` admits, by source and whether it's held out."""
+    held = [
+        (path, record)
+        for held_out in (False, True)
+        for path, record in records(cache, raws, held_out)
+        if used(record["source"], held_out)
+    ]
     without_targets = [path for path, record in held if not complete_targets(path, record["crops"], targets)]
     print(f"pairs: {len(without_targets)} photos without {targets.name} targets", flush=True)
     each_with_pmrid(partial(make_targets, targets=targets), without_targets, workers, cache / ".scratch", "targets")

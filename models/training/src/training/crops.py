@@ -5,12 +5,15 @@ import csv
 import hashlib
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from training.files import write_atomic
+from training.metrics import detail
+from training.mosaic import pack, stabilise
 from training.pmrid import Opened, Unreadable, each_with_pmrid, pmrid
 
 DEFAULT_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "bowerbird" / "denoised-crops"
@@ -21,9 +24,14 @@ RAW_SUFFIXES = {
 }  # fmt: skip
 
 CROP = 512
-CROPS_PER_PHOTO = 8
+CAPPED_CROPS = 8
 MAX_CLIPPED_SHARE = 0.1
-MIN_DETAIL_SHARE = 0.5
+DETAIL_CUTOFF = 0.25
+"""Cycles a plane pixel: past it lies what only a 2x upscale can put there."""
+DETAIL_FLOOR = 0.0018
+"""Mean amplitude past `DETAIL_CUTOFF` of a crop's stabilised planes, chosen by eye: under it a crop is
+flat or out of focus, with nothing for an upscale to learn from."""
+SELECTION = f"amplitude past {DETAIL_CUTOFF} at least {DETAIL_FLOOR}"
 VALIDATION_ONE_IN = 50
 
 
@@ -43,12 +51,21 @@ def isos(data: Path) -> dict[str, float]:
         return {row["path"]: float(row["iso"]) for row in csv.DictReader(f)}
 
 
-def prepare(raws: list[Path], cache: Path, workers: int) -> None:
+def prepare(raws: list[Path], cache: Path, workers: int, uncapped: Callable[[Path], bool]) -> None:
+    """Caches each of `raws`, keeping every crop with detail of those `uncapped` admits and the
+    `CAPPED_CROPS` most detailed of the rest. An uncapped photo cached by another selection is cached
+    again."""
     cache.mkdir(parents=True, exist_ok=True)
     present = [p for p in raws if p.exists()]
-    pending = [p for p in present if not (cache / f"{key(p)}.json").exists()]
-    print(f"prepare: {len(raws)} RAW files, {len(raws) - len(present)} missing, {len(pending)} not yet cached", flush=True)
-    each_with_pmrid(prepare_one, [(p, cache) for p in pending], workers, cache / ".scratch", "prepare")
+    pending = [(p, uncapped(p)) for p in present if stale(cache / f"{key(p)}.json", uncapped(p))]
+    print(f"prepare: {len(raws)} RAW files, {len(raws) - len(present)} missing, {len(pending)} to cache", flush=True)
+    each_with_pmrid(prepare_one, [(p, cache, whole) for p, whole in pending], workers, cache / ".scratch", "prepare")
+
+
+def stale(record_path: Path, uncapped: bool) -> bool:
+    if not record_path.exists():
+        return True
+    return uncapped and json.loads(record_path.read_text()).get("selection") != SELECTION
 
 
 def key(path: Path) -> str:
@@ -56,10 +73,14 @@ def key(path: Path) -> str:
     return hashlib.sha1(f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()
 
 
-def prepare_one(job: tuple[Path, Path]) -> str:
-    path, cache = job
+def prepare_one(job: tuple[Path, Path, bool]) -> str:
+    path, cache, uncapped = job
+    torch.set_num_threads(2)
     name = key(path)
-    record: dict[str, object] = {"source": str(path), "crops": 0}
+    # Pairs made from the crops this replaces would otherwise pass for this photo's if the count matched.
+    for derived in cache.glob(f"{name}.*-crops"):
+        derived.unlink()
+    record: dict[str, object] = {"source": str(path), "crops": 0, "selection": SELECTION}
     try:
         opened = pmrid().open(path)
     except Unreadable as error:
@@ -69,7 +90,7 @@ def prepare_one(job: tuple[Path, Path]) -> str:
             # Undenoised, so its targets would hold the noise its inputs are made without.
             record["skipped"] = "no usable noise fit"
         else:
-            corners = sharp_crops(opened)
+            corners = sharp_crops(opened, None if uncapped else CAPPED_CROPS)
             if corners:
                 crops = np.stack([opened.mosaic[y : y + CROP, x : x + CROP] for y, x in corners])
                 write_atomic(cache / f"{name}.npy", lambda f: np.save(f, crops.astype(np.float16)))
@@ -78,30 +99,23 @@ def prepare_one(job: tuple[Path, Path]) -> str:
     return "skipped" if "skipped" in record else f"{record['crops']} crops"
 
 
-def sharp_crops(opened: Opened) -> list[tuple[int, int]]:
-    """Corners of the non-overlapping crops with the most detail, clipped ones left out."""
+def sharp_crops(opened: Opened, limit: int | None) -> list[tuple[int, int]]:
+    """Corners of the non-overlapping crops of at least `DETAIL_FLOOR` detail, most detailed first and
+    at most `limit` of them, clipped ones left out."""
     mosaic = opened.mosaic
     ceilings = np.tile(opened.gains[[[0, 1], [1, 2]]] * 0.999, (CROP // 2, CROP // 2))
-    green = np.sqrt(np.clip(0.5 * (mosaic[0::2, 1::2] + mosaic[1::2, 0::2]), 0, None))
-    # Detail at a quarter of the mosaic's resolution, where photosite noise has mostly averaged out.
-    quarter = green[: green.shape[0] // 2 * 2, : green.shape[1] // 2 * 2]
-    quarter = quarter.reshape(quarter.shape[0] // 2, 2, quarter.shape[1] // 2, 2).mean((1, 3))
-    laplacian = np.abs(
-        4 * quarter[1:-1, 1:-1] - quarter[:-2, 1:-1] - quarter[2:, 1:-1] - quarter[1:-1, :-2] - quarter[1:-1, 2:]
-    )
-    side = CROP // 4
     scored = []
     for y in range(0, mosaic.shape[0] - CROP + 1, CROP):
         for x in range(0, mosaic.shape[1] - CROP + 1, CROP):
-            if (mosaic[y : y + CROP, x : x + CROP] >= ceilings).mean() > MAX_CLIPPED_SHARE:
+            crop = mosaic[y : y + CROP, x : x + CROP]
+            if (crop >= ceilings).mean() > MAX_CLIPPED_SHARE:
                 continue
-            detail = laplacian[y // 4 : y // 4 + side - 2, x // 4 : x // 4 + side - 2].mean()
-            scored.append((float(detail), y, x))
-    if not scored:
-        return []
+            planes = stabilise(pack(torch.from_numpy(np.ascontiguousarray(crop))[None, None]))
+            amplitude = float(detail(planes, DETAIL_CUTOFF)) / planes.numel()
+            if amplitude >= DETAIL_FLOOR:
+                scored.append((amplitude, y, x))
     scored.sort(reverse=True)
-    floor = scored[0][0] * MIN_DETAIL_SHARE
-    return [(y, x) for detail, y, x in scored[:CROPS_PER_PHOTO] if detail >= floor]
+    return [(y, x) for _, y, x in scored[:limit]]
 
 
 def records(cache: Path, raws: list[Path], validation: bool) -> Iterator[tuple[Path, dict]]:

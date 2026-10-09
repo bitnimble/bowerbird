@@ -20,8 +20,6 @@ from training.mosaic import (
 
 
 PRELU_INITIAL_SLOPE = 0.25
-MULTISCALE_ENCODER_BLOCKS = (2, 3, 4)
-MULTISCALE_DECODER_BLOCKS = (2, 2)
 
 
 class Upscaler(nn.Module):
@@ -37,19 +35,22 @@ class Upscaler(nn.Module):
 
 
 class MultiScale(nn.Module):
-    """`Upscaler`'s mapping, through a body at full, half and quarter plane resolution, `channels` wide
-    at full and doubling at each halving; h and w must be multiples of 4."""
+    """`Upscaler`'s mapping, through a body at a level of plane resolution for each of
+    `encoder_blocks`, halving from full, `channels` wide at full and doubling at each halving; h and w
+    must be multiples of 2 ** (levels - 1). `decoder_blocks` holds one count fewer, from full."""
 
-    def __init__(self, channels: int) -> None:
+    def __init__(self, channels: int, encoder_blocks: list[int], decoder_blocks: list[int]) -> None:
         super().__init__()
-        widths = [channels * 2**level for level in range(len(MULTISCALE_ENCODER_BLOCKS))]
+        if len(decoder_blocks) != len(encoder_blocks) - 1:
+            raise ValueError(f"{len(encoder_blocks)} levels need {len(encoder_blocks) - 1} decoder counts")
+        widths = [channels * 2**level for level in range(len(encoder_blocks))]
         self.encoders = nn.ModuleList(
             nn.Sequential(*stage(given, width, blocks))
-            for given, width, blocks in zip([4, *widths[:-1]], widths, MULTISCALE_ENCODER_BLOCKS)
+            for given, width, blocks in zip([4, *widths[:-1]], widths, encoder_blocks)
         )
         self.rises = nn.ModuleList(nn.Conv2d(widths[level + 1], widths[level], 1) for level in range(len(widths) - 1))
         self.decoders = nn.ModuleList(
-            nn.Sequential(*stage(width, width, blocks - 1)) for width, blocks in zip(widths, MULTISCALE_DECODER_BLOCKS)
+            nn.Sequential(*stage(width, width, blocks - 1)) for width, blocks in zip(widths, decoder_blocks)
         )
         self.out = nn.Conv2d(channels, 4 * 4, 3, padding=1)
         initialise(self, zeroed=[*self.rises, self.out])
@@ -90,7 +91,7 @@ def initialise(net: nn.Module, zeroed: list[nn.Conv2d]) -> None:
 
 def build(plan: dict) -> nn.Module:
     if plan.get("arch") == "multiscale":
-        return MultiScale(plan["channels"])
+        return MultiScale(plan["channels"], plan["encoder_blocks"], plan["decoder_blocks"])
     return Upscaler(plan["channels"], plan["blocks"])
 
 

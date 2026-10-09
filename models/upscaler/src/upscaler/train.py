@@ -52,8 +52,10 @@ class Planes(NamedTuple):
 def main() -> None:
     parser = arguments("Train the 2x RAW mosaic upscaler.")
     parser.add_argument("--channels", type=int, default=48)
-    parser.add_argument("--blocks", type=int, default=16, help="the plain body's; the multiscale body's are fixed")
+    parser.add_argument("--blocks", type=int, default=16, help="the plain body's")
     parser.add_argument("--arch", choices=("plain", "multiscale"), default="plain")
+    parser.add_argument("--encoder", type=counts, default=[2, 3, 4], help="the multiscale body's blocks a level, from full")
+    parser.add_argument("--decoder", type=counts, default=[2, 2], help="the multiscale body's, 1 level fewer")
     parser.add_argument("--texture", type=float, default=0, help="weight of the amplitude spectrum loss")
     parser.add_argument("--edges", type=float, default=0, help="weight of the edge loss")
     parser.add_argument("--targets", choices=TARGETS, default="plain")
@@ -92,7 +94,10 @@ def main() -> None:
             )
 
     plan = {"channels": args.channels, "stabiliser": FIT_STABILISER, "targets": args.targets}
-    plan |= {"arch": "multiscale"} if args.arch == "multiscale" else {"blocks": args.blocks}
+    if args.arch == "multiscale":
+        plan |= {"arch": "multiscale", "encoder_blocks": args.encoder, "decoder_blocks": args.decoder}
+    else:
+        plan |= {"blocks": args.blocks}
     train(
         build(plan).to(device, memory_format=torch.channels_last),
         loader(train_set, args.batch, args.workers),
@@ -103,12 +108,16 @@ def main() -> None:
         bf16=bf16,
         settings={
             name: getattr(args, name)
-            for name in ("steps", "batch", "channels", "blocks", "arch", "lr", "texture", "edges", "targets")
+            for name in ("steps", "batch", "channels", "blocks", "arch", "encoder", "decoder", "lr", "texture", "edges", "targets")
         },
         plan=plan,
         out=args.out,
         say=say,
     )
+
+
+def counts(text: str) -> list[int]:
+    return [int(count) for count in text.split(",")]
 
 
 def planes(low: torch.Tensor, high: torch.Tensor, sensors: torch.Tensor) -> Planes:
