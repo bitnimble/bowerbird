@@ -144,12 +144,10 @@ pub const LUMINANCE: f64 = 75.0;
 
 /// A Luminance position as how much of the network's light to keep and the share of the photo's
 /// noise variance to add as grain, together leaving `1 - luminance / 100` of its noise.
-///
-/// Below [`LUMINANCE`] the light blends back toward the input, whose own noise comes with it as the
-/// blend's square; grain makes up the rest.
 fn light_of(luminance: f64) -> (f64, f64) {
     let share = 1.0 - luminance / 100.0;
     let towards_input = ((LUMINANCE - luminance) / LUMINANCE).clamp(0.0, 1.0);
+    // The input's noise arrives as the blend's square, not the blend.
     let grain = (share - towards_input * towards_input).max(0.0);
     (1.0 - towards_input, grain)
 }
