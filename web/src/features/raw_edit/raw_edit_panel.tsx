@@ -127,17 +127,22 @@ const EditSlider = observer(function EditSlider({
   disabled?: boolean;
 }): JSX.Element {
   const stored = edit.doc?.[spec.key];
-  const followsPhoto = spec.measured === true;
-  // Where the photograph answers for itself, "untouched" is the document holding nothing rather
-  // than the document holding a particular number - so the reset arrow goes back to null and the
-  // row goes on following the frame.
-  const measured = followsPhoto ? stage.measured?.[spec.key] : undefined;
-  const neutral = measured == null ? (spec.neutral ?? 0) : snapped(measured, spec);
+  const follows = spec.follows != null;
+  // Where something else answers for the slider, "untouched" is the document holding nothing
+  // rather than the document holding a particular number - so the reset arrow goes back to null
+  // and the row goes on following it.
+  const followed =
+    spec.follows === 'photo'
+      ? stage.measured?.[spec.key]
+      : spec.follows === 'denoiser'
+        ? edit.denoiserDefaults[spec.key]
+        : undefined;
+  const neutral = followed == null ? (spec.neutral ?? 0) : snapped(followed, spec);
   const value = Number(stored ?? neutral);
-  const untouched = followsPhoto ? stored == null : value === neutral;
+  const untouched = follows ? stored == null : value === neutral;
   // Blank until the header lands: the measurement comes off it, and a number in its place would
   // state a value the module has not resolved - which is exactly what this row is here to stop.
-  const unknown = followsPhoto && stored == null && measured == null;
+  const unknown = follows && stored == null && followed == null;
   const shut = disabled === true || !stage.editable;
   const format = (at: number): string =>
     RawEditPanelStrings.valueWithUnit(reading(at, spec), spec.unit ?? '');
@@ -147,9 +152,7 @@ const EditSlider = observer(function EditSlider({
       label={spec.label}
       value={unknown ? '' : format(value)}
       reset={
-        shut || untouched
-          ? null
-          : () => presenter.settle({ [spec.key]: followsPhoto ? null : neutral })
+        shut || untouched ? null : () => presenter.settle({ [spec.key]: follows ? null : neutral })
       }
       typing={shut ? null : { ...spec, set: (typed) => presenter.settle({ [spec.key]: typed }) }}
     >

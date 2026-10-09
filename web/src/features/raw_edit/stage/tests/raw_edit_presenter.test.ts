@@ -15,6 +15,7 @@ import type { LocalPrepare } from '../../local_decode/local_open';
 import type { Region } from '../../edits';
 import type { PreparedHeader } from '../../../../../../src/schemas/prepared';
 import { withCameraMatch } from '../../../../../../src/schemas/edit_adjust';
+import { sharpeningOf } from '../../../../../../src/schemas/sharpening';
 import {
   IDENTITY_TONE_CURVE,
   neutralEdits,
@@ -309,7 +310,7 @@ describe('a slider reaching the picture', () => {
       colour: neutral.colourNoise,
       denoiser: 'pmrid',
       highlightRecovery: neutral.highlightRecovery,
-      sharpen: neutral.sharpening / 100,
+      sharpen: sharpeningOf(neutral.sharpening, 'pmrid') / 100,
       dust: {
         enabled: neutral.dustRemoval,
         sensitivity: neutral.dustSensitivity / 100,
@@ -433,6 +434,28 @@ describe('a slider reaching the picture', () => {
     await settled();
     expect(asked().at(-1)?.denoiser).toBe('galosh');
     expect(edit.doc?.denoiser).toBe('galosh');
+  });
+
+  test("an unmoved sharpening follows the denoiser's default, and a moved one stays put", async () => {
+    const asked = (): LocalPrepare[] =>
+      decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
+    const settled = async (): Promise<void> => {
+      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+    };
+
+    presenter.setDenoiser('upscaler');
+    await settled();
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpen: 0.35 });
+    expect(edit.doc?.sharpening).toBeNull();
+
+    presenter.setDenoiser('galosh');
+    await settled();
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'galosh', sharpen: 0.5 });
+
+    presenter.settle({ sharpening: 70 });
+    presenter.setDenoiser('upscaler');
+    await settled();
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpen: 0.7 });
   });
 
   /**

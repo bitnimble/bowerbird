@@ -140,6 +140,11 @@ export const ESTIMATED_MS: Record<RenderedRendition, Record<RenderStage, number>
   },
 };
 export const ESTIMATED_PMRID_DENOISE_MS = 30;
+/** The upscaler runs inside the demosaic's lap, leaving the denoise's the noise fit alone. */
+export const ESTIMATED_UPSCALER_MS: Partial<Record<RenderStage, number>> = {
+  denoise: 14,
+  demosaic: 360,
+};
 
 /** What this rendition's stages cost here, preferring what was measured to what was estimated. */
 export function stageMs(
@@ -147,10 +152,11 @@ export function stageMs(
   denoiser: Denoiser,
   measured: RenderTiming | undefined,
 ): Record<RenderStage, number> {
-  const estimated =
-    denoiser === 'pmrid'
-      ? { ...ESTIMATED_MS[rendition], denoise: ESTIMATED_PMRID_DENOISE_MS }
-      : ESTIMATED_MS[rendition];
+  const estimated = {
+    ...ESTIMATED_MS[rendition],
+    ...(denoiser === 'pmrid' ? { denoise: ESTIMATED_PMRID_DENOISE_MS } : {}),
+    ...(denoiser === 'upscaler' ? ESTIMATED_UPSCALER_MS : {}),
+  };
   if (measured == null) return estimated;
   const result = { ...estimated };
   for (const stage of RENDER_STAGES) result[stage] = measured.stages[stage] ?? estimated[stage];

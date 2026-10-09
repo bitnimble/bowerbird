@@ -11,12 +11,14 @@ import init, {
   holdPmridWeights,
   holdPrintEnvironment,
   holdRaw,
+  holdUpscalerWeights,
   pageDevice,
   releaseBuffers,
   renderRendition,
 } from '../../../native/rawshim/pkg/rawshim';
 import { pmridWeightsUrl } from '../../../native/rawshim/pkg/pmrid_weights';
 import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environments';
+import { upscalerWeightsUrl } from '../../../native/rawshim/pkg/upscaler_weights';
 import type { Environment } from '../features/raw_edit/print/print_scene';
 import { z } from 'zod';
 import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode/local_open';
@@ -52,7 +54,7 @@ const painter: Promise<StagePainter> = device.then((opened) => new StagePainter(
 const opens = new Map<number, Open>();
 /** An ask waiting out the warmth resumes after a close posted behind it, and would open it again. */
 const closed = new Set<number>();
-let weights: Promise<void> | null = null;
+const weights = new Map<Network, Promise<void>>();
 const environments = new Map<Environment, Promise<void>>();
 let lost: string | null = null;
 const stages = new KeptStages<KeptStage>(free);
@@ -545,27 +547,38 @@ async function eightBitPng(drawn: OffscreenCanvas): Promise<Blob> {
   return flat.convertToBlob();
 }
 
+type Network = Exclude<PrepareCrossing['denoiser'], 'galosh'>;
+
+const NETWORKS: Record<Network, { url: string; hold: (bytes: Uint8Array) => void }> = {
+  pmrid: { url: pmridWeightsUrl, hold: holdPmridWeights },
+  upscaler: { url: upscalerWeightsUrl, hold: holdUpscalerWeights },
+};
+
 /**
- * PMRID's weights, fetched once for the tab the first time a reader asks for that filter.
+ * A network's weights, fetched once for the tab the first time a reader asks for that filter.
  *
- * **Four megabytes the module does not carry**, so they are cached under a name of their own and a
+ * **Megabytes the module does not carry**, so they are cached under a name of their own and a
  * reader who stays on GALOSH never asks for them. Awaited before the prepare that needs them
  * rather than at startup: the module answers nothing until they are in, and an open on the other
  * filter should not wait for a download it will not read.
  */
 async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<void> {
-  if (denoiser !== 'pmrid') return;
-  weights ??= fetch(pmridWeightsUrl)
-    .then(async (answer) => {
-      if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
-      holdPmridWeights(new Uint8Array(await answer.arrayBuffer()));
-    })
-    .catch((why: unknown) => {
-      // Cleared, or the tab is stuck on one failed fetch for the rest of its life.
-      weights = null;
-      throw why;
-    });
-  await weights;
+  if (denoiser === 'galosh') return;
+  const { url, hold } = NETWORKS[denoiser];
+  const fetching =
+    weights.get(denoiser) ??
+    fetch(url)
+      .then(async (answer) => {
+        if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
+        hold(new Uint8Array(await answer.arrayBuffer()));
+      })
+      .catch((why: unknown) => {
+        // Cleared, or the tab is stuck on one failed fetch for the rest of its life.
+        weights.delete(denoiser);
+        throw why;
+      });
+  weights.set(denoiser, fetching);
+  await fetching;
 }
 
 /** A print environment's map, fetched once for the tab the first time a scene names it. */

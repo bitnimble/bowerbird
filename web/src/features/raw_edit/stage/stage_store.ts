@@ -113,7 +113,7 @@ export class StageStore {
 
   /**
    * What each slider the photograph answers for shows where the document holds null
-   * (`SliderSpec.measured`). Null until a frame is open.
+   * (`SliderSpec.follows`). Null until a frame is open.
    */
   @computed get measured(): Partial<Record<keyof EditDoc, number>> | null {
     const detail = this.detail;

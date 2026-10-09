@@ -98,6 +98,14 @@ describe('what a stage is said to cost', () => {
     expect({ ...pmrid, denoise: ESTIMATED_MS.full.denoise }).toEqual(ESTIMATED_MS.full);
   });
 
+  it("books the upscaler's work to the demosaic, where it runs", () => {
+    const upscaler = stageMs('full', 'upscaler', undefined);
+    expect(upscaler.demosaic).toBe(360);
+    expect(upscaler.denoise).toBe(14);
+    const { denoise, demosaic } = ESTIMATED_MS.full;
+    expect({ ...upscaler, denoise, demosaic }).toEqual(ESTIMATED_MS.full);
+  });
+
   it('prefers a measurement to an estimate, stage by stage rather than all or nothing', () => {
     const shown = stageMs('full', 'galosh', measured);
     expect(shown.colour).toBe(400);

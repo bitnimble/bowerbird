@@ -5,6 +5,7 @@ import {
   type EditDoc,
   type Illuminant,
 } from '../../../../../src/schemas/photo_edits';
+import { sharpeningOf } from '../../../../../src/schemas/sharpening';
 
 /** Whether a save is in flight, and whether the last one was refused. */
 export type SaveStatus = 'clean' | 'saving' | 'conflict' | 'failed';
@@ -47,6 +48,11 @@ export class EditStore {
 
   @computed get denoiser(): Denoiser {
     return this.doc?.denoiser ?? this.libraryDenoiser;
+  }
+
+  /** What each slider following the denoiser shows where the document holds null. */
+  @computed get denoiserDefaults(): Partial<Record<keyof EditDoc, number>> {
+    return { sharpening: sharpeningOf(null, this.denoiser) };
   }
 
   /**

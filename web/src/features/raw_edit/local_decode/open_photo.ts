@@ -7,6 +7,7 @@ import { settingsApi } from '../../../api/settings';
 import type { Settings, ViewerRendition } from '../../../../../src/schemas/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
+import { sharpeningOf } from '../../../../../src/schemas/sharpening';
 import { readPreparedHeader, type PreparedHeader } from '../../../../../src/schemas/prepared';
 import type { OpenStep } from '../stage/stage_store';
 import type { LocalDecoder } from './local_decoder';
@@ -307,14 +308,15 @@ export function prepareOf(doc: EditDoc | undefined, libraryDenoiser: Denoiser): 
   // Spelled rather than read off the schema, as `dustSettings` spells its pair: that module imports
   // zod, and the page keeps zod out of its bundle (`photo_edits.ts` says so, and every other import
   // of it on this side is a type).
+  const denoiser = doc?.denoiser ?? libraryDenoiser;
   return {
     luminance: doc?.luminanceNoise ?? null,
     colour: doc?.colourNoise ?? null,
-    denoiser: doc?.denoiser ?? libraryDenoiser,
+    denoiser,
     highlightRecovery: doc?.highlightRecovery ?? 100,
     // A fraction of the deconvolution where the document holds a slider position, which is the
     // unit the module reads it in and the same conversion `developed` makes for a rendition.
-    sharpen: (doc?.sharpening ?? 50) / 100,
+    sharpen: sharpeningOf(doc?.sharpening ?? null, denoiser) / 100,
     dust: dustSettings(doc),
     repairs: doc?.repairs ?? [],
   };

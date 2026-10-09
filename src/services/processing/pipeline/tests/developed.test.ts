@@ -48,4 +48,12 @@ describe('developed', () => {
     expect(developed(JSON.stringify({ denoiser: 'galosh' }), 'pmrid').denoiser).toBe('galosh');
     expect(developed(JSON.stringify({ denoiser: 'pmrid' }), 'galosh').denoiser).toBe('pmrid');
   });
+
+  it("sharpens an unmoved slider at the effective denoiser's default", () => {
+    expect(developed(JSON.stringify({ denoiser: 'upscaler' }), 'galosh').sharpen).toBeCloseTo(0.35);
+    expect(developed(JSON.stringify({ sharpening: null }), 'upscaler').sharpen).toBeCloseTo(0.35);
+    expect(developed(null, 'upscaler').sharpen).toBeCloseTo(0.35);
+    expect(developed(JSON.stringify({ denoiser: 'galosh' }), 'upscaler').sharpen).toBeCloseTo(0.5);
+    expect(developed(JSON.stringify({ sharpening: 60 }), 'upscaler').sharpen).toBeCloseTo(0.6);
+  });
 });

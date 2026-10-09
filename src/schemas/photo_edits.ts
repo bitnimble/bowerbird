@@ -32,7 +32,7 @@ export const TINT = { min: -150, max: 150 };
 export const ColourProfileSchema = z.enum(['matched', 'none']);
 export type ColourProfile = z.infer<typeof ColourProfileSchema>;
 
-export const DenoiserSchema = z.enum(['galosh', 'pmrid']);
+export const DenoiserSchema = z.enum(['galosh', 'pmrid', 'upscaler']);
 export type Denoiser = z.infer<typeof DenoiserSchema>;
 
 /** PCHIP on u = cbrt(luma / diffuse white) / 2, flat below and tangent-linear above; top is +3 stops. */
@@ -209,10 +209,11 @@ export const EditDocSchema = z
 
     // The capture sharpening beside them, and a position rather than a strength for the same
     // reason: 50 is the deconvolution as computed and 100 twice its difference from the frame
-    // (`image::SHARPEN_GAIN`), which is a gain rather than a unit in anything. The default is
-    // the deconvolution as computed: the sigma it inverts is measured off the frame's own
-    // photosites, so the estimate is already per-photograph.
-    sharpening: z.number().int().min(0).max(100).default(50),
+    // (`image::SHARPEN_GAIN`), which is a gain rather than a unit in anything.
+    //
+    // Null is the denoiser's default (`sharpeningOf`), so an unmoved slider follows a change of
+    // denoiser.
+    sharpening: z.number().int().min(0).max(100).nullable().default(null),
 
     // Dust. The particles on the sensor's cover glass, divided back out of the mosaic beside
     // the denoise (`crate::dust`).

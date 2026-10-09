@@ -2,6 +2,7 @@ import { adjustOf, exposureOf } from '../../../schemas/edit_adjust';
 import { dustSettings } from '../../../schemas/dust_settings';
 import { EditDocSchema, type Denoiser, type EditDoc } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
+import { sharpeningOf } from '../../../schemas/sharpening';
 import type { Developed } from '../workers/processing_types';
 
 /**
@@ -11,12 +12,16 @@ import type { Developed } from '../workers/processing_types';
  * a default that moves in `EditDocSchema` moves here too. "As metered" is about the *grade*: a
  * photo nobody has edited is still denoised and still sharpened, at whatever the sliders open at.
  */
-export const AS_METERED = {
-  ...asJob(EditDocSchema.parse({ awaitsCameraMatch: true }), 'galosh'),
-  // Off, against the document's own default: finding the particles costs a whole-frame read, and a
-  // photo nobody has edited has not asked for one.
-  dust: dustSettings(undefined),
-};
+export const AS_METERED = asMetered('galosh');
+
+function asMetered(denoiser: Denoiser): FromDocument {
+  return {
+    ...asJob(EditDocSchema.parse({ awaitsCameraMatch: true }), denoiser),
+    // Off, against the document's own default: finding the particles costs a whole-frame read, and
+    // a photo nobody has edited has not asked for one.
+    dust: dustSettings(undefined),
+  };
+}
 
 /**
  * The stored develop settings as the job wants them.
@@ -37,7 +42,7 @@ export function developed(
   libraryDenoiser: Denoiser,
   previewing?: PrepareDevelop,
 ): FromDocument {
-  const metered = { ...AS_METERED, denoiser: libraryDenoiser };
+  const metered = asMetered(libraryDenoiser);
   if (edits == null && previewing == null) return metered;
   try {
     const stored: unknown = edits == null ? {} : JSON.parse(edits);
@@ -55,15 +60,16 @@ export function developed(
 type FromDocument = Omit<Developed, 'defringe'>;
 
 function asJob(doc: EditDoc, libraryDenoiser: Denoiser): FromDocument {
+  const denoiser = doc.denoiser ?? libraryDenoiser;
   return {
     exposure: exposureOf(doc),
     denoiseLuminance: doc.luminanceNoise,
     denoiseColour: doc.colourNoise,
-    denoiser: doc.denoiser ?? libraryDenoiser,
+    denoiser,
     highlightRecovery: doc.highlightRecovery,
     // A position on a 0..100 track on this side and a fraction of the deconvolution on the
     // other; the shader's own gain is what the top of that track is worth.
-    sharpen: doc.sharpening / 100,
+    sharpen: sharpeningOf(doc.sharpening, denoiser) / 100,
     // The one field here that is not passed through unchanged, and the editor's open calls the
     // same function for the same reason.
     dust: dustSettings(doc),

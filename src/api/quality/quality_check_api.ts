@@ -13,7 +13,7 @@ import type { PhotoReadService } from '../../services/photos/listing/photo_read_
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
 import { encoderQuality } from '../../services/processing/analysis/quality';
 import { renderNativeJob } from '../../services/processing/rawshim/rawshim_command';
-import { AS_METERED } from '../../services/processing/pipeline/developed';
+import { developed } from '../../services/processing/pipeline/developed';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 
 // Which quantizer to ship renditions at. A diagnostic, like the HDR check
@@ -89,6 +89,7 @@ export class QualityCheckApi {
           // Created here rather than once at startup: this lives in the temp
           // directory, which something else is entitled to clean at any time.
           mkdirSync(CACHE, { recursive: true });
+          const metered = developed(null, library.denoiser);
           // One rendition job with one target, which is what this page always was:
           // decode the RAW and write a viewer-sized AVIF at the quality being
           // compared. Going through the same call the import does is also what keeps
@@ -107,10 +108,10 @@ export class QualityCheckApi {
             // Off, for the same reason: this page compares quantizers, and a correction that
             // removed a few discs from whichever photograph was chosen is a second variable.
             dust: dustSettings(undefined),
-            sharpen: AS_METERED.sharpen,
+            sharpen: metered.sharpen,
             defringe: settings.raw_defringe,
-            exposure: AS_METERED.exposure,
-            adjust: AS_METERED.adjust,
+            exposure: metered.exposure,
+            adjust: metered.adjust,
             geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
             grade: {
               referenceWhiteNits: settings.hdr_reference_white_nits,

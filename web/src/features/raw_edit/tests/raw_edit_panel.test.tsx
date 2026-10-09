@@ -392,6 +392,28 @@ describe('the edit panel', () => {
     screen.getByLabelText('Reset Colour').click();
     expect(calls).toEqual([{ name: 'settle', value: { colourNoise: null } }]);
   });
+
+  test("shows the denoiser's sharpening where the document holds none", () => {
+    const { calls } = open({ denoiser: 'upscaler', sharpening: null });
+
+    const sharpening = screen.getByRole('slider', { name: 'Sharpening' });
+    expect(sharpening.getAttribute('aria-valuenow')).toBe('35');
+    screen.getByLabelText('Reset Sharpening').click();
+    expect(calls).toEqual([]);
+    cleanup();
+
+    open({ denoiser: 'galosh', sharpening: null });
+    expect(screen.getByRole('slider', { name: 'Sharpening' }).getAttribute('aria-valuenow')).toBe(
+      '50',
+    );
+  });
+
+  test("resets a moved sharpening to nothing, so it follows the denoiser's default again", () => {
+    const { calls } = open({ denoiser: 'upscaler', sharpening: 60 });
+
+    screen.getByLabelText('Reset Sharpening').click();
+    expect(calls).toEqual([{ name: 'settle', value: { sharpening: null } }]);
+  });
 });
 
 describe('the temperature track', () => {

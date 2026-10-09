@@ -37,9 +37,9 @@ export function editRows(doc: EditDoc, frame: Size | null): Row[] {
   const slider = (spec: SliderSpec): void => {
     const value = doc[spec.key];
     if (typeof value !== 'number') return;
-    // A slider the photograph answers for itself has no default to compare against: null is
-    // untouched, and any number at all is the reader having overridden a measurement.
-    if (spec.measured !== true && value === (spec.neutral ?? 0)) return;
+    // A slider something else answers for has no fixed default to compare against: null is
+    // untouched, and any number at all is the reader having overridden it.
+    if (spec.follows == null && value === (spec.neutral ?? 0)) return;
     const label = EDIT_LABELS[spec.key]?.() ?? spec.label;
     rows.push([label, RawEditPanelStrings.valueWithUnit(reading(value, spec), spec.unit ?? '')]);
   };

@@ -18,18 +18,16 @@ export interface SliderSpec {
   /**
    * Where the reset arrow and the snap go, and what counts as untouched.
    *
-   * Zero for every slider that runs either side of nothing. The dust pair and the sharpen are what
-   * make this a field: all three are wanted by default, so resetting them to 0 would hand back an
-   * uncorrected picture and call that neutral.
+   * Zero for every slider that runs either side of nothing. The dust pair are what make this a
+   * field: both are wanted by default, so resetting them to 0 would hand back an uncorrected picture
+   * and call that neutral.
    */
   neutral?: number;
   /**
-   * Whether the *photograph* answers where the document holds null, rather than a fixed default.
-   *
-   * The Detail pair come from the noise fit where the document stores null. Reset keeps the
-   * measured value following the photograph.
+   * What answers where the document holds null, rather than a fixed default: the photograph's noise
+   * fit, or the denoiser. Reset stores null, so the slider keeps following it.
    */
-  measured?: boolean;
+  follows?: 'photo' | 'denoiser';
 }
 
 /**
@@ -99,7 +97,7 @@ export const DETAIL: readonly SliderSpec[] = [
     min: 0,
     max: 100,
     step: 1,
-    measured: true,
+    follows: 'photo',
   },
   {
     key: 'colourNoise',
@@ -107,7 +105,7 @@ export const DETAIL: readonly SliderSpec[] = [
     min: 0,
     max: 100,
     step: 1,
-    measured: true,
+    follows: 'photo',
   },
   {
     key: 'highlightRecovery',
@@ -123,7 +121,7 @@ export const DETAIL: readonly SliderSpec[] = [
     min: 0,
     max: 100,
     step: 1,
-    neutral: 50,
+    follows: 'denoiser',
   },
 ];
 
@@ -205,8 +203,8 @@ export function snapped(value: number, { step }: Pick<SliderSpec, 'step'>): numb
 
 export function sliderValue(
   value: number,
-  spec: Pick<SliderSpec, 'measured'>,
+  spec: Pick<SliderSpec, 'follows'>,
   neutral: number,
 ): number | null {
-  return spec.measured === true && value === neutral ? null : value;
+  return spec.follows != null && value === neutral ? null : value;
 }
