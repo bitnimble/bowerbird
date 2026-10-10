@@ -162,6 +162,9 @@ export const cells = stylex.create({
   masonry: {
     display: 'flex',
     flexWrap: 'wrap',
+    // Load-bearing: stretched, WKWebView left an open stack's line several times the height of its
+    // photos after a return from the viewer, every tile letterboxed in it.
+    alignItems: 'flex-start',
     // Eats the last line's free space, so two leftover photos don't stretch to a
     // screen-wide row.
     '::after': {
