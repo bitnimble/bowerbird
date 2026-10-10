@@ -1,7 +1,11 @@
 import { action, runInAction } from 'mobx';
+import { type ModelsStatus } from '../../../../src/schemas/models';
 import { type UpdateStatus } from '../../../../src/schemas/updates';
+import { modelsApi } from '../../api/models';
 import { ApiError } from '../../api/request';
 import { updatesApi } from '../../api/updates';
+import { fileSizeLabel } from '../../ui/format';
+import type { ConfirmPresenter } from '../confirm/confirm_presenter';
 import { UpdatesStrings } from './updates.strings';
 import type { UpdatesStore } from './updates_store';
 
@@ -43,6 +47,7 @@ export class UpdatesPresenter {
 
   constructor(
     private readonly store: UpdatesStore,
+    private readonly confirm: ConfirmPresenter,
     private readonly restart: RestartHooks = {
       reload: () => window.location.reload(),
       pollMs: RESTART_POLL_MS,
@@ -67,13 +72,33 @@ export class UpdatesPresenter {
   async check(force = false): Promise<void> {
     this.store.checking = true;
     try {
-      this.put(force ? await updatesApi.check() : await updatesApi.get());
-    } catch (err) {
-      // Recorded rather than toasted: this runs hourly whether or not anybody asked
-      // (§23.5). Settings shows it; the sidebar simply has no badge.
-      runInAction(() => (this.store.failure = message(err)));
+      await Promise.all([this.checkApp(force), this.checkModels(force)]);
     } finally {
       runInAction(() => (this.store.checking = false));
+    }
+  }
+
+  /** Asks first, since every photo rendered with the upscaler is rendered again with the new model. */
+  @action.bound
+  async downloadModel(): Promise<void> {
+    const available = this.store.modelAvailable;
+    if (this.store.modelDownloading || available == null) return;
+    const confirmed = await this.confirm.ask({
+      title: UpdatesStrings.modelUpdateTitle(),
+      body: UpdatesStrings.modelUpdateBody(fileSizeLabel(available.bytes)),
+      action: UpdatesStrings.modelUpdate(),
+    });
+    if (!confirmed) return;
+    runInAction(() => {
+      this.store.modelDownloading = true;
+      this.store.modelFailure = null;
+    });
+    try {
+      this.putModels(await modelsApi.download());
+    } catch (err) {
+      runInAction(() => (this.store.modelFailure = message(err)));
+    } finally {
+      runInAction(() => (this.store.modelDownloading = false));
     }
   }
 
@@ -137,10 +162,35 @@ export class UpdatesPresenter {
     });
   }
 
+  private async checkApp(force: boolean): Promise<void> {
+    try {
+      this.put(force ? await updatesApi.check() : await updatesApi.get());
+    } catch (err) {
+      // Recorded rather than toasted: this runs hourly whether or not anybody asked
+      // (§23.5). Settings shows it; the sidebar simply has no badge.
+      runInAction(() => (this.store.failure = message(err)));
+    }
+  }
+
+  private async checkModels(force: boolean): Promise<void> {
+    try {
+      this.putModels(force ? await modelsApi.check() : await modelsApi.get());
+    } catch (err) {
+      runInAction(() => (this.store.modelFailure = message(err)));
+    }
+  }
+
   private put(status: UpdateStatus): void {
     runInAction(() => {
       this.store.status = status;
       this.store.failure = status.error;
+    });
+  }
+
+  private putModels(status: ModelsStatus): void {
+    runInAction(() => {
+      this.store.models = status;
+      this.store.modelFailure = status.error;
     });
   }
 }

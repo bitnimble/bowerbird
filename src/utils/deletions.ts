@@ -155,6 +155,20 @@ export async function deleteUpdateStaging(
   await rm(path.join(home, which), { recursive: true, force: true });
 }
 
+// A downloaded model, its partial download, or the whole of one model's folder under the `models/`
+// beside the catalogue (§23.9). The folder is named by `modelsDir`, so only something inside a
+// `models/<model>/` can be reached, and never a tree that holds an original.
+export async function deleteModelFiles(modelHome: string, target: string): Promise<void> {
+  const home = path.resolve(modelHome);
+  if (path.basename(path.dirname(home)) !== 'models' || !containsPath(home, target)) {
+    throw new AppError('IO_ERROR', `refusing to remove ${target}: not a model under ${home}`);
+  }
+  if (isStrayOriginal(target) || (await findOriginalsAnywhere(target)).length > 0) {
+    throw new AppError('IO_ERROR', `refusing to remove ${target}: it holds an original`);
+  }
+  await rm(target, { recursive: true, force: true });
+}
+
 // A snapshot of the catalogue, rotated out or abandoned part-written (§4.9).
 // Directly inside the backup directory rather than anywhere beneath it: that
 // directory holds nothing but flat files this app wrote, and a subtree under it

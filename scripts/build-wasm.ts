@@ -22,6 +22,7 @@ const INPUTS = [
   'scripts/vcpkg.ts',
   'scripts/get-slangc.ts',
   'scripts/get-models.ts',
+  'src/services/models/bundled_upscaler.json',
   'scripts/get-environments.ts',
 ];
 

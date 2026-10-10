@@ -281,6 +281,9 @@ export class PhotoProcessingRepository {
   queueEditedSince(photoIds?: readonly string[]): number {
     return this.renditions.queueEditedSince(photoIds);
   }
+  queueDenoisedWith(denoiser: Denoiser): number {
+    return this.renditions.queueDenoisedWith(denoiser);
+  }
   // Whole library, same tile-only rule as `queueTileRebuild`.
   queueTileRebuildForLibrary(libraryId: string): number {
     this.db

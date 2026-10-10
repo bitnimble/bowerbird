@@ -121,6 +121,7 @@ export const PathSegment = {
   unpair: segment('unpair'),
   unstack: segment('unstack'),
   updates: segment('updates'),
+  upscaler: segment('upscaler'),
   verify: segment('verify'),
   welcome: segment('welcome'),
 

@@ -1,4 +1,5 @@
 import { computed, observable } from 'mobx';
+import { type ModelsStatus } from '../../../../src/schemas/models';
 import { type ReleaseNote, type UpdateStatus } from '../../../../src/schemas/updates';
 
 export type InstallPhase = 'idle' | 'downloading' | 'restarting';
@@ -22,6 +23,15 @@ export class UpdatesStore {
    */
   @observable accessor install: InstallPhase = 'idle';
   @observable.ref accessor failure: string | null = null;
+
+  /** The upscaler's model, which updates apart from the app. */
+  @observable.ref accessor models: ModelsStatus | null = null;
+  @observable.ref accessor modelFailure: string | null = null;
+  @observable accessor modelDownloading = false;
+
+  @computed get modelAvailable(): ModelsStatus['upscaler']['available'] {
+    return this.models?.upscaler.available ?? null;
+  }
 
   @computed get current(): string | null {
     return this.status?.current ?? null;

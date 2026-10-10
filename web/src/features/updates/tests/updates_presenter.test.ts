@@ -3,8 +3,12 @@
 // after `apply` fails until the new version is up, and a page that reloads on the click
 // reloads into nothing.
 import { expect, test } from 'bun:test';
+import { type ModelsStatus } from '../../../../../src/schemas/models';
 import { type UpdateStatus } from '../../../../../src/schemas/updates';
+import { modelsApi } from '../../../api/models';
 import { updatesApi } from '../../../api/updates';
+import { ConfirmPresenter } from '../../confirm/confirm_presenter';
+import { ConfirmStore } from '../../confirm/confirm_store';
 import { restoreApiAfterTests } from '../../../test_api';
 import { UpdatesPresenter } from '../updates_presenter';
 import { UpdatesStore } from '../updates_store';
@@ -36,15 +40,39 @@ function status(current: string, newer: string[], canInstall = true): UpdateStat
 
 // The restart's two real-world quantities - a page reload and a five-minute wait - stubbed
 // so the poll can be watched rather than waited out.
-function open(): { store: UpdatesStore; presenter: UpdatesPresenter; reloads: number[] } {
+function open(): {
+  store: UpdatesStore;
+  presenter: UpdatesPresenter;
+  reloads: number[];
+  confirm: ConfirmPresenter;
+  asked: ConfirmStore;
+} {
   const store = new UpdatesStore();
   const reloads: number[] = [];
-  const presenter = new UpdatesPresenter(store, {
+  const asked = new ConfirmStore();
+  const confirm = new ConfirmPresenter(asked);
+  const presenter = new UpdatesPresenter(store, confirm, {
     reload: () => reloads.push(Date.now()),
     pollMs: 1,
     timeoutMs: 60,
   });
-  return { store, presenter, reloads };
+  modelsApi.get = () => Promise.resolve(models(null));
+  return { store, presenter, reloads, confirm, asked };
+}
+
+function models(available: string | null, downloaded = false): ModelsStatus {
+  return {
+    upscaler: {
+      current: { revision: 'bundled', committed_at: '2026-10-01T00:00:00.000Z', downloaded },
+      available:
+        available == null
+          ? null
+          : { revision: available, committed_at: '2026-10-09T00:00:00.000Z', bytes: 8_270_080 },
+      downloading: false,
+    },
+    checked_at: '2026-10-09T00:00:00.000Z',
+    error: null,
+  };
 }
 
 test('a check with nothing newer leaves the sidebar with no badge', async () => {
@@ -152,6 +180,50 @@ test('a platform that cannot replace itself is offered the download instead', as
   await presenter.check();
   expect(store.canInstall).toBe(false);
   expect(store.installHint).toBe('https://example.invalid/Bowerbird.AppImage');
+});
+
+test('a newer model is offered, and downloaded only once the reader agrees', async () => {
+  const { store, presenter, confirm, asked } = open();
+  updatesApi.get = () => Promise.resolve(status('0.2.0', []));
+  modelsApi.get = () => Promise.resolve(models('newer'));
+  await presenter.check();
+  expect(store.modelAvailable?.revision).toBe('newer');
+
+  let downloads = 0;
+  modelsApi.download = () => {
+    downloads += 1;
+    return Promise.resolve(models(null, true));
+  };
+
+  const declined = presenter.downloadModel();
+  expect(asked.request?.title).toBe(UpdatesStrings.modelUpdateTitle());
+  expect(asked.request?.body).toBe(UpdatesStrings.modelUpdateBody('7.9 MB'));
+  confirm.answer(false);
+  await declined;
+  expect(downloads).toBe(0);
+
+  const agreed = presenter.downloadModel();
+  confirm.answer(true);
+  await agreed;
+  expect(downloads).toBe(1);
+  expect(store.modelAvailable).toBeNull();
+  expect(store.models?.upscaler.current.downloaded).toBe(true);
+  expect(store.modelDownloading).toBe(false);
+});
+
+test('a model download that fails is recorded and can be tried again', async () => {
+  const { store, presenter, confirm } = open();
+  updatesApi.get = () => Promise.resolve(status('0.2.0', []));
+  modelsApi.get = () => Promise.resolve(models('newer'));
+  await presenter.check();
+  modelsApi.download = () => Promise.reject(new Error('upscaler.bin does not match'));
+
+  const downloading = presenter.downloadModel();
+  confirm.answer(true);
+  await downloading;
+  expect(store.modelFailure).toBe('upscaler.bin does not match');
+  expect(store.modelDownloading).toBe(false);
+  expect(store.modelAvailable?.revision).toBe('newer');
 });
 
 test('the strings name the version, because that is the whole of the badge', () => {

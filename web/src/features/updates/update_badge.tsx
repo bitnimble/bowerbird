@@ -8,11 +8,18 @@ export const UpdateBadge = observer(function UpdateBadge(): JSX.Element | null {
   const store = useUpdatesStore();
   const { updates } = usePresenters();
   const available = store.available;
-  if (available == null) return null;
-
   return (
-    <SidebarButton icon={ArrowUpCircle} tone="update" onClick={updates.openDialog}>
-      <SidebarText>{UpdatesStrings.updateAvailable(available.version)}</SidebarText>
-    </SidebarButton>
+    <>
+      {available != null && (
+        <SidebarButton icon={ArrowUpCircle} tone="update" onClick={updates.openDialog}>
+          <SidebarText>{UpdatesStrings.updateAvailable(available.version)}</SidebarText>
+        </SidebarButton>
+      )}
+      {store.modelAvailable != null && !store.modelDownloading && (
+        <SidebarButton icon={ArrowUpCircle} tone="update" onClick={updates.downloadModel}>
+          <SidebarText>{UpdatesStrings.modelUpdateAvailable()}</SidebarText>
+        </SidebarButton>
+      )}
+    </>
   );
 });

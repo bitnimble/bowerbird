@@ -168,6 +168,12 @@ export function printerProfilesDir(dbPath: string): string {
   return besideCatalogue(dbPath, 'printer-profiles');
 }
 
+// Model weights downloaded since this build: beside the catalogue for the reason backups are, since
+// a cleared `DATA_DIR` would quietly put every render back on the build's own model.
+export function modelsDir(dbPath: string): string {
+  return besideCatalogue(dbPath, 'models');
+}
+
 export function serverLogPath(dbPath: string): string {
   return besideCatalogue(dbPath, 'server.log');
 }

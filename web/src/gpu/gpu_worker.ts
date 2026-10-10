@@ -11,6 +11,7 @@ import init, {
   holdPmridWeights,
   holdPrintEnvironment,
   holdRaw,
+  holdUpscalerModel,
   holdUpscalerWeights,
   pageDevice,
   releaseBuffers,
@@ -21,6 +22,8 @@ import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environm
 import { upscalerWeightsUrl } from '../../../native/rawshim/pkg/upscaler_weights';
 import type { Environment } from '../features/raw_edit/print/print_scene';
 import { z } from 'zod';
+import { ModelsStatusSchema } from '../../../src/schemas/models';
+import { PathSegment, route } from '../../../src/schemas/route';
 import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode/local_open';
 import { PortedFiles } from '../app/local_setting';
 import { PipelineWarmth, storedRecipes } from '../features/raw_edit/stage/pipeline_warmth';
@@ -54,7 +57,7 @@ const painter: Promise<StagePainter> = device.then((opened) => new StagePainter(
 const opens = new Map<number, Open>();
 /** An ask waiting out the warmth resumes after a close posted behind it, and would open it again. */
 const closed = new Set<number>();
-const weights = new Map<Network, Promise<void>>();
+const weights = new Map<string, Promise<void>>();
 const environments = new Map<Environment, Promise<void>>();
 let lost: string | null = null;
 const stages = new KeptStages<KeptStage>(free);
@@ -564,21 +567,62 @@ const NETWORKS: Record<Network, { url: string; hold: (bytes: Uint8Array) => void
  */
 async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<void> {
   if (denoiser === 'galosh') return;
+  if (denoiser === 'upscaler') {
+    const revision = await downloadedUpscaler();
+    if (revision != null) return held(`upscaler@${revision}`, () => downloadedModel(revision));
+  }
   const { url, hold } = NETWORKS[denoiser];
-  const fetching =
-    weights.get(denoiser) ??
-    fetch(url)
+  await held(denoiser, async () => hold(await bytesAt(url)));
+}
+
+/** Fetches what `key` names once for the tab, unless a fetch of it failed. */
+async function held(key: string, fetching: () => Promise<void>): Promise<void> {
+  const holding =
+    weights.get(key) ??
+    fetching().catch((why: unknown) => {
+      // Cleared, or the tab is stuck on one failed fetch for the rest of its life.
+      weights.delete(key);
+      throw why;
+    });
+  weights.set(key, holding);
+  await holding;
+}
+
+async function bytesAt(url: string): Promise<Uint8Array> {
+  const answer = await fetch(url);
+  if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
+  return new Uint8Array(await answer.arrayBuffer());
+}
+
+const MODEL_STATUS_MS = 60_000;
+let modelStatus: { at: number; revision: Promise<string | null> } | null = null;
+
+/**
+ * The upscaler model the app downloaded, by revision, or null for the build's own. Asked at most
+ * once a minute rather than per band, and null where there is no server to ask.
+ */
+function downloadedUpscaler(): Promise<string | null> {
+  if (modelStatus == null || Date.now() - modelStatus.at > MODEL_STATUS_MS) {
+    const asked = fetch(route(PathSegment.api(), PathSegment.models(), PathSegment.upscaler()))
       .then(async (answer) => {
-        if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
-        hold(new Uint8Array(await answer.arrayBuffer()));
+        if (!answer.ok) return null;
+        const { current } = ModelsStatusSchema.parse(await answer.json()).upscaler;
+        return current.downloaded ? current.revision : null;
       })
-      .catch((why: unknown) => {
-        // Cleared, or the tab is stuck on one failed fetch for the rest of its life.
-        weights.delete(denoiser);
-        throw why;
-      });
-  weights.set(denoiser, fetching);
-  await fetching;
+      .catch(() => null);
+    modelStatus = { at: Date.now(), revision: asked };
+  }
+  return modelStatus.revision;
+}
+
+async function downloadedModel(revision: string): Promise<void> {
+  const file = (name: string): string =>
+    `${route(PathSegment.api(), PathSegment.models(), PathSegment.upscaler(), name)}?v=${revision}`;
+  const [manifest, bytes] = await Promise.all([
+    bytesAt(file('upscaler.json')),
+    bytesAt(file('upscaler.bin')),
+  ]);
+  holdUpscalerModel(new TextDecoder().decode(manifest), bytes);
 }
 
 /** A print environment's map, fetched once for the tab the first time a scene names it. */

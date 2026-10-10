@@ -104,6 +104,29 @@ pub unsafe extern "C" fn bb_run_job(
     answered
 }
 
+/// Renders with the upscaler model the app downloaded, at these two paths, from the next frame on
+/// (`upscale::hold_model`). 0 on success, negative where either file could not be read.
+///
+/// # Safety
+/// Both must be NUL-terminated, borrowed for the call.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_hold_upscaler_model(
+    manifest: *const c_char,
+    weights: *const c_char,
+) -> i32 {
+    let (Some(manifest), Some(weights)) = (unsafe { as_str(manifest) }, unsafe { as_str(weights) })
+    else {
+        return -1;
+    };
+    let (Ok(manifest), Ok(weights)) = (std::fs::read_to_string(manifest), std::fs::read(weights))
+    else {
+        return -2;
+    };
+    crate::upscale::hold_model(manifest, weights);
+    0
+}
+
 /// Writes one rendition a client rendered (`job::render_bytes`), as `bb_run_job` would have written
 /// it: `command` is the job naming the one target, `framed` the client's frame. Replies as
 /// `bb_run_job` does.

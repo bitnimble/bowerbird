@@ -180,6 +180,17 @@ export function scrubExif(bytes: Buffer): boolean {
   return shim().bb_scrub_exif(ptr(bytes), bytes.byteLength) === 1;
 }
 
+/** Renders with this upscaler model from the next frame on, in every worker. */
+export function holdUpscalerModel(manifestPath: string, weightsPath: string): void {
+  const held = shim().bb_hold_upscaler_model(
+    Buffer.from(`${manifestPath}\0`),
+    Buffer.from(`${weightsPath}\0`),
+  );
+  if (held !== 0) {
+    throw new Error(`could not read the upscaler model at ${manifestPath} and ${weightsPath}`);
+  }
+}
+
 /**
  * The camera's embedded JPEG preview, as bytes. Null when the file has none.
  *

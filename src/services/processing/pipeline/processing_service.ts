@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Logger } from '../../../logger';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
-import type { CameraTone } from '../../../schemas/photo_edits';
+import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
 import { isComposite } from '../../../schemas/recipes';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { dataPathForLibraryId, renditionPathFor } from '../../../utils/paths';
@@ -164,6 +164,17 @@ export class ProcessingService extends RenderService {
         photoIds: photoIds == null ? undefined : [...photoIds],
       }).catch((err: unknown) =>
         log.warn('could not rebuild after an edit', { photos: queued, err }),
+      );
+    }
+    return queued;
+  }
+
+  /** Both derived stages of every photo denoised with `denoiser`, whose model has changed. */
+  rebuildDenoisedWith(denoiser: Denoiser): number {
+    const queued = this.photoProcessing.queueDenoisedWith(denoiser);
+    if (queued > 0) {
+      void this.processUnprocessed().catch((err: unknown) =>
+        log.warn('could not rebuild after a model update', { photos: queued, err }),
       );
     }
     return queued;

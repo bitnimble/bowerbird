@@ -204,6 +204,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     labels,
     backup,
   );
+  const confirm = new ConfirmPresenter(stores.confirm);
   const presenters: Presenters = {
     libraries,
     photos,
@@ -213,7 +214,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     replication,
     backup,
     toasts,
-    confirm: new ConfirmPresenter(stores.confirm),
+    confirm,
     appSettings,
     deviceSettings,
     events,
@@ -222,7 +223,8 @@ function build(): { stores: Stores; presenters: Presenters } {
     exportHistory: new ExportHistoryPresenter(stores.exportHistory, toasts),
     // Reports through the toasts like every other action that finishes off screen.
     feedback: new FeedbackPresenter(stores.feedback, toasts),
-    updates: new UpdatesPresenter(stores.updates),
+    // Asks before a model update, which renders again every photo that uses the model.
+    updates: new UpdatesPresenter(stores.updates, confirm),
     sidebar,
     frameTv: new FrameTvPresenter(
       stores.frameTv,

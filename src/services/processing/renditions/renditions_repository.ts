@@ -1,5 +1,6 @@
 import type { Database } from '../../../db/driver';
 import type { RenditionSource } from '../../../schemas/common';
+import type { Denoiser } from '../../../schemas/photo_edits';
 import { EDITS_RENDER } from '../../photos/photo_edit_sql';
 import { renditionVariant, type RenditionVariant } from './renditions';
 
@@ -342,6 +343,35 @@ export class RenditionsRepository {
       this.db
         .query(`UPDATE photos SET processing_error = NULL WHERE id IN (${placeholders})`)
         .run(...batch);
+    }
+    return queued.size;
+  }
+
+  /**
+   * Both derived stages of every photograph denoised with `denoiser`, by its own edit or by its
+   * library's default, for a change to that denoiser's model.
+   *
+   * ponytail: a composite is left as built, though its frames may use the denoiser.
+   */
+  queueDenoisedWith(denoiser: Denoiser): number {
+    const queued = new Set<string>();
+    for (const [variant, owes] of [
+      [`'grid'`, 'TRUE'],
+      [FULL_VARIANT_OF_LIBRARY, `(p.rendition_source IS NOT 'embedded' OR ${EDITS_RENDER('p.')})`],
+    ]) {
+      const rows = this.db
+        .query(
+          `INSERT INTO renditions (photo_id, variant, needs_build)
+             SELECT p.id, ${variant}, 1 FROM photos p
+               JOIN libraries l ON l.id = p.library_id
+               LEFT JOIN photo_edits e ON e.photo_id = p.id
+              WHERE p.is_missing = 0 AND p.is_deleted = 0 AND ${owes}
+                AND COALESCE(json_extract(e.doc, '$.denoiser'), l.denoiser) = ?
+           ON CONFLICT (photo_id, variant) DO UPDATE SET needs_build = 1
+           RETURNING photo_id AS id`,
+        )
+        .all(denoiser) as { id: string }[];
+      for (const row of rows) queued.add(row.id);
     }
     return queued.size;
   }

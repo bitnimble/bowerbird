@@ -195,6 +195,7 @@ COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=locked \
   bun install --frozen-lockfile
 COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-models.ts ./scripts/
+COPY src/services/models/hub.ts src/services/models/bundled_upscaler.json ./src/services/models/
 RUN --mount=type=cache,id=bowerbird-models,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run scripts/get-models.ts \

@@ -1025,64 +1025,88 @@ impl Halving {
     }
 }
 
-/// The plan for walking the weights, embedded on both hosts. The weights themselves are eight
-/// megabytes and are not ([`weights`]).
+/// The model this build carries: the plan for walking the weights, embedded on both hosts, and the
+/// weights, embedded in a rendition's binary and fetched by a page, as `pmrid::weights` says why.
+/// An app that has downloaded a newer one hands it over with [`hold_model`].
 const MANIFEST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/.upscaler/weights.json"
 ));
 
-/// The weights as `bun run get:models` installs them: embedded in a rendition's binary and
-/// fetched by a page, as `pmrid::weights` says why.
 #[cfg(not(target_arch = "wasm32"))]
-fn weights() -> Option<&'static [u8]> {
-    Some(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/.upscaler/weights.bin"
-    )))
-}
+const BUNDLED: Option<&[u8]> = Some(include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/.upscaler/weights.bin"
+)));
 
 #[cfg(target_arch = "wasm32")]
-thread_local! {
-    static WEIGHTS: std::cell::Cell<Option<&'static [u8]>> = const { std::cell::Cell::new(None) };
-    static BUILT: std::cell::Cell<Option<Option<&'static Upscaler>>> =
-        const { std::cell::Cell::new(None) };
+const BUNDLED: Option<&[u8]> = None;
+
+struct Model {
+    manifest: &'static str,
+    weights: Option<&'static [u8]>,
+    built: Option<Option<&'static Upscaler>>,
 }
 
+const UNBUILT: Model = Model {
+    manifest: MANIFEST,
+    weights: BUNDLED,
+    built: None,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+fn with_model<R>(f: impl FnOnce(&mut Model) -> R) -> R {
+    static MODEL: std::sync::Mutex<Model> = std::sync::Mutex::new(UNBUILT);
+    f(&mut MODEL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner))
+}
+
+// A page's network holds WebGPU handles, which are neither `Send` nor `Sync`.
 #[cfg(target_arch = "wasm32")]
-fn weights() -> Option<&'static [u8]> {
-    WEIGHTS.with(std::cell::Cell::get)
+fn with_model<R>(f: impl FnOnce(&mut Model) -> R) -> R {
+    thread_local! {
+        static MODEL: std::cell::RefCell<Model> = const { std::cell::RefCell::new(UNBUILT) };
+    }
+    MODEL.with(|held| f(&mut held.borrow_mut()))
 }
 
-/// What the page fetched, kept for the rest of the tab, leaked for `pmrid::hold_weights`'s reason.
+/// What the page fetched of the model this build carries, kept for the rest of the tab.
 #[cfg(target_arch = "wasm32")]
 pub fn hold_weights(bytes: Vec<u8>) {
-    WEIGHTS.with(|held| held.set(Some(Box::leak(bytes.into_boxed_slice()))));
+    with_model(|held| {
+        held.manifest = MANIFEST;
+        held.weights = Some(Box::leak(bytes.into_boxed_slice()));
+        held.built = None;
+    });
 }
 
-/// The network on its fastest arm, built on the first frame that asks for it and kept for the
-/// process.
-#[cfg(not(target_arch = "wasm32"))]
+/// A model the app downloaded, in place of the one this build carries, from the next frame on.
+///
+/// ponytail: leaks the model it replaces, network and all, since a frame mid-render may still hold
+/// it; one leak per model update for the life of the process.
+pub fn hold_model(manifest: String, weights: Vec<u8>) {
+    with_model(|held| {
+        held.manifest = Box::leak(manifest.into_boxed_str());
+        held.weights = Some(Box::leak(weights.into_boxed_slice()));
+        held.built = None;
+    });
+}
+
+/// The network on its fastest arm, built on the first frame that asks for it and kept until a model
+/// replaces it. `None` in a page until it has handed over what it fetched.
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Upscaler> {
-    static BUILT: std::sync::OnceLock<Option<Upscaler>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| built(gpu, weights()?)).as_ref()
-}
-
-/// `None` until the page has handed over what it fetched; built once after that.
-#[cfg(target_arch = "wasm32")]
-pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Upscaler> {
-    if let Some(tried) = BUILT.with(std::cell::Cell::get) {
-        return tried;
-    }
-    let made = built(gpu, weights()?).map(|made| &*Box::leak(Box::new(made)));
-    BUILT.with(|held| held.set(Some(made)));
-    made
-}
-
-fn built(gpu: &'static crate::gpu::Gpu, weights: &[u8]) -> Option<Upscaler> {
-    Upscaler::fastest(gpu, MANIFEST, weights)
-        .map_err(|why| crate::warn(&format!("rawshim: the upscaler did not build: {why}")))
-        .ok()
+    with_model(|held| {
+        if let Some(tried) = held.built {
+            return tried;
+        }
+        let made = Upscaler::fastest(gpu, held.manifest, held.weights?)
+            .map_err(|why| crate::warn(&format!("rawshim: the upscaler did not build: {why}")))
+            .ok()
+            .map(|made| &*Box::leak(Box::new(made)));
+        held.built = Some(made);
+        made
+    })
 }
 
 /// The bytes [`Upscaler::upscale`]'s answer for a `width` by `height` rectangle takes.
@@ -1514,6 +1538,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_held_model_replaces_the_built_one() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(before) = super::device(gpu) else {
+            return;
+        };
+        let weights = super::BUNDLED.expect("a built network has weights");
+        super::hold_model(super::MANIFEST.to_string(), weights.to_vec());
+        let after = super::device(gpu).expect("the held model builds");
+        assert!(!std::ptr::eq(before, after));
+    }
+
     /// Any rectangle of a frame, cut into any tiles, upscales to that part of the whole frame's
     /// answer, grain and all, on every arm: what lets a loupe tile be the rendition.
     #[test]
@@ -1521,7 +1559,7 @@ mod tests {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
-        let Some(weights) = super::weights() else {
+        let Some(weights) = super::BUNDLED else {
             return;
         };
         let (width, height) = (520, 392);

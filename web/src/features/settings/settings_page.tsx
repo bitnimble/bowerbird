@@ -38,7 +38,7 @@ import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { EmptyState } from '../../ui/empty_state';
 import { ErrorBanner } from '../../ui/error_banner';
-import { fileSizeLabel, relativeTime } from '../../ui/format';
+import { fileSizeLabel, longDate, relativeTime } from '../../ui/format';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
 import type { Option } from '../../ui/option';
@@ -379,7 +379,8 @@ export const UpdateSettings = observer(function UpdateSettings(): JSX.Element | 
   const store = useUpdatesStore();
   const { updates } = usePresenters();
   const status = store.status;
-  if (status == null) return null;
+  const models = store.models;
+  if (status == null && models == null) return null;
 
   const available = store.available;
 
@@ -387,36 +388,60 @@ export const UpdateSettings = observer(function UpdateSettings(): JSX.Element | 
     <>
       <GroupTitle>{UpdatesStrings.updates()}</GroupTitle>
       <Panel flush>
-        <SettingRow
-          label={UpdatesStrings.version()}
-          hint={
-            !status.checks
-              ? undefined
-              : (store.failure ??
-                (status.checked_at == null
-                  ? UpdatesStrings.neverChecked()
-                  : UpdatesStrings.lastChecked(relativeTime(status.checked_at))))
-          }
-        >
-          {available == null ? (
-            <>
-              <Text variant="mono">{status.current}</Text>
-              {status.checks && (
-                <Button disabled={store.checking} onClick={() => void updates.check(true)}>
-                  <RefreshCw size={ICON} />
-                  {store.checking ? UpdatesStrings.checking() : UpdatesStrings.checkNow()}
-                </Button>
-              )}
-            </>
-          ) : (
-            // The same dialog the sidebar's badge opens: what is in a release is the thing
-            // worth reading before installing it, whichever way you got here.
-            <Button variant="primary" onClick={updates.openDialog}>
-              <Sparkles size={ICON} />
-              {UpdatesStrings.updateAvailable(available.version)}
-            </Button>
-          )}
-        </SettingRow>
+        {status != null && (
+          <SettingRow
+            label={UpdatesStrings.version()}
+            hint={
+              !status.checks
+                ? undefined
+                : (store.failure ??
+                  (status.checked_at == null
+                    ? UpdatesStrings.neverChecked()
+                    : UpdatesStrings.lastChecked(relativeTime(status.checked_at))))
+            }
+          >
+            {available == null ? (
+              <>
+                <Text variant="mono">{status.current}</Text>
+                {status.checks && (
+                  <Button disabled={store.checking} onClick={() => void updates.check(true)}>
+                    <RefreshCw size={ICON} />
+                    {store.checking ? UpdatesStrings.checking() : UpdatesStrings.checkNow()}
+                  </Button>
+                )}
+              </>
+            ) : (
+              // The same dialog the sidebar's badge opens: what is in a release is the thing
+              // worth reading before installing it, whichever way you got here.
+              <Button variant="primary" onClick={updates.openDialog}>
+                <Sparkles size={ICON} />
+                {UpdatesStrings.updateAvailable(available.version)}
+              </Button>
+            )}
+          </SettingRow>
+        )}
+        {models != null && (
+          <SettingRow
+            label={UpdatesStrings.bestDenoiser()}
+            hint={
+              store.modelFailure ??
+              UpdatesStrings.modelFrom(longDate(models.upscaler.current.committed_at))
+            }
+          >
+            {store.modelAvailable != null && (
+              <Button
+                variant="primary"
+                disabled={store.modelDownloading}
+                onClick={() => void updates.downloadModel()}
+              >
+                <Sparkles size={ICON} />
+                {store.modelDownloading
+                  ? UpdatesStrings.downloading()
+                  : UpdatesStrings.modelUpdate()}
+              </Button>
+            )}
+          </SettingRow>
+        )}
       </Panel>
     </>
   );

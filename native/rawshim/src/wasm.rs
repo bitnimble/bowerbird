@@ -520,6 +520,12 @@ pub fn hold_upscaler_weights(bytes: Vec<u8>) {
     crate::upscale::hold_weights(bytes);
 }
 
+/// An upscaler model the app downloaded, in place of the one this build carries.
+#[wasm_bindgen(js_name = holdUpscalerModel)]
+pub fn hold_upscaler_model(manifest: String, bytes: Vec<u8>) {
+    crate::upscale::hold_model(manifest, bytes);
+}
+
 /// A print environment's map, which the page fetches before the first scene that names it.
 #[wasm_bindgen(js_name = holdPrintEnvironment)]
 pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue> {

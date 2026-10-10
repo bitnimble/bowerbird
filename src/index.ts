@@ -87,8 +87,11 @@ import { QualityCheckApi } from './api/quality/quality_check_api';
 import { SettingsApi } from './api/settings/settings_api';
 import { UpdatesApi } from './api/updates/updates_api';
 import { PrinterProfilesApi } from './api/printer_profiles/printer_profiles_api';
-import { printerProfilesDir } from './utils/paths';
+import { ModelsApi } from './api/models/models_api';
+import { modelsDir, printerProfilesDir } from './utils/paths';
 import { UpdateService } from './services/updates/update_service';
+import { ModelsService } from './services/models/models_service';
+import { holdUpscalerModel } from './services/processing/rawshim/rawshim_ops';
 import { VERSION } from './version';
 import { BrowseApi } from './api/browse/browse_api';
 import { SettingsRepository } from './services/settings/settings_repository';
@@ -219,6 +222,15 @@ const processingService: ProcessingService = new ProcessingService(
   holdingRenderMemory,
   activity,
 );
+const modelsService = new ModelsService(
+  path.join(modelsDir(config.dbPath), 'upscaler'),
+  holdUpscalerModel,
+  () => processingService.rebuildDenoisedWith('upscaler'),
+);
+// A downloaded model is handed over before the first await, so before any render starts.
+void modelsService.load().catch((err: unknown) => {
+  log.warn('could not drop a downloaded model this build has overtaken', { err: String(err) });
+});
 const eventsApi = new EventsApi(processingService);
 const replicationChanged = (libraryId: string): void =>
   eventsApi.announce('replication', { library_id: libraryId });
@@ -593,6 +605,7 @@ app.route(
   route(PathSegment.api(), PathSegment.updates()),
   new UpdatesApi(new UpdateService()).routes,
 );
+app.route(route(PathSegment.api(), PathSegment.models()), new ModelsApi(modelsService).routes);
 app.route(route(PathSegment.api(), PathSegment.browse()), new BrowseApi().routes);
 app.route(
   route(PathSegment.api(), PathSegment.printerProfiles()),

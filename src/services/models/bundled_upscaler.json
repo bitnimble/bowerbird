@@ -1,0 +1,14 @@
+{
+  "revision": "57e99ab3bdaf9210fa27e8357bb3be18d95768fb",
+  "committed_at": "2026-10-09T22:12:00.000Z",
+  "files": {
+    "upscaler.json": {
+      "sha256": "300e1488b2b90219f9eeb9d5d937f198f96df5ec8b20315b1e60967b80f757a9",
+      "git_oid": "3829c25db974f7f8b4d38dd7680c2c8d9b580ea0"
+    },
+    "upscaler.bin": {
+      "sha256": "85fe4e140ad548293a160b401c213ea3c8f058757661b0ca09701e9ebd60877a",
+      "git_oid": "3e61e4e6a6b49ff879de1c990cd2dbdd745603c5"
+    }
+  }
+}

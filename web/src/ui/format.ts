@@ -11,6 +11,15 @@ export function relativeTime(iso: string): string {
   return FormatStrings.daysAgo(Math.round(hours / 24));
 }
 
+/** "9 October 2026", the one way copy writes a date. */
+export function longDate(iso: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(iso));
+}
+
 export function durationLabel(seconds: number): string {
   if (seconds < 60) return FormatStrings.seconds(Math.max(1, Math.round(seconds)));
   const minutes = Math.round(seconds / 60);
