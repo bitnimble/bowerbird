@@ -436,7 +436,11 @@ export class RawEditPresenter {
 
       const saved = await edits;
       if (this.closed) return;
-      const mosaic = prepareOf(saved?.doc, saved?.library_denoiser ?? 'galosh');
+      const mosaic = prepareOf(
+        saved?.doc,
+        saved?.library_denoiser ?? 'galosh',
+        saved?.upscalable ?? true,
+      );
       // What the frame arrives holding, so the first settle at these positions asks for nothing.
       // Before `applyState` below, which would otherwise ask for a re-prepare to the settings the
       // decode is about to open at.
@@ -526,12 +530,13 @@ export class RawEditPresenter {
     // adjust above and costs nothing; these are the whole decode below the mosaic and a rebuild of
     // the blur the presence sliders read, which at 24MP is far more than a pointer emits positions
     // for.
-    this.prepare.want(prepareOf(next, this.editStore.libraryDenoiser));
+    this.prepareEdit(next);
     this.draw();
   }
 
   prepareEdit(doc: EditDoc): void {
-    this.prepare.want(prepareOf(doc, this.editStore.libraryDenoiser));
+    const { libraryDenoiser, upscalable } = this.editStore;
+    this.prepare.want(prepareOf(doc, libraryDenoiser, upscalable));
   }
 
   draw(): void {
@@ -1259,7 +1264,6 @@ export class RawEditPresenter {
     this.stage.matched = header.matched;
     this.stage.preparedElsewhere = preparedElsewhere;
     this.stage.mosaic = header.mosaic;
-    this.stage.upscalable = header.upscalable;
     this.edit.setAsShot(header.asShot);
     this.stage.noiseFit = header.noiseFit ?? null;
     this.stage.detail = header.detail;

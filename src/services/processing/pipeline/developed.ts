@@ -1,3 +1,4 @@
+import { denoiserFor } from '../../../schemas/denoiser';
 import { adjustOf, exposureOf } from '../../../schemas/edit_adjust';
 import { dustSettings } from '../../../schemas/dust_settings';
 import { EditDocSchema, type Denoiser, type EditDoc } from '../../../schemas/photo_edits';
@@ -12,11 +13,11 @@ import type { Developed } from '../workers/processing_types';
  * a default that moves in `EditDocSchema` moves here too. "As metered" is about the *grade*: a
  * photo nobody has edited is still denoised and still sharpened, at whatever the sliders open at.
  */
-export const AS_METERED = asMetered('galosh');
+export const AS_METERED = asMetered('galosh', false);
 
-function asMetered(denoiser: Denoiser): FromDocument {
+function asMetered(denoiser: Denoiser, upscalable: boolean): FromDocument {
   return {
-    ...asJob(EditDocSchema.parse({ awaitsCameraMatch: true }), denoiser),
+    ...asJob(EditDocSchema.parse({ awaitsCameraMatch: true }), denoiser, upscalable),
     // Off, against the document's own default: finding the particles costs a whole-frame read, and
     // a photo nobody has edited has not asked for one.
     dust: dustSettings(undefined),
@@ -40,9 +41,10 @@ function asMetered(denoiser: Denoiser): FromDocument {
 export function developed(
   edits: string | null,
   libraryDenoiser: Denoiser,
+  upscalable: boolean,
   previewing?: PrepareDevelop,
 ): FromDocument {
-  const metered = asMetered(libraryDenoiser);
+  const metered = asMetered(libraryDenoiser, upscalable);
   if (edits == null && previewing == null) return metered;
   try {
     const stored: unknown = edits == null ? {} : JSON.parse(edits);
@@ -50,7 +52,7 @@ export function developed(
       previewing == null ? stored : { ...(stored as object), ...previewing },
     );
     if (!parsed.success) return metered;
-    return asJob(parsed.data, libraryDenoiser);
+    return asJob(parsed.data, libraryDenoiser, upscalable);
   } catch {
     return metered;
   }
@@ -59,8 +61,8 @@ export function developed(
 /** Everything a job's develop settings hold except the defringe, which is the library's. */
 type FromDocument = Omit<Developed, 'defringe'>;
 
-function asJob(doc: EditDoc, libraryDenoiser: Denoiser): FromDocument {
-  const denoiser = doc.denoiser ?? libraryDenoiser;
+function asJob(doc: EditDoc, libraryDenoiser: Denoiser, upscalable: boolean): FromDocument {
+  const denoiser = denoiserFor(doc.denoiser ?? libraryDenoiser, upscalable);
   return {
     exposure: exposureOf(doc),
     denoiseLuminance: doc.luminanceNoise,

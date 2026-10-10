@@ -474,7 +474,6 @@ impl RegionMosaic {
             neutral_ceiling: neutral_ceiling_of(self.colour.ceiling),
             wb_gains: self.colour.ceiling,
             stated_white: None,
-            cfa: Some(self.cfa),
         }
     }
 }
@@ -1561,7 +1560,6 @@ impl Held {
             neutral_ceiling: neutral_ceiling_of(colour.ceiling),
             wb_gains: colour.ceiling,
             stated_white: None,
-            cfa: Some(cfa),
         })
     }
 
@@ -1791,7 +1789,6 @@ impl Held {
             neutral_ceiling: neutral_ceiling_of(colour.ceiling),
             wb_gains: colour.ceiling,
             stated_white: None,
-            cfa: Some(cfa),
         })
     }
 }

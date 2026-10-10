@@ -77,6 +77,7 @@ const SYMBOLS = {
   // What a render allocates, kept for the next one between a hold and its release.
   bb_hold_render_memory: { args: [], returns: FFIType.void },
   bb_release_render_memory: { args: [], returns: FFIType.void },
+  bb_upscalable: { args: [FFIType.cstring], returns: FFIType.i32 },
   // The upscaler model the app downloaded, by its manifest's and weights' paths.
   bb_hold_upscaler_model: { args: [FFIType.cstring, FFIType.cstring], returns: FFIType.i32 },
   // A response body on its way to a socket, copied into a buffer the caller owns

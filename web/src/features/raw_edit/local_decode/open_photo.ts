@@ -7,6 +7,7 @@ import { settingsApi } from '../../../api/settings';
 import type { Settings, ViewerRendition } from '../../../../../src/schemas/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
+import { denoiserFor } from '../../../../../src/schemas/denoiser';
 import { sharpeningOf } from '../../../../../src/schemas/sharpening';
 import { readPreparedHeader, type PreparedHeader } from '../../../../../src/schemas/prepared';
 import type { OpenStep } from '../stage/stage_store';
@@ -296,7 +297,11 @@ function gradeOf(settings: Settings): LocalOpen['grade'] {
  * Exported for the test that holds the defaults below against `EditDocSchema`'s, which is the only
  * place the two copies meet.
  */
-export function prepareOf(doc: EditDoc | undefined, libraryDenoiser: Denoiser): LocalPrepare {
+export function prepareOf(
+  doc: EditDoc | undefined,
+  libraryDenoiser: Denoiser,
+  upscalable: boolean,
+): LocalPrepare {
   // `EditDocSchema`'s own defaults where there is no document, not zero: the store is filled with a
   // neutral document either way, so answering 0 here would open the photograph at a Detail nothing
   // asked for and re-prepare it the moment the first control settles.
@@ -308,7 +313,7 @@ export function prepareOf(doc: EditDoc | undefined, libraryDenoiser: Denoiser): 
   // Spelled rather than read off the schema, as `dustSettings` spells its pair: that module imports
   // zod, and the page keeps zod out of its bundle (`photo_edits.ts` says so, and every other import
   // of it on this side is a type).
-  const denoiser = doc?.denoiser ?? libraryDenoiser;
+  const denoiser = denoiserFor(doc?.denoiser ?? libraryDenoiser, upscalable);
   return {
     luminance: doc?.luminanceNoise ?? null,
     colour: doc?.colourNoise ?? null,

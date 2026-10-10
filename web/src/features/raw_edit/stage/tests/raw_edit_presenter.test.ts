@@ -188,6 +188,7 @@ describe('a slider reaching the picture', () => {
       history: [],
       stamp: null,
       library_denoiser: 'galosh',
+      upscalable: true,
     };
     const matched: EditOpening = {
       ...unedited,
@@ -305,7 +306,7 @@ describe('a slider reaching the picture', () => {
     const neutral = neutralEdits();
 
     expect(neutral.denoiser).toBeNull();
-    expect(prepareOf(undefined, 'pmrid')).toEqual({
+    expect(prepareOf(undefined, 'pmrid', true)).toEqual({
       luminance: neutral.luminanceNoise,
       colour: neutral.colourNoise,
       denoiser: 'pmrid',
@@ -422,6 +423,7 @@ describe('a slider reaching the picture', () => {
       history: [],
       stamp: null,
       library_denoiser: 'pmrid',
+      upscalable: true,
     });
     expect(edit.denoiser).toBe('pmrid');
 
@@ -456,6 +458,31 @@ describe('a slider reaching the picture', () => {
     presenter.setDenoiser('upscaler');
     await settled();
     expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpen: 0.7 });
+  });
+
+  test('a sensor the upscaler cannot take runs GALOSH at its sharpening under a library of Best', async () => {
+    const asked = (): LocalPrepare[] =>
+      decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
+    const settled = async (): Promise<void> => {
+      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+    };
+    presenter.edit.opened({
+      doc: neutralEdits(),
+      rev: 1,
+      canUndo: false,
+      canRedo: false,
+      cursor: 0,
+      history: [],
+      stamp: null,
+      library_denoiser: 'upscaler',
+      upscalable: false,
+    });
+    expect(edit.denoiser).toBe('galosh');
+    expect(edit.denoiserDefaults).toEqual({ sharpening: 50 });
+
+    presenter.settle({ luminanceNoise: 40 });
+    await settled();
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'galosh', sharpen: 0.5 });
   });
 
   /**
@@ -924,7 +951,6 @@ describe('the level a zoom is served at', () => {
         matched: true,
         cameraMatch: 'lensAndColour',
         mosaic: false,
-        upscalable: false,
         asShot: null,
         detail: [0, 0],
         cameraExposure: null,
@@ -1076,7 +1102,7 @@ describe('the level a zoom is served at', () => {
   });
 
   test('a Detail setting is prepared again where the picture was, and every later ask carries it', async () => {
-    presenter.prepare.seed(prepareOf(edit.doc!, 'galosh'));
+    presenter.prepare.seed(prepareOf(edit.doc!, 'galosh', true));
     presenter.settle({ sharpening: 80 });
     await settled();
 
@@ -1324,6 +1350,7 @@ describe('leaving the editor', () => {
       history,
       stamp: 'opened-stamp',
       library_denoiser: 'galosh',
+      upscalable: true,
     });
     Object.assign(presenter.edit, { photoId: 'a-photo-id' });
   });

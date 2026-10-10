@@ -58,6 +58,7 @@ export class PhotoEditsService {
     /** Vouch for the copies built from this photo's document as it stood at `stamp`. */
     private readonly vouch: (photoId: string, stamp: string | null) => void = () => {},
     private readonly denoiserOf: (libraryId: string) => Denoiser = () => 'galosh',
+    private readonly upscalable: (photoId: string) => boolean = () => true,
   ) {}
 
   get(photoId: string): EditState {
@@ -70,6 +71,7 @@ export class PhotoEditsService {
     return {
       ...this.edits.checkpoint(photoId),
       library_denoiser: this.denoiserOf(photo.library_id),
+      upscalable: this.upscalable(photoId),
     };
   }
 

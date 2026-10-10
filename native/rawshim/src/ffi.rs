@@ -104,6 +104,19 @@ pub unsafe extern "C" fn bb_run_job(
     answered
 }
 
+/// 1 when the RAW at `path` is a Bayer mosaic, which the upscaler takes, 0 otherwise or unreadable.
+///
+/// # Safety
+/// `path` must be NUL-terminated, borrowed for the call.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_upscalable(path: *const c_char) -> i32 {
+    let Some(path) = (unsafe { as_str(path) }) else {
+        return 0;
+    };
+    i32::from(crate::decode_rawler::upscalable_at(path))
+}
+
 /// Renders with the upscaler model the app downloaded, at these two paths, from the next frame on
 /// (`upscale::hold_model`). 0 on success, negative where either file could not be read.
 ///

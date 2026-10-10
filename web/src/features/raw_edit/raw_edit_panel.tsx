@@ -349,15 +349,13 @@ const ColourProfileChoice = observer(function ColourProfileChoice({
 
 const DenoiserChoice = observer(function DenoiserChoice({
   edit,
-  stage,
   presenter,
 }: {
   edit: EditStore;
-  stage: StageStore;
   presenter: RawEditPresenter;
 }): JSX.Element {
   const options = DENOISERS.map((option) =>
-    option.value === 'upscaler' && !stage.upscalable
+    option.value === 'upscaler' && !edit.upscalable
       ? {
           ...option,
           disabled: true,
@@ -526,7 +524,7 @@ export const RawEditPanel = observer(function RawEditPanel({
         RawEditPanelStrings.groupDetail(),
         <>
           {stage.mosaic && stage.denoises && (
-            <DenoiserChoice edit={edit} stage={stage} presenter={presenter} />
+            <DenoiserChoice edit={edit} presenter={presenter} />
           )}
           {sliders(
             DETAIL.filter(

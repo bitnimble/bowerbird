@@ -1,4 +1,5 @@
 import { computed, observable } from 'mobx';
+import { denoiserFor } from '../../../../../src/schemas/denoiser';
 import { exposureOf } from '../../../../../src/schemas/edit_adjust';
 import {
   type Denoiser,
@@ -46,8 +47,10 @@ export class EditStore {
   /** What a document naming no denoiser is denoised with: its library's. */
   @observable accessor libraryDenoiser: Denoiser = 'galosh';
 
+  @observable accessor upscalable = true;
+
   @computed get denoiser(): Denoiser {
-    return this.doc?.denoiser ?? this.libraryDenoiser;
+    return denoiserFor(this.doc?.denoiser ?? this.libraryDenoiser, this.upscalable);
   }
 
   /** What each slider following the denoiser shows where the document holds null. */

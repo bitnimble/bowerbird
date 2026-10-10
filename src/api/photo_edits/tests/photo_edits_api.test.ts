@@ -61,6 +61,7 @@ describe('PhotoEditsApi', () => {
       history: [{ from: { exposure: 0 }, to: { exposure: 1 } }],
       stamp: 'stamp',
       library_denoiser: 'pmrid' as const,
+      upscalable: false,
     };
     const { app, service } = buildApp({ checkpoint: jest.fn(() => checkpoint) });
 

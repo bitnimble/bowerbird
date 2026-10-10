@@ -113,7 +113,7 @@ beforeEach(() => {
 });
 
 describe('PhotoEditsService.checkpoint', () => {
-  it("carries what the photo's library denoises a document naming no filter with", () => {
+  it("carries what the photo's library denoises a document naming no filter with, and whether the upscaler takes it", () => {
     const inLibrary = {
       getById: (id: string) => (id === PHOTO ? { id, library_id: 'lib' } : null),
     } as unknown as PhotoListingRepository;
@@ -125,9 +125,11 @@ describe('PhotoEditsService.checkpoint', () => {
       () => {},
       () => {},
       (libraryId) => (libraryId === 'lib' ? 'pmrid' : 'galosh'),
+      (photoId) => photoId !== PHOTO,
     ).checkpoint(PHOTO);
 
     expect(opening.library_denoiser).toBe('pmrid');
+    expect(opening.upscalable).toBe(false);
     expect(opening.doc.denoiser).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ import { getDataPath, originalPathOf } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
+import { isUpscalable } from '../rawshim/rawshim_ops';
 import {
   openPrepareWorker,
   pictureLevel,
@@ -102,7 +103,12 @@ export class PrepareRenderer {
       // composite the photographs rather than the cameras' own pictures.
       targets: [],
       grade: this.targets.grade(),
-      ...developed(this.editsFor(photoId)?.doc ?? null, library.denoiser, develop),
+      ...developed(
+        this.editsFor(photoId)?.doc ?? null,
+        library.denoiser,
+        original != null && isUpscalable(original),
+        develop,
+      ),
       ...this.targets.render(),
     };
     const job: WorkerJob =

@@ -88,10 +88,10 @@ import { SettingsApi } from './api/settings/settings_api';
 import { UpdatesApi } from './api/updates/updates_api';
 import { PrinterProfilesApi } from './api/printer_profiles/printer_profiles_api';
 import { ModelsApi } from './api/models/models_api';
-import { modelsDir, printerProfilesDir } from './utils/paths';
+import { modelsDir, originalPathOf, printerProfilesDir } from './utils/paths';
 import { UpdateService } from './services/updates/update_service';
 import { ModelsService } from './services/models/models_service';
-import { holdUpscalerModel } from './services/processing/rawshim/rawshim_ops';
+import { holdUpscalerModel, isUpscalable } from './services/processing/rawshim/rawshim_ops';
 import { VERSION } from './version';
 import { BrowseApi } from './api/browse/browse_api';
 import { SettingsRepository } from './services/settings/settings_repository';
@@ -294,6 +294,15 @@ const photoEditsService = new PhotoEditsService(
   replicationChanged,
   (photoId, stamp) => photoProcessingRepo.vouchSamePicture(photoId, stamp),
   (libraryId) => librariesRepo.getConfiguration(libraryId)?.denoiser ?? 'galosh',
+  (photoId) => {
+    const photo = photoPathsRepo.getBasicById(photoId);
+    const library = photo == null ? null : librariesRepo.getConfiguration(photo.library_id);
+    const original = library == null || photo == null ? null : originalPathOf(library, photo);
+    if (original == null) return false;
+    // A local copy given up for space comes back for the decode, and the decode still takes GALOSH
+    // off a non-Bayer mosaic; reading it as non-Bayer would lock "Best" on every such photo.
+    return !existsSync(original) || isUpscalable(original);
+  },
 );
 const shootsService = new ShootsService(
   shootsRepo,

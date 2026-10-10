@@ -402,8 +402,14 @@ export const EditCheckpointSchema = EditStateSchema.extend({
 });
 export type EditCheckpoint = z.infer<typeof EditCheckpointSchema>;
 
-/** A checkpoint as the editor opens on it: with what a document naming no denoiser is denoised with. */
-export const EditOpeningSchema = EditCheckpointSchema.extend({ library_denoiser: DenoiserSchema });
+/**
+ * A checkpoint as the editor opens on it: with what a document naming no denoiser is denoised with,
+ * and whether the upscaler can run on this photo at all (`denoiserFor`).
+ */
+export const EditOpeningSchema = EditCheckpointSchema.extend({
+  library_denoiser: DenoiserSchema,
+  upscalable: z.boolean(),
+});
 export type EditOpening = z.infer<typeof EditOpeningSchema>;
 
 /**

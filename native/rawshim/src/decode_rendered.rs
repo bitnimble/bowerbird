@@ -240,7 +240,6 @@ impl Held {
                 Some(_) => None,
                 None => Some(crate::light::Light::measured(crate::transfer::FULL_SCALE)),
             },
-            cfa: None,
         })
     }
 }

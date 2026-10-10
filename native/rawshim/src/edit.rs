@@ -119,8 +119,6 @@ pub struct PreparedHeader {
     /// there is nothing for either to act on. A slider that silently does nothing is worse than
     /// one that is not offered.
     pub mosaic: bool,
-    /// Whether that mosaic is a Bayer one, which is what the upscaler takes.
-    pub upscalable: bool,
     /// The illuminant the decode balanced against, which is the baseline the reader's
     /// temperature and tint move away from. None where the camera recorded no usable
     /// multipliers, and then the pair has nothing to mean and the panel says so.
@@ -399,7 +397,6 @@ pub async fn from_frame(
         // as one run of laps rather than as a decode that reports and a half that does not.
         let mut lap = crate::clock::laps("  open ");
         let noise_fit = frame.noise;
-        let upscalable = frame.cfa.as_ref().is_some_and(crate::cfa::Cfa::is_bayer);
         let stored = request.stored();
         let as_shot = frame.as_shot;
         let stated_white = frame.white_to_anchor(request.stated_white)?;
@@ -562,7 +559,6 @@ pub async fn from_frame(
             window.defocus,
             dust,
             mosaic,
-            upscalable,
         )
         .await;
         lap("noise measure, header");
@@ -651,7 +647,6 @@ async fn payload(
     defocus: (f32, f32),
     dust: Option<Vec<crate::dust::Spot>>,
     mosaic: bool,
-    upscalable: bool,
 ) -> PreparedHeader {
     // Everything this open now knows, against everything it was told. Reported only where it says
     // something new, so its presence means "keep this" rather than "here is what you gave me".
@@ -702,9 +697,8 @@ async fn payload(
         camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
         matched: matched.is_some(),
         mosaic,
-        upscalable,
         as_shot,
-        detail: request.detail().on_bayer(upscalable).resolved(noise_fit),
+        detail: request.detail().resolved(noise_fit),
         camera_curve,
         camera_exposure,
         camera_saturation,

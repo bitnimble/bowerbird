@@ -135,9 +135,6 @@ pub struct Frame {
     /// The level the file states diffuse white at, for a finished picture; None for a RAW, whose
     /// white is a quantile of its own scene.
     pub stated_white: Option<crate::light::Light<crate::light::Level>>,
-    /// The sensor's colour filter array, for a frame decoded off one; None for a finished picture or
-    /// a linear DNG.
-    pub cfa: Option<crate::cfa::Cfa>,
 }
 
 impl Frame {
@@ -154,7 +151,6 @@ impl Frame {
             neutral_ceiling: 1.0,
             wb_gains: [1.0; 3],
             stated_white: None,
-            cfa: None,
         }
     }
 

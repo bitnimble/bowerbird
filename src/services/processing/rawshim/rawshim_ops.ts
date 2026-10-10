@@ -180,6 +180,11 @@ export function scrubExif(bytes: Buffer): boolean {
   return shim().bb_scrub_exif(ptr(bytes), bytes.byteLength) === 1;
 }
 
+/** Whether the RAW is a Bayer mosaic, which the upscaler takes. False for one it can't read. */
+export function isUpscalable(filePath: string): boolean {
+  return shim().bb_upscalable(Buffer.from(`${filePath}\0`)) === 1;
+}
+
 /** Renders with this upscaler model from the next frame on, in every worker. */
 export function holdUpscalerModel(manifestPath: string, weightsPath: string): void {
   const held = shim().bb_hold_upscaler_model(

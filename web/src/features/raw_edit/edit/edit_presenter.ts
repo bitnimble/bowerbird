@@ -71,6 +71,7 @@ export class EditPresenter {
     this.store.saveStatus = 'clean';
     this.store.asShot = null;
     this.store.libraryDenoiser = 'galosh';
+    this.store.upscalable = true;
     this.openedAt = null;
     this.written = false;
   }
@@ -79,6 +80,7 @@ export class EditPresenter {
   opened(checkpoint: EditOpening | null): void {
     this.openedAt = checkpoint;
     this.store.libraryDenoiser = checkpoint?.library_denoiser ?? 'galosh';
+    this.store.upscalable = checkpoint?.upscalable ?? true;
   }
 
   @action.bound

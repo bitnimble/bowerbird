@@ -31,6 +31,7 @@ import {
 } from '../renditions/renditions';
 import { readStages, withStagesOff } from '../renditions/render_stages';
 import { ProcessingPool } from '../workers/processing_pool';
+import { isUpscalable } from '../rawshim/rawshim_ops';
 import { developed } from './developed';
 import { RenderService } from './render_service';
 import { LibraryActivity } from '../../activity/library_activity';
@@ -655,7 +656,7 @@ export class ProcessingService extends RenderService {
         dataPath,
         grade: this.targets.grade(),
         cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-        ...developed(pending.edits, pending.denoiser),
+        ...developed(pending.edits, pending.denoiser, isUpscalable(rawFilePath)),
         ...this.targets.render(),
       },
       readStages(pending.render_skip_full),

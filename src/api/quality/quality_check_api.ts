@@ -13,6 +13,7 @@ import type { PhotoReadService } from '../../services/photos/listing/photo_read_
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
 import { encoderQuality } from '../../services/processing/analysis/quality';
 import { renderNativeJob } from '../../services/processing/rawshim/rawshim_command';
+import { isUpscalable } from '../../services/processing/rawshim/rawshim_ops';
 import { developed } from '../../services/processing/pipeline/developed';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 
@@ -89,7 +90,7 @@ export class QualityCheckApi {
           // Created here rather than once at startup: this lives in the temp
           // directory, which something else is entitled to clean at any time.
           mkdirSync(CACHE, { recursive: true });
-          const metered = developed(null, library.denoiser);
+          const metered = developed(null, library.denoiser, isUpscalable(rawFilePath));
           // One rendition job with one target, which is what this page always was:
           // decode the RAW and write a viewer-sized AVIF at the quality being
           // compared. Going through the same call the import does is also what keeps
@@ -103,7 +104,7 @@ export class QualityCheckApi {
             // would be a strength no rendition of this photograph is ever taken at.
             denoiseLuminance: null,
             denoiseColour: null,
-            denoiser: library.denoiser,
+            denoiser: metered.denoiser,
             highlightRecovery: 100,
             // Off, for the same reason: this page compares quantizers, and a correction that
             // removed a few discs from whichever photograph was chosen is a second variable.

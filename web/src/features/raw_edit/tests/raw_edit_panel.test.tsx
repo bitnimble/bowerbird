@@ -92,7 +92,7 @@ function open(
   stage.detail = status === 'live' ? [24, 76] : null;
   stage.noiseFit = noiseFit;
   stage.mosaic = mosaic;
-  stage.upscalable = upscalable;
+  edit.upscalable = upscalable;
   const { presenter, calls } = recording();
   render(
     <RawEditPanel
@@ -410,16 +410,20 @@ describe('the edit panel', () => {
     );
   });
 
-  test('offers the upscaler only over a Bayer mosaic', () => {
+  test('offers the upscaler only over a Bayer mosaic, and shows what runs in its place', () => {
+    const picker = (): HTMLElement =>
+      screen.getByRole('combobox', { name: RawEditPanelStrings.denoiser() });
     const best = (): HTMLElement => {
-      fireEvent.click(screen.getByRole('combobox', { name: RawEditPanelStrings.denoiser() }));
+      fireEvent.click(picker());
       return screen.getByRole('option', { name: RawEditPanelStrings.denoiserUpscaler() });
     };
-    open();
+    open({ denoiser: 'upscaler' });
+    expect(picker().textContent).toContain(RawEditPanelStrings.denoiserUpscaler());
     expect(best().getAttribute('aria-disabled')).toBeNull();
     cleanup();
 
-    open({}, null, false, 'live', undefined, true, false);
+    open({ denoiser: 'upscaler' }, null, false, 'live', undefined, true, false);
+    expect(picker().textContent).toContain(RawEditPanelStrings.denoiserGalosh());
     const option = best();
     expect(option.getAttribute('aria-disabled')).toBe('true');
     expect(option.getAttribute('aria-description')).toBe(

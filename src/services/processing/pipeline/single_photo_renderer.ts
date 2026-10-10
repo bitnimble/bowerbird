@@ -12,6 +12,7 @@ import type { SettingsRepository } from '../../settings/settings_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
 import { renditionSkips, withStagesOff } from '../renditions/render_stages';
 import type { OptionalStage } from '../../../schemas/render_stages';
+import { isUpscalable } from '../rawshim/rawshim_ops';
 import { toCommand } from '../rawshim/worker_command';
 import { workerEntry } from '../../worker_entry';
 import type { CompositeWorker } from '../workers/composite_worker';
@@ -207,7 +208,7 @@ export class SinglePhotoRenderer {
           // And the same edits, for the same reason. This is the path a `max` export takes,
           // so without it the one rendition a reader asks for by name is the one that ignores
           // what they did to the picture.
-          ...developed(edits?.doc ?? null, denoiser),
+          ...developed(edits?.doc ?? null, denoiser, isUpscalable(rawFilePath)),
           ...this.targets.render(),
         } satisfies RenditionJob,
         skip,
@@ -254,7 +255,7 @@ export class SinglePhotoRenderer {
       measure: true,
       grade: this.targets.grade(),
       cameraMatch: 'lensAndColour',
-      ...developed(null, library.denoiser),
+      ...developed(null, library.denoiser, isUpscalable(rawFilePath)),
       ...this.targets.render(),
     };
     // Nothing to record either way: a job with no target writes no copy, and the analysis it
