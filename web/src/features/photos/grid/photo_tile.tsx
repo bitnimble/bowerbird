@@ -1,8 +1,20 @@
 import * as stylex from '@stylexjs/stylex';
-import { ChevronLeft, ChevronUp, EyeOff, Layers, Network, Snowflake, Unplug } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronUp,
+  Diff,
+  EyeOff,
+  Focus,
+  Grid3x3,
+  Layers,
+  Network,
+  Snowflake,
+  Unplug,
+} from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { type CaptureSequenceKind } from '../../../../../src/schemas/capture_sequence';
 import { type PhotoSummary } from '../../../../../src/schemas/photos';
 import { renditionsApi } from '../../../api/renditions';
 import { captureDateTime, localDateTime } from '../../../api/dates';
@@ -39,6 +51,25 @@ function rowName(photo: PhotoSummary): string {
   return photo.composite_kind != null
     ? PhotoGridStrings.compositeName(photo.frame_count ?? 0, photo.composite_kind)
     : filename(photo.file_path, photo.id);
+}
+
+function StackIcon({
+  bracket,
+  size,
+}: {
+  bracket: CaptureSequenceKind | null;
+  size: number;
+}): JSX.Element {
+  switch (bracket) {
+    case 'exposureBracket':
+      return <Diff size={size} aria-hidden="true" />;
+    case 'focusBracket':
+      return <Focus size={size} aria-hidden="true" />;
+    case 'pixelShift':
+      return <Grid3x3 size={size} aria-hidden="true" />;
+    case null:
+      return <Layers size={size} aria-hidden="true" />;
+  }
 }
 
 // Which way the viewer's filmstrip runs, or null in the gallery. Masonry keeps two
@@ -200,7 +231,13 @@ export const PhotoTile = observer(function PhotoTile({
   // name as well as on the tick box beside it.
   // A composite counts its frames; a stack counts its members.
   const counted = composed ? (photo.frame_count ?? 0) : stacked ? photo.stack_size : null;
-  const label = PhotoGridStrings.tile(selected, counted, name, photo.composite_kind ?? null);
+  const label = PhotoGridStrings.tile(
+    selected,
+    counted,
+    name,
+    photo.composite_kind ?? null,
+    photo.bracket_kind,
+  );
 
   // What the chip says, whether the tile itself is the disclosure or the chip is:
   // back the way the band opened, and otherwise what kind of a set this is and how
@@ -214,7 +251,7 @@ export const PhotoTile = observer(function PhotoTile({
           <ChevronUp size={chevron} />
         )
       ) : (
-        <Layers size={22} />
+        <StackIcon bracket={photo.bracket_kind} size={22} />
       )}
       {!expanded && <span {...stylex.props(tile.count)}>{counted ?? photo.stack_size}</span>}
     </>
@@ -525,10 +562,13 @@ const TileFoot = observer(function TileFoot({
             focusRing.ring,
           )}
           aria-expanded={stacks.expansions.has(band.stackId)}
-          aria-label={PhotoGridStrings.showStack(filename(photo.file_path, photo.id))}
+          aria-label={PhotoGridStrings.showStack(
+            filename(photo.file_path, photo.id),
+            photo.bracket_kind,
+          )}
           onClick={() => void photos.toggleBand(band.stackId, band.position)}
         >
-          <Layers size={12} aria-hidden="true" />
+          <StackIcon bracket={photo.bracket_kind} size={12} />
         </button>
       )}
       {/* The date is the list mode's second column, and a strip has no columns:
@@ -603,7 +643,7 @@ export const BandMember = observer(function BandMember({
             else if (e.metaKey || e.ctrlKey || marks.hasSelection) photos.toggleMember(photo);
             else openPhoto(photo.id);
           }}
-          aria-label={PhotoGridStrings.tile(selected, null, name, null)}
+          aria-label={PhotoGridStrings.tile(selected, null, name, null, null)}
         >
           <img
             {...stylex.props(pictureStyle(layout, loaded, photo, outside))}
