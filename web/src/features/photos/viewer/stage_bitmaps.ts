@@ -222,17 +222,10 @@ async function decodePicture(
   }
 
   // Safari: no `ImageDecoder`, so a PQ rendition's planes come from our own AV1 decoder, which only
-  // the WebGPU painter can draw - and it draws the fitted frame whole, so nothing past the texture
-  // edge every device allows.
-  const fitsATexture = Math.max(natural.width, natural.height) <= MAX_CANVAS_EDGE;
-  const planesRefusal = !canDecodeAvifPlanes()
-    ? `no shared memory (crossOriginIsolated ${globalThis.crossOriginIsolated})`
-    : navigator.gpu == null
-      ? 'no WebGPU'
-      : !fitsATexture
-        ? `${natural.width}x${natural.height} is past the ${MAX_CANVAS_EDGE} texture edge`
-        : null;
-  if (WebCodecs == null && blob.type === 'image/avif' && planesRefusal != null) {
+  // the WebGPU painter can draw - and it draws the fitted frame whole.
+  const planesRefusal =
+    WebCodecs != null || blob.type !== 'image/avif' ? null : await refusePlanes(natural);
+  if (planesRefusal != null) {
     log.warn(
       `no ImageDecoder and ${planesRefusal}, so the AVIF is decoded as a bitmap, which tone maps HDR to SDR`,
     );
@@ -274,6 +267,28 @@ async function decodePicture(
     rotation: 0,
     maxCll: null,
   };
+}
+
+async function refusePlanes(natural: { width: number; height: number }): Promise<string | null> {
+  if (!canDecodeAvifPlanes()) {
+    return `no shared memory (crossOriginIsolated ${globalThis.crossOriginIsolated})`;
+  }
+  if (navigator.gpu == null) return 'no WebGPU';
+  const edge = await textureEdge(navigator.gpu);
+  if (Math.max(natural.width, natural.height) > edge) {
+    return `${natural.width}x${natural.height} is past this device's ${edge}px texture limit`;
+  }
+  return null;
+}
+
+let adapterTextureEdge: Promise<number> | null = null;
+
+function textureEdge(gpu: GPU): Promise<number> {
+  // The GPU thread's device is this default adapter at its full limits (`gpu.rs` `limits_of`).
+  adapterTextureEdge ??= gpu
+    .requestAdapter()
+    .then((adapter) => adapter?.limits.maxTextureDimension2D ?? 0);
+  return adapterTextureEdge;
 }
 
 /**
