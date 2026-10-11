@@ -260,7 +260,10 @@ export const PhotoStrip = observer(function PhotoStrip({
                       ? undefined
                       : section.composite != null
                         ? PhotoGridStrings.frameBandLabel(section.photos.length, section.composite)
-                        : PhotoGridStrings.bandLabel(section.photos.length)
+                        : PhotoGridStrings.bandLabel(
+                            section.photos.length,
+                            section.photos[0]?.bracket_kind ?? null,
+                          )
                   }
                 >
                   {section.kind === 'grid'

@@ -1,4 +1,18 @@
+import { type CaptureSequenceKind } from '../../../../../src/schemas/capture_sequence';
 import { type CompositeKind } from '../../../../../src/schemas/photos';
+
+function stackName(bracket: CaptureSequenceKind | null): string {
+  switch (bracket) {
+    case 'exposureBracket':
+      return 'exposure bracket stack';
+    case 'focusBracket':
+      return 'focus bracket stack';
+    case 'pixelShift':
+      return 'pixel shift stack';
+    case null:
+      return 'stack';
+  }
+}
 
 export const PhotoGridStrings = {
   // A composite is named by what it is: the photograph the row happens to be drawn from is one
@@ -8,6 +22,7 @@ export const PhotoGridStrings = {
     stackSize: number | null,
     filename: string,
     composite: CompositeKind | null,
+    bracket: CaptureSequenceKind | null,
   ) =>
     `${selected ? 'selected, ' : ''}${
       stackSize == null
@@ -16,7 +31,7 @@ export const PhotoGridStrings = {
           ? `panorama of ${stackSize} photos`
           : composite === 'assembly'
             ? `merge of ${stackSize} photos`
-            : `stack of ${stackSize}, photo ${filename}`
+            : `${stackName(bracket)} of ${stackSize}, photo ${filename}`
     }`,
   pick: (filename: string) => `Select photo ${filename}`,
   /**
@@ -32,12 +47,14 @@ export const PhotoGridStrings = {
     `Show the ${count} frames of this ${composite === 'panorama' ? 'panorama' : 'merge'}`,
   noDate: () => 'No date',
   notInThisShoot: () => 'Not in this shoot',
-  bandLabel: (count: number) => `${count} photos in this stack`,
+  bandLabel: (count: number, bracket: CaptureSequenceKind | null) =>
+    `${count} photos in this ${stackName(bracket)}`,
   /** The same band, opened off a composite's badge, which stands for frames rather than a stack. */
   frameBandLabel: (count: number, composite: CompositeKind) =>
     `${count} frames of this ${composite === 'panorama' ? 'panorama' : 'merge'}`,
   /** The badge on a tile whose stack the filter has left showing one photograph. */
-  showStack: (filename: string) => `Show the stack ${filename} is in`,
+  showStack: (filename: string, bracket: CaptureSequenceKind | null) =>
+    `Show the ${stackName(bracket)} ${filename} is in`,
   /**
    * The grid's own name to a reader. Its rows, not its photographs, which the
    * readout beside the controls says: this is what `aria-setsize` counts, and a

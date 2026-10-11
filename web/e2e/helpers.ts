@@ -381,12 +381,15 @@ export function rowTiles(page: Page): Locator {
 
 export function bands(page: Page): Locator {
   return gallery(page).getByRole('group', {
-    name: /\d+ photos in this stack|\d+ frames of this (panorama|merge)/,
+    name: /\d+ photos in this ([a-z ]+ )?stack|\d+ frames of this (panorama|merge)/,
   });
 }
 
-const FRAME =
-  /^(selected, )?(photo |stack of \d+, photo |panorama of \d+ photos|merge of \d+ photos)/;
+const STACK = /stack of \d+, photo /;
+
+const FRAME = new RegExp(
+  `^(selected, )?(photo |([a-z ]+ )?${STACK.source}|panorama of \\d+ photos|merge of \\d+ photos)`,
+);
 
 // What a click on the picture lands on: a link into the photograph, or a stack's disclosure.
 export function frames(scope: Page | Locator): Locator {
@@ -394,7 +397,7 @@ export function frames(scope: Page | Locator): Locator {
 }
 
 export function stackFrames(scope: Page | Locator): Locator {
-  return scope.getByRole('button', { name: /stack of \d+, photo / });
+  return scope.getByRole('button', { name: STACK });
 }
 
 export function picks(scope: Page | Locator): Locator {

@@ -220,7 +220,10 @@ export const BandTiles = observer(function BandTiles({
       aria-label={
         expansion.composite != null
           ? PhotoGridStrings.frameBandLabel(expansion.photos.length, expansion.composite)
-          : PhotoGridStrings.bandLabel(expansion.photos.length)
+          : PhotoGridStrings.bandLabel(
+              expansion.photos.length,
+              expansion.photos[0]?.bracket_kind ?? null,
+            )
       }
     >
       {/* The interior corners of the join, which are concave and so cannot be a
