@@ -64,7 +64,7 @@ for (const entry of ['welcome', 'settings'] as const) {
     await dialog.getByRole('textbox', { name: 'Device address' }).fill('http://desktop:5173');
     await dialog.getByRole('button', { name: 'Next' }).click();
     await expect(dialog.getByText('12 photos', { exact: true })).toBeVisible();
-    await dialog.getByRole('radio', { name: 'Trip' }).check();
+    await dialog.getByRole('checkbox', { name: 'Trip' }).check();
     await dialog.getByRole('button', { name: 'Next' }).click();
 
     await expect(

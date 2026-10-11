@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { DEFAULT_LIBRARY_SETTINGS, type Library } from '../../../../../src/schemas/libraries';
 import { type AddReplicaRequest } from '../../../../../src/schemas/replication';
 import { blobsApi } from '../../../api/blobs';
 import { browseApi } from '../../../api/browse';
@@ -14,8 +15,74 @@ const { AddReplicaDialog } = await import('../add_replica_dialog');
 
 restoreApiAfterTests();
 afterEach(cleanup);
+
+let here: string[] = [];
+
+function libraryHere(id: string): Library {
+  return {
+    id,
+    root_path: `/fixture/${id}`,
+    bin_name: 'Bin',
+    read_only: false,
+    name: id,
+    ordering: 'taken_asc',
+    rendition_source: 'render',
+    rendition_hdr: true,
+    render_skip_full: [],
+    render_skip_max: [],
+    denoiser: 'galosh',
+    include_subfolders: true,
+    include_non_raw: false,
+    auto_stack: true,
+    auto_stack_similarity: 0.78,
+    auto_stack_window_seconds: 60,
+    last_synced_at: null,
+    photo_count: 0,
+    missing_photo_count: 0,
+    unavailable_photo_count: 0,
+    rendered_photo_count: 0,
+  };
+}
+
+/** `fail` gives a request's error, and `committed` whether its library still landed here. */
+function recordAdds(
+  fail: (request: AddReplicaRequest) => { error: Error; committed: boolean } | null = () => null,
+): AddReplicaRequest[] {
+  const requests: AddReplicaRequest[] = [];
+  replicationApi.addReplica = (request) => {
+    requests.push(request);
+    const failure = fail(request);
+    if (failure == null || failure.committed) here.push(request.library_id);
+    if (failure != null) return Promise.reject(failure.error);
+    return Promise.resolve({
+      library_id: request.library_id,
+      peer_id: 'peer000000000001',
+      applied: 0,
+    });
+  };
+  return requests;
+}
+
+async function asThinShell(run: () => Promise<void>): Promise<void> {
+  const userAgent = navigator.userAgent;
+  const bridge = globalThis as { __TAURI__?: unknown };
+  Object.defineProperty(navigator, 'userAgent', {
+    value: 'Mozilla/5.0 (Linux; Android 14; Pixel 8)',
+    configurable: true,
+  });
+  bridge.__TAURI__ = { core: { invoke: async () => null } };
+  try {
+    await run();
+  } finally {
+    delete bridge.__TAURI__;
+    Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+  }
+}
+
 beforeEach(() => {
-  librariesApi.list = () => Promise.resolve([]);
+  here = [];
+  librariesApi.list = () => Promise.resolve(here.map(libraryHere));
+  librariesApi.getDefaults = () => Promise.resolve(DEFAULT_LIBRARY_SETTINGS);
   blobsApi.listTransfers = () => Promise.resolve([]);
   browseApi.get = (path = '/') => Promise.resolve({ path, parent: null, directories: [] });
   replicationApi.listPeers = () =>
@@ -47,11 +114,22 @@ async function chooseLibrary(): Promise<void> {
   await act(async () => {
     fireEvent.keyDown(field, { key: 'Enter' });
   });
-  expect(screen.getByText('12 photos').textContent).toBe('12 photos');
+  screen.getByText('12 photos');
   await act(async () => {
-    fireEvent.click(screen.getByRole('radio', { name: 'Trip' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Trip' }));
   });
   await press('Next');
+}
+
+async function chooseFolder(path: string): Promise<void> {
+  await press('Choose folder');
+  const picker = within(screen.getByRole('dialog', { name: 'Choose folder' }));
+  await act(async () => {
+    fireEvent.change(picker.getByRole('textbox', { name: 'Library root' }), {
+      target: { value: path },
+    });
+    fireEvent.click(picker.getByRole('button', { name: 'Choose folder' }));
+  });
 }
 
 test('Enter browses the trimmed address once, and not at all while it is blank', async () => {
@@ -94,7 +172,7 @@ test('reconnecting to another device drops the library picked on the first', asy
   await press('Back');
   await press('Next');
 
-  expect(screen.getByRole('radio', { name: 'Trip' }).matches(':checked')).toBe(false);
+  expect(screen.getByRole('checkbox', { name: 'Trip' }).matches(':checked')).toBe(false);
   expect(screen.getByRole('button', { name: 'Next' }).matches(':disabled')).toBe(true);
 });
 
@@ -133,11 +211,7 @@ test.each([
 ] as const)(
   'connect submits keep originals %s and automatic transfers %s independently',
   async (keepOriginals, autoTransfer) => {
-    const requests: AddReplicaRequest[] = [];
-    replicationApi.addReplica = (request) => {
-      requests.push(request);
-      return Promise.resolve({ library_id: 'library1', peer_id: 'peer000000000001', applied: 0 });
-    };
+    const requests = recordAdds();
     render(
       <StoresProvider>
         <AddReplicaDialog open onOpenChange={() => {}} />
@@ -155,14 +229,7 @@ test.each([
           screen.getByRole('checkbox', { name: 'Automatically send and fetch originals' }),
         );
       });
-    await press('Choose folder');
-    const picker = within(screen.getByRole('dialog', { name: 'Choose folder' }));
-    await act(async () => {
-      fireEvent.change(picker.getByRole('textbox', { name: 'Library root' }), {
-        target: { value: '/fixture/trip' },
-      });
-      fireEvent.click(picker.getByRole('button', { name: 'Choose folder' }));
-    });
+    await chooseFolder('/fixture/trip');
     await press('Add "Trip"');
 
     expect(requests).toEqual([
@@ -190,11 +257,7 @@ test('a read-only library can be picked, and is added read-only without original
         { id: 'library1', name: 'Archive', photo_count: 3, read_only: true, replicating: false },
       ],
     });
-  const requests: AddReplicaRequest[] = [];
-  replicationApi.addReplica = (request) => {
-    requests.push(request);
-    return Promise.resolve({ library_id: 'library1', peer_id: 'peer000000000001', applied: 0 });
-  };
+  const requests = recordAdds();
   render(
     <StoresProvider>
       <AddReplicaDialog open onOpenChange={() => {}} />
@@ -208,10 +271,10 @@ test('a read-only library can be picked, and is added read-only without original
     fireEvent.keyDown(field, { key: 'Enter' });
   });
   screen.getByText('3 photos · read-only');
-  const radio = screen.getByRole('radio', { name: 'Archive, read-only' });
-  expect(radio.matches(':disabled')).toBe(false);
+  const option = screen.getByRole('checkbox', { name: 'Archive, read-only' });
+  expect(option.matches(':disabled')).toBe(false);
   await act(async () => {
-    fireEvent.click(radio);
+    fireEvent.click(option);
   });
   await press('Next');
 
@@ -220,14 +283,7 @@ test('a read-only library can be picked, and is added read-only without original
     screen.queryByRole('checkbox', { name: 'Automatically send and fetch originals' }),
   ).toBeNull();
   screen.getByText('Originals stay on the other device.');
-  await press('Choose folder');
-  const picker = within(screen.getByRole('dialog', { name: 'Choose folder' }));
-  await act(async () => {
-    fireEvent.change(picker.getByRole('textbox', { name: 'Library root' }), {
-      target: { value: '/fixture/archive' },
-    });
-    fireEvent.click(picker.getByRole('button', { name: 'Choose folder' }));
-  });
+  await chooseFolder('/fixture/archive');
   await press('Add "Archive"');
 
   expect(requests).toEqual([
@@ -242,20 +298,186 @@ test('a read-only library can be picked, and is added read-only without original
   ]);
 });
 
-test('the mobile app leaves the folder to its server and asks nothing about originals', async () => {
-  const userAgent = navigator.userAgent;
-  const bridge = globalThis as { __TAURI__?: unknown };
-  Object.defineProperty(navigator, 'userAgent', {
-    value: 'Mozilla/5.0 (Linux; Android 14; Pixel 8)',
-    configurable: true,
+async function chooseTwoLibraries(): Promise<void> {
+  replicationApi.browseRemote = () =>
+    Promise.resolve({
+      peer_id: 'peer000000000001',
+      name: 'Desktop',
+      address: 'http://desktop:5173',
+      clock_ms: Date.now(),
+      clock_skew_ms: 0,
+      libraries: [
+        { id: 'library1', name: 'Trip', photo_count: 12, read_only: false, replicating: true },
+        { id: 'library2', name: 'Archive', photo_count: 3, read_only: true, replicating: false },
+      ],
+    });
+  const field = screen.getByRole('textbox', { name: 'Device address' });
+  await act(async () => {
+    fireEvent.change(field, { target: { value: 'desktop:5173' } });
   });
-  bridge.__TAURI__ = { core: { invoke: async () => null } };
-  try {
-    const requests: AddReplicaRequest[] = [];
-    replicationApi.addReplica = (request) => {
-      requests.push(request);
-      return Promise.resolve({ library_id: 'library1', peer_id: 'peer000000000001', applied: 0 });
-    };
+  await act(async () => {
+    fireEvent.keyDown(field, { key: 'Enter' });
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Archive, read-only' }));
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Trip' }));
+  });
+  await press('Next');
+}
+
+test('several libraries each get a folder and are added in the order listed', async () => {
+  const requests = recordAdds();
+  let closed = false;
+  render(
+    <StoresProvider>
+      <AddReplicaDialog open onOpenChange={(open) => (closed = !open)} />
+    </StoresProvider>,
+  );
+  await chooseTwoLibraries();
+
+  screen.getByText('Folder for "Trip"');
+  expect(screen.getByRole('button', { name: 'Next' }).matches(':disabled')).toBe(true);
+  expect(screen.queryByRole('combobox', { name: 'Denoiser' })).toBeNull();
+  expect(screen.queryByRole('checkbox', { name: 'Keep originals on this device' })).toBeNull();
+  await chooseFolder('/fixture/trip');
+  await press('Next');
+  screen.getByText('Folder for "Archive"');
+  expect(screen.getByRole('button', { name: 'Add 2 libraries' }).matches(':disabled')).toBe(true);
+  await press('Back');
+  screen.getByText('Folder for "Trip"');
+  screen.getByText('/fixture/trip');
+  await press('Next');
+  await chooseFolder('/fixture/archive');
+  await act(async () => {
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Keep originals on this device' }));
+  });
+  await press('Add 2 libraries');
+
+  expect(requests).toEqual([
+    {
+      address: 'http://desktop:5173',
+      library_id: 'library1',
+      root_path: '/fixture/trip',
+      sync_originals: false,
+      auto_transfer_originals: true,
+      denoiser: 'galosh',
+    },
+    {
+      address: 'http://desktop:5173',
+      library_id: 'library2',
+      root_path: '/fixture/archive',
+      sync_originals: false,
+      auto_transfer_originals: false,
+      denoiser: 'galosh',
+    },
+  ]);
+  expect(closed).toBe(true);
+});
+
+async function addBothFailingOnArchive(committed: boolean): Promise<{
+  requests: AddReplicaRequest[];
+  closed: () => boolean;
+}> {
+  const requests = recordAdds((request) =>
+    request.library_id === 'library2' && requests.length === 2
+      ? { error: new Error('Unable to connect'), committed }
+      : null,
+  );
+  let closed = false;
+  render(
+    <StoresProvider>
+      <AddReplicaDialog open onOpenChange={(open) => (closed = !open)} />
+    </StoresProvider>,
+  );
+  await chooseTwoLibraries();
+  await chooseFolder('/fixture/trip');
+  await press('Next');
+  await chooseFolder('/fixture/archive');
+  await press('Add 2 libraries');
+  return { requests, closed: () => closed };
+}
+
+test('a failed add keeps only the libraries not yet on this device', async () => {
+  const { requests, closed } = await addBothFailingOnArchive(false);
+
+  expect(closed()).toBe(false);
+  screen.getByText(/Unable to connect/);
+  screen.getByText('Folder on this device');
+  screen.getByText('/fixture/archive');
+  await press('Add "Archive"');
+  expect(requests.map((request) => request.library_id)).toEqual([
+    'library1',
+    'library2',
+    'library2',
+  ]);
+  expect(requests[2]).toEqual({
+    address: 'http://desktop:5173',
+    library_id: 'library2',
+    root_path: '/fixture/archive',
+    sync_originals: false,
+    auto_transfer_originals: false,
+    denoiser: 'galosh',
+  });
+  expect(closed()).toBe(true);
+});
+
+test('an add that failed after reaching this device is not offered again', async () => {
+  const { requests, closed } = await addBothFailingOnArchive(true);
+
+  expect(requests.map((request) => request.library_id)).toEqual(['library1', 'library2']);
+  expect(closed()).toBe(true);
+});
+
+test('a library already on this device cannot be picked', async () => {
+  await addBothFailingOnArchive(false);
+  await press('Back');
+
+  const trip = screen.getByRole('checkbox', { name: 'Trip' });
+  expect(trip.matches(':disabled')).toBe(true);
+  expect(trip.matches(':checked')).toBe(false);
+  screen.getByText('Already on this device');
+  expect(screen.getByRole('checkbox', { name: 'Archive, read-only' }).matches(':checked')).toBe(
+    true,
+  );
+});
+
+test('the mobile app adds several libraries from 1 screen without folders', async () => {
+  await asThinShell(async () => {
+    const requests = recordAdds();
+    render(
+      <StoresProvider>
+        <AddReplicaDialog open onOpenChange={() => {}} />
+      </StoresProvider>,
+    );
+    await chooseTwoLibraries();
+
+    expect(screen.queryByRole('button', { name: 'Choose folder' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Keep originals on this device' })).toBeNull();
+    await press('Add 2 libraries');
+    expect(requests).toEqual([
+      {
+        address: 'http://desktop:5173',
+        library_id: 'library1',
+        sync_originals: false,
+        auto_transfer_originals: false,
+        denoiser: 'galosh',
+      },
+      {
+        address: 'http://desktop:5173',
+        library_id: 'library2',
+        sync_originals: false,
+        auto_transfer_originals: false,
+        denoiser: 'galosh',
+      },
+    ]);
+  });
+});
+
+test('the mobile app leaves the folder to its server and asks nothing about originals', async () => {
+  await asThinShell(async () => {
+    const requests = recordAdds();
     render(
       <StoresProvider>
         <AddReplicaDialog open onOpenChange={() => {}} />
@@ -278,8 +500,5 @@ test('the mobile app leaves the folder to its server and asks nothing about orig
         denoiser: 'galosh',
       },
     ]);
-  } finally {
-    delete bridge.__TAURI__;
-    Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
-  }
+  });
 });

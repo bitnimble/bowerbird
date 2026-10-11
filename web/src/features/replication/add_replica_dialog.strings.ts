@@ -15,10 +15,12 @@ export const AddReplicaStrings = {
   noLibraries: () => 'No libraries on that device',
   photoCount: (count: string, isOne: boolean, readOnly: boolean) =>
     `${count} ${isOne ? 'photo' : 'photos'}${readOnly ? ' · read-only' : ''}`,
+  alreadyHere: () => 'Already on this device',
   /** The wizard's previous step, which is not the way out of a page. */
   back: () => 'Back',
 
   folderOnThisDevice: () => 'Folder on this device',
+  folderFor: (libraryName: string) => `Folder for "${libraryName}"`,
   rootPlaceholder: () => '/photos/trip',
   folderHint: () => 'Choose a new or empty folder.',
 
@@ -27,4 +29,5 @@ export const AddReplicaStrings = {
 
   settingUp: () => 'Setting up…',
   add: (libraryName: string) => `Add "${libraryName}"`,
+  addLibraries: (count: number) => `Add ${count} libraries`,
 };

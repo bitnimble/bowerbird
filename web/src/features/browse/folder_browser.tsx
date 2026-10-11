@@ -12,8 +12,7 @@ import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { color, size } from '../../ui/tokens.stylex';
 import { FolderBrowserStrings } from './folder_browser.strings';
-import { FolderBrowserPresenter } from './folder_browser_presenter';
-import { FolderBrowserStore } from './folder_browser_store';
+import { type FolderBrowserParts, newFolderBrowser } from './folder_browser_presenter';
 
 const styles = stylex.create({
   browse: {
@@ -66,18 +65,11 @@ const styles = stylex.create({
   },
 });
 
-interface FolderBrowserProps {
-  store: FolderBrowserStore;
-  presenter: FolderBrowserPresenter;
+interface FolderBrowserProps extends FolderBrowserParts {
   label: string;
   placeholder?: string;
   canCreate?: boolean;
-  onPathChange: (path: string) => void;
-}
-
-function newBrowser(): { store: FolderBrowserStore; presenter: FolderBrowserPresenter } {
-  const store = new FolderBrowserStore();
-  return { store, presenter: new FolderBrowserPresenter(store) };
+  onPathChange?: (path: string) => void;
 }
 
 export const FolderBrowser = observer(function FolderBrowser({
@@ -89,7 +81,7 @@ export const FolderBrowser = observer(function FolderBrowser({
   onPathChange,
 }: FolderBrowserProps): JSX.Element {
   const selection = store.selection;
-  const [browser, setBrowser] = useState(newBrowser);
+  const [browser, setBrowser] = useState(newFolderBrowser);
   const [choosing, setChoosing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [path, setPath] = useState('');
@@ -102,7 +94,7 @@ export const FolderBrowser = observer(function FolderBrowser({
   }, [store]);
 
   useEffect(() => {
-    onPathChange(selection?.path ?? '');
+    onPathChange?.(selection?.path ?? '');
   }, [selection, store]);
 
   function open(): void {
@@ -110,7 +102,7 @@ export const FolderBrowser = observer(function FolderBrowser({
       void presenter.pick();
       return;
     }
-    const next = newBrowser();
+    const next = newFolderBrowser();
     opening.current++;
     setBrowser(next);
     setPath('');
@@ -199,7 +191,10 @@ const FolderTree = observer(function FolderTree({
   canCreate = false,
   onPathChange,
   disabled,
-}: FolderBrowserProps & { disabled: boolean }): JSX.Element {
+}: FolderBrowserProps & {
+  onPathChange: (path: string) => void;
+  disabled: boolean;
+}): JSX.Element {
   const listing = store.listing;
   const [draft, setDraft] = useState('');
   const [naming, setNaming] = useState<string | null>(null);

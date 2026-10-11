@@ -25,8 +25,7 @@ import { Spinner } from '../../ui/spinner';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { FolderBrowser } from '../browse/folder_browser';
-import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
-import { FolderBrowserStore } from '../browse/folder_browser_store';
+import { newFolderBrowser } from '../browse/folder_browser_presenter';
 import { SettingRow, settingStyles } from '../settings/settings_controls';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { BackupStrings } from './backup_panel.strings';
@@ -90,7 +89,7 @@ function ChooseBackupFolder({
   confirm?: boolean;
 }): JSX.Element {
   const { backup, confirm: confirmation } = usePresenters();
-  const [browser] = useState(newBrowser);
+  const [browser] = useState(newFolderBrowser);
   async function choose(path: string): Promise<void> {
     if (path === '' || disabled) return;
     if (
@@ -424,9 +423,4 @@ function FetchBackProgressView({
       )}
     </div>
   );
-}
-
-function newBrowser(): { store: FolderBrowserStore; presenter: FolderBrowserPresenter } {
-  const store = new FolderBrowserStore();
-  return { store, presenter: new FolderBrowserPresenter(store) };
 }

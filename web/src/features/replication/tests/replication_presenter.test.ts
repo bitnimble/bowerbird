@@ -475,16 +475,17 @@ test.each([true, false])(
       });
     };
 
-    const added = await presenter.addReplica({
-      address: 'http://desktop:5173',
-      library_id: 'lib',
-      root_path: '/fixture/trip',
-      sync_originals: false,
-      auto_transfer_originals: autoTransferOriginals,
-      denoiser: 'pmrid',
-    });
+    await presenter.addReplicas([
+      {
+        address: 'http://desktop:5173',
+        library_id: 'lib',
+        root_path: '/fixture/trip',
+        sync_originals: false,
+        auto_transfer_originals: autoTransferOriginals,
+        denoiser: 'pmrid',
+      },
+    ]);
 
-    expect(added).toBe(true);
     expect(asked).toEqual([
       {
         address: 'http://desktop:5173',
@@ -508,16 +509,49 @@ test('an add that failed still re-reads the library list', async () => {
       new ApiError('CONFLICT', '/fixture/trip is not empty', 409, [{ link: 'folder_not_empty' }]),
     );
 
-  const added = await presenter.addReplica({
+  await presenter.addReplicas([
+    {
+      address: 'http://desktop:5173',
+      library_id: 'lib',
+      root_path: '/fixture/trip',
+      sync_originals: true,
+      auto_transfer_originals: true,
+      denoiser: 'galosh',
+    },
+  ]);
+
+  expect(store.linkError).toBe("That folder isn't empty.");
+  expect(libraryLoads()).toBe(1);
+});
+
+test('adding several stops at the first that fails and answers those added before it', async () => {
+  const { store, presenter, toasts, libraryLoads } = harness();
+  const asked: string[] = [];
+  replicationApi.addReplica = (request) => {
+    asked.push(request.library_id);
+    if (request.library_id === 'family') {
+      return Promise.reject(
+        new ApiError('CONFLICT', '/fixture/family is not empty', 409, [
+          { link: 'folder_not_empty' },
+        ]),
+      );
+    }
+    return Promise.resolve({ library_id: request.library_id, peer_id: PEER.peer_id, applied: 2 });
+  };
+  const request = (library_id: string): AddReplicaRequest => ({
     address: 'http://desktop:5173',
-    library_id: 'lib',
-    root_path: '/fixture/trip',
+    library_id,
+    root_path: `/fixture/${library_id}`,
     sync_originals: true,
     auto_transfer_originals: true,
     denoiser: 'galosh',
   });
 
-  expect(added).toBe(false);
+  const added = await presenter.addReplicas([request('trip'), request('family'), request('work')]);
+
+  expect(added).toEqual(['trip']);
+  expect(asked).toEqual(['trip', 'family']);
+  expect(toasts).toEqual(['Synced library added with 2 changes so far.']);
   expect(store.linkError).toBe("That folder isn't empty.");
   expect(libraryLoads()).toBe(1);
 });

@@ -212,25 +212,28 @@ export class ReplicationPresenter {
   }
 
   /**
-   * Pairs with one of them and takes its catalogue, which is the whole add (§9.1). A replica that
-   * keeps originals has them queued by the server once the catalogue lands.
+   * Pairs with each in turn and takes its catalogue, which is the whole add (§9.1). Stops at the
+   * first that fails and answers the ids added before it; one that failed partway may still be in
+   * the libraries store.
    */
-  async addReplica(request: AddReplicaRequest): Promise<boolean> {
+  async addReplicas(requests: AddReplicaRequest[]): Promise<string[]> {
     this.clearError();
+    const added: string[] = [];
     try {
-      const replica = await replicationApi.addReplica(request);
-      this.toasts.show(ReplicationPresenterStrings.syncedLibraryAdded(replica.applied));
-      await this.libraries.load();
-      await this.loadPeers(replica.library_id);
-      await this.refreshTransfers();
-      return true;
+      for (const request of requests) {
+        const replica = await replicationApi.addReplica(request);
+        added.push(replica.library_id);
+        this.toasts.show(ReplicationPresenterStrings.syncedLibraryAdded(replica.applied));
+        await this.loadPeers(replica.library_id);
+      }
     } catch (err) {
       this.failedToLink(linkMessage(err));
-      // The library is committed before its catalogue arrives, so one that failed
-      // partway has left one here. Re-read the list either way.
-      await this.libraries.load();
-      return false;
     }
+    // The library is committed before its catalogue arrives, so one that failed
+    // partway has left one here.
+    await this.libraries.load();
+    await this.refreshTransfers();
+    return added;
   }
 
   /** A session with every peer this library can dial; the catalogue also does this on its own. */

@@ -16,8 +16,7 @@ import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { FolderBrowser } from '../browse/folder_browser';
-import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
-import { FolderBrowserStore } from '../browse/folder_browser_store';
+import { newFolderBrowser } from '../browse/folder_browser_presenter';
 import { ORDERINGS } from '../photos/grid/grid_controls';
 import { DENOISERS } from '../raw_edit/denoisers';
 import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
@@ -25,11 +24,6 @@ import { SettingsStrings } from '../settings/settings_page.strings';
 import { AddLibraryStrings } from './add_library_dialog.strings';
 import { inferredLibraryName } from './inferred_library_name';
 import { newLibraryStart } from './new_library_start';
-
-function newBrowser(): { store: FolderBrowserStore; presenter: FolderBrowserPresenter } {
-  const store = new FolderBrowserStore();
-  return { store, presenter: new FolderBrowserPresenter(store) };
-}
 
 // Everything a library needs before it exists, in one place: where its photos
 // are, what to call it, and how its gallery is ordered to begin with.
@@ -46,7 +40,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
 }): JSX.Element {
   const store = useLibrariesStore();
   const { libraries, scan } = usePresenters();
-  const [browser, setBrowser] = useState(newBrowser);
+  const [browser, setBrowser] = useState(newFolderBrowser);
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
@@ -79,7 +73,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     // Including whatever the last attempt failed with, which is answered by
     // this attempt rather than still standing over it.
     libraries.clearError();
-    const next = newBrowser();
+    const next = newFolderBrowser();
     setBrowser(next);
     void next.presenter.open(newLibraryStart(store.libraries.map((library) => library.root_path)));
   }, [open, libraries, store]);

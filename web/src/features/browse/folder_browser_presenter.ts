@@ -3,7 +3,17 @@ import { type BrowseResponse } from '../../../../src/schemas/browse';
 import { browseApi } from '../../api/browse';
 import { canPickFolder, pickFolder } from '../../api/pick_folder';
 import { PickFolderStrings } from '../../api/pick_folder.strings';
-import type { FolderBrowserStore } from './folder_browser_store';
+import { FolderBrowserStore } from './folder_browser_store';
+
+export interface FolderBrowserParts {
+  store: FolderBrowserStore;
+  presenter: FolderBrowserPresenter;
+}
+
+export function newFolderBrowser(): FolderBrowserParts {
+  const store = new FolderBrowserStore();
+  return { store, presenter: new FolderBrowserPresenter(store) };
+}
 
 export class FolderBrowserPresenter {
   readonly native = canPickFolder();
