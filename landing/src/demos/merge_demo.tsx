@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
+import { focusRing } from '../../../web/src/ui/focus_ring';
 import { color, font } from '../../../web/src/ui/tokens.stylex';
 import { DEMO } from '../features';
 import { MERGE_PHOTO } from '../photos';
@@ -7,34 +8,53 @@ import { Demo } from './demo';
 
 type Point = readonly [number, number];
 
-// Around each person in the frame, in fractions of its width and height. Both stand on the
-// paving, which is where the two frames agree: further back they disagree by their own parallax.
-const PEOPLE: readonly (readonly Point[])[] = [
-  [
-    [0.316, 0.67],
-    [0.342, 0.67],
-    [0.352, 0.722],
-    [0.36, 0.782],
-    [0.358, 0.81],
-    [0.3, 0.81],
-    [0.297, 0.768],
-    [0.308, 0.708],
-  ],
-  [
-    [0.474, 0.648],
-    [0.502, 0.648],
-    [0.516, 0.702],
-    [0.526, 0.8],
-    [0.524, 0.846],
-    [0.468, 0.846],
-    [0.462, 0.782],
-    [0.466, 0.7],
-  ],
+interface Piece {
+  /** Around the person on the frame with people, in fractions of its width and height. */
+  outline: readonly Point[];
+  /** Where the other frame is drawn under this piece, in percent of the frame. */
+  shift: Point;
+}
+
+// Both people stand on the paving, which is where the two frames agree: further back they disagree
+// by their own parallax.
+const PEOPLE: readonly Piece[] = [
+  {
+    outline: [
+      [0.316, 0.67],
+      [0.342, 0.67],
+      [0.352, 0.722],
+      [0.36, 0.782],
+      [0.358, 0.81],
+      [0.3, 0.81],
+      [0.297, 0.768],
+      [0.308, 0.708],
+    ],
+    // Per piece, measured on a band around each outline: the paving under the 2 people is at
+    // different depths, and 1 shift for both leaves the curb behind this one 4 px out.
+    shift: [2.72, -2.42],
+  },
+  {
+    outline: [
+      [0.474, 0.648],
+      [0.502, 0.648],
+      [0.516, 0.702],
+      [0.526, 0.8],
+      [0.524, 0.846],
+      [0.468, 0.846],
+      [0.462, 0.782],
+      [0.466, 0.7],
+    ],
+    shift: [2.67, -2.86],
+  },
 ];
 
+const UNTAKEN = PEOPLE.map(() => false);
+
+const PEOPLE_FRAME = 0;
+
 const FRAMES = [
-  { name: 'DSC00131', src: MERGE_PHOTO.people, alt: DEMO.merge.frameWith },
-  { name: 'DSC00130', src: MERGE_PHOTO.clear, alt: DEMO.merge.frameWithout },
+  { name: 'DSC00131', src: MERGE_PHOTO.people, alt: DEMO.merge.alt },
+  { name: 'DSC00130', src: MERGE_PHOTO.clear, alt: DEMO.merge.clearAlt },
 ];
 
 const LIT = ':is([aria-pressed=true], :focus-visible)';
@@ -61,10 +81,6 @@ const styles = stylex.create({
     inset: 0,
     width: '100%',
     height: '100%',
-    // The two frames were taken by hand a moment apart, so the second sits about 2.6% across
-    // and 2.9% down from the first. Measured on the ground around both people: without it the
-    // paving joints and the bollards behind them step sideways at the edge of the piece.
-    transform: 'translate(2.6%, -2.9%)',
   },
   overlay: {
     position: 'absolute',
@@ -87,16 +103,28 @@ const styles = stylex.create({
     display: 'flex',
     gap: '10px',
   },
-  figure: {
-    margin: 0,
+  thumb: {
+    display: 'block',
     width: '180px',
     maxWidth: '50%',
+    padding: 0,
+    borderStyle: 'none',
+    borderRadius: '6px',
+    backgroundColor: 'transparent',
+    textAlign: 'left',
+    cursor: 'pointer',
   },
   frame: {
     display: 'block',
     width: '100%',
     height: 'auto',
-    borderRadius: '4px',
+    borderWidth: '2px',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
+    borderRadius: '6px',
+  },
+  frameShown: {
+    borderColor: color.moss,
   },
   name: {
     display: 'block',
@@ -108,36 +136,51 @@ const styles = stylex.create({
 });
 
 export function MergeDemo(): JSX.Element {
-  const [taken, setTaken] = useState<readonly boolean[]>(PEOPLE.map(() => false));
+  const [taken, setTaken] = useState<readonly boolean[]>(UNTAKEN);
+  const [shown, setShown] = useState(PEOPLE_FRAME);
+  const stage = FRAMES[shown]!;
+  const other = FRAMES[shown === PEOPLE_FRAME ? 1 : PEOPLE_FRAME]!;
+  const pieces = PEOPLE.map((piece) => placed(piece, shown));
+  const label = shown === PEOPLE_FRAME ? DEMO.merge.removePerson : DEMO.merge.addPerson;
 
   const toggle = (index: number): void => {
     setTaken((was) => was.map((one, at) => (at === index ? !one : one)));
   };
 
+  const show = (index: number): void => {
+    setShown(index);
+    setTaken(UNTAKEN);
+  };
+
   return (
     <Demo>
       <div {...stylex.props(styles.stage)}>
-        <img {...stylex.props(styles.photo)} src={MERGE_PHOTO.people} alt={DEMO.merge.alt} />
-        {PEOPLE.map((piece, index) =>
+        <img {...stylex.props(styles.photo)} src={stage.src} alt={stage.alt} />
+        {pieces.map((piece, index) =>
           taken[index] === true ? (
             <div
               key={index}
               {...stylex.props(styles.photo, styles.piece)}
-              style={{ clipPath: polygon(piece) }}
+              style={{ clipPath: polygon(piece.outline) }}
             >
-              <img {...stylex.props(styles.pieceImage)} src={MERGE_PHOTO.clear} alt="" />
+              <img
+                {...stylex.props(styles.pieceImage)}
+                style={{ transform: `translate(${piece.shift[0]}%, ${piece.shift[1]}%)` }}
+                src={other.src}
+                alt=""
+              />
             </div>
           ) : null,
         )}
         <svg {...stylex.props(styles.overlay)} viewBox="0 0 1 1" preserveAspectRatio="none">
-          {PEOPLE.map((piece, index) => (
+          {pieces.map((piece, index) => (
             <path
               key={index}
-              d={`M${piece.map(([x, y]) => `${x},${y}`).join('L')}Z`}
+              d={`M${piece.outline.map(([x, y]) => `${x},${y}`).join('L')}Z`}
               {...stylex.props(styles.outline)}
               role="button"
               tabIndex={0}
-              aria-label={DEMO.merge.person(index)}
+              aria-label={label(index)}
               aria-pressed={taken[index] === true}
               onClick={() => toggle(index)}
               onKeyDown={(event) => {
@@ -150,15 +193,36 @@ export function MergeDemo(): JSX.Element {
         </svg>
       </div>
       <div {...stylex.props(styles.frames)}>
-        {FRAMES.map((frame) => (
-          <figure key={frame.name} {...stylex.props(styles.figure)}>
-            <img {...stylex.props(styles.frame)} src={frame.src} alt={frame.alt} />
-            <figcaption {...stylex.props(styles.name)}>{frame.name}</figcaption>
-          </figure>
+        {FRAMES.map((frame, index) => (
+          <button
+            key={frame.name}
+            type="button"
+            {...stylex.props(styles.thumb, focusRing.ring)}
+            aria-label={DEMO.merge.showFrame(frame.name)}
+            aria-pressed={shown === index}
+            onClick={() => show(index)}
+          >
+            <img
+              {...stylex.props(styles.frame, shown === index && styles.frameShown)}
+              src={frame.src}
+              alt=""
+            />
+            <span {...stylex.props(styles.name)}>{frame.name}</span>
+          </button>
         ))}
       </div>
     </Demo>
   );
+}
+
+/** `piece` on frame `shown`, drawing the other frame under it. */
+function placed(piece: Piece, shown: number): Piece {
+  if (shown === PEOPLE_FRAME) return piece;
+  const [dx, dy] = piece.shift;
+  return {
+    outline: piece.outline.map(([x, y]) => [x - dx / 100, y - dy / 100] as const),
+    shift: [-dx, -dy],
+  };
 }
 
 function polygon(points: readonly Point[]): string {

@@ -119,10 +119,11 @@ export const DEMO = {
     restart: 'Start again',
   },
   merge: {
-    person: (index: number) => `Remove the person in area ${index + 1}`,
+    removePerson: (index: number) => `Remove the person in area ${index + 1}`,
+    addPerson: (index: number) => `Add the person in area ${index + 1}`,
     alt: 'A tree-lined street with 2 people walking across it',
-    frameWith: 'The frame with both people',
-    frameWithout: 'The frame with nobody crossing',
+    clearAlt: 'The same street with nobody crossing it',
+    showFrame: (name: string) => `Show ${name}`,
   },
   panorama: {
     alt: 'A wide photo of a lake below a mountain range at sunset',
