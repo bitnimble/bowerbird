@@ -52,7 +52,7 @@ pub fn run() {
             caption::set_caption_buttons,
             device_files::read_device_file,
             device_files::write_device_file,
-            display::display_is_hdr,
+            display::display_range,
             export::pick_export_folder,
             export::export_to_folder,
             open_with::open_original_with,

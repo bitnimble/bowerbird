@@ -4,6 +4,7 @@
 // button does is answerable without a GPU, a server or a browser. An end-to-end run opening a
 // real RAW answers the same questions slowly, and only ever says that *something* changed.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { runInAction } from 'mobx';
 import { RawEditPresenter, REWINDOW_QUIET_MS } from '../raw_edit_presenter';
 import { prepareOf } from '../../local_decode/open_photo';
 import type { CropStore } from '../../crop/crop_store';
@@ -32,6 +33,7 @@ import {
   drawnBy,
   FakeDecoder,
   GRADE,
+  onScreen,
   openEditor,
   openedWith,
   runFrames,
@@ -536,22 +538,33 @@ describe('a slider reaching the picture', () => {
     expect(decoder.draws).toBeGreaterThan(drew);
   });
 
-  test("tells the module this device's display peak where the display shows past SDR white, asked on every tick", async () => {
-    const asked: string[] = [];
-    const original = globalThis.matchMedia;
-    globalThis.matchMedia = ((query: string) => {
-      asked.push(query);
-      return { matches: query === '(dynamic-range: high)' };
-    }) as typeof matchMedia;
-    editor.device.displayPeakNits = 1600;
-    try {
-      presenter.settle({ exposure: 0.25 });
-      await drawn();
-    } finally {
-      globalThis.matchMedia = original;
-    }
-    expect(asked).toContain('(dynamic-range: high)');
-    expect(decoder.proof?.displayPeakNits).toBe(1600);
+  test("tells the module the configured peak where the shell cannot read the screen's", async () => {
+    await onScreen(editor, { hdr: true });
+    runInAction(() => (editor.device.displayPeakNits = 800));
+    presenter.settle({ exposure: 0.25 });
+    await drawn();
+    expect(decoder.proof?.displayPeakNits).toBe(800);
+  });
+
+  test("redraws at the screen's new peak when its headroom moves under an open photo", async () => {
+    await onScreen(editor, { measures: true, headroom: 2 });
+    presenter.settle({ exposure: 0.25 });
+    const drew = await drawn();
+    expect(decoder.proof?.displayPeakNits).toBe(406);
+
+    await onScreen(editor, { measures: true, headroom: 4 });
+    expect(await drawn()).toBeGreaterThan(drew);
+    expect(decoder.proof?.displayPeakNits).toBe(812);
+  });
+
+  test('redraws in SDR when the window moves to a screen that shows nothing past SDR white', async () => {
+    await onScreen(editor, { measures: true, headroom: 4 });
+    presenter.settle({ exposure: 0.25 });
+    const drew = await drawn();
+
+    await onScreen(editor, { hdr: false, measures: true, headroom: 1 });
+    expect(await drawn()).toBeGreaterThan(drew);
+    expect(decoder.proof?.displayPeakNits).toBeNull();
   });
 
   test('sends the perspective correction the guides produced', async () => {

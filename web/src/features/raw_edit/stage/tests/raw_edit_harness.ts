@@ -23,6 +23,9 @@ import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
 import { EditSurface } from '../edit_surface';
 import { DeviceSettingsStore } from '../../../settings/device_settings_store';
+import { ScreenStore } from '../../../../app/screen_store';
+import { ScreenPresenter } from '../../../../app/screen_presenter';
+import type { DynamicRange } from '../../../../api/transport';
 import { type ColourNode, neutralEdits } from '../../../../../../src/schemas/photo_edits';
 import { readPreparedHeader } from '../../../../../../src/schemas/prepared';
 import type { Repair } from '../../../../../../src/schemas/stored_grid';
@@ -474,7 +477,7 @@ export function openEditor(): Editor {
   const colourWheel = new ColourWheelStore(edit);
   const loupe = new LoupeStore(crop, keystone, repair);
   const print = new PrintStore();
-  const device = new DeviceSettingsStore();
+  const device = new DeviceSettingsStore(new ScreenStore());
   edit.doc = neutralEdits();
   stage.width = 4000;
   stage.height = 3000;
@@ -553,4 +556,10 @@ export async function drawnBy({ decoder }: Editor): Promise<number> {
   runFrames();
   await new Promise((resolve) => setTimeout(resolve, 0));
   return decoder.draws;
+}
+
+/** The editor's screen as the desktop shell would read it. */
+export function onScreen({ device }: Editor, reading: Partial<DynamicRange>): Promise<void> {
+  const range = { hdr: true, measures: false, headroom: null, potential: null, ...reading };
+  return new ScreenPresenter(device.screen, async () => range).ask();
 }

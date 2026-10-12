@@ -104,7 +104,10 @@ export class ColourWheelPresenter {
         { fireImmediately: true },
       ),
       reaction(
-        () => (this.attached ? { channel: this.store.channel } : null),
+        () =>
+          this.attached
+            ? { channel: this.store.channel, displayPeak: this.host.displayPeak() }
+            : null,
         (drawing) => {
           if (drawing != null) this.unlessClosed(this.draw(drawing.channel));
         },

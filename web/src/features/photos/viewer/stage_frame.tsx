@@ -21,7 +21,7 @@ interface Painting {
   element: HTMLCanvasElement;
   frame: Decoded;
   proof: RenderingIntent | null;
-  devicePeakNits: number;
+  devicePeakNits: number | null;
   done: Promise<void>;
 }
 
@@ -66,7 +66,7 @@ export function StageFrame({
   requested: boolean;
   /** The operator an HDR frame is proofed to sRGB with, or null to draw it as it is. */
   proof: RenderingIntent | null;
-  devicePeakNits: number;
+  devicePeakNits: number | null;
   onDecoded: (source: string, width: number, height: number) => void;
   onMissing: (source: string) => void;
 }): JSX.Element {

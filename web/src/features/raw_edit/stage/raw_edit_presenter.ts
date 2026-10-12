@@ -1,4 +1,4 @@
-import { action } from 'mobx';
+import { action, reaction, type IReactionDisposer } from 'mobx';
 import {
   type ColourNode,
   type ColourProfile,
@@ -16,8 +16,11 @@ import type { CropGrip, CropRect } from '../crop/crop_turn';
 import type { AspectKey } from '../crop/crop_aspect';
 import { CropPresenter } from '../crop/crop_presenter';
 import type { CropStore } from '../crop/crop_store';
-import { displayPeakNits } from '../../../app/device';
-import { drawsOnThePage, readbackCanvases } from '../../../gpu/readback_canvas';
+import {
+  drawsOnThePage,
+  readbackCanvases,
+  transferredPeakNits,
+} from '../../../gpu/readback_canvas';
 import type { Ticked } from '../local_decode/local_open';
 import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
@@ -126,6 +129,7 @@ export class RawEditPresenter {
   private frame = 0;
   private closed = false;
   private remembersProof = false;
+  private readonly followPeak: IReactionDisposer;
 
   private photoId: string | null = null;
 
@@ -205,10 +209,21 @@ export class RawEditPresenter {
       preview: (patch) => this.preview(patch),
       settle: (patch) => this.settle(patch),
       fail: (why) => this.fail(why),
-      displayPeak: () => displayPeakNits(this.device.displayPeakNits),
+      // The wheel's canvas is always transferred.
+      displayPeak: () => transferredPeakNits(this.device.peakNits),
       showReach: (shown) => this.showReach(shown),
     });
     this.edit = new EditPresenter(editStore, this, this.repair);
+    this.followPeak = reaction(
+      () => this.shownPeakNits(),
+      () => this.request(),
+    );
+  }
+
+  /** The display's peak, held to what the stage can show if its canvas was transferred. */
+  private shownPeakNits(): number | null {
+    const peak = this.device.peakNits;
+    return this.surface.onPage.stage != null ? peak : transferredPeakNits(peak);
   }
 
   /**
@@ -230,7 +245,7 @@ export class RawEditPresenter {
       this.surface.handOver(canvas, which);
       const wanted = which === 'stage' ? this.stageSize() : null;
       const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
-      const onPage = drawsOnThePage(this.device.displayPeakNits);
+      const onPage = drawsOnThePage(this.device.peakNits);
       if (onPage) this.surface.onPage[which] = { canvas, ...size };
       const offscreen = onPage ? null : canvas.transferControlToOffscreen();
       await local.decoder.attach(which, offscreen, size.width, size.height);
@@ -1022,6 +1037,7 @@ export class RawEditPresenter {
     this.edit.close();
 
     this.closed = true;
+    this.followPeak();
     this.viewport?.disconnect();
     this.viewport = null;
     this.density?.removeEventListener('change', this.onDensity);
@@ -1128,7 +1144,7 @@ export class RawEditPresenter {
           proof: {
             output: this.stage.softProof === 'srgb' ? 'srgb' : 'hdr',
             intent: this.printStore.scene.renderingIntent,
-            displayPeakNits: displayPeakNits(this.device.displayPeakNits),
+            displayPeakNits: this.shownPeakNits(),
           },
           print,
           reachMask: reached == null ? null : { node: reached, strength: reach },

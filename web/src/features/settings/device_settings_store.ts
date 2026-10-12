@@ -1,4 +1,5 @@
-import { observable } from 'mobx';
+import { computed, observable } from 'mobx';
+import { ScreenStore, screenStore } from '../../app/screen_store';
 
 /** What a display is assumed to reach where nothing has been said about this one. */
 export const DEFAULT_DISPLAY_PEAK_NITS = 1000;
@@ -11,11 +12,22 @@ export class DeviceSettingsStore {
    */
   @observable accessor renderOnThisDevice = false;
   /**
-   * The brightest this device's display shows, which the viewer and the editor roll a photo's
-   * highlights off to. The platform will not say: Chrome exposes no headroom on `screen`, and
-   * `dynamic-range` is a boolean.
+   * The brightest this device's display shows, as the reader sets it: a browser exposes no
+   * headroom on `screen`, and `dynamic-range` is a boolean.
    */
   @observable accessor displayPeakNits = DEFAULT_DISPLAY_PEAK_NITS;
   /** The app's page zoom, which a browser has its own of. */
   @observable accessor uiScale = 1;
+
+  constructor(readonly screen: ScreenStore = screenStore) {}
+
+  /**
+   * What the viewer and the editor roll a photo's highlights off to, or null where the screen
+   * shows nothing past SDR white.
+   */
+  @computed
+  get peakNits(): number | null {
+    if (!this.screen.hdr) return null;
+    return this.screen.peakNits ?? this.displayPeakNits;
+  }
 }

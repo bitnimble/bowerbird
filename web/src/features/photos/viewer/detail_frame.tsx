@@ -197,7 +197,7 @@ export const DetailFrame = observer(function DetailFrame({
       zoomInto={zoomInto}
       fullscreenRef={fullscreenRef}
       proof={proof}
-      devicePeakNits={device.displayPeakNits}
+      devicePeakNits={device.peakNits}
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}

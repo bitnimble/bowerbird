@@ -387,7 +387,8 @@ lower brightens canvas, higher darkens it, uniformly without clipping.
 Results imply compositor maps AVIF nits through BT.2408's 203-nit reference white.
 Use constant `srgb_encode(nits / 203)`; both paths track brightness changes together.
 
-EETF targets configured device peak; compositor handles panel limits identically on both paths.
+EETF targets the device peak (DESIGN §10.7, the screen's headroom where the shell reads it);
+compositor handles panel limits identically on both paths.
 Divisor remains 203 regardless of user-adjustable library `Grade::reference_white_nits`.
 
 **Safari composites the first paint without the headroom.** On first load,
@@ -417,9 +418,9 @@ high.
 **A transferred canvas is capped at that 4.9x on WebKit**, whatever the panel
 reaches: measured on an XDR panel with its peak raised in the panel's settings,
 the canvas stopped at 1000 nits where a canvas the page configured itself went
-on. So on WebKit with a display peak past 1000, the stage and the loupe stay on
-the page and each tick hands back what it drew, as RGB9E5 words
-(`readback.slang`, `readback_canvas.ts`).
+on. So on WebKit with a display peak, or the shell's potential headroom, past
+1000, the stage and the loupe stay on the page and each tick hands back what it
+drew, as RGB9E5 words (`readback.slang`, `readback_canvas.ts`).
 
 Incidental from the same runs, worth knowing before relying on any of it: on
 that machine `(dynamic-range: high)` is true while `(video-dynamic-range: high)`
@@ -542,8 +543,9 @@ the rest. Consistent with the first-paint behaviour in §7.1: WebKit is stingier
 with headroom throughout. Whatever else that means, replacing the still route
 with a canvas does not cost highlight rendition on Safari, it gains a little.
 
-Canvas adds no clipping risk beyond media. EETF's 1000-nit default fits measured 5x to 15x
-headroom; device setting lets readers adjust. A future headroom API (§7.1) could replace that setting.
+Canvas adds no clipping risk beyond media. In the desktop and Android apps the EETF targets the
+screen's live headroom, which the shell reads (DESIGN §10.7). A browser exposes none (§7.1), so
+there the 1000-nit default device setting, inside the measured 5x to 15x, lets readers adjust.
 
 ## 8. Can the editor worker reach a GPU?
 

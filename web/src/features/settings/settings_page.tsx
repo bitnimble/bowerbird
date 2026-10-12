@@ -86,6 +86,7 @@ const RENDITION_MODES: Option<ViewerRenditionMode>[] = [
 
 const GeneralTab = observer(function GeneralTab(): JSX.Element {
   const settings = useAppSettingsStore();
+  const device = useDeviceSettingsStore();
   const { appSettings } = usePresenters();
   // The scale is this device's, so it does not wait on the server's settings.
   if (settings.settings == null) return <SettingsColumns left={<ThisApp />} right={null} />;
@@ -123,7 +124,7 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element {
               field="hide_sidebar_in_viewer"
               label={SettingsStrings.hideSidebarInViewer()}
             />
-            <DisplayPeak />
+            {!device.screen.measures && <DisplayPeak />}
           </Panel>
 
           <GroupTitle>{SettingsStrings.groupFrameTv()}</GroupTitle>

@@ -151,6 +151,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
 
   const { store, presenter } = session;
   const layers = store.layers;
+  const peakNits = device.peakNits;
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -158,12 +159,11 @@ export const MergePage = observer(function MergePage(): JSX.Element {
       width: store.layerSize?.width ?? 0,
       height: store.layerSize?.height ?? 0,
     });
-    session.stage.current =
-      canvas == null ? null : new MergeStage(canvas, size, layers, () => device.displayPeakNits);
+    session.stage.current = canvas == null ? null : new MergeStage(canvas, size, layers, peakNits);
     // The analysis lands before this canvas exists, so without a draw from here the picture stays
     // black until the reader happens to press something.
     if (canvas != null) session.presenter.redraw();
-  }, [session, layers, store, device]);
+  }, [session, layers, store, peakNits]);
 
   // §2.8's `[` and `]`. On the window rather than the stage: the reader's focus is wherever they
   // last clicked, and the picture is not a focusable element to put this on.
@@ -433,7 +433,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
               presenter={presenter}
               tile={store.openTile}
               zoom={zoom}
-              devicePeakNits={device.displayPeakNits}
+              devicePeakNits={device.peakNits}
               onClose={() => presenter.openTile(null)}
             />
           )}

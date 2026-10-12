@@ -491,7 +491,11 @@ export async function emulateHdrDisplay(page: Page): Promise<void> {
     window.matchMedia = (query) => {
       const list = answer(query);
       return query === '(dynamic-range: high)'
-        ? Object.create(list, { matches: { value: true } })
+        ? Object.create(list, {
+            matches: { value: true },
+            addEventListener: { value: list.addEventListener.bind(list) },
+            removeEventListener: { value: list.removeEventListener.bind(list) },
+          })
         : list;
     };
   });

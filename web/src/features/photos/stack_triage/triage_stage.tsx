@@ -92,7 +92,7 @@ export const Flip = observer(function Flip({
           unreachable={onScreen?.original_elsewhere === 'unreachable'}
           alt={onScreen == null ? '' : nameOf(onScreen)}
           filename={onScreen == null ? '' : nameOf(onScreen)}
-          devicePeakNits={device.displayPeakNits}
+          devicePeakNits={device.peakNits}
           onImageLoad={(source, width, height) => {
             onDecoded(source);
             stackTriage.noteFrame(source === sources[0] ? sides[0] : sides[1], width, height);
@@ -203,7 +203,7 @@ export const Split = observer(function Split({
               unreachable={photo.original_elsewhere === 'unreachable'}
               alt={nameOf(photo)}
               filename={nameOf(photo)}
-              devicePeakNits={device.displayPeakNits}
+              devicePeakNits={device.peakNits}
               // One stage owns the window-level fullscreen key, or both toggle on
               // a single press.
               keyboard={index === 0}

@@ -248,7 +248,7 @@ function SwatchCanvas({
   frame: Decoded;
   loop: readonly (readonly [number, number])[];
   label: string;
-  devicePeakNits: number;
+  devicePeakNits: number | null;
 }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const handCanvas = useStageCanvas(canvasRef);
@@ -300,7 +300,7 @@ export const MergeTilePopup = observer(function MergeTilePopup({
   presenter: MergePresenter;
   tile: number;
   zoom: ZoomPan;
-  devicePeakNits: number;
+  devicePeakNits: number | null;
   onClose: () => void;
 }): JSX.Element | null {
   const swatches = store.swatches;

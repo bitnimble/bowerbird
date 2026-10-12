@@ -11,7 +11,7 @@
     "allow-app-logs",
     "allow-read-device-file",
     "allow-write-device-file",
-    "allow-display-is-hdr",
+    "allow-display-range",
     "allow-pick-export-folder",
     "allow-app-data-dir"
   ]

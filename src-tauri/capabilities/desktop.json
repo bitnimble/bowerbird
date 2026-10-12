@@ -16,7 +16,7 @@
     "allow-set-caption-buttons",
     "allow-read-device-file",
     "allow-write-device-file",
-    "allow-display-is-hdr",
+    "allow-display-range",
     "allow-pick-export-folder",
     "allow-export-to-folder",
     "allow-open-original-with",
