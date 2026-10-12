@@ -1,7 +1,7 @@
 """Grain put back over an upscale: the network averages away noise and texture it can't predict, so its
-output is cleaner than the photo it came from. The grain is luma-only, changing each pixel's
-brightness and keeping its colour, at a share of the photo's own noise fit: the weights' calibration
-times the share the editor shows, which makes up for the texture the network smooths."""
+output is cleaner than the photo it came from. The grain moves each RGGB quad's light, keeping its
+colour where it's lit and grey where it's dark, at a share of the photo's own noise fit: the weights'
+calibration times the share the editor shows, which makes up for the texture the network smooths."""
 
 import torch
 import torch.nn.functional as F
@@ -21,13 +21,15 @@ def grained(high: torch.Tensor, gains: torch.Tensor, fit: dict | None, strength:
 
 
 def add_luma_noise(mosaic: torch.Tensor, gains: torch.Tensor, alpha: float, sigma_sq: float) -> torch.Tensor:
-    """`add_noise`'s grain as one factor over each RGGB quad, which scales the quad's light without
-    changing its colour, its quad means as spread as `add_noise`'s."""
+    """Grain over each RGGB quad, its mean spread as `add_noise` spreads it: along the quad's own colour
+    where it's lit, turning grey as its light falls under the grain."""
     raw = raw_planes(mosaic, gains)
-    level = raw.mean(1, keepdim=True).clamp(min=1e-6)
+    lit = raw.clamp(min=0)
+    level = lit.mean(1, keepdim=True)
     spread = (noise_variance(raw, gains, alpha, sigma_sq).mean(1, keepdim=True) / SITES_PER_QUAD).sqrt()
-    factor = 1 + torch.randn_like(level) * spread / level
-    return unpack(raw * factor * plane_gains(gains, raw))
+    grey = 1 / plane_gains(gains, raw)
+    shift = torch.randn_like(level) * spread / (level + spread)
+    return unpack((raw + shift * (lit + spread * grey / grey.mean(1, keepdim=True))) * plane_gains(gains, raw))
 
 
 def estimate(small: torch.Tensor, high: torch.Tensor, gains: torch.Tensor, fit: dict) -> float:

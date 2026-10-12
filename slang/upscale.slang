@@ -383,9 +383,9 @@ float normal_at(uint x, uint y)
 /// and unstabilised, blended back toward the input, grained, into the upscaled mosaic: the region's
 /// interior only, one thread a packed pixel.
 ///
-/// The grain is one factor over each 2x2 of the upscale, which brightens or darkens it without
-/// moving its colour: `models/upscaler`'s `add_luma_noise`, spread as that quad's photosites would be
-/// by the photo's own noise.
+/// The grain moves each 2x2 of the upscale's light by as much as that quad's photosites would be by
+/// the photo's own noise: along the quad's own colour where it is lit, so its colour stays, and
+/// turning grey as its light falls under the grain: `models/upscaler`'s `add_luma_noise`.
 [shader("compute")]
 [numthreads(16, 8, 1)]
 void leave(uint3 at : SV_DispatchThreadID)
@@ -418,22 +418,26 @@ void leave(uint3 at : SV_DispatchThreadID)
         float kept[4];
         var level = 0.0;
         var variance = 0.0;
+        var grey = 0.0;
         [ForceUnroll]
         for (uint c = 0; c < 4; c++) {
             kept[c] = input[c] + light * photo.luma + (found[c] - light) * photo.colour;
-            let raw = kept[c] / photo.gains[c];
+            let raw = max(kept[c] / photo.gains[c], 0.0);
             level += raw * 0.25;
-            variance += (photo.alpha * max(raw, 0.0) + photo.sigma_sq) * 0.25;
+            variance += (photo.alpha * raw + photo.sigma_sq) * 0.25;
+            grey += 0.25 / photo.gains[c];
         }
         let spread = sqrt(photo.grain * variance * 0.25);
-        let factor = 1.0 + normal_at(ux, uy) * spread / max(level, 1e-6);
+        // A fit can read no read noise, leaving black with no spread and the ratio 0 over 0.
+        let shift = spread > 0.0 ? normal_at(ux, uy) * spread / (level + spread) : 0.0;
         [ForceUnroll]
         for (uint c = 0; c < 4; c++) {
             let position = photo.positions[c];
             let sx = int(ux * 2 + position % 2) - int(step.out_left);
             let sy = int(uy * 2 + position / 2) - int(step.out_top);
             if (sx < 0 || sy < 0 || sx >= int(step.out_width) || sy >= int(step.out_height)) { continue; }
-            upscaled[times(uint(sy), step.out_width) + uint(sx)] = kept[c] * factor;
+            upscaled[times(uint(sy), step.out_width) + uint(sx)] =
+                kept[c] + shift * (max(kept[c], 0.0) + spread / grey);
         }
     }
 }

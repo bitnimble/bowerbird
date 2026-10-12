@@ -1552,6 +1552,79 @@ mod tests {
         assert!(!std::ptr::eq(before, after));
     }
 
+    /// Shadows crossing black, where a quad's light is a sliver of its grain or below zero: the
+    /// grain still moves a photosite less than 6 of the photo's noise sigma.
+    #[test]
+    fn grain_at_black_stays_within_the_photos_noise() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(weights) = super::BUNDLED else {
+            return;
+        };
+        let (width, height) = (256, 128);
+        let gains = [0.5, 1.0, 0.7];
+        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+        let noise = crate::galosh::NoiseModel {
+            alpha: 4.121e-4,
+            sigma_sq: 3.494e-6,
+        };
+        let (darkest, brightest) = (-0.002, 0.004);
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let frame: Vec<f32> = (0..width * height)
+            .map(|at| {
+                let (x, y) = (at % width, at / width);
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let unit_noise = ((seed >> 40) as f32 / 16777216.0 - 0.5) * 12f32.sqrt();
+                let ramp = darkest + (brightest - darkest) * x as f32 / width as f32;
+                let gain = gains[usize::from(cfa.colour_at(y % 2, x % 2))];
+                (ramp + noise.sigma_sq.sqrt() * unit_noise) * gain
+            })
+            .collect();
+        let mosaic = Mosaic::upload(gpu, &frame, width, height);
+        let at = Placement {
+            window: (0, 0, width, height),
+            frame: (width, height),
+            rect: (0, 0, width, height),
+        };
+        let bound = 6.0 * (noise.sigma_sq + noise.alpha * brightest).sqrt();
+
+        for arm in Arm::ALL {
+            let Some(upscaler) =
+                Upscaler::new(gpu, super::MANIFEST, weights, arm).expect("the network")
+            else {
+                continue;
+            };
+            let upscaled = |luminance: f64| {
+                let photo = upscaler
+                    .photo(gains, &cfa, noise, (luminance, 60.0))
+                    .expect("a photo");
+                let into = Mosaic::plane(gpu, width * 2, height * 2);
+                upscaler
+                    .upscale(gpu, &mosaic.buffer, at, &into.buffer, &photo, None)
+                    .expect("an upscale");
+                pollster::block_on(into.read(gpu)).expect("the answer reads back")
+            };
+            let (clean, grained) = (upscaled(100.0), upscaled(super::LUMINANCE));
+            assert!(
+                grained.iter().all(|v| v.is_finite()),
+                "{arm:?}: grain made a photosite that is not a number"
+            );
+            let worst = clean
+                .iter()
+                .zip(&grained)
+                .map(|(clean, grained)| (grained - clean).abs())
+                .fold(0.0f32, f32::max);
+            assert!(worst > 0.0, "{arm:?}: the default Luminance added no grain");
+            assert!(
+                worst <= bound,
+                "{arm:?}: grain moved a photosite {worst}, past 6 sigma of the photo's noise, {bound}"
+            );
+        }
+    }
+
     /// Any rectangle of a frame, cut into any tiles, upscales to that part of the whole frame's
     /// answer, grain and all, on every arm: what lets a loupe tile be the rendition.
     #[test]
