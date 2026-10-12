@@ -214,6 +214,13 @@ These read as written by a machine or a marketer. None of them appear in copy.
 - **No emoji** in copy.
 - **Bold** marks a UI name in help text and nothing else.
 
+## Icons
+
+- **Sparkles mean AI.** A sparkle icon goes only on a feature that runs a machine learning
+  model, such as the upscaler denoiser. On anything else it claims AI the feature doesn't use.
+  This covers every lucide icon with sparkles in it, including `Wand2`, an alias of
+  `WandSparkles`.
+
 ## Glossary
 
 Use 1 term per concept; replace its "Avoid" synonyms. Capitalised terms name features and

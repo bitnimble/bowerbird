@@ -6,10 +6,10 @@ import {
   CircleStop,
   HardDriveUpload,
   Image,
+  Images,
   Layers,
   RefreshCw,
   Settings as SettingsIcon,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
@@ -748,7 +748,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
             disabled={busy || !renders}
             onClick={() => void scanPresenter.rebuildRenditions(library.id)}
           >
-            <Sparkles size={ICON} />
+            <Images size={ICON} />
             {SettingsStrings.run()}
           </Button>
         </SettingRow>

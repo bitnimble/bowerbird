@@ -4,12 +4,12 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
+  ArrowUpCircle,
   FolderOpen,
   FolderPlus,
   Link2,
   RefreshCw,
   ScrollText,
-  Sparkles,
 } from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
@@ -414,7 +414,7 @@ export const UpdateSettings = observer(function UpdateSettings(): JSX.Element | 
               // The same dialog the sidebar's badge opens: what is in a release is the thing
               // worth reading before installing it, whichever way you got here.
               <Button variant="primary" onClick={updates.openDialog}>
-                <Sparkles size={ICON} />
+                <ArrowUpCircle size={ICON} />
                 {UpdatesStrings.updateAvailable(available.version)}
               </Button>
             )}
@@ -434,7 +434,7 @@ export const UpdateSettings = observer(function UpdateSettings(): JSX.Element | 
                 disabled={store.modelDownloading}
                 onClick={() => void updates.downloadModel()}
               >
-                <Sparkles size={ICON} />
+                <ArrowUpCircle size={ICON} />
                 {store.modelDownloading
                   ? UpdatesStrings.downloading()
                   : UpdatesStrings.modelUpdate()}

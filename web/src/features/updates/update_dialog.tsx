@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Download, Sparkles } from 'lucide-react';
+import { ArrowUpCircle, Download } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { ErrorBanner } from '../../ui/error_banner';
 import { relativeTime } from '../../ui/format';
@@ -66,7 +66,7 @@ export const UpdateDialog = observer(function UpdateDialog(): JSX.Element | null
             disabled={store.install !== 'idle'}
             onClick={() => void updates.install()}
           >
-            <Sparkles size={ICON} />
+            <ArrowUpCircle size={ICON} />
             {INSTALL_LABEL[store.install]()}
           </Button>
         ) : (

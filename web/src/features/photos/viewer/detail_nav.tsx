@@ -8,10 +8,12 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  FileImage,
   FileType,
   FolderOpen,
   GalleryThumbnails,
   HardDriveDownload,
+  Image,
   Info,
   Layers,
   Layers2,
@@ -23,10 +25,8 @@ import {
   RotateCw,
   Share2,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   Undo2,
-  Wand2,
 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Link, useNavigate } from 'react-router-dom';
@@ -83,10 +83,10 @@ const RENDITIONS: Option<ViewerRendition>[] = [
   {
     value: 'embedded',
     label: renditionLabel('embedded'),
-    icon: <Sparkles size={ICON} />,
+    icon: <FileImage size={ICON} />,
     hint: 'I',
   },
-  { value: 'full', label: renditionLabel('full'), icon: <Wand2 size={ICON} />, hint: 'O' },
+  { value: 'full', label: renditionLabel('full'), icon: <Image size={ICON} />, hint: 'O' },
   { value: 'max', label: renditionLabel('max'), icon: <Maximize2 size={ICON} />, hint: 'P' },
 ];
 
