@@ -49,7 +49,7 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
   await expect(libraryRow(page, INDEX_PHOTOS_DIR)).toBeVisible({ timeout: 30_000 });
   await expect(
     libraryRow(page, INDEX_PHOTOS_DIR).getByText(
-      `${INDEX_PHOTOS_DIR} · ${PHOTO_NAMES.length} photos (0 missing, 0 unavailable, 0 rendered)`,
+      `${PHOTO_NAMES.length} photos (0 missing, 0 unavailable, 0 rendered)`,
       { exact: true },
     ),
   ).toBeVisible({ timeout: 45_000 });

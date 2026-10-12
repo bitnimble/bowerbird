@@ -182,26 +182,25 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
           ]}
         />
       </Row>
+      {!thin && (
+        <Text variant="mono" as="div" style={styles.meta}>
+          {canRevealFile() ? (
+            <TextLink
+              to={library.root_path}
+              tooltip={SettingsStrings.openLibraryFolder()}
+              onClick={(event) => {
+                event.preventDefault();
+                void libraries.openFolder(library.root_path);
+              }}
+            >
+              {library.root_path}
+            </TextLink>
+          ) : (
+            library.root_path
+          )}
+        </Text>
+      )}
       <Text variant="mono" as="div" style={styles.meta}>
-        {!thin && (
-          <>
-            {canRevealFile() ? (
-              <TextLink
-                to={library.root_path}
-                tooltip={SettingsStrings.openLibraryFolder()}
-                onClick={(event) => {
-                  event.preventDefault();
-                  void libraries.openFolder(library.root_path);
-                }}
-              >
-                {library.root_path}
-              </TextLink>
-            ) : (
-              library.root_path
-            )}
-            {' · '}
-          </>
-        )}
         {SettingsStrings.libraryPhotoCount(library)}
       </Text>
       <ScanStrip

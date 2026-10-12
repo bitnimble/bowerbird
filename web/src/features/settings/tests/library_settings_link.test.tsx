@@ -150,9 +150,8 @@ test('web library tiles show the path as plain text', async () => {
   Reflect.deleteProperty(globalThis, '__TAURI__');
   await openAt('/settings/libraries');
   expect(screen.queryByRole('link', { name: '/srv/reef' })).toBeNull();
-  expect(
-    screen.getByText('/srv/reef · 12 photos (3 missing, 1 unavailable, 7 rendered)'),
-  ).toBeTruthy();
+  expect(screen.getByText('/srv/reef')).toBeTruthy();
+  expect(screen.getByText('12 photos (3 missing, 1 unavailable, 7 rendered)')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Open library folder' })).toBeNull();
 });
 
@@ -172,9 +171,7 @@ test('library counts and the render queue keep updating after fetching ends', as
   reportedStatus = IDLE;
   await waitFor(
     () => {
-      expect(
-        screen.getByText('/srv/reef · 15 photos (0 missing, 0 unavailable, 15 rendered)'),
-      ).toBeTruthy();
+      expect(screen.getByText('15 photos (0 missing, 0 unavailable, 15 rendered)')).toBeTruthy();
       expect(screen.queryByText(/rendering/)).toBeNull();
     },
     { timeout: 2500 },
