@@ -5,7 +5,7 @@ import { Heading } from '../../web/src/ui/heading';
 import { Text } from '../../web/src/ui/text';
 import { font } from '../../web/src/ui/tokens.stylex';
 
-const WIDE = '@media (min-width: 960px)';
+const WIDE = '@media (min-width: 1152px)';
 
 const styles = stylex.create({
   title: {

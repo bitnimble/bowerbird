@@ -1,5 +1,6 @@
 import type { DemoId } from '../features';
 import { ColourDemo } from './colour_demo';
+import { DenoiseDemo } from './denoise_demo';
 import { DustDemo } from './dust_demo';
 import { HdrDemo } from './hdr_demo';
 import { MergeDemo } from './merge_demo';
@@ -11,6 +12,7 @@ export const DEMOS: Record<DemoId, () => JSX.Element> = {
   hdr: HdrDemo,
   colour: ColourDemo,
   dust: DustDemo,
+  denoise: DenoiseDemo,
   stacks: StacksDemo,
   triage: TriageDemo,
   merge: MergeDemo,

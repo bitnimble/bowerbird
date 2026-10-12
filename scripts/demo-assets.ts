@@ -39,10 +39,11 @@ import { canvasLongEdgeFor } from '../src/schemas/composition';
 import { AlignedSchema, type Aligned } from '../src/schemas/recipes';
 import { SettingsSchema } from '../src/schemas/settings';
 import { dustSettings } from '../src/schemas/dust_settings';
-import { AS_METERED } from '../src/services/processing/pipeline/developed';
+import { AS_METERED, developed } from '../src/services/processing/pipeline/developed';
 import { encoderQuality } from '../src/services/processing/analysis/quality';
 import type { Job, JobCompositeSource, JobTarget } from '../src/schemas/jobs';
 import { runJob } from '../src/services/processing/rawshim/rawshim_job';
+import { isUpscalable } from '../src/services/processing/rawshim/rawshim_ops';
 
 /**
  * Where a picture's raw is, read from the variable named after its slug.
@@ -104,6 +105,12 @@ const DUST = 'dust';
  * drags over spots rather than towards them.
  */
 const DUST_CROP: [number, number, number, number] = [0.49, 0.13, 0.71, 0.35];
+
+/** The noise reduction demo's frame, shot at a high enough ISO for its noise to read on the page. */
+const DENOISE = 'denoise';
+
+/** The part of that frame the demo shows, as Camera Raw's left, top, right and bottom. */
+const DENOISE_CROP: [number, number, number, number] = [0.66, 0.42, 0.96, 0.72];
 
 /**
  * The part of a scene's frame the page shows, as Camera Raw's left, top, right and bottom.
@@ -644,6 +651,42 @@ async function buildDust(): Promise<void> {
   }
 }
 
+/** The noise reduction demo's arms: the frame with no noise reduction, and through Fast and Best. */
+const DENOISE_ARMS = ['denoise-original', 'denoise-fast', 'denoise-best'] as const;
+
+type DenoiseArm = (typeof DENOISE_ARMS)[number];
+
+async function buildDenoise(arms: readonly DenoiseArm[]): Promise<void> {
+  const raw = rawFor(DENOISE);
+  if (arms.includes('denoise-best') && !isUpscalable(raw))
+    throw new Error(`${raw} is not a Bayer mosaic, which Best needs`);
+  const fast = developed(null, 'galosh', true);
+  const develops: Record<DenoiseArm, ReturnType<typeof developed>> = {
+    'denoise-original': { ...fast, denoiseLuminance: 0, denoiseColour: 0 },
+    'denoise-fast': fast,
+    'denoise-best': developed(null, 'upscaler', true),
+  };
+  for (const slug of arms) {
+    const develop = develops[slug];
+    const out = join(LANDING_OUT, `${slug}.avif`);
+    runJob({
+      rawFilePath: raw,
+      cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
+      defringe: SETTINGS.raw_defringe,
+      ...develop,
+      geometry: { ...develop.geometry, crop: DENOISE_CROP },
+      grade: {
+        referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
+        whiteQuantile: SETTINGS.hdr_white_quantile,
+      },
+      targets: [
+        { ...target(DENOISE), output: 'srgb', outputPath: out, size: croppedSize(DENOISE_CROP) },
+      ],
+    });
+    console.error(`[demo-assets] ${slug}: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
+  }
+}
+
 /** One 8-bit picture at the shipped settings, which is what the landing site's demos show. */
 function renderSrgb(
   raw: string,
@@ -710,7 +753,18 @@ const colour = asked.length === 0 || asked.includes(COLOUR);
 const merge = asked.length === 0 || asked.includes('merge');
 const panorama = asked.length === 0 || asked.includes('panorama');
 const dust = asked.length === 0 || asked.includes(DUST);
-if (wanted.length === 0 && !swatches && !colour && !merge && !panorama && !dust) {
+const denoise = DENOISE_ARMS.filter(
+  (slug) => asked.length === 0 || asked.includes(DENOISE) || asked.includes(slug),
+);
+if (
+  wanted.length === 0 &&
+  !swatches &&
+  !colour &&
+  !merge &&
+  !panorama &&
+  !dust &&
+  denoise.length === 0
+) {
   throw new Error(`no such scene: ${asked.join(', ')}`);
 }
 mkdirSync(OUT, { recursive: true });
@@ -720,4 +774,5 @@ if (colour) await buildColour();
 if (merge) await buildMerge();
 if (panorama) await buildPanorama();
 if (dust) await buildDust();
+if (denoise.length > 0) await buildDenoise(denoise);
 for (const scene of wanted) await build(scene);

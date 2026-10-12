@@ -19,6 +19,8 @@ const NARROW = '@media (max-width: 345px)';
 const styles = stylex.create({
   html: {
     scrollBehavior: { default: 'smooth', '@media (prefers-reduced-motion: reduce)': 'auto' },
+    // Phones stay at 1: zoom shrinks the layout width, and a 375px header no longer fits.
+    zoom: { default: null, '@media (min-width: 640px)': 1.2 },
   },
   body: {
     backgroundColor: color.ink,

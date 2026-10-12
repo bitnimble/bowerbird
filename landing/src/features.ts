@@ -1,6 +1,14 @@
 import type { MDXContent } from 'mdx/types';
 
-export type DemoId = 'hdr' | 'colour' | 'dust' | 'stacks' | 'triage' | 'merge' | 'panorama';
+export type DemoId =
+  | 'hdr'
+  | 'colour'
+  | 'dust'
+  | 'denoise'
+  | 'stacks'
+  | 'triage'
+  | 'merge'
+  | 'panorama';
 
 export type ShotFrame = 'desktop' | 'phone';
 
@@ -25,6 +33,8 @@ const FEATURE_ORDER = [
   'triage',
   'colour',
   'editing',
+  'denoise',
+  'print',
   'dust',
   'merge',
   'panorama',
@@ -71,7 +81,7 @@ export const DEMO = {
     divider: 'Divider between the SDR and HDR renditions',
     sdrAlt: (scene: string) => `${scene}, as an ordinary JPEG`,
     hdrAlt: (scene: string) => `${scene}, in HDR`,
-    note: 'Note: viewing HDR requires an HDR display, and Chrome or Safari.',
+    note: 'Viewing HDR needs an HDR display, and Chrome or Safari.',
   },
   colour: {
     label: 'Colour profile',
@@ -83,8 +93,15 @@ export const DEMO = {
   dust: {
     before: 'Before',
     after: 'After',
-    divider: 'Divider between the photo before and after dust removal',
+    divider: 'Divider between the photo before and after spot removal',
     alt: 'A dusk sky with sensor dust spots across it',
+  },
+  denoise: {
+    label: 'Noise reduction',
+    original: 'Original',
+    fast: 'Fast',
+    best: 'Best',
+    alt: 'Cars and people on a shoreline after sunset, shot at ISO 40000',
   },
   stacks: {
     toggle: (count: number, open: boolean) =>

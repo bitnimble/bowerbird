@@ -62,6 +62,13 @@ export const DUST_PHOTO: Record<'before' | 'after', string> = {
   after: `${import.meta.env.BASE_URL}samples/dust-after.avif`,
 };
 
+/** The noise reduction demo's 3: part of 1 high ISO raw, with no noise reduction and through each denoiser. */
+export const DENOISE_PHOTO: Record<'original' | 'fast' | 'best', string> = {
+  original: `${import.meta.env.BASE_URL}samples/denoise-original.avif`,
+  fast: `${import.meta.env.BASE_URL}samples/denoise-fast.avif`,
+  best: `${import.meta.env.BASE_URL}samples/denoise-best.avif`,
+};
+
 /** The panorama demo's merged picture, which 1 sweep of 5 frames came out as. */
 export const PANORAMA_PHOTO = `${import.meta.env.BASE_URL}samples/panorama.avif`;
 

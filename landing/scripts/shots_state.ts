@@ -19,12 +19,13 @@ const LIBRARY: Record<string, [from: string, to: string][]> = {
   Sony: [
     ['test/fixtures/DSC00853.ARW', 'DSC00853.ARW'],
     ['test/fixtures/DSC02981.ARW', 'DSC02981.ARW'],
+    ['assets/reference_frame.ARW', 'autumn.ARW'],
   ],
   Canon: [['test/fixtures/IMG_5360.CR3', 'IMG_5360.CR3']],
   HDR: [
-    ['web/public/hdr/arches-hdr.avif', 'arches.avif'],
-    ['web/public/hdr/rapids-hdr.avif', 'rapids.avif'],
-    ['web/public/hdr/sunset-hdr.avif', 'sunset.avif'],
+    ['landing/public/samples/arches.avif', 'arches.avif'],
+    ['landing/public/samples/rapids.avif', 'rapids.avif'],
+    ['landing/public/samples/sunset.avif', 'sunset.avif'],
   ],
 };
 export const PHOTO_COUNT = Object.values(LIBRARY).flat().length;

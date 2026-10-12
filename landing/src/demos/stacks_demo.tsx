@@ -38,7 +38,7 @@ const styles = stylex.create({
     display: 'grid',
     gridTemplateColumns: {
       default: 'repeat(4, minmax(0, 1fr))',
-      '@media (max-width: 600px)': 'repeat(3, minmax(0, 1fr))',
+      '@media (max-width: 720px)': 'repeat(3, minmax(0, 1fr))',
     },
     gridAutoFlow: 'row dense',
     gap: size.gridGap,

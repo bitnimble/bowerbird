@@ -9,7 +9,7 @@ import { Paragraph, SectionTitle } from './prose';
 import { Shot } from './shot';
 import { FEATURES_URL } from './site';
 
-const WIDE = '@media (min-width: 960px)';
+const WIDE = '@media (min-width: 1152px)';
 
 const styles = stylex.create({
   row: {

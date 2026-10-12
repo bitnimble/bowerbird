@@ -19,6 +19,8 @@ type Photo = {
   renditions_built_at: string | null;
 };
 
+const PRINT_SETTLE_MS = 3_000;
+
 let api: APIRequestContext;
 let libraryId = '';
 const photoIds = new Map<string, string>();
@@ -71,6 +73,10 @@ async function openEditor(page: Page, photoId: string): Promise<void> {
   ).toHaveCount(0);
 }
 
+async function pressRepeatedly(target: Locator, key: string, times: number): Promise<void> {
+  for (let at = 0; at < times; at++) await target.press(key);
+}
+
 test.beforeAll(async () => {
   api = await request.newContext({ baseURL: API_URL });
   const created = await api.post(route(PathSegment.api(), PathSegment.libraries()), {
@@ -119,6 +125,47 @@ test('viewer', async ({ page }) => {
 test('editor', async ({ page }) => {
   await openEditor(page, idOf('AFXT2721.RAF'));
   await shot(page, 'editor.jpg');
+});
+
+test('print', async ({ page }) => {
+  await page.goto(route(PathSegment.photos(), idOf('autumn.ARW'), PathSegment.mockup()));
+  await expect(page.getByTestId('raw-edit-diagnostics')).toHaveAttribute(
+    'data-rendered-mode',
+    'print',
+    { timeout: 300_000 },
+  );
+  await page.getByRole('combobox', { name: 'Paper', exact: true }).click();
+  await page.getByRole('option', { name: 'Satin', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Environment', exact: true }).click();
+  await page.getByRole('option', { name: 'Dim hotel room', exact: true }).click();
+  await pressRepeatedly(page.getByRole('slider', { name: 'Light intensity' }), 'ArrowUp', 60);
+  await expect(page.getByRole('slider', { name: 'Light intensity' })).toHaveAttribute(
+    'aria-valuetext',
+    '120 lx',
+  );
+  await pressRepeatedly(page.getByRole('slider', { name: 'Light temperature' }), 'ArrowUp', 29);
+  await expect(page.getByRole('slider', { name: 'Light temperature' })).toHaveAttribute(
+    'aria-valuetext',
+    '6,500 K',
+  );
+  const print = page.getByRole('region', { name: 'Rotate print' });
+  await print.press('Home');
+  await pressRepeatedly(print, 'Shift+ArrowUp', 4);
+  await pressRepeatedly(print, 'ArrowRight', 2);
+  await pressRepeatedly(print, 'ArrowDown', 3);
+  await expect(page.getByRole('slider', { name: 'Horizontal rotation' })).toHaveAttribute(
+    'aria-valuenow',
+    '-2',
+  );
+  await expect(page.getByRole('slider', { name: 'Vertical rotation' })).toHaveAttribute(
+    'aria-valuenow',
+    '-37',
+  );
+  // Focusing the light sliders scrolled the panel down to them.
+  await page.getByRole('combobox', { name: 'Paper', exact: true }).scrollIntoViewIfNeeded();
+  // The sheet draws in the GPU worker, which says nothing once a redraw lands.
+  await page.waitForTimeout(PRINT_SETTLE_MS);
+  await shot(page, 'print.jpg');
 });
 
 test.describe('phone', () => {

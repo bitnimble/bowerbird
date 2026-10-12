@@ -4,7 +4,7 @@ import { color } from '../../web/src/ui/tokens.stylex';
 import SpeedCopy from './copy/speed.mdx';
 import { Paragraph } from './prose';
 
-const WIDE = '@media (min-width: 960px)';
+const WIDE = '@media (min-width: 1152px)';
 
 const styles = stylex.create({
   band: {

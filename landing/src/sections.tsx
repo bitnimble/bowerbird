@@ -8,17 +8,12 @@ import { layout } from './layout.stylex';
 import { Paragraph, SectionTitle } from './prose';
 import { FEATURES_URL } from './site';
 
-const WIDE = '@media (min-width: 960px)';
+const WIDE = '@media (min-width: 1152px)';
 
 const styles = stylex.create({
   hero: {
     paddingTop: { default: '48px', [WIDE]: '88px' },
     paddingBottom: { default: '40px', [WIDE]: '64px' },
-  },
-  lead: {
-    maxWidth: '56ch',
-    fontSize: { default: '17px', [WIDE]: '19px' },
-    lineHeight: 1.55,
   },
   actions: {
     marginTop: '24px',
@@ -92,14 +87,6 @@ type Children = { children?: ReactNode };
 
 export function Hero({ children }: Children): JSX.Element {
   return <section {...stylex.props(styles.hero)}>{children}</section>;
-}
-
-export function Lead({ children }: Children): JSX.Element {
-  return (
-    <Paragraph muted style={styles.lead}>
-      {children}
-    </Paragraph>
-  );
 }
 
 export function Actions({ children }: Children): JSX.Element {
