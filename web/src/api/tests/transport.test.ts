@@ -99,6 +99,7 @@ describe('subscribeEvents', () => {
       rendition_fetch: () => {},
       replication: () => {},
       backup: () => {},
+      scan: () => {},
       composite: () => {},
       export: () => {},
       ...watching,
@@ -143,12 +144,18 @@ describe('subscribeEvents', () => {
         handlers({
           rendition: (data) => seen.push(`rendition:${data}`),
           replication: (data) => seen.push(`replication:${data}`),
+          scan: (data) => seen.push(`scan:${data}`),
         }),
       );
       source.deliver('rendition', '{"id":"a"}');
       source.deliver('replication', '{"library_id":"lib"}');
+      source.deliver('scan', '{"library_id":"lib"}');
       expect(source.opened).toEqual([route(PathSegment.api(), PathSegment.events())]);
-      expect(seen).toEqual(['rendition:{"id":"a"}', 'replication:{"library_id":"lib"}']);
+      expect(seen).toEqual([
+        'rendition:{"id":"a"}',
+        'replication:{"library_id":"lib"}',
+        'scan:{"library_id":"lib"}',
+      ]);
     } finally {
       source.restore();
     }

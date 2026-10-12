@@ -384,6 +384,11 @@ scanService.onSettled((libraryId, changed) => {
   void mirror.runScheduled(libraryId);
 });
 mirror.start();
+const announceScan = (libraryId: string): void =>
+  eventsApi.announce('scan', { library_id: libraryId });
+scanService.onScanned(announceScan);
+// Not gated on `changed`: it leaves out removals, which is how a photo becomes missing.
+scanService.onSettled(announceScan);
 const blobsApi = new BlobsApi(
   photoPathsRepo,
   photoMetadataRepo,

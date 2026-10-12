@@ -35,6 +35,7 @@ export class ScanStatus {
   private readonly statuses = new Map<string, LibraryScanStatus>();
   private readonly processingBatches = new Map<string, ProcessingBatch>();
   private readonly settledListeners = new Set<(libraryId: string, changed: boolean) => void>();
+  private readonly scannedListeners = new Set<(libraryId: string) => void>();
   private readonly libraryChangedListeners = new Set<(library: Library) => void>();
 
   constructor(
@@ -83,6 +84,21 @@ export class ScanStatus {
         listener(libraryId, changed);
       } catch (err) {
         log.error('a settled listener failed', { library: libraryId, err });
+      }
+    }
+  }
+
+  /** Called when a scan ends, however it ended, before the processing it queued has run. */
+  onScanned(listener: (libraryId: string) => void): void {
+    this.scannedListeners.add(listener);
+  }
+
+  notifyScanned(libraryId: string): void {
+    for (const listener of this.scannedListeners) {
+      try {
+        listener(libraryId);
+      } catch (err) {
+        log.error('a scanned listener failed', { library: libraryId, err });
       }
     }
   }

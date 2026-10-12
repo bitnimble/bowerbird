@@ -198,6 +198,7 @@ function build(): { stores: Stores; presenters: Presenters } {
   const backup = new BackupPresenter(stores.backup, photos, toasts);
   const events = new EventsPresenter(
     photos,
+    libraries,
     replication,
     stackTriage,
     exportPhotos,

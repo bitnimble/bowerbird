@@ -16,22 +16,29 @@ afterEach(() => {
   else Object.defineProperty(globalThis, 'EventSource', sourceDescriptor);
 });
 
-test('backup loads before Settings, refreshes on each stream open and reads backup invalidations', async () => {
-  const sources: Source[] = [];
-  class Source {
-    private readonly handlers = new Map<string, (event: { data: string }) => void>();
-    constructor() {
-      sources.push(this);
-    }
-    addEventListener(kind: string, handler: (event: { data: string }) => void): void {
-      this.handlers.set(kind, handler);
-    }
-    emit(kind: string, data = ''): void {
-      this.handlers.get(kind)?.({ data });
-    }
-    close(): void {}
+class Source {
+  static readonly opened: Source[] = [];
+  private readonly handlers = new Map<string, (event: { data: string }) => void>();
+  constructor() {
+    Source.opened.push(this);
   }
+  addEventListener(kind: string, handler: (event: { data: string }) => void): void {
+    this.handlers.set(kind, handler);
+  }
+  emit(kind: string, data = ''): void {
+    this.handlers.get(kind)?.({ data });
+  }
+  close(): void {}
+}
+
+function useFakeEventSource(): void {
+  Source.opened.length = 0;
   Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: Source });
+}
+
+test('backup loads before Settings, refreshes on each stream open and reads backup invalidations', async () => {
+  useFakeEventSource();
+  const sources = Source.opened;
   const store = new BackupStore();
   const backup = new BackupPresenter(
     store,
@@ -53,7 +60,9 @@ test('backup loads before Settings, refreshes on each stream open and reads back
       renditionsRebuilt: () => {},
       renditionFetch: () => {},
       compositeProgressed: () => {},
+      reload: async () => {},
     },
+    { load: async () => {} },
     { libraryChanged: async () => {}, reload: async () => {} },
     { renditionsRebuilt: () => {} },
     { progressed: () => {} },
@@ -78,4 +87,41 @@ test('backup loads before Settings, refreshes on each stream open and reads back
   source.emit('backup', JSON.stringify({ library_id: 'lib' }));
   await when(() => store.statusOf('lib') === server, { timeout: 1000 });
   expect(reads).toBe(4);
+});
+
+test('a finished scan re-reads the grid and the library counts', () => {
+  useFakeEventSource();
+  backupApi.list = async () => ({ backups: [] });
+  const reloads: string[] = [];
+  const events = new EventsPresenter(
+    {
+      serverReachable: () => {},
+      renditionsRebuilt: () => {},
+      renditionFetch: () => {},
+      compositeProgressed: () => {},
+      reload: async (activity) => {
+        reloads.push(`photos ${activity}`);
+      },
+    },
+    {
+      load: async (activity) => {
+        reloads.push(`libraries ${activity}`);
+      },
+    },
+    { libraryChanged: async () => {}, reload: async () => {} },
+    { renditionsRebuilt: () => {} },
+    { progressed: () => {} },
+    { load: async () => {} },
+    new BackupPresenter(
+      new BackupStore(),
+      { reload: async () => {} },
+      { show: () => {}, showError: () => {} },
+    ),
+  );
+  sessions.push(events);
+  events.connect();
+
+  Source.opened[0]?.emit('scan', JSON.stringify({ library_id: 'lib' }));
+
+  expect(reloads).toEqual(['photos background', 'libraries background']);
 });

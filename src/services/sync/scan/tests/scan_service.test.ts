@@ -308,3 +308,23 @@ describe('a photograph whose row and file disagree on purpose', () => {
     expect(row.is_missing).toBe(0);
   });
 });
+
+describe('telling the page a scan moved its photos', () => {
+  it('says so once the rows are written, a missing photo among them', async () => {
+    const peer = makeLibrary();
+    put(peer, 'Trip/a.arw');
+    await peer.scan.scanLibrary(LIB);
+    rmSync(path.join(peer.root, 'Trip', 'a.arw'));
+    const seen: { libraryId: string; missing: unknown[] }[] = [];
+    peer.scan.onScanned((libraryId) =>
+      seen.push({
+        libraryId,
+        missing: peer.db.query('SELECT is_missing FROM photos').all(),
+      }),
+    );
+
+    await peer.scan.scanLibrary(LIB);
+
+    expect(seen).toEqual([{ libraryId: LIB, missing: [{ is_missing: 1 }] }]);
+  });
+});

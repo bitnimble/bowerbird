@@ -153,6 +153,7 @@ export class ScanRunner {
       // detached (§9.5/§9.6: background work, client polls status), so POST /sync
       // returns promptly and rescans aren't blocked for the whole processing run.
       this.leases.release(libraryId, owner);
+      this.status.notifyScanned(libraryId);
       if (scannedStatus != null) {
         this.rebuilds.detachProcessing(libraryId, token, scannedStatus, processingIds, startedAt);
       }

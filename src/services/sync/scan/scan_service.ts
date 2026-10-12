@@ -192,6 +192,10 @@ export class ScanService implements LibraryLifecycleListener {
     return this.status.onSettled(listener);
   }
 
+  onScanned(listener: (libraryId: string) => void): void {
+    return this.status.onScanned(listener);
+  }
+
   onLibraryChanged(listener: (library: Library) => void): void {
     return this.status.onLibraryChanged(listener);
   }

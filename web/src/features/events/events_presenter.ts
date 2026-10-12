@@ -12,6 +12,7 @@ import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { ReplicationPresenter } from '../replication/replication_presenter';
 import type { StackTriagePresenter } from '../photos/stack_triage/stack_triage_presenter';
 import type { BackupPresenter } from '../backup/backup_presenter';
+import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 
 export class EventsPresenter {
   private stream: EventStream | null = null;
@@ -19,8 +20,9 @@ export class EventsPresenter {
   constructor(
     private readonly photos: Pick<
       PhotosPresenter,
-      'serverReachable' | 'renditionsRebuilt' | 'renditionFetch' | 'compositeProgressed'
+      'serverReachable' | 'renditionsRebuilt' | 'renditionFetch' | 'compositeProgressed' | 'reload'
     >,
+    private readonly libraries: Pick<LibrariesPresenter, 'load'>,
     private readonly replication: Pick<ReplicationPresenter, 'libraryChanged' | 'reload'>,
     private readonly stackTriage: Pick<StackTriagePresenter, 'renditionsRebuilt'>,
     private readonly exports: Pick<ExportPresenter, 'progressed'>,
@@ -65,6 +67,10 @@ export class EventsPresenter {
         void this.labels.load('background');
       },
       backup: () => this.backup.refresh(),
+      scan: () => {
+        void this.photos.reload('background');
+        void this.libraries.load('background');
+      },
       // A merge is minutes of work behind one request, so what the grid draws while it runs -
       // the frames dimmed, the bar in the toast - comes from here rather than from the call.
       composite: (payload) =>

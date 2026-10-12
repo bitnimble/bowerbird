@@ -232,6 +232,7 @@ export interface EventHandlers {
   rendition_fetch(data: string): void;
   replication(data: string): void;
   backup(data: string): void;
+  scan(data: string): void;
   composite(data: string): void;
   export(data: string): void;
 }
@@ -243,6 +244,7 @@ const KINDS = [
   'rendition_fetch',
   'replication',
   'backup',
+  'scan',
   'composite',
   'export',
 ] as const satisfies readonly (keyof EventHandlers)[];

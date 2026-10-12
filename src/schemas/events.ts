@@ -26,12 +26,15 @@ export type RenditionFetchEvent = z.infer<typeof RenditionFetchEventSchema>;
 export const ReplicationEventSchema = z.object({ library_id: z.string() });
 export type ReplicationEvent = z.infer<typeof ReplicationEventSchema>;
 export const BackupEventSchema = z.object({ library_id: z.string() });
+/** A scan of the library, whoever started it, wrote its rows or settled its processing. */
+export const ScanEventSchema = z.object({ library_id: z.string() });
 
 export const LibraryEventSchemas = {
   rendition: RenditionEventSchema,
   rendition_fetch: RenditionFetchEventSchema,
   replication: ReplicationEventSchema,
   backup: BackupEventSchema,
+  scan: ScanEventSchema,
   composite: CompositeProgressSchema,
   export: ExportProgressSchema,
 };

@@ -78,7 +78,9 @@ export class ScrollRailStore {
   /** How much of the collection is on screen, 0 to 1, which is how long the thumb is. */
   @computed get fraction(): number {
     const content = this.content();
-    if (content <= 0) return 1;
-    return Math.min(1, this.viewport() / content);
+    const viewport = this.viewport();
+    // Unmeasured is not overflowing: 0 shows the strip's seek gutter before its first measure.
+    if (content <= 0 || viewport <= 0) return 1;
+    return Math.min(1, viewport / content);
   }
 }
