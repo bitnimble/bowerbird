@@ -649,12 +649,18 @@ jobs:
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 3600 "$keychain"
           security unlock-keychain -p "$keychain_password" "$keychain"
+          # codesign finds the private key through the search list, whatever `--keychain` says.
+          security list-keychains -d user -s "$keychain"
           security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/signing.p12"
           # Without this codesign waits on a dialog asking to use the key.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
           # By hash: a self-signed certificate is untrusted, which a lookup by name can skip.
           identity=$(security find-certificate -a -c Bowerbird -Z "$keychain" | awk '/SHA-1 hash/ { print $3; exit }')
+          if [ -z "$identity" ]; then
+            echo "::error::no certificate named Bowerbird in the p12"
+            exit 1
+          fi
           sign() {
             codesign --force --deep --sign "$identity" --keychain "$keychain" "$1"
             codesign --verify --deep --strict "$1"
