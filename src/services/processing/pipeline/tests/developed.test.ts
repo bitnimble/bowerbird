@@ -37,13 +37,13 @@ describe('developed', () => {
       dustSensitivity: 25,
       dustIntensity: 100,
     });
-    expect(job.sharpen).toBeCloseTo(0.8);
+    expect(job.sharpen).toBeCloseTo(1.05);
     expect(job.denoiseLuminance).toBe(30);
     expect(job.highlightRecovery).toBe(40);
     expect(developed(stored, 'galosh', true).highlightRecovery).toBe(100);
     expect(job.dust.enabled).toBe(false);
     expect(job.exposure).toBe(1.5);
-    expect(developed(stored, 'galosh', true).sharpen).toBeCloseTo(0.2);
+    expect(developed(stored, 'galosh', true).sharpen).toBeCloseTo(0.45);
   });
 
   it("denoises with the library's filter unless the edit names one", () => {
@@ -65,7 +65,7 @@ describe('developed', () => {
     );
     expect(developed(null, 'upscaler', true).sharpen).toBeCloseTo(0.35);
     expect(developed(JSON.stringify({ denoiser: 'galosh' }), 'upscaler', true).sharpen).toBeCloseTo(
-      0.5,
+      0.75,
     );
     expect(developed(JSON.stringify({ sharpening: 60 }), 'upscaler', true).sharpen).toBeCloseTo(
       0.6,
@@ -78,7 +78,7 @@ describe('developed', () => {
       developed(JSON.stringify({ denoiser: 'upscaler' }), 'pmrid', false),
     ]) {
       expect(job.denoiser).toBe('galosh');
-      expect(job.sharpen).toBeCloseTo(0.5);
+      expect(job.sharpen).toBeCloseTo(0.75);
     }
     expect(developed(null, 'pmrid', false).denoiser).toBe('pmrid');
   });

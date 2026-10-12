@@ -24,6 +24,7 @@ import type { Environment } from '../features/raw_edit/print/print_scene';
 import { z } from 'zod';
 import { ModelsStatusSchema } from '../../../src/schemas/models';
 import { PathSegment, route } from '../../../src/schemas/route';
+import { sharpenOf } from '../../../src/schemas/sharpening';
 import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode/local_open';
 import { PortedFiles } from '../app/local_setting';
 import { PipelineWarmth, storedRecipes } from '../features/raw_edit/stage/pipeline_warmth';
@@ -308,7 +309,7 @@ class Open {
           ask.mosaic.colour,
           ask.mosaic.denoiser,
           ask.mosaic.highlightRecovery,
-          ask.mosaic.sharpen,
+          sharpenOf(ask.mosaic.sharpening, ask.mosaic.denoiser),
           enabled,
           sensitivity,
           intensity,
@@ -482,7 +483,7 @@ class Open {
       mosaic.colour,
       mosaic.denoiser,
       mosaic.highlightRecovery,
-      mosaic.sharpen,
+      sharpenOf(mosaic.sharpening, mosaic.denoiser),
       enabled,
       sensitivity,
       intensity,

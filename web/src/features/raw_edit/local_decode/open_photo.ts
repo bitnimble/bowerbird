@@ -319,9 +319,7 @@ export function prepareOf(
     colour: doc?.colourNoise ?? null,
     denoiser,
     highlightRecovery: doc?.highlightRecovery ?? 100,
-    // A fraction of the deconvolution where the document holds a slider position, which is the
-    // unit the module reads it in and the same conversion `developed` makes for a rendition.
-    sharpen: sharpeningOf(doc?.sharpening ?? null, denoiser) / 100,
+    sharpening: sharpeningOf(doc?.sharpening ?? null, denoiser),
     dust: dustSettings(doc),
     repairs: doc?.repairs ?? [],
   };
@@ -350,7 +348,7 @@ export function developOf(prepare: LocalPrepare): PrepareDevelop {
     colourNoise: prepare.colour,
     denoiser: prepare.denoiser,
     highlightRecovery: prepare.highlightRecovery,
-    sharpening: Math.round(prepare.sharpen * 100),
+    sharpening: prepare.sharpening,
     dustRemoval: prepare.dust.enabled,
     dustSensitivity: Math.round(prepare.dust.sensitivity * 100),
     dustIntensity: Math.round(prepare.dust.intensity * 100),
@@ -365,7 +363,7 @@ export function sameDevelop(at: LocalPrepare | null, next: LocalPrepare): boolea
     at.colour === next.colour &&
     at.denoiser === next.denoiser &&
     at.highlightRecovery === next.highlightRecovery &&
-    at.sharpen === next.sharpen &&
+    at.sharpening === next.sharpening &&
     at.dust.enabled === next.dust.enabled &&
     // Only where the switch is on: with it off the pair cannot move a photosite, so re-preparing
     // for them would be seconds of work that cannot change the picture.

@@ -1221,6 +1221,13 @@ pub(crate) fn base(
                 crate::composite_tile::coded_as(anchored, spec.sources[spec.reference].gain),
                 job.grade.reference_white_nits,
                 reference.from_raw.noise,
+                match drawn {
+                    Drawn::Shifted(_) => job.detail().without_upscaler(),
+                    _ => job.detail().on_bayer(crate::decode_rawler::upscalable_at(
+                        files[spec.reference].path,
+                    )),
+                }
+                .noise_left(reference.from_raw.noise),
                 crate::decode_rawler::camera_to_rec2020_at(files[spec.reference].path),
                 wb_gains.unwrap_or([1.0; 3]),
                 1,

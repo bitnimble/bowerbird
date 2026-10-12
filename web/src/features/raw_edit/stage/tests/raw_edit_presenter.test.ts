@@ -313,7 +313,7 @@ describe('a slider reaching the picture', () => {
       colour: neutral.colourNoise,
       denoiser: 'pmrid',
       highlightRecovery: neutral.highlightRecovery,
-      sharpen: sharpeningOf(neutral.sharpening, 'pmrid') / 100,
+      sharpening: sharpeningOf(neutral.sharpening, 'pmrid'),
       dust: {
         enabled: neutral.dustRemoval,
         sensitivity: neutral.dustSensitivity / 100,
@@ -345,7 +345,7 @@ describe('a slider reaching the picture', () => {
     // The release is the reader looking at it, so it runs then - once, at where they stopped.
     presenter.settle({ luminanceNoise: 60, colourNoise: 20 });
     await settled();
-    // The sharpen and the dust three ride along at what a photograph opens with, which is on and
+    // The sharpening and the dust three ride along at what a photograph opens with, which is on and
     // conservative.
     expect(asked()).toEqual([
       {
@@ -353,7 +353,7 @@ describe('a slider reaching the picture', () => {
         colour: 20,
         denoiser: 'galosh',
         highlightRecovery: 100,
-        sharpen: 0.5,
+        sharpening: 50,
         dust: { enabled: true, sensitivity: 0.25, intensity: 1 },
         repairs: [],
       },
@@ -382,14 +382,14 @@ describe('a slider reaching the picture', () => {
     expect(asked().length).toBe(ran + 2);
     expect(asked().at(-1)?.dust).toEqual({ enabled: true, sensitivity: 0.8, intensity: 0.6 });
 
-    // **The sharpening is on this path too, and the assertion above cannot see it.** Its 0.5 there
+    // **The sharpening is on this path too, and the assertion above cannot see it.** Its 50 there
     // is the schema's own default arriving by coincidence, so a `prepareOf` that ignored the
-    // document, or a `samePrepare` that stopped comparing the field, would still read 0.5 and still
+    // document, or a `samePrepare` that stopped comparing the field, would still read 50 and still
     // pass. Moving it is what says the slider is wired to the deconvolution.
     presenter.settle({ sharpening: 90 });
     await settled();
     expect(asked().length).toBe(ran + 3);
-    expect(asked().at(-1)?.sharpen).toBe(0.9);
+    expect(asked().at(-1)?.sharpening).toBe(90);
 
     // The highlight colouring is in the demosaic, so it re-prepares like the denoise does.
     presenter.settle({ highlightRecovery: 30 });
@@ -449,17 +449,17 @@ describe('a slider reaching the picture', () => {
 
     presenter.setDenoiser('upscaler');
     await settled();
-    expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpen: 0.35 });
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpening: 35 });
     expect(edit.doc?.sharpening).toBeNull();
 
     presenter.setDenoiser('galosh');
     await settled();
-    expect(asked().at(-1)).toMatchObject({ denoiser: 'galosh', sharpen: 0.5 });
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'galosh', sharpening: 50 });
 
     presenter.settle({ sharpening: 70 });
     presenter.setDenoiser('upscaler');
     await settled();
-    expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpen: 0.7 });
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'upscaler', sharpening: 70 });
   });
 
   test('a sensor the upscaler cannot take runs GALOSH at its sharpening under a library of Best', async () => {
@@ -484,7 +484,7 @@ describe('a slider reaching the picture', () => {
 
     presenter.settle({ luminanceNoise: 40 });
     await settled();
-    expect(asked().at(-1)).toMatchObject({ denoiser: 'galosh', sharpen: 0.5 });
+    expect(asked().at(-1)).toMatchObject({ denoiser: 'galosh', sharpening: 50 });
   });
 
   /**

@@ -863,6 +863,52 @@ impl Detail {
         let (luminance, colour) = self.resolved(fit);
         Amounts::from_sliders(luminance, colour)
     }
+
+    /// The share of the frame's noise variance this denoise leaves, approximately; 1 where it
+    /// filters nothing. `fit` is the one the decode denoised against, None where it denoised nothing.
+    pub fn noise_left(&self, fit: Option<NoiseFit>) -> f32 {
+        if fit.is_none() {
+            return 1.0;
+        }
+        let (luminance, _) = self.resolved(fit);
+        let left = match self.denoiser {
+            Denoiser::Upscaler => crate::upscale::noise_left(luminance),
+            Denoiser::Pmrid => {
+                let kept = 1.0 - (luminance / 100.0).clamp(0.0, 1.0);
+                kept * kept
+            }
+            Denoiser::Galosh => galosh_noise_left(luminance),
+        };
+        // No denoise leaves none; a gate at 0 noise sharpens whatever grain did survive.
+        left.max(LEAST_NOISE_LEFT) as f32
+    }
+}
+
+const LEAST_NOISE_LEFT: f64 = 0.02;
+
+/// GALOSH's Luminance position against the noise variance it leaves, measured on a flat sky of an
+/// ISO 40000 frame with Colour at the frame's own amount.
+const GALOSH_NOISE_LEFT: [(f64, f64); 10] = [
+    (0.0, 1.0),
+    (10.0, 0.23),
+    (20.0, 0.18),
+    (30.0, 0.15),
+    (40.0, 0.10),
+    (50.0, 0.052),
+    (62.5, 0.029),
+    (75.0, 0.023),
+    (87.5, 0.021),
+    (100.0, 0.020),
+];
+
+fn galosh_noise_left(luminance: f64) -> f64 {
+    let luminance = luminance.clamp(0.0, 100.0);
+    let pair = GALOSH_NOISE_LEFT
+        .windows(2)
+        .find(|pair| luminance <= pair[1].0)
+        .unwrap_or(&GALOSH_NOISE_LEFT[GALOSH_NOISE_LEFT.len() - 2..]);
+    let ((from, left_from), (to, left_to)) = (pair[0], pair[1]);
+    left_from + (left_to - left_from) * (luminance - from) / (to - from)
 }
 
 /// **A coarse luma level was built here and removed, and the reason is worth keeping.** An 8x8
@@ -2453,6 +2499,42 @@ mod tests {
         assert_eq!(at(50.0), (1.0, 0.0));
         assert_eq!(at(25.0), (0.5, 0.0));
         assert_eq!(at(0.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn the_sharpen_is_told_how_much_noise_each_denoise_left() {
+        let fit = Some(NoiseFit {
+            alpha: 0.0,
+            sigma_sq: 0.00257 * 0.00257,
+            unified_sigma: 1.2,
+            dark_ref: [0.0; 4],
+        });
+        let left = |luminance: f64, denoiser: Denoiser| {
+            Detail::at(luminance, 0.0).using(denoiser).noise_left(fit)
+        };
+        for denoiser in [Denoiser::Galosh, Denoiser::Pmrid, Denoiser::Upscaler] {
+            assert_eq!(Detail::at(62.0, 50.0).using(denoiser).noise_left(None), 1.0);
+            assert_eq!(left(0.0, denoiser), 1.0);
+            let mut previous = 1.0;
+            for luminance in (0..=100).step_by(5) {
+                let now = left(f64::from(luminance), denoiser);
+                assert!(
+                    (0.0..=previous).contains(&now),
+                    "{denoiser:?} at {luminance} left {now}, after {previous}"
+                );
+                previous = now;
+            }
+        }
+        assert!((left(62.5, Denoiser::Galosh) - 0.029).abs() < 1e-6);
+        assert!((left(56.25, Denoiser::Galosh) - 0.0405).abs() < 1e-6);
+        assert!((left(50.0, Denoiser::Pmrid) - 0.25).abs() < 1e-6);
+        assert!((left(75.0, Denoiser::Upscaler) - 0.0625).abs() < 1e-6);
+        for denoiser in [Denoiser::Galosh, Denoiser::Pmrid, Denoiser::Upscaler] {
+            assert!(
+                left(100.0, denoiser) >= 0.02,
+                "{denoiser:?} at 100 opened the gate"
+            );
+        }
     }
 
     #[test]

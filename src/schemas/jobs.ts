@@ -202,9 +202,9 @@ export const JobSchema = z.object({
   /** The reader's repairs, applied to the one frame every target is cut from. */
   repairs: z.array(RepairSchema).optional(),
   /**
-   * How much of a deconvolution to blend into the sharpen, 0 to 1. Belongs to the render
-   * rather than to a rendition, so every target shares it, and unitless - how much noise
-   * the frame has is measured off its own pixels on the far side, not passed in.
+   * How much of a deconvolution to blend into the sharpen, 0 to 1.25 (`sharpenOf`). Belongs to
+   * the render rather than to a rendition, so every target shares it, and unitless - how much
+   * noise the frame has is measured off its own pixels on the far side, not passed in.
    */
   sharpen: z.number(),
   defringe: z.number(),

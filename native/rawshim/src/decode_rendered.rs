@@ -220,6 +220,7 @@ impl Held {
             // temperature to move away from a baseline nobody recorded.
             as_shot: self.camera.as_ref().and_then(|camera| camera.as_shot),
             noise: None,
+            noise_left: 1.0,
             dust: None,
             // RCD did not run, so there is no reconstruction matrix for the defringe to propagate
             // its channel correlations through; it falls back to its own estimate.

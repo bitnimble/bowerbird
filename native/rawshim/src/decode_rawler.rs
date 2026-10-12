@@ -417,6 +417,7 @@ struct RegionMosaic {
     upright: rawler::decoders::Orientation,
     halving: bool,
     noise: Option<crate::galosh::NoiseFit>,
+    noise_left: f32,
     as_shot: Option<crate::white_balance::Illuminant>,
 }
 
@@ -468,6 +469,7 @@ impl RegionMosaic {
             reduced: self.reduced(),
             as_shot: self.as_shot,
             noise: self.noise,
+            noise_left: self.noise_left,
             // A tile's whole-frame statistics are the photograph's to provide, not this crop's.
             dust: None,
             matrix: Some(self.colour.matrix),
@@ -668,7 +670,7 @@ async fn region_mosaic(
     // a third variant - which needs the CFA's period to reach whoever builds the view.
     let halving = halve && crop.0 % 2 == 0 && crop.1 % 2 == 0 && cfa.is_bayer();
     let detail = detail.on_bayer(cfa.is_bayer());
-    let noise = denoise_over(
+    let (noise, noise_left) = denoise_over(
         gpu,
         &mut mosaic,
         detail,
@@ -693,6 +695,7 @@ async fn region_mosaic(
         upright,
         halving,
         noise,
+        noise_left,
     }))
 }
 
@@ -1521,7 +1524,8 @@ impl Held {
         };
         let detail = detail.on_bayer(cfa.is_bayer());
 
-        let noise = denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
+        let (noise, noise_left) =
+            denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
 
         let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
         let seen = self
@@ -1553,6 +1557,7 @@ impl Held {
             reduced,
             as_shot,
             noise,
+            noise_left,
             // A window is handed the photograph's list rather than finding one, and its sigma for
             // the same reason.
             dust: None,
@@ -1658,6 +1663,7 @@ impl Held {
         // The fit has to be whole-frame either way, since Phase 0 reduces over everything it is
         // shown and a tile's own statistics are not the photograph's.
         let mut noise = None;
+        let mut denoised = false;
         if let Some(gpu) = gpu {
             let frame = &mut *mosaic;
             if let Some(kernels) =
@@ -1689,22 +1695,28 @@ impl Held {
                         match brought || measured.usable() {
                             true => {
                                 report(crate::open_stage::Stage::Denoising);
-                                match detail.denoiser {
+                                denoised = match detail.denoiser {
                                     crate::galosh::Denoiser::Pmrid => {
                                         match crate::pmrid::device(gpu) {
-                                            Some(net) => crate::pmrid::denoise(
-                                                gpu,
-                                                net,
-                                                frame,
-                                                &cfa,
-                                                colour.ceiling,
-                                                detail,
-                                                measured,
-                                            ),
-                                            None => crate::warn(
-                                                "rawshim: PMRID's weights have not been handed over, \
-                                             so this frame was not denoised",
-                                            ),
+                                            Some(net) => {
+                                                crate::pmrid::denoise(
+                                                    gpu,
+                                                    net,
+                                                    frame,
+                                                    &cfa,
+                                                    colour.ceiling,
+                                                    detail,
+                                                    measured,
+                                                );
+                                                true
+                                            }
+                                            None => {
+                                                crate::warn(
+                                                    "rawshim: PMRID's weights have not been handed over, \
+                                                 so this frame was not denoised",
+                                                );
+                                                false
+                                            }
                                         }
                                     }
                                     crate::galosh::Denoiser::Galosh => {
@@ -1718,10 +1730,13 @@ impl Held {
                                             crate::RENDITION_TILE_HALO,
                                         )
                                         .await;
+                                        true
                                     }
                                     // Denoised as it is upscaled, in the demosaic below.
-                                    crate::galosh::Denoiser::Upscaler => {}
-                                }
+                                    crate::galosh::Denoiser::Upscaler => {
+                                        crate::upscale::device(gpu).is_some()
+                                    }
+                                };
                                 Some(measured)
                             }
                             false => {
@@ -1784,6 +1799,7 @@ impl Held {
             reduced,
             as_shot,
             noise,
+            noise_left: detail.noise_left(noise.filter(|_| denoised)),
             dust: spots,
             matrix: Some(colour.matrix),
             neutral_ceiling: neutral_ceiling_of(colour.ceiling),
@@ -1834,8 +1850,9 @@ async fn denoise_over(
     halo: usize,
     cfa: &crate::cfa::Cfa,
     gains: [f32; 3],
-) -> Option<crate::galosh::NoiseFit> {
+) -> (Option<crate::galosh::NoiseFit>, f32) {
     let mut noise = None;
+    let mut denoised = false;
     let only = matches!(fit, crate::galosh::Fit::Only);
     let brought = matches!(fit, crate::galosh::Fit::Given(_));
     // **Tiled inside the region, once the region is worth tiling.** A loupe window is not the size
@@ -1871,8 +1888,8 @@ async fn denoise_over(
                 _ => Some(crate::galosh::fit(gpu, kernels, mosaic, cfa).await),
             };
             let amounts = detail.amounts(measured);
-            noise = match (measured, tiled) {
-                _ if only || !amounts.does_anything() => measured,
+            (noise, denoised) = match (measured, tiled) {
+                _ if only || !amounts.does_anything() => (measured, false),
                 // **A fit this side measured is checked as hard as one crossing the API.** Every
                 // pixel is scaled by these numbers, so a reduction that came back wrong does not
                 // fail - it renders, confidently, in the wrong colours. An undenoised photograph is
@@ -1881,17 +1898,17 @@ async fn denoise_over(
                     crate::warn(&format!(
                         "rawshim: this frame's noise fit is not one to filter with, so it is not denoised: {fit:?}"
                     ));
-                    None
+                    (None, false)
                 }
                 // Denoised as it is upscaled, in the demosaic (`demosaic_detailed`).
-                (Some(fit), _) if upscales => Some(fit),
+                (Some(fit), _) if upscales => (Some(fit), crate::upscale::device(gpu).is_some()),
                 // The network tiles itself, and with a halo of its own, so the region's is not
                 // used: what a tile of it needs on every side is the reach of four halvings rather
                 // than of a kernel.
                 (Some(fit), _) if network => match crate::pmrid::device(gpu) {
                     Some(net) => {
                         crate::pmrid::denoise(gpu, net, mosaic, cfa, gains, detail, fit);
-                        Some(fit)
+                        (Some(fit), true)
                     }
                     // A page that asked for the network before handing over what it fetched. Said
                     // here rather than left to the line below, which would name GALOSH and send a
@@ -1901,22 +1918,28 @@ async fn denoise_over(
                             "rawshim: PMRID's weights have not been handed over, so this frame was \
                              not denoised",
                         );
-                        None
+                        (None, false)
                     }
                 },
                 (Some(fit), true) => {
                     denoise_in_tiles(gpu, kernels, mosaic, cfa, amounts, fit, halo).await;
-                    Some(fit)
+                    (Some(fit), true)
                 }
-                (Some(fit), false) => {
-                    Some(crate::galosh::denoise_with(gpu, kernels, mosaic, cfa, amounts, fit).await)
-                }
-                (None, _) => Some(crate::galosh::denoise(gpu, kernels, mosaic, cfa, amounts).await),
+                (Some(fit), false) => (
+                    Some(
+                        crate::galosh::denoise_with(gpu, kernels, mosaic, cfa, amounts, fit).await,
+                    ),
+                    true,
+                ),
+                (None, _) => (
+                    Some(crate::galosh::denoise(gpu, kernels, mosaic, cfa, amounts).await),
+                    true,
+                ),
             };
         }
     }
     declined_galosh(&noise, detail, fit, cfa);
-    noise
+    (noise, detail.noise_left(noise.filter(|_| denoised)))
 }
 
 /// Says so where a decode asked GALOSH for something and got nothing.

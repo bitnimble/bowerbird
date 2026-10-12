@@ -1740,11 +1740,13 @@ pub fn full_scale_light(
     (f64::from(u16::MAX) * scale / ceiling) as f32
 }
 
-/// The mosaic noise fit in the coded RGB frame capture sharpening reads.
+/// The mosaic noise fit in the coded RGB frame capture sharpening reads, scaled to the share of
+/// its variance the denoise left (`galosh::Detail::noise_left`).
 pub fn sharpen_noise(
     levels: crate::tone::Anchored,
     reference_white_nits: crate::light::Light<crate::light::SceneNits>,
     noise: Option<crate::galosh::NoiseFit>,
+    noise_left: f32,
     matrix: Option<[[f32; 3]; 3]>,
     wb_gains: [f32; 3],
     reduction: usize,
@@ -1782,8 +1784,8 @@ pub fn sharpen_noise(
     }
     crate::image::SharpenNoise {
         sensitivity,
-        shot_per_light: shot_per_light.map(|value| value as f32),
-        read_variance: read_variance.map(|value| value as f32),
+        shot_per_light: shot_per_light.map(|value| value as f32 * noise_left),
+        read_variance: read_variance.map(|value| value as f32 * noise_left),
         reduction,
     }
 }
@@ -3640,6 +3642,40 @@ mod tests {
         assert_eq!(declared("NOISE_SHOT"), super::SHARPEN_NOISE_SHOT);
         assert_eq!(declared("NOISE_READ"), super::SHARPEN_NOISE_READ);
         assert_eq!(declared("NOISE_WORDS"), super::SHARPEN_NOISE_WORDS);
+    }
+
+    #[test]
+    fn the_sharpen_gates_on_the_noise_the_denoise_left() {
+        let levels = crate::tone::Levels {
+            white: Light::measured(30000.0),
+            peak: Light::measured(60000.0),
+            floor: None,
+        }
+        .anchored();
+        let fit = Some(crate::galosh::NoiseFit {
+            alpha: 0.0004,
+            sigma_sq: 0.000002,
+            unified_sigma: 1.2,
+            dark_ref: [0.0; 4],
+        });
+        let noise = |left: f32| {
+            super::sharpen_noise(levels, REFERENCE, fit, left, None, [2.0, 1.0, 1.5], 1)
+        };
+        let (whole, quarter) = (noise(1.0), noise(0.25));
+        for channel in 0..3 {
+            assert!(whole.shot_per_light[channel] > 0.0);
+            assert!(whole.read_variance[channel] > 0.0);
+            let near = |a: f32, b: f32| (a - b).abs() <= b.abs() * 1e-6;
+            assert!(near(
+                quarter.shot_per_light[channel],
+                whole.shot_per_light[channel] * 0.25
+            ));
+            assert!(near(
+                quarter.read_variance[channel],
+                whole.read_variance[channel] * 0.25
+            ));
+        }
+        assert_eq!(quarter.sensitivity, whole.sensitivity);
     }
 
     /// The four `defocus.slang` bins and strides its readback is shaped by, against the host's.

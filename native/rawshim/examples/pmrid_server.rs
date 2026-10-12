@@ -309,6 +309,7 @@ fn sharpened(
         levels,
         white,
         measured.noise,
+        1.0,
         Some(matrix),
         measured.wb_gains,
         measured.reduced,

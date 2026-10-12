@@ -55,7 +55,7 @@ export type LocalOpen = {
  * wants the noise while it is still one photosite's own, and the dust correction wants the shadow
  * while it is still one number per photosite rather than three the demosaic has interpolated
  * between - and both want to be above the sharpen, which would otherwise ring what they are trying
- * to remove. `sharpen` is that stage, at the far end of the same prepare. These are the same calls
+ * to remove. `sharpening` is that stage, at the far end of the same prepare. These are the same calls
  * a rendition makes, so the editor and the export are one pipeline rather than two that have to be
  * argued into agreeing.
  */
@@ -65,7 +65,8 @@ export type LocalPrepare = {
   colour: number | null;
   denoiser: Denoiser;
   highlightRecovery: number;
-  sharpen: number;
+  /** The slider's position; `sharpenOf` is the strength the module is handed for it. */
+  sharpening: number;
   dust: DustSettings;
   /**
    * The reader's repairs, which come after the sharpen and so after everything above - here with
@@ -176,7 +177,7 @@ const PrepareCrossingSchema = z.object({
   colour: z.number().nullable(),
   denoiser: DenoiserSchema,
   highlightRecovery: z.number(),
-  sharpen: z.number(),
+  sharpening: z.number(),
   dust: DustSettingsSchema,
   repairs: JsonSchema,
 });

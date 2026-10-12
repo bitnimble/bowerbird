@@ -777,7 +777,7 @@ impl Base {
         .ok_or("could not decode this photograph scene-linear")?;
         lap("decode, denoise, demosaic");
         let (width, height) = (frame.width, frame.height);
-        let (noise, matrix) = (frame.noise, frame.matrix);
+        let (noise, noise_left, matrix) = (frame.noise, frame.noise_left, frame.matrix);
         let frame_reduced = frame.reduced.max(1);
         let sensor_long = width.max(height) * frame_reduced;
         let as_shot = frame.as_shot;
@@ -824,6 +824,7 @@ impl Base {
             levels,
             job.grade.reference_white_nits,
             noise,
+            noise_left,
             matrix,
             wb_gains,
             frame_reduced,

@@ -345,6 +345,7 @@ pub async fn prepared_on_device(
     // This window's own decode read them off the same file the whole frame's did, so they are the
     // photograph's and not the crop's however small the crop is.
     let wb_gains = frame.wb_gains;
+    let noise_left = frame.noise_left;
     // Where the decode left it, which is on the device: the coding, the defringe and the gather are
     // all shaders, so a window that came out of `decode_tile_source` never crosses the bus at all.
     let resident = match frame.pixels {
@@ -435,6 +436,7 @@ pub async fn prepared_on_device(
         levels,
         request.grade.reference_white_nits,
         noise,
+        noise_left,
         matrix,
         wb_gains,
         frame.reduced,

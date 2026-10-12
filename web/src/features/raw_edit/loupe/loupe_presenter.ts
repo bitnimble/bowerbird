@@ -1,7 +1,7 @@
 import { action } from 'mobx';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
-import { sharpeningOf } from '../../../../../src/schemas/sharpening';
+import { sharpenOf } from '../../../../../src/schemas/sharpening';
 import { describe } from '../../../errors';
 import type { Region } from '../edits';
 import type { EditStore } from '../edit/edit_store';
@@ -283,7 +283,7 @@ export class LoupePresenter {
       frame: [this.stage.width, this.stage.height],
       grade: local.open.grade,
       strengths: {
-        sharpen: sharpeningOf(doc.sharpening, this.edit.denoiser) / 100,
+        sharpen: sharpenOf(doc.sharpening, this.edit.denoiser),
         defringe: local.open.defringe,
       },
       denoiseLuminance: doc.luminanceNoise,

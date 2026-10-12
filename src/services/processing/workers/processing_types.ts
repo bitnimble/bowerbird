@@ -73,8 +73,8 @@ export interface Developed {
    * target: they describe the picture this renders to, so the grid tile and the full view
    * cannot disagree.
    *
-   * The denoise pair and the sharpen are the Detail panel's slider positions, 0 to 100 in
-   * the document and fractions here; the defringe is a library setting. A null of the pair is
+   * The denoise pair are the Detail panel's slider positions, the sharpen is the strength
+   * `sharpenOf` gives its slider, and the defringe is a library setting. A null of the pair is
    * the document not having said, resolved against the frame's own fit inside the decode.
    */
   denoiseLuminance: number | null;

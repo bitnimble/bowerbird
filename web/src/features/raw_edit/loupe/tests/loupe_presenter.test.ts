@@ -211,8 +211,9 @@ describe('the loupe', () => {
     expect(request.denoiseColour).toBe(65);
     expect(request.highlightRecovery).toBe(35);
     // The sharpen comes off the document rather than the open, since the reader can move it
-    // between the two; the defringe is the library's and rides through untouched.
-    expect(request.strengths).toEqual({ sharpen: 0.7, defringe: 0.5 });
+    // between the two, with GALOSH's lift on top; the defringe is the library's and rides through
+    // untouched.
+    expect(request.strengths).toEqual({ sharpen: 0.95, defringe: 0.5 });
     expect(request.photoAnalysis).toEqual([7, 7, 7]);
     // The presence sliders, which decide how far past the rectangle the window has to reach.
     expect(request.adjust.clarity).toBe(40);

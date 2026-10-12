@@ -3,7 +3,7 @@ import { adjustOf, exposureOf } from '../../../schemas/edit_adjust';
 import { dustSettings } from '../../../schemas/dust_settings';
 import { EditDocSchema, type Denoiser, type EditDoc } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
-import { sharpeningOf } from '../../../schemas/sharpening';
+import { sharpenOf } from '../../../schemas/sharpening';
 import type { Developed } from '../workers/processing_types';
 
 /**
@@ -69,9 +69,7 @@ function asJob(doc: EditDoc, libraryDenoiser: Denoiser, upscalable: boolean): Fr
     denoiseColour: doc.colourNoise,
     denoiser,
     highlightRecovery: doc.highlightRecovery,
-    // A position on a 0..100 track on this side and a fraction of the deconvolution on the
-    // other; the shader's own gain is what the top of that track is worth.
-    sharpen: sharpeningOf(doc.sharpening, denoiser) / 100,
+    sharpen: sharpenOf(doc.sharpening, denoiser),
     // The one field here that is not passed through unchanged, and the editor's open calls the
     // same function for the same reason.
     dust: dustSettings(doc),

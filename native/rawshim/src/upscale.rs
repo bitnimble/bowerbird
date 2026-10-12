@@ -152,6 +152,14 @@ fn light_of(luminance: f64) -> (f64, f64) {
     (1.0 - towards_input, grain)
 }
 
+/// The share of the photo's noise variance a Luminance position leaves at the photo's own size.
+pub(crate) fn noise_left(luminance: f64) -> f64 {
+    let (light, grain) = light_of(luminance);
+    let towards_input = 1.0 - light;
+    // Grain drawn at 2x photosites; the supersample down averages 4 of it per pixel.
+    towards_input * towards_input + grain / 4.0
+}
+
 /// `models/training`'s `fit_stabiliser`, as the weights' `weights.json` states it.
 struct Stabilising {
     reference_alpha: f32,

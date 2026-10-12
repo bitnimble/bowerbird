@@ -95,6 +95,8 @@ pub struct Frame {
     /// sites. It is the only physical description of this photograph's noise anything
     /// downstream has, and unlike the ISO it can tell a pushed exposure from a clean one.
     pub noise: Option<crate::galosh::NoiseFit>,
+    /// The share of that noise's variance the denoise left in these samples, 1 where none ran.
+    pub noise_left: f32,
     /// The particles this decode found on the cover glass, where it was the one to look.
     ///
     /// Travels beside the noise fit because it is the same kind of thing: measured off the mosaic,
@@ -146,6 +148,7 @@ impl Frame {
             reduced: 1,
             as_shot: None,
             noise: None,
+            noise_left: 1.0,
             dust: None,
             matrix: None,
             neutral_ceiling: 1.0,

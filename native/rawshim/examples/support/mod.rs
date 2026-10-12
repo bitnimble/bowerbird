@@ -185,6 +185,7 @@ pub fn cut(opened: &Opened, options: &EncodeOptions, lens: Option<&rawshim::fit:
         levels,
         options.grade.reference_white_nits,
         frame.noise,
+        frame.noise_left,
         frame.matrix,
         frame.wb_gains,
         frame.reduced,
