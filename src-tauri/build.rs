@@ -8,7 +8,7 @@ fn main() {
         "set_caption_buttons",
         "read_device_file",
         "write_device_file",
-        "display_is_hdr",
+        "display_range",
         "pick_export_folder",
         "export_to_folder",
         "open_original_with",

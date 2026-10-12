@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   WHEEL_RIM,
   drawnBy,
+  onScreen,
   openEditor,
   runFrames,
   wheelEdge,
@@ -215,22 +216,13 @@ describe('the colour wheel', () => {
     expect(Math.max(...editor.colourWheel.field.map(turned))).toBeLessThan(1e-3);
   });
 
-  test("draws the wheel's edge against this display's peak", async () => {
-    const original = globalThis.matchMedia;
-    globalThis.matchMedia = ((query: string) => ({
-      matches: query === '(dynamic-range: high)',
-    })) as typeof matchMedia;
-    try {
-      editor.device.displayPeakNits = 1600;
-      wheel().attach(fakeCanvas());
-      await settled();
-      // Only Settings changes it, with the editor closed.
-      editor.device.displayPeakNits = 1000;
-      await settled();
-    } finally {
-      globalThis.matchMedia = original;
-    }
-    expect(editor.decoder.wheelPeaks).toEqual([1600]);
+  test("redraws the wheel's edge as the screen's headroom moves", async () => {
+    await onScreen(editor, { measures: true, headroom: 4 });
+    wheel().attach(fakeCanvas());
+    await settled();
+    await onScreen(editor, { measures: true, headroom: 2 });
+    await settled();
+    expect(editor.decoder.wheelPeaks).toEqual([812, 406]);
   });
 
   const framed = async (): Promise<void> => {

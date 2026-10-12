@@ -155,6 +155,7 @@ dependencies = [
  "tauri-build",
  "tokio",
  "updater",
+ "windows",
  "windows-sys 0.59.0",
 ]
 

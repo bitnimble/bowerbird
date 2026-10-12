@@ -197,8 +197,8 @@ interface Props {
   style?: stylex.StyleXStyles;
   /** The operator HDR frames are proofed to sRGB with, or null to draw them as they are. */
   proof?: RenderingIntent | null;
-  /** `DeviceSettingsStore.displayPeakNits`, which an HDR frame is rolled onto. */
-  devicePeakNits: number;
+  /** `DeviceSettingsStore.peakNits`, which an HDR frame is rolled onto. */
+  devicePeakNits: number | null;
 }
 
 function noop(): void {

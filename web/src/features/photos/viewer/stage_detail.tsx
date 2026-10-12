@@ -55,7 +55,7 @@ interface Drawn {
   /** Device pixels per image pixel this was drawn for; a change in zoom is a redraw. */
   density: number;
   proof: RenderingIntent | null;
-  devicePeakNits: number;
+  devicePeakNits: number | null;
 }
 
 /**
@@ -90,7 +90,7 @@ export function StageDetail({
   shown: boolean;
   /** As `StageFrame`'s: the patch has to be the picture it lies over. */
   proof: RenderingIntent | null;
-  devicePeakNits: number;
+  devicePeakNits: number | null;
   /** Whether what this lays over the frame is as sharp as the view asks for, including having nothing to add. */
   onSharp: (source: string, sharp: boolean) => void;
 }): JSX.Element | null {
@@ -230,7 +230,7 @@ interface Draw {
   source: string;
   region: Region;
   proof: RenderingIntent | null;
-  devicePeakNits: number;
+  devicePeakNits: number | null;
   onDrawn: () => void;
   onFailed: (err: unknown) => void;
 }

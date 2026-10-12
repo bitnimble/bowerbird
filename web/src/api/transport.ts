@@ -114,6 +114,24 @@ export async function appDataDir(): Promise<string | null> {
   return NullableStringSchema.parse(await invoke('app_data_dir', {}));
 }
 
+const DynamicRangeSchema = z
+  .object({
+    hdr: z.boolean(),
+    measures: z.boolean(),
+    headroom: z.number().nullable(),
+    potential: z.number().nullable(),
+  })
+  .nullable();
+
+export type DynamicRange = NonNullable<z.infer<typeof DynamicRangeSchema>>;
+
+/** The window's screen as the shell reads it (`display.rs`), or null where it cannot. */
+export async function displayRange(): Promise<DynamicRange | null> {
+  const invoke = shellInvoke();
+  if (invoke == null) return null;
+  return DynamicRangeSchema.parse(await invoke('display_range', {}));
+}
+
 /** Opens it in the reader's own file manager. */
 export async function openAppDataDir(): Promise<void> {
   const invoke = shellInvoke();

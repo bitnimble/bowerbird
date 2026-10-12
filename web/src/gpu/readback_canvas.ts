@@ -3,14 +3,12 @@
 // **WebKit caps a transferred canvas at the headroom of its default HDR image content**: 1000 nits
 // over 203, whatever the display reaches, measured on an XDR panel with the peak raised in its own
 // settings. A canvas the page configures on its own device is not capped. So on WebKit, and only
-// where this device's peak is past that cap, a canvas stays on the page and the worker hands back
+// where the display's peak can pass that cap, a canvas stays on the page and the worker hands back
 // what it drew instead of drawing into it.
 import READBACK_WGSL from '../features/photos/generated/readback.wgsl?raw';
-import { displayPeakNits } from '../app/device';
-import { SDR_WHITE_NITS } from '../features/photos/viewer/stage_gpu';
+import { screenStore } from '../app/screen_store';
 
-/** What WebKit lets a transferred canvas show above SDR white: 1000 nits over 203. */
-const TRANSFERRED_HEADROOM = 1000 / 203;
+const TRANSFERRED_PEAK_NITS = 1000;
 
 /** A frame the GPU thread drew, as RGB9E5 words, a row of `width` after another. */
 export interface ReadFrame {
@@ -19,10 +17,17 @@ export interface ReadFrame {
   height: number;
 }
 
-/** Whether a canvas should stay on the page rather than be transferred to the GPU thread. */
-export function drawsOnThePage(devicePeakNits: number): boolean {
-  const peak = displayPeakNits(devicePeakNits);
-  return isWebKit() && peak != null && peak / SDR_WHITE_NITS > TRANSFERRED_HEADROOM;
+/**
+ * Whether a canvas should stay on the page rather than be transferred to the GPU thread, given
+ * `DeviceSettingsStore.peakNits`. Settled once per canvas, so it asks the screen's potential too.
+ */
+export function drawsOnThePage(peak: number | null): boolean {
+  if (!isWebKit() || peak == null) return false;
+  return Math.max(peak, screenStore.potentialNits ?? 0) > TRANSFERRED_PEAK_NITS;
+}
+
+export function transferredPeakNits(peak: number | null): number | null {
+  return peak != null && isWebKit() ? Math.min(peak, TRANSFERRED_PEAK_NITS) : peak;
 }
 
 function isWebKit(): boolean {

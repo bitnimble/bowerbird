@@ -2,7 +2,8 @@ import * as stylex from '@stylexjs/stylex';
 import type { MDXComponents } from 'mdx/types';
 import { Fragment, createContext, useContext, useState, type ReactNode } from 'react';
 import { PathSegment, route } from '../../../../src/schemas/route';
-import { displayIsHdr } from '../../app/device';
+import { observer } from 'mobx-react-lite';
+import { useDeviceSettingsStore } from '../../app/stores_context';
 import { focusRing } from '../../ui/focus_ring';
 import { Heading } from '../../ui/heading';
 import { Page, PageHead } from '../../ui/page';
@@ -561,10 +562,11 @@ function SectionHeading({ children }: Children): JSX.Element {
   return <Heading style={inColumn ? styles.h2OpensColumn : styles.h2}>{children}</Heading>;
 }
 
-function SdrNotice({ children }: Children): JSX.Element | null {
+const SdrNotice = observer(function SdrNotice({ children }: Children): JSX.Element | null {
+  const device = useDeviceSettingsStore();
   // Not a reliable "no": Firefox answers `standard` on an HDR display, which is why the copy
   // hedges rather than hiding anything.
-  if (displayIsHdr()) return null;
+  if (device.screen.hdr) return null;
   return (
     <div {...stylex.props(styles.notice)}>
       <Text as="p" style={styles.p}>
@@ -572,7 +574,7 @@ function SdrNotice({ children }: Children): JSX.Element | null {
       </Text>
     </div>
   );
-}
+});
 
 function Split({ children }: Children): JSX.Element {
   return <section {...stylex.props(styles.split)}>{children}</section>;

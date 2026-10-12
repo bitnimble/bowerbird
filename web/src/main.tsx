@@ -2,9 +2,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import * as stylex from '@stylexjs/stylex';
+import { displayRange, shellInvoke } from './api/transport';
 import { App } from './app/app';
-import { shellScreen } from './app/device';
 import { openDeviceStorage } from './app/local_setting';
+import { ScreenPresenter } from './app/screen_presenter';
+import { screenStore } from './app/screen_store';
 import { pageLog } from './features/logs/page_log';
 import { restoreUiScale } from './features/settings/device_settings_presenter';
 import { StoresProvider } from './app/stores_context';
@@ -38,7 +40,8 @@ if (root == null) throw new Error('missing #root');
 
 // Before the first render, so a stage opened straight away is not drawn in SDR first, and the
 // page is not laid out once at the wrong scale.
-void Promise.all([storage, shellScreen.follow()]).then(() =>
+const screen = new ScreenPresenter(screenStore, shellInvoke() == null ? null : displayRange);
+void Promise.all([storage, screen.follow()]).then(() =>
   createRoot(root).render(
     <StrictMode>
       <BrowserRouter>

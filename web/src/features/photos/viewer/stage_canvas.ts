@@ -1,11 +1,15 @@
 import { useCallback } from 'react';
-import { displayPeakNits } from '../../../app/device';
 import { gpuThread } from '../../../gpu/gpu_thread';
 import { PaintedSchema, type LayerPicture, type Painted } from '../../../gpu/gpu_protocol';
-import { drawsOnThePage, readbackCanvases } from '../../../gpu/readback_canvas';
+import {
+  drawsOnThePage,
+  readbackCanvases,
+  transferredPeakNits,
+} from '../../../gpu/readback_canvas';
+import { SDR_WHITE_NITS } from '../../../app/sdr_white';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { Decoded } from './stage_bitmaps';
-import { SDR_WHITE_NITS, type Region } from './stage_gpu';
+import type { Region } from './stage_gpu';
 
 /** ST 2084's ceiling: what a PQ file that names no brightest pixel may reach. */
 const PQ_CEILING_NITS = 10000;
@@ -72,7 +76,7 @@ class StageCanvases {
       ...size,
       region: shown.region ?? null,
       proof: shown.proof ?? null,
-      headroom: headroomOf(shown.devicePeakNits),
+      headroom: headroomOf(shown.devicePeakNits, readback),
       sourcePeak: (frame.maxCll ?? PQ_CEILING_NITS) / SDR_WHITE_NITS,
       readback,
     } as const;
@@ -109,9 +113,9 @@ class StageCanvases {
     size: CanvasSize,
     base: LayerPicture,
     layers: readonly MaskedLayer[],
-    devicePeakNits: number,
+    devicePeakNits: number | null,
   ): Promise<boolean> {
-    const headroom = headroomOf(devicePeakNits);
+    const headroom = headroomOf(devicePeakNits, false);
     const masks = await Promise.all(layers.map((layer) => createImageBitmap(layer.mask)));
     try {
       if (this.released.has(canvas)) return false;
@@ -192,8 +196,8 @@ async function shownOnThePage(canvas: HTMLCanvasElement, painted: Painted): Prom
 
 /** Where and how one paint shows its frame. */
 export interface Shown {
-  /** `DeviceSettingsStore.displayPeakNits`. */
-  devicePeakNits: number;
+  /** `DeviceSettingsStore.peakNits`. */
+  devicePeakNits: number | null;
   region?: Region;
   proof?: RenderingIntent | null;
 }
@@ -204,11 +208,11 @@ export interface Shown {
  * **One above white on an SDR screen, and that is not a detail.** The roll-off holds a colour's
  * ratios while it compresses, so aiming at a peak the display cannot reach leaves the brightest
  * pixels above what it shows and the *compositor* does the clipping - per channel, which is the
- * mauve `prelude.slang` records through a cloud top. A window dragged between two screens changes
- * the answer, so it is asked per draw rather than cached.
+ * mauve `prelude.slang` records through a cloud top.
  */
-function headroomOf(devicePeakNits: number): number {
-  return (displayPeakNits(devicePeakNits) ?? SDR_WHITE_NITS) / SDR_WHITE_NITS;
+function headroomOf(devicePeakNits: number | null, readback: boolean): number {
+  const peak = readback ? devicePeakNits : transferredPeakNits(devicePeakNits);
+  return (peak ?? SDR_WHITE_NITS) / SDR_WHITE_NITS;
 }
 
 function lostIf(painted: Painted): void {

@@ -1,5 +1,5 @@
 import { adapterName } from '../../adapter_name';
-import { displayIsHdr } from '../../app/device';
+import { screenStore } from '../../app/screen_store';
 import { WebCodecs } from '../photos/viewer/image_decoder';
 
 export interface Diagnostics {
@@ -21,7 +21,7 @@ export async function readDiagnostics(): Promise<Diagnostics> {
     browser: window.navigator.userAgent,
     origin: window.location.origin,
     adapter: await adapter(),
-    hdrDisplay: displayIsHdr(),
+    hdrDisplay: screenStore.hdr,
     imageDecoder: WebCodecs != null,
     crossOriginIsolated: globalThis.crossOriginIsolated === true,
     secureContext: globalThis.isSecureContext === true,

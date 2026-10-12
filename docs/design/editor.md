@@ -302,11 +302,13 @@ onto the display's peak on its brightest channel, as a frame is, because nothing
 sheet turned to the lamp gathers past any display, and what a compositor clips it clips per
 channel, which is a hue shift across the brightest paper.
 
-The display's peak is the library's own on an HDR display and SDR white on one that is not. Every
-tick carries `(dynamic-range: high)` to the module, which aims every draw - a frame, a proof, a
-sheet - at SDR white when it is false, which is the rule the viewer's `displayHeadroom` keeps. It is
-asked per tick because a window dragged to another screen changes the answer, and Firefox answering
-`standard` on an HDR display is right here: the canvas is the one thing it composites in SDR.
+The display's peak is the device's on an HDR display (§10.7: the screen's headroom where the shell
+reads it, the device setting where it cannot) and SDR white on one that is not. Every tick carries
+it to the module as `DeviceSettingsStore.peakNits`, null on an SDR screen, which aims every draw - a
+frame, a proof, a sheet - at SDR white, the rule the viewer keeps too. Whether the screen is HDR is
+the shell's answer where there is a shell and `(dynamic-range: high)` where there is not, and both are
+observed, so a window dragged to another screen redraws. Firefox answering `standard` on an HDR
+display is right here: the canvas is the one thing it composites in SDR.
 The default is the daylit room: 500 lux of it, and a 133-lux downlight a degree and a half across,
 over the reader's head at 7800 K. The sunny meadow is 80000 lux of sun against 9570 of sky and
 grass, and the hotel room 30 of downlight against 15, which the exposure's floor leaves reading dim.
@@ -510,4 +512,4 @@ The rows under the JPEG are the reason this is worth drawing four times. **Two o
 
 **Every desktop and Android build pays 845kB:** `public/` is copied into `web/dist`, which each app's server serves. Halving assets introduces artefacts in the highlights being demonstrated; lazy-loading saves nothing for readers reaching the bottom.
 
-`(dynamic-range: high)` decides whether to say the display is SDR, and the copy hedges rather than hiding anything: Firefox answers `standard` on an HDR display. On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.
+The shell, or in a browser `(dynamic-range: high)`, decides whether to say the display is SDR, and the copy hedges rather than hiding anything: Firefox answers `standard` on an HDR display. On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.
