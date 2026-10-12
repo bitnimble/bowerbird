@@ -609,6 +609,100 @@ jobs:
           name: play-aab
           path: play/
 
+  # macOS files privacy grants (Documents access) under the signing certificate, so replacing it
+  # makes every install ask again. No hardened runtime: it refuses native addons without a team ID.
+  # The certificate's CN is Bowerbird, which finds it below; its p12 is 3DES
+  # (`-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`), since `security import`
+  # cannot read OpenSSL 3's default.
+  sign-macos:
+    needs: [plan, desktop]
+    # `always()`: a failed Windows leg fails `desktop` as a whole, and macOS would ship ad-hoc.
+    if: ${{ always() && github.ref == 'refs/heads/main' && contains(needs.plan.outputs.desktop, '"macos"') && needs.desktop.result != 'skipped' && needs.desktop.result != 'cancelled' }}
+    runs-on: macos-14
+    environment: macos-signing
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist-macos-arm64-installer
+          path: installer
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist-macos-arm64-payload
+          path: payload
+      - name: Sign the app in the DMG and the payload
+        id: sign
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${CERTIFICATE:-}" ]; then
+            echo "::warning::no MACOS_CERTIFICATE_BASE64 secret: publishing the ad-hoc signed app"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -f "$RUNNER_TEMP/signing.p12"' EXIT
+          keychain_password=$(uuidgen)
+          echo "$CERTIFICATE" | base64 -D > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          # Without this codesign waits on a dialog asking to use the key.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # By hash: a self-signed certificate is untrusted, which a lookup by name can skip.
+          identity=$(security find-certificate -a -c Bowerbird -Z "$keychain" | awk '/SHA-1 hash/ { print $3; exit }')
+          sign() {
+            codesign --force --deep --sign "$identity" --keychain "$keychain" "$1"
+            codesign --verify --deep --strict "$1"
+            requirement=$(codesign --display --requirements - "$1" 2>&1)
+            echo "$requirement"
+            case "$requirement" in
+              *'certificate leaf = H"'*) ;;
+              *) echo "::error::$1 is not signed by the certificate"; exit 1 ;;
+            esac
+          }
+
+          payload=payload/macos-arm64/bowerbird-payload-macos-arm64.tar.gz
+          staging="$RUNNER_TEMP/payload"
+          mkdir -p "$staging"
+          tar -xzf "$payload" -C "$staging"
+          sign "$staging/Bowerbird.app"
+          rm "$payload"
+          # Else macOS's tar adds a `._` file of extended attributes beside every entry.
+          COPYFILE_DISABLE=1 tar -czf "$payload" -C "$staging" .
+
+          dmg=$(ls installer/macos-arm64/*.dmg)
+          # Sparse so it can grow: the new signatures are larger than the ad-hoc ones the image
+          # was sized for.
+          hdiutil convert "$dmg" -format UDSP -o "$RUNNER_TEMP/rw"
+          hdiutil resize -size 2g "$RUNNER_TEMP/rw.sparseimage"
+          mount="$RUNNER_TEMP/dmg"
+          hdiutil attach "$RUNNER_TEMP/rw.sparseimage" -nobrowse -noautoopen -mountpoint "$mount"
+          sign "$mount/Bowerbird.app"
+          # Spotlight indexing a fresh mount can hold it busy.
+          hdiutil detach "$mount" || { sleep 5; hdiutil detach -force "$mount"; }
+          hdiutil resize -sectors min "$RUNNER_TEMP/rw.sparseimage"
+          rm "$dmg"
+          hdiutil convert "$RUNNER_TEMP/rw.sparseimage" -format UDZO -o "$dmg"
+
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-macos-arm64-installer
+          path: installer/
+          overwrite: true
+      - if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-macos-arm64-payload
+          path: payload/
+          overwrite: true
+
   # Its own job so the `play` environment's required reviewer holds back only the upload. The
   # workload identity pool hands a token only to a run in that environment, on `main`.
   play:
@@ -674,7 +768,7 @@ jobs:
   # so a platform whose build failed is simply absent from it - and an install of that
   # platform is told there is nothing for it rather than handed a 404.
   publish:
-    needs: [plan, platform-tests, docker, desktop, sign]
+    needs: [plan, platform-tests, docker, desktop, sign, sign-macos]
     # A platform that failed to build should not hold the release back; what it must not
     # do is appear in the manifest, which it cannot, having uploaded nothing.
     if: ${{ always() && needs.platform-tests.result == 'success' && needs.plan.outputs.tag != '' }}
@@ -690,6 +784,12 @@ jobs:
           path: dist
           pattern: dist-*
           merge-multiple: true
+      # Its ad-hoc build would reset every install's privacy grants; absent from the manifest,
+      # macOS installs are told there is nothing new instead.
+      - if: needs.sign-macos.result == 'failure' || needs.sign-macos.result == 'cancelled'
+        run: |
+          echo "::warning::macOS signing failed: leaving macOS out of this release"
+          rm -rf dist/macos-arm64
       - run: bun run scripts/write-release-manifest.ts --dist dist ${{ needs.docker.result == 'success' && format('--image-repo ghcr.io/{0}', github.repository) || '' }}
       - run: jq -r --arg tag "$TAG" '.[$tag] // "Bug fixes and performance improvements"' changelog.json > "$RUNNER_TEMP/changelog.md"
         env:
