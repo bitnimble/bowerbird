@@ -151,6 +151,9 @@ export const SettingsStrings = {
   displayPeakNits: () => 'Display peak brightness',
   displayPeakNitsHint: () =>
     "Applies to this device only. Set this to your device display's peak brightness. If you don't know it, you can search online.",
+  measuredPeakNits: (nits: number) => `${nits} nits`,
+  measuredPeakSdr: () => 'SDR',
+  measuredPeakPending: () => 'Measured while a photo is open',
 
   groupResolution: () => 'Resolution',
   gridRenditionSize: () => 'Grid thumbnail longest edge',

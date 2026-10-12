@@ -22,6 +22,7 @@ import {
   useReplicationStore,
   useUpdatesStore,
 } from '../../app/stores_context';
+import type { ScreenStore } from '../../app/screen_store';
 import { isThinShell } from '../../app/thin_shell';
 import { DiagnosticsDialog } from '../feedback/diagnostics_dialog';
 import { DiagnosticsStrings } from '../feedback/diagnostics_dialog.strings';
@@ -124,7 +125,7 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element {
               field="hide_sidebar_in_viewer"
               label={SettingsStrings.hideSidebarInViewer()}
             />
-            {!device.screen.measures && <DisplayPeak />}
+            {device.screen.measures ? <MeasuredDisplayPeak /> : <DisplayPeak />}
           </Panel>
 
           <GroupTitle>{SettingsStrings.groupFrameTv()}</GroupTitle>
@@ -238,6 +239,21 @@ const DisplayPeak = observer(function DisplayPeak(): JSX.Element {
     </SettingRow>
   );
 });
+
+export const MeasuredDisplayPeak = observer(function MeasuredDisplayPeak(): JSX.Element {
+  const { screen } = useDeviceSettingsStore();
+  return (
+    <SettingRow label={SettingsStrings.displayPeakNits()}>
+      <Text>{measuredPeak(screen)}</Text>
+    </SettingRow>
+  );
+});
+
+function measuredPeak(screen: ScreenStore): string {
+  if (!screen.hdr) return SettingsStrings.measuredPeakSdr();
+  if (screen.peakNits == null) return SettingsStrings.measuredPeakPending();
+  return SettingsStrings.measuredPeakNits(Math.round(screen.peakNits));
+}
 
 const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {
   const store = useAppSettingsStore();
