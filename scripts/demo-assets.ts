@@ -42,7 +42,7 @@ import { dustSettings } from '../src/schemas/dust_settings';
 import { AS_METERED, developed } from '../src/services/processing/pipeline/developed';
 import { encoderQuality } from '../src/services/processing/analysis/quality';
 import type { Job, JobCompositeSource, JobTarget } from '../src/schemas/jobs';
-import { runJob } from '../src/services/processing/rawshim/rawshim_job';
+import { runJob, writeTenBitCopy } from '../src/services/processing/rawshim/rawshim_job';
 import { isUpscalable } from '../src/services/processing/rawshim/rawshim_ops';
 
 /**
@@ -153,6 +153,11 @@ function croppedSize(crop: [number, number, number, number]): number {
 
 function outputPath(slug: string, hdr: boolean): string {
   return join(OUT, `${slug}-${hdr ? 'hdr' : 'sdr'}.avif`);
+}
+
+/** The HDR arm as Firefox is served it (`useHdrVideo`), re-encoded as the app's server would. */
+function tenBitPath(slug: string): string {
+  return join(OUT, `${slug}-hdr-10bit.avif`);
 }
 
 function colourPath(profile: 'matched' | 'none'): string {
@@ -728,21 +733,23 @@ async function build(scene: string): Promise<void> {
       targets: [crop == null ? target(scene) : { ...target(scene), size: croppedSize(crop) }],
     });
     await clipToWhite(scene);
+    const { hdrQuantizer, preset } = target(scene);
+    writeTenBitCopy(outputPath(scene, true), tenBitPath(scene), hdrQuantizer, preset);
   } catch (failure) {
-    // The HDR arm lands before the 8-bit one is derived from it, so a failure in the
-    // second step leaves the first behind - and these outputs are committed, where a
-    // half-built pair is a picture the page shows against one it does not. The worker
+    // The HDR arm lands before the other two are derived from it, so a failure in a
+    // later step leaves the first behind - and these outputs are committed, where a
+    // half-built set is a picture the page shows against one it does not. The worker
     // cleans up for the same reason (`processing_worker.ts`).
-    for (const hdr of [false, true])
-      await Bun.file(outputPath(scene, hdr))
+    for (const file of [outputPath(scene, false), outputPath(scene, true), tenBitPath(scene)])
+      await Bun.file(file)
         .delete()
         .catch(() => {});
     throw failure;
   }
 
-  const sizes = [false, true].map((hdr) => Bun.file(outputPath(scene, hdr)).size);
+  const kb = (file: string): string => (Bun.file(file).size / 1024).toFixed(0);
   console.error(
-    `[demo-assets] ${scene}: ${(sizes[0]! / 1024).toFixed(0)}kB SDR, ${(sizes[1]! / 1024).toFixed(0)}kB HDR`,
+    `[demo-assets] ${scene}: ${kb(outputPath(scene, false))}kB SDR, ${kb(outputPath(scene, true))}kB HDR, ${kb(tenBitPath(scene))}kB 10-bit`,
   );
 }
 

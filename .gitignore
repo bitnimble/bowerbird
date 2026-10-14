@@ -187,6 +187,8 @@ native/rawshim/.codecs
 native/rawshim/.codecs-*
 # `bun run get:android-runtime`.
 native/rawshim/.android-runtime
+# `bun run get:vpx`, libvpx for the browser's VP9 encoder.
+native/rawshim/.vpx
 # `bun run get:swiftshader`, wanted only on a machine with no GPU.
 native/rawshim/.swiftshader
 # The denoisers' weights, `bun run get:models`.

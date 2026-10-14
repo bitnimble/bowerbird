@@ -2,7 +2,7 @@
 //!
 //! Safari has no `ImageDecoder`, and everything else it offers flattens an HDR picture to SDR
 //! before a canvas sees it. So this is rav1d, built for `wasm32-wasip1-threads` and threaded
-//! through a pool of the page's workers (`web/src/avif/`), and what it hands back is what
+//! through a pool of the page's workers (`web/src/wasi/`), and what it hands back is what
 //! `VideoFrame.copyTo` hands back where there is one: the planes, laid out as rawshim's
 //! `planes::Layout` reads them. The viewer's planar draw and the editor's `hold_planes` then take
 //! either without knowing which decoded it.

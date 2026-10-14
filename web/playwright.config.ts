@@ -46,8 +46,7 @@ export default defineConfig({
   // are where the two disagree, and a band of photographs is all three at once.
   // `editor/raw_editing` does not run there: the editor needs WebGPU, which Gecko ships on
   // Windows first, so a Linux run would assert against an engine that cannot open the
-  // editor at all. What it used to cover - the three sinks, the rewrap, the thread pool -
-  // went with the routes (`docs/raw-edit-gpu.md` §7).
+  // editor at all.
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'firefox', use: { browserName: 'firefox' }, testMatch: /grid\/bands\.spec\.ts/ },

@@ -101,8 +101,7 @@ export function StageFrame({
     };
 
     // A video when it has a frame to show (`loadeddata`; `loadedmetadata` knows the size and
-    // nothing else). Firefox's HDR twin is the only one, and it is built in the page out of
-    // a still already fetched.
+    // nothing else). Firefox's HDR twin is the only one.
     if (element instanceof HTMLVideoElement) {
       const arrived = (): void => report(element.videoWidth, element.videoHeight);
       if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) arrived();
@@ -214,6 +213,9 @@ export function StageFrame({
         loop
         muted
         playsInline
+        disablePictureInPicture
+        role="img"
+        aria-label={alt}
         {...styled}
         aria-hidden={!shown}
         onError={() => missing.current(source)}

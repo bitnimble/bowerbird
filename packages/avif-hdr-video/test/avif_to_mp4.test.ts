@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { avifToMp4, orientationOfAvif } from '../src/index';
+import { avifToMp4, orientationOfAvif, vp9FrameToMp4 } from '../src/index';
 
 // 64x64, 10-bit 4:2:0, tagged BT.2020 + PQ, from `avifenc --cicp 9/16/9`. Small enough
 // to read by hand and structurally identical to a 24MP one.
@@ -105,6 +105,42 @@ test('something that is not an AVIF is refused rather than half-read', () => {
   expect(() => avifToMp4(still.subarray(0, 40))).toThrow();
 });
 
+test('a VP9 frame is described as the 10-bit 4:2:0 PQ picture Firefox composites as HDR', () => {
+  const mp4 = vp9FrameToMp4(new Uint8Array([0xa2, 1, 2, 3]), 1920, 1080);
+  const entry = ['moov', 'trak', 'mdia', 'minf', 'stbl', 'stsd', 'vp09'];
+  const record = find(mp4, [...entry, 'vpcC']);
+  // Version 1, then profile 2, level 4.1, ten bits over 4:2:0 left-sited and limited range,
+  // BT.2020, PQ, BT.2020 non-constant luminance, and no initialisation data.
+  expect([...record]).toEqual([1, 0, 0, 0, 2, 41, 0xa0, 9, 16, 9, 0, 0]);
+  const colr = find(mp4, [...entry, 'colr']);
+  expect(String.fromCharCode(...colr.subarray(0, 4))).toBe('nclx');
+  expect([...colr.subarray(4)]).toEqual([0, 9, 0, 16, 0, 9, 0]);
+  const fixed = find(mp4, entry);
+  const view = new DataView(fixed.buffer, fixed.byteOffset, fixed.byteLength);
+  expect([view.getUint16(24), view.getUint16(26)]).toEqual([1920, 1080]);
+  expect([...find(mp4, ['mdat'])]).toEqual([0xa2, 1, 2, 3]);
+  const stco = find(mp4, ['moov', 'trak', 'mdia', 'minf', 'stbl', 'stco']);
+  const at = new DataView(stco.buffer, stco.byteOffset, stco.byteLength).getUint32(8);
+  expect(mp4[at]).toBe(0xa2);
+});
+
+test("a VP9 frame's level holds its picture", () => {
+  const level = (width: number, height: number): number | undefined =>
+    find(vp9FrameToMp4(new Uint8Array(1), width, height), [
+      'moov',
+      'trak',
+      'mdia',
+      'minf',
+      'stbl',
+      'stsd',
+      'vp09',
+      'vpcC',
+    ])[5];
+  expect(level(2048, 1088)).toBe(41);
+  expect(level(3840, 2160)).toBe(51);
+  expect(level(6000, 4000)).toBe(61);
+});
+
 // A box walker of its own, rather than the one under test: a parser that agrees with
 // itself proves nothing.
 
@@ -115,6 +151,7 @@ const FIXED_FIELDS: Record<string, number> = {
   stsd: 8,
   // A VisualSampleEntry's fixed fields.
   av01: 78,
+  vp09: 78,
 };
 
 /** The payload of a box, by the path of types leading to it. */

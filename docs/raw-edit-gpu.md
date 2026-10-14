@@ -84,7 +84,7 @@ colour are never approximated, only resolution.
 
 ## 3. Where the time goes
 
-Timed inside `grade_from` at a ~9.8MP settle (DESIGN §21.1.1):
+Timed inside `grade_from` at a ~9.8MP settle (DESIGN §21.1.1 at `v0.1.19`):
 
 | Stage      | ms                                              | Share                           |
 | ---------- | ----------------------------------------------- | ------------------------------- |
@@ -95,7 +95,7 @@ Timed inside `grade_from` at a ~9.8MP settle (DESIGN §21.1.1):
 | Emit       | 106–190 (pack) / 146–189 (PNG) / 617–798 (AVIF) | rest                            |
 
 A drag tick at 960 is 88ms (PNG route) and 119ms (AVIF), delivering 7-12fps
-depending on route (DESIGN §21.2, §21.3).
+depending on route (DESIGN §21.2, §21.3 at `v0.1.19`).
 
 ## 4. The goal, and three costs
 
@@ -121,7 +121,7 @@ with no `fit_to` precisely because the decode is already bounded. So one
 constant fixes the decode size, the `prepared` buffer, the settle's pixel count,
 the emitted frame, and most of the resident set: 841MB to 1.24GB on the track
 route and 1.4GB to 2.17GB on the still route, moving from 1920 to 3840
-(DESIGN §21.2).
+(DESIGN §21.2 at `v0.1.19`).
 
 Constant inherits rendition-file size, unrelated to screen. This editor has no zoom
 (§21: Edit replaces stage, Done discards); relevant resolution is stage's physical pixels.
@@ -170,7 +170,7 @@ at about 13ms/960 without GPU work.
 
 ### 4.3 Delivery caps the two blob routes, not compute
 
-DESIGN §21.3: 88ms and 119ms ticks both deliver 7-8fps, so something outside the
+DESIGN §21.3 at `v0.1.19`: 88ms and 119ms ticks both deliver 7-8fps, so something outside the
 tick sets the rate, and it is the blob → object URL → browser decode per tick.
 GPU compute does not touch that at all. It is the same finding that makes §7
 worth more than it looks.
@@ -352,7 +352,7 @@ has another: a WebGPU canvas.
   `rgba16float` + `toneMapping: { mode: 'extended' }` + colorSpace `srgb`:
   values above 1.0 light the panel above SDR white, and the ladder plateaus at
   an encoded 3.0. No encode, no blob, no `VideoFrame`, no track, and it takes
-  the still route's unrecoverable `cc::ImageDecodeCache` growth (§21.2, ~500MB
+  the still route's unrecoverable `cc::ImageDecodeCache` growth (DESIGN §21.2 at `v0.1.19`, ~500MB
   per six-second drag) with it
 - **Safari: measured working, and it is the surprise.** Safari 26.4, same
   machine and panel, `rgba16float` + extended + colorSpace `display-p3`: same
@@ -653,7 +653,7 @@ refine is a sequential hill-climb (DESIGN §10.4). That leaves roughly
   settle costs a second. A fallback that slow is arguably not a fallback
 
 Worth noting the encode side is already threadless: libaom in the module is
-built single-threaded (DESIGN §21.3), so Firefox's rewrap route does not depend
+built single-threaded (DESIGN §21.3 at `v0.1.19`), so Firefox's rewrap route does not depend
 on the pool either.
 
 | Where                                                 | Verdict                                                                                               |
@@ -894,7 +894,7 @@ canvas replaced.
 without a CPU round trip and served to a `<video>` through a custom protocol or
 a local URL, which is the delivery ceiling of §4.3 removed outright rather than
 worked around. The webview is still WebKit on macOS, so the constraints
-DESIGN §21.2 measured for Safari still govern what it will composite: the win is
+DESIGN §21.2 (at `v0.1.19`) measured for Safari still govern what it will composite: the win is
 that we choose the encoder and the transport, not that the compositor got
 easier. The extended-range canvas probe (§7) is still worth running, because a
 canvas path would serve both builds and needs no encoder at all.

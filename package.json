@@ -34,6 +34,7 @@
     "get:all": "bun run get:shell && bun run get:codecs",
     "get:tauri": "bun run scripts/get-tauri-cli.ts",
     "get:shell": "bun run get:slangc && bun run get:models && bun run get:environments",
+    "get:vpx": "bun run scripts/get-vpx.ts",
     "get:slangc": "bun run scripts/get-slangc.ts",
     "get:codecs": "bun run scripts/get-codecs.ts",
     "get:android-runtime": "bun run scripts/get-android-runtime.ts",

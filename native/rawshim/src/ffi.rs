@@ -537,6 +537,37 @@ pub unsafe extern "C" fn bb_export_still(
     answered
 }
 
+/// Writes `source`'s Firefox copy to `out` (`avif::ten_bit_copy`). 0, or -1 with the reason logged.
+///
+/// # Safety
+/// `source` and `out` must be NUL-terminated. Neither is retained past the call.
+#[cfg(feature = "renditions")]
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_write_ten_bit_copy(
+    source: *const c_char,
+    out: *const c_char,
+    quantizer: i32,
+    speed: i32,
+) -> i32 {
+    let (Some(source), Some(out)) = (unsafe { as_str(source) }, unsafe { as_str(out) }) else {
+        return -1;
+    };
+    let written = crate::guard("bb_write_ten_bit_copy", Err("panicked".to_string()), || {
+        let bytes = std::fs::read(source).map_err(|e| format!("could not read {source}: {e}"))?;
+        let copy = crate::avif::ten_bit_copy(&bytes, quantizer, speed)?;
+        std::fs::write(out, copy).map_err(|e| format!("could not write {out}: {e}"))
+    });
+    crate::release_freed_memory();
+    match written {
+        Ok(()) => 0,
+        Err(why) => {
+            crate::warn(&format!("rawshim: no 10-bit copy of {source}: {why}"));
+            -1
+        }
+    }
+}
+
 /// Names the adapter the grade will run on, or reports that there is none.
 ///
 /// **For the one line the entrypoint prints at boot**, and it earns its place because the

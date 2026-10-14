@@ -254,9 +254,8 @@ pub struct Job {
 
 /// **The grade is the shaders the editor runs, and there is nothing to fall back to.** The tick
 /// has to be WGSL because it runs in a browser, so the choice was ever a second implementation in
-/// Rust or this - and DESIGN 21.1 records what the second one cost: the editor lost the camera
-/// match twice, silently, to two implementations drifting. A machine with no adapter at all
-/// therefore builds no renditions rather than building different ones. `gpu::device` asks for a
+/// Rust or this - and a second one drifts from the first silently (DESIGN 21.1). A machine with
+/// no adapter at all therefore builds no renditions rather than building different ones. `gpu::device` asks for a
 /// software adapter where there is no hardware, so that means no Vulkan whatsoever rather than
 /// merely no GPU.
 const NO_ADAPTER: &str = "no GPU adapter of any kind, so the grade cannot run - the shaders are \

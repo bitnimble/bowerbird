@@ -8,6 +8,7 @@ import {
   RENDITION_EXTENSION,
   renditionVariants,
   retiredRenditionDirs,
+  tenBitCopyDirs,
 } from '../processing/renditions/renditions';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
@@ -19,12 +20,13 @@ import { LibraryActivity } from '../activity/library_activity';
 // stray the user left, a directory a later feature adds - is keyed by something
 // other than a photo id and must not be touched.
 function generatedDirs(library: Library): string[] {
-  return renditionVariants().map((variant) =>
-    path.join(getDataPath(library), 'renditions', variant),
+  return [...renditionVariants(), ...tenBitCopyDirs()].map((dir) =>
+    path.join(getDataPath(library), 'renditions', dir),
   );
 }
 
 const log = new Logger('prune');
+const STAGING_GRACE_MS = 60 * 60 * 1000;
 
 // The eager half of the sweep below, for photos whose rows are going right now
 // rather than ones whose rows went at some point (§8.5). Same directories and the
@@ -110,7 +112,10 @@ export class PruneService {
             if (live.has(id) && path.extname(file) === RENDITION_EXTENSION) continue;
             const target = path.join(dir, file);
             try {
-              bytes += (await stat(target)).size;
+              const found = await stat(target);
+              // A copy still being encoded (`TenBitCopies`); a crash's is old enough to go.
+              if (file.endsWith('.tmp') && Date.now() - found.mtimeMs < STAGING_GRACE_MS) continue;
+              bytes += found.size;
               await deleteGeneratedFile(dataPath, target);
               removed++;
             } catch (err) {

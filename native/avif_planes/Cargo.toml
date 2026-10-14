@@ -3,7 +3,7 @@ name = "avif_planes"
 version = "0.1.0"
 edition = "2024"
 
-# For the browser (`scripts/build-avif-planes.ts`, `wasm32-wasip1-threads`).
+# For the browser (`scripts/build-wasi-modules.ts`, `wasm32-wasip1-threads`).
 [lib]
 crate-type = ["cdylib"]
 

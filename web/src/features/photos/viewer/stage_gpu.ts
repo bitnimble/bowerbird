@@ -304,9 +304,9 @@ export class StagePainter {
   private readonly canvases = new Map<number, OffscreenCanvas>();
   /**
    * Set the first time a draw fails after the context was taken, which is a WebGPU this
-   * browser advertises and cannot complete - Gecko's, where `importExternalTexture` is
-   * missing behind a `navigator.gpu` that answers. One canvas is already spent when that is
-   * found out; every later frame takes the 2D path instead of spending another.
+   * browser advertises and cannot complete - Gecko's, which refuses an `rgba16float` canvas
+   * behind a `navigator.gpu` that answers (bug 1834395). One canvas is already spent when that
+   * is found out; every later frame takes the 2D path instead of spending another.
    */
   private declined = false;
   private readonly said = new Set<string>();

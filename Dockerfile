@@ -181,6 +181,21 @@ RUN --mount=type=cache,id=bowerbird-slangc,target=/root/.cache,sharing=locked \
   && rm native/rawshim/.slangc \
   && cp -a "$tree" native/rawshim/.slangc
 
+# libvpx for `wasm32-wasip1-threads`, which the wasm package's VP9 encoder links.
+FROM base AS vpx
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git tar
+COPY scripts/pinned.ts scripts/prune-pinned.ts scripts/get-vpx.ts ./scripts/
+RUN --mount=type=cache,id=bowerbird-vpx,target=/root/.cache,sharing=locked \
+  rm -f /root/.cache/bowerbird/*/*.lock \
+  && bun run scripts/get-vpx.ts \
+  && bun run scripts/prune-pinned.ts \
+  && tree="$(readlink native/rawshim/.vpx)" \
+  && rm native/rawshim/.vpx \
+  && cp -a "$tree" native/rawshim/.vpx
+
 # The denoisers' weights, which `src/pmrid.rs` and `src/upscale.rs` embed - so these are files the
 # crate does not compile without, on the same terms as the shaders. A stage of its own because the
 # getter unpacks PMRID's checkpoint with `fflate`, which is a dev dependency: `deps` installs
@@ -315,6 +330,7 @@ RUN --mount=type=cache,id=bowerbird-cargo-registry,target=/root/.cargo/registry 
 FROM rust AS wasm-build
 COPY package.json bun.lock ./
 COPY scripts ./scripts
+COPY --from=vpx /app/native/rawshim/.vpx ./native/rawshim/.vpx
 RUN rustup target add wasm32-unknown-unknown wasm32-wasip1-threads \
   && curl -sSfL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
      | tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/wasm-pack' \

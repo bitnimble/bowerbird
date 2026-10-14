@@ -1,9 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
+import { useHdrVideo } from '../../../web/src/features/photos/viewer/hdr_video';
 import { SegmentedControl } from '../../../web/src/ui/segmented_control';
 import { DEMO } from '../features';
 import { PHOTOS, SCENES, type Scene } from '../photos';
-import { Demo, DemoBar, DemoNote } from './demo';
+import { Demo, DemoBar, DemoWarning } from './demo';
 import { SplitFrame, splitImage } from './split_frame';
 
 type View = 'sdr' | 'split' | 'hdr';
@@ -29,6 +30,20 @@ const styles = stylex.create({
     paddingInline: { default: '10px', [NARROW]: '6px' },
   },
 });
+
+// `video-dynamic-range` as well: Firefox answers `dynamic-range: standard` on an HDR display,
+// and it is shown the HDR arm as a video.
+const HDR_DISPLAY = '(dynamic-range: high), (video-dynamic-range: high)';
+
+function followDisplay(changed: () => void): () => void {
+  const media = matchMedia(HDR_DISPLAY);
+  media.addEventListener('change', changed);
+  return () => media.removeEventListener('change', changed);
+}
+
+function useHdrDisplay(): boolean {
+  return useSyncExternalStore(followDisplay, () => matchMedia(HDR_DISPLAY).matches);
+}
 
 function viewAt(divider: number): View | null {
   return VIEWS.find((view) => DIVIDER[view.value] === divider)?.value ?? null;
@@ -67,10 +82,44 @@ function Rendition({
   );
 }
 
+/** The HDR arm, which Firefox is shown as a video of its 10-bit copy (`useHdrVideo`). */
+function HdrRendition({
+  style,
+  src,
+  tenBitSrc,
+  alt,
+  onReady,
+}: {
+  style: stylex.StyleXStyles;
+  src: string;
+  tenBitSrc: string;
+  alt: string;
+  onReady: (src: string) => void;
+}): JSX.Element {
+  const { twin, failed } = useHdrVideo(src, src, tenBitSrc, true);
+  if (twin == null) return <Rendition style={style} src={src} alt={alt} onReady={onReady} />;
+  return (
+    <video
+      {...stylex.props(style)}
+      src={twin.url}
+      autoPlay
+      loop
+      muted
+      playsInline
+      disablePictureInPicture
+      role="img"
+      aria-label={alt}
+      onLoadedData={() => onReady(src)}
+      onError={failed}
+    />
+  );
+}
+
 export function HdrDemo(): JSX.Element {
   const [scene, setScene] = useState<Scene>('gamut');
-  const [divider, setDivider] = useState(50);
+  const [divider, setDivider] = useState(DIVIDER.split);
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
+  const hdrDisplay = useHdrDisplay();
   const title = DEMO.hdr.scenes[scene];
   const photo = PHOTOS[scene];
   // Both arms at once or neither: an 8-bit file lands well before its HDR twin, and a
@@ -86,7 +135,10 @@ export function HdrDemo(): JSX.Element {
           label={DEMO.hdr.sceneLabel}
           options={SCENE_OPTIONS}
           value={scene}
-          onChange={setScene}
+          onChange={(next) => {
+            setScene(next);
+            setDivider(DIVIDER.split);
+          }}
           stretch
           style={styles.control}
           itemStyle={styles.controlItem}
@@ -112,10 +164,11 @@ export function HdrDemo(): JSX.Element {
           />
         }
         after={
-          <Rendition
+          <HdrRendition
             key={photo.hdr}
             style={splitImage.after}
             src={photo.hdr}
+            tenBitSrc={photo.hdrTenBit}
             alt={DEMO.hdr.hdrAlt(title)}
             onReady={markShown}
           />
@@ -127,7 +180,7 @@ export function HdrDemo(): JSX.Element {
         onChange={setDivider}
         loading={loading}
       />
-      <DemoNote>{DEMO.hdr.note}</DemoNote>
+      {!hdrDisplay && <DemoWarning>{DEMO.hdr.noHdrDisplay}</DemoWarning>}
     </Demo>
   );
 }

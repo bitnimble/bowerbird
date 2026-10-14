@@ -88,6 +88,12 @@ public float srgb_eotf(float level)
     return level <= 0.04045 ? level / 12.92 : pow((level + 0.055) / 1.055, 2.4);
 }
 
+/// `srgb_oetf_signed` undone: what an extended-range canvas holds, as the linear light it was.
+public float3 srgb_eotf_signed(float3 level)
+{
+    return sign(level) * float3(srgb_eotf(abs(level.r)), srgb_eotf(abs(level.g)), srgb_eotf(abs(level.b)));
+}
+
 /// How far under diffuse white, or a lower target peak, a roll-off may begin.
 ///
 /// **Diffuse white and below is the picture; a target's headroom decides only what happens above

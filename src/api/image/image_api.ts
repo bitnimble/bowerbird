@@ -26,6 +26,7 @@ import type { ShareService } from '../../services/processing/exports/share_servi
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
 import type { BasicPhoto } from '../../services/photos/paths/photo_paths_repository';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
+import type { TenBitCopies } from '../../services/processing/renditions/ten_bit_copies';
 import type { Missing, Shown } from '../../services/processing/workers/prepare_pool';
 import { takeAsLongAsItTakes } from '../long_requests';
 import { LibraryActivity } from '../../services/activity/library_activity';
@@ -216,12 +217,14 @@ export class ImageApi {
      */
     private readonly pictures: PreparesPictures | null = null,
     private readonly activity = new LibraryActivity(),
+    /** Null for the suites that never ask for `bits=10`, which then get the rendition itself. */
+    private readonly tenBitCopies: TenBitCopies | null = null,
   ) {
     const app = new Hono();
     // One route for every rendition, named rather than spelled out per size: `grid`, `full`,
     // `max`, `embedded`. Dynamic range is not in the URL - the library decides it, and a client
-    // guessing would ask for a file that was never built. There is no video form either, though
-    // Firefox watches one: it makes that itself out of these bytes (§10.7).
+    // guessing would ask for a file that was never built. `bits=10` is Firefox asking for the
+    // copy it can show as HDR video, which is the rendition itself wherever that is SDR (§10.7.2).
     app.get(
       route(PathSegment.param('photoId'), PathSegment.renditions(), PathSegment.param('rendition')),
       async (c) => {
@@ -257,10 +260,13 @@ export class ImageApi {
             renditionVariant(rendition, library.rendition_hdr),
           );
         this.photoRenditions.rebuildIfStale(photoId);
+        const tenBit = c.req.query('bits') === '10' ? this.tenBitCopies : null;
         // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
         // the camera view has.
         return this.serve(c, lifted ? 'image/jpeg' : RENDITION_CONTENT_TYPE, (lib, each) =>
-          getRenditionPath(lib, each.id, rendition, lib.rendition_hdr),
+          tenBit == null
+            ? getRenditionPath(lib, each.id, rendition, lib.rendition_hdr)
+            : tenBit.pathFor(lib, each.id, rendition),
         );
       },
     );

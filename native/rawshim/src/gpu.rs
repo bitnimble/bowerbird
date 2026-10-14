@@ -2,8 +2,7 @@
 //!
 //! **This exists so there is one implementation of the grade.** The editor's tick has to be
 //! WGSL - it runs in a browser - so the choice was ever a second implementation in Rust or
-//! this. DESIGN 21.1 records what the second one cost: the editor lost the camera match
-//! twice, silently, because two implementations of one picture drifted. Sharing the source
+//! this. Two implementations of one picture drift silently (DESIGN 21.1); sharing the source
 //! makes that unexpressible rather than tested-for.
 //!
 //! The shaders are `include_str!`'d out of `OUT_DIR`, which is what the browser's build compiles
@@ -48,6 +47,57 @@ const FRAME_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/frame.wgsl
 const PEAK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/peak.wgsl"));
 const DETAIL_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/detail.wgsl"));
 const READBACK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/readback.wgsl"));
+const PQ420_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/pq420.wgsl"));
+
+/// Where `pq420.slang`'s `pack_pq420` writes each plane of a `width` by `height` frame, in words of
+/// two samples: luma rows a block of four pixels wide and padded to an even count, then the two
+/// chroma planes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pq420Layout {
+    pub width: u32,
+    pub height: u32,
+    pub luma_stride: u32,
+    pub chroma_stride: u32,
+    pub cb_at: u32,
+    pub cr_at: u32,
+    pub words: u32,
+}
+
+impl Pq420Layout {
+    pub fn of(width: u32, height: u32) -> Pq420Layout {
+        let blocks = width.div_ceil(4);
+        let rows = height.div_ceil(2);
+        let (luma_stride, chroma_stride) = (blocks * 2, blocks);
+        let cb_at = luma_stride * rows * 2;
+        let cr_at = cb_at + chroma_stride * rows;
+        Pq420Layout {
+            width,
+            height,
+            luma_stride,
+            chroma_stride,
+            cb_at,
+            cr_at,
+            words: cr_at + chroma_stride * rows,
+        }
+    }
+
+    /// What leads [`Gpu::pq420`]'s answer: the width and height, then the strides and the chroma
+    /// planes' offsets in samples from the first, then two unused.
+    pub fn header(&self) -> [u32; PQ420_HEADER_WORDS] {
+        [
+            self.width,
+            self.height,
+            self.luma_stride * 2,
+            self.chroma_stride * 2,
+            self.cb_at * 2,
+            self.cr_at * 2,
+            0,
+            0,
+        ]
+    }
+}
+
+pub const PQ420_HEADER_WORDS: usize = 8;
 
 /// `readback.slang`'s `pack`.
 const PACK_BINDINGS: [(u32, Binding); 3] = [
@@ -293,6 +343,9 @@ pub struct Gpu {
     id: u64,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
+    // Firefox's alone, so left to the first frame that needs it.
+    pack_pq420: PipelineCell<wgpu::ComputePipeline>,
+    pack_srgb8: PipelineCell<wgpu::ComputePipeline>,
     peak_layout: wgpu::BindGroupLayout,
     peak_measure: wgpu::ComputePipeline,
     peak_collect: wgpu::ComputePipeline,
@@ -337,7 +390,7 @@ static GPU: std::sync::OnceLock<Option<Gpu>> = std::sync::OnceLock::new();
 /// The device, or None where no adapter of any kind answered.
 ///
 /// None is a refusal, not a fallback. There is no CPU grade to drop to - a second
-/// implementation is what DESIGN 21.1 records the cost of - so `job::run` returns an error
+/// implementation is the drift DESIGN 21.1 guards against - so `job::run` returns an error
 /// naming the missing driver and the photo goes unrendered rather than rendered differently.
 /// An `Option` rather than a panic so the refusal is the caller's to word.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1310,18 +1363,31 @@ impl Gpu {
     /// `drawn` as RGB9E5 words, four little-endian bytes a pixel, a row after another: what a
     /// canvas the page draws itself is sent (`readback.slang`).
     pub async fn rgb9e5(&self, drawn: &Texture) -> Option<Vec<u8>> {
+        self.packed(drawn, &self.pack).await
+    }
+
+    /// `drawn` as eight-bit sRGB RGBA, a row after another: a thumbnail, ready for a PNG.
+    pub async fn srgb8(&self, drawn: &Texture) -> Option<Vec<u8>> {
+        let pipeline = self.pack_srgb8.get_or_init(|| {
+            self.compute_pipeline("srgb8", READBACK_WGSL, &self.pack_layout, "pack_srgb8")
+        });
+        self.packed(drawn, pipeline).await
+    }
+
+    /// `drawn` through one of `readback.slang`'s four-byte packs.
+    async fn packed(&self, drawn: &Texture, pack: &wgpu::ComputePipeline) -> Option<Vec<u8>> {
         let (width, height) = (drawn.width(), drawn.height());
         let bytes = u64::from(width) * u64::from(height) * 4;
         let mut recording = self.record();
         recording.holding_texture(drawn);
         let words = recording.buffer(&wgpu::BufferDescriptor {
-            label: Some("rgb9e5"),
+            label: Some("packed"),
             size: bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let read = recording.buffer(&wgpu::BufferDescriptor {
-            label: Some("rgb9e5 read"),
+            label: Some("packed read"),
             size: bytes,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -1331,13 +1397,13 @@ impl Gpu {
             .flat_map(u32::to_le_bytes)
             .collect();
         let size = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("rgb9e5 size"),
+            label: Some("packed size"),
             contents: &size,
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let view = drawn.view();
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rgb9e5"),
+            label: Some("packed"),
             layout: &self.pack_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -1356,7 +1422,7 @@ impl Gpu {
         });
         {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.pack);
+            pass.set_pipeline(pack);
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
         }
@@ -1365,6 +1431,124 @@ impl Gpu {
             .copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
         recording.submit();
         read_back(self, &read, <[u8]>::to_vec).await
+    }
+
+    /// `drawn` as the ten-bit PQ 4:2:0 planes the editor's VP9 encoder takes on Firefox
+    /// (`pq420.slang`): [`Pq420Layout::header`] as little-endian words, then the planes as
+    /// little-endian samples.
+    pub async fn pq420(&self, drawn: &Texture) -> Option<Vec<u8>> {
+        let layout = Pq420Layout::of(drawn.width(), drawn.height());
+        let bytes = u64::from(layout.words) * 4;
+        let mut recording = self.record();
+        recording.holding_texture(drawn);
+        let words = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("pq420"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let read = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("pq420 read"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let planes: Vec<u8> = [
+            layout.width,
+            layout.height,
+            layout.luma_stride,
+            layout.chroma_stride,
+            layout.cb_at,
+            layout.cr_at,
+            (CANVAS_WHITE_NITS as f32).to_bits(),
+            0,
+        ]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+        let planes = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pq420 planes"),
+            contents: &planes,
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let view = drawn.view();
+        let group = self.bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pq420"),
+            layout: &self.pack_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: words.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: planes.as_entire_binding(),
+                },
+            ],
+        });
+        {
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_pipeline(self.pack_pq420());
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(
+                layout.width.div_ceil(4).div_ceil(8),
+                layout.height.div_ceil(2).div_ceil(8),
+                1,
+            );
+        }
+        recording
+            .encoder()
+            .copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
+        recording.submit();
+        read_back(self, &read, |mapped| {
+            let mut answer = Vec::with_capacity(PQ420_HEADER_WORDS * 4 + mapped.len());
+            answer.extend(layout.header().into_iter().flat_map(u32::to_le_bytes));
+            answer.extend_from_slice(mapped);
+            answer
+        })
+        .await
+    }
+
+    fn pack_pq420(&self) -> &wgpu::ComputePipeline {
+        self.pack_pq420.get_or_init(|| {
+            self.compute_pipeline("pq420", PQ420_WGSL, &self.pack_layout, "pack_pq420")
+        })
+    }
+
+    /// One compute pipeline over one bind group, for a pipeline built on first use.
+    fn compute_pipeline(
+        &self,
+        label: &str,
+        wgsl: &'static str,
+        group: &wgpu::BindGroupLayout,
+        entry_point: &str,
+    ) -> wgpu::ComputePipeline {
+        let module = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+            });
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: &[Some(group)],
+                ..Default::default()
+            });
+        self.device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
     }
 
     /// A buffer whose life is its own rather than a submission's: a frame, a mosaic, a pyramid.
@@ -1830,6 +2014,8 @@ impl Gpu {
             },
             pack_layout,
             pack,
+            pack_pq420: PipelineCell::new(),
+            pack_srgb8: PipelineCell::new(),
             peak_layout,
             peak_measure,
             peak_collect,
@@ -1996,13 +2182,16 @@ pub struct Stage {
     target: StageTarget,
     width: u32,
     height: u32,
+    /// Held for a video rather than a canvas, so read back by [`Gpu::pq420`].
+    video: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
 enum StageTarget {
     Surface(wgpu::Surface<'static>, web_sys::OffscreenCanvas),
-    /// A texture of this module's, which [`Gpu::rgb9e5`] reads back for a canvas the page draws
-    /// itself: WebKit caps what a transferred canvas may show at 1000 nits over 203.
+    /// A texture of this module's, read back for the page to show itself: by [`Gpu::rgb9e5`] for a
+    /// canvas, since WebKit caps what a transferred one may show at 1000 nits over 203, and by
+    /// [`Gpu::pq420`] for a video, since Firefox shows HDR in nothing else.
     Held(Option<Texture>),
 }
 
@@ -2026,17 +2215,20 @@ impl Stage {
             target: StageTarget::Surface(surface, canvas),
             width: 0,
             height: 0,
+            video: false,
         };
         held.resize(gpu, width, height);
         Some(held)
     }
 
-    /// A stage drawn into a texture rather than a canvas, for the page to be sent ([`Stage::drawn`]).
-    pub fn held(gpu: &Gpu, width: u32, height: u32) -> Stage {
+    /// A stage drawn into a texture rather than a canvas, for the page to be sent ([`Stage::drawn`])
+    /// as a canvas's words or with `video` as a video frame's planes.
+    pub fn held(gpu: &Gpu, width: u32, height: u32, video: bool) -> Stage {
         let mut held = Stage {
             target: StageTarget::Held(None),
             width: 0,
             height: 0,
+            video,
         };
         held.resize(gpu, width, height);
         held
@@ -2091,10 +2283,11 @@ impl Stage {
         (self.width, self.height)
     }
 
-    /// What the last draw wrote, where this stage is held rather than a canvas.
-    pub fn drawn(&self) -> Option<Texture> {
+    /// What the last draw wrote, where this stage is held rather than a canvas, and whether it is
+    /// held for a video.
+    pub fn drawn(&self) -> Option<(Texture, bool)> {
         match &self.target {
-            StageTarget::Held(texture) => texture.clone(),
+            StageTarget::Held(texture) => texture.clone().map(|texture| (texture, self.video)),
             StageTarget::Surface(..) => None,
         }
     }
@@ -5383,6 +5576,185 @@ mod tests {
         }
     }
 
+    /// A thumbnail drawn proofed into sRGB over the canvas's P3 comes back as the eight-bit sRGB a
+    /// PNG holds: neutral levels unmoved, and a primary at the edge of sRGB at sRGB's own primary.
+    #[test]
+    fn a_thumbnail_is_packed_as_the_srgb_it_was_proofed_to() {
+        let gpu = super::device().expect("a Vulkan adapter");
+        let p3_of_srgb_red = {
+            let to_rec2020 = crate::hdr_fit::srgb_to_rec2020();
+            let to_p3 = crate::transfer::Primaries::DISPLAY_P3.from_rec2020();
+            let rec2020: [f64; 3] = std::array::from_fn(|row| to_rec2020[row][0]);
+            let linear: [f64; 3] =
+                std::array::from_fn(|row| (0..3).map(|col| to_p3[row][col] * rec2020[col]).sum());
+            linear.map(|v| crate::hdr_fit::srgb_oetf(v) as f32)
+        };
+        let drawn: [[f32; 3]; 4] = [
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.5, 0.5, 0.5],
+            p3_of_srgb_red,
+        ];
+        let data: Vec<u8> = drawn
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 1.0])
+            .flat_map(super::half)
+            .collect();
+        let texture = gpu.own_texture_with_data(
+            &wgpu::TextureDescriptor {
+                label: Some("drawn"),
+                size: wgpu::Extent3d {
+                    width: 2,
+                    height: 2,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &data,
+        );
+        let rgba = pollster::block_on(gpu.srgb8(&texture)).expect("the readback mapped");
+        let want: [[u8; 4]; 4] = [
+            [0, 0, 0, 255],
+            [255, 255, 255, 255],
+            [128, 128, 128, 255],
+            [255, 0, 0, 255],
+        ];
+        for (at, (got, want)) in rgba.chunks_exact(4).zip(want).enumerate() {
+            let off = got.iter().zip(want).map(|(&g, w)| g.abs_diff(w)).max();
+            assert!(off <= Some(1), "pixel {at}: {got:?} for {want:?}");
+        }
+    }
+
+    /// The planes Firefox's video is encoded from code the light the canvas would have shown, as
+    /// BT.2020 video range: luma per pixel, chroma sited on each pair's left column between its
+    /// rows, and padding where the picture's width and height are not multiples of the block.
+    #[test]
+    fn the_video_planes_code_what_the_canvas_would_show() {
+        use crate::light::{DisplayNits, Light};
+        let gpu = super::device().expect("a Vulkan adapter");
+        let (width, height) = (7u32, 5u32);
+        // What `fs` writes: Display P3 over 203 through the signed sRGB curve, past one for
+        // highlights and below zero for a colour outside P3.
+        let drawn: Vec<[f32; 3]> = (0..width * height)
+            .map(|at| {
+                let t = at as f32 / (width * height) as f32;
+                [2.4 * t, (1.3 - 1.7 * t).abs(), 0.9 * (t * 7.0).sin() - 0.1]
+            })
+            .collect();
+        let data: Vec<u8> = drawn
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 1.0])
+            .flat_map(super::half)
+            .collect();
+        let texture = gpu.own_texture_with_data(
+            &wgpu::TextureDescriptor {
+                label: Some("drawn"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &data,
+        );
+        let answer = pollster::block_on(gpu.pq420(&texture)).expect("the readback mapped");
+
+        let layout = super::Pq420Layout::of(width, height);
+        let words: Vec<u32> = answer
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes(b.try_into().expect("a word")))
+            .collect();
+        assert_eq!(words[..super::PQ420_HEADER_WORDS], layout.header());
+        let samples: Vec<u16> = answer[super::PQ420_HEADER_WORDS * 4..]
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes(b.try_into().expect("a sample")))
+            .collect();
+        assert_eq!(samples.len(), layout.words as usize * 2);
+
+        // An independent statement of the coding: the canvas undone, ST 2084, BT.2020's weights.
+        let to_rec2020 = crate::transfer::Primaries::DISPLAY_P3.to_rec2020();
+        let eotf = |v: f64| {
+            let level = v.abs();
+            let linear = match level <= 0.04045 {
+                true => level / 12.92,
+                false => ((level + 0.055) / 1.055).powf(2.4),
+            };
+            linear.copysign(v)
+        };
+        let video = |x: i64, y: i64| -> [f64; 3] {
+            let (x, y) = (x.clamp(0, width as i64 - 1), y.clamp(0, height as i64 - 1));
+            let canvas = drawn[(y * width as i64 + x) as usize]
+                .map(|v| eotf(f64::from(half::f16::from_f32(v).to_f32())));
+            let pq: [f64; 3] = std::array::from_fn(|row| {
+                let nits: f64 = (0..3)
+                    .map(|col| f64::from(to_rec2020[row][col]) * canvas[col])
+                    .sum::<f64>()
+                    * super::CANVAS_WHITE_NITS;
+                crate::tone::pq(Light::<DisplayNits>::exactly(nits.max(0.0))).raw()
+            });
+            let [kr, kg, kb] = crate::hdr_fit::LUMA;
+            let luma = kr * pq[0] + kg * pq[1] + kb * pq[2];
+            [
+                64.0 + 876.0 * luma,
+                512.0 + 896.0 * (pq[2] - luma) / (2.0 * (1.0 - kb)),
+                512.0 + 896.0 * (pq[0] - luma) / (2.0 * (1.0 - kr)),
+            ]
+        };
+        let close = |got: u16, want: f64, what: &str| {
+            assert!(
+                (f64::from(got) - want).abs() <= 1.0,
+                "{what}: {got} for {want:.2}"
+            );
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let got = samples[(y * layout.luma_stride * 2 + x) as usize];
+                close(
+                    got,
+                    video(x.into(), y.into())[0],
+                    &format!("luma ({x}, {y})"),
+                );
+            }
+        }
+        for y in 0..height.div_ceil(2) {
+            for x in 0..width.div_ceil(2) {
+                let (left, top) = (i64::from(x) * 2, i64::from(y) * 2);
+                let mut want = [0.0; 2];
+                for (dx, weight) in [(-1, 1.0), (0, 2.0), (1, 1.0)] {
+                    for dy in 0..2 {
+                        let at = video(left + dx, top + dy);
+                        want[0] += weight * at[1] / 8.0;
+                        want[1] += weight * at[2] / 8.0;
+                    }
+                }
+                let at = (y * layout.chroma_stride * 2 + x) as usize;
+                close(
+                    samples[(layout.cb_at * 2) as usize + at],
+                    want[0],
+                    &format!("cb ({x}, {y})"),
+                );
+                close(
+                    samples[(layout.cr_at * 2) as usize + at],
+                    want[1],
+                    &format!("cr ({x}, {y})"),
+                );
+            }
+        }
+    }
+
     /// A `Geometry`, positionally, so a table of cases reads as a table.
     fn geometry(
         crop: [f64; 4],
@@ -7421,6 +7793,12 @@ mod tests {
         pinned(
             "R2020_TO_P3",
             crate::transfer::Primaries::DISPLAY_P3.from_rec2020(),
+        );
+        pinned(
+            "P3_TO_R2020",
+            crate::transfer::Primaries::DISPLAY_P3
+                .to_rec2020()
+                .map(|row| row.map(f64::from)),
         );
     }
 

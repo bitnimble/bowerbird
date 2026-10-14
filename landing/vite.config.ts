@@ -8,6 +8,10 @@ import { defineConfig } from 'vite';
 
 const page = (name: string): string => fileURLToPath(new URL(name, import.meta.url));
 
+const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(',')
+  .map((h) => h.trim())
+  .filter((h) => h !== '');
+
 export default defineConfig({
   base: '/',
   plugins: [
@@ -28,6 +32,8 @@ export default defineConfig({
     // The ui components read out of `web/` resolve their bare imports from web/node_modules, so
     // without this the page runs two Reacts and every hook in them throws.
     dedupe: ['react', 'react-dom', '@stylexjs/stylex'],
+    // Source, as `web/vite.config.ts` takes it: the package's `dist` is never built here.
+    alias: { 'avif-hdr-video': page('../packages/avif-hdr-video/src/index.ts') },
   },
   server: {
     // The ui components, the tokens and the HDR photographs are read out of `web/`, outside this root.
@@ -36,6 +42,9 @@ export default defineConfig({
     port: Number(process.env.LANDING_PORT ?? 5174),
     // An asked-for port that silently moves is worse than a failure.
     strictPort: true,
+    // As `web/vite.config.ts`: a reverse proxy forwarding a real hostname trips Vite's
+    // DNS-rebinding guard unless the host is named, or `all`.
+    allowedHosts: allowedHosts?.includes('all') ? true : allowedHosts,
   },
   build: {
     rollupOptions: {

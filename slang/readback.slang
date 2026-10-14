@@ -1,14 +1,19 @@
-// A drawn frame carried from the GPU thread to a canvas the page owns, for WebKit (`stage_readback.ts`).
+// A drawn frame carried from the GPU thread to the page.
 //
-// WebKit caps what a transferred canvas may show at the headroom of its default HDR image content,
-// 1000 nits over 203, whatever the display reaches; a canvas the page draws itself is not capped.
-// So past that the worker draws into a texture, `pack`s it to RGB9E5 - four bytes a pixel, half of
-// what `rgba16float` would cross the thread boundary as - and the page uploads the words into an
-// `rgb9e5ufloat` texture and `blit`s it onto its own canvas.
+// For WebKit, to a canvas the page owns (`readback_canvas.ts`). WebKit caps what a transferred
+// canvas may show at the headroom of its default HDR image content, 1000 nits over 203, whatever
+// the display reaches; a canvas the page draws itself is not capped. So past that the worker draws
+// into a texture, `pack`s it to RGB9E5 - four bytes a pixel, half of what `rgba16float` would cross
+// the thread boundary as - and the page uploads the words into an `rgb9e5ufloat` texture and
+// `blit`s it onto its own canvas.
 //
 // RGB9E5 holds no alpha and no sign, so only an opaque frame crosses this way, and a component the
 // canvas's primaries put below zero arrives at zero: the display clips it there anyway.
+//
+// And for a thumbnail, as the eight-bit sRGB a PNG holds (`pack_srgb8`).
 import stage_shared;
+import prelude;
+import primaries;
 
 struct Size {
     uint width;
@@ -44,6 +49,19 @@ void pack(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= size.width || id.y >= size.height) { return; }
     packed[id.y * size.width + id.x] = rgb9e5_of(drawn.Load(int3(int2(id.xy), 0)).rgb);
+}
+
+/// Four bytes a pixel, red first and alpha opaque. A thumbnail is drawn proofed into sRGB but
+/// still over the canvas's P3, so it is moved into sRGB's own primaries before it is coded.
+[shader("compute")]
+[numthreads(16, 16, 1)]
+void pack_srgb8(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= size.width || id.y >= size.height) { return; }
+    let p3 = srgb_eotf_signed(drawn.Load(int3(int2(id.xy), 0)).rgb);
+    let linear = saturate(mul(R2020_TO_SRGB, mul(P3_TO_R2020, p3)));
+    let coded = uint3(round(float3(srgb_oetf(linear.r), srgb_oetf(linear.g), srgb_oetf(linear.b)) * 255.0));
+    packed[id.y * size.width + id.x] = coded.r | (coded.g << 8) | (coded.b << 16) | (255u << 24);
 }
 
 [shader("vertex")]

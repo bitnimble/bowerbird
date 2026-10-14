@@ -177,11 +177,21 @@ export function renditionVariants(): RenditionVariant[] {
   ]);
 }
 
+// Where Firefox's copy of an HDR rendition lives, built only when Firefox asks for one
+// (`TenBitCopies`, §10.7.2). Beside its rendition and named `<photoId>.avif` like it, so the
+// sweeps read its filenames as ids.
+export function tenBitCopyDir(rendition: Rendition): string {
+  return `${renditionVariant(rendition, true)}-10bit`;
+}
+
+export function tenBitCopyDirs(): string[] {
+  return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).map(tenBitCopyDir);
+}
+
 // Directories under `renditions/` that nothing writes any more, emptied by the
 // prune sweep so an upgrade does not leave the disk holding files no code can
-// name (§10.6). `<rendition>-hdr-video` held a one-frame AV1 copy of each HDR
-// still, encoded for Firefox, which the client now makes for itself out of the
-// still (§10.7).
+// name (§10.6). `<rendition>-hdr-video` held a one-frame AV1 MP4 of each HDR
+// still, encoded for Firefox at import.
 export function retiredRenditionDirs(): string[] {
   return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).map(
     (rendition) => `${rendition}-hdr-video`,

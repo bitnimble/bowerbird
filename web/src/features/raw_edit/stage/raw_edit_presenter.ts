@@ -19,8 +19,10 @@ import type { CropStore } from '../crop/crop_store';
 import {
   drawsOnThePage,
   readbackCanvases,
+  showsAsVideo,
   transferredPeakNits,
 } from '../../../gpu/readback_canvas';
+import { pq420FrameOf, vp9Encoder } from '../../../vp9/vp9_encoder';
 import type { Ticked } from '../local_decode/local_open';
 import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
@@ -245,10 +247,11 @@ export class RawEditPresenter {
       this.surface.handOver(canvas, which);
       const wanted = which === 'stage' ? this.stageSize() : null;
       const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
-      const onPage = drawsOnThePage(this.device.peakNits);
-      if (onPage) this.surface.onPage[which] = { canvas, ...size };
+      const video = showsAsVideo();
+      const onPage = video || drawsOnThePage(this.device.peakNits);
+      if (onPage) this.surface.onPage[which] = { canvas, ...size, video };
       const offscreen = onPage ? null : canvas.transferControlToOffscreen();
-      await local.decoder.attach(which, offscreen, size.width, size.height);
+      await local.decoder.attach(which, offscreen, size.width, size.height, video);
     }
     if (which === 'stage') this.drawable = true;
   }
@@ -1161,6 +1164,13 @@ export class RawEditPresenter {
       const bytes = ticked[which];
       const shown = this.surface.onPage[which];
       if (bytes == null || shown == null) continue;
+      if (shown.video) {
+        const mp4 = await vp9Encoder.encode(which, pq420FrameOf(bytes));
+        if (this.closed) return;
+        if (which === 'stage') this.showVideoFrame(mp4);
+        else this.loupe.showVideoFrame(mp4);
+        continue;
+      }
       const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
       await readbackCanvases.show(shown.canvas, {
         words,
@@ -1168,6 +1178,11 @@ export class RawEditPresenter {
         height: shown.height,
       });
     }
+  }
+
+  @action.bound
+  private showVideoFrame(mp4: Uint8Array<ArrayBuffer>): void {
+    this.stage.videoFrame = mp4;
   }
 
   @action.bound
@@ -1239,6 +1254,7 @@ export class RawEditPresenter {
     this.stage.region = null;
     this.stage.stage = null;
     this.stage.renderedMode = null;
+    this.stage.videoFrame = null;
     this.stage.preparedElsewhere = false;
     this.stage.level = null;
     this.stage.fetchingWindow = false;

@@ -1,6 +1,6 @@
-// One of the AVIF decoder's threads (`avif_pool.ts`).
+// One of a threaded module's threads (`thread_pool.ts`).
 
-import { serveSlot, type PoolStart } from './avif_pool';
+import { serveSlot, type PoolStart } from './thread_pool';
 import { pageLog } from '../features/logs/page_log';
 
 pageLog.follow('worker');

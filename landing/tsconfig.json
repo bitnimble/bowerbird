@@ -14,7 +14,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "avif-hdr-video": ["../packages/avif-hdr-video/src/index.ts"]
+    }
   },
   "include": ["src"],
   "mdx": { "checkMdx": true }

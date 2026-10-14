@@ -185,16 +185,18 @@ export class LocalDecoder {
    * the element can never take a context on this thread again, and transferring the same element
    * twice throws - so each canvas is transferred once, and the next photo adopts the stage.
    *
-   * Null keeps the canvas on the page, and every tick hands back what it drew there.
+   * Null keeps the canvas on the page, and every tick hands back what it drew there: RGB9E5, or
+   * with `video` the planes of a video frame.
    */
   attach(
     which: 'stage' | 'loupe',
     canvas: OffscreenCanvas | null,
     width: number,
     height: number,
+    video = false,
   ): Promise<void> {
     return this.nothing(
-      { kind: 'attach', which, canvas, width, height },
+      { kind: 'attach', which, canvas, width, height, video },
       canvas == null ? [] : [canvas],
     );
   }
@@ -203,9 +205,12 @@ export class LocalDecoder {
     return this.nothing({ kind: 'releaseLoupe' });
   }
 
-  /** The colour wheel's canvas, `side` square, transferred as `attach`'s are. */
-  attachWheel(canvas: OffscreenCanvas, side: number): Promise<void> {
-    return this.nothing({ kind: 'attachWheel', canvas, side }, [canvas]);
+  /**
+   * The colour wheel's canvas, `side` square, transferred as `attach`'s are. Null shows the wheel
+   * as video, whose planes each draw hands back.
+   */
+  attachWheel(canvas: OffscreenCanvas | null, side: number): Promise<void> {
+    return this.nothing({ kind: 'attachWheel', canvas, side }, canvas == null ? [] : [canvas]);
   }
 
   /**
@@ -220,9 +225,12 @@ export class LocalDecoder {
     });
   }
 
-  /** `drawWheel` again for another `selected`, its edge unchanged. */
-  shadeWheel(lightness: number, selected: ColourNode | null): Promise<void> {
-    return this.nothing({
+  /** `drawWheel` again for another `selected`, its edge unchanged: the video planes, or null. */
+  shadeWheel(
+    lightness: number,
+    selected: ColourNode | null,
+  ): Promise<Uint8Array<ArrayBuffer> | null> {
+    return this.ask(BytesSchema.nullable(), {
       kind: 'shadeWheel',
       lightness,
       selected: selected == null ? null : JSON.stringify(selected),

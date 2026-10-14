@@ -113,6 +113,11 @@ const SYMBOLS = {
     args: [FFIType.cstring, FFIType.cstring, FFIType.f32, FFIType.ptr, FFIType.u64],
     returns: FFIType.i64,
   },
+  // An HDR rendition's Firefox copy, path to path.
+  bb_write_ten_bit_copy: {
+    args: [FFIType.cstring, FFIType.cstring, FFIType.i32, FFIType.i32],
+    returns: FFIType.i32,
+  },
 
   // What the library will answer about a file without decoding it. Each fills a
   // struct or an array this side allocated.

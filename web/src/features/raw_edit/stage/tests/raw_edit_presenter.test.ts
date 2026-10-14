@@ -28,6 +28,7 @@ import {
 import { photoEditsApi } from '../../../../api/photo_edits';
 import { ApiError } from '../../../../api/request';
 import { readbackCanvases } from '../../../../gpu/readback_canvas';
+import { vp9Encoder } from '../../../../vp9/vp9_encoder';
 import { pictureLevel } from '../../../../../../src/services/processing/workers/prepare_pool';
 import {
   drawnBy,
@@ -662,6 +663,33 @@ describe('the window each frame is drawn at', () => {
         1,
       );
     } finally {
+      readbackCanvases.show = show;
+    }
+  });
+
+  test('shows a stage kept as video as the frame its planes encode to', async () => {
+    const mp4 = new Uint8Array([1, 2, 3]);
+    const encoded: string[] = [];
+    const encode = vp9Encoder.encode;
+    const show = readbackCanvases.show;
+    readbackCanvases.show = async () => {
+      throw new Error('a stage shown as video drew a canvas');
+    };
+    vp9Encoder.encode = async (surface) => {
+      encoded.push(surface);
+      return mp4;
+    };
+    try {
+      Object.assign(editor.surface.onPage, {
+        stage: { canvas: {}, width: 1, height: 1, video: true },
+      });
+      decoder.handsBack = true;
+      presenter.previewExposure(1);
+      await drawn();
+      expect(encoded).toEqual(['stage']);
+      expect(stage.videoFrame).toBe(mp4);
+    } finally {
+      vp9Encoder.encode = encode;
       readbackCanvases.show = show;
     }
   });

@@ -48,6 +48,9 @@ export class StageStore {
    */
   @observable accessor stage: { width: number; height: number } | null = null;
 
+  /** The stage's last draw as a one-frame MP4, where it is shown as video. */
+  @observable.ref accessor videoFrame: Uint8Array<ArrayBuffer> | null = null;
+
   /** Whether the camera's own colour is in play, or the grade fell back to neutral. */
   @observable accessor matched = false;
   @observable accessor renderedMode: 'photo' | 'print' | null = null;

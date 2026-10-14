@@ -7,83 +7,47 @@ A chapter of [`DESIGN.md`](../../DESIGN.md), numbered with the other chapters as
 
 ## 21. Editing in the browser
 
-> **Status: this section is an argument about a wasm CPU editor, not a description of the
-> one that ships.** The editor opens the RAW in the page - in any browser, and in the desktop
-> shell's own webview, which is why the shell has no decode path of its own - and grades per
-> tick on the GPU through WGSL. The crate builds for `wasm32-unknown-unknown` as pure Rust
-> with no C linked, which `tests/wasm_build.rs` is the host-side half of. The device is the
-> module's own: wgpu cannot adopt a `GPUDevice` from JS, so the page hands over a canvas
-> instead (`gpu::page_device`). **`docs/gpu-editor.md` describes what runs.**
->
-> What it is kept for is §21.1: how a second implementation of one picture drifts - the
-> editor lost the camera match twice, silently - which is the reason the GPU tick is pinned
-> against CPU fixtures at all, and the reason a CPU arm for a stage that has a shader is
-> refused outright.
+The editor opens the RAW in the page - in any browser with WebGPU, and in the desktop shell's own
+webview, which is why the shell has no decode path of its own - and grades per tick on the GPU
+through the rendition's own shaders. `rawshim` builds for `wasm32-unknown-unknown` as pure Rust
+with no C linked, which `tests/wasm_build.rs` is the host-side half of. The module runs on the
+app's GPU thread (`web/src/gpu/gpu_thread.ts`), one worker for the life of the page holding the
+one device everything draws with. wgpu cannot adopt a `GPUDevice` from JS, so the module requests
+its own (`gpu::page_device`) and the page hands over canvases (`transferControlToOffscreen`) for it
+to draw on. **`docs/gpu-editor.md` describes the runtime.**
 
-A Lightroom exposure slider, in the photo viewer, in HDR. Actions → Edit replaces the metadata strip with the exposure panel and the stage with the live grade; Done (or Escape) discards everything and returns to the stored rendition. There is no save yet - sidecars come later. One RAW is decoded once and then graded per slider tick, entirely client side: `rawshim` compiled to `wasm32-unknown-unknown` runs LibRaw, the embedded preview's JPEG decode, the camera match and the grade. There is no server in the loop below the fetch, and the browser contributes nothing to the picture.
+Edit, in the photo viewer, replaces the metadata strip with the edit panels and the stage with the live grade. One RAW is decoded once and then graded per slider tick, entirely client side: the module decodes the RAW and its embedded preview, fits the camera match and opens the frame (`edit.rs`), and each tick is `gpu::present`, a uniform write, one pass and a present onto the handed-over canvas. A tick sends the worker a region and a set of edits and no pixels, there is no server in the loop below the fetch, and the browser contributes nothing to the picture.
 
 The Light panel has exposure, contrast, highlights, shadows, whites, blacks, and a tone curve. Exposure sets the global level, starting at the camera's value anchored to middle grey. The basic sliders act first. The curve changes contrast within the photo; the camera's starting curve has a knot at exposed middle grey. It maps luma through a monotone cubic and carries the change to colour as a ratio so hue stays fixed. Its horizontal axis puts diffuse white at the middle and 3 stops above white at the right edge. [§10.8.1](rendering.md#1081-the-same-look-in-hdr-hdr_fitrs) defines the stored curve shape and interpolation. The camera match writes its exposure, saturation, curve and white balance as the photo's first edits, from the first render that fits it or the editor's open, adding no undo step. The white balance is the temperature and tint that pull the frame's greys onto the camera's, written as a Custom pair, or As Shot where the match pulled none. A merged photo gets them beside the crop its merge wrote. It never writes into edits a person or a sidecar made, and those render as written: an exposure of 0 is 0. Once written they are ordinary edits: each reset goes to 0, a straight curve or As Shot, and **Reset edits to camera match** in the overflow menu writes the camera's four and the Matched profile back. The Colour profile choice leaves all four where they are: None drops only the match's residual colour.
 
 The Colour panel's colour wheel edits colours one at a time ([§10.8.2](rendering.md#1082-the-readers-colour-edits-latticecolournode)), on top of the profile. Hue runs around it and chroma out to its rim, drawn in HDR at one of five lightness channels (ZCAM lightness 10, 30, 55, 80 and 110) or All, which edits every lightness at once. The channels are round swatches, each the grey of its lightness, with All a ramp across them, set first and apart from the rest and chosen when the editor opens; up to three dots under a channel mark the edits it holds that move colour furthest (ZCAM distance from source to output), each the colour the edit reads, scaled until its brightest component is diffuse white (`colour_wheel::swatch`), so a shadow's still shows its hue. A tap or click on the wheel adds an edit there, at the colour it selected, moving nothing yet; with an edit selected, it lets go of the edit instead. A drag across the wheel adds nothing; on a phone it scrolls the edit sheet unless it starts on an edit or one of its handles, as one on the tone curve does unless it starts on a point or the curve. Browsers ignore `touch-action` on SVG shapes, so a drag holds the sheet still by cancelling its `touchmove` (`ui/hold_scroll.ts`). An edit's outer saturation edge stays on the wheel: dragging the edit towards the rim narrows its saturation range to fit, and widens it back to where the drag began as the edit comes away, and the saturation handle stops at the rim. The selected edit darkens the wheel by up to 80%, less wherever it reaches, by the weight `lattice_bake.slang` gives a colour there (`kernel_reach.slang`, shared with the backdrop). It shows its reach as an outline and an arrow to the output colour, a ring the arrowhead stops short of with the output colour itself drawn undarkened inside it; dragging the edit moves the colour it reads and leaves the output where it is, dragging the ring moves the output, a double press on the ring puts the output back on the hue and saturation the edit reads, keeping its lightness, and two-way arrows on the outline set the reach by drag or arrow keys, one halfway along each hue edge (a single one once the reach is a full circle) and one at the chroma edge. On a phone each grab area is about three times as wide, and a drag hides the edit sheet, as a slider's does, leaving the photo under only the dragged edit, its outlines, its output and the wheel's colours inside its reach, at half opacity as a dragged slider is. While the edit itself is dragged, the stage takes each pixel towards black by how much the edit does not reach it, by the same weight read where the edit keys the pixel (`reach_kept` in `colour.slang`, applied after the grade in `frame.slang`'s `fs` so the peak pass never sees it); the mask fades in and out over 100ms (`stage/fade.ts`). Dragging the ring or a reach handle draws the photo as it is. A touch on a slider starts it only once it moves sideways past 10px or rests on the knob for a quarter second (`ui/touch_drag.ts`), so a swipe down the sheet scrolls it even from a knob. Starting a slider or a wheel drag vibrates briefly where the device can. Under the wheel, a lightness range slider (on the five channels, not All) sits above output hue, saturation and lightness, which set the same output as the ring. Behind the edits, the wheel can show a few thousand of the photo's own pixels at the channel as faint dots, where edits read them, and the profile's strongest push in each twelfth of the hue circle as an arrow, dropping any under a fifth of the strongest or shorter than twice its head; each is off until turned on from the wheel's options menu. The profile is read at 45%, 65% and 85% of the way out to the display's edge at each hue and lightness, so every arrow starts on a colour the display shows. A dashed outline marks that edge at the channel's lightness, Display P3 under its peak, and for All the widest of the five; it is on until turned off from the same menu.
 
-**The experiment established that the grade can stay exact.** Drags use the rendition's transform and library settings at 960px on the long edge, then full size once the pointer stops. Spend resolution, never tone or colour accuracy: a cheaper curve would show a different picture.
+**The grade stays exact.** Every tick, a drag's included, draws with the rendition's transform and library settings at the stage's resolution (`stage_resolution.ts`). Spend resolution, never tone or colour accuracy: a cheaper curve would show a different picture.
 
 ### 21.1 One pipeline, two entry points
 
-The editor and renditions grade through `hdr::prepare` and `hdr::grade_prepared`. `Prepared` holds a decoded frame with geometry, falloff and levels applied, but no exposure - the only per-tick change. A rendition calls both once; the editor calls `prepare` at open and `grade_prepared` per tick.
+A rendition and the editor open a photograph through the same code (`open::measure`) and draw it through the same `gpu.rs` passes. A job is an open, one tick and an encode; the editor is the open (`edit.rs`) and then a tick per slider move. What differs between the two callers is `open::Opening`, and it is three things: a rendition may decline the camera match, the two fit it from different sources (`Fitting`), and a job brings its own strengths.
 
-The spike's separate grade drifted silently: the editor fitted its camera match against a _sharpened_ render, the rendition against an unsharpened one, producing different colour from the same file. `Strengths::before_the_fit` defines what both fits see.
+**A second implementation of one picture drifts silently.** A camera match fitted against a different frame, or reduced through a kernel that is wrong on one target only, still grades a plausible HDR frame at the right size, just flatter and less saturated than the rendition of the same file, and nothing reports a failure. So both hosts fit the match against the same frame, `Strengths::before_the_fit` defining what the fit sees, on the same fit grids, a shader (`fit_grids.slang`); the GPU tick is pinned against fixtures; and a CPU arm for a stage that has a shader is refused outright. Nothing native runs the wasm build, so the e2e assertion that the editor reports the camera match (`data-matched` in `editor/raw_editing.spec.ts`) is what catches the browser losing it.
 
-**Settings cross as one JSON value, `wasm::EditorSpec`.** The web side reads the server's settings. Inlining peak, anchor or denoise defaults would make edited libraries show one picture and write another.
+**Settings cross as one JSON value, `edit::EditRequest`.** The web side reads the server's settings. Inlining peak, anchor or denoise defaults would make edited libraries show one picture and write another.
 
-**The browser decodes nothing, including the preview the match is fitted from.** That was `createImageBitmap` onto an `OffscreenCanvas` once, on the reasoning that the engine has a good JPEG decoder and the alternative was another codec in the module. There was no second codec to avoid: `crate::jpeg` is `jpeg-decoder`, pure Rust and already compiled in, and it is the decoder the server fits against. `fit_camera_match` now takes no arguments and reads the preview out of the RAW itself, which is what `hdr::fit_all` does natively.
+**The browser decodes nothing of a RAW, including the preview the match is fitted from.** `crate::jpeg` is `jpeg-decoder`, pure Rust, and the decoder the server fits against; `Fitting::Preview` reads the preview out of the RAW's own bytes, on both hosts.
 
-**The wasm build is scalar - no `+simd128` - and libblur's wasm kernel is what first put it there.** 0.24 selected a hand-written wasm SIMD stack blur under `target_feature = "simd128"`, and that kernel is wrong: it rounds the accumulator with `f32x4_nearest` and then hands the result straight to `u32x4_pack_trunc_u16x8`, so an IEEE-754 bit pattern is packed as though it were an integer - the SSE kernel beside it converts with `_mm_cvtps_epi32` first, and so do this crate's own wasm `fast_gaussian` kernels, which pair `f32x4_nearest` with `i32x4_trunc_sat_f32x4`. Only the two stack blur passes are missing it. A blurred 148.0 is `0x43140000`, whose low 16 bits are zero, so it stores black. On the fit's own grid the mean fell from 148 to 56 and 47% of the pixels came out black. `pairs` then rejected nearly everything it was handed, the fit found 1,702 usable pairs where `MIN_PAIRS` wants 2,000, and it declined - so **every browser edit graded on the neutral arm**, flatter and less saturated than the rendition beside it, with nothing anywhere reporting a failure. A two-line fork adding the missing `i32x4_trunc_sat_f32x4` fixed it and found 234,075 pairs against the server's 230,969 on the same frame, so the bug is understood rather than merely avoided.
-
-The fork does not ship: interleaved drag medians were 106 and 137ms with `+simd128`, 107 and 113ms without - within one machine's noise (the flag gates little of the module; see below). A submodule and `[patch.crates-io]` buy no measured gain, so `build:wasm` requests only `+atomics,+bulk-memory`.
-
-The flag is safe to turn on now: the fit's blur is `fit_grids.slang`, so there is no libblur in the crate for a wasm kernel to be wrong in. The guard that caught it - the e2e assertion that the browser reports `camera match` rather than `neutral` - is still the only thing that would, since nothing native runs the wasm build.
-
-### 21.1.1 What SIMD is actually doing here, which is less than the flag suggests
-
-Toggling `+simd128` changes neither settle nor drag because it gates almost nothing per tick:
-
-- **`fast_image_resize` ignores it.** Its wasm kernels are `#[target_feature(enable = "simd128")]` per function and its `has_simd128()` returns a hardcoded `true` on wasm32, so the resize is vectorised whether or not the flag is set. It is also the only vectorised code in the module: 14,306 of the 14,306 SIMD instructions in the shipped `.wasm`, all of them still there in the scalar build.
-- **libblur was flag-gated** (`cfg(all(target_arch = "wasm32", target_feature = "simd128"))`) and ran once per open, inside the fit, so it never showed up in a per-tick figure either way - and its flag-gated path was the broken one above. The fit's blur is `fit_grids.slang` now, so neither the breakage nor the count survives.
-- **LibRaw, libaom and libavif are not vectorised at all**, and deliberately - a deliberate choice of the wasi-sdk build. Enabling `-msimd128` across the three raises the count to 465k and makes everything 30-130% slower, the still route's pure-Rust drag included, because the module grows 2MB and the engine's cost for that exceeds what the lanes save.
-- **Our own grade is scalar Rust** that LLVM does not appear to vectorise - but see below, because it is not where the time goes either.
-
-**A settle is a second of `image::finish` and very little else.** Timed inside `grade_from` at the default 3840 edge, a 2566x3840 frame in Chromium, two samples each:
-
-| stage  | ms                          | what it is                                              |
-| ------ | --------------------------- | ------------------------------------------------------- |
-| copy   | 3-5                         | the prepared frame into the working buffer              |
-| grade  | 118-146                     | `tone::grade`, the exposure and the fitted camera curve |
-| pq     | 6-15                        | `tone::encode_pq`, a LUT and a lookup                   |
-| finish | **837-1035**                | `image::finish` - denoise, defringe, sharpen            |
-| emit   | 106-190 / 146-189 / 617-798 | pack for a track / PNG / AVIF                           |
-
-So the still route's 1.2s and the rewrap route's 1.7s are 80% and 60% one function, and the grade proper is a tenth of either. `finish` is not slow through carelessness - it is already rayon-parallel throughout - it is five guided-filter passes plus a Richardson-Lucy deconvolution over three f32 planes of 9.8M pixels, each allocating its own. Optimising the arithmetic of the grade, or vectorising it, addresses the 130ms.
-
-Two substantial options remain unimplemented: reduce `finish` through fewer passes, reused buffers or whole-frame `measure_defocus` reused across ticks; or emit the grade immediately, then the finished frame. The latter preserves the resting picture and roughly quarters perceived latency, but needs two encodes per settle and changes the editor's contract.
-
-**There is no AVX to reach for, in any browser.** WebAssembly SIMD is 128-bit `v128` and nothing else; the 256-bit AVX intrinsics Emscripten documents are emulated as two 128-bit operations, which is source compatibility rather than width, and the proposal for genuinely wider vectors (flexible vectors) is unshipped everywhere. The one step up is relaxed SIMD - still 128-bit, mostly FMA and relaxed lane ops - and it is unavailable to us twice over: Safari does not support it (Chrome 114+, Firefox 146+), and Safari is a blessed platform, so the module would be refused outright there rather than degraded. Measured anyway: building with `+relaxed-simd` emits _zero_ relaxed instructions and leaves the SIMD count byte-identical, so there is nothing in this module for it to improve.
-
-### 21.1.2 The merge page draws through the stage's own pipeline, not a second one
+### 21.1.1 The merge page draws through the stage's own pipeline, not a second one
 
 The take-best-parts merge page (§18.3.5) also draws pipeline output outside a stored rendition;
 the same prohibition on a second implementation applies.
 
 **Every preview on the page, a hover or a pick, is the viewer's own pipeline with one addition: a
 mask.** `stage.slang`'s `stage_light` is the whole of what turns a decoded plane into a canvas pixel - the
-planes read, PQ taken back to nits, rolled into the display's headroom, rotated onto the canvas's primaries
-
-- and it is called once, from both `planar` and `planar_masked`, so a masked draw is the same picture with
-  an alpha rather than a second copy of that arithmetic. `StagePainter.paintMasked` (`stage_gpu.ts`) draws the base layer
-  opaque, then each source a tile currently picks blended over it, its alpha sampled from an 8-bit mask
-  `merge_mask.ts` rasterises from the tile outlines on an offscreen 2D canvas - fine for a mask, where it
-  would not be for the picture itself. Hovering a swatch and clicking it call the identical draw, so the two
-  look the same on screen and differ only in whether the choice survives the pointer leaving.
+planes read, PQ taken back to nits, rolled into the display's headroom, rotated onto the canvas's primaries -
+and it is called once, from both `planar` and `planar_masked`, so a masked draw is the same picture with
+an alpha rather than a second copy of that arithmetic. `StagePainter.paintMasked` (`stage_gpu.ts`) draws the base layer
+opaque, then each source a tile currently picks blended over it, its alpha sampled from an 8-bit mask
+`merge_mask.ts` rasterises from the tile outlines on an offscreen 2D canvas - fine for a mask, where it
+would not be for the picture itself. Hovering a swatch and clicking it call the identical draw, so the two
+look the same on screen and differ only in whether the choice survives the pointer leaving.
 
 **One render pass, one submit, and every plane copied out before the canvas is touched.** A composite cannot
 be spread over several frames: `VideoFrame.copyTo` answers a task or more later, a canvas texture is presented
@@ -97,52 +61,47 @@ every layer is an HDR-decoded `VideoFrame`. Avoid `createImageBitmap`, which ton
 
 **What stays out of the browser is a masked, feathered, multi-layer composite of its own** - the band split
 that hides a residual seam and the per-source weight that decides how far a feather reaches - which is
-exactly the kind of second answer this pipeline has already lost to drift, twice, silently (§21.1). There is
-no AVIF decoder in an editor wasm build and no compute pipeline in `web/src` to run one through, so a masked
-_draw_ of layers already decoded for the canvas is the whole of what the browser is trusted to do here; the
-render that actually blends the bands and the weights runs once, in the one native crate, on the server.
+exactly the kind of second answer that drifts silently (§21.1). A masked _draw_ of layers already decoded
+for the canvas is the whole of what the browser is trusted to do here; the render that actually blends the
+bands and the weights runs once, in the one native crate, on the server.
 
 **A pick that stands still for 400ms is asked for as a render**, and the server's own picture of it
 replaces the masked draw in place. The masked draw is what a hover and a click show at once, because
 a render is most of a second; the render is what answers "is this what Save writes", because it is
-that picture at the layers' size. Each is keyed by what it draws (`pictureKeyOf`), so stepping back
+that picture at the layers' size. Each is keyed by what it draws (`MergeStore.keyOf`), so stepping back
 to a pick already seen is the file rather than a second render of it, and every one is reaped with
 the draft it sits beside.
 
 **Save** posts the finished recipe straight to the route that commits or updates the photograph
 (§18.3.5).
 
-### 21.2 Three engines, three routes
+### 21.2 How each engine shows the frame
 
-Only the route to the compositor differs by browser; each branch is measured:
+The frame reaches the compositor the same way in Chromium and Safari: an `rgba16float` WebGPU
+canvas configured with `toneMapping: extended`, which is what makes a compositor show values above
+SDR white, drawn by the module on the GPU thread. Both light an HDR panel above SDR white from it.
+An engine without WebGPU has no editor (`wasm::needs_webgpu`).
 
-- **Chromium, anywhere: a video track.** It accepts a 10-bit `VideoFrame` and composites a PQ track. Also the cheapest route there is - no encode, no blob, no decode, just planes handed to a sink. Where the track is _created_ is itself forced: Chromium's `MediaStreamTrackGenerator` is a track, and a track is neither transferable nor cloneable, so it is built on the main thread and fed from the worker; Safari's standard `VideoTrackGenerator` exists only in a worker and hands a track back. Two paths, no way to unify them.
-- **Safari on macOS and iOS: a PNG per tick.** WebKit validates `I420` and `NV12` alone, so a track there is 8 bits, and Apple's guidance for the layer behind a `MediaStream` is that sample buffers need 10 or more to reach EDR - the PQ tag is accepted and then tone-mapped, which on an XDR panel is a washed-out picture. A PNG goes through Core Graphics, which reads CICP and has no bit-depth floor, and carries 16 bits at 4:4:4. The better frame, the worse drag: measured at 9fps against 12, and 1.4GB resident against 841MB.
-- **Firefox: a 12-bit AV1 per tick, rewrapped as an MP4.** Gecko composites HDR through video and only video, and every in-page route to a video frame is capped at 8 bits - which it then will not composite either. So the frame is encoded properly and handed over in the container Gecko will take. See below.
+**Firefox shows HDR only through `<video>`** (§10.7.2), and refuses an `rgba16float` canvas
+outright. So there the stage, the loupe and an isolated colour wheel draw into held textures, and
+each tick hands back what it drew as PQ Rec.2020 4:2:0 ten-bit planes (`pq420.slang`). The page
+encodes them as a one-frame VP9 profile 2 stream with libvpx, built for `wasm32-wasip1-threads`
+(`native/vp9_encode`, `bun run get:vpx`) with up to eight threads and one encoder per surface, wraps
+that as an MP4 (`vp9FrameToMp4`) and shows it in a `<video>` over the canvas, which keeps the
+pointer and the accessible name (`canvas_video.tsx`). About 30ms a 1080p frame, all of it on top of
+the tick; a banner over the viewer and the editor says so (`quality_notice.tsx`). The panel
+thumbnails are packed to eight-bit sRGB (`pack_srgb8`) and drawn to a PNG in every engine.
 
-The e2e-only `?route=` query param compares routes on one machine. The viewer has no route picker.
+**WebKit caps a transferred canvas at the headroom of its default HDR image content**: 1000 nits
+over 203, whatever the display reaches, while a canvas the page configures on its own device is not
+capped. So on WebKit, and only where the display's peak can pass 1000 nits, the canvas stays on the
+page and the GPU thread hands back what it drew as RGB9E5 words, which the page draws through
+`readback.slang` (`web/src/gpu/readback_canvas.ts`). Everywhere else the canvas is transferred and
+nothing comes back.
 
-**The still route's memory is the browser's, and no page can get it back.** A URL per tick is a decode per tick, and Chromium holds those in `cc::ImageDecodeCache` outside the JS heap: a six-second drag at 1920 adds ~500MB that a forced major GC does not touch. It is a cache rather than a leak - four drags grow it 1.5x, and a critical memory-pressure notification returns ~330MB - but every lever that returns it belongs to the browser. Measured and all within noise: revoking sooner, reusing one `Image` (the cache is keyed by URL and there is a new one each tick), blanking the decoded element's `src`, freezing the page. The pressure notification is DevTools protocol only, and the API that would have exposed it to a page is an archived WICG proposal. Explicit lifetimes exist exactly once, on `ImageDecoder` and `close()` - which decodes to a `VideoFrame`, so it is the route this one is the fallback for.
+### 21.3 Where the state lives
 
-### 21.3 Firefox: the encoder moves into the module
-
-Firefox's rendition rewrap (§10.7.2) changes only the container around existing AV1. **A live edit must first encode that AV1.**
-
-Not with WebCodecs. Its input is a `VideoFrame`, which Gecko accepts as 8-bit `I420` or `NV12` and nothing else, so the depth ceiling is in the _frame_ type rather than the codec - VP9 profile 2 and HEVC are shut out by the same wall. And 8 bits would not have been enough anyway: an 8-bit PQ AV1 in an MP4, correctly tagged, does not composite as HDR on 153/Windows, measured against a 10-bit control of the same frame on the same page and the same panel. The 10-bit one lights the display and the 8-bit one does not.
-
-So the encoder is **libaom, compiled into the wasm module**, taking the graded samples directly and never passing through a `VideoFrame`. rav1e was the obvious candidate - pure Rust, smaller - and is the wrong one: it would be a _second_ AV1 encoder with its own colour handling to keep in step with the first, which is the divergence §21.1 exists to prevent. libaom keeps the promise that the frame in the viewer is the frame the library writes, because it is literally `avif::encode_still` under the CICP a rendition uses. The page then hands the AVIF to `avifToMp4` - the same rewrap the photo view uses on stored renditions, so there is one implementation of the container trick and not one per caller.
-
-Two settings are the editor's own rather than the library's, because a frame that lives for one slider tick and never reaches a disk is not a size decision: fastest speed, and a quantizer low enough to judge on. Chroma is forced to 4:2:0 whatever `sdr_full_chroma` says, since Firefox decodes 4:4:4 AV1 in software and then declines to composite it in HDR (§10.7).
-
-**It builds with wasi-sdk, not emscripten** (the wasm library build), which is what makes it a static archive that links into an ordinary `wasm32-unknown-unknown` cdylib with wasm-bindgen still owning the boundary - the same route LibRaw already took. `AOM_TARGET_CPU=generic` drops every x86 and NEON path, and the C fallbacks are complete. It is built single-threaded: libaom would otherwise call `pthread_create`, which under wasip1-threads wants a `wasi_thread_spawn` import no browser provides, and this module's threads come from wasm-bindgen-rayon. What is lost is tile threading on a frame the grade has already parallelised into.
-
-Two things in that build are silent when wrong and cost an afternoon each. libaom signals codec errors with `setjmp`/`longjmp`, which on wasm lowers onto exception handling: it needs `-mllvm -wasm-enable-sjlj`, it must link wasi-libc's `libsetjmp.a` or the runtime calls become imports from an `env` module that **the link still accepts**, and it has to use the same non-legacy EH encoding as the prebuilt libc++abi or the browser refuses the whole module. And `find_package(libsharpyuv QUIET)` finds the _host's_ copy and links an x86 archive into a wasm one, so the build script asserts no archive references it.
-
-**The cost, measured.** The module goes from 2.87MB to 6.72MB, and 896KB to 2.08MB gzipped - it more than doubles. Tolerable only because the module is fetched by the editor's worker and nothing else, so no one browsing photos pays for it. On a 9.9MP frame in Chromium, against the PNG route on the same machine and the same file: a drag tick costs 119ms against 88ms, a settle 1.4s against 1.05s, and both deliver 7-8fps. The encode is therefore _not_ what limits the drag on either route; swapping a fresh blob into an element each tick is.
-
-### 21.4 Where the state lives
-
-`EditStore` holds what every tool reads - the document, its revision, undo and save - and `StageStore`, `CropStore`, `KeystoneStore`, `RepairStore` and `LoupeStore` hold their own, each taking a one-way reference to the peers it reads. A presenter per domain is the only writer of its store, and `RawEditPresenter` owns the worker, the track and every object URL. They are constructed when edit mode or the viewer's print mockup is entered on the photo detail page, and torn down when it is left or the photo changes - never for an ordinary viewer visit - rather than in the app's provider (§18.2), because the presenter owns a worker and a few hundred MB of wasm heap. A new route rebuilds them, since the route is fixed at decode.
+`EditStore` holds what every tool reads - the document, its revision, undo and save - and `StageStore`, `CropStore`, `KeystoneStore`, `RepairStore`, `ColourWheelStore`, `LoupeStore` and `PrintStore` hold their own, each taking a one-way reference to the peers it reads. A presenter per domain is the only writer of its store, and `RawEditPresenter` owns the open: its session on the GPU thread and the canvases it hands over. The stores are constructed when edit mode or the viewer's print mockup is entered on the photo detail page and torn down when it is left - never for an ordinary viewer visit - rather than in the app's provider (§18.2), because an open holds the RAW, the frame and its tiles on the device. `RawEditPresenter` is built per photo over them; closing it frees the photo's state on the GPU thread but keeps the stage there for the next photo to draw onto (`EditSurface`), which the visit drops when it ends.
 
 Drag requests **coalesce rather than queue**: only the latest position remains outstanding, avoiding slow-motion replay after release.
 
@@ -183,7 +142,8 @@ time a canvas sees them. So the viewer and the mockup decode a rendition themsel
 (`native/avif_planes`), built for `wasm32-wasip1-threads` because it cannot build for
 `wasm32-unknown-unknown`, returning exactly the planes `copyTo` would (pinned sample for sample
 against libavif, grids included, through the files and planes `tables/avif-planes.txt` lists).
-`web/src/avif/` hosts it: a worker holding the instance, and a pool of workers started ahead of time as its threads,
+`web/src/avif/` hosts it: a worker holding the instance, and a pool of workers started ahead of time as its threads
+(`web/src/wasi/`, shared with the VP9 encoder),
 handed each thread through shared memory because the decode that spawns one never returns to its
 event loop until it is done. Shared memory is why the app is served cross-origin isolated
 (`src/schemas/isolation.ts`), and the pool is why the decode costs 90ms for a 10MP rendition rather
@@ -228,8 +188,8 @@ drags the view across, and Home or a double-click puts all three back. Zoom is t
 rather than a scale on the drawn canvas, so a print seen closer is a print seen closer: the
 perspective narrows and the sheen moves with it, where scaling the canvas would only enlarge the
 same picture. The camera fits the sheet's own outline to the canvas, so a landscape sheet fills a
-landscape canvas as far as a portrait one does; fitted to the long edge alone it lay along the
-canvas's long edge and covered half the frame. The panel controls the material and the light, and
+landscape canvas as far as a portrait one does, where one fitted to the long edge alone would lie
+along the canvas's long edge and cover half the frame. The panel controls the material and the light, and
 every slider carries the editor's reset arrow and double-click back to its rest - for a paper
 control, the chosen paper's own value, which is also what choosing a paper puts every material
 control back to. The mockup is the viewer's own screen, so a sidebar the viewer hides stays hidden
@@ -269,9 +229,9 @@ sheen is a reflection of the map along the mirrored direction, read at the mip l
 and follows what the sheet is turned towards; the other downlights and the windows are what makes it
 a reflection rather than a veil. What is behind the print is the same map along each camera ray, and
 it and every mirror image of it are 0.012 radians out of focus, as a 50mm lens at f/2.8 focused on
-the print leaves a room a few metres behind it. The map is read through a cubic B-spline rather than
-bilinearly, which drew its texel grid into a window brighter than white once the display's roll-off
-flattened each ramp. The reader is in that room too, and is a body rather than a
+the print leaves a room a few metres behind it. The map is read through a cubic B-spline: a
+bilinear read draws its texel grid into a window brighter than white once the display's roll-off
+flattens each ramp. The reader is in that room too, and is a body rather than a
 head: a third of a radian across and most of a radian tall, standing on the floor rather than
 floating at eye level, so the silhouette hangs below the direction a square-on sheet mirrors into
 the eye and reaches half the room's own radiance. A print faced straight therefore reflects a
@@ -315,7 +275,7 @@ grass, and the hotel room 30 of downlight against 15, which the exposure's floor
 Both lux controls slide in decades, from 1 to 150000, so a dim room and the sun each get a usable
 stretch of track. The lamp is placed by where it hangs rather than by
 its angle: across, up and forward from the sheet's centre in print lengths, at most ten, which is
-where the sun stands. Angles alone left the
+where the sun stands. Angles alone leave the
 one question a reader asks of a room light - is it behind me or in front of the picture - with no
 control of its own. The source spans a tenth of a degree to ninety, slid
 in decades so a pinpoint lamp and a broad one each get a usable stretch of track. Below about a degree the
@@ -354,11 +314,11 @@ the emitter.
 **What the print costs is the emitter's integral, and it is paid per canvas pixel on the desktop
 path and per field texel on the touch one.** Four things keep it in proportion. The emitter is
 sampled against how much of the sky it covers, from 64 for a small lamp to 128 for a broad one, since a
-source a degree across hardly varies over its own solid angle. Sampling the lobe as well is dropped
-where the emitter is the smaller of the two: balance-weighted MIS is unbiased either way, and the
-lobe's strategy finds a one-degree lamp once in a hundred tries for a hundred times the value, which
-is variance and not signal - held against a thousand-sample render, the pair costs a third of the
-frame and lands closer than the old estimator did.
+source a degree across hardly varies over its own solid angle. Where the emitter is the smaller of
+the two, only the emitter is sampled, not the lobe as well: balance-weighted MIS is unbiased either
+way, and the lobe's strategy finds a one-degree lamp once in a hundred tries for a hundred times the
+value, which is variance and not signal - held against a thousand-sample render, the pair costs a
+third of the frame and lands closer than sampling both strategies does.
 The third is that those counts are the _specular's_. Under a hundredth of a steradian - a small
 lamp, not a broad one - every geometric factor is constant across the emitter's face, so the diffuse
 half of the same pixel is the diffuser's mean radiance times one cosine, in closed form, at one
@@ -412,15 +372,15 @@ incidence for the 1.25 of a microporous gloss or satin coat, a twenty-fifth for 
 nothing about its width. Satin sits at 0.28, where a one-degree lamp is a soft spot rather than a
 glow across half the sheet.
 
-### 21.5 Tests
+### 21.4 Tests
 
-E2e pins cross-origin isolation and the thread pool: without `SharedArrayBuffer`, the module silently falls back to one thread. The still route checks PQ tagging in the bytes delivered to the browser, using a graded ARW fixture. Four cICP bytes make it HDR; losing them leaves a valid SDR PNG that passes every other downstream check.
-
-The rewrap similarly checks the delivered MP4's `colr` box and AV1 configuration record's `high_bitdepth` bit. A frame lacking high-bit-depth PQ is wrong regardless of browser acceptance.
-
-**A rendition is twelve-bit now, which is AV1 Professional profile, and this is the route that route is most exposed on.** The rewrap copies the file's own `av1C` verbatim, so it carries whatever the still was written at, and a still decoder taking profile 2 says nothing about a _video_ pipeline taking it - which is the one Firefox composites HDR through. Untested here, and the failure would be Firefox showing nothing rather than showing it flat.
-
-This spec is the second one to run under Gecko as well as Chromium, and the only one whose _subject_ is an engine - a route that exists for Firefox and is exercised only in Chromium is tested everywhere except where it matters. It confirms the mechanism end to end there: shared memory, the thread pool, LibRaw, libaom and the rewrap. What it cannot confirm is the pixels reaching an HDR compositor, which no automated check can read back on any of the three routes.
+Three suites check the editor's GPU path, and they fail at different places: `gpu_shader.rs` the
+shader arithmetic, `gpu_fixture.rs` that the grade still draws its snapshots, both in-process against
+a Vulkan adapter, and `editor/raw_editing.spec.ts` that a real photo reaches the browser's own adapter
+through the wasm module and comes back live, the camera match included (`data-matched`, §21.1). The
+e2e spec is the only one that can see the bindings and the page disagreeing. It runs in Chromium
+alone: the editor needs WebGPU, which the Linux Firefox the suite runs does not ship. What no
+automated check can confirm is the pixels reaching an HDR compositor.
 
 ## 22. What HDR is for (`/hdr`)
 
@@ -466,7 +426,7 @@ This cost a day to find, and every wrong turn on the way is instructive about ho
 
 **The swap is an opacity change on two mounted, decoded frames**, which is the stack triage flip (§20.4) and works for the same reason: `will-change: opacity` keeps the hidden one rasterised, so a press costs no repaint. Nothing on that subtree or above it may carry a filter, a transform or a partial opacity - any of those rasterises into an SDR intermediate and loses the PQ tagging silently (§10.7). That constraint is also why the reading column is left-aligned rather than centred, in passing: `.pad`'s first child reserves an inline gap for the collapsed sidebar's floating button, and a centred column would carry that indent on the heading and nowhere else.
 
-Firefox uses the photo view's `useHdrVideo` rewrap. Three mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The 4:4:4 swatch strip does not use this path.
+Firefox uses the photo view's `useHdrVideo` rewrap, of each scene's committed `-hdr-10bit.avif` (§10.7.2). Three mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The swatch strip is rewrapped from its own file, which is 10-bit 4:2:0 already.
 
 **Swatch strips are the page's only synthetic content.** They explain brightness above white before the photographs: five colours start at their 8-bit maximum and rise to their format's limit. Quantisation is lossless; flat colour has no detail to trade away.
 
@@ -512,4 +472,4 @@ The rows under the JPEG are the reason this is worth drawing four times. **Two o
 
 **Every desktop and Android build pays 845kB:** `public/` is copied into `web/dist`, which each app's server serves. Halving assets introduces artefacts in the highlights being demonstrated; lazy-loading saves nothing for readers reaching the bottom.
 
-The shell, or in a browser `(dynamic-range: high)`, decides whether to say the display is SDR, and the copy hedges rather than hiding anything: Firefox answers `standard` on an HDR display. On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.
+The shell, or in a browser `(dynamic-range: high)` or `(video-dynamic-range: high)`, decides whether to say the display is SDR. The second query is Firefox's: it answers `dynamic-range` `standard` on an HDR display, and is shown this page's pictures as video (§10.7.2). On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.

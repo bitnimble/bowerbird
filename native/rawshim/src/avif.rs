@@ -271,11 +271,33 @@ fn decode_at_with_rotation(
     depth: u32,
     rotate: bool,
 ) -> Result<(Vec<u16>, usize, usize), String> {
+    let (samples, width, height, tags) = decoded(bytes, depth)?;
+    let angle = if rotate { tags.irot } else { 0 };
+    Ok(rotate_samples(samples, width, height, angle))
+}
+
+/// What a still's container says about its picture, beyond the samples.
+struct Tags {
+    cicp: Cicp,
+    range: raw::avifRange,
+    light: Option<crate::hdr_args::ContentLight>,
+    /// `irot`'s anticlockwise quarter turns, 0 where the file has none.
+    irot: u8,
+}
+
+impl Tags {
+    /// The clockwise turn `converted` takes to write this `irot` back.
+    fn rotate(&self) -> u16 {
+        u16::from((4 - self.irot % 4) % 4) * 90
+    }
+}
+
+fn decoded(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize, Tags), String> {
     let decoder = Decoder::new()?;
     let image = Image::empty()?;
 
-    // SAFETY: both handles are live for the block, and `source.pixels` points into `data`, which
-    // outlives the conversion.
+    // SAFETY: both handles are live for the block, and `source.pixels` points into `deep` or
+    // `shallow`, which outlive the conversion.
     #[expect(unsafe_code)]
     unsafe {
         (*decoder.0).maxThreads = max_threads();
@@ -285,19 +307,21 @@ fn decode_at_with_rotation(
         }
 
         let (width, height) = ((*image.0).width as usize, (*image.0).height as usize);
-        // libavif writes one byte per sample at 8 and two above it, in host order, so the
-        // buffer is bytes either way and the samples are widened once it has filled it.
-        let stride = match depth > 8 {
-            true => 2,
-            false => 1,
-        };
-        let mut data = vec![0u8; width * height * 3 * stride];
+        // libavif writes one byte per sample at 8 and a host-order `u16` above it, so a deep
+        // frame is written straight into its samples and only a shallow one is widened after.
+        let wide = depth > 8;
+        let count = width * height * 3;
+        let mut deep = vec![0u16; if wide { count } else { 0 }];
+        let mut shallow = vec![0u8; if wide { 0 } else { count }];
         let mut source = std::mem::zeroed::<raw::avifRGBImage>();
         raw::avifRGBImageSetDefaults(&mut source, image.0);
         source.format = AVIF_RGB_FORMAT_RGB;
         source.depth = depth;
-        source.pixels = data.as_mut_ptr();
-        source.rowBytes = (width * 3 * stride) as u32;
+        source.pixels = match wide {
+            true => deep.as_mut_ptr().cast(),
+            false => shallow.as_mut_ptr(),
+        };
+        source.rowBytes = (width * 3 * if wide { 2 } else { 1 }) as u32;
         // The direction libavif *will* thread, and the only one: the field on the encoder is
         // documented as ignored for RGB to YUV, which is why that way round is banded by hand.
         source.maxThreads = max_threads();
@@ -309,17 +333,50 @@ fn decode_at_with_rotation(
                 message(status)
             ));
         }
-        let samples = match stride {
-            1 => data.iter().map(|v| u16::from(*v)).collect(),
-            _ => bytemuck::pod_collect_to_vec(&data),
+        let samples = match wide {
+            true => deep,
+            false => shallow.iter().map(|v| u16::from(*v)).collect(),
         };
-        let angle = if rotate && (*image.0).transformFlags & AVIF_TRANSFORM_IROT != 0 {
-            (*image.0).irot.angle
-        } else {
-            0
+        let image = &*image.0;
+        let tags = Tags {
+            cicp: Cicp {
+                primaries: image.colorPrimaries,
+                transfer: image.transferCharacteristics,
+                matrix: image.matrixCoefficients,
+            },
+            range: image.yuvRange,
+            light: (image.clli.maxCLL != 0).then_some(crate::hdr_args::ContentLight {
+                max_cll: image.clli.maxCLL,
+                max_fall: image.clli.maxPALL,
+            }),
+            irot: match image.transformFlags & AVIF_TRANSFORM_IROT != 0 {
+                true => image.irot.angle,
+                false => 0,
+            },
         };
-        Ok(rotate_samples(samples, width, height, angle))
+        Ok((samples, width, height, tags))
     }
+}
+
+/// `bytes`, a high-bit-depth PQ still, re-encoded at the one AV1 shape Firefox composites as HDR
+/// video: 10-bit 4:2:0. A twelve-bit or 4:4:4 one plays there with no transfer applied, flat.
+pub fn ten_bit_copy(bytes: &[u8], quantizer: i32, speed: i32) -> Result<Vec<u8>, String> {
+    let (samples, width, height, tags) = decoded(bytes, 16)?;
+    encode_avif(
+        std::borrow::Cow::Owned(samples),
+        16,
+        tags.range,
+        width,
+        height,
+        10,
+        AVIF_PIXEL_FORMAT_YUV420,
+        &tags.cicp,
+        tags.light,
+        quantizer,
+        speed,
+        tags.rotate(),
+        None,
+    )
 }
 
 fn rotate_samples(
@@ -452,9 +509,9 @@ pub fn gain_map(
 /// 795MB fitted to 3840 and 2199MB at native, and twelve bits is 1-4% of that. Multiply by
 /// `processing_concurrency` on a machine that starts OOM-killing; DESIGN 10.7 has the rest.
 ///
-/// Bytes rather than a path because the browser has neither (DESIGN 21.3). The frame is
-/// what costs; the encoded file is single-digit MB, so carrying it back through a `Vec`
-/// is not the copy worth avoiding.
+/// Bytes rather than a path, for a caller that puts the still inside another file
+/// (`avif_gain_write`) or measures it. The frame is what costs; the encoded file is
+/// single-digit MB, so carrying it back through a `Vec` is not the copy worth avoiding.
 pub fn encode_still(
     pq: std::borrow::Cow<'_, [u16]>,
     width: usize,
@@ -1240,6 +1297,74 @@ mod tests {
                 bands(AVIF_PIXEL_FORMAT_YUV444, 96, &[64, 64, 64, 8]),
             ),
         ]
+    }
+
+    #[test]
+    fn the_firefox_copy_is_ten_bit_four_two_zero_and_keeps_the_stills_tags() {
+        let (width, height) = (63usize, 47usize);
+        // One ramp under all three channels, so 4:2:0 has no chroma detail to lose.
+        let picture: Vec<u16> = (0..width * height)
+            .flat_map(|at| {
+                let ramp = ((at % width) * 300 + (at / width) * 200) as u16;
+                [24_000 + ramp, 20_000 + ramp, 16_000 + ramp]
+            })
+            .collect();
+        let options = StillOptions {
+            cicp: Cicp {
+                primaries: 9,
+                transfer: 16,
+                matrix: 9,
+            },
+            format: AVIF_PIXEL_FORMAT_YUV444,
+            quantizer: 0,
+            speed: 10,
+            light: Some(crate::hdr_args::ContentLight {
+                max_cll: 1000,
+                max_fall: 400,
+            }),
+        };
+        let still = encode_still_rotated(picture.into(), width, height, &options, 90, None)
+            .expect("encodes");
+        let copy = ten_bit_copy(&still, 0, 10).expect("the copy encodes");
+
+        let decoder = Decoder::new().expect("a decoder");
+        let image = Image::empty().expect("an image");
+        // SAFETY: both handles are live for the block.
+        #[expect(unsafe_code)]
+        let (depth, format, cicp, range, clli, irot) = unsafe {
+            let status = raw::avifDecoderReadMemory(decoder.0, image.0, copy.as_ptr(), copy.len());
+            assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the copy");
+            let image = &*image.0;
+            (
+                image.depth,
+                image.yuvFormat,
+                (
+                    image.colorPrimaries,
+                    image.transferCharacteristics,
+                    image.matrixCoefficients,
+                ),
+                image.yuvRange,
+                (image.clli.maxCLL, image.clli.maxPALL),
+                (image.transformFlags & AVIF_TRANSFORM_IROT != 0).then_some(image.irot.angle),
+            )
+        };
+        assert_eq!(depth, 10);
+        assert_eq!(format, AVIF_PIXEL_FORMAT_YUV420);
+        assert_eq!(cicp, (9, 16, 9));
+        assert_eq!(range, AVIF_RANGE_LIMITED);
+        assert_eq!(clli, (1000, 400));
+        assert_eq!(irot, Some(3), "the 90 degree turn the still asked for");
+
+        let (before, ..) = decode_at_unturned(&still, 16).expect("the still decodes");
+        let (after, ..) = decode_at_unturned(&copy, 16).expect("the copy decodes");
+        let worst = before
+            .iter()
+            .zip(&after)
+            .map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs())
+            .max()
+            .unwrap_or(0);
+        // A limited-range 10-bit step is 75 sixteen-bit codes.
+        assert!(worst <= 150, "a sample {worst} codes from the still's");
     }
 
     #[test]

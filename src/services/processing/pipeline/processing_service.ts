@@ -28,6 +28,7 @@ import {
   renditionVariant,
   renditionVariants,
   sourceFor,
+  tenBitCopyDirs,
 } from '../renditions/renditions';
 import { readStages, withStagesOff } from '../renditions/render_stages';
 import { ProcessingPool } from '../workers/processing_pool';
@@ -604,6 +605,15 @@ export class ProcessingService extends RenderService {
       if (keep.has(file)) continue;
       this.photoProcessing.forgetBuilt(photo.photoId, [variant]);
       void deleteGeneratedFile(photo.dataPath, file).catch(() => {});
+    }
+    for (const dir of tenBitCopyDirs()) {
+      const copy = path.join(
+        photo.dataPath,
+        'renditions',
+        dir,
+        `${photo.photoId}${RENDITION_EXTENSION}`,
+      );
+      void deleteGeneratedFile(photo.dataPath, copy).catch(() => {});
     }
   }
 

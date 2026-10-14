@@ -35,7 +35,9 @@ crates.io - `heic` and `heic_decoder` - are AGPL-3 or a paid commercial licence,
 (`native/heif`), and AVIF is the libavif already linked below on the server. `rav1d`
 (BSD-2-Clause) cannot build for `wasm32-unknown-unknown`, so rawshim's browser build reads no AVIF;
 it does build for `wasm32-wasip1-threads`, which is `native/avif_planes`, the AV1 decoder a browser
-with no `ImageDecoder` gets (Safari). The remaining Rust and TypeScript dependencies are not listed
+with no `ImageDecoder` gets (Safari). **libvpx** 1.17.0 (BSD-3-Clause) is linked statically into
+`native/vp9_encode`, also `wasm32-wasip1-threads` with wasi-libc, the encoder Firefox's editor
+shows its HDR frames through. The remaining Rust and TypeScript dependencies are not listed
 here: they are resolved from `Cargo.lock` and `bun.lock`, and all are permissive.
 
 ## The C libraries the server links

@@ -5,6 +5,7 @@
 // settings. A canvas the page configures on its own device is not capped. So on WebKit, and only
 // where the display's peak can pass that cap, a canvas stays on the page and the worker hands back
 // what it drew instead of drawing into it.
+import { needsHdrVideo } from 'avif-hdr-video';
 import READBACK_WGSL from '../features/photos/generated/readback.wgsl?raw';
 import { screenStore } from '../app/screen_store';
 
@@ -24,6 +25,14 @@ export interface ReadFrame {
 export function drawsOnThePage(peak: number | null): boolean {
   if (!isWebKit() || peak == null) return false;
   return Math.max(peak, screenStore.potentialNits ?? 0) > TRANSFERRED_PEAK_NITS;
+}
+
+/**
+ * Whether the editor's canvases are shown as video: Firefox composites HDR for video and nothing
+ * else (bug 1889288), and refuses the `rgba16float` canvas besides (bug 1834395).
+ */
+export function showsAsVideo(): boolean {
+  return needsHdrVideo();
 }
 
 export function transferredPeakNits(peak: number | null): number | null {

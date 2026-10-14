@@ -36,7 +36,10 @@ export class ColourWheelStore {
 
   @observable accessor selectedIndex: number | null = null;
 
-  @observable.ref accessor drawn: WheelDrawn | null = null;
+  @observable.ref accessor drawn: Omit<WheelDrawn, 'video'> | null = null;
+
+  /** The wheel's last draw as a one-frame MP4, where it is shown as video. */
+  @observable.ref accessor videoFrame: Uint8Array<ArrayBuffer> | null = null;
 
   @observable.ref accessor dots: readonly Dot[] = [];
 

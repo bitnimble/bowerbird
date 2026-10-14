@@ -81,7 +81,7 @@ export const DEMO = {
     divider: 'Divider between the SDR and HDR renditions',
     sdrAlt: (scene: string) => `${scene}, as an ordinary JPEG`,
     hdrAlt: (scene: string) => `${scene}, in HDR`,
-    note: 'Viewing HDR needs an HDR display, and Chrome or Safari.',
+    noHdrDisplay: "We didn't detect an HDR display, so HDR may look wrong.",
   },
   colour: {
     label: 'Colour profile',

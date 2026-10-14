@@ -22,9 +22,10 @@ const styles = stylex.create({
     justifyContent: 'space-between',
     gap: '8px',
   },
-  note: {
+  warning: {
     margin: 0,
     lineHeight: 1.6,
+    color: color.ochre,
   },
 });
 
@@ -46,9 +47,9 @@ export function DemoBar({ children }: { children: ReactNode }): JSX.Element {
   return <div {...stylex.props(styles.bar)}>{children}</div>;
 }
 
-export function DemoNote({ children }: { children: ReactNode }): JSX.Element {
+export function DemoWarning({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <Text as="p" variant="mono" style={styles.note}>
+    <Text as="p" variant="mono" style={styles.warning}>
       {children}
     </Text>
   );

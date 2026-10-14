@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Maximize, Minimize } from 'lucide-react';
 import { Button } from '../../../ui/button';
@@ -186,6 +186,8 @@ interface Props {
    * reader zoomed in and panning finds it in the same place.
    */
   status?: { label: string; busy: boolean } | null;
+  /** A banner along the top of the stage. */
+  banner?: ReactNode;
   /** The photo's original is only on devices this one cannot dial, so no frame will arrive. */
   unreachable?: boolean;
   /**
@@ -225,6 +227,7 @@ export function PhotoStage({
   zoomInto,
   fullscreenRef,
   status = null,
+  banner,
   unreachable = false,
   frameColor,
   style,
@@ -729,9 +732,9 @@ export function PhotoStage({
       next.add(source);
       return next;
     });
-    // Firefox's HDR twin is built in the page out of a still already fetched, so a failure
-    // there is not the server missing a file and there is nothing to build. The frame is
-    // still marked failed, or the stage would keep waiting on it and never say so.
+    // Firefox's HDR twin is a blob made in the page, so a failure there is not the server
+    // missing a file and there is nothing to build. The frame is still marked failed, or the
+    // stage would keep waiting on it and never say so.
     if (isVideo(source)) return;
     onMissing.current?.(source);
   }, []);
@@ -933,6 +936,7 @@ export function PhotoStage({
           createPortal(tools, toolsInto)
         ))}
       {zoomInto != null && createPortal(<ZoomSlider zoom={zoom} />, zoomInto)}
+      {banner}
 
       <div
         ref={viewportRef}

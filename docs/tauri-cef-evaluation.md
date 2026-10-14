@@ -7,8 +7,8 @@ Reviewed: 2026-08-03 (claims re-checked against live GitHub/API, Tauri docs, and
 > for a wasm editor before `src-tauri` existed. The shell now registers `bowerbird://` and
 > answers `invoke`; the editor decodes natively and grades each tick through page-side WGSL.
 >
-> §4.1's premise no longer applies; §4.2's `SharedArrayBuffer` and cross-origin isolation
-> are unnecessary. §5's native Rust streaming into `<video>` was considered and **not**
+> §4.1's premise no longer applies; §4.2's wasm-bindgen-rayon threads are gone, and
+> cross-origin isolation is kept for the WASI modules' threads (`src/schemas/isolation.ts`). §5's native Rust streaming into `<video>` was considered and **not**
 > taken; `docs/raw-edit-gpu.md` §0 and §6.2 explain the current architecture. §6 tests that
 > unbuilt editor.
 >
@@ -28,8 +28,8 @@ Tauri + CEF is what Linux ships. Nothing in the codebase was a hard blocker, and
 §4.4 is now the build rather than a proposal.
 
 The original checks were HDR Chromium parity and cross-origin isolation for
-`SharedArrayBuffer`. Nothing now holds a `SharedArrayBuffer`, so isolation is
-unnecessary. §4.1 proposed Rust grading; the shipped editor grades in page-side
+`SharedArrayBuffer`. The editor's own module holds none; Safari's AV1 decoder and
+Firefox's VP9 encoder do, so isolation stays. §4.1 proposed Rust grading; the shipped editor grades in page-side
 WGSL. **Chromium parity is why Linux takes CEF**: WebKitGTK builds with
 `ENABLE_WEBGPU` off and cannot run the tick.
 See `docs/raw-edit-gpu.md` §0 and §6.2.
@@ -117,7 +117,7 @@ A desktop shell would:
 
 ### 4.1 The editor stops being a wasm problem
 
-The three editor routes (`track` / `still` / `rewrap`, `DESIGN.md` §21.2) handle
+The three editor routes (`track` / `still` / `rewrap`, `DESIGN.md` §21.2 at `v0.1.19`) handle
 arbitrary browser engines and their in-page graded-frame limits. The proposed
 shell avoids both: CEF pins Chromium; native grading builds no page-side frames.
 Either would retire the shell's routes.
@@ -134,7 +134,7 @@ Deleted outright, not mitigated:
   machinery (`MediaStreamTrackGenerator`, `VideoFrame`, the `I444P10` probe) and
   the two fallbacks that only ever existed for other engines.
 - The wasm module in the shell: 6.72MB, 3.85MB of it the libaom encoder and its
-  build (§21.3: wasi-sdk, `setjmp`/`longjmp` lowering, the libsharpyuv
+  build (§21.3 at `v0.1.19`: wasi-sdk, `setjmp`/`longjmp` lowering, the libsharpyuv
   host-archive trap), plus the `+simd128` landmine sitting on `fit::blur`.
 - `SharedArrayBuffer`, and with it §4.2 entirely.
 
@@ -147,9 +147,9 @@ zero bytes and invoke a callback when the next frame arrives
 This removes both blob-per-tick costs:
 
 - **The decode cache.** `cc::ImageDecodeCache` is keyed by URL, which is why a
-  six-second drag adds ~500MB that no page-side lever returns (§21.2,
+  six-second drag adds ~500MB that no page-side lever returns (§21.2 at `v0.1.19`,
   `raw_edit_presenter.ts:250`). One URL for the session, so nothing accumulates.
-- **The drag limiter.** §21.3 measured that "the encode is therefore _not_ what
+- **The drag limiter.** §21.3 at `v0.1.19` measured that "the encode is therefore _not_ what
   limits the drag on either route; swapping a fresh blob into an element each
   tick is". No swap, so that ceiling goes with it.
 
@@ -170,7 +170,7 @@ editor, and live for the browser client either way.
 
 The wasm editor needs `SharedArrayBuffer` for wasm-bindgen-rayon
 (`native/rawshim` + `raw_edit_worker.ts`). Without cross-origin isolation,
-`DESIGN.md` §21.5: failure is a **silent fall back to one thread**. E2e asserts
+`DESIGN.md` §21.5 at `v0.1.19`: failure is a **silent fall back to one thread**. E2e asserts
 `crossOriginIsolated` in `web/e2e/editor/raw_editing.spec.ts`.
 
 Today isolation headers exist only on Vite’s `server` and `preview` (`web/`); the

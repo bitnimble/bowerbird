@@ -10,6 +10,11 @@ export class ScreenStore {
   @observable.ref accessor reading: DynamicRange | null = null;
   /** `(dynamic-range: high)`, which WKWebView and Android's WebView answer "no" on HDR screens. */
   @observable accessor mediaHdr = false;
+  /**
+   * `(video-dynamic-range: high)`, which Firefox answers "yes" on an HDR screen where `mediaHdr`
+   * says no. Only video reaches the panel there, so it says nothing about a canvas's headroom.
+   */
+  @observable accessor videoHdr = false;
 
   @computed
   get hdr(): boolean {

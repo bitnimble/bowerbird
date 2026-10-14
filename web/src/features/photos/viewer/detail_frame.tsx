@@ -2,7 +2,8 @@ import { useRef } from 'react';
 import { observer } from 'mobx-react-lite';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { useDeviceSettingsStore, usePresenters, useViewerStore } from '../../../app/stores_context';
-import { useHdrVideo } from './hdr_video';
+import { renditionsApi } from '../../../api/renditions';
+import { useHdrVideo, useTenBitCopiesAhead } from './hdr_video';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { PhotoStage, type StagePicture } from './photo_stage';
 import { decodedFrame } from './stage_bitmaps';
@@ -10,6 +11,7 @@ import { renditionLabel } from '../renditions';
 import { nameOf, useStep } from './detail_navigation';
 import { useNamedRendition } from '../named_rendition';
 import { PhotoStageStrings } from './photo_stage.strings';
+import { QualityNotice } from './quality_notice';
 
 // How many photographs either side the stage holds ready, of the one open and the one
 // before it both (`ViewerStore.runCovering`).
@@ -44,16 +46,18 @@ export const DetailFrame = observer(function DetailFrame({
   const shownFile = photo?.renditions?.[showing];
 
   // Firefox renders an HDR still dark - it applies a PQ transfer to nothing but
-  // video - so there the same AVIF is rewrapped as one and shown through a
-  // `<video>` (§10.7). The camera's JPEG never needs it, being 8-bit SDR with no
+  // video - so there the rendition's 10-bit copy is rewrapped as one and shown through
+  // a `<video>` (§10.7.2). The camera's JPEG never needs it, being 8-bit SDR with no
   // headroom to carry, so its still is already right.
   // A proof is drawn by the stage's shader, which a `<video>` never passes through.
   const proof =
     store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofIntent : null;
-  const hdrVideo = useHdrVideo(
+  const asHdrVideo = shownFile?.hdr === true && showing !== 'embedded' && proof == null;
+  const { twin: hdrVideo, failed: hdrVideoFailed } = useHdrVideo(
     photoId,
     stillSrc,
-    shownFile?.hdr === true && showing !== 'embedded' && proof == null,
+    renditionsApi.tenBitUrl(stillSrc),
+    asHdrVideo,
   );
 
   // Every rendition this photo has already decoded stays mounted, with the one
@@ -90,8 +94,7 @@ export const DetailFrame = observer(function DetailFrame({
   // is as common as forwards, so both sides.
   //
   // The renditions on screen are what they are held at, so a reader set to the camera's
-  // JPEG never pays for a render they will not see. Holding the still holds Firefox's
-  // video too, that being the same file read out of the cache.
+  // JPEG never pays for a render they will not see.
   //
   // **At every rendition this photo has been read at, not only the one on screen.** Those
   // URLs move with the rendition, so holding one set meant every swap unmounted a pair and
@@ -138,6 +141,11 @@ export const DetailFrame = observer(function DetailFrame({
             renditionLabel(store.frameOf(id).rendition),
           ),
         },
+  );
+  useTenBitCopiesAhead(
+    run
+      .filter((id) => id !== photoId && store.frameOf(id).rendition !== 'embedded')
+      .map((id) => renditionsApi.tenBitUrl(store.frameOf(id).source)),
   );
 
   // Which photo and which rendition each mounted frame is, for every picture on the stage
@@ -187,6 +195,7 @@ export const DetailFrame = observer(function DetailFrame({
       // will be.
       hold={store.photoFor(photoId) == null || store.detailWidth === 0}
       status={status}
+      banner={asHdrVideo && <QualityNotice where="viewer" />}
       unreachable={store.unreachable(photoId)}
       retryEpoch={store.retryEpoch}
       pictures={strip}
@@ -223,6 +232,12 @@ export const DetailFrame = observer(function DetailFrame({
       // chose, it was built before it was shown, so a 404 there is a real fault rather than a
       // gap still being filled.
       onImageMissing={(source) => {
+        // A twin that will not play is no sign the rendition is missing, and building it again
+        // makes another twin that will not play.
+        if (source === hdrVideo?.url) {
+          hdrVideoFailed();
+          return;
+        }
         const gone = owning.get(source);
         if (gone == null || store.servedWhole(gone.photoId, gone.rendition)) return;
         if (store.overrideFor(gone.photoId) != null) return;

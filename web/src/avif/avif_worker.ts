@@ -8,12 +8,13 @@ import type {
   DecoderStart,
   PlanesLayout,
 } from './avif_planes';
-import { ThreadPool } from './avif_pool';
-import { wasiImports } from './wasi';
+import { ThreadPool } from '../wasi/thread_pool';
+import { wasiImports } from '../wasi/wasi';
 import { pageLog } from '../features/logs/page_log';
 
 pageLog.follow('worker');
 
+const LOG_NAME = 'avif_planes';
 /** Past eight, a still decodes no faster and each thread holds its own buffers. */
 const MAX_THREADS = 8;
 /** The module's own `--max-memory`, in 64KiB pages. */
@@ -39,8 +40,11 @@ class Decoder {
   static async open(module: WebAssembly.Module): Promise<Decoder> {
     const threads = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, MAX_THREADS));
     const memory = new WebAssembly.Memory({ initial: 256, maximum: MAX_PAGES, shared: true });
-    const pool = await ThreadPool.start(module, memory, threads);
-    const instance = await WebAssembly.instantiate(module, wasiImports(memory, pool.spawn));
+    const pool = await ThreadPool.start(LOG_NAME, module, memory, threads);
+    const instance = await WebAssembly.instantiate(
+      module,
+      wasiImports(LOG_NAME, memory, pool.spawn),
+    );
     const exports = instance.exports as unknown as Exports;
     // What a reactor's `_initialize` would run, which this module does not link.
     exports.__wasi_init_tp();

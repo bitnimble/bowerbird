@@ -8,6 +8,7 @@ import { soleInputOf, type StoredRecipe } from '../schemas/recipes';
 import {
   RENDITION_EXTENSION,
   renditionVariant,
+  tenBitCopyDir,
   type Rendition,
   type RenditionVariant,
 } from '../services/processing/renditions/renditions';
@@ -54,6 +55,15 @@ export function renditionVariantPath(
   variant: RenditionVariant,
 ): string {
   return path.join(dataPath, 'renditions', variant, `${photoId}${RENDITION_EXTENSION}`);
+}
+
+export function tenBitCopyPathFor(dataPath: string, photoId: string, rendition: Rendition): string {
+  return path.join(
+    dataPath,
+    'renditions',
+    tenBitCopyDir(rendition),
+    `${photoId}${RENDITION_EXTENSION}`,
+  );
 }
 
 export function getRenditionPath(

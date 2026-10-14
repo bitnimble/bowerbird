@@ -78,10 +78,10 @@ export class RenditionsPresenter {
     this.viewer.buildStarted(photoId, rendition);
     try {
       await this.build(photoId, rendition, force);
-      // The build may have written an HDR video beside the still, and only the
-      // detail knows whether one exists. Without this, Firefox keeps showing the
-      // dark still until the page is reloaded (§10.7). Only after a build, because
-      // only a build can have written one.
+      // Only the detail says whether the built still is HDR, which is what turns on
+      // Firefox's video twin. Without this, Firefox keeps showing the dark still until
+      // the page is reloaded (§10.7.2). Only after a build, because only a build can
+      // change it.
       await this.refreshDetail();
       return true;
     } catch (error) {

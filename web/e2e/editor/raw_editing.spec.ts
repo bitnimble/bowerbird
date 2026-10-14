@@ -146,9 +146,9 @@ async function gradesOnTheGpu(page: Page): Promise<void> {
   // The camera match has to reach the client, and no other check can see that it did:
   // without it the grade takes its neutral arm and still produces a plausible HDR frame at
   // the right size, just flatter and less saturated than the rendition of the same file.
-  // It has been wrong twice before, both times numerically and silently (DESIGN 21.1), so what
-  // this guards is the hand-off: the curves, the matrix and the chroma lattice crossing as arrays
-  // a shader can index, rather than being dropped somewhere in the header.
+  // A wrong match is numeric and silent (DESIGN 21.1), so what this guards is the hand-off: the
+  // curves, the matrix and the chroma lattice crossing as arrays a shader can index, rather than
+  // being dropped somewhere in the header.
   await expect(editDiagnostics(page)).toHaveAttribute('data-matched', 'true');
 
   // The camera neutral reaches the client too: what the sliders *do* with it is

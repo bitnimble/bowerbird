@@ -258,6 +258,12 @@ jobs:
           workspaces: |
             native/rawshim
             native/avif_planes
+            native/vp9_encode
+      # bindgen for `vp9_encode`.
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
       - name: The pinned trees, from last time
         id: pinned-cache
         uses: actions/cache/restore@v6
@@ -265,7 +271,9 @@ jobs:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-wasm-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
           restore-keys: pinned-${{ runner.os }}-wasm-
-      - run: bun run get:shell
+      - run: |
+          bun run get:shell
+          bun run get:vpx
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
         run: bun run scripts/prune-pinned.ts
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'

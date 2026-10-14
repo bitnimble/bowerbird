@@ -1,11 +1,11 @@
-// The browser's package, `native/rawshim/pkg`: rawshim as wasm, the AV1 decoder beside it, and
-// the files `hash-pkg.ts` serves with them.
+// The browser's package, `native/rawshim/pkg`: rawshim as wasm, the AV1 decoder and VP9 encoder
+// beside it, and the files `hash-pkg.ts` serves with them.
 //
 // Skipped when the package on disk was built from exactly these inputs, whoever built it: CI's
 // `wasm` job builds it once and every app job downloads it with no `target/` to be fresh against.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -16,7 +16,8 @@ const INPUTS = [
   'slang',
   'scripts/build-wasm.ts',
   'scripts/hash-pkg.ts',
-  'scripts/build-avif-planes.ts',
+  'scripts/build-wasi-modules.ts',
+  'scripts/get-vpx.ts',
   'scripts/cargo.ts',
   'scripts/pinned.ts',
   'scripts/vcpkg.ts',
@@ -84,6 +85,10 @@ if (inputs != null && built === inputs) {
   process.exit(0);
 }
 
+// A directory rather than the getter's link is a tree a Docker stage copied in, with no cache behind it.
+const vpx = lstatSync(join(ROOT, 'native', 'rawshim', '.vpx'), { throwIfNoEntry: false });
+if (vpx?.isDirectory() !== true) run('bun', ['run', 'scripts/get-vpx.ts']);
+
 rmSync(STAMP, { force: true });
 rmSync(join(PKG, 'package.json'), { force: true });
 run('bun', [
@@ -100,5 +105,5 @@ run('bun', [
   '--no-default-features',
 ]);
 run('bun', ['run', 'scripts/hash-pkg.ts']);
-run('bun', ['run', 'scripts/build-avif-planes.ts']);
+run('bun', ['run', 'scripts/build-wasi-modules.ts']);
 if (inputs != null) writeFileSync(STAMP, `${inputs}\n`);

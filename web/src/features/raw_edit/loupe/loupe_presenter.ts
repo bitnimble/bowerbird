@@ -67,6 +67,12 @@ export class LoupePresenter {
     this.store.loupeAt = null;
     this.store.loupeSharp = false;
     this.store.loupeRendering = false;
+    this.store.videoFrame = null;
+  }
+
+  @action.bound
+  showVideoFrame(mp4: Uint8Array<ArrayBuffer>): void {
+    if (this.store.loupeOpen) this.store.videoFrame = mp4;
   }
 
   /**
@@ -97,6 +103,7 @@ export class LoupePresenter {
     }
     this.store.loupeAt = null;
     this.store.loupeSharp = false;
+    this.store.videoFrame = null;
     // A draw and a tile owed to a glass nobody is holding any more.
     this.host.clearPending();
     if (this.tileTimer != null) clearTimeout(this.tileTimer);

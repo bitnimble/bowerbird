@@ -107,11 +107,15 @@ manifest, libavif overlay using sharpyuv rather than libyuv, and triplets skippi
 and pinning macOS deployment target. A vcpkg bump must re-record `encode` rows in
 `bench.budget.json` (`BOWERBIRD_WRITE_BUDGET=1`) in the same commit. Snapshots are PNG, not AVIF.
 
-Linux/macOS prerequisites: compiler, git, pkg-config, python3, zip, unzip, nasm on x86.
+Linux/macOS prerequisites: compiler, make, git, pkg-config, python3, zip, unzip, nasm on x86;
+libclang for `build:wasm`'s bindgen.
 Getter names missing tools; vcpkg fetches cmake/ninja, and everything on Windows.
 
-All six getters reuse trees only when recipes match (`scripts/pinned.ts`):
+All seven getters reuse trees only when recipes match (`scripts/pinned.ts`):
 codecs/compiler record vcpkg commit, files under `native/rawshim/vcpkg/`, getter source;
+`get:vpx` (libvpx for `wasm32-wasip1-threads`, which `build:wasm` runs itself; Linux/macOS only, so
+Windows hosts download the wasm package rather than build it)
+records libvpx commit, wasi-sdk version, flags and getter source;
 driver/maps weights record file hashes; upscaler weights record the Hugging Face commit and file
 hashes `src/services/models/bundled_upscaler.json` pins; PMRID weights record checkpoint hash and
 getter source; `get:android-runtime` (the Android app's Bun and native addons) records their pins
@@ -172,6 +176,7 @@ as needed. `lensdb` tests pin scored search against C results (DESIGN §10.8).
 `avif_planes` (rav1d) never links into rawshim (libdav1d): both export `dav1d_*`, so one binary
 holding both fails to link. Its planes are pinned to libavif's through `avif-planes.txt`, so a
 change to `avif_planes`, `heif` or those fixtures runs its test as well as rawshim's.
+`native/vp9_encode` has no own tests: `packages/avif-hdr-video`'s tests pin the MP4 around its frames.
 
 **Run only checks affected since the last green run.** Rust: `test:native`; `src`:
 `bun run test`; `web/src`: `bun run --cwd web test`; TypeScript changes also need

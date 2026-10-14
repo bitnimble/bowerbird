@@ -41,6 +41,7 @@ import { ColourWheelStrings as strings } from './colour_wheel.strings';
 import { type ColourWheelPresenter, type Handle, WHEEL_SIDE } from './colour_wheel_presenter';
 import type { ColourWheelStore } from './colour_wheel_store';
 import { styles } from './colour_wheel_editor.stylex';
+import { CanvasVideo } from '../stage/canvas_video';
 
 const CHANNEL_POTS: { channel: Channel; name: () => string; pot: stylex.StyleXStyles }[] = [
   { channel: null, name: strings.all, pot: styles.all },
@@ -151,6 +152,14 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
             isolated && styles.clipped(`url(#${clipId})`),
           )}
           aria-hidden="true"
+        />
+        <CanvasVideo
+          mp4={store.videoFrame}
+          style={[
+            styles.backdrop,
+            isolated && styles.shown,
+            isolated && styles.clipped(`url(#${clipId})`),
+          ]}
         />
         {store.showDots && <Dots store={store} rim={rim} />}
         {rim != null && (

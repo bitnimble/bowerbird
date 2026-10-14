@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { font } from '../../../ui/tokens.stylex';
 import { LoupeOverlayStrings } from './loupe_overlay.strings';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
+import { CanvasVideo } from '../stage/canvas_video';
 import { LOUPE_SIZE } from './loupe_store';
 import type { LoupeStore } from './loupe_store';
 
@@ -112,6 +113,7 @@ export const LoupeOverlay = observer(function LoupeOverlay({
         height={LOUPE_SIZE * (globalThis.devicePixelRatio || 1)}
         style={{ width: `${LOUPE_SIZE}px`, height: `${LOUPE_SIZE}px` }}
       />
+      <CanvasVideo mp4={store.videoFrame} style={styles.glass} />
       {/* Outside the box, so neither the number nor the spinner covers the pixels they
           describe. The spinner says the glass is still showing the tick's own render and the
           export's is on its way - which is worth saying, because the two differ in exactly the

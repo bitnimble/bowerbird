@@ -8,6 +8,7 @@ import { stageStyles } from '../../photos/viewer/photo_stage.stylex';
 import { Spinner } from '../../../ui/spinner';
 import { Text } from '../../../ui/text';
 import { PhotoStageStrings } from '../../photos/viewer/photo_stage.strings';
+import { QualityNotice } from '../../photos/viewer/quality_notice';
 import { ZoomControl, ZoomSlider } from '../../photos/viewer/zoom_control';
 import { CropOverlay } from '../crop/crop_overlay';
 import type { CropStore } from '../crop/crop_store';
@@ -21,6 +22,7 @@ import { NO_SIZE, regionOf, useZoomPan } from '../../photos/viewer/zoom_pan';
 import type { RawEditPresenter } from './raw_edit_presenter';
 import type { StageStore } from './stage_store';
 import { RawEditStageStrings } from './raw_edit_stage.strings';
+import { CanvasVideo } from './canvas_video';
 import type { PrintStore } from '../print/print_store';
 import { PrintPanelStrings } from '../print/print_panel.strings';
 import { focusRing } from '../../../ui/focus_ring';
@@ -456,6 +458,7 @@ export const RawEditStage = observer(function RawEditStage({
         createPortal(tools, toolsInto)
       )}
       {zoomInto != null && !still && createPortal(<ZoomSlider zoom={zoom} />, zoomInto)}
+      <QualityNotice where="editor" />
       <div
         ref={viewport}
         {...stylex.props(
@@ -486,6 +489,7 @@ export const RawEditStage = observer(function RawEditStage({
           role="img"
           aria-label={RawEditStageStrings.picture()}
         />
+        {stageStore.renderedMode != null && <CanvasVideo mp4={stageStore.videoFrame} />}
         {/* Only while the slider is under a finger. A horizon is levelled against something
             straight, and the picture rarely offers one where it is needed - so the tool
             brings its own, and takes it away again rather than living over the photograph. */}

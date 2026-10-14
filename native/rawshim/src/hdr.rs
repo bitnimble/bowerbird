@@ -8,9 +8,9 @@
 //
 // The still is an AVIF, which Chrome renders as HDR on Android 14+ and on desktop, and
 // Safari renders on macOS - including at 4:4:4, confirmed on an HDR display. Firefox
-// honours no HDR image tagging at all and is served the same file: it rewraps the
-// bitstream as an MP4 in the page, its video pipeline being the one that composites
-// HDR (§10.7).
+// honours no HDR image tagging at all: it asks for a 10-bit 4:2:0 copy of this file
+// (`avif::ten_bit_copy`) and rewraps that as an MP4 in the page, its video pipeline being
+// the one that composites HDR (§10.7.2).
 
 use crate::hdr_args::{self, EncodeOptions};
 use crate::hdr_fit::{self, CameraMatch, HdrMatch};
@@ -793,9 +793,7 @@ fn still_options(options: &EncodeOptions) -> crate::avif::StillOptions {
 /// match and the filter across every rendition of a photo, and calls the same three stages
 /// below with those already settled.
 ///
-/// One file. Firefox needs the same bitstream wrapped as an MP4 to composite it, and does that
-/// rewrap in the page against these very bytes - a second encode here would be libaom run twice
-/// at the same settings over the same frame.
+/// One file. Firefox's 10-bit copy is encoded from it only when Firefox asks (§10.7.2).
 #[cfg(feature = "renditions")]
 pub fn encode_still(
     samples: Vec<u16>,

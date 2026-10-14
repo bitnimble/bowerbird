@@ -1,0 +1,16 @@
+[package]
+name = "vp9_encode"
+version = "0.1.0"
+edition = "2024"
+
+# For the browser only (`scripts/build-wasi-modules.ts`, `wasm32-wasip1-threads`): the libvpx it
+# links is built for nothing else.
+[lib]
+crate-type = ["cdylib"]
+
+[build-dependencies]
+bindgen = "0.72"
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -255,30 +255,36 @@ class Open {
       case 'attach': {
         const editor = this.drawing();
         const canvas = ask.canvas ?? undefined;
-        if (ask.which === 'stage') editor.attachStage(canvas, ask.width, ask.height);
-        else editor.attachLoupe(canvas, ask.width, ask.height);
+        if (ask.which === 'stage') editor.attachStage(canvas, ask.width, ask.height, ask.video);
+        else editor.attachLoupe(canvas, ask.width, ask.height, ask.video);
         return { value: null };
       }
       case 'releaseLoupe':
         this.drawing().releaseLoupe();
         return { value: null };
       case 'attachWheel':
-        this.drawing().attachWheel(ask.canvas, ask.side);
+        this.drawing().attachWheel(ask.canvas ?? undefined, ask.side);
         return { value: null };
       case 'drawWheel': {
         const editor = this.drawing();
         editor.drawWheel(ask.lightness, ask.selected ?? undefined);
         const edges = editor.wheelEdges(new Float64Array(ask.edgeAt), ask.displayPeak ?? undefined);
+        const video = await heldWheel(editor);
         return {
           value: {
             chroma: editor.wheelChroma(),
             edges: ask.edgeAt.map((_, at) => [...edges.subarray(at * 360, (at + 1) * 360)]),
+            video,
           },
+          transfer: video == null ? [] : [video.buffer],
         };
       }
-      case 'shadeWheel':
-        this.drawing().drawWheel(ask.lightness, ask.selected ?? undefined);
-        return { value: null };
+      case 'shadeWheel': {
+        const editor = this.drawing();
+        editor.drawWheel(ask.lightness, ask.selected ?? undefined);
+        const video = await heldWheel(editor);
+        return { value: video, transfer: video == null ? [] : [video.buffer] };
+      }
       case 'wheelSwatches':
         return { value: [...this.drawing().wheelSwatches(new Float64Array(ask.colours))] };
       case 'probeWheel': {
@@ -351,21 +357,18 @@ class Open {
       case 'outputOfPicture':
         return { value: JSON.parse(this.drawing().outputOfPicture(ask.geometry, ask.points)) };
       case 'repairThumbnail': {
-        const canvas = new OffscreenCanvas(ask.side, ask.side);
-        this.drawing().drawThumbnail(canvas, ask.side, ask.ev, ask.region, ask.repair);
-        return { value: await eightBitPng(canvas) };
+        const rgba = await this.drawing().drawThumbnail(ask.side, ask.ev, ask.region, ask.repair);
+        return { value: await pngOf(rgba, ask.side) };
       }
       case 'optionThumbnail': {
-        const canvas = new OffscreenCanvas(ask.side, ask.side);
-        this.drawing().drawOptionThumbnail(
-          canvas,
+        const rgba = await this.drawing().drawOptionThumbnail(
           ask.side,
           ask.ev,
           ask.region,
           ask.showing ?? undefined,
           ask.option,
         );
-        return { value: await eightBitPng(canvas) };
+        return { value: await pngOf(rgba, ask.side) };
       }
       case 'tick': {
         const editor = this.drawing();
@@ -539,16 +542,24 @@ class Open {
   }
 }
 
-/** A thumbnail the module drew, as an 8-bit sRGB PNG. */
-async function eightBitPng(drawn: OffscreenCanvas): Promise<Blob> {
-  // The drawn canvas is float16 and encodes as a 16-bit PNG, and in Chrome on Windows one of those
-  // leaving the page drops the stage's canvas to SDR for as long as it keeps redrawing.
-  const flat = new OffscreenCanvas(drawn.width, drawn.height);
-  const context = flat.getContext('2d');
+/** A thumbnail's eight-bit sRGB RGBA, `side` square, as a PNG. */
+function pngOf(rgba: Uint8Array, side: number): Promise<Blob> {
+  const canvas = new OffscreenCanvas(side, side);
+  const context = canvas.getContext('2d');
   if (context == null) throw new Error('this worker would not open a 2D canvas for a thumbnail');
-  // Before any await: the drawn canvas's image expires when the current event-loop task ends.
-  context.drawImage(drawn, 0, 0);
-  return flat.convertToBlob();
+  const pixels = new Uint8ClampedArray(
+    rgba.buffer as ArrayBuffer,
+    rgba.byteOffset,
+    rgba.byteLength,
+  );
+  context.putImageData(new ImageData(pixels, side, side), 0, 0);
+  return canvas.convertToBlob();
+}
+
+/** The colour wheel as a video frame's planes, where it was attached as one; null where not. */
+async function heldWheel(editor: HeldRaw): Promise<Uint8Array<ArrayBuffer> | null> {
+  // wasm-bindgen copies a returned Vec out into a fresh ArrayBuffer; its d.ts just does not say so.
+  return ((await editor.heldWheel()) as Uint8Array<ArrayBuffer> | undefined) ?? null;
 }
 
 type Network = Exclude<PrepareCrossing['denoiser'], 'galosh'>;

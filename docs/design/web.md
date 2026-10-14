@@ -434,7 +434,7 @@ source's own analysis-scale layer - the same picture the canvas is already drawn
 as that frame grows it (the largest growth another frame found where its own was refused, the tile itself
 where every one was) and shifted into a fixed box, named by the frame's file. Hovering a swatch
 composites it into the main canvas in place; clicking picks it and closes the popup - both draw through the
-one masked pipeline (§21.1.2), so a hover and a pick look identical on screen and differ only in whether the
+one masked pipeline (§21.1.1), so a hover and a pick look identical on screen and differ only in whether the
 choice survives the pointer leaving. A press anywhere off it closes it and does nothing else: the click that
 press ends neither opens the piece under it nor seeds the picture.
 

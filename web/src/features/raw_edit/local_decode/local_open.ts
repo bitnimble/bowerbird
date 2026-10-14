@@ -126,17 +126,24 @@ export const NothingSchema = z.null();
 
 export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() });
 
-/** A tick's draws of the canvases the page draws itself, as RGB9E5 words; null for the rest. */
+/**
+ * A tick's draws of the canvases the page shows itself - RGB9E5 words, or the planes of a video
+ * frame for one attached as video (`gpu::Gpu::pq420`) - and null for the rest.
+ */
 export const TickedSchema = z.object({
   stage: BytesSchema.nullable(),
   loupe: BytesSchema.nullable(),
 });
 export type Ticked = z.infer<typeof TickedSchema>;
 
-/** The colour wheel's rim chroma, and per lightness asked the displayable chroma per degree of hue. */
+/**
+ * The colour wheel's rim chroma, per lightness asked the displayable chroma per degree of hue, and
+ * the wheel as a video frame's planes where it was attached with no canvas.
+ */
 export const WheelDrawnSchema = z.object({
   chroma: z.number(),
   edges: z.array(z.array(z.number())),
+  video: BytesSchema.nullable(),
 });
 export type WheelDrawn = z.infer<typeof WheelDrawnSchema>;
 
@@ -219,13 +226,16 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('attach'),
     which: z.enum(['stage', 'loupe']),
-    /** Null for a canvas the page draws itself, from what each tick hands back. */
+    /** Null for a canvas the page shows itself, from what each tick hands back. */
     canvas: CanvasSchema.nullable(),
     width: z.number(),
     height: z.number(),
+    /** With no canvas, whether what comes back is a video frame's planes rather than RGB9E5. */
+    video: z.boolean(),
   }),
   z.object({ kind: z.literal('releaseLoupe') }),
-  z.object({ kind: z.literal('attachWheel'), canvas: CanvasSchema, side: z.number() }),
+  /** Null for a wheel shown as video, whose planes each draw hands back. */
+  z.object({ kind: z.literal('attachWheel'), canvas: CanvasSchema.nullable(), side: z.number() }),
   z.object({
     kind: z.literal('drawWheel'),
     lightness: z.number(),

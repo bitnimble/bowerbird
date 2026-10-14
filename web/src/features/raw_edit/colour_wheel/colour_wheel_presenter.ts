@@ -7,6 +7,8 @@ import {
   type ColourNode,
   type EditDoc,
 } from '../../../../../src/schemas/photo_edits';
+import { showsAsVideo } from '../../../gpu/readback_canvas';
+import { pq420FrameOf, vp9Encoder } from '../../../vp9/vp9_encoder';
 import type { EditStore } from '../edit/edit_store';
 import type { WheelDrawn } from '../local_decode/local_open';
 import type { LocalSource } from '../local_decode/open_photo';
@@ -308,7 +310,8 @@ export class ColourWheelPresenter {
     if (local == null || this.attached) return;
     canvas.width = WHEEL_SIDE;
     canvas.height = WHEEL_SIDE;
-    await local.decoder.attachWheel(canvas.transferControlToOffscreen(), WHEEL_SIDE);
+    const offscreen = showsAsVideo() ? null : canvas.transferControlToOffscreen();
+    await local.decoder.attachWheel(offscreen, WHEEL_SIDE);
     if (!this.closed) this.setAttached();
   }
 
@@ -320,7 +323,9 @@ export class ColourWheelPresenter {
       selected: this.store.selectedNode,
     });
     if (this.closed || drawn == null || this.store.channel !== channel) return;
-    this.setDrawn(drawn);
+    const { video, ...wheel } = drawn;
+    this.setDrawn(wheel);
+    await this.showVideo(video);
   }
 
   private async shade(): Promise<void> {
@@ -328,9 +333,22 @@ export class ColourWheelPresenter {
     // at that rate wedged Chrome on macOS inside the worker's `queue.submit`.
     await new Promise((resolve) => requestAnimationFrame(resolve));
     if (this.closed) return;
-    await this.host
+    const video = await this.host
       .local()
       ?.decoder.shadeWheel(lightnessOf(this.store.channel), this.store.selectedNode);
+    await this.showVideo(video ?? null);
+  }
+
+  /** The wheel's planes, where it is shown as video, encoded and put on screen. */
+  private async showVideo(planes: Uint8Array<ArrayBuffer> | null): Promise<void> {
+    if (planes == null) return;
+    const mp4 = await vp9Encoder.encode('wheel', pq420FrameOf(planes));
+    if (!this.closed) this.setVideoFrame(mp4);
+  }
+
+  @action.bound
+  private setVideoFrame(mp4: Uint8Array<ArrayBuffer>): void {
+    this.store.videoFrame = mp4;
   }
 
   private async swatch(): Promise<void> {
@@ -406,7 +424,7 @@ export class ColourWheelPresenter {
   }
 
   @action.bound
-  private setDrawn(drawn: WheelDrawn): void {
+  private setDrawn(drawn: Omit<WheelDrawn, 'video'>): void {
     this.store.drawn = drawn;
   }
 

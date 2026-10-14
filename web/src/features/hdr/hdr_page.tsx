@@ -486,7 +486,12 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
   const hdrSrc = route(PathSegment.hdr(), `${slug}-hdr.avif`);
   // Firefox composites HDR for video and only video, so the still is rewrapped there
   // (DESIGN §10.7.2). Null everywhere else, where the `<img>` is the better element.
-  const hdrVideo = useHdrVideo(slug, hdrSrc, true);
+  const { twin: hdrVideo, failed } = useHdrVideo(
+    slug,
+    hdrSrc,
+    route(PathSegment.hdr(), `${slug}-hdr-10bit.avif`),
+    true,
+  );
 
   return (
     <button
@@ -514,6 +519,10 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
           loop
           muted
           playsInline
+          disablePictureInPicture
+          role="img"
+          aria-label={HdrPageStrings.hdrAlt(alt)}
+          onError={failed}
           {...stylex.props(styles.layer, styles.layerOver, hdr && styles.layerUp)}
         />
       )}
@@ -564,9 +573,8 @@ function SectionHeading({ children }: Children): JSX.Element {
 
 const SdrNotice = observer(function SdrNotice({ children }: Children): JSX.Element | null {
   const device = useDeviceSettingsStore();
-  // Not a reliable "no": Firefox answers `standard` on an HDR display, which is why the copy
-  // hedges rather than hiding anything.
-  if (device.screen.hdr) return null;
+  // Video too: Firefox is shown these pictures as video, and answers `dynamic-range` "no".
+  if (device.screen.hdr || device.screen.videoHdr) return null;
   return (
     <div {...stylex.props(styles.notice)}>
       <Text as="p" style={styles.p}>
@@ -601,13 +609,27 @@ function Note({ children }: Children): JSX.Element {
  * about a quarter dim against an sRGB one, so a pair could not be compared.
  */
 function Swatches(): JSX.Element {
+  const src = route(PathSegment.hdr(), 'swatches.avif');
+  // Already 10-bit 4:2:0 (`scripts/demo-assets.ts`), so Firefox's twin needs no copy of its own.
+  const { twin: hdrVideo, failed } = useHdrVideo('swatches', src, src, true);
   return (
     <figure {...stylex.props(styles.swatches)}>
-      <img
-        src={route(PathSegment.hdr(), 'swatches.avif')}
-        alt={HdrPageStrings.swatchesAlt()}
-        {...stylex.props(styles.swatchesImage)}
-      />
+      {hdrVideo == null ? (
+        <img src={src} alt={HdrPageStrings.swatchesAlt()} {...stylex.props(styles.swatchesImage)} />
+      ) : (
+        <video
+          src={hdrVideo.url}
+          autoPlay
+          loop
+          muted
+          playsInline
+          disablePictureInPicture
+          role="img"
+          aria-label={HdrPageStrings.swatchesAlt()}
+          onError={failed}
+          {...stylex.props(styles.swatchesImage)}
+        />
+      )}
       <figcaption {...stylex.props(styles.swatchesCaption)}>
         <Text variant="mono" style={styles.swatchesHalf}>
           {HdrPageStrings.eightBit()}

@@ -65,6 +65,9 @@ export class LoupeStore {
   /** Whether a rendition tile is on its way, which the glass says beside its magnification. */
   @observable accessor loupeRendering = false;
 
+  /** The glass's last draw as a one-frame MP4, where it is shown as video. */
+  @observable.ref accessor videoFrame: Uint8Array<ArrayBuffer> | null = null;
+
   @computed get tool(): EditTool {
     if (this.crop.cropping) return 'crop';
     if (this.keystone.keystoning) return 'perspective';

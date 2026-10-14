@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { Logger } from '../../logger';
 import { deleteGeneratedFile } from '../../utils/deletions';
-import { dataPathForLibraryId, renditionVariantPath } from '../../utils/paths';
+import { dataPathForLibraryId, renditionVariantPath, tenBitCopyPathFor } from '../../utils/paths';
 import { LibraryActivity } from '../activity/library_activity';
 import type { RenditionCache } from '../blobs/rendition_cache';
 import { variantParts } from '../processing/renditions/renditions';
@@ -85,16 +85,22 @@ export class DiskSpaceLimit {
   private async evict(copy: EvictableCopy): Promise<number | null> {
     const { photo_id, variant, library_id } = copy;
     const dataPath = dataPathForLibraryId(library_id);
-    const file = renditionVariantPath(dataPath, photo_id, variant);
-    const bytes = (await stat(file).catch(() => null))?.size ?? 0;
-    try {
-      await deleteGeneratedFile(dataPath, file);
-    } catch (err) {
-      log.warn('could not evict a rendition', { file, err });
-      return null;
+    const { rendition, hdr } = variantParts(variant);
+    const files = [
+      ...(hdr ? [tenBitCopyPathFor(dataPath, photo_id, rendition)] : []),
+      renditionVariantPath(dataPath, photo_id, variant),
+    ];
+    let bytes = 0;
+    for (const file of files) {
+      bytes += (await stat(file).catch(() => null))?.size ?? 0;
+      try {
+        await deleteGeneratedFile(dataPath, file);
+      } catch (err) {
+        log.warn('could not evict a rendition', { file, err });
+        return null;
+      }
     }
     this.renditions.markEvicted(copy);
-    const { rendition, hdr } = variantParts(variant);
     this.fetched.release(library_id, photo_id, rendition, hdr);
     return bytes;
   }

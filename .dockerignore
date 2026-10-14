@@ -37,6 +37,7 @@ native/rawshim/.pmrid
 native/rawshim/.upscaler
 native/rawshim/.environments
 native/rawshim/.swiftshader
+native/rawshim/.vpx
 native/rawshim/pkg
 # Generated with this machine's SDK paths baked in (`android-build.ts`), and the build
 # outputs a desktop build leaves beside it.

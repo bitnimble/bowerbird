@@ -1065,15 +1065,17 @@ impl HeldRaw {
     /// could only be drawn by sending it the samples - which is the transfer per open this whole
     /// path exists to delete.
     ///
-    /// No canvas is a stage the page draws itself, from what [`HeldRaw::held_stage`] reads back.
+    /// No canvas is a stage the page shows itself, from what [`HeldRaw::held_stage`] reads back:
+    /// with `video`, as the planes of a video frame.
     #[wasm_bindgen(js_name = attachStage)]
     pub fn attach_stage(
         &self,
         canvas: Option<web_sys::OffscreenCanvas>,
         width: u32,
         height: u32,
+        video: bool,
     ) -> Result<(), JsValue> {
-        self.attach(&self.stage, canvas, width, height)
+        self.attach(&self.stage, canvas, width, height, video)
     }
 
     /// The stage, taken off this photograph for the next one to draw onto.
@@ -1095,11 +1097,13 @@ impl HeldRaw {
         canvas: Option<web_sys::OffscreenCanvas>,
         width: u32,
         height: u32,
+        video: bool,
     ) -> Result<(), JsValue> {
-        self.attach(&self.loupe, canvas, width, height)
+        self.attach(&self.loupe, canvas, width, height, video)
     }
 
-    /// What the last tick drew onto a stage attached with no canvas, as RGB9E5 words.
+    /// What the last tick drew onto a stage attached with no canvas: RGB9E5 words for a canvas the
+    /// page draws, or the planes of a video frame for one attached as video.
     #[wasm_bindgen(js_name = heldStage)]
     pub async fn held_stage(&self) -> Result<Option<Vec<u8>>, JsValue> {
         self.read_held(&self.stage).await
@@ -1109,6 +1113,12 @@ impl HeldRaw {
     #[wasm_bindgen(js_name = heldLoupe)]
     pub async fn held_loupe(&self) -> Result<Option<Vec<u8>>, JsValue> {
         self.read_held(&self.loupe).await
+    }
+
+    /// The same for a colour wheel attached with no canvas, which is always video.
+    #[wasm_bindgen(js_name = heldWheel)]
+    pub async fn held_wheel(&self) -> Result<Option<Vec<u8>>, JsValue> {
+        self.read_held(&self.wheel).await
     }
 
     /// What this open last answered with.
@@ -1755,6 +1765,7 @@ impl HeldRaw {
         canvas: Option<web_sys::OffscreenCanvas>,
         width: u32,
         height: u32,
+        video: bool,
     ) -> Result<(), JsValue> {
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
@@ -1766,7 +1777,7 @@ impl HeldRaw {
                     JsValue::from_str("rawshim: this canvas would not take a surface")
                 })?
             }
-            None => crate::gpu::Stage::held(gpu, width, height),
+            None => crate::gpu::Stage::held(gpu, width, height, video),
         };
         into.replace(Some(stage));
         Ok(())
@@ -1777,15 +1788,18 @@ impl HeldRaw {
         stage: &std::cell::RefCell<Option<crate::gpu::Stage>>,
     ) -> Result<Option<Vec<u8>>, JsValue> {
         // Taken out of the borrow before the await: a `RefCell` may not be held across one.
-        let Some(drawn) = stage.borrow().as_ref().and_then(crate::gpu::Stage::drawn) else {
+        let Some((drawn, video)) = stage.borrow().as_ref().and_then(crate::gpu::Stage::drawn)
+        else {
             return Ok(None);
         };
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
-        let words = gpu
-            .rgb9e5(&drawn)
-            .await
-            .ok_or_else(|| JsValue::from_str("rawshim: the stage could not be read back"))?;
+        let read = match video {
+            true => gpu.pq420(&drawn).await,
+            false => gpu.rgb9e5(&drawn).await,
+        };
+        let words =
+            read.ok_or_else(|| JsValue::from_str("rawshim: the stage could not be read back"))?;
         Ok(Some(words))
     }
 
@@ -1834,47 +1848,66 @@ impl HeldRaw {
     }
 
     /// The picture at `region` of the output from under `repair`, among every other repair as
-    /// drawn, onto `canvas`, for the page to copy out as that repair's thumbnail.
+    /// drawn, as `side` square eight-bit sRGB RGBA, for the page to keep as that repair's thumbnail.
     #[wasm_bindgen(js_name = drawThumbnail)]
-    pub fn draw_thumbnail(
+    pub async fn draw_thumbnail(
         &self,
-        canvas: web_sys::OffscreenCanvas,
         side: u32,
         ev: Option<f64>,
-        region: &str,
-        repair: &str,
-    ) -> Result<(), JsValue> {
-        let repair = repair_of(repair)?;
-        self.draw_part(canvas, side, ev, region, |frame, rect| {
+        region: String,
+        repair: String,
+    ) -> Result<Vec<u8>, JsValue> {
+        let repair = repair_of(&repair)?;
+        self.draw_part(side, ev, &region, |frame, rect| {
             frame.original_under(&repair, rect)
-        })
+        })?;
+        self.read_thumbnail().await
     }
 
     /// The picture at `region` of the output with `option` drawn in place of `showing`, the fill
     /// the frame is drawn with at the loop, as [`HeldRaw::draw_thumbnail`] draws: what choosing
     /// `option` would show.
     #[wasm_bindgen(js_name = drawOptionThumbnail)]
-    pub fn draw_option_thumbnail(
+    pub async fn draw_option_thumbnail(
         &self,
-        canvas: web_sys::OffscreenCanvas,
         side: u32,
         ev: Option<f64>,
-        region: &str,
+        region: String,
         showing: Option<String>,
-        option: &str,
-    ) -> Result<(), JsValue> {
+        option: String,
+    ) -> Result<Vec<u8>, JsValue> {
         let showing = showing.as_deref().map(repair_of).transpose()?;
-        let option = repair_of(option)?;
-        self.draw_part(canvas, side, ev, region, |frame, rect| {
+        let option = repair_of(&option)?;
+        self.draw_part(side, ev, &region, |frame, rect| {
             frame.drawn_instead(showing.as_ref(), &option, rect)
-        })
+        })?;
+        self.read_thumbnail().await
+    }
+
+    async fn read_thumbnail(&self) -> Result<Vec<u8>, JsValue> {
+        // Taken out of the borrow before the await: a `RefCell` may not be held across one.
+        let drawn = self
+            .thumbnail
+            .borrow()
+            .as_ref()
+            .and_then(crate::gpu::Stage::drawn);
+        let gpu = crate::gpu::device()
+            .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
+        match drawn {
+            Some((texture, _)) => gpu.srgb8(&texture).await,
+            None => None,
+        }
+        .ok_or_else(|| JsValue::from_str("rawshim: the thumbnail could not be read back"))
     }
 
     /// The part of the picture behind `region` that `part` copies out of the frame, graded and
-    /// drawn onto `canvas`. Proofed against sRGB whatever the stage is: the copy is eight bits.
+    /// drawn into the thumbnail's texture. Proofed against sRGB whatever the stage is: the copy is
+    /// eight bits.
+    ///
+    /// A texture rather than a canvas in every engine: Gecko refuses the `rgba16float` canvas this
+    /// draw would configure (bug 1834395).
     fn draw_part(
         &self,
-        canvas: web_sys::OffscreenCanvas,
         side: u32,
         ev: Option<f64>,
         region: &str,
@@ -1918,7 +1951,7 @@ impl HeldRaw {
             let uploaded = gpu.upload_resident(&under, &grade, &drawing._peak);
             (under, uploaded, (width, height, window))
         };
-        self.attach(&self.thumbnail, Some(canvas), side, side)?;
+        self.attach(&self.thumbnail, None, side, side, false)?;
         let (width, height, window) = part;
         let drawn = self.draw(
             &self.thumbnail,
@@ -1937,9 +1970,14 @@ impl HeldRaw {
         drawn
     }
 
+    /// No canvas is a wheel shown as video, from what [`HeldRaw::held_wheel`] reads back.
     #[wasm_bindgen(js_name = attachWheel)]
-    pub fn attach_wheel(&self, canvas: web_sys::OffscreenCanvas, side: u32) -> Result<(), JsValue> {
-        self.attach(&self.wheel, Some(canvas), side, side)
+    pub fn attach_wheel(
+        &self,
+        canvas: Option<web_sys::OffscreenCanvas>,
+        side: u32,
+    ) -> Result<(), JsValue> {
+        self.attach(&self.wheel, canvas, side, side, true)
     }
 
     /// `selected` is a `lattice::ColourNode` as JSON.

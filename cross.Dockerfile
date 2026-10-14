@@ -23,7 +23,7 @@ ENV PATH="${PATH}:/usr/local/bun-node-fallback-bin"
 
 FROM base AS cross
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git unzip xz-utils zip \
+  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git libclang-dev unzip xz-utils zip \
   && rm -rf /var/lib/apt/lists/*
 ENV PATH="/root/.cargo/bin:${PATH}"
 COPY rust-toolchain.toml ./
@@ -45,8 +45,9 @@ COPY . .
 RUN --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=locked \
   rm -f /root/.cache/bowerbird/*/*.lock \
   && bun run get:shell \
+  && bun run get:vpx \
   && bun run scripts/prune-pinned.ts \
-  && for name in slangc pmrid upscaler environments; do \
+  && for name in slangc pmrid upscaler environments vpx; do \
        tree="$(readlink "native/rawshim/.$name")" \
        && rm "native/rawshim/.$name" \
        && cp -a "$tree" "native/rawshim/.$name" || exit 1; \

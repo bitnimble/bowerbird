@@ -1,9 +1,11 @@
 import { adapterName } from '../../../adapter_name';
 import type { GpuThread } from '../../../gpu/gpu_thread';
+import { vp9Encoder } from '../../../vp9/vp9_encoder';
 
 type AdapterInfo = { name: string; maxTexture: number };
 
-type OnPage = { canvas: HTMLCanvasElement; width: number; height: number };
+/** A canvas the page shows itself, as a canvas of its own or, with `video`, as a video over it. */
+type OnPage = { canvas: HTMLCanvasElement; width: number; height: number; video: boolean };
 
 /** What an edit visit keeps across the photos it opens, until {@link close}. */
 export class EditSurface {
@@ -41,5 +43,6 @@ export class EditSurface {
 
   close(): void {
     this.thread.dropSurface(this.stageKey);
+    vp9Encoder.close();
   }
 }

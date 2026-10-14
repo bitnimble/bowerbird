@@ -1,10 +1,10 @@
 // HDR AVIF stills, shown in HDR on Firefox.
 //
 // Firefox composites HDR for video and only video (bug 1889288). Hand it a PQ AVIF and
-// it decodes the file, ignores the transfer, and paints the code values as if they were
-// sRGB: a washed-out picture rather than a refusal, so nothing in the page can even
-// observe that it went wrong. The same bitstream in an MP4 goes down the video path and
-// reaches the panel.
+// it decodes the file and renders it wrongly - washed out on Windows, dark on macOS -
+// rather than refusing it, so nothing in the page can even observe that it went wrong.
+// The same bitstream in an MP4 goes down the video path and reaches the panel, provided
+// it is 10-bit 4:2:0: a 12-bit or 4:4:4 frame plays there flat too.
 //
 // So that is all this does - it moves the frame into an MP4 and puts a `<video>` where
 // the `<img>` was. Nothing is decoded or re-encoded: AVIF *is* AV1, and both files are
@@ -16,7 +16,8 @@
 //   install();
 //
 // Everything below `install` is there for applications that own their own rendering:
-// `hdrVideoUrl` for one image, `avifToMp4` for the bytes alone.
+// `hdrVideoUrl` for one image, `avifToMp4` for the bytes alone, and `vp9FrameToMp4` for a
+// picture the page drew and encoded itself.
 
 /** PQ and HLG, the two CICP transfer characteristics that mean an image is HDR. */
 const HDR_TRANSFERS = new Set([16, 18]);
@@ -46,13 +47,17 @@ interface Obu {
   end: number;
 }
 
-/** Everything the MP4 needs, read out of an AVIF's boxes. */
-interface Still {
+/** The one coded frame an MP4 carries, and how it is shown. */
+interface Frame {
   width: number;
   height: number;
   orientation: 0 | 90 | 180 | 270;
-  transfer: number;
   sample: Uint8Array;
+}
+
+/** Everything the MP4 needs, read out of an AVIF's boxes. */
+interface Still extends Frame {
+  transfer: number;
   configuration: Uint8Array;
   colour: Uint8Array | null;
 }
@@ -142,7 +147,7 @@ export async function hdrVideoUrl(
   const avif = new Uint8Array(await response.arrayBuffer());
   const still = describe(avif);
   if (!HDR_TRANSFERS.has(still.transfer)) return null;
-  return URL.createObjectURL(new Blob([wrap(still)], { type: 'video/mp4' }));
+  return URL.createObjectURL(new Blob([wrap(still, av01Entry(still))], { type: 'video/mp4' }));
 }
 
 /**
@@ -155,7 +160,8 @@ export async function hdrVideoUrl(
  * configuration.
  */
 export function avifToMp4(avif: Uint8Array): Uint8Array {
-  return wrap(describe(avif));
+  const still = describe(avif);
+  return wrap(still, av01Entry(still));
 }
 
 export function orientationOfAvif(avif: Uint8Array): 0 | 90 | 180 | 270 {
@@ -311,34 +317,81 @@ function describe(avif: Uint8Array): Still {
   };
 }
 
-function wrap(still: Still): Uint8Array<ArrayBuffer> {
+/**
+ * A VP9 keyframe as a one-frame MP4, ready for a Blob and an object URL: profile 2, 10-bit 4:2:0
+ * with chroma sited left of its luma pair, limited range, PQ over BT.2020. That is the only frame
+ * Firefox composites as HDR, so it is the only one this describes.
+ */
+export function vp9FrameToMp4(
+  frame: Uint8Array,
+  width: number,
+  height: number,
+): Uint8Array<ArrayBuffer> {
+  const BT2020 = 9;
+  const PQ = 16;
+  const BT2020_NCL = 9;
+  const VERTICAL_420 = 0;
+  const entry = box(
+    'vp09',
+    visualSampleEntry(width, height),
+    box(
+      'vpcC',
+      fullHeader(1, 0),
+      new Uint8Array([
+        2,
+        vp9Level(width, height),
+        (10 << 4) | (VERTICAL_420 << 1),
+        BT2020,
+        PQ,
+        BT2020_NCL,
+      ]),
+      u16(0), // no codec initialisation data
+    ),
+    box('colr', ascii('nclx'), u16(BT2020), u16(PQ), u16(BT2020_NCL), new Uint8Array([0])),
+  );
+  return wrap({ width, height, orientation: 0, sample: frame }, entry, 'vp09');
+}
+
+const VP9_LEVELS = [
+  { level: 41, samples: 2_228_224, edge: 4096 },
+  { level: 51, samples: 8_912_896, edge: 8384 },
+];
+
+/** The least VP9 level whose largest picture and longest edge hold a `width` by `height` frame. */
+function vp9Level(width: number, height: number): number {
+  const fits = VP9_LEVELS.find(
+    ({ samples, edge }) => width * height <= samples && Math.max(width, height) <= edge,
+  );
+  return fits?.level ?? 61;
+}
+
+function av01Entry(still: Still): Uint8Array {
+  return box(
+    'av01',
+    visualSampleEntry(still.width, still.height),
+    box('av1C', still.configuration),
+    ...(still.colour == null ? [] : [box('colr', still.colour)]),
+  );
+}
+
+function wrap(frame: Frame, entry: Uint8Array, brand = 'av01'): Uint8Array<ArrayBuffer> {
   const ftyp = box(
     'ftyp',
     ascii('isom'),
     u32(0x200),
     ascii('isom'),
-    ascii('av01'),
+    ascii(brand),
     ascii('iso2'),
     ascii('mp41'),
   );
-  const description = box(
-    'stsd',
-    fullHeader(0, 0),
-    u32(1),
-    box(
-      'av01',
-      visualSampleEntry(still.width, still.height),
-      box('av1C', still.configuration),
-      ...(still.colour == null ? [] : [box('colr', still.colour)]),
-    ),
-  );
+  const description = box('stsd', fullHeader(0, 0), u32(1), entry);
 
   // Laid out twice because `stco` holds the absolute file offset of the sample, which is
   // not known until everything before it has a size. The field is fixed width, so the
   // second pass comes out the same length as the first.
-  const sized = moov(description, still, 0);
+  const sized = moov(description, frame, 0);
   const at = ftyp.length + sized.length + 8;
-  return concat([ftyp, moov(description, still, at), box('mdat', still.sample)]);
+  return concat([ftyp, moov(description, frame, at), box('mdat', frame.sample)]);
 }
 
 // One second at 1000 ticks. Any duration would do for a frame that never changes; a
@@ -347,7 +400,7 @@ const TIMESCALE = 1000;
 const DURATION = 1000;
 
 /** @param sampleAt absolute file offset of the sample */
-function moov(description: Uint8Array, still: Still, sampleAt: number): Uint8Array {
+function moov(description: Uint8Array, still: Frame, sampleAt: number): Uint8Array {
   const header = box(
     'mvhd',
     fullHeader(0, 0),
@@ -462,7 +515,7 @@ function orientationOfProperties(view: DataView, properties: Box[]): 0 | 90 | 18
   }
 }
 
-function trackMatrix(still: Still): Uint8Array {
+function trackMatrix(still: Frame): Uint8Array {
   const one = 0x00010000;
   const minusOne = 0xffff0000;
   const w = 0x40000000;

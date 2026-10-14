@@ -105,6 +105,8 @@ import { DiskSpaceLimit } from './services/maintenance/disk_space_limit';
 import { RenditionCache } from './services/blobs/rendition_cache';
 import { BackupService, ScheduledBackup } from './services/maintenance/backup_service';
 import { ProcessingService } from './services/processing/pipeline/processing_service';
+import { RenderTargets } from './services/processing/pipeline/render_targets';
+import { TenBitCopies } from './services/processing/renditions/ten_bit_copies';
 import { shim } from './services/processing/rawshim/rawshim';
 import { holdingRenderMemory, nativeRunningJob } from './services/processing/rawshim/rawshim_job';
 import { config } from './config';
@@ -530,6 +532,7 @@ const imageApi = new ImageApi(
   shareService,
   processingService,
   activity,
+  new TenBitCopies(new RenderTargets(settingsRepo)),
 );
 const exportApi = new ExportApi(
   exportService,

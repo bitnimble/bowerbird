@@ -30,9 +30,11 @@ export const renditionsApi = {
   // question and how it answers is its recipe's, so a client naming a copy never has to know
   // whether that copy is a file on disk or bytes lifted out of the original (§10.2). Dynamic
   // range is not in the URL either: the library decides it, so a client guessing would ask for
-  // a file that was never built. Firefox is served the same AVIF as everything else and rewraps
-  // it into a video for itself (`hdr_video.ts`).
+  // a file that was never built.
   url: renditionUrl,
+
+  /** The same rendition as the 10-bit copy Firefox rewraps into a video (`hdr_video.ts`). */
+  tenBitUrl: (url: string): string => `${url}${url.includes('?') ? '&' : '?'}bits=10`,
 
   /** Hands the server a rendition this device rendered, gzipped, for it to encode and keep. */
   keep: async (

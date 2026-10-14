@@ -6,6 +6,8 @@ import { DEFAULT_DISPLAY_PEAK_NITS, type DeviceSettingsStore } from './device_se
 const RENDER_ON_THIS_DEVICE_KEY = 'bowerbird.renderOnThisDevice';
 const DISPLAY_PEAK_NITS_KEY = 'bowerbird.displayPeakNits';
 const UI_SCALE_KEY = 'bowerbird.uiScale';
+const VIEWER_QUALITY_NOTICE_KEY = 'bowerbird.viewerQualityNoticeClosed';
+const EDITOR_QUALITY_NOTICE_KEY = 'bowerbird.editorQualityNoticeClosed';
 
 export class DeviceSettingsPresenter {
   constructor(private readonly store: DeviceSettingsStore) {
@@ -19,6 +21,19 @@ export class DeviceSettingsPresenter {
     this.store.displayPeakNits =
       Number.isFinite(peak) && peak >= 1 ? peak : DEFAULT_DISPLAY_PEAK_NITS;
     this.store.uiScale = savedUiScale();
+    this.store.viewerQualityNoticeClosed = readSetting(VIEWER_QUALITY_NOTICE_KEY) === '1';
+    this.store.editorQualityNoticeClosed = readSetting(EDITOR_QUALITY_NOTICE_KEY) === '1';
+  }
+
+  @action.bound
+  closeQualityNotice(where: 'viewer' | 'editor'): void {
+    if (where === 'viewer') {
+      this.store.viewerQualityNoticeClosed = true;
+      writeSetting(VIEWER_QUALITY_NOTICE_KEY, '1');
+      return;
+    }
+    this.store.editorQualityNoticeClosed = true;
+    writeSetting(EDITOR_QUALITY_NOTICE_KEY, '1');
   }
 
   @action.bound

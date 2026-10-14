@@ -5,6 +5,7 @@
 module video_range;
 
 import light;
+import prelude;
 
 /// Ten-bit video range. A twelve-bit frame's are four times these, so its caller divides the sample
 /// rather than a second set of constants existing to be kept in step.
@@ -33,4 +34,15 @@ public Colour<Pq> pq_of_video(float3 yuv)
     let blue = (yuv.y - CHROMA_MID) / CHROMA_SPAN;
     let red = (yuv.z - CHROMA_MID) / CHROMA_SPAN;
     return measured<Pq>(clamp(mul(YUV_TO_RGB, float3(level, blue, red)), float3(0.0), float3(1.0)));
+}
+
+/// The way there: a PQ signal as one pixel's luma and chroma on the ten-bit scale, unrounded so a
+/// caller can average chroma before it quantises.
+public float3 video_of_pq(Colour<Pq> signal)
+{
+    let rgb = signal.v;
+    let level = dot(LUMA, rgb);
+    let blue = (rgb.b - level) / (2.0 * (1.0 - LUMA.b));
+    let red = (rgb.r - level) / (2.0 * (1.0 - LUMA.r));
+    return float3(LUMA_FLOOR + LUMA_SPAN * level, CHROMA_MID + CHROMA_SPAN * blue, CHROMA_MID + CHROMA_SPAN * red);
 }

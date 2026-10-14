@@ -9,6 +9,7 @@ const manifests = [
   'native/updater/Cargo.toml',
   'native/avif_planes/Cargo.toml',
   'native/avif_planes/parking_lot/Cargo.toml',
+  'native/vp9_encode/Cargo.toml',
   'src-tauri/Cargo.toml',
 ];
 

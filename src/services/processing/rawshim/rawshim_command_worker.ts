@@ -1,5 +1,5 @@
 import type { Job } from '../../../schemas/jobs';
-import { runJob } from './rawshim_job';
+import { runJob, writeTenBitCopy } from './rawshim_job';
 import { stackGroups } from './rawshim_ops';
 
 export type RawshimCommand =
@@ -10,10 +10,12 @@ export type RawshimCommand =
       timestamps: BigInt64Array;
       threshold: number;
       windowSeconds: number;
-    };
+    }
+  | { kind: 'tenBitCopy'; sourcePath: string; outPath: string; quantizer: number; speed: number };
 
 export type RawshimCommandReply =
   | { kind: 'rendered' }
+  | { kind: 'written' }
   | { kind: 'grouped'; groups: Int32Array }
   | { kind: 'failed'; error: string };
 
@@ -27,6 +29,11 @@ self.onmessage = ({ data }) => {
     if (data.kind === 'render') {
       runJob(data.job);
       self.postMessage({ kind: 'rendered' });
+      return;
+    }
+    if (data.kind === 'tenBitCopy') {
+      writeTenBitCopy(data.sourcePath, data.outPath, data.quantizer, data.speed);
+      self.postMessage({ kind: 'written' });
       return;
     }
     self.postMessage({

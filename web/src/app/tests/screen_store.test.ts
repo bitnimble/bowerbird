@@ -70,6 +70,23 @@ test('falls back to the media query in a browser', async () => {
   expect(settings.peakNits).toBe(CONFIGURED);
 });
 
+test("takes Firefox's HDR video answer without giving its canvases a peak", async () => {
+  const settings = device();
+  const realMatchMedia = globalThis.matchMedia;
+  globalThis.matchMedia = ((query: string) => ({
+    matches: query === '(video-dynamic-range: high)',
+    addEventListener: () => undefined,
+  })) as unknown as typeof matchMedia;
+  try {
+    await new ScreenPresenter(settings.screen, null).follow();
+  } finally {
+    globalThis.matchMedia = realMatchMedia;
+  }
+  expect(settings.screen.videoHdr).toBe(true);
+  expect(settings.screen.hdr).toBe(false);
+  expect(settings.peakNits).toBeNull();
+});
+
 test('lets a slow answer land without asking over it', async () => {
   const settings = device();
   const answer = Promise.withResolvers<DynamicRange>();

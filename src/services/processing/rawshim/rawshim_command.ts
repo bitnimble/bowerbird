@@ -11,15 +11,22 @@ export class RawshimCommandWorker {
 
   async render(job: Job): Promise<void> {
     const reply = await this.request({ kind: 'render', job });
-    if (reply.kind !== 'rendered') throw new Error('worker returned groups for a render');
+    if (reply.kind !== 'rendered') throw new Error(`worker replied ${reply.kind} to a render`);
   }
 
   async group(
     command: Omit<Extract<RawshimCommand, { kind: 'group' }>, 'kind'>,
   ): Promise<Int32Array> {
     const reply = await this.request({ kind: 'group', ...command });
-    if (reply.kind !== 'grouped') throw new Error('worker returned a render for groups');
+    if (reply.kind !== 'grouped') throw new Error(`worker replied ${reply.kind} to a group`);
     return reply.groups;
+  }
+
+  async tenBitCopy(
+    command: Omit<Extract<RawshimCommand, { kind: 'tenBitCopy' }>, 'kind'>,
+  ): Promise<void> {
+    const reply = await this.request({ kind: 'tenBitCopy', ...command });
+    if (reply.kind !== 'written') throw new Error(`worker replied ${reply.kind} to a copy`);
   }
 
   close(): void {

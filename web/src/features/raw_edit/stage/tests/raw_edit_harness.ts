@@ -378,7 +378,7 @@ export class FakeDecoder {
   wheelDots: number[] = [55, 4, -3, 1];
   wheelMoves = (place: number[]): number[] => place;
 
-  attachWheel(_canvas: OffscreenCanvas, side: number): Promise<void> {
+  attachWheel(_canvas: OffscreenCanvas | null, side: number): Promise<void> {
     this.wheelSide = side;
     this.wheelsAttached += 1;
     return Promise.resolve();
@@ -391,12 +391,16 @@ export class FakeDecoder {
     return Promise.resolve({
       chroma: WHEEL_RIM,
       edges: edgeAt.map((at) => Array.from({ length: 360 }, (_, degree) => wheelEdge(at, degree))),
+      video: null,
     });
   }
 
-  shadeWheel(_lightness: number, selected: ColourNode | null): Promise<void> {
+  shadeWheel(
+    _lightness: number,
+    selected: ColourNode | null,
+  ): Promise<Uint8Array<ArrayBuffer> | null> {
     this.wheelShadedBy.push(selected);
-    return Promise.resolve();
+    return Promise.resolve(null);
   }
 
   /** Each colour's hue, chroma and lightness, scaled into a code. */

@@ -16,9 +16,9 @@ On Firefox, replaces each HDR AVIF with a `<video>` of the same frame. Other bro
 
 ## Why
 
-Firefox composites HDR only for video ([bug 1889288][bug]). It decodes PQ AVIF but paints
-codes as sRGB, ignoring the transfer curve. This washed-out result exposes no detectable
-failure. Chrome and Safari render correctly.
+Firefox composites HDR only for video ([bug 1889288][bug]). It decodes PQ AVIF but renders
+it wrongly: washed out on Windows, dark on macOS, where it fits 10,000 nits into SDR white.
+Neither exposes a detectable failure. Chrome and Safari render correctly.
 
 AVIF holds an AV1 frame; wrapping it in MP4 sends identical bytes through Firefox's HDR video path.
 
@@ -76,15 +76,25 @@ outside the file, or anything that is not AV1.
 Returns primary image's display rotation in clockwise degrees. Reads irot metadata;
 returns 0 when absent.
 
+### `contentLightOfAvif(avif: Uint8Array): { maxCll, maxFall } | null`
+
+Returns the primary image's content light level (`clli`), or null when absent or zero.
+
+### `vp9FrameToMp4(frame: Uint8Array, width: number, height: number): Uint8Array`
+
+Wraps one VP9 profile 2 keyframe (10-bit 4:2:0, PQ, BT.2020, limited range) as a
+one-sample MP4, for a frame you encoded yourself.
+
 ### `needsHdrVideo(): boolean`
 
 Uses user-agent sniffing: Gecko's incorrect PQ rendering succeeds, so feature detection cannot catch it.
 
 ## Limits
 
-- **Firefox needs 4:2:0.** A 4:4:4 AVIF is AV1 Profile 1, which Firefox decodes and then
-  composites SDR anyway — the remux is correct, the browser still will not show it in
-  HDR. Encode HDR stills 4:2:0 if Firefox matters to you.
+- **Firefox needs 10-bit 4:2:0.** A 4:4:4 AVIF is AV1 Profile 1 and a 12-bit one Profile 2;
+  Firefox decodes both and then shows them washed out, with no transfer applied. The remux
+  is correct and the browser still will not show them in HDR. Encode HDR stills 10-bit
+  4:2:0 if Firefox matters to you, or pass `hdrVideoUrl` a 10-bit 4:2:0 copy.
 - **Grid images are refused.** Several coded tiles cannot be one video sample. Encoders
   produce these past a size threshold (libavif's default is 8192px), so a very large
   still may need re-encoding with tiling off.

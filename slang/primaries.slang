@@ -24,6 +24,18 @@ public Colour<P3Linear> on_the_canvas(Colour<DisplayNits> nits, float sdr_white)
     return measured<P3Linear>(mul(R2020_TO_P3, nits.v) / sdr_white);
 }
 
+/// Display P3 to Rec.2020, the way back.
+public static const float3x3 P3_TO_R2020 = float3x3(
+     0.753833,   0.198597,   0.047570,
+     0.045744,   0.941777,   0.012479,
+    -0.001210,   0.017602,   0.983609);
+
+/// `on_the_canvas` undone: what a canvas holds, as the display nits that drew it.
+public Colour<DisplayNits> off_the_canvas(Colour<P3Linear> canvas, float sdr_white)
+{
+    return measured<DisplayNits>(mul(P3_TO_R2020, canvas.v) * sdr_white);
+}
+
 /// Rec.2020 to sRGB.
 ///
 /// A draw targets P3 because that is what a display is; a file targets sRGB because that is what

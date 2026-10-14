@@ -249,9 +249,8 @@ export const RenditionPanel = observer(function RenditionPanel({
               : fileSizeLabel(shownFile.bytes),
           ),
         ],
-        // The file the server holds, which is what a reader can act on. Firefox
-        // is watching an MP4 of the same frame, but that is made in the page and
-        // exists nowhere to be downloaded or measured.
+        // The rendition the server holds, which is what a reader can act on, even where
+        // Firefox is watching an MP4 made from its 10-bit copy.
         [
           PhotoDetailStrings.format(),
           pending(() =>
