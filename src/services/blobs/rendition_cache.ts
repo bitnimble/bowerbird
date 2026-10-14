@@ -3,7 +3,7 @@ import { statSync } from 'node:fs';
 import { Logger } from '../../logger';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
-import { getDataPath, renditionPathFor, tenBitCopyPathFor } from '../../utils/paths';
+import { getDataPath, renditionPathFor, tenBitCopyPathsFor } from '../../utils/paths';
 import { renditionVariant, type Rendition } from '../processing/renditions/renditions';
 import { RenditionsRepository } from '../processing/renditions/renditions_repository';
 
@@ -132,10 +132,8 @@ export class RenditionCache {
           renditionPathFor(dataPath, row.photo_id, row.rendition, row.hdr === 1),
         ).catch(() => {});
         if (row.hdr === 1)
-          await deleteGeneratedFile(
-            dataPath,
-            tenBitCopyPathFor(dataPath, row.photo_id, row.rendition),
-          ).catch(() => {});
+          for (const copy of tenBitCopyPathsFor(dataPath, row.photo_id, row.rendition))
+            await deleteGeneratedFile(dataPath, copy).catch(() => {});
         held -= row.bytes;
         dropped += 1;
       }

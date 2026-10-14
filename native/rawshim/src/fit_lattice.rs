@@ -65,8 +65,7 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
                 entry(5, write),
                 entry(6, write),
                 entry(7, write),
-                entry(8, write),
-                entry(9, read),
+                entry(8, read),
                 entry(20, wgpu::BufferBindingType::Uniform),
             ],
         });
@@ -166,17 +165,13 @@ pub(crate) async fn moments(
     let ordered = buffer("fit lattice order", pairs, storage);
     // Each cell's last slice may be part-filled, so a cell adds at most one past the even share.
     let slices = pairs.div_ceil(SLICE) + cells;
-    let corners = buffer(
-        "fit lattice corners",
-        slices * CORNERS * NODE_WORDS,
-        storage,
-    );
-    let out = buffer(
-        "fit lattice moments",
-        nodes * NODE_WORDS,
+    let words = nodes * NODE_WORDS;
+    // The moments, then every (slice, corner)'s sums: `fit_lattice.slang`'s `totals`.
+    let totals = buffer(
+        "fit lattice totals",
+        words + slices * CORNERS * NODE_WORDS,
         storage | wgpu::BufferUsages::COPY_SRC,
     );
-    let words = nodes * NODE_WORDS;
     let staging = buffer(
         "fit lattice out",
         words,
@@ -244,14 +239,10 @@ pub(crate) async fn moments(
             },
             wgpu::BindGroupEntry {
                 binding: 7,
-                resource: corners.as_entire_binding(),
+                resource: totals.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 8,
-                resource: out.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 9,
                 resource: indexed.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
@@ -281,7 +272,7 @@ pub(crate) async fn moments(
     }
     recording
         .encoder()
-        .copy_buffer_to_buffer(&out, 0, &staging, 0, (words * 4) as u64);
+        .copy_buffer_to_buffer(&totals, 0, &staging, 0, (words * 4) as u64);
     recording.submit();
 
     let read = crate::gpu::read_back(gpu, &staging, |mapped| {

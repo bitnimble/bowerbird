@@ -549,13 +549,15 @@ pub unsafe extern "C" fn bb_write_ten_bit_copy(
     out: *const c_char,
     quantizer: i32,
     speed: i32,
+    white_nits: f64,
 ) -> i32 {
     let (Some(source), Some(out)) = (unsafe { as_str(source) }, unsafe { as_str(out) }) else {
         return -1;
     };
     let written = crate::guard("bb_write_ten_bit_copy", Err("panicked".to_string()), || {
         let bytes = std::fs::read(source).map_err(|e| format!("could not read {source}: {e}"))?;
-        let copy = crate::avif::ten_bit_copy(&bytes, quantizer, speed)?;
+        let white = crate::light::Light::measured(white_nits);
+        let copy = crate::avif::ten_bit_copy(&bytes, quantizer, speed, white)?;
         std::fs::write(out, copy).map_err(|e| format!("could not write {out}: {e}"))
     });
     crate::release_freed_memory();

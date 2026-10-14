@@ -1,9 +1,9 @@
 // A drawn frame as ten-bit PQ BT.2020 4:2:0 in video range: the planes the editor's VP9 encoder
 // takes on Firefox, whose compositor shows HDR for video and nothing else (DESIGN §21.2).
 //
-// The frame holds what a canvas would: Display P3 over the browser's 203, through the sRGB curve
-// with the sign kept (`frame.slang`'s `fs`). That is undone to the display nits that drew it before
-// anything is coded, so the video shows the light the canvas would have.
+// The frame holds what a canvas would: Display P3 over SDR white, through the sRGB curve with the
+// sign kept (`frame.slang`'s `fs`). That is undone to nits at `sdr_white`, the white the platform
+// shows a PQ video's SDR white at, so the video sits where the same photo drawn SDR does.
 //
 // Two samples to a word, the left one in the low half: the little-endian `u16` rows the encoder
 // reads. Each lane codes a four-by-two block of luma and the two chroma samples over it, sited

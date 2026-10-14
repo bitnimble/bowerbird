@@ -52,20 +52,22 @@ struct Params {
 /// radius the falloff is indexed by. `refit_gain` is the one reader that wants them on the host,
 /// and it sums real f64 out of the sRGB transfer, which is not something a fold of integers does.
 [vk::binding(4, 0)] RWStructuredBuffer<uint> records;
-/// Per candidate and phase: the camera's luma summed per level, and how many landed there.
-[vk::binding(5, 0)] RWStructuredBuffer<Atomic<uint> > bins;
+/// Both folds, in one buffer because Firefox on a Mac allows nine storage buffers a stage.
+///
+/// First, per candidate: the residual summed over the held-out pairs, how many there were, and how
+/// many pairs the gate admitted in total. Three words rather than two so that one twelve-byte
+/// readback answers everything a candidate is asked - `MIN_PAIRS` included - and the objective is
+/// one submit. Then from `bins_from()`, per candidate and phase: the camera's luma summed per
+/// level, and how many landed there.
+[vk::binding(5, 0)] RWStructuredBuffer<Atomic<uint> > tallies;
 /// Each candidate's fitted curve, 256 levels, one to a word so `fit_obj_curve` can write it.
 [vk::binding(6, 0)] RWStructuredBuffer<uint> curves;
-/// Per candidate: the residual summed over the held-out pairs, how many there were, and how many
-/// pairs the gate admitted in total. Three words rather than two so that one twelve-byte readback
-/// answers everything a candidate is asked - `MIN_PAIRS` included - and the objective is one submit.
-[vk::binding(7, 0)] RWStructuredBuffer<Atomic<uint> > score;
 /// `fit::invert_curve`'s answer for the round's own curve, 256 levels, then `fit::linear_table`'s
 /// 256 - the sRGB transfer undone, which is the light a ratio of levels has to be taken in.
 [vk::binding(8, 0)] StructuredBuffer<float> falloff_tables;
 /// Per block, `FALLOFF_BINS` triples: the light the camera wants, the light we have, and the pairs
 /// that carried them.
-[vk::binding(9, 0)] RWStructuredBuffer<float> falloff_bins;
+[vk::binding(7, 0)] RWStructuredBuffer<float> falloff_bins;
 
 /// Words a candidate's answer occupies.
 static const int SCORE_WORDS = 3;
@@ -85,6 +87,7 @@ static const int PHASES = 2;
 /// A candidate's own stretch of each buffer.
 int pixels() { return pc.width * pc.height; }
 int bins_per_candidate() { return PHASES * LEVELS * 2; }
+int bins_from() { return times(pc.candidates, SCORE_WORDS); }
 
 /// The 8-bit level a float plane's sample carries, as `fit::read_rgb` rounds it.
 int level_of(StructuredBuffer<float> plane, int base, int i)
@@ -296,9 +299,9 @@ void fit_obj_bins(uint3 id: SV_DispatchThreadID)
     int level;
     int target;
     pair_at(candidate, k, level, target);
-    let slot = candidate * bins_per_candidate() + (k & 1) * LEVELS * 2 + level * 2;
-    bins[slot].add(uint(target));
-    bins[slot + 1].add(1);
+    let slot = bins_from() + candidate * bins_per_candidate() + (k & 1) * LEVELS * 2 + level * 2;
+    tallies[slot].add(uint(target));
+    tallies[slot + 1].add(1);
 }
 
 /// The curve one half's bins draw: gaps interpolated, ends extended, monotone.
@@ -314,18 +317,18 @@ void fit_obj_curve(uint3 id: SV_DispatchThreadID)
 {
     let candidate = int(id.x);
     if (candidate >= pc.candidates) { return; }
-    let bin = candidate * bins_per_candidate() + pc.fitted * LEVELS * 2;
+    let bin = bins_from() + candidate * bins_per_candidate() + pc.fitted * LEVELS * 2;
     let out = candidate * LEVELS;
     // Carried out with the score, so the host learns how many pairs the gate admitted without a
     // readback of its own.
-    score[times(candidate, SCORE_WORDS) + 2].store(counts[total_at(candidate)]);
+    tallies[times(candidate, SCORE_WORDS) + 2].store(counts[total_at(candidate)]);
 
     var curve = float[LEVELS]();
     var known = int[LEVELS]();
     var seen = 0;
     for (int level = 0; level < LEVELS; level++) {
-        let count = float(bins[bin + level * 2 + 1].load());
-        curve[level] = count >= float(pc.min_bin) ? float(bins[bin + level * 2].load()) / count : -1.0;
+        let count = float(tallies[bin + level * 2 + 1].load());
+        curve[level] = count >= float(pc.min_bin) ? float(tallies[bin + level * 2].load()) / count : -1.0;
         if (curve[level] >= 0.0) {
             known[seen] = level;
             seen++;
@@ -381,8 +384,8 @@ void fit_obj_score(uint3 id: SV_DispatchThreadID)
     pair_at(candidate, k, level, target);
     let drawn = int(curves[candidate * LEVELS + level]);
     let at = times(candidate, SCORE_WORDS);
-    score[at].add(uint(abs(drawn - target)));
-    score[at + 1].add(1);
+    tallies[at].add(uint(abs(drawn - target)));
+    tallies[at + 1].add(1);
 }
 
 /// The falloff's radius bins, summed over the pairs the gate admitted.

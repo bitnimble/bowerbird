@@ -255,15 +255,16 @@ class Open {
       case 'attach': {
         const editor = this.drawing();
         const canvas = ask.canvas ?? undefined;
-        if (ask.which === 'stage') editor.attachStage(canvas, ask.width, ask.height, ask.video);
-        else editor.attachLoupe(canvas, ask.width, ask.height, ask.video);
+        const white = ask.videoWhite ?? undefined;
+        if (ask.which === 'stage') editor.attachStage(canvas, ask.width, ask.height, white);
+        else editor.attachLoupe(canvas, ask.width, ask.height, white);
         return { value: null };
       }
       case 'releaseLoupe':
         this.drawing().releaseLoupe();
         return { value: null };
       case 'attachWheel':
-        this.drawing().attachWheel(ask.canvas ?? undefined, ask.side);
+        this.drawing().attachWheel(ask.canvas ?? undefined, ask.side, ask.videoWhite ?? undefined);
         return { value: null };
       case 'drawWheel': {
         const editor = this.drawing();

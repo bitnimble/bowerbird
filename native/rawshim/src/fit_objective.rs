@@ -81,7 +81,6 @@ pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
                 entry(6, write),
                 entry(7, write),
                 entry(8, read),
-                entry(9, write),
                 entry(20, wgpu::BufferBindingType::Uniform),
             ],
         });
@@ -128,9 +127,10 @@ pub(crate) struct Paired {
     jpeg: crate::gpu::Buffer,
     counts: crate::gpu::Buffer,
     records: crate::gpu::Buffer,
-    bins: crate::gpu::Buffer,
+    /// Every candidate's score words, then every candidate's bins (`fit_objective.slang`'s
+    /// `tallies`).
+    tallies: crate::gpu::Buffer,
     curves: crate::gpu::Buffer,
-    score: crate::gpu::Buffer,
     /// `invert_curve`'s answer for the round in hand, then `linear_table`, rewritten per round.
     falloff_tables: crate::gpu::Buffer,
     falloff_bins: crate::gpu::Buffer,
@@ -221,19 +221,13 @@ pub(crate) fn paired(
             candidates * pixels * RECORD_WORDS,
             readable,
         ),
-        bins: held(
+        tallies: held(
             gpu,
-            "fit objective bins",
-            candidates * BINS_PER_CANDIDATE,
+            "fit objective tallies",
+            candidates * (SCORE_WORDS + BINS_PER_CANDIDATE),
             cleared,
         ),
         curves: held(gpu, "fit objective curves", candidates * LEVELS, readable),
-        score: held(
-            gpu,
-            "fit objective score",
-            candidates * SCORE_WORDS,
-            cleared,
-        ),
         // Two 256-level tables, rewritten each round because the curve they come off is.
         falloff_tables: held(
             gpu,
@@ -304,7 +298,7 @@ impl Paired {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.bins.as_entire_binding(),
+                    resource: self.tallies.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
@@ -312,15 +306,11 @@ impl Paired {
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: self.score.as_entire_binding(),
+                    resource: self.falloff_bins.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
                     resource: self.falloff_tables.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: self.falloff_bins.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 20,
@@ -373,8 +363,7 @@ impl Paired {
         }
         // Cleared rather than allocated afresh: a falloff asks three rounds of this about one pair
         // list, and every slot in both folds is added into.
-        recording.encoder().clear_buffer(&self.bins, 0, None);
-        recording.encoder().clear_buffer(&self.score, 0, None);
+        recording.encoder().clear_buffer(&self.tallies, 0, None);
         let push = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("fit_objective push"),
             contents: &block(self, gain.is_some(), fitted),
@@ -414,7 +403,7 @@ impl Paired {
         );
         recording
             .encoder()
-            .copy_buffer_to_buffer(&self.score, 0, &out, 0, (words * 4) as u64);
+            .copy_buffer_to_buffer(&self.tallies, 0, &out, 0, (words * 4) as u64);
         recording.submit();
         let read = read_words(self.gpu, &out).await?;
         Some(

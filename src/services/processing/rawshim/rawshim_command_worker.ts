@@ -11,7 +11,14 @@ export type RawshimCommand =
       threshold: number;
       windowSeconds: number;
     }
-  | { kind: 'tenBitCopy'; sourcePath: string; outPath: string; quantizer: number; speed: number };
+  | {
+      kind: 'tenBitCopy';
+      sourcePath: string;
+      outPath: string;
+      quantizer: number;
+      speed: number;
+      whiteNits: number;
+    };
 
 export type RawshimCommandReply =
   | { kind: 'rendered' }
@@ -32,7 +39,7 @@ self.onmessage = ({ data }) => {
       return;
     }
     if (data.kind === 'tenBitCopy') {
-      writeTenBitCopy(data.sourcePath, data.outPath, data.quantizer, data.speed);
+      writeTenBitCopy(data.sourcePath, data.outPath, data.quantizer, data.speed, data.whiteNits);
       self.postMessage({ kind: 'written' });
       return;
     }

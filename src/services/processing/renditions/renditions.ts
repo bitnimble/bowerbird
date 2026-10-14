@@ -24,6 +24,7 @@
 
 import { RENDITIONS, type RenditionSource } from '../../../schemas/common';
 import { type StoredRecipe } from '../../../schemas/recipes';
+import { STILL_WHITE, TEN_BIT_WHITES, type TenBitWhite } from '../../../schemas/ten_bit_white';
 import { hasEmbeddedJpeg } from '../../../utils/scan';
 
 export type Rendition = (typeof RENDITIONS)[number];
@@ -178,14 +179,17 @@ export function renditionVariants(): RenditionVariant[] {
 }
 
 // Where Firefox's copy of an HDR rendition lives, built only when Firefox asks for one
-// (`TenBitCopies`, §10.7.2). Beside its rendition and named `<photoId>.avif` like it, so the
-// sweeps read its filenames as ids.
-export function tenBitCopyDir(rendition: Rendition): string {
-  return `${renditionVariant(rendition, true)}-10bit`;
+// (`TenBitCopies`, §10.7.2), one per white it codes. Beside its rendition and named
+// `<photoId>.avif` like it, so the sweeps read its filenames as ids.
+export function tenBitCopyDir(rendition: Rendition, white: TenBitWhite): string {
+  const dir = `${renditionVariant(rendition, true)}-10bit`;
+  return white === STILL_WHITE ? dir : `${dir}-white${white}`;
 }
 
 export function tenBitCopyDirs(): string[] {
-  return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).map(tenBitCopyDir);
+  return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).flatMap((rendition) =>
+    TEN_BIT_WHITES.map((white) => tenBitCopyDir(rendition, white)),
+  );
 }
 
 // Directories under `renditions/` that nothing writes any more, emptied by the

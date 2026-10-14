@@ -230,12 +230,20 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     canvas: CanvasSchema.nullable(),
     width: z.number(),
     height: z.number(),
-    /** With no canvas, whether what comes back is a video frame's planes rather than RGB9E5. */
-    video: z.boolean(),
+    /**
+     * With no canvas, the nits SDR white is coded at in the video frame planes that come back, or
+     * null for RGB9E5.
+     */
+    videoWhite: z.number().nullable(),
   }),
   z.object({ kind: z.literal('releaseLoupe') }),
-  /** Null for a wheel shown as video, whose planes each draw hands back. */
-  z.object({ kind: z.literal('attachWheel'), canvas: CanvasSchema.nullable(), side: z.number() }),
+  /** A null canvas for a wheel shown as video, whose planes each draw hands back. */
+  z.object({
+    kind: z.literal('attachWheel'),
+    canvas: CanvasSchema.nullable(),
+    side: z.number(),
+    videoWhite: z.number().nullable(),
+  }),
   z.object({
     kind: z.literal('drawWheel'),
     lightness: z.number(),

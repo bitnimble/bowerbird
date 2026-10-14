@@ -128,7 +128,7 @@ pub(crate) fn params_block() -> usize {
 
 /// One entry of `assembly_weight.slang`, and the bindings past the uniform it reads.
 ///
-/// **Only those**, because the four together bind eleven storage buffers and a stage is allowed ten
+/// **Only those**, because the four together bind eleven storage buffers and a stage is allowed nine
 /// (`gpu::MOST_STORAGE_BUFFERS`).
 struct Entry {
     kernel: crate::hdr_fit::Kernel,

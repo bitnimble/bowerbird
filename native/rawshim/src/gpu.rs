@@ -475,10 +475,11 @@ pub fn device() -> Option<&'static Gpu> {
     PAGE.with(std::cell::Cell::get)
 }
 
-/// The most storage buffers one shader stage binds: what an Apple GPU offers a page, where
-/// Windows, Linux and Android mostly offer sixteen. Every host asks for no more, so a kernel that
-/// binds an eleventh is refused on the machine it was written on rather than on a Mac.
-pub const MOST_STORAGE_BUFFERS: u32 = 10;
+/// The most storage buffers one shader stage binds: what Firefox on a Mac offers a page, one fewer
+/// than Chrome and Safari there, where Windows, Linux and Android mostly offer sixteen. Every host
+/// asks for no more, so a kernel that binds a tenth is refused on the machine it was written on
+/// rather than on a Mac.
+pub const MOST_STORAGE_BUFFERS: u32 = 9;
 
 /// What this device asks for beyond the base, where the adapter has it and nothing where it does
 /// not.
@@ -1434,9 +1435,13 @@ impl Gpu {
     }
 
     /// `drawn` as the ten-bit PQ 4:2:0 planes the editor's VP9 encoder takes on Firefox
-    /// (`pq420.slang`): [`Pq420Layout::header`] as little-endian words, then the planes as
-    /// little-endian samples.
-    pub async fn pq420(&self, drawn: &Texture) -> Option<Vec<u8>> {
+    /// (`pq420.slang`), with the canvas's SDR white coded at `white`: [`Pq420Layout::header`] as
+    /// little-endian words, then the planes as little-endian samples.
+    pub async fn pq420(
+        &self,
+        drawn: &Texture,
+        white: crate::light::Light<crate::light::DisplayNits>,
+    ) -> Option<Vec<u8>> {
         let layout = Pq420Layout::of(drawn.width(), drawn.height());
         let bytes = u64::from(layout.words) * 4;
         let mut recording = self.record();
@@ -1460,7 +1465,7 @@ impl Gpu {
             layout.chroma_stride,
             layout.cb_at,
             layout.cr_at,
-            (CANVAS_WHITE_NITS as f32).to_bits(),
+            (white.raw() as f32).to_bits(),
             0,
         ]
         .into_iter()
@@ -2149,9 +2154,9 @@ const DRAW_BINDINGS: [(u32, Binding); 17] = [
 /// values the fragment shader writes are display nits over an SDR white and go past one.
 const CANVAS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// Browsers' SDR white on an extended-range canvas (`docs/raw-edit-gpu.md` §7.1); never
-/// `reference_nits`, which a library may move.
-const CANVAS_WHITE_NITS: f64 = 203.0;
+/// Browsers' SDR white on an extended-range canvas and in a PQ still (`docs/raw-edit-gpu.md` §7.1);
+/// never `reference_nits`, which a library may move.
+pub(crate) const CANVAS_WHITE_NITS: f64 = 203.0;
 
 /// The gamut and the tone mapping every canvas the editor draws on is configured with.
 ///
@@ -2182,8 +2187,9 @@ pub struct Stage {
     target: StageTarget,
     width: u32,
     height: u32,
-    /// Held for a video rather than a canvas, so read back by [`Gpu::pq420`].
-    video: bool,
+    /// Held for a video rather than a canvas, read back by [`Gpu::pq420`] with SDR white coded at
+    /// this.
+    video: Option<crate::light::Light<crate::light::DisplayNits>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2215,15 +2221,20 @@ impl Stage {
             target: StageTarget::Surface(surface, canvas),
             width: 0,
             height: 0,
-            video: false,
+            video: None,
         };
         held.resize(gpu, width, height);
         Some(held)
     }
 
     /// A stage drawn into a texture rather than a canvas, for the page to be sent ([`Stage::drawn`])
-    /// as a canvas's words or with `video` as a video frame's planes.
-    pub fn held(gpu: &Gpu, width: u32, height: u32, video: bool) -> Stage {
+    /// as a canvas's words or, with `video`'s white, as a video frame's planes.
+    pub fn held(
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        video: Option<crate::light::Light<crate::light::DisplayNits>>,
+    ) -> Stage {
         let mut held = Stage {
             target: StageTarget::Held(None),
             width: 0,
@@ -2283,9 +2294,14 @@ impl Stage {
         (self.width, self.height)
     }
 
-    /// What the last draw wrote, where this stage is held rather than a canvas, and whether it is
-    /// held for a video.
-    pub fn drawn(&self) -> Option<(Texture, bool)> {
+    /// What the last draw wrote, where this stage is held rather than a canvas, and the white a
+    /// video is coded at where it is held for one.
+    pub fn drawn(
+        &self,
+    ) -> Option<(
+        Texture,
+        Option<crate::light::Light<crate::light::DisplayNits>>,
+    )> {
         match &self.target {
             StageTarget::Held(texture) => texture.clone().map(|texture| (texture, self.video)),
             StageTarget::Surface(..) => None,
@@ -5639,7 +5655,7 @@ mod tests {
         use crate::light::{DisplayNits, Light};
         let gpu = super::device().expect("a Vulkan adapter");
         let (width, height) = (7u32, 5u32);
-        // What `fs` writes: Display P3 over 203 through the signed sRGB curve, past one for
+        // What `fs` writes: Display P3 over SDR white through the signed sRGB curve, past one for
         // highlights and below zero for a colour outside P3.
         let drawn: Vec<[f32; 3]> = (0..width * height)
             .map(|at| {
@@ -5670,7 +5686,10 @@ mod tests {
             wgpu::util::TextureDataOrder::LayerMajor,
             &data,
         );
-        let answer = pollster::block_on(gpu.pq420(&texture)).expect("the readback mapped");
+        // Not the canvas's 203, so a coding that ignored the white it was given would fail.
+        let white = 100.0;
+        let answer = pollster::block_on(gpu.pq420(&texture, Light::exactly(white)))
+            .expect("the readback mapped");
 
         let layout = super::Pq420Layout::of(width, height);
         let words: Vec<u32> = answer
@@ -5702,7 +5721,7 @@ mod tests {
                 let nits: f64 = (0..3)
                     .map(|col| f64::from(to_rec2020[row][col]) * canvas[col])
                     .sum::<f64>()
-                    * super::CANVAS_WHITE_NITS;
+                    * white;
                 crate::tone::pq(Light::<DisplayNits>::exactly(nits.max(0.0))).raw()
             });
             let [kr, kg, kb] = crate::hdr_fit::LUMA;

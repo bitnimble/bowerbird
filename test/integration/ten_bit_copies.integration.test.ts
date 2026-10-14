@@ -45,6 +45,14 @@ test('an HDR rendition is served as a 10-bit 4:2:0 PQ copy beside it', async () 
   expect(probe(copy)).toEqual({ pix_fmt: 'yuv420p10le', color_transfer: 'smpte2084' });
 });
 
+test("macOS's copy, white at 100 nits, is kept beside the 203 one", async () => {
+  const copy = await copies.pathFor(library(true), 'p1', 'full', 100);
+  expect(copy).toBe(
+    path.join(dataPathForLibraryId(LIB), 'renditions', 'full-hdr-10bit-white100', 'p1.avif'),
+  );
+  expect(probe(copy)).toEqual({ pix_fmt: 'yuv420p10le', color_transfer: 'smpte2084' });
+});
+
 test('the copy is kept until its still changes', async () => {
   const copy = await copies.pathFor(library(true), 'p1', 'full');
   const written = statSync(copy).ino;

@@ -6,7 +6,7 @@
 // showing as the slider moves.
 //
 // **Bound with only the anchors the slider can reach**, which is two sets of three planes beside
-// the regression: all four is twelve storage buffers, and an Apple GPU offers a stage ten
+// the regression: all four is twelve storage buffers, and Firefox on a Mac offers a stage nine
 // (`gpu::MOST_STORAGE_BUFFERS`). The slider is one number for the whole dispatch, so the host knows
 // which two.
 

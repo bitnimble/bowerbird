@@ -1,4 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
+import { hdrVideoWhiteNits } from 'avif-hdr-video';
 import type { MDXComponents } from 'mdx/types';
 import { Fragment, createContext, useContext, useState, type ReactNode } from 'react';
 import { PathSegment, route } from '../../../../src/schemas/route';
@@ -486,12 +487,7 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
   const hdrSrc = route(PathSegment.hdr(), `${slug}-hdr.avif`);
   // Firefox composites HDR for video and only video, so the still is rewrapped there
   // (DESIGN §10.7.2). Null everywhere else, where the `<img>` is the better element.
-  const { twin: hdrVideo, failed } = useHdrVideo(
-    slug,
-    hdrSrc,
-    route(PathSegment.hdr(), `${slug}-hdr-10bit.avif`),
-    true,
-  );
+  const { twin: hdrVideo, failed } = useHdrVideo(slug, hdrSrc, tenBitDemo(slug), true);
 
   return (
     <button
@@ -536,6 +532,12 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
       </span>
     </button>
   );
+}
+
+/** A demo's 10-bit copy at the white this platform shows a video's at (`scripts/demo-assets.ts`). */
+function tenBitDemo(slug: string): string {
+  const white = hdrVideoWhiteNits();
+  return route(PathSegment.hdr(), `${slug}-hdr-10bit${white === 203 ? '' : `-white${white}`}.avif`);
 }
 
 type Children = { children?: ReactNode };
@@ -610,8 +612,10 @@ function Note({ children }: Children): JSX.Element {
  */
 function Swatches(): JSX.Element {
   const src = route(PathSegment.hdr(), 'swatches.avif');
-  // Already 10-bit 4:2:0 (`scripts/demo-assets.ts`), so Firefox's twin needs no copy of its own.
-  const { twin: hdrVideo, failed } = useHdrVideo('swatches', src, src, true);
+  // Already 10-bit 4:2:0 at 203 (`scripts/demo-assets.ts`), so only macOS's white has a copy.
+  const white = hdrVideoWhiteNits();
+  const tenBit = white === 203 ? src : route(PathSegment.hdr(), `swatches-white${white}.avif`);
+  const { twin: hdrVideo, failed } = useHdrVideo('swatches', src, tenBit, true);
   return (
     <figure {...stylex.props(styles.swatches)}>
       {hdrVideo == null ? (

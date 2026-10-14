@@ -1,3 +1,4 @@
+import { hdrVideoWhiteNits } from 'avif-hdr-video';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { type RenditionJobResponse, RenditionJobResponseSchema } from '../../../src/schemas/photos';
 import type { Rendition } from '../../../src/services/processing/renditions/renditions';
@@ -33,8 +34,12 @@ export const renditionsApi = {
   // a file that was never built.
   url: renditionUrl,
 
-  /** The same rendition as the 10-bit copy Firefox rewraps into a video (`hdr_video.ts`). */
-  tenBitUrl: (url: string): string => `${url}${url.includes('?') ? '&' : '?'}bits=10`,
+  /**
+   * The same rendition as the 10-bit copy Firefox rewraps into a video (`hdr_video.ts`), with SDR
+   * white where this platform shows a PQ video's.
+   */
+  tenBitUrl: (url: string): string =>
+    `${url}${url.includes('?') ? '&' : '?'}bits=10&white=${hdrVideoWhiteNits()}`,
 
   /** Hands the server a rendition this device rendered, gzipped, for it to encode and keep. */
   keep: async (

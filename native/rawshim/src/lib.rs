@@ -206,6 +206,8 @@ pub mod pmrid;
 /// PNG, which an export can ask for and nothing else writes.
 #[cfg(feature = "renditions")]
 pub mod png_write;
+#[cfg(feature = "renditions")]
+pub mod pq_rescale;
 pub mod print;
 pub mod printer_gamut;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.

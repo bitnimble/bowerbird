@@ -51,13 +51,13 @@ struct Params {
 [vk::binding(5, 0)] RWStructuredBuffer<uint> counts;
 /// Each cell's landings, in pair order, as indices into `landed`.
 [vk::binding(6, 0)] RWStructuredBuffer<uint> ordered;
-/// Per (slice, corner), `NODE_WORDS` sums, which `lat_fold` adds up.
-[vk::binding(7, 0)] RWStructuredBuffer<float> corners;
-/// Per node, `NODE_WORDS` sums.
-[vk::binding(8, 0)] RWStructuredBuffer<float> moments;
+/// Per node, `NODE_WORDS` sums; then from `corners_from()`, per (slice, corner), the `NODE_WORDS`
+/// sums `lat_fold` adds up into them. One buffer because Firefox on a Mac allows nine storage
+/// buffers a stage.
+[vk::binding(7, 0)] RWStructuredBuffer<float> totals;
 /// Per pair, the colour the lattice is indexed by: the sample through the tone stage and the
 /// matrix. `through` itself, unless the pass fits on what an earlier lattice left.
-[vk::binding(9, 0)] StructuredBuffer<float4> indexed;
+[vk::binding(8, 0)] StructuredBuffer<float4> indexed;
 
 /// Corners of a cell, which is how many cells a node is a corner of.
 static const int CORNERS = 16;
@@ -74,6 +74,7 @@ static const int REACH_WORDS = 26;
 static const int SLICE = 256;
 
 int nodes() { return pc.hue_nodes * pc.chroma_nodes * pc.level_nodes * pc.neighbourhood_nodes; }
+int corners_from() { return nodes() * NODE_WORDS; }
 int cells()
 {
     return pc.hue_nodes * (pc.chroma_nodes - 1) * (pc.level_nodes - 1)
@@ -335,7 +336,7 @@ void lat_gather(uint3 id: SV_DispatchThreadID)
     }
 
     for (int i = 0; i < NODE_WORDS; i++) {
-        corners[int(id.x) * NODE_WORDS + i] = sums[i];
+        totals[corners_from() + int(id.x) * NODE_WORDS + i] = sums[i];
     }
 }
 
@@ -357,8 +358,8 @@ void lat_fold(uint3 id: SV_DispatchThreadID)
         if (cell < 0) { continue; }
         let slices = slices_of(cell);
         for (uint piece = slices.x; piece < slices.y; piece++) {
-            sum += corners[(int(piece) * CORNERS + c) * NODE_WORDS + word];
+            sum += totals[corners_from() + (int(piece) * CORNERS + c) * NODE_WORDS + word];
         }
     }
-    moments[int(id.x)] = sum;
+    totals[int(id.x)] = sum;
 }

@@ -210,6 +210,16 @@ export function needsHdrVideo(): boolean {
 }
 
 /**
+ * The nits this platform shows a PQ video's SDR white at: 100 on macOS, whose compositor maps a PQ
+ * video's 100 nits to SDR white, and 203 elsewhere, as browsers show a PQ still. A video coded at
+ * 203 on a Mac shows a stop brighter than the still it stands in for.
+ */
+export function hdrVideoWhiteNits(): 100 | 203 {
+  if (typeof navigator === 'undefined') return 203;
+  return navigator.userAgent.includes('Macintosh') ? 100 : 203;
+}
+
+/**
  * Puts a `<video>` of `image` in its place, where its file turns out to be HDR.
  *
  * The fetch comes first and the swap only follows a successful one, so an image that is

@@ -240,16 +240,20 @@ export function writeGainMap(
   return Buffer.from(out.subarray(0, written));
 }
 
-/** Writes `sourcePath`'s 10-bit 4:2:0 copy, the one Firefox shows as HDR, to `outPath` (§10.7.2). */
+/**
+ * Writes `sourcePath`'s 10-bit 4:2:0 copy, the one Firefox shows as HDR, to `outPath` (§10.7.2),
+ * with SDR white where the platform shows a PQ video's.
+ */
 export function writeTenBitCopy(
   sourcePath: string,
   outPath: string,
   quantizer: number,
   speed: number,
+  whiteNits: number,
 ): void {
   const source = Buffer.from(`${sourcePath}\0`);
   const out = Buffer.from(`${outPath}\0`);
-  if (shim().bb_write_ten_bit_copy(source, out, quantizer, speed) !== 0)
+  if (shim().bb_write_ten_bit_copy(source, out, quantizer, speed, whiteNits) !== 0)
     throw new Error(`rawshim could not write a 10-bit copy of ${sourcePath}`);
 }
 

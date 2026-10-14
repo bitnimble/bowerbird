@@ -7,7 +7,7 @@ import {
   type ColourNode,
   type EditDoc,
 } from '../../../../../src/schemas/photo_edits';
-import { showsAsVideo } from '../../../gpu/readback_canvas';
+import { videoWhiteNits } from '../../../gpu/readback_canvas';
 import { pq420FrameOf, vp9Encoder } from '../../../vp9/vp9_encoder';
 import type { EditStore } from '../edit/edit_store';
 import type { WheelDrawn } from '../local_decode/local_open';
@@ -310,8 +310,9 @@ export class ColourWheelPresenter {
     if (local == null || this.attached) return;
     canvas.width = WHEEL_SIDE;
     canvas.height = WHEEL_SIDE;
-    const offscreen = showsAsVideo() ? null : canvas.transferControlToOffscreen();
-    await local.decoder.attachWheel(offscreen, WHEEL_SIDE);
+    const videoWhite = videoWhiteNits();
+    const offscreen = videoWhite != null ? null : canvas.transferControlToOffscreen();
+    await local.decoder.attachWheel(offscreen, WHEEL_SIDE, videoWhite);
     if (!this.closed) this.setAttached();
   }
 

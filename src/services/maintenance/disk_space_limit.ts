@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { Logger } from '../../logger';
 import { deleteGeneratedFile } from '../../utils/deletions';
-import { dataPathForLibraryId, renditionVariantPath, tenBitCopyPathFor } from '../../utils/paths';
+import { dataPathForLibraryId, renditionVariantPath, tenBitCopyPathsFor } from '../../utils/paths';
 import { LibraryActivity } from '../activity/library_activity';
 import type { RenditionCache } from '../blobs/rendition_cache';
 import { variantParts } from '../processing/renditions/renditions';
@@ -87,7 +87,7 @@ export class DiskSpaceLimit {
     const dataPath = dataPathForLibraryId(library_id);
     const { rendition, hdr } = variantParts(variant);
     const files = [
-      ...(hdr ? [tenBitCopyPathFor(dataPath, photo_id, rendition)] : []),
+      ...(hdr ? tenBitCopyPathsFor(dataPath, photo_id, rendition) : []),
       renditionVariantPath(dataPath, photo_id, variant),
     ];
     let bytes = 0;

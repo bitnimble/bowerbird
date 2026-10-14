@@ -186,17 +186,17 @@ export class LocalDecoder {
    * twice throws - so each canvas is transferred once, and the next photo adopts the stage.
    *
    * Null keeps the canvas on the page, and every tick hands back what it drew there: RGB9E5, or
-   * with `video` the planes of a video frame.
+   * with `videoWhite` the planes of a video frame coding SDR white at that many nits.
    */
   attach(
     which: 'stage' | 'loupe',
     canvas: OffscreenCanvas | null,
     width: number,
     height: number,
-    video = false,
+    videoWhite: number | null = null,
   ): Promise<void> {
     return this.nothing(
-      { kind: 'attach', which, canvas, width, height, video },
+      { kind: 'attach', which, canvas, width, height, videoWhite },
       canvas == null ? [] : [canvas],
     );
   }
@@ -206,11 +206,18 @@ export class LocalDecoder {
   }
 
   /**
-   * The colour wheel's canvas, `side` square, transferred as `attach`'s are. Null shows the wheel
-   * as video, whose planes each draw hands back.
+   * The colour wheel's canvas, `side` square, transferred as `attach`'s are; or none, to show the
+   * wheel as video at `videoWhite`, whose planes each draw hands back.
    */
-  attachWheel(canvas: OffscreenCanvas | null, side: number): Promise<void> {
-    return this.nothing({ kind: 'attachWheel', canvas, side }, canvas == null ? [] : [canvas]);
+  attachWheel(
+    canvas: OffscreenCanvas | null,
+    side: number,
+    videoWhite: number | null = null,
+  ): Promise<void> {
+    return this.nothing(
+      { kind: 'attachWheel', canvas, side, videoWhite },
+      canvas == null ? [] : [canvas],
+    );
   }
 
   /**

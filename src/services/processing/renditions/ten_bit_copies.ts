@@ -2,6 +2,7 @@ import { mkdir, stat, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { newId } from '../../../schemas/id';
 import type { LibraryConfiguration } from '../../../schemas/libraries';
+import { STILL_WHITE, type TenBitWhite } from '../../../schemas/ten_bit_white';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { replaceFile } from '../../../utils/files';
 import { getDataPath, renditionPathFor, tenBitCopyPathFor } from '../../../utils/paths';
@@ -20,8 +21,8 @@ export class TenBitCopies {
   constructor(private readonly targets: RenderTargets) {}
 
   /**
-   * The file a reader asking for 10 bits is served: the copy where `rendition` is stored HDR,
-   * otherwise the rendition itself, which is then 8-bit already.
+   * The file a reader asking for 10 bits is served: the copy coding SDR white at `white` where
+   * `rendition` is stored HDR, otherwise the rendition itself, which is then 8-bit already.
    *
    * A rendition with no file on disk answers with its own path, so it 404s.
    */
@@ -29,13 +30,14 @@ export class TenBitCopies {
     library: LibraryConfiguration,
     photoId: string,
     rendition: Rendition,
+    white: TenBitWhite = STILL_WHITE,
   ): Promise<string> {
     const dataPath = getDataPath(library);
     const source = renditionPathFor(dataPath, photoId, rendition, library.rendition_hdr);
     if (!storedAsHdr(rendition, library.rendition_hdr)) return source;
     const sourceTime = await modifiedAt(source);
     if (sourceTime == null) return source;
-    const copy = tenBitCopyPathFor(dataPath, photoId, rendition);
+    const copy = tenBitCopyPathFor(dataPath, photoId, rendition, white);
     const copyTime = await modifiedAt(copy);
     // Within a millisecond rather than equal: `utimes` sets milliseconds, a file system keeps more.
     if (copyTime != null && Math.abs(copyTime - sourceTime) < 1) return copy;
@@ -46,7 +48,7 @@ export class TenBitCopies {
       // One at a time: a reader holding an arrow key asks for both neighbours of every photo
       // passed, and each is a full-size encode in a worker of its own.
       writing = this.queue
-        .then(() => this.write(dataPath, photoId, rendition, source, sourceTime, copy))
+        .then(() => this.write(dataPath, photoId, rendition, source, sourceTime, copy, white))
         .finally(() => this.writing.delete(key));
       this.queue = writing.catch(() => undefined);
       this.writing.set(key, writing);
@@ -62,6 +64,7 @@ export class TenBitCopies {
     source: string,
     sourceTime: number,
     copy: string,
+    white: TenBitWhite,
   ): Promise<void> {
     const { hdrQuantizer, preset } = this.targets.target(
       dataPath,
@@ -79,6 +82,7 @@ export class TenBitCopies {
         outPath: staging,
         quantizer: hdrQuantizer,
         speed: preset,
+        whiteNits: white,
       });
       await replaceFile(staging, copy);
       // Its still's time, not its own: a still rebuilt while this encoded is older than this

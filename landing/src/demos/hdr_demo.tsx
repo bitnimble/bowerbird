@@ -1,4 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
+import { hdrVideoWhiteNits } from 'avif-hdr-video';
 import { useState, useSyncExternalStore } from 'react';
 import { useHdrVideo } from '../../../web/src/features/photos/viewer/hdr_video';
 import { SegmentedControl } from '../../../web/src/ui/segmented_control';
@@ -168,7 +169,7 @@ export function HdrDemo(): JSX.Element {
             key={photo.hdr}
             style={splitImage.after}
             src={photo.hdr}
-            tenBitSrc={photo.hdrTenBit}
+            tenBitSrc={photo.hdrTenBit[hdrVideoWhiteNits()]}
             alt={DEMO.hdr.hdrAlt(title)}
             onReady={markShown}
           />

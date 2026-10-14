@@ -7,6 +7,7 @@ import { EditDocSchema } from '../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../schemas/prepare_develop';
 import { isComposite, soleInputOf } from '../../schemas/recipes';
 import { PathSegment, route } from '../../schemas/route';
+import { STILL_WHITE, TenBitWhiteSchema } from '../../schemas/ten_bit_white';
 import { getDataPath, getRenditionPath } from '../../utils/paths';
 import type { Originals } from '../../services/blobs/originals';
 import { originalMediaType } from '../../utils/scan';
@@ -224,7 +225,8 @@ export class ImageApi {
     // One route for every rendition, named rather than spelled out per size: `grid`, `full`,
     // `max`, `embedded`. Dynamic range is not in the URL - the library decides it, and a client
     // guessing would ask for a file that was never built. `bits=10` is Firefox asking for the
-    // copy it can show as HDR video, which is the rendition itself wherever that is SDR (§10.7.2).
+    // copy it can show as HDR video, which is the rendition itself wherever that is SDR, and
+    // `white` where its platform shows that video's SDR white (§10.7.2).
     app.get(
       route(PathSegment.param('photoId'), PathSegment.renditions(), PathSegment.param('rendition')),
       async (c) => {
@@ -261,12 +263,13 @@ export class ImageApi {
           );
         this.photoRenditions.rebuildIfStale(photoId);
         const tenBit = c.req.query('bits') === '10' ? this.tenBitCopies : null;
+        const white = TenBitWhiteSchema.catch(STILL_WHITE).parse(Number(c.req.query('white')));
         // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
         // the camera view has.
         return this.serve(c, lifted ? 'image/jpeg' : RENDITION_CONTENT_TYPE, (lib, each) =>
           tenBit == null
             ? getRenditionPath(lib, each.id, rendition, lib.rendition_hdr)
-            : tenBit.pathFor(lib, each.id, rendition),
+            : tenBit.pathFor(lib, each.id, rendition, white),
         );
       },
     );

@@ -5,6 +5,7 @@ import { config } from '../config';
 import { newId } from '../schemas/id';
 import type { LibraryConfiguration } from '../schemas/libraries';
 import { soleInputOf, type StoredRecipe } from '../schemas/recipes';
+import { TEN_BIT_WHITES, type TenBitWhite } from '../schemas/ten_bit_white';
 import {
   RENDITION_EXTENSION,
   renditionVariant,
@@ -57,13 +58,27 @@ export function renditionVariantPath(
   return path.join(dataPath, 'renditions', variant, `${photoId}${RENDITION_EXTENSION}`);
 }
 
-export function tenBitCopyPathFor(dataPath: string, photoId: string, rendition: Rendition): string {
+export function tenBitCopyPathFor(
+  dataPath: string,
+  photoId: string,
+  rendition: Rendition,
+  white: TenBitWhite,
+): string {
   return path.join(
     dataPath,
     'renditions',
-    tenBitCopyDir(rendition),
+    tenBitCopyDir(rendition, white),
     `${photoId}${RENDITION_EXTENSION}`,
   );
+}
+
+/** Every white's copy of `rendition`, which go with it. */
+export function tenBitCopyPathsFor(
+  dataPath: string,
+  photoId: string,
+  rendition: Rendition,
+): string[] {
+  return TEN_BIT_WHITES.map((white) => tenBitCopyPathFor(dataPath, photoId, rendition, white));
 }
 
 export function getRenditionPath(

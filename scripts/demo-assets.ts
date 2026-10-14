@@ -43,6 +43,7 @@ import { AS_METERED, developed } from '../src/services/processing/pipeline/devel
 import { encoderQuality } from '../src/services/processing/analysis/quality';
 import type { Job, JobCompositeSource, JobTarget } from '../src/schemas/jobs';
 import { runJob, writeTenBitCopy } from '../src/services/processing/rawshim/rawshim_job';
+import { STILL_WHITE, TEN_BIT_WHITES, type TenBitWhite } from '../src/schemas/ten_bit_white';
 import { isUpscalable } from '../src/services/processing/rawshim/rawshim_ops';
 
 /**
@@ -155,9 +156,12 @@ function outputPath(slug: string, hdr: boolean): string {
   return join(OUT, `${slug}-${hdr ? 'hdr' : 'sdr'}.avif`);
 }
 
-/** The HDR arm as Firefox is served it (`useHdrVideo`), re-encoded as the app's server would. */
-function tenBitPath(slug: string): string {
-  return join(OUT, `${slug}-hdr-10bit.avif`);
+/**
+ * The HDR arm as Firefox is served it (`useHdrVideo`), re-encoded as the app's server would, with
+ * SDR white at `white` (`hdrVideoWhiteNits`).
+ */
+function tenBitPath(slug: string, white: TenBitWhite): string {
+  return join(OUT, `${slug}-hdr-10bit${white === STILL_WHITE ? '' : `-white${white}`}.avif`);
 }
 
 function colourPath(profile: 'matched' | 'none'): string {
@@ -488,7 +492,7 @@ async function buildSwatches(): Promise<void> {
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(
     ffmpeg.stdin!,
   );
-  const out = join(OUT, 'swatches.avif');
+  const out = swatchesPath(STILL_WHITE);
   await run(
     'avifenc',
     [
@@ -507,7 +511,15 @@ async function buildSwatches(): Promise<void> {
     ],
     ffmpeg.stdout!,
   );
+  // Already 10-bit 4:2:0 at 203, so only macOS's white needs a copy of its own.
+  for (const white of TEN_BIT_WHITES.filter((white) => white !== STILL_WHITE))
+    writeTenBitCopy(out, swatchesPath(white), 0, 4, white);
   console.error(`[demo-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
+}
+
+/** The swatches as Firefox is shown them at `white`: the file itself at 203. */
+function swatchesPath(white: TenBitWhite): string {
+  return join(OUT, white === STILL_WHITE ? 'swatches.avif' : `swatches-white${white}.avif`);
 }
 
 /**
@@ -734,13 +746,24 @@ async function build(scene: string): Promise<void> {
     });
     await clipToWhite(scene);
     const { hdrQuantizer, preset } = target(scene);
-    writeTenBitCopy(outputPath(scene, true), tenBitPath(scene), hdrQuantizer, preset);
+    for (const white of TEN_BIT_WHITES)
+      writeTenBitCopy(
+        outputPath(scene, true),
+        tenBitPath(scene, white),
+        hdrQuantizer,
+        preset,
+        white,
+      );
   } catch (failure) {
     // The HDR arm lands before the other two are derived from it, so a failure in a
     // later step leaves the first behind - and these outputs are committed, where a
     // half-built set is a picture the page shows against one it does not. The worker
     // cleans up for the same reason (`processing_worker.ts`).
-    for (const file of [outputPath(scene, false), outputPath(scene, true), tenBitPath(scene)])
+    for (const file of [
+      outputPath(scene, false),
+      outputPath(scene, true),
+      ...TEN_BIT_WHITES.map((white) => tenBitPath(scene, white)),
+    ])
       await Bun.file(file)
         .delete()
         .catch(() => {});
@@ -749,7 +772,7 @@ async function build(scene: string): Promise<void> {
 
   const kb = (file: string): string => (Bun.file(file).size / 1024).toFixed(0);
   console.error(
-    `[demo-assets] ${scene}: ${kb(outputPath(scene, false))}kB SDR, ${kb(outputPath(scene, true))}kB HDR, ${kb(tenBitPath(scene))}kB 10-bit`,
+    `[demo-assets] ${scene}: ${kb(outputPath(scene, false))}kB SDR, ${kb(outputPath(scene, true))}kB HDR, ${kb(tenBitPath(scene, STILL_WHITE))}kB 10-bit`,
   );
 }
 

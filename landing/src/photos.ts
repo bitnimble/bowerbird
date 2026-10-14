@@ -4,27 +4,43 @@ export type Scene = 'gamut' | 'whites' | 'sun' | 'saturated';
 export const SCENES: readonly Scene[] = ['gamut', 'whites', 'sun', 'saturated'];
 
 // Each `new URL` is a literal so Vite bundles the committed file rather than a second copy of it.
-// `hdrTenBit` is the HDR arm Firefox shows, through a video (`useHdrVideo`).
-export const PHOTOS: Record<Scene, { sdr: string; hdr: string; hdrTenBit: string }> = {
+// `hdrTenBit` is the HDR arm Firefox shows, through a video (`useHdrVideo`), by the nits its
+// platform shows a video's SDR white at (`hdrVideoWhiteNits`).
+export const PHOTOS: Record<
+  Scene,
+  { sdr: string; hdr: string; hdrTenBit: Record<100 | 203, string> }
+> = {
   gamut: {
     sdr: new URL('../../web/public/hdr/gamut-sdr.avif', import.meta.url).href,
     hdr: new URL('../../web/public/hdr/gamut-hdr.avif', import.meta.url).href,
-    hdrTenBit: new URL('../../web/public/hdr/gamut-hdr-10bit.avif', import.meta.url).href,
+    hdrTenBit: {
+      203: new URL('../../web/public/hdr/gamut-hdr-10bit.avif', import.meta.url).href,
+      100: new URL('../../web/public/hdr/gamut-hdr-10bit-white100.avif', import.meta.url).href,
+    },
   },
   whites: {
     sdr: new URL('../../web/public/hdr/whites-sdr.avif', import.meta.url).href,
     hdr: new URL('../../web/public/hdr/whites-hdr.avif', import.meta.url).href,
-    hdrTenBit: new URL('../../web/public/hdr/whites-hdr-10bit.avif', import.meta.url).href,
+    hdrTenBit: {
+      203: new URL('../../web/public/hdr/whites-hdr-10bit.avif', import.meta.url).href,
+      100: new URL('../../web/public/hdr/whites-hdr-10bit-white100.avif', import.meta.url).href,
+    },
   },
   sun: {
     sdr: new URL('../../web/public/hdr/sun-sdr.avif', import.meta.url).href,
     hdr: new URL('../../web/public/hdr/sun-hdr.avif', import.meta.url).href,
-    hdrTenBit: new URL('../../web/public/hdr/sun-hdr-10bit.avif', import.meta.url).href,
+    hdrTenBit: {
+      203: new URL('../../web/public/hdr/sun-hdr-10bit.avif', import.meta.url).href,
+      100: new URL('../../web/public/hdr/sun-hdr-10bit-white100.avif', import.meta.url).href,
+    },
   },
   saturated: {
     sdr: new URL('../../web/public/hdr/saturated-sdr.avif', import.meta.url).href,
     hdr: new URL('../../web/public/hdr/saturated-hdr.avif', import.meta.url).href,
-    hdrTenBit: new URL('../../web/public/hdr/saturated-hdr-10bit.avif', import.meta.url).href,
+    hdrTenBit: {
+      203: new URL('../../web/public/hdr/saturated-hdr-10bit.avif', import.meta.url).href,
+      100: new URL('../../web/public/hdr/saturated-hdr-10bit-white100.avif', import.meta.url).href,
+    },
   },
 };
 
