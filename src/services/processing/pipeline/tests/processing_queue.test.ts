@@ -307,6 +307,37 @@ describe('ProcessingService.processUnprocessed', () => {
     ]);
   });
 
+  it('builds only the tile of a file with no camera JPEG where the library does not pre-render', async () => {
+    const heic = (photoId: string, librarySource: RenditionSource): PendingPhoto => ({
+      ...pending(photoId),
+      recipe: fileRecipe(`${photoId}.heic`),
+      rendition_source: null,
+      library_rendition_source: librarySource,
+    });
+    const repo = {
+      listPendingProcessing: jest.fn(() => [heic('later', 'embedded'), heic('ahead', 'render')]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+
+    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    expect(posted.map((job) => photoStage(job))).toEqual([
+      'later:grid',
+      'ahead:grid',
+      'ahead:full',
+    ]);
+    // Settled rather than left owing, or every batch would ask about it again.
+    expect(repo.markRenditionsBuilt).toHaveBeenCalledWith(
+      'later',
+      expect.any(String),
+      'embedded',
+      null,
+      'full',
+    );
+  });
+
   it('passes the embedded-JPEG matching setting through to the worker', async () => {
     // The worker cannot read config, so a job that does not carry the flag leaves
     // the feature permanently off however the server is configured.

@@ -85,6 +85,20 @@ describe('owedOf', () => {
     ]);
   });
 
+  it('leaves a file with no JPEG to be rendered when opened on a library that does not pre-render', () => {
+    const heic = { recipe: fileRecipe('a.heic'), inputs: ['a.heic'], hdr: true };
+    expect(owedOf(row(heic))).toEqual([{ rendition: 'grid', hdr: false, from: 'render' }]);
+    expect(owedOf(row({ ...heic, librarySource: 'render' }))).toEqual([
+      { rendition: 'grid', hdr: false, from: 'render' },
+      { rendition: 'full', hdr: true, from: 'render' },
+    ]);
+    // An edit is still rendered ahead, as on any other file.
+    expect(owedOf(row({ ...heic, edited: true }))).toEqual([
+      { rendition: 'grid', hdr: false, from: 'render' },
+      { rendition: 'full', hdr: true, from: 'render' },
+    ]);
+  });
+
   /**
    * There is no camera JPEG of a canvas, so an `embedded` library cannot be served one whole - it
    * is served one composited from its frames', and that is done when a reader opens it. Queued

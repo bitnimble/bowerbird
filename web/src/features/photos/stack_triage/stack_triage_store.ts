@@ -162,7 +162,7 @@ export class StackTriageStore {
     // **Only where every member actually has one.** The camera's JPEG is a property of the file,
     // and a stack of HEICs has none - so a round drawn at `embedded` there is a round of blank
     // tiles. A member that came from a finished picture takes the whole pool to the render, which
-    // is the one file all of them are certain to have.
+    // every member has or, on a library that doesn't pre-render, builds when its frame 404s.
     const anyEmbedded = [...this.members.values()].every((member) => member.has_embedded);
     const built: ViewerRendition =
       library?.rendition_source === 'render' || !anyEmbedded ? 'full' : 'embedded';

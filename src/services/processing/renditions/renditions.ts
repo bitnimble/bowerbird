@@ -110,8 +110,7 @@ export interface Buildable {
  *   permanently and with nothing saying why; a composite whose *frame* was edited is the same
  *   fault one row further out.
  * - **an input has no camera rendering to take**: a PNG, a HEIC, an AVIF, or a set holding one.
- *   Left saying `embedded` a row would owe no viewer copy at all and there would be nothing to
- *   open.
+ *   Left saying `embedded` the viewer would ask for a camera picture the file does not have.
  * - **the library asks for ours**, which is the setting's whole purpose.
  */
 export function sourceFor(row: Buildable): RenditionSource {
@@ -143,7 +142,9 @@ export interface Owed {
  *
  * A library that renders is the other answer, and there the copy is owed: what the viewer is
  * promised there is ours, and a reader who opens a panorama on it should not be the one to pay
- * for a demosaic, a denoise and a defringe per frame.
+ * for a demosaic, a denoise and a defringe per frame. So is an edited row's. A row shown a render
+ * only because it has no camera picture, on a library that does not render ahead, owes the tile
+ * alone, and its render is built when it is opened (`rendersAhead`).
  *
  * Its range is still the library's, and which variant this names is what the queue asks about
  * (`FULL_VARIANT_OF_LIBRARY`): a build that settled a different one would leave the row owing this
@@ -151,12 +152,23 @@ export interface Owed {
  */
 export function owedOf(row: Buildable): readonly Owed[] {
   const from = sourceFor(row);
-  const servedWhole = from === 'embedded';
   return [
     // Always SDR, as `storedAsHdr` says and for its reason.
     { rendition: 'grid', hdr: false, from },
-    ...(servedWhole ? [] : [{ rendition: 'full' as const, hdr: row.hdr, from }]),
+    ...(from === 'render' && rendersAhead(row)
+      ? [{ rendition: 'full' as const, hdr: row.hdr, from }]
+      : []),
   ];
+}
+
+/**
+ * Whether a row shown a render has it built at import rather than when someone opens it: a HEIC on
+ * a library that doesn't pre-render is still shown a render, built on open.
+ */
+export function rendersAhead(
+  row: Pick<Buildable, 'edited' | 'photoSource' | 'librarySource'>,
+): boolean {
+  return row.edited || (row.photoSource ?? row.librarySource) === 'render';
 }
 
 export function variantParts(variant: RenditionVariant): { rendition: Rendition; hdr: boolean } {

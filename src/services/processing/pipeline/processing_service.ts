@@ -31,6 +31,7 @@ import {
   owedOf,
   renditionVariant,
   renditionVariants,
+  rendersAhead,
   sourceFor,
   storedAsHdr,
 } from '../renditions/renditions';
@@ -638,14 +639,15 @@ export class ProcessingService extends RenderService {
     // a rendition is built from is a question about a recipe, and `renditions::sourceFor` is where
     // it is answered. Only the photos actually edited render, so a library of ten thousand keeps
     // its 18ms tiles and the handful someone worked on cost ~1.7s each.
-    const source = sourceFor({
+    const row = {
       recipe: pending.recipe,
       inputs: [pending.recipe.path],
       edited: pending.edited === 1,
       photoSource: pending.rendition_source,
       librarySource: pending.library_rendition_source,
       hdr: pending.rendition_hdr === 1,
-    });
+    };
+    const source = sourceFor(row);
     const photoId = pending.photo_id;
     const rawFilePath = path.join(pending.root_path, pending.recipe.path);
     // The `full` skips, for both jobs below: the grid tile the renditions pass writes is a downscale
@@ -690,7 +692,7 @@ export class ProcessingService extends RenderService {
     // 61MP body. The grid upgrades in place as the queue reaches each photo, and
     // `tile_built_at` moving is what makes a client re-fetch it.
     const renditions: RenditionJob | null =
-      source === 'render' && owesRenditions
+      source === 'render' && owesRenditions && rendersAhead(row)
         ? {
             ...common,
             targets: [

@@ -84,7 +84,7 @@ export function wantedRendition(ctx: RenditionContext): ViewerRendition | null {
  * `full` outright rather than asking whether this particular file has finished. Showing a
  * rendition on that promise, ahead of confirming it, is what lets a photo mid-import open
  * at the render it is about to have: the `<img>` may 404 once, and that 404 is what starts
- * the build (`ensureBuilt`, `ImageApi`) - the self-heal a stat-gated answer would skip
+ * the build (the viewer's `buildMissingRendition`) - the self-heal a stat-gated answer would skip
  * straight past, onto a photo silently stuck on the camera's JPEG.
  *
  * **Only `best_available` looks at what is actually built** (`wantedRendition`, above),
