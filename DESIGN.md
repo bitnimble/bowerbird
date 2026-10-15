@@ -37,7 +37,7 @@ and web clients use its REST API. This repo's web client has a separate build/de
 
 - **RAW decoder bundled.** `rawler`, vendored submodule `native/vendor/dnglab`, compiles into
   `rawshim`. Run `git submodule update --init`; no decoder package needed. Only `renditions`
-  builds link C codecs libavif/libjxl.
+  builds link C codecs libavif/libjxl/libjpeg-turbo.
 - **Lens database bundled.** `native/lensdb` supplies geometry before curve fitting (§10.8),
   compiling ~3.6MB lensfun XML into `librawshim`. Copyleft notices: `THIRD_PARTY.md`.
 - **libavif and libjxl** encode AVIF/JXL and decode AVIF for JPEG downloads (`avif.rs`, §10.7);

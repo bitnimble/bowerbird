@@ -177,7 +177,7 @@ fast_image_resize = "6.1.0"
 half = { version = "2.7.1", default-features = false }
 # libjpeg's DCT scaling is what makes a bounded decode cheap, and `Decoder::scale` is the
 # pure-Rust decoder that exposes it. zune-jpeg is faster at a whole frame and cannot do it,
-# which is the wrong way round here: every decode is bounded to the fit grid or a tile.
+# which is the wrong way round here: every decode is bounded to the fit grid or a preview.
 jpeg-decoder = { version = "0.3.2", default-features = false, features = ["rayon"] }
 jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 # The grade runs here, on the same WGSL the editor runs, so there is one implementation of

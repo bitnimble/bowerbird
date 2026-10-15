@@ -133,6 +133,13 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
 /// last bit, so anything a fit or a render reads stays on [`decode`].
 #[cfg(feature = "renditions")]
 pub fn decode_tile(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
+    // A warning too: one followed by a fatal error in the same call still reads back as a warning,
+    // over a half-written frame.
+    turbo_tile(bytes, long_edge).or_else(|_| decode(bytes, long_edge))
+}
+
+#[cfg(feature = "renditions")]
+fn turbo_tile(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     use crate::raw::{TJCS, TJPARAM, TJPF, tjscalingfactor};
 
     let turbo = Turbo::new()?;
@@ -235,14 +242,6 @@ impl Turbo {
 
     fn check(&self, status: i32, what: &str) -> Result<(), String> {
         if status == 0 {
-            return Ok(());
-        }
-        // A warning, such as data past the end of the scan, still leaves a whole picture, and
-        // `decode` takes the same file without complaint.
-        // SAFETY: the handle is live.
-        #[expect(unsafe_code)]
-        let code = unsafe { crate::raw::tj3GetErrorCode(self.0) };
-        if code == crate::raw::TJERR::TJERR_WARNING.0 as i32 {
             return Ok(());
         }
         // SAFETY: the handle is live, and the string it hands back lives as long as it does.
@@ -1008,11 +1007,12 @@ mod tests {
                 .all(|p| p[0] == p[1] && p[1] == p[2])
         );
 
-        // Cut off partway through the scan, which libjpeg-turbo reports as a warning over a
-        // picture whose missing rows are filled in.
+        // Cut off partway through the scan, which libjpeg-turbo answers with a warning.
         let truncated = &stored[..stored.len() * 3 / 4];
-        let tile = decode_tile(truncated, 200).expect("a warning is not a failure");
-        assert_eq!((tile.width, tile.height), (200, 113));
+        assert_eq!(
+            decode_tile(truncated, 200).map(|tile| tile.data),
+            decode(truncated, 200).map(|frame| frame.data),
+        );
 
         assert!(decode_tile(b"", 0).is_err());
         assert!(decode_tile(&[0xFF, 0xD8, 0, 1, 2, 3], 800).is_err());

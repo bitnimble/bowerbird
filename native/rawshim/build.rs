@@ -379,8 +379,6 @@ fn turbojpeg_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("tj3InitVersion")
         .allowlist_function("tj3Destroy")
         .allowlist_function("tj3GetErrorStr")
-        .allowlist_function("tj3GetErrorCode")
-        .allowlist_type("TJERR")
         .allowlist_function("tj3Get")
         .allowlist_function("tj3DecompressHeader")
         .allowlist_function("tj3SetScalingFactor")
