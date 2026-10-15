@@ -5,15 +5,19 @@ export const styles = stylex.create({
   controls: {
     marginBottom: '10px',
   },
-  // The count and the menu behind it belong to the grid rather than to the filters.
+  // The count and the menu behind it belong to the grid rather than to the filters. Wraps as one,
+  // the count folding into the menu before the row wraps.
   end: {
-    marginLeft: 'auto',
-    display: 'inline-flex',
+    display: 'flex',
     alignItems: 'center',
     gap: '10px',
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: `calc(${size.controlH} + 10px)`,
   },
   count: {
-    whiteSpace: 'nowrap',
+    justifyContent: 'flex-end',
   },
   // The inset is the item padding either side, so the panel lines up with the labels around it.
   menuPanel: {

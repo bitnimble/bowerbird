@@ -13,6 +13,7 @@ import {
 import { observer } from 'mobx-react-lite';
 import { useListingStore, useMarksStore, usePresenters } from '../../../app/stores_context';
 import { MenuCheckItem } from '../../../ui/check_menu';
+import { textSection } from '../../../ui/fold';
 import { ICON } from '../../../ui/icon';
 import { menuSection } from '../../../ui/menu_section';
 import type { Option } from '../../../ui/option';
@@ -42,12 +43,18 @@ const SELECTIONS: Option<SelectionKey>[] = [
  * question about the photographs and is worth a press to see the answer to, where the tile
  * size and the view mode are settled once and then left alone.
  */
-export const GridOverflow = observer(function GridOverflow(): JSX.Element {
+export const GridOverflow = observer(function GridOverflow({
+  count,
+}: {
+  /** The photo count, where the row had no room for it. */
+  count: string | null;
+}): JSX.Element {
   const listing = useListingStore();
   const marks = useMarksStore();
   const { photos } = usePresenters();
 
   const sections = [
+    ...(count == null ? [] : [textSection(count)]),
     menuSection({
       label: GridControlsStrings.sectionSelection(),
       options: SELECTIONS,

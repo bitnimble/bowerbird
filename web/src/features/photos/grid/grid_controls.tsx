@@ -13,13 +13,13 @@ import { type Ordering } from '../../../../../src/schemas/common';
 import { useIsMobile } from '../../../app/device';
 import { useListingStore, usePresenters } from '../../../app/stores_context';
 import { CLEARS_CAPTION_BUTTONS } from '../../../ui/caption_buttons';
+import { BarText, useFolded } from '../../../ui/fold';
 import { ICON } from '../../../ui/icon';
 import type { Option } from '../../../ui/option';
 import { ShowSidebarButton } from '../../../ui/page';
 import { Row } from '../../../ui/row';
 import { SegmentedControl } from '../../../ui/segmented_control';
 import { Select } from '../../../ui/select';
-import { Text } from '../../../ui/text';
 import { DRAGS_WINDOW } from '../../../ui/title_bar';
 import { GridControlsStrings } from './grid_controls.strings';
 import { styles } from './grid_controls.stylex';
@@ -98,6 +98,8 @@ export const GridControls = observer(function GridControls({
   const store = useListingStore();
   const { photos } = usePresenters();
   const mobile = useIsMobile();
+  const count = GridControlsStrings.photoCount(store.photoTotal);
+  const [countFolded, countRef] = useFolded();
 
   return (
     <Row
@@ -138,10 +140,10 @@ export const GridControls = observer(function GridControls({
       )}
 
       <span {...stylex.props(styles.end)}>
-        <Text variant="mono" style={styles.count}>
-          {GridControlsStrings.photoCount(store.photoTotal)}
-        </Text>
-        <GridOverflow />
+        <BarText ref={countRef} style={styles.count}>
+          {count}
+        </BarText>
+        <GridOverflow count={countFolded ? count : null} />
       </span>
     </Row>
   );

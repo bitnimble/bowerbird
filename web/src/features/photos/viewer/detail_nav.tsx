@@ -50,7 +50,7 @@ import { OverflowMenu } from '../../../ui/overflow_menu';
 import { ShowSidebarButton } from '../../../ui/page';
 import { DRAGS_WINDOW } from '../../../ui/title_bar';
 import { Row, Spacer } from '../../../ui/row';
-import { Text } from '../../../ui/text';
+import { BarText, textSection, useFolded } from '../../../ui/fold';
 import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
 import { EditToolbar } from '../../raw_edit/edit_tools';
 import { EditToolsStrings } from '../../raw_edit/edit_tools.strings';
@@ -349,6 +349,7 @@ export const DetailNav = observer(function DetailNav({
   // A row composed rather than imported has no path to show, so the bar names it the way
   // every other view does rather than going blank.
   const path = photo == null ? '' : (photo.file_path ?? nameOf(store, photoId));
+  const [pathFolded, pathRef] = useFolded();
 
   // Editing keeps the view controls and the downloads and drops the rest: which rendition
   // the viewer shows says nothing about the frame being graded, and every other action is
@@ -435,17 +436,7 @@ export const DetailNav = observer(function DetailNav({
     : [];
 
   const sections = [
-    ...(mobile && !previewing && path !== ''
-      ? [
-          menuSection({
-            content: (
-              <Text variant="mono" style={styles.pathMenu}>
-                {path}
-              </Text>
-            ),
-          }),
-        ]
-      : []),
+    ...(pathFolded && !previewing && path !== '' ? [textSection(path)] : []),
     ...editSection,
     ...crowded,
     menuSection({
@@ -674,18 +665,13 @@ export const DetailNav = observer(function DetailNav({
               </Button>
             </>
           )}
-          {/* The one thing in the bar that gives up width, so the controls stay on a
-              single line however long a path is. A phone has no width to give it in the
-              first place, so there it is a row of the menu instead. */}
-          {!mobile && (
-            <Text variant="mono" style={styles.path}>
-              {path}
-            </Text>
-          )}
+          <BarText ref={pathRef} shrinks>
+            {path}
+          </BarText>
         </>
       )}
 
-      {(!editing || centred) && <Spacer />}
+      {centred && <Spacer />}
 
       {/* Between two spacers where there is room for them, so the toolbar sits in the middle
           of the bar rather than on the end of whichever group happens to be longer. */}

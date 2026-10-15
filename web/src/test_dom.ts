@@ -22,6 +22,15 @@ import { JSDOM } from 'jsdom';
 
 let registered = false;
 
+const intersections = new Map<Element, (ratio: number) => void>();
+
+/** Reports `element` in or out of view to the intersection observers watching it or an ancestor of it. */
+export function setShown(element: Element, shown: boolean): void {
+  for (const [target, report] of intersections) {
+    if (target.contains(element)) report(shown ? 1 : 0);
+  }
+}
+
 export function registerDom(): void {
   if (registered) return;
   registered = true;
@@ -150,6 +159,44 @@ function install(): void {
       unobserve(): void {}
 
       disconnect(): void {}
+    },
+    configurable: true,
+    writable: true,
+  });
+
+  // Everything is in view until a test says otherwise through `setShown`.
+  Object.defineProperty(globalThis, 'IntersectionObserver', {
+    value: class {
+      private readonly targets = new Set<Element>();
+
+      constructor(private readonly report: IntersectionObserverCallback) {}
+
+      observe(target: Element): void {
+        const report = (ratio: number): void =>
+          this.report(
+            [
+              {
+                target,
+                intersectionRatio: ratio,
+                isIntersecting: ratio > 0,
+              } as IntersectionObserverEntry,
+            ],
+            this as unknown as IntersectionObserver,
+          );
+        this.targets.add(target);
+        intersections.set(target, report);
+        report(1);
+      }
+
+      unobserve(target: Element): void {
+        this.targets.delete(target);
+        intersections.delete(target);
+      }
+
+      disconnect(): void {
+        for (const target of this.targets) intersections.delete(target);
+        this.targets.clear();
+      }
     },
     configurable: true,
     writable: true,

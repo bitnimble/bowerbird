@@ -31,23 +31,6 @@ export const styles = stylex.create({
   navEditing: {
     flexWrap: 'wrap',
   },
-  path: {
-    flexGrow: 0,
-    flexShrink: 1,
-    flexBasis: 'auto',
-    minWidth: 0,
-    overflow: 'hidden',
-    whiteSpace: 'nowrap',
-    textOverflow: 'ellipsis',
-  },
-  // The popup is sized by its widest row, and a path has no word to break at.
-  pathMenu: {
-    display: 'block',
-    maxWidth: '70vw',
-    paddingBlock: '6px',
-    paddingInline: '9px',
-    overflowWrap: 'anywhere',
-  },
   tools: {
     display: 'contents',
   },

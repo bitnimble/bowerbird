@@ -19,11 +19,14 @@ import {
   RotateCcw,
   RotateCw,
   Tag,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { type Triage } from '../../../../../src/schemas/photos';
 import { canRevealFile } from '../../../api/transport';
 import {
   useAlbumsStore,
@@ -36,13 +39,14 @@ import {
   useShootsStore,
 } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
+import { useFolded } from '../../../ui/fold';
 import { ICON } from '../../../ui/icon';
 import { menuSection } from '../../../ui/menu_section';
 import type { Option } from '../../../ui/option';
 import { OverflowMenu } from '../../../ui/overflow_menu';
 import { Submenu } from '../../../ui/submenu';
 import { Text } from '../../../ui/text';
-import { color } from '../../../ui/tokens.stylex';
+import { color, size } from '../../../ui/tokens.stylex';
 import { AddAlbumDialog } from '../../albums/add_album_dialog';
 import { AddLabelMenuStrings } from '../../labels/add_label_menu.strings';
 import { EditLabelsStrings } from '../../labels/edit_labels_dialog.strings';
@@ -50,6 +54,8 @@ import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
 import { AddShootDialog } from '../../shoots/add_shoot_dialog';
 import { BulkBarStrings } from './bulk_bar.strings';
 import { Rating, Verdict } from '../marks';
+import { MarksStrings } from '../marks.strings';
+import { TriageControlStrings } from '../stack_triage/triage_control.strings';
 import { MergePageStrings } from '../merge/merge_page.strings';
 import { PanoramaIcon } from './panorama_icon';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
@@ -66,37 +72,79 @@ import {
 // constantly - the verdict. The rest is reached deliberately, and most of it
 // rarely, in three groups: what the selection *is*, where it is filed, and what
 // can be done to the photographs themselves.
-type StackAction = 'stack' | 'unstack' | 'triage';
+type StackAction = 'stack' | 'unstack' | 'removeFromStack' | 'triage';
 type MergeAction = 'panorama' | 'assembly' | 'bracket' | 'reduceNoise' | 'increaseResolution';
 type FilingAction = 'remove' | 'banner';
 type PhotoAction = 'export' | 'reveal' | 'thumbnails' | 'metadata' | 'hide' | 'unhide' | 'bin';
 
+// Widths of the dock below which the bar sheds, worked out at a finger's control sizes and a
+// 4-digit count: spacing, then Clear's label, then the verdict. Remove from stack and Restore's
+// label go first, being the widest.
+const TIGHT = '@container (max-width: 370px)';
+const NO_CLEAR_LABEL = '@container (max-width: 340px)';
+const NO_VERDICT = '@container (max-width: 295px)';
+const NO_REMOVE_FROM_STACK = '@container (max-width: 570px)';
+const NO_RESTORE_LABEL = '@container (max-width: 530px)';
+
 const styles = stylex.create({
   // Floating over the foot of the viewport, out of the flow: in the flow its arrival moved every
-  // tile below it by a bar's height mid-gesture (§18.3.1).
-  bar: {
+  // tile below it by a bar's height mid-gesture (§18.3.1). Spans it, apart from the bar: a query
+  // container cannot size to its content, which the bar does.
+  dock: {
     position: 'fixed',
-    left: '50%',
+    left: '12px',
+    right: '12px',
     bottom: 'calc(16px + env(safe-area-inset-bottom))',
-    transform: 'translateX(-50%)',
     zIndex: 5,
-    maxWidth: 'calc(100vw - 24px)',
+    display: 'flex',
+    justifyContent: 'center',
+    pointerEvents: 'none',
+    containerType: 'inline-size',
+  },
+  bar: {
+    pointerEvents: 'auto',
+    minWidth: 0,
     backgroundColor: color.slateSoft,
     borderWidth: '1px',
     borderStyle: 'solid',
     borderColor: color.slate,
     borderRadius: '6px',
     paddingBlock: '8px',
-    paddingInline: '10px',
+    paddingInline: { default: '10px', [TIGHT]: '4px' },
     boxShadow: '0 12px 32px rgb(0 0 0 / 0.55)',
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
+    gap: { default: '8px', [TIGHT]: '4px' },
   },
+  // Ellipsised past the last threshold, so the bar still never wraps.
   count: {
     color: color.glass,
+    minWidth: 0,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    textOverflow: 'ellipsis',
+  },
+  clearLabel: {
+    display: { default: null, [NO_CLEAR_LABEL]: 'none' },
+  },
+  clearIconOnly: {
+    width: { default: 'auto', [NO_CLEAR_LABEL]: size.controlH },
+    paddingInline: { default: '10px', [NO_CLEAR_LABEL]: 0 },
+    justifyContent: 'center',
+  },
+  verdict: {
+    display: { default: 'flex', [NO_VERDICT]: 'none' },
+  },
+  removeFromStack: {
+    display: { default: 'inline-flex', [NO_REMOVE_FROM_STACK]: 'none' },
+  },
+  restoreLabel: {
+    display: { default: null, [NO_RESTORE_LABEL]: 'none' },
+  },
+  restoreIconOnly: {
+    width: { default: 'auto', [NO_RESTORE_LABEL]: size.controlH },
+    paddingInline: { default: '10px', [NO_RESTORE_LABEL]: 0 },
+    justifyContent: 'center',
   },
   // A section's own control rather than one of its rows, so it takes the items' text column.
   menuRating: {
@@ -151,10 +199,13 @@ function mergeRefusal(candidate: MergeCandidate): string | undefined {
 const stackOptions = ({
   canStack,
   canUnstack,
+  canRemoveFromStack,
   stack,
 }: {
   canStack: boolean;
   canUnstack: boolean;
+  /** Where the bar's own button has been shed. */
+  canRemoveFromStack: boolean;
   stack: StackSelection;
 }): Option<StackAction>[] => [
   ...(canStack
@@ -169,12 +220,34 @@ const stackOptions = ({
         },
       ]
     : []),
+  ...(canRemoveFromStack
+    ? [
+        {
+          value: 'removeFromStack' as const,
+          label: BulkBarStrings.removeFromStack(),
+          icon: <Layers2 size={ICON} />,
+        },
+      ]
+    : []),
   {
     value: 'triage',
     label: BulkBarStrings.triageThisStack(),
     icon: <ListChecks size={ICON} />,
     disabled: stack.kind !== 'stack',
     tooltip: triageRefusal(stack),
+  },
+];
+
+const verdictOptions = (triage: Triage | null): Option<Triage>[] => [
+  {
+    value: triage === 'rejected' ? 'untriaged' : 'rejected',
+    label: triage === 'rejected' ? MarksStrings.clearReject() : TriageControlStrings.reject(),
+    icon: <ThumbsDown size={ICON} />,
+  },
+  {
+    value: triage === 'picked' ? 'untriaged' : 'picked',
+    label: triage === 'picked' ? MarksStrings.clearPick() : TriageControlStrings.pick(),
+    icon: <ThumbsUp size={ICON} />,
   },
 ];
 
@@ -268,6 +341,9 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   const labelsStore = useLabelsStore();
   const { photos, replication, export: exportPhotos, frameTv, labels, confirm } = usePresenters();
   const [creating, setCreating] = useState<'shoot' | 'album' | null>(null);
+  const [verdictFolded, verdictRef] = useFolded();
+  const [removeFromStackFolded, removeFromStackRef] = useFolded();
+  const setVerdict = (triage: Triage): void => void photos.markSelection({ triage });
 
   // The selection itself, not the ids: it may name more photographs than this client
   // has ever held rows for, and the export resolves it when it runs (§18.3.3). The
@@ -360,317 +436,346 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
       : null;
 
   return (
-    <div {...stylex.props(styles.bar)} role="group" aria-label={BulkBarStrings.selection()}>
-      {/* "all" and no number when it is the whole collection: it is what the
+    <div {...stylex.props(styles.dock)}>
+      <div {...stylex.props(styles.bar)} role="group" aria-label={BulkBarStrings.selection()}>
+        {/* "all" and no number when it is the whole collection: it is what the
           reader is asking about at six figures anyway, and a count is not
           something the client can answer there - the stacks in the rows it has
           never held stand for a number only the server knows. */}
-      <Button variant="ghost" onClick={photos.clearSelection}>
-        <X size={ICON} />
-        {BulkBarStrings.clear()}
-      </Button>
-      <Text variant="mono" style={styles.count}>
-        {store.allSelected ? BulkBarStrings.allSelected() : BulkBarStrings.countSelected(count)}
-      </Text>
+        <Button
+          variant="ghost"
+          aria-label={BulkBarStrings.clear()}
+          style={styles.clearIconOnly}
+          onClick={photos.clearSelection}
+        >
+          <X size={ICON} />
+          <span {...stylex.props(styles.clearLabel)}>{BulkBarStrings.clear()}</span>
+        </Button>
+        <Text variant="mono" style={styles.count}>
+          {store.allSelected ? BulkBarStrings.allSelected() : BulkBarStrings.countSelected(count)}
+        </Text>
 
-      {/* The cull's own two decisions, over the selection, for the same reason
+        {/* The cull's own two decisions, over the selection, for the same reason
           they are on every tile: routing a burst's verdict through the tiles one
           at a time is what the bar is here to save (§18.3.1). Not in the Bin,
           where a verdict on something already thrown out decides nothing. */}
-      {!inBin && (
-        <Verdict
-          triage={marks.triage}
-          onSet={(triage) => void photos.markSelection({ triage })}
-          large
-        />
-      )}
+        {!inBin && (
+          <span ref={verdictRef} {...stylex.props(styles.verdict)}>
+            <Verdict triage={marks.triage} onSet={setVerdict} large />
+          </span>
+        )}
 
-      {/* Only about the members: taking a photo out of the stack it is in is not
+        {/* Only about the members: taking a photo out of the stack it is in is not
           something the positions in a selection can express. */}
-      {!inBin && members && (
-        <Button onClick={() => void photos.removeSelectedFromStacks()}>
-          <Layers2 size={ICON} />
-          {BulkBarStrings.removeFromStack()}
-        </Button>
-      )}
+        {!inBin && members && (
+          <Button
+            ref={removeFromStackRef}
+            style={styles.removeFromStack}
+            onClick={() => void photos.removeSelectedFromStacks()}
+          >
+            <Layers2 size={ICON} />
+            {BulkBarStrings.removeFromStack()}
+          </Button>
+        )}
 
-      {inBin ? (
-        <Button
-          variant="primary"
-          disabled={restoreRefused}
-          tooltip={restoreRefused ? BulkBarStrings.restoreRefused() : undefined}
-          onClick={() => void photos.restoreSelected()}
-        >
-          <RotateCcw size={ICON} />
-          {BulkBarStrings.restoreToOriginalLocation()}
-        </Button>
-      ) : (
-        <>
-          <OverflowMenu
-            hotkey
-            label={BulkBarStrings.moreActions()}
-            sections={[
-              menuSection({
-                label: PhotoDetailStrings.rating(),
-                content: (
-                  <Rating
-                    rating={marks.rating}
-                    onSet={(rating) => void photos.markSelection({ rating })}
-                    focusable={false}
-                    style={styles.menuRating}
-                  />
-                ),
-              }),
-              menuSection({
-                options: stackOptions({
-                  canStack: entries > 1,
-                  canUnstack: store.hasSelectedStack,
-                  stack: selectedStack,
+        {inBin ? (
+          <Button
+            variant="primary"
+            aria-label={BulkBarStrings.restoreToOriginalLocation()}
+            style={styles.restoreIconOnly}
+            disabled={restoreRefused}
+            tooltip={restoreRefused ? BulkBarStrings.restoreRefused() : undefined}
+            onClick={() => void photos.restoreSelected()}
+          >
+            <RotateCcw size={ICON} />
+            <span {...stylex.props(styles.restoreLabel)}>
+              {BulkBarStrings.restoreToOriginalLocation()}
+            </span>
+          </Button>
+        ) : (
+          <>
+            <OverflowMenu
+              hotkey
+              label={BulkBarStrings.moreActions()}
+              sections={[
+                ...(verdictFolded
+                  ? [
+                      menuSection({
+                        options: verdictOptions(marks.triage),
+                        onSelect: setVerdict,
+                      }),
+                    ]
+                  : []),
+                menuSection({
+                  label: PhotoDetailStrings.rating(),
+                  content: (
+                    <Rating
+                      rating={marks.rating}
+                      onSet={(rating) => void photos.markSelection({ rating })}
+                      focusable={false}
+                      style={styles.menuRating}
+                    />
+                  ),
                 }),
-                onSelect: (action) => {
-                  if (action === 'stack') void photos.stackSelection();
-                  else if (action === 'unstack') void photos.unstackSelection();
-                  else if (selectedStack.kind === 'stack')
-                    navigate(triagePath(selectedStack.stackId, listing.source));
-                },
-              }),
-              // A section of its own: `OverflowMenu` renders a section's `content` above its
-              // `options`, so putting this in the stack section would push it above Stack and
-              // Unstack and break the adjacency those two are ordered for.
-              menuSection({
-                content: (
-                  <Submenu
-                    label={MergePageStrings.mergePhotos()}
-                    icon={<PanoramaIcon size={ICON} />}
-                    options={[
-                      {
-                        value: 'panorama' as const,
-                        label: MergePageStrings.toPanorama(),
-                        disabled: count < 2,
-                        tooltip: count < 2 ? MergePageStrings.selectAtLeastTwo() : undefined,
-                      },
-                      {
-                        value: 'assembly' as const,
-                        label: MergePageStrings.takeBestParts(),
-                        disabled: mergeCandidate.kind !== 'ready',
-                        tooltip:
-                          mergeRefusal(mergeCandidate) ??
-                          MergePageStrings.takeBestPartsDescription(),
-                      },
-                      {
-                        value: 'reduceNoise' as const,
-                        label: MergePageStrings.reduceNoise(),
-                        disabled: mergeCandidate.kind !== 'ready',
-                        tooltip:
-                          mergeRefusal(mergeCandidate) ?? MergePageStrings.reduceNoiseDescription(),
-                      },
-                      {
-                        value: 'increaseResolution' as const,
-                        label: MergePageStrings.increaseResolution(),
-                        disabled: mergeCandidate.kind !== 'ready',
-                        tooltip:
-                          mergeRefusal(mergeCandidate) ??
-                          MergePageStrings.increaseResolutionDescription(),
-                      },
-                      {
-                        value: 'bracket' as const,
-                        label: MergePageStrings.bracket(selectedBracket),
-                        disabled: selectedBracket == null,
-                        tooltip:
-                          selectedBracket == null
-                            ? MergePageStrings.selectABracketStack()
-                            : undefined,
-                      },
-                    ]}
-                    onSelect={(action: MergeAction) => {
-                      if (action === 'panorama') void photos.mergeSelectionToPanorama();
-                      else if (action === 'bracket') void photos.mergeSelectedBracket();
-                      else if (action === 'reduceNoise') void photos.mergeSelectionToBurst(1);
-                      else if (action === 'increaseResolution')
-                        void photos.mergeSelectionToBurst(2);
-                      else if (mergeCandidate.kind === 'ready') {
-                        const source = listing.source;
-                        void photos
-                          .startAssembly(mergeCandidate.frames.map((frame) => frame.id))
-                          .then((jobId) => {
-                            if (jobId != null) navigate(mergeJobPath(jobId, source));
-                          });
-                      }
-                    }}
-                  />
-                ),
-              }),
-              menuSection({
-                content: (
-                  <>
-                    {libraryId != null && (
-                      <Submenu
-                        label={
-                          store.selectionInAShoot
-                            ? BulkBarStrings.moveToShoot()
-                            : BulkBarStrings.addToShoot()
-                        }
-                        icon={<FolderInput size={ICON} />}
-                        options={[
-                          ...filable.map((shoot) => ({
-                            value: shoot.id,
-                            label: shoot.folder_path,
-                          })),
-                          {
-                            value: NEW_COLLECTION,
-                            label: store.selectionInAShoot
-                              ? BulkBarStrings.moveToNewShoot()
-                              : BulkBarStrings.addToNewShoot(),
-                            icon: <Plus size={ICON} />,
-                          },
-                        ]}
-                        onSelect={(shootId) =>
-                          shootId === NEW_COLLECTION
-                            ? setCreating('shoot')
-                            : void photos.addSelectedToShoot(shootId)
-                        }
-                        disabled={readOnly}
-                        tooltip={readOnlyRefusal}
-                      />
-                    )}
+                menuSection({
+                  options: stackOptions({
+                    canStack: entries > 1,
+                    canUnstack: store.hasSelectedStack,
+                    canRemoveFromStack: members && removeFromStackFolded,
+                    stack: selectedStack,
+                  }),
+                  onSelect: (action) => {
+                    if (action === 'stack') void photos.stackSelection();
+                    else if (action === 'unstack') void photos.unstackSelection();
+                    else if (action === 'removeFromStack') void photos.removeSelectedFromStacks();
+                    else if (selectedStack.kind === 'stack')
+                      navigate(triagePath(selectedStack.stackId, listing.source));
+                  },
+                }),
+                // A section of its own: `OverflowMenu` renders a section's `content` above its
+                // `options`, so putting this in the stack section would push it above Stack and
+                // Unstack and break the adjacency those two are ordered for.
+                menuSection({
+                  content: (
                     <Submenu
-                      label={BulkBarStrings.addToAlbum()}
-                      icon={<Images size={ICON} />}
+                      label={MergePageStrings.mergePhotos()}
+                      icon={<PanoramaIcon size={ICON} />}
                       options={[
-                        ...albums.albums.map((album) => ({ value: album.id, label: album.name })),
                         {
-                          value: NEW_COLLECTION,
-                          label: BulkBarStrings.addToNewAlbum(),
-                          icon: <Plus size={ICON} />,
+                          value: 'panorama' as const,
+                          label: MergePageStrings.toPanorama(),
+                          disabled: count < 2,
+                          tooltip: count < 2 ? MergePageStrings.selectAtLeastTwo() : undefined,
+                        },
+                        {
+                          value: 'assembly' as const,
+                          label: MergePageStrings.takeBestParts(),
+                          disabled: mergeCandidate.kind !== 'ready',
+                          tooltip:
+                            mergeRefusal(mergeCandidate) ??
+                            MergePageStrings.takeBestPartsDescription(),
+                        },
+                        {
+                          value: 'reduceNoise' as const,
+                          label: MergePageStrings.reduceNoise(),
+                          disabled: mergeCandidate.kind !== 'ready',
+                          tooltip:
+                            mergeRefusal(mergeCandidate) ??
+                            MergePageStrings.reduceNoiseDescription(),
+                        },
+                        {
+                          value: 'increaseResolution' as const,
+                          label: MergePageStrings.increaseResolution(),
+                          disabled: mergeCandidate.kind !== 'ready',
+                          tooltip:
+                            mergeRefusal(mergeCandidate) ??
+                            MergePageStrings.increaseResolutionDescription(),
+                        },
+                        {
+                          value: 'bracket' as const,
+                          label: MergePageStrings.bracket(selectedBracket),
+                          disabled: selectedBracket == null,
+                          tooltip:
+                            selectedBracket == null
+                              ? MergePageStrings.selectABracketStack()
+                              : undefined,
                         },
                       ]}
-                      onSelect={(albumId) =>
-                        albumId === NEW_COLLECTION
-                          ? setCreating('album')
-                          : void photos.addSelectedToAlbum(albumId)
-                      }
-                    />
-                    {libraryId != null && (
-                      <Submenu
-                        label={AddLabelMenuStrings.addLabel()}
-                        icon={<Tag size={ICON} />}
-                        options={[
-                          {
-                            value: EDIT_LABELS,
-                            label: EditLabelsStrings.open(),
-                            icon: <Pencil size={ICON} />,
-                          },
-                          ...labelsStore
-                            .labelsOf(libraryId)
-                            .map((label) => ({ value: label.id, label: label.name })),
-                        ]}
-                        onSelect={(labelId) => {
-                          if (labelId === EDIT_LABELS) {
-                            void labels.openEditor(libraryId);
-                            return;
-                          }
-                          const target = photos.selectionTarget();
-                          if (target != null) void labels.labelSelection(labelId, target, count);
-                        }}
-                      />
-                    )}
-                  </>
-                ),
-                options: filingOptions({
-                  removeFrom: removable == null ? null : BulkBarStrings.removeFrom(removable.name),
-                  removeRefusal,
-                  banner: thumbnail,
-                }),
-                onSelect: (action) => {
-                  if (action === 'banner') {
-                    if (collection != null) void photos.setSelectionAsBanner(collection);
-                  } else if (removable != null) {
-                    void (removable.kind === 'shoot'
-                      ? photos.removeSelectedFromShoot(removable.id)
-                      : photos.removeSelectedFromAlbum(removable.id));
-                  }
-                },
-              }),
-              // §7.6. Named per peer because that is what the action is: the copy here goes only
-              // once the one over there answers for itself, so which peer is asked is the whole
-              // decision.
-              ...(peers.length > 0
-                ? [
-                    menuSection({
-                      content: (
-                        <Submenu
-                          label={BulkBarStrings.sync()}
-                          icon={<RefreshCw size={ICON} />}
-                          options={peers.map((p) => ({
-                            value: p.peer_id,
-                            label: BulkBarStrings.removeLocalCopyKeptOn(p.name),
-                            icon: <HardDrive size={ICON} />,
-                          }))}
-                          onSelect={async (peerId) => {
-                            const target = photos.selectionTarget();
-                            if (target == null || libraryId == null) return;
-                            const name = replicationStore.peerName(libraryId, peerId);
-                            const confirmed = await confirm.ask({
-                              title: BulkBarStrings.removeLocalCopyQuestion(
-                                count,
-                                store.allSelected,
-                              ),
-                              body: BulkBarStrings.removeLocalCopyWarning(name),
-                              action: BulkBarStrings.removeLocalCopy(),
-                              tone: 'danger',
+                      onSelect={(action: MergeAction) => {
+                        if (action === 'panorama') void photos.mergeSelectionToPanorama();
+                        else if (action === 'bracket') void photos.mergeSelectedBracket();
+                        else if (action === 'reduceNoise') void photos.mergeSelectionToBurst(1);
+                        else if (action === 'increaseResolution')
+                          void photos.mergeSelectionToBurst(2);
+                        else if (mergeCandidate.kind === 'ready') {
+                          const source = listing.source;
+                          void photos
+                            .startAssembly(mergeCandidate.frames.map((frame) => frame.id))
+                            .then((jobId) => {
+                              if (jobId != null) navigate(mergeJobPath(jobId, source));
                             });
-                            if (confirmed)
-                              void replication.removeLocalCopies(target, libraryId, peerId);
-                          }}
+                        }
+                      }}
+                    />
+                  ),
+                }),
+                menuSection({
+                  content: (
+                    <>
+                      {libraryId != null && (
+                        <Submenu
+                          label={
+                            store.selectionInAShoot
+                              ? BulkBarStrings.moveToShoot()
+                              : BulkBarStrings.addToShoot()
+                          }
+                          icon={<FolderInput size={ICON} />}
+                          options={[
+                            ...filable.map((shoot) => ({
+                              value: shoot.id,
+                              label: shoot.folder_path,
+                            })),
+                            {
+                              value: NEW_COLLECTION,
+                              label: store.selectionInAShoot
+                                ? BulkBarStrings.moveToNewShoot()
+                                : BulkBarStrings.addToNewShoot(),
+                              icon: <Plus size={ICON} />,
+                            },
+                          ]}
+                          onSelect={(shootId) =>
+                            shootId === NEW_COLLECTION
+                              ? setCreating('shoot')
+                              : void photos.addSelectedToShoot(shootId)
+                          }
                           disabled={readOnly}
                           tooltip={readOnlyRefusal}
                         />
-                      ),
-                    }),
-                  ]
-                : []),
-              menuSection({
-                content: <SendToFrameTv onSend={(tvId) => void frameTv.sendSelection(tvId)} />,
-                options: photoOptions({
-                  bin: binLabel,
-                  revealable: revealId != null,
-                  hide: hidingLabel(hiding?.shown, BulkBarStrings.hide(), BulkBarStrings.hideCount),
-                  unhide: hidingLabel(
-                    hiding?.hidden,
-                    BulkBarStrings.unhide(),
-                    BulkBarStrings.unhideCount,
+                      )}
+                      <Submenu
+                        label={BulkBarStrings.addToAlbum()}
+                        icon={<Images size={ICON} />}
+                        options={[
+                          ...albums.albums.map((album) => ({ value: album.id, label: album.name })),
+                          {
+                            value: NEW_COLLECTION,
+                            label: BulkBarStrings.addToNewAlbum(),
+                            icon: <Plus size={ICON} />,
+                          },
+                        ]}
+                        onSelect={(albumId) =>
+                          albumId === NEW_COLLECTION
+                            ? setCreating('album')
+                            : void photos.addSelectedToAlbum(albumId)
+                        }
+                      />
+                      {libraryId != null && (
+                        <Submenu
+                          label={AddLabelMenuStrings.addLabel()}
+                          icon={<Tag size={ICON} />}
+                          options={[
+                            {
+                              value: EDIT_LABELS,
+                              label: EditLabelsStrings.open(),
+                              icon: <Pencil size={ICON} />,
+                            },
+                            ...labelsStore
+                              .labelsOf(libraryId)
+                              .map((label) => ({ value: label.id, label: label.name })),
+                          ]}
+                          onSelect={(labelId) => {
+                            if (labelId === EDIT_LABELS) {
+                              void labels.openEditor(libraryId);
+                              return;
+                            }
+                            const target = photos.selectionTarget();
+                            if (target != null) void labels.labelSelection(labelId, target, count);
+                          }}
+                        />
+                      )}
+                    </>
                   ),
+                  options: filingOptions({
+                    removeFrom:
+                      removable == null ? null : BulkBarStrings.removeFrom(removable.name),
+                    removeRefusal,
+                    banner: thumbnail,
+                  }),
+                  onSelect: (action) => {
+                    if (action === 'banner') {
+                      if (collection != null) void photos.setSelectionAsBanner(collection);
+                    } else if (removable != null) {
+                      void (removable.kind === 'shoot'
+                        ? photos.removeSelectedFromShoot(removable.id)
+                        : photos.removeSelectedFromAlbum(removable.id));
+                    }
+                  },
                 }),
-                onSelect: (action) => {
-                  if (action === 'export') openExport();
-                  else if (action === 'reveal')
-                    void (revealId != null && photos.revealOriginal(revealId));
-                  else if (action === 'thumbnails') void photos.rebuildGridRenditions();
-                  else if (action === 'metadata') void photos.refreshMetadataForSelection();
-                  else if (action === 'hide') void photos.hideSelected(true);
-                  else if (action === 'unhide') void photos.hideSelected(false);
-                  else void photos.deleteSelected();
-                },
-              }),
-            ]}
-          />
-
-          {libraryId != null && (
-            <AddShootDialog
-              libraryId={libraryId}
-              parentPath=""
-              open={creating === 'shoot'}
-              onOpenChange={(open) => !open && setCreating(null)}
-              onCreated={(shootId) => void photos.addSelectedToShoot(shootId)}
+                // §7.6. Named per peer because that is what the action is: the copy here goes only
+                // once the one over there answers for itself, so which peer is asked is the whole
+                // decision.
+                ...(peers.length > 0
+                  ? [
+                      menuSection({
+                        content: (
+                          <Submenu
+                            label={BulkBarStrings.sync()}
+                            icon={<RefreshCw size={ICON} />}
+                            options={peers.map((p) => ({
+                              value: p.peer_id,
+                              label: BulkBarStrings.removeLocalCopyKeptOn(p.name),
+                              icon: <HardDrive size={ICON} />,
+                            }))}
+                            onSelect={async (peerId) => {
+                              const target = photos.selectionTarget();
+                              if (target == null || libraryId == null) return;
+                              const name = replicationStore.peerName(libraryId, peerId);
+                              const confirmed = await confirm.ask({
+                                title: BulkBarStrings.removeLocalCopyQuestion(
+                                  count,
+                                  store.allSelected,
+                                ),
+                                body: BulkBarStrings.removeLocalCopyWarning(name),
+                                action: BulkBarStrings.removeLocalCopy(),
+                                tone: 'danger',
+                              });
+                              if (confirmed)
+                                void replication.removeLocalCopies(target, libraryId, peerId);
+                            }}
+                            disabled={readOnly}
+                            tooltip={readOnlyRefusal}
+                          />
+                        ),
+                      }),
+                    ]
+                  : []),
+                menuSection({
+                  content: <SendToFrameTv onSend={(tvId) => void frameTv.sendSelection(tvId)} />,
+                  options: photoOptions({
+                    bin: binLabel,
+                    revealable: revealId != null,
+                    hide: hidingLabel(
+                      hiding?.shown,
+                      BulkBarStrings.hide(),
+                      BulkBarStrings.hideCount,
+                    ),
+                    unhide: hidingLabel(
+                      hiding?.hidden,
+                      BulkBarStrings.unhide(),
+                      BulkBarStrings.unhideCount,
+                    ),
+                  }),
+                  onSelect: (action) => {
+                    if (action === 'export') openExport();
+                    else if (action === 'reveal')
+                      void (revealId != null && photos.revealOriginal(revealId));
+                    else if (action === 'thumbnails') void photos.rebuildGridRenditions();
+                    else if (action === 'metadata') void photos.refreshMetadataForSelection();
+                    else if (action === 'hide') void photos.hideSelected(true);
+                    else if (action === 'unhide') void photos.hideSelected(false);
+                    else void photos.deleteSelected();
+                  },
+                }),
+              ]}
             />
-          )}
-          <AddAlbumDialog
-            open={creating === 'album'}
-            onOpenChange={(open) => !open && setCreating(null)}
-            onCreated={(albumId) => void photos.addSelectedToAlbum(albumId)}
-          />
-        </>
-      )}
+
+            {libraryId != null && (
+              <AddShootDialog
+                libraryId={libraryId}
+                parentPath=""
+                open={creating === 'shoot'}
+                onOpenChange={(open) => !open && setCreating(null)}
+                onCreated={(shootId) => void photos.addSelectedToShoot(shootId)}
+              />
+            )}
+            <AddAlbumDialog
+              open={creating === 'album'}
+              onOpenChange={(open) => !open && setCreating(null)}
+              onCreated={(albumId) => void photos.addSelectedToAlbum(albumId)}
+            />
+          </>
+        )}
+      </div>
     </div>
   );
 });
