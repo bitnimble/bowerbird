@@ -251,8 +251,8 @@ mod wgsl_layout;
 pub mod wgsl_overrides;
 pub mod white_balance;
 
-/// libavif and libjxl, which only a `renditions` build binds. An editor build links no C at all
-/// and so has no bindings to declare.
+/// libavif, libjxl and libjpeg-turbo, which only a `renditions` build binds. An editor build links
+/// no C at all and so has no bindings to declare.
 #[cfg(feature = "renditions")]
 mod raw {
     #![allow(

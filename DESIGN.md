@@ -40,7 +40,8 @@ and web clients use its REST API. This repo's web client has a separate build/de
   builds link C codecs libavif/libjxl.
 - **Lens database bundled.** `native/lensdb` supplies geometry before curve fitting (§10.8),
   compiling ~3.6MB lensfun XML into `librawshim`. Copyleft notices: `THIRD_PARTY.md`.
-- **libavif and libjxl** encode AVIF/JXL and decode AVIF for JPEG downloads (`avif.rs`, §10.7).
+- **libavif and libjxl** encode AVIF/JXL and decode AVIF for JPEG downloads (`avif.rs`, §10.7);
+  **libjpeg-turbo** decodes the JPEG a grid tile is cut from (`jpeg::decode_tile`).
   `bun run get:codecs` builds them plus aom, dav1d, sharpyuv, highway, brotli and lcms2 at one
   vcpkg commit, statically linked for consistent output (§23.7). Missing tree fails naming the
   getter. Distribution libavif lacks gain-map support; ffmpeg's AVIF muxer omits `colr`,

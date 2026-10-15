@@ -245,21 +245,15 @@ impl Held {
     }
 }
 
-/// A JPEG that arrived as itself, decoded to `long_edge`, upright, as the 8-bit sRGB a grid tile
-/// is encoded from.
-///
-/// **Only a JPEG, and that is the whole of the shortcut.** What makes a grid tile cheap for a RAW
-/// is lifting the camera's own rendering instead of demosaicing, and for a JPEG the file *is* that
-/// rendering - `jpeg::decode` bounds the decode to the tile's size through libjpeg's DCT scaling,
-/// so an 8000px file becomes an 800px tile without ever being held whole. A PNG, a HEIC or an AVIF
-/// has nothing to lift and no scaled decode to lift it with, so each falls through to the render,
-/// which is what a RAW embedding no preview does too.
+/// A JPEG decoded upright to `long_edge` for its grid tile; `None` for any other format, whose tile
+/// is rendered.
+#[cfg(feature = "renditions")]
 pub fn preview_rgb(path: &str, long_edge: usize) -> Option<crate::rgb::Rgb> {
     let bytes = std::fs::read(path).ok()?;
     if !bytes.starts_with(&[0xFF, 0xD8]) {
         return None;
     }
-    crate::jpeg::decode(&bytes, long_edge).ok()
+    crate::jpeg::decode_tile(&bytes, long_edge).ok()
 }
 
 /// What a container says about itself before anything is decoded.

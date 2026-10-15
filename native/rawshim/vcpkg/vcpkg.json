@@ -2,13 +2,14 @@
   "$comment": "Everything this repo takes from vcpkg, at the versions the vcpkg commit in scripts/vcpkg.ts fixes. One feature per getter, so a machine that only compiles shaders never builds a codec.",
   "features": {
     "codecs": {
-      "description": "`bun run get:codecs`: libavif and libjxl, and aom, dav1d, sharpyuv, highway, brotli and lcms2 under them, static. pkgconf is how the getter reads the link line back out.",
+      "description": "`bun run get:codecs`: libavif, libjxl and libjpeg-turbo, and aom, dav1d, sharpyuv, highway, brotli and lcms2 under them, static. pkgconf is how the getter reads the link line back out.",
       "dependencies": [
         {
           "name": "libavif",
           "features": ["aom", "dav1d"]
         },
         "libjxl",
+        "libjpeg-turbo",
         {
           "name": "pkgconf",
           "host": true

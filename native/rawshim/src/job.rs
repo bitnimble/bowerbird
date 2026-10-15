@@ -1374,6 +1374,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                             decoder.as_ref(),
                             size,
                             want,
+                            crate::jpeg::decode_tile,
                         )
                     }
                     // A JPEG that arrived as itself *is* the camera's rendering, so the tile is a
@@ -1383,7 +1384,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                     _ if crate::decode_rendered::is_rendered(&job.raw_file_path) => {
                         crate::decode_rendered::preview_rgb(&job.raw_file_path, size)
                     }
-                    _ => crate::decode_rawler::upright_preview_rgb(&job.raw_file_path, size, want),
+                    _ => crate::decode_rawler::upright_preview_tile(&job.raw_file_path, size, want),
                 }
             });
             if let Some(preview) = preview {

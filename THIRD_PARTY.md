@@ -60,6 +60,7 @@ not be visible in them:
 
 - **libavif** 1.4.2 - BSD-2-Clause. Every rendition and the gain map beside it.
 - **libjxl** 0.11.1 - BSD-3-Clause. The JXL arm of an export.
+- **libjpeg-turbo** 3.2.0 - IJG, BSD-3-Clause and zlib. The grid tile's JPEG decode on import.
 
 Desktop ships all these libraries. `build:native` includes default `rawshim` features,
 including `renditions`; `scripts/build-sidecar.ts` bundles it for the server. Replicas need
@@ -77,4 +78,4 @@ it starts the bundled server that loads it.
   `pmrid_weights.<hash>.bin`. `get:models` converts the checkpoint to flat f32, a modified
   file that §4(b) asks be marked as changed. Apache-2.0 §4(a) asks that a copy of the licence
   travel with them; upstream has no NOTICE. Releases bundle no licence texts yet, so both are
-  open, as is the BSD notice libavif and libjxl ask of a binary.
+  open, as are the BSD notices libavif, libjxl and libjpeg-turbo ask of a binary.

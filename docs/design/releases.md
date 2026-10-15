@@ -207,8 +207,8 @@ merging them.
 compiler forces otherwise, and that is worth stating because the reverse is easy to assume:
 libjxl builds under `cl.exe` and under `clang-cl`, and libavif always did.
 
-**The codecs are vcpkg's, built static on every platform.** `bun run get:codecs` installs libavif
-and libjxl and the six libraries under them - aom, dav1d and sharpyuv under libavif; highway,
+**The codecs are vcpkg's, built static on every platform.** `bun run get:codecs` installs libavif,
+libjxl, libjpeg-turbo and the six libraries under the first two - aom, dav1d and sharpyuv under libavif; highway,
 brotli and lcms2 under libjxl - on `arm64-osx`, `x64-windows-static-md` and `x64-linux`, and
 `--target aarch64-linux-android` cross-builds them for `arm64-android` into a tree of its own,
 `.codecs-aarch64-linux-android`, which `build.rs` links when cargo builds for the phone. On

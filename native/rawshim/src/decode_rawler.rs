@@ -99,20 +99,45 @@ pub fn upright_preview_jpeg_bytes(bytes: &[u8], want: Preview) -> Option<Vec<u8>
 pub fn upright_preview_rgb(path: &str, long_edge: usize, want: Preview) -> Option<crate::rgb::Rgb> {
     let source = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
-    upright_preview_rgb_with(&source, decoder.as_ref(), long_edge, want)
+    upright_preview_rgb_with(
+        &source,
+        decoder.as_ref(),
+        long_edge,
+        want,
+        crate::jpeg::decode,
+    )
 }
 
-/// The same, off a source and decoder the caller already opened.
+/// The same, for a grid tile, through `jpeg::decode_tile`.
+#[cfg(feature = "renditions")]
+pub fn upright_preview_tile(
+    path: &str,
+    long_edge: usize,
+    want: Preview,
+) -> Option<crate::rgb::Rgb> {
+    let source = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?;
+    let decoder = rawler::get_decoder(&source).ok()?;
+    upright_preview_rgb_with(
+        &source,
+        decoder.as_ref(),
+        long_edge,
+        want,
+        crate::jpeg::decode_tile,
+    )
+}
+
+/// The same, off a source and decoder the caller already opened, through `decode`.
 pub fn upright_preview_rgb_with(
     source: &rawler::rawsource::RawSource,
     decoder: &dyn rawler::decoders::Decoder,
     long_edge: usize,
     want: Preview,
+    decode: fn(&[u8], usize) -> Result<crate::rgb::Rgb, String>,
 ) -> Option<crate::rgb::Rgb> {
     let params = rawler::decoders::RawDecodeParams::default();
     let previews = decoder.preview_jpegs(source, &params).ok()?;
     let jpeg = chosen(&previews, want)?;
-    let image = crate::jpeg::decode(jpeg, long_edge).ok()?;
+    let image = decode(jpeg, long_edge).ok()?;
 
     let upright = upright_of(decoder, source, &params);
     use rawler::decoders::Orientation as O;

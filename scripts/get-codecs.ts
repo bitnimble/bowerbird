@@ -1,6 +1,6 @@
-// Builds libavif and libjxl, and aom, dav1d, sharpyuv, highway, brotli and lcms2 under them, into
-// the user's cache, which `native/rawshim/.codecs/` then points at (`pinned.ts` says why it is not
-// in the checkout).
+// Builds libavif, libjxl and libjpeg-turbo, and aom, dav1d, sharpyuv, highway, brotli and lcms2
+// under them, into the user's cache, which `native/rawshim/.codecs/` then points at (`pinned.ts`
+// says why it is not in the checkout).
 //
 //   bun run get:codecs [--target aarch64-linux-android]
 //
@@ -30,7 +30,7 @@ const RECIPE = vcpkgRecipe(FEATURE, import.meta.path, TRIPLET);
 const HOME = pinnedHome(NAME, RECIPE);
 /** What `build.rs` reads the whole link from, relative to `HOME`. */
 const LINK = 'link.txt';
-const MODULES = ['libavif', 'libjxl', 'libjxl_threads', 'libjxl_cms'];
+const MODULES = ['libavif', 'libjxl', 'libjxl_threads', 'libjxl_cms', 'libturbojpeg'];
 
 function main(): void {
   makeOnce(HOME, RECIPE, process.env.BOWERBIRD_REBUILD_CODECS != null, build);
@@ -66,7 +66,7 @@ function build(): void {
 }
 
 /**
- * The link line `pkgconf --static` gives for the four libraries `rawshim` binds, as the lines
+ * The link line `pkgconf --static` gives for the libraries `rawshim` binds, as the lines
  * `build.rs` turns into cargo's: `include`, `search`, `static` and `dylib`.
  *
  * Asked of the tree's own pkgconf with only the tree's `.pc` files visible, so nothing on the build

@@ -95,8 +95,8 @@ Host-only tools (Bun's `--windows-*` flags) are fine in release; the cross stage
 
 ## The codecs are pinned too, through vcpkg, and linked statically
 
-`bun run get:codecs` builds libavif, libjxl, aom, dav1d, sharpyuv, highway, brotli and lcms2
-into `native/rawshim/.codecs`, pinned by one vcpkg commit (DESIGN §23.7). Missing tree fails
+`bun run get:codecs` builds libavif, libjxl, libjpeg-turbo, aom, dav1d, sharpyuv, highway, brotli
+and lcms2 into `native/rawshim/.codecs`, pinned by one vcpkg commit (DESIGN §23.7). Missing tree fails
 naming that command. Distribution codecs are unsuitable: libavif gain-map API arrived behind
 a flag in 1.1, settled in 1.2; Ubuntu 24.04 ships 1.0.4, Debian trixie 1.1.1 with flag off.
 Distributed libjxl 0.7 predates encoder API stability in 0.10.

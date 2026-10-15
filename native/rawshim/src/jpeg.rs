@@ -1,4 +1,4 @@
-// JPEG, in and out. Two pure-Rust crates, and no libvips.
+// JPEG, in and out. Two pure-Rust crates, libjpeg-turbo for the grid tile alone, and no libvips.
 //
 // ============================================================================================
 // JPEG IS FOR PIXELS LEAVING THE APPLICATION. NEVER FOR TRANSPORT INSIDE IT.
@@ -16,7 +16,8 @@
 // were, as far as any test could tell, working.
 //
 // So: `decode` for a camera's own embedded JPEG, which is the one JPEG this library genuinely
-// handles and which arrives from someone else's encoder. `encode` from `bb_transcode_jpeg`, the
+// handles and which arrives from someone else's encoder, and `decode_tile` for the same JPEG cut
+// down to a grid tile on import, the one decode on a hot path. `encode` from `bb_transcode_jpeg`, the
 // download an SDR library offers for compatibility - an HDR library's download hands back the
 // AVIF untouched, since transcoding it would ship a tone-map and call it the render.
 //
@@ -43,12 +44,13 @@
 //   encode 6000x4000   197ms against 70ms, same
 //
 // Single-threaded against a libvips that spreads over the machine, which is why the whole
-// decode wins on CPU and loses on wall time. Neither figure is on a hot path: every
-// production decode is a shrink-on-load to the fit grid, where the two are a wash, and the
+// decode wins on CPU and loses on wall time. Off the import, no figure is on a hot path: every
+// other decode is a shrink-on-load to the fit grid, where the two are a wash, and the
 // full-size encode happens once per manual download.
 //
-// One decoder, for everybody. A shell fetches the RAW and prepares it through `edit::fit`,
-// which reads the embedded preview through here, so no client decodes a JPEG of its own.
+// One decoder for every picture a fit or a render reads. A shell fetches the RAW and prepares it
+// through `edit::fit`, which reads the embedded preview through here, so no client decodes a JPEG
+// of its own; only the server's grid tile goes through libjpeg-turbo.
 
 use crate::rgb::{Rgb, RgbRef};
 
@@ -122,6 +124,143 @@ pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     // take the frame by value and hand back the same one when there is nothing to do,
     // because an unbounded decode of that preview is 170MB per copy avoided.
     Ok(turn.applied(crate::image::fitted(decoded, long_edge)))
+}
+
+/// [`decode`] for a grid tile, through libjpeg-turbo.
+///
+/// **Only for a tile.** The editor decodes in the browser, where no C is linked, and a camera match
+/// fitted off a preview must agree with a rendition's; turbo's IDCT is not jpeg-decoder's to the
+/// last bit, so anything a fit or a render reads stays on [`decode`].
+#[cfg(feature = "renditions")]
+pub fn decode_tile(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
+    use crate::raw::{TJCS, TJPARAM, TJPF, tjscalingfactor};
+
+    let turbo = Turbo::new()?;
+    // SAFETY: the handle is live for `turbo`'s scope, and the buffer and its length are one slice.
+    #[expect(unsafe_code)]
+    let read = unsafe { crate::raw::tj3DecompressHeader(turbo.0, bytes.as_ptr(), bytes.len()) };
+    turbo.check(read, "not a readable JPEG")?;
+    let get = |param: TJPARAM| -> i32 {
+        // SAFETY: as above; `tj3Get` only reads the handle's state.
+        #[expect(unsafe_code)]
+        unsafe {
+            crate::raw::tj3Get(turbo.0, param.0 as i32)
+        }
+    };
+    let colourspace = get(TJPARAM::TJPARAM_COLORSPACE);
+    if colourspace == TJCS::TJCS_CMYK.0 as i32 || colourspace == TJCS::TJCS_YCCK.0 as i32 {
+        return Err("CMYK JPEG is not supported".to_string());
+    }
+    if get(TJPARAM::TJPARAM_PRECISION) != 8 {
+        return Err(
+            "this JPEG is more than eight bits, which this build does not read".to_string(),
+        );
+    }
+    let (width, height) = (
+        usize::try_from(get(TJPARAM::TJPARAM_JPEGWIDTH)).map_err(|_| "no frame width")?,
+        usize::try_from(get(TJPARAM::TJPARAM_JPEGHEIGHT)).map_err(|_| "no frame height")?,
+    );
+
+    // The coarsest of 1/8, 1/4, 1/2 that still covers the long edge, as `Decoder::scale` picks.
+    let eighths = match long_edge {
+        0 => 8,
+        edge => [1, 2, 4]
+            .into_iter()
+            .find(|n| (width.max(height) * n).div_ceil(8) >= edge)
+            .unwrap_or(8),
+    };
+    // In lowest terms: turbo matches the factor against its table exactly, and 2/8 is not 1/4 there.
+    let scaling = tjscalingfactor {
+        num: 1,
+        denom: (8 / eighths) as i32,
+    };
+    // SAFETY: as above.
+    #[expect(unsafe_code)]
+    let scaled = unsafe { crate::raw::tj3SetScalingFactor(turbo.0, scaling) };
+    turbo.check(scaled, "the JPEG would not scale during the decode")?;
+    let (width, height) = (
+        (width * eighths).div_ceil(8),
+        (height * eighths).div_ceil(8),
+    );
+    let bytes_out = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(3))
+        .ok_or("the JPEG states a frame too large to hold")?;
+    let mut data = vec![0u8; bytes_out];
+    // SAFETY: `data` holds the scaled frame at three bytes a pixel, which pitch 0 and `TJPF_RGB`
+    // tell the call it is.
+    #[expect(unsafe_code)]
+    let decoded = unsafe {
+        crate::raw::tj3Decompress8(
+            turbo.0,
+            bytes.as_ptr(),
+            bytes.len(),
+            data.as_mut_ptr(),
+            0,
+            TJPF::TJPF_RGB.0 as i32,
+        )
+    };
+    turbo.check(decoded, "the JPEG would not decode")?;
+
+    let turn = exif_app1(bytes)
+        .map(|(_, tiff)| orientation(&bytes[tiff]))
+        .unwrap_or(Orientation::AsStored);
+    let decoded = Rgb {
+        width,
+        height,
+        data,
+    };
+    Ok(turn.applied(crate::image::fitted(decoded, long_edge)))
+}
+
+#[cfg(feature = "renditions")]
+struct Turbo(crate::raw::tjhandle);
+
+#[cfg(feature = "renditions")]
+impl Turbo {
+    fn new() -> Result<Turbo, String> {
+        // SAFETY: takes no pointers; a null handle is refused below.
+        #[expect(unsafe_code)]
+        let handle = unsafe {
+            crate::raw::tj3InitVersion(
+                crate::raw::TJINIT::TJINIT_DECOMPRESS.0 as i32,
+                crate::raw::TURBOJPEG_VERSION_NUMBER as i32,
+            )
+        };
+        match handle.is_null() {
+            true => Err("libjpeg-turbo would not allocate a decompressor".to_string()),
+            false => Ok(Turbo(handle)),
+        }
+    }
+
+    fn check(&self, status: i32, what: &str) -> Result<(), String> {
+        if status == 0 {
+            return Ok(());
+        }
+        // A warning, such as data past the end of the scan, still leaves a whole picture, and
+        // `decode` takes the same file without complaint.
+        // SAFETY: the handle is live.
+        #[expect(unsafe_code)]
+        let code = unsafe { crate::raw::tj3GetErrorCode(self.0) };
+        if code == crate::raw::TJERR::TJERR_WARNING.0 as i32 {
+            return Ok(());
+        }
+        // SAFETY: the handle is live, and the string it hands back lives as long as it does.
+        #[expect(unsafe_code)]
+        let why = unsafe { std::ffi::CStr::from_ptr(crate::raw::tj3GetErrorStr(self.0)) };
+        Err(format!("{what}: {}", why.to_string_lossy()))
+    }
+}
+
+#[cfg(feature = "renditions")]
+impl Drop for Turbo {
+    fn drop(&mut self) {
+        // SAFETY: built by `tj3InitVersion` in `new` and freed exactly once, here.
+        #[expect(unsafe_code)]
+        unsafe {
+            crate::raw::tj3Destroy(self.0);
+        }
+    }
 }
 
 /// The same JPEG, carrying `orientation`, without touching a pixel of it.
@@ -822,6 +961,61 @@ mod tests {
             assert_eq!(pixel[0], pixel[1], "greyscale stays neutral");
             assert_eq!(pixel[1], pixel[2], "greyscale stays neutral");
         }
+    }
+
+    /// The tile's decoder and the editor's pick the same DCT factor and turn, so a tile is the
+    /// picture the other would have made, within the two IDCTs' and chroma upsamplers' rounding.
+    #[cfg(feature = "renditions")]
+    #[test]
+    fn the_tile_decode_is_the_same_picture_as_the_shared_one() {
+        let stored = encode(gradient(1600, 900).as_ref(), 92).unwrap();
+        for tag in [1, 6] {
+            let jpeg = with_orientation(&stored, tag).unwrap();
+            for bound in [0, 100, 199, 200, 201, 400, 800, 4000] {
+                let shared = decode(&jpeg, bound).unwrap();
+                let tile = decode_tile(&jpeg, bound).unwrap();
+                assert_eq!(
+                    (tile.width, tile.height),
+                    (shared.width, shared.height),
+                    "EXIF {tag}, bound {bound}"
+                );
+                let apart: Vec<u8> = tile
+                    .data
+                    .iter()
+                    .zip(&shared.data)
+                    .map(|(a, b)| a.abs_diff(*b))
+                    .collect();
+                let worst = *apart.iter().max().unwrap();
+                let mean = apart.iter().map(|&d| f64::from(d)).sum::<f64>() / apart.len() as f64;
+                // A code apart on average at 1/8, where both keep only the DC and round it
+                // differently; a few hundredths elsewhere.
+                assert!(
+                    worst <= 5 && mean <= 1.1,
+                    "EXIF {tag}, bound {bound}: worst {worst}, mean {mean:.2} codes apart"
+                );
+            }
+        }
+
+        let mut grey = Vec::new();
+        jpeg_encoder::Encoder::new(&mut grey, 92)
+            .encode(&[0u8, 64, 128, 255], 2, 2, jpeg_encoder::ColorType::Luma)
+            .unwrap();
+        let grey = decode_tile(&grey, 0).unwrap();
+        assert_eq!(grey.data.len(), 2 * 2 * 3);
+        assert!(
+            grey.data
+                .chunks_exact(3)
+                .all(|p| p[0] == p[1] && p[1] == p[2])
+        );
+
+        // Cut off partway through the scan, which libjpeg-turbo reports as a warning over a
+        // picture whose missing rows are filled in.
+        let truncated = &stored[..stored.len() * 3 / 4];
+        let tile = decode_tile(truncated, 200).expect("a warning is not a failure");
+        assert_eq!((tile.width, tile.height), (200, 113));
+
+        assert!(decode_tile(b"", 0).is_err());
+        assert!(decode_tile(&[0xFF, 0xD8, 0, 1, 2, 3], 800).is_err());
     }
 
     #[test]

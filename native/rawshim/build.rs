@@ -368,9 +368,28 @@ fn server_bindings(include: &Path) -> bindgen::Bindings {
             is_global: false,
         })
         .prepend_enum_name(false);
-    jxl_functions(avif_functions(builder))
+    turbojpeg_functions(jxl_functions(avif_functions(builder)))
         .generate()
-        .expect("bindgen failed against the pinned libavif and libjxl headers")
+        .expect("bindgen failed against the pinned libavif, libjxl and libjpeg-turbo headers")
+}
+
+/// libjpeg-turbo, which only the grid tile's decode reads through (`jpeg::decode_tile`).
+fn turbojpeg_functions(builder: bindgen::Builder) -> bindgen::Builder {
+    builder
+        .allowlist_function("tj3InitVersion")
+        .allowlist_function("tj3Destroy")
+        .allowlist_function("tj3GetErrorStr")
+        .allowlist_function("tj3GetErrorCode")
+        .allowlist_type("TJERR")
+        .allowlist_function("tj3Get")
+        .allowlist_function("tj3DecompressHeader")
+        .allowlist_function("tj3SetScalingFactor")
+        .allowlist_function("tj3Decompress8")
+        .allowlist_type("TJINIT")
+        .allowlist_type("TJPARAM")
+        .allowlist_type("TJPF")
+        .allowlist_type("TJCS")
+        .allowlist_var("TURBOJPEG_VERSION_NUMBER")
 }
 
 /// libavif and libjxl, and the six libraries under them, from the tree `get:codecs` built, linked
