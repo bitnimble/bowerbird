@@ -206,25 +206,32 @@ void align(uint3 gid : SV_DispatchThreadID)
     found[out + 3] = 1.0;
 }
 
+static const uint REFINE_LANES = 64;
+static const uint REFINE_SUMS = 15;
+groupshared float refine_sums[REFINE_SUMS * REFINE_LANES];
+
 // Lucas-Kanade on full-resolution site luma from the search's answer, over the pairs neither
 // side saturated. The frame's contrast is matched to the reference's each iteration, which takes
-// up an exposure gain the header stated slightly wrong.
+// up an exposure gain the header stated slightly wrong. One workgroup a tile, its lanes splitting
+// the window.
 [shader("compute")]
-[numthreads(8, 8, 1)]
-void refine(uint3 gid : SV_DispatchThreadID)
+[numthreads(64, 1, 1)]
+void refine(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
 {
-    if (gid.x >= params.grid_width || gid.y >= params.grid_height) { return; }
     let tile_size = measured<Sensor>(params.tile).n;
-    let tile = gid.y * params.grid_width + gid.x;
+    let tile = min(group.y * params.grid_width + group.x, params.grid_width * params.grid_height - 1);
     let out = tile * 4;
-    for (uint k = 0; k < 4; k++) { found[out + k] = previous[out + k]; }
-    if (previous[out + 3] == 0.0) { return; }
-    let rx = params.grid_left + int(gid.x * tile_size + tile_size / 2) - params.reference_left;
-    let ry = params.grid_top + int(gid.y * tile_size + tile_size / 2) - params.reference_top;
+    let rx = params.grid_left + int(group.x * tile_size + tile_size / 2) - params.reference_left;
+    let ry = params.grid_top + int(group.y * tile_size + tile_size / 2) - params.reference_top;
     let radius = params.patch;
-    if (rx - radius - 1 < 0 || ry - radius - 1 < 0
-        || rx + radius + 1 >= int(params.reference_width)
-        || ry + radius + 1 >= int(params.reference_height)) { return; }
+    let side = 2 * radius + 1;
+    let inside = group.x < params.grid_width && group.y < params.grid_height
+        && rx - radius - 1 >= 0 && ry - radius - 1 >= 0
+        && rx + radius + 1 < int(params.reference_width)
+        && ry + radius + 1 < int(params.reference_height);
+    let refining = inside && previous[out + 3] != 0.0;
+    bool running = refining;
+    bool failed = false;
 
     let spread = 2.0 * pow(float(radius) * 0.5, 2.0);
     let width = int(params.reference_width);
@@ -232,68 +239,90 @@ void refine(uint3 gid : SV_DispatchThreadID)
     float2 d = start;
     let to_frame = float2(float(params.reference_left - params.frame_left),
         float(params.reference_top - params.frame_top));
+    // Every lane meets every barrier: a finished tile's lanes keep stepping through the iterations.
     for (int iteration = 0; iteration < REFINE_ITERATIONS; iteration++) {
-        float whole = 0.0;
-        float weight = 0.0;
-        float sr = 0.0;
-        float sf = 0.0;
-        float srr = 0.0;
-        float sff = 0.0;
-        float2 sg = float2(0.0);
-        float2 sgr = float2(0.0);
-        float2 sgf = float2(0.0);
-        float h00 = 0.0;
-        float h01 = 0.0;
-        float h11 = 0.0;
-        for (int y = -radius; y <= radius; y++) {
-            for (int x = -radius; x <= radius; x++) {
-                let w = exp(-float(x * x + y * y) / spread);
-                whole += w;
-                let at = (ry + y) * width + rx + x;
-                let r = reference[at];
-                let left = reference[at - 1];
-                let right = reference[at + 1];
-                let above = reference[at - width];
-                let below = reference[at + width];
-                if (!usable(r) || !usable(left) || !usable(right) || !usable(above) || !usable(below)) { continue; }
-                let f = frame_cubic(float(rx + x) + to_frame.x + d.x, float(ry + y) + to_frame.y + d.y);
-                if (!usable(f)) { continue; }
-                let g = 0.5 * float2(right - left, below - above);
-                weight += w;
-                sr += w * r;
-                sf += w * f;
-                srr += w * r * r;
-                sff += w * f * f;
-                sg += w * g;
-                sgr += w * g * r;
-                sgf += w * g * f;
-                h00 += w * g.x * g.x;
-                h01 += w * g.x * g.y;
-                h11 += w * g.y * g.y;
+        float sums[REFINE_SUMS];
+        [ForceUnroll]
+        for (uint k = 0; k < REFINE_SUMS; k++) { sums[k] = 0.0; }
+        for (int t = running ? int(lane) : side * side; t < side * side; t += int(REFINE_LANES)) {
+            let y = t / side - radius;
+            let x = t % side - radius;
+            let w = exp(-float(x * x + y * y) / spread);
+            sums[0] += w;
+            let at = (ry + y) * width + rx + x;
+            let r = reference[at];
+            let left = reference[at - 1];
+            let right = reference[at + 1];
+            let above = reference[at - width];
+            let below = reference[at + width];
+            if (!usable(r) || !usable(left) || !usable(right) || !usable(above) || !usable(below)) { continue; }
+            let f = frame_cubic(float(rx + x) + to_frame.x + d.x, float(ry + y) + to_frame.y + d.y);
+            if (!usable(f)) { continue; }
+            let g = 0.5 * float2(right - left, below - above);
+            sums[1] += w;
+            sums[2] += w * r;
+            sums[3] += w * f;
+            sums[4] += w * r * r;
+            sums[5] += w * f * f;
+            sums[6] += w * g.x;
+            sums[7] += w * g.y;
+            sums[8] += w * g.x * r;
+            sums[9] += w * g.y * r;
+            sums[10] += w * g.x * f;
+            sums[11] += w * g.y * f;
+            sums[12] += w * g.x * g.x;
+            sums[13] += w * g.x * g.y;
+            sums[14] += w * g.y * g.y;
+        }
+        [ForceUnroll]
+        for (uint k = 0; k < REFINE_SUMS; k++) { refine_sums[k * REFINE_LANES + lane] = sums[k]; }
+        GroupMemoryBarrierWithGroupSync();
+        for (uint stride = REFINE_LANES / 2; stride > 0; stride >>= 1) {
+            if (lane < stride) {
+                [ForceUnroll]
+                for (uint k = 0; k < REFINE_SUMS; k++) {
+                    refine_sums[k * REFINE_LANES + lane] += refine_sums[k * REFINE_LANES + lane + stride];
+                }
+            }
+            GroupMemoryBarrierWithGroupSync();
+        }
+        [ForceUnroll]
+        for (uint k = 0; k < REFINE_SUMS; k++) { sums[k] = refine_sums[k * REFINE_LANES]; }
+        GroupMemoryBarrierWithGroupSync();
+        if (running) {
+            let weight = sums[1];
+            let sg = float2(sums[6], sums[7]);
+            let h00 = sums[12];
+            let h01 = sums[13];
+            let h11 = sums[14];
+            let det = h00 * h11 - h01 * h01;
+            // A search's answer is only as good as its step, so a tile that can't be placed takes
+            // its neighbours'.
+            failed = weight < MIN_REFINED * sums[0] || det <= 1e-6 * (h00 + h11) * (h00 + h11) || h00 + h11 <= 1e-12;
+            if (!failed) {
+                let mean_r = sums[2] / weight;
+                let mean_f = sums[3] / weight;
+                let spread_r = max(sums[4] / weight - mean_r * mean_r, 0.0);
+                let spread_f = max(sums[5] / weight - mean_f * mean_f, 0.0);
+                let contrast = spread_f > 0.0 ? sqrt(spread_r / spread_f) : 1.0;
+                let b = contrast * (float2(sums[10], sums[11]) - mean_f * sg) - (float2(sums[8], sums[9]) - mean_r * sg);
+                let step = -float2(h11 * b.x - h01 * b.y, h00 * b.y - h01 * b.x) / det;
+                d += step;
+                failed = length(d - start) > REFINE_REACH;
+                running = !failed && length(step) >= 0.001;
+            } else {
+                running = false;
             }
         }
-        let det = h00 * h11 - h01 * h01;
-        if (weight < MIN_REFINED * whole || det <= 1e-6 * (h00 + h11) * (h00 + h11) || h00 + h11 <= 1e-12) {
-            // A search's answer is only as good as its step, so the tile takes its neighbours'.
-            found[out + 3] = 0.0;
-            return;
-        }
-        let mean_r = sr / weight;
-        let mean_f = sf / weight;
-        let spread_r = max(srr / weight - mean_r * mean_r, 0.0);
-        let spread_f = max(sff / weight - mean_f * mean_f, 0.0);
-        let contrast = spread_f > 0.0 ? sqrt(spread_r / spread_f) : 1.0;
-        let b = contrast * (sgf - mean_f * sg) - (sgr - mean_r * sg);
-        let step = -float2(h11 * b.x - h01 * b.y, h00 * b.y - h01 * b.x) / det;
-        d += step;
-        if (length(d - start) > REFINE_REACH) {
-            found[out + 3] = 0.0;
-            return;
-        }
-        if (length(step) < 0.001) { break; }
     }
-    found[out] = d.x;
-    found[out + 1] = d.y;
+    if (lane != 0 || group.x >= params.grid_width || group.y >= params.grid_height) { return; }
+    for (uint k = 0; k < 4; k++) { found[out + k] = previous[out + k]; }
+    if (failed) {
+        found[out + 3] = 0.0;
+    } else if (refining) {
+        found[out] = d.x;
+        found[out + 1] = d.y;
+    }
 }
 
 [shader("compute")]

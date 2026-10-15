@@ -204,6 +204,7 @@ pub async fn prepared(
             },
             as_shot: from_the_base.as_shot,
             wb_gains: Some(from_the_base.wb_gains),
+            noise: from_the_base.noise,
             photograph: (canvas(recipe.spec.canvas[0]), canvas(recipe.spec.canvas[1])),
             origin: (left, top),
             defocus: from_the_base.defocus,

@@ -684,7 +684,11 @@ fn dispatch(
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(&kernel.pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((width as u32).div_ceil(8), (height as u32).div_ceil(8), 1);
+        let (across, down) = match entry {
+            "refine" => (width as u32, height as u32),
+            _ => ((width as u32).div_ceil(8), (height as u32).div_ceil(8)),
+        };
+        pass.dispatch_workgroups(across, down, 1);
     }
     output
 }

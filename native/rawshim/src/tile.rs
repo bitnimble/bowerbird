@@ -145,6 +145,9 @@ pub struct Prepared {
     /// no source of this window carried any - the case a synthetic fixture and a finished picture
     /// both are.
     pub wb_gains: Option<[f32; 3]>,
+    /// The mosaic noise the window was denoised and is sharpened against: a composite's is its
+    /// reference source's.
+    pub noise: Option<crate::galosh::NoiseFit>,
     /// The photograph the window is a piece of, which is the scale the presence sliders read at.
     pub photograph: (usize, usize),
     /// Where the window starts in that photograph, which is where the grade reads the
@@ -538,6 +541,7 @@ pub async fn prepared_on_device(
             matched: grown.matched,
             as_shot,
             wb_gains: Some(wb_gains),
+            noise,
             photograph: grown.frame,
             origin: (grown.window.0, grown.window.1),
             defocus: took_off,

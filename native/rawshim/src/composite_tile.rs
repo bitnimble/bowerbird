@@ -920,6 +920,7 @@ async fn prepared_with(
     let mut as_shot = None;
     let mut defocus = (0.0, 0.0);
     let mut wb_gains = None;
+    let mut noise = None;
 
     let mut lap = crate::clock::laps("    pano source ");
     let mut blending = Blending::over(gpu, base, request.window);
@@ -933,6 +934,7 @@ async fn prepared_with(
             as_shot = taken.as_shot;
             // The frame a composite is graded as, so the balance it files is this one's.
             wb_gains = Some(taken.wb_gains);
+            noise = taken.noise;
             defocus = taken.defocus;
         }
         blending.add(taken.layer);
@@ -968,6 +970,7 @@ async fn prepared_with(
             },
             as_shot,
             wb_gains,
+            noise,
             photograph: (canvas(spec.canvas[0]), canvas(spec.canvas[1])),
             origin: (left, top),
             defocus,

@@ -31,20 +31,38 @@ fn main() {
     let out = args.remove(0);
     let frames = args;
     std::fs::create_dir_all(&out).expect("the output directory");
-    let sources: Vec<Value> = frames
+    let mut sources: Vec<Value> = frames
         .iter()
         .enumerate()
         .map(|(at, path)| json!({ "photoId": format!("frame{at}"), "rawFilePath": path }))
         .collect();
+    let unused = format!("{out}/unused.avif");
+    let align = |sources: &[Value]| -> Value {
+        let mut align = rendition(&frames[0], &unused);
+        align["composite"] = json!({ "sources": sources, "want": "align", "shape": kind });
+        let answer = rawshim::job::run(&job(align))
+            .expect("the align")
+            .composite
+            .expect("a recipe");
+        serde_json::from_str::<Value>(&answer).expect("the align's answer")
+    };
 
-    let mut align = rendition(&frames[0], &format!("{out}/unused.avif"));
-    align["composite"] = json!({ "sources": sources, "want": "align", "shape": kind });
-    let answer = rawshim::job::run(&job(align))
-        .expect("the align")
-        .composite
-        .expect("a recipe");
-    let mut recipe =
-        serde_json::from_str::<Value>(&answer).expect("the align's answer")["recipe"].clone();
+    // As `composites_service.aligned` does: a lens nothing has fitted is fitted, then aligned again.
+    let mut answer = align(&sources);
+    let lensless: Vec<usize> = answer["lensless"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|id| sources.iter().position(|source| source["photoId"] == *id))
+        .collect();
+    for &at in &lensless {
+        let fitted = rawshim::job::run(&job(rendition(&frames[at], &unused))).expect("a lens fit");
+        sources[at]["photoAnalysis"] = json!(fitted.photo_analysis.expect("an analysis"));
+    }
+    if !lensless.is_empty() {
+        answer = align(&sources);
+    }
+    let mut recipe = answer["recipe"].clone();
     let reference = recipe["reference"].as_u64().expect("a reference") as usize;
     for axis in 0..2 {
         recipe["canvas"][axis] =

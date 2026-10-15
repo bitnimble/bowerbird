@@ -920,10 +920,16 @@ pub(crate) fn base(
             .as_ref()
             .and_then(|m| m.colour.as_ref())
             .is_none();
+    // A merge is drawn in its reference's light, every frame gained onto it, so the reference's
+    // samples are the canvas's.
+    let (sampled, sampled_reference) = match (wanted.stack(), files.get(spec.reference)) {
+        (Some(_), Some(reference)) => (std::slice::from_ref(reference), 0),
+        _ => (files.as_slice(), spec.reference),
+    };
     let (stacked, stacked_as_shot) = match from {
         crate::composite_tile::From::Original if filed.is_none() || needs_colour => {
             crate::base::device(gpu)
-                .and_then(|base| stacked_sources(gpu, base, job, &files, spec.reference))
+                .and_then(|base| stacked_sources(gpu, base, job, sampled, sampled_reference))
                 .unzip()
         }
         _ => (None, None),
@@ -935,7 +941,7 @@ pub(crate) fn base(
             let matched = if needs_colour {
                 stacked
                     .as_ref()
-                    .and_then(|stacked| union_match(gpu, job, &files, stacked, stacked_as_shot))
+                    .and_then(|stacked| union_match(gpu, job, sampled, stacked, stacked_as_shot))
             } else {
                 known.from_raw.matched.clone()
             };
@@ -953,7 +959,7 @@ pub(crate) fn base(
                 levels,
                 stacked
                     .as_ref()
-                    .and_then(|stacked| union_match(gpu, job, &files, stacked, stacked_as_shot)),
+                    .and_then(|stacked| union_match(gpu, job, sampled, stacked, stacked_as_shot)),
             )
         }),
     };
@@ -974,6 +980,7 @@ pub(crate) fn base(
     let mut fallback_match = None;
     let mut as_shot = None;
     let mut wb_gains = None;
+    let mut decoded_noise = None;
     // An assembly's two bands are taken against a lowpass over the whole crop, so it is built once
     // for the render and sliced by every strip: per strip it would truncate at each strip's own
     // edge and draw a seam with no image seam under it (`assembly_render::lowpass`). Deferred to
@@ -1061,6 +1068,7 @@ pub(crate) fn base(
             tile.reclaim();
             as_shot = as_shot.or(prepared.as_shot);
             wb_gains = wb_gains.or(prepared.wb_gains);
+            decoded_noise = decoded_noise.or(prepared.noise);
             // Only where the composite's own fit declined: `union_match` is the colour this picture
             // is graded through, and the reference's is the fallback.
             fallback_match = fallback_match.or_else(|| {
@@ -1099,6 +1107,13 @@ pub(crate) fn base(
     let as_shot = as_shot.or_else(|| known.from_raw.balance.and_then(|kept| kept.as_shot));
     let wb_gains = wb_gains.or_else(|| known.from_raw.balance.map(|kept| kept.wb_gains));
     let balance = wb_gains.map(|wb_gains| crate::photo_analysis::Balance { wb_gains, as_shot });
+    // A reference never rendered alone has no fit on file, and without one the sharpen reads the
+    // canvas as noiseless and deconvolves its grain at full strength.
+    let noise = reference
+        .from_raw
+        .noise
+        .or(decoded_noise)
+        .or(known.from_raw.noise);
     // **The composite's own, which is what makes it a photograph the rest of the pipeline can ask
     // about.** Everything measured over the whole set goes here - the union levels the canvas was
     // coded against and the union colour it is graded through - and the per-camera half comes from
@@ -1115,7 +1130,7 @@ pub(crate) fn base(
             from_raw: crate::photo_analysis::FromRaw {
                 matched: matched.clone(),
                 // The reference's: no single fit describes a blend.
-                noise: reference.from_raw.noise,
+                noise,
                 // A composite looks for no particles. Each source's own render corrected its own,
                 // and the canvas is past the mosaic a search would have to read.
                 dust: None,
@@ -1163,21 +1178,21 @@ pub(crate) fn base(
         // frame's long edge is a fraction of a pan's, which pins `deconvolve_split`'s `k` at 1 and
         // deconvolves a reduced render as though it were native.
         sensor_long: spec.canvas[0].max(spec.canvas[1]),
-        // The reference's stored fit and tags rather than whichever decode reached this window, so
-        // every window of the canvas sharpens as the rendition does.
+        // The reference's fit and tags rather than whichever source's decode reached this window,
+        // so every window of the canvas sharpens as the rendition does.
         sharpen_noise: match from {
             crate::composite_tile::From::Camera => crate::image::SharpenNoise::NONE,
             crate::composite_tile::From::Original => crate::base::sharpen_noise(
                 crate::composite_tile::coded_as(anchored, spec.sources[spec.reference].gain),
                 job.grade.reference_white_nits,
-                reference.from_raw.noise,
+                noise,
                 match drawn {
                     Drawn::Merged(..) => job.detail().without_upscaler(),
                     _ => job.detail().on_bayer(crate::decode_rawler::upscalable_at(
                         files[spec.reference].path,
                     )),
                 }
-                .noise_left(reference.from_raw.noise),
+                .noise_left(noise),
                 crate::decode_rawler::camera_to_rec2020_at(files[spec.reference].path),
                 wb_gains.unwrap_or([1.0; 3]),
                 1,

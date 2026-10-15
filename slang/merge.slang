@@ -50,6 +50,14 @@ struct Params {
     float sharpness_power;
     float sharpest;
     int robust_reach;
+    float reference_ceiling0;
+    float reference_ceiling1;
+    float reference_ceiling2;
+    float reference_ceiling3;
+    uint averages;
+    uint pad0;
+    uint pad1;
+    uint pad2;
 };
 
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
@@ -63,11 +71,13 @@ struct Params {
 // Twelve floats an output pixel, here and in `wide_sums`: each channel's weighed residual and its
 // weight from the other frames, then the same from the reference.
 [vk::binding(8, 0)] RWStructuredBuffer<float> sums;
+[vk::binding(9, 0)] RWStructuredBuffer<float> eroded;
 [vk::binding(10, 0)] RWStructuredBuffer<float> rgb;
 [vk::binding(18, 0)] StructuredBuffer<float> prior;
 [vk::binding(11, 0)] RWStructuredBuffer<float> merged;
 [vk::binding(12, 0)] RWStructuredBuffer<float> half;
 [vk::binding(13, 0)] RWStructuredBuffer<float> wide_sums;
+[vk::binding(14, 0)] RWStructuredBuffer<float> reference_detail;
 [vk::binding(15, 0)] RWStructuredBuffer<float> low_band;
 [vk::binding(16, 0)] RWStructuredBuffer<float> blurred;
 [vk::binding(17, 0)] RWStructuredBuffer<float> banded;
@@ -97,6 +107,11 @@ static const float ALIASING = 0.25;
 // A period with a saturated photosite this near a pixel, in the wide kernel's weight, says its light
 // is at least the clip.
 static const float CLIP_NEAR = 0.5;
+// A frame's period this far under where the reference saturated, in the reference's light, cannot
+// be the light that saturated it.
+static const float BELOW_CLIP = 0.75;
+// How far over its bound a channel still counts as held by it.
+static const float HELD_TO = 1.1;
 // The low band: every frame trusted, through one wide kernel over Bayer periods, whose own 2x2
 // aperture the band split adds back. A blur takes nothing from it, so every frame counts.
 static const Extent<Sensor> WIDE = { 1.5 };
@@ -109,6 +124,8 @@ static const int SHARPNESS_REACH = 4;
 // a red, two greens and a blue.
 static const float LAPLACIAN_VARIANCE = 20.0;
 static const float PERIOD_LUMA_VARIANCE = 0.278;
+// The share of the noise's Laplacian energy both sides of a sharpness ratio are floored at.
+static const float DETAIL_FLOOR = 0.5;
 
 uint colour_at(int x, int y)
 {
@@ -134,6 +151,17 @@ float channel_ceiling(uint channel)
     [ForceUnroll]
     for (int at = 0; at < 4; at++) {
         if (colour_at(at & 1, at >> 1) == channel) { ceiling = max(ceiling, ceiling_at(at & 1, at >> 1)); }
+    }
+    return ceiling;
+}
+
+float reference_ceiling(uint channel)
+{
+    let ceilings = float4(params.reference_ceiling0, params.reference_ceiling1, params.reference_ceiling2, params.reference_ceiling3);
+    float ceiling = 0.0;
+    [ForceUnroll]
+    for (int at = 0; at < 4; at++) {
+        if (colour_at(at & 1, at >> 1) == channel) { ceiling = max(ceiling, ceilings[at]); }
     }
     return ceiling;
 }
@@ -328,8 +356,8 @@ float period_luma(bool reference_side, int x, int y)
 }
 
 // The mean squared Laplacian of one plane's period luma about `(x, y)`, less what its noise alone
-// would give.
-float detail_of(bool reference_side, int x, int y, float alpha, float sigma_sq, float gain)
+// would give, beside that noise; negative where nothing there was read.
+float2 detail_of(bool reference_side, int x, int y, float alpha, float sigma_sq, float gain)
 {
     float energy = 0.0;
     float level = 0.0;
@@ -348,11 +376,24 @@ float detail_of(bool reference_side, int x, int y, float alpha, float sigma_sq, 
             n += 1.0;
         }
     }
-    if (n < 1.0) { return -1.0; }
+    if (n < 1.0) { return float2(-1.0, 0.0); }
     let mean = level / n;
     let noise = LAPLACIAN_VARIANCE * PERIOD_LUMA_VARIANCE * gain * gain
         * variance_of(max(mean / gain, 0.0), alpha, sigma_sq);
-    return max(energy / n - noise, 0.0);
+    return float2(max(energy / n - noise, 0.0), noise);
+}
+
+// The reference's `detail_of` at each of its periods, the same for every frame `robust` compares.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void reference_details(uint3 gid : SV_DispatchThreadID)
+{
+    let half_width = params.width / 2;
+    if (gid.x >= half_width || gid.y >= params.height / 2) { return; }
+    let here = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width));
+    let detail = detail_of(true, int(gid.x), int(gid.y), params.reference_alpha, params.reference_sigma_sq, 1.0);
+    reference_detail[here.n * 2] = detail.x;
+    reference_detail[here.n * 2 + 1] = detail.y;
 }
 
 // How far one frame may be trusted at each of the reference's periods, then how much of its
@@ -389,6 +430,8 @@ void robust(uint3 gid : SV_DispatchThreadID)
         float theirs = 0.0;
         float seen = 0.0;
         float visible = 0.0;
+        float contradicted = 0.0;
+        let saturates = reference_ceiling(channel);
         for (int j = -reach; j <= reach; j++) {
             for (int i = -reach; i <= reach; i++) {
                 let rx = clamp(int(gid.x) + i, 0, int(half_width) - 1);
@@ -396,6 +439,7 @@ void robust(uint3 gid : SV_DispatchThreadID)
                 let r = reference_half[wide_at<Sensor>(uint(rx), uint(ry), measured<Sensor>(half_width)) * 3 + channel];
                 let f = frame_half_bilinear(qx + float(i), qy + float(j), channel);
                 if (usable(r)) { visible += 1.0; }
+                if (!usable(r) && usable(f) && f < BELOW_CLIP * saturates) { contradicted += 1.0; }
                 if (!usable(r) || !usable(f)) { continue; }
                 n += 1.0;
                 ours += r;
@@ -404,6 +448,9 @@ void robust(uint3 gid : SV_DispatchThreadID)
                 seen += 1.0;
             }
         }
+        // the reference saturated, so its light is at least the clip: a frame reading well under
+        // it is placed somewhere else, which a field filled across a blown highlight often is
+        if (contradicted >= side * side / 3.0) { worst = MOVED_AT * MOVED_AT; }
         if (n < side * side / 3.0) {
             // the reference sees here and the frame can't be checked against it, so the frame's few
             // unsaturated photosites may come from anywhere its field strayed in its clipped tiles
@@ -423,30 +470,53 @@ void robust(uint3 gid : SV_DispatchThreadID)
     }
     robustness[here.n * 2] = 1.0 - smoothstep(MOVED_FROM, MOVED_AT, sqrt(worst));
 
-    let ours = detail_of(true, int(gid.x), int(gid.y), params.reference_alpha, params.reference_sigma_sq, 1.0);
+    let ours = float2(reference_detail[here.n * 2], reference_detail[here.n * 2 + 1]);
     let theirs = detail_of(false, int(round(qx)), int(round(qy)), params.alpha, params.sigma_sq, params.gain);
-    let ratio = ours > 0.0 && theirs >= 0.0 ? theirs / ours : 1.0;
-    robustness[here.n * 2 + 1] = pow(clamp(ratio, 0.0, params.sharpest), params.sharpness_power);
+    // Where each place takes one frame, floored at a share of the noise so a reference with nothing
+    // left to read still hands over to a frame holding detail there. Where frames average, a floor
+    // lets a darker, noisier frame into the high band wherever only the reference reads detail.
+    let floor = params.averages != 0 ? 0.0 : DETAIL_FLOOR * ours.y;
+    let ratio = ours.x >= 0.0 && theirs.x >= 0.0 && ours.x + floor > 0.0
+        ? (theirs.x + floor) / (ours.x + floor) : 1.0;
+    let sharpness = pow(clamp(ratio, 0.0, params.sharpest), params.sharpness_power);
+    // where each place takes one frame, one no sharper than the reference adds only its noise
+    robustness[here.n * 2 + 1] = params.averages != 0 ? sharpness : max(sharpness - 1.0, 0.0);
 }
 
-// The least trust any period within `reach` of `(sx, sy)` gives the frame, and the sharpness of
-// its own.
-float2 robustness_near(float sx, float sy, int reach)
+// Per period, the least trust within one period, the period's own sharpness, and the least trust
+// within two: what `accumulate` reads at each output pixel and each wide tap.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void erode(uint3 gid : SV_DispatchThreadID)
 {
     let half_width = int(params.width / 2);
     let half_height = int(params.height / 2);
-    let hx = int(floor(sx * 0.5));
-    let hy = int(floor(sy * 0.5));
-    float least = 1.0;
-    for (int j = -reach; j <= reach; j++) {
-        for (int i = -reach; i <= reach; i++) {
-            let x = clamp(hx + i, 0, half_width - 1);
-            let y = clamp(hy + j, 0, half_height - 1);
-            least = min(least, robustness[wide_at<Sensor>(uint(x), uint(y), measured<Sensor>(uint(half_width))).n * 2]);
+    if (int(gid.x) >= half_width || int(gid.y) >= half_height) { return; }
+    float near = 1.0;
+    float far = 1.0;
+    for (int j = -2; j <= 2; j++) {
+        for (int i = -2; i <= 2; i++) {
+            let x = clamp(int(gid.x) + i, 0, half_width - 1);
+            let y = clamp(int(gid.y) + j, 0, half_height - 1);
+            let trust = robustness[wide_at<Sensor>(uint(x), uint(y), measured<Sensor>(uint(half_width))).n * 2];
+            far = min(far, trust);
+            if (abs(i) <= 1 && abs(j) <= 1) { near = min(near, trust); }
         }
     }
-    let own = wide_at<Sensor>(uint(clamp(hx, 0, half_width - 1)), uint(clamp(hy, 0, half_height - 1)), measured<Sensor>(uint(half_width)));
-    return float2(least, robustness[own.n * 2 + 1]);
+    let here = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(uint(half_width)));
+    eroded[here * 3] = near;
+    eroded[here * 3 + 1] = robustness[here.n * 2 + 1];
+    eroded[here * 3 + 2] = far;
+}
+
+// `erode`'s three at the period under `(sx, sy)`.
+float3 eroded_at(float sx, float sy)
+{
+    let half_width = int(params.width / 2);
+    let hx = clamp(int(floor(sx * 0.5)), 0, half_width - 1);
+    let hy = clamp(int(floor(sy * 0.5)), 0, int(params.height / 2) - 1);
+    let at = wide_at<Sensor>(uint(hx), uint(hy), measured<Sensor>(uint(half_width))) * 3;
+    return float3(eroded[at], eroded[at + 1], eroded[at + 2]);
 }
 
 float prior_site(int x, int y, uint channel)
@@ -482,7 +552,7 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
     let scale = float(params.scale);
     let sx = float(params.output_left) + (float(gid.x) + 0.5) / scale - 0.5;
     let sy = float(params.output_top) + (float(gid.y) + 0.5) / scale - 0.5;
-    let near = robustness_near(sx, sy, 1);
+    let near = eroded_at(sx, sy);
     let trust = near.x;
     if (trust <= 0.0) { return; }
     let kx = clamp(int(round(sx)), 0, int(params.width) - 1);
@@ -546,7 +616,7 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
                 // The wide kernel reaches past the periods the output pixel's trust was read
                 // over, so each period answers for itself and its wider neighbourhood, or a
                 // subject's edge, which its own texture lets pass, spreads a halo.
-                let own = robustness_near(sx + dx, sy + dy, 2).x;
+                let own = eroded_at(sx + dx, sy + dy).z;
                 let spread = own * exp(-0.5 * (dx * dx + dy * dy) / (wide_spread * wide_spread));
                 let w = spread * exposure_weight(value);
                 let mask = one_hot(channel);
@@ -696,13 +766,37 @@ void combine(uint3 gid : SV_DispatchThreadID)
         total += w;
     }
     let at = wide_at<Output>(gid.x, gid.y, measured<Output>(params.output_width)) * 3;
+    Colour<Level> value;
+    Colour<Level> clip;
     [ForceUnroll]
     for (uint channel = 0; channel < 3; channel++) {
-        Light<Level> value;
-        value.v = prior_at(sx, sy, channel) + merged[at + channel] - low[channel] / total
+        value.v[channel] = prior_at(sx, sy, channel) + merged[at + channel] - low[channel] / total
             + low_band[at + channel];
-        // zero is "no clip seen", not a floor: a shadow's noise reads below it
-        let clip = clipped_light[at + channel];
-        banded[at + channel] = clip > 0.0 ? max(value.v, clip) : value.v;
+        clip.v[channel] = clipped_light[at + channel];
     }
+    let held = unclipped_light(value, clip);
+    [ForceUnroll]
+    for (uint channel = 0; channel < 3; channel++) { banded[at + channel] = held.v[channel]; }
+}
+
+// A channel held by its bound is a lower limit, and the bounds as a colour are magenta where green's
+// is lowest; under the merge's ceiling the colour pass can't see them, so the neutralising is here.
+// Only up to the highest bound: past it the raise is a guess at a colour no frame read.
+// A clip of zero is "none seen", not a floor: a shadow's noise reads below it.
+Colour<Level> unclipped_light(Colour<Level> value, Colour<Level> clip)
+{
+    let bounded = max(value.v, clip.v);
+    let held = float3(
+        clip.v.x > 0.0 ? 1.0 - smoothstep(1.0, HELD_TO, value.v.x / clip.v.x) : 0.0,
+        clip.v.y > 0.0 ? 1.0 - smoothstep(1.0, HELD_TO, value.v.y / clip.v.y) : 0.0,
+        clip.v.z > 0.0 ? 1.0 - smoothstep(1.0, HELD_TO, value.v.z / clip.v.z) : 0.0);
+    let reach = max(clip.v.x, max(clip.v.y, clip.v.z));
+    let zero_tint = min(float3(
+        bounded.y * bounded.y / max(bounded.z, 1e-6),
+        sqrt(max(bounded.x * bounded.z, 0.0)),
+        bounded.y * bounded.y / max(bounded.x, 1e-6)), float3(reach));
+    let raised = lerp(bounded, max(bounded, zero_tint), held);
+    Colour<Level> light;
+    light.v = lerp(raised, max(raised, float3(reach)), min(held.x, min(held.y, held.z)));
+    return light;
 }

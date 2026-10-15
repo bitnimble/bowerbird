@@ -144,12 +144,33 @@ uint4 source_for(uint sample)
     return uint4(params.left + inside.x, params.top + inside.y, channel, 1);
 }
 
-/// How full each colour's photosites are about a place in the mosaic, as a fraction of its ceiling.
-///
+/// How full each colour's photosites are about a place in the mosaic, as a fraction of its ceiling,
+/// and which colours have a site at the clip there.
+struct Wells
+{
+    float3 fill;
+    /// One for a colour with any site at its ceiling: its fill is only a floor. On a light's sharp
+    /// edge green clips at a third of red's and blue's levels, so a mean over clipped and lit greens
+    /// reads short of blown while red and blue read on, and the edge rings magenta.
+    float3 clipped;
+}
+
+Wells wells_of(float3 mean, float3 brightest, float3 ceiling)
+{
+    let clip = SATURATED_AT * ceiling;
+    Wells wells;
+    wells.fill = mean / max(ceiling, float3(1e-6));
+    wells.clipped = float3(
+        brightest.x >= clip.x ? 1.0 : 0.0,
+        brightest.y >= clip.y ? 1.0 : 0.0,
+        brightest.z >= clip.z ? 1.0 : 0.0);
+    return wells;
+}
+
 /// The 3x3, which holds at least one site of every colour whatever phase it is centred on, and
 /// averaged rather than maximised: the question is how full the wells under this pixel are, and a
 /// maximum would carry a blown neighbour outward exactly as the interpolation does.
-float3 fills_at(uint x, uint y)
+Wells fills_at(uint x, uint y)
 {
     let ceiling = float3(params.row0.w, params.row1.w, params.row2.w);
     // The plane's own extent, so a site past an edge is dropped rather than wrapped. Clamping the
@@ -163,6 +184,7 @@ float3 fills_at(uint x, uint y)
     pattern(cfa);
     float3 sum = float3(0.0);
     float3 seen = float3(0.0);
+    float3 brightest = float3(0.0);
     // Every site but the plane's own border has all nine of its neighbours, so the test each would
     // otherwise carry is one test for the nine, and the loop unrolls without a `continue` in it.
     // Every site asks the pattern for its own colour: `dy` of -1 and +1 share a row phase only on a
@@ -176,12 +198,12 @@ float3 fills_at(uint x, uint y)
                 let sx = int(x) + dx;
                 let colour = colour_of(cfa, sy, sx);
                 let value = samples[uint(sy) * params.stride + uint(sx)];
-                if (colour == 0) { sum.r += value; seen.r += 1.0; }
-                else if (colour == 2) { sum.b += value; seen.b += 1.0; }
-                else { sum.g += value; seen.g += 1.0; }
+                if (colour == 0) { sum.r += value; seen.r += 1.0; brightest.r = max(brightest.r, value); }
+                else if (colour == 2) { sum.b += value; seen.b += 1.0; brightest.b = max(brightest.b, value); }
+                else { sum.g += value; seen.g += 1.0; brightest.g = max(brightest.g, value); }
             }
         }
-        return (sum / max(seen, float3(1.0))) / max(ceiling, float3(1e-6));
+        return wells_of(sum / max(seen, float3(1.0)), brightest, ceiling);
     }
     for (int dy = -1; dy <= 1; dy = dy + 1) {
         let sy = int(y) + dy;
@@ -191,12 +213,12 @@ float3 fills_at(uint x, uint y)
             if (sx < 0 || sx >= int(params.stride)) { continue; }
             let colour = colour_of(cfa, sy, sx);
             let value = samples[uint(sy) * params.stride + uint(sx)];
-            if (colour == 0) { sum.r += value; seen.r += 1.0; }
-            else if (colour == 2) { sum.b += value; seen.b += 1.0; }
-            else { sum.g += value; seen.g += 1.0; }
+            if (colour == 0) { sum.r += value; seen.r += 1.0; brightest.r = max(brightest.r, value); }
+            else if (colour == 2) { sum.b += value; seen.b += 1.0; brightest.b = max(brightest.b, value); }
+            else { sum.g += value; seen.g += 1.0; brightest.g = max(brightest.g, value); }
         }
     }
-    return (sum / max(seen, float3(1.0))) / max(ceiling, float3(1e-6));
+    return wells_of(sum / max(seen, float3(1.0)), brightest, ceiling);
 }
 
 /// The colour share of the light around a place in this dispatch's mosaic
@@ -225,26 +247,29 @@ float3 light_around(float2 at)
 /// crossed in one pixel on a steep edge.
 static const Stops WHITENS_OVER = { 1.5 };
 
-/// What a clipped photosite would have read. `fill` is each colour's wells under this pixel as a
-/// fraction of its ceiling.
+/// What a clipped photosite would have read, from the wells under this pixel.
 ///
 /// Every strength ramps on a fill: a branch on a count of clipped channels draws a ring.
-float3 reconstructed(float3 camera, float3 fill, float2 at)
+float3 reconstructed(float3 camera, Wells under, float2 at)
 {
+    let fill = under.fill;
     let hi = max(fill.r, max(fill.g, fill.b));
-    if (hi < BLOWN_FROM) { return camera; }
+    let clipped = max(under.clipped.r, max(under.clipped.g, under.clipped.b));
+    if (hi < BLOWN_FROM && clipped == 0.0) { return camera; }
     let around = light_around(at);
-    let gone = running_out(fill);
+    let running = running_out(fill);
+    let gone = max(running, under.clipped);
     // Off the photosites once a channel runs out: RCD interpolates a run-out channel from green and
-    // green from it, a scale pattern the wells never had.
+    // green from it, a scale pattern the wells never had. On the fill alone: a lone clipped site
+    // switching to the 3x3's means would lift its colour over the others and tint the edge.
     let ceiling = float3(params.row0.w, params.row1.w, params.row2.w);
-    let wells = lerp(camera, fill * ceiling, smoothstep(0.0, 0.5, max(gone.r, max(gone.g, gone.b))));
+    let wells = lerp(camera, fill * ceiling, smoothstep(0.0, 0.5, max(running.r, max(running.g, running.b))));
     let reading = 1.0 - gone;
     let measured = smoothstep(0.0, 0.5, reading.r + reading.g + reading.b);
     let lo = min(fill.r, min(fill.g, fill.b));
     let toward_clip = smoothstep(-WHITENS_OVER.s, 0.0, log2(max(lo, 1e-6)));
     let kept = lerp(params.colour_reading, params.colour_blown * vivid(around), toward_clip);
-    let neutral = broadband(wells, fill);
+    let neutral = broadband(wells, fill, gone);
     let lit = lit_like(wells, gone, measured, around) * luma_of(neutral);
     return lerp(neutral, fitted(neutral, lit), kept);
 }
@@ -306,7 +331,7 @@ float luma_of(float3 camera)
 /// Capped at the brightest channel read, or a noisy low blue turns `g²/b` into a deep red torch.
 /// Raised to the brightest still reading, not left at the clipped ceiling: green's is lowest, so a
 /// blown neutral rings magenta. All three gone is neutral; the illuminant's ratios render a sun pink.
-float3 broadband(float3 camera, float3 fill)
+float3 broadband(float3 camera, float3 fill, float3 gone)
 {
     let edge = 1e-6;
     let hi = max(fill.r, max(fill.g, fill.b));
@@ -317,7 +342,6 @@ float3 broadband(float3 camera, float3 fill)
         camera.g * camera.g / max(camera.b, edge),
         sqrt(max(camera.r * camera.b, 0.0)),
         camera.g * camera.g / max(camera.r, edge)), top);
-    let gone = running_out(fill);
     let estimated = lerp(camera, max(camera, zero_tint), gone);
     // Two clipped channels tie the zero-tint estimates to their ceilings. Normalize the remaining
     // channel weights so a partly clipped blue cannot leave a blue ring around a neutral light.
@@ -403,6 +427,7 @@ float3 pixel_of_reduced<let SIDE : int>(uint2 at)
     pattern(cfa);
     float3 sums = float3(0.0);
     float3 counts = float3(0.0);
+    float3 brightest = float3(0.0);
     // **Off one base index, a row at a time.** Spelled as `sy * stride + sx` per site the block's
     // reads are four independent addresses the compiler has to prove adjacent before it can fetch
     // them together. On an adapter whose memory is the system's that is two fetches a pixel against
@@ -419,9 +444,9 @@ float3 pixel_of_reduced<let SIDE : int>(uint2 at)
             // compares, three conversions and six fused multiplies where this spends one compare
             // and two adds, and only one of the three is ever live.
             let colour = colour_of(cfa, sy, times(int(at.x), side) + dx);
-            if (colour == 0) { sums.r += value; counts.r += 1.0; }
-            else if (colour == 2) { sums.b += value; counts.b += 1.0; }
-            else { sums.g += value; counts.g += 1.0; }
+            if (colour == 0) { sums.r += value; counts.r += 1.0; brightest.r = max(brightest.r, value); }
+            else if (colour == 2) { sums.b += value; counts.b += 1.0; brightest.b = max(brightest.b, value); }
+            else { sums.g += value; counts.g += 1.0; brightest.g = max(brightest.g, value); }
         }
     }
     var camera = sums / max(counts, float3(1.0));
@@ -432,7 +457,7 @@ float3 pixel_of_reduced<let SIDE : int>(uint2 at)
     // output pixel is not made of.
     let ceiling = float3(params.row0.w, params.row1.w, params.row2.w);
     let centre = (float2(at) + 0.5) * float(side);
-    return rec2020_of(reconstructed(camera, camera / max(ceiling, float3(1e-6)), centre));
+    return rec2020_of(reconstructed(camera, wells_of(camera, brightest, ceiling), centre));
 }
 
 /// The side of the square of destination words one workgroup owns.
@@ -476,7 +501,8 @@ void put(uint word, uint2 low, uint2 high)
 /// false, and nothing written to `held`, for one that needs `pixel_of`.
 bool unclipped_pixel(uint2 site, out float3 held)
 {
-    let fill = fills_at(site.x, site.y);
+    let under = fills_at(site.x, site.y);
+    let fill = max(under.fill, under.clipped);
     held = float3(0.0);
     if (max(fill.r, max(fill.g, fill.b)) >= BLOWN_FROM) { return false; }
     let base = wide_at<Sensor>(site.x, site.y, measured<Sensor>(params.stride)) * 3;

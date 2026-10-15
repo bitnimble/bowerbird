@@ -48,6 +48,9 @@ struct Params {
     sharpness_power: f32,
     sharpest: f32,
     robust_reach: i32,
+    reference_ceilings: [f32; 4],
+    averages: u32,
+    pad: [u32; 3],
 }
 
 /// How a stack's frames are weighed against the reference.
@@ -59,6 +62,10 @@ pub struct Weights {
     pub sharpest: f32,
     /// Half-resolution periods either side a frame's light is compared over.
     pub robust_reach: i32,
+    /// Whether every frame lands samples at a place. A stack whose places each take one frame
+    /// averages nothing, so its frames are read through the reader's denoise, and its kernels are
+    /// as wide as one frame's samples need.
+    pub averages: bool,
 }
 
 impl Weights {
@@ -69,6 +76,7 @@ impl Weights {
         sharpness_power: 2.0,
         sharpest: 2.0,
         robust_reach: 1,
+        averages: true,
     };
 
     /// Frames focused at different distances: each place takes the frame in focus there, and a
@@ -78,15 +86,26 @@ impl Weights {
         sharpness_power: 8.0,
         sharpest: 4.0,
         robust_reach: 3,
+        averages: false,
     };
 }
 
 /// What a one-photosite merge holds for each pixel of its region, beside the strip itself: the
-/// kernels, both halved planes, robustness and sharpness, three accumulators, the four planes the
-/// bands settle through, the reference's demosaic under them, the merged mosaic, and two alignment
-/// pyramids.
+/// kernels, both halved planes, the reference's detail, robustness and sharpness and their erosion,
+/// three accumulators, the four planes the bands settle through, the reference's demosaic under
+/// them, the merged mosaic, and two alignment pyramids.
 pub const WORKING_BYTES_PER_PIXEL: f64 = 4.0
-    * (3.0 + 0.75 + 0.75 + 0.5 + 27.0 + 12.0 + 3.0 + 1.0 + 2.0 * (1.0 + 0.25 + 0.0625 + 0.015625));
+    * (3.0
+        + 0.75
+        + 0.75
+        + 0.5
+        + 0.5
+        + 0.75
+        + 27.0
+        + 12.0
+        + 3.0
+        + 1.0
+        + 2.0 * (1.0 + 0.25 + 0.0625 + 0.015625));
 
 #[cfg(test)]
 pub(crate) fn block() -> usize {
@@ -125,7 +144,9 @@ pub struct Merge {
     ceilings: [f32; 4],
     kernels: Buffer,
     reference_half: Buffer,
+    reference_detail: Buffer,
     robustness: Buffer,
+    eroded: Buffer,
     prior: Buffer,
     sums: Buffer,
     wide_sums: Buffer,
@@ -136,7 +157,9 @@ pub struct Merge {
 enum Entry {
     Shape,
     Halve,
+    ReferenceDetails,
     Robust,
+    Erode,
     Accumulate,
     Settle,
     BlurRows,
@@ -153,10 +176,22 @@ fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
     let (name, bindings): (&str, &[(u32, wgpu::BufferBindingType)]) = match entry {
         Entry::Shape => ("shape", &[(0, UNIFORM), (3, READ), (4, WRITE)]),
         Entry::Halve => ("halve", &[(0, UNIFORM), (1, READ), (12, WRITE)]),
+        Entry::ReferenceDetails => (
+            "reference_details",
+            &[(0, UNIFORM), (5, READ), (6, READ), (14, WRITE)],
+        ),
         Entry::Robust => (
             "robust",
-            &[(0, UNIFORM), (2, READ), (5, READ), (6, READ), (7, WRITE)],
+            &[
+                (0, UNIFORM),
+                (2, READ),
+                (5, READ),
+                (6, READ),
+                (7, WRITE),
+                (14, WRITE),
+            ],
         ),
+        Entry::Erode => ("erode", &[(0, UNIFORM), (7, WRITE), (9, WRITE)]),
         Entry::Accumulate => (
             "accumulate",
             &[
@@ -165,8 +200,8 @@ fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
                 (2, READ),
                 (4, WRITE),
                 (6, READ),
-                (7, WRITE),
                 (8, WRITE),
+                (9, WRITE),
                 (13, WRITE),
                 (18, READ),
                 (19, WRITE),
@@ -311,7 +346,9 @@ impl Merge {
             ceilings: reference.exposure.ceilings,
             kernels: storage(gpu, "merge kernels", width * height * 3),
             reference_half: storage(gpu, "merge reference half", half_width * half_height * 3),
+            reference_detail: storage(gpu, "merge reference detail", half_width * half_height * 2),
             robustness: storage(gpu, "merge robustness", half_width * half_height * 2),
+            eroded: storage(gpu, "merge eroded robustness", half_width * half_height * 3),
             prior,
             sums: storage(gpu, "merge sums", values * 4),
             wide_sums: storage(gpu, "merge wide sums", values * 4),
@@ -331,6 +368,18 @@ impl Merge {
             Entry::Halve,
             &params,
             &[(1, &reference.mosaic.buffer), (12, &merge.reference_half)],
+            half_width,
+            half_height,
+        );
+        dispatch(
+            gpu,
+            Entry::ReferenceDetails,
+            &params,
+            &[
+                (5, &merge.reference_half),
+                (6, &merge.reference_half),
+                (14, &merge.reference_detail),
+            ],
             half_width,
             half_height,
         );
@@ -459,7 +508,17 @@ impl Merge {
                 (5, &self.reference_half),
                 (6, frame_half),
                 (7, &self.robustness),
+                (14, &self.reference_detail),
             ],
+            self.width / 2,
+            self.height / 2,
+        );
+        record(
+            gpu,
+            &mut recording,
+            Entry::Erode,
+            &params,
+            &[(7, &self.robustness), (9, &self.eroded)],
             self.width / 2,
             self.height / 2,
         );
@@ -473,8 +532,8 @@ impl Merge {
                 (2, field),
                 (4, &self.kernels),
                 (6, frame_half),
-                (7, &self.robustness),
                 (8, &self.sums),
+                (9, &self.eroded),
                 (13, &self.wide_sums),
                 (18, &self.prior),
                 (19, &self.clipped_light),
@@ -536,7 +595,10 @@ impl Merge {
             reference_alpha: self.noise.alpha,
             reference_sigma_sq: self.noise.sigma_sq,
             is_reference: 1,
-            frames: self.frames as u32,
+            frames: match self.weighed.averages {
+                true => self.frames as u32,
+                false => 1,
+            },
             window_left: 0,
             window_top: 0,
             window_width: 0,
@@ -544,6 +606,9 @@ impl Merge {
             sharpness_power: self.weighed.sharpness_power,
             sharpest: self.weighed.sharpest,
             robust_reach: self.weighed.robust_reach,
+            reference_ceilings: self.ceilings,
+            averages: u32::from(self.weighed.averages),
+            pad: [0; 3],
         }
     }
 

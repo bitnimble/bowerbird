@@ -273,25 +273,33 @@ pub(crate) async fn decode_merged_tile(
         )
         .await;
     }
-    // The merge is the denoise: every frame is read undenoised, and the reference's fit is what
-    // weighs them against each other.
-    let undenoised = crate::galosh::Detail {
-        luminance: Some(0.0),
-        colour: Some(0.0),
-        ..detail.without_upscaler()
+    // Where frames average, the merge is the denoise: every frame is read undenoised, and the
+    // reference's fit is what weighs them against each other.
+    let read = match stack.weights.averages {
+        false => detail.without_upscaler(),
+        true => crate::galosh::Detail {
+            luminance: Some(0.0),
+            colour: Some(0.0),
+            ..detail.without_upscaler()
+        },
     };
     let given = match fit {
         crate::galosh::Fit::Given(fit) => Some(fit),
         _ => None,
     };
+    let mut lap = crate::clock::laps("  merge ");
     let reference_extra = crate::align::REFERENCE_MARGIN
         .raw()
         .saturating_sub(RCD_MARGIN + crate::tile_halo(halo));
     let Region::Mosaic(mut reference) = region_mosaic(
         first,
         view,
-        undenoised,
-        given.map_or(crate::galosh::Fit::Only, crate::galosh::Fit::Given),
+        read,
+        match (given, stack.weights.averages) {
+            (Some(fit), _) => crate::galosh::Fit::Given(fit),
+            (None, false) => crate::galosh::Fit::Measure,
+            (None, true) => crate::galosh::Fit::Only,
+        },
         halo,
         crate::px::Span::exact(reference_extra),
         crate::dust::Known::Off,
@@ -309,7 +317,7 @@ pub(crate) async fn decode_merged_tile(
     }
     let (Some(noise), false, true) = (reference.noise, reference.halving, reference.cfa.is_bayer())
     else {
-        // read again with the user's denoise, which the undenoised read above skipped
+        // the reference as it renders alone: the read above may skip the user's denoise and halving
         return decode_tile_source(
             first,
             view,
@@ -320,6 +328,7 @@ pub(crate) async fn decode_merged_tile(
         )
         .await;
     };
+    lap("reference");
     let noise = noise.model();
     let exposure = crate::align::Exposure::of(&reference.cfa, reference.colour.ceiling, 1.0);
     let reference_pyramid = crate::align::Pyramid::of(gpu, &reference.mosaic, exposure);
@@ -359,6 +368,8 @@ pub(crate) async fn decode_merged_tile(
         sources.len(),
         stack.weights,
     )?;
+    gpu.settle();
+    lap("prepare");
     let (reference_x, reference_y) = reference.origin.raw();
     let window = crate::px::Rect::exact(
         reference_x + reference.crop.0,
@@ -381,7 +392,7 @@ pub(crate) async fn decode_merged_tile(
         let Region::Mosaic(frame) = region_mosaic(
             source,
             view,
-            undenoised,
+            read,
             crate::galosh::Fit::Given(reference.noise?),
             halo,
             crate::px::Span::exact(crate::align::MARGIN.raw() + moved),
@@ -395,6 +406,7 @@ pub(crate) async fn decode_merged_tile(
         if frame.cfa != reference.cfa {
             return None;
         }
+        lap("frame");
         let (photo_x, photo_y) = reference.photograph_origin.raw();
         let (frame_photo_x, frame_photo_y) = frame.photograph_origin.raw();
         let crop_shift_x = frame_photo_x as f64 - photo_x as f64;
@@ -424,6 +436,8 @@ pub(crate) async fn decode_merged_tile(
             },
             crate::align::Search::AROUND_PRIOR,
         );
+        gpu.settle();
+        lap("align");
         merge.add(
             gpu,
             crate::merge::Frame {
@@ -435,8 +449,12 @@ pub(crate) async fn decode_merged_tile(
             },
             &field,
         )?;
+        gpu.settle();
+        lap("accumulate");
     }
     let merged = merge.settle(gpu);
+    gpu.settle();
+    lap("settle");
     // The colour pass finds a highlight blown on the merge's wells, against the brightest light any
     // frame could read, so it reconstructs only where every frame saturated.
     let mosaic = merge.remosaic(gpu, &merged);
@@ -469,6 +487,8 @@ pub(crate) async fn decode_merged_tile(
         &|recording, rgb, window| merge.paste(gpu, recording, &merged, rgb, window),
     )
     .await?;
+    gpu.settle();
+    lap("demosaic");
     Some(Frame {
         neutral_ceiling: neutral_ceiling_of(colour.ceiling),
         ..reference.frame(built)
@@ -774,7 +794,10 @@ async fn region_mosaic(
     )
     .await;
     Some(Region::Mosaic(RegionMosaic {
-        as_shot: as_shot_of(gpu?, image).await,
+        as_shot: match demosaiced {
+            Demosaiced::ByTheReference => None,
+            Demosaiced::Here => as_shot_of(gpu?, image).await,
+        },
         mosaic,
         highlight,
         highlight_at: crate::px::At::exact(left - field_left, top - field_top),
