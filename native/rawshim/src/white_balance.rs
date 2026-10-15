@@ -25,6 +25,13 @@ pub struct Illuminant {
     pub tint: f64,
 }
 
+/// What a finished picture's samples are balanced to: D65, the white of every space `linearise`
+/// reads into Rec.2020, as the shader's own locus reads it.
+pub const RENDERED_WHITE: Illuminant = Illuminant {
+    temperature: 6503.7,
+    tint: 9.77,
+};
+
 /// The illuminant the camera balanced for, from what the decoder read out of the file.
 ///
 /// None where the file recorded no usable multipliers, where the camera matrix will not invert,
@@ -289,6 +296,22 @@ mod tests {
             d50.tint.abs() < 25.0,
             "D50's tint came out at {:.0}",
             d50.tint
+        );
+    }
+
+    #[test]
+    fn a_finished_pictures_white_is_d65_as_the_shader_reads_it() {
+        let Some(gpu) = crate::gpu::device() else {
+            eprintln!("SKIPPED: no adapter answered, so the rendered white was not read.");
+            return;
+        };
+        let d65 = illuminant(gpu, 0.3127, 0.3290);
+        assert!(
+            (d65.temperature - RENDERED_WHITE.temperature).abs() < 1.0
+                && (d65.tint - RENDERED_WHITE.tint).abs() < 0.05,
+            "D65 reads as {:.2}K tint {:.3}",
+            d65.temperature,
+            d65.tint,
         );
     }
 

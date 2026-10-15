@@ -1081,6 +1081,23 @@ describe('the level a zoom is served at', () => {
     expect(stage.cameraTone).toEqual(tone);
   });
 
+  test("a finished picture's white balance opens at its own white and reaches the module", async () => {
+    // A JPEG's header: no mosaic, no match, and `white_balance::RENDERED_WHITE` for its illuminant.
+    headerOverrides = {
+      mosaic: false,
+      matched: false,
+      asShot: { temperature: 6503.7, tint: 9.77 },
+    };
+    presenter.showRegion(QUARTER);
+    await settled();
+    expect(edit.balance).toEqual({ temperature: 6504, tint: 10 });
+
+    presenter.settleBalance({ temperature: 8000 });
+    await drawn();
+    expect(decoder.adjust?.temperature).toBe(8000);
+    expect(decoder.adjust?.tint).toBe(10);
+  });
+
   test('a public window without a camera match has no camera tone', async () => {
     presenter.showRegion(QUARTER);
     await settled();

@@ -7,12 +7,14 @@
 //! and everything below the two is one implementation.
 //!
 //! **What a finished picture does not have**, and therefore what it does not run: a mosaic. So no
-//! GALOSH, no dust search, no demosaic, no as-shot illuminant and no camera matrix to fit. What it
-//! does run is everything below those: the coding, the defringe, the lens gather, the sharpen, the
-//! grade, the crop and the roll-off - which is most of the pipeline and all of the editor.
+//! GALOSH, no dust search, no demosaic, no camera matrix to fit, and no recorded as-shot
+//! illuminant: its white balance moves away from the white it was rendered to
+//! ([`crate::white_balance::RENDERED_WHITE`]). What it does run is everything below those: the
+//! coding, the defringe, the lens gather, the sharpen, the grade, the crop and the roll-off -
+//! which is most of the pipeline and all of the editor.
 //!
 //! A linear DNG is held here too, since a camera demosaiced it before it was written, and it is
-//! the one picture that keeps an as-shot illuminant ([`Camera`]).
+//! the one picture that keeps the as-shot illuminant its camera recorded ([`Camera`]).
 //!
 //! The codec for each container:
 //!
@@ -215,10 +217,12 @@ impl Held {
                 true => 2,
                 false => 1,
             },
-            // A finished picture has been white-balanced by whoever rendered it, and the samples
-            // carry no trace of what was divided out. The panel says so rather than offering a
-            // temperature to move away from a baseline nobody recorded.
-            as_shot: self.camera.as_ref().and_then(|camera| camera.as_shot),
+            as_shot: self
+                .camera
+                .as_ref()
+                .map_or(Some(crate::white_balance::RENDERED_WHITE), |camera| {
+                    camera.as_shot
+                }),
             noise: None,
             noise_left: 1.0,
             dust: None,

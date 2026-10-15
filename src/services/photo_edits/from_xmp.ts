@@ -91,8 +91,8 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
       'the white balance states only one of temperature and tint, so it was left as shot',
     );
   }
-  // The relative pair is the control for JPEG and TIFF sources. We only edit RAW,
-  // so a file using it is describing a photo this import cannot be for.
+  // The relative pair is Lightroom's control for JPEG and TIFF sources, on a -100..100
+  // scale with no Kelvin the document could store.
   if (whiteBalance.incrementalTemperature !== 0 || whiteBalance.incrementalTint !== 0) {
     reasons.push(
       'the white balance is the relative kind written for non-raw sources, and was not carried',

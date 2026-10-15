@@ -4,7 +4,7 @@
 //! `gpu_linearise.rs` pins the kernel and `rendered_decode.rs` pins the readers. What neither can
 //! say is whether the *chain* takes what they produce - the correction, the levels, the coding,
 //! the defringe, the gather and the sharpen are written against a frame a demosaic left, and a
-//! decode with no mosaic behind it reaches them with `as_shot`, `noise` and `matrix` all absent.
+//! decode with no mosaic behind it reaches them with `noise` and `matrix` both absent.
 //! Each of those is an `Option` the RAWs also leave empty in some case, which is exactly the kind
 //! of agreement that holds until it does not.
 
@@ -59,10 +59,13 @@ fn a_png_opens_through_the_chain_a_raw_opens_through() {
 
     assert_eq!((header.width, header.height), (width, height));
     assert_eq!(opened.samples.len(), width * height * 3);
-    // A finished picture has no second rendering of itself to be matched against, and no
-    // illuminant the samples were divided by: both are the neutral arm rather than an error.
+    // A finished picture has no second rendering of itself to be matched against, which is the
+    // neutral arm rather than an error, and its white balance moves away from its own white.
     assert!(!header.matched);
-    assert!(header.as_shot.is_none());
+    assert_eq!(
+        header.as_shot,
+        Some(rawshim::white_balance::RENDERED_WHITE)
+    );
     assert!(
         !header.mosaic,
         "so the panel closes the Detail pair and the Dust group"
@@ -88,6 +91,124 @@ fn a_png_opens_through_the_chain_a_raw_opens_through() {
     assert!(
         brightest - darkest > 20000,
         "the coded frame runs {darkest}..{brightest}"
+    );
+}
+
+/// A grey ramp, so every pixel is a neutral the balance can move off grey.
+fn grey_jpeg(width: usize, height: usize) -> Vec<u8> {
+    let pixels: Vec<u8> = (0..width * height)
+        .flat_map(|at| {
+            let level = (32 + (at % width) * 192 / width) as u8;
+            [level; 3]
+        })
+        .collect();
+    let mut file = Vec::new();
+    jpeg_encoder::Encoder::new(&mut file, 95)
+        .encode(
+            &pixels,
+            width as u16,
+            height as u16,
+            jpeg_encoder::ColorType::Rgb,
+        )
+        .expect("the JPEG encodes");
+    file
+}
+
+fn graded(
+    opened: &rawshim::edit::Prepared,
+    as_shot: Option<rawshim::white_balance::Illuminant>,
+    temperature: Option<f64>,
+    tint: Option<f64>,
+) -> Vec<u16> {
+    let gpu = rawshim::gpu::device().expect("an adapter");
+    let header = &opened.header;
+    let grade = rawshim::gpu::Grade {
+        adjust: rawshim::gpu::Adjust {
+            temperature,
+            tint,
+            ..rawshim::gpu::Adjust::none()
+        },
+        as_shot,
+        ..rawshim::gpu::Grade::new(
+            header.width,
+            header.height,
+            rawshim::tone::Levels {
+                white: header.white,
+                peak: header.peak,
+                floor: header.floor,
+            },
+            header.grade.reference_white_nits,
+            rawshim::gpu::Output::Pq.mastered(header.grade.reference_white_nits),
+        )
+    };
+    gpu.encode(&opened.samples, &grade)
+}
+
+#[test]
+fn a_jpegs_white_balance_moves_away_from_the_picture_as_it_was_rendered() {
+    if rawshim::gpu::device().is_none() {
+        eprintln!("SKIPPED: no adapter answered, so nothing was opened.");
+        return;
+    }
+    let (width, height) = (64usize, 48);
+    let opened = rawshim::edit::prepare_bytes(&grey_jpeg(width, height), &request(0), 30.0)
+        .expect("a JPEG opens");
+    let as_shot = opened.header.as_shot.expect("a JPEG has a white to balance from");
+
+    let unbalanced = graded(&opened, None, None, None);
+    for (name, at_rest) in [
+        ("unset", graded(&opened, Some(as_shot), None, None)),
+        (
+            "set to as shot",
+            graded(
+                &opened,
+                Some(as_shot),
+                Some(as_shot.temperature),
+                Some(as_shot.tint),
+            ),
+        ),
+    ] {
+        let worst = at_rest
+            .iter()
+            .zip(&unbalanced)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .expect("a graded frame");
+        assert!(
+            worst <= 1,
+            "a JPEG's balance {name} moved the picture by {worst} counts"
+        );
+    }
+
+    // The middle of the ramp, R against B: PQ is monotonic, so the order of the codes is the
+    // order of the light.
+    let middle = ((height / 2) * width + width / 2) * 3;
+    let red_over_blue = |frame: &[u16]| f64::from(frame[middle]) - f64::from(frame[middle + 2]);
+    let rest = red_over_blue(&unbalanced);
+    let warmer = red_over_blue(&graded(&opened, Some(as_shot), Some(9000.0), Some(as_shot.tint)));
+    let cooler = red_over_blue(&graded(&opened, Some(as_shot), Some(4500.0), Some(as_shot.tint)));
+    assert!(
+        rest.abs() <= 2.0,
+        "the grey ramp is {rest} counts off grey at rest"
+    );
+    assert!(
+        warmer > rest + 200.0 && cooler < rest - 200.0,
+        "R over B is {rest} at rest, {warmer} at 9000K and {cooler} at 4500K"
+    );
+
+    let green = |frame: &[u16]| {
+        f64::from(frame[middle + 1]) - (f64::from(frame[middle]) + f64::from(frame[middle + 2])) / 2.0
+    };
+    let magenta = green(&graded(
+        &opened,
+        Some(as_shot),
+        Some(as_shot.temperature),
+        Some(as_shot.tint + 40.0),
+    ));
+    assert!(
+        magenta < green(&unbalanced) - 200.0,
+        "tint +40 left green at {magenta} against {} at rest",
+        green(&unbalanced)
     );
 }
 

@@ -1937,10 +1937,9 @@ mod tests {
             .clone()
             .expect("a prepare describes its picture");
 
-        // With an illuminant written into it, which these views - rendered pictures, not RAWs -
-        // carry no multipliers for: what the window has to do is read the *file's* balance where
-        // the frames it decodes state none, and a fixture stating one either way could not tell a
-        // read from a coincidence.
+        // With an illuminant written into it that is not the one these views - rendered pictures,
+        // not RAWs - balance from: a window that never decodes the reference has to read the
+        // *file's*, and a filed value equal to the frame's could not tell a read from a coincidence.
         const WARM: f64 = 5240.0;
         let mut filed = crate::photo_analysis::decode(&kept).expect("the blob reads back");
         let gains = filed
@@ -1984,13 +1983,30 @@ mod tests {
         // from the level it is a rectangle of.
         assert_eq!(part.header.white, whole.header.white);
         assert_eq!(part.header.peak, whole.header.peak);
-        // And the illuminant, which the reference frame carries and a window has to read off what
-        // the last pass filed.
-        let read = part.header.as_shot.expect("a window lost the illuminant");
+        // And the illuminant: the reference frame's own where the window reaches it, and what the
+        // last pass filed where it does not. Only one end of a two-view pan is the reference's.
+        assert_eq!(
+            part.header.as_shot,
+            Some(crate::white_balance::RENDERED_WHITE)
+        );
+        let strip = (across / 8) & !1;
+        let at_end = |left: usize| {
+            crate::picture::prepared(
+                &with_analysis,
+                1,
+                Some(crate::px::Rect::exact(left, 0, strip, down)),
+                &[],
+            )
+            .expect("a window at one end")
+            .header
+            .as_shot
+            .map(|it| it.temperature)
+        };
+        let ends = [at_end(0), at_end((across - strip) & !1)];
         assert!(
-            (read.temperature - WARM).abs() < 0.1,
-            "the illuminant is {}",
-            read.temperature
+            ends.contains(&Some(WARM))
+                && ends.contains(&Some(crate::white_balance::RENDERED_WHITE.temperature)),
+            "the two ends of the pan read {ends:?}",
         );
 
         // **The whole of it, asked for as a window, is it.** Every part of the windowing that is

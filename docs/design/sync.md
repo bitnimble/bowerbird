@@ -65,8 +65,7 @@ function importsFormat(scope: LibraryScope, filename: string): boolean {
 **The mosaic, and everything fitted to it.** GALOSH is fitted to a photosite's own noise on the
 colour filter array and the dust search reads the same lattice, so a frame somebody else's camera
 has already demosaiced has neither - the Detail pair and the Dust panel are closed for one, and
-`PreparedHeader.mosaic` is what closes them. Nor is there a demosaic to run, an as-shot illuminant
-to move away from, or a camera matrix for the defringe to propagate its channel correlations
+`PreparedHeader.mosaic` is what closes them. Nor is there a demosaic to run, or a camera matrix for the defringe to propagate its channel correlations
 through.
 
 **A camera match.** The match is fitted by comparing our render against the camera's own JPEG; a

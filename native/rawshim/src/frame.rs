@@ -83,7 +83,7 @@ pub struct Frame {
     /// blur two thirds the width of the one it deconvolves.
     pub reduced: usize,
     /// The illuminant the decode balanced against, from the camera's own multipliers
-    /// and its own matrix.
+    /// and its own matrix, or a finished picture's `RENDERED_WHITE`.
     ///
     /// Read here rather than recomputed downstream because the samples that come out
     /// carry no trace of what was divided out of them. None where the file recorded
