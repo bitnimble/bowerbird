@@ -163,6 +163,62 @@ test('a tap after a pinch still steps the zoom', () => {
   expect(seen.scale).toBeGreaterThan(held);
 });
 
+const press = (frame: HTMLElement, pointerType: string): void => {
+  fireEvent.pointerDown(frame, {
+    pointerId: 1,
+    pointerType,
+    clientX: 100,
+    clientY: 10,
+    isPrimary: true,
+  });
+  fireEvent.pointerUp(frame, {
+    pointerId: 1,
+    pointerType,
+    clientX: 100,
+    clientY: 10,
+    isPrimary: true,
+  });
+  fireEvent.click(frame, { clientX: 100, clientY: 10 });
+};
+
+test('a single tap leaves the zoom where it is', () => {
+  const { frame, seen } = open();
+
+  act(() => press(frame, 'touch'));
+
+  expect(seen.scale).toBe(1);
+});
+
+test('a double tap steps the zoom', () => {
+  const { frame, seen } = open();
+
+  act(() => {
+    press(frame, 'touch');
+    press(frame, 'touch');
+  });
+
+  expect(seen.scale).toBeGreaterThan(1);
+});
+
+test('a click with no press behind it steps the zoom after a tap', () => {
+  const { frame, seen } = open();
+
+  act(() => {
+    press(frame, 'touch');
+    fireEvent.click(frame, { clientX: 100, clientY: 10 });
+  });
+
+  expect(seen.scale).toBeGreaterThan(1);
+});
+
+test('a mouse click steps the zoom', () => {
+  const { frame, seen } = open();
+
+  act(() => press(frame, 'mouse'));
+
+  expect(seen.scale).toBeGreaterThan(1);
+});
+
 // A press whose release never arrived, which is what a browser does when it takes the
 // pointer for a gesture of its own. Left in the map, its last position pairs into the next
 // pinch's baseline and the following touch scales the picture by an arbitrary amount.

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
-const MOBILE = '(max-width: 860px)';
+// device-width as well: a touchscreen's interface scale widens the page past the breakpoint
+// while its screen stays a phone's.
+const MOBILE = '(max-width: 860px), (pointer: coarse) and (max-device-width: 860px)';
 const TOUCH = '(pointer: coarse)';
 
 export function useMediaQuery(query: string): boolean {

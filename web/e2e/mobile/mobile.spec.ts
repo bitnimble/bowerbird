@@ -440,7 +440,7 @@ function pictureAlone(page: Page): Promise<Buffer> {
 }
 
 // Every control a gesture replaces is out of the bar: the frame is dragged aside to
-// step, tapped to step the zoom and pinched for the scales between. What is left keeps
+// step, double-tapped to step the zoom and pinched for the scales between. What is left keeps
 // to one line, its menus folded into an overflow button.
 test('the bar keeps to one line, without the controls a finger makes redundant', async ({
   page,

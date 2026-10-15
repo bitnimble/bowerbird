@@ -320,6 +320,7 @@ test.describe('zoom on a high density phone display with small memory', () => {
         );
       });
       await editPreview(page).tap();
+      await editPreview(page).tap();
       const response = await prepared;
       expect(response.status()).toBe(200);
       await expect

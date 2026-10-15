@@ -41,7 +41,7 @@ import {
 import { useIsMobile, useIsTouch } from './device';
 import { useDrawerSwipe } from './drawer_swipe';
 
-const NARROW = '@media (max-width: 860px)';
+const NARROW = '@media (max-width: 860px), (pointer: coarse) and (max-device-width: 860px)';
 
 const drawerOut = stylex.createTheme(drawer, { progress: '1' });
 

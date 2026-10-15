@@ -6,6 +6,7 @@ import {
   MIN_SCALE,
   clampPan,
   fitScale,
+  isDoubleTap,
   letterboxOf,
   maxScaleFor,
   nextStopAfter,
@@ -219,6 +220,26 @@ describe('zooming about the point the reader asked for', () => {
     expect(native).toBeLessThan(MIN_SCALE);
     expect(nextStopAfter(MIN_SCALE, native)).toBe(DOUBLE_SCALE);
     expect(nextStopAfter(DOUBLE_SCALE, native)).toBe(MIN_SCALE);
+  });
+});
+
+describe('isDoubleTap', () => {
+  const first = { at: 1000, x: 100, y: 100 };
+
+  test('is a second tap soon after the first, near where it landed', () => {
+    expect(isDoubleTap(first, { at: 1250, x: 110, y: 95 })).toBe(true);
+  });
+
+  test('is not a lone tap', () => {
+    expect(isDoubleTap(null, first)).toBe(false);
+  });
+
+  test('is not a tap that came too late', () => {
+    expect(isDoubleTap(first, { at: 1400, x: 100, y: 100 })).toBe(false);
+  });
+
+  test('is not a tap somewhere else on the photo', () => {
+    expect(isDoubleTap(first, { at: 1100, x: 200, y: 100 })).toBe(false);
   });
 });
 

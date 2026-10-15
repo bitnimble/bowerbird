@@ -89,13 +89,14 @@ export async function writeDeviceFile(
 }
 
 /**
- * Android's webview has no page zoom for the shell to set, so the page scales its viewport: an
- * initial scale with no width lays the page out that much narrower, as a page zoom does.
+ * Android's webview has no page zoom for the shell to set, so the page scales its viewport: the
+ * width extends to the screen's over the scale, laying the page out narrower as a page zoom does.
  */
 function scaleViewport(scale: number): void {
   document
     .querySelector('meta[name="viewport"]')
-    ?.setAttribute('content', `initial-scale=${scale}`);
+    // width=1, not none: the webview lays out an unset width at a scale other than 1 at 980px.
+    ?.setAttribute('content', `width=1, initial-scale=${scale}, user-scalable=no`);
 }
 
 function scalesOwnViewport(): boolean {

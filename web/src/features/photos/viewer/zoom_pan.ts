@@ -47,9 +47,26 @@ export const CLICK_SLOP_PX = 4;
 /** `PointerEvent.button` for the wheel pressed in. */
 export const MIDDLE_BUTTON = 1;
 
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_SLOP_PX = 30;
+
 /** As the hook measures it, so a surface arbitrating against the pan draws the same line. */
 export function travelOf(dx: number, dy: number): number {
   return Math.abs(dx) + Math.abs(dy);
+}
+
+export interface Tap {
+  at: number;
+  x: number;
+  y: number;
+}
+
+export function isDoubleTap(previous: Tap | null, tap: Tap): boolean {
+  return (
+    previous != null &&
+    tap.at - previous.at <= DOUBLE_TAP_MS &&
+    travelOf(tap.x - previous.x, tap.y - previous.y) <= DOUBLE_TAP_SLOP_PX
+  );
 }
 
 interface Point {
@@ -339,6 +356,8 @@ export function useZoomPan(
   const pinched = useRef(false);
   // The primary press in flight, and how to stop watching it for the move that makes it a drag.
   const press = useRef<{ id: number; release: () => void } | null>(null);
+  const pressedByTouch = useRef(false);
+  const lastTap = useRef<Tap | null>(null);
   // The viewport's rect, measured once for the gesture that is using it.
   //
   // `zoomTo` pins a point, so it wants the origin as well as the extent and cannot read the
@@ -476,6 +495,7 @@ export function useZoomPan(
     // one in flight from wherever it touched down, and lift into a step of its own.
     if (!e.isPrimary) return;
     pinched.current = false;
+    pressedByTouch.current = e.pointerType === 'touch';
     if (!drags) {
       if (e.button !== MIDDLE_BUTTON) return;
       // The browser's own middle-button autoscroll would otherwise scroll the page under the pan.
@@ -615,16 +635,28 @@ export function useZoomPan(
 
   // A drag ends in a click event too, so only treat it as a zoom step when the
   // gesture it ends barely moved - a swipe that lands on the next photo must not
-  // zoom it, and a pan must not un-zoom.
+  // zoom it, and a pan must not un-zoom. A finger steps on the second of two taps.
   function onClick(e: React.MouseEvent): void {
+    const tapped = pressedByTouch.current;
+    pressedByTouch.current = false;
     // A pinch lifts its last finger into a click, and one whose fingers scaled about a still
     // midpoint has travelled nothing to disqualify it. Spent here, so the next real tap steps
     // the zoom as it always did.
     if (pinched.current) {
       pinched.current = false;
+      lastTap.current = null;
       return;
     }
-    if (!enabled || !drags || dragging || travelled.current > CLICK_SLOP_PX) return;
+    if (!enabled || !drags || dragging || travelled.current > CLICK_SLOP_PX) {
+      lastTap.current = null;
+      return;
+    }
+    if (tapped) {
+      const tap = { at: e.timeStamp, x: e.clientX, y: e.clientY };
+      const double = isDoubleTap(lastTap.current, tap);
+      lastTap.current = double ? null : tap;
+      if (!double) return;
+    }
     zoomTo(stopAfter, { x: e.clientX, y: e.clientY });
   }
 

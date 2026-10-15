@@ -241,6 +241,7 @@ class MainActivity : TauriActivity() {
   // Off, the WebView ignores the page's viewport tag, which is how its interface scale applies.
   override fun onWebViewCreate(webView: WebView) {
     webView.settings.useWideViewPort = true
+    webView.settings.setSupportZoom(false)
   }
 
   // Backgrounded, not finished: Tauri's result launchers stay bound to the first activity, so

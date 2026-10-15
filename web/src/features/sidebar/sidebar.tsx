@@ -22,7 +22,7 @@ import { SidebarAlbums } from './sidebar_albums';
 import { SidebarButton, SidebarLink, SidebarText, sidebarStyles } from './sidebar_link';
 import { SidebarRow, SidebarSection } from './sidebar_row';
 
-const NARROW = '@media (max-width: 860px)';
+const NARROW = '@media (max-width: 860px), (pointer: coarse) and (max-device-width: 860px)';
 
 const styles = stylex.create({
   sidebar: {

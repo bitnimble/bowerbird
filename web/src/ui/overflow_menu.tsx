@@ -10,7 +10,7 @@ import { menuStyles } from './menu_styles';
 import { Section, Sections } from './section';
 import { Tooltip } from './tooltip';
 
-const NARROW = '@media (max-width: 860px)';
+const NARROW = '@media (max-width: 860px), (pointer: coarse) and (max-device-width: 860px)';
 
 const styles = stylex.create({
   wide: { display: { default: null, [NARROW]: 'none' } },
