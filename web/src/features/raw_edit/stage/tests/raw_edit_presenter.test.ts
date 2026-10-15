@@ -4,7 +4,7 @@
 // button does is answerable without a GPU, a server or a browser. An end-to-end run opening a
 // real RAW answers the same questions slowly, and only ever says that *something* changed.
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { runInAction } from 'mobx';
+import { autorun, runInAction } from 'mobx';
 import { RawEditPresenter, REWINDOW_QUIET_MS } from '../raw_edit_presenter';
 import { prepareOf } from '../../local_decode/open_photo';
 import type { CropStore } from '../../crop/crop_store';
@@ -739,6 +739,23 @@ describe('the window each frame is drawn at', () => {
     expect(decoder.exposure).toBe(0.9);
   });
 
+  test('a move wakes only what reads the control that moved', () => {
+    const woken = { exposure: 0, contrast: 0 };
+    const stops = [
+      autorun(() => {
+        void edit.doc?.exposure;
+        woken.exposure += 1;
+      }),
+      autorun(() => {
+        void edit.doc?.contrast;
+        woken.contrast += 1;
+      }),
+    ];
+    for (const ev of [0.6, 0.7, 0.8, 0.9]) presenter.previewExposure(ev);
+    for (const stop of stops) stop();
+    expect(woken).toEqual({ exposure: 5, contrast: 1 });
+  });
+
   /**
    * A command the GPU refused reaches the reader, rather than a black stage that says `live`.
    *
@@ -1382,8 +1399,10 @@ describe('leaving the editor', () => {
     };
     edit.rev = 1;
     Object.assign(presenter, { photoId: 'a-photo-id' });
-    presenter.edit.opened({
-      doc: edit.doc ?? neutralEdits(),
+    // One object for both, as `open` does: a store document sharing the checkpoint's would carry
+    // every edit into it, and a cancel would put back what it was meant to undo.
+    const opening: EditOpening = {
+      doc: neutralEdits(),
       rev: 1,
       canUndo: true,
       canRedo: false,
@@ -1392,7 +1411,9 @@ describe('leaving the editor', () => {
       stamp: 'opened-stamp',
       library_denoiser: 'galosh',
       upscalable: true,
-    });
+    };
+    presenter.edit.opened(opening);
+    presenter.edit.applyState(opening);
     Object.assign(presenter.edit, { photoId: 'a-photo-id' });
   });
 
@@ -1532,7 +1553,7 @@ describe('leaving the editor', () => {
 
   // The server compares, and vouches for the copies on disk where the document came home.
   test('hands the close what the editor opened on', async () => {
-    const openedDoc = edit.doc;
+    const openedDoc = neutralEdits();
     presenter.settleExposure(1.25);
     await Bun.sleep(0);
 
@@ -1582,7 +1603,8 @@ describe('leaving the editor', () => {
   });
 
   test('a cancel puts back the document and history it opened on', async () => {
-    const openedDoc = edit.doc;
+    const openedDoc = neutralEdits();
+    presenter.previewExposure(0.5);
     presenter.settleExposure(1.25);
     await Bun.sleep(0);
 
@@ -1590,7 +1612,7 @@ describe('leaving the editor', () => {
     expect(restored).toEqual([
       { rev: 2, checkpoint: expect.objectContaining({ doc: openedDoc, cursor: 1, history }) },
     ]);
-    expect(edit.doc?.exposure).toBe(openedDoc?.exposure);
+    expect(edit.doc?.exposure).toBe(openedDoc.exposure);
 
     presenter.close();
     await Bun.sleep(0);

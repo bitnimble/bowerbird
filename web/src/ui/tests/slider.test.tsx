@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import type { Isolation, IsolationRectangle } from '../isolation';
 import { registerDom } from '../../test_dom';
+import { pointerEvent } from './pointer_event';
 
 registerDom();
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
@@ -12,28 +13,9 @@ afterEach(cleanup);
 function pointer(
   element: HTMLElement,
   type: string,
-  options: {
-    id?: number;
-    primary?: boolean;
-    button?: number;
-    touch?: boolean;
-    x?: number;
-    y?: number;
-  } = {},
+  options: Parameters<typeof pointerEvent>[1] = {},
 ): void {
-  const event = new MouseEvent(type, {
-    bubbles: true,
-    button: options.button ?? 0,
-    buttons: type === 'pointerdown' ? 1 : 0,
-    clientX: options.x ?? 0,
-    clientY: options.y ?? 0,
-  });
-  Object.defineProperties(event, {
-    pointerId: { value: options.id ?? 7 },
-    isPrimary: { value: options.primary ?? true },
-    pointerType: { value: options.touch === true ? 'touch' : 'mouse' },
-  });
-  fireEvent(element, event);
+  fireEvent(element, pointerEvent(type, options));
 }
 
 function fixture(): {

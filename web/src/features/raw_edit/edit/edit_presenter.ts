@@ -111,14 +111,15 @@ export class EditPresenter {
   write(patch: Partial<EditDoc>): EditDoc | null {
     const doc = this.store.doc;
     if (doc == null) return null;
-    const next = { ...doc, ...patch };
-    this.store.doc = next;
+    // In place: a new document per move re-renders every control in the panel, which on a phone
+    // holds the dragged thumb back.
+    Object.assign(doc, patch);
     this.locallyEdited = true;
     // The geometry before the grade, because it decides what the draw is even reading. The
     // store works out whether the crop tool wants it whole (`store.geometry`).
     this.stage.followGeometry();
     this.repair.follow();
-    return next;
+    return doc;
   }
 
   /**
