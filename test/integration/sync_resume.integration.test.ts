@@ -4,7 +4,7 @@
 // rather than a flat idle (§9.6).
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -113,6 +113,54 @@ test('a first scan writes its photos down as it goes, not all at the end', async
   expect(midScan).toEqual([1000]);
   expect(status.photos_added).toBe(1001);
   expect(count()).toBe(1001);
+});
+
+test('an import resumed after a stop still writes its photos down as it goes', async () => {
+  for (const name of ['a.arw', 'b.arw', 'c.arw']) writeFileSync(path.join(root, name), name);
+  await build({ processUnprocessed: () => {} }, async (absPath) => metadata(absPath)).scanLibrary(
+    LIB,
+  );
+  for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
+
+  const midScan: number[] = [];
+  let opened = 0;
+  const scan: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
+    if (++opened === 1001) midScan.push(count());
+    return metadata(absPath);
+  });
+
+  const status = await scan.scanLibrary(LIB);
+
+  expect(opened).toBe(1001);
+  expect(midScan).toEqual([1003]);
+  expect(status.photos_added).toBe(1001);
+  expect(count()).toBe(1004);
+});
+
+test('a scan that misses a row holds its new files back for the move they may be', async () => {
+  writeFileSync(path.join(root, 'a.arw'), 'a.arw');
+  await build({ processUnprocessed: () => {} }, async (absPath) => metadata(absPath)).scanLibrary(
+    LIB,
+  );
+  const before = db.query('SELECT id FROM photos').get() as { id: string };
+  renameSync(path.join(root, 'a.arw'), path.join(root, 'moved.arw'));
+  for (let i = 0; i < 1001; i++) writeFileSync(path.join(root, `f${i}.arw`), `f${i}`);
+
+  const midScan: number[] = [];
+  let opened = 0;
+  const scan: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
+    if (++opened === 1002) midScan.push(count());
+    return metadata(absPath);
+  });
+
+  await scan.scanLibrary(LIB);
+
+  expect(midScan).toEqual([1]);
+  expect(count()).toBe(1002);
+  const moved = db
+    .query(`SELECT id, is_missing FROM photos WHERE json_extract(recipe, '$.path') = ?`)
+    .get('moved.arw');
+  expect(moved).toEqual({ id: before.id, is_missing: 0 });
 });
 
 test('a scoped run hands the rendition batch its own files, not the library backlog', async () => {

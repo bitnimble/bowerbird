@@ -111,8 +111,8 @@ export class ScanBatch {
     this.awaitingSidecars.length = 0;
   }
 
-  // First scan commits additions in batches, so a killed import resumes where it reached.
-  // Only a run with no rows qualifies: against populated library an addition can be move's far half.
+  // An import commits additions in batches, so a killed one resumes where it reached.
+  // Only a run that found every row's file qualifies: otherwise an addition can be a move's far half.
   insertBatch(files: readonly DiskFile[]): void {
     if (!this.libraries.has(this.libraryId)) {
       throw new AppError('NOT_FOUND', `library not found: ${this.libraryId}`);

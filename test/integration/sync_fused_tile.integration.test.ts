@@ -5,7 +5,15 @@
 process.env.DATA_DIR = `${process.env.TMPDIR ?? '/tmp'}/bb-fused-tile-data`;
 
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -125,9 +133,9 @@ test('a stopped scan leaves none of its tiles behind', async () => {
   for (const name of ['a.arw', 'b.arw', 'c.arw']) copyFileSync(FIXTURE, path.join(stopping, name));
 
   // Stops once a file has been read, but only after the library has rows: a *first* scan
-  // commits its batches as it goes and finishes normally, where a populated one applies in one
-  // closing transaction and unwinds through `ScanCancelled` - which is the path that skips
-  // everything after the apply.
+  // commits its batches as it goes and finishes normally, where a populated one with a row
+  // missing applies in one closing transaction and unwinds through `ScanCancelled` - which is
+  // the path that skips everything after the apply.
   let stopAfterRead = false;
   const sync2 = new ScanService(
     photoScan(db2, photoProcessingRepo2),
@@ -157,6 +165,7 @@ test('a stopped scan leaves none of its tiles behind', async () => {
   const settled = db2.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number };
 
   stopAfterRead = true;
+  rmSync(path.join(stopping, 'a.arw'));
   for (const name of ['d.arw', 'e.arw']) copyFileSync(FIXTURE, path.join(stopping, name));
   await sync2.scanLibrary(LIB2);
 
@@ -164,16 +173,24 @@ test('a stopped scan leaves none of its tiles behind', async () => {
   // Nothing was applied, so the stopped run added no rows - and left no tile of its own either.
   expect(db2.query('SELECT COUNT(*) AS n FROM photos').get()).toEqual(settled);
   expect(readdirSync(grid).length).toBe(settled.n);
+
+  // With every row found again, new files commit as they are read, so a stop keeps those, and
+  // a changed file's tile still waits on the diff the stop abandons.
+  copyFileSync(FIXTURE, path.join(stopping, 'a.arw'));
+  await sync2.scanLibrary(LIB2);
+  const rows = db2.query('SELECT COUNT(*) AS n FROM photos').get() as { n: number };
+  expect(readdirSync(grid).length).toBe(rows.n);
   db2.close();
   rmSync(stopping, { recursive: true, force: true });
   rmSync(dataPathForLibraryId(LIB2), { recursive: true, force: true });
 });
 
 test('and so does one that arrives in a library that already has rows', async () => {
-  // The other insert path. A first scan writes its photos down in batches and builds its own
-  // `AddedEntry`; every later scan goes through `buildDiff` instead, and the tile has to be
-  // carried by both - threading only one is a fused import that works exactly until the second
-  // time you use it.
+  // The other insert path. A scan that finds every row's file writes its new photos down in
+  // batches and builds its own `AddedEntry`; one missing a row, here to a move, goes through
+  // `buildDiff` instead, and the tile has to be carried by both - threading only one is a fused
+  // import that works exactly until the second time you use it.
+  renameSync(path.join(root, 'p.arw'), path.join(root, 'p2.arw'));
   copyFileSync(FIXTURE, path.join(root, 'q.arw'));
 
   await scan.scanLibrary(LIB);

@@ -32,6 +32,12 @@ export type MetadataExtractor = (absPath: string, stage?: TileStage) => Promise<
 
 export class ScanCancelled extends Error {}
 
+export interface BatchedInserts {
+  insert(batch: readonly DiskFile[]): void;
+  /** Whether a file new to the catalogue at `relPath` is a live photo, which a batch may insert. */
+  accepts(relPath: string): boolean;
+}
+
 export class ScanFileReader {
   constructor(
     private readonly extract: MetadataExtractor,
@@ -42,21 +48,20 @@ export class ScanFileReader {
   // changed vs the stored record (§9.1). Unchanged files are never opened, so a
   // no-op scan does zero decoding. Shared by the full and scoped paths.
   //
-  // `onBatch`, when given, takes the files as they are hashed, a batch at a time,
-  // and is what makes a first scan resumable: a half-built `present` is normally
+  // `batched`, when given, takes new files as they are hashed, a batch at a time,
+  // and is what makes an import resumable: a half-built `present` is normally
   // unusable, because absence from it is how a removal is detected, and applying
-  // it would mark every file the scan had not reached as missing. With no rows
-  // for it to be an absence from that cannot happen, and nothing else can either
-  // - a move pairs a removal with an addition, and there are no removals - so
-  // each batch says only "these files are new", which is true whether or not the
-  // scan saw the rest. Those files are then handed over rather than accumulated,
-  // so `changed` (and the diff built from it) stays empty.
+  // it would mark every file the scan had not reached as missing. When the stat
+  // pass finds every row's file, no removal can come of this run, and so no move
+  // either - a move pairs a removal with an addition - so a new file says only
+  // "this file is new", which is true whether or not the scan saw the rest. Those
+  // files are handed over rather than accumulated in `changed`.
   async scanFiles(
     files: readonly ScannedFile[],
     dbPhotos: readonly ScanDbPhoto[],
     signal: AbortSignal,
     onProgress: (scanned: number, toScan: number) => void,
-    onBatch: ((batch: readonly DiskFile[]) => void) | null,
+    batched: BatchedInserts | null,
     keepLease: () => void,
     stageFor: () => TileStage | undefined = () => undefined,
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
@@ -94,19 +99,23 @@ export class ScanFileReader {
       stopped,
     );
 
+    const found = new Set([...byInode.values()].map((file) => file.relPath));
+    const inserts =
+      batched != null && dbPhotos.every((row) => found.has(row.file_path)) ? batched : null;
+
     const present = new Set<string>();
     const changed: DiskFile[] = [];
     const failed = new Set<string>();
     const batch: DiskFile[] = [];
     let committedAt = Date.now();
     const keep = (file: DiskFile): void => {
-      if (onBatch == null) {
+      if (inserts == null || dbByPath.has(file.filePath) || !inserts.accepts(file.filePath)) {
         changed.push(file);
         return;
       }
       batch.push(file);
       if (batch.length < INSERT_BATCH && Date.now() - committedAt < INSERT_BATCH_MS) return;
-      onBatch(batch.splice(0));
+      inserts.insert(batch.splice(0));
       committedAt = Date.now();
     };
 
@@ -169,10 +178,9 @@ export class ScanFileReader {
 
     // The tail of a batched scan, stopped or finished: it is as applicable as
     // every batch before it.
-    if (batch.length > 0) onBatch?.(batch.splice(0));
-    // Nothing was written down as it went, so a stop leaves the run with nothing
-    // it can apply.
-    if (signal.aborted && onBatch == null) throw new ScanCancelled();
+    if (batch.length > 0) inserts?.insert(batch.splice(0));
+    // With rows, the rest of a stopped run's picture reads as removals.
+    if (signal.aborted && dbByPath.size > 0) throw new ScanCancelled();
     return { present, changed, failed };
   }
 }

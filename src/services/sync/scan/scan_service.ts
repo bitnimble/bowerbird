@@ -24,7 +24,8 @@ import type { SidecarImporter } from './scan_batch';
 
 // Unwinds a stopped scan whose partial result cannot be applied, which is any
 // run that had rows to reconcile against (§9.10). Never leaves this module:
-// scanLibrary turns it back into an idle status, because that run applied nothing.
+// scanLibrary turns it back into an idle status, because that run applied nothing
+// past the new photos its batches wrote down.
 const log = new Logger('scan');
 
 export class ScanService implements LibraryLifecycleListener {

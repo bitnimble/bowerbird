@@ -1,6 +1,6 @@
 // What a run reports while it is going, and what stopping it does. Both phases
-// are covered: the scan, which counts its way through the files and abandons its
-// work if stopped because nothing has been applied yet, and the detached
+// are covered: the scan, which counts its way through the files and, stopped, keeps
+// only the new photos it wrote down as it went, and the detached
 // processing tail, which stops handing out jobs and settles back to idle.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, jest, test } from 'bun:test';
@@ -159,7 +159,7 @@ test('a stopped first scan keeps the photos it did reach', async () => {
   expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 1').get()).toEqual({ n: 0 });
 });
 
-test('stopping a rescan applies nothing, because a half-built scan reads as deletions', async () => {
+test('stopping a rescan keeps the new photos it reached and applies nothing else', async () => {
   const scan: ScanService = build({ processUnprocessed: () => {} }, async () =>
     metadata(new Date(), 3),
   );
@@ -172,17 +172,42 @@ test('stopping a rescan applies nothing, because a half-built scan reads as dele
   // A fourth file to be found, so there is something for a partial run to apply.
   writeFileSync(path.join(root, 'd.arw'), 'd.arw');
 
-  let scanned = 0;
-  const stopped: ScanService = build({ processUnprocessed: () => {} }, async () => {
-    if (++scanned === 1) stopped.cancelScan(LIB);
+  const stopped: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
+    if (absPath.endsWith('d.arw')) stopped.cancelScan(LIB);
     return metadata(new Date(), 3);
   });
   const status = await stopped.scanLibrary(LIB);
 
   expect(status.status).toBe('idle');
   expect(status.photos_scanned).toBe(0);
-  // Untouched: no fourth row, and no row marked missing for the files it never
-  // reached, which is what applying the truncated scan would have done.
+  // The 3 rows untouched and none marked missing, which is what applying the truncated
+  // scan's picture would have done; the fourth file, which it did read, is kept.
+  const after = db
+    .query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`)
+    .all();
+  expect(after.slice(0, 3)).toEqual(before);
+  expect(after).toHaveLength(4);
+  expect(db.query('SELECT COUNT(*) AS n FROM photos WHERE is_missing = 1').get()).toEqual({ n: 0 });
+});
+
+test('stopping a rescan with a file gone applies nothing, since a new file may be its move', async () => {
+  const scan: ScanService = build({ processUnprocessed: () => {} }, async () =>
+    metadata(new Date(), 3),
+  );
+  await scan.scanLibrary(LIB);
+  const before = db
+    .query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`)
+    .all();
+
+  rmSync(path.join(root, 'a.arw'));
+  writeFileSync(path.join(root, 'd.arw'), 'd.arw');
+
+  const stopped: ScanService = build({ processUnprocessed: () => {} }, async (absPath) => {
+    if (absPath.endsWith('d.arw')) stopped.cancelScan(LIB);
+    return metadata(new Date(), 3);
+  });
+  await stopped.scanLibrary(LIB);
+
   expect(
     db.query(`SELECT id, file_hash FROM photos ORDER BY json_extract(recipe, '$.path')`).all(),
   ).toEqual(before);

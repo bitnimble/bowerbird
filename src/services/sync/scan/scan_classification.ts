@@ -61,13 +61,11 @@ export async function readAndClassify(
     [...dbPhotos, ...binned],
     token.signal,
     (scanned, toScan) => batch.reportScan(scanned, toScan),
-    // The resumable first-scan path inserts every file it is handed as a new
-    // live photograph, which a file under the bin is not (§9.1.1). A library
-    // with rows, with binned rows, or with anything already in its bin takes
-    // the ordinary diff instead.
-    dbPhotos.length === 0 && binned.length === 0 && binFiles.length === 0
-      ? (files) => batch.insertBatch(files)
-      : null,
+    {
+      insert: (files) => batch.insertBatch(files),
+      // A batch inserts live photographs, which a file under the bin is not (§9.1.1).
+      accepts: (filePath) => binRoot == null || !shootContains(binRoot, filePath),
+    },
     keepLease,
     tiles.stageFor(library),
   );
