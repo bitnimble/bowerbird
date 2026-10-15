@@ -1,4 +1,6 @@
 // Build the Android APK, and with `--play` the Play Store's AAB, unsigned; `release.yml` signs both.
+// `--dev` instead builds `photos.bowerbird.dev`, labelled "Bowerbird dev" and signed with the debug
+// key, which installs beside the release app.
 //
 // The app starts its own server as the desktop does (`src-tauri/src/android.rs`), so this builds
 // everything that server runs on for the phone first: the codecs, `librawshim`, and Bun with its
@@ -11,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { ensureIcons, writeAndroidIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -45,6 +48,7 @@ function run(
   if (done.status !== 0) process.exit(done.status ?? 1);
 }
 
+const DEV_ID_SUFFIX = '.dev';
 const MEDIA_PERMISSIONS = [
   '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
   '<uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />',
@@ -54,6 +58,14 @@ const MEDIA_PERMISSIONS = [
   '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
   '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
 ];
+
+const play = process.argv.includes('--play');
+const dev = process.argv.includes('--dev');
+const passed = process.argv.slice(2).filter((arg) => arg !== '--play' && arg !== '--dev');
+if (dev && play) {
+  console.error('[android-build] --dev builds a sideloaded app, which Play has no listing for');
+  process.exit(1);
+}
 
 ensureIcons();
 
@@ -75,8 +87,6 @@ run('bun', ['run', 'get:android-runtime']);
 run('bun', ['run', 'build'], join(repoRoot, 'web'));
 run('bun', ['run', 'scripts/build-sidecar.ts', '--target', ANDROID_TARGET]);
 
-const play = process.argv.includes('--play');
-const passed = process.argv.slice(2).filter((arg) => arg !== '--play');
 const tauriBuild = (format: '--apk' | '--aab', extra: Record<string, string> = {}): void =>
   run(
     'bun',
@@ -95,9 +105,11 @@ const tauriBuild = (format: '--apk' | '--aab', extra: Record<string, string> = {
     repoRoot,
     extra,
   );
-tauriBuild('--apk');
-// Play forbids an app updating itself other than through Play, so its build checks for none.
-if (play) tauriBuild('--aab', { BOWERBIRD_UPDATE_URL: '' });
+// Play forbids an app updating itself other than through Play, so its build checks for none; a dev
+// build's update would be the release app, a different package installed beside it.
+const noUpdates = { BOWERBIRD_UPDATE_URL: '' };
+tauriBuild('--apk', dev ? noUpdates : {});
+if (play) tauriBuild('--aab', noUpdates);
 
 /**
  * What the generated project gets wrong for an app whose page is its own local server's.
@@ -120,8 +132,27 @@ function patchProject(app: string): void {
       throw new Error(`${gradlePath} has no \`buildFeatures\` to patch beside`);
     }
     gradle = gradle.replace(anchor, `    ${extracted}\n${anchor}`);
-    writeFileSync(gradlePath, gradle);
   }
+  const suffix = `        applicationIdSuffix = "${DEV_ID_SUFFIX}"\n`;
+  gradle = gradle.replace(suffix, '');
+  if (dev) {
+    const applicationId = /^ *applicationId = .+\n/m;
+    if (!applicationId.test(gradle)) throw new Error(`${gradlePath} has no \`applicationId\``);
+    gradle = gradle.replace(applicationId, (line) => `${line}${suffix}`);
+  }
+  writeFileSync(gradlePath, gradle);
+
+  const label = dev ? 'Bowerbird dev' : 'Bowerbird';
+  writeFileSync(
+    join(app, 'src', 'main', 'res', 'values', 'strings.xml'),
+    [
+      '<resources>',
+      `    <string name="app_name">"${label}"</string>`,
+      `    <string name="main_activity_title">"${label}"</string>`,
+      '</resources>',
+      '',
+    ].join('\n'),
+  );
 
   const xml = join(app, 'src', 'main', 'res', 'xml');
   mkdirSync(xml, { recursive: true });
@@ -281,13 +312,18 @@ assertPageAligned(apk);
 if (play) {
   assertPageAligned(join(outputs, '..', 'bundle', 'universalRelease', 'app-universal-release.aab'));
 }
-if (dist) {
-  mkdirSync(resolve(dist), { recursive: true });
-  const out = join(resolve(dist), 'Bowerbird.apk');
+const outDir = dist ? resolve(dist) : dirname(apk);
+mkdirSync(outDir, { recursive: true });
+if (dev) {
+  const out = join(outDir, 'Bowerbird-dev.apk');
   signWithDebugKey(apk, out);
   console.error(`[android-build] apk, signed with the debug key: ${out}`);
+} else if (dist) {
+  const out = join(outDir, 'Bowerbird-unsigned.apk');
+  copyFileSync(apk, out);
+  console.error(`[android-build] apk, unsigned: ${out}`);
 } else {
-  console.error(`[android-build] apk: ${apk}`);
+  console.error(`[android-build] apk, unsigned: ${apk}`);
 }
 
 function assertPageAligned(archive: string): void {

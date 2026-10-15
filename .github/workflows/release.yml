@@ -461,6 +461,9 @@ jobs:
     needs: [plan, platform-tests]
     if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-22.04
+    env:
+      # Only `main` reaches the release key (`sign`).
+      DEV: ${{ github.ref != 'refs/heads/main' }}
     permissions:
       contents: read
       actions: read
@@ -540,7 +543,7 @@ jobs:
       - uses: ./.github/actions/wasm-pkg
       # One debug key across runs, so a branch build installs over the last without losing its data.
       - name: The debug key
-        if: github.ref != 'refs/heads/main'
+        if: env.DEV == 'true'
         env:
           DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         run: |
@@ -551,14 +554,17 @@ jobs:
           fi
           mkdir -p ~/.android
           echo "$DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
-      - run: bun run build:android --play
+      - if: env.DEV != 'true'
+        run: bun run build:android --play
+      - if: env.DEV == 'true'
+        run: bun run build:android --dev
         env:
-          BOWERBIRD_ANDROID_DIST_DIR: ${{ github.ref != 'refs/heads/main' && 'debug-signed' || '' }}
-      - if: github.ref != 'refs/heads/main'
+          BOWERBIRD_ANDROID_DIST_DIR: dev
+      - if: env.DEV == 'true'
         uses: actions/upload-artifact@v6
         with:
-          name: android-debug-signed
-          path: debug-signed/
+          name: android-dev
+          path: dev/
       - if: env.SAVE_CACHES == 'true' && steps.gradle-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
@@ -568,6 +574,7 @@ jobs:
           key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Stage the unsigned APK and AAB
+        if: env.DEV != 'true'
         run: |
           set -eu
           mkdir -p unsigned
@@ -576,7 +583,8 @@ jobs:
             "unsigned/Bowerbird_${version}_android-arm64.apk"
           cp "$(find src-tauri/gen/android -name '*release*.aab' | head -n1)" \
             "unsigned/Bowerbird_${version}.aab"
-      - uses: actions/upload-artifact@v6
+      - if: env.DEV != 'true'
+        uses: actions/upload-artifact@v6
         with:
           name: android-unsigned
           path: unsigned/

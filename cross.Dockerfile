@@ -84,7 +84,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/native/rawshim/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
-  && BOWERBIRD_ANDROID_DIST_DIR=/out/installer/android-arm64 bun run scripts/android-build.ts
+  && BOWERBIRD_ANDROID_DIST_DIR=/out/installer/android-arm64 bun run scripts/android-build.ts --dev
 
 FROM scratch AS android-dist
 COPY --from=android /out/ /

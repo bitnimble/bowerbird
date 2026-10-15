@@ -319,10 +319,13 @@ key, given to the Play Console as the app signing key, so either install updates
 `play` job uploads the AAB to the internal track, behind the `play` environment's reviewer, with a
 token from Google's workload identity federation rather than a stored key.
 
-**Only `main` sees the release key.** The `android-signing` environment refuses other branches, so
-a branch build signs its APK with the debug key instead, as `android-build.ts` does locally, and
-uploads it as `android-debug-signed`. The key comes from the `ANDROID_DEBUG_KEYSTORE_BASE64`
-secret when set, so one branch build installs over the last; without it each run makes its own.
+**A dev build installs beside the release app.** `android-build.ts --dev` builds
+`photos.bowerbird.dev`, labelled "Bowerbird dev", signed with the debug key and checking for no
+updates, since the release APK is a different app to it. The debug key never signs the release
+package, so neither install can be replaced by the other. Only `main` reaches the release key: the
+`android-signing` environment refuses other branches, so `release.yml` builds them with `--dev`
+and uploads the APK as `android-dev`. The key comes from the `ANDROID_DEBUG_KEYSTORE_BASE64` secret
+when set, so one branch build installs over the last; without it each run makes its own.
 
 ### 23.8 Versions
 
