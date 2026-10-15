@@ -14,7 +14,7 @@ const styles = stylex.create({
     minWidth: 0,
     height: size.controlH,
     overflow: 'hidden',
-    // A lone item never wraps: without this, text with no room overflows instead of wrapping onto the clipped line.
+    // Something for the text to wrap after: alone on its line, text with no room overflows rather than dropping onto the clipped one.
     '::before': {
       content: '""',
       height: '100%',

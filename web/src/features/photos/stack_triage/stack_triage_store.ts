@@ -147,8 +147,8 @@ export class StackTriageStore {
    * choice onto every member - or nothing at all, where the library lookup misses
    * and the answer silently becomes the camera's JPEG.
    *
-   * Only a rendition every member is certain to have: one built on request is a
-   * 404 until something builds it, and a tournament cannot wait a build per round.
+   * Only a rendition every member is certain to have, or to build once on its first 404:
+   * a tournament cannot wait a `max` build per round.
    *
    * Not each member's own `shown_rendition`, though every row now carries one: that is the
    * answer for one photograph, and under `remember_per_photo` or `best_available` the
@@ -163,16 +163,16 @@ export class StackTriageStore {
     // and a stack of HEICs has none - so a round drawn at `embedded` there is a round of blank
     // tiles. A member that came from a finished picture takes the whole pool to the render, which
     // every member has or, on a library that doesn't pre-render, builds when its frame 404s.
-    const anyEmbedded = [...this.members.values()].every((member) => member.has_embedded);
+    const allEmbedded = [...this.members.values()].every((member) => member.has_embedded);
     const built: ViewerRendition =
-      library?.rendition_source === 'render' || !anyEmbedded ? 'full' : 'embedded';
+      library?.rendition_source === 'render' || !allEmbedded ? 'full' : 'embedded';
     const mode = this.settings.viewerRenditionMode;
     // The camera's JPEG is the only thing a reader can ask for that every member is certain
     // to have; everything else - a per-photo mode, which is not a claim about the rest, a
     // remembered `max`, a `full` in a library that serves the JPEG - lands on what the
     // library builds, since that is the one file the whole pool can be drawn at.
     const chosen = mode === 'remember' ? this.settings.lastViewerRendition : mode;
-    return chosen === 'embedded' && anyEmbedded ? 'embedded' : built;
+    return chosen === 'embedded' && allEmbedded ? 'embedded' : built;
   }
 
   srcOf(photoId: string): string {

@@ -2,6 +2,7 @@ import { AppError } from '../../../errors';
 import { isComposite } from '../../../schemas/recipes';
 import type { ViewerRendition } from '../../../schemas/settings';
 import { getRenditionPath } from '../../../utils/paths';
+import { hasEmbeddedJpeg } from '../../../utils/scan';
 import type { PhotoRenditionService } from '../../photos/renditions/photo_rendition_service';
 import { storedAsHdr } from '../renditions/renditions';
 import type { ExportService } from './export_service';
@@ -10,7 +11,10 @@ import { LibraryActivity } from '../../activity/library_activity';
 /** A rendition as one JPEG anything can open, for a share sheet or a TV. */
 export class ShareService {
   constructor(
-    private readonly photoRenditions: Pick<PhotoRenditionService, 'locate' | 'embeddedJpeg'>,
+    private readonly photoRenditions: Pick<
+      PhotoRenditionService,
+      'locate' | 'embeddedJpeg' | 'buildRendition'
+    >,
     private readonly exports: Pick<ExportService, 'shareable'>,
     private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {}
@@ -38,7 +42,10 @@ export class ShareService {
     });
   }
 
-  /** The rendition to share where nobody is looking at one: the first already built, else the camera's JPEG. */
+  /**
+   * The rendition to share where nobody is looking at one: the first already built, else the
+   * camera's JPEG, else `full`, built here.
+   */
   async built(photoId: string): Promise<ViewerRendition> {
     const { photo, library } = this.photoRenditions.locate(photoId);
     for (const rendition of ['full', 'max'] as const) {
@@ -49,6 +56,8 @@ export class ShareService {
       )
         return rendition;
     }
-    return 'embedded';
+    if (photo.recipe.kind !== 'file' || hasEmbeddedJpeg(photo.recipe.path)) return 'embedded';
+    await this.photoRenditions.buildRendition(photoId, 'full');
+    return 'full';
   }
 }

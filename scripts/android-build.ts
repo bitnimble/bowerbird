@@ -241,6 +241,7 @@ class MainActivity : TauriActivity() {
   // Off, the WebView ignores the page's viewport tag, which is how its interface scale applies.
   override fun onWebViewCreate(webView: WebView) {
     webView.settings.useWideViewPort = true
+    // The page's tag only says user-scalable=no once a UI scale has rewritten it.
     webView.settings.setSupportZoom(false)
   }
 

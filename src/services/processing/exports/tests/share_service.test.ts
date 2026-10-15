@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'bun:test';
+import { afterEach, expect, it, jest } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { dataPathForLibraryId } from '../../../../utils/paths';
@@ -39,6 +39,22 @@ it('takes the native-size rendition where it is the only one built', async () =>
 
 it("falls back to the camera's JPEG where nothing is built", async () => {
   expect(await shares.built('p1')).toBe('embedded');
+});
+
+it('builds the render of a file with no camera JPEG where nothing is built', async () => {
+  const buildRendition = jest.fn(async () => {});
+  const heic = new ShareService(
+    {
+      locate: () => ({
+        library: { id: LIB, rendition_hdr: false },
+        photo: { id: 'p1', recipe: { kind: 'file', path: 'a.heic' } },
+      }),
+      buildRendition,
+    } as unknown as ConstructorParameters<typeof ShareService>[0],
+    { shareable: () => Promise.resolve(new Uint8Array()) },
+  );
+  expect(await heic.built('p1')).toBe('full');
+  expect(buildRendition).toHaveBeenCalledWith('p1', 'full');
 });
 
 it('keeps share preparation visible until the JPEG arrives and clears failures', async () => {
