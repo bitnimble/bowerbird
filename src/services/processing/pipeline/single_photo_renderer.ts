@@ -1,7 +1,6 @@
-import { replaceFile } from '../../../utils/files';
+import { replaceFile, stagingPathFor } from '../../../utils/files';
 import path from 'node:path';
 import { Logger } from '../../../logger';
-import { newId } from '../../../schemas/id';
 import type { Job } from '../../../schemas/jobs';
 import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
@@ -282,7 +281,7 @@ export class SinglePhotoRenderer {
     } else {
       const target = job.targets[0];
       if (target == null) throw new Error('a client rendition needs one target');
-      const temporary = target.outputPath + '.' + newId() + '.tmp';
+      const temporary = stagingPathFor(target.outputPath);
       try {
         result = await this.runDetached({
           ...job,

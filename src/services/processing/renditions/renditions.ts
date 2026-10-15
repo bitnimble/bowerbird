@@ -193,8 +193,7 @@ export function tenBitCopyDirs(): string[] {
 
 // Directories under `renditions/` that nothing writes any more, emptied by the
 // prune sweep so an upgrade does not leave the disk holding files no code can
-// name (§10.6). `<rendition>-hdr-video` held a one-frame AV1 MP4 of each HDR
-// still, encoded for Firefox at import.
+// name (§10.6).
 export function retiredRenditionDirs(): string[] {
   return RENDITIONS.filter((rendition) => storedAsHdr(rendition, true)).map(
     (rendition) => `${rendition}-hdr-video`,

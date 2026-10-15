@@ -176,7 +176,6 @@ interface Props {
    * reader zoomed in and panning finds it in the same place.
    */
   status?: { label: string; busy: boolean } | null;
-  /** A banner along the top of the stage. */
   banner?: ReactNode;
   /** The photo's original is only on devices this one cannot dial, so no frame will arrive. */
   unreachable?: boolean;
@@ -195,6 +194,14 @@ interface Props {
 
 function noop(): void {
   /* a frame on its way off the stage reports to nobody */
+}
+
+function toggled(set: ReadonlySet<string>, source: string, on: boolean): ReadonlySet<string> {
+  if (set.has(source) === on) return set;
+  const next = new Set(set);
+  if (on) next.add(source);
+  else next.delete(source);
+  return next;
 }
 
 // The image viewport: fit/zoom, wheel zoom, drag-to-pan and fullscreen. All of
@@ -257,27 +264,17 @@ export function PhotoStage({
   const [naturals, setNaturals] = useState<ReadonlyMap<string, Size>>(new Map());
   // The frames whose detail layer is as sharp as the view asks for (`StageDetail`).
   const [sharp, setSharp] = useState<ReadonlySet<string>>(new Set());
-  const noteSharp = useCallback((source: string, isSharp: boolean) => {
-    setSharp((previous) => {
-      if (previous.has(source) === isSharp) return previous;
-      const next = new Set(previous);
-      if (isSharp) next.add(source);
-      else next.delete(source);
-      return next;
-    });
-  }, []);
+  const noteSharp = useCallback(
+    (source: string, isSharp: boolean) =>
+      setSharp((previous) => toggled(previous, source, isSharp)),
+    [],
+  );
   // The frames up as a video rather than a canvas (`HdrPictures`), which have no detail layer.
   const [videos, setVideos] = useState<ReadonlySet<string>>(new Set());
-  const noteVideo = useCallback((source: string, video: boolean) => {
-    setVideos((previous) => {
-      if (previous.has(source) === video) return previous;
-      const next = new Set(previous);
-      if (video) next.add(source);
-      else next.delete(source);
-      return next;
-    });
-  }, []);
-  const isVideo = (source: string): boolean => videos.has(source);
+  const noteVideo = useCallback(
+    (source: string, video: boolean) => setVideos((previous) => toggled(previous, source, video)),
+    [],
+  );
   // The frames `painted` just replaced, kept mounted and opaque underneath for
   // RETIRED_FRAMES. Their rasters are the ones the browser already has, so they
   // are what shows through while the replacements' are being built.
@@ -355,7 +352,7 @@ export function PhotoStage({
     held != null &&
     held !== arrived &&
     pictureOf(held) === shownKey &&
-    !isVideo(arrived);
+    !videos.has(arrived);
   const ready = arrived != null && (!swapping || sharp.has(arrived));
   // Something else on screen while the picture asked for has nothing to show: the beat
   // after a step to a photograph this stage was not holding. Not a rendition swapping
@@ -365,7 +362,7 @@ export function PhotoStage({
   if (visible != null) standing.current = visible;
   const natural = (visible == null ? undefined : naturals.get(visible)) ?? NO_SIZE;
   const detailed = [...new Set([visible, swapping ? arrived : undefined])].filter(
-    (source): source is string => source != null && !isVideo(source),
+    (source): source is string => source != null && !videos.has(source),
   );
 
   // Unzoomed there is nothing to pan, so a drag across the frame is a step. Any pointer: a

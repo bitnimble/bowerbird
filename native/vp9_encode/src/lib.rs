@@ -17,15 +17,13 @@ mod vpx {
     include!(concat!(env!("OUT_DIR"), "/vpx.rs"));
 }
 
-use std::ffi::{CStr, c_int, c_uint};
+use std::ffi::{CStr, c_int};
 use std::mem::MaybeUninit;
 use vpx::*;
 
-/// libvpx's own quality scale, 0 to 63: past a few kilobytes a frame costs nothing here, and a
-/// lower level is barely slower to encode, so the picture is as near the stage's as VP9 gets.
-const CQ_LEVEL: c_uint = 4;
+/// libvpx's quality scale, 0 to 63.
+const CQ_LEVEL: c_int = 4;
 const CPU_USED: c_int = 9;
-/// As a power of two. libvpx holds it to what the width allows, four at 1080p.
 const TILE_COLUMNS_LOG2: c_int = 2;
 
 /// Where a frame's planes are, in samples from the first: luma then the two chroma, each a row of
@@ -88,7 +86,7 @@ impl Encoder {
             )
         };
         checked(opened, "libvpx would not open a VP9 encoder")?;
-        let encoder = Encoder {
+        let mut encoder = Encoder {
             context,
             width,
             height,
@@ -96,7 +94,7 @@ impl Encoder {
             frames: 0,
         };
         encoder.control(vp8e_enc_control_id::VP8E_SET_CPUUSED, CPU_USED)?;
-        encoder.control(vp8e_enc_control_id::VP8E_SET_CQ_LEVEL, CQ_LEVEL as c_int)?;
+        encoder.control(vp8e_enc_control_id::VP8E_SET_CQ_LEVEL, CQ_LEVEL)?;
         encoder.control(
             vp8e_enc_control_id::VP9E_SET_COLOR_SPACE,
             vpx_color_space::VPX_CS_BT_2020.0 as c_int,
@@ -113,10 +111,9 @@ impl Encoder {
         Ok(encoder)
     }
 
-    fn control(&self, id: vp8e_enc_control_id, value: c_int) -> Result<(), String> {
-        let context = std::ptr::from_ref(&*self.context).cast_mut();
+    fn control(&mut self, id: vp8e_enc_control_id, value: c_int) -> Result<(), String> {
         // SAFETY: the context is open, and every control this sets takes an `int`.
-        let status = unsafe { vpx_codec_control_(context, id.0 as c_int, value) };
+        let status = unsafe { vpx_codec_control_(&mut *self.context, id.0 as c_int, value) };
         checked(status, "libvpx refused a setting")
     }
 
@@ -294,28 +291,25 @@ mod exports {
             cr_offset,
         };
         let words = HELD.with_borrow_mut(|(encoders, coded, message)| {
-            let Some(encoder) = encoders.get_mut(surface as usize) else {
-                *message = format!("there is no surface {surface}");
-                return [1, message.as_ptr() as u32, message.len() as u32];
-            };
-            let open = encoder
-                .as_ref()
-                .is_some_and(|it| (it.width, it.height, it.threads) == (width, height, threads));
-            if !open {
-                // The old one first, so its threads are back in the pool before the new one's start.
-                *encoder = None;
-                match Encoder::open(width, height, threads) {
-                    Ok(opened) => *encoder = Some(opened),
-                    Err(why) => {
-                        *message = why;
-                        return [1, message.as_ptr() as u32, message.len() as u32];
+            let encoded = (|| -> Result<(), String> {
+                let slot = encoders
+                    .get_mut(surface as usize)
+                    .ok_or_else(|| format!("there is no surface {surface}"))?;
+                let encoder = match slot {
+                    Some(open)
+                        if (open.width, open.height, open.threads) == (width, height, threads) =>
+                    {
+                        open
                     }
-                }
-            }
-            let encoded = match encoder.as_mut() {
-                Some(encoder) => encoder.encode(&planes, coded),
-                None => Err("no encoder is open".to_string()),
-            };
+                    _ => {
+                        // The old one first, so its threads are back in the pool before the new
+                        // one's start.
+                        *slot = None;
+                        slot.insert(Encoder::open(width, height, threads)?)
+                    }
+                };
+                encoder.encode(&planes, coded)
+            })();
             match encoded {
                 Ok(()) => [0, coded.as_ptr() as u32, coded.len() as u32],
                 Err(why) => {

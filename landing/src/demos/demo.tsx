@@ -25,7 +25,6 @@ const styles = stylex.create({
   warning: {
     margin: 0,
     lineHeight: 1.6,
-    color: color.ochre,
   },
 });
 
@@ -49,7 +48,7 @@ export function DemoBar({ children }: { children: ReactNode }): JSX.Element {
 
 export function DemoWarning({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <Text as="p" variant="mono" style={styles.warning}>
+    <Text as="p" variant="mono" tone="warning" style={styles.warning}>
       {children}
     </Text>
   );

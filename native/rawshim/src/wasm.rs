@@ -1910,9 +1910,6 @@ impl HeldRaw {
     /// The part of the picture behind `region` that `part` copies out of the frame, graded and
     /// drawn into the thumbnail's texture. Proofed against sRGB whatever the stage is: the copy is
     /// eight bits.
-    ///
-    /// A texture rather than a canvas in every engine: Gecko refuses the `rgba16float` canvas this
-    /// draw would configure (bug 1834395).
     fn draw_part(
         &self,
         side: u32,
@@ -1958,6 +1955,7 @@ impl HeldRaw {
             let uploaded = gpu.upload_resident(&under, &grade, &drawing._peak);
             (under, uploaded, (width, height, window))
         };
+        // No canvas: Gecko refuses the `rgba16float` one this would configure (bug 1834395).
         self.attach(&self.thumbnail, None, side, side, None)?;
         let (width, height, window) = part;
         let drawn = self.draw(

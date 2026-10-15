@@ -2,6 +2,7 @@ import { constants as fsConstants } from 'node:fs';
 import { copyFile, link, mkdir, open, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
+import { newId } from '../schemas/id';
 import { deleteEmptyClaim, unlinkMovedFile } from './deletions';
 
 // Atomically moves `from` into `dir` with a collision-free name, returning the
@@ -88,6 +89,13 @@ export async function replaceFile(from: string, to: string): Promise<void> {
       await Bun.sleep(wait);
     }
   }
+}
+
+export const STAGING_SUFFIX = '.tmp';
+
+/** Where to stage `final` for `replaceFile`; the prune sweep spares it while young. */
+export function stagingPathFor(final: string): string {
+  return `${final}.${newId()}${STAGING_SUFFIX}`;
 }
 
 export async function ensureDir(dir: string): Promise<void> {

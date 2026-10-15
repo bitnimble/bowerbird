@@ -54,7 +54,6 @@ fn main() {
         .allowlist_function("vpx_codec_get_cx_data")
         .allowlist_function("vpx_codec_destroy")
         .allowlist_function("vpx_codec_err_to_string")
-        .allowlist_function("vpx_codec_error_detail")
         .allowlist_function("vpx_img_wrap")
         .allowlist_type("vp8e_enc_control_id")
         .allowlist_var("VPX_ENCODER_ABI_VERSION")

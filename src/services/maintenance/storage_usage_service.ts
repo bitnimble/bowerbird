@@ -101,9 +101,7 @@ export class StorageUsageService {
 
   private isStagingFile(file: string, catalogueNames: readonly string[]): boolean {
     const name = path.basename(file);
-    if (
-      /\.avif(?:\.[a-z0-9]+\.(?:tmp|fetching)|\.descriptor)$|^\.volume-[a-z0-9]+\.bin$/.test(name)
-    )
+    if (/\.avif(?:\.[a-z0-9]+\.tmp|\.descriptor)$|^\.volume-[a-z0-9]+\.bin$/.test(name))
       return true;
     return catalogueNames.some(
       (base) =>

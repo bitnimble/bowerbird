@@ -1,7 +1,9 @@
-// A rendition's YUV samples as the PQ signal they code: BT.2020 video range undone.
+// BT.2020 video range both ways: a rendition's YUV samples as the PQ signal they code
+// (`pq_of_video`), and a PQ signal as those samples (`video_of_pq`).
 //
 // The viewer's stage draws a rendition's planes and `planes.slang` turns them into the codes the
 // editor opens, and a picture shown in one and printed in the other has to be the same picture.
+// `pq420.slang` goes the other way, coding the editor's frame as Firefox's video.
 module video_range;
 
 import light;

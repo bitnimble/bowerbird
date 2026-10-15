@@ -6,7 +6,7 @@ import {
 } from '../../../src/schemas/request_activity';
 import { hdrPictures, type HdrPictures, type HdrSource } from './hdr_pictures';
 
-export interface ShownPicture {
+interface ShownPicture {
   kind: 'video' | 'image';
   url: string;
 }

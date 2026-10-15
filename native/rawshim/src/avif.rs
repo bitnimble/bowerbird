@@ -1425,16 +1425,11 @@ mod tests {
         let matching = crate::sdr_match::SdrMatch::MacVideo;
         let copy = ten_bit_copy(&still, 0, 10, matching).expect("the copy encodes");
 
-        let decoder = Decoder::new().expect("a decoder");
-        let image = Image::empty().expect("an image");
-        // SAFETY: both handles are live for the block.
-        #[expect(unsafe_code)]
-        let clli = unsafe {
-            let status = raw::avifDecoderReadMemory(decoder.0, image.0, copy.as_ptr(), copy.len());
-            assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the copy");
-            ((*image.0).clli.maxCLL, (*image.0).clli.maxPALL)
-        };
-        assert_eq!(clli, (500, 200));
+        let (after, _, _, tags) = decoded(&copy, 16).expect("the copy decodes");
+        assert_eq!(
+            tags.light.map(|light| (light.max_cll, light.max_fall)),
+            Some((500, 200))
+        );
 
         let nits = |code: u16| {
             crate::tone::pq_inv::<crate::light::DisplayNits>(crate::light::Light::exactly(
@@ -1442,7 +1437,6 @@ mod tests {
             ))
         };
         let (before, ..) = decode_at_unturned(&still, 16).expect("the still decodes");
-        let (after, ..) = decode_at_unturned(&copy, 16).expect("the copy decodes");
         let (mut under, mut over) = (0, 0);
         for (&was, &is) in before.iter().zip(&after).step_by(7) {
             let want = matching.of_still(nits(was)).raw();

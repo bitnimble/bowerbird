@@ -143,13 +143,13 @@ function build(sdk: string, source: string): void {
 }
 
 async function main(): Promise<void> {
-  const refetch = process.env.BOWERBIRD_REFETCH_VPX != null;
-  if (!alreadyPinned(HOME, RECIPE) || refetch) {
+  const rebuild = process.env.BOWERBIRD_REBUILD_VPX != null;
+  if (!alreadyPinned(HOME, RECIPE) || rebuild) {
     const scratch = mkdtempSync(join(tmpdir(), 'bb-vpx-'));
     try {
       const sdk = await fetchWasiSdk(scratch);
       const source = fetchLibvpx(scratch);
-      makeOnce(HOME, RECIPE, refetch, () => build(sdk, source));
+      makeOnce(HOME, RECIPE, rebuild, () => build(sdk, source));
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }

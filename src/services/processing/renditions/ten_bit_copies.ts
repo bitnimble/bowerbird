@@ -1,10 +1,9 @@
 import { mkdir, stat, utimes } from 'node:fs/promises';
 import path from 'node:path';
-import { newId } from '../../../schemas/id';
 import type { LibraryConfiguration } from '../../../schemas/libraries';
 import type { SdrMatch } from '../../../schemas/sdr_match';
 import { deleteGeneratedFile } from '../../../utils/deletions';
-import { replaceFile } from '../../../utils/files';
+import { replaceFile, stagingPathFor } from '../../../utils/files';
 import { getDataPath, renditionPathFor, tenBitCopyPathFor } from '../../../utils/paths';
 import type { RenderTargets } from '../pipeline/render_targets';
 import { RawshimCommandWorker } from '../rawshim/rawshim_command';
@@ -30,7 +29,7 @@ export class TenBitCopies {
     library: LibraryConfiguration,
     photoId: string,
     rendition: Rendition,
-    matching: SdrMatch = 'still',
+    matching: SdrMatch,
   ): Promise<string> {
     const dataPath = getDataPath(library);
     const source = renditionPathFor(dataPath, photoId, rendition, library.rendition_hdr);
@@ -73,7 +72,7 @@ export class TenBitCopies {
       true,
       'render',
     );
-    const staging = `${copy}.${newId()}.tmp`;
+    const staging = stagingPathFor(copy);
     await mkdir(path.dirname(copy), { recursive: true });
     const worker = new RawshimCommandWorker();
     try {

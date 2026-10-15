@@ -100,6 +100,11 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
   const isolationId = useId();
   const clipId = `colour-wheel-reach${isolationId.replace(/[^\w-]/g, '')}`;
   const isolated = useContext(IsolationContext)?.active?.id === isolationId;
+  const backdrop: stylex.StyleXStyles = [
+    styles.backdrop,
+    isolated && styles.shown,
+    isolated && styles.clipped(`url(#${clipId})`),
+  ];
   return (
     <div {...stylex.props(styles.editor)}>
       <div {...stylex.props(styles.header)}>
@@ -145,22 +150,10 @@ export const ColourWheelEditor = observer(function ColourWheelEditor({
         <canvas
           key={presenter.key}
           ref={presenter.attach}
-          {...stylex.props(
-            styles.layer,
-            styles.backdrop,
-            isolated && styles.shown,
-            isolated && styles.clipped(`url(#${clipId})`),
-          )}
+          {...stylex.props(styles.layer, backdrop)}
           aria-hidden="true"
         />
-        <CanvasVideo
-          mp4={store.videoFrame}
-          style={[
-            styles.backdrop,
-            isolated && styles.shown,
-            isolated && styles.clipped(`url(#${clipId})`),
-          ]}
-        />
+        <CanvasVideo mp4={store.videoFrame} style={backdrop} />
         {store.showDots && <Dots store={store} rim={rim} />}
         {rim != null && (
           <Overlay

@@ -45,6 +45,7 @@ import type { Job, JobCompositeSource, JobTarget } from '../src/schemas/jobs';
 import { runJob, writeTenBitCopy } from '../src/services/processing/rawshim/rawshim_job';
 import { SDR_MATCHES, type SdrMatch, sdrMatchSuffix } from '../src/schemas/sdr_match';
 import { isUpscalable } from '../src/services/processing/rawshim/rawshim_ops';
+import { run } from './spawned';
 
 /**
  * Where a picture's raw is, read from the variable named after its slug.
@@ -183,23 +184,6 @@ function target(slug: string): JobTarget {
   };
 }
 
-function run(command: string, args: string[], stdin?: NodeJS.ReadableStream): Promise<void> {
-  return new Promise((ok, fail) => {
-    const child = spawn(command, args, {
-      stdio: [stdin == null ? 'ignore' : 'pipe', 'ignore', 'pipe'],
-    });
-    const err: Buffer[] = [];
-    child.stderr?.on('data', (chunk: Buffer) => err.push(chunk));
-    child.on('error', fail);
-    child.on('close', (code) =>
-      code === 0
-        ? ok()
-        : fail(new Error(`${command} exited ${code}: ${Buffer.concat(err).toString()}`)),
-    );
-    stdin?.pipe(child.stdin!);
-  });
-}
-
 /**
  * The same picture with nowhere to put anything above white.
  *
@@ -310,6 +294,8 @@ const SWATCH_RADIUS = 6;
 
 const SWATCH_WIDTH = Math.round((SWATCH_STEPS.length * 2 + SWATCH_GAP) * SWATCH_CELL);
 const SWATCH_HEIGHT = SWATCHES.length * SWATCH_CELL;
+const SWATCH_QUANTIZER = 0;
+const SWATCH_SPEED = 4;
 
 /**
  * Both halves in one frame, as scene-linear samples where 1.0 is diffuse white.
@@ -502,18 +488,18 @@ async function buildSwatches(): Promise<void> {
       '--clli',
       contentLight(samples),
       '--min',
-      '0',
+      String(SWATCH_QUANTIZER),
       '--max',
-      '0',
+      String(SWATCH_QUANTIZER),
       '-s',
-      '4',
+      String(SWATCH_SPEED),
       out,
     ],
     ffmpeg.stdout!,
   );
   // Already 10-bit 4:2:0 coded as a still, so only macOS needs a copy of its own.
   for (const matching of SDR_MATCHES.filter((matching) => matching !== 'still'))
-    writeTenBitCopy(out, swatchesPath(matching), 0, 4, matching);
+    writeTenBitCopy(out, swatchesPath(matching), SWATCH_QUANTIZER, SWATCH_SPEED, matching);
   console.error(`[demo-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
 }
 
@@ -755,7 +741,7 @@ async function build(scene: string): Promise<void> {
         matching,
       );
   } catch (failure) {
-    // The HDR arm lands before the other two are derived from it, so a failure in a
+    // The HDR arm lands before the others are derived from it, so a failure in a
     // later step leaves the first behind - and these outputs are committed, where a
     // half-built set is a picture the page shows against one it does not. The worker
     // cleans up for the same reason (`processing_worker.ts`).

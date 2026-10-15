@@ -54,9 +54,9 @@ RUN --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=loc
      done
 
 FROM cross AS android
-# The codecs' vcpkg build, and bindgen for `rawshim`.
+# The codecs' vcpkg build.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends pkg-config python3 libclang-dev cmake \
+  && apt-get install -y --no-install-recommends pkg-config python3 cmake \
   && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /opt/jdk \
   && curl -sSfLo /tmp/jdk.tar.gz https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse \

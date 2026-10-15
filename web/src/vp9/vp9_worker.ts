@@ -5,12 +5,10 @@ import {
   VIDEO_SURFACES,
   type EncodeAnswer,
   type EncodeAsk,
-  type EncoderStart,
   type Pq420Frame,
   type VideoSurface,
 } from './vp9_encoder';
-import { ThreadPool } from '../wasi/thread_pool';
-import { wasiImports } from '../wasi/wasi';
+import { instantiateThreaded, type ModuleStart, type ThreadedExports } from '../wasi/thread_pool';
 import { pageLog } from '../features/logs/page_log';
 
 pageLog.follow('worker');
@@ -21,13 +19,9 @@ const PIXELS_PER_THREAD = 250_000;
 // Every surface's encoder holds its threads while open, and libvpx starts one fewer than it is
 // given: fewer workers than this and a spawn waits out its timeout and the encode fails.
 const POOL_THREADS = VIDEO_SURFACES.reduce((sum, surface) => sum + MOST_THREADS[surface] - 1, 0);
-/** The module's own `--max-memory`, in 64KiB pages. */
-const MAX_PAGES = 16384;
 const ANSWER_WORDS = 3;
 
-interface Exports {
-  __wasi_init_tp(): void;
-  __wasm_call_ctors(): void;
+interface Exports extends ThreadedExports {
   hdr_video_alloc(length: number): number;
   hdr_video_free(at: number, length: number): void;
   hdr_video_encode(
@@ -54,16 +48,7 @@ class Encoder {
 
   static async open(module: WebAssembly.Module): Promise<Encoder> {
     const threads = Math.max(1, navigator.hardwareConcurrency || 4);
-    const memory = new WebAssembly.Memory({ initial: 256, maximum: MAX_PAGES, shared: true });
-    const pool = await ThreadPool.start(LOG_NAME, module, memory, POOL_THREADS);
-    const instance = await WebAssembly.instantiate(
-      module,
-      wasiImports(LOG_NAME, memory, pool.spawn),
-    );
-    const exports = instance.exports as unknown as Exports;
-    // What a reactor's `_initialize` would run, which this module does not link.
-    exports.__wasi_init_tp();
-    exports.__wasm_call_ctors();
+    const { exports, memory } = await instantiateThreaded<Exports>(LOG_NAME, module, POOL_THREADS);
     return new Encoder(exports, memory, threads);
   }
 
@@ -107,15 +92,13 @@ class Encoder {
   }
 }
 
-let open: (module: WebAssembly.Module) => void = () => {};
-const opened = new Promise<Encoder>((resolve, reject) => {
-  open = (module) => Encoder.open(module).then(resolve, reject);
-});
+const started = Promise.withResolvers<WebAssembly.Module>();
+const opened = started.promise.then(Encoder.open);
 
-self.onmessage = async (event: MessageEvent<EncodeAsk | EncoderStart>) => {
+self.onmessage = async (event: MessageEvent<EncodeAsk | ModuleStart>) => {
   const message = event.data;
   if ('module' in message) {
-    open(message.module);
+    started.resolve(message.module);
     return;
   }
   let answer: EncodeAnswer;

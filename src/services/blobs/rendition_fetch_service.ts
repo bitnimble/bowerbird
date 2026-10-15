@@ -2,12 +2,11 @@ import type { Database } from '../../db/driver';
 import { existsSync } from 'node:fs';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
-import { newId } from '../../schemas/id';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { PathSegment, route } from '../../schemas/route';
 import { stampWithinSkew } from '../replication/stamps';
 import { deleteGeneratedFile } from '../../utils/deletions';
-import { replaceFile } from '../../utils/files';
+import { replaceFile, stagingPathFor } from '../../utils/files';
 import { getDataPath, getRenditionPath, originalPathOf } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
@@ -332,7 +331,7 @@ export class RenditionFetchService {
   ): Promise<void> {
     // One per fetch: a request passed on for a peer joins no other fetch, so two can land on one
     // target at once, and a shared staging file would interleave their bytes.
-    const staging = `${target}.${newId()}.fetching`;
+    const staging = stagingPathFor(target);
     // Never resumed: a rendition is small and the sender has to be asked again
     // anyway, so an interrupted attempt is started over rather than appended to.
     try {

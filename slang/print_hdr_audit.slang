@@ -12,7 +12,7 @@ groupshared float4 values[256];
 
 float3 linear_canvas(float3 coded)
 {
-    return sign(coded) * float3(srgb_eotf(abs(coded.x)), srgb_eotf(abs(coded.y)), srgb_eotf(abs(coded.z))) * 203.0;
+    return srgb_eotf_signed(coded) * 203.0;
 }
 
 void decode_pq(out Colour<DisplayNits> nits, Colour<Pq> coded)

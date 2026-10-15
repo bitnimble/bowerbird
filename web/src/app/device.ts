@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 const MOBILE = '(max-width: 860px)';
 const TOUCH = '(pointer: coarse)';
 
-function useMediaQuery(query: string): boolean {
+export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
   useEffect(() => {
     const media = window.matchMedia(query);

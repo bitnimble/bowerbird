@@ -53,18 +53,18 @@ const PQ420_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/pq420.wgsl
 /// two samples: luma rows a block of four pixels wide and padded to an even count, then the two
 /// chroma planes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Pq420Layout {
-    pub width: u32,
-    pub height: u32,
-    pub luma_stride: u32,
-    pub chroma_stride: u32,
-    pub cb_at: u32,
-    pub cr_at: u32,
-    pub words: u32,
+struct Pq420Layout {
+    width: u32,
+    height: u32,
+    luma_stride: u32,
+    chroma_stride: u32,
+    cb_at: u32,
+    cr_at: u32,
+    words: u32,
 }
 
 impl Pq420Layout {
-    pub fn of(width: u32, height: u32) -> Pq420Layout {
+    fn of(width: u32, height: u32) -> Pq420Layout {
         let blocks = width.div_ceil(4);
         let rows = height.div_ceil(2);
         let (luma_stride, chroma_stride) = (blocks * 2, blocks);
@@ -83,7 +83,7 @@ impl Pq420Layout {
 
     /// What leads [`Gpu::pq420`]'s answer: the width and height, then the strides and the chroma
     /// planes' offsets in samples from the first, then two unused.
-    pub fn header(&self) -> [u32; PQ420_HEADER_WORDS] {
+    fn header(&self) -> [u32; PQ420_HEADER_WORDS] {
         [
             self.width,
             self.height,
@@ -97,9 +97,8 @@ impl Pq420Layout {
     }
 }
 
-pub const PQ420_HEADER_WORDS: usize = 8;
+const PQ420_HEADER_WORDS: usize = 8;
 
-/// `readback.slang`'s `pack`.
 const PACK_BINDINGS: [(u32, Binding); 3] = [
     (0, Binding::Drawn),
     (1, Binding::Storage { read_only: false }),
@@ -343,7 +342,6 @@ pub struct Gpu {
     id: u64,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
-    // Firefox's alone, so left to the first frame that needs it.
     pack_pq420: PipelineCell<wgpu::ComputePipeline>,
     pack_srgb8: PipelineCell<wgpu::ComputePipeline>,
     peak_layout: wgpu::BindGroupLayout,
@@ -1364,7 +1362,7 @@ impl Gpu {
     /// `drawn` as RGB9E5 words, four little-endian bytes a pixel, a row after another: what a
     /// canvas the page draws itself is sent (`readback.slang`).
     pub async fn rgb9e5(&self, drawn: &Texture) -> Option<Vec<u8>> {
-        self.packed(drawn, &self.pack).await
+        self.four_byte_packed(drawn, &self.pack).await
     }
 
     /// `drawn` as eight-bit sRGB RGBA, a row after another: a thumbnail, ready for a PNG.
@@ -1372,13 +1370,37 @@ impl Gpu {
         let pipeline = self.pack_srgb8.get_or_init(|| {
             self.compute_pipeline("srgb8", READBACK_WGSL, &self.pack_layout, "pack_srgb8")
         });
-        self.packed(drawn, pipeline).await
+        self.four_byte_packed(drawn, pipeline).await
     }
 
     /// `drawn` through one of `readback.slang`'s four-byte packs.
-    async fn packed(&self, drawn: &Texture, pack: &wgpu::ComputePipeline) -> Option<Vec<u8>> {
+    async fn four_byte_packed(
+        &self,
+        drawn: &Texture,
+        pack: &wgpu::ComputePipeline,
+    ) -> Option<Vec<u8>> {
         let (width, height) = (drawn.width(), drawn.height());
-        let bytes = u64::from(width) * u64::from(height) * 4;
+        self.packed(
+            drawn,
+            pack,
+            u64::from(width) * u64::from(height) * 4,
+            &[width, height, 0, 0],
+            (width.div_ceil(16), height.div_ceil(16)),
+            <[u8]>::to_vec,
+        )
+        .await
+    }
+
+    /// `drawn` through `pack`, one of the pipelines on `pack_layout`.
+    async fn packed<T>(
+        &self,
+        drawn: &Texture,
+        pack: &wgpu::ComputePipeline,
+        bytes: u64,
+        uniform: &[u32],
+        (across, down): (u32, u32),
+        take: impl FnOnce(&[u8]) -> T,
+    ) -> Option<T> {
         let mut recording = self.record();
         recording.holding_texture(drawn);
         let words = recording.buffer(&wgpu::BufferDescriptor {
@@ -1393,13 +1415,10 @@ impl Gpu {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let size: Vec<u8> = [width, height, 0, 0]
-            .into_iter()
-            .flat_map(u32::to_le_bytes)
-            .collect();
-        let size = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("packed size"),
-            contents: &size,
+        let uniform: Vec<u8> = uniform.iter().copied().flat_map(u32::to_le_bytes).collect();
+        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("packed uniform"),
+            contents: &uniform,
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let view = drawn.view();
@@ -1417,7 +1436,7 @@ impl Gpu {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: size.as_entire_binding(),
+                    resource: uniform.as_entire_binding(),
                 },
             ],
         });
@@ -1425,18 +1444,18 @@ impl Gpu {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
             pass.set_pipeline(pack);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
+            pass.dispatch_workgroups(across, down, 1);
         }
         recording
             .encoder()
             .copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
         recording.submit();
-        read_back(self, &read, <[u8]>::to_vec).await
+        read_back(self, &read, take).await
     }
 
     /// `drawn` as the ten-bit PQ 4:2:0 planes the editor's VP9 encoder takes on Firefox
     /// (`pq420.slang`), with the canvas's SDR range coded as `matching` shows it:
-    /// [`Pq420Layout::header`] as little-endian words, then the planes as little-endian samples.
+    /// `Pq420Layout::header` as little-endian words, then the planes as little-endian samples.
     pub async fn pq420(
         &self,
         drawn: &Texture,
@@ -1444,85 +1463,35 @@ impl Gpu {
     ) -> Option<Vec<u8>> {
         let [white, reads_sdr_as_power] = matching.words();
         let layout = Pq420Layout::of(drawn.width(), drawn.height());
-        let bytes = u64::from(layout.words) * 4;
-        let mut recording = self.record();
-        recording.holding_texture(drawn);
-        let words = recording.buffer(&wgpu::BufferDescriptor {
-            label: Some("pq420"),
-            size: bytes,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
+        let pipeline = self.pack_pq420.get_or_init(|| {
+            self.compute_pipeline("pq420", PQ420_WGSL, &self.pack_layout, "pack_pq420")
         });
-        let read = recording.buffer(&wgpu::BufferDescriptor {
-            label: Some("pq420 read"),
-            size: bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let planes: Vec<u8> = [
-            layout.width,
-            layout.height,
-            layout.luma_stride,
-            layout.chroma_stride,
-            layout.cb_at,
-            layout.cr_at,
-            white,
-            reads_sdr_as_power,
-        ]
-        .into_iter()
-        .flat_map(u32::to_le_bytes)
-        .collect();
-        let planes = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("pq420 planes"),
-            contents: &planes,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let view = drawn.view();
-        let group = self.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("pq420"),
-            layout: &self.pack_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: words.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: planes.as_entire_binding(),
-                },
+        self.packed(
+            drawn,
+            pipeline,
+            u64::from(layout.words) * 4,
+            &[
+                layout.width,
+                layout.height,
+                layout.luma_stride,
+                layout.chroma_stride,
+                layout.cb_at,
+                layout.cr_at,
+                white,
+                reads_sdr_as_power,
             ],
-        });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(self.pack_pq420());
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(
+            (
                 layout.width.div_ceil(4).div_ceil(8),
                 layout.height.div_ceil(2).div_ceil(8),
-                1,
-            );
-        }
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
-        recording.submit();
-        read_back(self, &read, |mapped| {
-            let mut answer = Vec::with_capacity(PQ420_HEADER_WORDS * 4 + mapped.len());
-            answer.extend(layout.header().into_iter().flat_map(u32::to_le_bytes));
-            answer.extend_from_slice(mapped);
-            answer
-        })
+            ),
+            |mapped| {
+                let mut answer = Vec::with_capacity(PQ420_HEADER_WORDS * 4 + mapped.len());
+                answer.extend(layout.header().into_iter().flat_map(u32::to_le_bytes));
+                answer.extend_from_slice(mapped);
+                answer
+            },
+        )
         .await
-    }
-
-    fn pack_pq420(&self) -> &wgpu::ComputePipeline {
-        self.pack_pq420.get_or_init(|| {
-            self.compute_pipeline("pq420", PQ420_WGSL, &self.pack_layout, "pack_pq420")
-        })
     }
 
     /// One compute pipeline over one bind group, for a pipeline built on first use.
@@ -5549,29 +5518,7 @@ mod tests {
             [12.0, 0.01, 7.5],
             [-0.2, 0.7, 1.4],
         ];
-        let data: Vec<u8> = drawn
-            .iter()
-            .flat_map(|&[r, g, b]| [r, g, b, 1.0])
-            .flat_map(super::half)
-            .collect();
-        let texture = gpu.own_texture_with_data(
-            &wgpu::TextureDescriptor {
-                label: Some("drawn"),
-                size: wgpu::Extent3d {
-                    width: 3,
-                    height: 2,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &data,
-        );
+        let texture = drawn_texture(gpu, 3, 2, &drawn);
         let words = pollster::block_on(gpu.rgb9e5(&texture)).expect("the readback mapped");
         for (at, (word, want)) in words.chunks_exact(4).zip(drawn).enumerate() {
             let word = u32::from_le_bytes(word.try_into().expect("a word"));
@@ -5606,29 +5553,7 @@ mod tests {
             [0.5, 0.5, 0.5],
             p3_of_srgb_red,
         ];
-        let data: Vec<u8> = drawn
-            .iter()
-            .flat_map(|&[r, g, b]| [r, g, b, 1.0])
-            .flat_map(super::half)
-            .collect();
-        let texture = gpu.own_texture_with_data(
-            &wgpu::TextureDescriptor {
-                label: Some("drawn"),
-                size: wgpu::Extent3d {
-                    width: 2,
-                    height: 2,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &data,
-        );
+        let texture = drawn_texture(gpu, 2, 2, &drawn);
         let rgba = pollster::block_on(gpu.srgb8(&texture)).expect("the readback mapped");
         let want: [[u8; 4]; 4] = [
             [0, 0, 0, 255],
@@ -5658,29 +5583,7 @@ mod tests {
                 [2.4 * t, (1.3 - 1.7 * t).abs(), 0.9 * (t * 7.0).sin() - 0.1]
             })
             .collect();
-        let data: Vec<u8> = drawn
-            .iter()
-            .flat_map(|&[r, g, b]| [r, g, b, 1.0])
-            .flat_map(super::half)
-            .collect();
-        let texture = gpu.own_texture_with_data(
-            &wgpu::TextureDescriptor {
-                label: Some("drawn"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &data,
-        );
+        let texture = drawn_texture(gpu, width, height, &drawn);
         // Not the still's match, so a coding that ignored the one it was given would fail.
         let matching = crate::sdr_match::SdrMatch::MacVideo;
         let answer =
@@ -5768,6 +5671,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The page reads the header `pq420` leads its answer with, so both say how long it is.
+    #[test]
+    fn the_page_reads_the_header_the_host_writes() {
+        let line = format!("const HEADER_WORDS = {};", super::PQ420_HEADER_WORDS);
+        assert!(
+            include_str!("../../../web/src/vp9/vp9_encoder.ts").contains(&line),
+            "vp9_encoder.ts does not say `{line}`"
+        );
+    }
+
+    fn drawn_texture(
+        gpu: &super::Gpu,
+        width: u32,
+        height: u32,
+        rgb: &[[f32; 3]],
+    ) -> super::Texture {
+        let data: Vec<u8> = rgb
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 1.0])
+            .flat_map(super::half)
+            .collect();
+        gpu.own_texture_with_data(
+            &wgpu::TextureDescriptor {
+                label: Some("drawn"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &data,
+        )
     }
 
     /// A `Geometry`, positionally, so a table of cases reads as a table.

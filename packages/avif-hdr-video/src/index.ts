@@ -16,8 +16,8 @@
 //   install();
 //
 // Everything below `install` is there for applications that own their own rendering:
-// `hdrVideoUrl` for one image, `avifToMp4` for the bytes alone, and `vp9FrameToMp4` for a
-// picture the page drew and encoded itself.
+// `hdrVideoUrl` for one image, `hdrMp4` for bytes already in hand, `avifToMp4` for the remux
+// alone, and `vp9FrameToMp4` for a picture the page drew and encoded itself.
 
 /** PQ and HLG, the two CICP transfer characteristics that mean an image is HDR. */
 const HDR_TRANSFERS = new Set([16, 18]);
@@ -416,7 +416,7 @@ const TIMESCALE = 1000;
 const DURATION = 1000;
 
 /** @param sampleAt absolute file offset of the sample */
-function moov(description: Uint8Array, still: Frame, sampleAt: number): Uint8Array {
+function moov(description: Uint8Array, frame: Frame, sampleAt: number): Uint8Array {
   const header = box(
     'mvhd',
     fullHeader(0, 0),
@@ -449,9 +449,9 @@ function moov(description: Uint8Array, still: Frame, sampleAt: number): Uint8Arr
       u16(0), // alternate group
       u16(0), // volume, silent this being video
       u16(0),
-      trackMatrix(still),
-      u32(still.width * 0x10000),
-      u32(still.height * 0x10000),
+      trackMatrix(frame),
+      u32(frame.width * 0x10000),
+      u32(frame.height * 0x10000),
     ),
     box(
       'mdia',
@@ -475,7 +475,7 @@ function moov(description: Uint8Array, still: Frame, sampleAt: number): Uint8Arr
           description,
           box('stts', fullHeader(0, 0), u32(1), u32(1), u32(DURATION)),
           box('stsc', fullHeader(0, 0), u32(1), u32(1), u32(1), u32(1)),
-          box('stsz', fullHeader(0, 0), u32(still.sample.length), u32(1)),
+          box('stsz', fullHeader(0, 0), u32(frame.sample.length), u32(1)),
           box('stco', fullHeader(0, 0), u32(1), u32(sampleAt)),
         ),
       ),
@@ -531,11 +531,11 @@ function orientationOfProperties(view: DataView, properties: Box[]): 0 | 90 | 18
   }
 }
 
-function trackMatrix(still: Frame): Uint8Array {
+function trackMatrix(frame: Frame): Uint8Array {
   const one = 0x00010000;
   const minusOne = 0xffff0000;
   const w = 0x40000000;
-  switch (still.orientation) {
+  switch (frame.orientation) {
     case 90:
       return concat([
         u32(0),
@@ -544,7 +544,7 @@ function trackMatrix(still: Frame): Uint8Array {
         u32(minusOne),
         u32(0),
         u32(0),
-        u32(still.height * one),
+        u32(frame.height * one),
         u32(0),
         u32(w),
       ]);
@@ -556,8 +556,8 @@ function trackMatrix(still: Frame): Uint8Array {
         u32(0),
         u32(minusOne),
         u32(0),
-        u32(still.width * one),
-        u32(still.height * one),
+        u32(frame.width * one),
+        u32(frame.height * one),
         u32(w),
       ]);
     case 270:
@@ -569,7 +569,7 @@ function trackMatrix(still: Frame): Uint8Array {
         u32(0),
         u32(0),
         u32(0),
-        u32(still.width * one),
+        u32(frame.width * one),
         u32(w),
       ]);
     default:

@@ -8,7 +8,7 @@ import {
   type EditDoc,
 } from '../../../../../src/schemas/photo_edits';
 import { videoSdrMatch } from '../../../gpu/readback_canvas';
-import { pq420FrameOf, vp9Encoder } from '../../../vp9/vp9_encoder';
+import { vp9Encoder } from '../../../vp9/vp9_encoder';
 import type { EditStore } from '../edit/edit_store';
 import type { WheelDrawn } from '../local_decode/local_open';
 import type { LocalSource } from '../local_decode/open_photo';
@@ -340,10 +340,9 @@ export class ColourWheelPresenter {
     await this.showVideo(video ?? null);
   }
 
-  /** The wheel's planes, where it is shown as video, encoded and put on screen. */
   private async showVideo(planes: Uint8Array<ArrayBuffer> | null): Promise<void> {
     if (planes == null) return;
-    const mp4 = await vp9Encoder.encode('wheel', pq420FrameOf(planes));
+    const mp4 = await vp9Encoder.encode('wheel', planes);
     if (!this.closed) this.setVideoFrame(mp4);
   }
 

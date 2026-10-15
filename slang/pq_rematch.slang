@@ -4,20 +4,20 @@
 // Sixteen-bit full-range codes, two to a word with the first in the low half: the RGB samples
 // libavif decoded the still to, rewritten in place before the copy is encoded. Each sample is
 // matched on its own, which is the channel-at-a-time curve SDR is read through.
+import lanes;
 import light;
 import prelude;
 import sdr_match;
 
 struct Params {
     uint words;
-    /// Words one row of the dispatch grid covers, so a frame past 65535 groups spills into `y`.
-    uint row;
+    uint unused0;
     float still_white;
     float white;
     uint reads_sdr_as_power;
-    uint unused0;
     uint unused1;
     uint unused2;
+    uint unused3;
 };
 
 [vk::binding(0, 0)] RWStructuredBuffer<uint> codes;
@@ -36,7 +36,7 @@ uint rematched(uint code)
 [numthreads(64, 1, 1)]
 void rematch_pq(uint3 id : SV_DispatchThreadID)
 {
-    let at = id.y * pc.row + id.x;
+    let at = linear(id);
     if (at >= pc.words) { return; }
     let word = codes[at];
     codes[at] = rematched(word & 0xffffu) | (rematched(word >> 16) << 16);

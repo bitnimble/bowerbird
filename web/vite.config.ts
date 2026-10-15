@@ -4,12 +4,9 @@ import { type ViteDevServer, defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin';
 import { SLANG, buildWebShaders } from '../scripts/build-web-shaders';
+import { viteAllowedHosts } from '../scripts/vite_allowed_hosts';
 import { PathSegment, route } from '../src/schemas/route';
 import { CROSS_ORIGIN_ISOLATION } from '../src/schemas/isolation';
-
-const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(',')
-  .map((h) => h.trim())
-  .filter((h) => h !== '');
 
 // The viewer's stage is Slang like every other shader, so it has to be compiled before anything
 // imports it. Here rather than in a package.json script because both `dev` and `build` start
@@ -90,11 +87,7 @@ export default defineConfig({
     // which is the collision this avoids.
     port: 20000 + Math.floor(Math.random() * 20000),
     host: true,
-    // Vite refuses any Host header that is not an IP or localhost, which is a
-    // DNS-rebinding guard that a reverse proxy forwarding a real hostname trips. Name
-    // the hosts, or `all` where the server is already reachable only from a network you
-    // trust.
-    allowedHosts: allowedHosts?.includes('all') ? true : allowedHosts,
+    allowedHosts: viteAllowedHosts(),
     // Everything the browser asks the API for goes through here: this server is
     // the only one exposed, and the API is internal. /quality-check is the API's
     // own diagnostic page, reachable the same way.

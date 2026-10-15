@@ -43,7 +43,6 @@ test('counts retained data without render, fetch, scan, or assembly staging file
   put('data/library/analysis/photo.bba', 20);
   put('data/library/drafts/layers/seams.bin', 30);
   put('data/library/renditions/full-hdr/photo.avif.abcdefgh.tmp', 10_000);
-  put('data/library/renditions/full-hdr/photo.avif.abcdefgh.fetching', 10_000);
   put('data/library/renditions/grid/photo.avif.descriptor', 10_000);
   put('data/library/drafts/.volume-abcdefgh.bin', 10_000);
   put('data/library/renditions/full-hdr/photo.avif.abcdefghijklmnop.tmp', 10_000);

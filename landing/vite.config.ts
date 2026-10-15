@@ -5,12 +5,9 @@ import react from '@vitejs/plugin-react';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
 import { defineConfig } from 'vite';
+import { viteAllowedHosts } from '../scripts/vite_allowed_hosts';
 
 const page = (name: string): string => fileURLToPath(new URL(name, import.meta.url));
-
-const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(',')
-  .map((h) => h.trim())
-  .filter((h) => h !== '');
 
 export default defineConfig({
   base: '/',
@@ -42,9 +39,7 @@ export default defineConfig({
     port: Number(process.env.LANDING_PORT ?? 5174),
     // An asked-for port that silently moves is worse than a failure.
     strictPort: true,
-    // As `web/vite.config.ts`: a reverse proxy forwarding a real hostname trips Vite's
-    // DNS-rebinding guard unless the host is named, or `all`.
-    allowedHosts: allowedHosts?.includes('all') ? true : allowedHosts,
+    allowedHosts: viteAllowedHosts(),
   },
   build: {
     rollupOptions: {

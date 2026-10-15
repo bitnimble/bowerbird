@@ -34,11 +34,11 @@ export const DetailFrame = observer(function DetailFrame({
   const device = useDeviceSettingsStore();
   const { photos } = usePresenters();
   const step = useStep();
-  // Which rendition this photograph is drawn from and the file that is, from the one call
-  // that pairs them - the same one every neighbour goes through below. Asked of the id in
-  // the route rather than read off `store.showing`, which answers for whatever `open` names:
-  // that lags the route by a render, so on the first render after a step it described the
-  // photograph just left, and this one was mounted at a rendition chosen for that one.
+  // Which rendition this photograph is drawn from, asked of the id in the route (`frameOf`, as
+  // every neighbour below) rather than read off `store.showing`, which answers for whatever
+  // `open` names: that lags the route by a render, so on the first render after a step it
+  // describes the photograph just left, and this one would mount at a rendition chosen for
+  // that one.
   const { rendition: showing } = store.frameOf(photoId);
 
   const proof =

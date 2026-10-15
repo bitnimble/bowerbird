@@ -2,9 +2,8 @@
 //!
 //! `slang/fit_objective.slang` is the arithmetic over pixels: the gate that makes a pair, the bins
 //! the curve is fitted from, and the residual the held-out half scores. What is left here is the
-//! batching - every candidate of a scan in one submit, as `fit_score::Scoring` does for the colour
-//! objective - and the curve between the two folds, which is 256 bins of arithmetic rather than a
-//! picture.
+//! batching: every candidate of a scan in one submit, as `fit_score::Scoring` does for the colour
+//! objective.
 
 /// Pixels one thread of the gate walks.
 ///
@@ -333,10 +332,9 @@ impl Paired {
 
     /// Each candidate's mean residual over the half its curve was not fitted from.
     ///
-    /// **Bins, curve and score in one submit**, which is the only shape that beats the host walk it
-    /// replaced. Split so the host could draw the curve in the middle, the refine's fifty
-    /// sequential steps paid three round trips each and the whole search came out half again
-    /// slower - `test:bench` said so, at `measure` +51%.
+    /// **Bins, curve and score in one submit.** Split so the host draws the curve in the middle,
+    /// the refine's fifty sequential steps pay three round trips each and the whole search comes
+    /// out half again slower (`test:bench`, `measure` +51%).
     ///
     /// Scaled into L*-sized units so `REFINE_MARGIN` and `REFINE_FLOOR` mean what they meant when
     /// this was scored in deltaE.

@@ -16,24 +16,28 @@ pub enum SdrMatch {
     MacVideo,
 }
 
+const NAMES: [(&str, SdrMatch); 2] = [
+    ("still", SdrMatch::Still),
+    ("mac-video", SdrMatch::MacVideo),
+];
+
 impl SdrMatch {
     /// The name the page and the server use, `schemas/sdr_match.ts`.
     pub fn named(name: &str) -> Option<SdrMatch> {
-        match name {
-            "still" => Some(SdrMatch::Still),
-            "mac-video" => Some(SdrMatch::MacVideo),
-            _ => None,
-        }
+        NAMES
+            .iter()
+            .find(|(named, _)| *named == name)
+            .map(|&(_, matching)| matching)
     }
 
-    pub fn white(self) -> Light<DisplayNits> {
+    fn white(self) -> Light<DisplayNits> {
         match self {
             SdrMatch::Still => Light::exactly(crate::gpu::CANVAS_WHITE_NITS),
             SdrMatch::MacVideo => Light::exactly(MAC_VIDEO_WHITE_NITS),
         }
     }
 
-    pub fn reads_sdr_as_power(self) -> bool {
+    fn reads_sdr_as_power(self) -> bool {
         self == SdrMatch::MacVideo
     }
 
@@ -53,5 +57,32 @@ impl SdrMatch {
             (self.white().raw() as f32).to_bits(),
             u32::from(self.reads_sdr_as_power()),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NAMES, SDR_READ_POWER};
+
+    #[test]
+    fn the_names_are_the_schemas() {
+        let quoted: Vec<String> = NAMES.iter().map(|(name, _)| format!("'{name}'")).collect();
+        let line = format!(
+            "export const SdrMatchSchema = z.enum([{}]);",
+            quoted.join(", ")
+        );
+        assert!(
+            include_str!("../../../src/schemas/sdr_match.ts").contains(&line),
+            "src/schemas/sdr_match.ts does not say `{line}`"
+        );
+    }
+
+    #[test]
+    fn the_read_power_is_the_shaders() {
+        let line = format!("static const float SDR_READ_POWER = {SDR_READ_POWER:?};");
+        assert!(
+            include_str!("../../../slang/sdr_match.slang").contains(&line),
+            "slang/sdr_match.slang does not say `{line}`"
+        );
     }
 }

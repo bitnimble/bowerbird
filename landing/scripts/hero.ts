@@ -6,10 +6,11 @@
 //
 // Run by the hero capture itself, under bun for the FFI. `ffmpeg` and `avifenc` are needed, as for
 // `scripts/demo-assets.ts`, and `bun run build:native` for the 10-bit copy.
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { exited, run } from '../../scripts/spawned';
 import { SDR_MATCHES, sdrMatchSuffix, type SdrMatch } from '../../src/schemas/sdr_match';
 import { SettingsSchema } from '../../src/schemas/settings';
 import { encoderQuality } from '../../src/services/processing/analysis/quality';
@@ -33,34 +34,7 @@ const PlacedSchema = z.object({
   scale: z.number(),
 });
 type Placed = z.infer<typeof PlacedSchema>;
-
-interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-function exited(child: ChildProcess, command: string): Promise<void> {
-  const err: Buffer[] = [];
-  child.stderr?.on('data', (chunk: Buffer) => err.push(chunk));
-  return new Promise((ok, fail) => {
-    child.on('error', fail);
-    child.on('close', (code) =>
-      code === 0
-        ? ok()
-        : fail(new Error(`${command} exited ${code}: ${Buffer.concat(err).toString()}`)),
-    );
-  });
-}
-
-function run(command: string, args: string[], stdin?: NodeJS.ReadableStream): Promise<void> {
-  const child = spawn(command, args, {
-    stdio: [stdin == null ? 'ignore' : 'pipe', 'ignore', 'pipe'],
-  });
-  stdin?.pipe(child.stdin!);
-  return exited(child, command);
-}
+type Rect = Placed['box'];
 
 function sizeOf(file: string): { width: number; height: number } {
   const probe = spawnSync(

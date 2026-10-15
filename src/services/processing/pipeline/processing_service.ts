@@ -6,7 +6,12 @@ import type { CompositeKind } from '../../../schemas/photos';
 import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
 import { isComposite } from '../../../schemas/recipes';
 import { deleteGeneratedFile } from '../../../utils/deletions';
-import { dataPathForLibraryId, renditionPathFor } from '../../../utils/paths';
+import {
+  dataPathForLibraryId,
+  renditionPathFor,
+  renditionVariantPath,
+  tenBitCopyPathsFor,
+} from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type {
@@ -20,15 +25,14 @@ import type {
   RenditionJob,
   RenditionSource,
 } from '../workers/processing_types';
-import type { ProcessingStage } from '../../../schemas/common';
+import { RENDITIONS, type ProcessingStage } from '../../../schemas/common';
 import type { Made } from '../renditions/renditions_repository';
 import {
   owedOf,
-  RENDITION_EXTENSION,
   renditionVariant,
   renditionVariants,
   sourceFor,
-  tenBitCopyDirs,
+  storedAsHdr,
 } from '../renditions/renditions';
 import { readStages, withStagesOff } from '../renditions/render_stages';
 import { ProcessingPool } from '../workers/processing_pool';
@@ -596,25 +600,14 @@ export class ProcessingService extends RenderService {
   /** Deletes every rendition of `photo` except the ones named in `keep`. */
   private sweepRenditions(photo: StagedPhoto, keep: Set<string>): void {
     for (const variant of renditionVariants()) {
-      const file = path.join(
-        photo.dataPath,
-        'renditions',
-        variant,
-        `${photo.photoId}${RENDITION_EXTENSION}`,
-      );
+      const file = renditionVariantPath(photo.dataPath, photo.photoId, variant);
       if (keep.has(file)) continue;
       this.photoProcessing.forgetBuilt(photo.photoId, [variant]);
       void deleteGeneratedFile(photo.dataPath, file).catch(() => {});
     }
-    for (const dir of tenBitCopyDirs()) {
-      const copy = path.join(
-        photo.dataPath,
-        'renditions',
-        dir,
-        `${photo.photoId}${RENDITION_EXTENSION}`,
-      );
-      void deleteGeneratedFile(photo.dataPath, copy).catch(() => {});
-    }
+    for (const rendition of RENDITIONS.filter((r) => storedAsHdr(r, true)))
+      for (const copy of tenBitCopyPathsFor(photo.dataPath, photo.photoId, rendition))
+        void deleteGeneratedFile(photo.dataPath, copy).catch(() => {});
   }
 
   // One photo's import, split into the two stages it is worth running separately.

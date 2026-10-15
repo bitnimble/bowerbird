@@ -7,6 +7,7 @@ import { ICON } from '../../../ui/icon';
 import { InlineIconButton } from '../../../ui/inline_icon_button';
 import { Text } from '../../../ui/text';
 import { color } from '../../../ui/tokens.stylex';
+import { ToastsStrings } from '../../toasts/toasts.strings';
 import { QualityNoticeStrings } from './quality_notice.strings';
 
 const styles = stylex.create({
@@ -44,7 +45,7 @@ export const QualityNotice = observer(function QualityNotice({
     <div {...stylex.props(styles.notice)} role="note">
       <Text tone="warning">{QualityNoticeStrings[where]()}</Text>
       <InlineIconButton
-        label={QualityNoticeStrings.dismiss()}
+        label={ToastsStrings.dismiss()}
         onClick={() => deviceSettings.closeQualityNotice(where)}
       >
         <X size={ICON} />

@@ -65,6 +65,10 @@ useEffect(() => {
 return src == null ? <img src={photo} /> : <video src={src} autoPlay loop muted playsInline />;
 ```
 
+### `hdrMp4(avif: Uint8Array): Uint8Array | null`
+
+Returns the MP4 twin of AVIF bytes you already have, or `null` where the file is not HDR.
+
 ### `avifToMp4(avif: Uint8Array): Uint8Array`
 
 The remux on its own, for bytes you already have. Works on any AVIF, HDR or not. Throws
@@ -88,6 +92,11 @@ one-sample MP4, for a frame you encoded yourself.
 ### `needsHdrVideo(): boolean`
 
 Uses user-agent sniffing: Gecko's incorrect PQ rendering succeeds, so feature detection cannot catch it.
+
+### `hdrVideoSdrMatch(): 'still' | 'mac-video'`
+
+Returns how this platform shows a PQ video's SDR range: `mac-video` on macOS, where SDR white
+sits at 100 nits and the SDR under it reads through a 2.2 power, and `still` elsewhere.
 
 ## Limits
 

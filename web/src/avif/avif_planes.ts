@@ -1,5 +1,6 @@
 import { avifPlanesUrl } from '../../../native/rawshim/pkg/avif_planes';
 import { Logger, pageLog } from '../features/logs/page_log';
+import type { ModuleStart } from '../wasi/thread_pool';
 
 /** `crate::planes::Layout`: where each plane is in the samples, in bytes. */
 export interface PlanesLayout {
@@ -41,9 +42,6 @@ export type DecodeAnswer =
 
 /** What the decoder's worker sends back: that a decode has begun, or how it ended. */
 export type DecodeReply = DecodeAnswer | { id: number; started: true };
-
-/** A decoder worker's first message: the module, compiled once for every worker the page starts. */
-export type DecoderStart = { module: WebAssembly.Module };
 
 const log = new Logger('avif_planes');
 
@@ -135,7 +133,7 @@ class AvifPlanes {
       if (this.worker === worker) this.worker = this.start();
     };
     this.module.then(
-      (module) => worker.postMessage({ module } satisfies DecoderStart),
+      (module) => worker.postMessage({ module } satisfies ModuleStart),
       (err: unknown) => {
         this.uncompiled = true;
         this.fail(

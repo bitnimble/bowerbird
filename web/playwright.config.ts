@@ -39,7 +39,7 @@ export default defineConfig({
       ],
     },
   },
-  // One engine for the app's behaviour, and a second for the two files whose risk is the
+  // One engine for the app's behaviour, and a second for the one file whose risk is the
   // engine itself. A whole suite in both would double the run for that much.
   //
   // `grid/bands` because aspect ratios against stretched grid rows and capped flex lines

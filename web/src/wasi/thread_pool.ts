@@ -17,6 +17,17 @@ export interface PoolStart {
   slot: number;
 }
 
+/** A threaded module's worker's first message: the module, compiled once on the page. */
+export type ModuleStart = { module: WebAssembly.Module };
+
+export interface ThreadedExports {
+  __wasi_init_tp(): void;
+  __wasm_call_ctors(): void;
+}
+
+/** The module's own `--max-memory` (`scripts/build-wasi-modules.ts`), in 64KiB pages. */
+const MAX_PAGES = 16384;
+
 /** How long a spawn waits for a thread that is still returning to free its slot. */
 const SPAWN_PATIENCE_MS = 1000;
 
@@ -29,7 +40,7 @@ const SPAWN_PATIENCE_MS = 1000;
  * instantiates the module once and then waits on its slot, and `spawn` writes the thread's id and
  * argument there and wakes it.
  */
-export class ThreadPool {
+class ThreadPool {
   private readonly control: Int32Array<SharedArrayBuffer>;
   private readonly nextId: number;
   private readonly finished: number;
@@ -88,6 +99,21 @@ export class ThreadPool {
       Atomics.wait(this.control, this.finished, seen, left);
     }
   };
+}
+
+export async function instantiateThreaded<E extends ThreadedExports>(
+  name: string,
+  module: WebAssembly.Module,
+  poolSize: number,
+): Promise<{ exports: E; memory: WebAssembly.Memory }> {
+  const memory = new WebAssembly.Memory({ initial: 256, maximum: MAX_PAGES, shared: true });
+  const pool = await ThreadPool.start(name, module, memory, poolSize);
+  const instance = await WebAssembly.instantiate(module, wasiImports(name, memory, pool.spawn));
+  const exports = instance.exports as unknown as E;
+  // What a reactor's `_initialize` would run, which these modules do not link.
+  exports.__wasi_init_tp();
+  exports.__wasm_call_ctors();
+  return { exports, memory };
 }
 
 /** A pool worker's loop, which never returns: the worker is that thread for its whole life. */

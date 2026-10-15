@@ -270,7 +270,7 @@ class Open {
         const editor = this.drawing();
         editor.drawWheel(ask.lightness, ask.selected ?? undefined);
         const edges = editor.wheelEdges(new Float64Array(ask.edgeAt), ask.displayPeak ?? undefined);
-        const video = await heldWheel(editor);
+        const video = await heldBytes(editor.heldWheel());
         return {
           value: {
             chroma: editor.wheelChroma(),
@@ -283,7 +283,7 @@ class Open {
       case 'shadeWheel': {
         const editor = this.drawing();
         editor.drawWheel(ask.lightness, ask.selected ?? undefined);
-        const video = await heldWheel(editor);
+        const video = await heldBytes(editor.heldWheel());
         return { value: video, transfer: video == null ? [] : [video.buffer] };
       }
       case 'wheelSwatches':
@@ -392,16 +392,10 @@ class Open {
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
         await finishDraw();
-        // wasm-bindgen copies a returned Vec out into a fresh ArrayBuffer; its d.ts just does not say so.
-        const stage = ask.drawStage
-          ? ((await editor.heldStage()) as Uint8Array<ArrayBuffer> | undefined)
-          : undefined;
-        const loupe =
-          ask.loupe != null
-            ? ((await editor.heldLoupe()) as Uint8Array<ArrayBuffer> | undefined)
-            : undefined;
+        const stage = ask.drawStage ? await heldBytes(editor.heldStage()) : null;
+        const loupe = ask.loupe != null ? await heldBytes(editor.heldLoupe()) : null;
         return {
-          value: { stage: stage ?? null, loupe: loupe ?? null },
+          value: { stage, loupe },
           transfer: [stage?.buffer, loupe?.buffer].filter((buffer) => buffer != null),
         };
       }
@@ -557,10 +551,11 @@ function pngOf(rgba: Uint8Array, side: number): Promise<Blob> {
   return canvas.convertToBlob();
 }
 
-/** The colour wheel as a video frame's planes, where it was attached as one; null where not. */
-async function heldWheel(editor: HeldRaw): Promise<Uint8Array<ArrayBuffer> | null> {
+async function heldBytes(
+  held: Promise<Uint8Array | undefined>,
+): Promise<Uint8Array<ArrayBuffer> | null> {
   // wasm-bindgen copies a returned Vec out into a fresh ArrayBuffer; its d.ts just does not say so.
-  return ((await editor.heldWheel()) as Uint8Array<ArrayBuffer> | undefined) ?? null;
+  return ((await held) as Uint8Array<ArrayBuffer> | undefined) ?? null;
 }
 
 type Network = Exclude<PrepareCrossing['denoiser'], 'galosh'>;

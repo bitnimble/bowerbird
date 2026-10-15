@@ -46,7 +46,7 @@ function probe(file: string): { pix_fmt: string; color_transfer: string } {
 }
 
 test('an HDR rendition is served as a 10-bit 4:2:0 PQ copy beside it', async () => {
-  const copy = await copies.pathFor(library(true), 'p1', 'full');
+  const copy = await copies.pathFor(library(true), 'p1', 'full', 'still');
   expect(copy).toBe(
     path.join(dataPathForLibraryId(LIB), 'renditions', 'full-hdr-10bit', 'p1.avif'),
   );
@@ -59,19 +59,19 @@ test("macOS's video copy is kept beside the still's", async () => {
     path.join(dataPathForLibraryId(LIB), 'renditions', 'full-hdr-10bit-mac-video', 'p1.avif'),
   );
   expect(probe(copy)).toEqual({ pix_fmt: 'yuv420p10le', color_transfer: 'smpte2084' });
-  const still = await copies.pathFor(library(true), 'p1', 'full');
+  const still = await copies.pathFor(library(true), 'p1', 'full', 'still');
   expect(readFileSync(copy).equals(readFileSync(still))).toBe(false);
 });
 
 test('the copy is kept until its still changes', async () => {
-  const copy = await copies.pathFor(library(true), 'p1', 'full');
+  const copy = await copies.pathFor(library(true), 'p1', 'full', 'still');
   const written = statSync(copy).ino;
-  await copies.pathFor(library(true), 'p1', 'full');
+  await copies.pathFor(library(true), 'p1', 'full', 'still');
   expect(statSync(copy).ino).toBe(written);
 
   const later = new Date(statSync(source).mtimeMs + 60_000);
   utimesSync(source, later, later);
-  await copies.pathFor(library(true), 'p1', 'full');
+  await copies.pathFor(library(true), 'p1', 'full', 'still');
   expect(statSync(copy).ino).not.toBe(written);
   expect(Math.abs(statSync(copy).mtimeMs - later.getTime())).toBeLessThan(1);
 });
@@ -80,21 +80,21 @@ test('two readers asking at once share one encode', async () => {
   const later = new Date(statSync(source).mtimeMs + 60_000);
   utimesSync(source, later, later);
   const [first, second] = await Promise.all([
-    copies.pathFor(library(true), 'p1', 'full'),
-    copies.pathFor(library(true), 'p1', 'full'),
+    copies.pathFor(library(true), 'p1', 'full', 'still'),
+    copies.pathFor(library(true), 'p1', 'full', 'still'),
   ]);
   expect(first).toBe(second);
   expect(readdirSync(path.dirname(first))).toEqual(['p1.avif']);
 });
 
 test('a rendition with no still is served as its own path, which 404s', async () => {
-  expect(await copies.pathFor(library(true), 'absent', 'full')).toBe(
+  expect(await copies.pathFor(library(true), 'absent', 'full', 'still')).toBe(
     renditionPathFor(dataPathForLibraryId(LIB), 'absent', 'full', true),
   );
 });
 
 test('an SDR rendition is served as itself', async () => {
-  expect(await copies.pathFor(library(false), 'p1', 'full')).toBe(
+  expect(await copies.pathFor(library(false), 'p1', 'full', 'still')).toBe(
     renditionPathFor(dataPathForLibraryId(LIB), 'p1', 'full', false),
   );
 });

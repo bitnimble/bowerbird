@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Logger } from '../../logger';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { deleteDraft, deleteGeneratedDirectory, deleteGeneratedFile } from '../../utils/deletions';
+import { STAGING_SUFFIX } from '../../utils/files';
 import { getDataPath } from '../../utils/paths';
 import {
   RENDITION_EXTENSION,
@@ -113,8 +114,9 @@ export class PruneService {
             const target = path.join(dir, file);
             try {
               const found = await stat(target);
-              // A copy still being encoded (`TenBitCopies`); a crash's is old enough to go.
-              if (file.endsWith('.tmp') && Date.now() - found.mtimeMs < STAGING_GRACE_MS) continue;
+              // Still being staged; a crash's is old enough to go.
+              const staging = file.endsWith(STAGING_SUFFIX);
+              if (staging && Date.now() - found.mtimeMs < STAGING_GRACE_MS) continue;
               bytes += found.size;
               await deleteGeneratedFile(dataPath, target);
               removed++;

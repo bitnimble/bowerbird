@@ -7,7 +7,11 @@ on:
   #     - "landing/**"
   #     # Everything the landing build reads out of web/.
   #     - "web/src/ui/**"
+  #     - "web/src/app/device.ts"
   #     - "web/src/app/global.css"
+  #     - "web/src/avif/**"
+  #     - "scripts/vite_allowed_hosts.ts"
+  #     - "src/schemas/**"
   #     - "web/public/hdr/**"
   #     - "web/package.json"
   #     - "web/bun.lock"

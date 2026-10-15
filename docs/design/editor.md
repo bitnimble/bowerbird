@@ -428,7 +428,7 @@ This cost a day to find, and every wrong turn on the way is instructive about ho
 
 **The swap is an opacity change on two mounted, decoded frames**, which is the stack triage flip (§20.4) and works for the same reason: `will-change: opacity` keeps the hidden one rasterised, so a press costs no repaint. Nothing on that subtree or above it may carry a filter, a transform or a partial opacity - any of those rasterises into an SDR intermediate and loses the PQ tagging silently (§10.7). That constraint is also why the reading column is left-aligned rather than centred, in passing: `.pad`'s first child reserves an inline gap for the collapsed sidebar's floating button, and a centred column would carry that indent on the heading and nowhere else.
 
-Each picture is an `HdrPicture`, so Firefox is shown a rewrap of each scene's committed `-hdr-10bit.avif`, or `-hdr-10bit-mac-video.avif` on macOS, and never fetches the still (§10.7.2). Three mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The swatch strip is rewrapped from its own file, which is 10-bit 4:2:0 already.
+Each picture is an `HdrPicture`, so Firefox is shown a rewrap of each scene's committed `-hdr-10bit.avif`, or `-hdr-10bit-mac-video.avif` on macOS, and never fetches the still (§10.7.2). Three mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The swatch strip is rewrapped from its own file, which is 10-bit 4:2:0 already, bar macOS's `swatches-mac-video.avif`.
 
 **Swatch strips are the page's only synthetic content.** They explain brightness above white before the photographs: five colours start at their 8-bit maximum and rise to their format's limit. Quantisation is lossless; flat colour has no detail to trade away.
 

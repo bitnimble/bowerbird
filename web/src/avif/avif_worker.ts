@@ -1,15 +1,8 @@
 // The AVIF decoder's own thread (`avif_planes.ts`): an instance of the module, its memory, and the
 // pool its threads run on.
 
-import type {
-  DecodeAnswer,
-  DecodeAsk,
-  DecodeReply,
-  DecoderStart,
-  PlanesLayout,
-} from './avif_planes';
-import { ThreadPool } from '../wasi/thread_pool';
-import { wasiImports } from '../wasi/wasi';
+import type { DecodeAnswer, DecodeAsk, DecodeReply, PlanesLayout } from './avif_planes';
+import { instantiateThreaded, type ModuleStart, type ThreadedExports } from '../wasi/thread_pool';
 import { pageLog } from '../features/logs/page_log';
 
 pageLog.follow('worker');
@@ -17,13 +10,9 @@ pageLog.follow('worker');
 const LOG_NAME = 'avif_planes';
 /** Past eight, a still decodes no faster and each thread holds its own buffers. */
 const MAX_THREADS = 8;
-/** The module's own `--max-memory`, in 64KiB pages. */
-const MAX_PAGES = 16384;
 const ANSWER_WORDS = 13;
 
-interface Exports {
-  __wasi_init_tp(): void;
-  __wasm_call_ctors(): void;
+interface Exports extends ThreadedExports {
   avif_planes_alloc(length: number): number;
   avif_planes_free(at: number, length: number): void;
   avif_planes_decode(file: number, length: number, threads: number, out: number): void;
@@ -39,16 +28,7 @@ class Decoder {
 
   static async open(module: WebAssembly.Module): Promise<Decoder> {
     const threads = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, MAX_THREADS));
-    const memory = new WebAssembly.Memory({ initial: 256, maximum: MAX_PAGES, shared: true });
-    const pool = await ThreadPool.start(LOG_NAME, module, memory, threads);
-    const instance = await WebAssembly.instantiate(
-      module,
-      wasiImports(LOG_NAME, memory, pool.spawn),
-    );
-    const exports = instance.exports as unknown as Exports;
-    // What a reactor's `_initialize` would run, which this module does not link.
-    exports.__wasi_init_tp();
-    exports.__wasm_call_ctors();
+    const { exports, memory } = await instantiateThreaded<Exports>(LOG_NAME, module, threads);
     return new Decoder(exports, memory, threads);
   }
 
@@ -97,13 +77,11 @@ type Queued = Extract<DecodeAsk, { file: Uint8Array }>;
 class Queue {
   private readonly queued: Queued[] = [];
   private running = false;
-  private open: (module: WebAssembly.Module) => void = () => {};
-  private readonly opened = new Promise<Decoder>((resolve, reject) => {
-    this.open = (module) => Decoder.open(module).then(resolve, reject);
-  });
+  private readonly started = Promise.withResolvers<WebAssembly.Module>();
+  private readonly opened = this.started.promise.then(Decoder.open);
 
-  start({ module }: DecoderStart): void {
-    this.open(module);
+  start({ module }: ModuleStart): void {
+    this.started.resolve(module);
   }
 
   take(ask: DecodeAsk): void {
@@ -158,7 +136,7 @@ class Queue {
 }
 
 const queue = new Queue();
-self.onmessage = (event: MessageEvent<DecodeAsk | DecoderStart>) => {
+self.onmessage = (event: MessageEvent<DecodeAsk | ModuleStart>) => {
   const message = event.data;
   if ('module' in message) queue.start(message);
   else queue.take(message);

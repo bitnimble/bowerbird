@@ -22,7 +22,7 @@ import {
   videoSdrMatch,
   transferredPeakNits,
 } from '../../../gpu/readback_canvas';
-import { pq420FrameOf, vp9Encoder } from '../../../vp9/vp9_encoder';
+import { vp9Encoder } from '../../../vp9/vp9_encoder';
 import type { Ticked } from '../local_decode/local_open';
 import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
@@ -237,8 +237,8 @@ export class RawEditPresenter {
    * glass is picked up. The stage outlives the photo: the open took the stage the last one drew
    * onto ({@link adoptsStage}), and the first tick sizes it.
    *
-   * A canvas the page draws itself (`drawsOnThePage`) stays on the page, and the worker holds a
-   * texture in its place.
+   * A canvas the page shows itself (`drawsOnThePage`, or as video where `videoSdrMatch` answers)
+   * stays on the page, and the worker holds a texture in its place.
    */
   private async handOver(canvas: HTMLCanvasElement, which: 'stage' | 'loupe'): Promise<void> {
     const local = this.local;
@@ -1166,7 +1166,7 @@ export class RawEditPresenter {
       const shown = this.surface.onPage[which];
       if (bytes == null || shown == null) continue;
       if (shown.video) {
-        const mp4 = await vp9Encoder.encode(which, pq420FrameOf(bytes));
+        const mp4 = await vp9Encoder.encode(which, bytes);
         if (this.closed) return;
         if (which === 'stage') this.showVideoFrame(mp4);
         else this.loupe.showVideoFrame(mp4);

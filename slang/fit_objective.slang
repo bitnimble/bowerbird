@@ -2,16 +2,11 @@
 //
 // A candidate is a warp and then this: gate every pixel of the grid into a pair, bin the camera's
 // luma by the render's level, and score the held-out half against the curve the other half fitted.
-// `fit::pairs` walked 273k pixels on the host for each of tens of candidates, and every one of
-// those candidates came back off the device as an 8-bit plane first.
 //
 // **Every sum here is an integer**, which is what lets the folds be plain atomics: a level is a
 // `u8`, a target is a `u8`, and a residual is the difference of two of them. Two runs agree to the
 // bit whatever order the lanes landed in - the ordered-partial machinery `fit_score` needs for its
 // f64 sums buys nothing here. `stacks.slang` records the same trade.
-//
-// The curve between the two folds stays on the host: 256 bins of gap-filling, extension and a
-// monotone pass, which is arithmetic over a curve rather than over a picture.
 import prelude;
 import px;
 import times;

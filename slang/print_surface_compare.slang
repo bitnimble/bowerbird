@@ -11,7 +11,7 @@ groupshared float4 worst[64];
 
 float3 nits(float3 coded)
 {
-    return sign(coded) * float3(srgb_eotf(abs(coded.r)), srgb_eotf(abs(coded.g)), srgb_eotf(abs(coded.b))) * 203.0;
+    return srgb_eotf_signed(coded) * 203.0;
 }
 
 [shader("compute")]

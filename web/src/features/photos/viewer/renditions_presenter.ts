@@ -78,10 +78,7 @@ export class RenditionsPresenter {
     this.viewer.buildStarted(photoId, rendition);
     try {
       await this.build(photoId, rendition, force);
-      // Only the detail says whether the built still is HDR, which is what turns on
-      // Firefox's video twin. Without this, Firefox keeps showing the dark still until
-      // the page is reloaded (§10.7.2). Only after a build, because only a build can
-      // change it.
+      // The detail is what says the built still is HDR (`showsHdr`); only a build changes it.
       await this.refreshDetail();
       return true;
     } catch (error) {
@@ -118,8 +115,7 @@ export class RenditionsPresenter {
     }
     // Any other photograph's is dropped rather than re-read: nothing is showing it, and a
     // library-wide rebuild would otherwise re-read every detail this session has opened. Kept,
-    // it describes the file that was just replaced - and `renditions[…].hdr` off a stale one
-    // is what decides Firefox's HDR rewrap, so the photo reopens dark (§10.7).
+    // it describes the file that was just replaced.
     this.viewer.dropDetail(photoId);
   }
 

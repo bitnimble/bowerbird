@@ -194,7 +194,7 @@ export class LocalDecoder {
     canvas: OffscreenCanvas | null,
     width: number,
     height: number,
-    video: SdrMatch | null = null,
+    video: SdrMatch | null,
   ): Promise<void> {
     return this.nothing(
       { kind: 'attach', which, canvas, width, height, video },
@@ -210,11 +210,7 @@ export class LocalDecoder {
    * The colour wheel's canvas, `side` square, transferred as `attach`'s are; or none, to show the
    * wheel as video coded to `video`, whose planes each draw hands back.
    */
-  attachWheel(
-    canvas: OffscreenCanvas | null,
-    side: number,
-    video: SdrMatch | null = null,
-  ): Promise<void> {
+  attachWheel(canvas: OffscreenCanvas | null, side: number, video: SdrMatch | null): Promise<void> {
     return this.nothing(
       { kind: 'attachWheel', canvas, side, video },
       canvas == null ? [] : [canvas],

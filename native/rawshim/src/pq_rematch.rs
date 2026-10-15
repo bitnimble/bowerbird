@@ -4,8 +4,6 @@ use crate::gpu::Gpu;
 use crate::sdr_match::SdrMatch;
 
 const SAMPLES_PER_WORD: usize = 2;
-const LANES: u32 = 64;
-const MOST_GROUPS: u32 = 65535;
 
 fn kernel(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
     static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
@@ -22,26 +20,19 @@ fn kernel(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
 
 /// `samples`, sixteen-bit full-range PQ codes of a still, as the codes `matching` shows it at.
 pub async fn rematched(gpu: &'static Gpu, samples: &[u16], matching: SdrMatch) -> Option<Vec<u16>> {
-    let mut packed = samples.to_vec();
-    packed.resize(
-        samples.len().div_ceil(SAMPLES_PER_WORD) * SAMPLES_PER_WORD,
-        0,
-    );
-    let words = (packed.len() / SAMPLES_PER_WORD) as u32;
-    let groups = words.div_ceil(LANES).max(1);
-    let across = groups.min(MOST_GROUPS);
-    let down = groups.div_ceil(across);
+    let words = samples.len().div_ceil(SAMPLES_PER_WORD) as u32;
+    let (across, down) = crate::base::groups(words as usize);
 
     let mut recording = gpu.record();
     let codes = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("pq rematch codes"),
-        contents: bytemuck::cast_slice(&packed),
+        contents: bytemuck::cast_slice(samples),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
     let [white, reads_sdr_as_power] = matching.words();
     let params: Vec<u8> = [
         words,
-        across * LANES,
+        0,
         (crate::gpu::CANVAS_WHITE_NITS as f32).to_bits(),
         white,
         reads_sdr_as_power,

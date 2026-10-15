@@ -14,6 +14,7 @@
 import stage_shared;
 import prelude;
 import primaries;
+import light;
 
 struct Size {
     uint width;
@@ -58,9 +59,9 @@ void pack(uint3 id : SV_DispatchThreadID)
 void pack_srgb8(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= size.width || id.y >= size.height) { return; }
-    let p3 = srgb_eotf_signed(drawn.Load(int3(int2(id.xy), 0)).rgb);
-    let linear = saturate(mul(R2020_TO_SRGB, mul(P3_TO_R2020, p3)));
-    let coded = uint3(round(float3(srgb_oetf(linear.r), srgb_oetf(linear.g), srgb_oetf(linear.b)) * 255.0));
+    let p3 = measured<P3Linear>(srgb_eotf_signed(drawn.Load(int3(int2(id.xy), 0)).rgb));
+    let linear = measured<SrgbLinear>(saturate(mul(R2020_TO_SRGB, mul(P3_TO_R2020, p3.v))));
+    let coded = uint3(round(float3(srgb_oetf(linear.v.r), srgb_oetf(linear.v.g), srgb_oetf(linear.v.b)) * 255.0));
     packed[id.y * size.width + id.x] = coded.r | (coded.g << 8) | (coded.b << 16) | (255u << 24);
 }
 
