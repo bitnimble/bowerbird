@@ -2,7 +2,7 @@ import { readdir, realpath, stat } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { RENDITION_EXTENSION } from '../services/processing/renditions/renditions';
-import { isDirInScope, type LibraryScope } from './scope';
+import { isDirInScope, isHiddenName, type LibraryScope } from './scope';
 
 // The scan filter, and the media type each format is served under. See DESIGN §7:
 // the decoder is chosen later by header sniff, so a format is added here and read
@@ -237,7 +237,7 @@ export async function scanLibraryTree(
           });
         else complete = false;
         if (!(await walk(abs))) complete = false;
-      } else if (isFile && importsFormat(scope, entry.name)) {
+      } else if (isFile && !isHiddenName(entry.name) && importsFormat(scope, entry.name)) {
         files.push({ relPath: rel, absPath: abs });
       }
     }

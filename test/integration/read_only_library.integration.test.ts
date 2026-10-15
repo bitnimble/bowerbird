@@ -18,6 +18,7 @@ import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { AlbumsService } from '../../src/services/albums/albums_service';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
+import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
 import type { PhotoReadService } from '../../src/services/photos/listing/photo_read_service';
 import { PhotoMutationService } from '../../src/services/photos/mutations/photo_mutation_service';
 import { SettingsRepository } from '../../src/services/settings/settings_repository';
@@ -101,8 +102,21 @@ beforeEach(async () => {
     { processUnprocessed() {} },
     extractMetadata,
   );
-  service = new PhotoMutationService(state, paths, libraries, {} as unknown as PhotoReadService);
-  shootsService = new ShootsService(shoots, paths, state, libraries, new FolderRulesRepository(db));
+  service = new PhotoMutationService(
+    state,
+    paths,
+    libraries,
+    {} as unknown as PhotoReadService,
+    UNRESTRICTED_WRITES,
+  );
+  shootsService = new ShootsService(
+    shoots,
+    paths,
+    state,
+    libraries,
+    new FolderRulesRepository(db),
+    UNRESTRICTED_WRITES,
+  );
   albumsService = new AlbumsService(albums, paths);
   stacksService = new StacksService(
     new StacksRepository(db),

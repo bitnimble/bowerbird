@@ -18,6 +18,7 @@ import { BlobLocations } from '../blob_locations';
 import { BackupLocations } from '../../backup/backup_locations';
 import type { PeerTransport } from '../peer';
 import { TransferService } from '../transfer_service';
+import { UNRESTRICTED_WRITES } from '../../libraries/write_grants';
 import { LibraryActivity } from '../../activity/library_activity';
 
 // Two real replicas in one process: real temp directories, real files, and the
@@ -94,6 +95,7 @@ export function makePeer(name: string): Peer {
     locations,
     new BackupLocations(db),
     transport,
+    UNRESTRICTED_WRITES,
     build,
     activity,
   );

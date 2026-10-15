@@ -13,6 +13,7 @@ import {
   LibrariesService,
 } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
+import { ShellWriteGrants, UNRESTRICTED_WRITES } from './services/libraries/write_grants';
 import { RenderTimingsFile } from './services/processing/renditions/render_timings_file';
 import { StorageUsageService } from './services/maintenance/storage_usage_service';
 import { PhotosApi } from './api/photos/photos_api';
@@ -168,6 +169,9 @@ const stacksRepo = new StacksRepository(db);
 const syncLocksRepo = new SyncLocksRepository(db);
 const photoEditsRepo = new PhotoEditsRepository(db);
 
+const writeGrants =
+  config.shellSocket == null ? UNRESTRICTED_WRITES : new ShellWriteGrants(config.shellSocket);
+
 // Moving the originals themselves (§7). The queue is durable, so a restart takes
 // up whatever a kill interrupted rather than losing it.
 const blobLocations = new BlobLocations(db, activity);
@@ -203,6 +207,7 @@ const transferService = new TransferService(
   blobLocations,
   backupLocations,
   peers,
+  writeGrants,
   buildArrived,
   activity,
 );
@@ -240,7 +245,12 @@ const eventsApi = new EventsApi(processingService);
 const replicationChanged = (libraryId: string): void =>
   eventsApi.announce('replication', { library_id: libraryId });
 
-const librariesService = new LibrariesService(librariesRepo, photoScanRepo, photoPathsRepo);
+const librariesService = new LibrariesService(
+  librariesRepo,
+  photoScanRepo,
+  photoPathsRepo,
+  writeGrants,
+);
 const renditionFetch = new RenditionFetchService(
   db,
   photoPathsRepo,
@@ -288,6 +298,7 @@ const photoMutationService = new PhotoMutationService(
   photoPathsRepo,
   librariesRepo,
   photoReadService,
+  writeGrants,
 );
 const albumsService = new AlbumsService(albumsRepo, photoPathsRepo);
 const labelsService = new LabelsService(labelsRepo, librariesRepo);
@@ -315,6 +326,7 @@ const shootsService = new ShootsService(
   photoStateRepo,
   librariesRepo,
   folderRulesRepo,
+  writeGrants,
 );
 const scanConcurrency = (): number => settingsRepo.get().scan_concurrency;
 const scanPool = new ScanPool(scanConcurrency);
@@ -364,6 +376,7 @@ const replicationRunner = new ReplicationRunner(
     transferService.kick();
     return queued;
   },
+  writeGrants,
   activity,
 );
 const replicationService = new ReplicationService(

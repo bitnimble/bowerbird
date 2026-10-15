@@ -211,8 +211,8 @@ export const SettingsStrings = {
   libraries: () => 'Libraries',
   noLibrariesYet: () => 'No libraries yet',
   noLibrariesHint: () => 'Add a folder of RAW files to start your library.',
-  /** The mobile app's, which can only sync a library from another device. */
-  noSyncedLibrariesHint: () => 'Connect to another Bowerbird to sync one of its libraries.',
+  /** The mobile app's, which has no folder to pick. */
+  noPhoneLibrariesHint: () => "Add your phone's photos, or sync a library from another device.",
   groupGeneral: () => 'General',
   groupAdvanced: () => 'Advanced',
   groupSystem: () => 'System',

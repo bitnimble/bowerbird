@@ -271,7 +271,8 @@ Android build) and Parcel's watcher (compiled from the installed package's sourc
 Android build is linked for 4 KB pages), both by `get:android-runtime`. Play refuses a library a
 16 KB page device cannot map, so every one links with `ANDROID_PAGE_SIZE_LINK_ARG` and
 `android-build.ts` fails a build whose APK or AAB holds one aligned to less. The Gradle project is patched to
-extract them on install and to allow cleartext to `127.0.0.1` alone (`android-build.ts`), and
+extract them on install, to allow cleartext to `127.0.0.1` alone, and to declare the photo
+permissions and carry `PhotosPlugin.kt` (`android-build.ts`), and
 `build-sidecar.ts` fails the build on any of them needing a library outside the NDK's stable set
 and what ships beside them: the codecs' libc++ is the NDK's static one, and Parcel's watcher
 wants the shared one, which ships as `libc++_shared.so`. The bundle and the page are only read,
@@ -279,13 +280,33 @@ so they travel as the app's assets and `android.rs` unpacks them into the data d
 build, keyed by the `payload-id` hash `build-sidecar.ts` writes beside them. The bundle loads each
 addon through a loader that opens it from `BOWERBIRD_ADDON_DIR`.
 
-**The mobile app holds synced libraries only.** Its server can read nothing in the phone's shared
-storage, so the app offers no local library to add, only a connection to another Bowerbird. The
-request names no folder and the server puts the library under `BOWERBIRD_LIBRARIES_DIR`, which
-the shell sets inside the app's own storage. It keeps no originals and sends or fetches none
-automatically. The page treats it as a thin shell (`isThinShell`):
-a library's path, folder rules, scanning, watching, stacks and backups are hidden, having nothing
-on this device to act on, and the server starts with watching and the daily scan off (`BOWERBIRD_DEFAULT_SETTINGS`).
+**The mobile app holds the phone's own photos and libraries synced from another Bowerbird.** It
+has no folder to pick (`isThinShell`), so it offers those two. **Add phone photos** asks Android to
+read images, and adds the camera folder, `DCIM`, with its non-RAW files as well as its RAWs. The
+permissions are `READ_MEDIA_IMAGES`, `READ_MEDIA_VISUAL_USER_SELECTED` (Android 14's partial access
+to selected photos), `ACCESS_MEDIA_LOCATION`, without which Android blanks the GPS block in every
+EXIF the server reads, and `MANAGE_MEDIA`; before Android 13, `READ_EXTERNAL_STORAGE`, and before
+11, `WRITE_EXTERNAL_STORAGE`.
+Play allows `READ_MEDIA_IMAGES` only for an app whose core use is managing the reader's photos, which
+Bowerbird is, declared in the Play Console. The server reads the photos by path, as on a desktop:
+Android's media filesystem opens a file for an app holding the permission. Its Bin is `DCIM/Bin` by
+default, because an app may create images only under the standard media folders, so other galleries
+show it as a folder.
+
+**Moving or binning a photo another app owns needs Android's permission first.** The camera owns the
+photos it took, and the media filesystem refuses an app's `rename` or `unlink` of one until a write
+request (`MediaStore.createWriteRequest`) grants it. The server asks for that grant before every
+move or deletion of an original (`write_grants.ts`), over the socket the shell names in
+`BOWERBIRD_SHELL_SOCKET`; the shell's `photos` plugin (`photos.rs`, `PhotosPlugin.kt`) makes the
+request and the server then moves the file itself, through the same Bin as everywhere else. With
+media management (`MANAGE_MEDIA`) allowed, Android grants the request without showing anything.
+Without it, each batch shows Android's own prompt.
+
+A synced library names no folder, and the server puts it under `BOWERBIRD_LIBRARIES_DIR`, which the
+shell sets inside the app's own storage. It keeps no originals and sends or fetches none
+automatically. The page treats it as a synced copy (`isSyncedCopy`): its path, folder rules,
+scanning, stacks and backups are hidden, having nothing on this device to act on. The server starts
+with the daily scan off (`BOWERBIRD_DEFAULT_SETTINGS`); watching is on, for the camera folder.
 
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system

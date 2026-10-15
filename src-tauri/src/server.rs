@@ -271,10 +271,15 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         .env("BOWERBIRD_LIBRARIES_DIR", data.join("libraries"))
         .env(
             "BOWERBIRD_DEFAULT_SETTINGS",
-            r#"{"disk_space_limit_gb":50,"watch_enabled":false,"full_sync_at":""}"#,
+            r#"{"disk_space_limit_gb":50,"watch_enabled":true,"full_sync_at":""}"#,
         );
     #[cfg(target_os = "android")]
-    crate::android::environment(&mut command, &data)?;
+    {
+        crate::android::environment(&mut command, &data)?;
+        let socket = data.join("shell.sock");
+        crate::photos::serve_write_grants(app, &socket)?;
+        command.env("BOWERBIRD_SHELL_SOCKET", socket);
+    }
     let child = command
         // Windows' sidecar is a compiled stub carrying our name and icon; without this it runs
         // the stub rather than the bundle (`build-sidecar.ts`).

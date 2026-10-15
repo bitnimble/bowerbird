@@ -13,6 +13,12 @@ import {
   unlinkMovedFile,
 } from '../deletions';
 import { contentHash } from '../hash';
+import type { WriteGrants } from '../../services/libraries/write_grants';
+
+/** A refused deletion must not ask the platform first, or the reader is prompted for nothing. */
+const NEVER_ASKED: WriteGrants = {
+  grant: () => Promise.reject(new Error('asked leave for a deletion it then refused')),
+};
 
 function withTmp(run: (root: string) => Promise<void> | void): () => Promise<void> {
   return async () => {
@@ -182,8 +188,12 @@ describe('deleteBackedUpOriginal', () => {
     withTmp(async (root) => {
       const { raw, copy } = await shaped(root, 'RAW', 'RAW');
 
-      await deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, await contentHash(copy));
+      const granted: string[] = [];
+      await deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, await contentHash(copy), {
+        grant: async (paths) => void granted.push(...paths),
+      });
 
+      expect(granted).toEqual([raw]);
       expect(existsSync(raw)).toBe(false);
       expect(existsSync(copy)).toBe(true);
     }),
@@ -197,7 +207,7 @@ describe('deleteBackedUpOriginal', () => {
       rmSync(copy);
 
       await expect(
-        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash),
+        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash, NEVER_ASKED),
       ).rejects.toMatchObject({ issueCode: 'backup_missing' });
       expect(existsSync(raw)).toBe(true);
     }),
@@ -211,7 +221,7 @@ describe('deleteBackedUpOriginal', () => {
       writeFileSync(copy, 'half a RAW');
 
       await expect(
-        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash),
+        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash, NEVER_ASKED),
       ).rejects.toMatchObject({ issueCode: 'backup_changed' });
       expect(existsSync(raw)).toBe(true);
     }),
@@ -226,7 +236,13 @@ describe('deleteBackedUpOriginal', () => {
       const { raw, copy } = await shaped(root, 'RAW two', 'RAW');
 
       await expect(
-        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, await contentHash(copy)),
+        deleteBackedUpOriginal(
+          path.join(root, 'library'),
+          raw,
+          copy,
+          await contentHash(copy),
+          NEVER_ASKED,
+        ),
       ).rejects.toMatchObject({ issueCode: 'local_changed' });
       expect(existsSync(raw)).toBe(true);
     }),
@@ -238,7 +254,13 @@ describe('deleteBackedUpOriginal', () => {
       const { raw, copy } = await shaped(root, 'RAW', 'RAW');
 
       await expect(
-        deleteBackedUpOriginal(path.join(root, 'elsewhere'), raw, copy, await contentHash(copy)),
+        deleteBackedUpOriginal(
+          path.join(root, 'elsewhere'),
+          raw,
+          copy,
+          await contentHash(copy),
+          NEVER_ASKED,
+        ),
       ).rejects.toThrow(/outside the library root/);
       expect(existsSync(raw)).toBe(true);
     }),

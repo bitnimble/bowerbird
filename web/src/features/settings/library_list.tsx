@@ -16,9 +16,10 @@ import { type Library } from '../../../../src/schemas/libraries';
 import type { Activity } from '../../../../src/schemas/activity';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { canRevealFile } from '../../api/transport';
-import { isThinShell } from '../../app/thin_shell';
+import { isSyncedCopy } from '../../app/thin_shell';
 import {
   useBackupStore,
+  useDevicePhotosStore,
   useLibrariesStore,
   usePresenters,
   useReplicationStore,
@@ -147,7 +148,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
     });
     if (confirmed) void libraries.remove(library.id);
   };
-  const thin = isThinShell();
+  const thin = isSyncedCopy(library, useDevicePhotosStore());
   const navigate = useNavigate();
   const params = useParams();
   const settingsOpen = params.libraryId === library.id;
@@ -674,7 +675,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
   const backingUp =
     activity.some((work) => work.kind === 'backing_up' || work.kind === 'restoring_backup') ||
     backupStore.busy(library.id);
-  const thin = isThinShell();
+  const thin = isSyncedCopy(library, useDevicePhotosStore());
 
   return (
     <details>

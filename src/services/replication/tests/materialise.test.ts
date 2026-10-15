@@ -6,6 +6,7 @@ import path from 'node:path';
 import { runMigrations } from '../../../db/migrate';
 import { BlobLocations } from '../../blobs/blob_locations';
 import { LibrariesRepository } from '../../libraries/libraries_repository';
+import { UNRESTRICTED_WRITES } from '../../libraries/write_grants';
 import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import { PhotoScanRepository } from '../../photos/scan/photo_scan_repository';
@@ -114,7 +115,7 @@ function addPhoto(peer: Peer, id: string, relPath: string, onDisk: boolean): voi
 function drain(peer: Peer): Promise<number> {
   const library = peer.libraries.getById(LIB);
   if (library == null) throw new Error('library not found');
-  return drainMaterialisations(peer.db, library, new BlobLocations(peer.db));
+  return drainMaterialisations(peer.db, library, new BlobLocations(peer.db), UNRESTRICTED_WRITES);
 }
 
 describe('a merged move', () => {
@@ -136,6 +137,33 @@ describe('a merged move', () => {
     expect(existsSync(path.join(b.root, 'Day2/one.arw'))).toBe(true);
     expect(existsSync(path.join(b.root, 'Day1/one.arw'))).toBe(false);
     expect(pendingMaterialisations(b.db, LIB)).toBe(0);
+  });
+
+  it('asks leave for the file it moves, and keeps the move queued when refused', async () => {
+    const a = makePeer('a');
+    const b = makePeer('b');
+    addPhoto(a, 'photo1', 'Day1/one.arw', false);
+    addPhoto(b, 'photo1', 'Day1/one.arw', true);
+    a.advance();
+    a.photoPaths.setFilePath('photo1', 'Day2/one.arw');
+    pull(b.replica, a.replica);
+    const library = b.libraries.getById(LIB)!;
+    const asked: string[][] = [];
+
+    const refused = await drainMaterialisations(b.db, library, new BlobLocations(b.db), {
+      grant: (paths) => {
+        asked.push([...paths]);
+        return Promise.reject(new Error('declined'));
+      },
+    });
+
+    expect(refused).toBe(0);
+    expect(asked).toEqual([[path.join(b.root, 'Day1/one.arw')]]);
+    expect(existsSync(path.join(b.root, 'Day1/one.arw'))).toBe(true);
+    expect(pendingMaterialisations(b.db, LIB)).toBe(1);
+
+    expect(await drain(b)).toBe(1);
+    expect(existsSync(path.join(b.root, 'Day2/one.arw'))).toBe(true);
   });
 
   it('is nothing to do on a peer that does not hold the original', async () => {

@@ -9,6 +9,7 @@ import { StackMembership } from '../../stacks/stack_membership';
 import { SyncLocksRepository } from '../../sync/coordination/sync_locks_repository';
 import { registerPeer } from '../pairing';
 import { ReplicationRunner } from '../replication_runner';
+import { UNRESTRICTED_WRITES } from '../../libraries/write_grants';
 import { replicate } from '../session';
 import { peerId, stamp } from '../stamps';
 import { LIB, makePeer, type Peer } from './peers';
@@ -25,6 +26,7 @@ function runnerFor(peer: Peer, activity = new LibraryActivity()): ReplicationRun
     () => {},
     () => {},
     () => Promise.resolve(0),
+    UNRESTRICTED_WRITES,
     activity,
   );
 }

@@ -193,9 +193,11 @@ export const App = observer(function App(): JSX.Element {
   const [dragging, setDragging] = useState(false);
   const shell = useRef<HTMLDivElement>(null);
   const { pathname } = useLocation();
-  const { appSettings, sidebar: sidebarPresenter, precompile } = usePresenters();
+  const { appSettings, sidebar: sidebarPresenter, precompile, devicePhotos } = usePresenters();
   const { ready: precompiled } = usePrecompileStore();
   useEffect(precompile.start, [precompile]);
+  // Before the routes split, because the welcome wizard offers the phone's photos too.
+  useEffect(() => devicePhotos.follow(), [devicePhotos]);
 
   // The sidebar decides what to do on the first photo opened, so the settings cannot
   // wait for the page that reads the rest of them.

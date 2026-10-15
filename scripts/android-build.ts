@@ -45,6 +45,16 @@ function run(
   if (done.status !== 0) process.exit(done.status ?? 1);
 }
 
+const MEDIA_PERMISSIONS = [
+  '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
+  '<uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />',
+  '<uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />',
+  // A special app access the reader turns on in system settings, which lint takes for a system app's.
+  '<uses-permission android:name="android.permission.MANAGE_MEDIA" tools:ignore="ProtectedPermissions" />',
+  '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+  '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
+];
+
 ensureIcons();
 
 // The Gradle project, on the same terms as the icons: it bakes in this machine's SDK paths, so it
@@ -128,14 +138,28 @@ function patchProject(app: string): void {
     ].join('\n'),
   );
   const manifestPath = join(app, 'src', 'main', 'AndroidManifest.xml');
-  const manifest = readFileSync(manifestPath, 'utf8');
-  const named = 'android:networkSecurityConfig="@xml/network_security_config"';
-  if (!manifest.includes(named)) {
-    if (!manifest.includes('<application')) {
-      throw new Error(`${manifestPath} has no \`<application>\` to patch`);
-    }
-    writeFileSync(manifestPath, manifest.replace('<application', `<application\n        ${named}`));
+  let manifest = readFileSync(manifestPath, 'utf8');
+  const root = '<manifest xmlns:android="http://schemas.android.com/apk/res/android"';
+  if (!manifest.includes('<application') || !manifest.includes(root)) {
+    throw new Error(`${manifestPath} has no \`<manifest>\` and \`<application>\` to patch`);
   }
+  const tools = 'xmlns:tools="http://schemas.android.com/tools"';
+  if (!manifest.includes(tools)) manifest = manifest.replace(root, `${root}\n    ${tools}`);
+  for (const attribute of [
+    'android:networkSecurityConfig="@xml/network_security_config"',
+    // Android 10 opens shared storage by path only with the legacy flag (`PhotosPlugin.kt`).
+    'android:requestLegacyExternalStorage="true"',
+  ]) {
+    if (!manifest.includes(attribute)) {
+      manifest = manifest.replace('<application', `<application\n        ${attribute}`);
+    }
+  }
+  for (const permission of MEDIA_PERMISSIONS) {
+    if (!manifest.includes(permission)) {
+      manifest = manifest.replace('<application', `${permission}\n    <application`);
+    }
+  }
+  writeFileSync(manifestPath, manifest);
 
   // Edge to edge, as Tauri's template asks for, draws the page under the status and navigation
   // bars, and the WebView reports none of them to CSS; so the page is inset natively instead.
@@ -187,9 +211,19 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     webView.settings.useWideViewPort = true
   }
+
+  // Backgrounded, not finished: Tauri's result launchers stay bound to the first activity, so
+  // after a finish \`PhotosPlugin.kt\`'s prompts never answer.
+  @Suppress("OVERRIDE_DEPRECATION")
+  override fun onBackPressed() {
+    moveTaskToBack(true)
+  }
 }
 `,
   );
+
+  const plugin = readFileSync(join(repoRoot, 'src-tauri', 'android', 'PhotosPlugin.kt'), 'utf8');
+  writeFileSync(join(dirname(activity), 'PhotosPlugin.kt'), plugin.replace(/^package .+$/m, pkg));
 }
 
 function findFile(dir: string, name: string): string | null {

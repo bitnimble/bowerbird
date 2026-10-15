@@ -15,6 +15,7 @@ import { RenditionsRepository } from '../../../services/processing/renditions/re
 import { StackMembership } from '../../../services/stacks/stack_membership';
 import { addReplica } from '../../../services/replication/remote';
 import { ReplicationRunner } from '../../../services/replication/replication_runner';
+import { UNRESTRICTED_WRITES } from '../../../services/libraries/write_grants';
 import { ReplicationService } from '../../../services/replication/replication_service';
 import { SyncLocksRepository } from '../../../services/sync/coordination/sync_locks_repository';
 import type { Replica } from '../../../services/replication/session';
@@ -57,6 +58,7 @@ export function runnerFor(db: Database): ReplicationRunner {
     () => {},
     () => {},
     () => Promise.resolve(0),
+    UNRESTRICTED_WRITES,
   );
 }
 

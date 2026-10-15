@@ -19,6 +19,7 @@ import {
 import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_repository';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ShootsService } from '../../src/services/shoots/shoots_service';
+import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 
@@ -57,6 +58,7 @@ function shootsService(folderRules: FolderRulesRepository): ShootsService {
     photoState(db),
     new LibrariesRepository(db),
     folderRules,
+    UNRESTRICTED_WRITES,
   );
 }
 
@@ -363,6 +365,7 @@ test('follows a renamed folder that holds no photos', async () => {
     photoState(db),
     new LibrariesRepository(db),
     rules,
+    UNRESTRICTED_WRITES,
   );
   const { id } = await shootsService.create({
     library_id: LIB,

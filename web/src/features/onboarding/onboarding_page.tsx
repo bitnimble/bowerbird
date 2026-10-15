@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderPlus, Link2 } from 'lucide-react';
 import { route } from '../../../../src/schemas/route';
-import { useLibrariesStore, usePresenters } from '../../app/stores_context';
-import { isThinShell } from '../../app/thin_shell';
+import { useDevicePhotosStore, useLibrariesStore, usePresenters } from '../../app/stores_context';
+import { isSyncedCopy, isThinShell } from '../../app/thin_shell';
+import { DevicePhotosActions } from '../device_photos/device_photos_actions';
 import { Button } from '../../ui/button';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
@@ -102,13 +103,14 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
   const [joining, setJoining] = useState(false);
   const none = store.libraries.length === 0;
   const thin = isThinShell();
+  const devicePhotos = useDevicePhotosStore();
 
   return (
     <div {...stylex.props(styles.section)}>
       <Heading>{OnboardingStrings.welcome()}</Heading>
       {none ? (
         <Text variant="muted" as="p">
-          {thin ? SettingsStrings.noSyncedLibrariesHint() : SettingsStrings.noLibrariesHint()}
+          {thin ? SettingsStrings.noPhoneLibrariesHint() : SettingsStrings.noLibrariesHint()}
         </Text>
       ) : (
         <List label={SettingsStrings.libraries()}>
@@ -116,7 +118,7 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
             <ListRow key={library.id}>
               <ListBody>
                 <ListName>{libraryLabel(library)}</ListName>
-                {!thin && <ListMeta>{library.root_path}</ListMeta>}
+                {!isSyncedCopy(library, devicePhotos) && <ListMeta>{library.root_path}</ListMeta>}
               </ListBody>
             </ListRow>
           ))}
@@ -129,7 +131,11 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
             {AddLibraryStrings.title()}
           </Button>
         )}
-        <Button variant={thin && none ? 'primary' : 'default'} onClick={() => setJoining(true)}>
+        <DevicePhotosActions primary={none} />
+        <Button
+          variant={thin && none && !devicePhotos.canAddLibrary ? 'primary' : 'default'}
+          onClick={() => setJoining(true)}
+        >
           <Link2 size={ICON} />
           {AddReplicaStrings.title()}
         </Button>

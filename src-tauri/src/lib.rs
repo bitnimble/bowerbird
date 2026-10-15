@@ -14,6 +14,7 @@ mod display;
 mod export;
 mod export_paths;
 mod open_with;
+mod photos;
 mod reveal;
 /// The Bowerbird server this app carries, so the library is local and works offline.
 mod server;
@@ -56,15 +57,19 @@ pub fn run() {
             export::pick_export_folder,
             export::export_to_folder,
             open_with::open_original_with,
+            photos::photo_access,
+            photos::ask_photo_access,
             reveal::open_folder,
             reveal::reveal_file,
             reveal::reveal_original,
             server::app_data_dir,
             server::open_app_data_dir
         ]);
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(photos::plugin());
     // The server outlives the window otherwise, holding the catalogue against the next start and
-    // leaving a process nobody can see. Not on Android, where a back press destroys the window and
-    // the same process brings it back wanting its server; the platform ends the server with the
+    // leaving a process nobody can see. Not on Android, where the system can destroy the window and
+    // bring it back in the same process wanting its server; the platform ends the server with the
     // app's process group.
     #[cfg(desktop)]
     let builder = builder.on_window_event(|window, event| {

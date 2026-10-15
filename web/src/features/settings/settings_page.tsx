@@ -16,12 +16,14 @@ import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas
 import { appDataDir, openAppDataDir, shellInvoke } from '../../api/transport';
 import {
   useAppSettingsStore,
+  useDevicePhotosStore,
   useDeviceSettingsStore,
   useLibrariesStore,
   usePresenters,
   useReplicationStore,
   useUpdatesStore,
 } from '../../app/stores_context';
+import { DevicePhotosActions } from '../device_photos/device_photos_actions';
 import type { ScreenStore } from '../../app/screen_store';
 import { isThinShell } from '../../app/thin_shell';
 import { DiagnosticsDialog } from '../feedback/diagnostics_dialog';
@@ -743,6 +745,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const navigate = useNavigate();
   const tab = tabFromPath(useParams().tab);
   const thin = isThinShell();
+  const devicePhotos = useDevicePhotosStore();
 
   useEffect(() => {
     void libraries.load();
@@ -776,7 +779,11 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
 
           <PageHead>
             <Spacer />
-            <Button variant={thin ? 'primary' : 'default'} onClick={() => setJoining(true)}>
+            <DevicePhotosActions primary />
+            <Button
+              variant={thin && !devicePhotos.canAddLibrary ? 'primary' : 'default'}
+              onClick={() => setJoining(true)}
+            >
               <Link2 size={ICON} />
               {AddReplicaStrings.title()}
             </Button>
@@ -793,7 +800,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
           {store.isEmpty && (
             <EmptyState title={SettingsStrings.noLibrariesYet()}>
               <Text as="p" variant="muted">
-                {thin ? SettingsStrings.noSyncedLibrariesHint() : SettingsStrings.noLibrariesHint()}
+                {thin ? SettingsStrings.noPhoneLibrariesHint() : SettingsStrings.noLibrariesHint()}
               </Text>
             </EmptyState>
           )}

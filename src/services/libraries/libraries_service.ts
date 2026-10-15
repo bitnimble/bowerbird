@@ -1,5 +1,5 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
-import { rename } from 'node:fs/promises';
+import { readdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { config } from '../../config';
@@ -21,6 +21,7 @@ import type { PhotoScanRepository } from '../photos/scan/photo_scan_repository';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import { ensureBinFolder } from './bin_folder';
 import type { LibrariesRepository } from './libraries_repository';
+import type { WriteGrants } from './write_grants';
 
 const log = new Logger('libraries');
 
@@ -85,6 +86,7 @@ export class LibrariesService {
     private readonly repo: LibrariesRepository,
     private readonly photoScan: PhotoScanRepository,
     private readonly photoPaths: PhotoPathsRepository,
+    private readonly writes: WriteGrants,
   ) {}
 
   addLifecycleListener(listener: LibraryLifecycleListener): void {
@@ -422,6 +424,12 @@ export class LibrariesService {
       // disk at the new name with stale columns, which is exactly what §9.1.1
       // follows; committing first would leave the mirror image, and §9.1.1 would
       // follow the *old* folder and revert the name just set.
+      const binned = await readdir(from, { recursive: true, withFileTypes: true }).catch(() => []);
+      await this.writes.grant(
+        binned
+          .filter((entry) => entry.isFile())
+          .map((entry) => path.join(entry.parentPath, entry.name)),
+      );
       try {
         // Same parent directory, so EXDEV is impossible and no copy fallback is
         // needed - this is not `moveIntoDir`, which exists to suffix colliding files.

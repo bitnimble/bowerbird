@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibrariesService } from '../../src/services/libraries/libraries_service';
+import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
 import type { PhotoMetadataRepository } from '../../src/services/photos/metadata/photo_metadata_repository';
 import type { PhotoPathsRepository } from '../../src/services/photos/paths/photo_paths_repository';
 import type { PhotoScanRepository } from '../../src/services/photos/scan/photo_scan_repository';
@@ -150,7 +151,7 @@ test('prune is a no-op when nothing is orphaned', async () => {
 });
 
 test('removing a library takes its data directory but not the photographs', async () => {
-  const service = new LibrariesService(libraries, scan, paths);
+  const service = new LibrariesService(libraries, scan, paths, UNRESTRICTED_WRITES);
   seedFile('renditions/grid', `${LIVE}.avif`);
   const rawPhoto = path.join(root, 'DSC00001.ARW');
   writeFileSync(rawPhoto, 'raw');
@@ -169,7 +170,7 @@ test('removing a library takes its data directory but not the photographs', asyn
 test('a data directory holding an original is left alone', async () => {
   const stray = seedFile('renditions/grid', 'DSC00001.ARW');
 
-  await new LibrariesService(libraries, scan, paths).delete(LIB);
+  await new LibrariesService(libraries, scan, paths, UNRESTRICTED_WRITES).delete(LIB);
 
   expect(existsSync(stray)).toBe(true);
 });

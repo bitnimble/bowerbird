@@ -11,6 +11,7 @@ import { RenditionsRepository } from '../../processing/renditions/renditions_rep
 import { stagePath, stagedSize, stagingDir } from '../blob_store';
 import { BackupLocations } from '../../backup/backup_locations';
 import { TransferService } from '../transfer_service';
+import { UNRESTRICTED_WRITES } from '../../libraries/write_grants';
 import { queueMaterialisation } from '../../replication/materialise';
 import {
   addPhoto,
@@ -566,6 +567,7 @@ describe('queue durability', () => {
         request: (peer: string, reqPath: string, init?: RequestInit) =>
           Promise.resolve(net.get(peer)!.request(reqPath, init)),
       },
+      UNRESTRICTED_WRITES,
     );
     expect(restarted.get(item.id).state).toBe('queued');
     await restarted.drain();

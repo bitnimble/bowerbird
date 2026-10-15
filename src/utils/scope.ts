@@ -32,10 +32,10 @@ export function libraryScope(
   };
 }
 
-// Hidden dirs (leading '.') at any depth: configuration and caches rather than
+// Hidden names (leading '.') at any depth: configuration and caches rather than
 // photographs, including a legacy `<root>/.bowerbird` from before generated files
-// left the library root. See DESIGN §6.
-function isHidden(name: string): boolean {
+// left the library root (DESIGN §6).
+export function isHiddenName(name: string): boolean {
   return name.startsWith('.');
 }
 
@@ -48,7 +48,7 @@ function isHidden(name: string): boolean {
 export function isPathAllowed(scope: LibraryScope, relPath: string): boolean {
   if (relPath === '') return true;
   const segments = relPath.split('/');
-  if (segments.some(isHidden)) return false;
+  if (segments.some(isHiddenName)) return false;
   // The library's one bin, and everything it holds. Anchored at the root rather
   // than matched at every depth because that is the only place a bin is ever made
   // (§12.3): a folder of the user's own called `Bin` further down is theirs, and
@@ -77,5 +77,6 @@ export function isDirInScope(scope: LibraryScope, relDir: string): boolean {
 /** Location only: whether the *format* is one this library takes is `importsFormat` (§7). */
 export function isFileInScope(scope: LibraryScope, relPath: string): boolean {
   const slash = relPath.lastIndexOf('/');
+  if (isHiddenName(relPath.slice(slash + 1))) return false;
   return isDirInScope(scope, slash < 0 ? '' : relPath.slice(0, slash));
 }

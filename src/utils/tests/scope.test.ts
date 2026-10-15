@@ -113,6 +113,13 @@ describe('isFileInScope', () => {
     expect(isFileInScope(s, 'Bin/Trip/a.arw')).toBe(false);
   });
 
+  it('drops hidden files wherever they sit', () => {
+    const s = scope();
+    expect(isFileInScope(s, '.trashed-1760000000-PXL_1.jpg')).toBe(false);
+    expect(isFileInScope(s, 'Camera/.pending-1760000000-PXL_2.jpg')).toBe(false);
+    expect(isFileInScope(s, 'Camera/PXL_3.jpg')).toBe(true);
+  });
+
   // A root-only library still has its own root.
   it('keeps root files when subfolders are off, and drops the rest', () => {
     const s = scope({ includeSubfolders: false });
