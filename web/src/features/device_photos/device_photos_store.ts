@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import type { Library } from '../../../../src/schemas/libraries';
+import type { CreateLibraryRequest, Library } from '../../../../src/schemas/libraries';
 import type { PhotoAccess } from '../../api/transport';
 import type { LibrariesStore } from '../libraries/libraries_store';
 
@@ -12,6 +12,9 @@ export class DevicePhotosStore {
   @observable accessor asking = false;
   /** The reader was asked for access and allowed none. */
   @observable accessor refused = false;
+  @observable accessor adding = false;
+  /** Kept after the dialog closes, so it does not lose its folder while closing. */
+  @observable.ref accessor newLibrary: CreateLibraryRequest | null = null;
 
   constructor(private readonly libraries: LibrariesStore) {}
 

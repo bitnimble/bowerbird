@@ -80,6 +80,8 @@ describe('LibrariesService.create', () => {
         include_subfolders: true,
         include_non_raw: false,
         rendition_source: 'render',
+        render_skip_full: [],
+        render_skip_max: [],
         auto_stack: true,
         denoiser: 'galosh',
       }),
@@ -99,6 +101,8 @@ describe('LibrariesService.create', () => {
           include_subfolders: true,
           include_non_raw: false,
           rendition_source: 'render',
+          render_skip_full: [],
+          render_skip_max: [],
           auto_stack: true,
           denoiser: 'galosh',
         }),
@@ -126,6 +130,8 @@ describe('LibrariesService.create', () => {
           include_subfolders: true,
           include_non_raw: false,
           rendition_source: 'render',
+          render_skip_full: [],
+          render_skip_max: [],
           auto_stack: true,
           denoiser: 'galosh',
         }),
@@ -155,6 +161,8 @@ describe('LibrariesService.create', () => {
           include_subfolders: true,
           include_non_raw: false,
           rendition_source: 'render',
+          render_skip_full: [],
+          render_skip_max: [],
           auto_stack: true,
           denoiser: 'galosh',
         }),
@@ -177,6 +185,8 @@ describe('LibrariesService.create', () => {
         include_subfolders: true,
         include_non_raw: false,
         rendition_source: 'render',
+        render_skip_full: [],
+        render_skip_max: [],
         auto_stack: true,
         denoiser: 'galosh',
       });
@@ -201,6 +211,8 @@ describe('LibrariesService.create', () => {
         include_subfolders: true,
         include_non_raw: false,
         rendition_source: 'render',
+        render_skip_full: [],
+        render_skip_max: [],
         auto_stack: true,
         denoiser: 'galosh',
       });
@@ -246,15 +258,21 @@ describe('LibrariesService.create', () => {
         include_subfolders: true,
         include_non_raw: false,
         rendition_source: 'embedded',
+        render_skip_full: ['dust'],
+        render_skip_max: ['dust', 'sharpen'],
         auto_stack: false,
         denoiser: 'pmrid',
       });
       expect(library.rendition_source).toBe('embedded');
+      expect(library.render_skip_full).toEqual(['dust']);
+      expect(library.render_skip_max).toEqual(['dust', 'sharpen']);
       expect(library.auto_stack).toBe(false);
       expect(library.denoiser).toBe('pmrid');
       expect(insert).toHaveBeenCalledWith(
         expect.objectContaining({
           rendition_source: 'embedded',
+          render_skip_full: ['dust'],
+          render_skip_max: ['dust', 'sharpen'],
           auto_stack: false,
           denoiser: 'pmrid',
         }),
@@ -280,6 +298,8 @@ describe('LibrariesService.create', () => {
         include_subfolders: true,
         include_non_raw: false,
         rendition_source: 'render',
+        render_skip_full: [],
+        render_skip_max: [],
         auto_stack: true,
         denoiser: 'galosh',
       });
@@ -303,6 +323,8 @@ describe('LibrariesService.create', () => {
         include_subfolders: true,
         include_non_raw: false,
         rendition_source: 'render',
+        render_skip_full: [],
+        render_skip_max: [],
         auto_stack: true,
         denoiser: 'galosh',
       });
@@ -332,6 +354,8 @@ describe('LibrariesService.create', () => {
           include_subfolders: true,
           include_non_raw: false,
           rendition_source: 'render',
+          render_skip_full: [],
+          render_skip_max: [],
           auto_stack: true,
           denoiser: 'galosh',
         }),
@@ -365,6 +389,8 @@ describe('LibrariesService.create', () => {
           include_subfolders: true,
           include_non_raw: false,
           rendition_source: 'render',
+          render_skip_full: [],
+          render_skip_max: [],
           auto_stack: true,
           denoiser: 'galosh',
         }),
@@ -391,6 +417,8 @@ describe('LibrariesService.create', () => {
           include_subfolders: true,
           include_non_raw: false,
           rendition_source: 'render',
+          render_skip_full: [],
+          render_skip_max: [],
           auto_stack: true,
           denoiser: 'galosh',
         }),

@@ -4,6 +4,7 @@ import type { RequestActivity } from '../../../../../src/schemas/request_activit
 import { albumsApi } from '../../../api/albums';
 import { type PhotoListParams, photosApi } from '../../../api/photos';
 import { shootsApi } from '../../../api/shoots';
+import { inMobileApp } from '../../../api/transport';
 import type { ScrollRailPresenter } from './scroll_rail_presenter';
 import type { ListingStore } from './listing_store';
 import { BLOCK, columnsAtZoom, tileWidthForColumns } from './grid_layout';
@@ -546,7 +547,7 @@ export class ListingPresenter {
     if (saved?.tileSize != null) this.listing.tileSize = saved.tileSize;
     if (saved?.mode != null) this.listing.mode = saved.mode;
     this.listing.expandStacks = saved?.expandStacks ?? false;
-    this.listing.showFilenames = saved?.showFilenames ?? true;
+    this.listing.showFilenames = saved?.showFilenames ?? !inMobileApp();
     // Off under a finger: marks big enough to hit cover the photo they decide about.
     const marksByDefault = !pointerIsCoarse();
     this.selection.setDisplay(

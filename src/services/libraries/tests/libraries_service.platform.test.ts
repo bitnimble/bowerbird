@@ -23,6 +23,8 @@ describe('LibrariesService.create', () => {
         include_subfolders: true,
         include_non_raw: false,
         rendition_source: 'render',
+        render_skip_full: [],
+        render_skip_max: [],
         auto_stack: true,
         denoiser: 'galosh',
       });

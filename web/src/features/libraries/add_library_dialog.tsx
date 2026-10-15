@@ -1,8 +1,11 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
-import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
-import { type Denoiser } from '../../../../src/schemas/photo_edits';
+import {
+  CreateLibraryRequestSchema,
+  DEFAULT_BIN_NAME,
+  type CreateLibraryRequest,
+} from '../../../../src/schemas/libraries';
 import { useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
@@ -25,6 +28,8 @@ import { AddLibraryStrings } from './add_library_dialog.strings';
 import { inferredLibraryName } from './inferred_library_name';
 import { newLibraryStart } from './new_library_start';
 
+const NEW_LIBRARY = CreateLibraryRequestSchema.omit({ root_path: true }).parse({});
+
 // Everything a library needs before it exists, in one place: where its photos
 // are, what to call it, and how its gallery is ordered to begin with.
 //
@@ -34,24 +39,29 @@ import { newLibraryStart } from './new_library_start';
 export const AddLibraryDialog = observer(function AddLibraryDialog({
   open,
   onOpenChange,
+  preset,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** A library whose folder is already chosen: its root is fixed, and the rest starts from it. */
+  preset?: CreateLibraryRequest;
 }): JSX.Element {
   const store = useLibrariesStore();
   const { libraries, scan } = usePresenters();
   const [browser, setBrowser] = useState(newFolderBrowser);
-  const [path, setPath] = useState('');
-  const [name, setName] = useState('');
-  const [nameTouched, setNameTouched] = useState(false);
-  const [binName, setBinName] = useState('Bin');
-  const [readOnly, setReadOnly] = useState(false);
-  const [ordering, setOrdering] = useState<Ordering>('taken_asc');
-  const [includeSubfolders, setIncludeSubfolders] = useState(true);
-  const [includeNonRaw, setIncludeNonRaw] = useState(false);
-  const [renditionSource, setRenditionSource] = useState<RenditionSource>('render');
-  const [autoStack, setAutoStack] = useState(true);
-  const [denoiser, setDenoiser] = useState<Denoiser>('galosh');
+  // From the preset as well as the reset below: a dialog mounted open runs the
+  // name inference in the same commit, which would blank the preset's name.
+  const [path, setPath] = useState(preset?.root_path ?? '');
+  const [name, setName] = useState(preset?.name ?? '');
+  const [nameTouched, setNameTouched] = useState(preset?.name != null);
+  const [binName, setBinName] = useState(DEFAULT_BIN_NAME);
+  const [readOnly, setReadOnly] = useState(NEW_LIBRARY.read_only);
+  const [ordering, setOrdering] = useState(NEW_LIBRARY.ordering);
+  const [includeSubfolders, setIncludeSubfolders] = useState(NEW_LIBRARY.include_subfolders);
+  const [includeNonRaw, setIncludeNonRaw] = useState(NEW_LIBRARY.include_non_raw);
+  const [renditionSource, setRenditionSource] = useState(NEW_LIBRARY.rendition_source);
+  const [autoStack, setAutoStack] = useState(NEW_LIBRARY.auto_stack);
+  const [denoiser, setDenoiser] = useState(NEW_LIBRARY.denoiser);
   const [saving, setSaving] = useState(false);
 
   // Reopening starts over rather than resuming wherever the last attempt was
@@ -60,23 +70,28 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   // until the first listing lands.
   useEffect(() => {
     if (!open) return;
-    setName('');
-    setNameTouched(false);
-    setBinName('Bin');
-    setReadOnly(false);
-    setOrdering('taken_asc');
-    setIncludeSubfolders(true);
-    setIncludeNonRaw(false);
-    setRenditionSource('render');
-    setAutoStack(true);
-    setDenoiser('galosh');
+    const start = preset ?? NEW_LIBRARY;
+    setName(start.name ?? '');
+    setNameTouched(start.name != null);
+    setBinName(start.bin_name ?? DEFAULT_BIN_NAME);
+    setReadOnly(start.read_only);
+    setOrdering(start.ordering);
+    setIncludeSubfolders(start.include_subfolders);
+    setIncludeNonRaw(start.include_non_raw);
+    setRenditionSource(start.rendition_source);
+    setAutoStack(start.auto_stack);
+    setDenoiser(start.denoiser);
     // Including whatever the last attempt failed with, which is answered by
     // this attempt rather than still standing over it.
     libraries.clearError();
+    if (preset != null) {
+      setPath(preset.root_path);
+      return;
+    }
     const next = newFolderBrowser();
     setBrowser(next);
     void next.presenter.open(newLibraryStart(store.libraries.map((library) => library.root_path)));
-  }, [open, libraries, store]);
+  }, [open, libraries, store, preset]);
 
   // The folder name is the library's name until the user types one of their own.
   useEffect(() => {
@@ -106,6 +121,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   async function submit(): Promise<void> {
     setSaving(true);
     const { created, readOnlyRoot } = await libraries.create({
+      ...(preset ?? NEW_LIBRARY),
       root_path: root,
       name: name.trim(),
       read_only: readOnlyLibrary,
@@ -139,16 +155,24 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
             <Text variant="label" as="span">
               {AddLibraryStrings.folder()}
             </Text>
-            <FolderBrowser
-              store={browser.store}
-              presenter={browser.presenter}
-              label={AddLibraryStrings.libraryRootPath()}
-              placeholder={AddLibraryStrings.rootPlaceholder()}
-              onPathChange={setPath}
-            />
-            <Text variant="mono" as="p">
-              {AddLibraryStrings.folderHint()}
-            </Text>
+            {preset == null ? (
+              <>
+                <FolderBrowser
+                  store={browser.store}
+                  presenter={browser.presenter}
+                  label={AddLibraryStrings.libraryRootPath()}
+                  placeholder={AddLibraryStrings.rootPlaceholder()}
+                  onPathChange={setPath}
+                />
+                <Text variant="mono" as="p">
+                  {AddLibraryStrings.folderHint()}
+                </Text>
+              </>
+            ) : (
+              <Text variant="mono" as="p">
+                {preset.root_path}
+              </Text>
+            )}
           </Field>
 
           <DialogStack>

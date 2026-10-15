@@ -253,7 +253,6 @@ function build(): { stores: Stores; presenters: Presenters } {
     devicePhotos: new DevicePhotosPresenter(
       stores.devicePhotos,
       { access: photoAccess, ask: askPhotoAccess },
-      libraries,
       scan,
       toasts,
     ),

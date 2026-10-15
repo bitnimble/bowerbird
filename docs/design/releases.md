@@ -282,7 +282,9 @@ addon through a loader that opens it from `BOWERBIRD_ADDON_DIR`.
 
 **The mobile app holds the phone's own photos and libraries synced from another Bowerbird.** It
 has no folder to pick (`isThinShell`), so it offers those two. **Add phone photos** asks Android to
-read images, and adds the camera folder, `DCIM`, with its non-RAW files as well as its RAWs. The
+read images, then opens the Add library dialog on the camera folder, `DCIM`, fixed, with its non-RAW
+files as well as its RAWs, newest first, no pre-render, and dust removal left out of both rendered
+renditions (`render_skip_full`, `render_skip_max`); a phone's lens leaves no sensor dust to find. The
 permissions are `READ_MEDIA_IMAGES`, `READ_MEDIA_VISUAL_USER_SELECTED` (Android 14's partial access
 to selected photos), `ACCESS_MEDIA_LOCATION`, without which Android blanks the GPS block in every
 EXIF the server reads, and `MANAGE_MEDIA`; before Android 13, `READ_EXTERNAL_STORAGE`, and before

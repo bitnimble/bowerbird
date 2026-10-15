@@ -43,6 +43,8 @@ export const CreateLibraryRequestSchema = z.object({
   include_subfolders: z.boolean().default(true),
   include_non_raw: z.boolean().default(false),
   rendition_source: RenditionSourceSchema.default('render'),
+  render_skip_full: OptionalStagesSchema.default([]),
+  render_skip_max: OptionalStagesSchema.default([]),
   auto_stack: z.boolean().default(true),
   denoiser: DenoiserSchema.default('galosh'),
 });

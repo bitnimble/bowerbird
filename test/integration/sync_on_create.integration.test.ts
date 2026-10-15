@@ -104,6 +104,8 @@ test('creating a library imports its photographs without a second request', asyn
     include_subfolders: true,
     include_non_raw: false,
     rendition_source: 'render',
+    render_skip_full: ['dust'],
+    render_skip_max: ['dust', 'sharpen'],
     auto_stack: true,
     denoiser: 'pmrid',
   });
@@ -114,8 +116,11 @@ test('creating a library imports its photographs without a second request', asyn
     .query(`SELECT json_extract(recipe, '$.path') AS file_path FROM photos WHERE library_id = ?`)
     .get(library.id) as { file_path: string } | null;
   expect(photo?.file_path).toBe('photo.arw');
-  expect(new LibrariesRepository(db).getById(library.id)?.last_synced_at).not.toBeNull();
-  expect(new LibrariesRepository(db).getById(library.id)?.denoiser).toBe('pmrid');
+  const stored = new LibrariesRepository(db).getById(library.id);
+  expect(stored?.last_synced_at).not.toBeNull();
+  expect(stored?.denoiser).toBe('pmrid');
+  expect(stored?.render_skip_full).toEqual(['dust']);
+  expect(stored?.render_skip_max).toEqual(['dust', 'sharpen']);
 });
 
 // A root that already keeps a folder of the bin name has it adopted (§12.3), and
@@ -137,6 +142,8 @@ test('creating a library over a folder already at the bin name imports its photo
     include_subfolders: true,
     include_non_raw: false,
     rendition_source: 'render',
+    render_skip_full: [],
+    render_skip_max: [],
     auto_stack: true,
     denoiser: 'galosh',
   });

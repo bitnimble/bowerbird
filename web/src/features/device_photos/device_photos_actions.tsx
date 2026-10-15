@@ -4,6 +4,7 @@ import { useDevicePhotosStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { ICON } from '../../ui/icon';
 import { Text } from '../../ui/text';
+import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { DevicePhotosActionsStrings } from './device_photos_actions.strings';
 
 export const DevicePhotosActions = observer(function DevicePhotosActions({
@@ -54,6 +55,13 @@ export const DevicePhotosActions = observer(function DevicePhotosActions({
             {DevicePhotosActionsStrings.openSettings()}
           </Button>
         </>
+      )}
+      {store.newLibrary != null && (
+        <AddLibraryDialog
+          open={store.adding}
+          onOpenChange={devicePhotos.setAdding}
+          preset={store.newLibrary}
+        />
       )}
     </>
   );

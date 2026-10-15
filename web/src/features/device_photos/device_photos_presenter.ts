@@ -1,8 +1,10 @@
 import { action } from 'mobx';
-import { CreateLibraryRequestSchema } from '../../../../src/schemas/libraries';
+import {
+  CreateLibraryRequestSchema,
+  type CreateLibraryRequest,
+} from '../../../../src/schemas/libraries';
 import type { PhotoAccess, PhotoAsk } from '../../api/transport';
 import { describe } from '../../errors';
-import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { ScanPresenter } from '../scan/scan_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { DevicePhotosPresenterStrings } from './device_photos_presenter.strings';
@@ -17,7 +19,6 @@ export class DevicePhotosPresenter {
   constructor(
     private readonly store: DevicePhotosStore,
     private readonly shell: PhotoShell,
-    private readonly libraries: Pick<LibrariesPresenter, 'create'>,
     private readonly scan: Pick<ScanPresenter, 'scanLibrary'>,
     private readonly toasts: Pick<ToastsPresenter, 'showError'>,
   ) {}
@@ -47,15 +48,29 @@ export class DevicePhotosPresenter {
       const access =
         this.store.access?.photos === 'none' ? await this.ask('read') : this.store.access;
       if (access == null || access.photos === 'none') return;
-      const { created } = await this.libraries.create(
+      this.openNewLibrary(
         CreateLibraryRequestSchema.parse({
           root_path: access.cameraFolder,
           name: DevicePhotosPresenterStrings.libraryName(),
+          ordering: 'taken_desc',
           include_non_raw: true,
+          rendition_source: 'embedded',
+          render_skip_full: ['dust'],
+          render_skip_max: ['dust'],
         }),
       );
-      if (created == null) this.toasts.showError(DevicePhotosPresenterStrings.couldNotAdd());
     });
+  }
+
+  @action.bound
+  setAdding(adding: boolean): void {
+    this.store.adding = adding;
+  }
+
+  @action.bound
+  private openNewLibrary(request: CreateLibraryRequest): void {
+    this.store.newLibrary = request;
+    this.store.adding = true;
   }
 
   choosePhotos(): Promise<void> {

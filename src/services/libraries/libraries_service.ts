@@ -190,6 +190,8 @@ export class LibrariesService {
       ordering: request.ordering,
       ...DEFAULT_LIBRARY_SETTINGS,
       rendition_source: request.rendition_source,
+      render_skip_full: request.render_skip_full,
+      render_skip_max: request.render_skip_max,
       auto_stack: request.auto_stack,
       include_subfolders: request.include_subfolders,
       include_non_raw: request.include_non_raw,

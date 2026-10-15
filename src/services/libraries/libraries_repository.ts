@@ -79,6 +79,8 @@ export class LibrariesRepository {
       | 'name'
       | 'ordering'
       | 'rendition_source'
+      | 'render_skip_full'
+      | 'render_skip_max'
       | 'auto_stack'
       | 'include_subfolders'
       | 'include_non_raw'
@@ -87,9 +89,10 @@ export class LibrariesRepository {
   ): void {
     this.db
       .query(
-        `INSERT INTO libraries (id, root_path, bin_name, read_only, name, ordering, rendition_source, auto_stack,
-           include_subfolders, include_non_raw, denoiser, bin_dev, bin_ino, bin_birthtime, stamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO libraries (id, root_path, bin_name, read_only, name, ordering, rendition_source,
+           render_skip_full, render_skip_max, auto_stack, include_subfolders, include_non_raw, denoiser,
+           bin_dev, bin_ino, bin_birthtime, stamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         library.id,
@@ -99,6 +102,8 @@ export class LibrariesRepository {
         library.name,
         library.ordering,
         library.rendition_source,
+        writeStages(library.render_skip_full),
+        writeStages(library.render_skip_max),
         library.auto_stack ? 1 : 0,
         library.include_subfolders ? 1 : 0,
         library.include_non_raw ? 1 : 0,
