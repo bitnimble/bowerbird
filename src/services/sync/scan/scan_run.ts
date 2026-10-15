@@ -166,10 +166,12 @@ export class ScanRunner {
     const library = this.libraries.getById(libraryId);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     this.status.setProcessing(libraryId);
+    log.info('scan has the library', { library: libraryId, ms: Date.now() - startedAt });
 
     // Before a single path is read (docs/replication.md §7.4). A merged move not yet made on disk
     // looks exactly like the user moving the file back; reading it would stamp and replicate reversal.
-    await this.materialise(libraryId);
+    const moved = await this.materialise(libraryId);
+    log.info('scan made synced moves', { library: libraryId, moved, ms: Date.now() - startedAt });
 
     const batch = new ScanBatch(
       libraryId,
@@ -194,6 +196,11 @@ export class ScanRunner {
       },
       { libraryId, library, scope: this.scopeFor(library), changedScope, scopePaths, keepLease },
     );
+    log.info('scan walked the tree', {
+      library: libraryId,
+      files: evidence.files.length,
+      ms: Date.now() - startedAt,
+    });
     const classified = await readAndClassify(
       { fileReader: this.fileReader, albums: this.albums, reconciler: this.reconciler },
       { libraryId, library, scopePaths, token, startedAt, keepLease, batch, evidence },

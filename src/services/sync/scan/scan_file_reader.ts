@@ -99,6 +99,7 @@ export class ScanFileReader {
       stopped,
     );
 
+    log.info('scan statted files', { files: byInode.size });
     const found = new Set([...byInode.values()].map((file) => file.relPath));
     const inserts =
       batched != null && dbPhotos.every((row) => found.has(row.file_path)) ? batched : null;
