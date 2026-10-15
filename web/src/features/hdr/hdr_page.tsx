@@ -1,9 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
-import { hdrVideoSdrMatch } from 'avif-hdr-video';
 import type { MDXComponents } from 'mdx/types';
 import { Fragment, createContext, useContext, useState, type ReactNode } from 'react';
 import { PathSegment, route } from '../../../../src/schemas/route';
-import { sdrMatchSuffix } from '../../../../src/schemas/sdr_match';
+import { HdrPicture } from '../../avif/hdr_picture';
+import { demoScene, demoSwatches } from './demo_sources';
 import { observer } from 'mobx-react-lite';
 import { useDeviceSettingsStore } from '../../app/stores_context';
 import { focusRing } from '../../ui/focus_ring';
@@ -11,7 +11,6 @@ import { Heading } from '../../ui/heading';
 import { Page, PageHead } from '../../ui/page';
 import { Text } from '../../ui/text';
 import { color, font, size } from '../../ui/tokens.stylex';
-import { useHdrVideo } from '../photos/viewer/hdr_video';
 import HdrPageCopy from './hdr_page.mdx';
 import { HdrPageStrings } from './hdr_page.strings';
 
@@ -485,11 +484,6 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
   // Eight bits first, because that is the picture the reader already has and the page is
   // about what it costs them. Opening on the HDR one asks them to notice an absence.
   const [hdr, setHdr] = useState(false);
-  const hdrSrc = route(PathSegment.hdr(), `${slug}-hdr.avif`);
-  // Firefox composites HDR for video and only video, so the still is rewrapped there
-  // (DESIGN §10.7.2). Null everywhere else, where the `<img>` is the better element.
-  const { twin: hdrVideo, failed } = useHdrVideo(slug, hdrSrc, tenBitDemo(slug), true);
-
   return (
     <button
       type="button"
@@ -503,26 +497,11 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
         alt={HdrPageStrings.sdrAlt(alt)}
         {...stylex.props(styles.layer, styles.layerBase, !hdr && styles.layerUp)}
       />
-      {hdrVideo == null ? (
-        <img
-          src={hdrSrc}
-          alt={HdrPageStrings.hdrAlt(alt)}
-          {...stylex.props(styles.layer, styles.layerOver, hdr && styles.layerUp)}
-        />
-      ) : (
-        <video
-          src={hdrVideo.url}
-          autoPlay
-          loop
-          muted
-          playsInline
-          disablePictureInPicture
-          role="img"
-          aria-label={HdrPageStrings.hdrAlt(alt)}
-          onError={failed}
-          {...stylex.props(styles.layer, styles.layerOver, hdr && styles.layerUp)}
-        />
-      )}
+      <HdrPicture
+        source={demoScene(slug)}
+        alt={HdrPageStrings.hdrAlt(alt)}
+        style={[styles.layer, styles.layerOver, hdr && styles.layerUp]}
+      />
       <span {...stylex.props(styles.pill)} aria-hidden>
         <span {...stylex.props(styles.pillHalf, !hdr && styles.pillHalfOn)}>
           {HdrPageStrings.eightBit()}
@@ -533,11 +512,6 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
       </span>
     </button>
   );
-}
-
-/** A demo's 10-bit copy coded to this platform's SDR match (`scripts/demo-assets.ts`). */
-function tenBitDemo(slug: string): string {
-  return route(PathSegment.hdr(), `${slug}-hdr-10bit${sdrMatchSuffix(hdrVideoSdrMatch())}.avif`);
 }
 
 type Children = { children?: ReactNode };
@@ -611,28 +585,13 @@ function Note({ children }: Children): JSX.Element {
  * about a quarter dim against an sRGB one, so a pair could not be compared.
  */
 function Swatches(): JSX.Element {
-  const src = route(PathSegment.hdr(), 'swatches.avif');
-  // Already 10-bit 4:2:0 coded as a still (`scripts/demo-assets.ts`), so only macOS has a copy.
-  const tenBit = route(PathSegment.hdr(), `swatches${sdrMatchSuffix(hdrVideoSdrMatch())}.avif`);
-  const { twin: hdrVideo, failed } = useHdrVideo('swatches', src, tenBit, true);
   return (
     <figure {...stylex.props(styles.swatches)}>
-      {hdrVideo == null ? (
-        <img src={src} alt={HdrPageStrings.swatchesAlt()} {...stylex.props(styles.swatchesImage)} />
-      ) : (
-        <video
-          src={hdrVideo.url}
-          autoPlay
-          loop
-          muted
-          playsInline
-          disablePictureInPicture
-          role="img"
-          aria-label={HdrPageStrings.swatchesAlt()}
-          onError={failed}
-          {...stylex.props(styles.swatchesImage)}
-        />
-      )}
+      <HdrPicture
+        source={demoSwatches()}
+        alt={HdrPageStrings.swatchesAlt()}
+        style={styles.swatchesImage}
+      />
       <figcaption {...stylex.props(styles.swatchesCaption)}>
         <Text variant="mono" style={styles.swatchesHalf}>
           {HdrPageStrings.eightBit()}

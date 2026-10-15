@@ -9,6 +9,8 @@ import {
   useStackTriageStore,
   useViewerStore,
 } from '../../../app/stores_context';
+import { renditionsApi } from '../../../api/renditions';
+import { hdrPictures } from '../../../avif/hdr_pictures';
 import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
 import { Page, PageHead } from '../../../ui/page';
@@ -205,7 +207,12 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
           {ready && (
             <div {...stylex.props(styles.warm)} aria-hidden>
               {store.warm.map((id) => (
-                <img key={id} src={store.srcOf(id)} alt="" {...stylex.props(styles.warmImage)} />
+                <img
+                  key={id}
+                  src={hdrPictures.shownFile(renditionsApi.hdrSource(store.srcOf(id)))}
+                  alt=""
+                  {...stylex.props(styles.warmImage)}
+                />
               ))}
             </div>
           )}

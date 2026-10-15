@@ -19,6 +19,8 @@ import {
   decodeAvifPlanes,
   type DecodeOptions,
 } from '../../../avif/avif_planes';
+import { hdrPictures } from '../../../avif/hdr_pictures';
+import { renditionsApi } from '../../../api/renditions';
 import type { StagePicture } from '../../../gpu/gpu_protocol';
 import { contentLightOfAvif, orientationOfAvif } from 'avif-hdr-video';
 import {
@@ -405,7 +407,7 @@ function decodedAt(
     const superseded = <T>(err: unknown): T => {
       throw abort.signal.aborted ? new Error('superseded') : err;
     };
-    const response = await fetch(source, {
+    const response = await fetch(hdrPictures.pixelFile(renditionsApi.hdrSource(source)), {
       signal: abort.signal,
       headers: { [REQUEST_ACTIVITY_HEADER]: activity },
     }).catch(superseded<Response>);

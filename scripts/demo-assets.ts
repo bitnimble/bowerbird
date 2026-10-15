@@ -157,7 +157,7 @@ function outputPath(slug: string, hdr: boolean): string {
 }
 
 /**
- * The HDR arm as Firefox is served it (`useHdrVideo`), re-encoded as the app's server would, coded
+ * The HDR arm as Firefox is served it (`HdrPictures`), re-encoded as the app's server would, coded
  * to `matching` (`hdrVideoSdrMatch`).
  */
 function tenBitPath(slug: string, matching: SdrMatch): string {

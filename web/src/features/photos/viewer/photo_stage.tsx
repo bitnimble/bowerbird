@@ -110,16 +110,6 @@ function altOf(picture: StagePicture | undefined, source: string): string | unde
   return typeof picture?.alt === 'function' ? picture.alt(source) : picture?.alt;
 }
 
-// Firefox's HDR twin is the one source that is a `<video>`, and the only thing on this
-// stage ever built as an object URL (`useHdrVideo`), so the element type is a property of
-// the source rather than of the picture asking for it. That matters for a frame on its way
-// off the stage: it is drawn from `painted`/`retiring` after its picture has left the
-// props, and a flag read off the picture then flipped it to an `<img>` mid-exit, remounting
-// a revoked blob as an image that cannot decode.
-function isVideo(source: string): boolean {
-  return source.startsWith('blob:');
-}
-
 function frameOf(picture: StagePicture): string | undefined {
   return picture.frame ?? picture.sources[picture.sources.length - 1];
 }
@@ -276,6 +266,18 @@ export function PhotoStage({
       return next;
     });
   }, []);
+  // The frames up as a video rather than a canvas (`HdrPictures`), which have no detail layer.
+  const [videos, setVideos] = useState<ReadonlySet<string>>(new Set());
+  const noteVideo = useCallback((source: string, video: boolean) => {
+    setVideos((previous) => {
+      if (previous.has(source) === video) return previous;
+      const next = new Set(previous);
+      if (video) next.add(source);
+      else next.delete(source);
+      return next;
+    });
+  }, []);
+  const isVideo = (source: string): boolean => videos.has(source);
   // The frames `painted` just replaced, kept mounted and opaque underneath for
   // RETIRED_FRAMES. Their rasters are the ones the browser already has, so they
   // are what shows through while the replacements' are being built.
@@ -732,10 +734,6 @@ export function PhotoStage({
       next.add(source);
       return next;
     });
-    // Firefox's HDR twin is a blob made in the page, so a failure there is not the server
-    // missing a file and there is nothing to build. The frame is still marked failed, or the
-    // stage would keep waiting on it and never say so.
-    if (isVideo(source)) return;
     onMissing.current?.(source);
   }, []);
 
@@ -983,7 +981,6 @@ export function PhotoStage({
                   source={source}
                   photoKey={photoKey}
                   hold={hold === true}
-                  video={isVideo(source)}
                   alt={
                     altOf(
                       pictures.find((each) => each.key === group.key),
@@ -998,6 +995,7 @@ export function PhotoStage({
                   proof={proof}
                   devicePeakNits={devicePeakNits}
                   onDecoded={promote}
+                  onVideo={noteVideo}
                   // Only a frame still being asked for. A retiring one is on its
                   // way off the stage, and building a rendition nobody is looking
                   // at because its element happened to error is work for no screen.

@@ -1,5 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { renditionsApi } from '../../../api/renditions';
+import { useHdrPicture } from '../../../avif/hdr_picture';
 import { decodeFrame, decodedFrame, fittedCanvasSize, type Decoded } from './stage_bitmaps';
 import { CanvasLost, stageCanvases, useStageCanvas } from './stage_canvas';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
@@ -12,6 +14,10 @@ const styles = stylex.create({
   // Keeps a hidden frame's raster, so revealing it is an opacity change with no repaint.
   layer: {
     willChange: 'opacity',
+  },
+  hidden: {
+    opacity: 0,
+    pointerEvents: 'none',
   },
 });
 
@@ -35,7 +41,6 @@ export function StageFrame({
   source,
   photoKey,
   hold,
-  video,
   alt,
   state,
   zoomed,
@@ -46,12 +51,12 @@ export function StageFrame({
   devicePeakNits,
   onDecoded,
   onMissing,
+  onVideo,
 }: {
   source: string;
   /** Reported against, so a frame carried into a new round reports again. */
   photoKey: string;
   hold: boolean;
-  video: boolean;
   alt: string;
   state: FrameState;
   zoomed: boolean;
@@ -69,8 +74,28 @@ export function StageFrame({
   devicePeakNits: number | null;
   onDecoded: (source: string, width: number, height: number) => void;
   onMissing: (source: string) => void;
+  /** Whether this frame is up as a video (`HdrPictures`), which has no detail layer to wait on. */
+  onVideo: (source: string, video: boolean) => void;
 }): JSX.Element {
-  const elementRef = useRef<HTMLCanvasElement | HTMLVideoElement | null>(null);
+  const { shown: picture, failed: videoFailed } = useHdrPicture(renditionsApi.hdrSource(source), {
+    activity: requested ? 'interactive' : 'background',
+  });
+  const video = picture?.kind === 'video' ? picture.url : null;
+  const waiting = picture == null && proof == null;
+  // A proof is drawn by the canvas's shader, which a `<video>` never passes through.
+  const fromVideo = video != null && proof == null;
+  // Kept once drawn, so turning a proof on and off is a change of which element is on top.
+  const [canvasDrawn, setCanvasDrawn] = useState(false);
+  const videoUp = video != null && (proof == null || !canvasDrawn);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handCanvas = useStageCanvas(canvasRef);
+  const videoReport = useRef(onVideo);
+  videoReport.current = onVideo;
+  useEffect(() => {
+    videoReport.current(source, videoUp);
+    return () => videoReport.current(source, false);
+  }, [source, videoUp]);
   // Through refs: callers pass inline callbacks, and a new identity per render
   // would restart the decode below while one is in flight.
   const decoded = useRef(onDecoded);
@@ -91,8 +116,7 @@ export function StageFrame({
   const painting = useRef<Painting | null>(null);
 
   useEffect(() => {
-    const element = elementRef.current;
-    if (element == null || hold) return;
+    if (hold || waiting) return;
     let live = true;
 
     const report = (width: number, height: number): void => {
@@ -101,16 +125,19 @@ export function StageFrame({
     };
 
     // A video when it has a frame to show (`loadeddata`; `loadedmetadata` knows the size and
-    // nothing else). Firefox's HDR twin is the only one.
-    if (element instanceof HTMLVideoElement) {
-      const arrived = (): void => report(element.videoWidth, element.videoHeight);
-      if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) arrived();
-      else element.addEventListener('loadeddata', arrived);
+    // nothing else).
+    const playing = videoRef.current;
+    if (fromVideo && playing != null) {
+      const arrived = (): void => report(playing.videoWidth, playing.videoHeight);
+      if (playing.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) arrived();
+      else playing.addEventListener('loadeddata', arrived);
       return () => {
         live = false;
-        element.removeEventListener('loadeddata', arrived);
+        playing.removeEventListener('loadeddata', arrived);
       };
     }
+    const element = canvasRef.current;
+    if (element == null) return;
 
     // The frame is a bitmap this page decoded and holds (`stage_bitmaps.ts`), drawn into a
     // canvas of its own. Drawn here rather than at the reveal: the draw is what uploads the
@@ -136,6 +163,7 @@ export function StageFrame({
       void done.then(
         () => {
           if (!live) return;
+          setCanvasDrawn(true);
           // The file's own shape, not the decoded one's: what is decoded is capped at what this
           // display can show, and a reader asking a photograph's dimensions is asking about the
           // photograph.
@@ -147,6 +175,7 @@ export function StageFrame({
           // The element is spent rather than the picture unreadable, so what it needs is a
           // new element and not a report that the photograph is gone.
           if (err instanceof CanvasLost) {
+            setCanvasDrawn(false);
             setAttempt((n) => n + 1);
             return;
           }
@@ -184,55 +213,49 @@ export function StageFrame({
     // keeping its slot - would otherwise never report again, and the round would show one
     // photo whichever slot was asked for. Only the report reruns: repainting a canvas that
     // already holds its frame is a GPU upload per held neighbour on every step.
-  }, [source, photoKey, hold, attempt, proof, devicePeakNits]);
+  }, [source, photoKey, hold, attempt, proof, devicePeakNits, waiting, fromVideo]);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const handCanvas = useStageCanvas(canvasRef);
-  const capture = useCallback(
-    (element: HTMLCanvasElement | HTMLVideoElement | null): void => {
-      elementRef.current = element;
-      handCanvas(element instanceof HTMLVideoElement ? null : element);
-    },
-    [handCanvas],
-  );
-
-  const styled = stylex.props(
-    stageStyles.content,
-    zoomed && stageStyles.zoomed,
-    state === 'ready' && stageStyles.ready,
-    state === 'retiring' && styles.retiring,
-    state === 'layer' && styles.layer,
-  );
-
-  if (video) {
-    return (
-      <video
-        ref={capture}
-        src={source}
-        autoPlay
-        loop
-        muted
-        playsInline
-        disablePictureInPicture
-        role="img"
-        aria-label={alt}
-        {...styled}
-        aria-hidden={!shown}
-        onError={() => missing.current(source)}
-      />
+  const styled = (hidden: boolean): ReturnType<typeof stylex.props> =>
+    stylex.props(
+      stageStyles.content,
+      zoomed && stageStyles.zoomed,
+      state === 'ready' && stageStyles.ready,
+      state === 'retiring' && styles.retiring,
+      state === 'layer' && styles.layer,
+      hidden && styles.hidden,
     );
-  }
-  // A canvas rather than an `<img>`, because the picture is a bitmap this page decoded and
-  // holds: the browser neither chooses when to decode it nor drops it once it has. `role`
-  // and `aria-label` because a canvas has no `alt`, and this one is a photograph.
+
   return (
-    <canvas
-      key={attempt}
-      ref={capture}
-      role="img"
-      aria-label={alt}
-      {...styled}
-      aria-hidden={!shown}
-    />
+    <>
+      {(!fromVideo || canvasDrawn) && (
+        // A canvas rather than an `<img>`, because the picture is a bitmap this page decoded and
+        // holds: the browser neither chooses when to decode it nor drops it once it has. `role`
+        // and `aria-label` because a canvas has no `alt`, and this one is a photograph.
+        <canvas
+          key={attempt}
+          ref={handCanvas}
+          role="img"
+          aria-label={alt}
+          {...styled(videoUp)}
+          aria-hidden={!shown || videoUp}
+        />
+      )}
+      {video != null && (
+        <video
+          ref={videoRef}
+          src={video}
+          autoPlay
+          loop
+          muted
+          playsInline
+          disablePictureInPicture
+          role="img"
+          aria-label={alt}
+          {...styled(!videoUp)}
+          aria-hidden={!shown || !videoUp}
+          onError={videoFailed}
+        />
+      )}
+    </>
   );
 }

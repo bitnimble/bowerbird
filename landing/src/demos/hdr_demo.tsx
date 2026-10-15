@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
-import { hdrVideoSdrMatch } from 'avif-hdr-video';
 import { useState, useSyncExternalStore } from 'react';
-import { useHdrVideo } from '../../../web/src/features/photos/viewer/hdr_video';
+import { HdrPicture } from '../../../web/src/avif/hdr_picture';
+import type { HdrSource } from '../../../web/src/avif/hdr_pictures';
 import { SegmentedControl } from '../../../web/src/ui/segmented_control';
 import { DEMO } from '../features';
 import { PHOTOS, SCENES, type Scene } from '../photos';
@@ -83,37 +83,20 @@ function Rendition({
   );
 }
 
-/** The HDR arm, which Firefox is shown as a video of its 10-bit copy (`useHdrVideo`). */
+/** The HDR arm (`HdrPicture`), reported ready under its still's URL as the 8-bit arm is. */
 function HdrRendition({
   style,
-  src,
-  tenBitSrc,
+  source,
   alt,
   onReady,
 }: {
   style: stylex.StyleXStyles;
-  src: string;
-  tenBitSrc: string;
+  source: HdrSource;
   alt: string;
   onReady: (src: string) => void;
 }): JSX.Element {
-  const { twin, failed } = useHdrVideo(src, src, tenBitSrc, true);
-  if (twin == null) return <Rendition style={style} src={src} alt={alt} onReady={onReady} />;
-  return (
-    <video
-      {...stylex.props(style)}
-      src={twin.url}
-      autoPlay
-      loop
-      muted
-      playsInline
-      disablePictureInPicture
-      role="img"
-      aria-label={alt}
-      onLoadedData={() => onReady(src)}
-      onError={failed}
-    />
-  );
+  const ready = (): void => onReady(source.still);
+  return <HdrPicture source={source} alt={alt} style={style} onShown={ready} onError={ready} />;
 }
 
 export function HdrDemo(): JSX.Element {
@@ -168,8 +151,7 @@ export function HdrDemo(): JSX.Element {
           <HdrRendition
             key={photo.hdr}
             style={splitImage.after}
-            src={photo.hdr}
-            tenBitSrc={photo.hdrTenBit[hdrVideoSdrMatch()]}
+            source={{ still: photo.hdr, tenBit: (match) => photo.hdrTenBit[match] }}
             alt={DEMO.hdr.hdrAlt(title)}
             onReady={markShown}
           />

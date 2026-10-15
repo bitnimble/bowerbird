@@ -6,8 +6,8 @@ export type Scene = 'gamut' | 'whites' | 'sun' | 'saturated';
 export const SCENES: readonly Scene[] = ['gamut', 'whites', 'sun', 'saturated'];
 
 // Each `new URL` is a literal so Vite bundles the committed file rather than a second copy of it.
-// `hdrTenBit` is the HDR arm Firefox shows, through a video (`useHdrVideo`), coded to how its
-// platform shows a video's SDR range (`hdrVideoSdrMatch`).
+// `hdrTenBit` is the HDR arm Firefox shows, through a video (`HdrPicture`), coded to how each
+// platform shows a video's SDR range.
 export const PHOTOS: Record<
   Scene,
   { sdr: string; hdr: string; hdrTenBit: Record<SdrMatch, string> }

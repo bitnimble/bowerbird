@@ -144,10 +144,14 @@ export async function hdrVideoUrl(
 ): Promise<string | null> {
   const response = await fetch(source, fetchOptions);
   if (!response.ok) throw new Error(`${source}: ${response.status}`);
-  const avif = new Uint8Array(await response.arrayBuffer());
+  const mp4 = hdrMp4(new Uint8Array(await response.arrayBuffer()));
+  return mp4 == null ? null : URL.createObjectURL(new Blob([mp4], { type: 'video/mp4' }));
+}
+
+/** The MP4 twin of AVIF bytes already in hand, or null where the file is not HDR. */
+export function hdrMp4(avif: Uint8Array): Uint8Array<ArrayBuffer> | null {
   const still = describe(avif);
-  if (!HDR_TRANSFERS.has(still.transfer)) return null;
-  return URL.createObjectURL(new Blob([wrap(still, av01Entry(still))], { type: 'video/mp4' }));
+  return HDR_TRANSFERS.has(still.transfer) ? wrap(still, av01Entry(still)) : null;
 }
 
 /**

@@ -1,7 +1,7 @@
-import { hdrVideoSdrMatch } from 'avif-hdr-video';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { type RenditionJobResponse, RenditionJobResponseSchema } from '../../../src/schemas/photos';
 import type { Rendition } from '../../../src/services/processing/renditions/renditions';
+import type { HdrSource } from '../avif/hdr_pictures';
 import { errorFrom, NothingSchema, request } from './request';
 
 function renditionUrl(photoId: string, rendition: Rendition, version = 0): string {
@@ -34,12 +34,11 @@ export const renditionsApi = {
   // a file that was never built.
   url: renditionUrl,
 
-  /**
-   * The same rendition as the 10-bit copy Firefox rewraps into a video (`hdr_video.ts`), coded to
-   * how this platform shows a PQ video's SDR range.
-   */
-  tenBitUrl: (url: string): string =>
-    `${url}${url.includes('?') ? '&' : '?'}bits=10&match=${hdrVideoSdrMatch()}`,
+  /** A rendition's URL with its 10-bit copies beside it, for `HdrPictures` to choose between. */
+  hdrSource: (url: string): HdrSource => ({
+    still: url,
+    tenBit: (match) => `${url}${url.includes('?') ? '&' : '?'}bits=10&match=${match}`,
+  }),
 
   /** Hands the server a rendition this device rendered, gzipped, for it to encode and keep. */
   keep: async (

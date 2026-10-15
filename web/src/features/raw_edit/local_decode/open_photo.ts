@@ -2,6 +2,7 @@ import { type Denoiser, type EditDoc } from '../../../../../src/schemas/photo_ed
 import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
 import { photosApi } from '../../../api/photos';
 import { renditionsApi } from '../../../api/renditions';
+import { hdrPictures } from '../../../avif/hdr_pictures';
 import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
 import type { Settings, ViewerRendition } from '../../../../../src/schemas/settings';
@@ -211,7 +212,8 @@ async function renditionFile(
   onStep('rendering');
   await renditionsApi.build(photoId, rendition);
   onStep('preparing');
-  const reply = await fetch(renditionsApi.url(photoId, rendition), {
+  const source = renditionsApi.hdrSource(renditionsApi.url(photoId, rendition));
+  const reply = await fetch(hdrPictures.pixelFile(source), {
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });
   if (!reply.ok) throw new Error(await refusal(reply));
