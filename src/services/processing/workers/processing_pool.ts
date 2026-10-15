@@ -7,7 +7,10 @@ const log = new Logger('processing');
 
 interface Batch {
   jobs: RenditionJob[];
+  /** The first job not yet handed out; jobs handed out ahead of it are marked in `taken`. */
   next: number;
+  taken: Uint8Array;
+  byPhoto: Map<string, number>;
   running: number;
   onResult: (result: ProcessingResult, job: RenditionJob) => void;
   stopped?: () => boolean;
@@ -20,8 +23,14 @@ export class ProcessingPool {
   private readonly idle: Worker[] = [];
   private busy = 0;
   private turn = 0;
+  private preferred: readonly string[] = [];
 
   constructor(private readonly concurrency: () => number) {}
+
+  /** Jobs for these photos are handed out before any other, earliest first, from any batch. */
+  prefer(photoIds: readonly string[]): void {
+    this.preferred = photoIds;
+  }
 
   /**
    * Settles once every job has landed, or once `stopped` and the jobs in flight have landed.
@@ -34,7 +43,16 @@ export class ProcessingPool {
   ): Promise<void> {
     if (jobs.length === 0) return Promise.resolve();
     return new Promise((settle) => {
-      this.batches.push({ jobs, next: 0, running: 0, onResult, stopped, settle });
+      this.batches.push({
+        jobs,
+        next: 0,
+        taken: new Uint8Array(jobs.length),
+        byPhoto: new Map(jobs.map((job, index) => [job.photoId, index])),
+        running: 0,
+        onResult,
+        stopped,
+        settle,
+      });
       this.pump();
     });
   }
@@ -42,17 +60,39 @@ export class ProcessingPool {
   private pump(): void {
     this.settleFinished();
     while (this.busy < this.limit()) {
-      const batch = this.nextBatch();
-      if (batch == null) break;
+      const pick = this.preferredJob() ?? this.nextJob();
+      if (pick == null) break;
       const worker = this.idle.pop() ?? this.spawn();
       if (worker == null) {
         // Nothing in flight would call back in here, so the batches would never settle.
         if (this.busy === 0) this.abandon();
         break;
       }
-      this.assign(worker, batch, batch.jobs[batch.next++]!);
+      this.assign(worker, pick.batch, this.take(pick.batch, pick.index));
     }
     for (const worker of this.idle.splice(0)) worker.terminate();
+  }
+
+  private preferredJob(): { batch: Batch; index: number } | null {
+    for (const photoId of this.preferred) {
+      for (const batch of this.batches) {
+        if (!this.owesWork(batch)) continue;
+        const index = batch.byPhoto.get(photoId);
+        if (index != null && batch.taken[index] === 0) return { batch, index };
+      }
+    }
+    return null;
+  }
+
+  private nextJob(): { batch: Batch; index: number } | null {
+    const batch = this.nextBatch();
+    return batch == null ? null : { batch, index: batch.next };
+  }
+
+  private take(batch: Batch, index: number): RenditionJob {
+    batch.taken[index] = 1;
+    while (batch.next < batch.jobs.length && batch.taken[batch.next] === 1) batch.next++;
+    return batch.jobs[index]!;
   }
 
   private limit(): number {

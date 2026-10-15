@@ -1,4 +1,5 @@
 import type { CaptureSequence } from '../../../schemas/capture_sequence';
+import type { RawHeaderFields } from '../../../schemas/jobs';
 import { extractEmbedded, readHeaderFields, scrubExif } from './rawshim_ops';
 
 // The RAW file's own metadata and its embedded preview, both by way of
@@ -75,7 +76,10 @@ export function wallClockIso(epochSeconds: number): string {
 // hardcoded byte offsets - one of them reached by assuming where another sits inside a
 // sixth, which is the same guess that moved the decode into Rust.
 export function readRawHeader(filePath: string): RawHeader {
-  const fields = readHeaderFields(filePath);
+  return headerOf(readHeaderFields(filePath));
+}
+
+export function headerOf(fields: RawHeaderFields): RawHeader {
   return {
     width: fields.width,
     height: fields.height,

@@ -210,21 +210,10 @@ pub struct Job {
     pub preserve_source_orientation: bool,
     pub grade: hdr::Grade,
     pub targets: Vec<Target>,
-    /// This is the import's scan: report the catalogue's fields off the source this job already
-    /// opens, and **never demosaic**.
-    ///
-    /// The scan's answer and the grid tile are otherwise the same file read twice - the same
-    /// open, the same decoder, the same tag walk, and the tile then reading a preview that sits
-    /// in the pages the walk faulted.
-    ///
-    /// The refusal to render is the other half of it, and it is not a detail. A target whose
-    /// embedded preview cannot be lifted - a body that embeds a bitmap, or nothing - otherwise
-    /// falls through to `Base::build`, which is a demosaic, a denoise and a camera match: 1.5
-    /// seconds on the *scan* pool, for a tile the rendition pass is about to be asked for
-    /// anyway. So a scan leaves that photograph tileless and says so by writing nothing, and the
-    /// rendition pass builds it with the library's own settings, which a scan does not carry.
+    /// Also report the catalogue's fields off the source this job already opens, for a row whose
+    /// scan took them from the device's media index rather than the file.
     #[serde(default)]
-    pub scan: bool,
+    pub header: bool,
     /// The photographs this job is a panorama of, and what to do with them.
     ///
     /// Present, `raw_file_path` says nothing: the sources are here, and what a target renders is
@@ -1301,10 +1290,9 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     // service decides that, not the library's `rendition_source`, which governs the photo
     // viewer alone (10.1). A file with no usable preview falls through to the render below,
     // which it could not do while the decode was gated on some *other* target wanting one.
-    // The import's fused pass: one mmap and one decoder answering both the catalogue's fields and
-    // the tile below, where a scan and a tile pass ask the same file the same questions twice.
+    // One mmap and one decoder answering both the catalogue's fields and the tile below.
     // Declared before the decoder, which borrows it, so it outlives it.
-    let source = match job.scan {
+    let source = match job.header {
         true => {
             rawler::rawsource::RawSource::new_lazy(std::path::Path::new(&job.raw_file_path)).ok()
         }
@@ -1317,17 +1305,12 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     if let (Some(source), Some(decoder)) = (source.as_ref(), decoder.as_ref()) {
         outcome.header = crate::header::read_with(source, decoder.as_ref()).map(HeaderFields::from);
         lap("header");
-    } else if job.scan && crate::decode_rendered::is_rendered(&job.raw_file_path) {
-        // A finished picture is not rawler's, so the fused pass above found no decoder for it and
-        // the catalogue's fields come off its container instead. Still without decoding a pixel:
+    } else if job.header && crate::decode_rendered::is_rendered(&job.raw_file_path) {
+        // A finished picture is not rawler's, so the open above found no decoder for it and the
+        // catalogue's fields come off its container instead. Still without decoding a pixel:
         // every one of the three states its size in its first few kilobytes.
         outcome.header = crate::header::read_rendered(&job.raw_file_path).map(HeaderFields::from);
         lap("header");
-    }
-    // A scan that could not open the file at all has nothing to say about it, and must not go on
-    // to render: the caller reads a missing header as "catalogue this the ordinary way".
-    if job.scan && outcome.header.is_none() {
-        return Ok(outcome);
     }
 
     // A fit and nothing else. The base is where the camera match is made, and everything after it
@@ -1396,12 +1379,6 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                 save_avif(image, target, output_rotation, exif)?;
                 describe_if_grid(image, target, &mut outcome);
                 lap("embedded preview, encode, write");
-                continue;
-            }
-            // Nothing to lift, and a scan may not demosaic to make up for it: this photograph
-            // gets no tile here and the rendition pass builds one, with the settings a scan does
-            // not carry (see `Job::scan`).
-            if job.scan {
                 continue;
             }
         }

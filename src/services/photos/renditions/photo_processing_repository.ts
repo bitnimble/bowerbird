@@ -56,6 +56,7 @@ export interface PendingPhoto {
   inputs_edited: number;
   // `builtFromOf`, read with the rest for the reason `edits_stamp` is.
   built_from: string | null;
+  metadata_provisional: number;
 }
 
 /** What decides whether one stored copy is current: what it was built from, against what the photo holds now. */
@@ -99,7 +100,7 @@ export class PhotoProcessingRepository {
     const order =
       libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
-      `SELECT p.id AS photo_id, p.rendition_source, p.recipe,
+      `SELECT p.id AS photo_id, p.rendition_source, p.recipe, p.metadata_provisional,
                 MAX(r.variant = 'grid') AS needs_tile,
                 MAX(r.variant = ${FULL_VARIANT_OF_LIBRARY}) AS needs_renditions,
                 l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr,

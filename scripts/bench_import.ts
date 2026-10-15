@@ -141,6 +141,7 @@ async function split(
     edited: 0,
     inputs_edited: 0,
     built_from: null,
+    metadata_provisional: 0,
   }));
   const repository = {
     listPendingProcessing: () => pending,

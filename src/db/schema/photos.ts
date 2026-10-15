@@ -91,6 +91,8 @@ export const photos = sqliteTable(
     // in the viewer, an edit - which is the order the cull gives copies back in (§14.5). Local and
     // unstamped: which photos this laptop has been working on is not a fact about the photograph.
     lastAccessedAt: text('last_accessed_at'),
+    // Local and unstamped: whether this device has read the header is not a fact about the photograph.
+    metadataProvisional: integer('metadata_provisional').notNull().default(0),
   },
   (t) => [
     check('photos_rating', sql`${t.rating} >= 0 AND ${t.rating} <= 5`),

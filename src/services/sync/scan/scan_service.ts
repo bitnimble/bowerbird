@@ -5,6 +5,7 @@ import { libraryScope, type LibraryScope } from '../../../utils/scope';
 import type { AlbumsRepository } from '../../albums/albums_repository';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../../libraries/libraries_service';
+import type { MediaListing } from '../../libraries/media_listing';
 import type { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
@@ -66,6 +67,7 @@ export class ScanService implements LibraryLifecycleListener {
     private readonly pendingMoves: (
       libraryId: string,
     ) => readonly { photoId: string; wasAt: string }[] = () => [],
+    media: MediaListing | null = null,
   ) {
     const reconciler = new ScanReconciler(
       photoPaths,
@@ -75,7 +77,7 @@ export class ScanService implements LibraryLifecycleListener {
       shoots,
       folderRules,
     );
-    const fileReader = new ScanFileReader(extract, scanConcurrency);
+    const fileReader = new ScanFileReader(extract, scanConcurrency, media);
     this.leases = new ScanLeases(photoScan, syncLocks);
     this.status = new ScanStatus(photoProcessing, libraries, processing);
     this.rebuilds = new ScanRebuilds(

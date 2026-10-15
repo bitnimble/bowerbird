@@ -19,16 +19,6 @@ export interface DiskFile {
   filePath: string;
   hash: string;
   metadata: FileMetadata;
-  /**
-   * The grid tile the scan built while it held this file open, waiting for a photo id to be
-   * renamed to (§10.4).
-   *
-   * Carried from the read that made it rather than derived again later, which is what keeps it
-   * unambiguous: this name belongs to this file, whatever the diff decides it is. A file that
-   * turns out to be a move has its tile discarded, since the photo it pairs with already has
-   * one.
-   */
-  stagedTile?: string;
 }
 
 // Which walk an entry came from, and so which set of rows it is about: the live
@@ -51,8 +41,6 @@ export interface AddedEntry {
   fileHash: string;
   metadata: FileMetadata;
   channel: Channel;
-  /** The tile the scan built for this file, for the row this becomes (`DiskFile.stagedTile`). */
-  stagedTile?: string;
 }
 
 export interface ModifiedEntry {
@@ -63,8 +51,6 @@ export interface ModifiedEntry {
   metadata: FileMetadata;
   wasMissing: boolean;
   channel: Channel;
-  /** The tile the scan built for the file's new contents (`DiskFile.stagedTile`). */
-  stagedTile?: string;
 }
 
 /**
@@ -149,7 +135,6 @@ export function buildDiff(
         metadata: change.metadata,
         wasMissing: db.is_missing,
         channel,
-        stagedTile: change.stagedTile,
       });
     } else if (db.is_missing) {
       // present at its path, unchanged (or re-hashed identical): reappearance.
@@ -164,7 +149,6 @@ export function buildDiff(
       fileHash: f.hash,
       metadata: f.metadata,
       channel,
-      stagedTile: f.stagedTile,
     }));
 
   return { removed, added, modified, reappeared };

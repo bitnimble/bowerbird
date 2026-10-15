@@ -9,7 +9,6 @@ import type { ScanLeases } from './scan_leases';
 import type { ScanReconciler } from './scan_reconciler';
 import type { ShootRelocation } from './scan_relocations';
 import { idleScanStatus, type ScanStatus } from './scan_status';
-import type { ScanTiles } from './scan_tiles';
 
 const log = new Logger('scan');
 const SCAN_PROGRESS_EVERY = 500;
@@ -41,7 +40,6 @@ export class ScanBatch {
     scopePaths: readonly string[] | null,
     private readonly startedAt: number,
     private readonly keepLease: () => void,
-    private readonly tiles: ScanTiles,
     private readonly libraries: LibrariesRepository,
     shoots: ShootsRepository,
     private readonly reconciler: ScanReconciler,
@@ -97,9 +95,6 @@ export class ScanBatch {
     );
     this.touched?.push(id);
     this.awaitingSidecars.push({ id, filePath: entry.filePath });
-    // Row now has id scan could not know, which is all its staged tile was waiting for.
-    // Collected rather than renamed here because this runs inside insert transaction.
-    this.tiles.claim(id, entry.stagedTile);
     return id;
   }
 
@@ -127,14 +122,12 @@ export class ScanBatch {
             fileHash: file.hash,
             metadata: file.metadata,
             channel: 'live',
-            stagedTile: file.stagedTile,
           },
           batchAt,
         );
       }
     });
     this.importSidecars();
-    this.tiles.adopt();
     this.added += files.length;
     const now = Date.now();
     const seconds = (now - (this.committedAt ?? now)) / 1000;

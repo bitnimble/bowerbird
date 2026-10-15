@@ -81,6 +81,7 @@ export const PathSegment = {
   peers: segment('peers'),
   photos: segment('photos'),
   positions: segment('positions'),
+  prefer: segment('prefer'),
   prepare: segment('prepare'),
   preview: segment('preview'),
   printerProfiles: segment('printer-profiles'),

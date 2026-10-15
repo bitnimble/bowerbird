@@ -2,9 +2,10 @@ import type { Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Logger } from '../../../logger';
 import { computeFileHash } from '../../../utils/hash';
-import type { ScannedFile } from '../../../utils/scan';
+import { isRendered, type ScannedFile } from '../../../utils/scan';
+import type { MediaEntry, MediaListing } from '../../libraries/media_listing';
 import type { ScanDbPhoto } from '../../photos/scan/photo_scan_repository';
-import type { FileMetadata, TileStage } from '../../processing/analysis/metadata';
+import type { FileMetadata } from '../../processing/analysis/metadata';
 import type { DiskFile } from './scan_diff';
 import { eachInOrder, inodeOrder } from './scan_order';
 
@@ -12,13 +13,11 @@ const log = new Logger('scan');
 
 // How many photos a first scan holds before writing them down. Small enough that
 // a kill costs seconds of work rather than hours, large enough that the commit
-// itself is nowhere near the cost of the decodes that filled it.
+// itself is nowhere near the cost of the reads that filled it.
 const INSERT_BATCH = 1000;
 
-// And how long it holds them, however few there are. The scan builds each photo's
-// grid tile while it has the RAW open, so a thousand files is minutes of work: a
-// library whose whole import is smaller than one batch would otherwise show
-// nothing at all until the run ended.
+// And how long it holds them, however few there are, so a drive slow enough to make a
+// thousand header reads take a while still shows photos arriving.
 const INSERT_BATCH_MS = 2_000;
 
 /** One file the walk found, with the stat the diff and the read order are both taken from. */
@@ -28,7 +27,7 @@ interface Scanned {
   stats: Stats;
 }
 
-export type MetadataExtractor = (absPath: string, stage?: TileStage) => Promise<FileMetadata>;
+export type MetadataExtractor = (absPath: string) => Promise<FileMetadata>;
 
 export class ScanCancelled extends Error {}
 
@@ -42,6 +41,7 @@ export class ScanFileReader {
   constructor(
     private readonly extract: MetadataExtractor,
     private readonly scanConcurrency: () => number,
+    private readonly media: MediaListing | null = null,
   ) {}
 
   // Stats each file and opens/hashes ONLY the ones that are new or whose mtime+size
@@ -59,11 +59,11 @@ export class ScanFileReader {
   async scanFiles(
     files: readonly ScannedFile[],
     dbPhotos: readonly ScanDbPhoto[],
+    root: string,
     signal: AbortSignal,
     onProgress: (scanned: number, toScan: number) => void,
     batched: BatchedInserts | null,
     keepLease: () => void,
-    stageFor: () => TileStage | undefined = () => undefined,
   ): Promise<{ present: Set<string>; changed: DiskFile[]; failed: Set<string> }> {
     const dbByPath = new Map(dbPhotos.map((p) => [p.file_path, p]));
 
@@ -139,15 +139,18 @@ export class ScanFileReader {
     // nothing to scan for as long as the first file takes - which on the library this is
     // for is the better part of a second.
     onProgress(0, byInode.size);
+    // Asked once, and only when some file is opened at all: a scan that finds nothing changed
+    // costs the index nothing.
+    let indexed: Promise<ReadonlyMap<string, MediaEntry> | null> | null = null;
+    const index = (): Promise<ReadonlyMap<string, MediaEntry> | null> =>
+      (indexed ??= this.media?.under(root) ?? Promise.resolve(null));
     await eachInOrder(
       inodeOrder([...byInode.values()]),
       width,
-      // The staged tile's name travels back with the metadata rather than being worked out
-      // again downstream: it is a name minted for this read, and nothing else can derive it.
       async (file) => {
         if (unchanged(file)) return null;
-        const stage = stageFor();
-        return { metadata: await this.extract(file.absPath, stage), stagedTile: stage?.outputPath };
+        const entry = (await index())?.get(file.absPath);
+        return fromIndex(file, entry) ?? (await this.extract(file.absPath));
       },
       (file, outcome) => {
         // After the file is counted in, not before it: reads run ahead of their results
@@ -162,13 +165,12 @@ export class ScanFileReader {
           log.warn('unreadable file, left as it is', { file: file.absPath, err: outcome.error });
           return;
         }
-        const read = outcome.value;
-        if (read == null) return;
+        const metadata = outcome.value;
+        if (metadata == null) return;
         keep({
           filePath: file.relPath,
-          hash: computeFileHash(file.absPath, read.metadata),
-          metadata: read.metadata,
-          stagedTile: read.stagedTile,
+          hash: computeFileHash(file.absPath, metadata),
+          metadata,
         });
       },
       // Between files, not inside one: this is the pass that opens and hashes, so a
@@ -183,4 +185,43 @@ export class ScanFileReader {
     if (signal.aborted && dbByPath.size > 0) throw new ScanCancelled();
     return { present, changed, failed };
   }
+}
+
+const EXIF_ORIENTATION_OF_DEGREES = new Map([
+  [0, 1],
+  [90, 6],
+  [180, 3],
+  [270, 8],
+]);
+
+/**
+ * What the media index already knows about a finished picture, without opening it. Never for a
+ * RAW, whose recorded size is the camera's crop rather than the sensor's the index reports, and
+ * never where the index is behind the file.
+ */
+function fromIndex(file: Scanned, entry: MediaEntry | undefined): FileMetadata | null {
+  if (entry == null || !isRendered(file.relPath) || entry.size !== file.stats.size) return null;
+  const orientation = EXIF_ORIENTATION_OF_DEGREES.get(entry.orientationDegrees ?? 0);
+  if (entry.width == null || entry.height == null || orientation == null) return null;
+  const turned = orientation === 6 || orientation === 8;
+  return {
+    width: turned ? entry.height : entry.width,
+    height: turned ? entry.width : entry.height,
+    orientation,
+    dateTaken: entry.takenWallMs == null ? null : new Date(entry.takenWallMs).toISOString(),
+    dateTakenOffset: null,
+    latitude: null,
+    longitude: null,
+    iso: null,
+    shutterSpeed: null,
+    aperture: null,
+    focalLength: null,
+    cameraMake: null,
+    cameraModel: null,
+    lensModel: null,
+    sequence: null,
+    mtime: file.stats.mtime.toISOString(),
+    fileSize: file.stats.size,
+    provisional: true,
+  };
 }

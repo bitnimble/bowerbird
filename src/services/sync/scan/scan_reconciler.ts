@@ -157,6 +157,7 @@ export class ScanReconciler {
         camera_model: entry.metadata.cameraModel,
         lens_model: entry.metadata.lensModel,
         capture_sequence: sequenceColumn(entry.metadata.sequence),
+        metadata_provisional: entry.metadata.provisional,
       }),
     );
   }

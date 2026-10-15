@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
 import { AppError } from '../../../errors';
-import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { LibraryConfiguration } from '../../../schemas/libraries';
 import type { Job } from '../../../schemas/jobs';
 import { deleteGeneratedFile } from '../../../utils/deletions';
@@ -17,7 +16,10 @@ import {
   type RenditionVariant,
 } from '../../processing/renditions/renditions';
 import type { PhotoListingRepository } from '../listing/photo_listing_repository';
-import type { PhotoMetadataRepository } from '../metadata/photo_metadata_repository';
+import {
+  metadataFieldsOf,
+  type PhotoMetadataRepository,
+} from '../metadata/photo_metadata_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from './photo_processing_repository';
 import { photoLog as log } from '../photo_service_log';
@@ -85,24 +87,7 @@ export class PhotoRenditionService {
       if (filePath == null) continue;
       const finish = this.activity.begin(library.id, 'refreshing_metadata', photoId);
       try {
-        const metadata = await this.extract(filePath);
-        this.photoMetadata.updateMetadata(photoId, {
-          width: metadata.width,
-          height: metadata.height,
-          orientation: metadata.orientation,
-          date_taken: metadata.dateTaken,
-          date_taken_offset: metadata.dateTakenOffset,
-          latitude: metadata.latitude,
-          longitude: metadata.longitude,
-          iso: metadata.iso,
-          shutter_speed: metadata.shutterSpeed,
-          aperture: metadata.aperture,
-          focal_length: metadata.focalLength,
-          camera_make: metadata.cameraMake,
-          camera_model: metadata.cameraModel,
-          lens_model: metadata.lensModel,
-          capture_sequence: sequenceColumn(metadata.sequence),
-        });
+        this.photoMetadata.updateMetadata(photoId, metadataFieldsOf(await this.extract(filePath)));
         updated++;
       } catch (err) {
         // One unreadable file must not abandon the rest of the selection.

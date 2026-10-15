@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runMigrations } from '../../../../db/migrate';
 import type { FileMetadata } from '../../../processing/analysis/metadata';
+import type { MediaListing } from '../../../libraries/media_listing';
 import { AlbumsRepository } from '../../../albums/albums_repository';
 import { LibrariesRepository } from '../../../libraries/libraries_repository';
 import { PhotoMetadataRepository } from '../../../photos/metadata/photo_metadata_repository';
@@ -65,7 +66,10 @@ export function makeLibrary(
   over: {
     include_subfolders?: number;
     bin_name?: string | null;
+    include_non_raw?: number;
     pendingMoves?: ConstructorParameters<typeof ScanService>[14];
+    extract?: ConstructorParameters<typeof ScanService>[10];
+    media?: MediaListing;
   } = {},
 ): Peer {
   const db = new Database(':memory:');
@@ -76,13 +80,14 @@ export function makeLibrary(
   const root = path.join(dir, 'library');
   mkdirSync(root);
   db.query(
-    `INSERT INTO libraries (id, root_path, name, ordering, bin_name, include_subfolders)
-       VALUES (?, ?, 'Trip', 'taken_desc', ?, ?)`,
+    `INSERT INTO libraries (id, root_path, name, ordering, bin_name, include_subfolders, include_non_raw)
+       VALUES (?, ?, 'Trip', 'taken_desc', ?, ?, ?)`,
   ).run(
     LIB,
     root,
     over.bin_name === undefined ? 'Bin' : over.bin_name,
     over.include_subfolders ?? 1,
+    over.include_non_raw ?? 0,
   );
 
   const photoProcessing = new PhotoProcessingRepository(db, new RenditionsRepository(db));
@@ -102,11 +107,12 @@ export function makeLibrary(
     rules,
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
-    meta,
+    over.extract ?? meta,
     undefined,
     undefined,
     undefined,
     over.pendingMoves,
+    over.media ?? null,
   );
   return { db, root, scan, photoPaths, photoMetadata, photoProcessing, photoScan, shoots, rules };
 }

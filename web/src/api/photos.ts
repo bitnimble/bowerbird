@@ -35,6 +35,7 @@ import {
   PhotoSummaryListSchema,
   type PhotoTarget,
   PhotoTargetSchema,
+  PreferPhotosRequestSchema,
   type Triage,
   type UpdatePhotoRequest,
   UpdatePhotoRequestSchema,
@@ -222,6 +223,14 @@ export const photosApi = {
       'POST',
       route(PathSegment.api(), PathSegment.photos(), PathSegment.rebuildTiles()),
       PhotoTargetSchema.parse(target),
+    ),
+  prefer: (photoIds: string[]): Promise<void> =>
+    request(
+      NothingSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.photos(), PathSegment.prefer()),
+      PreferPhotosRequestSchema.parse({ photo_ids: photoIds }),
+      { activity: 'background' },
     ),
   refreshMetadata: (target: PhotoTarget): Promise<{ updated: number }> =>
     request(

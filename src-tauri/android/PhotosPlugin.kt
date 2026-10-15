@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -22,10 +23,18 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import java.util.TimeZone
+import org.json.JSONArray
+import org.json.JSONObject
 
 @InvokeArg
 class GrantWritesArgs {
     lateinit var paths: List<String>
+}
+
+@InvokeArg
+class ListMediaArgs {
+    lateinit var root: String
 }
 
 @TauriPlugin
@@ -79,6 +88,20 @@ class PhotosPlugin(private val activity: Activity) : Plugin(activity) {
         }
         val request = MediaStore.createWriteRequest(activity.contentResolver, uris)
         startIntentSenderForResult(invoke, IntentSenderRequest.Builder(request.intentSender).build(), "writesAnswered")
+    }
+
+    /** Each row is `[path, size, width, height, orientationDegrees, takenWallMs]`, null where unknown. */
+    @Command
+    fun listMedia(invoke: Invoke) {
+        val root = invoke.parseArgs(ListMediaArgs::class.java).root.trimEnd('/')
+        // Commands run on the UI thread, and a camera folder holds thousands of rows.
+        Thread {
+            try {
+                invoke.resolve(JSObject().apply { put("media", mediaUnder(root)) })
+            } catch (err: Exception) {
+                invoke.reject(err.message ?: err.toString())
+            }
+        }.start()
     }
 
     @PermissionCallback
@@ -172,6 +195,44 @@ class PhotosPlugin(private val activity: Activity) : Plugin(activity) {
         }
         found
     }
+
+    private fun mediaUnder(root: String): JSONArray {
+        val media = JSONArray()
+        val escaped = root.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        activity.contentResolver.query(
+            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
+            arrayOf(
+                MediaStore.MediaColumns.DATA,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.WIDTH,
+                MediaStore.MediaColumns.HEIGHT,
+                MediaStore.Images.ImageColumns.ORIENTATION,
+                MediaStore.Images.ImageColumns.DATE_TAKEN,
+            ),
+            "${MediaStore.MediaColumns.DATA} LIKE ? ESCAPE '\\'",
+            arrayOf("$escaped/%"),
+            null,
+        )?.use { rows ->
+            while (rows.moveToNext()) {
+                if (rows.isNull(0) || rows.isNull(1)) continue
+                val taken = positiveOrNull(rows, 5)
+                media.put(
+                    JSONArray()
+                        .put(rows.getString(0))
+                        .put(rows.getLong(1))
+                        .put(positiveOrNull(rows, 2) ?: JSONObject.NULL)
+                        .put(positiveOrNull(rows, 3) ?: JSONObject.NULL)
+                        .put(if (rows.isNull(4)) JSONObject.NULL else rows.getInt(4))
+                        // DATE_TAKEN is a UTC instant; the server keeps the camera's wall clock as if UTC.
+                        .put(taken?.let { it + TimeZone.getDefault().getOffset(it) } ?: JSONObject.NULL),
+                )
+            }
+        }
+        return media
+    }
+
+    private fun positiveOrNull(rows: Cursor, column: Int): Long? =
+        if (rows.isNull(column)) null else rows.getLong(column).takeIf { it > 0 }
 
     private companion object {
         const val QUERY_CHUNK = 500

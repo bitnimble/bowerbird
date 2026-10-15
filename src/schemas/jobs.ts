@@ -235,16 +235,8 @@ export const JobSchema = z.object({
   geometry: JobGeometrySchema,
   grade: JobGradeSchema,
   targets: z.array(JobTargetSchema),
-  /**
-   * This is the import's scan: report the catalogue's fields off the source this job already
-   * opens, and never demosaic.
-   *
-   * The refusal to render is half of what it means. A file whose embedded preview cannot be
-   * lifted would otherwise fall through to a full render - 1.5s on the scan pool, for a tile
-   * the rendition pass is about to build anyway, and without the library's settings to build it
-   * from. Such a photo comes back with a header and no tile, which is what the scan wants.
-   */
-  scan: z.boolean().optional(),
+  /** Also report the catalogue's fields off the source this job already opens. */
+  header: z.boolean().optional(),
   /**
    * The photographs this job is a panorama of, and what to do with them.
    *

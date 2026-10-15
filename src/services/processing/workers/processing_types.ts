@@ -8,6 +8,7 @@ import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/job
 import type { CameraTone, Denoiser, Repair } from '../../../schemas/photo_edits';
 import type { CameraMatch } from '../../../schemas/render_stages';
 import type { RenderingIntent } from '../../../schemas/rendering_intent';
+import type { HeaderMetadata } from '../analysis/metadata';
 import type { Rendition } from '../renditions/renditions';
 
 export type { RenditionSource };
@@ -107,6 +108,8 @@ export interface RenditionJob extends Developed {
   grade: HdrGrade;
   cameraMatch: CameraMatch;
   preserveSourceOrientation?: boolean;
+  /** Also read the file's header off the same open, for a row whose scan took it from the media index. */
+  header?: true;
   /**
    * Collapse each Bayer quad into one pixel rather than interpolating it (§10.5).
    *
@@ -203,6 +206,7 @@ export type ProcessingResult =
       descriptor?: Uint8Array;
       composite?: string;
       cameraTone?: CameraTone;
+      header?: HeaderMetadata;
     }
   | { photoId: string; success: false; error: string };
 

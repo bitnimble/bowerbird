@@ -1,5 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { readCaptureOffset } from '../analysis/exif_zone';
+import { headerOf } from '../rawshim/raw_decoder';
 import { runJob, writeRendered } from '../rawshim/rawshim_job';
 import { writePhotoAnalysis } from '../analysis/photo_analysis_store';
 import { toCommand, toCompositeCommand } from '../rawshim/worker_command';
@@ -58,14 +60,24 @@ self.onmessage = async (event) => {
                   self.postMessage({ kind: 'started', photoId: job.photoId, analysisCache })
               : undefined,
           );
-    const { descriptor, photoAnalysis, composite, cameraTone } =
+    const { descriptor, photoAnalysis, composite, cameraTone, header } =
       job.kind === 'composite'
         ? runJob(command)
         : job.rendered != null
           ? writeRendered(command, job.rendered)
           : runJob(command);
     if (photoAnalysis != null) writePhotoAnalysis(job.dataPath, job.photoId, photoAnalysis);
-    self.postMessage({ photoId: job.photoId, success: true, descriptor, composite, cameraTone });
+    self.postMessage({
+      photoId: job.photoId,
+      success: true,
+      descriptor,
+      composite,
+      cameraTone,
+      header:
+        header == null || job.kind === 'composite'
+          ? undefined
+          : { ...headerOf(header), dateTakenOffset: await readCaptureOffset(job.rawFilePath) },
+    });
   } catch (err) {
     for (const output of outputsOf(job))
       await Bun.file(output)

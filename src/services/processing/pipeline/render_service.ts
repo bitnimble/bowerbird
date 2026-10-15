@@ -1,5 +1,3 @@
-import { replaceFile } from '../../../utils/files';
-import type { ProcessingStage } from '../../../schemas/common';
 import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { ExportOptions } from '../../../schemas/export';
 import type { Job } from '../../../schemas/jobs';
@@ -7,14 +5,12 @@ import type { LibraryConfiguration as Library } from '../../../schemas/libraries
 import type { AlignShape } from '../../../schemas/jobs';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { CameraTone, Denoiser } from '../../../schemas/photo_edits';
+import type { HeaderMetadata } from '../analysis/metadata';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
-import { renditionPathFor, stagedDescriptorPath } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
-import { encoderQuality } from '../analysis/quality';
-import type { TileEncoding } from '../analysis/metadata';
 import type { Rendition } from '../renditions/renditions';
 import { renditionSkips } from '../renditions/render_stages';
 import type { CompositeWorker } from '../workers/composite_worker';
@@ -49,6 +45,7 @@ export abstract class RenderService {
   private readonly processed = new Set<(photoId: string, written: RenditionWritten) => void>();
   protected readonly described = new Set<(photoId: string, descriptor: Uint8Array) => void>();
   private readonly cameraMatched = new Set<(photoId: string, tone: CameraTone) => void>();
+  private readonly headerRead = new Set<(photoId: string, header: HeaderMetadata) => void>();
 
   constructor(
     protected readonly photoProcessing: PhotoProcessingRepository,
@@ -92,6 +89,7 @@ export abstract class RenderService {
         for (const listener of this.described) listener(photoId, descriptor);
       },
       (photoId, tone) => this.matchedCamera(photoId, tone),
+      (photoId, header) => this.readHeader(photoId, header),
     );
     this.exports = new ExportRenderer(
       settings,
@@ -119,74 +117,13 @@ export abstract class RenderService {
     return cameraMatchWithStages(base, renditionSkips(library, rendition));
   }
 
-  protected abstract stageDone(
-    photo: null,
-    photoId: string,
-    stage: ProcessingStage,
-    descriptor?: Uint8Array,
-  ): void;
-
-  /**
-   * How a grid tile is encoded, for the scan to build one while it holds the RAW open (§10.4).
-   *
-   * The same two settings `target` reads, so a tile built by the scan and one built here are
-   * the same picture. The scan's own encoder settings are not a thing that exists.
-   */
-  tileEncoding(): TileEncoding {
-    const settings = this.settings.get();
-    return {
-      size: settings.grid_rendition_size,
-      quantizer: encoderQuality('avif-sdr', settings.grid_rendition_quality),
-      speed: settings.avif_speed,
-    };
+  /** Called with the header a grid tile job read off its own open. */
+  onHeaderRead(listener: (photoId: string, header: HeaderMetadata) => void): void {
+    this.headerRead.add(listener);
   }
 
-  /**
-   * Takes on a grid tile the scan built, now that the photo it belongs to has an id (§10.4).
-   *
-   * A rename inside `grid/`, which is atomic and cannot cross a filesystem, and then exactly
-   * the bookkeeping the tile pass does when it builds one: the flag, the stamp the client
-   * versions its URL off, and the stacking descriptor. So a tile whose pixels came from the
-   * scan is indistinguishable from one the rendition pass built.
-   *
-   * False where there was nothing to take on - a body that embeds no JPEG, a scan that failed,
-   * a run that died before it got here - and the photo then keeps `needs_tile`, so the
-   * rendition pass builds it the way it always did.
-   */
-  async adoptScannedTile(photoId: string, dataPath: string, staged: string): Promise<boolean> {
-    const descriptorPath = stagedDescriptorPath(staged);
-    try {
-      // Read before the rename, because the descriptor is only meaningful while it still
-      // describes a file that is there to be adopted.
-      const descriptor = await Bun.file(descriptorPath)
-        .bytes()
-        .catch(() => undefined);
-      await replaceFile(staged, renditionPathFor(dataPath, photoId, 'grid', false));
-      await Bun.file(descriptorPath)
-        .delete()
-        .catch(() => {});
-      this.stageDone(null, photoId, 'tile', descriptor);
-      return true;
-    } catch {
-      // Both halves, or the sweep would carry a descriptor for a tile that never landed.
-      await Bun.file(staged)
-        .delete()
-        .catch(() => {});
-      await Bun.file(descriptorPath)
-        .delete()
-        .catch(() => {});
-      return false;
-    }
-  }
-
-  /** Drops a scanned tile no photo took on: the file turned out to be a move, or the run stopped. */
-  async discardScannedTile(staged: string): Promise<void> {
-    await Bun.file(staged)
-      .delete()
-      .catch(() => {});
-    await Bun.file(stagedDescriptorPath(staged))
-      .delete()
-      .catch(() => {});
+  protected readHeader(photoId: string, header: HeaderMetadata): void {
+    for (const listener of this.headerRead) listener(photoId, header);
   }
 
   /** Called with each derived file written: which photo, which stage, and when. */

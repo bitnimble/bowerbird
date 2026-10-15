@@ -302,7 +302,11 @@ move or deletion of an original (`write_grants.ts`), over the socket the shell n
 `BOWERBIRD_SHELL_SOCKET`; the shell's `photos` plugin (`photos.rs`, `PhotosPlugin.kt`) makes the
 request and the server then moves the file itself, through the same Bin as everywhere else. With
 media management (`MANAGE_MEDIA`) allowed, Android grants the request without showing anything.
-Without it, each batch shows Android's own prompt.
+Without it, each batch shows Android's own prompt. The same socket answers a media listing
+(`media_listing.ts`): one `MediaStore` query for every file under a library's folder, with the size,
+dimensions, orientation and capture time Android already indexed, which the scan reads instead of
+opening each finished picture to learn them (§10.3). A RAW is still read, and a listing that fails
+leaves the scan reading every file itself.
 
 A synced library names no folder, and the server puts it under `BOWERBIRD_LIBRARIES_DIR`, which the
 shell sets inside the app's own storage. It keeps no originals and sends or fetches none

@@ -73,12 +73,12 @@ fn fused(raw: &str, out_path: &str) {
 
 /// The job `processing_service.target` builds for a grid tile, as JSON because that is how it
 /// crosses to the worker - the same fields, so nothing here can drift from what an import sends.
-fn tile_job(raw: &str, out_path: &str, scan: bool) -> job::Job {
+fn tile_job(raw: &str, out_path: &str, header: bool) -> job::Job {
     serde_json::from_str(&format!(
         r#"{{
             "rawFilePath": {raw:?},
             "cameraMatch": "lensAndColour",
-            "scan": {scan},
+            "header": {header},
             "denoiseLuminance": null,
             "denoiseColour": null,
             "sharpen": 0.5,

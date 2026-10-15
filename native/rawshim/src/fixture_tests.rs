@@ -226,7 +226,7 @@ fn tile_job(
         // A crop cannot fit one, and the point here is the coding rather than the colour.
         camera_match: crate::hdr_fit::CameraMatch::None,
         half_size: false,
-        scan: false,
+        header: false,
         composite: None,
         tile,
         noise_fit: None,
@@ -4565,16 +4565,16 @@ mod one_open_at_a_time {
     }
 }
 
-/// The scan's half of an import, which builds the grid tile while it holds the RAW open (10.4).
-mod fused_scan {
+/// A grid tile that also reports the catalogue's fields off its own open (`Job::header`).
+mod tile_header {
     use super::*;
 
-    fn tile_job(path: &PathBuf, out: &str, scan: bool) -> crate::job::Job {
+    fn tile_job(path: &PathBuf, out: &str, header: bool) -> crate::job::Job {
         serde_json::from_str(&format!(
             r#"{{
                 "rawFilePath": {:?},
                 "cameraMatch": "none",
-                "scan": {scan},
+                "header": {header},
                 "denoiseLuminance": 0,
                 "denoiseColour": 0,
                 "sharpen": 0,
@@ -4598,42 +4598,21 @@ mod fused_scan {
         .expect("the tile job parses")
     }
 
-    /// **The catalogue's answer cannot depend on which pass read the file.** A fused scan reports
-    /// these fields off the source it lifts the preview from, where a scan that stages nothing
-    /// reads them through `header::read_path`, and the row is written from whichever ran - so a
-    /// field that came back differently would date, orient or credit a photograph according to a
-    /// decision about speed.
+    /// **The catalogue's answer cannot depend on which pass read the file.** A tile job reports
+    /// these fields off the source it lifts the preview from, where the scan reads them through
+    /// `header::read_path` - so a field that came back differently would date, orient or credit a
+    /// photograph according to whether the media index answered for it first.
     #[test]
-    fn the_fused_header_is_the_one_the_scan_would_have_read() {
+    fn the_tile_jobs_header_is_the_one_the_scan_would_have_read() {
         let path = sony();
-        let out = std::env::temp_dir().join("bb-fused-scan-header.avif");
-        let fused = crate::job::run(&tile_job(&path, &out.to_string_lossy(), true))
-            .expect("the fused job runs")
+        let out = std::env::temp_dir().join("bb-tile-header.avif");
+        let reported = crate::job::run(&tile_job(&path, &out.to_string_lossy(), true))
+            .expect("the tile job runs")
             .header
-            .expect("a fused job reports the header");
+            .expect("a tile job asked for the header reports it");
         let read = crate::header::read_path(&path.to_string_lossy()).expect("the header reads");
 
-        assert_eq!(fused, crate::job::HeaderFields::from(read));
-    }
-
-    /// The tile and its descriptor both. The pass that adopts the tile cannot recover the
-    /// descriptor from it - the pixels are inside an AVIF by then - so a fused scan that wrote
-    /// the one without the other would leave that photograph silently unable to stack.
-    #[test]
-    fn the_fused_pass_writes_the_tile_and_describes_it() {
-        let path = sony();
-        let out = std::env::temp_dir().join("bb-fused-scan-tile.avif");
-        std::fs::remove_file(&out).ok();
-
-        let outcome =
-            crate::job::run(&tile_job(&path, &out.to_string_lossy(), true)).expect("the job runs");
-
-        assert!(out.is_file(), "the fused pass wrote no tile");
-        assert!(std::fs::metadata(&out).expect("the tile stats").len() > 0);
-        assert!(
-            outcome.descriptor.is_some(),
-            "the fused pass described no frame"
-        );
+        assert_eq!(reported, crate::job::HeaderFields::from(read));
     }
 
     /// A job that did not ask reports nothing, which is every rendition the viewer and the editor
@@ -4641,43 +4620,10 @@ mod fused_scan {
     #[test]
     fn a_job_that_did_not_ask_for_the_header_does_not_pay_for_it() {
         let path = sony();
-        let out = std::env::temp_dir().join("bb-fused-scan-unasked.avif");
+        let out = std::env::temp_dir().join("bb-tile-header-unasked.avif");
         let outcome =
             crate::job::run(&tile_job(&path, &out.to_string_lossy(), false)).expect("the job runs");
         assert!(outcome.header.is_none());
-    }
-
-    /// **A scan never demosaics, and this is the test that says so.**
-    ///
-    /// A target whose preview cannot be lifted falls through to `Base::build` for every other
-    /// caller, which is what a rendition job wants and what a scan must not do: 1.5 seconds on
-    /// the *scan* pool, for a tile the rendition pass is about to be asked for anyway, rendered
-    /// without the library settings a scan does not carry. Asked of a file with no preview at
-    /// all, so the fallback is the only thing that could produce a tile.
-    #[test]
-    fn a_scan_leaves_a_file_it_cannot_lift_a_preview_from_to_the_rendition_pass() {
-        let raw = std::env::temp_dir().join("bb-fused-scan-not-a-raw.arw");
-        // Not a RAW at all, which is the same thing to this code as a body that embeds no JPEG:
-        // there is no preview to lift. A real such body would be a better fixture and there is
-        // not one in the tree.
-        std::fs::write(&raw, b"not a raw file").expect("the scratch file writes");
-        let out = std::env::temp_dir().join("bb-fused-scan-no-preview.avif");
-        std::fs::remove_file(&out).ok();
-
-        let outcome = crate::job::run(&tile_job(&raw, &out.to_string_lossy(), true));
-
-        // Either answer is a scan that gave up rather than rendered; what must not happen is a
-        // tile on disk, which could only have come from a demosaic.
-        assert!(
-            outcome
-                .as_ref()
-                .map_or(true, |done| done.descriptor.is_none()),
-            "a scan described a frame it could not lift a preview from",
-        );
-        assert!(
-            !out.is_file(),
-            "a scan rendered a tile it should have left to the rendition pass"
-        );
     }
 }
 

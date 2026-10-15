@@ -10,7 +10,6 @@ import type { ClassifiedScan } from './scan_classification';
 import type { CollectedEvidence } from './scan_evidence';
 import type { ScanLeases } from './scan_leases';
 import type { ScanReconciler } from './scan_reconciler';
-import type { ScanTiles } from './scan_tiles';
 
 export interface AppliedCounts {
   removed: number;
@@ -32,14 +31,13 @@ export function applyChanges(
     libraryId: string;
     owner: string;
     batch: ScanBatch;
-    tiles: ScanTiles;
     evidence: CollectedEvidence;
     classified: ClassifiedScan;
   },
 ): AppliedCounts {
   const { libraries, photoPaths, photoMetadata, photoScan, shoots, reconciler, leases } =
     dependencies;
-  const { libraryId, owner, batch, tiles, evidence, classified } = input;
+  const { libraryId, owner, batch, evidence, classified } = input;
 
   const { followed, binFolder, binRoot } = evidence;
   const { diff, result, imported, relocations, moves, relocatedPath, nowUtc } = classified;
@@ -94,11 +92,9 @@ export function applyChanges(
         camera_model: md.metadata.cameraModel,
         lens_model: md.metadata.lensModel,
         capture_sequence: sequenceColumn(md.metadata.sequence),
+        metadata_provisional: md.metadata.provisional,
       });
       batch.touched?.push(md.photoId);
-      // Its pixels changed, so the tile the scan just built off them is the one this photo
-      // should be showing - and its row already has the id to name it with.
-      tiles.claim(md.photoId, md.stagedTile);
       modified++;
     }
     for (const cr of result.crossings) {
@@ -114,13 +110,9 @@ export function applyChanges(
     // where it would restore to read off the mirrored layout: `<bin>/A/B/c.arw`
     // came from `A/B/c.arw`, and `<bin>/c.arw` from the library root.
     for (const ad of imported) {
-      const id = reconciler.insertAdded(libraryId, ad, null, nowUtc, {
+      reconciler.insertAdded(libraryId, ad, null, nowUtc, {
         deleted_from_path: ad.filePath.slice(binRoot!.length + 1),
       });
-      // Its tile too. A binned photograph is still shown - in the bin, and in a search that
-      // includes it - and the scan built this one exactly as it built every other, so
-      // dropping it here would encode a tile and delete it in the same run.
-      tiles.claim(id, ad.stagedTile);
       batch.added++;
     }
     for (const photoId of diff.reappeared) {

@@ -1,5 +1,6 @@
 //! The device's own photo library, where the platform guards it: leave to read it, for the page,
-//! and leave to change photos other apps own, for the server (`write_grants.ts`).
+//! and, for the server, leave to change photos other apps own (`write_grants.ts`) and what the
+//! media store holds under a folder (`media_listing.ts`).
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +43,7 @@ pub async fn ask_photo_access(
 }
 
 #[cfg(target_os = "android")]
-pub(crate) use platform::{plugin, serve_write_grants};
+pub(crate) use platform::{plugin, serve_shell_socket};
 
 #[cfg(target_os = "android")]
 mod platform {
@@ -85,8 +86,18 @@ mod platform {
     }
 
     #[derive(serde::Deserialize)]
-    struct GrantRequest {
-        grant_writes: Vec<String>,
+    #[serde(rename_all = "snake_case")]
+    enum Request {
+        GrantWrites(Vec<String>),
+        ListMedia(String),
+    }
+
+    #[derive(serde::Serialize)]
+    #[serde(untagged)]
+    enum Reply {
+        Grant(GrantReply),
+        Media(serde_json::Value),
+        Failed { error: String },
     }
 
     #[derive(serde::Serialize)]
@@ -103,7 +114,7 @@ mod platform {
     /// `PhotosPlugin.kt`'s code for a reader who said no.
     const DECLINED: &str = "declined";
 
-    pub(crate) fn serve_write_grants(
+    pub(crate) fn serve_shell_socket(
         app: &tauri::AppHandle<Runtime>,
         socket: &Path,
     ) -> Result<(), String> {
@@ -132,11 +143,12 @@ mod platform {
     fn answer(app: &tauri::AppHandle<Runtime>, connection: UnixStream) {
         let mut line = String::new();
         let reply = match BufReader::new(&connection).read_line(&mut line) {
-            Ok(_) => match serde_json::from_str::<GrantRequest>(&line) {
-                Ok(request) => grant(app, request.grant_writes),
-                Err(err) => refused(format!("could not read the request: {err}")),
+            Ok(_) => match serde_json::from_str::<Request>(&line) {
+                Ok(Request::GrantWrites(paths)) => Reply::Grant(grant(app, paths)),
+                Ok(Request::ListMedia(root)) => list_media(app, root),
+                Err(err) => Reply::Grant(refused(format!("could not read the request: {err}"))),
             },
-            Err(err) => refused(format!("could not read the request: {err}")),
+            Err(err) => Reply::Grant(refused(format!("could not read the request: {err}"))),
         };
         let mut connection = connection;
         if let Ok(reply) = serde_json::to_string(&reply) {
@@ -182,6 +194,21 @@ mod platform {
             ),
             Ok(Err(err)) => refused(err.to_string()),
             Err(_) => refused("Android did not answer the request to change these photos".into()),
+        }
+    }
+
+    fn list_media(app: &tauri::AppHandle<Runtime>, root: String) -> Reply {
+        match app
+            .state::<Photos>()
+            .0
+            .run_mobile_plugin::<serde_json::Value>(
+                "listMedia",
+                serde_json::json!({ "root": root }),
+            ) {
+            Ok(media) => Reply::Media(media),
+            Err(err) => Reply::Failed {
+                error: format!("could not list the device's media: {err}"),
+            },
         }
     }
 

@@ -2,7 +2,6 @@ import { lstatSync, readlinkSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config';
-import { newId } from '../schemas/id';
 import type { LibraryConfiguration } from '../schemas/libraries';
 import { soleInputOf, type StoredRecipe } from '../schemas/recipes';
 import { SDR_MATCHES, type SdrMatch } from '../schemas/sdr_match';
@@ -114,28 +113,6 @@ export function draftPreviewPath(dataPath: string, layerKey: string, picture: st
 /** Where a carve leaves the volume its seams are solved over, beside the layers it drew. */
 export function draftVolumePath(dataPath: string, layerKey: string): string {
   return path.join(dataPath, 'drafts', layerKey, 'seams.bin');
-}
-
-/**
- * Where the scan leaves a grid tile it built while it had the RAW open (§10.4).
- *
- * **A name nobody has to derive twice.** The scan runs before the photo has an id - the row is
- * inserted after the whole library has been walked, and a file that turns out to be a move
- * never gets one - so the tile is written under a fresh id and that name is carried in scope
- * until the row exists. Then it is renamed to the photo's own, *in this same directory*, which
- * is atomic, cannot cross a filesystem, and is the whole of what adopting one costs.
- *
- * In `grid/` rather than a staging directory of its own, which is what makes the leftovers
- * free: one abandoned by a crash is a file in there whose name is not a live photo id, and the
- * orphan sweep already deletes exactly that (`PruneService`).
- */
-export function scannedTilePath(dataPath: string): string {
-  return renditionPathFor(dataPath, newId(), 'grid', false);
-}
-
-/** The stacking descriptor of a scanned tile, beside it, since it is computed off those pixels. */
-export function stagedDescriptorPath(stagedTile: string): string {
-  return `${stagedTile}.descriptor`;
 }
 
 /**

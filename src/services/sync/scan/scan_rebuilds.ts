@@ -2,7 +2,6 @@ import { AppError } from '../../../errors';
 import { Logger } from '../../../logger';
 import type { LibraryScanStatus } from '../../../schemas/libraries';
 import type { ProcessingScope } from '../../processing/pipeline/processing_service';
-import type { TileEncoding } from '../../processing/analysis/metadata';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import type { ScanLeases } from './scan_leases';
@@ -13,22 +12,6 @@ const log = new Logger('scan');
 export interface ProcessingTrigger {
   processUnprocessed(scope?: ProcessingScope, stopped?: () => boolean): void | Promise<void>;
   getProcessingCount?(libraryId: string): number;
-  /**
-   * How this library's grid tiles are encoded, for a scan to build them while it holds each
-   * RAW open (§10.4), or undefined where it should leave them to the rendition pass.
-   *
-   * Asked of the service that owns the answer rather than read here: size, quantizer and
-   * speed are settings, and a scan encoding to its own idea of them would fill a library
-   * with tiles that do not match the ones built any other way.
-   */
-  tileEncoding?(): TileEncoding;
-  /**
-   * Take on a tile the scan built, now that the photo has the id it was waiting for: rename it
-   * into place and record it as the tile pass would have (§10.4).
-   */
-  adoptScannedTile?(photoId: string, dataPath: string, staged: string): Promise<boolean>;
-  /** Drop one no row claimed - the file turned out to be a move, or was never written down. */
-  discardScannedTile?(staged: string): Promise<void>;
 }
 
 export class ScanRebuilds {

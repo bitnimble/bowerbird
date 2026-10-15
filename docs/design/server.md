@@ -431,7 +431,7 @@ sets them; manual values misrepresent the installation.
 | `BOWERBIRD_LIBRARIES_DIR`    | the mobile shell                    | Where a synced library goes when adding it names no folder, as `<dir>/<library id>`. Unset, adding one requires a folder                                                                                      |
 | `BOWERBIRD_DEFAULT_SETTINGS` | the mobile shell                    | Settings, as JSON, replacing their defaults: what a fresh catalogue starts with and Settings resets to. The mobile shell sends a 50 GB disk space limit and the daily scan off                                |
 | `BOWERBIRD_ADDON_DIR`        | the Android shell                   | Where the Android build's `libsql` and `@parcel/watcher` addons are, which their bundled loaders open from there                                                                                              |
-| `BOWERBIRD_SHELL_SOCKET`     | the Android shell                   | A Unix socket the shell answers on for leave to move or delete photos another app owns (`write_grants.ts`, §23). Unset, the filesystem's own permissions are the whole answer                                 |
+| `BOWERBIRD_SHELL_SOCKET`     | the Android shell                   | A Unix socket the shell answers on for leave to move or delete photos another app owns (`write_grants.ts`, §23) and for the scan's media listing (`media_listing.ts`). Unset, neither is asked                |
 
 Three more are genuinely optional. The first replaces the lens database the binary carries; the other two say where update checks are made (§23.5):
 

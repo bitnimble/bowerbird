@@ -13,8 +13,10 @@ import type {
 import { dataPathForLibraryId } from '../../../../utils/paths';
 import { ProcessingService } from '../processing_service';
 import type { CompositeJob, RenditionJob, RenditionSource } from '../../workers/processing_types';
+import type { HeaderMetadata } from '../../analysis/metadata';
 import {
   CRASH,
+  HEADER,
   LIB,
   MockWorker,
   REAL_WORKER,
@@ -78,6 +80,7 @@ describe('ProcessingService.processUnprocessed', () => {
       // A photograph composes no rows, so there is nothing behind it to be edited.
       inputs_edited: 0,
       built_from: null,
+      metadata_provisional: 0,
     };
   }
 
@@ -336,6 +339,29 @@ describe('ProcessingService.processUnprocessed', () => {
       null,
       'full',
     );
+  });
+
+  it('reads the header with the tile of a row the media index catalogued, and hands it on', async () => {
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        { ...pending('indexed'), metadata_provisional: 1 },
+        pending('read'),
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+    const service = makeProcessingService(repo, settingsWith({}));
+    const headers: [string, HeaderMetadata][] = [];
+    service.onHeaderRead((photoId, header) => headers.push([photoId, header]));
+
+    await service.processUnprocessed({ libraryId: 'lib' });
+
+    const asked = posted
+      .filter((job): job is RenditionJob => job.kind === 'rendition' && job.header === true)
+      .map((job) => photoStage(job));
+    expect(asked).toEqual(['indexed:grid']);
+    expect(headers).toEqual([['indexed', HEADER]]);
   });
 
   it('passes the embedded-JPEG matching setting through to the worker', async () => {

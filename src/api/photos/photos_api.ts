@@ -18,6 +18,7 @@ import {
   PhotoRangeRequestSchema,
   PhotoSummaryListSchema,
   PhotoTargetSchema,
+  PreferPhotosRequestSchema,
   RenditionJobResponseSchema,
   UpdatePhotoRequestSchema,
 } from '../../schemas/photos';
@@ -199,6 +200,12 @@ export class PhotosApi {
           queued: await this.processing.rebuildTiles(this.target(await c.req.json())),
         }),
       );
+    });
+
+    // What the reader is looking at, so its tiles are built before the rest of the queue.
+    app.post(route(PathSegment.photos(), PathSegment.prefer()), async (c) => {
+      this.processing.prefer(PreferPhotosRequestSchema.parse(await c.req.json()).photo_ids);
+      return c.body(null, 204);
     });
 
     // Re-reads the RAW headers. Sync only re-opens a file whose stat changed, so

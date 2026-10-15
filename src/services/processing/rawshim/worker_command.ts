@@ -27,6 +27,7 @@ export function toCommand(
     rawFilePath: job.rawFilePath,
     cameraMatch: job.cameraMatch,
     preserveSourceOrientation: job.preserveSourceOrientation,
+    header: job.header,
     photoAnalysis,
     denoiseLuminance: job.denoiseLuminance,
     denoiseColour: job.denoiseColour,

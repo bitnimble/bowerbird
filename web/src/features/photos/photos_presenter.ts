@@ -56,6 +56,9 @@ export const MAX_BLOCKS = 24;
 // key rather than to save a row.
 const NEIGHBOUR_WINDOW = 50;
 
+const PREFERRED_TILES = 200;
+const PREFER_DELAY_MS = 300;
+
 // The collection a selection's positions are into. The bin and the missing view
 // are the library plus a filter, so the server needs no scope of its own for
 // them (§18.3.3).
@@ -126,6 +129,7 @@ export class PhotosPresenter {
   // Stacks whose members are on the wire for the *selection* rather than for a band, so a reader
   // dragging a range over a dozen stacks asks for each of them once.
   private readonly resolving = new Set<string>();
+  private preferredSent: readonly string[] = [];
 
   /** The gallery's place in the collection. Its only writer, and the strip's own is a peer. */
   readonly rail: ScrollRailPresenter;
@@ -229,6 +233,13 @@ export class PhotosPresenter {
         fireImmediately: true,
       },
     );
+    // A plain function, not a computed: mobx re-derives a computed on every row change to decide
+    // whether to schedule, where this way `delay` holds the scan to once per window.
+    reaction(
+      () => this.unbuiltTilesAhead(),
+      (photoIds) => void this.preferTiles(photoIds),
+      { equals: comparer.structural, fireImmediately: true, delay: PREFER_DELAY_MS },
+    );
     // The run the viewer's arrows step through, re-centred when the reader gets
     // near an end of it (§19.5.3). Its own reaction rather than part of opening a
     // photo, because it is also what answers for a photo opened with no
@@ -295,6 +306,29 @@ export class PhotosPresenter {
   @action.bound
   private rememberStack(stackId: string, photos: PhotoSummary[]): void {
     this.stackActionsPresenter.rememberStack(stackId, photos);
+  }
+
+  /** Held rows from the top of the view down whose tile is still owed, nearest first. */
+  private unbuiltTilesAhead(): string[] {
+    const { from } = this.listing.visible;
+    const ahead: [number, string][] = [];
+    for (const [index, photo] of this.listing.rows) {
+      if (index >= from && photo.tile_built_at == null) ahead.push([index, photo.id]);
+    }
+    return ahead
+      .sort(([a], [b]) => a - b)
+      .slice(0, PREFERRED_TILES)
+      .map(([, id]) => id);
+  }
+
+  private async preferTiles(photoIds: string[]): Promise<void> {
+    if (photoIds.length === 0 || comparer.structural(photoIds, this.preferredSent)) return;
+    this.preferredSent = photoIds;
+    try {
+      await photosApi.prefer(photoIds);
+    } catch {
+      // Only an ordering hint: a lost one leaves the queue in library order.
+    }
   }
 
   async open(source: PhotoSource): Promise<void> {

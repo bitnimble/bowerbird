@@ -11,6 +11,7 @@ import type { SettingsRepository } from '../../settings/settings_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
 import { renditionSkips, withStagesOff } from '../renditions/render_stages';
 import type { OptionalStage } from '../../../schemas/render_stages';
+import type { HeaderMetadata } from '../analysis/metadata';
 import { isUpscalable } from '../rawshim/rawshim_ops';
 import { toCommand } from '../rawshim/worker_command';
 import { workerEntry } from '../../worker_entry';
@@ -37,6 +38,7 @@ export class SinglePhotoRenderer {
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
     private readonly describe: (photoId: string, descriptor: Uint8Array) => void,
     private readonly cameraMatched: (photoId: string, tone: CameraTone) => void,
+    private readonly headerRead: (photoId: string, header: HeaderMetadata) => void,
   ) {}
 
   // One rendition, on demand: the detail view asking for a size or a range it
@@ -67,7 +69,9 @@ export class SinglePhotoRenderer {
       source,
       remeasure,
     );
-    return this.runOneOff(job, builtFrom);
+    // A tile repaired here, ahead of the queue, is the only tile a row the media index catalogued
+    // may ever get, so it reads the header as the queue's would.
+    return this.runOneOff(rendition === 'grid' ? { ...job, header: true } : job, builtFrom);
   }
 
   /**
@@ -319,6 +323,7 @@ export class SinglePhotoRenderer {
       });
       this.announce(job.photoId, { stage: 'tile', version });
     }
+    if (result.header != null) this.headerRead(job.photoId, result.header);
     const full = wrote('full');
     const max = wrote('max');
     if (full != null || max != null) {

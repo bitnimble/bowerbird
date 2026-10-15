@@ -50,7 +50,10 @@ function buildApp(
     renditionJob: jest.fn(() => null),
     ...over.renditions,
   } as unknown as PhotoRenditionService;
-  const processing = { rebuildTiles: jest.fn(async () => 1) } as unknown as ProcessingService;
+  const processing = {
+    rebuildTiles: jest.fn(async () => 1),
+    prefer: jest.fn(),
+  } as unknown as ProcessingService;
   const app = new Hono();
   app.route(
     route(PathSegment.api()),
@@ -152,6 +155,25 @@ describe('PhotosApi', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
     expect(mutations.update).not.toHaveBeenCalled();
+  });
+
+  it('hands the photos the reader is looking at to the queue', async () => {
+    const { app, processing } = buildApp();
+    const prefer = (photo_ids: string[]): Promise<Response> =>
+      Promise.resolve(
+        app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.prefer()), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ photo_ids }),
+        }),
+      );
+
+    expect((await prefer([PID, 'photo002'])).status).toBe(204);
+    expect(processing.prefer).toHaveBeenCalledWith([PID, 'photo002']);
+
+    expect((await prefer(Array.from({ length: 501 }, () => PID))).status).toBe(400);
+    expect((await prefer(['not an id'])).status).toBe(400);
+    expect(processing.prefer).toHaveBeenCalledTimes(1);
   });
 
   it('rejects an empty photo_ids delete', async () => {

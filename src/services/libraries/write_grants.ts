@@ -1,6 +1,6 @@
-import { createConnection } from 'node:net';
 import { z } from 'zod';
 import { AppError } from '../../errors';
+import { askShell, parsedOrNull } from './shell_socket';
 
 /** Leave from the platform to move or delete originals another app owns, asked for before the change. */
 export interface WriteGrants {
@@ -12,15 +12,8 @@ export const UNRESTRICTED_WRITES: WriteGrants = { grant: async () => {} };
 
 // One createWriteRequest each, whose URIs cross a single 1 MB binder transaction.
 const GRANT_CHUNK = 500;
+// Past `photos.rs`'s wait on the prompt, so a slow reader gets the shell's answer.
 const ANSWER_TIMEOUT_MS = 330_000;
-
-function parsedOrNull(line: string): unknown {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
 
 const GrantReplySchema = z.object({
   granted: z.boolean(),
@@ -45,30 +38,12 @@ export class ShellWriteGrants implements WriteGrants {
     }
   }
 
-  private ask(request: unknown): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const failed = (why: string): void =>
-        reject(
-          new AppError('IO_ERROR', `could not ask the app for leave to change photos: ${why}`),
-        );
-      let reply = '';
-      const socket = createConnection(this.socketPath);
-      socket.setEncoding('utf8');
-      // Past `photos.rs`'s wait on the prompt, so a slow reader gets the shell's answer.
-      socket.setTimeout(ANSWER_TIMEOUT_MS, () => {
-        socket.destroy();
-        failed('it did not answer');
-      });
-      socket.on('connect', () => socket.write(`${JSON.stringify(request)}\n`));
-      socket.on('data', (chunk: string) => {
-        reply += chunk;
-        const end = reply.indexOf('\n');
-        if (end < 0) return;
-        socket.end();
-        resolve(reply.slice(0, end));
-      });
-      socket.on('end', () => failed('it closed the connection without answering'));
-      socket.on('error', (err) => failed(err.message));
-    });
+  private async ask(request: unknown): Promise<string> {
+    try {
+      return await askShell(this.socketPath, request, ANSWER_TIMEOUT_MS);
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      throw new AppError('IO_ERROR', `could not ask the app for leave to change photos: ${why}`);
+    }
   }
 }

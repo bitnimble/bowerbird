@@ -523,6 +523,9 @@ export type MarkPhotosRequest = z.infer<typeof MarkPhotosRequestSchema>;
 export const HidePhotosRequestSchema = z.object({ target: PhotoTargetSchema, hidden: z.boolean() });
 export type HidePhotosRequest = z.infer<typeof HidePhotosRequestSchema>;
 
+// The photos whose queued work goes ahead of the rest, earliest first. Empty clears it.
+export const PreferPhotosRequestSchema = z.object({ photo_ids: z.array(IdSchema).max(500) });
+
 // Unbounded, unlike a request's `PhotoIdListSchema`: this is a whole selection spelled out.
 export const PhotoIdsResponseSchema = z.object({ photo_ids: z.array(IdSchema) });
 export type PhotoIdsResponse = z.infer<typeof PhotoIdsResponseSchema>;

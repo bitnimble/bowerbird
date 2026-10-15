@@ -4,6 +4,8 @@ import path from 'node:path';
 import { AlbumsRepository } from '../../../albums/albums_repository';
 import { LibrariesRepository } from '../../../libraries/libraries_repository';
 import { ensureBinFolder } from '../../../libraries/bin_folder';
+import type { MediaListing } from '../../../libraries/media_listing';
+import { metadataFieldsOf } from '../../../photos/metadata/photo_metadata_repository';
 import { ScanService } from '../scan_service';
 import { SyncLocksRepository } from '../../coordination/sync_locks_repository';
 import { LIB, makeLibrary, meta, type Peer, put, roots } from './scan_service_test_helpers';
@@ -326,5 +328,106 @@ describe('telling the page a scan moved its photos', () => {
     await peer.scan.scanLibrary(LIB);
 
     expect(seen).toEqual([{ libraryId: LIB, missing: [{ is_missing: 1 }] }]);
+  });
+});
+
+describe('a library the device media index answers for', () => {
+  it('catalogues a finished picture off the index without opening it, and reads the rest', async () => {
+    const opened: string[] = [];
+    const sized = (root: string, name: string): number => statSync(path.join(root, name)).size;
+    const media: MediaListing = {
+      under: (root) =>
+        Promise.resolve(
+          new Map([
+            [
+              path.join(root, 'pixel.jpg'),
+              {
+                size: sized(root, 'pixel.jpg'),
+                width: 4000,
+                height: 3000,
+                orientationDegrees: 90,
+                takenWallMs: Date.UTC(2026, 9, 1, 9, 30),
+              },
+            ],
+            [
+              path.join(root, 'stale.jpg'),
+              { size: 1, width: 10, height: 10, orientationDegrees: 0, takenWallMs: null },
+            ],
+            [
+              path.join(root, 'raw.dng'),
+              {
+                size: sized(root, 'raw.dng'),
+                width: 8000,
+                height: 6000,
+                orientationDegrees: 0,
+                takenWallMs: null,
+              },
+            ],
+          ]),
+        ),
+    };
+    const peer = makeLibrary({
+      include_non_raw: 1,
+      media,
+      extract: (absPath) => {
+        opened.push(path.basename(absPath));
+        return meta(absPath);
+      },
+    });
+    for (const name of ['pixel.jpg', 'stale.jpg', 'raw.dng']) put(peer, name);
+
+    await peer.scan.scanLibrary(LIB);
+
+    expect(opened.sort()).toEqual(['raw.dng', 'stale.jpg']);
+    const rows = peer.db
+      .query(
+        `SELECT json_extract(recipe, '$.path') AS file_path, width, height, orientation, date_taken,
+                metadata_provisional FROM photos ORDER BY file_path`,
+      )
+      .all();
+    expect(rows).toEqual([
+      {
+        file_path: 'pixel.jpg',
+        width: 3000,
+        height: 4000,
+        orientation: 6,
+        date_taken: '2026-10-01T09:30:00.000Z',
+        metadata_provisional: 1,
+      },
+      {
+        file_path: 'raw.dng',
+        width: 100,
+        height: 100,
+        orientation: 1,
+        date_taken: null,
+        metadata_provisional: 0,
+      },
+      {
+        file_path: 'stale.jpg',
+        width: 100,
+        height: 100,
+        orientation: 1,
+        date_taken: null,
+        metadata_provisional: 0,
+      },
+    ]);
+
+    // The tile pass's header lands on the indexed row alone: a row whose header was read keeps it.
+    const read = metadataFieldsOf(await meta(path.join(peer.root, 'raw.dng')));
+    const ids = peer.db.query('SELECT id FROM photos').all() as { id: string }[];
+    for (const { id } of ids) {
+      peer.photoMetadata.fillProvisional(id, { ...read, camera_model: 'Pixel 9' });
+    }
+    const models = peer.db
+      .query(
+        `SELECT json_extract(recipe, '$.path') AS file_path, camera_model, metadata_provisional
+           FROM photos ORDER BY file_path`,
+      )
+      .all();
+    expect(models).toEqual([
+      { file_path: 'pixel.jpg', camera_model: 'Pixel 9', metadata_provisional: 0 },
+      { file_path: 'raw.dng', camera_model: null, metadata_provisional: 0 },
+      { file_path: 'stale.jpg', camera_model: null, metadata_provisional: 0 },
+    ]);
   });
 });

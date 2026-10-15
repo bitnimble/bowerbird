@@ -14,6 +14,7 @@ import {
 } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
 import { ShellWriteGrants, UNRESTRICTED_WRITES } from './services/libraries/write_grants';
+import { ShellMediaListing } from './services/libraries/media_listing';
 import { RenderTimingsFile } from './services/processing/renditions/render_timings_file';
 import { StorageUsageService } from './services/maintenance/storage_usage_service';
 import { PhotosApi } from './api/photos/photos_api';
@@ -21,7 +22,10 @@ import { PhotoCompositesRepository } from './services/photos/composites/photo_co
 import { PhotoListingRepository } from './services/photos/listing/photo_listing_repository';
 import { PhotoNavigationRepository } from './services/photos/listing/photo_navigation_repository';
 import { PhotoReadService } from './services/photos/listing/photo_read_service';
-import { PhotoMetadataRepository } from './services/photos/metadata/photo_metadata_repository';
+import {
+  metadataFieldsOf,
+  PhotoMetadataRepository,
+} from './services/photos/metadata/photo_metadata_repository';
 import { PhotoMutationService } from './services/photos/mutations/photo_mutation_service';
 import { PhotoStateRepository } from './services/photos/mutations/photo_state_repository';
 import { PhotoPathsRepository } from './services/photos/paths/photo_paths_repository';
@@ -346,6 +350,7 @@ const scanService = new ScanService(
   scanConcurrency,
   (libraryId) => replicationRunner.materialise(libraryId),
   (libraryId) => replicationRunner.stillToMove(libraryId),
+  config.shellSocket == null ? null : new ShellMediaListing(config.shellSocket),
 );
 const stacksService = new StacksService(
   stacksRepo,
@@ -435,6 +440,15 @@ librariesService.addLifecycleListener(new ReplicationLifecycle(db));
 processingService.onDescribed((photoId, descriptor) =>
   stacksService.storeDescriptor(photoId, descriptor),
 );
+
+// Inside a worker's result handler, where nothing catches.
+processingService.onHeaderRead((photoId, header) => {
+  try {
+    photoMetadataRepo.fillProvisional(photoId, metadataFieldsOf(header));
+  } catch (err) {
+    log.warn('could not write a header read with the tile', { photo: photoId, err });
+  }
+});
 
 // Inside a worker's result handler, where nothing catches.
 processingService.onCameraMatched((photoId, tone) => {

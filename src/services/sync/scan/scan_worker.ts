@@ -1,11 +1,6 @@
-import {
-  extractMetadata,
-  type FileMetadata,
-  type TileStage,
-} from '../../processing/analysis/metadata';
+import { extractMetadata, type FileMetadata } from '../../processing/analysis/metadata';
 
-// Bun worker thread: the header read of one file, off the main thread - and its grid
-// tile, where the scan was given somewhere to put one (§10.4).
+// Bun worker thread: the header read of one file, off the main thread.
 //
 // A thread rather than a promise because `bb_read_header` is a synchronous FFI call
 // (§10.4). Awaiting several of them on one thread interleaves the `stat` either side
@@ -14,7 +9,6 @@ import {
 
 export interface ScanRequest {
   absPath: string;
-  stage?: TileStage;
 }
 
 export type ScanReply = { metadata: FileMetadata } | { error: string };
@@ -26,7 +20,7 @@ declare const self: {
 
 self.onmessage = async (event) => {
   try {
-    self.postMessage({ metadata: await extractMetadata(event.data.absPath, event.data.stage) });
+    self.postMessage({ metadata: await extractMetadata(event.data.absPath) });
   } catch (err) {
     // Reported rather than thrown: an unreadable file leaves its row as it is and the
     // scan carries on (§9.1), where a throw would take the worker with it.

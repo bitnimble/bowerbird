@@ -15,7 +15,6 @@ import type { ScanFileReader } from './scan_file_reader';
 import type { CollectedEvidence } from './scan_evidence';
 import type { ScanReconciler } from './scan_reconciler';
 import { detectShootRelocations, type ShootRelocation } from './scan_relocations';
-import type { ScanTiles } from './scan_tiles';
 
 const log = new Logger('scan');
 
@@ -44,14 +43,12 @@ export async function readAndClassify(
     token: AbortController;
     startedAt: number;
     keepLease: () => void;
-    tiles: ScanTiles;
     batch: ScanBatch;
     evidence: CollectedEvidence;
   },
 ): Promise<ClassifiedScan> {
   const { fileReader, albums, reconciler } = dependencies;
-  const { libraryId, library, scopePaths, token, startedAt, keepLease, tiles, batch, evidence } =
-    input;
+  const { libraryId, library, scopePaths, token, startedAt, keepLease, batch, evidence } = input;
 
   const { binned, dbPhotos, files, binRoot, binFolder, binFiles, byIdentity, onDisk } = evidence;
   const { present, changed, failed } = await fileReader.scanFiles(
@@ -59,6 +56,7 @@ export async function readAndClassify(
     // answers correctly: nothing binned is opened or hashed unless it changed.
     [...files, ...binFiles],
     [...dbPhotos, ...binned],
+    library.root_path,
     token.signal,
     (scanned, toScan) => batch.reportScan(scanned, toScan),
     {
@@ -67,7 +65,6 @@ export async function readAndClassify(
       accepts: (filePath) => binRoot == null || !shootContains(binRoot, filePath),
     },
     keepLease,
-    tiles.stageFor(library),
   );
   log.info('scan done', {
     library: libraryId,

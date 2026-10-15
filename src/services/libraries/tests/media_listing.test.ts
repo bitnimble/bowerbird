@@ -1,0 +1,82 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { ShellMediaListing } from '../media_listing';
+import { FakeShell } from './fake_shell';
+
+let shell: FakeShell;
+
+beforeEach(() => {
+  shell = new FakeShell();
+});
+
+afterEach(() => {
+  shell.close();
+});
+
+describe('ShellMediaListing', () => {
+  it('asks the shell for the folder and keys what it knows by path', async () => {
+    await shell.answer(
+      JSON.stringify({
+        media: [
+          [
+            '/storage/emulated/0/DCIM/Camera/PXL_1.jpg',
+            4_200_000,
+            4032,
+            3024,
+            90,
+            1_760_000_000_000,
+          ],
+          ['/storage/emulated/0/DCIM/Camera/notes.txt', 12, null, null, null, null],
+        ],
+      }),
+    );
+    const listed = await new ShellMediaListing(shell.socket).under('/storage/emulated/0/DCIM');
+    expect(shell.asked).toEqual([{ list_media: '/storage/emulated/0/DCIM' }]);
+    expect(listed).toEqual(
+      new Map([
+        [
+          '/storage/emulated/0/DCIM/Camera/PXL_1.jpg',
+          {
+            size: 4_200_000,
+            width: 4032,
+            height: 3024,
+            orientationDegrees: 90,
+            takenWallMs: 1_760_000_000_000,
+          },
+        ],
+        [
+          '/storage/emulated/0/DCIM/Camera/notes.txt',
+          { size: 12, width: null, height: null, orientationDegrees: null, takenWallMs: null },
+        ],
+      ]),
+    );
+  });
+
+  it('reads an empty folder as an empty listing', async () => {
+    await shell.answer('{"media":[]}');
+    expect(await new ShellMediaListing(shell.socket).under('/empty')).toEqual(new Map());
+  });
+
+  it('answers null when the shell reports an error', async () => {
+    await shell.answer('{"error":"could not list the device\'s media: no permission"}');
+    expect(await new ShellMediaListing(shell.socket).under('/a')).toBeNull();
+  });
+
+  it('answers null for a reply it cannot read', async () => {
+    await shell.answer('not json');
+    expect(await new ShellMediaListing(shell.socket).under('/a')).toBeNull();
+  });
+
+  it('answers null for a row of the wrong shape', async () => {
+    await shell.answer('{"media":[["/a.jpg",null,1,1,0,0]]}');
+    expect(await new ShellMediaListing(shell.socket).under('/a')).toBeNull();
+  });
+
+  it('answers null when the shell closes without answering', async () => {
+    await shell.answer(null);
+    expect(await new ShellMediaListing(shell.socket).under('/a')).toBeNull();
+  });
+
+  it('answers null when no shell is listening', async () => {
+    expect(await new ShellMediaListing(shell.socket).under('/a')).toBeNull();
+  });
+});

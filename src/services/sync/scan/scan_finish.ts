@@ -8,7 +8,6 @@ import type { ClassifiedScan } from './scan_classification';
 import type { CollectedEvidence } from './scan_evidence';
 import type { ScanReconciler } from './scan_reconciler';
 import type { ScanStatus } from './scan_status';
-import type { ScanTiles } from './scan_tiles';
 
 const log = new Logger('scan');
 
@@ -28,7 +27,6 @@ export async function finishScan(
     libraryId: string;
     scopePaths: readonly string[] | null;
     startedAt: number;
-    tiles: ScanTiles;
     batch: ScanBatch;
     evidence: CollectedEvidence;
     classified: ClassifiedScan;
@@ -36,7 +34,7 @@ export async function finishScan(
   },
 ): Promise<CompletedScan> {
   const { libraries, statusStore, reconciler, photoProcessing } = dependencies;
-  const { libraryId, scopePaths, startedAt, tiles, batch, evidence, classified, counts } = input;
+  const { libraryId, scopePaths, startedAt, batch, evidence, classified, counts } = input;
 
   const library = batch.library;
   const { scope, dirs, walkComplete, followed } = evidence;
@@ -44,11 +42,6 @@ export async function finishScan(
   const { removed, moved, modified } = counts;
 
   batch.importSidecars();
-
-  // Outside the transaction and after it commits, for the reason the sidecars above are:
-  // this is a rename per photo, and the rows now hold the ids to rename to. What no row
-  // claimed goes with it, so a run leaves nothing of its own behind (§10.4).
-  await tiles.settle(true);
 
   // Outside the transaction, so a listener cannot hold the write lock, and
   // only once it has committed: the watcher would otherwise re-arm against a

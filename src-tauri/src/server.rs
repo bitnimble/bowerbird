@@ -277,7 +277,7 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     {
         crate::android::environment(&mut command, &data)?;
         let socket = data.join("shell.sock");
-        crate::photos::serve_write_grants(app, &socket)?;
+        crate::photos::serve_shell_socket(app, &socket)?;
         command.env("BOWERBIRD_SHELL_SOCKET", socket);
     }
     let child = command

@@ -135,6 +135,11 @@ export class ProcessingService extends RenderService {
     );
   }
 
+  /** Queued jobs for these photos go ahead of the rest, earliest first. Replaces the last list. */
+  prefer(photoIds: readonly string[]): void {
+    this.pool.prefer(photoIds);
+  }
+
   // Rebuilds the grid tile of specific photos, from the camera's JPEG an import
   // builds it from. Returns how many were queued; ids that are missing or binned
   // have no file to read.
@@ -437,9 +442,8 @@ export class ProcessingService extends RenderService {
 
     // **Owes the viewer nothing and has no tile to build either, so no pass will ever post a
     // job for it and nothing would clear the flag.** A library serving the camera's JPEG has no
-    // renditions to build, and the tile that would otherwise have settled the row was adopted
-    // from the scan (§10.4) - which leaves `needs_renditions` set on a photo with all its files
-    // already on disk, re-queried by every batch for the life of the library.
+    // renditions to build, and a tile already built leaves `needs_renditions` set on a photo with
+    // all its files on disk, re-queried by every batch for the life of the library.
     for (const photo of staged) {
       if (photo.tile == null && photo.renditions == null && photo.owesRenditions) {
         this.stageDone(photo, photo.photoId, 'renditions');
@@ -461,6 +465,7 @@ export class ProcessingService extends RenderService {
         // ~1.5s away, and a grid already on screen should fill at the tile's pace
         // rather than wait for both.
         this.stageDone(photo, result.photoId, 'tile', result.descriptor);
+        if (result.header != null) this.readHeader(result.photoId, result.header);
         if (photo?.renditions == null) active.delete(result.photoId);
       },
       stopped,
@@ -675,6 +680,7 @@ export class ProcessingService extends RenderService {
       pending.needs_tile === 1
         ? {
             ...common,
+            ...(pending.metadata_provisional === 1 ? { header: true as const } : {}),
             targets: [this.targets.target(dataPath, photoId, 'grid', false, 'embedded')],
           }
         : null;

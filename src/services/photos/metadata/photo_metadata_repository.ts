@@ -1,4 +1,6 @@
 import type { Database } from '../../../db/driver';
+import { sequenceColumn } from '../../../schemas/capture_sequence';
+import type { HeaderMetadata } from '../../processing/analysis/metadata';
 import { stamp } from '../../replication/stamps';
 import { IS_A_FILE } from '../paths/photo_paths_repository';
 import type { ScanModification } from '../scan/photo_scan_repository';
@@ -8,8 +10,28 @@ import type { PhotoProcessingRepository } from '../renditions/photo_processing_r
 // our own, nothing that says the file changed.
 export type PhotoMetadataFields = Omit<
   ScanModification,
-  'file_hash' | 'file_size' | 'date_updated'
+  'file_hash' | 'file_size' | 'date_updated' | 'metadata_provisional'
 >;
+
+export function metadataFieldsOf(header: HeaderMetadata): PhotoMetadataFields {
+  return {
+    width: header.width,
+    height: header.height,
+    orientation: header.orientation,
+    date_taken: header.dateTaken,
+    date_taken_offset: header.dateTakenOffset,
+    latitude: header.latitude,
+    longitude: header.longitude,
+    iso: header.iso,
+    shutter_speed: header.shutterSpeed,
+    aperture: header.aperture,
+    focal_length: header.focalLength,
+    camera_make: header.cameraMake,
+    camera_model: header.cameraModel,
+    lens_model: header.lensModel,
+    capture_sequence: sequenceColumn(header.sequence),
+  };
+}
 
 export class PhotoMetadataRepository {
   constructor(
@@ -21,11 +43,21 @@ export class PhotoMetadataRepository {
   // either pending flag: re-reading metadata is not a content change, so it must
   // not look like one to the next scan or trigger a rebuild.
   updateMetadata(photoId: string, fields: PhotoMetadataFields): void {
+    this.writeMetadata(photoId, fields, '');
+  }
+
+  /** `updateMetadata` for a row the media index catalogued, and a no-op for any other. */
+  fillProvisional(photoId: string, fields: PhotoMetadataFields): void {
+    this.writeMetadata(photoId, fields, 'AND metadata_provisional = 1');
+  }
+
+  private writeMetadata(photoId: string, fields: PhotoMetadataFields, only: string): void {
     this.db
       .query(
         `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?, latitude = ?,
             longitude = ?, iso = ?, shutter_speed = ?, aperture = ?, focal_length = ?,
-            camera_make = ?, camera_model = ?, lens_model = ?, capture_sequence = ?, stamp_imported = ? WHERE id = ?`,
+            camera_make = ?, camera_model = ?, lens_model = ?, capture_sequence = ?, metadata_provisional = 0,
+            stamp_imported = ? WHERE id = ? ${only}`,
       )
       .run(
         fields.width,

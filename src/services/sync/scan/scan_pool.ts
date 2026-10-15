@@ -1,9 +1,5 @@
 import { Logger } from '../../../logger';
-import {
-  extractMetadata,
-  type FileMetadata,
-  type TileStage,
-} from '../../processing/analysis/metadata';
+import { extractMetadata, type FileMetadata } from '../../processing/analysis/metadata';
 import type { MetadataExtractor } from './scan_file_reader';
 import type { ScanReply, ScanRequest } from './scan_worker';
 import { workerEntry } from '../../worker_entry';
@@ -17,7 +13,6 @@ const IDLE_MS = 2000;
 
 interface Waiting {
   absPath: string;
-  stage?: TileStage;
   settle: (reply: ScanReply) => void;
 }
 
@@ -38,11 +33,10 @@ export class ScanPool {
 
   constructor(private readonly concurrency: () => number) {}
 
-  read: MetadataExtractor = (absPath, stage) =>
+  read: MetadataExtractor = (absPath) =>
     new Promise<FileMetadata>((resolve, reject) => {
       this.queue.push({
         absPath,
-        stage,
         settle: (reply) =>
           'error' in reply ? reject(new Error(reply.error)) : resolve(reply.metadata),
       });
@@ -103,7 +97,7 @@ export class ScanPool {
       done({ error: `scan worker crashed: ${event.message}` });
       this.pump();
     };
-    const request: ScanRequest = { absPath: waiting.absPath, stage: waiting.stage };
+    const request: ScanRequest = { absPath: waiting.absPath };
     worker.postMessage(request);
   }
 
@@ -121,7 +115,7 @@ export class ScanPool {
   // So it is read here instead - slower, and it still finishes.
   private readHere(waiting: Waiting): void {
     this.busy++;
-    void extractMetadata(waiting.absPath, waiting.stage)
+    void extractMetadata(waiting.absPath)
       .then((metadata) => waiting.settle({ metadata }))
       .catch((err: unknown) => waiting.settle({ error: (err as Error).message }))
       .finally(() => {

@@ -73,6 +73,10 @@ export function isOriginal(filename: string): boolean {
   return RAW_MEDIA_TYPES.has(extension) || RENDERED_MEDIA_TYPES.has(extension);
 }
 
+export function isRendered(filename: string): boolean {
+  return RENDERED_MEDIA_TYPES.has(extensionOf(filename));
+}
+
 /**
  * Whether `scope`'s library imports a file of this name.
  *

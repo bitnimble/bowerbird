@@ -15,7 +15,6 @@ import { ScanCancelled, type ScanFileReader } from './scan_file_reader';
 import type { ScanLeases } from './scan_leases';
 import type { ProcessingTrigger, ScanRebuilds } from './scan_rebuilds';
 import { idleScanStatus, type ScanStatus } from './scan_status';
-import { ScanTiles } from './scan_tiles';
 import { ScanBatch, type SidecarImporter } from './scan_batch';
 import { collectEvidence, type ScanScope } from './scan_evidence';
 import { readAndClassify } from './scan_classification';
@@ -101,8 +100,6 @@ export class ScanRunner {
     // library's whole backlog.
     let processingIds: readonly string[] | null = null;
 
-    const tiles = new ScanTiles(libraryId, this.processing);
-
     try {
       // Inside the mutex, outside the lease: the lease first keeps scan-vs-scan
       // fail-fast (409), while the mutex makes file-moving mutations queue behind
@@ -118,7 +115,6 @@ export class ScanRunner {
           token,
           startedAt,
           keepLease,
-          tiles,
         );
       });
       scannedStatus = scanned.status;
@@ -145,10 +141,6 @@ export class ScanRunner {
       throw err;
     } finally {
       stopHolding();
-      // Whatever the run did or did not reach. A successful one has already settled, so this is
-      // the stopped and the failed ones: the tiles their committed batches earned stay, and
-      // everything else they built goes rather than waiting a week for the orphan sweep.
-      await tiles.settle(false);
       // Release the lease as soon as scan+apply is done. Rendition generation runs
       // detached (§9.5/§9.6: background work, client polls status), so POST /sync
       // returns promptly and rescans aren't blocked for the whole processing run.
@@ -168,7 +160,6 @@ export class ScanRunner {
     token: AbortController,
     startedAt: number,
     keepLease: () => void,
-    tiles: ScanTiles,
   ): Promise<CompletedScan> {
     // Re-read here, not from snapshot taken before mutex: `bin_name` is renameable (§4.1), and
     // every path this run derives from it would otherwise use a name the rename moved off.
@@ -187,7 +178,6 @@ export class ScanRunner {
       scopePaths,
       startedAt,
       keepLease,
-      tiles,
       this.libraries,
       this.shoots,
       this.reconciler,
@@ -206,7 +196,7 @@ export class ScanRunner {
     );
     const classified = await readAndClassify(
       { fileReader: this.fileReader, albums: this.albums, reconciler: this.reconciler },
-      { libraryId, library, scopePaths, token, startedAt, keepLease, tiles, batch, evidence },
+      { libraryId, library, scopePaths, token, startedAt, keepLease, batch, evidence },
     );
     const counts = applyChanges(
       {
@@ -218,7 +208,7 @@ export class ScanRunner {
         reconciler: this.reconciler,
         leases: this.leases,
       },
-      { libraryId, owner, batch, tiles, evidence, classified },
+      { libraryId, owner, batch, evidence, classified },
     );
     return finishScan(
       {
@@ -227,7 +217,7 @@ export class ScanRunner {
         reconciler: this.reconciler,
         photoProcessing: this.photoProcessing,
       },
-      { libraryId, scopePaths, startedAt, tiles, batch, evidence, classified, counts },
+      { libraryId, scopePaths, startedAt, batch, evidence, classified, counts },
     );
   }
 }
