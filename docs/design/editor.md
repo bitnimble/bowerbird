@@ -182,8 +182,8 @@ rather than the samples it decodes to - 3MB against 59MB for a 10MP rendition.
 time a canvas sees them. So the viewer and the mockup decode a rendition themselves there: rav1d
 (`native/avif_planes`), built for `wasm32-wasip1-threads` because it cannot build for
 `wasm32-unknown-unknown`, returning exactly the planes `copyTo` would (pinned sample for sample
-against libavif, grids included: `the_browsers_decoder_hands_back_libavifs_planes`). `web/src/avif/`
-hosts it: a worker holding the instance, and a pool of workers started ahead of time as its threads,
+against libavif, grids included, through the files and planes `tables/avif-planes.txt` lists).
+`web/src/avif/` hosts it: a worker holding the instance, and a pool of workers started ahead of time as its threads,
 handed each thread through shared memory because the decode that spawns one never returns to its
 event loop until it is done. Shared memory is why the app is served cross-origin isolated
 (`src/schemas/isolation.ts`), and the pool is why the decode costs 90ms for a 10MP rendition rather

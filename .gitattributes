@@ -8,3 +8,4 @@ test/fixtures/snapshots/**/*.png filter=lfs diff=lfs merge=lfs -text
 *.diff text eol=lf
 *.patch text eol=lf
 test/fixtures/mosaics/*.f32 filter=lfs diff=lfs merge=lfs -text
+test/fixtures/avif-planes/* filter=lfs diff=lfs merge=lfs -text

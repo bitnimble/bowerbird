@@ -1120,10 +1120,68 @@ mod tests {
         }
     }
 
-    /// The browser's AV1 decoder (`avif_planes`, Safari's viewer and editor) against libavif, plane
-    /// for plane. Both are dav1d, so one sample apart is the grid assembly or the layout.
+    /// The files `avif_planes` (Safari's viewer and editor) is held to, and libavif's planes of
+    /// them packed as it packs them. Its own test compares; it cannot link beside libavif's dav1d.
     #[test]
-    fn the_browsers_decoder_hands_back_libavifs_planes() {
+    fn libavif_decodes_the_browser_decoders_fixtures() {
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures");
+        let table = fixtures.join("tables/avif-planes.txt");
+        let files = fixtures.join("avif-planes");
+        let cases = browser_decoder_cases();
+        let write = std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|v| v == "1");
+        if write {
+            std::fs::create_dir_all(&files).expect("the fixture directory");
+            for (name, file) in &cases {
+                std::fs::write(files.join(format!("{name}.avif")), file).expect("the file writes");
+            }
+            let sdr = encode_rgb8(vec![128u8; 16 * 8 * 3].into(), 16, 8, 20, 10, true)
+                .expect("the encode");
+            std::fs::write(files.join("sdr.avif"), sdr).expect("the file writes");
+        }
+        let mut shapes = String::new();
+        for (name, _) in cases {
+            let file = std::fs::read(files.join(format!("{name}.avif")))
+                .unwrap_or_else(|e| panic!("{name}: {e}. BOWERBIRD_WRITE_FIXTURES=1 writes it"));
+            let (samples, layout) = yuv_planes(&file);
+            let mut packed = Vec::new();
+            for (plane, theirs) in layout.planes.iter().enumerate() {
+                let (row_length, rows) = match plane > 0 && layout.subsampled {
+                    true => (layout.width.div_ceil(2), layout.height.div_ceil(2)),
+                    false => (layout.width, layout.height),
+                };
+                for row in 0..rows {
+                    let at = theirs.offset + row * theirs.stride;
+                    packed.extend_from_slice(&samples[at..at + row_length * 2]);
+                }
+            }
+            shapes.push_str(&format!(
+                "{name} {} {} {} {}\n",
+                layout.width, layout.height, layout.bits, layout.subsampled
+            ));
+            let planes = files.join(format!("{name}.yuv"));
+            if write {
+                std::fs::write(&planes, packed).expect("the planes write");
+                continue;
+            }
+            assert!(
+                std::fs::read(&planes).expect("the planes") == packed,
+                "{name}: libavif's planes moved. BOWERBIRD_WRITE_FIXTURES=1 rewrites them"
+            );
+        }
+        if write {
+            std::fs::write(&table, shapes).expect("the table writes");
+            return;
+        }
+        assert_eq!(
+            std::fs::read_to_string(&table).expect("the table"),
+            shapes,
+            "BOWERBIRD_WRITE_FIXTURES=1 rewrites it"
+        );
+    }
+
+    /// A still each way and a grid each way, the last band shorter: the grid a still is saved as,
+    /// cropped.
+    fn browser_decoder_cases() -> [(&'static str, Vec<u8>); 4] {
         let frame = |width: usize, height: usize| -> Vec<u16> {
             (0..width * height)
                 .flat_map(|at| {
@@ -1152,7 +1210,6 @@ mod tests {
             encode_still(frame(width, height).into(), width, height, &options)
                 .expect("the still encodes")
         };
-        // Whole rows at a time, the last band shorter: the grid a still is saved as, cropped.
         let bands = |format, width: usize, heights: &[usize]| {
             let bands = heights.iter().map(|height| frame(width, *height)).collect();
             encode_grid(
@@ -1171,59 +1228,18 @@ mod tests {
             )
             .expect("the grid encodes")
         };
-        let cases = [
-            ("4:4:4", still(AVIF_PIXEL_FORMAT_YUV444, 64, 48)),
-            ("odd 4:2:0", still(AVIF_PIXEL_FORMAT_YUV420, 63, 47)),
+        [
+            ("444", still(AVIF_PIXEL_FORMAT_YUV444, 64, 48)),
+            ("odd-420", still(AVIF_PIXEL_FORMAT_YUV420, 63, 47)),
             (
-                "4:2:0 grid",
+                "420-grid",
                 bands(AVIF_PIXEL_FORMAT_YUV420, 96, &[64, 64, 64, 8]),
             ),
             (
-                "4:4:4 grid",
+                "444-grid",
                 bands(AVIF_PIXEL_FORMAT_YUV444, 96, &[64, 64, 64, 8]),
             ),
-        ];
-        for (name, file) in cases {
-            let (libavif, layout) = yuv_planes(&file);
-            let Ok(avif_planes::Decoded::Planes(ours)) = avif_planes::decode(&file, 2) else {
-                panic!("{name}: the browser's decoder declined or failed");
-            };
-            assert_eq!(
-                (ours.width, ours.height, ours.bits, ours.subsampled),
-                (layout.width, layout.height, layout.bits, layout.subsampled),
-                "{name}",
-            );
-            for (plane, (first, row_length)) in ours.layout().into_iter().enumerate() {
-                let rows = if plane > 0 && ours.subsampled {
-                    ours.height.div_ceil(2)
-                } else {
-                    ours.height
-                };
-                let theirs = &layout.planes[plane];
-                for row in 0..rows {
-                    let at = theirs.offset + row * theirs.stride;
-                    let expected: Vec<u16> = libavif[at..at + row_length * 2]
-                        .chunks_exact(2)
-                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                        .collect();
-                    let start = first + row * row_length;
-                    assert_eq!(
-                        &ours.samples[start..start + row_length],
-                        &expected[..],
-                        "{name}: plane {plane}, row {row}"
-                    );
-                }
-            }
-        }
-        let sdr =
-            encode_rgb8(vec![128u8; 16 * 8 * 3].into(), 16, 8, 20, 10, true).expect("the encode");
-        assert!(
-            matches!(
-                avif_planes::decode(&sdr, 2),
-                Ok(avif_planes::Decoded::Declined(_))
-            ),
-            "SDR is declined"
-        );
+        ]
     }
 
     #[test]

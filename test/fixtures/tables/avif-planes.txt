@@ -1,0 +1,4 @@
+444 64 48 12 false
+odd-420 63 47 12 true
+420-grid 96 200 12 true
+444-grid 96 200 12 false

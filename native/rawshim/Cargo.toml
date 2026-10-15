@@ -293,5 +293,3 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # A second reader for what `tiff_write` writes, so the export is held against a decoder that is
 # not the writer's own.
 tiff = "0.11.3"
-# The browser's AV1 decoder, held to libavif's planes (`avif::tests`).
-avif_planes = { path = "../avif_planes" }

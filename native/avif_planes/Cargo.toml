@@ -3,10 +3,9 @@ name = "avif_planes"
 version = "0.1.0"
 edition = "2024"
 
-# cdylib for the browser (`scripts/build-avif-planes.ts`, `wasm32-wasip1-threads`); rlib for
-# rawshim's test that holds these planes to libavif's.
+# For the browser (`scripts/build-avif-planes.ts`, `wasm32-wasip1-threads`).
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 heif = { path = "../heif" }

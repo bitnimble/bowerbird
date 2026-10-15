@@ -371,3 +371,65 @@ mod exports {
         HELD.with_borrow_mut(|held| *held = (Vec::new(), String::new()));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Decoded, decode};
+    use std::path::Path;
+
+    /// The files rawshim's `libavif_decodes_the_browser_decoders_fixtures` writes, against the
+    /// planes libavif decodes them to. Both are dav1d, so one sample apart is the grid assembly or
+    /// the layout.
+    #[test]
+    fn hands_back_libavifs_planes() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures");
+        let read = |name: &str| std::fs::read(fixtures.join(name)).expect(name);
+        let table = String::from_utf8(read("tables/avif-planes.txt")).expect("the table");
+        assert_eq!(table.lines().count(), 4, "a still and a grid each way");
+        for line in table.lines() {
+            let [name, width, height, bits, subsampled] =
+                line.split_whitespace().collect::<Vec<_>>()[..]
+            else {
+                panic!("a table row is name, width, height, bits and subsampled: {line}");
+            };
+            let file = read(&format!("avif-planes/{name}.avif"));
+            let ours = match decode(&file, 2) {
+                Ok(Decoded::Planes(planes)) => planes,
+                Ok(Decoded::Declined(why)) | Err(why) => panic!("{name}: {why}"),
+            };
+            assert_eq!(
+                (ours.width, ours.height, ours.bits, ours.subsampled),
+                (
+                    width.parse().unwrap(),
+                    height.parse().unwrap(),
+                    bits.parse().unwrap(),
+                    subsampled.parse().unwrap()
+                ),
+                "{name}",
+            );
+            let expected: Vec<u16> = read(&format!("avif-planes/{name}.yuv"))
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            assert_eq!(ours.samples.len(), expected.len(), "{name}");
+            if let Some(at) = ours.samples.iter().zip(&expected).position(|(a, b)| a != b) {
+                let layout = ours.layout();
+                let plane = layout.iter().rposition(|(first, _)| *first <= at).unwrap();
+                let (first, row_length) = layout[plane];
+                panic!(
+                    "{name}: plane {plane}, row {}: {} where libavif has {}",
+                    (at - first) / row_length,
+                    ours.samples[at],
+                    expected[at]
+                );
+            }
+        }
+        assert!(
+            matches!(
+                decode(&read("avif-planes/sdr.avif"), 2),
+                Ok(Decoded::Declined(_))
+            ),
+            "SDR is declined"
+        );
+    }
+}

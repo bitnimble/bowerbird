@@ -1,6 +1,6 @@
 # Where the fixtures came from
 
-RAWs, snapshots and mosaics use Git LFS (`.gitattributes`). Run `git lfs pull` before fixture suites.
+RAWs, snapshots, mosaics and `avif-planes/` use Git LFS (`.gitattributes`). Run `git lfs pull` before fixture suites.
 
 ## AFXT2721.RAF
 
@@ -88,3 +88,10 @@ Approved crop only, cut the same way from project-owned Sony ILCE-7CR frame DSC0
 carved phoenix and beam medallions - small saturated reds, blues and greens a few pixels across, the
 fine colour detail a chroma stage can blur. No metadata. Row-major little-endian f32, RGGB.
 `demosaic.rs`'s `BEAMS_COLOUR` carries the frame's matrix and ceilings.
+
+## avif-planes/
+
+Synthetic gradients encoded by rawshim's `libavif_decodes_the_browser_decoders_fixtures`, which
+also writes libavif's planes of each (`.yuv`, u16 little-endian, packed as `avif_planes` packs them)
+and `tables/avif-planes.txt`. `BOWERBIRD_WRITE_FIXTURES=1 bun run test:native
+libavif_decodes_the_browser_decoders_fixtures` rewrites them; then run `avif_planes`' own test.

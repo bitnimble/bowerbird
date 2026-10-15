@@ -167,10 +167,11 @@ then do other work or wait for completion. **Never poll output files**: output p
 `test:native` requires a name filter, `--test <file>`, or `--lib`; no selection exits 2.
 Real RAW tests require `--features fixtures`. It covers **only `native/rawshim`**.
 Run sibling crates through `bun run scripts/cargo.ts test --manifest-path native/updater/Cargo.toml`,
-substituting `native/lensdb/Cargo.toml` or `native/heif/Cargo.toml` as needed.
-`lensdb` tests pin scored search against C results (DESIGN §10.8).
-`native/avif_planes` has no own tests: rawshim's
-`the_browsers_decoder_hands_back_libavifs_planes` compares it to libavif; `build:wasm` builds it.
+substituting `native/lensdb/Cargo.toml`, `native/heif/Cargo.toml` or `native/avif_planes/Cargo.toml`
+as needed. `lensdb` tests pin scored search against C results (DESIGN §10.8).
+`avif_planes` (rav1d) never links into rawshim (libdav1d): both export `dav1d_*`, so one binary
+holding both fails to link. Its planes are pinned to libavif's through `avif-planes.txt`, so a
+change to `avif_planes`, `heif` or those fixtures runs its test as well as rawshim's.
 
 **Run only checks affected since the last green run.** Rust: `test:native`; `src`:
 `bun run test`; `web/src`: `bun run --cwd web test`; TypeScript changes also need
@@ -330,6 +331,9 @@ Where logic exists twice, pin agreement:
   `module_json.test.ts`. One-sided renames yield `missing
 field` and a black stage.
 - `display-size.txt`: `hdr::cropped_size` versus `schemas/display_size.ts`, used by grid layout.
+- `avif-planes.txt`: libavif's planes of `test/fixtures/avif-planes/`, which `avif_planes` must
+  hand back (Safari's decoder). rawshim's `libavif_decodes_the_browser_decoders_fixtures` writes
+  the files, planes and table.
 - `gpu_fixture.rs`, `edit-words.txt`, `detail-passes.txt`, `reduction-words.txt`: grade snapshots/tables.
 
 Tables live in `test/fixtures/tables/`. Pin duplicated rules in the same commit.
