@@ -3,15 +3,16 @@
 
 use crate::light::{DisplayNits, Light};
 
-const MAC_VIDEO_WHITE_NITS: f64 = 120.0;
+const MAC_VIDEO_WHITE_NITS: f64 = 100.0;
 const SDR_READ_POWER: f64 = 2.2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SdrMatch {
     /// As a browser shows a PQ still: SDR white at 203 nits, the sRGB curve under it.
     Still,
-    /// As Firefox on macOS shows a PQ video beside SDR, matched by eye on an XDR display: SDR white
-    /// at 120 nits, and the SDR under it read through a 2.2 power where the sRGB curve made it.
+    /// As Firefox on macOS shows a PQ video, matched by eye on an XDR display against Chrome showing
+    /// the still: SDR white at 100 nits, and the SDR under it read through a 2.2 power where the
+    /// sRGB curve made it.
     MacVideo,
 }
 

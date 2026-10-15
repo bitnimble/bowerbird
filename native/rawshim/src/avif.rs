@@ -1434,7 +1434,7 @@ mod tests {
             assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the copy");
             ((*image.0).clli.maxCLL, (*image.0).clli.maxPALL)
         };
-        assert_eq!(clli, (600, 240));
+        assert_eq!(clli, (500, 200));
 
         let nits = |code: u16| {
             crate::tone::pq_inv::<crate::light::DisplayNits>(crate::light::Light::exactly(
