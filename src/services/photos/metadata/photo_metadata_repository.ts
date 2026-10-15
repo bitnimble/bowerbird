@@ -10,7 +10,7 @@ import type { PhotoProcessingRepository } from '../renditions/photo_processing_r
 // our own, nothing that says the file changed.
 export type PhotoMetadataFields = Omit<
   ScanModification,
-  'file_hash' | 'file_size' | 'date_updated' | 'metadata_provisional'
+  'file_hash' | 'file_size' | 'date_updated' | 'metadata_provisional' | 'media_image_id'
 >;
 
 export function metadataFieldsOf(header: HeaderMetadata): PhotoMetadataFields {

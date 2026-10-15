@@ -306,7 +306,8 @@ Without it, each batch shows Android's own prompt. The same socket answers a med
 (`media_listing.ts`): one `MediaStore` query for every file under a library's folder, with the size,
 dimensions, orientation and capture time Android already indexed, which the scan reads instead of
 opening each finished picture to learn them (§10.3). A RAW is still read, and a listing that fails
-leaves the scan reading every file itself.
+leaves the scan reading every file itself. It also hands over Android's cached thumbnail of an
+image by its MediaStore id, which is the grid tile of an unedited finished picture (§10.3).
 
 A synced library names no folder, and the server puts it under `BOWERBIRD_LIBRARIES_DIR`, which the
 shell sets inside the app's own storage. It keeps no originals and sends or fetches none

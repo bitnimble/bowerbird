@@ -68,6 +68,7 @@ export function toTarget(target: RenditionTarget): JobTarget {
     stillFullChroma: target.stillFullChroma,
     sdrFullChroma: target.sdrFullChroma,
     intent: target.intent,
+    describeOnly: target.describeOnly,
   };
 }
 

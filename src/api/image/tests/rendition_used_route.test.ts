@@ -24,6 +24,7 @@ function serving(hdr: boolean, used: string[]): Hono {
       photo: { id: 'p1', file_path: 'p1.arw', recipe: { kind: 'file', path: 'p1.arw' } },
     }),
     rebuildIfStale: () => undefined,
+    isDeviceTile: () => false,
     markUsed: (photoId: string, variant: string) => used.push(`${photoId}:${variant}`),
   };
   const app = new Hono();

@@ -138,3 +138,32 @@ describe('PhotoProcessingRepository.markCopyBuilt', () => {
     });
   });
 });
+
+describe('PhotoProcessingRepository.deviceTile', () => {
+  const made = (from: 'embedded' | 'render'): { from: typeof from; matched: boolean } => ({
+    from,
+    matched: false,
+  });
+
+  it('is the device thumbnail until a render replaces the tile, and again after', () => {
+    db.query("UPDATE photos SET media_image_id = 7 WHERE id = 'live'").run();
+    expect(repo.deviceTile('live')).toBe(7);
+
+    repo.markTileBuilt('live', '2026-06-01T00:00:00.000Z', null, made('embedded'));
+    expect(repo.deviceTile('live')).toBe(7);
+
+    repo.markTileBuilt('live', '2026-06-01T00:00:01.000Z', 'edits-1', made('render'));
+    expect(repo.deviceTile('live')).toBeNull();
+
+    repo.markTileBuilt('live', '2026-06-01T00:00:02.000Z', 'edits-2', made('embedded'));
+    expect(repo.deviceTile('live')).toBe(7);
+  });
+
+  it('is never a row the media index did not catalogue, or one dropped from it', () => {
+    expect(repo.deviceTile('binned')).toBeNull();
+
+    db.query("UPDATE photos SET media_image_id = 7 WHERE id = 'live'").run();
+    repo.dropDeviceTile('live');
+    expect(repo.deviceTile('live')).toBeNull();
+  });
+});

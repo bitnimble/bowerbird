@@ -7,6 +7,7 @@ import { getDataPath, getRenditionPath } from '../../../utils/paths';
 import type { Originals } from '../../blobs/originals';
 import { isComposite } from '../../../schemas/recipes';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
+import type { MediaListing } from '../../libraries/media_listing';
 import { renditionCurrent, type RenditionFetchService } from '../../blobs/rendition_fetch_service';
 import { extractMetadata, type FileMetadata } from '../../processing/analysis/metadata';
 import type { ProcessingService } from '../../processing/pipeline/processing_service';
@@ -52,7 +53,38 @@ export class PhotoRenditionService {
     private readonly extract: (filePath: string) => Promise<FileMetadata> = extractMetadata,
     private readonly fetchThrough: RenditionFetchService | null,
     private readonly activity: LibraryActivity = new LibraryActivity(),
+    private readonly media: MediaListing | null = null,
   ) {}
+
+  /** Whether the grid tile is the device's own thumbnail, where no file of ours stands for it. */
+  isDeviceTile(photoId: string): boolean {
+    return this.media != null && this.photoProcessing.deviceTile(photoId) != null;
+  }
+
+  /**
+   * The device's own thumbnail as this photo's grid tile, or null where it has none to hand over.
+   *
+   * One the device says it no longer has has the photo's tile built as a file instead.
+   */
+  async deviceTile(photoId: string): Promise<Uint8Array | null> {
+    if (this.media == null) return null;
+    const imageId = this.photoProcessing.deviceTile(photoId);
+    if (imageId == null) return null;
+    const { photo, library } = this.locate(photoId);
+    const original = this.originals.here(library, photo);
+    if (original == null) return null;
+    const jpeg = await this.media.thumbnail(imageId, original);
+    if (jpeg !== 'gone') return jpeg;
+    void this.tileAsFile(photoId).catch((err: unknown) =>
+      log.warn('could not build a tile', { photo: photoId, err }),
+    );
+    return null;
+  }
+
+  private async tileAsFile(photoId: string): Promise<void> {
+    this.photoProcessing.dropDeviceTile(photoId);
+    await this.processing.rebuildTiles([photoId]);
+  }
 
   // The photo and its library, and nothing else. Everything that serves bytes or
   // builds a file wants these four columns; `get` above assembles the detail
@@ -114,6 +146,8 @@ export class PhotoRenditionService {
     force = false,
   ): Promise<void> {
     if (rendition !== 'grid') return this.build(photoId, rendition, { force, hdr, via });
+    // A peer can't ask this device's media index, so it is handed a file of ours.
+    if (this.isDeviceTile(photoId)) return this.tileAsFile(photoId);
     // The tile is the queue's to build wherever the original is.
     const { photo, library } = this.locate(photoId);
     if (this.fetchThrough == null || this.originals.here(library, photo) != null) return;

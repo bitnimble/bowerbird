@@ -1,6 +1,6 @@
 //! The device's own photo library, where the platform guards it: leave to read it, for the page,
-//! and, for the server, leave to change photos other apps own (`write_grants.ts`) and what the
-//! media store holds under a folder (`media_listing.ts`).
+//! and, for the server, leave to change photos other apps own (`write_grants.ts`), what the
+//! media store holds under a folder and its thumbnails (`media_listing.ts`).
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,13 +90,14 @@ mod platform {
     enum Request {
         GrantWrites(Vec<String>),
         ListMedia(String),
+        Thumbnail(i64, String),
     }
 
     #[derive(serde::Serialize)]
     #[serde(untagged)]
     enum Reply {
         Grant(GrantReply),
-        Media(serde_json::Value),
+        Answer(serde_json::Value),
         Failed { error: String },
     }
 
@@ -145,7 +146,18 @@ mod platform {
         let reply = match BufReader::new(&connection).read_line(&mut line) {
             Ok(_) => match serde_json::from_str::<Request>(&line) {
                 Ok(Request::GrantWrites(paths)) => Reply::Grant(grant(app, paths)),
-                Ok(Request::ListMedia(root)) => list_media(app, root),
+                Ok(Request::ListMedia(root)) => ask(
+                    app,
+                    "listMedia",
+                    serde_json::json!({ "root": root }),
+                    "could not list the device's media",
+                ),
+                Ok(Request::Thumbnail(id, path)) => ask(
+                    app,
+                    "thumbnail",
+                    serde_json::json!({ "id": id, "path": path }),
+                    "could not read the device's thumbnail",
+                ),
                 Err(err) => Reply::Grant(refused(format!("could not read the request: {err}"))),
             },
             Err(err) => Reply::Grant(refused(format!("could not read the request: {err}"))),
@@ -197,17 +209,20 @@ mod platform {
         }
     }
 
-    fn list_media(app: &tauri::AppHandle<Runtime>, root: String) -> Reply {
+    fn ask(
+        app: &tauri::AppHandle<Runtime>,
+        command: &str,
+        args: serde_json::Value,
+        failure: &str,
+    ) -> Reply {
         match app
             .state::<Photos>()
             .0
-            .run_mobile_plugin::<serde_json::Value>(
-                "listMedia",
-                serde_json::json!({ "root": root }),
-            ) {
-            Ok(media) => Reply::Media(media),
+            .run_mobile_plugin::<serde_json::Value>(command, args)
+        {
+            Ok(answer) => Reply::Answer(answer),
             Err(err) => Reply::Failed {
-                error: format!("could not list the device's media: {err}"),
+                error: format!("{failure}: {err}"),
             },
         }
     }

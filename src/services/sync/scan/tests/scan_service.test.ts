@@ -347,11 +347,19 @@ describe('a library the device media index answers for', () => {
                 height: 3000,
                 orientationDegrees: 90,
                 takenWallMs: Date.UTC(2026, 9, 1, 9, 30),
+                imageId: 7,
               },
             ],
             [
               path.join(root, 'stale.jpg'),
-              { size: 1, width: 10, height: 10, orientationDegrees: 0, takenWallMs: null },
+              {
+                size: 1,
+                width: 10,
+                height: 10,
+                orientationDegrees: 0,
+                takenWallMs: null,
+                imageId: 8,
+              },
             ],
             [
               path.join(root, 'raw.dng'),
@@ -361,10 +369,23 @@ describe('a library the device media index answers for', () => {
                 height: 6000,
                 orientationDegrees: 0,
                 takenWallMs: null,
+                imageId: 9,
+              },
+            ],
+            [
+              path.join(root, 'unsized.jpg'),
+              {
+                size: sized(root, 'unsized.jpg'),
+                width: null,
+                height: null,
+                orientationDegrees: 0,
+                takenWallMs: null,
+                imageId: 10,
               },
             ],
           ]),
         ),
+      thumbnail: () => Promise.resolve(null),
     };
     const peer = makeLibrary({
       include_non_raw: 1,
@@ -374,15 +395,15 @@ describe('a library the device media index answers for', () => {
         return meta(absPath);
       },
     });
-    for (const name of ['pixel.jpg', 'stale.jpg', 'raw.dng']) put(peer, name);
+    for (const name of ['pixel.jpg', 'stale.jpg', 'raw.dng', 'unsized.jpg']) put(peer, name);
 
     await peer.scan.scanLibrary(LIB);
 
-    expect(opened.sort()).toEqual(['raw.dng', 'stale.jpg']);
+    expect(opened.sort()).toEqual(['raw.dng', 'stale.jpg', 'unsized.jpg']);
     const rows = peer.db
       .query(
         `SELECT json_extract(recipe, '$.path') AS file_path, width, height, orientation, date_taken,
-                metadata_provisional FROM photos ORDER BY file_path`,
+                metadata_provisional, media_image_id FROM photos ORDER BY file_path`,
       )
       .all();
     expect(rows).toEqual([
@@ -393,6 +414,7 @@ describe('a library the device media index answers for', () => {
         orientation: 6,
         date_taken: '2026-10-01T09:30:00.000Z',
         metadata_provisional: 1,
+        media_image_id: 7,
       },
       {
         file_path: 'raw.dng',
@@ -401,6 +423,7 @@ describe('a library the device media index answers for', () => {
         orientation: 1,
         date_taken: null,
         metadata_provisional: 0,
+        media_image_id: null,
       },
       {
         file_path: 'stale.jpg',
@@ -409,6 +432,16 @@ describe('a library the device media index answers for', () => {
         orientation: 1,
         date_taken: null,
         metadata_provisional: 0,
+        media_image_id: null,
+      },
+      {
+        file_path: 'unsized.jpg',
+        width: 100,
+        height: 100,
+        orientation: 1,
+        date_taken: null,
+        metadata_provisional: 0,
+        media_image_id: 10,
       },
     ]);
 
@@ -428,6 +461,7 @@ describe('a library the device media index answers for', () => {
       { file_path: 'pixel.jpg', camera_model: 'Pixel 9', metadata_provisional: 0 },
       { file_path: 'raw.dng', camera_model: null, metadata_provisional: 0 },
       { file_path: 'stale.jpg', camera_model: null, metadata_provisional: 0 },
+      { file_path: 'unsized.jpg', camera_model: null, metadata_provisional: 0 },
     ]);
   });
 });

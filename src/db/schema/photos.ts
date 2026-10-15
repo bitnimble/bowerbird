@@ -93,6 +93,9 @@ export const photos = sqliteTable(
     lastAccessedAt: text('last_accessed_at'),
     // Local and unstamped: whether this device has read the header is not a fact about the photograph.
     metadataProvisional: integer('metadata_provisional').notNull().default(0),
+    // The device's media index id, whose thumbnail is this photo's grid tile until a render replaces
+    // it. Local and unstamped, like the flag above.
+    mediaImageId: integer('media_image_id'),
   },
   (t) => [
     check('photos_rating', sql`${t.rating} >= 0 AND ${t.rating} <= 5`),

@@ -57,6 +57,7 @@ export interface PendingPhoto {
   // `builtFromOf`, read with the rest for the reason `edits_stamp` is.
   built_from: string | null;
   metadata_provisional: number;
+  media_image_id: number | null;
 }
 
 /** What decides whether one stored copy is current: what it was built from, against what the photo holds now. */
@@ -100,7 +101,7 @@ export class PhotoProcessingRepository {
     const order =
       libraryId == null ? '' : `ORDER BY ${orderByClause(this.libraryOrdering(libraryId), 'p.')}`;
     const query = (idClause: string): string =>
-      `SELECT p.id AS photo_id, p.rendition_source, p.recipe, p.metadata_provisional,
+      `SELECT p.id AS photo_id, p.rendition_source, p.recipe, p.metadata_provisional, p.media_image_id,
                 MAX(r.variant = 'grid') AS needs_tile,
                 MAX(r.variant = ${FULL_VARIANT_OF_LIBRARY}) AS needs_renditions,
                 l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr,
@@ -157,6 +158,20 @@ export class PhotoProcessingRepository {
   }
   forgetBuilt(id: string, variants: readonly RenditionVariant[]): void {
     this.renditions.forgetBuilt(id, variants);
+  }
+  /** The media index image whose thumbnail is this photo's grid tile, or null where a file is. */
+  deviceTile(id: string): number | null {
+    const row = this.db
+      .query(
+        `SELECT p.media_image_id FROM photos p
+           LEFT JOIN renditions r ON r.photo_id = p.id AND r.variant = ?
+          WHERE p.id = ? AND r.source IS NOT 'render'`,
+      )
+      .get(renditionVariant('grid', false), id) as { media_image_id: number | null } | null;
+    return row?.media_image_id ?? null;
+  }
+  dropDeviceTile(id: string): void {
+    this.db.query('UPDATE photos SET media_image_id = NULL WHERE id = ?').run(id);
   }
   markUsed(id: string, variant: RenditionVariant): void {
     this.renditions.markUsed(id, variant, new Date().toISOString());

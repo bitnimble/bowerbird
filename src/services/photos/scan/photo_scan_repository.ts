@@ -41,6 +41,7 @@ export interface ScanInsert {
   /** `CaptureSequenceSchema` as JSON. */
   capture_sequence: string | null;
   metadata_provisional?: boolean;
+  media_image_id?: number;
   /**
    * An unclaimed file found under the bin comes in already binned (§9.1.1), with
    * where it would restore to and no rendition work queued: `PENDING_PROCESSING`
@@ -70,6 +71,7 @@ export interface ScanModification {
   lens_model: string | null;
   capture_sequence: string | null;
   metadata_provisional?: boolean;
+  media_image_id?: number;
 }
 
 // Fields the scan quick-check needs to decide whether to re-open a file (§9.1).
@@ -213,13 +215,13 @@ export class PhotoScanRepository {
              is_missing, is_deleted, date_taken, date_taken_offset, date_added, date_updated,
              deleted_from_path,
              latitude, longitude, iso, shutter_speed, aperture, focal_length,
-             camera_make, camera_model, lens_model, capture_sequence, metadata_provisional, rating,
+             camera_make, camera_model, lens_model, capture_sequence, metadata_provisional, media_image_id, rating,
              -- The verdict and the stacking are left unstamped: this import has no
              -- opinion about either, and a NULL stamp is how a peer says so - anyone
              -- else's rating then wins rather than racing a default.
              stamp_imported, stamp_placement${binned ? ', stamp_bin' : ''})
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ${binned ? 1 : 0}, ?, ?, ?, ?, ${binned ? '?' : 'NULL'},
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?${binned ? ', ?' : ''})`,
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?${binned ? ', ?' : ''})`,
       )
       .run(
         record.id,
@@ -252,6 +254,7 @@ export class PhotoScanRepository {
         record.lens_model,
         record.capture_sequence,
         record.metadata_provisional === true ? 1 : 0,
+        record.media_image_id ?? null,
         ...(binned ? [at, at, at] : [at, at]),
       );
   }
@@ -274,7 +277,7 @@ export class PhotoScanRepository {
             -- Left standing, a photo imported under an 'embedded' library and edited after the
             -- library moved to 'render' keeps resolving 'embedded', so no full rendition is
             -- ever built and the viewer asks for a file nothing writes.
-            rendition_source = NULL, is_missing = 0, metadata_provisional = ?,
+            rendition_source = NULL, is_missing = 0, metadata_provisional = ?, media_image_id = ?,
             stamp_imported = COALESCE(?, stamp_imported) WHERE id = ?`,
       )
       .run(
@@ -297,6 +300,7 @@ export class PhotoScanRepository {
         fields.lens_model,
         fields.capture_sequence,
         fields.metadata_provisional === true ? 1 : 0,
+        fields.media_image_id ?? null,
         moved,
         photoId,
       );

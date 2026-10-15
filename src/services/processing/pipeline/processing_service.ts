@@ -465,6 +465,10 @@ export class ProcessingService extends RenderService {
         // ~1.5s away, and a grid already on screen should fill at the tile's pace
         // rather than wait for both.
         this.stageDone(photo, result.photoId, 'tile', result.descriptor);
+        // A render's tile from before would otherwise be read as the camera's picture it now stands for.
+        for (const target of job.targets.filter((each) => each.describeOnly === true)) {
+          void deleteGeneratedFile(job.dataPath, target.outputPath).catch(() => {});
+        }
         if (result.header != null) this.readHeader(result.photoId, result.header);
         if (photo?.renditions == null) active.delete(result.photoId);
       },
@@ -676,12 +680,15 @@ export class ProcessingService extends RenderService {
     // crash, a restart, a library that went away and came back - resumes at the
     // one it did not reach rather than redoing a tile already on disk.
     const owesRenditions = pending.needs_renditions === 1;
+    const grid = this.targets.target(dataPath, photoId, 'grid', false, 'embedded');
     const tile: RenditionJob | null =
       pending.needs_tile === 1
         ? {
             ...common,
             ...(pending.metadata_provisional === 1 ? { header: true as const } : {}),
-            targets: [this.targets.target(dataPath, photoId, 'grid', false, 'embedded')],
+            // The device's own thumbnail is the tile (`PhotoRenditionService.deviceTile`); stacking
+            // still wants the descriptor.
+            targets: [pending.media_image_id == null ? grid : { ...grid, describeOnly: true }],
           }
         : null;
     // The renditions job writes the grid tile a second time, from the render.

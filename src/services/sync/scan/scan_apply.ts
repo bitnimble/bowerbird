@@ -93,6 +93,7 @@ export function applyChanges(
         lens_model: md.metadata.lensModel,
         capture_sequence: sequenceColumn(md.metadata.sequence),
         metadata_provisional: md.metadata.provisional,
+        media_image_id: md.metadata.mediaImageId,
       });
       batch.touched?.push(md.photoId);
       modified++;

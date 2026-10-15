@@ -2071,6 +2071,7 @@ mod loupe_tile {
             still_full_chroma: false,
             sdr_full_chroma: false,
             intent: crate::gpu::Intent::Perceptual,
+            describe_only: false,
         };
         let mut job = tile_job(path, None, None);
         job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
@@ -2269,6 +2270,7 @@ mod loupe_tile {
             still_full_chroma: false,
             sdr_full_chroma: false,
             intent: crate::gpu::Intent::Perceptual,
+            describe_only: false,
         };
         let mut job = tile_job(path, None, None);
         job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
@@ -4570,6 +4572,10 @@ mod tile_header {
     use super::*;
 
     fn tile_job(path: &PathBuf, out: &str, header: bool) -> crate::job::Job {
+        grid_job(path, out, header, false)
+    }
+
+    fn grid_job(path: &PathBuf, out: &str, header: bool, describe_only: bool) -> crate::job::Job {
         serde_json::from_str(&format!(
             r#"{{
                 "rawFilePath": {:?},
@@ -4590,7 +4596,8 @@ mod tile_header {
                     "hdrQuantizer": 13,
                     "preset": 0,
                     "stillFullChroma": false,
-                    "sdrFullChroma": false
+                    "sdrFullChroma": false,
+                    "describeOnly": {describe_only}
                 }}]
             }}"#,
             path.to_string_lossy(),
@@ -4624,6 +4631,25 @@ mod tile_header {
         let outcome =
             crate::job::run(&tile_job(&path, &out.to_string_lossy(), false)).expect("the job runs");
         assert!(outcome.header.is_none());
+    }
+
+    /// A phone library's grid is the device's own thumbnail, but stacking still needs the
+    /// photograph's descriptor, and it has to be the one a written tile would have reported.
+    #[test]
+    fn a_describe_only_tile_writes_nothing_and_describes_the_same() {
+        let path = sony();
+        let written = std::env::temp_dir().join("bb-tile-described.avif");
+        let skipped = std::env::temp_dir().join("bb-tile-described-only.avif");
+        let _ = std::fs::remove_file(&skipped);
+        let expected = crate::job::run(&grid_job(&path, &written.to_string_lossy(), false, false))
+            .expect("the tile job runs")
+            .descriptor;
+        let outcome = crate::job::run(&grid_job(&path, &skipped.to_string_lossy(), false, true))
+            .expect("the describe-only job runs");
+
+        assert!(!skipped.exists());
+        assert!(outcome.descriptor.is_some());
+        assert_eq!(outcome.descriptor, expected);
     }
 }
 

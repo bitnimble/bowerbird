@@ -175,6 +175,7 @@ const photoEditsRepo = new PhotoEditsRepository(db);
 
 const writeGrants =
   config.shellSocket == null ? UNRESTRICTED_WRITES : new ShellWriteGrants(config.shellSocket);
+const deviceMedia = config.shellSocket == null ? null : new ShellMediaListing(config.shellSocket);
 
 // Moving the originals themselves (§7). The queue is durable, so a restart takes
 // up whatever a kill interrupted rather than losing it.
@@ -284,6 +285,7 @@ const photoRenditionService = new PhotoRenditionService(
   extractMetadata,
   renditionFetch,
   activity,
+  deviceMedia,
 );
 const photoReadService = new PhotoReadService(
   photoListingRepo,
@@ -350,7 +352,7 @@ const scanService = new ScanService(
   scanConcurrency,
   (libraryId) => replicationRunner.materialise(libraryId),
   (libraryId) => replicationRunner.stillToMove(libraryId),
-  config.shellSocket == null ? null : new ShellMediaListing(config.shellSocket),
+  deviceMedia,
 );
 const stacksService = new StacksService(
   stacksRepo,

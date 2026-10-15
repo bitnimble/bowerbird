@@ -81,6 +81,7 @@ describe('ProcessingService.processUnprocessed', () => {
       inputs_edited: 0,
       built_from: null,
       metadata_provisional: 0,
+      media_image_id: null,
     };
   }
 
@@ -362,6 +363,42 @@ describe('ProcessingService.processUnprocessed', () => {
       .map((job) => photoStage(job));
     expect(asked).toEqual(['indexed:grid']);
     expect(headers).toEqual([['indexed', HEADER]]);
+  });
+
+  it('writes no tile for a row the device thumbnails, and still marks its tile built', async () => {
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        { ...pending('thumbnailed'), media_image_id: 7 },
+        pending('ours'),
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+    const service = makeProcessingService(repo, settingsWith({}));
+    const before = path.join(dataPathForLibraryId(LIB), 'renditions', 'grid', 'thumbnailed.avif');
+    mkdirSync(path.dirname(before), { recursive: true });
+    writeFileSync(before, 'a render from before');
+
+    await service.processUnprocessed({ libraryId: 'lib' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(existsSync(before)).toBe(false);
+    const grids = posted
+      .filter((job): job is RenditionJob => job.kind === 'rendition')
+      .flatMap((job) => job.targets.filter((target) => target.rendition === 'grid'))
+      .filter((target) => target.source === 'embedded')
+      .map((target) => [path.basename(target.outputPath), target.describeOnly === true]);
+    expect(grids).toEqual([
+      ['thumbnailed.avif', true],
+      ['ours.avif', false],
+    ]);
+    expect(repo.markTileBuilt).toHaveBeenCalledWith(
+      'thumbnailed',
+      expect.any(String),
+      null,
+      expect.objectContaining({ from: 'embedded' }),
+    );
   });
 
   it('passes the embedded-JPEG matching setting through to the worker', async () => {

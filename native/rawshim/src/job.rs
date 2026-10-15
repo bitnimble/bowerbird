@@ -83,6 +83,9 @@ pub struct Target {
     /// How an sRGB output reaches its gamut. A PQ output reads nothing of it.
     #[serde(default)]
     pub intent: crate::gpu::Intent,
+    /// Measure the stacking descriptor and write no file: the device serves its own thumbnail.
+    #[serde(default)]
+    pub describe_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -546,6 +549,9 @@ fn save_avif(
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
+    if target.describe_only {
+        return Ok(());
+    }
     crate::save_avif_frame(
         image,
         target.sdr_quantizer,
@@ -1403,6 +1409,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         still_full_chroma: true,
         sdr_full_chroma: true,
         intent: target.intent,
+        describe_only: false,
     });
     let mut first = whole.clone();
     if let Some(measuring) = &measuring {
@@ -1597,6 +1604,9 @@ async fn bands(
                     target,
                     outcome,
                 );
+            }
+            if target.describe_only {
+                return Ok(());
             }
             crate::avif::save_rendition_bands(
                 bands,

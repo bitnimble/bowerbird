@@ -24,8 +24,9 @@ describe('ShellMediaListing', () => {
             3024,
             90,
             1_760_000_000_000,
+            41,
           ],
-          ['/storage/emulated/0/DCIM/Camera/notes.txt', 12, null, null, null, null],
+          ['/storage/emulated/0/DCIM/Camera/notes.txt', 12, null, null, null, null, null],
         ],
       }),
     );
@@ -41,11 +42,19 @@ describe('ShellMediaListing', () => {
             height: 3024,
             orientationDegrees: 90,
             takenWallMs: 1_760_000_000_000,
+            imageId: 41,
           },
         ],
         [
           '/storage/emulated/0/DCIM/Camera/notes.txt',
-          { size: 12, width: null, height: null, orientationDegrees: null, takenWallMs: null },
+          {
+            size: 12,
+            width: null,
+            height: null,
+            orientationDegrees: null,
+            takenWallMs: null,
+            imageId: null,
+          },
         ],
       ]),
     );
@@ -67,7 +76,7 @@ describe('ShellMediaListing', () => {
   });
 
   it('answers null for a row of the wrong shape', async () => {
-    await shell.answer('{"media":[["/a.jpg",null,1,1,0,0]]}');
+    await shell.answer('{"media":[["/a.jpg",null,1,1,0,0,null]]}');
     expect(await new ShellMediaListing(shell.socket).under('/a')).toBeNull();
   });
 
@@ -78,5 +87,35 @@ describe('ShellMediaListing', () => {
 
   it('answers null when no shell is listening', async () => {
     expect(await new ShellMediaListing(shell.socket).under('/a')).toBeNull();
+  });
+});
+
+describe('ShellMediaListing.thumbnail', () => {
+  it('asks for the image and hands back its bytes', async () => {
+    await shell.answer(
+      JSON.stringify({ jpeg: Buffer.from([0xff, 0xd8, 0xff]).toString('base64') }),
+    );
+    const jpeg = await new ShellMediaListing(shell.socket).thumbnail(41, '/a/p.jpg');
+    expect(shell.asked).toEqual([{ thumbnail: [41, '/a/p.jpg'] }]);
+    expect(jpeg).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+  });
+
+  it('answers gone when the shell reports it has none', async () => {
+    await shell.answer('{"error":"could not read the device\'s thumbnail: moved"}');
+    expect(await new ShellMediaListing(shell.socket).thumbnail(41, '/a/p.jpg')).toBe('gone');
+  });
+
+  it('answers null when no shell is listening', async () => {
+    expect(await new ShellMediaListing(shell.socket).thumbnail(41, '/a/p.jpg')).toBeNull();
+  });
+
+  it('answers every one of more asks than it makes at once', async () => {
+    await shell.answer(JSON.stringify({ jpeg: Buffer.from([0xff]).toString('base64') }));
+    const listing = new ShellMediaListing(shell.socket);
+    const answers = await Promise.all(
+      Array.from({ length: 9 }, (_, at) => listing.thumbnail(at, `/a/${at}.jpg`)),
+    );
+    expect(answers.every((answer) => answer instanceof Uint8Array)).toBe(true);
+    expect(shell.asked).toHaveLength(9);
   });
 });

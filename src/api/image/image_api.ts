@@ -8,7 +8,7 @@ import type { PrepareDevelop } from '../../schemas/prepare_develop';
 import { isComposite, soleInputOf } from '../../schemas/recipes';
 import { PathSegment, route } from '../../schemas/route';
 import { SdrMatchSchema } from '../../schemas/sdr_match';
-import { getDataPath, getRenditionPath } from '../../utils/paths';
+import { getDataPath, getRenditionPath, originalPathOf } from '../../utils/paths';
 import type { Originals } from '../../services/blobs/originals';
 import { originalMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg, scrubIdentifying } from '../../services/processing/rawshim/raw_decoder';
@@ -262,6 +262,10 @@ export class ImageApi {
             renditionVariant(rendition, library.rendition_hdr),
           );
         this.photoRenditions.rebuildIfStale(photoId);
+        if (rendition === 'grid') {
+          const deviceTile = await this.serveDeviceTile(photo, library, c);
+          if (deviceTile != null) return deviceTile;
+        }
         const tenBit = c.req.query('bits') === '10' ? this.tenBitCopies : null;
         const matching = SdrMatchSchema.catch('still').parse(c.req.query('match'));
         // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
@@ -506,10 +510,33 @@ export class ImageApi {
     });
   }
 
+  /** The device's own thumbnail where it is this photo's grid tile, or null to serve the file. */
+  private async serveDeviceTile(
+    photo: BasicPhoto,
+    library: LibraryConfiguration,
+    c: Context,
+  ): Promise<Response | null> {
+    const original = originalPathOf(library, photo);
+    if (original == null || !this.photoRenditions.isDeviceTile(photo.id)) return null;
+    // The original's stat, as for the embedded JPEG: the thumbnail moves exactly when it does.
+    const etag = `${etagOf(Bun.file(original)).slice(0, -1)}-device"`;
+    const headers = {
+      'Content-Type': 'image/jpeg',
+      'Cache-Control': 'no-cache',
+      ETag: etag,
+      ...TIMING_ALLOW_ORIGIN,
+    };
+    if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
+    const jpeg = await this.photoRenditions.deviceTile(photo.id);
+    return jpeg == null ? null : new Response(jpeg, { headers });
+  }
+
   private async servePreview(c: Context): Promise<Response> {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photoRenditions.locate(photoId);
+    const deviceTile = await this.serveDeviceTile(photo, library, c);
+    if (deviceTile != null) return deviceTile;
     const tilePath = getRenditionPath(library, photo.id, 'grid', false);
     const tile = Bun.file(tilePath);
     if (!(await tile.exists()))

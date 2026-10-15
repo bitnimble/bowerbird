@@ -32,6 +32,7 @@ import type {
 import { PhotoReadService } from '../../listing/photo_read_service';
 import { PhotoRenditionService } from '../photo_rendition_service';
 import type { RenditionFetchService } from '../../../blobs/rendition_fetch_service';
+import type { MediaListing } from '../../../libraries/media_listing';
 import { Logger } from '../../../../logger';
 
 const emptyResult: PhotoListResult = { photos: [], total: 0 };
@@ -47,6 +48,7 @@ function build(over: {
   processing?: Partial<ProcessingService>;
   settings?: Partial<ReturnType<SettingsRepository['get']>>;
   fetchThrough?: Partial<RenditionFetchService>;
+  media?: MediaListing;
 }) {
   const photoPaths = {
     getBasicById: jest.fn(() => null),
@@ -102,6 +104,8 @@ function build(over: {
     localOriginals(),
     undefined,
     over.fetchThrough == null ? null : (over.fetchThrough as RenditionFetchService),
+    undefined,
+    over.media ?? null,
   );
   const read = new PhotoReadService(
     photoListing,
@@ -221,6 +225,93 @@ describe('PhotoRenditionService.rebuildIfStale', () => {
     service.rebuildIfStale('p1');
 
     expect(processing.rebuildEdited).not.toHaveBeenCalled();
+  });
+});
+
+describe('PhotoRenditionService.deviceTile', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'device-tile-'));
+  writeFileSync(path.join(root, 'p1.jpg'), 'original');
+  const thumbnailing = (jpeg: Uint8Array | 'gone' | null): MediaListing => ({
+    under: jest.fn(async () => null),
+    thumbnail: jest.fn(async () => jpeg),
+  });
+  const located = {
+    photoPaths: {
+      getBasicById: jest.fn(() => ({
+        id: 'p1',
+        library_id: 'lib',
+        file_path: 'p1.jpg',
+        recipe: fileRecipe('p1.jpg'),
+      })),
+    } as unknown as Partial<PhotoPathsRepository>,
+    libraries: { getConfiguration: jest.fn(() => ({ ...library, root_path: root })) },
+  };
+  const deviceTiled = (imageId: number | null) => ({
+    deviceTile: jest.fn(() => imageId),
+    dropDeviceTile: jest.fn(),
+  });
+
+  it("hands over the device's thumbnail of the row's image, named by its file", async () => {
+    const media = thumbnailing(new Uint8Array([0xff, 0xd8]));
+    const { service } = build({ ...located, media, photoProcessing: deviceTiled(7) });
+
+    expect(await service.deviceTile('p1')).toEqual(new Uint8Array([0xff, 0xd8]));
+    expect(media.thumbnail).toHaveBeenCalledWith(7, path.join(root, 'p1.jpg'));
+  });
+
+  it('asks the device nothing where the tile is a file of ours', async () => {
+    const media = thumbnailing(new Uint8Array([0xff]));
+    const { service } = build({ ...located, media, photoProcessing: deviceTiled(null) });
+
+    expect(await service.deviceTile('p1')).toBeNull();
+    expect(service.isDeviceTile('p1')).toBe(false);
+    expect(media.thumbnail).not.toHaveBeenCalled();
+  });
+
+  it('builds a tile of its own for an image the device says it no longer has', async () => {
+    const { service, photoProcessing, processing } = build({
+      ...located,
+      media: thumbnailing('gone'),
+      photoProcessing: deviceTiled(7),
+      processing: { rebuildTiles: jest.fn(async () => 1) },
+    });
+
+    expect(await service.deviceTile('p1')).toBeNull();
+    expect(photoProcessing.dropDeviceTile).toHaveBeenCalledWith('p1');
+    expect(processing.rebuildTiles).toHaveBeenCalledWith(['p1']);
+  });
+
+  it('keeps the device tile when the device could not be asked', async () => {
+    const { service, photoProcessing, processing } = build({
+      ...located,
+      media: thumbnailing(null),
+      photoProcessing: deviceTiled(7),
+      processing: { rebuildTiles: jest.fn(async () => 1) },
+    });
+
+    expect(await service.deviceTile('p1')).toBeNull();
+    expect(photoProcessing.dropDeviceTile).not.toHaveBeenCalled();
+    expect(processing.rebuildTiles).not.toHaveBeenCalled();
+  });
+
+  it('builds a file for a peer, which cannot ask this device for its thumbnail', async () => {
+    const { service, photoProcessing, processing } = build({
+      ...located,
+      media: thumbnailing(new Uint8Array([0xff])),
+      photoProcessing: deviceTiled(7),
+      processing: { rebuildTiles: jest.fn(async () => 1) },
+    });
+
+    await service.buildForPeer('p1', 'grid', false, []);
+
+    expect(photoProcessing.dropDeviceTile).toHaveBeenCalledWith('p1');
+    expect(processing.rebuildTiles).toHaveBeenCalledWith(['p1']);
+  });
+
+  it('is never a device tile on a server with no device to ask', () => {
+    const { service } = build({ ...located, photoProcessing: deviceTiled(7) });
+
+    expect(service.isDeviceTile('p1')).toBe(false);
   });
 });
 

@@ -58,6 +58,8 @@ export interface RenditionTarget {
   sdrFullChroma: boolean;
   /** How an SDR target reaches sRGB's gamut; perceptual where absent. */
   intent?: RenderingIntent;
+  /** A grid target that measures the stacking descriptor and writes no file. */
+  describeOnly?: boolean;
 }
 
 /**

@@ -29,10 +29,15 @@ export interface FileMetadata {
   fileSize: number; // bytes
   /** Read off the device's media index rather than the file, so the tile pass reads the header. */
   provisional?: boolean;
+  /** `MediaEntry.imageId`, where the device's media index has this file as it is now. */
+  mediaImageId?: number;
 }
 
 /** What a header read says about a photograph, without the file's own size and time. */
-export type HeaderMetadata = Omit<FileMetadata, 'mtime' | 'fileSize' | 'provisional'>;
+export type HeaderMetadata = Omit<
+  FileMetadata,
+  'mtime' | 'fileSize' | 'provisional' | 'mediaImageId'
+>;
 
 export async function extractMetadata(filePath: string): Promise<FileMetadata> {
   const stats = await stat(filePath);

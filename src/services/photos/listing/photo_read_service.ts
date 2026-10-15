@@ -169,6 +169,7 @@ export class PhotoReadService {
   private repairGridTile(photo: UnresolvedDetail, library: Library): void {
     if (this.repairing.has(photo.id)) return;
     if (existsSync(getRenditionPath(library, photo.id, 'grid', false))) return;
+    if (this.renditions.isDeviceTile(photo.id)) return;
     // A synthesised row's tile is composed rather than rendered from a file, so the repair for
     // one is the queue's rebuild rather than this.
     const raw = originalPathOf(library, photo);
