@@ -1435,13 +1435,14 @@ impl Gpu {
     }
 
     /// `drawn` as the ten-bit PQ 4:2:0 planes the editor's VP9 encoder takes on Firefox
-    /// (`pq420.slang`), with the canvas's SDR white coded at `white`: [`Pq420Layout::header`] as
-    /// little-endian words, then the planes as little-endian samples.
+    /// (`pq420.slang`), with the canvas's SDR range coded as `matching` shows it:
+    /// [`Pq420Layout::header`] as little-endian words, then the planes as little-endian samples.
     pub async fn pq420(
         &self,
         drawn: &Texture,
-        white: crate::light::Light<crate::light::DisplayNits>,
+        matching: crate::sdr_match::SdrMatch,
     ) -> Option<Vec<u8>> {
+        let [white, reads_sdr_as_power] = matching.words();
         let layout = Pq420Layout::of(drawn.width(), drawn.height());
         let bytes = u64::from(layout.words) * 4;
         let mut recording = self.record();
@@ -1465,8 +1466,8 @@ impl Gpu {
             layout.chroma_stride,
             layout.cb_at,
             layout.cr_at,
-            (white.raw() as f32).to_bits(),
-            0,
+            white,
+            reads_sdr_as_power,
         ]
         .into_iter()
         .flat_map(u32::to_le_bytes)
@@ -2187,9 +2188,8 @@ pub struct Stage {
     target: StageTarget,
     width: u32,
     height: u32,
-    /// Held for a video rather than a canvas, read back by [`Gpu::pq420`] with SDR white coded at
-    /// this.
-    video: Option<crate::light::Light<crate::light::DisplayNits>>,
+    /// Held for a video rather than a canvas, read back by [`Gpu::pq420`] coded to this match.
+    video: Option<crate::sdr_match::SdrMatch>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2228,12 +2228,12 @@ impl Stage {
     }
 
     /// A stage drawn into a texture rather than a canvas, for the page to be sent ([`Stage::drawn`])
-    /// as a canvas's words or, with `video`'s white, as a video frame's planes.
+    /// as a canvas's words or, with `video`, as a video frame's planes.
     pub fn held(
         gpu: &Gpu,
         width: u32,
         height: u32,
-        video: Option<crate::light::Light<crate::light::DisplayNits>>,
+        video: Option<crate::sdr_match::SdrMatch>,
     ) -> Stage {
         let mut held = Stage {
             target: StageTarget::Held(None),
@@ -2294,14 +2294,9 @@ impl Stage {
         (self.width, self.height)
     }
 
-    /// What the last draw wrote, where this stage is held rather than a canvas, and the white a
-    /// video is coded at where it is held for one.
-    pub fn drawn(
-        &self,
-    ) -> Option<(
-        Texture,
-        Option<crate::light::Light<crate::light::DisplayNits>>,
-    )> {
+    /// What the last draw wrote, where this stage is held rather than a canvas, and the match a
+    /// video is coded to where it is held for one.
+    pub fn drawn(&self) -> Option<(Texture, Option<crate::sdr_match::SdrMatch>)> {
         match &self.target {
             StageTarget::Held(texture) => texture.clone().map(|texture| (texture, self.video)),
             StageTarget::Surface(..) => None,
@@ -5686,10 +5681,10 @@ mod tests {
             wgpu::util::TextureDataOrder::LayerMajor,
             &data,
         );
-        // Not the canvas's 203, so a coding that ignored the white it was given would fail.
-        let white = 100.0;
-        let answer = pollster::block_on(gpu.pq420(&texture, Light::exactly(white)))
-            .expect("the readback mapped");
+        // Not the still's match, so a coding that ignored the one it was given would fail.
+        let matching = crate::sdr_match::SdrMatch::MacVideo;
+        let answer =
+            pollster::block_on(gpu.pq420(&texture, matching)).expect("the readback mapped");
 
         let layout = super::Pq420Layout::of(width, height);
         let words: Vec<u32> = answer
@@ -5718,10 +5713,11 @@ mod tests {
             let canvas = drawn[(y * width as i64 + x) as usize]
                 .map(|v| eotf(f64::from(half::f16::from_f32(v).to_f32())));
             let pq: [f64; 3] = std::array::from_fn(|row| {
-                let nits: f64 = (0..3)
+                let whites: f64 = (0..3)
                     .map(|col| f64::from(to_rec2020[row][col]) * canvas[col])
-                    .sum::<f64>()
-                    * white;
+                    .sum();
+                let still = Light::<DisplayNits>::exactly(whites * super::CANVAS_WHITE_NITS);
+                let nits = matching.of_still(still).raw();
                 crate::tone::pq(Light::<DisplayNits>::exactly(nits.max(0.0))).raw()
             });
             let [kr, kg, kb] = crate::hdr_fit::LUMA;

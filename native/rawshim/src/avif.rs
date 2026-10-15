@@ -361,32 +361,32 @@ fn decoded(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize, Tags), S
 /// `bytes`, a high-bit-depth PQ still, re-encoded at the one AV1 shape Firefox composites as HDR
 /// video: 10-bit 4:2:0. A twelve-bit or 4:4:4 one plays there with no transfer applied, flat.
 ///
-/// `white` is where the platform shows the video's SDR white: the still's light is rescaled from
-/// the 203 nits a browser shows a still's white at, so the copy sits where the still would.
+/// `matching` is how the platform shows the video's SDR range, so the copy sits where the still
+/// would in a browser.
 pub fn ten_bit_copy(
     bytes: &[u8],
     quantizer: i32,
     speed: i32,
-    white: crate::light::Light<crate::light::DisplayNits>,
+    matching: crate::sdr_match::SdrMatch,
 ) -> Result<Vec<u8>, String> {
     let (samples, width, height, tags) = decoded(bytes, 16)?;
-    let gain = white.raw() / crate::gpu::CANVAS_WHITE_NITS;
-    let (samples, light) = match gain == 1.0 {
-        true => (samples, tags.light),
-        false => {
-            let gpu = crate::gpu::device().ok_or("no Vulkan adapter to rescale the copy on")?;
-            let rescaled = pollster::block_on(crate::pq_rescale::rescaled(
-                gpu,
-                &samples,
-                crate::light::Gain::of_ratio(gain),
-            ))
-            .ok_or("the rescaled copy did not read back")?;
-            let scaled = |nits: u16| (f64::from(nits) * gain).round() as u16;
+    let (samples, light) = match matching {
+        crate::sdr_match::SdrMatch::Still => (samples, tags.light),
+        _ => {
+            let gpu = crate::gpu::device().ok_or("no Vulkan adapter to rematch the copy on")?;
+            let rematched =
+                pollster::block_on(crate::pq_rematch::rematched(gpu, &samples, matching))
+                    .ok_or("the rematched copy did not read back")?;
+            let shown = |nits: u16| {
+                matching
+                    .of_still(crate::light::Light::exactly(f64::from(nits)))
+                    .raw()
+            };
             let light = tags.light.map(|light| crate::hdr_args::ContentLight {
-                max_cll: scaled(light.max_cll),
-                max_fall: scaled(light.max_fall),
+                max_cll: shown(light.max_cll).ceil() as u16,
+                max_fall: shown(light.max_fall).round() as u16,
             });
-            (rescaled, light)
+            (rematched, light)
         }
     };
     encode_avif(
@@ -1352,8 +1352,8 @@ mod tests {
         };
         let still = encode_still_rotated(picture.into(), width, height, &options, 90, None)
             .expect("encodes");
-        let white = crate::light::Light::exactly(crate::gpu::CANVAS_WHITE_NITS);
-        let copy = ten_bit_copy(&still, 0, 10, white).expect("the copy encodes");
+        let copy = ten_bit_copy(&still, 0, 10, crate::sdr_match::SdrMatch::Still)
+            .expect("the copy encodes");
 
         let decoder = Decoder::new().expect("a decoder");
         let image = Image::empty().expect("an image");
@@ -1395,10 +1395,10 @@ mod tests {
         assert!(worst <= 150, "a sample {worst} codes from the still's");
     }
 
-    /// A copy for a platform whose PQ video white is 100 nits carries the still's light at 100/203,
-    /// its content light level with it, so it shows where the still does in a browser at 203.
+    /// A copy for macOS's PQ video carries the still's light as that platform shows it, across
+    /// SDR white from the bent shadows to the scaled highlights, its content light level with it.
     #[test]
-    fn a_copy_for_another_white_carries_the_stills_light_rescaled() {
+    fn a_copy_for_macos_video_carries_the_stills_light_as_it_shows_it() {
         let (width, height) = (16usize, 8usize);
         let picture: Vec<u16> = (0..width * height)
             .flat_map(|at| {
@@ -1422,9 +1422,8 @@ mod tests {
         };
         let still = encode_still_rotated(picture.into(), width, height, &options, 0, None)
             .expect("encodes");
-        let gain = 100.0 / crate::gpu::CANVAS_WHITE_NITS;
-        let copy = ten_bit_copy(&still, 0, 10, crate::light::Light::exactly(100.0))
-            .expect("the copy encodes");
+        let matching = crate::sdr_match::SdrMatch::MacVideo;
+        let copy = ten_bit_copy(&still, 0, 10, matching).expect("the copy encodes");
 
         let decoder = Decoder::new().expect("a decoder");
         let image = Image::empty().expect("an image");
@@ -1435,25 +1434,30 @@ mod tests {
             assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the copy");
             ((*image.0).clli.maxCLL, (*image.0).clli.maxPALL)
         };
-        assert_eq!(clli, (500, 200));
+        assert_eq!(clli, (600, 240));
 
         let nits = |code: u16| {
             crate::tone::pq_inv::<crate::light::DisplayNits>(crate::light::Light::exactly(
                 f64::from(code) / 65535.0,
             ))
-            .raw()
         };
         let (before, ..) = decode_at_unturned(&still, 16).expect("the still decodes");
         let (after, ..) = decode_at_unturned(&copy, 16).expect("the copy decodes");
+        let (mut under, mut over) = (0, 0);
         for (&was, &is) in before.iter().zip(&after).step_by(7) {
-            let ratio = nits(is) / nits(was);
+            let want = matching.of_still(nits(was)).raw();
+            match nits(was).raw() < crate::gpu::CANVAS_WHITE_NITS {
+                true => under += 1,
+                false => over += 1,
+            }
             assert!(
-                (ratio / gain - 1.0).abs() < 0.03,
-                "{} nits came back {} (x{ratio:.3}, wanted x{gain:.3})",
-                nits(was),
-                nits(is)
+                (nits(is).raw() / want - 1.0).abs() < 0.03,
+                "{} nits came back {}, wanted {want:.1}",
+                nits(was).raw(),
+                nits(is).raw()
             );
         }
+        assert!(under > 0 && over > 0, "the picture spans SDR white");
     }
 
     #[test]

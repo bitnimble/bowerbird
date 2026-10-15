@@ -9,6 +9,7 @@
 import { ptr } from 'bun:ffi';
 import { type Job, JobReplySchema, type RawHeaderFields } from '../../../schemas/jobs';
 import type { CameraTone } from '../../../schemas/photo_edits';
+import type { SdrMatch } from '../../../schemas/sdr_match';
 import { shim } from './rawshim';
 
 export interface JobOutcome {
@@ -242,18 +243,19 @@ export function writeGainMap(
 
 /**
  * Writes `sourcePath`'s 10-bit 4:2:0 copy, the one Firefox shows as HDR, to `outPath` (§10.7.2),
- * with SDR white where the platform shows a PQ video's.
+ * coded to how the platform shows a PQ video's SDR range.
  */
 export function writeTenBitCopy(
   sourcePath: string,
   outPath: string,
   quantizer: number,
   speed: number,
-  whiteNits: number,
+  matching: SdrMatch,
 ): void {
   const source = Buffer.from(`${sourcePath}\0`);
   const out = Buffer.from(`${outPath}\0`);
-  if (shim().bb_write_ten_bit_copy(source, out, quantizer, speed, whiteNits) !== 0)
+  const named = Buffer.from(`${matching}\0`);
+  if (shim().bb_write_ten_bit_copy(source, out, quantizer, speed, named) !== 0)
     throw new Error(`rawshim could not write a 10-bit copy of ${sourcePath}`);
 }
 

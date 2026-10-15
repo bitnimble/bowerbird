@@ -5,7 +5,8 @@
 // settings. A canvas the page configures on its own device is not capped. So on WebKit, and only
 // where the display's peak can pass that cap, a canvas stays on the page and the worker hands back
 // what it drew instead of drawing into it.
-import { hdrVideoWhiteNits, needsHdrVideo } from 'avif-hdr-video';
+import { hdrVideoSdrMatch, needsHdrVideo } from 'avif-hdr-video';
+import type { SdrMatch } from '../../../src/schemas/sdr_match';
 import READBACK_WGSL from '../features/photos/generated/readback.wgsl?raw';
 import { screenStore } from '../app/screen_store';
 
@@ -28,12 +29,12 @@ export function drawsOnThePage(peak: number | null): boolean {
 }
 
 /**
- * The nits the editor's video planes code SDR white as, or null where its canvases are not shown
+ * The SDR match the editor's video planes are coded to, or null where its canvases are not shown
  * as video. Firefox composites HDR for video and nothing else (bug 1889288), and refuses the
  * `rgba16float` canvas besides (bug 1834395).
  */
-export function videoWhiteNits(): number | null {
-  return needsHdrVideo() ? hdrVideoWhiteNits() : null;
+export function videoSdrMatch(): SdrMatch | null {
+  return needsHdrVideo() ? hdrVideoSdrMatch() : null;
 }
 
 export function transferredPeakNits(peak: number | null): number | null {

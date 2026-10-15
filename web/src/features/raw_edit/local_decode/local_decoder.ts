@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { type ColourNode, type Repair, RepairSchema } from '../../../../../src/schemas/photo_edits';
 import { type Job as RenditionCommand } from '../../../../../src/schemas/jobs';
+import type { SdrMatch } from '../../../../../src/schemas/sdr_match';
 import type { EditAdjust, EditGeometry, Proof, Region } from '../edits';
 import type { PrintScene } from '../print/print_scene';
 import {
@@ -186,17 +187,17 @@ export class LocalDecoder {
    * twice throws - so each canvas is transferred once, and the next photo adopts the stage.
    *
    * Null keeps the canvas on the page, and every tick hands back what it drew there: RGB9E5, or
-   * with `videoWhite` the planes of a video frame coding SDR white at that many nits.
+   * with `video` the planes of a video frame coded to that SDR match.
    */
   attach(
     which: 'stage' | 'loupe',
     canvas: OffscreenCanvas | null,
     width: number,
     height: number,
-    videoWhite: number | null = null,
+    video: SdrMatch | null = null,
   ): Promise<void> {
     return this.nothing(
-      { kind: 'attach', which, canvas, width, height, videoWhite },
+      { kind: 'attach', which, canvas, width, height, video },
       canvas == null ? [] : [canvas],
     );
   }
@@ -207,15 +208,15 @@ export class LocalDecoder {
 
   /**
    * The colour wheel's canvas, `side` square, transferred as `attach`'s are; or none, to show the
-   * wheel as video at `videoWhite`, whose planes each draw hands back.
+   * wheel as video coded to `video`, whose planes each draw hands back.
    */
   attachWheel(
     canvas: OffscreenCanvas | null,
     side: number,
-    videoWhite: number | null = null,
+    video: SdrMatch | null = null,
   ): Promise<void> {
     return this.nothing(
-      { kind: 'attachWheel', canvas, side, videoWhite },
+      { kind: 'attachWheel', canvas, side, video },
       canvas == null ? [] : [canvas],
     );
   }

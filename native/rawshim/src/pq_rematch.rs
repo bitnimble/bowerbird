@@ -1,7 +1,7 @@
-//! A PQ picture's light under one gain, on the device (`slang/pq_rescale.slang`).
+//! A PQ still's light as a platform shows a PQ video's, on the device (`slang/pq_rematch.slang`).
 
 use crate::gpu::Gpu;
-use crate::light::Gain;
+use crate::sdr_match::SdrMatch;
 
 const SAMPLES_PER_WORD: usize = 2;
 const LANES: u32 = 64;
@@ -12,16 +12,16 @@ fn kernel(gpu: &'static Gpu) -> &'static crate::hdr_fit::Kernel {
     BUILT.get_or_init(|| {
         crate::hdr_fit::kernel(
             gpu,
-            "rescale_pq",
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/pq_rescale.wgsl")),
+            "rematch_pq",
+            include_str!(concat!(env!("OUT_DIR"), "/wgsl/pq_rematch.wgsl")),
             &[(0, crate::hdr_fit::WRITE), (1, crate::hdr_fit::UNIFORM)],
             &[],
         )
     })
 }
 
-/// `samples`, sixteen-bit full-range PQ codes, as the light they code times `gain`.
-pub async fn rescaled(gpu: &'static Gpu, samples: &[u16], gain: Gain) -> Option<Vec<u16>> {
+/// `samples`, sixteen-bit full-range PQ codes of a still, as the codes `matching` shows it at.
+pub async fn rematched(gpu: &'static Gpu, samples: &[u16], matching: SdrMatch) -> Option<Vec<u16>> {
     let mut packed = samples.to_vec();
     packed.resize(
         samples.len().div_ceil(SAMPLES_PER_WORD) * SAMPLES_PER_WORD,
@@ -34,29 +34,39 @@ pub async fn rescaled(gpu: &'static Gpu, samples: &[u16], gain: Gain) -> Option<
 
     let mut recording = gpu.record();
     let codes = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("pq rescale codes"),
+        label: Some("pq rematch codes"),
         contents: bytemuck::cast_slice(&packed),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
     });
-    let params: Vec<u8> = [words, across * LANES, (gain.raw() as f32).to_bits(), 0]
-        .into_iter()
-        .flat_map(u32::to_le_bytes)
-        .collect();
+    let [white, reads_sdr_as_power] = matching.words();
+    let params: Vec<u8> = [
+        words,
+        across * LANES,
+        (crate::gpu::CANVAS_WHITE_NITS as f32).to_bits(),
+        white,
+        reads_sdr_as_power,
+        0,
+        0,
+        0,
+    ]
+    .into_iter()
+    .flat_map(u32::to_le_bytes)
+    .collect();
     let params = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("pq rescale params"),
+        label: Some("pq rematch params"),
         contents: &params,
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let bytes = u64::from(words) * 4;
     let read = recording.buffer(&wgpu::BufferDescriptor {
-        label: Some("pq rescale read"),
+        label: Some("pq rematch read"),
         size: bytes,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
     let built = kernel(gpu);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("pq rescale"),
+        label: Some("pq rematch"),
         layout: &built.layout,
         entries: &[
             wgpu::BindGroupEntry {
@@ -89,24 +99,23 @@ pub async fn rescaled(gpu: &'static Gpu, samples: &[u16], gain: Gain) -> Option<
 
 #[cfg(test)]
 mod tests {
-    use crate::light::{DisplayNits, Gain, Light};
+    use crate::light::{DisplayNits, Light};
+    use crate::sdr_match::SdrMatch;
 
-    /// Each code moves to the one `tone::pq` gives its light under the gain, odd lengths included.
+    /// Each code moves to the one `tone::pq` gives `SdrMatch::of_still` of its light, odd lengths
+    /// included, through shadows the macOS match bends and highlights it only scales.
     #[test]
-    fn a_rescaled_code_is_its_light_times_the_gain() {
-        let Some(gpu) = crate::gpu::device() else {
-            eprintln!("SKIPPED: no adapter answered.");
-            return;
-        };
+    fn a_rematched_code_is_its_light_as_the_platform_shows_it() {
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
         let samples: Vec<u16> = (0..1001).map(|at| (at * 65) as u16).collect();
-        let gain = 100.0 / 203.0;
-        let got = pollster::block_on(super::rescaled(gpu, &samples, Gain::of_ratio(gain)))
+        let matching = SdrMatch::MacVideo;
+        let got = pollster::block_on(super::rematched(gpu, &samples, matching))
             .expect("the readback mapped");
         assert_eq!(got.len(), samples.len());
         for (&code, &moved) in samples.iter().zip(&got) {
-            let nits =
-                crate::tone::pq_inv::<DisplayNits>(Light::exactly(f64::from(code) / 65535.0)).raw();
-            let want = crate::tone::pq(Light::<DisplayNits>::exactly(nits * gain)).raw() * 65535.0;
+            let still =
+                crate::tone::pq_inv::<DisplayNits>(Light::exactly(f64::from(code) / 65535.0));
+            let want = crate::tone::pq(matching.of_still(still)).raw() * 65535.0;
             assert!(
                 (f64::from(moved) - want).abs() <= 2.0,
                 "code {code} moved to {moved}, wanted {want:.1}"

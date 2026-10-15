@@ -19,7 +19,7 @@ import type { CropStore } from '../crop/crop_store';
 import {
   drawsOnThePage,
   readbackCanvases,
-  videoWhiteNits,
+  videoSdrMatch,
   transferredPeakNits,
 } from '../../../gpu/readback_canvas';
 import { pq420FrameOf, vp9Encoder } from '../../../vp9/vp9_encoder';
@@ -247,12 +247,12 @@ export class RawEditPresenter {
       this.surface.handOver(canvas, which);
       const wanted = which === 'stage' ? this.stageSize() : null;
       const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
-      const videoWhite = videoWhiteNits();
-      const video = videoWhite != null;
+      const matching = videoSdrMatch();
+      const video = matching != null;
       const onPage = video || drawsOnThePage(this.device.peakNits);
       if (onPage) this.surface.onPage[which] = { canvas, ...size, video };
       const offscreen = onPage ? null : canvas.transferControlToOffscreen();
-      await local.decoder.attach(which, offscreen, size.width, size.height, videoWhite);
+      await local.decoder.attach(which, offscreen, size.width, size.height, matching);
     }
     if (which === 'stage') this.drawable = true;
   }

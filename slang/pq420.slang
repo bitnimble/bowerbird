@@ -2,8 +2,8 @@
 // takes on Firefox, whose compositor shows HDR for video and nothing else (DESIGN §21.2).
 //
 // The frame holds what a canvas would: Display P3 over SDR white, through the sRGB curve with the
-// sign kept (`frame.slang`'s `fs`). That is undone to nits at `sdr_white`, the white the platform
-// shows a PQ video's SDR white at, so the video sits where the same photo drawn SDR does.
+// sign kept (`frame.slang`'s `fs`). That is undone to the nits the platform shows a PQ video's SDR
+// range at (`sdr_match.slang`), so the video sits where the same photo drawn SDR does.
 //
 // Two samples to a word, the left one in the low half: the little-endian `u16` rows the encoder
 // reads. Each lane codes a four-by-two block of luma and the two chroma samples over it, sited
@@ -13,6 +13,7 @@
 import light;
 import prelude;
 import primaries;
+import sdr_match;
 import video_range;
 
 struct Planes {
@@ -23,8 +24,8 @@ struct Planes {
     uint chroma_stride;
     uint cb_at;
     uint cr_at;
-    float sdr_white;
-    uint unused;
+    float white;
+    uint reads_sdr_as_power;
 };
 
 [vk::binding(0, 0)] Texture2D<float4> drawn;
@@ -35,7 +36,8 @@ float3 video_at(int x, int y)
 {
     let held = clamp(int2(x, y), int2(0), int2(int(planes.width) - 1, int(planes.height) - 1));
     let canvas = measured<P3Linear>(srgb_eotf_signed(drawn.Load(int3(held, 0)).rgb));
-    let nits = off_the_canvas(canvas, planes.sdr_white).v;
+    let whites = mul(P3_TO_R2020, canvas.v);
+    let nits = matched(whites, measured<DisplayNits>(planes.white), planes.reads_sdr_as_power).v;
     let signal = float3(
         pq(measured<DisplayNits>(nits.r)).v,
         pq(measured<DisplayNits>(nits.g)).v,

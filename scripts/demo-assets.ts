@@ -43,7 +43,7 @@ import { AS_METERED, developed } from '../src/services/processing/pipeline/devel
 import { encoderQuality } from '../src/services/processing/analysis/quality';
 import type { Job, JobCompositeSource, JobTarget } from '../src/schemas/jobs';
 import { runJob, writeTenBitCopy } from '../src/services/processing/rawshim/rawshim_job';
-import { STILL_WHITE, TEN_BIT_WHITES, type TenBitWhite } from '../src/schemas/ten_bit_white';
+import { SDR_MATCHES, type SdrMatch, sdrMatchSuffix } from '../src/schemas/sdr_match';
 import { isUpscalable } from '../src/services/processing/rawshim/rawshim_ops';
 
 /**
@@ -157,11 +157,11 @@ function outputPath(slug: string, hdr: boolean): string {
 }
 
 /**
- * The HDR arm as Firefox is served it (`useHdrVideo`), re-encoded as the app's server would, with
- * SDR white at `white` (`hdrVideoWhiteNits`).
+ * The HDR arm as Firefox is served it (`useHdrVideo`), re-encoded as the app's server would, coded
+ * to `matching` (`hdrVideoSdrMatch`).
  */
-function tenBitPath(slug: string, white: TenBitWhite): string {
-  return join(OUT, `${slug}-hdr-10bit${white === STILL_WHITE ? '' : `-white${white}`}.avif`);
+function tenBitPath(slug: string, matching: SdrMatch): string {
+  return join(OUT, `${slug}-hdr-10bit${sdrMatchSuffix(matching)}.avif`);
 }
 
 function colourPath(profile: 'matched' | 'none'): string {
@@ -492,7 +492,7 @@ async function buildSwatches(): Promise<void> {
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(
     ffmpeg.stdin!,
   );
-  const out = swatchesPath(STILL_WHITE);
+  const out = swatchesPath('still');
   await run(
     'avifenc',
     [
@@ -511,15 +511,15 @@ async function buildSwatches(): Promise<void> {
     ],
     ffmpeg.stdout!,
   );
-  // Already 10-bit 4:2:0 at 203, so only macOS's white needs a copy of its own.
-  for (const white of TEN_BIT_WHITES.filter((white) => white !== STILL_WHITE))
-    writeTenBitCopy(out, swatchesPath(white), 0, 4, white);
+  // Already 10-bit 4:2:0 coded as a still, so only macOS needs a copy of its own.
+  for (const matching of SDR_MATCHES.filter((matching) => matching !== 'still'))
+    writeTenBitCopy(out, swatchesPath(matching), 0, 4, matching);
   console.error(`[demo-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
 }
 
-/** The swatches as Firefox is shown them at `white`: the file itself at 203. */
-function swatchesPath(white: TenBitWhite): string {
-  return join(OUT, white === STILL_WHITE ? 'swatches.avif' : `swatches-white${white}.avif`);
+/** The swatches as Firefox is shown them coded to `matching`: the file itself as a still. */
+function swatchesPath(matching: SdrMatch): string {
+  return join(OUT, `swatches${sdrMatchSuffix(matching)}.avif`);
 }
 
 /**
@@ -746,13 +746,13 @@ async function build(scene: string): Promise<void> {
     });
     await clipToWhite(scene);
     const { hdrQuantizer, preset } = target(scene);
-    for (const white of TEN_BIT_WHITES)
+    for (const matching of SDR_MATCHES)
       writeTenBitCopy(
         outputPath(scene, true),
-        tenBitPath(scene, white),
+        tenBitPath(scene, matching),
         hdrQuantizer,
         preset,
-        white,
+        matching,
       );
   } catch (failure) {
     // The HDR arm lands before the other two are derived from it, so a failure in a
@@ -762,7 +762,7 @@ async function build(scene: string): Promise<void> {
     for (const file of [
       outputPath(scene, false),
       outputPath(scene, true),
-      ...TEN_BIT_WHITES.map((white) => tenBitPath(scene, white)),
+      ...SDR_MATCHES.map((matching) => tenBitPath(scene, matching)),
     ])
       await Bun.file(file)
         .delete()
@@ -772,7 +772,7 @@ async function build(scene: string): Promise<void> {
 
   const kb = (file: string): string => (Bun.file(file).size / 1024).toFixed(0);
   console.error(
-    `[demo-assets] ${scene}: ${kb(outputPath(scene, false))}kB SDR, ${kb(outputPath(scene, true))}kB HDR, ${kb(tenBitPath(scene, STILL_WHITE))}kB 10-bit`,
+    `[demo-assets] ${scene}: ${kb(outputPath(scene, false))}kB SDR, ${kb(outputPath(scene, true))}kB HDR, ${kb(tenBitPath(scene, 'still'))}kB 10-bit`,
   );
 }
 

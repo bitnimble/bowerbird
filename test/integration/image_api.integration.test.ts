@@ -56,9 +56,10 @@ function buildApp(
         throw new AppError('NOT_FOUND', `photo not found: ${id}`);
       return { photo, library };
     },
-    // Serving one queues a rebuild where the copy is behind its edits. Nothing here asserts on
-    // that, but leaving it off makes every route in this file fail on the call rather than on
-    // whatever it was meant to be testing.
+    // Serving one marks it used and queues a rebuild where the copy is behind its edits. Nothing
+    // here asserts on either, but leaving one off makes every route in this file fail on the call
+    // rather than on whatever it was meant to be testing.
+    markUsed(): void {},
     rebuildIfStale(): void {},
   } as unknown as PhotoRenditionService;
   const app = new Hono();

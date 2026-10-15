@@ -84,9 +84,9 @@ An engine without WebGPU has no editor (`wasm::needs_webgpu`).
 
 **Firefox shows HDR only through `<video>`** (§10.7.2), and refuses an `rgba16float` canvas
 outright. So there the stage, the loupe and an isolated colour wheel draw into held textures, and
-each tick hands back what it drew as PQ Rec.2020 4:2:0 ten-bit planes (`pq420.slang`). SDR white is
-coded where the platform shows a PQ video's SDR white, 100 nits on macOS and 203 elsewhere
-(`hdrVideoWhiteNits`, §10.7.2). The page
+each tick hands back what it drew as PQ Rec.2020 4:2:0 ten-bit planes (`pq420.slang`). The SDR range
+is coded as the platform shows a PQ video's, through the same match as the viewer's copies
+(`hdrVideoSdrMatch`, `sdr_match.slang`, §10.7.2). The page
 encodes them as a one-frame VP9 profile 2 stream with libvpx, built for `wasm32-wasip1-threads`
 (`native/vp9_encode`, `bun run get:vpx`) with up to eight threads and one encoder per surface, wraps
 that as an MP4 (`vp9FrameToMp4`) and shows it in a `<video>` over the canvas, which keeps the
@@ -428,7 +428,7 @@ This cost a day to find, and every wrong turn on the way is instructive about ho
 
 **The swap is an opacity change on two mounted, decoded frames**, which is the stack triage flip (§20.4) and works for the same reason: `will-change: opacity` keeps the hidden one rasterised, so a press costs no repaint. Nothing on that subtree or above it may carry a filter, a transform or a partial opacity - any of those rasterises into an SDR intermediate and loses the PQ tagging silently (§10.7). That constraint is also why the reading column is left-aligned rather than centred, in passing: `.pad`'s first child reserves an inline gap for the collapsed sidebar's floating button, and a centred column would carry that indent on the heading and nowhere else.
 
-Firefox uses the photo view's `useHdrVideo` rewrap, of each scene's committed `-hdr-10bit.avif`, or `-hdr-10bit-white100.avif` on macOS (§10.7.2). Three mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The swatch strip is rewrapped from its own file, which is 10-bit 4:2:0 already.
+Firefox uses the photo view's `useHdrVideo` rewrap, of each scene's committed `-hdr-10bit.avif`, or `-hdr-10bit-mac-video.avif` on macOS (§10.7.2). Three mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The swatch strip is rewrapped from its own file, which is 10-bit 4:2:0 already.
 
 **Swatch strips are the page's only synthetic content.** They explain brightness above white before the photographs: five colours start at their 8-bit maximum and rise to their format's limit. Quantisation is lossless; flat colour has no detail to trade away.
 

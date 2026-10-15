@@ -1,4 +1,5 @@
 import type { Job } from '../../../schemas/jobs';
+import type { SdrMatch } from '../../../schemas/sdr_match';
 import { runJob, writeTenBitCopy } from './rawshim_job';
 import { stackGroups } from './rawshim_ops';
 
@@ -17,7 +18,7 @@ export type RawshimCommand =
       outPath: string;
       quantizer: number;
       speed: number;
-      whiteNits: number;
+      matching: SdrMatch;
     };
 
 export type RawshimCommandReply =
@@ -39,7 +40,7 @@ self.onmessage = ({ data }) => {
       return;
     }
     if (data.kind === 'tenBitCopy') {
-      writeTenBitCopy(data.sourcePath, data.outPath, data.quantizer, data.speed, data.whiteNits);
+      writeTenBitCopy(data.sourcePath, data.outPath, data.quantizer, data.speed, data.matching);
       self.postMessage({ kind: 'written' });
       return;
     }

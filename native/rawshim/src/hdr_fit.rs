@@ -5845,7 +5845,7 @@ async fn fit_model(
 }
 
 /// `plane` as it would be lit by `to` rather than by `from`, the illuminant it was balanced for:
-/// the grade's own balance (`colour::lit_by_reader`) over every pixel.
+/// the grade's own balance (`colour.slang`'s `lit_by_reader`) over every pixel.
 fn rebalanced(
     gpu: &'static crate::gpu::Gpu,
     plane: &Source,

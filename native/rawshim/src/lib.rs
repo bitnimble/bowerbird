@@ -207,7 +207,7 @@ pub mod pmrid;
 #[cfg(feature = "renditions")]
 pub mod png_write;
 #[cfg(feature = "renditions")]
-pub mod pq_rescale;
+pub mod pq_rematch;
 pub mod print;
 pub mod printer_gamut;
 /// How far the work somebody is waiting on has got, read from outside the call doing it.
@@ -220,6 +220,7 @@ pub mod resident;
 pub mod retouched_frame;
 pub mod rgb;
 pub mod scrub;
+pub mod sdr_match;
 /// Test answers committed as PNGs a reader can open, and the side-by-side that shows one moving.
 #[cfg(all(feature = "renditions", not(target_arch = "wasm32")))]
 pub mod snapshot;

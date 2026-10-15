@@ -1,8 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
-import { hdrVideoWhiteNits } from 'avif-hdr-video';
+import { hdrVideoSdrMatch } from 'avif-hdr-video';
 import type { MDXComponents } from 'mdx/types';
 import { Fragment, createContext, useContext, useState, type ReactNode } from 'react';
 import { PathSegment, route } from '../../../../src/schemas/route';
+import { sdrMatchSuffix } from '../../../../src/schemas/sdr_match';
 import { observer } from 'mobx-react-lite';
 import { useDeviceSettingsStore } from '../../app/stores_context';
 import { focusRing } from '../../ui/focus_ring';
@@ -534,10 +535,9 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
   );
 }
 
-/** A demo's 10-bit copy at the white this platform shows a video's at (`scripts/demo-assets.ts`). */
+/** A demo's 10-bit copy coded to this platform's SDR match (`scripts/demo-assets.ts`). */
 function tenBitDemo(slug: string): string {
-  const white = hdrVideoWhiteNits();
-  return route(PathSegment.hdr(), `${slug}-hdr-10bit${white === 203 ? '' : `-white${white}`}.avif`);
+  return route(PathSegment.hdr(), `${slug}-hdr-10bit${sdrMatchSuffix(hdrVideoSdrMatch())}.avif`);
 }
 
 type Children = { children?: ReactNode };
@@ -612,9 +612,8 @@ function Note({ children }: Children): JSX.Element {
  */
 function Swatches(): JSX.Element {
   const src = route(PathSegment.hdr(), 'swatches.avif');
-  // Already 10-bit 4:2:0 at 203 (`scripts/demo-assets.ts`), so only macOS's white has a copy.
-  const white = hdrVideoWhiteNits();
-  const tenBit = white === 203 ? src : route(PathSegment.hdr(), `swatches-white${white}.avif`);
+  // Already 10-bit 4:2:0 coded as a still (`scripts/demo-assets.ts`), so only macOS has a copy.
+  const tenBit = route(PathSegment.hdr(), `swatches${sdrMatchSuffix(hdrVideoSdrMatch())}.avif`);
   const { twin: hdrVideo, failed } = useHdrVideo('swatches', src, tenBit, true);
   return (
     <figure {...stylex.props(styles.swatches)}>

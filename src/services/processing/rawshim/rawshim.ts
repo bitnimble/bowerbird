@@ -115,7 +115,7 @@ const SYMBOLS = {
   },
   // An HDR rendition's Firefox copy, path to path.
   bb_write_ten_bit_copy: {
-    args: [FFIType.cstring, FFIType.cstring, FFIType.i32, FFIType.i32, FFIType.f64],
+    args: [FFIType.cstring, FFIType.cstring, FFIType.i32, FFIType.i32, FFIType.cstring],
     returns: FFIType.i32,
   },
 

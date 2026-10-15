@@ -540,7 +540,7 @@ pub unsafe extern "C" fn bb_export_still(
 /// Writes `source`'s Firefox copy to `out` (`avif::ten_bit_copy`). 0, or -1 with the reason logged.
 ///
 /// # Safety
-/// `source` and `out` must be NUL-terminated. Neither is retained past the call.
+/// `source`, `out` and `matching` must be NUL-terminated. None is retained past the call.
 #[cfg(feature = "renditions")]
 #[expect(unsafe_code)]
 #[unsafe(no_mangle)]
@@ -549,15 +549,20 @@ pub unsafe extern "C" fn bb_write_ten_bit_copy(
     out: *const c_char,
     quantizer: i32,
     speed: i32,
-    white_nits: f64,
+    matching: *const c_char,
 ) -> i32 {
-    let (Some(source), Some(out)) = (unsafe { as_str(source) }, unsafe { as_str(out) }) else {
+    let (Some(source), Some(out), Some(matching)) =
+        (unsafe { as_str(source) }, unsafe { as_str(out) }, unsafe {
+            as_str(matching)
+        })
+    else {
         return -1;
     };
     let written = crate::guard("bb_write_ten_bit_copy", Err("panicked".to_string()), || {
+        let matching = crate::sdr_match::SdrMatch::named(matching)
+            .ok_or_else(|| format!("no SDR match is named {matching}"))?;
         let bytes = std::fs::read(source).map_err(|e| format!("could not read {source}: {e}"))?;
-        let white = crate::light::Light::measured(white_nits);
-        let copy = crate::avif::ten_bit_copy(&bytes, quantizer, speed, white)?;
+        let copy = crate::avif::ten_bit_copy(&bytes, quantizer, speed, matching)?;
         std::fs::write(out, copy).map_err(|e| format!("could not write {out}: {e}"))
     });
     crate::release_freed_memory();

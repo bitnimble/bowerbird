@@ -5,7 +5,7 @@ import { config } from '../config';
 import { newId } from '../schemas/id';
 import type { LibraryConfiguration } from '../schemas/libraries';
 import { soleInputOf, type StoredRecipe } from '../schemas/recipes';
-import { TEN_BIT_WHITES, type TenBitWhite } from '../schemas/ten_bit_white';
+import { SDR_MATCHES, type SdrMatch } from '../schemas/sdr_match';
 import {
   RENDITION_EXTENSION,
   renditionVariant,
@@ -62,23 +62,23 @@ export function tenBitCopyPathFor(
   dataPath: string,
   photoId: string,
   rendition: Rendition,
-  white: TenBitWhite,
+  matching: SdrMatch,
 ): string {
   return path.join(
     dataPath,
     'renditions',
-    tenBitCopyDir(rendition, white),
+    tenBitCopyDir(rendition, matching),
     `${photoId}${RENDITION_EXTENSION}`,
   );
 }
 
-/** Every white's copy of `rendition`, which go with it. */
+/** Every SDR match's copy of `rendition`, which go with it. */
 export function tenBitCopyPathsFor(
   dataPath: string,
   photoId: string,
   rendition: Rendition,
 ): string[] {
-  return TEN_BIT_WHITES.map((white) => tenBitCopyPathFor(dataPath, photoId, rendition, white));
+  return SDR_MATCHES.map((matching) => tenBitCopyPathFor(dataPath, photoId, rendition, matching));
 }
 
 export function getRenditionPath(

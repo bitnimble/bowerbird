@@ -210,13 +210,15 @@ export function needsHdrVideo(): boolean {
 }
 
 /**
- * The nits this platform shows a PQ video's SDR white at: 100 on macOS, whose compositor maps a PQ
- * video's 100 nits to SDR white, and 203 elsewhere, as browsers show a PQ still. A video coded at
- * 203 on a Mac shows a stop brighter than the still it stands in for.
+ * How this platform shows a PQ video's SDR range, which a video standing in for a still has to be
+ * coded to match. `still` is how browsers show a PQ still: SDR white at 203 nits, through the sRGB
+ * curve. `mac-video` is Firefox on macOS, matched by eye: SDR white at 120 nits, with the SDR under
+ * it read through a 2.2 power. A video coded as a still there shows a stop brighter, its shadows
+ * lifted.
  */
-export function hdrVideoWhiteNits(): 100 | 203 {
-  if (typeof navigator === 'undefined') return 203;
-  return navigator.userAgent.includes('Macintosh') ? 100 : 203;
+export function hdrVideoSdrMatch(): 'still' | 'mac-video' {
+  if (typeof navigator === 'undefined') return 'still';
+  return navigator.userAgent.includes('Macintosh') ? 'mac-video' : 'still';
 }
 
 /**

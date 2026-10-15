@@ -1066,16 +1066,16 @@ impl HeldRaw {
     /// path exists to delete.
     ///
     /// No canvas is a stage the page shows itself, from what [`HeldRaw::held_stage`] reads back:
-    /// with `video_white`, as the planes of a video frame coding SDR white at that many nits.
+    /// with `video`, an `SdrMatch` by name, as the planes of a video frame coded to it.
     #[wasm_bindgen(js_name = attachStage)]
     pub fn attach_stage(
         &self,
         canvas: Option<web_sys::OffscreenCanvas>,
         width: u32,
         height: u32,
-        video_white: Option<f64>,
+        video: Option<String>,
     ) -> Result<(), JsValue> {
-        self.attach(&self.stage, canvas, width, height, video_white)
+        self.attach(&self.stage, canvas, width, height, video)
     }
 
     /// The stage, taken off this photograph for the next one to draw onto.
@@ -1097,9 +1097,9 @@ impl HeldRaw {
         canvas: Option<web_sys::OffscreenCanvas>,
         width: u32,
         height: u32,
-        video_white: Option<f64>,
+        video: Option<String>,
     ) -> Result<(), JsValue> {
-        self.attach(&self.loupe, canvas, width, height, video_white)
+        self.attach(&self.loupe, canvas, width, height, video)
     }
 
     /// What the last tick drew onto a stage attached with no canvas: RGB9E5 words for a canvas the
@@ -1765,10 +1765,17 @@ impl HeldRaw {
         canvas: Option<web_sys::OffscreenCanvas>,
         width: u32,
         height: u32,
-        video_white: Option<f64>,
+        video: Option<String>,
     ) -> Result<(), JsValue> {
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
+        let video = video
+            .map(|name| {
+                crate::sdr_match::SdrMatch::named(&name).ok_or_else(|| {
+                    JsValue::from_str(&format!("rawshim: no SDR match is named {name}"))
+                })
+            })
+            .transpose()?;
         // Before the new one configures: the old one's drop unconfigures its canvas's context.
         drop(into.take());
         let stage = match canvas {
@@ -1777,12 +1784,7 @@ impl HeldRaw {
                     JsValue::from_str("rawshim: this canvas would not take a surface")
                 })?
             }
-            None => crate::gpu::Stage::held(
-                gpu,
-                width,
-                height,
-                video_white.map(crate::light::Light::measured),
-            ),
+            None => crate::gpu::Stage::held(gpu, width, height, video),
         };
         into.replace(Some(stage));
         Ok(())
@@ -1800,7 +1802,7 @@ impl HeldRaw {
         let gpu = crate::gpu::device()
             .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
         let read = match video {
-            Some(white) => gpu.pq420(&drawn, white).await,
+            Some(matching) => gpu.pq420(&drawn, matching).await,
             None => gpu.rgb9e5(&drawn).await,
         };
         let words =
@@ -1975,16 +1977,16 @@ impl HeldRaw {
         drawn
     }
 
-    /// No canvas is a wheel shown as video at `video_white`, from what [`HeldRaw::held_wheel`]
+    /// No canvas is a wheel shown as video coded to `video`, from what [`HeldRaw::held_wheel`]
     /// reads back.
     #[wasm_bindgen(js_name = attachWheel)]
     pub fn attach_wheel(
         &self,
         canvas: Option<web_sys::OffscreenCanvas>,
         side: u32,
-        video_white: Option<f64>,
+        video: Option<String>,
     ) -> Result<(), JsValue> {
-        self.attach(&self.wheel, canvas, side, side, video_white)
+        self.attach(&self.wheel, canvas, side, side, video)
     }
 
     /// `selected` is a `lattice::ColourNode` as JSON.
