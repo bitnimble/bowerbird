@@ -27,5 +27,6 @@ test('a re-record writes what it measured and keeps every widening', () => {
   ]);
   expect(written.adapters[ADAPTER]?.['DSC00853.ARW']?.condition).toBe(13.9);
   expect(written.widened).toEqual(budget.widened);
+  expect(written.stages).toEqual(expect.arrayContaining(['denoise', 'align', 'merge']));
   expect(gateOf(written, ADAPTER, 'DSC00853.ARW', 'condition')).toBe(18);
 });

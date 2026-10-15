@@ -8,6 +8,7 @@ import {
   SoftDeleteFilterSchema,
   IdSchema,
 } from './common';
+import { BurstScaleSchema } from './composition';
 import { JobSchema } from './jobs';
 import { StoredRecipeSchema } from './recipes';
 import { ViewerRenditionSchema } from './settings';
@@ -23,6 +24,7 @@ export const CompositeKindSchema = z.enum([
   'exposureBracket',
   'focusBracket',
   'pixelShift',
+  'burst',
 ]);
 export type CompositeKind = z.infer<typeof CompositeKindSchema>;
 
@@ -412,6 +414,9 @@ export const PhotoTargetSchema = z.union([
   z.object({ batch: IdSchema }),
 ]);
 export type PhotoTarget = z.infer<typeof PhotoTargetSchema>;
+
+export const BurstMergeSchema = z.object({ target: PhotoTargetSchema, scale: BurstScaleSchema });
+export type BurstMerge = z.infer<typeof BurstMergeSchema>;
 
 // Where given rows sit in a collection now (§19.6.1). Same scope and filters as
 // a selection, because it is the same listing being asked about; a key is a photo

@@ -48,6 +48,9 @@ fn a_bracket_recipe_is_read_as_its_own_arm() {
     let recipe: CompositeRecipe =
         serde_json::from_value(tagged("panorama-recipe.json", "pixelShift")).expect("it parses");
     assert!(matches!(recipe, CompositeRecipe::PixelShift(_)));
+    let recipe: CompositeRecipe =
+        serde_json::from_value(tagged("panorama-recipe.json", "burst")).expect("it parses");
+    assert!(matches!(recipe, CompositeRecipe::Burst(_)));
 }
 
 /// The tag decides, not the shape: an assembly's fields on a recipe calling itself a panorama are

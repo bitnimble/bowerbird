@@ -14,8 +14,13 @@ import {
   type SolvedSeamsResponse,
   SolvedSeamsResponseSchema,
 } from '../../../src/schemas/assembly';
-import { type CompositePhoto, CompositePhotoSchema } from '../../../src/schemas/composition';
 import {
+  type BurstScale,
+  type CompositePhoto,
+  CompositePhotoSchema,
+} from '../../../src/schemas/composition';
+import {
+  BurstMergeSchema,
   type PhotoSummary,
   PhotoSummaryListSchema,
   type PhotoTarget,
@@ -55,6 +60,13 @@ export const compositesApi = {
       'POST',
       route(PathSegment.api(), PathSegment.composites(), PathSegment.bracket()),
       PhotoTargetSchema.parse(target),
+    ),
+  mergeBurst: (target: PhotoTarget, scale: BurstScale): Promise<CompositePhoto> =>
+    request(
+      CompositePhotoSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.composites(), PathSegment.burst()),
+      BurstMergeSchema.parse({ target, scale }),
     ),
   /** The frames a panorama is composed from, in the order its recipe names them. */
   listFrames: (

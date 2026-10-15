@@ -138,7 +138,9 @@ CREATE INDEX idx_photos_is_hidden ON photos(library_id, is_hidden) WHERE is_hidd
 `photos.recipe` is a discriminated union (`schemas/recipes.ts`): `file` names one
 camera-written path; `panorama` combines different viewing directions into a wider
 picture; `assembly` combines takes of the same scene using chosen parts, such as
-unblinking faces or unobstructed ground. **Paths belong inside recipes**, forcing
+unblinking faces or unobstructed ground; `exposureBracket`, `focusBracket` and `pixelShift`
+merge a capture the camera flagged; `burst` merges hand-held frames of one scene on the
+mosaic (rendering §10.9.3). **Paths belong inside recipes**, forcing
 callers to handle a list of inputs. `originalPathOf` returns a path to own bytes only for
 exactly one file, otherwise null; `soleInputOf` gives the same answer without joining
 the library path.

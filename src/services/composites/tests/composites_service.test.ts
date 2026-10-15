@@ -592,6 +592,29 @@ describe('CompositesService.mergeBracket', () => {
   });
 });
 
+describe('CompositesService.mergeBurst', () => {
+  it('merges a burst in the order it was taken', async () => {
+    const { photoId } = await panoramas.mergeBurst(['photo003', 'photo001', 'photo002'], 1);
+
+    expect(photoPaths.getBasicById(photoId)?.recipe.kind).toBe('burst');
+    expect(photoComposites.framesOf(photoId)).toEqual(['photo001', 'photo002', 'photo003']);
+    const align = posted[0];
+    expect(align?.want === 'align' && align.shape).toBe('burst');
+    expect([photoListing.getById(photoId)?.width]).toEqual([8100]);
+  });
+
+  it('increases the resolution onto a canvas twice as fine', async () => {
+    const { photoId } = await panoramas.mergeBurst(['photo001', 'photo002'], 2);
+
+    const made = photoListing.getById(photoId);
+    expect([made?.width, made?.height]).toEqual([16200, 6720]);
+    const recipe = photoPaths.getBasicById(photoId)?.recipe;
+    expect(recipe?.kind === 'burst' && recipe.canvas).toEqual([18000, 8400]);
+    expect(recipe?.kind === 'burst' && recipe.centre).toEqual([9000, 4200]);
+    expect(recipe?.kind === 'burst' && recipe.radiansPerPixel).toBe(1 / 10400);
+  });
+});
+
 /** A carve started, and every fraction its job reported until it settled. */
 async function carve(photoIds: string[]): Promise<AssemblyJob & { fractions: number[] }> {
   return await settled(panoramas.startAssembly(photoIds));

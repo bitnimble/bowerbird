@@ -4,8 +4,8 @@
 //! pixel_shift_probe <frame> <frame> <frame> <frame>
 //! ```
 //!
-//! Candidate one-photosite placements scored by green agreement, beside the burst's measured
-//! block-luma displacements. Frames are ordered by the shot the header names.
+//! Candidate one-photosite placements scored by green agreement, beside the search prior the
+//! merge starts from. Frames are ordered by the shot the header names.
 
 const WINDOW: usize = 1024;
 
@@ -64,78 +64,7 @@ fn main() {
     let worst = scored.last().expect("a candidate");
     println!("worst: mean square {:.5}  p90 {:.4}", worst.0.1, worst.0.0);
 
-    let reference = block_luma(samples[0], width, top, left);
-    for (frame, frame_samples) in samples.iter().enumerate().skip(1) {
-        let (dy, dx) = displacement(&reference, &block_luma(frame_samples, width, top, left));
-        println!(
-            "frame {} sits ({dy:+.2}, {dx:+.2}) photosites from the first",
-            frame + 1
-        );
-    }
-    println!("search prior SHIFTS {:?}", rawshim::pixel_shift::SHIFTS);
-}
-
-/// Each 2x2 period of the window summed, which reads every filter once and so is a luma a shift
-/// of any number of photosites can be compared through.
-fn block_luma(samples: &[u16], width: usize, top: usize, left: usize) -> Vec<f64> {
-    let side = WINDOW / 2;
-    let mut out = Vec::with_capacity(side * side);
-    for by in 0..side {
-        for bx in 0..side {
-            let (y, x) = (top + by * 2, left + bx * 2);
-            let at = |r: usize, c: usize| f64::from(samples[r * width + c]);
-            out.push(at(y, x) + at(y, x + 1) + at(y + 1, x) + at(y + 1, x + 1));
-        }
-    }
-    out
-}
-
-/// Where `frame`'s content sits against `reference`'s, in photosites: the bilinear shift that leaves
-/// the least squared difference, found in whole blocks over ten either way and then in eighths of a
-/// block around the best of those.
-fn displacement(reference: &[f64], frame: &[f64]) -> (f64, f64) {
-    let side = WINDOW / 2;
-    let margin = 12;
-    let cost = |dy: f64, dx: f64| {
-        let sample = |y: f64, x: f64| {
-            let (y0, x0) = (y.floor() as usize, x.floor() as usize);
-            let (fy, fx) = (y - y0 as f64, x - x0 as f64);
-            let at = |r: usize, c: usize| frame[r * side + c];
-            (at(y0, x0) * (1.0 - fx) + at(y0, x0 + 1) * fx) * (1.0 - fy)
-                + (at(y0 + 1, x0) * (1.0 - fx) + at(y0 + 1, x0 + 1) * fx) * fy
-        };
-        let mut sum = 0.0;
-        for y in margin..side - margin {
-            for x in margin..side - margin {
-                let d = reference[y * side + x] - sample(y as f64 + dy, x as f64 + dx);
-                sum += d * d;
-            }
-        }
-        sum
-    };
-    let mut coarse = (f64::INFINITY, 0.0, 0.0);
-    for dy in -10..=10 {
-        for dx in -10..=10 {
-            let sum = cost(f64::from(dy), f64::from(dx));
-            if sum < coarse.0 {
-                coarse = (sum, f64::from(dy), f64::from(dx));
-            }
-        }
-    }
-    let mut fine = coarse;
-    for qy in -8..=8 {
-        for qx in -8..=8 {
-            let (dy, dx) = (
-                coarse.1 + f64::from(qy) / 8.0,
-                coarse.2 + f64::from(qx) / 8.0,
-            );
-            let sum = cost(dy, dx);
-            if sum < fine.0 {
-                fine = (sum, dy, dx);
-            }
-        }
-    }
-    (fine.1 * 2.0, fine.2 * 2.0)
+    println!("search prior SHIFTS {:?}", rawshim::burst::SHIFTS);
 }
 
 /// The first frame where it is; the other three a photosite away, one at each of the three other
@@ -170,9 +99,9 @@ fn candidates() -> Vec<[(i32, i32); 4]> {
     out
 }
 
-/// The 90th percentile and the mean square of `|G1 - G2| / (G1 + G2)` over the window's sites,
-/// merged as `pixel_shift.slang` merges them. Noise adds the same to every candidate's mean square,
-/// so that one still ranks a burst too noisy for the percentile to.
+/// The 90th percentile and the mean square of `|G1 - G2| / (G1 + G2)` over the window's sites, the
+/// two greens a candidate's shifts land on each one. Noise adds the same to every candidate's mean
+/// square, so that one still ranks a burst too noisy for the percentile to.
 fn disagreement(
     samples: &[&[u16]],
     cfa: &rawler::CFA,

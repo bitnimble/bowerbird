@@ -42,8 +42,7 @@ struct Params {
     float inv_half2;
     uint projection;
     uint through;
-    /// Where the weight comes from: `WEIGHED_FEATHER`, `WEIGHED_MASK` or `WEIGHED_FLAT`
-    /// (`composite_tile::Weighed`).
+    /// Where the weight comes from: `WEIGHED_FEATHER` or `WEIGHED_MASK` (`composite_tile::Weighed`).
     uint weighting;
     /// How many floats `mask` strides by, and which of them is this source's.
     uint mask_stride;
@@ -96,8 +95,6 @@ static const uint THROUGH_LENS = 1;
 static const uint WEIGHED_FEATHER = 0;
 /// An assembly's: §5.2's field, which `mask` holds.
 static const uint WEIGHED_MASK = 1;
-/// An exposure bracket's: one wherever the source reaches, the blend doing the weighing.
-static const uint WEIGHED_FLAT = 2;
 
 /// How sharply the feather favours the source a pixel sits deepest inside.
 ///
@@ -230,7 +227,6 @@ float weightless()
 float reached_weight(uint pixel, float2 pinhole)
 {
     if (params.weighting == WEIGHED_MASK) { return mask[pixel * params.mask_stride + params.mask_slot]; }
-    if (params.weighting == WEIGHED_FLAT) { return 1.0; }
     return feather(pinhole);
 }
 

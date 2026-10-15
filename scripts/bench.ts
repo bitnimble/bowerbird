@@ -17,15 +17,22 @@
 // A ratchet on one of them cannot see a regression that only lands on the other, so this runs the
 // render once per adapter and holds each against its own table.
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { cpus, loadavg } from 'node:os';
 import { resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dir, '..');
 const BUDGET = resolve(ROOT, 'test/fixtures/bench.budget.json');
-const FIXTURES = ['DSC02981.ARW', 'IMG_5360.CR3', 'DSC00853.ARW'];
+const RENDERED = ['DSC02981.ARW', 'IMG_5360.CR3', 'DSC00853.ARW'];
 
-/// What `bench_stages` times for each of them, and what a recorded budget has to hold for all three.
+/// A hand-held burst merged on the mosaic, `bench_stages --burst`'s fixture: written by `synth_raw`
+/// rather than committed, at a 24MP sensor's size, since the merge's cost is per photosite and frame.
+const BURST = 'burst';
+const BURST_DIR = resolve(ROOT, 'test/fixtures/bench-burst');
+const BURST_FRAMES = Array.from({ length: 4 }, (_, at) => resolve(BURST_DIR, `frame-${at}.dng`));
+const FIXTURES = [...RENDERED, BURST];
+
+/// What `bench_stages` times for each rendered fixture, and what a recorded budget holds for each.
 ///
 /// The order is the order a render runs in, which is the order they are reported in - `bench_stages`
 /// emits them keyed rather than positioned, so this is the one place that says which is which.
@@ -45,6 +52,16 @@ const STAGES = [
   'peak',
   'total',
 ];
+
+/// What `bench_stages --burst` times: the align a merge starts with, and its whole rendition.
+const MERGE_STAGES = ['align', 'merge'];
+
+function stagesOf(fixture: string): string[] {
+  return fixture === BURST ? MERGE_STAGES : STAGES;
+}
+
+/// Every stage a recorded budget names, in the order they are reported.
+const ALL_STAGES = [...STAGES, ...MERGE_STAGES];
 
 /// The stages a regression is called on. The rest are measured and reported and nothing more.
 ///
@@ -112,16 +129,51 @@ export function gateOf(
 export function rerecorded(budget: Budget, runs: { adapter: string; taken: Taken }[]): Budget {
   const adapters = { ...budget.adapters };
   for (const { adapter, taken } of runs) adapters[adapter] = taken;
-  return { tolerance: budget.tolerance, stages: STAGES, widened: budget.widened, adapters };
+  return { tolerance: budget.tolerance, stages: ALL_STAGES, widened: budget.widened, adapters };
 }
 
 /** Whether a recorded budget describes the stages this build renders. */
 function current(budget: Budget): boolean {
   return (
     budget.stages != null &&
-    budget.stages.length === STAGES.length &&
-    budget.stages.every((stage, at) => stage === STAGES[at])
+    budget.stages.length === ALL_STAGES.length &&
+    budget.stages.every((stage, at) => stage === ALL_STAGES[at])
   );
+}
+
+/// The burst's frames, written once and kept: `synth_raw` takes most of a minute over four of them.
+function burstFrames(): string[] {
+  if (BURST_FRAMES.every((frame) => existsSync(frame))) return BURST_FRAMES;
+  const run = spawnSync(
+    'bun',
+    [
+      'run',
+      'scripts/cargo.ts',
+      'run',
+      '--release',
+      '--example',
+      'synth_raw',
+      '--manifest-path',
+      'native/rawshim/Cargo.toml',
+      '--',
+      resolve(BURST_DIR, 'unused.dng'),
+      '--burst',
+      BURST_DIR,
+      '--frames',
+      String(BURST_FRAMES.length),
+      '--width',
+      '6000',
+      '--height',
+      '4000',
+    ],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  if (run.status !== 0 || !BURST_FRAMES.every((frame) => existsSync(frame))) {
+    process.stderr.write(run.stderr ?? '');
+    console.error('synth_raw did not write the burst');
+    process.exit(run.status || 1);
+  }
+  return BURST_FRAMES;
 }
 
 /** The adapter `gpu::device` settled on, which is what makes a number comparable. */
@@ -159,7 +211,10 @@ function measured(stdout: string): Taken {
 /// `want` unset is the adapter the product would pick on its own, which is what the first run has
 /// to be: the shim's own choice is a thing worth reporting, and asking for it by name would hide a
 /// change in how it chooses.
-function render(want?: string): { adapter: string; offered: string[]; taken: Taken } {
+function render(
+  burst: string[],
+  want?: string,
+): { adapter: string; offered: string[]; taken: Taken } {
   const run = spawnSync(
     'bun',
     [
@@ -172,7 +227,9 @@ function render(want?: string): { adapter: string; offered: string[]; taken: Tak
       '--manifest-path',
       'native/rawshim/Cargo.toml',
       '--',
-      ...FIXTURES.map((f) => `test/fixtures/${f}`),
+      ...RENDERED.map((f) => `test/fixtures/${f}`),
+      '--burst',
+      ...burst,
     ],
     {
       cwd: ROOT,
@@ -197,12 +254,13 @@ function main(): void {
 
   // The shim's own choice first, then each other adapter it listed. The first run pays for the
   // enumeration as well as for its own numbers, so nothing is spent finding out what is here.
-  const first = render();
+  const burst = burstFrames();
+  const first = render(burst);
   const rest = first.offered.filter((a) => a !== first.adapter);
   const runs = [
     { adapter: first.adapter, taken: first.taken },
     ...rest.map((want) => {
-      const run = render(want);
+      const run = render(burst, want);
       return { adapter: run.adapter, taken: run.taken };
     }),
   ];
@@ -230,9 +288,9 @@ function main(): void {
     // silently, leaving the ratchet watching two photographs where it used to watch three.
     const missing = runs.flatMap(({ adapter, taken }) =>
       FIXTURES.flatMap((fixture) =>
-        STAGES.filter((stage) => taken[fixture]?.[stage] == null).map(
-          (stage) => `${adapter}: ${fixture} ${stage}`,
-        ),
+        stagesOf(fixture)
+          .filter((stage) => taken[fixture]?.[stage] == null)
+          .map((stage) => `${adapter}: ${fixture} ${stage}`),
       ),
     );
     if (missing.length > 0) {
@@ -272,7 +330,7 @@ function main(): void {
     }
     const comparable = recorded != null && !busy;
     for (const fixture of FIXTURES) {
-      for (const stage of STAGES) {
+      for (const stage of stagesOf(fixture)) {
         const ms = taken[fixture]?.[stage];
         const was = stale ? undefined : recorded?.[fixture]?.[stage];
         const gate = stale ? undefined : gateOf(budget, adapter, fixture, stage);

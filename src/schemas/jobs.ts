@@ -95,7 +95,13 @@ export const JobAdjustSchema = z.object({
 export type JobAdjust = z.infer<typeof JobAdjustSchema>;
 
 /** `composite_job::Shape`: what an align is looking for, which decides how it looks. */
-export const AlignShapeSchema = z.enum(['pan', 'exposureBracket', 'focusBracket', 'pixelShift']);
+export const AlignShapeSchema = z.enum([
+  'pan',
+  'exposureBracket',
+  'focusBracket',
+  'pixelShift',
+  'burst',
+]);
 export type AlignShape = z.infer<typeof AlignShapeSchema>;
 
 /** `composite_job::Want`: what a composite job asks of its sources, and what that needs. */

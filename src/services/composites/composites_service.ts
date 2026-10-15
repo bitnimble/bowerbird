@@ -20,11 +20,13 @@ import {
   type ReopenedAssembly,
   type Seams,
 } from '../../schemas/assembly';
-import type {
-  CompositePhase,
-  CompositePhoto,
-  CompositeProgress,
-  Composition,
+import {
+  magnified,
+  type BurstScale,
+  type CompositePhase,
+  type CompositePhoto,
+  type CompositeProgress,
+  type Composition,
 } from '../../schemas/composition';
 import {
   AlignedSchema,
@@ -199,6 +201,11 @@ export class CompositesService {
     return this.serially(photoIds, () => this.mergeNow(photoIds, 'panorama'));
   }
 
+  /** A hand-held burst of one scene, merged on the mosaic onto its sharpest frame. */
+  mergeBurst(photoIds: readonly string[], scale: BurstScale): Promise<CompositePhoto> {
+    return this.serially(photoIds, () => this.mergeNow(photoIds, 'burst', scale));
+  }
+
   /**
    * A bracket stack's frames into the one photograph the camera shot them to make: an exposure
    * merge, a focus merge or a pixel shift, whichever the frames say they are. In the camera's own
@@ -250,9 +257,13 @@ export class CompositesService {
     return queued;
   }
 
-  private async mergeNow(photoIds: readonly string[], kind: AlignedKind): Promise<CompositePhoto> {
-    // A pan is shot oldest first; a bracket comes in the camera's own order already.
-    const frames = this.framesOf(photoIds, kind !== 'panorama');
+  private async mergeNow(
+    photoIds: readonly string[],
+    kind: AlignedKind,
+    scale: BurstScale = 1,
+  ): Promise<CompositePhoto> {
+    // A pan or a burst is shot oldest first; a bracket comes in the camera's own order already.
+    const frames = this.framesOf(photoIds, kind !== 'panorama' && kind !== 'burst');
     const { library, sources } = frames;
     await this.bringFrames(photoIds, library);
     const watching = { photoId: null, photoIds: sources.map((source) => source.photoId) };
@@ -263,8 +274,9 @@ export class CompositesService {
     let photoId: string | null = null;
     try {
       const shape = kind === 'panorama' ? 'pan' : kind;
-      const aligned = await this.watched(watching, 0, () =>
-        this.aligned(sources, library, on, shape),
+      const aligned = magnified(
+        await this.watched(watching, 0, () => this.aligned(sources, library, on, shape)),
+        scale,
       );
       const recipe: Composed = { ...aligned, kind };
 

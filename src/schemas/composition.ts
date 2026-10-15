@@ -43,6 +43,20 @@ export const CompositionSchema = z.object({
 });
 export type Composition = z.infer<typeof CompositionSchema>;
 
+/** `Composition::magnified`: the same picture on a canvas `by` times finer in each axis. */
+export function magnified(recipe: Composition, by: number): Composition {
+  return {
+    ...recipe,
+    canvas: [recipe.canvas[0] * by, recipe.canvas[1] * by],
+    centre: [recipe.centre[0] * by, recipe.centre[1] * by],
+    radiansPerPixel: recipe.radiansPerPixel / by,
+  };
+}
+
+/** Pixels a side per photosite a burst is merged onto: 2 draws it finer than the sensor. */
+export const BurstScaleSchema = z.union([z.literal(1), z.literal(2)]);
+export type BurstScale = z.infer<typeof BurstScaleSchema>;
+
 /** The photograph a merge made, or the one an assembly was saved onto. */
 export const CompositePhotoSchema = z.object({ photoId: z.string() });
 export type CompositePhoto = z.infer<typeof CompositePhotoSchema>;

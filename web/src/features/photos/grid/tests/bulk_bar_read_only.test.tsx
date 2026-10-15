@@ -22,6 +22,7 @@ const {
   useShootsStore,
 } = await import('../../../../app/stores_context');
 const { SelectionRanges } = await import('../../selection');
+const { compositesApi } = await import('../../../../api/composites');
 
 afterEach(cleanup);
 
@@ -43,7 +44,15 @@ function shoot(id: string, name: string): Shoot {
 
 const DAWN = { kind: 'shoot', id: 'dawn', name: 'Dawn' } as const;
 
-function Seed({ readOnly, synced }: { readOnly: boolean; synced: boolean }): null {
+function Seed({
+  readOnly,
+  synced,
+  photos,
+}: {
+  readOnly: boolean;
+  synced: boolean;
+  photos: number;
+}): null {
   const libraries = useLibrariesStore();
   const listing = useListingStore();
   const marks = useMarksStore();
@@ -58,19 +67,29 @@ function Seed({ readOnly, synced }: { readOnly: boolean; synced: boolean }): nul
       libraries.libraries = [{ id: 'lib', name: 'Reef', read_only: readOnly } as Library];
       shoots.shoots = [shoot('dawn', 'Dawn'), shoot('dusk', 'Dusk')];
       listing.source = { kind: 'shoot', shootId: DAWN.id };
-      listing.total = 1;
-      listing.rows = new Map([[0, { id: 'p1', shoot_id: 'dawn', stack_size: 1 } as PhotoSummary]]);
-      marks.selection = SelectionRanges.of(0, 0);
+      listing.total = photos;
+      listing.rows = new Map(
+        Array.from({ length: photos }, (_, at) => {
+          const row: Partial<PhotoSummary> = {
+            id: `p${at + 1}`,
+            library_id: 'lib',
+            shoot_id: 'dawn',
+            stack_size: 1,
+          };
+          return [at, row as PhotoSummary] as const;
+        }),
+      );
+      marks.selection = SelectionRanges.of(0, photos - 1);
     });
-  }, [libraries, listing, marks, shoots, replication, readOnly, synced]);
+  }, [libraries, listing, marks, shoots, replication, readOnly, synced, photos]);
   return null;
 }
 
-async function openMenu(readOnly: boolean, synced = false): Promise<void> {
+async function openMenu(readOnly: boolean, synced = false, photos = 1): Promise<void> {
   render(
     <MemoryRouter>
       <StoresProvider>
-        <Seed readOnly={readOnly} synced={synced} />
+        <Seed readOnly={readOnly} synced={synced} photos={photos} />
         <BulkBar collection={DAWN} />
       </StoresProvider>
     </MemoryRouter>,
@@ -100,6 +119,40 @@ test('one photo is not a panorama, and the row says so', async () => {
   const item = screen.getByRole('menuitem', { name: 'To panorama' });
   expect(item.getAttribute('aria-disabled')).toBe('true');
   expect(item.getAttribute('aria-description')).toBe('Select at least 2 photos.');
+});
+
+test('one photo is no burst to merge', async () => {
+  await openMenu(false);
+  await act(async () => {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Merge photos' }));
+  });
+  for (const name of ['Reduce noise', 'Increase resolution']) {
+    expect(screen.getByRole('menuitem', { name }).getAttribute('aria-disabled')).toBe('true');
+  }
+});
+
+test('Reduce noise merges a burst at 1x and Increase resolution at 2x', async () => {
+  const merge = compositesApi.mergeBurst;
+  const asked: number[] = [];
+  compositesApi.mergeBurst = (_, scale) => {
+    asked.push(scale);
+    return new Promise(() => {});
+  };
+  try {
+    for (const name of ['Reduce noise', 'Increase resolution']) {
+      await openMenu(false, false, 2);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Merge photos' }));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('menuitem', { name }));
+      });
+      cleanup();
+    }
+  } finally {
+    compositesApi.mergeBurst = merge;
+  }
+  expect(asked).toEqual([1, 2]);
 });
 
 test('removing a local copy is under Sync, and only in a synced library', async () => {

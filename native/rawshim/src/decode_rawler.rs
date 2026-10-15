@@ -230,37 +230,68 @@ pub(crate) async fn decode_tile_source(
     Some(region.frame(built))
 }
 
-/// A window of a sensor-shift burst, merged on the photosite lattice where a single frame would be
-/// demosaiced. `sources` are the burst's frames in its own order.
+/// A window of a stack, merged on the mosaic where a single frame would be demosaiced. `sources`
+/// are its frames in the recipe's order, `recipe.reference` the one the others are merged onto.
 ///
-/// **Where the frame is halved, the merge buys nothing**: a halved frame reads one pixel per 2x2 site,
-/// which already has every colour, so the four frames are the same picture below its Nyquist and the
-/// reference alone is the answer.
-pub(crate) async fn decode_shifted_tile(
+/// **Where a sensor shift's frame is halved, the merge buys nothing**: a halved frame reads one pixel
+/// per 2x2 site, which already has every colour, so the four frames are the same picture below its
+/// Nyquist and the reference alone is the answer. A placed stack is merged at every size: what it
+/// buys is less noise, a range no one frame held, or focus no one frame had, and a thumbnail showing
+/// one frame's would not be the photograph.
+///
+/// `scale` is the frame's pixels a side per photosite of `view`: 2 merges onto a grid twice as fine
+/// as the sensor's, and hands back a frame twice the size of the window.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn decode_merged_tile(
     sources: &[rawler::rawsource::RawSource],
     view: crate::view::View,
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
     halo: usize,
-    prior: &[crate::pixel_shift::Offset],
+    prior: &[crate::burst::Offset],
     recipe: &crate::composition::Composition,
+    stack: crate::burst::Stack,
+    scale: usize,
 ) -> Option<Frame> {
-    let detail = detail.without_upscaler();
-    let (first, rest) = sources.split_first()?;
-    if rest.len() + 1 != crate::pixel_shift::SHIFTS.len()
+    let taken = stack.taken;
+    if !taken.holds(sources.len())
         || prior.len() != sources.len()
         || recipe.sources.len() != sources.len()
     {
         return None;
     }
-    let reference_extra = crate::pixel_shift_align::REFERENCE_MARGIN
+    let reference_at = recipe.reference;
+    let first = sources.get(reference_at)?;
+    if taken == crate::burst::Taken::SensorShift && view.scale.halves() {
+        return decode_tile_source(
+            first,
+            view,
+            detail.without_upscaler(),
+            fit,
+            halo,
+            crate::dust::Known::Off,
+        )
+        .await;
+    }
+    // The merge is the denoise: every frame is read undenoised, and the reference's fit is what
+    // weighs them against each other.
+    let undenoised = crate::galosh::Detail {
+        luminance: Some(0.0),
+        colour: Some(0.0),
+        ..detail.without_upscaler()
+    };
+    let given = match fit {
+        crate::galosh::Fit::Given(fit) => Some(fit),
+        _ => None,
+    };
+    let reference_extra = crate::align::REFERENCE_MARGIN
         .raw()
         .saturating_sub(RCD_MARGIN + crate::tile_halo(halo));
-    let Region::Mosaic(reference) = region_mosaic(
+    let Region::Mosaic(mut reference) = region_mosaic(
         first,
         view,
-        detail,
-        fit,
+        undenoised,
+        given.map_or(crate::galosh::Fit::Only, crate::galosh::Fit::Given),
         halo,
         crate::px::Span::exact(reference_extra),
         crate::dust::Known::Off,
@@ -272,14 +303,29 @@ pub(crate) async fn decode_shifted_tile(
     };
     let gpu = crate::gpu::device()?;
     let rcd = crate::demosaic::device(gpu)?;
-    if reference.halving {
-        let built = reference.built(gpu, rcd).await?;
-        return Some(reference.frame(built));
+    reference.noise = given.or(reference.noise);
+    if taken == crate::burst::Taken::Placed {
+        reference.halving = false;
     }
-    let reference_pyramid = crate::pixel_shift_align::Pyramid::of(gpu, &reference.mosaic);
+    let (Some(noise), false, true) = (reference.noise, reference.halving, reference.cfa.is_bayer())
+    else {
+        // read again with the user's denoise, which the undenoised read above skipped
+        return decode_tile_source(
+            first,
+            view,
+            detail.without_upscaler(),
+            fit,
+            halo,
+            crate::dust::Known::Off,
+        )
+        .await;
+    };
+    let noise = noise.model();
+    let exposure = crate::align::Exposure::of(&reference.cfa, reference.colour.ceiling, 1.0);
+    let reference_pyramid = crate::align::Pyramid::of(gpu, &reference.mosaic, exposure);
     let (period_w, period_h) = reference.cfa.period();
-    let reach_x = RCD_MARGIN + crate::pixel_shift::SETTLE_REACH.raw() + period_w;
-    let reach_y = RCD_MARGIN + crate::pixel_shift::SETTLE_REACH.raw() + period_h;
+    let reach_x = RCD_MARGIN + period_w;
+    let reach_y = RCD_MARGIN + period_h;
     let (left, top) = reference.cfa.align_origin(
         reference.crop.0.saturating_sub(reach_x),
         reference.crop.1.saturating_sub(reach_y),
@@ -291,32 +337,54 @@ pub(crate) async fn decode_shifted_tile(
         .next_multiple_of(period_h)
         .min(reference.mosaic.height);
     let (width, height) = reference.cfa.align_extent(right - left, bottom - top);
-    let (reference_x, reference_y) = reference.origin.raw();
-    let merge_region = crate::px::Rect::exact(reference_x + left, reference_y + top, width, height);
-    let merged = crate::pixel_shift::Merged::over(gpu, merge_region);
-    merged.gather(
+    let grid = crate::merge::Grid {
+        left,
+        top,
+        width: width * scale,
+        height: height * scale,
+        scale,
+    };
+    let merge = crate::merge::Merge::new(
         gpu,
-        &reference.mosaic,
-        &reference.cfa,
-        reference.origin,
-        None,
+        rcd,
+        crate::merge::Frame {
+            mosaic: &reference.mosaic,
+            cfa: &reference.cfa,
+            origin: reference.origin,
+            exposure,
+            noise,
+        },
+        reference_pyramid.sites(),
+        grid,
+        sources.len(),
+        stack.weights,
     )?;
+    let (reference_x, reference_y) = reference.origin.raw();
     let window = crate::px::Rect::exact(
         reference_x + reference.crop.0,
         reference_y + reference.crop.1,
         reference.crop.2,
         reference.crop.3,
     );
-    for (at, source) in rest.iter().enumerate() {
-        // The reference's fit, so every frame is denoised as the one it is merged into.
-        let fit = reference.noise.map_or(fit, crate::galosh::Fit::Given);
+    let reference_gain = recipe.sources[reference_at].gain;
+    let reach = recipe
+        .sources
+        .iter()
+        .map(|source| (source.gain / reference_gain) as f32)
+        .fold(1.0, f32::max);
+    for (at, source) in sources.iter().enumerate() {
+        if at == reference_at {
+            continue;
+        }
+        // handheld drift can pass the search margin
+        let moved = prior[at].x.raw().abs().max(prior[at].y.raw().abs()).ceil() as usize;
         let Region::Mosaic(frame) = region_mosaic(
             source,
             view,
-            detail,
-            fit,
+            undenoised,
+            crate::galosh::Fit::Given(reference.noise?),
             halo,
-            crate::pixel_shift_align::MARGIN,
+            crate::px::Span::exact(crate::align::MARGIN.raw() + moved),
             crate::dust::Known::Off,
             Demosaiced::ByTheReference,
         )
@@ -331,55 +399,80 @@ pub(crate) async fn decode_shifted_tile(
         let (frame_photo_x, frame_photo_y) = frame.photograph_origin.raw();
         let crop_shift_x = frame_photo_x as f64 - photo_x as f64;
         let crop_shift_y = frame_photo_y as f64 - photo_y as f64;
-        let fallback = prior[at + 1];
-        let field = crate::pixel_shift_align::measure(
+        let fallback = prior[at];
+        let frame_exposure = crate::align::Exposure::of(
+            &frame.cfa,
+            frame.colour.ceiling,
+            (recipe.sources[at].gain / reference_gain) as f32,
+        );
+        let field = crate::align::measure(
             gpu,
             &reference_pyramid,
             &frame.mosaic,
+            frame_exposure,
             reference.origin,
             frame.origin,
             window,
             |sensor_x, sensor_y| {
                 let point = [sensor_x - photo_x as f64, sensor_y - photo_y as f64];
                 let projected =
-                    crate::pixel_shift::prior_at(recipe, at + 1, point).unwrap_or(fallback);
-                crate::pixel_shift::Offset {
+                    crate::burst::prior_at(recipe, at, point, taken).unwrap_or(fallback);
+                crate::burst::Offset {
                     x: crate::px::Extent::measured(projected.x.raw() + crop_shift_x),
                     y: crate::px::Extent::measured(projected.y.raw() + crop_shift_y),
                 }
             },
+            crate::align::Search::AROUND_PRIOR,
         );
-        merged.gather(gpu, &frame.mosaic, &frame.cfa, frame.origin, Some(&field))?;
+        merge.add(
+            gpu,
+            crate::merge::Frame {
+                mosaic: &frame.mosaic,
+                cfa: &frame.cfa,
+                origin: frame.origin,
+                exposure: frame_exposure,
+                noise,
+            },
+            &field,
+        )?;
     }
-    // The reference's own demosaic under the merge, which is what a site the frames disagree about
-    // takes instead (`pixel_shift::Merged::settle`).
-    let noise = reference.noise.map(|fit| fit.model());
+    let merged = merge.settle(gpu);
+    // The colour pass finds a highlight blown on the merge's wells, against the brightest light any
+    // frame could read, so it reconstructs only where every frame saturated.
+    let mosaic = merge.remosaic(gpu, &merged);
+    let colour = crate::demosaic::Colour {
+        ceiling: reference.colour.ceiling.map(|ceiling| ceiling * reach),
+        ..reference.colour
+    };
+    let highlight = reference.highlight.as_ref()?.magnified(scale);
+    let (highlight_x, highlight_y) = reference.highlight_at.raw();
+    let (crop_left, crop_top, crop_w, crop_h) = reference.crop;
     let built = demosaic_settled_in_tiles(
         gpu,
         rcd,
-        &reference.mosaic,
+        &mosaic,
         &reference.cfa,
-        reference.crop,
-        reference.colour,
-        reference.seen()?,
+        (
+            crop_left * scale,
+            crop_top * scale,
+            crop_w * scale,
+            crop_h * scale,
+        ),
+        colour,
+        highlight
+            .seen_from(crate::px::At::exact(
+                highlight_x * scale,
+                highlight_y * scale,
+            ))
+            .coloured(reference.detail.colouring()),
         orientation_code(reference.upright),
-        &|recording, rgb, window| {
-            merged.settle(
-                gpu,
-                recording,
-                rgb,
-                (
-                    reference_x + window.0 - merge_region.at.x.raw(),
-                    reference_y + window.1 - merge_region.at.y.raw(),
-                    window.2,
-                    window.3,
-                ),
-                noise,
-            )
-        },
+        &|recording, rgb, window| merge.paste(gpu, recording, &merged, rgb, window),
     )
     .await?;
-    Some(reference.frame(built))
+    Some(Frame {
+        neutral_ceiling: neutral_ceiling_of(colour.ceiling),
+        ..reference.frame(built)
+    })
 }
 
 /// What a window of a RAW is before the demosaic: its mosaic, or for a linear DNG, which has none,

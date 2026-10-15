@@ -10,7 +10,7 @@
 //! which is the geometry the recipe is stated in, so the lens is carried for the RAW gather to undo
 //! later and is not applied to anything here.
 
-use crate::composite_pairs::{Pair, Pyramid};
+use crate::composite_pairs::{Match, Pair, Pyramid};
 use crate::composite_solve::{Leash, exposure_of, framed, gains, solve};
 use crate::composition::{Composition, LensSpec, SourceSpec, VERSION};
 use crate::px::Share;
@@ -174,7 +174,7 @@ const ASSUMED_HFOV: f64 = 55.0;
 
 const QUANTILE: f64 = 0.99;
 
-/// What kind of set is being aligned, which only the caller knows and which two things here turn
+/// What kind of set is being aligned, which only the caller knows and which three things here turn
 /// on.
 ///
 /// **A pan and a burst see opposite halves of the same geometry.** A pan's frames overlap in a
@@ -184,10 +184,23 @@ const QUANTILE: f64 = 0.99;
 /// rotation, and it is a real difference (a lens breathes as it refocuses, a hand moves along the
 /// axis) - while the plane can be half the size, because the align is only the first of two stages
 /// and §3.7a's per-piece warp carries the last few pixels at the analysis scale.
+///
+/// A stack is placed by the aligner every merge on the mosaic uses (`align`), one frame against the
+/// reference at a time; a pan's frames have no one frame they all overlap.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Pan,
-    Burst,
+    Stack(Reference),
+}
+
+/// Which frame of a stack the others are placed on, and the composite is drawn as.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reference {
+    /// The first offered, for a set whose order says where each frame landed.
+    First,
+    /// The middle of the exposures, which leaves the fewest stops either side to carry.
+    MiddleExposure,
+    Sharpest,
 }
 
 impl Kind {
@@ -198,7 +211,15 @@ impl Kind {
     fn plane_long(self) -> usize {
         match self {
             Kind::Pan => crate::hdr_fit::sample_long_edge(),
-            Kind::Burst => crate::hdr_fit::sample_long_edge() / 2,
+            Kind::Stack(_) => crate::hdr_fit::sample_long_edge() / 2,
+        }
+    }
+
+    /// How many pairs of `n` frames are searched.
+    pub fn searches(self, n: usize) -> usize {
+        match self {
+            Kind::Pan => n * n.saturating_sub(1) / 2,
+            Kind::Stack(_) => n.saturating_sub(1),
         }
     }
 }
@@ -220,17 +241,140 @@ pub async fn align(
     let mut lensless = Vec::new();
     let lenses = shared_lenses(sources, &mut warnings, &mut lensless);
 
-    // A preview each, then a pass over every pair of them, then the solve.
+    // A preview each, then a pass over every pair searched, then the solve.
     let n = sources.len();
-    crate::progress::begin(n + n * (n - 1) / 2 + 1);
+    crate::progress::begin(n + kind.searches(n) + 1);
     let planes = previews_at(gpu, sources, kind.plane_long()).await?;
     let sizes: Vec<[usize; 2]> = planes.iter().map(|p| [p.width, p.height]).collect();
     let pyramids: Vec<Pyramid> = planes.iter().map(|plane| Pyramid::of(gpu, plane)).collect();
+    let mut lap = crate::clock::laps("  align ");
+    let (pairs, chosen) = match kind {
+        Kind::Pan => (panned(gpu, &pyramids, &mut lap).await, None),
+        Kind::Stack(reference) => {
+            let chosen = chosen(gpu, sources, &pyramids, reference).await;
+            (stacked(gpu, &pyramids, chosen).await?, Some(chosen))
+        }
+    };
+    lap("pairs");
+    if pairs.is_empty() {
+        return Err("no two of these photographs overlap".into());
+    }
 
+    // The body's answer where it has one, carried into the plane the solve works in.
+    let told = sources.iter().zip(&sizes).find_map(|(source, plane)| {
+        let full = source.size[0].max(source.size[1]) as f64;
+        source
+            .focal_px
+            .map(|focal| focal * plane[0].max(plane[1]) as f64 / full)
+    });
+    let (focal0, leash) = match told {
+        Some(focal) => (focal, Leash::Told),
+        None => (assumed_focal(&sizes[0]), untold),
+    };
+    let mut solved = solve(&sizes, &pairs, focal0, leash)
+        .ok_or_else(|| "these photographs do not make one picture".to_string())?;
+    if matches!(kind, Kind::Stack(_)) {
+        crate::composite_solve::scale_each(&sizes, &pairs, &mut solved);
+    }
+    let solved = solved;
+    lap("solve");
+    crate::progress::advance();
+    for &i in &solved.dropped {
+        warnings.push(format!(
+            "{} does not overlap the rest and was left out",
+            sources[i].photo_id
+        ));
+    }
+
+    let kept: Vec<usize> = (0..sources.len())
+        .filter(|i| !solved.dropped.contains(i))
+        .collect();
+    if kept.len() < 2 {
+        return Err("only one of these photographs could be placed".into());
+    }
+    // The most connected of them: the panorama is graded as this one's rendering, and it is the
+    // frame the exposures are matched to, so it wants to be in the middle rather than at an end.
+    let reference = chosen.unwrap_or_else(|| {
+        *kept
+            .iter()
+            .max_by_key(|&&i| {
+                pairs
+                    .iter()
+                    .filter(|p| p.a == i || p.b == i)
+                    .map(|p| p.matches.len())
+                    .sum::<usize>()
+            })
+            .expect("a kept source")
+    });
+
+    let exposures: Vec<Option<f64>> = sources
+        .iter()
+        .map(|s| exposure_of(s.shutter, s.aperture, s.iso))
+        .collect();
+    // `measured` is always empty here: nothing computes a pairwise exposure ratio from the align's
+    // own matches, so every source's gain is the header arithmetic alone. Left unfinished rather
+    // than built out - the take-best-parts design spec's section 8 says why a burst does not want
+    // it fixed here either.
+    let matched = gains(&exposures, &[], reference);
+
+    let full_scale = |i: usize| {
+        let long = sources[i].size[0].max(sources[i].size[1]) as f64;
+        long / sizes[i][0].max(sizes[i][1]) as f64
+    };
+    let framing = framed(&solved, &sizes, full_scale(reference));
+
+    let panorama = Composition {
+        version: VERSION,
+        sources: kept
+            .iter()
+            .map(|&i| SourceSpec {
+                photo_id: sources[i].photo_id.to_string(),
+                size: sources[i].size,
+                rotation: solved.rotations[i],
+                focal: solved.focal * solved.scales[i] * full_scale(i),
+                lens: lenses[i].clone(),
+                gain: matched[i],
+                // §3.7a is measured after the align and applied per tile; what the solve answers is
+                // where a whole frame points.
+                warp: crate::composition::no_warp(),
+            })
+            .collect(),
+        projection: framing.projection,
+        canvas: framing.canvas,
+        centre: framing.centre,
+        radians_per_pixel: framing.radians_per_pixel,
+        crop: framing.crop,
+        reference: kept.iter().position(|&i| i == reference).unwrap_or(0),
+        seam_rms_px: None,
+    };
+    Ok(Aligned {
+        composition: panorama,
+        rms_px: solved.rms_px,
+        dropped: solved.dropped.clone(),
+        kept: solved.kept.clone(),
+        radial: Share::measured(
+            solved.radial_px,
+            sizes
+                .iter()
+                .map(|size| size[0].max(size[1]))
+                .max()
+                .unwrap_or(1) as f64,
+        ),
+        lensless,
+        warnings,
+    })
+}
+
+/// The pairs of a pan that overlap, searched every one against every other.
+async fn panned(
+    gpu: &'static crate::gpu::Gpu,
+    pyramids: &[Pyramid],
+    lap: &mut impl FnMut(&str),
+) -> Vec<Pair> {
+    let n = pyramids.len();
     // **What each frame's corners look like, once.** The pairs below ask the one question a
     // correlation search cannot: whether a match is the *only* good answer. A frame's corners are
     // described here rather than per pair, since the description does not depend on who is asking.
-    let mut lap = crate::clock::laps("  align ");
     let distinctly: f64 = std::env::var("PANO_DISTINCT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -250,7 +394,7 @@ pub async fn align(
         .and_then(|v| v.parse().ok())
         .unwrap_or(MOSTLY_STRONG);
     let mut described = Vec::with_capacity(pyramids.len());
-    for level in &pyramids {
+    for level in pyramids {
         let corners = match distinctly > 0.0 {
             true => crate::composite_features::described(gpu, level.top()).await,
             false => None,
@@ -351,112 +495,112 @@ pub async fn align(
             pairs.len()
         );
     }
-    lap("pairs");
-    if pairs.is_empty() {
-        return Err("no two of these photographs overlap".into());
-    }
+    pairs
+}
 
-    // The body's answer where it has one, carried into the plane the solve works in.
-    let told = sources.iter().zip(&sizes).find_map(|(source, plane)| {
-        let full = source.size[0].max(source.size[1]) as f64;
-        source
-            .focal_px
-            .map(|focal| focal * plane[0].max(plane[1]) as f64 / full)
-    });
-    let (focal0, leash) = match told {
-        Some(focal) => (focal, Leash::Told),
-        None => (assumed_focal(&sizes[0]), untold),
-    };
-    let mut solved = solve(&sizes, &pairs, focal0, leash)
-        .ok_or_else(|| "these photographs do not make one picture".to_string())?;
-    if kind == Kind::Burst {
-        crate::composite_solve::scale_each(&sizes, &pairs, &mut solved);
-    }
-    let solved = solved;
-    lap("solve");
-    crate::progress::advance();
-    for &i in &solved.dropped {
-        warnings.push(format!(
-            "{} does not overlap the rest and was left out",
-            sources[i].photo_id
-        ));
-    }
-
-    let kept: Vec<usize> = (0..sources.len())
-        .filter(|i| !solved.dropped.contains(i))
-        .collect();
-    if kept.len() < 2 {
-        return Err("only one of these photographs could be placed".into());
-    }
-    // The most connected of them: the panorama is graded as this one's rendering, and it is the
-    // frame the exposures are matched to, so it wants to be in the middle rather than at an end.
-    let reference = *kept
-        .iter()
-        .max_by_key(|&&i| {
-            pairs
+/// The frame a stack is placed on.
+async fn chosen(
+    gpu: &'static crate::gpu::Gpu,
+    sources: &[AlignSource<'_>],
+    pyramids: &[Pyramid],
+    reference: Reference,
+) -> usize {
+    match reference {
+        Reference::First => 0,
+        Reference::MiddleExposure => {
+            let mut by_light: Vec<(usize, f64)> = sources
                 .iter()
-                .filter(|p| p.a == i || p.b == i)
-                .map(|p| p.matches.len())
-                .sum::<usize>()
-        })
-        .expect("a kept source");
+                .enumerate()
+                .map(|(at, s)| (at, exposure_of(s.shutter, s.aperture, s.iso).unwrap_or(1.0)))
+                .collect();
+            by_light.sort_by(|a, b| a.1.total_cmp(&b.1));
+            by_light[by_light.len() / 2].0
+        }
+        Reference::Sharpest => {
+            let mut sharpest = (0, f64::MIN);
+            for (at, pyramid) in pyramids.iter().enumerate() {
+                let sharpness = crate::align::sharpness(gpu, &luma_of(pyramid))
+                    .await
+                    .unwrap_or(0.0);
+                if sharpness > sharpest.1 {
+                    sharpest = (at, sharpness);
+                }
+            }
+            sharpest.0
+        }
+    }
+}
 
-    let exposures: Vec<Option<f64>> = sources
-        .iter()
-        .map(|s| exposure_of(s.shutter, s.aperture, s.iso))
-        .collect();
-    // `measured` is always empty here: nothing computes a pairwise exposure ratio from the align's
-    // own matches, so every source's gain is the header arithmetic alone. Left unfinished rather
-    // than built out - the take-best-parts design spec's section 8 says why a burst does not want
-    // it fixed here either.
-    let matched = gains(&exposures, &[], reference);
-
-    let full_scale = |i: usize| {
-        let long = sources[i].size[0].max(sources[i].size[1]) as f64;
-        long / sizes[i][0].max(sizes[i][1]) as f64
+/// Each frame placed on `reference`'s by `align::measure`, as the matches a solve takes: one tile
+/// a match, every frame paired with the reference and no other.
+async fn stacked(
+    gpu: &'static crate::gpu::Gpu,
+    pyramids: &[Pyramid],
+    reference: usize,
+) -> Result<Vec<Pair>, String> {
+    let preview = crate::align::Exposure {
+        gain: 1.0,
+        ceilings: [1.0; 4],
     };
-    let framing = framed(&solved, &sizes, full_scale(reference));
-
-    let panorama = Composition {
-        version: VERSION,
-        sources: kept
+    let on = crate::align::Pyramid::of(gpu, &luma_of(&pyramids[reference]), preview);
+    let mut pairs = Vec::new();
+    for at in (0..pyramids.len()).filter(|&at| at != reference) {
+        let frame = luma_of(&pyramids[at]);
+        let field = crate::align::measure(
+            gpu,
+            &on,
+            &frame,
+            preview,
+            crate::px::At::ORIGIN,
+            crate::px::At::ORIGIN,
+            crate::px::Rect::exact(0, 0, frame.width, frame.height),
+            |_, _| crate::burst::Offset::exactly(0.0, 0.0),
+            crate::align::Search::unplaced(frame.width.max(frame.height)),
+        );
+        crate::progress::advance();
+        let placed = field
+            .placed(gpu)
+            .await
+            .ok_or("the device did not answer the align")?;
+        let matches: Vec<Match> = placed
             .iter()
-            .map(|&i| SourceSpec {
-                photo_id: sources[i].photo_id.to_string(),
-                size: sources[i].size,
-                rotation: solved.rotations[i],
-                focal: solved.focal * solved.scales[i] * full_scale(i),
-                lens: lenses[i].clone(),
-                gain: matched[i],
-                // §3.7a is measured after the align and applied per tile; what the solve answers is
-                // where a whole frame points.
-                warp: crate::composition::no_warp(),
+            .map(|tile| {
+                let there = [tile.at[0] + tile.moved[0], tile.at[1] + tile.moved[1]];
+                let (a, b) = match at < reference {
+                    true => (there, tile.at),
+                    false => (tile.at, there),
+                };
+                Match {
+                    a,
+                    b,
+                    peak: tile.score,
+                }
             })
-            .collect(),
-        projection: framing.projection,
-        canvas: framing.canvas,
-        centre: framing.centre,
-        radians_per_pixel: framing.radians_per_pixel,
-        crop: framing.crop,
-        reference: kept.iter().position(|&i| i == reference).unwrap_or(0),
-        seam_rms_px: None,
-    };
-    Ok(Aligned {
-        composition: panorama,
-        rms_px: solved.rms_px,
-        dropped: solved.dropped.clone(),
-        kept: solved.kept.clone(),
-        radial: Share::measured(
-            solved.radial_px,
-            sizes
-                .iter()
-                .map(|size| size[0].max(size[1]))
-                .max()
-                .unwrap_or(1) as f64,
-        ),
-        lensless,
-        warnings,
-    })
+            .collect();
+        if matches.is_empty() {
+            continue;
+        }
+        let score = matches.iter().map(|m| m.peak).sum::<f64>() / matches.len() as f64;
+        pairs.push(Pair {
+            a: at.min(reference),
+            b: at.max(reference),
+            score,
+            found: matches.len(),
+            matches: crate::composite_pairs::agreeing(&matches),
+            vouched: true,
+        });
+    }
+    Ok(pairs)
+}
+
+/// A pyramid's own-size luma, as the plane `align` reads.
+fn luma_of(pyramid: &Pyramid) -> crate::condition::Mosaic {
+    let top = pyramid.top();
+    crate::condition::Mosaic {
+        buffer: top.buffer.clone(),
+        width: top.width,
+        height: top.height,
+    }
 }
 
 /// Only each frame's best few overlaps, which is what a photograph can actually have.
@@ -1071,5 +1215,85 @@ pub(crate) mod tests {
             centre.is_some(),
             "the reference does not look at its own axis"
         );
+    }
+
+    /// A hand-held stack's previews: the blurred frame is not the one the others are placed on,
+    /// and every tile of every other frame lands where the hand put it.
+    #[test]
+    fn a_stack_is_placed_on_its_sharpest_frame_where_each_hand_put_it() {
+        use crate::burst_scene::{Burst, Scene, Shake};
+        let gpu = crate::gpu::device().expect("an adapter for the alignment");
+        let shakes = vec![
+            Shake {
+                shift: [3.0, 2.0],
+                blur: [5.0, 3.0],
+                ..Shake::default()
+            },
+            Shake::default(),
+            Shake {
+                shift: [23.4, -11.7],
+                roll: 0.01,
+                ..Shake::default()
+            },
+            Shake {
+                shift: [-60.2, 41.0],
+                roll: -0.008,
+                ..Shake::default()
+            },
+        ];
+        let burst = |shakes: Vec<Shake>| Burst {
+            width: 768,
+            height: 512,
+            cfa: crate::cfa::Cfa::new(1, 1, &[1]).expect("one colour"),
+            shakes,
+            subject: None,
+            focus: None,
+        };
+        let scene = Scene::new(7);
+        let pyramids: Vec<Pyramid> = (0..shakes.len())
+            .map(|frame| {
+                let taken = burst(shakes.clone());
+                let luma = taken.photograph(&scene, frame, 1.0, None);
+                let rgb: Vec<f32> = luma.iter().flat_map(|&value| [value; 3]).collect();
+                let plane = crate::hdr_fit::Source {
+                    buffer: gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("stack preview"),
+                        contents: bytemuck::cast_slice(&rgb),
+                        usage: wgpu::BufferUsages::STORAGE,
+                    }),
+                    width: taken.width,
+                    height: taken.height,
+                };
+                Pyramid::of(gpu, &plane)
+            })
+            .collect();
+
+        let reference = pollster::block_on(chosen(gpu, &[], &pyramids, Reference::Sharpest));
+        assert_ne!(reference, 0, "the blurred frame was chosen");
+
+        let pairs = pollster::block_on(stacked(gpu, &pyramids, reference)).expect("placed");
+        assert_eq!(pairs.len(), shakes.len() - 1);
+        for pair in &pairs {
+            let frame = if pair.a == reference { pair.b } else { pair.a };
+            let from_reference = burst(vec![shakes[reference], shakes[frame]]);
+            let errors: Vec<f64> = pair
+                .matches
+                .iter()
+                .map(|found| {
+                    let (on, there) = match pair.a == reference {
+                        true => (found.a, found.b),
+                        false => (found.b, found.a),
+                    };
+                    let [dx, dy] = from_reference.displacement(1, on[0], on[1]);
+                    (there[0] - on[0] - dx).hypot(there[1] - on[1] - dy)
+                })
+                .collect();
+            let rms = (errors.iter().map(|e| e * e).sum::<f64>() / errors.len() as f64).sqrt();
+            assert!(
+                errors.len() >= 40 && rms < 0.15,
+                "frame {frame}: {} tiles at {rms:.3} px",
+                errors.len()
+            );
+        }
     }
 }

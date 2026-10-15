@@ -58,6 +58,7 @@ use std::os::raw::c_char;
 #[cfg(feature = "renditions")]
 use std::os::raw::c_int;
 
+mod align;
 /// The headroom behind Apple's own gain map, which the two maker note tags state between them.
 pub mod apple_gain;
 /// A composition's geometry, and the tiles across it that each take one frame.
@@ -96,6 +97,9 @@ pub mod avif;
 pub mod avif_gain_write;
 /// The stages between the demosaic and the grade, moving onto the GPU one at a time.
 pub mod base;
+pub mod burst;
+#[cfg(test)]
+mod burst_scene;
 /// Which colour each photosite carries, as a period rather than as a 2x2.
 pub mod cfa;
 /// The monotonic clock the timed paths read, which `wasm32` has none of.
@@ -183,6 +187,7 @@ pub mod light;
 pub mod linearise;
 /// Demosaicing by luma-chroma demultiplexing, for the patterns RCD cannot pair into 2x2 sites.
 pub mod lslcd;
+pub mod merge;
 pub mod open;
 pub mod open_stage;
 /// Which way up a file says its picture goes, in the numbering both hosts and both shaders use.
@@ -198,8 +203,6 @@ pub mod photo_analysis;
 #[cfg(feature = "renditions")]
 pub mod picture;
 pub mod pipelines;
-pub mod pixel_shift;
-mod pixel_shift_align;
 pub mod planes;
 /// The other denoise, in the same place: a learned network a reader can choose instead.
 pub mod pmrid;

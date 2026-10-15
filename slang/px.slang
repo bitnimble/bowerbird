@@ -30,8 +30,9 @@
 //   Print frame borders use a share of the photo's short edge, identical on all four sides.
 // - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*` and `QUIET_*` tile, `galosh`'s windows,
 //   `galosh/reconstruct_bayer`'s `HALO`, `defocus.slang`'s `STRIDE`, `highlight::CELL_SITES`
-//   (`highlight_field.slang`'s `cell_sites`) and `pixel_shift_align.slang`'s tile, patch, search
-//   and outlier reaches. A photosite is a photosite, so a count of them is a quantity and `exact`
+//   (`highlight_field.slang`'s `cell_sites`), `align.slang`'s tile, patch, search
+//   and outlier reaches, and `merge.slang`'s kernel spreads, all on the frames' photosites
+//   whatever grid the merge writes. A photosite is a photosite, so a count of them is a quantity and `exact`
 //   takes it. `upscale.slang`'s 3x3 taps and `upscale.rs`'s reach of one packed pixel a layer are
 //   the same: the network was trained on photosites. So is `supersample.slang`'s `REACH`,
 //   Lanczos-3 over the demosaic of the upscale, two of its pixels a photosite.

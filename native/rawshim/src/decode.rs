@@ -176,15 +176,18 @@ pub async fn tile_from(
     crate::decode_rawler::decode_tile_source(&raw, view, detail, fit, halo, dust).await
 }
 
-/// [`tile_from`] over a sensor-shift burst's RAWs, merged on the mosaic (`pixel_shift`).
-pub async fn shifted_tile_from(
+/// [`tile_from`] over a stack's RAWs, merged on the mosaic (`merge`).
+#[allow(clippy::too_many_arguments)]
+pub async fn merged_tile_from(
     paths: &[&str],
     view: crate::view::View,
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
     halo: usize,
-    prior: &[crate::pixel_shift::Offset],
+    prior: &[crate::burst::Offset],
     recipe: &crate::composition::Composition,
+    stack: crate::burst::Stack,
+    scale: usize,
 ) -> Option<crate::frame::Frame> {
     if paths
         .iter()
@@ -196,8 +199,10 @@ pub async fn shifted_tile_from(
         .iter()
         .map(|path| crate::decode_rawler::mapped(path))
         .collect::<Option<Vec<_>>>()?;
-    crate::decode_rawler::decode_shifted_tile(&sources, view, detail, fit, halo, prior, recipe)
-        .await
+    crate::decode_rawler::decode_merged_tile(
+        &sources, view, detail, fit, halo, prior, recipe, stack, scale,
+    )
+    .await
 }
 
 /// Where a photograph's bytes are, for the two entry points that take a file rather than an open.

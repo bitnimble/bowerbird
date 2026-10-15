@@ -141,9 +141,10 @@ vite.config.ts.timestamp-*
 # Bowerbird
 /photos/
 /.photos/
-# The frames e2e renders once per checkout, from the crate rather than from a camera.
+# The frames e2e and the bench render once per checkout, from the crate rather than from a camera.
 /test/fixtures/pano-views/
 /test/fixtures/merge-burst/
+/test/fixtures/bench-burst/
 bowerbird.db
 bowerbird.db-*
 # The catalogue a restore moves aside (§4.9), which is `.db.` rather than `.db-`.

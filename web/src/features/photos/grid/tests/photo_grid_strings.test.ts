@@ -5,6 +5,8 @@ test('a panorama and a merge are each read out as what they are', () => {
   expect(PhotoGridStrings.compositeName(3, 'panorama')).toBe('Panorama of 3 photos');
   expect(PhotoGridStrings.compositeName(3, 'assembly')).toBe('Merge of 3 photos');
   expect(PhotoGridStrings.tile(false, 3, 'x', 'assembly', null)).toBe('merge of 3 photos');
+  expect(PhotoGridStrings.tile(false, 8, 'x', 'burst', null)).toBe('merge of 8 photos');
+  expect(PhotoGridStrings.compositeName(8, 'burst')).toBe('Merge of 8 photos');
   expect(PhotoGridStrings.tile(false, 3, 'x', null, null)).toBe('stack of 3, photo x');
   expect(PhotoGridStrings.showCompositeFrames(3, 'assembly')).toBe(
     'Show the 3 frames of this merge',

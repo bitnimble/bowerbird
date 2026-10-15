@@ -5,6 +5,8 @@ export const MergePageStrings = {
   mergePhotos: () => 'Merge photos',
   toPanorama: () => 'To panorama',
   takeBestParts: () => 'Take best parts',
+  reduceNoise: () => 'Reduce noise',
+  increaseResolution: () => 'Increase resolution',
   bracket: (kind: CaptureSequenceKind | null) => {
     if (kind === 'pixelShift') return 'Pixel shift';
     if (kind === 'exposureBracket') return 'Exposure bracket';

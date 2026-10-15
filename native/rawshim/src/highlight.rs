@@ -187,6 +187,14 @@ impl Field {
             colouring: Colouring::DEFAULT,
         }
     }
+
+    /// The same field over a mosaic `by` times finer in each axis than the one it was measured over.
+    pub fn magnified(&self, by: usize) -> Field {
+        Field {
+            cell: self.cell * by,
+            ..self.clone()
+        }
+    }
 }
 
 impl<'a> Seen<'a> {

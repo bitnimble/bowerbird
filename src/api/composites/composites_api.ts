@@ -7,7 +7,7 @@ import {
   ReopenedAssemblySchema,
 } from '../../schemas/assembly';
 import { CompositePhotoSchema } from '../../schemas/composition';
-import { PhotoTargetSchema } from '../../schemas/photos';
+import { BurstMergeSchema, PhotoTargetSchema } from '../../schemas/photos';
 import { PathSegment, route } from '../../schemas/route';
 import type { CompositesService } from '../../services/composites/composites_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
@@ -40,6 +40,15 @@ export class CompositesApi {
       const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));
       return c.json(
         respond(CompositePhotoSchema, await this.composites.mergeBracket(photoIds)),
+        201,
+      );
+    });
+
+    app.post(route(PathSegment.burst()), async (c) => {
+      const { target, scale } = BurstMergeSchema.parse(await c.req.json());
+      const photoIds = this.photos.resolve(target);
+      return c.json(
+        respond(CompositePhotoSchema, await this.composites.mergeBurst(photoIds, scale)),
         201,
       );
     });

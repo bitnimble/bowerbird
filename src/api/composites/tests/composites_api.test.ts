@@ -30,6 +30,7 @@ const RECIPE = AssemblyRecipeSchema.parse(
 function buildApp(composites: Partial<CompositesService> = {}) {
   const service = {
     mergePanorama: jest.fn(async () => ({ photoId: 'made' })),
+    mergeBurst: jest.fn(async () => ({ photoId: 'made' })),
     startAssembly: jest.fn(() => 'job1'),
     assemblyJob: jest.fn((id: string) =>
       id === 'job1' ? { id, photoIds: ['photo001'], status: 'analysing', fraction: 0.4 } : null,
@@ -61,6 +62,30 @@ async function post(app: Hono, at: string, body?: unknown): Promise<Response> {
       : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
   });
 }
+
+describe('CompositesApi, a burst', () => {
+  it('merges the target and answers the photo it made', async () => {
+    const { app, service } = buildApp();
+
+    const res = await post(app, '/api/composites/burst', {
+      target: { photo_ids: ['photo001', 'photo002'] },
+      scale: 2,
+    });
+
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ photoId: 'made' });
+    expect(service.mergeBurst).toHaveBeenCalledWith(['photo001', 'photo002'], 2);
+  });
+
+  it('refuses a scale it cannot merge at', async () => {
+    const { app, service } = buildApp();
+    const target = { photo_ids: ['photo001', 'photo002'] };
+
+    expect((await post(app, '/api/composites/burst', { target, scale: 3 })).status).toBe(400);
+    expect((await post(app, '/api/composites/burst', { target })).status).toBe(400);
+    expect(service.mergeBurst).not.toHaveBeenCalled();
+  });
+});
 
 describe('CompositesApi, the assembly half', () => {
   it('starts a carve and answers its job', async () => {

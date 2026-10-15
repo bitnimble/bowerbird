@@ -207,6 +207,17 @@ impl Composition {
             seam_rms_px: None,
         }
     }
+
+    /// The same picture on a canvas `by` times finer in each axis.
+    pub fn magnified(self, by: usize) -> Composition {
+        let by_f = by as f64;
+        Composition {
+            canvas: [self.canvas[0] * by, self.canvas[1] * by],
+            centre: [self.centre[0] * by_f, self.centre[1] * by_f],
+            radians_per_pixel: self.radians_per_pixel / by_f,
+            ..self
+        }
+    }
 }
 
 /// The pinhole focal [`Composition::of_one`] states its one source at.

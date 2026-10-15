@@ -98,6 +98,10 @@ export const PANORAMA_PHOTO_NAMES = PANORAMA_VIEW_NAMES;
 // moving camera.
 export const MERGE_PHOTOS_DIR = path.join(E2E_ROOT, 'merge-photos');
 export const MERGE_PHOTO_NAMES = ['frame-0.dng', 'frame-1.dng', 'frame-2.dng'];
+// The same burst for Reduce noise and for Increase resolution, each under its own root since each
+// merge inserts a photograph too.
+export const BURST_PHOTOS_DIR = path.join(E2E_ROOT, 'burst-photos');
+export const RESOLUTION_PHOTOS_DIR = path.join(E2E_ROOT, 'resolution-photos');
 
 // A stack's members. The sort is required rather than defaulted, so that a caller
 // cannot get back an order nothing else in the app uses (§19.5.3); these fixtures
@@ -271,8 +275,10 @@ export function prepareFixture(): void {
     copyFileSync(path.join(PANORAMA_VIEWS, name), path.join(PANORAMA_PHOTOS_DIR, name));
   }
   mergeBurst(MERGE_BURST);
-  mkdirSync(MERGE_PHOTOS_DIR, { recursive: true });
-  for (const name of MERGE_PHOTO_NAMES) {
-    copyFileSync(path.join(MERGE_BURST, name), path.join(MERGE_PHOTOS_DIR, name));
+  for (const root of [MERGE_PHOTOS_DIR, BURST_PHOTOS_DIR, RESOLUTION_PHOTOS_DIR]) {
+    mkdirSync(root, { recursive: true });
+    for (const name of MERGE_PHOTO_NAMES) {
+      copyFileSync(path.join(MERGE_BURST, name), path.join(root, name));
+    }
   }
 }

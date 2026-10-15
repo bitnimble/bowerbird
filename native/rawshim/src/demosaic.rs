@@ -915,6 +915,26 @@ pub async fn demosaic_plane<T>(
     crate::gpu::read_back(gpu, &readback, consume).await
 }
 
+/// [`demosaic_plane`] left on the device, for a merge to gather its frames' residuals against.
+pub fn demosaic_resident(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &Rcd,
+    mosaic: &crate::condition::Mosaic,
+    cfa: &crate::cfa::Cfa,
+) -> Option<crate::gpu::Buffer> {
+    let margin = match cfa.is_bayer() {
+        true => MARGIN,
+        false => crate::lslcd::MARGIN,
+    };
+    let (shape, shape_group) = shape_group(gpu, rcd, cfa, mosaic, margin);
+    let Recorded {
+        mut recording, rgb, ..
+    } = record(gpu, rcd, mosaic, cfa, &shape_group)?;
+    recording.holding(&shape);
+    recording.submit();
+    Some(rgb)
+}
+
 /// The demosaic this pattern gets, recorded but not submitted, with the plane it writes.
 ///
 /// **The fork is on the pattern and nothing else.** RCD pairs rows and columns into 2x2 sites at

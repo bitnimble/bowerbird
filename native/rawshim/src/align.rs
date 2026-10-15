@@ -7,13 +7,72 @@ use crate::condition::Mosaic;
 use crate::gpu::{Buffer, Gpu};
 use crate::px::{Sensor, Span};
 
-pub const TILE: Span<Sensor> = Span::exact(256);
+pub const TILE: Span<Sensor> = Span::exact(64);
 pub const MARGIN: Span<Sensor> = Span::exact(320);
-const SEARCH: [Span<Sensor>; 3] = [Span::exact(6), Span::exact(12), Span::exact(64)];
+// One step either side below the coarsest level: repeated texture finer than a search's reach
+// offers a whole period's slip as a match as good as the true one.
+const SEARCH: [Span<Sensor>; 2] = [Span::exact(2), Span::exact(4)];
 const PATCH: [Span<Sensor>; 3] = [Span::exact(10), Span::exact(12), Span::exact(24)];
 const COARSE_STEP: Span<Sensor> = Span::exact(8);
-pub const REFERENCE_MARGIN: Span<Sensor> =
-    Span::exact(TILE.raw() + PATCH[2].raw() + COARSE_STEP.raw() / 2);
+const REFINE_RADIUS: Span<Sensor> = Span::exact(24);
+pub const REFERENCE_MARGIN: Span<Sensor> = Span::exact(
+    TILE.raw()
+        + if PATCH[2].raw() > REFINE_RADIUS.raw() + 2 {
+            PATCH[2].raw()
+        } else {
+            REFINE_RADIUS.raw() + 2
+        }
+        + COARSE_STEP.raw() / 2,
+);
+
+/// How far the coarsest level looks from the prior, and what straying from the prior costs a match.
+#[derive(Clone, Copy)]
+pub struct Search {
+    pub reach: Span<Sensor>,
+    /// Correlation given up per squared photosite from the prior.
+    pub penalty: f32,
+}
+
+impl Search {
+    /// A prior from a recipe already placing the frame within a few photosites.
+    pub const AROUND_PRIOR: Search = Search {
+        reach: Span::exact(64),
+        penalty: 0.0003,
+    };
+
+    /// No prior worth leaning on: a frame anywhere within a sixth of `long`.
+    pub fn unplaced(long: usize) -> Search {
+        let reach = (long / 6).max(64);
+        Search {
+            reach: Span::exact(reach),
+            penalty: 0.1 / (reach * reach) as f32,
+        }
+    }
+}
+
+/// A frame's light against the reference's, and where each photosite of its mosaic saturates.
+#[derive(Clone, Copy)]
+pub struct Exposure {
+    pub gain: f32,
+    /// By position in the mosaic's 2x2, row-major from its origin.
+    pub ceilings: [f32; 4],
+}
+
+impl Exposure {
+    #[cfg(test)]
+    pub const UNCLIPPED: Exposure = Exposure {
+        gain: 1.0,
+        ceilings: [f32::INFINITY; 4],
+    };
+
+    pub fn of(cfa: &crate::cfa::Cfa, ceiling: [f32; 3], gain: f32) -> Exposure {
+        let at = |row, column| ceiling[usize::from(cfa.colour_at(row, column)).min(2)];
+        Exposure {
+            gain,
+            ceilings: [at(0, 0), at(0, 1), at(1, 0), at(1, 1)],
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -22,6 +81,10 @@ struct LumaParams {
     height: u32,
     output_width: u32,
     output_height: u32,
+    gain: f32,
+    ceilings: [f32; 4],
+    tile: u32,
+    pad: [u32; 2],
 }
 
 #[repr(C)]
@@ -44,7 +107,7 @@ struct AlignParams {
     patch: i32,
     has_previous: u32,
     tile: u32,
-    pad0: u32,
+    penalty: f32,
     pad1: u32,
     pad2: u32,
 }
@@ -63,16 +126,19 @@ fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fi
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
     static BLOCK: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
     static REDUCE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    let cell = if entry == "block_luma" {
-        &BLOCK
-    } else {
-        &REDUCE
+    static SITE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
+    static DETAIL: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
+    let cell = match entry {
+        "block_luma" => &BLOCK,
+        "site_luma" => &SITE,
+        "detail" => &DETAIL,
+        _ => &REDUCE,
     };
     cell.get_or_init(|| {
         crate::hdr_fit::kernel(
             gpu,
             entry,
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_luma.wgsl")),
+            include_str!(concat!(env!("OUT_DIR"), "/wgsl/align_luma.wgsl")),
             &[(0, UNIFORM), (1, READ), (2, WRITE)],
             &[],
         )
@@ -82,17 +148,20 @@ fn luma_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fi
 fn align_kernel(gpu: &'static Gpu, entry: &'static str) -> &'static crate::hdr_fit::Kernel {
     use crate::hdr_fit::{READ, UNIFORM, WRITE};
     static ALIGN: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
+    static REFINE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
     static REGULARIZE: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
-    let cell = if entry == "align" {
-        &ALIGN
-    } else {
-        &REGULARIZE
+    static FILL: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
+    let cell = match entry {
+        "align" => &ALIGN,
+        "refine" => &REFINE,
+        "fill" => &FILL,
+        _ => &REGULARIZE,
     };
     cell.get_or_init(|| {
         crate::hdr_fit::kernel(
             gpu,
             entry,
-            include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_align.wgsl")),
+            include_str!(concat!(env!("OUT_DIR"), "/wgsl/align.wgsl")),
             &[
                 (0, UNIFORM),
                 (1, READ),
@@ -121,11 +190,13 @@ fn plane(
     height: usize,
     step: usize,
     entry: &'static str,
+    exposure: Exposure,
 ) -> Plane {
-    let output_width = width.div_ceil(2);
-    let output_height = height.div_ceil(2);
+    let halving = if step == 1 { 1 } else { 2 };
+    let output_width = width.div_ceil(halving);
+    let output_height = height.div_ceil(halving);
     let output = gpu.own_buffer(&wgpu::BufferDescriptor {
-        label: Some("pixel shift luma"),
+        label: Some("align luma"),
         size: (output_width * output_height * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
@@ -135,17 +206,21 @@ fn plane(
         height: height as u32,
         output_width: output_width as u32,
         output_height: output_height as u32,
+        gain: exposure.gain,
+        ceilings: exposure.ceilings,
+        tile: 0,
+        pad: [0; 2],
     };
     let kernel = luma_kernel(gpu, entry);
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("pixel shift luma params"),
+        label: Some("align luma params"),
         contents: bytemuck::bytes_of(&params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     recording.holding(source);
     recording.holding(&output);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("pixel shift luma"),
+        label: Some("align luma"),
         layout: &kernel.layout,
         entries: &[
             wgpu::BindGroupEntry {
@@ -181,13 +256,19 @@ fn plane(
 }
 
 pub struct Pyramid {
+    sites: Plane,
     planes: [Plane; 3],
 }
 
 impl Pyramid {
-    pub fn of(gpu: &'static Gpu, mosaic: &Mosaic) -> Pyramid {
+    /// The full-resolution luma the refinement reads, one value a photosite.
+    pub fn sites(&self) -> &Buffer {
+        &self.sites.buffer
+    }
+
+    pub fn of(gpu: &'static Gpu, mosaic: &Mosaic, exposure: Exposure) -> Pyramid {
         let mut recording = gpu.record();
-        let pyramid = Pyramid::record(gpu, &mut recording, mosaic);
+        let pyramid = Pyramid::record(gpu, &mut recording, mosaic, exposure);
         recording.submit();
         pyramid
     }
@@ -196,7 +277,18 @@ impl Pyramid {
         gpu: &'static Gpu,
         recording: &mut crate::gpu::Recording<'static>,
         mosaic: &Mosaic,
+        exposure: Exposure,
     ) -> Pyramid {
+        let sites = plane(
+            gpu,
+            recording,
+            &mosaic.buffer,
+            mosaic.width,
+            mosaic.height,
+            1,
+            "site_luma",
+            exposure,
+        );
         let base = plane(
             gpu,
             recording,
@@ -205,6 +297,7 @@ impl Pyramid {
             mosaic.height,
             2,
             "block_luma",
+            exposure,
         );
         let middle = plane(
             gpu,
@@ -214,6 +307,7 @@ impl Pyramid {
             base.height,
             4,
             "reduce_luma",
+            exposure,
         );
         let coarse = plane(
             gpu,
@@ -223,8 +317,10 @@ impl Pyramid {
             middle.height,
             COARSE_STEP.raw(),
             "reduce_luma",
+            exposure,
         );
         Pyramid {
+            sites,
             planes: [base, middle, coarse],
         }
     }
@@ -238,14 +334,133 @@ pub struct Field {
     pub height: usize,
 }
 
+/// One tile of a [`Field`]: where it sits on the reference, and where the frame has it.
+#[derive(Clone, Copy, Debug)]
+pub struct Placed {
+    pub at: [f64; 2],
+    pub moved: [f64; 2],
+    pub score: f64,
+}
+
+impl Field {
+    /// The tiles a search placed itself, leaving out those that took their neighbours' answer.
+    pub async fn placed(&self, gpu: &'static Gpu) -> Option<Vec<Placed>> {
+        let values = read_floats(gpu, &self.buffer, self.width * self.height * 4).await?;
+        let tile = TILE.raw() as f64;
+        Some(
+            values
+                .chunks_exact(4)
+                .enumerate()
+                .filter(|(_, value)| value[2] > 0.0 && value[3] > 0.0)
+                .map(|(at, value)| Placed {
+                    at: [
+                        self.left as f64 + (at % self.width) as f64 * tile + tile / 2.0,
+                        self.top as f64 + (at / self.width) as f64 * tile + tile / 2.0,
+                    ],
+                    moved: [f64::from(value[0]), f64::from(value[1])],
+                    score: f64::from(value[2]),
+                })
+                .collect(),
+        )
+    }
+}
+
+/// How much of a luma plane's contrast is fine detail, which blur takes and exposure scales out of.
+pub async fn sharpness(gpu: &'static Gpu, luma: &Mosaic) -> Option<f64> {
+    let tile = TILE.raw();
+    let (across, down) = (luma.width.div_ceil(tile), luma.height.div_ceil(tile));
+    let output = gpu.own_buffer(&wgpu::BufferDescriptor {
+        label: Some("align detail"),
+        size: (across * down * 8) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let params = LumaParams {
+        width: luma.width as u32,
+        height: luma.height as u32,
+        output_width: across as u32,
+        output_height: down as u32,
+        gain: 1.0,
+        ceilings: [1.0; 4],
+        tile: tile as u32,
+        pad: [0; 2],
+    };
+    let kernel = luma_kernel(gpu, "detail");
+    let mut recording = gpu.record();
+    let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("align detail params"),
+        contents: bytemuck::bytes_of(&params),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    recording.holding(&luma.buffer);
+    recording.holding(&output);
+    let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("align detail"),
+        layout: &kernel.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: luma.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: output.as_entire_binding(),
+            },
+        ],
+    });
+    {
+        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        pass.set_pipeline(&kernel.pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups((across as u32).div_ceil(8), (down as u32).div_ceil(8), 1);
+    }
+    recording.submit();
+    let tiles = read_floats(gpu, &output, across * down * 2).await?;
+    let (fine, contrast) = tiles
+        .chunks_exact(2)
+        .fold((0.0, 0.0), |(fine, contrast), tile| {
+            (fine + f64::from(tile[0]), contrast + f64::from(tile[1]))
+        });
+    (contrast > 0.0).then(|| fine / contrast)
+}
+
+pub(crate) async fn read_floats(
+    gpu: &'static Gpu,
+    buffer: &Buffer,
+    count: usize,
+) -> Option<Vec<f32>> {
+    let bytes = (count * 4) as u64;
+    let mut recording = gpu.record();
+    let readback = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("align readback"),
+        size: bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(buffer, 0, &readback, 0, bytes);
+    recording.submit();
+    crate::gpu::read_back(gpu, &readback, |mapped| {
+        bytemuck::cast_slice::<u8, f32>(mapped).to_vec()
+    })
+    .await
+}
+
 pub fn measure(
     gpu: &'static Gpu,
     reference: &Pyramid,
     frame: &Mosaic,
+    exposure: Exposure,
     reference_origin: crate::px::At<Sensor>,
     frame_origin: crate::px::At<Sensor>,
     window: crate::px::Rect<Sensor>,
-    prior_at: impl Fn(f64, f64) -> crate::pixel_shift::Offset,
+    prior_at: impl Fn(f64, f64) -> crate::burst::Offset,
+    search: Search,
 ) -> Field {
     let (reference_left, reference_top) = reference_origin.raw();
     let (frame_left, frame_top) = frame_origin.raw();
@@ -265,14 +480,14 @@ pub fn measure(
         }
     }
     let priors = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("pixel shift tile priors"),
+        label: Some("align tile priors"),
         contents: bytemuck::cast_slice(&prior_values),
         usage: wgpu::BufferUsages::STORAGE,
     });
     let mut recording = gpu.record();
-    let frame_planes = Pyramid::record(gpu, &mut recording, frame);
+    let frame_planes = Pyramid::record(gpu, &mut recording, frame, exposure);
     let stub = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("pixel shift empty field"),
+        label: Some("align empty field"),
         contents: &[0u8; 16],
         usage: wgpu::BufferUsages::STORAGE,
     });
@@ -280,6 +495,7 @@ pub fn measure(
     for level in (0..3).rev() {
         let ours = &reference.planes[level];
         let theirs = &frame_planes.planes[level];
+        let reach = SEARCH.get(level).copied().unwrap_or(search.reach);
         let params = AlignParams {
             reference_width: ours.width as u32,
             reference_height: ours.height as u32,
@@ -294,11 +510,11 @@ pub fn measure(
             grid_width: width as u32,
             grid_height: height as u32,
             step: ours.step as u32,
-            reach: (SEARCH[level].raw() / ours.step) as i32,
+            reach: (reach.raw() / ours.step) as i32,
             patch: (PATCH[level].raw() / ours.step) as i32,
             has_previous: u32::from(level != 2),
             tile: TILE.raw() as u32,
-            pad0: 0,
+            penalty: search.penalty,
             pad1: 0,
             pad2: 0,
         };
@@ -315,6 +531,40 @@ pub fn measure(
             height,
         );
     }
+    let params = AlignParams {
+        reference_width: reference.sites.width as u32,
+        reference_height: reference.sites.height as u32,
+        frame_width: frame_planes.sites.width as u32,
+        frame_height: frame_planes.sites.height as u32,
+        reference_left: reference_left as i32,
+        reference_top: reference_top as i32,
+        frame_left: frame_left as i32,
+        frame_top: frame_top as i32,
+        grid_left: left,
+        grid_top: top,
+        grid_width: width as u32,
+        grid_height: height as u32,
+        step: 1,
+        reach: 0,
+        patch: REFINE_RADIUS.raw() as i32,
+        has_previous: 1,
+        tile: TILE.raw() as u32,
+        penalty: 0.0,
+        pad1: 0,
+        pad2: 0,
+    };
+    previous = dispatch(
+        gpu,
+        &mut recording,
+        "refine",
+        &params,
+        &reference.sites.buffer,
+        &frame_planes.sites.buffer,
+        &previous,
+        &priors,
+        width,
+        height,
+    );
     let params = AlignParams {
         reference_width: 0,
         reference_height: 0,
@@ -333,11 +583,11 @@ pub fn measure(
         patch: 0,
         has_previous: 1,
         tile: TILE.raw() as u32,
-        pad0: 0,
+        penalty: 0.0,
         pad1: 0,
         pad2: 0,
     };
-    let regular = dispatch(
+    let mut regular = dispatch(
         gpu,
         &mut recording,
         "regularize",
@@ -349,6 +599,20 @@ pub fn measure(
         width,
         height,
     );
+    for _ in 0..width.max(height) {
+        regular = dispatch(
+            gpu,
+            &mut recording,
+            "fill",
+            &params,
+            &reference.planes[0].buffer,
+            &frame_planes.planes[0].buffer,
+            &regular,
+            &priors,
+            width,
+            height,
+        );
+    }
     recording.submit();
     Field {
         buffer: regular,
@@ -372,14 +636,14 @@ fn dispatch(
     height: usize,
 ) -> Buffer {
     let output = gpu.own_buffer(&wgpu::BufferDescriptor {
-        label: Some("pixel shift field"),
+        label: Some("align field"),
         size: (width * height * 16) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let kernel = align_kernel(gpu, entry);
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("pixel shift align params"),
+        label: Some("align params"),
         contents: bytemuck::bytes_of(params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -387,7 +651,7 @@ fn dispatch(
         recording.holding(buffer);
     }
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("pixel shift align"),
+        label: Some("align"),
         layout: &kernel.layout,
         entries: &[
             wgpu::BindGroupEntry {

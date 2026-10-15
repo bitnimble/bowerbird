@@ -112,7 +112,9 @@ export class OpenGraph {
 
   private describePhoto(photo: PhotoDetail): Page {
     const title = isComposite(photo.recipe)
-      ? OpenGraphStrings.panorama(sourcesOf(photo.recipe).length)
+      ? photo.recipe.kind === 'panorama'
+        ? OpenGraphStrings.panorama(sourcesOf(photo.recipe).length)
+        : OpenGraphStrings.merge(sourcesOf(photo.recipe).length)
       : (photo.file_path?.split('/').pop() ?? photo.id);
     const exposure = [
       photo.focal_length == null ? null : OpenGraphStrings.focalLength(photo.focal_length),

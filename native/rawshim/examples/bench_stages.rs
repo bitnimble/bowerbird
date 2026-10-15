@@ -1,10 +1,12 @@
 //! What a rendition request costs, stage by stage, in a form a ratchet can read.
 //!
 //! ```text
-//! bench_stages [--denoiser galosh|pmrid|upscaler] <raw>...
+//! bench_stages [--denoiser galosh|pmrid|upscaler] <raw>... [--burst <frame>...]
 //! ```
 //!
 //! One line per measurement, `fixture<TAB>stage<TAB>fastest_ms`, and nothing else on stdout.
+//! `--burst` times the hand-held merge as the fixture `burst`: the align a merge starts with, and
+//! the same `full` rendition of the merged frames, less its encode.
 //! `scripts/bench.ts` holds those against `test/fixtures/bench.budget.json`, at the default GALOSH.
 //!
 //! **The whole request, not the pipeline's middle.** `job::run` over the command `bb_run_job` is
@@ -53,8 +55,16 @@ fn main() {
         }
         _ => "galosh".to_string(),
     };
-    if files.is_empty() {
-        eprintln!("bench_stages [--denoiser galosh|pmrid|upscaler] <raw>...");
+    let burst = match files.iter().position(|arg| arg == "--burst") {
+        Some(at) => {
+            let frames = files.split_off(at + 1);
+            files.pop();
+            frames
+        }
+        None => Vec::new(),
+    };
+    if files.is_empty() && burst.is_empty() {
+        eprintln!("bench_stages [--denoiser galosh|pmrid|upscaler] <raw>... [--burst <frame>...]");
         std::process::exit(2);
     }
     rawshim::clock::record();
@@ -69,6 +79,9 @@ fn main() {
     };
     for path in &files {
         measure(path, &output, &denoiser);
+    }
+    if !burst.is_empty() {
+        measure_burst(&burst, &output, &denoiser);
     }
 }
 
@@ -88,7 +101,7 @@ fn fastest(taken: Vec<f64>) -> f64 {
 }
 
 fn measure(path: &str, output: &str, denoiser: &str) {
-    let command = command(path, output, denoiser);
+    let command = job(rendition(path, output, denoiser));
     let mut rounds: Vec<Vec<(String, f64)>> = Vec::with_capacity(REPEATS);
     let mut totals: Vec<f64> = Vec::with_capacity(REPEATS);
 
@@ -127,6 +140,66 @@ fn measure(path: &str, output: &str, denoiser: &str) {
     println!("{}\ttotal\t{:.1}", name(path), fastest(totals));
 }
 
+/// The align a merge of `frames` starts with, then the `full` rendition of what it merges, each
+/// timed whole, discarding round zero for [`measure`]'s reason.
+fn measure_burst(frames: &[String], output: &str, denoiser: &str) {
+    let sources: Vec<serde_json::Value> = frames
+        .iter()
+        .enumerate()
+        .map(|(at, path)| serde_json::json!({ "photoId": format!("frame{at}"), "rawFilePath": path }))
+        .collect();
+    let mut align = rendition(&frames[0], output, denoiser);
+    align["composite"] =
+        serde_json::json!({ "sources": sources, "want": "align", "shape": "burst" });
+    let Some((aligned, align_ms)) = timed(&job(align)) else {
+        return;
+    };
+    let Some(mut recipe) = aligned
+        .composite
+        .and_then(|answer| serde_json::from_str::<serde_json::Value>(&answer).ok())
+        .map(|answer| answer["recipe"].clone())
+    else {
+        eprintln!("burst: the align answered no recipe");
+        return;
+    };
+    recipe["kind"] = serde_json::json!("burst");
+    let mut render = rendition(&frames[0], output, denoiser);
+    render["composite"] =
+        serde_json::json!({ "sources": sources, "want": "render", "recipe": recipe });
+    let Some((_, merge_ms)) = timed(&job(render)) else {
+        return;
+    };
+    println!("burst\talign\t{align_ms:.1}");
+    println!("burst\tmerge\t{merge_ms:.1}");
+}
+
+/// The last round's outcome and the fastest round less its encode, or None where a round failed.
+fn timed(command: &rawshim::job::Job) -> Option<(rawshim::job::Outcome, f64)> {
+    let mut taken = Vec::with_capacity(REPEATS);
+    let mut last = None;
+    for round in 0..=REPEATS {
+        let began = Instant::now();
+        let outcome = rawshim::job::run(command);
+        let encoded: f64 = rawshim::clock::taken()
+            .iter()
+            .filter(|(prefix, name, _)| *prefix == "  job " && name.as_str() == "encode, write")
+            .map(|(_, _, ms)| ms)
+            .sum();
+        let ms = began.elapsed().as_secs_f64() * 1000.0 - encoded;
+        match outcome {
+            Err(why) => {
+                eprintln!("burst: {why}");
+                return None;
+            }
+            Ok(outcome) => last = Some(outcome),
+        }
+        if round > 0 {
+            taken.push(ms);
+        }
+    }
+    Some((last?, fastest(taken)))
+}
+
 /// This round's laps as the stages the budget names, dropping the roll-ups and anything a stage
 /// this build does not know about.
 ///
@@ -162,8 +235,8 @@ fn staged(laps: &[(&'static str, String, f64)]) -> Vec<(String, f64)> {
 /// is the shipped configuration and serde's absent-field defaults are not it.
 ///
 /// No `photoAnalysis`, which is what makes the round cold (see the header).
-fn command(raw: &str, output: &str, denoiser: &str) -> rawshim::job::Job {
-    let json = serde_json::json!({
+fn rendition(raw: &str, output: &str, denoiser: &str) -> serde_json::Value {
+    serde_json::json!({
         "rawFilePath": raw,
         "cameraMatch": "lensAndColour",
         "denoiseLuminance": 20.0,
@@ -187,6 +260,9 @@ fn command(raw: &str, output: &str, denoiser: &str) -> rawshim::job::Job {
             "stillFullChroma": false,
             "sdrFullChroma": false,
         }],
-    });
+    })
+}
+
+fn job(json: serde_json::Value) -> rawshim::job::Job {
     serde_json::from_value(json).expect("the job this file just wrote")
 }

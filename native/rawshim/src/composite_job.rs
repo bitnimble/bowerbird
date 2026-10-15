@@ -43,13 +43,15 @@ pub enum Shape {
     #[default]
     Pan,
     /// Frames of one scene from one place at different exposures, each over the whole of the
-    /// others (`composite_align::Kind::Burst`).
+    /// others (`composite_align::Kind::Stack`).
     ExposureBracket,
     /// The same, focused at different distances, which a lens breathes across: the burst align frees
     /// each frame's scale for it.
     FocusBracket,
     /// A sensor-shift burst.
     PixelShift,
+    /// Frames of one scene from one place, held by hand.
+    Burst,
 }
 
 /// The recipe a render is handed: a composition, and how its sources become one picture.
@@ -62,12 +64,14 @@ pub enum Shape {
 pub enum CompositeRecipe {
     Panorama(crate::composition::Composition),
     Assembly(Box<crate::assembly::Assembly>),
-    /// Weighted by the light each frame gathered, rolled off before it clips.
+    /// Merged on the mosaic (`merge`), each frame weighed by its noise in the reference's light.
     ExposureBracket(crate::composition::Composition),
-    /// Weighted by how sharp each frame is where it is.
+    /// Merged on the mosaic, each place taking the frame in focus there.
     FocusBracket(crate::composition::Composition),
-    /// Merged on the mosaic, before any demosaic (`pixel_shift`).
+    /// Merged on the mosaic from where the sensor moved each frame.
     PixelShift(crate::composition::Composition),
+    /// Merged on the mosaic from wherever each frame's hand put it.
+    Burst(crate::composition::Composition),
 }
 
 impl CompositeRecipe {
@@ -78,27 +82,39 @@ impl CompositeRecipe {
             CompositeRecipe::Panorama(spec)
             | CompositeRecipe::ExposureBracket(spec)
             | CompositeRecipe::FocusBracket(spec)
-            | CompositeRecipe::PixelShift(spec) => spec,
+            | CompositeRecipe::PixelShift(spec)
+            | CompositeRecipe::Burst(spec) => spec,
             CompositeRecipe::Assembly(assembly) => &assembly.spec,
         }
     }
 
-    fn weight(&self) -> crate::composite_tile::Weight<'static> {
-        match self {
-            CompositeRecipe::ExposureBracket(_) => crate::composite_tile::Weight::Exposure,
-            CompositeRecipe::FocusBracket(_) => crate::composite_tile::Weight::Sharpness,
-            CompositeRecipe::Panorama(_)
-            | CompositeRecipe::Assembly(_)
-            | CompositeRecipe::PixelShift(_) => crate::composite_tile::Weight::Feather,
-        }
+    fn stack(&self) -> Option<crate::burst::Stack> {
+        let shape = match self {
+            CompositeRecipe::Panorama(_) | CompositeRecipe::Assembly(_) => return None,
+            CompositeRecipe::ExposureBracket(_) => Shape::ExposureBracket,
+            CompositeRecipe::FocusBracket(_) => Shape::FocusBracket,
+            CompositeRecipe::PixelShift(_) => Shape::PixelShift,
+            CompositeRecipe::Burst(_) => Shape::Burst,
+        };
+        shape.merged().map(|(stack, _)| stack)
     }
+}
 
-    /// How far past a strip its sources are gathered, for a weight that reads its neighbours.
-    fn halo(&self) -> usize {
-        match self {
-            CompositeRecipe::FocusBracket(_) => crate::composite_tile::SHARPNESS_HALO,
-            _ => 0,
-        }
+impl Shape {
+    /// How a shape merged on the mosaic is taken and weighed, and which frame it is drawn as, or
+    /// None for one that is not.
+    fn merged(self) -> Option<(crate::burst::Stack, crate::composite_align::Reference)> {
+        use crate::burst::{Stack, Taken};
+        use crate::composite_align::Reference;
+        use crate::merge::Weights;
+        let (taken, weights, reference) = match self {
+            Shape::Pan => return None,
+            Shape::ExposureBracket => (Taken::Placed, Weights::MOMENT, Reference::MiddleExposure),
+            Shape::FocusBracket => (Taken::Placed, Weights::FOCUS, Reference::Sharpest),
+            Shape::PixelShift => (Taken::SensorShift, Weights::MOMENT, Reference::First),
+            Shape::Burst => (Taken::Placed, Weights::MOMENT, Reference::Sharpest),
+        };
+        Some((Stack { taken, weights }, reference))
     }
 }
 
@@ -138,20 +154,19 @@ pub const MAX_LONG_EDGE: u32 = 16384;
 const STRIP_BUDGET_BYTES: f64 = 512.0 * 1024.0 * 1024.0;
 
 /// Bytes a strip holds per output pixel: the layer being gathered - three 16-bit samples and the
-/// weight beside them - and the blend's accumulator, its alpha, its anchor and the strip it
-/// resolves into.
+/// weight beside them - and the blend's accumulator, its alpha and the strip it resolves into.
 ///
 /// **Not per source.** `composite_tile::Blending` adds each layer and gives it back, so what a tile
 /// costs is its own pixels however many photographs reach it. Multiplied by the source count, as
 /// it was while a blend was handed every layer at once, a twenty-six frame pan took 180 rows a
 /// strip where 910 fit - and every one of those strips decodes every source that reaches it.
-const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 4.0 + 6.0;
+const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 6.0;
 
 fn strip_bytes_per_pixel(recipe: &CompositeRecipe) -> f64 {
     STRIP_BYTES_PER_PIXEL
-        + match recipe {
-            CompositeRecipe::PixelShift(_) => crate::pixel_shift::WORKING_BYTES_PER_PIXEL,
-            _ => 0.0,
+        + match recipe.stack() {
+            Some(_) => crate::merge::WORKING_BYTES_PER_PIXEL,
+            None => 0.0,
         }
 }
 
@@ -324,50 +339,38 @@ pub fn align(
     let (headers, models) = headers_of(pano);
     let sources = sources_of(pano, &headers, &models)?;
 
-    let aligned = match shape {
-        Shape::Pan => pollster::block_on(crate::composite_align::align(
+    let aligned = match shape.merged() {
+        None => pollster::block_on(crate::composite_align::align(
             gpu,
             &sources,
             crate::composite_solve::Leash::Free,
             crate::composite_align::Kind::Pan,
         ))?,
-        // A bracket points every frame at the same place, as a burst does, so its focal is held for
-        // the assembly's reason (take-best-parts §3.1) and every source covers the same crop.
-        Shape::ExposureBracket | Shape::FocusBracket => {
-            let mut aligned = pollster::block_on(crate::composite_align::align(
-                gpu,
-                &sources,
-                crate::composite_solve::Leash::Assumed,
-                crate::composite_align::Kind::Burst,
-            ))?;
-            aligned.composition.crop =
-                crate::assembly_analysis::intersection_crop(&aligned.composition);
-            aligned
-        }
-        Shape::PixelShift => {
-            let first = sources.first().ok_or("a pixel shift needs four frames")?;
-            if sources.len() != crate::pixel_shift::SHIFTS.len()
+        // Every frame of a stack points at the same place, so its focal is held for the assembly's
+        // reason (take-best-parts §3.1), and the picture is the reference's own frame.
+        Some((stack, reference)) => {
+            let first = sources.first().ok_or("a merge needs frames")?;
+            if !stack.taken.holds(sources.len())
                 || sources.iter().any(|source| source.size != first.size)
             {
-                return Err("these frames are not one sensor-shift burst".into());
+                return Err("these frames are not one stack".into());
             }
             let mut aligned = pollster::block_on(crate::composite_align::align(
                 gpu,
                 &sources,
                 crate::composite_solve::Leash::Assumed,
-                crate::composite_align::Kind::Burst,
+                crate::composite_align::Kind::Stack(reference),
             ))?;
-            if aligned.composition.sources.len() != crate::pixel_shift::SHIFTS.len() {
-                return Err("every pixel shift frame must be placed".into());
+            if aligned.composition.sources.len() != sources.len() {
+                return Err("every frame of a stack must be placed".into());
             }
-            let first = &aligned.composition.sources[0];
-            let direct = crate::composition::Composition::of_one(first.size, first.lens.clone());
+            let on = &aligned.composition.sources[aligned.composition.reference];
+            let direct = crate::composition::Composition::of_one(on.size, on.lens.clone());
             aligned.composition.canvas = direct.canvas;
             aligned.composition.centre = direct.centre;
             aligned.composition.radians_per_pixel = direct.radians_per_pixel;
             aligned.composition.projection = direct.projection;
             aligned.composition.crop = direct.crop;
-            aligned.composition.reference = 0;
             aligned
         }
     };
@@ -797,33 +800,11 @@ fn overlap(
         .then(|| crate::px::Rect::exact(left, top, right - left, bottom - top))
 }
 
-/// The `wide` by `deep` rectangle at `at` of a tile `across` pixels wide, as a tile of its own.
-fn inner_of(
-    gpu: &'static crate::gpu::Gpu,
-    grown: crate::resident::Resident,
-    across: usize,
-    at: (usize, usize),
-    (wide, deep): (usize, usize),
-) -> crate::resident::Resident {
-    let inner = crate::resident::Resident::empty(gpu, wide, deep);
-    let mut recording = gpu.record();
-    recording.holding(grown.buffer());
-    recording.holding(inner.buffer());
-    for (to, from, bytes) in crate::resident::runs(across, at.0, at.1, wide, deep) {
-        recording
-            .encoder()
-            .copy_buffer_to_buffer(grown.buffer(), from, inner.buffer(), to, bytes);
-    }
-    recording.submit();
-    grown.reclaim();
-    inner
-}
-
 /// How a strip of a recipe is drawn.
 enum Drawn {
     Blended,
     Assembly(crate::assembly::Drawing),
-    Shifted(crate::composition::Composition),
+    Merged(crate::composition::Composition, crate::burst::Stack),
 }
 
 /// The composite this job's targets are cut from, at the largest of the sizes they asked for.
@@ -998,15 +979,12 @@ pub(crate) fn base(
     // edge and draw a seam with no image seam under it (`assembly_render::lowpass`). Deferred to
     // the first strip that asks, which is where a request to build it from exists.
     let mut hold: Option<crate::assembly_render::Lowpass> = None;
-    let drawn = match wanted {
-        CompositeRecipe::Assembly(assembly) => Drawn::Assembly(assembly.rendered()?),
-        CompositeRecipe::Panorama(_)
-        | CompositeRecipe::ExposureBracket(_)
-        | CompositeRecipe::FocusBracket(_) => Drawn::Blended,
-        CompositeRecipe::PixelShift(spec) => Drawn::Shifted(spec.clone()),
+    let drawn = match (wanted, wanted.stack()) {
+        (CompositeRecipe::Assembly(assembly), _) => Drawn::Assembly(assembly.rendered()?),
+        (_, Some(stack)) => Drawn::Merged(spec.clone(), stack),
+        (_, None) => Drawn::Blended,
     };
-    let burst: Vec<&str> = files.iter().map(|file| file.path).collect();
-    let halo = wanted.halo();
+    let frames: Vec<&str> = files.iter().map(|file| file.path).collect();
     let mut top = 0;
     while top < height {
         let deep = down.min(height - top);
@@ -1041,14 +1019,14 @@ pub(crate) fn base(
                 detail: job.detail(),
                 sources: &files,
                 from,
-                weight: wanted.weight(),
+                weight: crate::composite_tile::Weight::Feather,
             };
             // **A tile of a canvas can hold no photograph at all.** The canvas is framed to what
             // the sources cover between them, and a hand-held pan leaves wedges of nothing at its
             // corners - which a full-width strip always crossed a source somewhere in, and a tile
             // does not. Left as the zeros it was allocated with, and the rendition's own crop is
             // what trims them off (§19.4).
-            if !matches!(&drawn, Drawn::Shifted(_))
+            if !matches!(&drawn, Drawn::Merged(..))
                 && !crate::composite_tile::covered(spec, &request)
             {
                 left += wide;
@@ -1056,40 +1034,12 @@ pub(crate) fn base(
                 continue;
             }
             let (tile, prepared) = match &drawn {
-                Drawn::Blended if halo > 0 => {
-                    // Past the strip and cut back to it, so a weight reading its neighbours reads the
-                    // same ones either side of a strip's edge rather than the edge twice.
-                    let (reach_left, reach_top) =
-                        ((window_left + left).min(halo), (window_top + top).min(halo));
-                    let gathered = crate::px::Rect::exact(
-                        window_left + left - reach_left,
-                        window_top + top - reach_top,
-                        wide + reach_left + halo,
-                        deep + reach_top + halo,
-                    );
-                    let request = crate::composite_tile::CompositeRequest {
-                        window: gathered,
-                        ..request
-                    };
-                    let (grown, prepared) =
-                        pollster::block_on(crate::composite_tile::prepared(spec, &request))?;
-                    (
-                        inner_of(
-                            gpu,
-                            grown,
-                            wide + reach_left + halo,
-                            (reach_left, reach_top),
-                            (wide, deep),
-                        ),
-                        prepared,
-                    )
-                }
                 Drawn::Blended => {
                     pollster::block_on(crate::composite_tile::prepared(spec, &request))?
                 }
-                Drawn::Shifted(first) => {
-                    pollster::block_on(crate::composite_tile::shifted(first, &request, &burst))?
-                }
+                Drawn::Merged(first, stack) => pollster::block_on(crate::composite_tile::merged(
+                    first, &request, &frames, *stack,
+                ))?,
                 Drawn::Assembly(assembly) => {
                     let held = match &hold {
                         Some(held) => held,
@@ -1222,7 +1172,7 @@ pub(crate) fn base(
                 job.grade.reference_white_nits,
                 reference.from_raw.noise,
                 match drawn {
-                    Drawn::Shifted(_) => job.detail().without_upscaler(),
+                    Drawn::Merged(..) => job.detail().without_upscaler(),
                     _ => job.detail().on_bayer(crate::decode_rawler::upscalable_at(
                         files[spec.reference].path,
                     )),
@@ -1560,7 +1510,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pixel_shift_strip_counts_its_merge_buffers() {
+    fn a_merged_strip_counts_its_merge_buffers() {
         let spec = shaped([9504, 6336], [9504, 6336]);
         let ordinary = tile_of(
             &spec,
@@ -1568,10 +1518,15 @@ mod tests {
             6336,
             strip_bytes_per_pixel(&CompositeRecipe::Panorama(spec.clone())),
         );
-        let shifted_bytes = strip_bytes_per_pixel(&CompositeRecipe::PixelShift(spec.clone()));
-        let shifted = tile_of(&spec, 9504, 6336, shifted_bytes);
-        assert!(shifted.0 * shifted.1 < ordinary.0 * ordinary.1);
-        assert!((shifted.0 * shifted.1) as f64 * shifted_bytes <= STRIP_BUDGET_BYTES);
+        for recipe in [
+            CompositeRecipe::PixelShift(spec.clone()),
+            CompositeRecipe::Burst(spec.clone()),
+        ] {
+            let merged_bytes = strip_bytes_per_pixel(&recipe);
+            let merged = tile_of(&spec, 9504, 6336, merged_bytes);
+            assert!(merged.0 * merged.1 < ordinary.0 * ordinary.1);
+            assert!((merged.0 * merged.1) as f64 * merged_bytes <= STRIP_BUDGET_BYTES);
+        }
     }
 
     /// **The tile takes one source's shape, not the canvas's.** How many tiles a source is decoded

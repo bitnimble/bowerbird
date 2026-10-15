@@ -45,6 +45,10 @@ name = "fit_bench"
 required-features = ["renditions"]
 
 [[example]]
+name = "merges"
+required-features = ["renditions"]
+
+[[example]]
 name = "crops"
 required-features = ["renditions"]
 

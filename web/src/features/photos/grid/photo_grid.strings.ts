@@ -29,7 +29,7 @@ export const PhotoGridStrings = {
         ? `photo ${filename}`
         : composite === 'panorama'
           ? `panorama of ${stackSize} photos`
-          : composite === 'assembly'
+          : composite != null
             ? `merge of ${stackSize} photos`
             : `${stackName(bracket)} of ${stackSize}, photo ${filename}`
     }`,

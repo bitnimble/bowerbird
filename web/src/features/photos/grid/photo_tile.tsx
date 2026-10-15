@@ -516,7 +516,7 @@ const TileFoot = observer(function TileFoot({
   const compositeBadge = inStrip == null && composite != null && position != null;
   const badged = compositeBadge || (inStrip == null && band != null);
   // A merge is the scene its frames show, so it goes unnamed under its tile.
-  const named = listing.showFilenames && composite !== 'assembly';
+  const named = listing.showFilenames && (composite == null || composite === 'panorama');
 
   return (
     <div {...stylex.props(foot.foot, list && foot.list, inStrip != null && foot.strip)}>

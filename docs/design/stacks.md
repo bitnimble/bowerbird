@@ -570,29 +570,31 @@ members with the positions (§18.3.1).
 The bulk bar counts **entries**, where a stack counts as one, because the client
 cannot know the sizes of stacks in a selection covering rows it has never held.
 
-| action            | shown when                                                          |
-| ----------------- | ------------------------------------------------------------------- |
-| Stack             | two or more entries selected                                        |
-| Unstack           | a selected row this client is holding is a stack                    |
-| Remove from stack | band members are selected, of one stack or several                  |
-| Merge photos      | always, its two rows individually refused or greyed by name (below) |
+| action            | shown when                                                      |
+| ----------------- | --------------------------------------------------------------- |
+| Stack             | two or more entries selected                                    |
+| Unstack           | a selected row this client is holding is a stack                |
+| Remove from stack | band members are selected, of one stack or several              |
+| Merge photos      | always, its rows individually refused or greyed by name (below) |
 
 Stacking a selection that already contains stacked photos moves those photos into
 the new stack; any stack left with fewer than two members is deleted, because a
 stack of one is a photograph.
 
-**Merge photos sits in its own section beside Stack and Unstack, not among them.** `bulk_bar.tsx`'s
-`OverflowMenu` renders a section's own content above its options, and the ordering that keeps Stack and
-Unstack adjacent stays deliberate rather than getting a third row wedged between them. It opens a `Submenu`
-of two rows, **To panorama** and **Take best parts** - joining frames that point in different directions
-into one wider picture, or frames that point at the same thing and disagree about what was in it. The two
-are not refused the same way: **To panorama** has no page of its own to navigate to, so a click issues the
-merge directly and the service is what refuses a bad selection - fewer than two entries, entries from more
-than one library, or an entry that is itself a composite. **Take best parts** is a route, so its four
-refusals - the same three plus, for it alone, more than twelve frames, since carving tiles out of a burst is
-what stops being quick past that - are checked client-side first: a failing selection greys the row rather
-than letting a click navigate anywhere, named in its title. The service refuses the same four again when a
-request reaches it without the page.
+**Merge photos sits in its own section beside Stack and Unstack**, so those two stay adjacent:
+`bulk_bar.tsx`'s `OverflowMenu` renders a section's own content above its options. It opens a `Submenu`
+of five rows: **To panorama** joins frames that point in different directions into one wider picture,
+**Take best parts** frames that point at the same thing and disagree about what was in it, **Reduce noise**
+and **Increase resolution** merge frames of the same thing on the mosaic, onto the reference's photosites or
+a grid twice as fine (rendering §10.9.3), and the bracket row merges an exposure or focus bracket the same
+way. They are not refused the same way: **To panorama** has no page of its own to navigate to, so a click issues the merge
+directly and the service is what refuses a bad selection - fewer than two entries, entries from more than
+one library, or an entry that is itself a composite. **Take best parts** is a route, so its four refusals -
+the same three plus, for it alone, more than twelve frames, since carving tiles out of a burst is what stops
+being quick past that - are checked client-side first: a failing selection greys the row rather than letting
+a click navigate anywhere, named in its title. The service refuses the same four again when a request
+reaches it without the page. **Reduce noise** and **Increase resolution** grey on the same four, since every
+frame is decoded for every tile, and the native align refuses frames of different sizes.
 
 ## 20. Stack Triage
 

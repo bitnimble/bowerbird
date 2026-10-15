@@ -96,7 +96,7 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
     // into this rather than into a pass of their own: a preview and a pair each, the solve, a
     // full-size plane each, and the field.
     let n = sources.len();
-    crate::progress::begin(n + n * n.saturating_sub(1) / 2 + 1 + n + FIELD_STEPS);
+    crate::progress::begin(n + n.saturating_sub(1) + 1 + n + FIELD_STEPS);
     stopping()?;
     let gpu = crate::gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
@@ -107,7 +107,7 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
         gpu,
         sources,
         crate::composite_solve::Leash::Assumed,
-        crate::composite_align::Kind::Burst,
+        crate::composite_align::Kind::Stack(crate::composite_align::Reference::Sharpest),
     )
     .await
     .map_err(Refused::NotAligned)?;

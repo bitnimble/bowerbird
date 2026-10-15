@@ -10,7 +10,11 @@ import type { RequestActivity } from '../../../../../src/schemas/request_activit
 import { compositesApi } from '../../../api/composites';
 import { photosApi } from '../../../api/photos';
 import { stacksApi } from '../../../api/stacks';
-import type { CompositePhoto, CompositeProgress } from '../../../../../src/schemas/composition';
+import type {
+  BurstScale,
+  CompositePhoto,
+  CompositeProgress,
+} from '../../../../../src/schemas/composition';
 import type { ToastsPresenter } from '../../toasts/toasts_presenter';
 import { displayRowOf, rowAt, type Expansion } from './bands';
 import type { ScrollRailPresenter } from './scroll_rail_presenter';
@@ -434,6 +438,10 @@ export class StackActionsPresenter {
   /** Merges a selected bracket stack into the photograph its capture was shot for. */
   async mergeSelectedBracket(): Promise<void> {
     await this.mergeSelection(compositesApi.mergeBracket);
+  }
+
+  async mergeSelectionToBurst(scale: BurstScale): Promise<void> {
+    await this.mergeSelection((target) => compositesApi.mergeBurst(target, scale));
   }
 
   /**

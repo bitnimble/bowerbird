@@ -67,7 +67,7 @@ import {
 // rarely, in three groups: what the selection *is*, where it is filed, and what
 // can be done to the photographs themselves.
 type StackAction = 'stack' | 'unstack' | 'triage';
-type MergeAction = 'panorama' | 'assembly' | 'bracket';
+type MergeAction = 'panorama' | 'assembly' | 'bracket' | 'reduceNoise' | 'increaseResolution';
 type FilingAction = 'remove' | 'banner';
 type PhotoAction = 'export' | 'reveal' | 'thumbnails' | 'metadata' | 'hide' | 'unhide' | 'bin';
 
@@ -456,6 +456,18 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                         tooltip: mergeRefusal(mergeCandidate),
                       },
                       {
+                        value: 'reduceNoise' as const,
+                        label: MergePageStrings.reduceNoise(),
+                        disabled: mergeCandidate.kind !== 'ready',
+                        tooltip: mergeRefusal(mergeCandidate),
+                      },
+                      {
+                        value: 'increaseResolution' as const,
+                        label: MergePageStrings.increaseResolution(),
+                        disabled: mergeCandidate.kind !== 'ready',
+                        tooltip: mergeRefusal(mergeCandidate),
+                      },
+                      {
                         value: 'bracket' as const,
                         label: MergePageStrings.bracket(selectedBracket),
                         disabled: selectedBracket == null,
@@ -468,6 +480,9 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                     onSelect={(action: MergeAction) => {
                       if (action === 'panorama') void photos.mergeSelectionToPanorama();
                       else if (action === 'bracket') void photos.mergeSelectedBracket();
+                      else if (action === 'reduceNoise') void photos.mergeSelectionToBurst(1);
+                      else if (action === 'increaseResolution')
+                        void photos.mergeSelectionToBurst(2);
                       else if (mergeCandidate.kind === 'ready') {
                         const source = listing.source;
                         void photos

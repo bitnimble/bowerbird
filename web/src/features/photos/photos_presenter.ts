@@ -15,7 +15,7 @@ import { type Rendition } from '../../../../src/services/processing/renditions/r
 import { photosApi } from '../../api/photos';
 import { ApiError } from '../../api/request';
 import { stacksApi } from '../../api/stacks';
-import type { CompositeProgress } from '../../../../src/schemas/composition';
+import type { BurstScale, CompositeProgress } from '../../../../src/schemas/composition';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
@@ -1281,6 +1281,10 @@ export class PhotosPresenter {
 
   async mergeSelectedBracket(): Promise<void> {
     await this.stackActionsPresenter.mergeSelectedBracket();
+  }
+
+  async mergeSelectionToBurst(scale: BurstScale): Promise<void> {
+    await this.stackActionsPresenter.mergeSelectionToBurst(scale);
   }
 
   async startAssembly(frameIds: string[]): Promise<string | null> {
