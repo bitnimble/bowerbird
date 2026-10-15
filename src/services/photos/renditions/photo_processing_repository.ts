@@ -170,6 +170,15 @@ export class PhotoProcessingRepository {
       .get(renditionVariant('grid', false), id) as { media_image_id: number | null } | null;
     return row?.media_image_id ?? null;
   }
+  /** Moves the tile's version alone: the tile pass is still owed its descriptor and header. */
+  markTileArrived(id: string, atIso: string): void {
+    this.db
+      .query(
+        `INSERT INTO renditions (photo_id, variant, needs_build, built_at) VALUES (?, ?, 1, ?)
+         ON CONFLICT (photo_id, variant) DO UPDATE SET built_at = excluded.built_at`,
+      )
+      .run(id, renditionVariant('grid', false), atIso);
+  }
   dropDeviceTile(id: string): void {
     this.db.query('UPDATE photos SET media_image_id = NULL WHERE id = ?').run(id);
   }

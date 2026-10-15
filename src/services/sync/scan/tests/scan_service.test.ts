@@ -386,6 +386,7 @@ describe('a library the device media index answers for', () => {
           ]),
         ),
       thumbnail: () => Promise.resolve(null),
+      queueThumbnail: () => Promise.resolve(null),
     };
     const peer = makeLibrary({
       include_non_raw: 1,

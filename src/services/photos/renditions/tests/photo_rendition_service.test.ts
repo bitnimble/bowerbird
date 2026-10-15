@@ -231,10 +231,16 @@ describe('PhotoRenditionService.rebuildIfStale', () => {
 describe('PhotoRenditionService.deviceTile', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'device-tile-'));
   writeFileSync(path.join(root, 'p1.jpg'), 'original');
-  const thumbnailing = (jpeg: Uint8Array | 'gone' | null): MediaListing => ({
+  const thumbnailing = (
+    queued: Uint8Array | 'gone' | null,
+    direct: Uint8Array | 'gone' | null = queued,
+  ): MediaListing => ({
     under: jest.fn(async () => null),
-    thumbnail: jest.fn(async () => jpeg),
+    thumbnail: jest.fn(async () => direct),
+    queueThumbnail: jest.fn(async () => queued),
   });
+  const landed = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+  const JPEG = new Uint8Array([0xff, 0xd8]);
   const located = {
     photoPaths: {
       getBasicById: jest.fn(() => ({
@@ -251,21 +257,45 @@ describe('PhotoRenditionService.deviceTile', () => {
     dropDeviceTile: jest.fn(),
   });
 
-  it("hands over the device's thumbnail of the row's image, named by its file", async () => {
-    const media = thumbnailing(new Uint8Array([0xff, 0xd8]));
-    const { service } = build({ ...located, media, photoProcessing: deviceTiled(7) });
+  it('fetches a thumbnail behind the request, then hands it over when asked again', async () => {
+    const media = thumbnailing(JPEG);
+    const { service, processing } = build({
+      ...located,
+      media,
+      photoProcessing: deviceTiled(7),
+      processing: { deviceTileArrived: jest.fn() },
+    });
 
-    expect(await service.deviceTile('p1')).toEqual(new Uint8Array([0xff, 0xd8]));
+    expect(await service.deviceTile('p1')).toBeNull();
+    expect(media.queueThumbnail).toHaveBeenCalledWith(7, path.join(root, 'p1.jpg'));
+    await landed();
+    expect(processing.deviceTileArrived).toHaveBeenCalledWith('p1');
+
+    expect(await service.deviceTile('p1')).toEqual(JPEG);
     expect(media.thumbnail).toHaveBeenCalledWith(7, path.join(root, 'p1.jpg'));
   });
 
+  it('fetches once however many requests arrive while it runs', async () => {
+    const media = thumbnailing(JPEG);
+    const { service } = build({
+      ...located,
+      media,
+      photoProcessing: deviceTiled(7),
+      processing: { deviceTileArrived: jest.fn() },
+    });
+
+    await Promise.all([service.deviceTile('p1'), service.deviceTile('p1')]);
+
+    expect(media.queueThumbnail).toHaveBeenCalledTimes(1);
+  });
+
   it('asks the device nothing where the tile is a file of ours', async () => {
-    const media = thumbnailing(new Uint8Array([0xff]));
+    const media = thumbnailing(JPEG);
     const { service } = build({ ...located, media, photoProcessing: deviceTiled(null) });
 
     expect(await service.deviceTile('p1')).toBeNull();
     expect(service.isDeviceTile('p1')).toBe(false);
-    expect(media.thumbnail).not.toHaveBeenCalled();
+    expect(media.queueThumbnail).not.toHaveBeenCalled();
   });
 
   it('builds a tile of its own for an image the device says it no longer has', async () => {
@@ -277,27 +307,48 @@ describe('PhotoRenditionService.deviceTile', () => {
     });
 
     expect(await service.deviceTile('p1')).toBeNull();
+    await landed();
     expect(photoProcessing.dropDeviceTile).toHaveBeenCalledWith('p1');
     expect(processing.rebuildTiles).toHaveBeenCalledWith(['p1']);
   });
 
-  it('keeps the device tile when the device could not be asked', async () => {
+  it('builds a tile of its own when one handed over before is gone', async () => {
     const { service, photoProcessing, processing } = build({
       ...located,
-      media: thumbnailing(null),
+      media: thumbnailing(JPEG, 'gone'),
       photoProcessing: deviceTiled(7),
-      processing: { rebuildTiles: jest.fn(async () => 1) },
+      processing: { deviceTileArrived: jest.fn(), rebuildTiles: jest.fn(async () => 1) },
     });
+    await service.deviceTile('p1');
+    await landed();
 
     expect(await service.deviceTile('p1')).toBeNull();
+    expect(photoProcessing.dropDeviceTile).toHaveBeenCalledWith('p1');
+    expect(processing.rebuildTiles).toHaveBeenCalledWith(['p1']);
+  });
+
+  it('keeps the device tile, and fetches again next time, when the device could not be asked', async () => {
+    const media = thumbnailing(null);
+    const { service, photoProcessing, processing } = build({
+      ...located,
+      media,
+      photoProcessing: deviceTiled(7),
+      processing: { deviceTileArrived: jest.fn(), rebuildTiles: jest.fn(async () => 1) },
+    });
+
+    await service.deviceTile('p1');
+    await landed();
+    await service.deviceTile('p1');
+
     expect(photoProcessing.dropDeviceTile).not.toHaveBeenCalled();
-    expect(processing.rebuildTiles).not.toHaveBeenCalled();
+    expect(processing.deviceTileArrived).not.toHaveBeenCalled();
+    expect(media.queueThumbnail).toHaveBeenCalledTimes(2);
   });
 
   it('builds a file for a peer, which cannot ask this device for its thumbnail', async () => {
     const { service, photoProcessing, processing } = build({
       ...located,
-      media: thumbnailing(new Uint8Array([0xff])),
+      media: thumbnailing(JPEG),
       photoProcessing: deviceTiled(7),
       processing: { rebuildTiles: jest.fn(async () => 1) },
     });

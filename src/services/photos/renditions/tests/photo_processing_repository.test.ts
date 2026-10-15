@@ -159,6 +159,18 @@ describe('PhotoProcessingRepository.deviceTile', () => {
     expect(repo.deviceTile('live')).toBe(7);
   });
 
+  it("moves a thumbnail's version without settling the tile pass it still owes", () => {
+    repo.markTileArrived('live', '2026-06-01T00:00:00.000Z');
+
+    expect(
+      db
+        .query(
+          "SELECT needs_build, built_at FROM renditions WHERE photo_id = 'live' AND variant = 'grid'",
+        )
+        .get(),
+    ).toEqual({ needs_build: 1, built_at: '2026-06-01T00:00:00.000Z' });
+  });
+
   it('is never a row the media index did not catalogue, or one dropped from it', () => {
     expect(repo.deviceTile('binned')).toBeNull();
 

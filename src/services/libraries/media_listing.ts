@@ -6,7 +6,8 @@ const log = new Logger('media-listing');
 
 const ANSWER_TIMEOUT_MS = 30_000;
 const THUMBNAIL_TIMEOUT_MS = 10_000;
-const THUMBNAILS_AT_ONCE = 4;
+const QUEUED_THUMBNAILS_AT_ONCE = 4;
+const QUEUED_THUMBNAILS_WAITING = 64;
 
 export interface MediaEntry {
   size: number;
@@ -26,6 +27,11 @@ export interface MediaListing {
    * more, null where it could not be asked.
    */
   thumbnail(imageId: number, path: string): Promise<Uint8Array | 'gone' | null>;
+  /**
+   * `thumbnail`, a few at a time and newest first, for one the device may still have to make. Null
+   * as well where newer asks pushed this one out of the queue.
+   */
+  queueThumbnail(imageId: number, path: string): Promise<Uint8Array | 'gone' | null>;
 }
 
 const MediaReplySchema = z.union([
@@ -52,7 +58,7 @@ const ThumbnailReplySchema = z.union([
 
 export class ShellMediaListing implements MediaListing {
   private asking = 0;
-  private readonly waiting: (() => void)[] = [];
+  private readonly waiting: ((turn: boolean) => void)[] = [];
 
   constructor(private readonly socketPath: string) {}
 
@@ -86,12 +92,23 @@ export class ShellMediaListing implements MediaListing {
     );
   }
 
+  async queueThumbnail(imageId: number, path: string): Promise<Uint8Array | 'gone' | null> {
+    if (this.asking < QUEUED_THUMBNAILS_AT_ONCE) this.asking++;
+    else if (!(await this.turn())) return null;
+    try {
+      return await this.thumbnail(imageId, path);
+    } finally {
+      // Handed straight to the newest waiting, so a caller arriving in between can't take it too.
+      const next = this.waiting.pop();
+      if (next == null) this.asking--;
+      else next(true);
+    }
+  }
+
   async thumbnail(imageId: number, path: string): Promise<Uint8Array | 'gone' | null> {
     let line: string;
     try {
-      line = await this.inTurn(() =>
-        askShell(this.socketPath, { thumbnail: [imageId, path] }, THUMBNAIL_TIMEOUT_MS),
-      );
+      line = await askShell(this.socketPath, { thumbnail: [imageId, path] }, THUMBNAIL_TIMEOUT_MS);
     } catch (err) {
       log.warn('could not ask the app for a thumbnail', { imageId, err });
       return null;
@@ -111,16 +128,11 @@ export class ShellMediaListing implements MediaListing {
     return Buffer.from(reply.data.jpeg, 'base64');
   }
 
-  private async inTurn<T>(ask: () => Promise<T>): Promise<T> {
-    if (this.asking < THUMBNAILS_AT_ONCE) this.asking++;
-    else await new Promise<void>((resolve) => this.waiting.push(resolve));
-    try {
-      return await ask();
-    } finally {
-      // Handed straight to the next in line, so a caller arriving in between can't take it too.
-      const next = this.waiting.shift();
-      if (next == null) this.asking--;
-      else next();
-    }
+  /** Whether this ask got a turn, rather than being pushed out by newer ones. */
+  private turn(): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.waiting.push(resolve);
+      if (this.waiting.length > QUEUED_THUMBNAILS_WAITING) this.waiting.shift()?.(false);
+    });
   }
 }

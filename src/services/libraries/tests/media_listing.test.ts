@@ -108,14 +108,27 @@ describe('ShellMediaListing.thumbnail', () => {
   it('answers null when no shell is listening', async () => {
     expect(await new ShellMediaListing(shell.socket).thumbnail(41, '/a/p.jpg')).toBeNull();
   });
+});
 
-  it('answers every one of more asks than it makes at once', async () => {
+describe('ShellMediaListing.queueThumbnail', () => {
+  const queued = async (count: number): Promise<(Uint8Array | 'gone' | null)[]> => {
     await shell.answer(JSON.stringify({ jpeg: Buffer.from([0xff]).toString('base64') }));
     const listing = new ShellMediaListing(shell.socket);
-    const answers = await Promise.all(
-      Array.from({ length: 9 }, (_, at) => listing.thumbnail(at, `/a/${at}.jpg`)),
+    return Promise.all(
+      Array.from({ length: count }, (_, at) => listing.queueThumbnail(at, `/a/${at}.jpg`)),
     );
+  };
+
+  it('answers every ask the queue holds', async () => {
+    const answers = await queued(9);
     expect(answers.every((answer) => answer instanceof Uint8Array)).toBe(true);
     expect(shell.asked).toHaveLength(9);
+  });
+
+  it('answers null for the oldest waiting ask once newer ones push it out', async () => {
+    const answers = await queued(4 + 64 + 1);
+    expect(answers[4]).toBeNull();
+    expect(answers.filter((answer) => answer instanceof Uint8Array)).toHaveLength(68);
+    expect(shell.asked).toHaveLength(68);
   });
 });

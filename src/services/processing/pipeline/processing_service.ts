@@ -140,6 +140,13 @@ export class ProcessingService extends RenderService {
     this.pool.prefer(photoIds);
   }
 
+  /** The device has made the thumbnail that is this photo's grid tile, so a client can fetch it. */
+  deviceTileArrived(photoId: string): void {
+    const version = new Date().toISOString();
+    this.photoProcessing.markTileArrived(photoId, version);
+    this.announce(photoId, { stage: 'tile', version });
+  }
+
   // Rebuilds the grid tile of specific photos, from the camera's JPEG an import
   // builds it from. Returns how many were queued; ids that are missing or binned
   // have no file to read.
