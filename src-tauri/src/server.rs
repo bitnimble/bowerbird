@@ -446,6 +446,20 @@ fn reachable_data_dir(_app: &tauri::AppHandle<crate::Runtime>) -> Option<String>
     None
 }
 
+/// The newest lines of the server's log files, the run before this one's first, for a server too
+/// stuck to answer for its own.
+#[tauri::command]
+pub fn server_log_file(app: tauri::AppHandle<crate::Runtime>) -> Result<Vec<String>, String> {
+    const LINES_KEPT: usize = 2000;
+    let data = data_dir(&app)?;
+    let mut lines: Vec<String> = ["server.log.1", "server.log"]
+        .iter()
+        .filter_map(|name| std::fs::read_to_string(data.join(name)).ok())
+        .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
+        .collect();
+    Ok(lines.split_off(lines.len().saturating_sub(LINES_KEPT)))
+}
+
 /// Opens that folder in the reader's own file manager.
 #[tauri::command]
 pub fn open_app_data_dir(app: tauri::AppHandle<crate::Runtime>) -> Result<(), String> {

@@ -13,6 +13,7 @@
     "core:window:allow-close",
     "allow-set-ui-scale",
     "allow-app-logs",
+    "allow-server-log-file",
     "allow-set-caption-buttons",
     "allow-read-device-file",
     "allow-write-device-file",

@@ -9,6 +9,7 @@
     "core:default",
     "allow-set-ui-scale",
     "allow-app-logs",
+    "allow-server-log-file",
     "allow-read-device-file",
     "allow-write-device-file",
     "allow-display-range",

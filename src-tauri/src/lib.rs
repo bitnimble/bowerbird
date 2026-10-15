@@ -63,7 +63,8 @@ pub fn run() {
             reveal::reveal_file,
             reveal::reveal_original,
             server::app_data_dir,
-            server::open_app_data_dir
+            server::open_app_data_dir,
+            server::server_log_file
         ]);
     #[cfg(target_os = "android")]
     let builder = builder.plugin(photos::plugin());

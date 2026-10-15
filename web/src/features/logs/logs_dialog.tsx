@@ -9,6 +9,7 @@ import { Text } from '../../ui/text';
 import { focusRing } from '../../ui/focus_ring';
 import { color, font, size } from '../../ui/tokens.stylex';
 import { appLog } from './app_log';
+import { serverLog } from './server_log';
 import { LogsDialogStrings } from './logs_dialog.strings';
 
 const styles = stylex.create({
@@ -62,11 +63,15 @@ export function LogsDialog({
     if (!open) return;
     let current = true;
     const failure = LogsDialogStrings.couldNotLoad();
-    void logsApi.server().then(
-      ({ name, lines }) => current && setServer({ key: SERVER, name, lines, failure }),
-      () =>
+    void serverLog().then(
+      (log) =>
         current &&
-        setServer({ key: SERVER, name: LogsDialogStrings.server(), lines: null, failure }),
+        setServer({
+          key: SERVER,
+          name: log?.name ?? LogsDialogStrings.server(),
+          lines: log?.lines ?? null,
+          failure,
+        }),
     );
     void logsApi.peers().then(
       (logs) =>

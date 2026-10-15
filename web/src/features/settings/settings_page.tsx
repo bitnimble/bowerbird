@@ -615,23 +615,6 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
           <GroupTitle>{SettingsStrings.groupThisDevice()}</GroupTitle>
           <Panel flush>
             <DeviceName />
-            {settings != null && (
-              <SettingRow
-                label={SettingsStrings.logLevel()}
-                onReset={resetTo(
-                  settings.log_level,
-                  store.defaults?.log_level,
-                  (v) => void write({ log_level: v }),
-                )}
-              >
-                <Select
-                  label={SettingsStrings.logLevel()}
-                  options={LOG_LEVELS}
-                  value={settings.log_level}
-                  onChange={(level) => void write({ log_level: level })}
-                />
-              </SettingRow>
-            )}
           </Panel>
           <UpdateSettings />
           {settings != null && shellInvoke() == null && (
@@ -714,6 +697,23 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
               </>
             )}
             <AppDataFolder />
+            {settings != null && (
+              <SettingRow
+                label={SettingsStrings.logLevel()}
+                onReset={resetTo(
+                  settings.log_level,
+                  store.defaults?.log_level,
+                  (v) => void write({ log_level: v }),
+                )}
+              >
+                <Select
+                  label={SettingsStrings.logLevel()}
+                  options={LOG_LEVELS}
+                  value={settings.log_level}
+                  onChange={(level) => void write({ log_level: level })}
+                />
+              </SettingRow>
+            )}
             <LogsRow />
             <DiagnosticsRow />
           </Panel>

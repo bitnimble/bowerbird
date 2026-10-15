@@ -5,6 +5,7 @@ fn main() {
     let commands = tauri_build::AppManifest::new().commands(&[
         "set_ui_scale",
         "app_logs",
+        "server_log_file",
         "set_caption_buttons",
         "read_device_file",
         "write_device_file",

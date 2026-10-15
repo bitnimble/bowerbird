@@ -4,6 +4,7 @@ export const LogsDialogStrings = {
   logsFrom: () => 'Logs from',
   thisApp: () => 'This app',
   server: () => 'Server',
+  serverLogFile: () => 'Server log file',
   nothingLogged: () => 'Nothing logged yet.',
   couldNotLoad: () => "We couldn't load these logs. Try again in a moment.",
   couldNotReach: (name: string) => `We couldn't reach ${name}. Check it's on the same network.`,
