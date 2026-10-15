@@ -3,9 +3,10 @@ import { existsSync } from 'node:fs';
 import { Logger } from '../../logger';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { ReplicatedPathSchema } from '../../schemas/replication';
-import { libraryPath } from '../../utils/paths';
+import { containsPath, libraryPath } from '../../utils/paths';
 import type { BlobLocations } from '../blobs/blob_locations';
 import { isOnDisk, materialise } from '../blobs/blob_store';
+import type { WriteGrants } from '../libraries/write_grants';
 
 // Disk catching up with a merge (docs/replication.md §7.4).
 //
@@ -116,6 +117,7 @@ export async function drainMaterialisations(
   db: Database,
   library: Library,
   locations: BlobLocations,
+  writes: WriteGrants,
 ): Promise<number> {
   const pending = db
     .query(
@@ -133,6 +135,26 @@ export async function drainMaterialisations(
       library: library.id,
       root: library.root_path,
       pending: pending.length,
+    });
+    return 0;
+  }
+  try {
+    await writes.grant(
+      pending.flatMap((entry) => {
+        const at = recipePathToTouch(db, entry.photo_id);
+        const from = libraryPath(library, entry.was_at);
+        const moves =
+          at != null &&
+          at !== entry.was_at &&
+          containsPath(library.root_path, from) &&
+          isOnDisk(from);
+        return moves ? [from] : [];
+      }),
+    );
+  } catch (error) {
+    log.warn('no leave to move the merged photos; leaving the moves queued', {
+      library: library.id,
+      err: String(error),
     });
     return 0;
   }

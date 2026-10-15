@@ -2,6 +2,7 @@ import { jest } from 'bun:test';
 import type { PhotoDetail } from '../../../../schemas/photos';
 import { fileRecipe } from '../../../../schemas/recipes';
 import type { LibrariesRepository } from '../../../libraries/libraries_repository';
+import { UNRESTRICTED_WRITES, type WriteGrants } from '../../../libraries/write_grants';
 import type { PhotoReadService } from '../../listing/photo_read_service';
 import type { PhotoPathsRepository } from '../../paths/photo_paths_repository';
 import { PhotoMutationService } from '../photo_mutation_service';
@@ -12,6 +13,7 @@ export function build(over: {
   photoPaths?: Partial<PhotoPathsRepository>;
   read?: Partial<PhotoReadService>;
   libraries?: Partial<LibrariesRepository>;
+  writes?: WriteGrants;
 }) {
   const photoState = {
     update: jest.fn(() => true),
@@ -33,7 +35,13 @@ export function build(over: {
     ...over.libraries,
   } as unknown as LibrariesRepository;
   return {
-    service: new PhotoMutationService(photoState, photoPaths, libraries, read),
+    service: new PhotoMutationService(
+      photoState,
+      photoPaths,
+      libraries,
+      read,
+      over.writes ?? UNRESTRICTED_WRITES,
+    ),
     photoState,
     photoPaths,
     read,

@@ -1,6 +1,7 @@
 import { jest } from 'bun:test';
 import { LibrariesService } from '../libraries_service';
 import type { LibrariesRepository } from '../libraries_repository';
+import { UNRESTRICTED_WRITES } from '../write_grants';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { PhotoScanRepository } from '../../photos/scan/photo_scan_repository';
 
@@ -26,5 +27,5 @@ const noPhotoScan = { transaction: (fn: () => void) => fn() } as unknown as Phot
 const noPhotoPaths = { rewriteBinnedPathPrefix: jest.fn() } as unknown as PhotoPathsRepository;
 
 export function build(repo: LibrariesRepository): LibrariesService {
-  return new LibrariesService(repo, noPhotoScan, noPhotoPaths);
+  return new LibrariesService(repo, noPhotoScan, noPhotoPaths, UNRESTRICTED_WRITES);
 }

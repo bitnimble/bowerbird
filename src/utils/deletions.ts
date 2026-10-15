@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../errors';
 import { BackupError } from '../services/backup/backup_error';
+import type { WriteGrants } from '../services/libraries/write_grants';
 import { Logger } from '../logger';
 import type { BlobVerifyResponse } from '../schemas/blobs';
 import type { Library } from '../schemas/libraries';
@@ -225,6 +226,7 @@ export async function deleteEvictedOriginal(
   target: string,
   confirmation: BlobVerifyResponse,
   recordedHash: string | null,
+  writes: WriteGrants,
 ): Promise<void> {
   if (!containsPath(rootPath, target)) {
     throw new AppError('IO_ERROR', `refusing to evict ${target}: outside the library root`);
@@ -235,6 +237,7 @@ export async function deleteEvictedOriginal(
       `refusing to evict ${target}: no live confirmation of another verified copy`,
     );
   }
+  await writes.grant([target]);
   await unlink(target);
 }
 
@@ -261,6 +264,7 @@ export async function deleteBackedUpOriginal(
   target: string,
   backupCopy: string,
   recordedHash: string,
+  writes: WriteGrants,
 ): Promise<void> {
   if (!containsPath(rootPath, target)) {
     throw new AppError('IO_ERROR', `refusing to give up ${target}: outside the library root`);
@@ -285,6 +289,7 @@ export async function deleteBackedUpOriginal(
       `The local copy of ${path.basename(target)} has changed. Check the local file before removing it.`,
     );
   }
+  await writes.grant([target]);
   await unlink(target);
 }
 

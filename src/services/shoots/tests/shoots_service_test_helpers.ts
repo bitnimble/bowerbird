@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { Library } from '../../../schemas/libraries';
 import type { Shoot } from '../../../schemas/shoots';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
+import { UNRESTRICTED_WRITES } from '../../libraries/write_grants';
 import type { PhotoStateRepository } from '../../photos/mutations/photo_state_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { FolderRulesRepository } from '../folder_rules_repository';
@@ -56,7 +57,14 @@ export function makeService(
   folderRules: FolderRulesRepository,
 ): ShootsService {
   const photoState = { refreshStacksUnderShoot: jest.fn() } as unknown as PhotoStateRepository;
-  return new ShootsService(shoots, photoPaths, photoState, libraries, folderRules);
+  return new ShootsService(
+    shoots,
+    photoPaths,
+    photoState,
+    libraries,
+    folderRules,
+    UNRESTRICTED_WRITES,
+  );
 }
 function library(root: string): Library {
   return {

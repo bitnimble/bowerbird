@@ -13,6 +13,7 @@ import type {
 } from '../../schemas/replication';
 import type { BlobLocations } from '../blobs/blob_locations';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
+import type { WriteGrants } from '../libraries/write_grants';
 import type { Library } from '../../schemas/libraries';
 import {
   LEASE_REFRESH_MS,
@@ -83,6 +84,7 @@ export class ReplicationRunner {
       peerId: string,
       direction: TransferDirection,
     ) => Promise<number>,
+    private readonly writes: WriteGrants,
     private readonly activity = new LibraryActivity(),
   ) {}
 
@@ -311,7 +313,7 @@ export class ReplicationRunner {
     const library = this.libraries.getById(libraryId);
     if (library == null) return 0;
     return this.activity.track(libraryId, 'syncing', 'materialise', () =>
-      drainMaterialisations(this.db, library, this.locations),
+      drainMaterialisations(this.db, library, this.locations, this.writes),
     );
   }
 

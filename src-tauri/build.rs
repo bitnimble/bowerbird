@@ -12,6 +12,8 @@ fn main() {
         "pick_export_folder",
         "export_to_folder",
         "open_original_with",
+        "photo_access",
+        "ask_photo_access",
         "open_folder",
         "reveal_file",
         "reveal_original",

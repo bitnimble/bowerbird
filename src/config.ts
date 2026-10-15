@@ -63,4 +63,5 @@ export const config = {
     ? path.resolve(process.env.BOWERBIRD_LIBRARIES_DIR)
     : undefined,
   defaultSettings: envDefaultSettings(),
+  shellSocket: process.env.BOWERBIRD_SHELL_SOCKET || undefined,
 } as const;

@@ -417,7 +417,7 @@ catalogue can be opened.
 | `DB_PATH`  | `./bowerbird.db` | SQLite database file path                                                                                                                     |
 | `DATA_DIR` | `./data`         | Where every generated file lives, one subdirectory per library (§6). Resolved absolute at load, created and tested for writability at startup |
 
-Eight **launcher-owned variables, not user configuration**, identify the server's
+Nine **launcher-owned variables, not user configuration**, identify the server's
 environment (§23.3, §10.4). Only the shell, Dockerfile or container entrypoint
 sets them; manual values misrepresent the installation.
 
@@ -429,8 +429,9 @@ sets them; manual values misrepresent the installation.
 | `WEB_DIST`                   | the shell                           | The web client to serve, which is the page the shell's webview loads from this server. Unset, `./web/dist` where it exists, which is the container's                                                          |
 | `BOWERBIRD_API_TOKEN`        | the shell                           | A secret every request must carry, as a bearer token or the cookie the shell's page is signed in with (`?token=` once, then redirected off the address), so nothing else on the machine can drive the library |
 | `BOWERBIRD_LIBRARIES_DIR`    | the mobile shell                    | Where a synced library goes when adding it names no folder, as `<dir>/<library id>`. Unset, adding one requires a folder                                                                                      |
-| `BOWERBIRD_DEFAULT_SETTINGS` | the mobile shell                    | Settings, as JSON, replacing their defaults: what a fresh catalogue starts with and Settings resets to. The mobile shell sends a 50 GB disk space limit, and watching and the daily scan off                  |
+| `BOWERBIRD_DEFAULT_SETTINGS` | the mobile shell                    | Settings, as JSON, replacing their defaults: what a fresh catalogue starts with and Settings resets to. The mobile shell sends a 50 GB disk space limit and the daily scan off                                |
 | `BOWERBIRD_ADDON_DIR`        | the Android shell                   | Where the Android build's `libsql` and `@parcel/watcher` addons are, which their bundled loaders open from there                                                                                              |
+| `BOWERBIRD_SHELL_SOCKET`     | the Android shell                   | A Unix socket the shell answers on for leave to move or delete photos another app owns (`write_grants.ts`, §23). Unset, the filesystem's own permissions are the whole answer                                 |
 
 Three more are genuinely optional. The first replaces the lens database the binary carries; the other two say where update checks are made (§23.5):
 
@@ -466,7 +467,7 @@ the bounds; the reasoning behind each number lives beside it there.
 | `hdr_white_quantile`       | `0.90`  | Quantile of the frame taken as diffuse white (§10.7.1)                                                                                                                                                                                                             |
 | `avif_speed`               | `8`     | libavif encoder speed for every AVIF, 0 slowest and 10 fastest                                                                                                                                                                                                     |
 | `hdr_still_full_chroma`    | `false` | 4:4:4 rather than 4:2:0 for the HDR still. Holds chroma detail, roughly double the encoder's memory (§10.7). The video has no say                                                                                                                                  |
-| `watch_enabled`            | `true`  | Auto-sync a library when its files change on disk (§9.8). Mobile: off, since only Bowerbird writes there                                                                                                                                                           |
+| `watch_enabled`            | `true`  | Auto-sync a library when its files change on disk (§9.8)                                                                                                                                                                                                           |
 | `watch_debounce_ms`        | `30000` | Debounce window for coalescing filesystem events (§9.8)                                                                                                                                                                                                            |
 | `watch_poll_interval_ms`   | `20000` | How often a library on a network filesystem is walked for folders whose mtime moved, since it delivers no events (§9.8)                                                                                                                                            |
 | `full_sync_at`             | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8). Mobile: off                                                                                                                                                                                      |

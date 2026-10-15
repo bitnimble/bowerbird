@@ -33,6 +33,7 @@ import {
   pullFromRemote,
 } from '../../../services/replication/remote';
 import { ReplicationRunner } from '../../../services/replication/replication_runner';
+import { UNRESTRICTED_WRITES } from '../../../services/libraries/write_grants';
 import { ReplicationService } from '../../../services/replication/replication_service';
 import { SyncLocksRepository } from '../../../services/sync/coordination/sync_locks_repository';
 import { pullFrom, type ChangeSource } from '../../../services/replication/session';
@@ -847,6 +848,7 @@ describe('browse, then add (§9.1)', () => {
       () => {},
       () => {},
       () => Promise.resolve(0),
+      UNRESTRICTED_WRITES,
     );
 
     const summary = await runner.add({
@@ -888,6 +890,7 @@ describe('browse, then add (§9.1)', () => {
       () => {},
       () => {},
       () => Promise.resolve(0),
+      UNRESTRICTED_WRITES,
     );
 
     await expect(
@@ -923,6 +926,7 @@ describe('browse, then add (§9.1)', () => {
       () => {},
       () => {},
       () => Promise.resolve(0),
+      UNRESTRICTED_WRITES,
     );
 
     const summary = await runner.add({
@@ -1086,6 +1090,7 @@ describe('originals moved by a session', () => {
         asked.push(`${direction} ${libraryId} ${peer}`);
         return Promise.resolve(0);
       },
+      UNRESTRICTED_WRITES,
     );
   }
 
@@ -1214,6 +1219,7 @@ describe('originals moved by a session', () => {
         happened.push(direction);
         return Promise.resolve(0);
       },
+      UNRESTRICTED_WRITES,
     );
     await runner.add({
       address: origin.url,

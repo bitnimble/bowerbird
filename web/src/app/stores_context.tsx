@@ -3,6 +3,8 @@ import { AlbumsPresenter } from '../features/albums/albums_presenter';
 import { AlbumsStore } from '../features/albums/albums_store';
 import { ConfirmPresenter } from '../features/confirm/confirm_presenter';
 import { ConfirmStore } from '../features/confirm/confirm_store';
+import { DevicePhotosPresenter } from '../features/device_photos/device_photos_presenter';
+import { DevicePhotosStore } from '../features/device_photos/device_photos_store';
 import { EventsPresenter } from '../features/events/events_presenter';
 import { FeedbackPresenter } from '../features/feedback/feedback_presenter';
 import { FeedbackStore } from '../features/feedback/feedback_store';
@@ -48,6 +50,7 @@ import { SidebarStore } from './sidebar_store';
 import { gpuThread } from '../gpu/gpu_thread';
 import { BUILD_VERSION } from './build_version';
 import { readSetting, writeSetting } from './local_setting';
+import { askPhotoAccess, photoAccess } from '../api/transport';
 
 // Peer stores, each with its own context: components subscribe to the one domain
 // they read, and nothing can reach a god-object of everything.
@@ -75,6 +78,7 @@ const FrameTvStoreContext = createContext<FrameTvStore | null>(null);
 const LabelsStoreContext = createContext<LabelsStore | null>(null);
 const LabelEditorStoreContext = createContext<LabelEditorStore | null>(null);
 const PrecompileStoreContext = createContext<PrecompileStore | null>(null);
+const DevicePhotosStoreContext = createContext<DevicePhotosStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -98,6 +102,7 @@ interface Presenters {
   frameTv: FrameTvPresenter;
   labels: LabelsPresenter;
   precompile: PrecompilePresenter;
+  devicePhotos: DevicePhotosPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -145,6 +150,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     labels: new LabelsStore(),
     labelEditor: new LabelEditorStore(),
     precompile: new PrecompileStore(),
+    devicePhotos: new DevicePhotosStore(librariesStore),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -244,6 +250,13 @@ function build(): { stores: Stores; presenters: Presenters } {
         write: (version) => writeSetting(PRECOMPILED_KEY, version),
       },
     ),
+    devicePhotos: new DevicePhotosPresenter(
+      stores.devicePhotos,
+      { access: photoAccess, ask: askPhotoAccess },
+      libraries,
+      scan,
+      toasts,
+    ),
   };
   return { stores, presenters };
 }
@@ -273,6 +286,7 @@ interface Stores {
   labels: LabelsStore;
   labelEditor: LabelEditorStore;
   precompile: PrecompileStore;
+  devicePhotos: DevicePhotosStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -309,7 +323,11 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                                     <PrecompileStoreContext.Provider
                                                       value={stores.precompile}
                                                     >
-                                                      {children}
+                                                      <DevicePhotosStoreContext.Provider
+                                                        value={stores.devicePhotos}
+                                                      >
+                                                        {children}
+                                                      </DevicePhotosStoreContext.Provider>
                                                     </PrecompileStoreContext.Provider>
                                                   </ConfirmStoreContext.Provider>
                                                 </LabelEditorStoreContext.Provider>
@@ -390,5 +408,7 @@ export const useLabelEditorStore = (): LabelEditorStore =>
   required(useContext(LabelEditorStoreContext), 'LabelEditorStore');
 export const usePrecompileStore = (): PrecompileStore =>
   required(useContext(PrecompileStoreContext), 'PrecompileStore');
+export const useDevicePhotosStore = (): DevicePhotosStore =>
+  required(useContext(DevicePhotosStoreContext), 'DevicePhotosStore');
 export const usePresenters = (): Presenters =>
   required(useContext(PresentersContext), 'Presenters');

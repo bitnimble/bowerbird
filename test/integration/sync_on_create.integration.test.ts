@@ -10,6 +10,7 @@ import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibrariesService } from '../../src/services/libraries/libraries_service';
+import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
 import {
   photoMetadata,
   photoPaths,
@@ -67,7 +68,12 @@ function buildServices(): { scan: ScanService; service: LibrariesService } {
     { processUnprocessed() {} },
     stubExtract,
   );
-  const service = new LibrariesService(new LibrariesRepository(db), photoScanRepo, photoPathsRepo);
+  const service = new LibrariesService(
+    new LibrariesRepository(db),
+    photoScanRepo,
+    photoPathsRepo,
+    UNRESTRICTED_WRITES,
+  );
   service.addLifecycleListener(scan);
   return { scan, service };
 }

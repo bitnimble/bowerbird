@@ -26,6 +26,7 @@ import { RenditionFetchService, renditionCurrent } from '../rendition_fetch_serv
 import { BackupLocations } from '../../backup/backup_locations';
 import type { PeerTransport } from '../peer';
 import { TransferService } from '../transfer_service';
+import { UNRESTRICTED_WRITES } from '../../libraries/write_grants';
 
 // A device holding the catalogue but not the originals, serving pictures from a
 // peer's built renditions (§7.9). Two replicas in one process, answering each
@@ -108,6 +109,7 @@ export function makePeer(name: string): Peer {
     locations,
     new BackupLocations(db),
     transport,
+    UNRESTRICTED_WRITES,
   );
   const announced: string[] = [];
   const phases: string[] = [];

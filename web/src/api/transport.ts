@@ -132,6 +132,32 @@ export async function displayRange(): Promise<DynamicRange | null> {
   return DynamicRangeSchema.parse(await invoke('display_range', {}));
 }
 
+const PhotoAccessSchema = z
+  .object({
+    photos: z.enum(['all', 'selected', 'none']),
+    manageable: z.boolean(),
+    managed: z.boolean(),
+    cameraFolder: z.string(),
+  })
+  .nullable();
+
+export type PhotoAccess = NonNullable<z.infer<typeof PhotoAccessSchema>>;
+export type PhotoAsk = 'read' | 'management' | 'settings';
+
+/** Null where the platform doesn't guard the device's photos. */
+export async function photoAccess(): Promise<PhotoAccess | null> {
+  const invoke = shellInvoke();
+  if (invoke == null || !inMobileApp()) return null;
+  return PhotoAccessSchema.parse(await invoke('photo_access', {}));
+}
+
+/** Resolves once the reader has answered the platform, with what they allowed. */
+export async function askPhotoAccess(ask: PhotoAsk): Promise<PhotoAccess | null> {
+  const invoke = shellInvoke();
+  if (invoke == null || !inMobileApp()) return null;
+  return PhotoAccessSchema.parse(await invoke('ask_photo_access', { ask }));
+}
+
 /** Opens it in the reader's own file manager. */
 export async function openAppDataDir(): Promise<void> {
   const invoke = shellInvoke();

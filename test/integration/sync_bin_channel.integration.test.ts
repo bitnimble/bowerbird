@@ -20,6 +20,7 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
+import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
 import { renditionVariant } from '../../src/services/processing/renditions/renditions';
 import type { PhotoReadService } from '../../src/services/photos/listing/photo_read_service';
 import { PhotoMutationService } from '../../src/services/photos/mutations/photo_mutation_service';
@@ -118,7 +119,13 @@ beforeEach(() => {
     { processUnprocessed() {} },
     extractMetadata,
   );
-  service = new PhotoMutationService(state, paths, libraries, {} as unknown as PhotoReadService);
+  service = new PhotoMutationService(
+    state,
+    paths,
+    libraries,
+    {} as unknown as PhotoReadService,
+    UNRESTRICTED_WRITES,
+  );
 });
 
 afterEach(() => {
@@ -457,7 +464,10 @@ test('removing a folder does not re-import its binned frames as new photographs'
   // The real path, so the rule this depends on is the rule that removal writes.
   const shoots = new ShootsRepository(db);
   const rules = new FolderRulesRepository(db);
-  await new ShootsService(shoots, paths, state, libraries, rules).delete(shootId, 'remove');
+  await new ShootsService(shoots, paths, state, libraries, rules, UNRESTRICTED_WRITES).delete(
+    shootId,
+    'remove',
+  );
   await scan.scanLibrary(LIB);
 
   expect(rows()).toEqual([]);

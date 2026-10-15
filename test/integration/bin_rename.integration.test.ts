@@ -10,6 +10,7 @@ import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { LibrariesService } from '../../src/services/libraries/libraries_service';
+import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
 import { photoPaths, photoScan } from './helpers/photo_repositories';
 
 const LIB = 'lib000e1';
@@ -50,7 +51,7 @@ beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-binname-'));
   db = createDatabase(':memory:');
   libraries = new LibrariesRepository(db);
-  service = new LibrariesService(libraries, photoScan(db), photoPaths(db));
+  service = new LibrariesService(libraries, photoScan(db), photoPaths(db), UNRESTRICTED_WRITES);
 });
 
 afterEach(() => {

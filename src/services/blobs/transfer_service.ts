@@ -32,6 +32,7 @@ import { BackupError, backupIssueCode } from '../backup/backup_error';
 import { assertMirrorOf, backupPath } from '../backup/backup_root';
 import { passivePeerOf } from '../backup/passive_peers';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
+import type { WriteGrants } from '../libraries/write_grants';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
 import { libraryMutex } from '../sync/coordination/library_mutex';
@@ -158,6 +159,7 @@ export class TransferService {
     private readonly locations: BlobLocations,
     private readonly backups: BackupLocations,
     private readonly transport: PeerTransport,
+    private readonly writes: WriteGrants,
     /** What an arriving original owes the pipeline (§7.8). */
     private readonly build: (photoIds: string[]) => void = () => {},
     private readonly activity = new LibraryActivity(),
@@ -603,6 +605,7 @@ export class TransferService {
             abs,
             backupPath(backup.root, entry.rel_path),
             recorded,
+            this.writes,
           );
         } catch (error) {
           const code = backupIssueCode(error);
@@ -638,7 +641,7 @@ export class TransferService {
     }
     return await this.refusable(() =>
       libraryMutex.run(library.id, async () => {
-        await deleteEvictedOriginal(library.root_path, abs, confirmation, recorded);
+        await deleteEvictedOriginal(library.root_path, abs, confirmation, recorded, this.writes);
         this.retire(library.id, photo.id, at);
       }),
     );

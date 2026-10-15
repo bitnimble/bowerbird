@@ -9,6 +9,7 @@ import { shootContains } from '../../../utils/shoots';
 import { isOnDisk } from '../../blobs/blob_store';
 import { ensureBinFolder } from '../../libraries/bin_folder';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
+import type { WriteGrants } from '../../libraries/write_grants';
 import { libraryMutex } from '../../sync/coordination/library_mutex';
 import type { PhotoStateRepository } from './photo_state_repository';
 import type {
@@ -38,6 +39,7 @@ export class PhotoMutationService {
     private readonly photoPaths: PhotoPathsRepository,
     private readonly libraries: LibrariesRepository,
     private readonly read: PhotoReadService,
+    private readonly writes: WriteGrants,
   ) {}
 
   update(photoId: string, updates: UpdatePhotoRequest): PhotoDetail {
@@ -93,6 +95,14 @@ export class PhotoMutationService {
             binRelPath: string | null;
             wasAt: string | null;
           }[] = [];
+          if (!library.read_only) {
+            await this.writes.grant(
+              chunk.flatMap((photo) => {
+                const from = originalPathOf(library, photo);
+                return from == null ? [] : [from];
+              }),
+            );
+          }
           for (const photo of chunk) {
             const was = soleInputOf(photo.recipe);
             const from = originalPathOf(library, photo);
@@ -150,6 +160,11 @@ export class PhotoMutationService {
             // orphaned forever. Move them back out, as if the delete never ran.
             // Unreachable for an in-place binning, where every row's `to` equals
             // its `from`.
+            await this.writes
+              .grant(
+                moved.flatMap((row) => (row.to == null || row.to === row.from ? [] : [row.to])),
+              )
+              .catch((e: unknown) => log.error('no leave to roll the Bin moves back', { err: e }));
             for (const row of moved) {
               if (row.to == null || row.from == null || row.to === row.from) continue;
               await moveIntoDir(row.to, path.dirname(row.from), path.basename(row.from)).catch(
@@ -250,6 +265,12 @@ export class PhotoMutationService {
         const dirs = new Set<string>();
         for (const chunk of inChunks(photos, DELETE_CHUNK)) {
           const moved: { id: string; path: string | null }[] = [];
+          await this.writes.grant(
+            chunk.flatMap((photo) => {
+              const from = originalPathOf(library, photo);
+              return from != null && this.isInBin(library, soleInputOf(photo.recipe)) ? [from] : [];
+            }),
+          );
           for (const photo of chunk) {
             try {
               const was = soleInputOf(photo.recipe);

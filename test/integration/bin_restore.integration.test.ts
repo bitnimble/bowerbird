@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
+import { AppError } from '../../src/errors';
 import { LibrariesRepository } from '../../src/services/libraries/libraries_repository';
 import { AlbumsRepository } from '../../src/services/albums/albums_repository';
 import type { PhotoReadService } from '../../src/services/photos/listing/photo_read_service';
@@ -22,6 +23,8 @@ const PHOTO = 'pht000bd';
 let root: string;
 let db: ReturnType<typeof createDatabase>;
 let service: PhotoMutationService;
+/** Paths granted while still at the move's source. */
+let granted: string[];
 
 function photoRow(): { file_path: string; is_deleted: number; shoot_id: string | null } {
   return db
@@ -64,11 +67,17 @@ beforeEach(() => {
     '2026-01-01T00:00:00.000Z',
   );
 
+  granted = [];
   service = new PhotoMutationService(
     photoState(db),
     photoPaths(db),
     new LibrariesRepository(db),
     {} as unknown as PhotoReadService,
+    {
+      grant: async (paths) => {
+        granted.push(...paths.filter(existsSync));
+      },
+    },
   );
 });
 
@@ -93,6 +102,33 @@ test('restore returns the file to the exact path it was deleted from', async () 
   expect(row.file_path).toBe('Trip/a.arw');
   expect(existsSync(path.join(root, 'Trip', 'a.arw'))).toBe(true);
   expect(existsSync(path.join(root, 'Bin', 'Trip', 'a.arw'))).toBe(false);
+});
+
+test('each move asks leave for the file it is about to move', async () => {
+  await service.delete([PHOTO]);
+  expect(granted).toEqual([path.join(root, 'Trip', 'a.arw')]);
+
+  await service.restore([PHOTO]);
+  expect(granted).toEqual([
+    path.join(root, 'Trip', 'a.arw'),
+    path.join(root, 'Bin', 'Trip', 'a.arw'),
+  ]);
+});
+
+test('a refused grant leaves the photo where it was', async () => {
+  const refusing = new PhotoMutationService(
+    photoState(db),
+    photoPaths(db),
+    new LibrariesRepository(db),
+    {} as unknown as PhotoReadService,
+    {
+      grant: () => Promise.reject(new AppError('READ_ONLY', 'You declined the change.')),
+    },
+  );
+
+  await expect(refusing.delete([PHOTO])).rejects.toMatchObject({ code: 'READ_ONLY' });
+  expect(photoRow().is_deleted).toBe(0);
+  expect(existsSync(path.join(root, 'Trip', 'a.arw'))).toBe(true);
 });
 
 test('shoot and album membership survive the delete/restore round trip', async () => {

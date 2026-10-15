@@ -7,6 +7,7 @@ import { runMigrations } from '../../../db/migrate';
 import { BlobLocations } from '../../blobs/blob_locations';
 import { Originals } from '../../blobs/originals';
 import { TransferService } from '../../blobs/transfer_service';
+import { UNRESTRICTED_WRITES } from '../../libraries/write_grants';
 import { LibrariesRepository } from '../../libraries/libraries_repository';
 import { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
@@ -95,6 +96,7 @@ function makeDevice(): {
       canReach: () => false,
       request: () => Promise.reject(new Error('no device is paired')),
     }),
+    UNRESTRICTED_WRITES,
     undefined,
     activity,
   );

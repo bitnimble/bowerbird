@@ -10,6 +10,7 @@ import { containsPath, toLibraryRelative } from '../../utils/paths';
 import { isDirInScope, libraryScope, type LibraryScope } from '../../utils/scope';
 import { mostSpecificShoot } from '../../utils/shoots';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
+import type { WriteGrants } from '../libraries/write_grants';
 import { deleteGeneratedFilesFor } from '../maintenance/prune_service';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import type { PhotoStateRepository } from '../photos/mutations/photo_state_repository';
@@ -24,6 +25,7 @@ export class ShootsService {
     private readonly photoState: PhotoStateRepository,
     private readonly libraries: LibrariesRepository,
     private readonly folderRules: FolderRulesRepository,
+    private readonly writes: WriteGrants,
   ) {}
 
   async create(request: CreateShootRequest): Promise<Shoot> {
@@ -157,6 +159,7 @@ export class ShootsService {
     // Queue behind any in-flight sync of this library: these moves would otherwise
     // invalidate its mid-scan snapshot.
     await libraryMutex.run(shoot.library_id, async () => {
+      await this.writes.grant(this.movedInto(library, photos, destDir));
       for (const photo of photos) {
         const was = soleInputOf(photo.recipe);
         // A shoot is a folder, and a row with no file of its own is in no folder: it joins by
@@ -187,6 +190,15 @@ export class ShootsService {
     });
   }
 
+  private movedInto(library: Library, photos: BasicPhoto[], dir: string): string[] {
+    return photos.flatMap((photo) => {
+      const was = soleInputOf(photo.recipe);
+      if (was == null) return [];
+      const from = path.join(library.root_path, was);
+      return path.resolve(path.dirname(from)) === path.resolve(dir) ? [] : [from];
+    });
+  }
+
   // Membership without a move: a row already in the folder, or one with no file to move at all.
   private joinShoot(photo: BasicPhoto, shootId: string): void {
     if (photo.shoot_id === shootId) return;
@@ -210,8 +222,11 @@ export class ShootsService {
     }
 
     await libraryMutex.run(shoot.library_id, async () => {
-      for (const photo of this.photoPaths.getBasicByIds(photoIds)) {
-        if (photo.shoot_id !== shootId || photo.library_id !== shoot.library_id) continue;
+      const members = this.photoPaths
+        .getBasicByIds(photoIds)
+        .filter((photo) => photo.shoot_id === shootId && photo.library_id === shoot.library_id);
+      await this.writes.grant(this.movedInto(library, members, library.root_path));
+      for (const photo of members) {
         const was = soleInputOf(photo.recipe);
         // Nothing to move back to the root, so leaving the shoot is the membership alone.
         if (was == null) {

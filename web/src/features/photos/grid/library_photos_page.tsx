@@ -1,8 +1,12 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { usePresenters } from '../../../app/stores_context';
-import { isThinShell } from '../../../app/thin_shell';
+import {
+  useDevicePhotosStore,
+  useLibrariesStore,
+  usePresenters,
+} from '../../../app/stores_context';
+import { isSyncedCopy } from '../../../app/thin_shell';
 import { Page } from '../../../ui/page';
 import { BackupStrip } from '../../backup/backup_strip';
 import { BulkBar } from './bulk_bar';
@@ -13,6 +17,8 @@ import { PhotoGrid } from './photo_grid';
 export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Element {
   const { libraryId = '' } = useParams();
   const { photos, shoots, albums, scan } = usePresenters();
+  const library = useLibrariesStore().byId.get(libraryId);
+  const devicePhotos = useDevicePhotosStore();
 
   useEffect(() => {
     void photos.open({ kind: 'library', libraryId });
@@ -32,7 +38,7 @@ export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Elem
       <BulkBar />
       <PhotoGrid
         emptyHint={
-          isThinShell()
+          library != null && isSyncedCopy(library, devicePhotos)
             ? LibraryPhotosPageStrings.emptySyncedHint()
             : LibraryPhotosPageStrings.emptyHint()
         }
