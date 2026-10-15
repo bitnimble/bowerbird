@@ -12,7 +12,6 @@ export function computeFileHash(filePath: string, metadata: FileMetadata): strin
     metadata.width,
     metadata.height,
     metadata.mtime,
-    metadata.colorSpace,
     metadata.fileSize,
     metadata.orientation,
   ].join('|');

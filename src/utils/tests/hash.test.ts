@@ -5,7 +5,6 @@ import type { FileMetadata } from '../../services/processing/analysis/metadata';
 const meta: FileMetadata = {
   width: 6000,
   height: 4000,
-  colorSpace: 'sRGB',
   orientation: 0,
   dateTaken: null,
   dateTakenOffset: null,

@@ -56,7 +56,6 @@ self.onmessage = async (event) => {
       metadata: {
         width: header.width,
         height: header.height,
-        colorSpace: 'sRGB',
         orientation: header.orientation,
         dateTaken: header.timestamp == null ? null : wallClockIso(header.timestamp),
         dateTakenOffset,

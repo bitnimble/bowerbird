@@ -44,7 +44,6 @@ export const meta = (absPath: string): Promise<FileMetadata> =>
   Promise.resolve({
     width: 100,
     height: 100,
-    colorSpace: 'sRGB',
     orientation: 1,
     dateTaken: null,
     dateTakenOffset: null,

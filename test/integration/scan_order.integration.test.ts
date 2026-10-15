@@ -30,7 +30,6 @@ function blank(size: number): FileMetadata {
   return {
     width: 100,
     height: 100,
-    colorSpace: 'sRGB',
     orientation: 0,
     dateTaken: null,
     dateTakenOffset: null,

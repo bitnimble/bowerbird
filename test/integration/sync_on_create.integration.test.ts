@@ -29,7 +29,6 @@ import { dataPathForLibraryId } from '../../src/utils/paths';
 const stubExtract = async (): Promise<FileMetadata> => ({
   width: 100,
   height: 100,
-  colorSpace: 'sRGB',
   orientation: 0,
   dateTaken: '2026-01-01T00:00:00.000Z',
   dateTakenOffset: null,

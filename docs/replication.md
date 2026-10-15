@@ -636,8 +636,8 @@ never caller authority.
 
 ### 7.1 Integrity: a content hash, which does not exist yet
 
-The existing `file_hash` is a SHA-1 over stat metadata (`ext|width|height|mtime|colorspace|
-filesize|orientation`), mtime included: it identifies "this file on this disk hasn't changed",
+The existing `file_hash` is a SHA-1 over stat metadata (`ext|width|height|mtime|filesize|
+orientation`), mtime included: it identifies "this file on this disk hasn't changed",
 which is the scan's question, and it **cannot** verify a transfer or match bytes across
 machines. It moves to the per-peer list (§3.1) beside `date_updated`, exactly as local as
 they are. Replicating it would ping-pong: each peer's scan would see its local mtime disagree,

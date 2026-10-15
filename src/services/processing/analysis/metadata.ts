@@ -17,7 +17,6 @@ import { runJob } from '../rawshim/rawshim_job';
 export interface FileMetadata {
   width: number; // display/upright width (post-flip)
   height: number; // display/upright height (post-flip)
-  colorSpace: string;
   orientation: number; // EXIF orientation, 1 to 8; informational + hash input only
   dateTaken: string | null; // the camera's wall clock, as a Z string (§11.1)
   // What zone that wall clock was written in, "+11:00", or null from a body that
@@ -169,10 +168,6 @@ function fileMetadata(
   return {
     width: header.width,
     height: header.height,
-    // Stage 1 constant: the header parser does not carry the camera's source
-    // color space, and we always decode to sRGB, so this is the sRGB output space
-    // (a fixed, informational hash input; see DESIGN §9.2/§11.1).
-    colorSpace: 'sRGB',
     orientation: header.orientation,
     dateTaken: header.dateTaken,
     dateTakenOffset,
