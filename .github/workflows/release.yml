@@ -538,7 +538,27 @@ jobs:
           key: gradle-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/tauri.android.conf.json') }}
           restore-keys: gradle-
       - uses: ./.github/actions/wasm-pkg
+      # One debug key across runs, so a branch build installs over the last without losing its data.
+      - name: The debug key
+        if: github.ref != 'refs/heads/main'
+        env:
+          DEBUG_KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -eu
+          if [ -z "${DEBUG_KEYSTORE:-}" ]; then
+            echo "::warning::no ANDROID_DEBUG_KEYSTORE_BASE64 secret: signing with a new debug key"
+            exit 0
+          fi
+          mkdir -p ~/.android
+          echo "$DEBUG_KEYSTORE" | base64 -d > ~/.android/debug.keystore
       - run: bun run build:android --play
+        env:
+          BOWERBIRD_ANDROID_DIST_DIR: ${{ github.ref != 'refs/heads/main' && 'debug-signed' || '' }}
+      - if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-debug-signed
+          path: debug-signed/
       - if: env.SAVE_CACHES == 'true' && steps.gradle-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
