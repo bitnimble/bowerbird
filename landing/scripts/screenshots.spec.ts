@@ -6,9 +6,22 @@ import {
   type Locator,
   type Page,
 } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { PathSegment, route } from '../../src/schemas/route';
-import { API_URL, LIBRARY_ROOT, PHOTO_COUNT, SHOTS_DIR } from './shots_state';
+import {
+  API_URL,
+  HERO_CAPTURE,
+  HERO_SCRIPT,
+  LIBRARY_ROOT,
+  PHOTO_COUNT,
+  SHOTS_DIR,
+  heroName,
+} from './shots_state';
+
+const HERO_SCALE = 2;
+const HERO_QUALITY = 90;
 
 test.describe.configure({ mode: 'serial' });
 
@@ -38,12 +51,12 @@ async function listPhotos(): Promise<Photo[]> {
   return ((await response.json()) as { photos: Photo[] }).photos;
 }
 
-async function shot(page: Page, name: string): Promise<void> {
+async function shot(page: Page, name: string, quality = 85): Promise<void> {
   await page.mouse.move(0, page.viewportSize()?.height ?? 0);
   await page.screenshot({
     path: path.join(SHOTS_DIR, name),
     type: 'jpeg',
-    quality: 85,
+    quality,
     animations: 'disabled',
   });
 }
@@ -102,7 +115,7 @@ test.beforeAll(async () => {
 
   const verdicts: [string, { rating?: number; triage?: 'picked' }][] = [
     ['AFXT2721.RAF', { rating: 5, triage: 'picked' }],
-    ['sunset.avif', { rating: 4, triage: 'picked' }],
+    [heroName(), { rating: 4, triage: 'picked' }],
     ['DSCF8146.RAF', { rating: 3 }],
   ];
   for (const [name, data] of verdicts) {
@@ -114,12 +127,27 @@ test.afterAll(async () => {
   await api.dispose();
 });
 
-test('viewer', async ({ page }) => {
-  await page.goto(route(PathSegment.photos(), idOf('sunset.avif')));
-  await stageReady(page);
-  await page.getByRole('button', { name: 'Show filmstrip' }).click();
-  await expect(gallery(page)).toBeVisible();
-  await shot(page, 'viewer.jpg');
+test.describe('hero', () => {
+  test.use({ deviceScaleFactor: HERO_SCALE });
+
+  test('viewer', async ({ page }) => {
+    const hero = idOf(heroName());
+    await page.goto(route(PathSegment.photos(), hero));
+    await stageReady(page);
+    await page.getByRole('button', { name: 'Show filmstrip' }).click();
+    await expect(gallery(page)).toBeVisible();
+    await shot(page, 'viewer.jpg', HERO_QUALITY);
+    await page.screenshot({ path: HERO_CAPTURE.shot, animations: 'disabled' });
+
+    const box = await stage(page).getByRole('img').boundingBox();
+    if (box == null) throw new Error('the hero photo is not on the stage');
+    const photo = await api.get(route(PathSegment.image(), hero, PathSegment.renditions(), 'full'));
+    expect(photo.status()).toBe(200);
+    writeFileSync(HERO_CAPTURE.photo, await photo.body());
+    writeFileSync(HERO_CAPTURE.placed, JSON.stringify({ box, scale: HERO_SCALE }));
+    // Under bun: the 10-bit copy goes through the FFI, which this runner's Node cannot load.
+    execFileSync('bun', ['run', HERO_SCRIPT], { stdio: 'inherit' });
+  });
 });
 
 test('editor', async ({ page }) => {

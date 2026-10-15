@@ -10,7 +10,29 @@ export const LIBRARY_ROOT = path.join(STATE_ROOT, 'Bowerbird');
 export const DB_PATH = path.join(STATE_ROOT, 'shots.db');
 export const DATA_DIR = path.join(STATE_ROOT, 'data');
 
-// Public assets only: the site these land on is public, and nothing else may appear in a shot.
+/** What the hero's capture leaves for `hero.ts`: the shot, the photo's HDR rendition, and where it was drawn. */
+export const HERO_CAPTURE = {
+  shot: path.join(STATE_ROOT, 'hero.png'),
+  photo: path.join(STATE_ROOT, 'hero-photo.avif'),
+  placed: path.join(STATE_ROOT, 'hero.json'),
+};
+
+export const HERO_SCRIPT = path.join(REPO, 'landing/scripts/hero.ts');
+
+// Named by the caller, like `scripts/demo-assets.ts`'s raws: the original is the photographer's.
+function heroRaw(): string {
+  const raw = process.env.BOWERBIRD_SHOTS_HERO;
+  if (raw == null || raw === '') throw new Error('BOWERBIRD_SHOTS_HERO must name the hero raw');
+  return raw;
+}
+
+/** The photo in the hero shot, under the name it is given in the library. */
+export function heroName(): string {
+  return `sunset${path.extname(heroRaw())}`;
+}
+
+// Public assets only, and the hero rendered from its raw: the site these land on is public,
+// and nothing else may appear in a shot.
 const LIBRARY: Record<string, [from: string, to: string][]> = {
   Fujifilm: [
     ['test/fixtures/AFXT2721.RAF', 'AFXT2721.RAF'],
@@ -25,10 +47,9 @@ const LIBRARY: Record<string, [from: string, to: string][]> = {
   HDR: [
     ['landing/public/samples/arches.avif', 'arches.avif'],
     ['landing/public/samples/rapids.avif', 'rapids.avif'],
-    ['landing/public/samples/sunset.avif', 'sunset.avif'],
   ],
 };
-export const PHOTO_COUNT = Object.values(LIBRARY).flat().length;
+export const PHOTO_COUNT = Object.values(LIBRARY).flat().length + 1;
 
 // Published through the environment so the workers Playwright forks call the servers the config started.
 function runPort(name: string): number {
@@ -52,5 +73,6 @@ export function prepareState(): void {
     for (const [from, to] of files)
       copyFileSync(path.join(REPO, from), path.join(LIBRARY_ROOT, shoot, to));
   }
+  copyFileSync(heroRaw(), path.join(LIBRARY_ROOT, 'HDR', heroName()));
   mkdirSync(SHOTS_DIR, { recursive: true });
 }

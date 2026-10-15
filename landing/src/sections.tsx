@@ -32,21 +32,6 @@ const styles = stylex.create({
   splitBody: {
     maxWidth: '60ch',
   },
-  notice: {
-    backgroundColor: color.slateSoft,
-    borderWidth: '1px',
-    borderStyle: 'solid',
-    borderColor: color.slate,
-    borderLeftWidth: '2px',
-    borderLeftColor: color.ochre,
-    borderRadius: '4px',
-    paddingBlock: '2px',
-    paddingInline: '12px',
-    marginBottom: '16px',
-  },
-  noticeText: {
-    marginBlock: '10px',
-  },
   section: {
     paddingBlock: { default: '40px', [WIDE]: '64px' },
     borderTopWidth: '1px',
@@ -115,14 +100,6 @@ export function Split({ title, children }: Children & { title: string }): JSX.El
       <SectionTitle>{title}</SectionTitle>
       <div {...stylex.props(styles.splitBody)}>{children}</div>
     </section>
-  );
-}
-
-export function Notice({ children }: Children): JSX.Element {
-  return (
-    <div {...stylex.props(styles.notice)}>
-      <Paragraph style={styles.noticeText}>{children}</Paragraph>
-    </div>
   );
 }
 

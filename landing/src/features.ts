@@ -17,8 +17,12 @@ export const SHOT_SIZE: Record<ShotFrame, { width: number; height: number }> = {
   phone: { width: 780, height: 1688 },
 };
 
-/** `src` is a filename under `landing/public/shots/`, captured by `bun run shots` at its frame's size. */
-export type Shot = { src: string; alt: string; frame: ShotFrame };
+/**
+ * `src` is a filename under `landing/public/shots/`, captured by `bun run shots` at its frame's size.
+ * `avif` is the same shot as an AVIF, and `hdr` the name of an HDR version, `<hdr>.avif` with its
+ * Firefox copies beside it (`landing/scripts/hero.ts`).
+ */
+export type Shot = { src: string; alt: string; frame: ShotFrame; avif?: string; hdr?: string };
 
 type FeatureCopy = {
   frontmatter: { title: string; summary: string } & ({ demo: DemoId } | { shot: Shot });

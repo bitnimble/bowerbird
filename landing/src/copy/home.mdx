@@ -1,5 +1,5 @@
 import { FeatureIndex, FeatureRow } from '../feature_row';
-import { Actions, DownloadButton, FeaturesButton, Hero, Notice, Split } from '../sections';
+import { Actions, DownloadButton, FeaturesButton, Hero } from '../sections';
 import { Shot } from '../shot';
 import { Speed } from '../speed';
 
@@ -14,6 +14,8 @@ import { Speed } from '../speed';
 
 <Shot
   src="viewer.jpg"
+  avif="viewer.avif"
+  hdr="viewer-hdr"
   frame="desktop"
   alt="The photo viewer showing a photo at full size, with the filmstrip beside it"
 />
@@ -27,16 +29,3 @@ import { Speed } from '../speed';
 ## More features
 
 <FeatureIndex skip="hdr" />
-
-<Split title="Always free">
-
-Bowerbird is open source, with no paid tier and no ads.
-
-<Notice>
-  Bowerbird is still in alpha. It never deletes your original photos, but updates may lose your
-  settings, triage data, or edits.
-</Notice>
-
-<DownloadButton />
-
-</Split>

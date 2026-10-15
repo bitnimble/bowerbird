@@ -1,9 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
-import { useState, useSyncExternalStore } from 'react';
+import { useState } from 'react';
 import { HdrPicture } from '../../../web/src/avif/hdr_picture';
 import type { HdrSource } from '../../../web/src/avif/hdr_pictures';
 import { SegmentedControl } from '../../../web/src/ui/segmented_control';
 import { DEMO } from '../features';
+import { useHdrDisplay } from '../hdr_display';
 import { PHOTOS, SCENES, type Scene } from '../photos';
 import { Demo, DemoBar, DemoWarning } from './demo';
 import { SplitFrame, splitImage } from './split_frame';
@@ -31,20 +32,6 @@ const styles = stylex.create({
     paddingInline: { default: '10px', [NARROW]: '6px' },
   },
 });
-
-// `video-dynamic-range` as well: Firefox answers `dynamic-range: standard` on an HDR display,
-// and it is shown the HDR arm as a video.
-const HDR_DISPLAY = '(dynamic-range: high), (video-dynamic-range: high)';
-
-function followDisplay(changed: () => void): () => void {
-  const media = matchMedia(HDR_DISPLAY);
-  media.addEventListener('change', changed);
-  return () => media.removeEventListener('change', changed);
-}
-
-function useHdrDisplay(): boolean {
-  return useSyncExternalStore(followDisplay, () => matchMedia(HDR_DISPLAY).matches);
-}
 
 function viewAt(divider: number): View | null {
   return VIEWS.find((view) => DIVIDER[view.value] === divider)?.value ?? null;
