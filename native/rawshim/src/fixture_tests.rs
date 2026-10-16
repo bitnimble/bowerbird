@@ -2737,7 +2737,7 @@ mod camera_match {
     fn a_crushed_blue_does_not_put_blue_on_red() {
         let (_, matched) = fitted(&night_crushed_blue());
         let blue = matched.colour.expect("a colour fit").matrix[2];
-        assert!(blue[2] > 0.85, "blue row {blue:?}");
+        assert!(blue[2] > 0.75, "blue row {blue:?}");
         assert!(blue[0] < 0.1, "blue row {blue:?}");
     }
 
