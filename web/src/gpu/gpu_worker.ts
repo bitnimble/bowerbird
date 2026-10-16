@@ -153,7 +153,10 @@ async function answer(
       // A draw reaching a pipeline still warming would compile it again, synchronously, and freeze
       // every page while it did. Never for a canvas, which draws nothing: queued behind the warmth,
       // a close posted after it lands first and the transferred canvas is lost with the session.
-      if (message.ask.kind !== 'attach') await warmth.settled();
+      if (message.ask.kind !== 'attach') {
+        void warmth.warmUp();
+        await warmth.settled();
+      }
       if (closed.has(message.session)) throw new Error('this decoder was closed');
       let open = opens.get(message.session);
       if (open == null) {

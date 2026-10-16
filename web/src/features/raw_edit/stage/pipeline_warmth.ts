@@ -24,6 +24,8 @@ const PipelineRecipeSchema = z.object({
   groups: z.array(BindGroupLayoutSchema),
   /** When a session last drew with it or precompiled it, in milliseconds since the epoch. */
   lastUsed: z.number(),
+  /** When a session last drew with it, which is what earns it a place in the warm-up. */
+  lastDrawn: z.number().nullable().default(null),
 });
 export type PipelineRecipe = z.infer<typeof PipelineRecipeSchema>;
 
@@ -63,7 +65,7 @@ const COMPILES_AT_ONCE = 1;
  * Compiles, asynchronously, the pipelines earlier sessions drew with, and hands each to the stand-in
  * wgpu creates in its place - wgpu's own pipeline creation being synchronous on the browser's GPU
  * main thread, where it blocks every page being drawn until it returns - deferring the rest to
- * their first use.
+ * their first use. Nothing is warmed until `warmUp`, so a session that never edits compiles nothing.
  *
  * It finds its surface rather than being told it, so a pipeline nobody here has heard of is
  * covered on the day it is written: every `create…Pipeline` on `GPUDevice` is deferred, every
@@ -86,8 +88,21 @@ export class PipelineWarmth {
   private compilesAsked = 0;
   private compilesDone = 0;
   private readonly progressListeners = new Set<(compiled: number, of: number) => void>();
+  private device: { opened: GPUDevice; created: Created } | null = null;
+  private warmedUp: Promise<void> | null = null;
+  private storedLoaded: Promise<void> | null = null;
 
   constructor(private readonly store: RecipeStore) {}
+
+  /** Compiles, once, the pipelines earlier sessions drew with; nothing before a device has opened. */
+  warmUp(): Promise<void> {
+    if (this.device == null) return Promise.resolve();
+    if (this.warmedUp == null) {
+      this.warmedUp = this.warm(this.device.opened, this.device.created);
+      this.track(this.warmedUp);
+    }
+    return this.warmedUp;
+  }
 
   /** Every compile this warmth has run in the background and how many it has been asked for, as either moves. */
   onProgress(listener: (compiled: number, of: number) => void): void {
@@ -112,8 +127,10 @@ export class PipelineWarmth {
       layout: GPUPipelineLayout,
     ): PipelineRecipe => this.recipeOf(build, descriptor, layout);
     const arrived = (wait: Deferred): void => this.arrived(wait);
-    const built = (recipe: PipelineRecipe, pipeline: object): void => this.built(recipe, pipeline);
-    const warm = (opened: GPUDevice): Promise<void> => this.warm(opened, created);
+    const drawn = (wait: Deferred): object => this.drawn(wait);
+    const opens = (opened: GPUDevice): void => {
+      this.device = { opened, created };
+    };
 
     device.createShaderModule = function (this: GPUDevice, descriptor) {
       const module = createShaderModule.call(this, descriptor);
@@ -159,18 +176,29 @@ export class PipelineWarmth {
       pass.prototype.setPipeline = function (this: Setter, standIn: object) {
         const wait = deferred.get(standIn);
         if (wait == null) return setPipeline.call(this, standIn);
-        if (wait.pipeline == null) {
-          wait.pipeline = wait.warmed ?? wait.build();
-          built(wait.recipe, wait.pipeline);
-        }
-        return setPipeline.call(this, wait.pipeline);
+        return setPipeline.call(this, wait.pipeline ?? drawn(wait));
       };
     }
     adapter.requestDevice = async function (this: GPUAdapter, descriptor) {
       const opened = await requestDevice.call(this, descriptor);
-      await warm(opened);
+      opens(opened);
       return opened;
     };
+  }
+
+  /**
+   * The pipeline a stand-in is drawn with: warmed for it, or warmed since from a recipe of the same
+   * code (the warm-up starts after wgpu has handed most stand-ins out), or built here and now.
+   */
+  private drawn(wait: Deferred): object {
+    const { identity } = wait.recipe;
+    const kept = this.recipes.get(identity);
+    const warmed =
+      wait.warmed ??
+      (kept != null && sameRecipe(kept, wait.recipe) ? this.compiled.get(identity) : undefined);
+    wait.pipeline = warmed ?? wait.build();
+    this.built(wait.recipe, wait.pipeline, true);
+    return wait.pipeline;
   }
 
   /** Resolves once every pipeline being warmed has compiled, so a draw finds it rather than compiling it. */
@@ -188,13 +216,13 @@ export class PipelineWarmth {
     await this.settled();
     for (const wait of this.undrawn()) {
       if (wait.warmed != null) {
-        this.built(wait.recipe, wait.warmed);
+        this.built(wait.recipe, wait.warmed, false);
         continue;
       }
       this.track(
         this.inTurn(wait.compile).then((pipeline) => {
           wait.warmed = pipeline;
-          this.built(wait.recipe, pipeline);
+          this.built(wait.recipe, pipeline, false);
         }),
       );
     }
@@ -214,17 +242,13 @@ export class PipelineWarmth {
   }
 
   /**
-   * Hands a stand-in an earlier session drew with the pipeline already compiled for it, or compiles
-   * one now where its shaders or layout have changed since.
+   * Compiles a stand-in an earlier session drew with now where its shaders or layout have changed
+   * since; one unchanged is handed the warm-up's pipeline when it is drawn.
    */
   private arrived(wait: Deferred): void {
     const { recipe } = wait;
     const kept = this.recipes.get(recipe.identity);
-    if (kept == null) return;
-    if (sameRecipe(kept, recipe)) {
-      wait.warmed = this.compiled.get(recipe.identity);
-      return;
-    }
+    if (kept == null || sameRecipe(kept, recipe)) return;
     this.track(
       this.inTurn(wait.compile).then((pipeline) => {
         wait.warmed = pipeline;
@@ -287,6 +311,7 @@ export class PipelineWarmth {
       stages,
       groups: recorded(this.layouts, layout),
       lastUsed: this.opened,
+      lastDrawn: null,
     };
   }
 
@@ -313,27 +338,58 @@ export class PipelineWarmth {
     });
   }
 
-  private built(recipe: PipelineRecipe, pipeline: object): void {
+  private built(recipe: PipelineRecipe, pipeline: object, drawn: boolean): void {
     this.compiled.set(recipe.identity, pipeline);
     const kept = this.recipes.get(recipe.identity);
-    if (kept != null && kept.lastUsed === this.opened && sameRecipe(kept, recipe)) return;
-    this.recipes.set(recipe.identity, recipe);
+    const same = kept != null && sameRecipe(kept, recipe);
+    const lastDrawn = drawn ? this.opened : same ? kept.lastDrawn : null;
+    if (same && kept.lastUsed === this.opened && kept.lastDrawn === lastDrawn) return;
+    this.recipes.set(recipe.identity, { ...recipe, lastDrawn });
     if (this.saveTimer != null) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => void this.save(), SAVE_QUIET_MS);
   }
 
+  /** Once, for the warm-up and for every save: a save before it would drop every recipe on disk. */
+  private loadStored(): Promise<void> {
+    this.storedLoaded ??= this.store
+      .load()
+      .catch(() => null)
+      .then((stored) => {
+        for (const recipe of stored?.recipes ?? []) {
+          if (recipe.lastUsed <= this.opened - KEPT_UNUSED_MS) continue;
+          const current = this.recipes.get(recipe.identity);
+          if (current == null) this.recipes.set(recipe.identity, recipe);
+          else if (current.lastDrawn == null && sameRecipe(current, recipe))
+            this.recipes.set(recipe.identity, { ...current, lastDrawn: recipe.lastDrawn });
+        }
+      });
+    return this.storedLoaded;
+  }
+
   private async warm(device: GPUDevice, created: Created): Promise<void> {
-    const stored = await this.store.load().catch(() => null);
-    for (const recipe of stored?.recipes ?? []) {
-      if (recipe.lastUsed > this.opened - KEPT_UNUSED_MS) this.recipes.set(recipe.identity, recipe);
+    await this.loadStored();
+    // Most stand-ins were handed out before this ran, with no recipe yet to tell them apart by.
+    const changed = new Set<string>();
+    for (const wait of this.undrawn()) {
+      const kept = this.recipes.get(wait.recipe.identity);
+      if (kept != null && !sameRecipe(kept, wait.recipe)) changed.add(wait.recipe.identity);
+      this.arrived(wait);
     }
-    if (this.recipes.size === 0) return;
+    const drawnSince = this.opened - KEPT_UNUSED_MS;
+    const owed = [...this.recipes.values()].filter(
+      (recipe) =>
+        recipe.lastDrawn != null &&
+        recipe.lastDrawn > drawnSince &&
+        !changed.has(recipe.identity) &&
+        !this.compiled.has(recipe.identity),
+    );
+    if (owed.length === 0) return;
 
     // Scoped: a stale recipe's refusal would otherwise reach the module's handler and fail the editor.
     device.pushErrorScope('validation');
     const modules = new Map<string, GPUShaderModule>();
     const compiling: Promise<unknown>[] = [];
-    for (const recipe of this.recipes.values()) {
+    for (const recipe of owed) {
       const build = (device as Builder)[`${recipe.build}Async`] as BuildAsync;
       const descriptor: Record<string, unknown> = { ...recipe.descriptor };
       for (const [field, code] of Object.entries(recipe.stages)) {
@@ -365,6 +421,7 @@ export class PipelineWarmth {
 
   private async save(): Promise<void> {
     this.saveTimer = null;
+    await this.loadStored();
     await this.store
       .save({ recipes: [...this.recipes.values()] })
       .catch((error: unknown) => log.warn('could not keep the pipeline recipes', error));

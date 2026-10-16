@@ -224,7 +224,9 @@ test('the next session compiles in the background what the last one dispatched',
     return build(device, 'a', 'fn a() {}');
   });
 
-  await installed(store).adapter.requestDevice();
+  const next = installed(store);
+  await next.adapter.requestDevice();
+  await next.warmth.warmUp();
   expect(FakeDevice.compiledAsync).toHaveLength(1);
   const [warmed] = FakeDevice.compiledAsync;
   if (warmed == null) throw new Error('nothing was warmed');
@@ -250,7 +252,9 @@ test('a warmed draw goes to the drawing builder with the targets and primitive i
   await new Promise((resolve) => setTimeout(resolve, 2100));
   reset();
 
-  await installed(store).adapter.requestDevice();
+  const next = installed(store);
+  await next.adapter.requestDevice();
+  await next.warmth.warmUp();
   const [warmed] = FakeDevice.compiledAsync;
   if (warmed == null) throw new Error('nothing was warmed');
   expect(warmed.primitive).toEqual({ topology: 'triangle-list' });
@@ -269,6 +273,7 @@ test('a pipeline whose shader was edited since is warmed as it is created, and d
 
   const next = installed(store);
   const device = await next.adapter.requestDevice();
+  await next.warmth.warmUp();
   expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}']);
   const edited = build(device, 'a', 'fn a() { edited(); }');
   build(device, 'never', 'fn never() {}');
@@ -287,6 +292,7 @@ test('an unedited pipeline is dispatched as it was compiled before the device, a
 
   const next = installed(store);
   const device = await next.adapter.requestDevice();
+  await next.warmth.warmUp();
   next.pass.setPipeline(build(device, 'a', 'fn a() {}'));
   expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}']);
   expect(FakeDevice.compiled).toEqual([]);
@@ -300,6 +306,7 @@ test('a pipeline whose bindings moved since is compiled against them, not handed
 
   const next = installed(store);
   const device = await next.adapter.requestDevice();
+  await next.warmth.warmUp();
   const moved = build(device, 'a', 'fn a() {}', 1);
   expect(FakeDevice.compiledAsync).toHaveLength(2);
   const [, live] = FakeDevice.compiledAsync;
@@ -382,16 +389,73 @@ test('pipelines compile one at a time, whether precompiled or warmed by the next
   const store = memory();
   const first = installed(store);
   const device = await first.adapter.requestDevice();
+  const made: GPUComputePipeline[] = [];
   await first.warmth.precompile(() => {
-    for (const name of ['a', 'b', 'c', 'd']) build(device, name, `fn ${name}() {}`);
+    for (const name of ['a', 'b', 'c', 'd']) made.push(build(device, name, `fn ${name}() {}`));
   });
   expect(FakeDevice.compiledAsync).toHaveLength(4);
   expect(FakeDevice.mostInFlight).toBe(1);
+  for (const pipeline of made) first.pass.setPipeline(pipeline);
+  await new Promise((resolve) => setTimeout(resolve, 2100));
   reset();
 
-  await installed(store).adapter.requestDevice();
+  const next = installed(store);
+  await next.adapter.requestDevice();
+  await next.warmth.warmUp();
   expect(FakeDevice.compiledAsync).toHaveLength(4);
   expect(FakeDevice.mostInFlight).toBe(1);
+});
+
+test('opening a device compiles nothing until the warm-up is asked for', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+
+  const next = installed(store);
+  await next.adapter.requestDevice();
+  await next.warmth.settled();
+  expect(FakeDevice.compiledAsync).toEqual([]);
+  await next.warmth.warmUp();
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}']);
+});
+
+test('a session that never warms up keeps the recipes earlier ones drew with', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+  await dispatched(store, (device) => build(device, 'b', 'fn b() {}'));
+
+  const next = installed(store);
+  await next.adapter.requestDevice();
+  await next.warmth.warmUp();
+  expect(FakeDevice.compiledAsync.map(codeOf).sort()).toEqual(['fn a() {}', 'fn b() {}']);
+});
+
+test('a stand-in handed out before the warm-up is drawn with what it warmed', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+
+  const next = installed(store);
+  const early = build(await next.adapter.requestDevice(), 'a', 'fn a() {}');
+  await next.warmth.warmUp();
+  next.pass.setPipeline(early);
+  expect(FakeDevice.compiled).toEqual([]);
+  expect(FakePass.set).toEqual([{ warmed: 'fn a() {}' }]);
+});
+
+test('a stand-in handed out before the warm-up whose shader was edited is compiled, not handed the old one', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+
+  const next = installed(store);
+  const edited = build(await next.adapter.requestDevice(), 'a', 'fn a() { edited(); }');
+  await next.warmth.warmUp();
+  await next.warmth.settled();
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() { edited(); }']);
+  next.pass.setPipeline(edited);
+  expect(FakePass.set).toEqual([{ warmed: 'fn a() { edited(); }' }]);
 });
 
 test('a precompile counts each pipeline as it is asked for and as it finishes compiling', async () => {
@@ -411,7 +475,7 @@ test('a precompile counts each pipeline as it is asked for and as it finishes co
   ]);
 });
 
-test('the warming a device opens with is counted with the rest', async () => {
+test('the warm-up is counted with the rest', async () => {
   reset();
   const store = memory();
   await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
@@ -420,6 +484,7 @@ test('the warming a device opens with is counted with the rest', async () => {
   next.warmth.onProgress((compiled, of) => counted.push([compiled, of]));
 
   await next.adapter.requestDevice();
+  await next.warmth.warmUp();
   expect(counted.at(-1)).toEqual([1, 1]);
 });
 
@@ -448,19 +513,25 @@ test('a precompile leaves alone what was already drawn with', async () => {
   expect(FakeDevice.compiledAsync).toEqual([]);
 });
 
-test('the session after a precompile warms every pipeline it compiled', async () => {
+test('the next session warms only what an earlier one drew with, not everything precompiled', async () => {
   reset();
   const store = memory();
   const first = installed(store);
   const device = await first.adapter.requestDevice();
+  let drawn: GPUComputePipeline | null = null;
   await first.warmth.precompile(() => {
-    build(device, 'a', 'fn a() {}');
+    drawn = build(device, 'a', 'fn a() {}');
     build(device, 'b', 'fn b() {}');
   });
+  if (drawn == null) throw new Error('nothing was built');
+  first.pass.setPipeline(drawn);
+  await new Promise((resolve) => setTimeout(resolve, 2100));
   reset();
 
-  await installed(store).adapter.requestDevice();
-  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}', 'fn b() {}']);
+  const next = installed(store);
+  await next.adapter.requestDevice();
+  await next.warmth.warmUp();
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}']);
 });
 
 test('an edited pipeline dispatched before its warming finishes compiles there, and replaces its recipe', async () => {
