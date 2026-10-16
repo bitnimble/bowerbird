@@ -730,14 +730,14 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
 ///
 /// **The worst is loose on purpose**: near black the transfer is steep enough to turn the chroma
 /// lattice's fixed-point filter weights, which vendors round differently, into tens of counts of
-/// darkness no display resolves. Measured against the 3080, radv and lavapipe reach 87 on the
-/// matched arm and 30 on the neutral one, which reads no lattice.
+/// darkness no display resolves. Measured against the 3080, radv reaches 384 on the matched arm's
+/// rolled frame, one dark pixel of its red patch, and 30 on the neutral arm, which reads no lattice.
 ///
 /// **The mean is the bound that says the grade has not moved**: a wrong matrix row or a moved knee
 /// is worth hundreds of counts, where the widest an adapter costs is 3.5 - SwiftShader's filtering of
 /// the lattice, on the matched arm; the hardware ones and lavapipe stay under one.
 const GRADED: Tolerance = Tolerance {
-    worst: 256,
+    worst: 512,
     mean: 5.0,
 };
 
