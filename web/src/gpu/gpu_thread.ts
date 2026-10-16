@@ -61,7 +61,7 @@ export class GpuThread {
         id: ++this.asked,
         to: 'start',
         port: files.port2,
-        warmsAtOpen: !onMobileDevice(),
+        compilesSparingly: onMobileDevice(),
       }),
       [files.port2],
     );

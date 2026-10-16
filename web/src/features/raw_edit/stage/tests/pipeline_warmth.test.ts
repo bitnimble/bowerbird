@@ -83,7 +83,7 @@ type Installed = {
 };
 
 /** Fresh classes per install, so each wraps prototypes no earlier install has wrapped. */
-function installed(store: RecipeStore, warmsAtOpen = false): Installed {
+function installed(store: RecipeStore, sparing = true): Installed {
   class Device extends FakeDevice {}
   class Pass extends FakePass {}
   class Drawing extends FakePass {}
@@ -93,7 +93,7 @@ function installed(store: RecipeStore, warmsAtOpen = false): Installed {
       return Promise.resolve(new Device());
     }
   }
-  const warmth = new PipelineWarmth(store, Promise.resolve(warmsAtOpen));
+  const warmth = new PipelineWarmth(store, Promise.resolve(sparing));
   warmth.install({
     GPUAdapter: Adapter,
     GPUDevice: Device,
@@ -409,7 +409,7 @@ test('pipelines compile one at a time, whether precompiled or warmed by the next
 test('a device that warms at open is handed back with everything remembered compiled, drawn or not', async () => {
   reset();
   const store = memory();
-  const first = installed(store, true);
+  const first = installed(store, false);
   const device = await first.adapter.requestDevice();
   await first.warmth.precompile(() => {
     build(device, 'a', 'fn a() {}');
@@ -417,8 +417,18 @@ test('a device that warms at open is handed back with everything remembered comp
   });
   reset();
 
-  await installed(store, true).adapter.requestDevice();
+  await installed(store, false).adapter.requestDevice();
   expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}', 'fn b() {}']);
+});
+
+test('a device that does not compile sparingly compiles them all at once', async () => {
+  reset();
+  const { adapter, warmth } = installed(memory(), false);
+  const device = await adapter.requestDevice();
+  await warmth.precompile(() => {
+    for (const name of ['a', 'b', 'c', 'd']) build(device, name, `fn ${name}() {}`);
+  });
+  expect(FakeDevice.mostInFlight).toBe(4);
 });
 
 test('opening a device compiles nothing until the warm-up is asked for', async () => {

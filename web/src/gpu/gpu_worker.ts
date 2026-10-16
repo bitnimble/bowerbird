@@ -53,7 +53,7 @@ const worker = self as unknown as DedicatedWorkerGlobalScope;
 const started = Promise.withResolvers<StartMessage>();
 const warmth = new PipelineWarmth(
   storedRecipes(new PortedFiles(started.promise.then(({ port }) => port))),
-  started.promise.then(({ warmsAtOpen }) => warmsAtOpen),
+  started.promise.then(({ compilesSparingly }) => compilesSparingly),
 );
 warmth.install(worker);
 warmth.onProgress((compiled, of) => worker.postMessage(CompilingSchema.parse({ compiled, of })));

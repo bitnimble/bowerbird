@@ -125,8 +125,8 @@ export const StartMessageSchema = z.object({
   port: z.custom<MessagePort>(
     (value) => typeof MessagePort === 'function' && value instanceof MessagePort,
   ),
-  /** Whether the device opens with every remembered pipeline compiled (`PipelineWarmth`). */
-  warmsAtOpen: z.boolean(),
+  /** How `PipelineWarmth` compiles: one at a time and only for the editor, or everything at once at open. */
+  compilesSparingly: z.boolean(),
 });
 export type StartMessage = z.infer<typeof StartMessageSchema>;
 export type Addressed = DistributiveOmit<Message, 'id'>;

@@ -59,7 +59,6 @@ type Created = Pick<
 const BUILDS = /^create\w*Pipeline$/;
 const SAVE_QUIET_MS = 2000;
 const KEPT_UNUSED_MS = 30 * 24 * 60 * 60 * 1000;
-const COMPILES_AT_ONCE = 1;
 
 /**
  * Compiles, asynchronously, the pipelines earlier sessions drew with, and hands each to the stand-in
@@ -92,15 +91,22 @@ export class PipelineWarmth {
   private device: { opened: GPUDevice; created: Created } | null = null;
   private warmedUp: Promise<void> | null = null;
   private storedLoaded: Promise<void> | null = null;
+  /** One until told otherwise: the start message arrives ahead of any compile. */
+  private compilesAtOnce = 1;
 
   /**
-   * @param warmsAtOpen true to hand the device back only once every remembered pipeline has
-   *   compiled, precompiled or drawn; false to wait for `warmUp`, and warm only what was drawn.
+   * @param compilesSparingly true to compile one at a time, and warm only what was drawn and only
+   *   on `warmUp`; false to hand the device back once every remembered pipeline, precompiled or
+   *   drawn, has compiled, all at once.
    */
   constructor(
     private readonly store: RecipeStore,
-    private readonly warmsAtOpen: Promise<boolean> = Promise.resolve(false),
-  ) {}
+    private readonly compilesSparingly: Promise<boolean> = Promise.resolve(true),
+  ) {
+    void compilesSparingly.then((sparing) => {
+      this.compilesAtOnce = sparing ? 1 : Infinity;
+    });
+  }
 
   /** Compiles, once, the remembered pipelines this warmth warms; nothing before a device has opened. */
   warmUp(): Promise<void> {
@@ -138,7 +144,7 @@ export class PipelineWarmth {
     const drawn = (wait: Deferred): object => this.drawn(wait);
     const opens = async (opened: GPUDevice): Promise<void> => {
       this.device = { opened, created };
-      if (await this.warmsAtOpen) await this.warmUp();
+      if (!(await this.compilesSparingly)) await this.warmUp();
     };
 
     device.createShaderModule = function (this: GPUDevice, descriptor) {
@@ -270,7 +276,7 @@ export class PipelineWarmth {
     this.progressed();
     // Each compile holds the driver's compiler memory until it returns, and Android's WebView runs
     // them in the app's own process: all of the editor's at once aborted it out of memory.
-    if (this.compiling < COMPILES_AT_ONCE) this.compiling++;
+    if (this.compiling < this.compilesAtOnce) this.compiling++;
     else await new Promise<void>((resolve) => this.waitingToCompile.push(resolve));
     try {
       return await compile();
@@ -385,7 +391,7 @@ export class PipelineWarmth {
       this.arrived(wait);
     }
     const drawnSince = this.opened - KEPT_UNUSED_MS;
-    const everything = await this.warmsAtOpen;
+    const everything = !(await this.compilesSparingly);
     const owed = [...this.recipes.values()].filter(
       (recipe) =>
         (everything || (recipe.lastDrawn != null && recipe.lastDrawn > drawnSince)) &&
