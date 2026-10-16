@@ -21,9 +21,7 @@ export interface MediaEntry {
 export interface MediaListing {
   /** Every file under `root` the device's media index knows, by absolute path; null when the index can't be asked. */
   under(root: string): Promise<ReadonlyMap<string, MediaEntry> | null>;
-  /** `'gone'`: device has none for that file; null: couldn't ask. */
-  thumbnail(imageId: number, path: string): Promise<Uint8Array | 'gone' | null>;
-  /** `thumbnail`, a few at a time, newest first. */
+  /** A few at a time, newest first. `'gone'`: device has none for that file; null: couldn't ask. */
   queueThumbnail(imageId: number, path: string): Promise<Uint8Array | 'gone' | null>;
 }
 

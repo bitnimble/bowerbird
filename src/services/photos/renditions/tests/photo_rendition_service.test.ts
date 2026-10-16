@@ -232,12 +232,14 @@ describe('PhotoRenditionService.deviceTile', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'device-tile-'));
   writeFileSync(path.join(root, 'p1.jpg'), 'original');
   const thumbnailing = (
-    queued: Uint8Array | 'gone' | null,
-    direct: Uint8Array | 'gone' | null = queued,
+    first: Uint8Array | 'gone' | null,
+    later: Uint8Array | 'gone' | null = first,
   ): MediaListing => ({
     under: jest.fn(async () => null),
-    thumbnail: jest.fn(async () => direct),
-    queueThumbnail: jest.fn(async () => queued),
+    queueThumbnail: jest
+      .fn<MediaListing['queueThumbnail']>()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValue(later),
   });
   const landed = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
   const JPEG = new Uint8Array([0xff, 0xd8]);
@@ -272,7 +274,7 @@ describe('PhotoRenditionService.deviceTile', () => {
     expect(processing.deviceTileArrived).toHaveBeenCalledWith('p1');
 
     expect(await service.deviceTile('p1')).toEqual(JPEG);
-    expect(media.thumbnail).toHaveBeenCalledWith(7, path.join(root, 'p1.jpg'));
+    expect(media.queueThumbnail).toHaveBeenCalledTimes(2);
   });
 
   it('fetches once however many requests arrive while it runs', async () => {

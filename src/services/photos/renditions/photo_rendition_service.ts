@@ -72,7 +72,7 @@ export class PhotoRenditionService {
       const fetched = this.fetchDeviceTile(this.media, photoId, imageId, original);
       return wait ? fetched : null;
     }
-    const jpeg = await this.media.thumbnail(imageId, original);
+    const jpeg = await this.media.queueThumbnail(imageId, original);
     if (jpeg instanceof Uint8Array) return jpeg;
     this.handedOver.delete(imageId);
     if (jpeg === 'gone') this.tileAsFile(photoId);
