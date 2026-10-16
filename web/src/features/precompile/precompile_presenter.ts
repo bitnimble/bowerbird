@@ -19,15 +19,22 @@ export class PrecompilePresenter {
   private settled = false;
   private toast: number | null = null;
 
+  private readonly longestWaitMs: number;
+
+  /** @param options.precompiles false where nothing should compile ahead of use (`onMobileDevice`). */
   constructor(
     private readonly store: PrecompileStore,
     private readonly precompile: Precompile,
     private readonly version: string,
     private readonly remembered: Remembered,
     private readonly toasts: Toasts,
-    private readonly longestWaitMs = LONGEST_PRECOMPILE_WAIT_MS,
+    {
+      longestWaitMs = LONGEST_PRECOMPILE_WAIT_MS,
+      precompiles = true,
+    }: { longestWaitMs?: number; precompiles?: boolean } = {},
   ) {
-    if (remembered.read() === version) this.markReady();
+    this.longestWaitMs = longestWaitMs;
+    if (!precompiles || remembered.read() === version) this.markReady();
   }
 
   @action.bound

@@ -65,7 +65,8 @@ const COMPILES_AT_ONCE = 1;
  * Compiles, asynchronously, the pipelines earlier sessions drew with, and hands each to the stand-in
  * wgpu creates in its place - wgpu's own pipeline creation being synchronous on the browser's GPU
  * main thread, where it blocks every page being drawn until it returns - deferring the rest to
- * their first use. Nothing is warmed until `warmUp`, so a session that never edits compiles nothing.
+ * their first use. Where it does not warm at open, nothing is warmed until `warmUp`, so a session
+ * that never edits compiles nothing.
  *
  * It finds its surface rather than being told it, so a pipeline nobody here has heard of is
  * covered on the day it is written: every `create…Pipeline` on `GPUDevice` is deferred, every
@@ -92,9 +93,16 @@ export class PipelineWarmth {
   private warmedUp: Promise<void> | null = null;
   private storedLoaded: Promise<void> | null = null;
 
-  constructor(private readonly store: RecipeStore) {}
+  /**
+   * @param warmsAtOpen true to hand the device back only once every remembered pipeline has
+   *   compiled, precompiled or drawn; false to wait for `warmUp`, and warm only what was drawn.
+   */
+  constructor(
+    private readonly store: RecipeStore,
+    private readonly warmsAtOpen: Promise<boolean> = Promise.resolve(false),
+  ) {}
 
-  /** Compiles, once, the pipelines earlier sessions drew with; nothing before a device has opened. */
+  /** Compiles, once, the remembered pipelines this warmth warms; nothing before a device has opened. */
   warmUp(): Promise<void> {
     if (this.device == null) return Promise.resolve();
     if (this.warmedUp == null) {
@@ -128,8 +136,9 @@ export class PipelineWarmth {
     ): PipelineRecipe => this.recipeOf(build, descriptor, layout);
     const arrived = (wait: Deferred): void => this.arrived(wait);
     const drawn = (wait: Deferred): object => this.drawn(wait);
-    const opens = (opened: GPUDevice): void => {
+    const opens = async (opened: GPUDevice): Promise<void> => {
       this.device = { opened, created };
+      if (await this.warmsAtOpen) await this.warmUp();
     };
 
     device.createShaderModule = function (this: GPUDevice, descriptor) {
@@ -181,7 +190,7 @@ export class PipelineWarmth {
     }
     adapter.requestDevice = async function (this: GPUAdapter, descriptor) {
       const opened = await requestDevice.call(this, descriptor);
-      opens(opened);
+      await opens(opened);
       return opened;
     };
   }
@@ -376,10 +385,10 @@ export class PipelineWarmth {
       this.arrived(wait);
     }
     const drawnSince = this.opened - KEPT_UNUSED_MS;
+    const everything = await this.warmsAtOpen;
     const owed = [...this.recipes.values()].filter(
       (recipe) =>
-        recipe.lastDrawn != null &&
-        recipe.lastDrawn > drawnSince &&
+        (everything || (recipe.lastDrawn != null && recipe.lastDrawn > drawnSince)) &&
         !changed.has(recipe.identity) &&
         !this.compiled.has(recipe.identity),
     );

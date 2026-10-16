@@ -34,10 +34,11 @@ import { pipelinesFor, StagePainter } from '../features/photos/viewer/stage_gpu'
 import {
   AnswerSchema,
   CompilingSchema,
-  FilesMessageSchema,
   MessageSchema,
   ProgressSchema,
+  StartMessageSchema,
   type Message,
+  type StartMessage,
 } from './gpu_protocol';
 import { canDecodeAvifPlanes, decodeAvifPlanes, type PlanarPicture } from '../avif/avif_planes';
 import { pageLog } from '../features/logs/page_log';
@@ -49,8 +50,11 @@ pageLog.follow('worker');
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 
-const filesPort = Promise.withResolvers<MessagePort>();
-const warmth = new PipelineWarmth(storedRecipes(new PortedFiles(filesPort.promise)));
+const started = Promise.withResolvers<StartMessage>();
+const warmth = new PipelineWarmth(
+  storedRecipes(new PortedFiles(started.promise.then(({ port }) => port))),
+  started.promise.then(({ warmsAtOpen }) => warmsAtOpen),
+);
 warmth.install(worker);
 warmth.onProgress((compiled, of) => worker.postMessage(CompilingSchema.parse({ compiled, of })));
 
@@ -75,10 +79,10 @@ const IdSchema = z.object({ id: z.number() });
 
 worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
   const { id } = IdSchema.parse(event.data);
-  const files = FilesMessageSchema.safeParse(event.data);
+  const start = StartMessageSchema.safeParse(event.data);
   // Ahead of `answer`, which waits for the device, which waits for recipes read through this.
-  if (files.success) {
-    filesPort.resolve(files.data.port);
+  if (start.success) {
+    started.resolve(start.data);
     return;
   }
   const report = (stage: string): void => worker.postMessage(ProgressSchema.parse({ id, stage }));

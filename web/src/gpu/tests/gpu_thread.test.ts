@@ -37,7 +37,7 @@ test('a stage reaches the ask it belongs to, ahead of its answer', async () => {
       ),
     );
     // First, ahead of anything that waits on the device, which waits on recipes read through it.
-    expect(worker.posted[0]?.to).toBe('files');
+    expect(worker.posted[0]?.to).toBe('start');
     const [first, second] = worker.posted.filter((message) => message.to === 'open');
 
     worker.reply({ id: second!.id, stage: 'decoding' });
@@ -50,6 +50,30 @@ test('a stage reaches the ask it belongs to, ahead of its answer', async () => {
 
     expect(await Promise.all(asks)).toEqual(['first', 'second']);
     expect(heard).toEqual([['demosaicing'], ['decoding', 'matching']]);
+  } finally {
+    globalThis.Worker = real;
+  }
+});
+
+test('a precompile hears every background compile, from the count before it asked', async () => {
+  const real = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    const thread = new GpuThread();
+    const worker = FakeWorker.last!;
+    worker.reply({ compiled: 3, of: 40 });
+    const counted: [number, number][] = [];
+    const precompiling = thread.precompile((compiled, of) => counted.push([compiled, of]));
+    worker.reply({ compiled: 4, of: 40 });
+    const asked = worker.posted.find((message) => message.to === 'precompile');
+    worker.reply({ id: asked!.id, ok: true, value: null });
+    await precompiling;
+    worker.reply({ compiled: 5, of: 40 });
+
+    expect(counted).toEqual([
+      [3, 40],
+      [4, 40],
+    ]);
   } finally {
     globalThis.Worker = real;
   }

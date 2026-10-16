@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { OpenStage } from '../features/raw_edit/local_decode/local_open';
 import { serveFiles } from '../app/local_setting';
 import { pageLog } from '../features/logs/page_log';
-import { FilesMessageSchema, MessageSchema, ReplySchema, type Addressed } from './gpu_protocol';
+import { onMobileDevice } from '../api/transport';
+import { MessageSchema, ReplySchema, StartMessageSchema, type Addressed } from './gpu_protocol';
 
 /**
  * The app's GPU, on a thread of its own: one worker for the life of the page, holding the wasm
@@ -56,7 +57,12 @@ export class GpuThread {
     const files = new MessageChannel();
     serveFiles(files.port1);
     this.worker.postMessage(
-      FilesMessageSchema.parse({ id: ++this.asked, to: 'files', port: files.port2 }),
+      StartMessageSchema.parse({
+        id: ++this.asked,
+        to: 'start',
+        port: files.port2,
+        warmsAtOpen: !onMobileDevice(),
+      }),
       [files.port2],
     );
   }

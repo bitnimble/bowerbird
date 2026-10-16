@@ -83,7 +83,7 @@ type Installed = {
 };
 
 /** Fresh classes per install, so each wraps prototypes no earlier install has wrapped. */
-function installed(store: RecipeStore): Installed {
+function installed(store: RecipeStore, warmsAtOpen = false): Installed {
   class Device extends FakeDevice {}
   class Pass extends FakePass {}
   class Drawing extends FakePass {}
@@ -93,7 +93,7 @@ function installed(store: RecipeStore): Installed {
       return Promise.resolve(new Device());
     }
   }
-  const warmth = new PipelineWarmth(store);
+  const warmth = new PipelineWarmth(store, Promise.resolve(warmsAtOpen));
   warmth.install({
     GPUAdapter: Adapter,
     GPUDevice: Device,
@@ -404,6 +404,21 @@ test('pipelines compile one at a time, whether precompiled or warmed by the next
   await next.warmth.warmUp();
   expect(FakeDevice.compiledAsync).toHaveLength(4);
   expect(FakeDevice.mostInFlight).toBe(1);
+});
+
+test('a device that warms at open is handed back with everything remembered compiled, drawn or not', async () => {
+  reset();
+  const store = memory();
+  const first = installed(store, true);
+  const device = await first.adapter.requestDevice();
+  await first.warmth.precompile(() => {
+    build(device, 'a', 'fn a() {}');
+    build(device, 'b', 'fn b() {}');
+  });
+  reset();
+
+  await installed(store, true).adapter.requestDevice();
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}', 'fn b() {}']);
 });
 
 test('opening a device compiles nothing until the warm-up is asked for', async () => {

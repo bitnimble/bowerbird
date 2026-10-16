@@ -40,7 +40,11 @@ export function shellInvoke(): Invoke | null {
 
 /** The mobile app, which has no file manager or app chooser to hand anything to. */
 export function inMobileApp(): boolean {
-  if (shellInvoke() == null) return false;
+  return shellInvoke() != null && onMobileDevice();
+}
+
+/** A phone or tablet, in the app or a browser: a battery, and a GPU driver in the app's own process. */
+export function onMobileDevice(): boolean {
   const agent = navigator.userAgent;
   // An iPad's webview names itself a Mac.
   return /Android|iPhone|iPad/i.test(agent) || (/Mac/i.test(agent) && navigator.maxTouchPoints > 1);

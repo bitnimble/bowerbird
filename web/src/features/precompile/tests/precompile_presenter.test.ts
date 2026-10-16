@@ -63,6 +63,26 @@ test('a device that precompiled this version starts ready, without compiling', (
   expect(asked).toBe(0);
 });
 
+test('a device that compiles nothing ahead of use starts ready, without compiling', () => {
+  const store = new PrecompileStore();
+  let asked = 0;
+  const presenter = new PrecompilePresenter(
+    store,
+    () => {
+      asked++;
+      return deferred().promise;
+    },
+    '1.4.0',
+    remembering(null),
+    toasting(),
+    { precompiles: false },
+  );
+  presenter.start();
+
+  expect(store.ready).toBe(true);
+  expect(asked).toBe(0);
+});
+
 test('a new version compiles once however often it is asked for, then remembers it', async () => {
   const store = new PrecompileStore();
   const compile = deferred();
@@ -112,14 +132,9 @@ test('the store follows how many pipelines have compiled', () => {
 test('a compile that never finishes lets the app open once the wait runs out, and is not remembered', async () => {
   const store = new PrecompileStore();
   const remembered = remembering(null);
-  new PrecompilePresenter(
-    store,
-    () => new Promise(() => {}),
-    '1.4.0',
-    remembered,
-    toasting(),
-    10,
-  ).start();
+  new PrecompilePresenter(store, () => new Promise(() => {}), '1.4.0', remembered, toasting(), {
+    longestWaitMs: 10,
+  }).start();
 
   expect(store.ready).toBe(false);
   await when(() => store.ready, { timeout: 5000 });
@@ -130,14 +145,9 @@ test('a compile that finishes after the wait ran out is still remembered', async
   const store = new PrecompileStore();
   const compile = deferred();
   const remembered = remembering(null);
-  new PrecompilePresenter(
-    store,
-    () => compile.promise,
-    '1.4.0',
-    remembered,
-    toasting(),
-    10,
-  ).start();
+  new PrecompilePresenter(store, () => compile.promise, '1.4.0', remembered, toasting(), {
+    longestWaitMs: 10,
+  }).start();
 
   await when(() => store.ready, { timeout: 5000 });
   compile.resolve();
@@ -160,7 +170,7 @@ test('a compile still running when the app opens goes on in a toast, which close
     '1.4.0',
     remembering(null),
     toasts,
-    10,
+    { longestWaitMs: 10 },
   ).start();
   report(10, 200);
 

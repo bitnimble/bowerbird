@@ -117,17 +117,18 @@ export const MessageSchema = z.discriminatedUnion('to', [
 ]);
 export type Message = z.infer<typeof MessageSchema>;
 
-/**
- * Where the worker reads and writes this device's files (`PortedFiles`), sent once at start and
- * never answered.
- */
-export const FilesMessageSchema = z.object({
+/** What the worker needs before anything else, sent once at start and never answered. */
+export const StartMessageSchema = z.object({
   id: z.number(),
-  to: z.literal('files'),
+  to: z.literal('start'),
+  /** Where the worker reads and writes this device's files (`PortedFiles`). */
   port: z.custom<MessagePort>(
     (value) => typeof MessagePort === 'function' && value instanceof MessagePort,
   ),
+  /** Whether the device opens with every remembered pipeline compiled (`PipelineWarmth`). */
+  warmsAtOpen: z.boolean(),
 });
+export type StartMessage = z.infer<typeof StartMessageSchema>;
 export type Addressed = DistributiveOmit<Message, 'id'>;
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
