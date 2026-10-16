@@ -252,8 +252,7 @@ impl Held {
 /// A JPEG decoded upright to `long_edge` for its grid tile; `None` for any other format, whose tile
 /// is rendered.
 #[cfg(feature = "renditions")]
-/// The JPEG's pixels as stored, and the EXIF orientation that turns them upright.
-pub fn preview_rgb(path: &str, long_edge: usize) -> Option<(crate::rgb::Rgb, u16)> {
+pub fn preview_rgb(path: &str, long_edge: usize) -> Option<crate::rgb::Rgb> {
     let mut lap = crate::clock::laps("  rendered ");
     let bytes = std::fs::read(path).ok()?;
     lap("read");
@@ -262,7 +261,7 @@ pub fn preview_rgb(path: &str, long_edge: usize) -> Option<(crate::rgb::Rgb, u16
     }
     let decoded = crate::jpeg::decode_tile(&bytes, long_edge).ok()?;
     lap("decode");
-    Some((decoded, probe(&bytes).map_or(1, |probe| probe.orientation)))
+    Some(decoded)
 }
 
 /// What a container says about itself before anything is decoded.

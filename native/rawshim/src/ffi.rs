@@ -129,13 +129,7 @@ pub unsafe extern "C" fn bb_describe_jpeg(
         let Ok(rgb) = crate::jpeg::decode_tile(jpeg, 0) else {
             return -1;
         };
-        let orientation = crate::decode_rendered::probe(jpeg).map_or(1, |probe| probe.orientation);
-        let image = crate::rgb::RgbRef {
-            width: rgb.width,
-            height: rgb.height,
-            data: &rgb.data,
-        };
-        match crate::stacks::describe(gpu, image, orientation) {
+        match crate::stacks::describe(gpu, rgb.as_ref()) {
             Some(descriptor) if descriptor.len() <= out.len() => {
                 out[..descriptor.len()].copy_from_slice(&descriptor);
                 descriptor.len() as i64

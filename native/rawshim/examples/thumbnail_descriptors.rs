@@ -10,7 +10,6 @@
 //! keeps. Frames are taken in capture order.
 
 use rawshim::decode_rawler::{Preview, upright_preview_jpeg};
-use rawshim::rgb::RgbRef;
 use rawshim::stacks::{describe, group, similarity};
 
 const TILE: usize = 800;
@@ -188,15 +187,7 @@ fn describe_jpeg(
     long_edge: usize,
 ) -> Option<Vec<u8>> {
     let rgb = rawshim::jpeg::decode_tile(jpeg, long_edge).ok()?;
-    describe(
-        gpu,
-        RgbRef {
-            width: rgb.width,
-            height: rgb.height,
-            data: &rgb.data,
-        },
-        rawshim::decode_rendered::probe(jpeg).map_or(1, |probe| probe.orientation),
-    )
+    describe(gpu, rgb.as_ref())
 }
 
 fn percentile(sorted: &[f32], at: f32) -> f32 {

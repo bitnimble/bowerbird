@@ -529,12 +529,7 @@ const CHROMA_LEAK_TILE_FRACTION: f64 = 0.15;
 /// has no other reason to need a device. Taking one for the whole job would refuse to catalogue
 /// such a photograph on a machine with no Vulkan, over a descriptor it is allowed to do without.
 #[cfg(feature = "renditions")]
-fn describe_if_grid(
-    image: crate::rgb::RgbRef<'_>,
-    orientation: u16,
-    target: &Target,
-    outcome: &mut Outcome,
-) {
+fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mut Outcome) {
     if target.rendition != Rendition::Grid {
         return;
     }
@@ -542,7 +537,7 @@ fn describe_if_grid(
         crate::warn("rawshim: no adapter, so this photograph gets no stacking descriptor");
         return;
     };
-    if let Some(descriptor) = stacks::describe(gpu, image, orientation) {
+    if let Some(descriptor) = stacks::describe(gpu, image) {
         outcome.descriptor = Some(descriptor);
     }
 }
@@ -1370,7 +1365,6 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                             want,
                             crate::jpeg::decode_tile,
                         )
-                        .map(|preview| (preview, 1))
                     }
                     // A JPEG that arrived as itself *is* the camera's rendering, so the tile is a
                     // bounded decode of the file. Every other rendered format has no preview to
@@ -1379,11 +1373,10 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                     _ if crate::decode_rendered::is_rendered(&job.raw_file_path) => {
                         crate::decode_rendered::preview_rgb(&job.raw_file_path, size)
                     }
-                    _ => crate::decode_rawler::upright_preview_tile(&job.raw_file_path, size, want)
-                        .map(|preview| (preview, 1)),
+                    _ => crate::decode_rawler::upright_preview_tile(&job.raw_file_path, size, want),
                 }
             });
-            if let Some((preview, orientation)) = preview {
+            if let Some(preview) = preview {
                 let image = crate::rgb::RgbRef {
                     width: preview.width,
                     height: preview.height,
@@ -1392,7 +1385,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                 lap("embedded preview");
                 save_avif(image, target, output_rotation, exif)?;
                 lap("encode, write");
-                describe_if_grid(image, orientation, target, &mut outcome);
+                describe_if_grid(image, target, &mut outcome);
                 lap("describe");
                 continue;
             }
@@ -1610,7 +1603,6 @@ async fn bands(
                         height,
                         data: &samples,
                     },
-                    1,
                     target,
                     outcome,
                 );
@@ -2271,7 +2263,7 @@ fn write(
                 data: &data,
             };
             save_avif(image, target, rotate, exif)?;
-            describe_if_grid(image, 1, target, outcome);
+            describe_if_grid(image, target, outcome);
         }
     }
     Ok(())
@@ -2485,6 +2477,82 @@ mod tests {
         assert_eq!(job.scene_peak, Some(Light::measured(4130.5)));
         assert_eq!(job.noise_fit.map(|fit| fit.alpha), Some(0.0001502));
         assert_eq!(job.exposure, Some(Stops::measured(0.5)));
+    }
+
+    #[cfg(feature = "renditions")]
+    #[test]
+    fn a_turned_jpeg_describes_as_its_upright_picture() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let (width, height) = (320, 200);
+        let data: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    [
+                        (x * 255 / width) as u8,
+                        (y * 255 / height) as u8,
+                        (x * y % 251) as u8,
+                    ]
+                })
+            })
+            .collect();
+        let as_stored = crate::jpeg::encode(
+            crate::rgb::RgbRef {
+                width,
+                height,
+                data: &data,
+            },
+            92,
+        )
+        .expect("the JPEG encodes");
+        let stored = crate::jpeg::decode_tile(&as_stored, 0).expect("the JPEG decodes");
+        // EXIF 6: the upright frame's (u, v) is stored at (v, height - 1 - u).
+        let upright: Vec<u8> = (0..stored.width)
+            .flat_map(|v| (0..stored.height).map(move |u| (u, v)))
+            .flat_map(|(u, v)| {
+                let at = ((stored.height - 1 - u) * stored.width + v) * 3;
+                stored.data[at..at + 3].to_vec()
+            })
+            .collect();
+        let expected = stacks::describe(
+            gpu,
+            crate::rgb::RgbRef {
+                width: stored.height,
+                height: stored.width,
+                data: &upright,
+            },
+        )
+        .expect("the grids read back");
+        let turned = crate::jpeg::with_orientation(&as_stored, 6).expect("the JPEG takes a tag");
+
+        let mut out = vec![0u8; stacks::DESCRIPTOR_BYTES];
+        #[expect(unsafe_code)]
+        let written = unsafe {
+            crate::ffi::bb_describe_jpeg(turned.as_ptr(), turned.len(), out.as_mut_ptr(), out.len())
+        };
+        assert_eq!(written, expected.len() as i64);
+        assert_eq!(out, expected, "bb_describe_jpeg");
+
+        let path = std::env::temp_dir().join(format!("bb-turned-{}.jpg", std::process::id()));
+        std::fs::write(&path, &turned).expect("the JPEG writes");
+        let job: Job = serde_json::from_value(serde_json::json!({
+            "rawFilePath": path, "cameraMatch": "none", "sharpen": 0, "defringe": 0,
+            "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+            "targets": [{
+                "rendition": "grid", "output": "srgb", "outputPath": "", "size": 800,
+                "source": "embedded", "sdrQuantizer": 13, "hdrQuantizer": 13, "preset": 0,
+                "stillFullChroma": false, "sdrFullChroma": false, "describeOnly": true
+            }]
+        }))
+        .expect("the job parses");
+        let outcome = run(&job);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            outcome.expect("the job runs").descriptor,
+            Some(expected),
+            "a grid job"
+        );
     }
 
     #[test]
