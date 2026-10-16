@@ -105,13 +105,21 @@ for (const top of readdirSync(ROOT)) {
 
 // Files the app writes rather than files the repo holds, which a comment may name for the
 // same reasons and which no checkout will ever contain.
-const AT_RUNTIME = new Set(['.bowerbird-backup.json', 'config.json', 'release.yml']);
+const AT_RUNTIME = new Set([
+  '.bowerbird-backup.json',
+  'config.json',
+  'release.yml',
+  'installed.json',
+]);
+// Files the getters download into trees outside the checkout (`scripts/pinned.ts`).
+const FETCHED = new Set(['weights.json', 'upscaler.json']);
 
 function named(token: string): boolean {
-  // Not a path of ours: somebody else's tree, a URL, a glob, a sentence.
+  // Not a path of ours: somebody else's tree, a URL, a glob, a template, a sentence.
   if (token.startsWith('/') || token.startsWith('~') || token.includes('://')) return false;
-  if (/[\s*?<>|]/.test(token)) return false;
-  if (token.startsWith('node_modules/') || AT_RUNTIME.has(token)) return false;
+  if (/[\s*?<>|]|\$\{/.test(token)) return false;
+  if (token.startsWith('node_modules/') || AT_RUNTIME.has(token) || FETCHED.has(token))
+    return false;
   return NAMED.has(extname(token));
 }
 
