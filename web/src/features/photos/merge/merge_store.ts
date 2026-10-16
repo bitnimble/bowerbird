@@ -6,6 +6,7 @@ import {
   type Takes,
 } from '../../../../../src/schemas/assembly';
 import { type PhotoSummary } from '../../../../../src/schemas/photos';
+import { hashOf } from '../../../hash_of';
 import { layersOf, type Drawing, type Piece } from './merge_layers';
 import { NO_SHIFT, shiftOf, type Shift } from './merge_rect';
 import type { Decoded } from '../viewer/stage_bitmaps';
@@ -298,20 +299,6 @@ export class MergeStore {
     const { x: sx, y: sy } = this.layerScale;
     return loop.map((v) => [vertices[v]![0] * sx, vertices[v]![1] * sy]);
   }
-}
-
-/** cyrb53, a 53-bit string hash. */
-function hashOf(text: string): string {
-  let h1 = 0xdeadbeef;
-  let h2 = 0x41c6ce57;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 2654435761);
-    h2 = Math.imul(h2 ^ c, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 function pathOf(loop: Loop): string {

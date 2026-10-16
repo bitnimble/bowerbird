@@ -48,7 +48,7 @@ import { UpdatesStore } from '../features/updates/updates_store';
 import { SidebarPresenter } from './sidebar_presenter';
 import { SidebarStore } from './sidebar_store';
 import { gpuThread } from '../gpu/gpu_thread';
-import { BUILD_VERSION } from './build_version';
+import { PIPELINES_VERSION } from '../features/precompile/pipelines_version';
 import { readSetting, writeSetting } from './local_setting';
 import { askPhotoAccess, photoAccess } from '../api/transport';
 
@@ -244,7 +244,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     precompile: new PrecompilePresenter(
       stores.precompile,
       (onCompiled) => gpuThread().precompile(onCompiled),
-      BUILD_VERSION,
+      PIPELINES_VERSION,
       {
         read: () => readSetting(PRECOMPILED_KEY),
         write: (version) => writeSetting(PRECOMPILED_KEY, version),
