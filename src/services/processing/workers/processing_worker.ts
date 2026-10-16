@@ -5,6 +5,7 @@ import { headerOf } from '../rawshim/raw_decoder';
 import { runJob, writeRendered } from '../rawshim/rawshim_job';
 import { writePhotoAnalysis } from '../analysis/photo_analysis_store';
 import { toCommand, toCompositeCommand } from '../rawshim/worker_command';
+import { describedFrom, thumbnailDescriptor } from './device_thumbnail';
 import type { ProcessingMessage, WorkerJob } from './processing_types';
 
 // Bun worker thread (DESIGN §10.3). Writes renditions of one photo - the grid
@@ -60,12 +61,15 @@ self.onmessage = async (event) => {
                   self.postMessage({ kind: 'started', photoId: job.photoId, analysisCache })
               : undefined,
           );
+    const thumbnailed = job.kind === 'rendition' ? await thumbnailDescriptor(job) : null;
     const { descriptor, photoAnalysis, composite, cameraTone, header } =
       job.kind === 'composite'
         ? runJob(command)
         : job.rendered != null
           ? writeRendered(command, job.rendered)
-          : runJob(command);
+          : thumbnailed != null
+            ? describedFrom(thumbnailed, command)
+            : runJob(command);
     if (photoAnalysis != null) writePhotoAnalysis(job.dataPath, job.photoId, photoAnalysis);
     self.postMessage({
       photoId: job.photoId,

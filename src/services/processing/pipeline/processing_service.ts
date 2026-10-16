@@ -122,6 +122,7 @@ export class ProcessingService extends RenderService {
      */
     private readonly holdingRenderMemory: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
     activity: LibraryActivity = new LibraryActivity(),
+    private readonly shellSocket: string | null = null,
   ) {
     super(
       photoProcessing,
@@ -722,6 +723,9 @@ export class ProcessingService extends RenderService {
         ? {
             ...common,
             ...(pending.metadata_provisional === 1 ? { header: true as const } : {}),
+            ...(pending.media_image_id == null || this.shellSocket == null
+              ? {}
+              : { deviceThumbnail: { imageId: pending.media_image_id, socket: this.shellSocket } }),
             // Still runs: stacking needs the descriptor.
             targets: [pending.media_image_id == null ? grid : { ...grid, describeOnly: true }],
           }

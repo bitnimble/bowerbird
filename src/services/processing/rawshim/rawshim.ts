@@ -126,6 +126,10 @@ const SYMBOLS = {
   // Stacking: descriptors in, group indices out, the whole walk in Rust (§19).
   bb_descriptor_size: { args: [], returns: FFIType.u64 },
   bb_descriptor_format: { args: [], returns: FFIType.u8 },
+  bb_describe_jpeg: {
+    args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64],
+    returns: FFIType.i64,
+  },
   bb_stack_groups: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.f32, FFIType.i64, FFIType.ptr],
     returns: FFIType.i32,

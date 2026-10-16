@@ -233,6 +233,7 @@ const processingService: ProcessingService = new ProcessingService(
   (photoId) => compositesService.renderable(photoId),
   holdingRenderMemory,
   activity,
+  config.shellSocket ?? null,
 );
 const modelsService = new ModelsService(path.join(modelsDir(config.dbPath), 'downloaded'), [
   {

@@ -104,6 +104,47 @@ pub unsafe extern "C" fn bb_run_job(
     answered
 }
 
+/// The stacking descriptor of a JPEG held in memory, upright, written into `out`: its length, or -1
+/// where it would not decode, the device declined, or `out` is too small.
+///
+/// # Safety
+/// `jpeg` must be `len` readable bytes and `out` `cap` writable ones, borrowed for the call.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_describe_jpeg(
+    jpeg: *const u8,
+    len: usize,
+    out: *mut u8,
+    cap: usize,
+) -> i64 {
+    if jpeg.is_null() || out.is_null() {
+        return -1;
+    }
+    let jpeg = unsafe { std::slice::from_raw_parts(jpeg, len) };
+    let out = unsafe { std::slice::from_raw_parts_mut(out, cap) };
+    crate::guard("bb_describe_jpeg", -1, || {
+        let Some(gpu) = crate::gpu::device() else {
+            return -1;
+        };
+        let Ok(rgb) = crate::jpeg::decode_tile(jpeg, 0) else {
+            return -1;
+        };
+        let orientation = crate::decode_rendered::probe(jpeg).map_or(1, |probe| probe.orientation);
+        let image = crate::rgb::RgbRef {
+            width: rgb.width,
+            height: rgb.height,
+            data: &rgb.data,
+        };
+        match crate::stacks::describe(gpu, image, orientation) {
+            Some(descriptor) if descriptor.len() <= out.len() => {
+                out[..descriptor.len()].copy_from_slice(&descriptor);
+                descriptor.len() as i64
+            }
+            _ => -1,
+        }
+    })
+}
+
 /// 1 when the RAW at `path` is a Bayer mosaic, which the upscaler takes, 0 otherwise or unreadable.
 ///
 /// # Safety

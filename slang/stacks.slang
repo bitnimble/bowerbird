@@ -19,12 +19,14 @@ import px;
 import times;
 
 struct Params {
+    /// The frame as stored, which `orientation` turns upright.
     int width;
     int pixels;
     /// Cells along one edge, which is `stacks::GRID`.
     int cells;
-    int pad0;
-    /// The whole frame's rectangle: left, top, width, height.
+    /// EXIF's 1 to 8.
+    int orientation;
+    /// The upright frame's rectangle: left, top, width, height.
     int x0;
     int y0;
     int w;
@@ -52,6 +54,23 @@ uint sample_at(int index)
     return (frame[index >> 2] >> uint(8 * (index & 3))) & 0xffu;
 }
 
+/// Where the upright frame's `(u, v)` is stored.
+int2 stored_at(int u, int v)
+{
+    let w = pc.width;
+    let h = pc.pixels / pc.width;
+    switch (pc.orientation) {
+    case 2: return int2(w - 1 - u, v);
+    case 3: return int2(w - 1 - u, h - 1 - v);
+    case 4: return int2(u, h - 1 - v);
+    case 5: return int2(v, u);
+    case 6: return int2(v, h - 1 - u);
+    case 7: return int2(w - 1 - v, h - 1 - u);
+    case 8: return int2(w - 1 - v, u);
+    default: return int2(u, v);
+    }
+}
+
 /// The first of `extent` places whose cell, `(place * cells) / extent`, is `cell` or later.
 int cell_start(int cell, int extent)
 {
@@ -75,9 +94,8 @@ void stacks_cells(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
 
     var sum = uint3(0);
     for (var k = int(lane); k < count; k += int(LANES)) {
-        let x = uint(x0 + k % across);
-        let y = uint(y0 + k / across);
-        let i = int(wide_at<Output>(x, y, measured<Output>(uint(pc.width))) * 3);
+        let at = stored_at(x0 + k % across, y0 + k / across);
+        let i = int(wide_at<Output>(uint(at.x), uint(at.y), measured<Output>(uint(pc.width))) * 3);
         sum += uint3(sample_at(i), sample_at(i + 1), sample_at(i + 2));
     }
     partial[lane] = sum;

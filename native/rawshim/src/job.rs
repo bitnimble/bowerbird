@@ -529,7 +529,12 @@ const CHROMA_LEAK_TILE_FRACTION: f64 = 0.15;
 /// has no other reason to need a device. Taking one for the whole job would refuse to catalogue
 /// such a photograph on a machine with no Vulkan, over a descriptor it is allowed to do without.
 #[cfg(feature = "renditions")]
-fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mut Outcome) {
+fn describe_if_grid(
+    image: crate::rgb::RgbRef<'_>,
+    orientation: u16,
+    target: &Target,
+    outcome: &mut Outcome,
+) {
     if target.rendition != Rendition::Grid {
         return;
     }
@@ -537,7 +542,7 @@ fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mu
         crate::warn("rawshim: no adapter, so this photograph gets no stacking descriptor");
         return;
     };
-    if let Some(descriptor) = stacks::describe(gpu, image) {
+    if let Some(descriptor) = stacks::describe(gpu, image, orientation) {
         outcome.descriptor = Some(descriptor);
     }
 }
@@ -1365,6 +1370,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                             want,
                             crate::jpeg::decode_tile,
                         )
+                        .map(|preview| (preview, 1))
                     }
                     // A JPEG that arrived as itself *is* the camera's rendering, so the tile is a
                     // bounded decode of the file. Every other rendered format has no preview to
@@ -1373,10 +1379,11 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                     _ if crate::decode_rendered::is_rendered(&job.raw_file_path) => {
                         crate::decode_rendered::preview_rgb(&job.raw_file_path, size)
                     }
-                    _ => crate::decode_rawler::upright_preview_tile(&job.raw_file_path, size, want),
+                    _ => crate::decode_rawler::upright_preview_tile(&job.raw_file_path, size, want)
+                        .map(|preview| (preview, 1)),
                 }
             });
-            if let Some(preview) = preview {
+            if let Some((preview, orientation)) = preview {
                 let image = crate::rgb::RgbRef {
                     width: preview.width,
                     height: preview.height,
@@ -1385,7 +1392,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                 lap("embedded preview");
                 save_avif(image, target, output_rotation, exif)?;
                 lap("encode, write");
-                describe_if_grid(image, target, &mut outcome);
+                describe_if_grid(image, orientation, target, &mut outcome);
                 lap("describe");
                 continue;
             }
@@ -1603,6 +1610,7 @@ async fn bands(
                         height,
                         data: &samples,
                     },
+                    1,
                     target,
                     outcome,
                 );
@@ -2263,7 +2271,7 @@ fn write(
                 data: &data,
             };
             save_avif(image, target, rotate, exif)?;
-            describe_if_grid(image, target, outcome);
+            describe_if_grid(image, 1, target, outcome);
         }
     }
     Ok(())

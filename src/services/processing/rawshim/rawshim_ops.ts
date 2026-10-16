@@ -130,6 +130,15 @@ export function descriptorFormat(): number {
   return shim().bb_descriptor_format();
 }
 
+/** A JPEG's stacking descriptor, upright; null where it would not decode or describe. */
+export function describeJpeg(jpeg: Uint8Array): Uint8Array | null {
+  const out = new Uint8Array(descriptorSize());
+  const written = Number(
+    shim().bb_describe_jpeg(ptr(jpeg), jpeg.byteLength, ptr(out), out.byteLength),
+  );
+  return written === out.byteLength ? out : null;
+}
+
 /**
  * Groups frames into stacks, given their descriptors in ascending time order.
  *

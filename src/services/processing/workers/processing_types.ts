@@ -112,6 +112,8 @@ export interface RenditionJob extends Developed {
   preserveSourceOrientation?: boolean;
   /** Also read the file's header off the same open, for a row whose scan took it from the media index. */
   header?: true;
+  /** Describe off the device's thumbnail of `rawFilePath` where it hands one over. */
+  deviceThumbnail?: { imageId: number; socket: string };
   /**
    * Collapse each Bayer quad into one pixel rather than interpolating it (§10.5).
    *

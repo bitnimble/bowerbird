@@ -69,15 +69,13 @@ pub const DESCRIPTOR_BYTES: usize = HEADER + VIEW_BYTES * 2;
 /// A descriptor is stored and compared against ones written months earlier, and the only thing on
 /// the reading side that keeps two formats apart is `descriptorsOf`'s length check - so a change
 /// that kept the size and moved the bytes would quietly rank a library's older photographs against
-/// a rule they were not measured under. The grids are accumulated in integers now, which is exact
-/// where the f32 sums they replaced were not, so the last bits move and `rank_normalize` spreads a
-/// moved tie run across a whole stretch of cells.
+/// a rule they were not measured under.
 ///
 /// **The header is this many bytes, so that a bump is a length change by construction.** A version
 /// that only wrote its number into a fixed-width header would read as the right length forever: the
 /// blob would stay in the catalogue, `similarity` would score it zero against everything, and the
 /// photograph would drop out of stacking silently and permanently instead of being described again.
-pub const FORMAT: u8 = 1;
+pub const FORMAT: u8 = 2;
 const HEADER: usize = FORMAT as usize;
 
 /// A rectangle of the frame, as a fraction kept about the centre.
@@ -293,9 +291,15 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
 fn params_block(
     width: usize,
     pixels: usize,
+    orientation: u16,
     bounds: &[(usize, usize, usize, usize); 2],
 ) -> Vec<u8> {
-    let mut fields = vec![width as i32, pixels as i32, GRID as i32, 0];
+    let mut fields = vec![
+        width as i32,
+        pixels as i32,
+        GRID as i32,
+        i32::from(orientation),
+    ];
     for (x0, y0, w, h) in bounds {
         fields.extend([*x0 as i32, *y0 as i32, *w as i32, *h as i32]);
     }
@@ -309,12 +313,21 @@ fn params_block(
 ///
 /// The frame goes up as its own bytes, four samples to a word: it is 8-bit interleaved RGB, and
 /// as floats it would be four times the transfer for a sum of small integers.
-async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<[Cells; 2]> {
+async fn accumulate(
+    gpu: &'static crate::gpu::Gpu,
+    image: RgbRef<'_>,
+    orientation: u16,
+) -> Option<[Cells; 2]> {
     let pixels = image.width * image.height;
     if pixels == 0 || image.data.len() < pixels * 3 {
         return None;
     }
-    let bounds = VIEWS.map(|view| view.bounds(image.width, image.height));
+    let (upright_width, upright_height) = if (5..=8).contains(&orientation) {
+        (image.height, image.width)
+    } else {
+        (image.width, image.height)
+    };
+    let bounds = VIEWS.map(|view| view.bounds(upright_width, upright_height));
     let words = GRID_CELLS * 3;
     let sums_bytes = (words * VIEWS.len() * 4) as u64;
 
@@ -337,7 +350,7 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
         mapped_at_creation: false,
     });
 
-    let block = params_block(image.width, pixels, &bounds);
+    let block = params_block(image.width, pixels, orientation, &bounds);
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("stacks push"),
         contents: &block,
@@ -408,12 +421,19 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
 
 /// The descriptor for one frame: `DESCRIPTOR_BYTES` of rank-normalized grids.
 ///
+/// Always of the frame upright, `orientation` being EXIF's 1 to 8 for how `image` is stored: a
+/// photo described as stored one time and upright the next would not match itself.
+///
 /// None where the device declined to hand the grids back, which leaves the photograph out of the
 /// stacking rather than out of the library.
-pub fn describe(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<Vec<u8>> {
+pub fn describe(
+    gpu: &'static crate::gpu::Gpu,
+    image: RgbRef<'_>,
+    orientation: u16,
+) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(DESCRIPTOR_BYTES);
     out.resize(HEADER, FORMAT);
-    for cells in pollster::block_on(accumulate(gpu, image))? {
+    for cells in pollster::block_on(accumulate(gpu, image, orientation))? {
         let coarse = cells.folded();
         // Luma arrives on a 0-255 scale already, chromaticity on a 0-1 one.
         for grid in [&coarse, &cells] {
@@ -637,6 +657,7 @@ mod tests {
                 height,
                 data,
             },
+            1,
         )
         .expect("the device hands the grids back")
     }
@@ -715,7 +736,7 @@ mod tests {
             height,
             data: &data,
         };
-        let read = pollster::block_on(accumulate(gpu, image)).expect("the grids read back");
+        let read = pollster::block_on(accumulate(gpu, image, 1)).expect("the grids read back");
         for (view, cells) in VIEWS.iter().zip(read) {
             let (x0, y0, w, h) = view.bounds(width, height);
             let mut expected = vec![0u32; GRID * GRID * 3];
@@ -730,6 +751,63 @@ mod tests {
             }
             assert_eq!(cells.channels, expected);
         }
+    }
+
+    #[test]
+    fn a_stored_frame_describes_as_its_upright_picture() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let (width, height) = (161, 97);
+        let upright = scene_sized(width, height);
+        let expected = describe_frame(gpu, width, height, &upright);
+        for orientation in 1..=8u16 {
+            let turned = (5..=8).contains(&orientation);
+            let (stored_width, stored_height) = if turned {
+                (height, width)
+            } else {
+                (width, height)
+            };
+            let mut stored = vec![0u8; upright.len()];
+            for v in 0..height {
+                for u in 0..width {
+                    let (x, y) = match orientation {
+                        2 => (stored_width - 1 - u, v),
+                        3 => (stored_width - 1 - u, stored_height - 1 - v),
+                        4 => (u, stored_height - 1 - v),
+                        5 => (v, u),
+                        6 => (v, stored_height - 1 - u),
+                        7 => (stored_width - 1 - v, stored_height - 1 - u),
+                        8 => (stored_width - 1 - v, u),
+                        _ => (u, v),
+                    };
+                    let (from, to) = ((v * width + u) * 3, (y * stored_width + x) * 3);
+                    stored[to..to + 3].copy_from_slice(&upright[from..from + 3]);
+                }
+            }
+            let described = describe(
+                gpu,
+                RgbRef {
+                    width: stored_width,
+                    height: stored_height,
+                    data: &stored,
+                },
+                orientation,
+            );
+            assert_eq!(
+                described.as_deref(),
+                Some(&expected[..]),
+                "orientation {orientation}"
+            );
+        }
+    }
+
+    /// `scene`, at a size of the caller's, so a turn has rows and columns of different lengths.
+    fn scene_sized(width: usize, height: usize) -> Vec<u8> {
+        frame(width, height, |x, y| {
+            let lit = (40.0 + 150.0 * x + 60.0 * y * y) as u8;
+            [lit, (x * 255.0) as u8, (y * 255.0) as u8]
+        })
     }
 
     #[test]
