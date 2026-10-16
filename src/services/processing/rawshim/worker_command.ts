@@ -34,7 +34,7 @@ export function toCommand(
     highlightRecovery: job.highlightRecovery,
     halfSize: job.halfSize,
     measure: job.measure,
-    reportProgress: job.reportProgress,
+    progressId: job.progressId,
     dust: job.dust,
     repairs: job.repairs,
     sharpen: job.sharpen,
@@ -100,7 +100,7 @@ export function toCompositeCommand(job: CompositeJob): Job {
     geometry: job.geometry,
     grade: job.grade,
     targets: job.targets.map(toTarget),
-    reportProgress: job.reportProgress,
+    progressId: job.progressId,
     composite: {
       ...wantOf(job),
       sources: job.sources.map((source) => ({

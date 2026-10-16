@@ -878,8 +878,8 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
     }
 }
 
-/// How far the job counting itself right now has got: steps done in the high word, steps in the
-/// pass in the low one, and zero where none is counting.
+/// How far the job running under `progress_id` has got: steps done in the high word, steps in the
+/// pass in the low one, and zero where none is running.
 ///
 /// Read from a thread other than the one inside `bb_run_job`, which is the whole point: a merge or
 /// an export is minutes of work behind one blocking call, and this is what the caller shows a
@@ -887,21 +887,17 @@ pub unsafe extern "C" fn bb_read_header(path: *const c_char, out: *mut header::B
 #[expect(unsafe_code)]
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
-pub extern "C" fn bb_job_progress() -> u64 {
-    progress::packed()
+pub extern "C" fn bb_job_progress(progress_id: u32) -> u64 {
+    progress::packed(progress_id)
 }
 
-/// Tells whatever job is running to stop at the next boundary it counts itself at.
-///
-/// A control signal about a job already running rather than a second way to start one, so it
-/// follows `bb_job_progress`'s shape: a flag beside the counter, set from the caller's thread and
-/// read by the library's. Seen only by the job counting its steps, and cleared as
-/// that job starts.
+/// Tells the job running under `progress_id` to stop at the next boundary it counts itself at.
+/// Nothing happens where no job is running under it yet.
 #[expect(unsafe_code)]
 #[cfg(feature = "renditions")]
 #[unsafe(no_mangle)]
-pub extern "C" fn bb_cancel_job() {
-    progress::cancel();
+pub extern "C" fn bb_cancel_job(progress_id: u32) {
+    progress::cancel(progress_id);
 }
 
 /// Keeps what a render allocates for the next render to reuse, until as many

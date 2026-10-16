@@ -1,45 +1,55 @@
-//! How far a job has got, readable while it is still running.
+//! How far a job has got, readable while it is still running, and whether it has been told to stop.
 //!
 //! A job is one blocking call across the FFI, so the thread that asked for it cannot report on it;
-//! this is what another thread reads instead. One cell for the process, so only the job somebody is
-//! waiting on - the one that asked with `Job::report_progress` - counts itself here, and every other
-//! job's steps go nowhere.
+//! this is what another thread reads instead. A job somebody is watching runs under an id its caller
+//! chose (`Job::progress_id`), and that id names its cell: two watched jobs at once each count and
+//! stop alone. Every other job's steps go nowhere.
 //!
 //! **Owned by the counting job's thread, not by whichever job touches it.** Every job on every
 //! worker passes through the same `begin` and `advance`: a grid tile of an older merge rendering
 //! beside a carve would otherwise restart the reader's bar from nought.
 
-use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+#[derive(Default)]
+struct Cell {
+    /// `done` in the high word and `total` in the low one, so a reader gets both from one load and
+    /// never sees a count from one pass against a total from the next.
+    packed: AtomicU64,
+    cancel_asked: AtomicBool,
+}
+
+static WATCHED: Mutex<BTreeMap<u32, Arc<Cell>>> = Mutex::new(BTreeMap::new());
 
 thread_local! {
-    static COUNTS: Cell<bool> = const { Cell::new(false) };
+    static CURRENT: RefCell<Option<Arc<Cell>>> = const { RefCell::new(None) };
 }
 
-/// Runs `job` with its steps counted in the cell where `counts`, and not at all otherwise, leaving
-/// the cell clear behind a job that counted however it ended.
-pub fn counted<T>(counts: bool, job: impl FnOnce() -> T) -> T {
-    COUNTS.set(counts);
-    if counts {
-        // A cancel that landed after the last job returned was meant for that one.
-        CANCEL_ASKED.store(false, Ordering::Relaxed);
-    }
+fn watched() -> MutexGuard<'static, BTreeMap<u32, Arc<Cell>>> {
+    WATCHED.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn with_current<T>(read: impl FnOnce(&Cell) -> T) -> Option<T> {
+    CURRENT.with_borrow(|current| current.as_deref().map(read))
+}
+
+/// Runs `job` with its steps counted under `id`, and not at all without one, leaving nothing
+/// behind however it ended.
+pub fn counted<T>(id: Option<u32>, job: impl FnOnce() -> T) -> T {
+    let Some(id) = id else {
+        return job();
+    };
+    let cell = Arc::new(Cell::default());
+    watched().insert(id, cell.clone());
+    CURRENT.set(Some(cell));
     let out = job();
-    if counts {
-        PACKED.store(0, Ordering::Relaxed);
-    }
-    COUNTS.set(false);
+    CURRENT.set(None);
+    watched().remove(&id);
     out
 }
-
-/// `done` in the high word and `total` in the low one, so a reader gets both from one load and
-/// never sees a count from one pass against a total from the next.
-static PACKED: AtomicU64 = AtomicU64::new(0);
-
-/// Whether the counting job has been told to stop, read at the boundaries a long pass already
-/// crosses. A blocking call across the FFI cannot be interrupted from outside it, so cancelling one
-/// is the library agreeing to look.
-static CANCEL_ASKED: AtomicBool = AtomicBool::new(false);
 
 /// Starts a pass of `total` steps. A total of zero means nothing is running.
 ///
@@ -47,26 +57,49 @@ static CANCEL_ASKED: AtomicBool = AtomicBool::new(false);
 /// counts into the outer pass rather than restarting it. The align is both: a panorama asks for it
 /// on its own, and §3 asks for it as the first third of a carve - and when it restarted the count
 /// the reader watched the bar reach a sixth and then sit there for the two thirds that report
-/// nothing. [`counted`] clears the cell when the job ends, so nothing outlives the job that began it.
+/// nothing.
 pub fn begin(total: usize) {
-    if !COUNTS.get() || PACKED.load(Ordering::Relaxed) as u32 != 0 {
-        return;
-    }
-    PACKED.store(total.min(u32::MAX as usize) as u64, Ordering::Relaxed);
+    with_current(|cell| {
+        let fresh = total.min(u32::MAX as usize) as u64;
+        let _ = cell
+            .packed
+            .compare_exchange(0, fresh, Ordering::Relaxed, Ordering::Relaxed);
+    });
 }
 
-pub fn cancel() {
-    CANCEL_ASKED.store(true, Ordering::Relaxed);
+pub fn advance() {
+    with_current(|cell| {
+        let _ = cell
+            .packed
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |packed| {
+                let total = packed as u32;
+                let done = (packed >> 32) as u32;
+                (done < total).then(|| u64::from(done + 1) << 32 | u64::from(total))
+            });
+    });
+}
+
+/// The count of the job running under `id`, or zero where none is.
+pub fn packed(id: u32) -> u64 {
+    watched()
+        .get(&id)
+        .map_or(0, |cell| cell.packed.load(Ordering::Relaxed))
+}
+
+/// Tells the job running under `id` to stop at its next boundary. Nothing happens where none is
+/// running yet, so a caller cancelling a job it has only just posted asks again until it is.
+pub fn cancel(id: u32) {
+    if let Some(cell) = watched().get(&id) {
+        cell.cancel_asked.store(true, Ordering::Relaxed);
+    }
 }
 
 /// What a job a cancel reached fails with. The job answers it verbatim, which is how the server
 /// tells a cancel from a failure (`rawshim_job.ts`).
 pub const CANCELLED: &str = "cancelled";
 
-/// Whether this thread's job is the counting one and has been told to stop; a job nobody is
-/// watching is never the one a cancel meant.
 pub fn cancelled() -> bool {
-    COUNTS.get() && CANCEL_ASKED.load(Ordering::Relaxed)
+    with_current(|cell| cell.cancel_asked.load(Ordering::Relaxed)).unwrap_or(false)
 }
 
 pub fn stop_if_cancelled() -> Result<(), String> {
@@ -76,73 +109,72 @@ pub fn stop_if_cancelled() -> Result<(), String> {
     }
 }
 
-pub fn advance() {
-    if !COUNTS.get() {
-        return;
-    }
-    let _ = PACKED.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |packed| {
-        let total = packed as u32;
-        let done = (packed >> 32) as u32;
-        (done < total).then(|| u64::from(done + 1) << 32 | u64::from(total))
-    });
-}
-
-pub fn packed() -> u64 {
-    PACKED.load(Ordering::Relaxed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // One test, because the cell is the process's and tests run side by side.
     #[test]
-    fn only_the_counting_job_moves_the_cell() {
-        counted(true, || {
+    fn only_the_job_under_an_id_moves_its_count() {
+        counted(Some(1), || {
             begin(3);
             for _ in 0..5 {
                 advance();
             }
-            assert_eq!(packed(), 3 << 32 | 3, "past its total");
+            assert_eq!(packed(1), 3 << 32 | 3, "past its total");
         });
-        assert_eq!(packed(), 0, "left standing behind its job");
+        assert_eq!(packed(1), 0, "left standing behind its job");
 
-        counted(true, || {
+        counted(Some(2), || {
             begin(10);
             advance();
             // A stage that is also a phase of something larger counts into the outer pass.
             begin(3);
-            assert_eq!(packed(), 1 << 32 | 10, "the inner total replaced the outer");
+            assert_eq!(packed(2), 1 << 32 | 10, "the inner total replaced the outer");
 
             let other = std::thread::spawn(|| {
-                counted(false, || {
+                counted(None, || {
                     begin(99);
                     advance();
                 })
             });
             other.join().expect("the other job");
-            assert_eq!(
-                packed(),
-                1 << 32 | 10,
-                "a job nobody watches moved the count"
-            );
+            assert_eq!(packed(2), 1 << 32 | 10, "a job nobody watches moved the count");
         });
+    }
 
-        // A cancel is the counting job's alone, and survives a pass beginning but not a job.
-        cancel();
+    #[test]
+    fn a_cancel_reaches_only_the_job_it_names() {
+        cancel(3);
         assert!(
-            !counted(true, cancelled),
-            "a job was cancelled by the last one's cancel"
+            !counted(Some(3), cancelled),
+            "a cancel sent before its job ran was kept for it"
         );
-        counted(true, || {
-            cancel();
+
+        let (started, start) = std::sync::mpsc::channel();
+        let (finish, finished) = std::sync::mpsc::channel::<()>();
+        let beside = std::thread::spawn(move || {
+            counted(Some(5), || {
+                started.send(()).expect("the test is waiting");
+                finished.recv().expect("the test says when");
+                cancelled()
+            })
+        });
+        start.recv().expect("the job beside started");
+
+        counted(Some(4), || {
+            cancel(4);
             begin(2);
             assert!(cancelled(), "the job's own begin wiped its cancel");
-            let other = std::thread::spawn(|| counted(false, cancelled));
+            let unwatched = std::thread::spawn(|| counted(None, cancelled));
             assert!(
-                !other.join().expect("the other job"),
+                !unwatched.join().expect("the unwatched job"),
                 "a job nobody watches was cancelled"
             );
         });
+        finish.send(()).expect("the job beside is waiting");
+        assert!(
+            !beside.join().expect("the job beside"),
+            "a cancel stopped a job it did not name"
+        );
     }
 }

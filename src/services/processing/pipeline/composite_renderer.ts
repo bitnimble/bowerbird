@@ -52,6 +52,7 @@ export class CompositeRenderer {
     library: Library,
     on: CompositeWorker,
     shape: AlignShape,
+    progressId: number,
   ): Promise<string> {
     const { composite: recipe } = await on.run({
       kind: 'composite',
@@ -61,7 +62,7 @@ export class CompositeRenderer {
       photoId: libraryId,
       sources,
       dataPath: getDataPath(library),
-      reportProgress: true,
+      progressId,
       targets: [],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser, false),
@@ -83,6 +84,7 @@ export class CompositeRenderer {
     library: Library,
     on: CompositeWorker,
     volumePath: string,
+    progressId: number,
   ): Promise<string> {
     const { composite: analysed } = await on.run({
       kind: 'composite',
@@ -92,8 +94,7 @@ export class CompositeRenderer {
       sources,
       volumePath,
       dataPath: getDataPath(library),
-      // Also what lets a carve start after a cancelled one: only a counting job clears the cancel.
-      reportProgress: true,
+      progressId,
       targets: [],
       grade: this.targets.grade(),
       ...developed(null, library.denoiser, false),
@@ -331,8 +332,8 @@ export class CompositeRenderer {
     hdr: boolean,
     source: RenditionSource,
     on: CompositeWorker,
-    /** Whether a merge is watching this render's progress. */
-    watched = false,
+    /** Where a merge watching this render reads its progress. */
+    progressId?: number,
   ): Promise<CameraTone | undefined> {
     const dataPath = getDataPath(library);
     const { cameraTone } = await on.run(
@@ -345,7 +346,7 @@ export class CompositeRenderer {
           sources,
           recipe,
           dataPath,
-          reportProgress: watched,
+          progressId,
           targets: [
             this.targets.composedTarget(dataPath, photoId, recipe, kind, rendition, hdr, source),
           ],

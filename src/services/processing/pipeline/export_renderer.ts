@@ -47,6 +47,11 @@ export class ExportRenderer {
      * are built together - so this costs a dispatch and a small encode, not a second decode.
      */
     thumbnailPath?: string,
+    /**
+     * Where the export dialog's bar reads this render's count, which without one sits at nothing
+     * until the file lands.
+     */
+    progressId?: number,
   ): Promise<void> {
     const settings = this.settings.get();
     const edits = options.includeEdits ? this.editsFor(photoId) : null;
@@ -56,10 +61,7 @@ export class ExportRenderer {
         photoId,
         rawFilePath,
         dataPath: getDataPath(library),
-        // Somebody is sitting in front of this one: it is the render behind the bar the export
-        // dialog left them with, which without a count from inside the job sits at nothing until
-        // the file lands.
-        reportProgress: true,
+        progressId,
         targets: this.targets.exportTargets(outputPath, options, thumbnailPath),
         grade: this.targets.grade(),
         remeasure: false,
@@ -147,6 +149,8 @@ export class ExportRenderer {
     options: ExportOptions,
     /** A second size off the same composite, for the history's tile - `renderExport`'s reason. */
     thumbnailPath?: string,
+    /** `renderExport`'s. */
+    progressId?: number,
   ): Promise<void> {
     const edits = options.includeEdits ? this.editsFor(photoId) : null;
     await this.composites.runComposite({
@@ -157,7 +161,7 @@ export class ExportRenderer {
       sources,
       recipe,
       dataPath: getDataPath(library),
-      reportProgress: true,
+      progressId,
       targets: this.targets.exportTargets(outputPath, options, thumbnailPath),
       grade: this.targets.grade(),
       // The canvas's own document, which holds the framing the align found: an export of a

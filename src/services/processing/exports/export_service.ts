@@ -19,9 +19,9 @@ import type { ProcessingService } from '../pipeline/processing_service';
 import { encoderQuality } from '../analysis/quality';
 import {
   exportStill,
-  NO_RUNNING_JOB,
-  type RunningJob,
+  type NativeJobs,
   transcodeJpeg,
+  UnwatchedJobs,
   watchingJobProgress,
   writeGainMap,
 } from '../rawshim/rawshim_job';
@@ -71,8 +71,8 @@ export class ExportService {
      */
     private readonly panoramas?: CompositesService,
     private readonly activity: LibraryActivity = new LibraryActivity(),
-    /** `rawshim_job.nativeRunningJob`. Defaulted so a test, whose workers are mocks, never loads the native library. */
-    private readonly runningJob: RunningJob = NO_RUNNING_JOB,
+    /** `rawshim_job.LibraryJobs`. Defaulted so a test, whose workers are mocks, never loads the native library. */
+    private readonly jobs: NativeJobs = new UnwatchedJobs(),
   ) {}
 
   /**
@@ -89,7 +89,7 @@ export class ExportService {
      * How far through this photograph the export is, 0 to 1, called as it moves.
      *
      * The render is one blocking call in a worker, so what moves this is the count the job keeps
-     * for the thread that is not inside it (`RunningJob.progress`).
+     * for the thread that is not inside it (`WatchedJob.progress`).
      */
     onProgress?: (fraction: number) => void,
   ): Promise<ExportedFile> {
@@ -157,7 +157,12 @@ export class ExportService {
     // Asked of the row itself, so a *frame* of a panorama exports the frame - which is what asking
     // for it means, the composite being a row of its own to ask for.
     const panorama = this.panoramas?.renderable(photoId) ?? null;
-    const render = (outputPath: string, settings: ExportOptions, tile?: string): Promise<void> => {
+    const render = (
+      outputPath: string,
+      settings: ExportOptions,
+      progressId: number | undefined,
+      tile?: string,
+    ): Promise<void> => {
       log.info('export rendering', {
         photo: photoId,
         source: panorama == null ? 'original' : 'composite',
@@ -173,13 +178,22 @@ export class ExportService {
           outputPath,
           settings,
           tile,
+          progressId,
         );
       }
       // Neither a file nor a recipe this build can compose, which is a row from a peer running a
       // later one. There is nothing to render, and saying so beats decoding a path that is not.
       if (original == null)
         throw new AppError('VALIDATION_ERROR', `nothing here can render ${photoId}`);
-      return this.processing.renderExport(original, photoId, library, outputPath, settings, tile);
+      return this.processing.renderExport(
+        original,
+        photoId,
+        library,
+        outputPath,
+        settings,
+        tile,
+        progressId,
+      );
     };
     // The file's own name where there is one, so an export lands beside the frame it came from;
     // the id otherwise, a composite having no filename of its own to be named after.
@@ -199,7 +213,9 @@ export class ExportService {
       // A gain map is two renders of the same photograph, so the first of them is half the wait
       // rather than the whole of it.
       const share = (1 - ENCODE_SHARE) / (options.gainMap ? 2 : 1);
-      await this.watched(0, share, onProgress, () => render(rendered, options, tile));
+      await this.watched(0, share, onProgress, (progressId) =>
+        render(rendered, options, progressId, tile),
+      );
       if (!options.gainMap)
         log.info('export encoding', { photo: photoId, format: options.format, gainMap: false });
       const bytes = options.gainMap
@@ -207,7 +223,9 @@ export class ExportService {
             scratch,
             rendered,
             (outputPath, settings) =>
-              this.watched(share, share, onProgress, () => render(outputPath, settings)),
+              this.watched(share, share, onProgress, (progressId) =>
+                render(outputPath, settings, progressId),
+              ),
             options,
             photoId,
           )
@@ -293,10 +311,10 @@ export class ExportService {
     before: number,
     share: number,
     report: ((fraction: number) => void) | undefined,
-    run: () => Promise<T>,
+    run: (progressId: number | undefined) => Promise<T>,
   ): Promise<T> {
-    if (report == null) return await run();
-    return await watchingJobProgress(this.runningJob, before, share, report, run);
+    if (report == null) return await run(undefined);
+    return await watchingJobProgress(this.jobs, before, share, report, run);
   }
 
   private async encode(rendered: string, options: ExportOptions): Promise<Uint8Array> {

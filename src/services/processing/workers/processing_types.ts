@@ -130,13 +130,8 @@ export interface RenditionJob extends Developed {
    * those frames has no lens to reach their sensors through (`measureCameraMatch`).
    */
   measure?: boolean;
-  /**
-   * Count the job's steps where another thread can read them (`RunningJob.progress`).
-   *
-   * Only what a reader is watching asks - an export, and a merge's own jobs: there is one counter
-   * for the process, so a pool of four building tiles would report over it.
-   */
-  reportProgress?: boolean;
+  /** `WatchedJob.id`, for a job somebody is watching and may cancel. */
+  progressId?: number;
   /**
    * The one target's picture, already rendered by a client (`job::render_bytes`), so the worker
    * encodes and writes it rather than rendering (`writeRendered`).
@@ -177,8 +172,8 @@ interface CompositeJobBase extends Developed {
   /** The composite being rendered, or the library being searched where there is no row yet. */
   photoId: string;
   sources: CompositeJobSource[];
-  /** `RenditionJob.reportProgress`, for a job a merge is watching. */
-  reportProgress?: boolean;
+  /** `RenditionJob.progressId`. */
+  progressId?: number;
   dataPath: string;
   targets: RenditionTarget[];
   grade: HdrGrade;

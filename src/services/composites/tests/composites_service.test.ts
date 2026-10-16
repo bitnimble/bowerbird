@@ -142,8 +142,9 @@ function alignment(sources: readonly { photoId: string }[]): string {
 let holdAligns = false;
 const heldAligns: ((answer: 'aligned' | 'cancelled') => void)[] = [];
 
-/** How many times the service asked the native job to stop. */
-let nativeCancels = 0;
+/** The progress id of each native job the service asked to stop, once per ask. */
+const nativeCancels: number[] = [];
+let nextProgressId = 0;
 
 /** A worker that aligns whatever it is given and renders nothing. */
 class MockWorker {
@@ -274,7 +275,8 @@ beforeEach(() => {
   holding.length = 0;
   holdAligns = false;
   heldAligns.length = 0;
-  nativeCancels = 0;
+  nativeCancels.length = 0;
+  nextProgressId = 0;
   onHeldCarve = null;
   plantedRenditionFile = null;
   (globalThis as { Worker?: unknown }).Worker = MockWorker;
@@ -311,9 +313,9 @@ beforeEach(() => {
     localOriginals(),
     activity,
     {
-      progress: () => null,
-      cancel: () => {
-        nativeCancels += 1;
+      watch: () => {
+        const id = (nextProgressId += 1);
+        return { id, progress: () => null, cancel: () => nativeCancels.push(id) };
       },
     },
   );
@@ -688,17 +690,18 @@ describe('CompositesService.cancelMerge', () => {
     });
   }
 
-  it('signals the native job it lands in, and answers that job failing as cancelled', async () => {
+  it('signals only the native job it lands in, and answers that job failing as cancelled', async () => {
     holdAligns = true;
     const merging = panoramas.mergeBurst(['photo001', 'photo002'], 1, 'merge1');
     await until(() => heldAligns.length === 1);
 
     panoramas.cancelMerge('merge1');
-    await until(() => nativeCancels > 0);
+    await until(() => nativeCancels.length > 0);
     heldAligns.shift()?.('cancelled');
 
     await expect(merging).rejects.toMatchObject({ code: 'CANCELLED' });
     expect(posted.map((job) => job.want)).toEqual(['align']);
+    expect(new Set(nativeCancels)).toEqual(new Set([posted[0]?.progressId ?? -1]));
   });
 
   it('answers a queued merge cancelled at once, leaving the running one and the device alone', async () => {
@@ -714,7 +717,7 @@ describe('CompositesService.cancelMerge', () => {
     heldAligns.shift()?.('aligned');
     expect((await running).photoId).toBeTruthy();
     await until(() => activity.current(LIB).length === 0);
-    expect(nativeCancels).toBe(0);
+    expect(nativeCancels).toEqual([]);
     expect(posted.filter((job) => job.want === 'align')).toHaveLength(1);
   });
 
@@ -739,7 +742,7 @@ describe('CompositesService.cancelMerge', () => {
     await panoramas.mergeBurst(['photo001', 'photo002'], 1, 'merge1');
     panoramas.cancelMerge('merge1');
     panoramas.cancelMerge('never');
-    expect(nativeCancels).toBe(0);
+    expect(nativeCancels).toEqual([]);
     expect(composedRows()).toHaveLength(1);
   });
 });
@@ -843,8 +846,7 @@ describe('CompositesService.startAssembly', () => {
     expect(job.fractions).toEqual([...job.fractions].sort((a, b) => a - b));
   });
 
-  // §3.9: one at a time. Two carves would hold the device against each other for minutes, and
-  // there is one counter behind `RunningJob.progress`, so two at once report each other's progress.
+  // §3.9: one at a time. Two carves would hold the device against each other for minutes.
   it('queues a second carve behind the first rather than running both', async () => {
     heldOpen = true;
     const firstStarted = waitForHeldCarve();
@@ -876,8 +878,7 @@ describe('CompositesService.startAssembly', () => {
   it('reports how far the carve has got, never backwards, ending at the whole', async () => {
     const job = await carve(['photo001', 'photo002']);
 
-    // Counted in the process's one cell, which only a job that asks may move.
-    expect(posted.map((sent) => [sent.want, sent.reportProgress ?? false])).toEqual([
+    expect(posted.map((sent) => [sent.want, sent.progressId != null])).toEqual([
       ['analyse', true],
       ['render', false],
       ['render', false],
@@ -1136,8 +1137,8 @@ describe('CompositesService.commitAssembly', () => {
     expect(photoComposites.framesOf(photoId)).toEqual(['photo001', 'photo002']);
     // No align: the reader made the picks, so there is nothing left to search for.
     expect(posted.map((job) => job.want)).toEqual(['render', 'render']);
-    // Watched, so counted.
-    expect(posted.map((job) => job.reportProgress)).toEqual([true, true]);
+    // Watched, so each under an id of its own.
+    expect(posted.map((job) => job.progressId)).toEqual([1, 2]);
     expect(posted.map((job) => job.targets[0]?.rendition)).toEqual(['grid', 'full']);
     expect(Object.keys(renditions.versions(photoId)).sort()).toEqual(['full-hdr', 'grid']);
     // The framing on the row, so a reader can move it like any other crop.

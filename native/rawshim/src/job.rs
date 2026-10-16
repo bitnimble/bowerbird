@@ -242,14 +242,10 @@ pub struct Job {
     /// once the decode is paid for.
     #[serde(default)]
     pub measure: bool,
-    /// Count this job's steps in `crate::progress`, for a caller watching from another thread.
-    ///
-    /// Asked for rather than always, because there is one counter for the process: an import
-    /// building tiles four at a time would report over whatever the reader is actually waiting
-    /// on. An export, and a merge's own align, carve and renders, are what somebody is watching.
-    /// A carve has to count: only a counting job sees a cancel.
+    /// Where a caller watching from another thread reads this job's steps and cancels it
+    /// (`crate::progress`). Only a job with one can be cancelled.
     #[serde(default)]
-    pub report_progress: bool,
+    pub progress_id: Option<u32>,
 }
 
 /// **The grade is the shaders the editor runs, and there is nothing to fall back to.** The tick
@@ -1436,11 +1432,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     }
 
     // The waits a caller can be told about: the decode, the cut, and an encode per rendition.
-    // Only where it asked, because the cell is one for the whole process (`crate::progress`) - a
-    // rendition built in the background would otherwise count over a merge somebody is watching.
-    if job.report_progress {
-        crate::progress::begin(2 + first.len() + banded.len());
-    }
+    crate::progress::begin(2 + first.len() + banded.len());
 
     // Asked for below the loop above, so a job that renders nothing needs no adapter: a scan that
     // read a header, or one whose only target was lifted whole out of the camera's JPEG, is not a
@@ -1448,7 +1440,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     crate::gpu::device().ok_or(NO_ADAPTER)?;
     let base = assembled(job, largest_size(&first), &first, None, &[])?;
     lap("decode, open");
-    step(job);
+    crate::progress::advance();
     let measured = pollster::block_on(render(
         job,
         base,
@@ -1494,7 +1486,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
             &mut outcome,
         ))?;
         lap("bands, encode, write");
-        step(job);
+        crate::progress::advance();
     }
     Ok(outcome)
 }
@@ -1759,13 +1751,6 @@ pub(crate) async fn graded_bands(
     })
 }
 
-/// One step of a job somebody is watching (`Job::report_progress`).
-fn step(job: &Job) {
-    if job.report_progress {
-        crate::progress::advance();
-    }
-}
-
 /// A photograph's targets, cut from its base and graded, each handed to `wrote` as it comes off the
 /// device - and the analysis the job now owes the photograph, where it measured anything new.
 ///
@@ -1872,7 +1857,7 @@ pub(crate) async fn render(
     };
     gpu.settle();
     lap("resize, lens, sharpen");
-    step(job);
+    crate::progress::advance();
 
     // **The frame goes up once per size, not once per rendition.** Two outputs of one size
     // differ by two words of a uniform; uploading 59MB at 3840 - 366MB at native - and
@@ -2001,7 +1986,7 @@ pub(crate) async fn render(
         }
         wrote(target, coded, out_width, out_height, &options)?;
         lap("encode, write");
-        step(job);
+        crate::progress::advance();
     }
 
     // Dropped first: it borrows `scene_peak`, and the readback wants the buffer to itself.

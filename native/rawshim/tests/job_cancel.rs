@@ -11,8 +11,8 @@ use rawshim::assembly_analysis::Refused;
 /// asked for, let alone a frame decoded.
 #[test]
 fn analyse_stops_at_its_first_boundary_once_cancelled() {
-    rawshim::progress::counted(true, || {
-        rawshim::progress::cancel();
+    rawshim::progress::counted(Some(1), || {
+        rawshim::progress::cancel(1);
         match pollster::block_on(rawshim::assembly_analysis::analyse(&[])) {
             Err(refused) => assert_eq!(refused, Refused::Cancelled),
             Ok(_) => panic!("a cancelled analysis must not run to completion"),

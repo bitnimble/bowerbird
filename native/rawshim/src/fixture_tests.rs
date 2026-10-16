@@ -260,7 +260,7 @@ fn tile_job(
         },
         targets: Vec::new(),
         measure: false,
-        report_progress: false,
+        progress_id: None,
     }
 }
 

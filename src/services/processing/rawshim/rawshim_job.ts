@@ -106,37 +106,58 @@ function replied(call: (reply: Uint8Array) => number): JobOutcome {
 /** `progress::CANCELLED`: the whole of what a job a cancel reached fails with. */
 export const JOB_CANCELLED = 'cancelled';
 
-/** The job a worker is inside, as the main thread reaches it. */
-export interface RunningJob {
+/**
+ * A job a worker is inside, as the main thread reaches it: the job runs under `id`
+ * (`Job.progressId`), and these read and stop that job alone.
+ */
+export interface WatchedJob {
+  id: number;
   /**
-   * How far the job counting itself right now has got, or null where none is.
+   * How far it has got, or null where it is not running.
    *
    * The call that does the work blocks the thread that made it for as long as it takes, so the
    * count comes out of the library rather than out of the call.
    */
   progress(): { done: number; total: number } | null;
   /**
-   * Stops it at its next boundary.
-   *
-   * Seen only by a job reporting progress, and cleared as one starts - so a cancel that
-   * arrives between two jobs stops neither. The job it reaches fails with `JOB_CANCELLED`.
+   * Stops it at its next boundary, where it fails with `JOB_CANCELLED`. Nothing happens before it
+   * has started running.
    */
   cancel(): void;
 }
 
-export const nativeRunningJob: RunningJob = {
-  progress: () => {
-    const packed = BigInt(shim().bb_job_progress());
-    const total = Number(packed & 0xffffffffn);
-    return total === 0 ? null : { done: Number(packed >> 32n), total };
-  },
-  cancel: () => {
-    shim().bb_cancel_job();
-  },
-};
+export interface NativeJobs {
+  watch(): WatchedJob;
+}
+
+/** Hands out the ids the library keeps each watched job's count and cancel under. */
+export class LibraryJobs implements NativeJobs {
+  private next = 1;
+
+  watch(): WatchedJob {
+    const id = this.next++;
+    return {
+      id,
+      progress: () => {
+        const packed = BigInt(shim().bb_job_progress(id));
+        const total = Number(packed & 0xffffffffn);
+        return total === 0 ? null : { done: Number(packed >> 32n), total };
+      },
+      cancel: () => {
+        shim().bb_cancel_job(id);
+      },
+    };
+  }
+}
 
 /** For a caller whose workers are mocks, so the native library is never loaded. */
-export const NO_RUNNING_JOB: RunningJob = { progress: () => null, cancel: () => {} };
+export class UnwatchedJobs implements NativeJobs {
+  private next = 1;
+
+  watch(): WatchedJob {
+    return { id: this.next++, progress: () => null, cancel: () => {} };
+  }
+}
 
 /**
  * `run`, with what each render allocates kept for the next until it settles.
@@ -156,26 +177,27 @@ export async function holdingRenderMemory<T>(run: () => Promise<T>): Promise<T> 
 const POLL_MS = 250;
 
 /**
- * One job, with `report` told how far into it the native side is until it ends, and the job
- * cancelled while `cancelled` says so.
+ * One job, run under the id `run` is handed, with `report` told how far into it the native side
+ * is until it ends, and the job cancelled while `cancelled` says so.
  */
 export async function watchingJobProgress<T>(
-  job: RunningJob,
+  jobs: NativeJobs,
   before: number,
   share: number,
   report: (fraction: number) => void,
-  run: () => Promise<T>,
+  run: (progressId: number) => Promise<T>,
   cancelled: () => boolean = () => false,
 ): Promise<T> {
+  const job = jobs.watch();
   report(before);
   const timer = setInterval(() => {
-    // Every tick rather than once: a job starting clears a cancel sent before it began.
+    // Every tick rather than once: a cancel sent before the worker started the job is lost.
     if (cancelled()) job.cancel();
     const counted = job.progress();
     if (counted != null) report(before + share * (counted.done / counted.total));
   }, POLL_MS);
   try {
-    return await run();
+    return await run(job.id);
   } finally {
     clearInterval(timer);
     report(before + share);

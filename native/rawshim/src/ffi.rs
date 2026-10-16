@@ -92,7 +92,7 @@ pub unsafe extern "C" fn bb_run_job(
 
     let result = match parsed {
         Err(error) => Err(format!("could not read the job: {error}")),
-        Ok(parsed) => crate::progress::counted(parsed.report_progress, || {
+        Ok(parsed) => crate::progress::counted(parsed.progress_id, || {
             crate::guard("bb_run_job", Err("panicked".to_string()), || {
                 job::run(&parsed)
             })

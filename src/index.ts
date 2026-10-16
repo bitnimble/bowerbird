@@ -108,7 +108,7 @@ import { ProcessingService } from './services/processing/pipeline/processing_ser
 import { RenderTargets } from './services/processing/pipeline/render_targets';
 import { TenBitCopies } from './services/processing/renditions/ten_bit_copies';
 import { shim } from './services/processing/rawshim/rawshim';
-import { holdingRenderMemory, nativeRunningJob } from './services/processing/rawshim/rawshim_job';
+import { holdingRenderMemory, LibraryJobs } from './services/processing/rawshim/rawshim_job';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
 import { LibraryActivity } from './services/activity/library_activity';
@@ -485,6 +485,8 @@ const photosApi = new PhotosApi(
 const albumsApi = new AlbumsApi(albumsService, photoReadService);
 const shootsApi = new ShootsApi(shootsService, photoReadService);
 const stacksApi = new StacksApi(stacksService, photoReadService);
+// One for both, so no two watched jobs ever share an id.
+const libraryJobs = new LibraryJobs();
 const compositesService: CompositesService = new CompositesService(
   photoCompositesRepo,
   photoPathsRepo,
@@ -496,7 +498,7 @@ const compositesService: CompositesService = new CompositesService(
   photoEditsRepo,
   originals,
   activity,
-  nativeRunningJob,
+  libraryJobs,
 );
 compositesService.onProgress((progress) => eventsApi.announce('composite', progress));
 const compositesApi = new CompositesApi(compositesService, photoReadService);
@@ -508,7 +510,7 @@ const exportService = new ExportService(
   settingsRepo,
   compositesService,
   activity,
-  nativeRunningJob,
+  libraryJobs,
 );
 const shareService = new ShareService(photoRenditionService, exportService, activity);
 const frameTvService = new FrameTvService(

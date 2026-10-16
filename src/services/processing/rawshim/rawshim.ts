@@ -68,12 +68,12 @@ const SYMBOLS = {
     returns: FFIType.i64,
   },
   bb_prepare_header_cap: { args: [], returns: FFIType.u64 },
-  // How far the job counting itself right now has got, steps done over steps to do. Called from
+  // How far the job running under a progress id has got, steps done over steps to do. Called from
   // the thread that is *not* inside `bb_run_job`, which is the only way to ask.
-  bb_job_progress: { args: [], returns: FFIType.u64 },
-  // Tells whatever job is running to stop at the next boundary it counts itself at. Called from
-  // the same thread `bb_job_progress` is, and for the same reason.
-  bb_cancel_job: { args: [], returns: FFIType.void },
+  bb_job_progress: { args: [FFIType.u32], returns: FFIType.u64 },
+  // Tells the job running under a progress id to stop at the next boundary it counts itself at.
+  // Called from the same thread `bb_job_progress` is, and for the same reason.
+  bb_cancel_job: { args: [FFIType.u32], returns: FFIType.void },
   // What a render allocates, kept for the next one between a hold and its release.
   bb_hold_render_memory: { args: [], returns: FFIType.void },
   bb_release_render_memory: { args: [], returns: FFIType.void },

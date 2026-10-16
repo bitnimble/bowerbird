@@ -189,13 +189,8 @@ export const JobSchema = z.object({
    * would otherwise pay for a cut, a grade, an encode and a file it throws away.
    */
   measure: z.boolean().optional(),
-  /**
-   * Count this job's steps in the library's own cell, for `RunningJob.progress` to read from this thread.
-   *
-   * Only an export asks: there is one cell for the process, so a job nobody is watching would
-   * report over the one somebody is.
-   */
-  reportProgress: z.boolean().optional(),
+  /** Where `WatchedJob` reads this job's steps and cancels it from another thread. */
+  progressId: z.number().int().nonnegative().optional(),
   /**
    * The dust panel's switch and two sliders, on the job for the reason the Detail pair is: the
    * correction is on the mosaic, inside the one decode every target is cut from.

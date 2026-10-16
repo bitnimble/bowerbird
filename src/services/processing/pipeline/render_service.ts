@@ -230,8 +230,9 @@ export abstract class RenderService {
     library: Library,
     on: CompositeWorker,
     shape: AlignShape,
+    progressId: number,
   ): Promise<string> {
-    return this.composites.alignComposite(libraryId, sources, library, on, shape);
+    return this.composites.alignComposite(libraryId, sources, library, on, shape, progressId);
   }
 
   async analyseAssembly(
@@ -240,8 +241,9 @@ export abstract class RenderService {
     library: Library,
     on: CompositeWorker,
     volumePath: string,
+    progressId: number,
   ): Promise<string> {
-    return this.composites.analyseAssembly(libraryId, sources, library, on, volumePath);
+    return this.composites.analyseAssembly(libraryId, sources, library, on, volumePath, progressId);
   }
 
   async solveSeams(
@@ -295,8 +297,8 @@ export abstract class RenderService {
     hdr: boolean,
     source: RenditionSource,
     on: CompositeWorker,
-    /** Whether a merge is watching this render's progress. */
-    watched = false,
+    /** Where a merge watching this render reads its progress. */
+    progressId?: number,
   ): Promise<CameraTone | undefined> {
     return this.composites.buildCompositeRendition(
       photoId,
@@ -308,7 +310,7 @@ export abstract class RenderService {
       hdr,
       source,
       on,
-      watched,
+      progressId,
     );
   }
 
@@ -393,6 +395,8 @@ export abstract class RenderService {
      * are built together - so this costs a dispatch and a small encode, not a second decode.
      */
     thumbnailPath?: string,
+    /** Where the export dialog watching this render reads its progress. */
+    progressId?: number,
   ): Promise<void> {
     return this.exports.renderExport(
       rawFilePath,
@@ -401,6 +405,7 @@ export abstract class RenderService {
       outputPath,
       options,
       thumbnailPath,
+      progressId,
     );
   }
 
@@ -423,6 +428,8 @@ export abstract class RenderService {
     options: ExportOptions,
     /** A second size off the same composite, for the history's tile - `renderExport`'s reason. */
     thumbnailPath?: string,
+    /** `renderExport`'s. */
+    progressId?: number,
   ): Promise<void> {
     return this.exports.renderCompositeExport(
       photoId,
@@ -432,6 +439,7 @@ export abstract class RenderService {
       outputPath,
       options,
       thumbnailPath,
+      progressId,
     );
   }
 }

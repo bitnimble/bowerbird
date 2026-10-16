@@ -146,6 +146,7 @@ describe('ProcessingService.analyseAssembly', () => {
       library,
       on,
       '/nowhere/volume.bin',
+      7,
     );
     on.close();
 
@@ -155,6 +156,7 @@ describe('ProcessingService.analyseAssembly', () => {
       kind: 'composite',
       want: 'analyse',
       volumePath: '/nowhere/volume.bin',
+      progressId: 7,
     });
     // Keyed by the library, there being no row yet - and rendering nothing, so no targets.
     expect(posted[0]?.photoId).toBe(LIB);
@@ -170,7 +172,7 @@ describe('ProcessingService.analyseAssembly', () => {
     (globalThis as { Worker?: unknown }).Worker = Silent;
     const on = service().openComposite();
     await expect(
-      service().analyseAssembly(LIB, sources, library, on, '/nowhere/volume.bin'),
+      service().analyseAssembly(LIB, sources, library, on, '/nowhere/volume.bin', 7),
     ).rejects.toThrow(/carved/);
     on.close();
   });
