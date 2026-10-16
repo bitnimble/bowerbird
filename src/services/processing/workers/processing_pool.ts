@@ -144,10 +144,17 @@ export class ProcessingPool {
   private assign(worker: Worker, batch: Batch, job: RenditionJob): void {
     this.busy++;
     batch.running++;
+    const posted = performance.now();
     const landed = (result: ProcessingResult, reusable: Worker | null): void => {
+      const ran = performance.now();
       try {
         batch.onResult(result, job);
       } finally {
+        log.debug('job landed', {
+          photo: job.photoId,
+          ranMs: Math.round(ran - posted),
+          landingMs: Math.round(performance.now() - ran),
+        });
         this.busy--;
         batch.running--;
         if (reusable != null) this.idle.push(reusable);
