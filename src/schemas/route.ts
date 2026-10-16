@@ -45,6 +45,7 @@ export const PathSegment = {
   export: segment('export'),
   exports: segment('exports'),
   fetch: segment('fetch'),
+  files: segment('files'),
   folderRules: segment('folder-rules'),
   folders: segment('folders'),
   frames: segment('frames'),
@@ -122,7 +123,6 @@ export const PathSegment = {
   unpair: segment('unpair'),
   unstack: segment('unstack'),
   updates: segment('updates'),
-  upscaler: segment('upscaler'),
   verify: segment('verify'),
   welcome: segment('welcome'),
 

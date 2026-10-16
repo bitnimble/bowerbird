@@ -224,14 +224,17 @@ const processingService: ProcessingService = new ProcessingService(
   holdingRenderMemory,
   activity,
 );
-const modelsService = new ModelsService(
-  path.join(modelsDir(config.dbPath), 'upscaler'),
-  holdUpscalerModel,
-  () => processingService.rebuildDenoisedWith('upscaler'),
-);
+const modelsService = new ModelsService(path.join(modelsDir(config.dbPath), 'downloaded'), [
+  {
+    files: ['upscaler.json', 'upscaler.bin'],
+    hold: (dir) =>
+      holdUpscalerModel(path.join(dir, 'upscaler.json'), path.join(dir, 'upscaler.bin')),
+    changed: () => processingService.rebuildDenoisedWith('upscaler'),
+  },
+]);
 // A downloaded model is handed over before the first await, so before any render starts.
 void modelsService.load().catch((err: unknown) => {
-  log.warn('could not drop a downloaded model this build has overtaken', { err: String(err) });
+  log.warn('could not drop downloaded models this build has overtaken', { err: String(err) });
 });
 const eventsApi = new EventsApi(processingService);
 const replicationChanged = (libraryId: string): void =>

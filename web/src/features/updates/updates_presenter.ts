@@ -78,27 +78,27 @@ export class UpdatesPresenter {
     }
   }
 
-  /** Asks first, since every photo rendered with the upscaler is rendered again with the new model. */
+  /** Asks first, since every photo rendered with a changed model is rendered again. */
   @action.bound
-  async downloadModel(): Promise<void> {
-    const available = this.store.modelAvailable;
-    if (this.store.modelDownloading || available == null) return;
+  async downloadModels(): Promise<void> {
+    const available = this.store.modelsAvailable;
+    if (this.store.modelsDownloading || available == null) return;
     const confirmed = await this.confirm.ask({
-      title: UpdatesStrings.modelUpdateTitle(),
-      body: UpdatesStrings.modelUpdateBody(fileSizeLabel(available.bytes)),
-      action: UpdatesStrings.modelUpdate(),
+      title: UpdatesStrings.modelsUpdateTitle(),
+      body: UpdatesStrings.modelsUpdateBody(fileSizeLabel(available.bytes)),
+      action: UpdatesStrings.modelsUpdate(),
     });
     if (!confirmed) return;
     runInAction(() => {
-      this.store.modelDownloading = true;
-      this.store.modelFailure = null;
+      this.store.modelsDownloading = true;
+      this.store.modelsFailure = null;
     });
     try {
       this.putModels(await modelsApi.download());
     } catch (err) {
-      runInAction(() => (this.store.modelFailure = message(err)));
+      runInAction(() => (this.store.modelsFailure = message(err)));
     } finally {
-      runInAction(() => (this.store.modelDownloading = false));
+      runInAction(() => (this.store.modelsDownloading = false));
     }
   }
 
@@ -176,7 +176,7 @@ export class UpdatesPresenter {
     try {
       this.putModels(force ? await modelsApi.check() : await modelsApi.get());
     } catch (err) {
-      runInAction(() => (this.store.modelFailure = message(err)));
+      runInAction(() => (this.store.modelsFailure = message(err)));
     }
   }
 
@@ -190,7 +190,7 @@ export class UpdatesPresenter {
   private putModels(status: ModelsStatus): void {
     runInAction(() => {
       this.store.models = status;
-      this.store.modelFailure = status.error;
+      this.store.modelsFailure = status.error;
     });
   }
 }

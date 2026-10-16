@@ -24,13 +24,13 @@ export class UpdatesStore {
   @observable accessor install: InstallPhase = 'idle';
   @observable.ref accessor failure: string | null = null;
 
-  /** The upscaler's model, which updates apart from the app. */
+  /** The AI models, which update apart from the app. */
   @observable.ref accessor models: ModelsStatus | null = null;
-  @observable.ref accessor modelFailure: string | null = null;
-  @observable accessor modelDownloading = false;
+  @observable.ref accessor modelsFailure: string | null = null;
+  @observable accessor modelsDownloading = false;
 
-  @computed get modelAvailable(): ModelsStatus['upscaler']['available'] {
-    return this.models?.upscaler.available ?? null;
+  @computed get modelsAvailable(): ModelsStatus['available'] {
+    return this.models?.available ?? null;
   }
 
   @computed get current(): string | null {

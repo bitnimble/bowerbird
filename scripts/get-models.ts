@@ -14,7 +14,7 @@
 //
 // The upscaler's are `models/upscaler`'s `export`, published as `upscaler.json` and `upscaler.bin`
 // beside the project's other models. This is the model the build carries, at the commit
-// `bundled_upscaler.json` pins; an app downloads newer ones itself (`ModelsService`). `--from <dir>`
+// `bundled_models.json` pins; an app downloads newer ones itself (`ModelsService`). `--from <dir>`
 // takes them from a folder as `export` names them instead, held to the same hashes: a training
 // run's own `runs/<name>/`.
 
@@ -22,7 +22,7 @@ import { type Unzipped, unzipSync } from 'fflate';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import PINS from '../src/services/models/bundled_upscaler.json';
+import PINS from '../src/services/models/bundled_models.json';
 import { fileUrl } from '../src/services/models/hub';
 import { alreadyPinned, fetchPinned, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
 

@@ -349,21 +349,25 @@ every compared version comes from `VERSION`.
 
 ### 23.9 Models update apart from the app
 
-**The upscaler's model is downloaded by the running app, without an app update.** Our models
-live on Hugging Face (`bitnimble/bowerbird`), which publishes commits rather than releases: a
-model is its files at a commit. A build carries the model `bundled_upscaler.json` pins, so the
-"Best" denoiser works offline and on first launch; `ModelsService` checks `main` beside the app's
-own check (§23.5, same ten-minute cache, same quiet failure) and offers a commit that is newer
-than the model in use and changed one of its files. A commit that only adds another model offers
-nothing.
+**The AI models are downloaded by the running app, without an app update.** Our models live on
+Hugging Face (`bitnimble/bowerbird`), which publishes commits rather than releases: a model is its
+files at a commit, and a commit is one update for every model the app uses. Each registers its
+files with `ModelsService`, with how the renderer takes them and what renders again when they
+change; the upscaler is the only one so far. A build carries the models `bundled_models.json`
+pins, so the "Best" denoiser works offline and on first launch; `ModelsService` checks `main`
+beside the app's own check (§23.5, same ten-minute cache, same quiet failure) and offers a commit
+that is newer than the models in use and changed one of their files. A commit that only adds a
+model the app does not use offers nothing.
 
-The reader sees it where they see an app update (§23.6): a sidebar row and a Settings row. Both
-ask first, since every photo the upscaler denoises, by its own edit or its library's default, is
-then rendered again (`queueDenoisedWith`), so the editor and the renditions agree.
+The reader sees it where they see an app update (§23.6): a sidebar row and a Settings row, both
+named "AI models". Both ask first, since every photo rendered with a changed model is then
+rendered again (for the upscaler, every photo it denoises by its own edit or its library's
+default, `rebuildDenoisedWith`), so the editor and the renditions agree.
 
 The download is checked against the hub's listing (an LFS file's SHA-256, a git file's blob id),
-written beside the catalogue under `models/upscaler/<commit>/`, and recorded in `installed.json`
-last, so a kill leaves the model that was in use. The server hands it to every worker's rawshim
-(`bb_hold_upscaler_model`), which builds it on the next frame; the editor's page asks which model
-is in use before it renders and fetches the downloaded files by commit. At startup a download no
-newer than the build's own model is deleted, since an app update may carry a newer one.
+written beside the catalogue under `models/downloaded/<commit>/`, and recorded in `installed.json`
+last, so a kill leaves the models that were in use. The server hands each to every worker's
+rawshim (the upscaler through `bb_hold_upscaler_model`), which builds it on the next frame; the
+editor's page asks which commit is in use before it renders and fetches the downloaded files by
+commit. At startup a download no newer than the build's own models is deleted, since an app update
+may carry newer ones.

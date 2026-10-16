@@ -155,9 +155,9 @@ export async function deleteUpdateStaging(
   await rm(path.join(home, which), { recursive: true, force: true });
 }
 
-// A downloaded model, its partial download, or the whole of one model's folder under the `models/`
-// beside the catalogue (§23.9). The folder is named by `modelsDir`, so only something inside a
-// `models/<model>/` can be reached, and never a tree that holds an original.
+// A downloaded model, its partial download, or the whole of a folder under the `models/` beside
+// the catalogue (§23.9). The folder is named by `modelsDir`, so only something inside a
+// `models/<folder>/` can be reached, and never a tree that holds an original.
 export async function deleteModelFiles(modelHome: string, target: string): Promise<void> {
   const home = path.resolve(modelHome);
   if (path.basename(path.dirname(home)) !== 'models' || !containsPath(home, target)) {

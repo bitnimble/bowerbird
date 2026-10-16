@@ -16,7 +16,7 @@ export interface HubFile {
   sha256: string | null;
 }
 
-export interface HubModel {
+export interface HubModels {
   version: ModelVersion;
   files: HubFile[];
 }
@@ -40,7 +40,7 @@ export function fileUrl(revision: string, name: string): string {
 }
 
 /** These files as `main` has them. */
-export async function latest(names: readonly string[]): Promise<HubModel> {
+export async function latest(names: readonly string[]): Promise<HubModels> {
   const main = RevisionSchema.parse(await api('revision/main'));
   const tree = TreeSchema.parse(await api(`tree/${main.sha}`));
   const files = names.map((name): HubFile => {

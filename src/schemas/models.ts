@@ -7,14 +7,12 @@ export const ModelVersionSchema = z.object({
 });
 export type ModelVersion = z.infer<typeof ModelVersionSchema>;
 
-/** The upscaler's model on this server, and a newer one where Hugging Face has it. */
+/** The models on this server, and newer ones where Hugging Face has them. */
 export const ModelsStatusSchema = z.object({
-  upscaler: z.object({
-    /** False where it is the model this build carries. */
-    current: ModelVersionSchema.extend({ downloaded: z.boolean() }),
-    available: ModelVersionSchema.extend({ bytes: z.number() }).nullable(),
-    downloading: z.boolean(),
-  }),
+  /** `downloaded` is false where they are the models this build carries. */
+  current: ModelVersionSchema.extend({ downloaded: z.boolean() }),
+  available: ModelVersionSchema.extend({ bytes: z.number() }).nullable(),
+  downloading: z.boolean(),
   checked_at: z.string().nullable(),
   error: z.string().nullable(),
 });

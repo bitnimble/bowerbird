@@ -15,9 +15,9 @@ export const UpdateBadge = observer(function UpdateBadge(): JSX.Element | null {
           <SidebarText>{UpdatesStrings.updateAvailable(available.version)}</SidebarText>
         </SidebarButton>
       )}
-      {store.modelAvailable != null && !store.modelDownloading && (
-        <SidebarButton icon={ArrowUpCircle} tone="update" onClick={updates.downloadModel}>
-          <SidebarText>{UpdatesStrings.modelUpdateAvailable()}</SidebarText>
+      {store.modelsAvailable != null && !store.modelsDownloading && (
+        <SidebarButton icon={ArrowUpCircle} tone="update" onClick={updates.downloadModels}>
+          <SidebarText>{UpdatesStrings.modelsUpdateAvailable()}</SidebarText>
         </SidebarButton>
       )}
     </>

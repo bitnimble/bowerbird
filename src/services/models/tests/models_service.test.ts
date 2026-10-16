@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ModelsService, type Installed } from '../models_service';
+import { ModelsService, type Installed, type Model } from '../models_service';
 
 type Files = Record<string, string>;
 interface Commit {
@@ -77,16 +77,20 @@ process.env.BOWERBIRD_MODELS_HUB = HUB;
 let root = '';
 let home = '';
 let held: string[][] = [];
-let changed = 0;
+let changed: string[] = [];
 
-function service(bundled: Installed = BUNDLED): ModelsService {
-  return new ModelsService(
-    home,
-    (manifest, weights) =>
-      held.push([readFileSync(manifest, 'utf8'), readFileSync(weights, 'utf8')]),
-    () => (changed += 1),
-    bundled,
-  );
+function model(name: string, files: string[]): Model {
+  return {
+    files,
+    hold: (dir) => held.push(files.map((file) => readFileSync(path.join(dir, file), 'utf8'))),
+    changed: () => changed.push(name),
+  };
+}
+
+const UPSCALER = model('upscaler', ['upscaler.json', 'upscaler.bin']);
+
+function service(bundled: Installed = BUNDLED, models: Model[] = [UPSCALER]): ModelsService {
+  return new ModelsService(home, models, bundled);
 }
 
 function publish(next: Commit): void {
@@ -96,9 +100,9 @@ function publish(next: Commit): void {
 
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bowerbird-models-'));
-  home = path.join(root, 'models', 'upscaler');
+  home = path.join(root, 'models', 'downloaded');
   held = [];
-  changed = 0;
+  changed = [];
   commits.clear();
   served = (name, at) => at.files[name] ?? '';
   publish(BASE);
@@ -110,21 +114,21 @@ afterAll(() => {
   void hub.stop(true);
 });
 
-test("the build's own model is nothing to download", async () => {
+test("the build's own models are nothing to download", async () => {
   const status = await service().check();
-  expect(status.upscaler.current).toEqual({
+  expect(status.current).toEqual({
     revision: BASE.sha,
     committed_at: BASE.committed_at,
     downloaded: false,
   });
-  expect(status.upscaler.available).toBeNull();
+  expect(status.available).toBeNull();
 });
 
 test('a newer model on the hub is offered, downloaded, used and rendered with', async () => {
   publish(NEWER);
   const models = service();
 
-  expect((await models.check()).upscaler.available).toEqual({
+  expect((await models.check()).available).toEqual({
     revision: NEWER.sha,
     committed_at: NEWER.committed_at,
     bytes: '{"for":"newer"}'.length + 'retrained'.length,
@@ -132,28 +136,65 @@ test('a newer model on the hub is offered, downloaded, used and rendered with', 
 
   const after = await models.download();
   expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
-  expect(changed).toBe(1);
-  expect(after.upscaler.current).toEqual({
+  expect(changed).toEqual(['upscaler']);
+  expect(after.current).toEqual({
     revision: NEWER.sha,
     committed_at: NEWER.committed_at,
     downloaded: true,
   });
-  expect(after.upscaler.available).toBeNull();
-  expect(models.file('upscaler.bin')).toBe(path.join(home, NEWER.sha, 'upscaler.bin'));
-  expect(models.file('installed.json')).toBeNull();
+  expect(after.available).toBeNull();
+  expect(models.file(NEWER.sha, 'upscaler.bin')).toBe(path.join(home, NEWER.sha, 'upscaler.bin'));
+  expect(models.file(NEWER.sha, 'installed.json')).toBeNull();
+  expect(models.file(BASE.sha, 'upscaler.bin')).toBeNull();
 
   held = [];
   await service().load();
   expect(held).toEqual([['{"for":"newer"}', 'retrained']]);
 });
 
-test('a commit that only added another model is nothing to download', async () => {
+test('a commit that only added a model the app does not use is nothing to download', async () => {
   publish({
     sha: 'c'.repeat(40),
     committed_at: NEWER.committed_at,
     files: { ...BASE.files, 'other.bin': 'another network' },
   });
-  expect((await service().check()).upscaler.available).toBeNull();
+  expect((await service().check()).available).toBeNull();
+});
+
+test('every model is held from the download, and only a changed one renders again', async () => {
+  const bundled: Installed = {
+    ...BUNDLED,
+    git_oids: { ...BUNDLED.git_oids, 'other.bin': oidOf('other.bin', 'another network') },
+  };
+  publish({
+    sha: 'c'.repeat(40),
+    committed_at: NEWER.committed_at,
+    files: { ...BASE.files, 'other.bin': 'retrained network' },
+  });
+  const both = (): Model[] => [UPSCALER, model('other', ['other.bin'])];
+  const models = service(bundled, both());
+
+  expect((await models.check()).available?.bytes).toBe(
+    '{"for":"bundled"}'.length + 'old'.length + 'retrained network'.length,
+  );
+  await models.download();
+  expect(held).toEqual([['{"for":"bundled"}', 'old'], ['retrained network']]);
+  expect(changed).toEqual(['other']);
+  expect(models.file('c'.repeat(40), 'other.bin')).toBe(
+    path.join(home, 'c'.repeat(40), 'other.bin'),
+  );
+
+  held = [];
+  await service(bundled, both()).load();
+  expect(held).toEqual([['{"for":"bundled"}', 'old'], ['retrained network']]);
+
+  held = [];
+  rmSync(path.join(home, 'c'.repeat(40), 'other.bin'));
+  const incomplete = service(bundled, both());
+  await incomplete.load();
+  expect(held).toEqual([]);
+  expect(existsSync(home)).toBe(false);
+  expect(incomplete.status().current.downloaded).toBe(false);
 });
 
 test('a file that does not match what the hub lists is refused, and nothing changes', async () => {
@@ -164,10 +205,10 @@ test('a file that does not match what the hub lists is refused, and nothing chan
 
   await expect(models.download()).rejects.toThrow(/does not match/);
   expect(held).toEqual([]);
-  expect(changed).toBe(0);
+  expect(changed).toEqual([]);
   expect(existsSync(path.join(home, 'installed.json'))).toBe(false);
   expect(existsSync(path.join(home, NEWER.sha))).toBe(false);
-  expect(models.status().upscaler.current.downloaded).toBe(false);
+  expect(models.status().current.downloaded).toBe(false);
 });
 
 test('a build that carries a model as new as the downloaded one drops the download', async () => {
@@ -181,14 +222,14 @@ test('a build that carries a model as new as the downloaded one drops the downlo
   await updated.load();
   expect(held).toEqual([]);
   expect(existsSync(home)).toBe(false);
-  expect(updated.status().upscaler.current.downloaded).toBe(false);
+  expect(updated.status().current.downloaded).toBe(false);
 });
 
 test('a revision that is not a commit id is refused, since it names a directory', async () => {
   publish({ ...NEWER, sha: '..' });
   const status = await service().check();
   expect(status.error).not.toBeNull();
-  expect(status.upscaler.available).toBeNull();
+  expect(status.available).toBeNull();
 });
 
 test('a download a kill left part-written is dropped at the next start', async () => {
@@ -199,18 +240,18 @@ test('a download a kill left part-written is dropped at the next start', async (
 
 test('a model the renderer refuses is not recorded as in use', async () => {
   publish(NEWER);
-  const models = new ModelsService(
-    home,
-    () => {
-      throw new Error('could not read the upscaler model');
+  const models = service(BUNDLED, [
+    {
+      ...UPSCALER,
+      hold: () => {
+        throw new Error('could not read the upscaler model');
+      },
     },
-    () => (changed += 1),
-    BUNDLED,
-  );
+  ]);
   await models.check();
   await expect(models.download()).rejects.toThrow(/could not read/);
-  expect(changed).toBe(0);
-  expect(models.status().upscaler.current.downloaded).toBe(false);
+  expect(changed).toEqual([]);
+  expect(models.status().current.downloaded).toBe(false);
   expect(existsSync(path.join(home, 'installed.json'))).toBe(false);
 });
 
@@ -219,7 +260,7 @@ test('a hub that cannot be reached is recorded, not thrown', async () => {
   try {
     const status = await service().check(true);
     expect(status.error).not.toBeNull();
-    expect(status.upscaler.available).toBeNull();
+    expect(status.available).toBeNull();
   } finally {
     process.env.BOWERBIRD_MODELS_HUB = HUB;
   }

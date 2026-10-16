@@ -27,11 +27,10 @@ export const UpdatesStrings = {
   version: () => 'Version',
   updates: () => 'Updates',
 
-  // The upscaler's model, which updates apart from the app. Named as the denoiser picker names it.
-  bestDenoiser: () => 'Best denoiser',
-  modelFrom: (date: string) => `Model from ${date}`,
-  modelUpdateAvailable: () => 'Update the Best denoiser',
-  modelUpdateTitle: () => 'Update the Best denoiser?',
-  modelUpdateBody: (size: string) => `Downloads ${size} and renders the photos that use it again.`,
-  modelUpdate: () => 'Update',
+  aiModels: () => 'AI models',
+  modelsUpdateAvailable: () => 'Update AI models',
+  modelsUpdateTitle: () => 'Update AI models?',
+  modelsUpdateBody: (size: string) =>
+    `Downloads ${size} and renders the photos that use them again.`,
+  modelsUpdate: () => 'Update',
 };

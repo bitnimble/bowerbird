@@ -577,7 +577,12 @@ async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<vo
   if (denoiser === 'galosh') return;
   if (denoiser === 'upscaler') {
     const revision = await downloadedUpscaler();
-    if (revision != null) return held(`upscaler@${revision}`, () => downloadedModel(revision));
+    const key = revision == null ? denoiser : `upscaler@${revision}`;
+    // The module holds one upscaler; a key cached earlier no longer says what it holds.
+    for (const cached of weights.keys()) {
+      if (cached.startsWith('upscaler') && cached !== key) weights.delete(cached);
+    }
+    if (revision != null) return held(key, () => downloadedModel(revision));
   }
   const { url, hold } = NETWORKS[denoiser];
   await held(denoiser, async () => hold(await bytesAt(url)));
@@ -606,15 +611,15 @@ const MODEL_STATUS_MS = 60_000;
 let modelStatus: { at: number; revision: Promise<string | null> } | null = null;
 
 /**
- * The upscaler model the app downloaded, by revision, or null for the build's own. Asked at most
+ * The models the app downloaded, by revision, or null for the build's own. Asked at most
  * once a minute rather than per band, and null where there is no server to ask.
  */
 function downloadedUpscaler(): Promise<string | null> {
   if (modelStatus == null || Date.now() - modelStatus.at > MODEL_STATUS_MS) {
-    const asked = fetch(route(PathSegment.api(), PathSegment.models(), PathSegment.upscaler()))
+    const asked = fetch(route(PathSegment.api(), PathSegment.models(), PathSegment.status()))
       .then(async (answer) => {
         if (!answer.ok) return null;
-        const { current } = ModelsStatusSchema.parse(await answer.json()).upscaler;
+        const { current } = ModelsStatusSchema.parse(await answer.json());
         return current.downloaded ? current.revision : null;
       })
       .catch(() => null);
@@ -625,7 +630,7 @@ function downloadedUpscaler(): Promise<string | null> {
 
 async function downloadedModel(revision: string): Promise<void> {
   const file = (name: string): string =>
-    `${route(PathSegment.api(), PathSegment.models(), PathSegment.upscaler(), name)}?v=${revision}`;
+    route(PathSegment.api(), PathSegment.models(), PathSegment.files(), revision, name);
   const [manifest, bytes] = await Promise.all([
     bytesAt(file('upscaler.json')),
     bytesAt(file('upscaler.bin')),

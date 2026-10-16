@@ -117,7 +117,7 @@ codecs/compiler record vcpkg commit, files under `native/rawshim/vcpkg/`, getter
 Windows hosts download the wasm package rather than build it)
 records libvpx commit, wasi-sdk version, flags and getter source;
 driver/maps weights record file hashes; upscaler weights record the Hugging Face commit and file
-hashes `src/services/models/bundled_upscaler.json` pins; PMRID weights record checkpoint hash and
+hashes `src/services/models/bundled_models.json` pins; PMRID weights record checkpoint hash and
 getter source; `get:android-runtime` (the Android app's Bun and native addons) records their pins
 and versions. `get:environments` supplies print-preview HDR maps, `get:models` both denoisers'
 weights (PMRID's and the upscaler's); `get:shell` runs both. The upscaler's pin is only the model

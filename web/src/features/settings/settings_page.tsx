@@ -439,22 +439,22 @@ export const UpdateSettings = observer(function UpdateSettings(): JSX.Element | 
         )}
         {models != null && (
           <SettingRow
-            label={UpdatesStrings.bestDenoiser()}
+            label={UpdatesStrings.aiModels()}
             hint={
-              store.modelFailure ??
-              UpdatesStrings.modelFrom(longDate(models.upscaler.current.committed_at))
+              store.modelsFailure ??
+              UpdatesStrings.releasedOn(longDate(models.current.committed_at))
             }
           >
-            {store.modelAvailable != null && (
+            {store.modelsAvailable != null && (
               <Button
                 variant="primary"
-                disabled={store.modelDownloading}
-                onClick={() => void updates.downloadModel()}
+                disabled={store.modelsDownloading}
+                onClick={() => void updates.downloadModels()}
               >
                 <ArrowUpCircle size={ICON} />
-                {store.modelDownloading
+                {store.modelsDownloading
                   ? UpdatesStrings.downloading()
-                  : UpdatesStrings.modelUpdate()}
+                  : UpdatesStrings.modelsUpdate()}
               </Button>
             )}
           </SettingRow>

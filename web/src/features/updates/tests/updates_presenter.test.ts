@@ -62,14 +62,12 @@ function open(): {
 
 function models(available: string | null, downloaded = false): ModelsStatus {
   return {
-    upscaler: {
-      current: { revision: 'bundled', committed_at: '2026-10-01T00:00:00.000Z', downloaded },
-      available:
-        available == null
-          ? null
-          : { revision: available, committed_at: '2026-10-09T00:00:00.000Z', bytes: 8_270_080 },
-      downloading: false,
-    },
+    current: { revision: 'bundled', committed_at: '2026-10-01T00:00:00.000Z', downloaded },
+    available:
+      available == null
+        ? null
+        : { revision: available, committed_at: '2026-10-09T00:00:00.000Z', bytes: 8_270_080 },
+    downloading: false,
     checked_at: '2026-10-09T00:00:00.000Z',
     error: null,
   };
@@ -182,12 +180,12 @@ test('a platform that cannot replace itself is offered the download instead', as
   expect(store.installHint).toBe('https://example.invalid/Bowerbird.AppImage');
 });
 
-test('a newer model is offered, and downloaded only once the reader agrees', async () => {
+test('newer models are offered, and downloaded only once the reader agrees', async () => {
   const { store, presenter, confirm, asked } = open();
   updatesApi.get = () => Promise.resolve(status('0.2.0', []));
   modelsApi.get = () => Promise.resolve(models('newer'));
   await presenter.check();
-  expect(store.modelAvailable?.revision).toBe('newer');
+  expect(store.modelsAvailable?.revision).toBe('newer');
 
   let downloads = 0;
   modelsApi.download = () => {
@@ -195,35 +193,35 @@ test('a newer model is offered, and downloaded only once the reader agrees', asy
     return Promise.resolve(models(null, true));
   };
 
-  const declined = presenter.downloadModel();
-  expect(asked.request?.title).toBe(UpdatesStrings.modelUpdateTitle());
-  expect(asked.request?.body).toBe(UpdatesStrings.modelUpdateBody('7.9 MB'));
+  const declined = presenter.downloadModels();
+  expect(asked.request?.title).toBe(UpdatesStrings.modelsUpdateTitle());
+  expect(asked.request?.body).toBe(UpdatesStrings.modelsUpdateBody('7.9 MB'));
   confirm.answer(false);
   await declined;
   expect(downloads).toBe(0);
 
-  const agreed = presenter.downloadModel();
+  const agreed = presenter.downloadModels();
   confirm.answer(true);
   await agreed;
   expect(downloads).toBe(1);
-  expect(store.modelAvailable).toBeNull();
-  expect(store.models?.upscaler.current.downloaded).toBe(true);
-  expect(store.modelDownloading).toBe(false);
+  expect(store.modelsAvailable).toBeNull();
+  expect(store.models?.current.downloaded).toBe(true);
+  expect(store.modelsDownloading).toBe(false);
 });
 
-test('a model download that fails is recorded and can be tried again', async () => {
+test('a models download that fails is recorded and can be tried again', async () => {
   const { store, presenter, confirm } = open();
   updatesApi.get = () => Promise.resolve(status('0.2.0', []));
   modelsApi.get = () => Promise.resolve(models('newer'));
   await presenter.check();
   modelsApi.download = () => Promise.reject(new Error('upscaler.bin does not match'));
 
-  const downloading = presenter.downloadModel();
+  const downloading = presenter.downloadModels();
   confirm.answer(true);
   await downloading;
-  expect(store.modelFailure).toBe('upscaler.bin does not match');
-  expect(store.modelDownloading).toBe(false);
-  expect(store.modelAvailable?.revision).toBe('newer');
+  expect(store.modelsFailure).toBe('upscaler.bin does not match');
+  expect(store.modelsDownloading).toBe(false);
+  expect(store.modelsAvailable?.revision).toBe('newer');
 });
 
 test('the strings name the version, because that is the whole of the badge', () => {
