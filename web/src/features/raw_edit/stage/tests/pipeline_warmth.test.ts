@@ -50,12 +50,19 @@ class FakeDevice {
     return { compiled: code };
   }
   static refusing = false;
+  static inFlight = 0;
+  static mostInFlight = 0;
   private static compileAsync(descriptor: object, module: GPUShaderModule): Promise<unknown> {
     FakeDevice.compiledAsync.push(descriptor as Record<string, unknown>);
     const { code } = module as unknown as Module;
     const refused = FakeDevice.refusing;
+    FakeDevice.mostInFlight = Math.max(FakeDevice.mostInFlight, ++FakeDevice.inFlight);
     return new Promise((resolve, reject) =>
-      setTimeout(() => (refused ? reject(new Error('refused')) : resolve({ warmed: code })), 10),
+      setTimeout(() => {
+        FakeDevice.inFlight--;
+        if (refused) reject(new Error('refused'));
+        else resolve({ warmed: code });
+      }, 10),
     );
   }
 }
@@ -149,6 +156,8 @@ function reset(): void {
   FakeDevice.compiled = [];
   FakeDevice.compiledAsync = [];
   FakeDevice.refusing = false;
+  FakeDevice.inFlight = 0;
+  FakeDevice.mostInFlight = 0;
   FakePass.set = [];
 }
 
@@ -366,6 +375,23 @@ test('a precompile compiles every pipeline created before and during it, and sav
   for (const pipeline of made) pass.setPipeline(pipeline);
   expect(FakeDevice.compiled).toEqual([]);
   expect(FakePass.set).toEqual([{ warmed: 'fn early() {}' }, { warmed: 'fn late() {}' }]);
+});
+
+test('pipelines compile one at a time, whether precompiled or warmed by the next session', async () => {
+  reset();
+  const store = memory();
+  const first = installed(store);
+  const device = await first.adapter.requestDevice();
+  await first.warmth.precompile(() => {
+    for (const name of ['a', 'b', 'c', 'd']) build(device, name, `fn ${name}() {}`);
+  });
+  expect(FakeDevice.compiledAsync).toHaveLength(4);
+  expect(FakeDevice.mostInFlight).toBe(1);
+  reset();
+
+  await installed(store).adapter.requestDevice();
+  expect(FakeDevice.compiledAsync).toHaveLength(4);
+  expect(FakeDevice.mostInFlight).toBe(1);
 });
 
 test('a precompile counts each pipeline as it finishes compiling', async () => {

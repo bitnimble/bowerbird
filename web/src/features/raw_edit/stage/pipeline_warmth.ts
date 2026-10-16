@@ -57,6 +57,7 @@ type Created = Pick<
 const BUILDS = /^create\w*Pipeline$/;
 const SAVE_QUIET_MS = 2000;
 const KEPT_UNUSED_MS = 30 * 24 * 60 * 60 * 1000;
+const COMPILES_AT_ONCE = 1;
 
 /**
  * Compiles, asynchronously, the pipelines earlier sessions drew with, and hands each to the stand-in
@@ -80,6 +81,8 @@ export class PipelineWarmth {
   private readonly handedOut = new Set<WeakRef<Deferred>>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly opened = Date.now();
+  private compiling = 0;
+  private readonly waitingToCompile: (() => void)[] = [];
 
   constructor(private readonly store: RecipeStore) {}
 
@@ -189,8 +192,7 @@ export class PipelineWarmth {
         continue;
       }
       this.track(
-        wait
-          .compile()
+        this.inTurn(wait.compile)
           .then((pipeline) => {
             wait.warmed = pipeline;
             this.built(wait.recipe, pipeline);
@@ -226,10 +228,25 @@ export class PipelineWarmth {
       return;
     }
     this.track(
-      wait.compile().then((pipeline) => {
+      this.inTurn(wait.compile).then((pipeline) => {
         wait.warmed = pipeline;
       }),
     );
+  }
+
+  private async inTurn<T>(compile: () => Promise<T>): Promise<T> {
+    // Each compile holds the driver's compiler memory until it returns, and Android's WebView runs
+    // them in the app's own process: all of the editor's at once aborted it out of memory.
+    if (this.compiling < COMPILES_AT_ONCE) this.compiling++;
+    else await new Promise<void>((resolve) => this.waitingToCompile.push(resolve));
+    try {
+      return await compile();
+    } finally {
+      // Handed over without freeing the slot, else a caller arriving in between takes it too.
+      const next = this.waitingToCompile.shift();
+      if (next == null) this.compiling--;
+      else next();
+    }
   }
 
   private track(compiling: Promise<void>): void {
@@ -329,9 +346,11 @@ export class PipelineWarmth {
         ),
       });
       compiling.push(
-        build.call(device, descriptor as unknown as PipelineDescriptor).then((pipeline) => {
-          this.compiled.set(recipe.identity, pipeline);
-        }),
+        this.inTurn(() => build.call(device, descriptor as unknown as PipelineDescriptor)).then(
+          (pipeline) => {
+            this.compiled.set(recipe.identity, pipeline);
+          },
+        ),
       );
     }
     const refused = device.popErrorScope();
