@@ -5,6 +5,7 @@ import type { RawEditPresenter } from '../stage/raw_edit_presenter';
 import type { KeystoneStore } from '../keystone/keystone_store';
 
 import { fitScale, type Size } from '../../photos/viewer/zoom_pan';
+import { stopFlings } from '../../../ui/stop_flings';
 import type { CropGrip } from './crop_turn';
 import type { CropStore } from './crop_store';
 
@@ -201,6 +202,7 @@ export const CropOverlay = observer(function CropOverlay({
     // out: the canvas fills the viewport but the *image* in it is letterboxed, and a rectangle
     // laid out on the viewport would sit in the bars.
     <div
+      ref={stopFlings}
       {...stylex.props(styles.overlay)}
       style={{ aspectRatio: `${picture.width} / ${picture.height}` }}
     >

@@ -17,7 +17,7 @@ import { CSS } from '@dnd-kit/utilities';
 import * as stylex from '@stylexjs/stylex';
 import { GripVertical, Plus, Trash2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useId } from 'react';
+import { useCallback, useId } from 'react';
 import { LABEL_NAME_MAX } from '../../../../src/schemas/labels';
 import { useLabelEditorStore, useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
@@ -29,6 +29,7 @@ import { ICON } from '../../ui/icon';
 import { Modal } from '../../ui/modal';
 import { ModalStrings } from '../../ui/modal.strings';
 import { Select } from '../../ui/select';
+import { stopFlings } from '../../ui/stop_flings';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { color, size } from '../../ui/tokens.stylex';
@@ -201,6 +202,13 @@ const DraftRow = observer(function DraftRow({
     id: draft.key,
   });
   const name = draft.name.trim() === '' ? EditLabelsStrings.labelName() : draft.name.trim();
+  const handleRef = useCallback(
+    (element: HTMLElement | null) => {
+      setActivatorNodeRef(element);
+      stopFlings(element);
+    },
+    [setActivatorNodeRef],
+  );
 
   return (
     <li
@@ -210,7 +218,7 @@ const DraftRow = observer(function DraftRow({
     >
       <button
         type="button"
-        ref={setActivatorNodeRef}
+        ref={handleRef}
         {...attributes}
         {...listeners}
         {...stylex.props(styles.handle, focusRing.ring)}

@@ -4,6 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useListingStore, useMarksStore, useStacksStore } from '../../../app/stores_context';
 import { focusRing } from '../../../ui/focus_ring';
+import { stopFlings } from '../../../ui/stop_flings';
 import { GRID_GAP } from './grid_layout';
 import { PhotoGridStrings } from './photo_grid.strings';
 import {
@@ -40,6 +41,7 @@ export const StripResizer = observer(function StripResizer({
 
   return (
     <div
+      ref={stopFlings}
       {...stylex.props(strip.handle, along === 'x' ? strip.handleX : strip.handleY)}
       role="separator"
       aria-orientation={along === 'x' ? 'horizontal' : 'vertical'}

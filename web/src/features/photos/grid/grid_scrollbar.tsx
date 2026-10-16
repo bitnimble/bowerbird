@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useRef } from 'react';
+import { stopFlings } from '../../../ui/stop_flings';
 import type { ScrollRailStore } from './scroll_rail_store';
 import { PhotoGridStrings } from './photo_grid.strings';
 import { bar } from './photo_grid_styles';
@@ -92,6 +93,7 @@ export const GridScrollbar = observer(function GridScrollbar({
       )}
     >
       <div
+        ref={stopFlings}
         {...stylex.props(bar.thumb, !down && bar.thumbAcross)}
         style={
           down

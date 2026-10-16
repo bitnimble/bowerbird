@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { buttonStyles } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { IsolationContext } from '../../ui/isolation';
+import { stopFlings } from '../../ui/stop_flings';
 import { color, size } from '../../ui/tokens.stylex';
 import { editSheet } from './edit_sheet.stylex';
 import { MobileEditPanelsStrings as S } from './mobile_edit_panels.strings';
@@ -138,6 +139,7 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({
       >
         {expanded && (
           <button
+            ref={stopFlings}
             type="button"
             aria-label={S.close()}
             tabIndex={-1}

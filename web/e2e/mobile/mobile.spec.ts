@@ -301,6 +301,20 @@ test('swiping the frame steps to the next photo and back', async ({ page }) => {
   await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
 });
 
+// A flick on the stage, which cannot scroll, still sets Chromium flinging for about a second, and
+// the tap that stops a fling is no click: every button ignores it.
+test('a button takes the first tap after a swipe', async ({ page }) => {
+  await openFirstPhoto(page);
+  const first = page.url();
+  const box = await photoStage(page).boundingBox();
+  if (box == null) throw new Error('the stage has no box');
+
+  await swipe(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, -160);
+  await expect(page).not.toHaveURL(first);
+  await sheet(page).getByRole('button', { name: 'Show metadata' }).tap();
+  await expect(sheet(page).getByRole('button', { name: 'Hide metadata' })).toBeVisible();
+});
+
 // The system back gesture is history.back, so a run of swipes would otherwise be
 // a run of presses to get out of. Two photographs is enough to ask it: with an
 // entry per swipe, Back lands on the first one rather than on the grid.

@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { fitScale, type Size } from '../../photos/viewer/zoom_pan';
+import { stopFlings } from '../../../ui/stop_flings';
 import { isUpright, type KeystoneGuide } from './keystone';
 import { KeystoneOverlayStrings } from './keystone_overlay.strings';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
@@ -267,6 +268,7 @@ export const KeystoneOverlay = observer(function KeystoneOverlay({
 
   return (
     <div
+      ref={stopFlings}
       {...stylex.props(styles.overlay)}
       role="group"
       aria-label={KeystoneOverlayStrings.guides()}

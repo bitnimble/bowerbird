@@ -10,6 +10,7 @@ import {
 import { Button } from '../../../ui/button';
 import { ICON } from '../../../ui/icon';
 import { Row } from '../../../ui/row';
+import { stopFlings } from '../../../ui/stop_flings';
 import { Text } from '../../../ui/text';
 import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import { PhotoStage } from '../viewer/photo_stage';
@@ -142,6 +143,7 @@ export const ViewSwitch = observer(function ViewSwitch({
         aria-label={StackTriageStrings.peek()}
         tooltip={StackTriageStrings.peekTitle()}
         style={styles.peek}
+        ref={stopFlings}
         onPointerDown={(e: React.PointerEvent) => {
           // Capture, so releasing outside the button still ends the peek rather
           // than leaving the other photo pinned up.

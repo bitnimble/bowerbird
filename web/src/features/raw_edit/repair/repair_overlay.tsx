@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { stopFlings } from '../../../ui/stop_flings';
 import { color } from '../../../ui/tokens.stylex';
 import {
   framePointOf,
@@ -366,6 +367,7 @@ export const RepairOverlay = observer(function RepairOverlay({
               : null;
   return (
     <div
+      ref={stopFlings}
       {...stylex.props(styles.overlay, cursor)}
       onPointerDown={down}
       onPointerMove={hover}

@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { usePresenters, useSidebarStore } from '../../app/stores_context';
+import { stopFlings } from '../../ui/stop_flings';
 import { color } from '../../ui/tokens.stylex';
 import { sidebarWidth } from './sidebar';
 import { SidebarResizerStrings } from './sidebar_resizer.strings';
@@ -34,6 +35,7 @@ export const SidebarResizer = observer(function SidebarResizer(): JSX.Element {
 
   return (
     <div
+      ref={stopFlings}
       {...stylex.props(
         styles.resizer,
         styles.resizerAt(`calc(${sidebarWidth(store.width)} - 3px)`),

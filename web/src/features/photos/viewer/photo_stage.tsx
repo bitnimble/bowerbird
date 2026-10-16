@@ -13,6 +13,7 @@ import { ZoomControl, ZoomSlider } from './zoom_control';
 import { stageStyles } from './photo_stage.stylex';
 import { StageFrame, type FrameState } from './stage_frame';
 import { Spinner } from '../../../ui/spinner';
+import { stopFlings } from '../../../ui/stop_flings';
 import { styles } from './photo_stage_view.stylex';
 import { StageDetail } from './stage_detail';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
@@ -379,6 +380,7 @@ export function PhotoStage({
   );
   const zoom = useZoomPan(viewportRef, stageRef, natural, onGestureEnd);
   const { view, reset, zoomed, handlers, box } = zoom;
+  useEffect(() => stopFlings(viewportRef.current), []);
 
   // Off the observed box rather than a measurement: `useZoomPan` keeps it under a
   // ResizeObserver, and reading the element here would be a layout read on every frame of a
