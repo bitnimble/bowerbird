@@ -4,9 +4,11 @@ import {
   type LibraryEventKind,
   type LibraryEventPayload,
   LibraryEventSchemas,
+  type RenditionEvent,
 } from '../../schemas/events';
 import { route } from '../../schemas/route';
 import type { ProcessingService } from '../../services/processing/pipeline/processing_service';
+import type { RenditionWritten } from '../../services/processing/workers/processing_types';
 
 export interface LibraryEvent {
   // Monotonic for the life of the process, so a reconnecting client can name the
@@ -25,6 +27,8 @@ const REPLAY = 512;
 // a silent socket out well before a quiet library produces an event (index.ts).
 const HEARTBEAT_MS = 20_000;
 
+const RENDITIONS_EVERY_MS = 250;
+
 // What happened on this server that nobody asked about.
 //
 // Renditions are written asynchronously, so a tile rendered during an import asks
@@ -39,11 +43,11 @@ export class EventsApi {
   private nextId = 1;
   private readonly recent: LibraryEvent[] = [];
   private readonly clients = new Set<(event: LibraryEvent) => void>();
+  private readonly written = new Map<string, RenditionEvent>();
+  private flush: ReturnType<typeof setTimeout> | null = null;
 
   constructor(processing: ProcessingService) {
-    processing.onProcessed((photoId, written) =>
-      this.announce('rendition', { id: photoId, stage: written.stage, version: written.version }),
-    );
+    processing.onProcessed((photoId, written) => this.renditionWritten(photoId, written));
 
     const app = new Hono();
 
@@ -106,6 +110,23 @@ export class EventsApi {
     const last = Number(lastEventId);
     if (!Number.isInteger(last) || last <= 0 || last >= this.nextId) return [];
     return this.recent.filter((event) => event.id > last);
+  }
+
+  /** Announced up to `RENDITIONS_EVERY_MS` later, in one event with every other photo's written by then. */
+  renditionWritten(photoId: string, written: RenditionWritten): void {
+    this.written.set(`${photoId}/${written.stage}`, {
+      id: photoId,
+      stage: written.stage,
+      version: written.version,
+    });
+    this.flush ??= setTimeout(() => this.announceWritten(), RENDITIONS_EVERY_MS);
+  }
+
+  private announceWritten(): void {
+    this.flush = null;
+    const written = [...this.written.values()];
+    this.written.clear();
+    this.announce('renditions', { written });
   }
 
   announce<K extends LibraryEventKind>(kind: K, payload: LibraryEventPayload<K>): void {

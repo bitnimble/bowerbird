@@ -264,12 +264,7 @@ const renditionFetch = new RenditionFetchService(
   librariesRepo,
   blobLocations,
   peers,
-  (photoId, written) =>
-    eventsApi.announce('rendition', {
-      id: photoId,
-      stage: written.stage,
-      version: written.version,
-    }),
+  (photoId, written) => eventsApi.renditionWritten(photoId, written),
   (photoId, rendition, phase) =>
     eventsApi.announce('rendition_fetch', { id: photoId, rendition, phase }),
   undefined,

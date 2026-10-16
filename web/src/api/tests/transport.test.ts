@@ -95,7 +95,7 @@ describe('subscribeEvents', () => {
   function handlers(watching: Partial<EventHandlers> = {}): EventHandlers {
     return {
       open: () => {},
-      rendition: () => {},
+      renditions: () => {},
       rendition_fetch: () => {},
       replication: () => {},
       backup: () => {},
@@ -142,17 +142,17 @@ describe('subscribeEvents', () => {
       const seen: string[] = [];
       subscribeEvents(
         handlers({
-          rendition: (data) => seen.push(`rendition:${data}`),
+          renditions: (data) => seen.push(`renditions:${data}`),
           replication: (data) => seen.push(`replication:${data}`),
           scan: (data) => seen.push(`scan:${data}`),
         }),
       );
-      source.deliver('rendition', '{"id":"a"}');
+      source.deliver('renditions', '{"written":[]}');
       source.deliver('replication', '{"library_id":"lib"}');
       source.deliver('scan', '{"library_id":"lib"}');
       expect(source.opened).toEqual([route(PathSegment.api(), PathSegment.events())]);
       expect(seen).toEqual([
-        'rendition:{"id":"a"}',
+        'renditions:{"written":[]}',
         'replication:{"library_id":"lib"}',
         'scan:{"library_id":"lib"}',
       ]);

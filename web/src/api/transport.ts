@@ -273,7 +273,7 @@ export interface EventHandlers {
    * while the API was unreachable, so that one is the baseline the view was rendered against.
    */
   open(reconnect: boolean): void;
-  rendition(data: string): void;
+  renditions(data: string): void;
   rendition_fetch(data: string): void;
   replication(data: string): void;
   backup(data: string): void;
@@ -285,7 +285,7 @@ export interface EventHandlers {
 // Every event kind that carries a payload, so adding one is this line and a
 // handler. `open` is not among them: it is the connection, not something on it.
 const KINDS = [
-  'rendition',
+  'renditions',
   'rendition_fetch',
   'replication',
   'backup',

@@ -10,6 +10,8 @@ export const RenditionEventSchema = z.object({
   version: z.string(),
 });
 export type RenditionEvent = z.infer<typeof RenditionEventSchema>;
+/** Every derived file rewritten since the last of these, one entry a photo and stage. */
+export const RenditionsEventSchema = z.object({ written: z.array(RenditionEventSchema) });
 
 export const RenditionFetchPhaseSchema = z.enum(['fetching', 'rendering']);
 export type RenditionFetchPhase = z.infer<typeof RenditionFetchPhaseSchema>;
@@ -30,7 +32,7 @@ export const BackupEventSchema = z.object({ library_id: z.string() });
 export const ScanEventSchema = z.object({ library_id: z.string() });
 
 export const LibraryEventSchemas = {
-  rendition: RenditionEventSchema,
+  renditions: RenditionsEventSchema,
   rendition_fetch: RenditionFetchEventSchema,
   replication: ReplicationEventSchema,
   backup: BackupEventSchema,

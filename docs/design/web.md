@@ -590,7 +590,7 @@ Destructive actions split by reversibility. Binning is undoable, so it just happ
 
 ### 18.6 Renditions and the sync strip
 
-Renditions are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: rendition` (`EventsApi`).
+Renditions are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: renditions` (`EventsApi`). One event carries every photo written in the last 250 ms, the latest stamp for each photo and stage, so a batch that settles a whole library is a few events however many photos it touches.
 
 **The version is a column, and it travels on the row.** `photos.tile_built_at` and `photos.renditions_built_at` each mean "when was this file last written", which is exactly what a URL has to name - and _only_ that: whether a file is stale is asked of `built_from` beside them, which names the develop settings each stored variant was rendered from, because a wall clock written on the peer that built it cannot be held against an edit timed on the peer that made it (docs/replication.md §7.9). Both are on `PhotoSummary`, so every view that renders a photo is already holding them. Appending it is the only thing that makes a rebuilt file visible to an `<img>` that has already decoded the old one (§13.5). Remounting the element is not an alternative: three fresh `<img>`s with the same `src` produce one network request between them, because the browser hands the later ones the copy already in its in-memory resource cache without revalidating. The URL itself has to differ.
 
@@ -598,7 +598,7 @@ Server-owned stamps exist on first render, survive reloads, agree across browser
 and keep held neighbour URLs identical to displayed URLs. Revalidation replaces
 unnecessary downloads; versions belong to photos rather than views.
 
-**The announcement carries the new value**, not just the fact of a change, so learning about a rebuild costs nothing beyond the event: `PhotosPresenter.renditionsRebuilt` writes it into the row already on screen, and mobx notifies the one tile whose field moved. Nothing is re-fetched to find out what the version became.
+**The announcement carries the new value**, not just the fact of a change, so learning about a rebuild costs nothing beyond the event: `PhotosPresenter.renditionsRebuilt` writes each into the row already on screen in one action, and mobx notifies the tiles whose fields moved. Nothing is re-fetched to find out what the version became.
 
 Per photo rather than per rendition because a reprocess rewrites or drops all of them together (`dropStaleRenditions`), so a rendition-level version would be three copies of one fact.
 

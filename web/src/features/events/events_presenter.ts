@@ -1,7 +1,7 @@
 import { CompositeProgressSchema } from '../../../../src/schemas/composition';
 import {
-  RenditionEventSchema,
   RenditionFetchEventSchema,
+  RenditionsEventSchema,
   ReplicationEventSchema,
 } from '../../../../src/schemas/events';
 import { ExportProgressSchema } from '../../../../src/schemas/exports';
@@ -47,15 +47,15 @@ export class EventsPresenter {
         void this.replication.reload('background');
         void this.labels.load('background');
       },
-      rendition: (payload) => {
-        // The announcement carries the row's new value rather than a bare "it changed", so
+      renditions: (payload) => {
+        // The announcement carries the rows' new values rather than a bare "it changed", so
         // nothing has to be re-read to act on it.
-        const { id, stage, version } = RenditionEventSchema.parse(JSON.parse(payload));
-        this.photos.renditionsRebuilt(id, stage, version);
+        const { written } = RenditionsEventSchema.parse(JSON.parse(payload));
+        this.photos.renditionsRebuilt(written);
         // A triage session's members are its own rows, held nowhere else: without this a
         // rebuild announced mid-session leaves both sides of every round drawn from the
         // file that was just replaced, which is the one thing a cull is judging.
-        this.stackTriage.renditionsRebuilt(id, stage, version);
+        this.stackTriage.renditionsRebuilt(written);
       },
       rendition_fetch: (payload) => {
         const { id, rendition, phase } = RenditionFetchEventSchema.parse(JSON.parse(payload));

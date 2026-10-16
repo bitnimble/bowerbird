@@ -1,6 +1,7 @@
 import { action, runInAction } from 'mobx';
 import { stacksApi } from '../../../api/stacks';
-import { type Ordering, type ProcessingStage } from '../../../../../src/schemas/common';
+import { type Ordering } from '../../../../../src/schemas/common';
+import { type RenditionEvent } from '../../../../../src/schemas/events';
 import { type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
 import type { PhotosPresenter } from '../photos_presenter';
 import type { StackTriageStore } from './stack_triage_store';
@@ -220,13 +221,15 @@ export class StackTriagePresenter {
   // are read once when the session opens and then held, so the stamp that moves the URL on
   // has to be written here too - the gallery's copy of the same row is a different object.
   @action.bound
-  renditionsRebuilt(photoId: string, stage: ProcessingStage, version: string): void {
-    const member = this.store.members.get(photoId);
-    if (member == null) return;
-    member[stage === 'tile' ? 'tile_built_at' : 'renditions_built_at'] = version;
-    // Shallow, so the row object is not observed field by field: the map is what the frames
-    // are read through, and it has to be told that one of its values moved.
-    this.store.members.set(photoId, { ...member });
+  renditionsRebuilt(written: readonly RenditionEvent[]): void {
+    for (const { id, stage, version } of written) {
+      const member = this.store.members.get(id);
+      if (member == null) continue;
+      member[stage === 'tile' ? 'tile_built_at' : 'renditions_built_at'] = version;
+      // Shallow, so the row object is not observed field by field: the map is what the frames
+      // are read through, and it has to be told that one of its values moved.
+      this.store.members.set(id, { ...member });
+    }
   }
 
   /** @param verdict names a *drawn* side: `a` is the photo on the left, whichever slot of the round it holds. */

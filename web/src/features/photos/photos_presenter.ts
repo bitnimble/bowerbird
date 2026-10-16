@@ -1,5 +1,5 @@
 import { action, comparer, computed, reaction, runInAction } from 'mobx';
-import { type Ordering, type ProcessingStage } from '../../../../src/schemas/common';
+import { type Ordering } from '../../../../src/schemas/common';
 import {
   type CompositeKind,
   type PhotoMarks,
@@ -8,7 +8,7 @@ import {
   type PhotoTarget,
   type Triage,
 } from '../../../../src/schemas/photos';
-import { type RenditionFetchPhase } from '../../../../src/schemas/events';
+import { type RenditionEvent, type RenditionFetchPhase } from '../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../src/schemas/settings';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { type Rendition } from '../../../../src/services/processing/renditions/renditions';
@@ -966,16 +966,17 @@ export class PhotosPresenter {
     await this.renditionsPresenter.show(photoId, rendition);
   }
 
-  // The server has rewritten one of this photo's derived files. Written into the
-  // row every view already renders from, which is what moves that file's URLs on;
-  // mobx notifies the one tile whose field changed and nothing else.
+  // The server has rewritten these photos' derived files. Written into the
+  // rows every view already renders from, which is what moves those files' URLs on;
+  // mobx notifies the tiles whose fields changed and nothing else.
   //
   // Only the stamp for the stage that moved: the grid tile and the viewer's
   // renditions have one each, so rebuilding a photo's renditions leaves its tile
   // where it is rather than re-fetching bytes that did not change.
   @action.bound
-  renditionsRebuilt(photoId: string, stage: ProcessingStage, version: string): void {
-    this.renditionsPresenter.rebuilt(photoId, stage, version);
+  renditionsRebuilt(written: readonly RenditionEvent[]): void {
+    for (const { id, stage, version } of written)
+      this.renditionsPresenter.rebuilt(id, stage, version);
   }
 
   @action.bound

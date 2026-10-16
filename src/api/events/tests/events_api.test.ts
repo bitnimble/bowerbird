@@ -69,9 +69,32 @@ describe('EventsApi', () => {
     // The exact wire format, because an EventSource that cannot parse it reports
     // nothing at all rather than failing.
     expect(await readChunk(reader)).toBe(
-      'event: rendition\ndata: {"id":"photo-a","stage":"tile","version":"2026-07-28T00:00:00.000Z"}\nid: 1\n\n',
+      'event: renditions\ndata: {"written":[{"id":"photo-a","stage":"tile","version":"2026-07-28T00:00:00.000Z"}]}\nid: 1\n\n',
     );
     await reader.cancel();
+  });
+
+  it('announces a burst of rewrites as one event, the latest stamp for each photo and stage', async () => {
+    const { api, processed } = build();
+    api.announce('backup', { library_id: 'lib' });
+    processed('photo-a', 'tile', 'first');
+    processed('photo-b', 'tile', 'first');
+    processed('photo-a', 'renditions', 'first');
+    processed('photo-a', 'tile', 'second');
+    await Bun.sleep(300);
+
+    expect(api.since('1').map((event) => [event.kind, JSON.parse(event.data)])).toEqual([
+      [
+        'renditions',
+        {
+          written: [
+            { id: 'photo-a', stage: 'tile', version: 'second' },
+            { id: 'photo-b', stage: 'tile', version: 'first' },
+            { id: 'photo-a', stage: 'renditions', version: 'first' },
+          ],
+        },
+      ],
+    ]);
   });
 
   // The sidebar learns of a session it never asked for over the same stream, and a
@@ -91,28 +114,25 @@ describe('EventsApi', () => {
   });
 
   it('replays what a reconnecting client missed, and nothing it already saw', async () => {
-    const { app, api, processed } = build();
-    processed('photo-a');
-    processed('photo-b');
-    processed('photo-c');
+    const { app, api } = build();
+    api.announce('backup', { library_id: 'a' });
+    api.announce('backup', { library_id: 'b' });
+    api.announce('backup', { library_id: 'c' });
 
-    expect(api.since('1').map((e) => e.data)).toEqual([
-      '{"id":"photo-b","stage":"tile","version":"2026-07-28T00:00:00.000Z"}',
-      '{"id":"photo-c","stage":"tile","version":"2026-07-28T00:00:00.000Z"}',
-    ]);
+    expect(api.since('1').map((e) => e.data)).toEqual(['{"library_id":"b"}', '{"library_id":"c"}']);
     expect(api.since('3')).toEqual([]);
 
     const res = await app.request(route(PathSegment.api(), PathSegment.events()), {
       headers: { 'Last-Event-ID': '2' },
     });
     const reader = res.body!.getReader();
-    expect(await readChunk(reader)).toContain('"id":"photo-c"');
+    expect(await readChunk(reader)).toContain('"library_id":"c"');
     await reader.cancel();
   });
 
   it('replays nothing for an id this process never issued', () => {
-    const { api, processed } = build();
-    processed('photo-a');
+    const { api } = build();
+    api.announce('backup', { library_id: 'a' });
 
     // A restart: the client's id belongs to the previous run's numbering, so
     // "everything after 40" would be the whole buffer, most of it already seen.

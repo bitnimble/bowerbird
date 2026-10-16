@@ -90,7 +90,7 @@ test('a rendition event refreshes detail in the background while an explicit bui
   finish();
   await running;
   expect(activities).toEqual(['interactive']);
-  presenter.renditionsRebuilt(PHOTO, 'renditions', 'version');
+  presenter.renditionsRebuilt([{ id: PHOTO, stage: 'renditions', version: 'version' }]);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(activities).toEqual(['interactive', 'background']);
 });
