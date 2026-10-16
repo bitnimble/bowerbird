@@ -347,6 +347,9 @@ mod log {
         /// written; one line longer than `out` is cut to fit.
         fn take(&self, out: &mut [u8]) -> usize {
             self.claimed.store(true, Ordering::Relaxed);
+            if out.is_empty() {
+                return 0;
+            }
             let Ok(mut lines) = self.lines.lock() else {
                 return 0;
             };
