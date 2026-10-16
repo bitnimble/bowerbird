@@ -10,6 +10,8 @@ mod app_log;
 mod caption;
 mod device_files;
 mod display;
+#[cfg(target_os = "android")]
+mod exits;
 /// Renders the page asks for and this app writes to a folder, rather than answers.
 mod export;
 mod export_paths;
@@ -35,6 +37,8 @@ pub type Runtime = tauri::Wry;
 pub fn run() {
     let builder = tauri::Builder::default()
         .setup(|app| {
+            #[cfg(target_os = "android")]
+            exits::report(app.handle());
             if let Err(err) = open_window(app.handle()) {
                 server::stop();
                 return Err(err.into());
@@ -67,7 +71,7 @@ pub fn run() {
             server::server_log_file
         ]);
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(photos::plugin());
+    let builder = builder.plugin(photos::plugin()).plugin(exits::plugin());
     // The server outlives the window otherwise, holding the catalogue against the next start and
     // leaving a process nobody can see. Not on Android, where the system can destroy the window and
     // bring it back in the same process wanting its server; the platform ends the server with the

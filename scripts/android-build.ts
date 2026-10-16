@@ -255,8 +255,11 @@ class MainActivity : TauriActivity() {
 `,
   );
 
-  const plugin = readFileSync(join(repoRoot, 'src-tauri', 'android', 'PhotosPlugin.kt'), 'utf8');
-  writeFileSync(join(dirname(activity), 'PhotosPlugin.kt'), plugin.replace(/^package .+$/m, pkg));
+  const plugins = join(repoRoot, 'src-tauri', 'android');
+  for (const name of readdirSync(plugins).filter((file) => file.endsWith('.kt'))) {
+    const plugin = readFileSync(join(plugins, name), 'utf8');
+    writeFileSync(join(dirname(activity), name), plugin.replace(/^package .+$/m, pkg));
+  }
 }
 
 function findFile(dir: string, name: string): string | null {
