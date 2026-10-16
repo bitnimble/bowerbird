@@ -8,7 +8,6 @@ use crate::gpu::{Buffer, Gpu};
 use crate::px::{Sensor, Span};
 
 pub const TILE: Span<Sensor> = Span::exact(64);
-pub const MARGIN: Span<Sensor> = Span::exact(320);
 // One step either side below the coarsest level: repeated texture finer than a search's reach
 // offers a whole period's slip as a match as good as the true one.
 const SEARCH: [Span<Sensor>; 2] = [Span::exact(2), Span::exact(4)];
@@ -24,6 +23,19 @@ pub const REFERENCE_MARGIN: Span<Sensor> = Span::exact(
         }
         + COARSE_STEP.raw() / 2,
 );
+// align.slang's `REFINE_REACH`, and two for `frame_cubic`'s stencil past it.
+const REFINED_AND_SAMPLED: Span<Sensor> = Span::exact(3 + 2);
+
+/// How far past the window a frame cut around its prior is read: the reference's margin, then
+/// everywhere `search` and each finer level may move a tile off the prior.
+pub fn frame_margin(search: Search) -> Span<Sensor> {
+    Span::exact(
+        REFERENCE_MARGIN.raw()
+            + search.reach.raw()
+            + SEARCH.iter().map(|reach| reach.raw()).sum::<usize>()
+            + REFINED_AND_SAMPLED.raw(),
+    )
+}
 
 /// How far the coarsest level looks from the prior, and what straying from the prior costs a match.
 #[derive(Clone, Copy)]

@@ -387,15 +387,16 @@ pub(crate) async fn decode_merged_tile(
         if at == reference_at {
             continue;
         }
-        // handheld drift can pass the search margin
-        let moved = prior[at].x.raw().abs().max(prior[at].y.raw().abs()).ceil() as usize;
+        let frame_extra = (crate::align::frame_margin(crate::align::Search::AROUND_PRIOR).raw()
+            + prior_spread(recipe, at, view, taken, prior[at]))
+        .saturating_sub(RCD_MARGIN + crate::tile_halo(halo));
         let Region::Mosaic(frame) = region_mosaic(
             source,
-            view,
+            placed_at(view, prior[at]),
             read,
             crate::galosh::Fit::Given(reference.noise?),
             halo,
-            crate::px::Span::exact(crate::align::MARGIN.raw() + moved),
+            crate::px::Span::exact(frame_extra),
             crate::dust::Known::Off,
             Demosaiced::ByTheReference,
         )
@@ -493,6 +494,51 @@ pub(crate) async fn decode_merged_tile(
         neutral_ceiling: neutral_ceiling_of(colour.ceiling),
         ..reference.frame(built)
     })
+}
+
+/// `view` moved to where `prior` puts its content in a frame of the stack, kept inside the photograph.
+fn placed_at(view: crate::view::View, prior: crate::burst::Offset) -> crate::view::View {
+    let (x, y, width, height) = view.window.raw();
+    let (photo_w, photo_h) = view.photograph.raw();
+    let moved = |at: usize, by: f64, extent: usize, room: usize| {
+        (at as f64 + by.round()).clamp(0.0, room.saturating_sub(extent) as f64) as usize
+    };
+    crate::view::View {
+        window: crate::px::Rect::exact(
+            moved(x, prior.x.raw(), width, photo_w),
+            moved(y, prior.y.raw(), height, photo_h),
+            width,
+            height,
+        ),
+        ..view
+    }
+}
+
+/// How far the prior strays across `view`'s window from `prior`, the one it was cut around, in
+/// whole photosites: a roll moves the corners apart.
+fn prior_spread(
+    recipe: &crate::composition::Composition,
+    at: usize,
+    view: crate::view::View,
+    taken: crate::burst::Taken,
+    prior: crate::burst::Offset,
+) -> usize {
+    let (x, y, width, height) = view.window.raw();
+    [
+        (x, y),
+        (x + width, y),
+        (x, y + height),
+        (x + width, y + height),
+    ]
+    .into_iter()
+    .filter_map(|(cx, cy)| crate::burst::prior_at(recipe, at, [cx as f64, cy as f64], taken))
+    .map(|corner| {
+        (corner.x.raw() - prior.x.raw())
+            .abs()
+            .max((corner.y.raw() - prior.y.raw()).abs())
+    })
+    .fold(0.0, f64::max)
+    .ceil() as usize
 }
 
 /// What a window of a RAW is before the demosaic: its mosaic, or for a linear DNG, which has none,
