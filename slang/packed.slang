@@ -31,7 +31,37 @@ public float level_of(uint bits)
 /// Saturating at the largest finite half, so light past it is stored bright rather than infinite.
 public uint bits_of(float level)
 {
-    return f32tof16(min(level / FULL_SCALE, LARGEST_HALF));
+    return half_bits(min(level / FULL_SCALE, LARGEST_HALF));
+}
+
+/// `value` as a half, rounded to nearest even, the same on every adapter.
+///
+/// **Never `f32tof16` or `packHalf2x16`.** Vulkan leaves their rounding and their denormals to the
+/// driver: radv truncates (AMD's `v_cvt_pkrtz`), so a stored frame comes back up to a whole half
+/// step darker there than on NVIDIA.
+public uint half_bits(float value)
+{
+    let bits = asuint(value);
+    let sign = (bits >> 16) & 0x8000;
+    let magnitude = bits & 0x7fffffff;
+    if (magnitude > 0x7f800000) { return sign | 0x7e00; }
+    // 65520 and up, infinity included, round past the largest finite half.
+    if (magnitude >= 0x477ff000) { return sign | 0x7c00; }
+    let exponent = magnitude >> 23;
+    if (exponent >= 113) {
+        let rebased = magnitude - (112u << 23);
+        return sign | ((rebased + 0xfff + ((rebased >> 13) & 1)) >> 13);
+    }
+    if (exponent < 102) { return sign; }
+    let mantissa = (magnitude & 0x7fffff) | 0x800000;
+    let shift = 126 - exponent;
+    return sign | ((mantissa + (1u << (shift - 1)) - 1 + ((mantissa >> shift) & 1)) >> shift);
+}
+
+/// Two halves to a word, low first, through [`half_bits`].
+public uint pack_halves(float2 value)
+{
+    return half_bits(value.x) | (half_bits(value.y) << 16);
 }
 
 static const float LARGEST_HALF = 65504.0;

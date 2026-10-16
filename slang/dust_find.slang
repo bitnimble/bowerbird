@@ -6,8 +6,8 @@
 // that go back are the thresholded prominence the fill needs and the ~20kB of spots the fits make.
 // The frame stays where it was decoded.
 //
-// **Every working plane is half floats, two to a word.** `packHalf2x16` emits core WGSL, so this
-// asks nothing of the adapter that `shader-f16` would - and the planes are the whole memory cost of
+// **Every working plane is half floats, two to a word.** `pack_halves` packs them in integer
+// arithmetic, so this asks nothing of the adapter that `shader-f16` would - and the planes are the whole memory cost of
 // a search, 150MB on a 61MP body at four bytes a sample. Two to a word is also half the traffic
 // through passes that are almost all bandwidth.
 //
@@ -17,6 +17,7 @@
 // another one, so the whole plane can be shifted to sit around zero where the mantissa is spent on
 // the part that matters.
 import lanes;
+import packed;
 import px;
 
 static const float PI = 3.14159265358979;
@@ -167,14 +168,14 @@ void quads(uint3 id : SV_DispatchThreadID)
 
     let left = logged_at(qx, qy);
     let right = logged_at(qx + 1, qy);
-    red[at] = packHalf2x16(float2(left.r, right.r) + LOG_ANCHOR);
-    green[at] = packHalf2x16(float2(left.g, right.g) + LOG_ANCHOR);
-    blue[at] = packHalf2x16(float2(left.b, right.b) + LOG_ANCHOR);
+    red[at] = pack_halves(float2(left.r, right.r) + LOG_ANCHOR);
+    green[at] = pack_halves(float2(left.g, right.g) + LOG_ANCHOR);
+    blue[at] = pack_halves(float2(left.b, right.b) + LOG_ANCHOR);
     let achromatic = float2(left.r + left.g + left.b, right.r + right.g + right.b) / 3.0;
-    mean[at] = packHalf2x16(achromatic + LOG_ANCHOR);
+    mean[at] = pack_halves(achromatic + LOG_ANCHOR);
     // Gamma-encoded green, which is `exp(g / 2.2)` rather than `exp(g)` raised to a power. Unshifted:
     // it is a level between zero and one, where a half float's mantissa is already where it wants to be.
-    surround[at] = packHalf2x16(exp(float2(left.g, right.g) / 2.2));
+    surround[at] = pack_halves(exp(float2(left.g, right.g) / 2.2));
 }
 
 // ------------------------------------------------------- the separable passes
@@ -215,7 +216,7 @@ void box_cols(uint3 id : SV_DispatchThreadID)
     }
     let window = float(2 * find.radius + 1);
     for (uint y = first; y < last; y += 1) {
-        dst[y * wide() + wx] = packHalf2x16(sum / window);
+        dst[y * wide() + wx] = pack_halves(sum / window);
         sum += unpackHalf2x16ToFloat(src[uint(clamp(int(y) + r + 1, 0, bottom)) * wide() + wx])
              - unpackHalf2x16ToFloat(src[uint(clamp(int(y) - r, 0, bottom)) * wide() + wx]);
     }
@@ -266,7 +267,7 @@ void transpose(uint3 group: SV_GroupID, uint lane: SV_GroupIndex)
         let y = x0 + row;
         let x = y0 + col * 2;
         if (x < find.hh && y < find.hw) {
-            dst[y * out_wide + x / 2] = packHalf2x16(float2(
+            dst[y * out_wide + x / 2] = pack_halves(float2(
                 turning[col * 2 * (PATCH + 1) + row],
                 turning[(col * 2 + 1) * (PATCH + 1) + row]));
         }
@@ -315,7 +316,7 @@ void rank_rows(uint3 id : SV_DispatchThreadID)
             best.y = extreme(best.y, held);
         }
     }
-    dst[at] = packHalf2x16(best);
+    dst[at] = pack_halves(best);
 }
 
 /// The same down a column, where a word's two samples share their window's rows.
@@ -334,7 +335,7 @@ void rank_cols(uint3 id : SV_DispatchThreadID)
     for (int i = y - r + 1; i <= y + r; i += 1) {
         best = extremes(best, unpackHalf2x16ToFloat(src[uint(clamp(i, 0, bottom)) * wide() + wx]));
     }
-    dst[at] = packHalf2x16(best);
+    dst[at] = pack_halves(best);
 }
 
 // ------------------------------------------------------------------ the folds
@@ -358,13 +359,13 @@ void fold(uint3 id : SV_DispatchThreadID)
     if (at >= words()) { return; }
     let value = unpackHalf2x16ToFloat(sharp[at]) - unpackHalf2x16ToFloat(background[at]);
     if (find.channel == 0) {
-        band_sum[at] = packHalf2x16(value);
-        band_low[at] = packHalf2x16(value);
-        band_high[at] = packHalf2x16(value);
+        band_sum[at] = pack_halves(value);
+        band_low[at] = pack_halves(value);
+        band_high[at] = pack_halves(value);
     } else {
-        band_sum[at] = packHalf2x16(unpackHalf2x16ToFloat(band_sum[at]) + value);
-        band_low[at] = packHalf2x16(min(unpackHalf2x16ToFloat(band_low[at]), value));
-        band_high[at] = packHalf2x16(max(unpackHalf2x16ToFloat(band_high[at]), value));
+        band_sum[at] = pack_halves(unpackHalf2x16ToFloat(band_sum[at]) + value);
+        band_low[at] = pack_halves(min(unpackHalf2x16ToFloat(band_low[at]), value));
+        band_high[at] = pack_halves(max(unpackHalf2x16ToFloat(band_high[at]), value));
     }
 }
 
@@ -384,8 +385,8 @@ void judge(uint3 id : SV_DispatchThreadID)
     let mid = unpackHalf2x16ToFloat(band_sum[at]) / 3.0;
     // A dip carrying chroma is a scene edge: occlusion takes every channel equally.
     let chroma = max(unpackHalf2x16ToFloat(band_high[at]) - mid, mid - unpackHalf2x16ToFloat(band_low[at]));
-    score[at] = packHalf2x16(max(-mid - 2.0 * chroma, float2(0.0)));
-    texture_rms[at] = packHalf2x16(mid * mid);
+    score[at] = pack_halves(max(-mid - 2.0 * chroma, float2(0.0)));
+    texture_rms[at] = pack_halves(mid * mid);
 }
 
 [vk::binding(40, 0)] StructuredBuffer<uint> opened;
@@ -402,7 +403,7 @@ void tophat(uint3 id : SV_DispatchThreadID)
     let at = linear(id);
     if (at >= words()) { return; }
     let stands = unpackHalf2x16ToFloat(flat[at]) - unpackHalf2x16ToFloat(opened[at]);
-    prominence[at] = packHalf2x16(max(stands, float2(0.0)));
+    prominence[at] = pack_halves(max(stands, float2(0.0)));
 }
 
 // ---------------------------------------------------- the floor, and the mask
@@ -500,7 +501,7 @@ void threshold(uint3 id : SV_DispatchThreadID)
     let level = asfloat(floor_of[HIST_BINS - 1]);
     let noise = max(unpackHalf2x16ToFloat(local_noise[at]), float2(level));
     let keep = (value > float2(0.0)) & (value * value > find.snr_squared * noise);
-    masked[at] = packHalf2x16(select(keep, value, float2(0.0)));
+    masked[at] = pack_halves(select(keep, value, float2(0.0)));
 }
 
 // ------------------------------------------------------------------ the fits

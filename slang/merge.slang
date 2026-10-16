@@ -8,6 +8,7 @@
 import px;
 import light;
 import clipped;
+import packed;
 
 struct Params {
     uint width;
@@ -600,7 +601,7 @@ uint packed_residual(float residual, float weight)
     // Held inside a half's normals, the weight too: past the largest is inf and NaNs the sums, and
     // a denormal flushes on some adapters and not others. -1 and 0 are exact and pass.
     let held = weight > 0.0 ? clamp(weight, HALF_SMALLEST_NORMAL, HALF_LARGEST) : weight;
-    return packHalf2x16(float2(clamp(residual * RESIDUAL_SCALE, -HALF_LARGEST, HALF_LARGEST), held));
+    return pack_halves(float2(clamp(residual * RESIDUAL_SCALE, -HALF_LARGEST, HALF_LARGEST), held));
 }
 
 // A residual and its weight, off `packed_residual`'s word.

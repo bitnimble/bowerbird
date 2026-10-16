@@ -435,3 +435,94 @@ fn the_histogram_bins_a_nan_and_an_infinity_somewhere_defined() {
         got[3]
     );
 }
+
+/// Every stored half is IEEE's round to nearest even, denormals and overflow included, whatever
+/// the driver's own conversion does: radv truncates, so a frame stored there read darker.
+#[test]
+fn the_half_conversion_rounds_alike_on_every_adapter() {
+    let Some(shipped) = rawshim::gpu::device() else {
+        eprintln!("SKIPPED: no adapter answered, so `half_bits` was not run.");
+        return;
+    };
+    let device = shipped.describing();
+
+    // Each finite half, the tie between it and the next, and a float either side of the tie.
+    let mut fed: Vec<f32> = Vec::new();
+    for bits in 0..0x7bffu16 {
+        let here = half::f16::from_bits(bits).to_f32();
+        let tie = (here + half::f16::from_bits(bits + 1).to_f32()) / 2.0;
+        fed.extend([
+            here,
+            tie,
+            f32::from_bits(tie.to_bits() - 1),
+            f32::from_bits(tie.to_bits() + 1),
+        ]);
+    }
+    fed.extend([65504.0, 65519.99, 65520.0, 1e9, f32::INFINITY, 1e-30]);
+    let negated: Vec<f32> = fed.iter().map(|v| -v).collect();
+    fed.extend(negated);
+    fed.push(f32::NAN);
+
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("halves"),
+        source: wgpu::ShaderSource::Wgsl(read_wgsl("probe_halves.wgsl").into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("probe_halves"),
+        layout: None,
+        module: &module,
+        entry_point: Some("probe_halves"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bytes: Vec<u8> = fed.iter().flat_map(|v| v.to_bits().to_le_bytes()).collect();
+    let mut recording = shipped.record();
+    let words = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: &bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+    let readback = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: bytes.len() as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = shipped.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("halves"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: words.as_entire_binding(),
+        }],
+    });
+    {
+        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(fed.len().div_ceil(64) as u32, 1, 1);
+    }
+    recording
+        .encoder()
+        .copy_buffer_to_buffer(&words, 0, &readback, 0, bytes.len() as u64);
+    recording.submit();
+    let got: Vec<u16> = pollster::block_on(rawshim::gpu::read_back(shipped, &readback, |mapped| {
+        mapped
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u16)
+            .collect()
+    }))
+    .expect("the readback mapped");
+
+    for (value, got) in fed.iter().zip(&got) {
+        let want = half::f16::from_f32(*value);
+        let got = half::f16::from_bits(*got);
+        assert!(
+            got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan()),
+            "{value:e} ({:#010x}) became {:#06x} where IEEE says {:#06x}",
+            value.to_bits(),
+            got.to_bits(),
+            want.to_bits()
+        );
+    }
+}

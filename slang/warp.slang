@@ -100,7 +100,7 @@ float3 gathered(uint pixel)
     let mx = abs(source_of(ox + 1.0, oy, 1).x - here.x);
     let my = abs(source_of(ox, oy + 1.0, 1).y - here.y);
     let j = clamp(float2(1.0 / max(mx, 1e-4), 1.0 / max(my, 1e-4)), float2(0.25), float2(4.0));
-    jacobian[pixel] = packHalf2x16(j);
+    jacobian[pixel] = pack_halves(j);
 
     var pixel_out = float3(0.0);
     for (uint c = 0; c < 3; c++) {
