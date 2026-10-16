@@ -36,7 +36,7 @@ const STATUS: LibraryScanStatus = {
   photos_modified: 0,
   photos_processing: 3,
   photos_processed: 0,
-  processing_work: 'rendering',
+  processing_work: { thumbnails: 0, reading: 0, rendering: 3 },
   photos_per_second: null,
 };
 
@@ -92,27 +92,48 @@ test('fetch and render queues have separate messages and rendering outlasts the 
   expect(screen.getByText('rendering 3 photos')).toBeTruthy();
 
   await act(async () => {
-    view.rerender(<Status transfers={[]} status={{ ...STATUS, photos_processing: 1 }} />);
+    view.rerender(
+      <Status
+        transfers={[]}
+        status={{
+          ...STATUS,
+          photos_processing: 1,
+          processing_work: { thumbnails: 0, reading: 0, rendering: 1 },
+        }}
+      />,
+    );
   });
   expect(screen.getByText('rendering 1 photo')).toBeTruthy();
 
   await act(async () => {
     view.rerender(
-      <Status transfers={[]} status={{ ...STATUS, status: 'idle', photos_processing: 0 }} />,
+      <Status
+        transfers={[]}
+        status={{
+          ...STATUS,
+          status: 'idle',
+          photos_processing: 0,
+          processing_work: { thumbnails: 0, reading: 0, rendering: 0 },
+        }}
+      />,
     );
   });
   expect(screen.queryByText(/rendering/)).toBeNull();
 });
 
-test('names the work the queue is doing', async () => {
-  const view = render(
-    <Status transfers={[]} status={{ ...STATUS, processing_work: 'thumbnails' }} />,
+test('counts each kind of work the queue owes on its own line', async () => {
+  render(
+    <Status
+      transfers={[]}
+      status={{
+        ...STATUS,
+        photos_processing: 7308,
+        processing_work: { thumbnails: 12, reading: 7296, rendering: 0 },
+      }}
+    />,
   );
   await act(async () => {});
-  expect(screen.getByText('building thumbnails for 3 photos')).toBeTruthy();
-
-  await act(async () => {
-    view.rerender(<Status transfers={[]} status={{ ...STATUS, processing_work: 'reading' }} />);
-  });
-  expect(screen.getByText('reading 3 photos')).toBeTruthy();
+  expect(screen.getByText('building thumbnails for 12 photos')).toBeTruthy();
+  expect(screen.getByText('reading 7296 photos')).toBeTruthy();
+  expect(screen.queryByText(/rendering/)).toBeNull();
 });

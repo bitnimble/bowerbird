@@ -1,6 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { type Library, type LibraryScanStatus } from '../../../../src/schemas/libraries';
+import {
+  type Library,
+  type LibraryScanStatus,
+  type ProcessingWork,
+} from '../../../../src/schemas/libraries';
 import type { ActivityKind, Activity as ServerActivity } from '../../../../src/schemas/activity';
 import { ActivityStrips } from '../activity/activity_strips';
 import { useBackupStore, useReplicationStore, useScanStore } from '../../app/stores_context';
@@ -36,6 +40,11 @@ const styles = stylex.create({
 // Cap the cells so a 50k-photo import doesn't render 50k nodes; past that the
 // strip reads as a proportion bar and the mono count carries the exact figure.
 const MAX_CELLS = 48;
+const WORK = [
+  'thumbnails',
+  'reading',
+  'rendering',
+] as const satisfies readonly (keyof ProcessingWork)[];
 const BACKUP_WORK: ReadonlySet<ActivityKind> = new Set(['backing_up', 'restoring_backup']);
 
 export const ScanStrip = observer(function ScanStrip({
@@ -118,14 +127,17 @@ export const ScanStrip = observer(function ScanStrip({
           </Strip>
         ))
       )}
-      {processing > 0 && (
-        <Strip>
-          <StatusDot state="working" />
-          <StripLabel>
-            {ScanStripStrings[reported?.processing_work ?? 'rendering'](processing)}
-          </StripLabel>
-        </Strip>
-      )}
+      {WORK.map((kind) => {
+        const count = reported?.processing_work[kind] ?? 0;
+        return (
+          count > 0 && (
+            <Strip key={kind}>
+              <StatusDot state="working" />
+              <StripLabel>{ScanStripStrings[kind](count)}</StripLabel>
+            </Strip>
+          )
+        );
+      })}
     </>
   );
 });

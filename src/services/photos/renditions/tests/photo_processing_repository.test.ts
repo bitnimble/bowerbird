@@ -155,18 +155,26 @@ describe('PhotoProcessingRepository.pendingWork', () => {
       )
       .run(id, variant);
 
-  it('is the tile pass while any tile is owed, then the renders', () => {
-    expect(repo.pendingWork(LIB)).toBeNull();
-
-    owe('live', 'full');
-    expect(repo.pendingWork(LIB)).toBe('rendering');
+  it('counts each kind of owed work on its own', () => {
+    expect(repo.pendingWork(LIB)).toEqual({ thumbnails: 0, reading: 0, rendering: 0 });
 
     db.query("UPDATE photos SET media_image_id = 7 WHERE id = 'other'").run();
     owe('other', 'grid');
-    expect(repo.pendingWork(LIB)).toBe('reading');
-
     owe('live', 'grid');
-    expect(repo.pendingWork(LIB)).toBe('thumbnails');
+    expect(repo.pendingWork(LIB)).toEqual({ thumbnails: 1, reading: 1, rendering: 0 });
+  });
+
+  it('counts a render only where the renditions pass posts one', () => {
+    db.query("UPDATE libraries SET rendition_source = 'embedded' WHERE id = ?").run(LIB);
+    owe('live', 'full');
+    expect(repo.pendingWork(LIB).rendering).toBe(0);
+
+    db.query("UPDATE libraries SET rendition_source = 'render' WHERE id = ?").run(LIB);
+    expect(repo.pendingWork(LIB).rendering).toBe(1);
+
+    db.query("UPDATE libraries SET rendition_source = 'embedded' WHERE id = ?").run(LIB);
+    db.query("UPDATE photos SET rendition_source = 'render' WHERE id = 'live'").run();
+    expect(repo.pendingWork(LIB).rendering).toBe(1);
   });
 });
 

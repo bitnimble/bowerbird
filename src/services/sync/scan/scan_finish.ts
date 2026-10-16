@@ -1,5 +1,5 @@
 import { Logger } from '../../../logger';
-import type { LibraryScanStatus } from '../../../schemas/libraries';
+import { NO_PROCESSING_WORK, type LibraryScanStatus } from '../../../schemas/libraries';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import type { AppliedCounts } from './scan_apply';
@@ -92,7 +92,7 @@ export async function finishScan(
     photos_modified: modified,
     photos_processing: queued,
     photos_processed: 0,
-    processing_work: queued > 0 ? photoProcessing.pendingWork(libraryId) : null,
+    processing_work: queued > 0 ? photoProcessing.pendingWork(libraryId) : NO_PROCESSING_WORK,
     // The renditions are a different kind of work at a different rate, and the
     // scan's figure is not one the client should carry into them.
     photos_per_second: null,

@@ -50,7 +50,7 @@ const IDLE: LibraryScanStatus = {
   photos_modified: 0,
   photos_processing: 0,
   photos_processed: 0,
-  processing_work: null,
+  processing_work: { thumbnails: 0, reading: 0, rendering: 0 },
   photos_per_second: null,
 };
 
@@ -157,7 +157,11 @@ test('web library tiles show the path as plain text', async () => {
 });
 
 test('library counts and the render queue keep updating after fetching ends', async () => {
-  reportedStatus = { ...IDLE, photos_processing: 3 };
+  reportedStatus = {
+    ...IDLE,
+    photos_processing: 3,
+    processing_work: { thumbnails: 0, reading: 0, rendering: 3 },
+  };
   await openAt('/settings/libraries');
   expect(screen.getByText('rendering 3 photos')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();

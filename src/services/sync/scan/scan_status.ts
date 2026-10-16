@@ -1,6 +1,10 @@
 import { AppError } from '../../../errors';
 import { Logger } from '../../../logger';
-import type { Library, LibraryScanStatus } from '../../../schemas/libraries';
+import {
+  NO_PROCESSING_WORK,
+  type Library,
+  type LibraryScanStatus,
+} from '../../../schemas/libraries';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import type { ProcessingTrigger } from './scan_rebuilds';
@@ -27,7 +31,7 @@ export function idleScanStatus(libraryId: string, status: Status = 'idle'): Libr
     photos_modified: 0,
     photos_processing: 0,
     photos_processed: 0,
-    processing_work: null,
+    processing_work: NO_PROCESSING_WORK,
     photos_per_second: null,
   };
 }
@@ -132,7 +136,9 @@ export class ScanStatus {
     return {
       ...status,
       processing_work:
-        status.photos_processing > 0 ? this.photoProcessing.pendingWork(libraryId) : null,
+        status.photos_processing > 0
+          ? this.photoProcessing.pendingWork(libraryId)
+          : NO_PROCESSING_WORK,
     };
   }
 
