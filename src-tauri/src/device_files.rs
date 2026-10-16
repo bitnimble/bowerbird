@@ -4,7 +4,10 @@
 //! which is a new one each launch.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Manager;
+
+static WRITES: AtomicU64 = AtomicU64::new(0);
 
 // Async, so a pipeline recipes file megabytes long is read and written off the window's thread.
 #[tauri::command(async)]
@@ -32,7 +35,11 @@ pub fn write_device_file(
             .map_err(|err| format!("could not make {}: {err}", parent.display()))?;
     }
     // Renamed into place, so a write the app is killed in the middle of leaves the last whole one.
-    let partial = path.with_extension("partial");
+    // Numbered: a reloaded page can save a name while the old page's save of it still runs.
+    let partial = path.with_extension(format!(
+        "{}.partial",
+        WRITES.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&partial, contents)
         .and_then(|()| std::fs::rename(&partial, &path))
         .map_err(|err| format!("could not write {}: {err}", path.display()))

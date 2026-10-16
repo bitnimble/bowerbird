@@ -1,7 +1,9 @@
 //! Why the previous run ended, logged at the start of this one: a crash takes the logs with it.
 
 use std::collections::{HashMap, VecDeque};
+use std::io::Write;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tauri::Manager;
@@ -9,7 +11,9 @@ use tauri::plugin::PluginHandle;
 
 use crate::Runtime;
 
+static REPORTING: OnceLock<()> = OnceLock::new();
 const SAMPLE_EVERY: Duration = Duration::from_secs(1);
+const SAMPLES_PER_WRITE: usize = 10;
 const SAMPLES_KEPT: usize = 120;
 const KINDS_SHOWN: usize = 6;
 const RSS_LOGGED_EVERY_KB: u64 = 150 * 1024;
@@ -35,8 +39,11 @@ pub(crate) fn plugin() -> tauri::plugin::TauriPlugin<Runtime> {
         .build()
 }
 
-/// Logs the previous run's end, then has a panic in this one written where the next run reads it.
+/// Logs the previous run's end, then has this run's first panic kept for the next to read.
 pub(crate) fn report(app: &tauri::AppHandle<Runtime>) {
+    if REPORTING.set(()).is_err() {
+        return;
+    }
     let app = app.clone();
     // Off the setup thread: the plugin answers on Android's main thread, which setup holds.
     std::thread::spawn(move || {
@@ -55,7 +62,9 @@ pub(crate) fn report(app: &tauri::AppHandle<Runtime>) {
             crate::app_log::info(format!("an earlier run ended: {exit}"));
         }
         if let Some(crash) = last.crash {
-            crate::app_log::error(format!("the last run crashed: {crash}"));
+            crate::app_log::error(format!(
+                "the last run recorded a panic or exception: {crash}"
+            ));
         }
         let resources = Path::new(&last.crash_file).with_file_name("shell-resources.log");
         record_panics(last.crash_file);
@@ -71,17 +80,20 @@ struct Sample {
 }
 
 /// Every second, this process's threads, memory mappings and descriptors by name, the last of
-/// them kept in `file` for the next run to log, since each abort so far was this process out of
-/// one of them. A sudden jump, and every `RSS_LOGGED_EVERY_KB` of growth, is logged as it happens.
+/// them kept in `file` for the next run to log. A sudden jump, and every `RSS_LOGGED_EVERY_KB` of
+/// growth, is logged as it happens.
 fn sample_resources(file: &Path) -> ! {
     let previous = std::fs::read_to_string(file).unwrap_or_default();
     for line in previous.lines() {
         crate::app_log::info(format!("the previous run: {line}"));
     }
+    let partial = file.with_extension("partial");
     let mut samples = VecDeque::with_capacity(SAMPLES_KEPT);
+    let mut unwritten = 0;
     let mut last: Option<(usize, usize)> = None;
     let mut logged_rss_kb = 0u64;
     loop {
+        let mut climbed = false;
         let line = match resources() {
             Ok(sample) => {
                 let jumped = last.is_some_and(|(maps, fds)| {
@@ -90,6 +102,7 @@ fn sample_resources(file: &Path) -> ! {
                 if jumped || sample.rss_kb > logged_rss_kb + RSS_LOGGED_EVERY_KB {
                     crate::app_log::warn(format!("this process is climbing: {}", sample.line));
                     logged_rss_kb = sample.rss_kb;
+                    climbed = true;
                 }
                 last = Some((sample.maps, sample.fds));
                 format!("{} {}", crate::app_log::now(), sample.line)
@@ -103,7 +116,13 @@ fn sample_resources(file: &Path) -> ! {
             samples.pop_front();
         }
         samples.push_back(line);
-        let _ = std::fs::write(file, samples.make_contiguous().join("\n"));
+        unwritten += 1;
+        if climbed || unwritten == SAMPLES_PER_WRITE {
+            // Renamed into place, so a kill mid-write leaves the last whole file.
+            let _ = std::fs::write(&partial, samples.make_contiguous().join("\n"))
+                .and_then(|()| std::fs::rename(&partial, file));
+            unwritten = 0;
+        }
         std::thread::sleep(SAMPLE_EVERY);
     }
 }
@@ -223,7 +242,10 @@ fn record_panics(crash_file: String) {
             std::backtrace::Backtrace::force_capture()
         );
         crate::app_log::error(&message);
-        let _ = std::fs::write(&crash_file, &message);
+        // The first panic is usually the cause, the rest its fallout.
+        if let Ok(mut file) = std::fs::File::create_new(&crash_file) {
+            let _ = file.write_all(message.as_bytes());
+        }
         previous(info);
     }));
 }

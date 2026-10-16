@@ -16,17 +16,19 @@ object Tombstone {
         val threads = mutableMapOf<Long, ByteArray>()
         val logs = mutableListOf<String>()
         Fields(bytes).forEach { field, value ->
-            when (field) {
-                6 -> tid = value as Long
-                10 -> signal = Fields(value as ByteArray).string(2)
-                14 -> abort = String(value as ByteArray)
-                16 -> {
-                    val entry = Fields(value as ByteArray)
+            val message = value as? ByteArray
+            when {
+                field == 6 && value is Long -> tid = value
+                message == null -> {}
+                field == 10 -> signal = Fields(message).string(2)
+                field == 14 -> abort = String(message)
+                field == 16 -> {
+                    val entry = Fields(message)
                     entry.bytes(2)?.let { threads[entry.long(1) ?: 0L] = it }
                 }
-                18 -> Fields(value as ByteArray).forEach { logField, log ->
-                    if (logField == 2) {
-                        val line = Fields(log as ByteArray)
+                field == 18 -> Fields(message).forEach { logField, log ->
+                    if (logField == 2 && log is ByteArray) {
+                        val line = Fields(log)
                         logs += "${line.string(1)} ${line.long(3)} ${line.string(5)}: ${line.string(6)}"
                     }
                 }
@@ -44,15 +46,18 @@ object Tombstone {
 
     private fun thread(bytes: ByteArray): String {
         val thread = Fields(bytes)
-        val frames = thread.all(4).take(FRAMES_SHOWN).mapIndexed { i, frame ->
-            val f = Fields(frame as ByteArray)
+        val frames = thread.all(4).filterIsInstance<ByteArray>().take(FRAMES_SHOWN).mapIndexed { i, frame ->
+            val f = Fields(frame)
             val function = f.string(4)?.let { " ($it+${f.long(5)})" } ?: ""
             "  #%02d pc %x %s%s".format(i, f.long(1) ?: 0L, f.string(6) ?: "?", function)
         }
         return "thread ${thread.string(2)} (${thread.long(1)}):\n${frames.joinToString("\n")}"
     }
 
-    /** One message's fields: varints as Long, length-delimited as ByteArray, fixed ones skipped. */
+    /**
+     * One message's fields: varints as Long, length-delimited as ByteArray, fixed ones skipped.
+     * A truncated or malformed message yields the fields before the damage.
+     */
     private class Fields(private val bytes: ByteArray) {
         private val read: List<Pair<Int, Any>> by lazy { parse() }
 
@@ -65,26 +70,28 @@ object Tombstone {
         private fun parse(): List<Pair<Int, Any>> {
             val out = mutableListOf<Pair<Int, Any>>()
             var at = 0
-            fun varint(): Long {
+            fun varint(): Long? {
                 var value = 0L
                 var shift = 0
-                while (true) {
+                while (at < bytes.size && shift < 64) {
                     val b = bytes[at++].toInt()
                     value = value or ((b and 0x7f).toLong() shl shift)
                     if (b and 0x80 == 0) return value
                     shift += 7
                 }
+                return null
             }
             while (at < bytes.size) {
-                val key = varint()
+                val key = varint() ?: return out
                 val field = (key ushr 3).toInt()
                 when ((key and 7).toInt()) {
-                    0 -> out += field to varint()
+                    0 -> out += field to (varint() ?: return out)
                     1 -> at += 8
                     2 -> {
-                        val length = varint().toInt()
-                        out += field to bytes.copyOfRange(at, at + length)
-                        at += length
+                        val length = varint() ?: return out
+                        if (length < 0 || length > bytes.size - at) return out
+                        out += field to bytes.copyOfRange(at, at + length.toInt())
+                        at += length.toInt()
                     }
                     5 -> at += 4
                     else -> return out

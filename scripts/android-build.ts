@@ -291,13 +291,8 @@ if (found.length === 0) {
   process.exit(1);
 }
 
-// One APK, chosen rather than whichever the walk reached last: nothing cleans this tree, so it
-// holds whatever earlier builds left in it.
-//
-// Chosen by build type, not by the word "unsigned". Nothing here configures signing, so the
-// release APK this produces IS `app-universal-release-unsigned.apk` - filtering that word
-// out selects a debug APK from an earlier `tauri android dev` instead, leaves exactly one
-// candidate so the check below stays quiet, and ships it.
+// By build type, never the word "unsigned": the release APK is `...-release-unsigned.apk`, and
+// nothing cleans the older debug APKs out of this tree.
 const release = found.filter((apk) => /[/\\]release[/\\]/.test(apk));
 const chosen = release.length > 0 ? release : found;
 if (chosen.length > 1) {

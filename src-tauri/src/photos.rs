@@ -113,9 +113,7 @@ mod platform {
     // before the first answers would leave the first waiting forever.
     static GRANTING: Mutex<()> = Mutex::new(());
     const PROMPT_PATIENCE: Duration = Duration::from_secs(300);
-    /// `PhotosPlugin.kt`'s code for a reader who said no.
     const DECLINED: &str = "declined";
-    /// `PhotosPlugin.kt`'s code for an image it has no thumbnail of any more.
     const GONE: &str = "gone";
 
     pub(crate) fn serve_shell_socket(
