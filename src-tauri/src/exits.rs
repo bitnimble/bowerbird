@@ -9,8 +9,8 @@ use tauri::plugin::PluginHandle;
 
 use crate::Runtime;
 
-const SAMPLE_EVERY: Duration = Duration::from_secs(5);
-const SAMPLES_KEPT: usize = 24;
+const SAMPLE_EVERY: Duration = Duration::from_secs(1);
+const SAMPLES_KEPT: usize = 120;
 const KINDS_SHOWN: usize = 6;
 
 struct Exits(PluginHandle<Runtime>);
@@ -62,17 +62,34 @@ pub(crate) fn report(app: &tauri::AppHandle<Runtime>) {
     });
 }
 
-/// Every few seconds, this process's threads and memory mappings by name, the last of them kept
-/// in `file` for the next run to log: both aborts so far were this process out of one or the other.
+struct Sample {
+    line: String,
+    maps: usize,
+    fds: usize,
+}
+
+/// Every second, this process's threads, memory mappings and descriptors by name, the last of
+/// them kept in `file` for the next run to log, since each abort so far was this process out of
+/// one of them. A sudden climb is logged as it happens.
 fn sample_resources(file: &Path) -> ! {
     let previous = std::fs::read_to_string(file).unwrap_or_default();
     for line in previous.lines() {
         crate::app_log::info(format!("the previous run: {line}"));
     }
     let mut samples = VecDeque::with_capacity(SAMPLES_KEPT);
+    let mut last: Option<(usize, usize)> = None;
     loop {
-        let sample = match resources() {
-            Ok(sample) => format!("{} {sample}", crate::app_log::now()),
+        let line = match resources() {
+            Ok(sample) => {
+                let climbing = last.is_some_and(|(maps, fds)| {
+                    sample.maps > maps + maps / 4 || sample.fds > fds + fds / 4
+                });
+                if climbing {
+                    crate::app_log::warn(format!("this process is climbing: {}", sample.line));
+                }
+                last = Some((sample.maps, sample.fds));
+                format!("{} {}", crate::app_log::now(), sample.line)
+            }
             Err(err) => format!(
                 "{} could not read this process: {err}",
                 crate::app_log::now()
@@ -81,13 +98,13 @@ fn sample_resources(file: &Path) -> ! {
         if samples.len() == SAMPLES_KEPT {
             samples.pop_front();
         }
-        samples.push_back(sample);
+        samples.push_back(line);
         let _ = std::fs::write(file, samples.make_contiguous().join("\n"));
         std::thread::sleep(SAMPLE_EVERY);
     }
 }
 
-fn resources() -> std::io::Result<String> {
+fn resources() -> std::io::Result<Sample> {
     let status = std::fs::read_to_string("/proc/self/status")?;
     let rss = status
         .lines()
@@ -116,13 +133,26 @@ fn resources() -> std::io::Result<String> {
             }
         })
         .collect();
-    Ok(format!(
-        "rss {rss}; {} threads ({}); {} maps ({})",
-        threads.len(),
-        commonest(&threads),
-        mapped.len(),
-        commonest(&mapped)
-    ))
+    let fds: Vec<String> = std::fs::read_dir("/proc/self/fd")?
+        .filter_map(Result::ok)
+        .map(|fd| {
+            std::fs::read_link(fd.path())
+                .map_or_else(|_| "?".into(), |to| to.to_string_lossy().into_owned())
+        })
+        .collect();
+    Ok(Sample {
+        line: format!(
+            "rss {rss}; {} threads ({}); {} maps ({}); {} fds ({})",
+            threads.len(),
+            commonest(&threads),
+            mapped.len(),
+            commonest(&mapped),
+            fds.len(),
+            commonest(&fds)
+        ),
+        maps: mapped.len(),
+        fds: fds.len(),
+    })
 }
 
 /// The most frequent names, counted with their digits masked so numbered siblings group.
