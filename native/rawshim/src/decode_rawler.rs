@@ -4,7 +4,7 @@
 //! coefficients rawler carries on its `RawImage`; the demosaic lives in `demosaic.rs`.
 
 use crate::frame::{Frame, Pixels};
-use crate::orientation::{code as orientation_code, orient, unoriented_rect as as_sensor_rect};
+use crate::orientation::{code as orientation_code, unoriented_rect as as_sensor_rect};
 
 /// Which of a file's embedded JPEGs a caller wants.
 ///
@@ -137,19 +137,8 @@ pub fn upright_preview_rgb_with(
     let params = rawler::decoders::RawDecodeParams::default();
     let previews = decoder.preview_jpegs(source, &params).ok()?;
     let jpeg = chosen(&previews, want)?;
-    let image = decode(jpeg, long_edge).ok()?;
-
     let upright = upright_of(decoder, source, &params);
-    use rawler::decoders::Orientation as O;
-    if matches!(upright, O::Normal | O::Unknown) {
-        return Some(image);
-    }
-    let (data, width, height) = orient(image.data, image.width, image.height, upright);
-    Some(crate::rgb::Rgb {
-        width,
-        height,
-        data,
-    })
+    decode(&tagged(jpeg, upright)?, long_edge).ok()
 }
 
 fn upright_preview_of(source: &rawler::rawsource::RawSource, want: Preview) -> Option<Vec<u8>> {
@@ -158,13 +147,20 @@ fn upright_preview_of(source: &rawler::rawsource::RawSource, want: Preview) -> O
     let params = rawler::decoders::RawDecodeParams::default();
     let previews = decoder.preview_jpegs(source, &params).ok()?;
     let jpeg = chosen(&previews, want)?;
-
     let upright = upright_of(decoder.as_ref(), &source, &params);
-    use rawler::decoders::Orientation as O;
-    if matches!(upright, O::Normal | O::Unknown) {
-        return Some(jpeg.to_vec());
-    }
+    tagged(jpeg, upright).map(std::borrow::Cow::into_owned)
+}
 
+/// `jpeg` carrying the RAW's turn in place of its own tag; as it is where the RAW names none.
+///
+/// **Replaced, never composed.** Some bodies copy their EXIF, orientation and all, into the
+/// preview, so a decode that honours the preview's tag and then turns by the RAW's turns a portrait
+/// frame twice and leaves it on its side.
+fn tagged(
+    jpeg: &[u8],
+    upright: rawler::decoders::Orientation,
+) -> Option<std::borrow::Cow<'_, [u8]>> {
+    use rawler::decoders::Orientation as O;
     // **Said in EXIF rather than performed on the pixels.** `jpeg::with_orientation` says why: the
     // turn costs a 60MP decode and re-encode on a full-resolution preview, and thirty-six bytes
     // carry it instead. Everything downstream reads it - a browser, a downloaded file, and
@@ -177,9 +173,9 @@ fn upright_preview_of(source: &rawler::rawsource::RawSource, want: Preview) -> O
         O::Rotate90 => 6,
         O::Transverse => 7,
         O::Rotate270 => 8,
-        O::Normal | O::Unknown => 1,
+        O::Normal | O::Unknown => return Some(std::borrow::Cow::Borrowed(jpeg)),
     };
-    crate::jpeg::with_orientation(jpeg, tag)
+    crate::jpeg::with_orientation(jpeg, tag).map(std::borrow::Cow::Owned)
 }
 
 /// One tile of a photograph, decoding only the part of the file the tile needs.
@@ -3131,6 +3127,23 @@ async fn as_shot_of(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_preview_tagged_by_its_camera_turns_once() {
+        let stored = crate::rgb::Rgb {
+            width: 40,
+            height: 30,
+            data: vec![128; 40 * 30 * 3],
+        };
+        let jpeg = crate::jpeg::encode(stored.as_ref(), 90).expect("encoded");
+        let camera = crate::jpeg::with_orientation(&jpeg, 6).expect("tagged by its camera");
+
+        let tagged =
+            super::tagged(&camera, rawler::decoders::Orientation::Rotate90).expect("retagged");
+        let shown = crate::jpeg::decode(&tagged, 0).expect("decoded");
+
+        assert_eq!((shown.width, shown.height), (30, 40));
+    }
+
     /// The uncached read hands back the file, whatever the alignment cost it.
     ///
     /// A RAW is never a multiple of the page size, so the last read runs past the end of the file

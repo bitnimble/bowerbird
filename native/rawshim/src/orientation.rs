@@ -92,11 +92,10 @@ pub fn unoriented_rect(
     }
 }
 
-/// Rewrites a frame upright on the host, returning it with whatever dimensions that left.
-///
-/// The shaders do this as part of their own write; what still needs it here is the embedded
-/// preview, which is decoded on the CPU and never reaches a kernel.
-pub fn orient<T: Copy + Default>(
+/// Rewrites a frame upright on the host, returning it with whatever dimensions that left: the
+/// permutation the shaders' own writes are held against.
+#[cfg(test)]
+fn orient<T: Copy + Default>(
     pixels: Vec<T>,
     width: usize,
     height: usize,
