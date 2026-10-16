@@ -30,11 +30,17 @@ pub fn app_logs() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Now, as the log stamps it.
+pub(crate) fn now() -> String {
+    iso_8601(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default(),
+    )
+}
+
 fn record(level: &str, message: impl Display) {
-    let since_epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let line = format!("{} {level:<5} [shell] {message}", iso_8601(since_epoch));
+    let line = format!("{} {level:<5} [shell] {message}", now());
     eprintln!("{line}");
     let Ok(mut lines) = LINES.lock() else { return };
     lines.push_back(line);
