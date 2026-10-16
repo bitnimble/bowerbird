@@ -461,12 +461,15 @@ export class ProcessingService extends RenderService {
     // renditions to build, and a tile already built leaves `needs_renditions` set on a photo with
     // all its files on disk, re-queried by every batch for the life of the library.
     this.landing(() => {
+      let settled = 0;
       for (const photo of staged) {
         if (photo.tile == null && photo.renditions == null && photo.owesRenditions) {
           this.stageDone(photo, photo.photoId, 'renditions');
+          settled++;
         }
         if (photo.tile == null && photo.renditions == null) active.delete(photo.photoId);
       }
+      if (settled > 0) log.debug('settled photos with nothing to build', { photos: settled });
     });
 
     await this.pool.run(
@@ -588,7 +591,6 @@ export class ProcessingService extends RenderService {
       // fails to store is a photo that will not stack, which is not worth losing
       // the rendition over.
       if (descriptor != null) for (const listener of this.described) listener(photoId, descriptor);
-      log.debug('stage done', { photo: photoId, stage });
     } catch (err) {
       log.error('could not record a finished stage', { photo: photoId, stage, err });
     }
