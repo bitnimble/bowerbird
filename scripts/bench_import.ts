@@ -146,6 +146,7 @@ async function split(
   }));
   const repository = {
     listPendingProcessing: () => pending,
+    inOneCommit: <T>(record: () => T): T => record(),
     markTileBuilt: () => {},
     markRenditionsBuilt: () => {},
     markProcessingFailed: (_id: string, error: string) => {

@@ -34,7 +34,10 @@ function makeProcessingService(
   currentSettings: ConstructorParameters<typeof ProcessingService>[3],
 ): ProcessingService {
   return new ProcessingService(
-    Object.assign(photoProcessing, { forgetBuilt: jest.fn() }),
+    Object.assign(photoProcessing, {
+      forgetBuilt: jest.fn(),
+      inOneCommit: <T>(record: () => T): T => record(),
+    }),
     {} as unknown as PhotoPathsRepository,
     {} as unknown as PhotoListingRepository,
     currentSettings,
@@ -92,8 +95,9 @@ describe('ProcessingService.processUnprocessed', () => {
       markRenditionsBuilt: jest.fn(),
       forgetBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
+      inOneCommit: <T>(record: () => T): T => record(),
     } as unknown as PhotoProcessingRepository;
-    const holds: { postedBefore: number; postedAfter: number | null }[] = [];
+    const holds:{ postedBefore: number; postedAfter: number | null }[] = [];
     const holding = async <T>(run: () => Promise<T>): Promise<T> => {
       const hold = { postedBefore: posted.length, postedAfter: null as number | null };
       holds.push(hold);

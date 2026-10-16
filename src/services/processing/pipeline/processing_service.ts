@@ -460,25 +460,26 @@ export class ProcessingService extends RenderService {
 
     await this.pool.run(
       staged.flatMap((photo) => (photo.tile == null ? [] : [photo.tile])),
-      (result, job) => {
-        const photo = byId.get(result.photoId) ?? null;
-        if (!result.success) {
-          failed.add(result.photoId);
-          active.delete(result.photoId);
-          this.recordFailure(result, job, photo);
-          return;
-        }
-        // Its own stage, said as soon as it lands: the render behind it is still
-        // ~1.5s away, and a grid already on screen should fill at the tile's pace
-        // rather than wait for both.
-        this.stageDone(photo, result.photoId, 'tile', result.descriptor);
-        // A render's tile from before would otherwise be read as the camera's picture it now stands for.
-        for (const target of job.targets.filter((each) => each.describeOnly === true)) {
-          void deleteGeneratedFile(job.dataPath, target.outputPath).catch(() => {});
-        }
-        if (result.header != null) this.readHeader(result.photoId, result.header);
-        if (photo?.renditions == null) active.delete(result.photoId);
-      },
+      (result, job) =>
+        this.landing(() => {
+          const photo = byId.get(result.photoId) ?? null;
+          if (!result.success) {
+            failed.add(result.photoId);
+            active.delete(result.photoId);
+            this.recordFailure(result, job, photo);
+            return;
+          }
+          // Its own stage, said as soon as it lands: the render behind it is still
+          // ~1.5s away, and a grid already on screen should fill at the tile's pace
+          // rather than wait for both.
+          this.stageDone(photo, result.photoId, 'tile', result.descriptor);
+          // A render's tile from before would otherwise be read as the camera's picture it now stands for.
+          for (const target of job.targets.filter((each) => each.describeOnly === true)) {
+            void deleteGeneratedFile(job.dataPath, target.outputPath).catch(() => {});
+          }
+          if (result.header != null) this.readHeader(result.photoId, result.header);
+          if (photo?.renditions == null) active.delete(result.photoId);
+        }),
       stopped,
     );
 
@@ -489,30 +490,40 @@ export class ProcessingService extends RenderService {
 
     await this.pool.run(
       pending.map((photo) => photo.renditions as RenditionJob),
-      (result, job) => {
-        const photo = byId.get(result.photoId) ?? null;
-        active.delete(result.photoId);
-        if (!result.success) {
-          this.recordFailure(result, job, photo);
-          return;
-        }
-        this.stageDone(photo, result.photoId, 'renditions');
-        // And the tile, where this job rewrote it from the render. Asked of the targets
-        // rather than assumed from the pool, for the reason `runOneOff` gives: a job that
-        // wrote a grid file and stamped only the renditions leaves `tile_built_at` where
-        // it was, so the better tile lands on disk and no client ever asks for it.
-        if (job.targets.some((target) => target.rendition === 'grid')) {
-          this.stageDone(photo, result.photoId, 'tile', result.descriptor, {
-            from: 'render',
-            matched: job.cameraMatch !== 'none',
-          });
-        }
-        // This pass rather than the tile's: its job was built from the document as it stood before
-        // the tile pass, so a write there would leave these copies recorded against a stale one.
-        if (result.cameraTone != null) this.matchedCamera(result.photoId, result.cameraTone);
-      },
+      (result, job) =>
+        this.landing(() => {
+          const photo = byId.get(result.photoId) ?? null;
+          active.delete(result.photoId);
+          if (!result.success) {
+            this.recordFailure(result, job, photo);
+            return;
+          }
+          this.stageDone(photo, result.photoId, 'renditions');
+          // And the tile, where this job rewrote it from the render. Asked of the targets
+          // rather than assumed from the pool, for the reason `runOneOff` gives: a job that
+          // wrote a grid file and stamped only the renditions leaves `tile_built_at` where
+          // it was, so the better tile lands on disk and no client ever asks for it.
+          if (job.targets.some((target) => target.rendition === 'grid')) {
+            this.stageDone(photo, result.photoId, 'tile', result.descriptor, {
+              from: 'render',
+              matched: job.cameraMatch !== 'none',
+            });
+          }
+          // This pass rather than the tile's: its job was built from the document as it stood before
+          // the tile pass, so a write there would leave these copies recorded against a stale one.
+          if (result.cameraTone != null) this.matchedCamera(result.photoId, result.cameraTone);
+        }),
       stopped,
     );
+  }
+
+  // Never throws: this runs inside a worker's onmessage/onerror, where nothing catches it.
+  private landing(record: () => void): void {
+    try {
+      this.photoProcessing.inOneCommit(record);
+    } catch (err) {
+      log.error('could not record a landed job', { err });
+    }
   }
 
   // One stage of one photo has landed: clear its flag, stamp when it was written,

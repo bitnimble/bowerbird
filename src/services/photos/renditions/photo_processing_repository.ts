@@ -149,6 +149,10 @@ export class PhotoProcessingRepository {
     const parsed = OrderingSchema.safeParse(row?.ordering);
     return parsed.success ? parsed.data : 'taken_asc';
   }
+  /** `fn`'s writes as one commit: a disk sync per statement is most of what a landed job costs. */
+  inOneCommit<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
   // The grid tile has landed. Its own row, because the renditions are still to
   // come and a client versions the tile's URL off that one alone: sharing a stamp
   // with the second pass re-fetched every tile on the page whenever any photo's
