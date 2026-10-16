@@ -1,4 +1,4 @@
-// JPEG, in and out. Two pure-Rust crates, libjpeg-turbo for the grid tile alone, and no libvips.
+// JPEG, in and out. Two pure-Rust crates, and libjpeg-turbo for the grid tile alone.
 //
 // ============================================================================================
 // JPEG IS FOR PIXELS LEAVING THE APPLICATION. NEVER FOR TRANSPORT INSIDE IT.
@@ -28,25 +28,9 @@
 // Writing a picture out to look at? `avif::encode_rendition` for 8-bit, `avif::encode_still`
 // for PQ. Both are as easy to open as a JPEG and neither loses the thing being examined.
 //
-// libvips was reached for because it was already linked, and by the time the resampling
-// and filtering moved to `image` and `fit` it was carrying three calls: this decode, this
-// encode, and reading our own AVIF renditions back (`avif::decode`). What that cost was
-// not the library - 3MB - but its closure: 29 packages the rest of the app does not
-// touch, ImageMagick, poppler, OpenEXR, HDF5, NSS, cfitsio and matio among them, ~34MB in
-// the runtime image and a PDF renderer's worth of attack surface for a photo server.
-//
-// It is close to free to leave, because the shape of the work suits an ordinary decoder:
-//
-//   decode to 800px    38ms CPU against libvips' 32ms, deviation mean 0.25 of 255, worst 4
-//   decode to 1280px   38ms against 34ms, mean 0.26, worst 7
-//   decode whole       230ms against 303ms, mean 0.02, worst 4
-//   encode 1280px      10.0ms against 6.7ms, byte-for-byte within 0.2%
-//   encode 6000x4000   197ms against 70ms, same
-//
-// Single-threaded against a libvips that spreads over the machine, which is why the whole
-// decode wins on CPU and loses on wall time. Off the import, no figure is on a hot path: every
-// other decode is a shrink-on-load to the fit grid, where the two are a wash, and the
-// full-size encode happens once per manual download.
+// `decode` and `encode` are single-threaded, and neither is on a hot path: every decode off the
+// import is a shrink-on-load to the fit grid, and the full-size encode happens once per manual
+// download.
 //
 // One decoder for every picture a fit or a render reads. A shell fetches the RAW and prepares it
 // through `edit::fit`, which reads the embedded preview through here, so no client decodes a JPEG
