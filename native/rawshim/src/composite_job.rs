@@ -586,12 +586,19 @@ fn stacked_sources(
     #[cfg(test)]
     STACKS.with(|stacks| stacks.set(stacks.get() + 1));
 
+    // Undenoised: reducing to `REDUCED_TO` averages away what a full-resolution denoise would take,
+    // at a fraction of its cost per source.
+    let read = crate::galosh::Detail {
+        luminance: Some(0.0),
+        colour: Some(0.0),
+        ..job.detail().without_upscaler()
+    };
     let mut parts: Vec<crate::resident::Resident> = Vec::with_capacity(files.len());
     let mut as_shot = None;
     for (at, file) in files.iter().enumerate() {
         let frame = crate::decode::frame_from_path(
             file.path,
-            job.detail(),
+            read,
             DECODED_AT,
             false,
             crate::galosh::Fit::Measure,

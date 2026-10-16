@@ -91,16 +91,20 @@ impl Weights {
 }
 
 /// What a one-photosite merge holds for each pixel of its region, beside the strip itself: the
-/// kernels, both halved planes, the reference's detail, robustness and sharpness and their erosion,
-/// three accumulators, the four planes the bands settle through, the reference's demosaic under
-/// them, the merged mosaic, and two alignment pyramids.
+/// kernels, both halved planes, both planes' detail and the two passes it is summed through,
+/// robustness and sharpness and their erosion, a frame's residuals, three accumulators, the four
+/// planes the bands settle through, the reference's demosaic under them, the merged mosaic, and two
+/// alignment pyramids.
 pub const WORKING_BYTES_PER_PIXEL: f64 = 4.0
     * (3.0
         + 0.75
         + 0.75
         + 0.5
         + 0.5
+        + 1.5
+        + 0.5
         + 0.75
+        + 3.5
         + 27.0
         + 12.0
         + 3.0
@@ -157,9 +161,12 @@ pub struct Merge {
 enum Entry {
     Shape,
     Halve,
-    ReferenceDetails,
+    DetailTerms,
+    DetailRows,
+    DetailColumns,
     Robust,
     Erode,
+    Residuals,
     Accumulate,
     Settle,
     BlurRows,
@@ -176,10 +183,9 @@ fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
     let (name, bindings): (&str, &[(u32, wgpu::BufferBindingType)]) = match entry {
         Entry::Shape => ("shape", &[(0, UNIFORM), (3, READ), (4, WRITE)]),
         Entry::Halve => ("halve", &[(0, UNIFORM), (1, READ), (12, WRITE)]),
-        Entry::ReferenceDetails => (
-            "reference_details",
-            &[(0, UNIFORM), (5, READ), (6, READ), (14, WRITE)],
-        ),
+        Entry::DetailTerms => ("detail_terms", &[(0, UNIFORM), (6, READ), (21, WRITE)]),
+        Entry::DetailRows => ("detail_rows", &[(0, UNIFORM), (21, WRITE), (22, WRITE)]),
+        Entry::DetailColumns => ("detail_columns", &[(0, UNIFORM), (22, WRITE), (23, WRITE)]),
         Entry::Robust => (
             "robust",
             &[
@@ -189,22 +195,35 @@ fn kernel(gpu: &'static Gpu, entry: Entry) -> &'static Kernel {
                 (6, READ),
                 (7, WRITE),
                 (14, WRITE),
+                (23, WRITE),
             ],
         ),
         Entry::Erode => ("erode", &[(0, UNIFORM), (7, WRITE), (9, WRITE)]),
-        Entry::Accumulate => (
-            "accumulate",
+        Entry::Residuals => (
+            "residuals",
             &[
                 (0, UNIFORM),
                 (1, READ),
                 (2, READ),
-                (4, WRITE),
                 (6, READ),
+                (9, WRITE),
+                (18, READ),
+                (24, WRITE),
+                (25, WRITE),
+            ],
+        ),
+        Entry::Accumulate => (
+            "accumulate",
+            &[
+                (0, UNIFORM),
+                (2, READ),
+                (4, WRITE),
                 (8, WRITE),
                 (9, WRITE),
                 (13, WRITE),
-                (18, READ),
                 (19, WRITE),
+                (24, WRITE),
+                (25, WRITE),
             ],
         ),
         Entry::Settle => (
@@ -267,6 +286,50 @@ fn dispatch(
     let mut recording = gpu.record();
     record(gpu, &mut recording, entry, params, buffers, across, down);
     recording.submit();
+}
+
+/// `half`'s detail at each of its periods into `detail`, two floats a period: `params` names the
+/// frame it was halved from, whose noise and gain it is measured against.
+fn record_detail(
+    gpu: &'static Gpu,
+    recording: &mut Recording<'static>,
+    params: &Params,
+    half: &Buffer,
+    detail: &Buffer,
+) {
+    let (across, down) = (
+        params.frame_width as usize / 2,
+        params.frame_height as usize / 2,
+    );
+    let terms = storage(gpu, "merge detail terms", across * down * 3);
+    let rows = storage(gpu, "merge detail rows", across * down * 3);
+    record(
+        gpu,
+        recording,
+        Entry::DetailTerms,
+        params,
+        &[(6, half), (21, &terms)],
+        across,
+        down,
+    );
+    record(
+        gpu,
+        recording,
+        Entry::DetailRows,
+        params,
+        &[(21, &terms), (22, &rows)],
+        across,
+        down,
+    );
+    record(
+        gpu,
+        recording,
+        Entry::DetailColumns,
+        params,
+        &[(22, &rows), (23, detail)],
+        across,
+        down,
+    );
 }
 
 fn record(
@@ -371,18 +434,15 @@ impl Merge {
             half_width,
             half_height,
         );
-        dispatch(
+        let mut recording = gpu.record();
+        record_detail(
             gpu,
-            Entry::ReferenceDetails,
+            &mut recording,
             &params,
-            &[
-                (5, &merge.reference_half),
-                (6, &merge.reference_half),
-                (14, &merge.reference_detail),
-            ],
-            half_width,
-            half_height,
+            &merge.reference_half,
+            &merge.reference_detail,
         );
+        recording.submit();
         merge.accumulate(gpu, &reference, None)?;
         Some(merge)
     }
@@ -479,6 +539,7 @@ impl Merge {
             return None;
         }
         let params = self.params(frame, field);
+        let aligned = field.is_some();
         let stub = storage(gpu, "merge reference field", 4);
         let (field, frame_half) = match field {
             None => (&stub, None),
@@ -498,6 +559,16 @@ impl Merge {
         };
         let frame_half = frame_half.as_ref().unwrap_or(&self.reference_half);
         let mut recording = gpu.record();
+        // The reference's robustness is one throughout, so it reads no detail.
+        let frame_detail = match aligned {
+            false => storage(gpu, "merge reference's frame detail", 2),
+            true => {
+                let (half_width, half_height) = (frame.mosaic.width / 2, frame.mosaic.height / 2);
+                let detail = storage(gpu, "merge frame detail", half_width * half_height * 2);
+                record_detail(gpu, &mut recording, &params, frame_half, &detail);
+                detail
+            }
+        };
         record(
             gpu,
             &mut recording,
@@ -509,6 +580,7 @@ impl Merge {
                 (6, frame_half),
                 (7, &self.robustness),
                 (14, &self.reference_detail),
+                (23, &frame_detail),
             ],
             self.width / 2,
             self.height / 2,
@@ -522,21 +594,48 @@ impl Merge {
             self.width / 2,
             self.height / 2,
         );
+        let (frame_width, frame_height) = (frame.mosaic.width, frame.mosaic.height);
+        let photosite_residuals = storage(
+            gpu,
+            "merge photosite residuals",
+            frame_width * frame_height * 2,
+        );
+        let period_residuals = storage(
+            gpu,
+            "merge period residuals",
+            (frame_width / 2) * (frame_height / 2) * 6,
+        );
+        record(
+            gpu,
+            &mut recording,
+            Entry::Residuals,
+            &params,
+            &[
+                (1, &frame.mosaic.buffer),
+                (2, field),
+                (6, frame_half),
+                (9, &self.eroded),
+                (18, &self.prior),
+                (24, &photosite_residuals),
+                (25, &period_residuals),
+            ],
+            frame_width / 2,
+            frame_height / 2,
+        );
         record(
             gpu,
             &mut recording,
             Entry::Accumulate,
             &params,
             &[
-                (1, &frame.mosaic.buffer),
                 (2, field),
                 (4, &self.kernels),
-                (6, frame_half),
                 (8, &self.sums),
                 (9, &self.eroded),
                 (13, &self.wide_sums),
-                (18, &self.prior),
                 (19, &self.clipped_light),
+                (24, &photosite_residuals),
+                (25, &period_residuals),
             ],
             self.grid.width,
             self.grid.height,

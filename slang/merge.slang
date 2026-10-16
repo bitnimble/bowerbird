@@ -78,6 +78,14 @@ struct Params {
 [vk::binding(12, 0)] RWStructuredBuffer<float> half;
 [vk::binding(13, 0)] RWStructuredBuffer<float> wide_sums;
 [vk::binding(14, 0)] RWStructuredBuffer<float> reference_detail;
+[vk::binding(21, 0)] RWStructuredBuffer<float> period_terms;
+[vk::binding(22, 0)] RWStructuredBuffer<float> row_sums;
+// `detail_columns`' answer: the reference's when it is measuring the reference, the frame's in
+// `robust`.
+[vk::binding(23, 0)] RWStructuredBuffer<float> detail;
+// `residuals`' answers: two floats a frame photosite, and two a channel of a frame period.
+[vk::binding(24, 0)] RWStructuredBuffer<float> photosite_residuals;
+[vk::binding(25, 0)] RWStructuredBuffer<float> period_residuals;
 [vk::binding(15, 0)] RWStructuredBuffer<float> low_band;
 [vk::binding(16, 0)] RWStructuredBuffer<float> blurred;
 [vk::binding(17, 0)] RWStructuredBuffer<float> banded;
@@ -340,60 +348,87 @@ float frame_half_bilinear(float x, float y, uint channel)
     return lerp(lerp(a, b, fx), lerp(c, d, fx), fy);
 }
 
-float period_luma(bool reference_side, int x, int y)
+float period_luma(int x, int y)
 {
-    let width = reference_side ? params.width / 2 : params.frame_width / 2;
-    let height = reference_side ? params.height / 2 : params.frame_height / 2;
-    let at = wide_at<Sensor>(uint(clamp(x, 0, int(width) - 1)), uint(clamp(y, 0, int(height) - 1)), measured<Sensor>(width)) * 3;
+    let width = params.frame_width / 2;
+    let at = wide_at<Sensor>(uint(clamp(x, 0, int(width) - 1)), uint(clamp(y, 0, int(params.frame_height / 2) - 1)), measured<Sensor>(width)) * 3;
     float sum = 0.0;
     [ForceUnroll]
     for (uint channel = 0; channel < 3; channel++) {
-        let value = reference_side ? reference_half[at + channel] : frame_half[at + channel];
+        let value = frame_half[at + channel];
         if (!usable(value)) { return CLIPPED; }
         sum += value;
     }
     return sum / 3.0;
 }
 
-// The mean squared Laplacian of one plane's period luma about `(x, y)`, less what its noise alone
-// would give, beside that noise; negative where nothing there was read.
-float2 detail_of(bool reference_side, int x, int y, float alpha, float sigma_sq, float gain)
-{
-    float energy = 0.0;
-    float level = 0.0;
-    float n = 0.0;
-    for (int j = -SHARPNESS_REACH; j <= SHARPNESS_REACH; j++) {
-        for (int i = -SHARPNESS_REACH; i <= SHARPNESS_REACH; i++) {
-            let c = period_luma(reference_side, x + i, y + j);
-            let l = period_luma(reference_side, x + i - 1, y + j);
-            let r = period_luma(reference_side, x + i + 1, y + j);
-            let u = period_luma(reference_side, x + i, y + j - 1);
-            let d = period_luma(reference_side, x + i, y + j + 1);
-            if (!usable(c) || !usable(l) || !usable(r) || !usable(u) || !usable(d)) { continue; }
-            let laplacian = 4.0 * c - l - r - u - d;
-            energy += laplacian * laplacian;
-            level += c;
-            n += 1.0;
-        }
-    }
-    if (n < 1.0) { return float2(-1.0, 0.0); }
-    let mean = level / n;
-    let noise = LAPLACIAN_VARIANCE * PERIOD_LUMA_VARIANCE * gain * gain
-        * variance_of(max(mean / gain, 0.0), alpha, sigma_sq);
-    return float2(max(energy / n - noise, 0.0), noise);
-}
-
-// The reference's `detail_of` at each of its periods, the same for every frame `robust` compares.
+// A frame's detail, over its own periods, in three passes: each period's squared Laplacian of
+// period luma, its luma and whether all five taps read; their sums over `SHARPNESS_REACH` periods
+// along a row; then down a column, as the mean energy less what the noise alone gives, beside that
+// noise, or negative where nothing was read.
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void reference_details(uint3 gid : SV_DispatchThreadID)
+void detail_terms(uint3 gid : SV_DispatchThreadID)
 {
-    let half_width = params.width / 2;
-    if (gid.x >= half_width || gid.y >= params.height / 2) { return; }
-    let here = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width));
-    let detail = detail_of(true, int(gid.x), int(gid.y), params.reference_alpha, params.reference_sigma_sq, 1.0);
-    reference_detail[here.n * 2] = detail.x;
-    reference_detail[here.n * 2 + 1] = detail.y;
+    let half_width = params.frame_width / 2;
+    if (gid.x >= half_width || gid.y >= params.frame_height / 2) { return; }
+    let x = int(gid.x);
+    let y = int(gid.y);
+    let c = period_luma(x, y);
+    let l = period_luma(x - 1, y);
+    let r = period_luma(x + 1, y);
+    let u = period_luma(x, y - 1);
+    let d = period_luma(x, y + 1);
+    let read = usable(c) && usable(l) && usable(r) && usable(u) && usable(d);
+    let laplacian = 4.0 * c - l - r - u - d;
+    let at = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)) * 3;
+    period_terms[at] = read ? laplacian * laplacian : 0.0;
+    period_terms[at + 1] = read ? c : 0.0;
+    period_terms[at + 2] = read ? 1.0 : 0.0;
+}
+
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void detail_rows(uint3 gid : SV_DispatchThreadID)
+{
+    let half_width = params.frame_width / 2;
+    if (gid.x >= half_width || gid.y >= params.frame_height / 2) { return; }
+    float3 sum = float3(0.0);
+    for (int i = -SHARPNESS_REACH; i <= SHARPNESS_REACH; i++) {
+        let x = clamp(int(gid.x) + i, 0, int(half_width) - 1);
+        let at = wide_at<Sensor>(uint(x), gid.y, measured<Sensor>(half_width)) * 3;
+        sum += float3(period_terms[at], period_terms[at + 1], period_terms[at + 2]);
+    }
+    let at = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)) * 3;
+    row_sums[at] = sum.x;
+    row_sums[at + 1] = sum.y;
+    row_sums[at + 2] = sum.z;
+}
+
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void detail_columns(uint3 gid : SV_DispatchThreadID)
+{
+    let half_width = params.frame_width / 2;
+    let half_height = params.frame_height / 2;
+    if (gid.x >= half_width || gid.y >= half_height) { return; }
+    float3 sum = float3(0.0);
+    for (int j = -SHARPNESS_REACH; j <= SHARPNESS_REACH; j++) {
+        let y = clamp(int(gid.y) + j, 0, int(half_height) - 1);
+        let at = wide_at<Sensor>(gid.x, uint(y), measured<Sensor>(half_width)) * 3;
+        sum += float3(row_sums[at], row_sums[at + 1], row_sums[at + 2]);
+    }
+    let at = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)).n * 2;
+    if (sum.z < 1.0) {
+        detail[at] = -1.0;
+        detail[at + 1] = 0.0;
+        return;
+    }
+    let mean = sum.y / sum.z;
+    let noise = LAPLACIAN_VARIANCE * PERIOD_LUMA_VARIANCE * params.gain * params.gain
+        * variance_of(max(mean / params.gain, 0.0), params.alpha, params.sigma_sq);
+    detail[at] = max(sum.x / sum.z - noise, 0.0);
+    detail[at + 1] = noise;
 }
 
 // How far one frame may be trusted at each of the reference's periods, then how much of its
@@ -471,7 +506,11 @@ void robust(uint3 gid : SV_DispatchThreadID)
     robustness[here.n * 2] = 1.0 - smoothstep(MOVED_FROM, MOVED_AT, sqrt(worst));
 
     let ours = float2(reference_detail[here.n * 2], reference_detail[here.n * 2 + 1]);
-    let theirs = detail_of(false, int(round(qx)), int(round(qy)), params.alpha, params.sigma_sq, params.gain);
+    let frame_half_width = params.frame_width / 2;
+    let tx = clamp(int(round(qx)), 0, int(frame_half_width) - 1);
+    let ty = clamp(int(round(qy)), 0, int(params.frame_height / 2) - 1);
+    let their_at = wide_at<Sensor>(uint(tx), uint(ty), measured<Sensor>(frame_half_width)).n * 2;
+    let theirs = float2(detail[their_at], detail[their_at + 1]);
     // Where each place takes one frame, floored at a share of the noise so a reference with nothing
     // left to read still hands over to a frame holding detail there. Where frames average, a floor
     // lets a darker, noisier frame into the high band wherever only the reference reads detail.
@@ -509,14 +548,13 @@ void erode(uint3 gid : SV_DispatchThreadID)
     eroded[here * 3 + 2] = far;
 }
 
-// `erode`'s three at the period under `(sx, sy)`.
-float3 eroded_at(float sx, float sy)
+// Where `erode`'s three for the period under `(sx, sy)` start.
+uint eroded_at(float sx, float sy)
 {
     let half_width = int(params.width / 2);
     let hx = clamp(int(floor(sx * 0.5)), 0, half_width - 1);
     let hy = clamp(int(floor(sy * 0.5)), 0, int(params.height / 2) - 1);
-    let at = wide_at<Sensor>(uint(hx), uint(hy), measured<Sensor>(uint(half_width))) * 3;
-    return float3(eroded[at], eroded[at + 1], eroded[at + 2]);
+    return wide_at<Sensor>(uint(hx), uint(hy), measured<Sensor>(uint(half_width))) * 3;
 }
 
 float prior_site(int x, int y, uint channel)
@@ -539,6 +577,64 @@ float prior_at(float x, float y, uint channel)
         fy);
 }
 
+// Where a place in the frame's region sits in the reference's, in its photosites: the field is
+// stated at the reference's places, so read once where the frame's own place would be and again
+// where that lands.
+float2 in_reference(float2 at)
+{
+    let sensor = float2(float(params.frame_left), float(params.frame_top)) + at;
+    let first = sensor - displacement(sensor.x, sensor.y);
+    let landed = sensor - displacement(first.x, first.y);
+    return landed - float2(float(params.reference_left), float(params.reference_top));
+}
+
+// Each of one frame's photosites, and each channel of each of its periods, as its residual against
+// the reference's demosaic where it lands and the weight it carries there, once for every output
+// pixel it reaches: `accumulate` lays only the kernels over them. A weight of -1 marks a sample at
+// its ceiling.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void residuals(uint3 gid : SV_DispatchThreadID)
+{
+    let half_width = params.frame_width / 2;
+    if (gid.x >= half_width || gid.y >= params.frame_height / 2) { return; }
+    let corner = float2(float(gid.x) * 2.0, float(gid.y) * 2.0);
+    let shift = in_reference(corner + 0.5) - (corner + 0.5);
+    [ForceUnroll]
+    for (int j = 0; j < 2; j++) {
+        [ForceUnroll]
+        for (int i = 0; i < 2; i++) {
+            let x = int(gid.x) * 2 + i;
+            let y = int(gid.y) * 2 + j;
+            let value = mosaic[y * int(params.frame_width) + x];
+            let at = (y * int(params.frame_width) + x) * 2;
+            let landed = float2(float(x), float(y)) + shift;
+            let saturates = saturated(x, y, value);
+            photosite_residuals[at] = saturates ? 0.0
+                : params.gain * value - prior_at(landed.x, landed.y, colour_at(x, y));
+            photosite_residuals[at + 1] = saturates ? -1.0 : exposure_weight(params.gain * value);
+        }
+    }
+    let base = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)) * 6;
+    [ForceUnroll]
+    for (uint channel = 0; channel < 3; channel++) {
+        let value = frame_half[wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)) * 3 + channel];
+        let landed = corner + period_offset(channel) + shift;
+        let at = base + channel * 2;
+        if (!usable(value)) {
+            period_residuals[at] = 0.0;
+            period_residuals[at + 1] = -1.0;
+            continue;
+        }
+        // The wide kernel reaches past the periods an output pixel's trust is read over, so each
+        // period answers for itself and its wider neighbourhood, or a subject's edge, which its
+        // own texture lets pass, spreads a halo.
+        let own = eroded[eroded_at(landed.x, landed.y) + 2];
+        period_residuals[at] = value - prior_at(landed.x, landed.y, channel);
+        period_residuals[at + 1] = own * exposure_weight(value);
+    }
+}
+
 // One frame's photosites gathered onto each output pixel twice, each as its residual against the
 // reference's demosaic where it lands: through the reference's kernels weighed by the frame's
 // sharpness for the high band, and through one wide kernel over its periods for the low. A frame
@@ -553,7 +649,8 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
     let sx = float(params.output_left) + (float(gid.x) + 0.5) / scale - 0.5;
     let sy = float(params.output_top) + (float(gid.y) + 0.5) / scale - 0.5;
     let near = eroded_at(sx, sy);
-    let trust = near.x;
+    let trust = eroded[near];
+    let sharpness = eroded[near + 1];
     if (trust <= 0.0) { return; }
     let kx = clamp(int(round(sx)), 0, int(params.width) - 1);
     let ky = clamp(int(round(sy)), 0, int(params.height) - 1);
@@ -575,15 +672,15 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
             let x = x0 + i;
             let y = y0 + j;
             if (x < 0 || y < 0 || x >= int(params.frame_width) || y >= int(params.frame_height)) { continue; }
-            let value = mosaic[y * int(params.frame_width) + x];
-            let colour = colour_at(x, y);
-            let mask = one_hot(colour);
+            let at = (y * int(params.frame_width) + x) * 2;
+            let exposure = photosite_residuals[at + 1];
+            if (exposure < 0.0) { continue; }
+            let mask = one_hot(colour_at(x, y));
             let dx = float(x) - qx;
             let dy = float(y) - qy;
             let kernel = exp(-0.5 * (inverse.x * dx * dx + 2.0 * inverse.y * dx * dy + inverse.z * dy * dy));
-            if (saturated(x, y, value)) { continue; }
-            let w = trust * near.y * kernel * exposure_weight(params.gain * value);
-            sum += mask * (w * (params.gain * value - prior_at(sx + dx, sy + dy, colour)));
+            let w = trust * sharpness * kernel * exposure;
+            sum += mask * (w * photosite_residuals[at]);
             weight += mask * w;
         }
     }
@@ -594,33 +691,39 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
     let half_width = int(params.frame_width / 2);
     let half_height = int(params.frame_height / 2);
     float2 offsets[3] = { period_offset(0), period_offset(1), period_offset(2) };
+    float4 across[3];
+    float4 down[3];
+    [ForceUnroll]
+    for (uint channel = 0; channel < 3; channel++) {
+        let dx = float4(0.0, 2.0, 4.0, 6.0) + (float(px0) * 2.0 + offsets[channel].x - qx);
+        let dy = float4(0.0, 2.0, 4.0, 6.0) + (float(py0) * 2.0 + offsets[channel].y - qy);
+        across[channel] = exp(-0.5 * dx * dx / (wide_spread * wide_spread));
+        down[channel] = exp(-0.5 * dy * dy / (wide_spread * wide_spread));
+    }
+    [ForceUnroll]
     for (int j = 0; j < 4; j++) {
+        [ForceUnroll]
         for (int i = 0; i < 4; i++) {
             let x = px0 + i;
             let y = py0 + j;
             if (x < 0 || y < 0 || x >= half_width || y >= half_height) { continue; }
+            let base = wide_at<Sensor>(uint(x), uint(y), measured<Sensor>(uint(half_width))) * 6;
             [ForceUnroll]
             for (uint channel = 0; channel < 3; channel++) {
-                let value = frame_half_at(x, y, channel);
-                let dx = float(x) * 2.0 + offsets[channel].x - qx;
-                let dy = float(y) * 2.0 + offsets[channel].y - qy;
+                let spread = across[channel][i] * down[channel][j];
+                let carried = period_residuals[base + channel * 2 + 1];
                 // A period, not the photosite kernel: a blown highlight's kernel is narrower than a
                 // channel's spacing, so whether a clipped site landed inside it would follow each
                 // frame's sub-photosite phase and draw moire across the highlight.
-                if (!usable(value)) {
-                    if (exp(-0.5 * (dx * dx + dy * dy) / (wide_spread * wide_spread)) >= CLIP_NEAR) {
+                if (carried < 0.0) {
+                    if (spread >= CLIP_NEAR) {
                         clip = max(clip, one_hot(channel) * (params.gain * channel_ceiling(channel)));
                     }
                     continue;
                 }
-                // The wide kernel reaches past the periods the output pixel's trust was read
-                // over, so each period answers for itself and its wider neighbourhood, or a
-                // subject's edge, which its own texture lets pass, spreads a halo.
-                let own = eroded_at(sx + dx, sy + dy).z;
-                let spread = own * exp(-0.5 * (dx * dx + dy * dy) / (wide_spread * wide_spread));
-                let w = spread * exposure_weight(value);
+                let w = spread * carried;
                 let mask = one_hot(channel);
-                wide_sum += mask * (w * (value - prior_at(sx + dx, sy + dy, channel)));
+                wide_sum += mask * (w * period_residuals[base + channel * 2]);
                 wide_weight += mask * w;
             }
         }
