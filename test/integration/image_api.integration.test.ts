@@ -61,6 +61,7 @@ function buildApp(
     // rather than on whatever it was meant to be testing.
     markUsed(): void {},
     rebuildIfStale(): void {},
+    isDeviceTile: (): boolean => false,
   } as unknown as PhotoRenditionService;
   const app = new Hono();
   // No tile renderer: nothing here asks for one, and standing up the real decode would make

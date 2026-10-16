@@ -70,6 +70,7 @@ beforeAll(() => {
     },
     // Serving one queues a rebuild where the copy is behind its edits; nothing here asserts on it.
     rebuildIfStale(): void {},
+    isDeviceTile: (): boolean => false,
   } as unknown as PhotoRenditionService;
 
   const app = new Hono();
