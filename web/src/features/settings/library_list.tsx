@@ -118,7 +118,7 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
 
   return (
     <>
-      <ActivityStrips activities={store.globalActivity} />
+      <ActivityStrips activities={store.globalActivity} libraryId={null} rates={store.rates} />
       <div {...stylex.props(styles.tiles)} role="list" aria-label={SettingsStrings.libraries()}>
         {store.libraries.map((library) => (
           <LibraryTile key={library.id} library={library} />
@@ -208,6 +208,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         library={library}
         status={libraryStore.statuses.get(library.id)}
         activities={activities}
+        rates={libraryStore.rates}
       />
       <BackupStrip libraryId={library.id} />
       <LibraryJobs library={library} />

@@ -8,7 +8,6 @@ export const ScanStripStrings = {
   cellsLabel: (done: number, total: number) => `${done} of ${total} files`,
   count: (done: number, total: number) => ` · ${done}/${total} files`,
   rate: (perSecond: string) => ` · ${perSecond} files/s`,
-  eta: (duration: string) => ` · about ${duration} left`,
 
   syncing: () => 'syncing',
   fetching: () => 'fetching',

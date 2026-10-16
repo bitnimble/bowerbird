@@ -196,6 +196,8 @@ export const ProcessingWorkSchema = z.object({
   rendering: z.number().int(),
 });
 export type ProcessingWork = z.infer<typeof ProcessingWorkSchema>;
+export type ProcessingWorkKind = keyof ProcessingWork;
+export const PROCESSING_WORK_KINDS = ProcessingWorkSchema.keyof().options;
 export const NO_PROCESSING_WORK: ProcessingWork = { thumbnails: 0, reading: 0, rendering: 0 };
 
 export const LibraryScanStatusSchema = z.object({

@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import type { Transfer } from '../../../../../src/schemas/blobs';
 import { LibrarySchema, type LibraryScanStatus } from '../../../../../src/schemas/libraries';
 import { registerDom } from '../../../test_dom';
+import { queueKind, rateKey } from '../../libraries/remaining_rates';
 
 registerDom();
 const { act, cleanup, render, screen } = await import('@testing-library/react');
@@ -66,14 +67,16 @@ function Transfers({ transfers }: { transfers: Transfer[] }): null {
 function Status({
   transfers,
   status,
+  rates,
 }: {
   transfers: Transfer[];
   status: LibraryScanStatus;
+  rates?: ReadonlyMap<string, number>;
 }): JSX.Element {
   return (
     <StoresProvider>
       <Transfers transfers={transfers} />
-      <ScanStrip library={LIBRARY} status={status} />
+      <ScanStrip library={LIBRARY} status={status} rates={rates} />
     </StoresProvider>
   );
 }
@@ -136,4 +139,20 @@ test('counts each kind of work the queue owes on its own line', async () => {
   expect(screen.getByText('building thumbnails for 12 photos')).toBeTruthy();
   expect(screen.getByText('reading 7296 photos')).toBeTruthy();
   expect(screen.queryByText(/rendering/)).toBeNull();
+});
+
+test('says how fast each kind of work is going and when it should end', async () => {
+  render(
+    <Status
+      transfers={[]}
+      status={{
+        ...STATUS,
+        photos_processing: 120,
+        processing_work: { thumbnails: 0, reading: 120, rendering: 0 },
+      }}
+      rates={new Map([[rateKey(LIBRARY.id, queueKind('reading')), 4]])}
+    />,
+  );
+  await act(async () => {});
+  expect(screen.getByText(/^reading 120 photos · 4\.0\/s · about .+ left$/)).toBeTruthy();
 });

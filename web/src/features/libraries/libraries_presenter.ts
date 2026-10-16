@@ -7,6 +7,7 @@ import {
   type Library,
   type LibraryScanStatus,
   type LibrarySettings,
+  PROCESSING_WORK_KINDS,
   type UpdateLibraryRequest,
 } from '../../../../src/schemas/libraries';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
@@ -24,9 +25,25 @@ import { describe } from '../../errors';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { LibrariesPresenterStrings } from './libraries_presenter.strings';
 import type { LibrariesStore } from './libraries_store';
+import { queueKind, rateKey, RemainingRates } from './remaining_rates';
+
+function remainingCounts(snapshot: ActivitySnapshot): Map<string, number> {
+  const counts = new Map<string, number>();
+  const count = (libraryId: string | null, kind: string, remaining: number): void => {
+    if (remaining > 0) counts.set(rateKey(libraryId, kind), remaining);
+  };
+  for (const library of snapshot.libraries) {
+    for (const kind of PROCESSING_WORK_KINDS)
+      count(library.id, queueKind(kind), library.scan.processing_work[kind]);
+    for (const activity of library.activities) count(library.id, activity.kind, activity.count);
+  }
+  for (const activity of snapshot.global) count(null, activity.kind, activity.count);
+  return counts;
+}
 
 export class LibrariesPresenter {
   private readRevision = 0;
+  private readonly remaining = new RemainingRates();
 
   constructor(
     private readonly store: LibrariesStore,
@@ -99,6 +116,7 @@ export class LibrariesPresenter {
       snapshot.libraries.map((library) => [library.id, library.activities]),
     );
     this.store.globalActivity = snapshot.global;
+    this.store.rates = this.remaining.observe(remainingCounts(snapshot), Date.now());
     this.store.loading = false;
     if (error != null && this.store.error === error) this.store.error = null;
   }

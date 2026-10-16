@@ -29,4 +29,6 @@ const labels: Record<ActivityKind, (count: number) => string> = {
 
 export const ActivityStrings = {
   label: ({ kind, count }: Activity) => labels[kind](count),
+  perSecond: (rate: string) => ` · ${rate}/s`,
+  left: (duration: string) => ` · about ${duration} left`,
 };

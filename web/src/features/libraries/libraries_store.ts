@@ -14,6 +14,8 @@ export class LibrariesStore {
   @observable.shallow accessor activities = new Map<string, Activity[]>();
   @observable.shallow accessor globalActivity: Activity[] = [];
   @observable.shallow accessor localRendering = new Map<string, ReadonlyMap<string, number>>();
+  /** Per `rateKey`, how many a second of that work are finishing. */
+  @observable.ref accessor rates: ReadonlyMap<string, number> = new Map();
   /** What a new library is created with, for the settings page's reset. Null until it arrives. */
   @observable.ref accessor defaults: LibrarySettings | null = null;
   // Per library, keyed by id, because only the library being looked at in

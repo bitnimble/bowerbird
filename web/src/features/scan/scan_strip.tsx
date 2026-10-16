@@ -3,10 +3,12 @@ import { observer } from 'mobx-react-lite';
 import {
   type Library,
   type LibraryScanStatus,
-  type ProcessingWork,
+  PROCESSING_WORK_KINDS,
 } from '../../../../src/schemas/libraries';
 import type { ActivityKind, Activity as ServerActivity } from '../../../../src/schemas/activity';
-import { ActivityStrips } from '../activity/activity_strips';
+import { ActivityStrings } from '../activity/activity.strings';
+import { ActivityStrips, Pace } from '../activity/activity_strips';
+import { queueKind, rateKey } from '../libraries/remaining_rates';
 import { useBackupStore, useReplicationStore, useScanStore } from '../../app/stores_context';
 import { durationLabel } from '../../ui/format';
 import { StatusDot, Strip, StripLabel } from '../../ui/strip';
@@ -40,21 +42,19 @@ const styles = stylex.create({
 // Cap the cells so a 50k-photo import doesn't render 50k nodes; past that the
 // strip reads as a proportion bar and the mono count carries the exact figure.
 const MAX_CELLS = 48;
-const WORK = [
-  'thumbnails',
-  'reading',
-  'rendering',
-] as const satisfies readonly (keyof ProcessingWork)[];
 const BACKUP_WORK: ReadonlySet<ActivityKind> = new Set(['backing_up', 'restoring_backup']);
+const NO_RATES: ReadonlyMap<string, number> = new Map();
 
 export const ScanStrip = observer(function ScanStrip({
   library,
   status: current,
   activities,
+  rates = NO_RATES,
 }: {
   library: Library;
   status?: LibraryScanStatus;
   activities?: readonly ServerActivity[];
+  rates?: ReadonlyMap<string, number>;
 }): JSX.Element | null {
   const scan = useScanStore();
   const reported = current ?? (scan.libraryId === library.id ? scan.status : null);
@@ -113,12 +113,12 @@ export const ScanStrip = observer(function ScanStrip({
             {rate != null && ScanStripStrings.rate(rate.toFixed(1))}
             {secondsLeft != null &&
               secondsLeft > 0 &&
-              ScanStripStrings.eta(durationLabel(secondsLeft))}
+              ActivityStrings.left(durationLabel(secondsLeft))}
           </StripLabel>
         </Strip>
       )}
       {serverActivity != null ? (
-        <ActivityStrips activities={serverActivity} />
+        <ActivityStrips activities={serverActivity} libraryId={library.id} rates={rates} />
       ) : (
         moving.map(({ kind, text }) => (
           <Strip key={kind}>
@@ -127,13 +127,16 @@ export const ScanStrip = observer(function ScanStrip({
           </Strip>
         ))
       )}
-      {WORK.map((kind) => {
+      {PROCESSING_WORK_KINDS.map((kind) => {
         const count = reported?.processing_work[kind] ?? 0;
         return (
           count > 0 && (
             <Strip key={kind}>
               <StatusDot state="working" />
-              <StripLabel>{ScanStripStrings[kind](count)}</StripLabel>
+              <StripLabel>
+                {ScanStripStrings[kind](count)}
+                <Pace remaining={count} rate={rates.get(rateKey(library.id, queueKind(kind)))} />
+              </StripLabel>
             </Strip>
           )
         );
