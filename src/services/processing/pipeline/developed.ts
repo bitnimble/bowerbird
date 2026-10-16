@@ -13,9 +13,9 @@ import type { Developed } from '../workers/processing_types';
  * a default that moves in `EditDocSchema` moves here too. "As metered" is about the *grade*: a
  * photo nobody has edited is still denoised and still sharpened, at whatever the sliders open at.
  */
-export const AS_METERED = asMetered('galosh', false);
+export const AS_METERED = asMetered('galosh', () => false);
 
-function asMetered(denoiser: Denoiser, upscalable: boolean): FromDocument {
+function asMetered(denoiser: Denoiser, upscalable: () => boolean): FromDocument {
   return {
     ...asJob(EditDocSchema.parse({ awaitsCameraMatch: true }), denoiser, upscalable),
     // Off, against the document's own default: finding the particles costs a whole-frame read, and
@@ -41,28 +41,30 @@ function asMetered(denoiser: Denoiser, upscalable: boolean): FromDocument {
 export function developed(
   edits: string | null,
   libraryDenoiser: Denoiser,
-  upscalable: boolean,
+  // Lazy: it opens the original, which the queue would otherwise do for every photo it stages.
+  upscalable: () => boolean,
   previewing?: PrepareDevelop,
 ): FromDocument {
-  const metered = asMetered(libraryDenoiser, upscalable);
-  if (edits == null && previewing == null) return metered;
+  const metered = (): FromDocument => asMetered(libraryDenoiser, upscalable);
+  if (edits == null && previewing == null) return metered();
   try {
     const stored: unknown = edits == null ? {} : JSON.parse(edits);
     const parsed = EditDocSchema.safeParse(
       previewing == null ? stored : { ...(stored as object), ...previewing },
     );
-    if (!parsed.success) return metered;
+    if (!parsed.success) return metered();
     return asJob(parsed.data, libraryDenoiser, upscalable);
   } catch {
-    return metered;
+    return metered();
   }
 }
 
 /** Everything a job's develop settings hold except the defringe, which is the library's. */
 type FromDocument = Omit<Developed, 'defringe'>;
 
-function asJob(doc: EditDoc, libraryDenoiser: Denoiser, upscalable: boolean): FromDocument {
-  const denoiser = denoiserFor(doc.denoiser ?? libraryDenoiser, upscalable);
+function asJob(doc: EditDoc, libraryDenoiser: Denoiser, upscalable: () => boolean): FromDocument {
+  const requested = doc.denoiser ?? libraryDenoiser;
+  const denoiser = denoiserFor(requested, requested === 'upscaler' && upscalable());
   return {
     exposure: exposureOf(doc),
     denoiseLuminance: doc.luminanceNoise,

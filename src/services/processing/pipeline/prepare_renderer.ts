@@ -106,7 +106,7 @@ export class PrepareRenderer {
       ...developed(
         this.editsFor(photoId)?.doc ?? null,
         library.denoiser,
-        original != null && isUpscalable(original),
+        () => original != null && isUpscalable(original),
         develop,
       ),
       ...this.targets.render(),

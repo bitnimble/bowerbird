@@ -663,11 +663,11 @@ async function buildDenoise(arms: readonly DenoiseArm[]): Promise<void> {
   const raw = rawFor(DENOISE);
   if (arms.includes('denoise-best') && !isUpscalable(raw))
     throw new Error(`${raw} is not a Bayer mosaic, which Best needs`);
-  const fast = developed(null, 'galosh', true);
+  const fast = developed(null, 'galosh', () => true);
   const develops: Record<DenoiseArm, ReturnType<typeof developed>> = {
     'denoise-original': { ...fast, denoiseLuminance: 0, denoiseColour: 0 },
     'denoise-fast': fast,
-    'denoise-best': developed(null, 'upscaler', true),
+    'denoise-best': developed(null, 'upscaler', () => true),
   };
   for (const slug of arms) {
     const develop = develops[slug];

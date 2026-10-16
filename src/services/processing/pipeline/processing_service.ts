@@ -294,10 +294,18 @@ export class ProcessingService extends RenderService {
       const scope = this.queued.get(key);
       this.queued.delete(key);
       if (scope === undefined) return; // nothing asked for since the last pass
+      const listingFrom = Date.now();
       const pending = this.photoProcessing.listPendingProcessing(
         libraryId,
         scope == null ? undefined : [...scope],
       );
+      if (pending.length > 0) {
+        log.info('batch listed', {
+          library: libraryId,
+          photos: pending.length,
+          ms: Date.now() - listingFrom,
+        });
+      }
       const active = new Map(pending.map((row) => [row.photo_id, row.library_id]));
       this.active.set(key, active);
       // Composites are composed rather than decoded, one at a time and on a worker of their own:
@@ -318,6 +326,7 @@ export class ProcessingService extends RenderService {
         photos: staged.length,
         tiles: staged.filter((p) => p.tile != null).length,
         renditions: staged.filter((p) => p.renditions != null).length,
+        stagedMs: startedAt - listingFrom,
       });
       await this.runStaged(staged, active, stopped);
       active.clear();
@@ -697,7 +706,7 @@ export class ProcessingService extends RenderService {
         dataPath,
         grade: this.targets.grade(),
         cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-        ...developed(pending.edits, pending.denoiser, isUpscalable(rawFilePath)),
+        ...developed(pending.edits, pending.denoiser, () => isUpscalable(rawFilePath)),
         ...this.targets.render(),
       },
       readStages(pending.render_skip_full),

@@ -211,7 +211,7 @@ export class SinglePhotoRenderer {
           // And the same edits, for the same reason. This is the path a `max` export takes,
           // so without it the one rendition a reader asks for by name is the one that ignores
           // what they did to the picture.
-          ...developed(edits?.doc ?? null, denoiser, isUpscalable(rawFilePath)),
+          ...developed(edits?.doc ?? null, denoiser, () => isUpscalable(rawFilePath)),
           ...this.targets.render(),
         } satisfies RenditionJob,
         skip,
@@ -258,7 +258,7 @@ export class SinglePhotoRenderer {
       measure: true,
       grade: this.targets.grade(),
       cameraMatch: 'lensAndColour',
-      ...developed(null, library.denoiser, isUpscalable(rawFilePath)),
+      ...developed(null, library.denoiser, () => isUpscalable(rawFilePath)),
       ...this.targets.render(),
     };
     // Nothing to record either way: a job with no target writes no copy, and the analysis it

@@ -15,6 +15,7 @@ import { statSync } from 'node:fs';
 import { ptr } from 'bun:ffi';
 import type { CaptureSequence, CaptureSequenceKind } from '../../../schemas/capture_sequence';
 import type { RawHeaderFields } from '../../../schemas/jobs';
+import { isRendered } from '../../../utils/scan';
 import { shim } from './rawshim';
 
 // #[repr(C)] BbHeader: u32 width/height, i32 orientation, f32 iso/shutter/aperture
@@ -182,6 +183,7 @@ export function scrubExif(bytes: Buffer): boolean {
 
 /** Whether the RAW is a Bayer mosaic, which the upscaler takes. False for one it can't read. */
 export function isUpscalable(filePath: string): boolean {
+  if (isRendered(filePath)) return false;
   return shim().bb_upscalable(Buffer.from(`${filePath}\0`)) === 1;
 }
 

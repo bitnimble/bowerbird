@@ -317,7 +317,7 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     if let Ok(mut held) = RUNNING.lock() {
         *held = Some(child);
     }
-    watch_for_update(app.clone());
+    watch_for_update(app.clone(), data.join("server.stderr.log"));
     wait_until_answering(&origin)?;
     crate::app_log::info(format!("serving this library locally on {origin}"));
     let root =
@@ -351,7 +351,8 @@ fn server_stderr(data: &Path) -> Stdio {
 /// Polled rather than waited on, because `stop()` needs the same `Child` to kill it and
 /// only one of them can own it. Half a second is nothing against an update that has just
 /// downloaded a hundred megabytes, and the thread ends with the server it is watching.
-fn watch_for_update(app: tauri::AppHandle<crate::Runtime>) {
+fn watch_for_update(app: tauri::AppHandle<crate::Runtime>, stderr_log: PathBuf) {
+    const STDERR_LINES_REPORTED: usize = 40;
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_millis(500));
@@ -368,6 +369,11 @@ fn watch_for_update(app: tauri::AppHandle<crate::Runtime>) {
                     *held = None;
                     drop(held);
                     if !staged {
+                        crate::app_log::error(format!("the server stopped ({status})"));
+                        let stderr = tail_lines(&stderr_log);
+                        for line in &stderr[stderr.len().saturating_sub(STDERR_LINES_REPORTED)..] {
+                            crate::app_log::error(format!("server stderr: {line}"));
+                        }
                         return;
                     }
                     match crate::update::hand_over(&app) {

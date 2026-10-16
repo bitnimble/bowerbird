@@ -90,7 +90,7 @@ export class QualityCheckApi {
           // Created here rather than once at startup: this lives in the temp
           // directory, which something else is entitled to clean at any time.
           mkdirSync(CACHE, { recursive: true });
-          const metered = developed(null, library.denoiser, isUpscalable(rawFilePath));
+          const metered = developed(null, library.denoiser, () => isUpscalable(rawFilePath));
           // One rendition job with one target, which is what this page always was:
           // decode the RAW and write a viewer-sized AVIF at the quality being
           // compared. Going through the same call the import does is also what keeps
