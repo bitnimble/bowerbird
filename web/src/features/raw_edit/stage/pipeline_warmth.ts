@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { DeviceFiles } from '../../../app/local_setting';
+import { safeJson, type DeviceFiles } from '../../../app/local_setting';
 import { Logger } from '../../logs/page_log';
 
 const log = new Logger('pipelines');
@@ -90,7 +90,7 @@ export class PipelineWarmth {
   private readonly progressListeners = new Set<(compiled: number, of: number) => void>();
   private device: { opened: GPUDevice; created: Created } | null = null;
   private warmedUp: Promise<void> | null = null;
-  private storedLoaded: Promise<void> | null = null;
+  private storedLoaded: Promise<boolean> | null = null;
   /** One until told otherwise: the start message arrives ahead of any compile. */
   private compilesAtOnce = 1;
 
@@ -112,7 +112,9 @@ export class PipelineWarmth {
   warmUp(): Promise<void> {
     if (this.device == null) return Promise.resolve();
     if (this.warmedUp == null) {
-      this.warmedUp = this.warm(this.device.opened, this.device.created);
+      this.warmedUp = this.warm(this.device.opened, this.device.created).catch((error: unknown) =>
+        log.warn('could not warm the pipelines; each compiles at its first draw', error),
+      );
       this.track(this.warmedUp);
     }
     return this.warmedUp;
@@ -201,19 +203,23 @@ export class PipelineWarmth {
     };
   }
 
-  /**
-   * The pipeline a stand-in is drawn with: warmed for it, or warmed since from a recipe of the same
-   * code (the warm-up starts after wgpu has handed most stand-ins out), or built here and now.
-   */
   private drawn(wait: Deferred): object {
-    const { identity } = wait.recipe;
-    const kept = this.recipes.get(identity);
-    const warmed =
-      wait.warmed ??
-      (kept != null && sameRecipe(kept, wait.recipe) ? this.compiled.get(identity) : undefined);
-    wait.pipeline = warmed ?? wait.build();
+    wait.pipeline = this.warmedFor(wait) ?? wait.build();
     this.built(wait.recipe, wait.pipeline, true);
     return wait.pipeline;
+  }
+
+  /**
+   * Warmed for the stand-in, or since from a recipe of the same code: the warm-up starts after
+   * wgpu has handed most stand-ins out.
+   */
+  private warmedFor(wait: Deferred): object | undefined {
+    const { identity } = wait.recipe;
+    const kept = this.recipes.get(identity);
+    return (
+      wait.warmed ??
+      (kept != null && sameRecipe(kept, wait.recipe) ? this.compiled.get(identity) : undefined)
+    );
   }
 
   /** Resolves once every pipeline being warmed has compiled, so a draw finds it rather than compiling it. */
@@ -230,8 +236,9 @@ export class PipelineWarmth {
     build();
     await this.settled();
     for (const wait of this.undrawn()) {
-      if (wait.warmed != null) {
-        this.built(wait.recipe, wait.warmed, false);
+      const warmed = this.warmedFor(wait);
+      if (warmed != null) {
+        this.built(wait.recipe, warmed, false);
         continue;
       }
       this.track(
@@ -364,12 +371,13 @@ export class PipelineWarmth {
     this.saveTimer = setTimeout(() => void this.save(), SAVE_QUIET_MS);
   }
 
-  /** Once, for the warm-up and for every save: a save before it would drop every recipe on disk. */
-  private loadStored(): Promise<void> {
-    this.storedLoaded ??= this.store
-      .load()
-      .catch(() => null)
-      .then((stored) => {
+  /**
+   * Once, for the warm-up and for every save: a save before it would drop every recipe on disk.
+   * False when unreadable: a save would then replace them with this session's.
+   */
+  private loadStored(): Promise<boolean> {
+    this.storedLoaded ??= this.store.load().then(
+      (stored) => {
         for (const recipe of stored?.recipes ?? []) {
           if (recipe.lastUsed <= this.opened - KEPT_UNUSED_MS) continue;
           const current = this.recipes.get(recipe.identity);
@@ -377,7 +385,13 @@ export class PipelineWarmth {
           else if (current.lastDrawn == null && sameRecipe(current, recipe))
             this.recipes.set(recipe.identity, { ...current, lastDrawn: recipe.lastDrawn });
         }
-      });
+        return true;
+      },
+      (error: unknown) => {
+        log.warn('could not read the pipeline recipes, so none are saved this session', error);
+        return false;
+      },
+    );
     return this.storedLoaded;
   }
 
@@ -404,39 +418,42 @@ export class PipelineWarmth {
     device.pushErrorScope('validation');
     const modules = new Map<string, GPUShaderModule>();
     const compiling: Promise<unknown>[] = [];
-    for (const recipe of owed) {
-      const build = (device as Builder)[`${recipe.build}Async`] as BuildAsync;
-      const descriptor: Record<string, unknown> = { ...recipe.descriptor };
-      for (const [field, code] of Object.entries(recipe.stages)) {
-        let module = modules.get(code);
-        if (module == null) {
-          module = created.createShaderModule.call(device, { code });
-          modules.set(code, module);
-          // Module parsing stays synchronous on the GPU main thread: a flush each, drawn between.
-          await new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      for (const recipe of owed) {
+        const build = (device as Builder)[`${recipe.build}Async`] as BuildAsync;
+        const descriptor: Record<string, unknown> = { ...recipe.descriptor };
+        for (const [field, code] of Object.entries(recipe.stages)) {
+          let module = modules.get(code);
+          if (module == null) {
+            module = created.createShaderModule.call(device, { code });
+            modules.set(code, module);
+            // Module parsing stays synchronous on the GPU main thread: a flush each, drawn between.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+          descriptor[field] = { ...(recipe.descriptor[field] as object | undefined), module };
         }
-        descriptor[field] = { ...(recipe.descriptor[field] as object | undefined), module };
+        descriptor.layout = created.createPipelineLayout.call(device, {
+          bindGroupLayouts: recipe.groups.map((group) =>
+            created.createBindGroupLayout.call(device, group),
+          ),
+        });
+        compiling.push(
+          this.inTurn(() => build.call(device, descriptor as unknown as PipelineDescriptor)).then(
+            (pipeline) => {
+              this.compiled.set(recipe.identity, pipeline);
+            },
+          ),
+        );
       }
-      descriptor.layout = created.createPipelineLayout.call(device, {
-        bindGroupLayouts: recipe.groups.map((group) =>
-          created.createBindGroupLayout.call(device, group),
-        ),
-      });
-      compiling.push(
-        this.inTurn(() => build.call(device, descriptor as unknown as PipelineDescriptor)).then(
-          (pipeline) => {
-            this.compiled.set(recipe.identity, pipeline);
-          },
-        ),
-      );
+    } finally {
+      compiling.push(device.popErrorScope());
+      await Promise.allSettled(compiling);
     }
-    const refused = device.popErrorScope();
-    await Promise.allSettled([refused, ...compiling]);
   }
 
   private async save(): Promise<void> {
     this.saveTimer = null;
-    await this.loadStored();
+    if (!(await this.loadStored())) return;
     await this.store
       .save({ recipes: [...this.recipes.values()] })
       .catch((error: unknown) => log.warn('could not keep the pipeline recipes', error));
@@ -489,7 +506,7 @@ export function storedRecipes(files: DeviceFiles): RecipeStore {
       const kept = await files.load(name);
       if (kept == null) return null;
       // Written by whichever build ran last, so a shape this one cannot read is a cache to rebuild.
-      const recipes = RecipesSchema.safeParse(JSON.parse(kept));
+      const recipes = RecipesSchema.safeParse(safeJson(kept));
       return recipes.success ? recipes.data : null;
     },
     save: (recipes) => files.save(name, JSON.stringify(recipes)),

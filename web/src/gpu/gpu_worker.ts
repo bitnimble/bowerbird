@@ -48,8 +48,6 @@ pageLog.follow('worker');
 const paintLog = new Logger('stage');
 const SLOW_PAINT_MS = 150;
 
-/** The other half of `GpuThread`, which says why the module is over here. */
-
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 
 const started = Promise.withResolvers<StartMessage>();

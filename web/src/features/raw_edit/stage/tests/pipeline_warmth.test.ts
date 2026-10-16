@@ -19,7 +19,10 @@ class Layout {
 class FakeDevice {
   static compiled: string[] = [];
   static compiledAsync: Record<string, unknown>[] = [];
+  static unparseable = false;
+  static openScopes = 0;
   createShaderModule(descriptor: GPUShaderModuleDescriptor): unknown {
+    if (FakeDevice.unparseable) throw new TypeError('unparseable');
     return new Module(descriptor.label ?? '', descriptor.code);
   }
   createBindGroupLayout(descriptor: GPUBindGroupLayoutDescriptor): unknown {
@@ -40,8 +43,11 @@ class FakeDevice {
   createRenderPipelineAsync(descriptor: GPURenderPipelineDescriptor): Promise<unknown> {
     return FakeDevice.compileAsync(descriptor, descriptor.vertex.module);
   }
-  pushErrorScope(): void {}
+  pushErrorScope(): void {
+    FakeDevice.openScopes++;
+  }
   popErrorScope(): Promise<null> {
+    FakeDevice.openScopes--;
     return Promise.resolve(null);
   }
   private static compile(module: GPUShaderModule): unknown {
@@ -156,6 +162,8 @@ function reset(): void {
   FakeDevice.compiled = [];
   FakeDevice.compiledAsync = [];
   FakeDevice.refusing = false;
+  FakeDevice.unparseable = false;
+  FakeDevice.openScopes = 0;
   FakeDevice.inFlight = 0;
   FakeDevice.mostInFlight = 0;
   FakePass.set = [];
@@ -338,12 +346,65 @@ test('a recipe no session has drawn with for a month is dropped', async () => {
   reset();
   const store = memory();
   await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
-  const [recipe] = store.kept?.recipes ?? [];
-  if (recipe == null) throw new Error('nothing was kept');
-  store.kept = { recipes: [{ ...recipe, lastUsed: Date.now() - 31 * 24 * 60 * 60 * 1000 }] };
+  await dispatched(store, (device) => build(device, 'b', 'fn b() {}'));
+  const monthAgo = Date.now() - 31 * 24 * 60 * 60 * 1000;
+  store.kept = {
+    recipes: (store.kept?.recipes ?? []).map((recipe) =>
+      recipe.stages.compute === 'fn a() {}'
+        ? { ...recipe, lastUsed: monthAgo, lastDrawn: monthAgo }
+        : recipe,
+    ),
+  };
 
-  await installed(store).adapter.requestDevice();
-  expect(FakeDevice.compiledAsync).toEqual([]);
+  const next = installed(store);
+  await next.adapter.requestDevice();
+  await next.warmth.warmUp();
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn b() {}']);
+  await next.warmth.precompile(() => {});
+  expect(store.kept?.recipes.map((recipe) => recipe.stages.compute)).toEqual(['fn b() {}']);
+});
+
+test('a session that could not read the recipes leaves them as they were', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+  const kept = store.kept;
+
+  const next = installed({ ...store, load: () => Promise.reject(new Error('unreadable')) });
+  const device = await next.adapter.requestDevice();
+  await next.warmth.warmUp();
+  next.pass.setPipeline(build(device, 'b', 'fn b() {}'));
+  await next.warmth.precompile(() => {});
+  expect(store.kept).toBe(kept);
+});
+
+test('a warm-up that throws closes its error scope, and the device still opens', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+  FakeDevice.unparseable = true;
+
+  const next = installed(store, false);
+  expect(await next.adapter.requestDevice()).toBeInstanceOf(FakeDevice);
+  await next.warmth.warmUp();
+  expect(FakeDevice.openScopes).toBe(0);
+});
+
+test('a precompile hands a stand-in what the warm-up compiled from its recipe, not compiling it again', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+
+  const next = installed(store, false);
+  const device = await next.adapter.requestDevice();
+  const made: GPUComputePipeline[] = [];
+  await next.warmth.precompile(() => {
+    made.push(build(device, 'a', 'fn a() {}'), build(device, 'b', 'fn b() {}'));
+  });
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}', 'fn b() {}']);
+  for (const pipeline of made) next.pass.setPipeline(pipeline);
+  expect(FakeDevice.compiled).toEqual([]);
+  expect(FakePass.set).toEqual([{ warmed: 'fn a() {}' }, { warmed: 'fn b() {}' }]);
 });
 
 test('a pipeline created again later in the session is dispatched as its edited shader compiled', async () => {

@@ -127,7 +127,7 @@ export class ShellStorage implements DeviceStorage {
   }
 }
 
-function safeJson(text: string): unknown {
+export function safeJson(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {

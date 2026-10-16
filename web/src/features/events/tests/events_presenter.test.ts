@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { when } from 'mobx';
+import { type RenditionEvent } from '../../../../../src/schemas/events';
 import { backupApi } from '../../../api/backup';
 import { restoreApiAfterTests } from '../../../test_api';
 import { BackupPresenter } from '../../backup/backup_presenter';
@@ -124,4 +125,42 @@ test('a finished scan re-reads the grid and the library counts', () => {
   Source.opened[0]?.emit('scan', JSON.stringify({ library_id: 'lib' }));
 
   expect(reloads).toEqual(['photos background', 'libraries background']);
+});
+
+test('a batch of rewritten renditions reaches the grid and a triage session whole', () => {
+  useFakeEventSource();
+  backupApi.list = async () => ({ backups: [] });
+  const grid: RenditionEvent[][] = [];
+  const triage: RenditionEvent[][] = [];
+  const events = new EventsPresenter(
+    {
+      serverReachable: () => {},
+      renditionsRebuilt: (written) => grid.push([...written]),
+      renditionFetch: () => {},
+      compositeProgressed: () => {},
+      reload: async () => {},
+    },
+    { load: async () => {} },
+    { libraryChanged: async () => {}, reload: async () => {} },
+    { renditionsRebuilt: (written) => triage.push([...written]) },
+    { progressed: () => {} },
+    { load: async () => {} },
+    new BackupPresenter(
+      new BackupStore(),
+      { reload: async () => {} },
+      { show: () => {}, showError: () => {} },
+    ),
+  );
+  sessions.push(events);
+  events.connect();
+  const written: RenditionEvent[] = [
+    { id: 'a', stage: 'tile', version: '2026-10-16T01:00:00.000Z' },
+    { id: 'a', stage: 'renditions', version: '2026-10-16T01:00:01.000Z' },
+    { id: 'b', stage: 'renditions', version: '2026-10-16T01:00:02.000Z' },
+  ];
+
+  Source.opened[0]?.emit('renditions', JSON.stringify({ written }));
+
+  expect(grid).toEqual([written]);
+  expect(triage).toEqual([written]);
 });

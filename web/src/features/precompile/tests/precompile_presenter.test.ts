@@ -176,11 +176,11 @@ test('a compile still running when the app opens goes on in a toast, which close
 
   await when(() => store.ready, { timeout: 5000 });
   expect([...toasts.shown.values()]).toEqual([
-    { message: 'Precompiling shaders...', progress: 0.05 },
+    { message: 'Preparing the editor and photo viewer', progress: 0.05 },
   ]);
   report(100, 200);
   expect([...toasts.shown.values()]).toEqual([
-    { message: 'Precompiling shaders...', progress: 0.5 },
+    { message: 'Preparing the editor and photo viewer', progress: 0.5 },
   ]);
 
   compile.resolve();

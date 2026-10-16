@@ -797,8 +797,7 @@ describe('the window each frame is drawn at', () => {
 });
 
 // The shape the stage is laid out on, which is `displaySize` - the server's own function - read
-// through the store. It was a Playwright test that opened a RAW and compared the canvas's
-// backing store, for a claim that is three numbers.
+// through the store.
 describe('the shape the picture takes', () => {
   test('is the frame until something changes it', () => {
     expect(keystone.output).toEqual({ width: 4000, height: 3000 });
