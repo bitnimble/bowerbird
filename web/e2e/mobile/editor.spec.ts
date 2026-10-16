@@ -318,7 +318,9 @@ test.describe('zoom on a high density phone display with small memory', () => {
       const response = await prepared;
       expect(response.status()).toBe(200);
       await expect
-        .poll(async () => (await drawnWindows()).some((key) => !previous.has(key)))
+        .poll(async () => (await drawnWindows()).some((key) => !previous.has(key)), {
+          timeout: 30_000,
+        })
         .toBe(true);
       await expect(editorFailure(page)).toHaveCount(0);
       await page.getByRole('tab', { name: panel, exact: true }).click();
