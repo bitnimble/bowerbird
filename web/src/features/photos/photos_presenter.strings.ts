@@ -31,4 +31,5 @@ export const PhotosPresenterStrings = {
     if (phase === 'tile') return 'Merging… building the thumbnail';
     return 'Merging… rendering the photo';
   },
+  cancellingMerge: () => 'Cancelling merge…',
 };

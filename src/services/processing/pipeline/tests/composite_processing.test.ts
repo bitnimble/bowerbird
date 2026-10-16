@@ -216,7 +216,7 @@ describe('ProcessingService.solveSeams', () => {
   });
 
   it('names a cancelled job as the native side fails one', () => {
-    const planes = readFileSync(
+    const progress = readFileSync(
       join(
         import.meta.dir,
         '..',
@@ -227,11 +227,11 @@ describe('ProcessingService.solveSeams', () => {
         'native',
         'rawshim',
         'src',
-        'assembly_planes.rs',
+        'progress.rs',
       ),
       'utf8',
     );
-    expect(planes).toContain(`pub const CANCELLED: &str = "${JOB_CANCELLED}";`);
+    expect(progress).toContain(`pub const CANCELLED: &str = "${JOB_CANCELLED}";`);
   });
 });
 

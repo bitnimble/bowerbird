@@ -1045,6 +1045,7 @@ pub(crate) fn base(
         let deep = down.min(height - top);
         let mut left = 0;
         while left < width {
+            crate::progress::stop_if_cancelled()?;
             let wide = across.min(width - left);
             // The canvas's own coordinate, where `tile_runs` below stays in the buffer's: a
             // window's tile is somewhere else in the picture than it is in the buffer, and the

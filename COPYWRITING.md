@@ -284,7 +284,7 @@ stack) stay lower case, as do other terms except at the start of a string.
 | colour fringe removal                                                 | Removing purple and green rims along hard edges                                      | defringe, chromatic aberration, CA   |
 | soft proof                                                            | Showing the photo as it looks in HDR, in sRGB or printed                             | preview, simulate, mockup            |
 | merge                                                                 | Combining several photos into 1                                                      | composite, stitch, combine, assembly |
-| panorama                                                              | A merge of frames side by side into 1 wider photo                                    | pano, stitch                         |
+| panorama                                                              | A merge of overlapping frames into 1 larger photo                                    | pano, stitch                         |
 | Take best parts                                                       | A merge that builds 1 photo from the best part of each frame                         | composite, blend, best take          |
 | frame                                                                 | 1 of the photos going into a merge                                                   | source, input, layer                 |
 | export                                                                | Writing photos out as files in a chosen format                                       | render, save as, output              |

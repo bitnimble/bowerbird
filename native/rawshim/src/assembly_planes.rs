@@ -7,13 +7,6 @@ use crate::resident::Resident;
 /// The long edge every plane is measured at.
 pub const ANALYSIS_LONG: usize = 3000;
 
-/// What [`analysis_planes`] fails with when the reader asked it to stop.
-///
-/// A string, because `composite_tile::layers_of` carries one and nothing richer; `analyse` matches
-/// on it to answer `Refused::Cancelled` rather than reporting a gather that went wrong, and the job
-/// answers it verbatim, which is how the server tells a cancel from a failure (`rawshim_job.ts`).
-pub const CANCELLED: &str = "cancelled";
-
 /// Canvas samples one *independent* sample of a plane costs, at a canvas-to-plane area `ratio`.
 ///
 /// **What the resize averages is not independent, so a box of `n` of them is worth `n / this`.**
@@ -135,14 +128,7 @@ pub async fn analysis_planes(
         // A source each, and the slowest thing a carve does: this is a full decode and demosaic per
         // frame where the align worked off 800px previews.
         crate::progress::advance();
-        // **And the one place a long carve can be stopped.** Every other boundary §3 looks at is
-        // past this, so a reader who pressed Cancel while the frames were being decoded waited for
-        // all of them - on a four-frame burst most of the wall clock - and the carve then ran to the
-        // end and reported done before anything noticed.
-        match crate::progress::cancelled() {
-            true => Err(CANCELLED.to_string()),
-            false => Ok(()),
-        }
+        crate::progress::stop_if_cancelled()
     })
     .await?;
     Ok(planes)

@@ -66,6 +66,8 @@ export type CompositePhase = z.infer<typeof CompositePhaseSchema>;
 
 /** What a reader is told of a merge in flight. */
 export const CompositeProgressSchema = z.object({
+  // What cancels it; null for an assembly being saved, which cannot be.
+  mergeId: z.string().nullable(),
   // The photograph the merge is making, once there is one; null while it is still being aligned.
   photoId: z.string().nullable(),
   // The frames it is being made from, which are what a grid marks while it waits.

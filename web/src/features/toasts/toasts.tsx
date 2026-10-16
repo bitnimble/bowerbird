@@ -103,14 +103,24 @@ export const Toasts = observer(function Toasts(): JSX.Element | null {
           {toast.undo != null && (
             <Button onClick={() => void toasts.runUndo(toast.id)}>{toast.undoLabel}</Button>
           )}
-          <Button
-            variant="ghost"
-            iconOnly
-            aria-label={ToastsStrings.dismiss()}
-            onClick={() => toasts.dismiss(toast.id)}
-          >
-            <X size={ICON} />
-          </Button>
+          {toast.cancel != null ? (
+            <Button
+              disabled={toast.cancelling === true}
+              focusableWhenDisabled
+              onClick={toast.cancel}
+            >
+              {ToastsStrings.cancel()}
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              iconOnly
+              aria-label={ToastsStrings.dismiss()}
+              onClick={() => toasts.dismiss(toast.id)}
+            >
+              <X size={ICON} />
+            </Button>
+          )}
         </div>
       ))}
     </div>

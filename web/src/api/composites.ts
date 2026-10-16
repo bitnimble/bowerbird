@@ -21,6 +21,7 @@ import {
 } from '../../../src/schemas/composition';
 import {
   BurstMergeSchema,
+  MergeSchema,
   type PhotoSummary,
   PhotoSummaryListSchema,
   type PhotoTarget,
@@ -46,27 +47,40 @@ export const compositesApi = {
   // The same target every bulk route takes, answering with the photograph the merge made. It
   // takes as long as the alignment and the first renditions do, which is where the caller's
   // progress indicator earns its keep.
-  createPanorama: (target: PhotoTarget): Promise<CompositePhoto> =>
+  createPanorama: (target: PhotoTarget, mergeId: string): Promise<CompositePhoto> =>
     request(
       CompositePhotoSchema,
       'POST',
       route(PathSegment.api(), PathSegment.composites(), PathSegment.panorama()),
-      PhotoTargetSchema.parse(target),
+      MergeSchema.parse({ target, mergeId }),
     ),
   /** A bracket stack's frames merged into the photograph the camera shot them for. */
-  mergeBracket: (target: PhotoTarget): Promise<CompositePhoto> =>
+  mergeBracket: (target: PhotoTarget, mergeId: string): Promise<CompositePhoto> =>
     request(
       CompositePhotoSchema,
       'POST',
       route(PathSegment.api(), PathSegment.composites(), PathSegment.bracket()),
-      PhotoTargetSchema.parse(target),
+      MergeSchema.parse({ target, mergeId }),
     ),
-  mergeBurst: (target: PhotoTarget, scale: BurstScale): Promise<CompositePhoto> =>
+  mergeBurst: (target: PhotoTarget, scale: BurstScale, mergeId: string): Promise<CompositePhoto> =>
     request(
       CompositePhotoSchema,
       'POST',
       route(PathSegment.api(), PathSegment.composites(), PathSegment.burst()),
-      BurstMergeSchema.parse({ target, scale }),
+      BurstMergeSchema.parse({ target, mergeId, scale }),
+    ),
+  /** Stops a merge at its next boundary; the merge's own call then fails with `CANCELLED`. */
+  cancelMerge: (mergeId: string): Promise<void> =>
+    request(
+      NothingSchema,
+      'POST',
+      route(
+        PathSegment.api(),
+        PathSegment.composites(),
+        PathSegment.merge(),
+        encodeURIComponent(mergeId),
+        PathSegment.cancel(),
+      ),
     ),
   /** The frames a panorama is composed from, in the order its recipe names them. */
   listFrames: (

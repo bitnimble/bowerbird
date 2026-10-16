@@ -249,7 +249,7 @@ pub async fn align(
     let pyramids: Vec<Pyramid> = planes.iter().map(|plane| Pyramid::of(gpu, plane)).collect();
     let mut lap = crate::clock::laps("  align ");
     let (pairs, chosen) = match kind {
-        Kind::Pan => (panned(gpu, &pyramids, &mut lap).await, None),
+        Kind::Pan => (panned(gpu, &pyramids, &mut lap).await?, None),
         Kind::Stack(reference) => {
             let chosen = chosen(gpu, sources, &pyramids, reference).await;
             (stacked(gpu, &pyramids, chosen).await?, Some(chosen))
@@ -370,7 +370,7 @@ async fn panned(
     gpu: &'static crate::gpu::Gpu,
     pyramids: &[Pyramid],
     lap: &mut impl FnMut(&str),
-) -> Vec<Pair> {
+) -> Result<Vec<Pair>, String> {
     let n = pyramids.len();
     // **What each frame's corners look like, once.** The pairs below ask the one question a
     // correlation search cannot: whether a match is the *only* good answer. A frame's corners are
@@ -417,6 +417,7 @@ async fn panned(
             .await;
             coarse_ms += at.elapsed().as_secs_f64() * 1000.0;
             crate::progress::advance();
+            crate::progress::stop_if_cancelled()?;
             let Some(found) = found else {
                 continue;
             };
@@ -495,7 +496,7 @@ async fn panned(
             pairs.len()
         );
     }
-    pairs
+    Ok(pairs)
 }
 
 /// The frame a stack is placed on.
@@ -545,6 +546,7 @@ async fn stacked(
     let on = crate::align::Pyramid::of(gpu, &luma_of(&pyramids[reference]), preview);
     let mut pairs = Vec::new();
     for at in (0..pyramids.len()).filter(|&at| at != reference) {
+        crate::progress::stop_if_cancelled()?;
         let frame = luma_of(&pyramids[at]);
         let field = crate::align::measure(
             gpu,
@@ -677,6 +679,7 @@ pub async fn previews_at(
     for source in sources {
         planes.push(preview_of(gpu, source, wide).await?);
         crate::progress::advance();
+        crate::progress::stop_if_cancelled()?;
     }
 
     // **One scale, or the focal is two numbers at once.** The search compares two planes on one

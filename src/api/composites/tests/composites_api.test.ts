@@ -31,6 +31,8 @@ function buildApp(composites: Partial<CompositesService> = {}) {
   const service = {
     mergePanorama: jest.fn(async () => ({ photoId: 'made' })),
     mergeBurst: jest.fn(async () => ({ photoId: 'made' })),
+    mergeBracket: jest.fn(async () => ({ photoId: 'made' })),
+    cancelMerge: jest.fn(),
     startAssembly: jest.fn(() => 'job1'),
     assemblyJob: jest.fn((id: string) =>
       id === 'job1' ? { id, photoIds: ['photo001'], status: 'analysing', fraction: 0.4 } : null,
@@ -69,21 +71,72 @@ describe('CompositesApi, a burst', () => {
 
     const res = await post(app, '/api/composites/burst', {
       target: { photo_ids: ['photo001', 'photo002'] },
+      mergeId: 'merge1',
       scale: 2,
     });
 
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ photoId: 'made' });
-    expect(service.mergeBurst).toHaveBeenCalledWith(['photo001', 'photo002'], 2);
+    expect(service.mergeBurst).toHaveBeenCalledWith(['photo001', 'photo002'], 2, 'merge1');
   });
 
-  it('refuses a scale it cannot merge at', async () => {
+  it('refuses a burst without a valid scale or merge id', async () => {
+    const { app, service } = buildApp();
+    const target = { photo_ids: ['photo001', 'photo002'] };
+    const mergeId = 'merge1';
+
+    expect((await post(app, '/api/composites/burst', { target, mergeId, scale: 3 })).status).toBe(
+      400,
+    );
+    expect((await post(app, '/api/composites/burst', { target, mergeId })).status).toBe(400);
+    expect((await post(app, '/api/composites/burst', { target, scale: 1 })).status).toBe(400);
+    expect(service.mergeBurst).not.toHaveBeenCalled();
+  });
+
+  it('answers a cancelled merge with its own code', async () => {
+    const { app } = buildApp({
+      mergeBurst: jest.fn(async () => {
+        throw new AppError('CANCELLED', 'cancelled');
+      }),
+    });
+
+    const merged = await post(app, '/api/composites/burst', {
+      target: { photo_ids: ['photo001', 'photo002'] },
+      mergeId: 'merge1',
+      scale: 1,
+    });
+    expect(merged.status).toBe(409);
+    expect(await merged.json()).toMatchObject({ error: { code: 'CANCELLED' } });
+  });
+});
+
+describe('CompositesApi, a panorama and a bracket', () => {
+  it('merge the target under the client id, and refuse one without it', async () => {
     const { app, service } = buildApp();
     const target = { photo_ids: ['photo001', 'photo002'] };
 
-    expect((await post(app, '/api/composites/burst', { target, scale: 3 })).status).toBe(400);
-    expect((await post(app, '/api/composites/burst', { target })).status).toBe(400);
-    expect(service.mergeBurst).not.toHaveBeenCalled();
+    expect((await post(app, '/api/composites/panorama', { target, mergeId: 'pan' })).status).toBe(
+      201,
+    );
+    expect((await post(app, '/api/composites/bracket', { target, mergeId: 'brk' })).status).toBe(
+      201,
+    );
+    expect(service.mergePanorama).toHaveBeenCalledWith(['photo001', 'photo002'], 'pan');
+    expect(service.mergeBracket).toHaveBeenCalledWith(['photo001', 'photo002'], 'brk');
+
+    expect((await post(app, '/api/composites/panorama', { target })).status).toBe(400);
+    expect((await post(app, '/api/composites/bracket', { target })).status).toBe(400);
+  });
+});
+
+describe('CompositesApi, cancelling a merge', () => {
+  it('cancels by the merge id', async () => {
+    const { app, service } = buildApp();
+
+    const cancel = await post(app, '/api/composites/merge/merge1/cancel');
+
+    expect(cancel.status).toBe(204);
+    expect(service.cancelMerge).toHaveBeenCalledWith('merge1');
   });
 });
 

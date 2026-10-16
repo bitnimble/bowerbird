@@ -69,17 +69,8 @@ pub struct Analysed {
 /// Steps `analysis_of` reports: the frames' levels and the cells', one per `stepped()` boundary.
 const FIELD_STEPS: usize = 2;
 
-/// Whether the reader has asked for this run to stop.
-///
-/// A blocking call cannot be interrupted from outside itself, so this is the agreement: the stage
-/// looks between the steps §3.9 timed - the align, the gather, and each pass of the field - and a
-/// cancel is seen within one of them rather than at the end.
 fn stopping() -> Result<(), Refused> {
-    if crate::progress::cancelled() {
-        Err(Refused::Cancelled)
-    } else {
-        Ok(())
-    }
+    crate::progress::stop_if_cancelled().map_err(refused_by)
 }
 
 /// The same look, one of [`FIELD_STEPS`] behind it: §3's stages are the only places an analysis can
@@ -87,6 +78,15 @@ fn stopping() -> Result<(), Refused> {
 fn stepped() -> Result<(), Refused> {
     crate::progress::advance();
     stopping()
+}
+
+/// A stage's string failure, where [`crate::progress::CANCELLED`] is the reader's cancel rather
+/// than a set that would not align.
+fn refused_by(why: String) -> Refused {
+    match why == crate::progress::CANCELLED {
+        true => Refused::Cancelled,
+        false => Refused::NotAligned(why),
+    }
 }
 
 /// A set of photographs, aligned and analysed into a seam field (§3).
@@ -110,7 +110,7 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
         crate::composite_align::Kind::Stack(crate::composite_align::Reference::Sharpest),
     )
     .await
-    .map_err(Refused::NotAligned)?;
+    .map_err(refused_by)?;
     if !aligned.lensless.is_empty() {
         return Err(Refused::Lensless(aligned.lensless));
     }
@@ -145,10 +145,7 @@ pub async fn analyse(sources: &[AlignSource<'_>]) -> Result<Analysed, Refused> {
     stopping()?;
     let planes = crate::assembly_planes::analysis_planes(&spec, &files)
         .await
-        .map_err(|why| match why == crate::assembly_planes::CANCELLED {
-            true => Refused::Cancelled,
-            false => Refused::NotAligned(why),
-        })?;
+        .map_err(refused_by)?;
 
     let mut answer = analysis_of(gpu, base, spec, &planes).await?;
     answer.radial = Some(aligned.radial);

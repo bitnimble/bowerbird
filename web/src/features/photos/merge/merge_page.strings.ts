@@ -15,6 +15,10 @@ export const MergePageStrings = {
   },
   selectABracketStack: () => 'Select one bracket stack.',
 
+  takeBestPartsDescription: () => 'Builds 1 photo from the best part of each frame',
+  reduceNoiseDescription: () => 'Merges photos of 1 scene to reduce noise',
+  increaseResolutionDescription: () => 'Merges photos of 1 scene at 2× the resolution',
+
   selectAtLeastTwo: () => 'Select at least 2 photos.',
   selectTwelveOrFewer: () => `Select up to ${MERGE_MAX_FRAMES} photos.`,
   selectOneLibrary: () => 'Select photos from 1 library.',

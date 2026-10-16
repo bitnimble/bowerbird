@@ -7,8 +7,10 @@ import {
   type PhotoTarget,
 } from '../../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
+import { newId } from '../../../../../src/schemas/id';
 import { compositesApi } from '../../../api/composites';
 import { photosApi } from '../../../api/photos';
+import { ApiError } from '../../../api/request';
 import { stacksApi } from '../../../api/stacks';
 import type {
   BurstScale,
@@ -24,6 +26,8 @@ import type { SelectionPresenter } from './selection_presenter';
 import type { ListingStore } from './listing_store';
 import type { MarksStore } from './marks_store';
 import type { StacksStore } from './stacks_store';
+
+type MergePhase = Parameters<typeof PhotosPresenterStrings.merging>[0];
 
 function scopeOf(source: PhotoSource): PhotoSelection['scope'] {
   switch (source.kind) {
@@ -46,6 +50,10 @@ export class StackActionsPresenter {
   // The toast a merge is reporting into, so its bar is moved rather than a second one raised at
   // every step.
   private mergeToast: number | null = null;
+  // What that toast's Cancel stops; null for a merge that cannot be cancelled.
+  private mergeId: string | null = null;
+  private mergePhase: MergePhase = 'aligning';
+  private mergeCancelling = false;
 
   constructor(
     private readonly listing: ListingStore,
@@ -441,7 +449,34 @@ export class StackActionsPresenter {
   }
 
   async mergeSelectionToBurst(scale: BurstScale): Promise<void> {
-    await this.mergeSelection((target) => compositesApi.mergeBurst(target, scale));
+    await this.mergeSelection((target, mergeId) =>
+      compositesApi.mergeBurst(target, scale, mergeId),
+    );
+  }
+
+  /** Stops the merge the toast is about, which then answers as cancelled and lets the rows go. */
+  @action.bound
+  cancelMerge(): void {
+    const mergeId = this.mergeId;
+    if (mergeId == null || this.mergeToast == null || this.mergeCancelling) return;
+    this.mergeCancelling = true;
+    this.toasts.markCancelling(this.mergeToast, PhotosPresenterStrings.cancellingMerge(), true);
+    void compositesApi
+      .cancelMerge(mergeId)
+      .catch((err: unknown) => this.cancelRefused(mergeId, err));
+  }
+
+  // The merge is still running, so its toast goes back to saying so and offers Cancel again.
+  @action.bound
+  private cancelRefused(mergeId: string, err: unknown): void {
+    this.fail(err);
+    if (this.mergeId !== mergeId || this.mergeToast == null) return;
+    this.mergeCancelling = false;
+    this.toasts.markCancelling(
+      this.mergeToast,
+      PhotosPresenterStrings.merging(this.mergePhase),
+      false,
+    );
   }
 
   /**
@@ -454,7 +489,7 @@ export class StackActionsPresenter {
    * the grid reads as an action that did nothing.
    */
   private async mergeSelection(
-    merge: (target: PhotoTarget) => Promise<CompositePhoto>,
+    merge: (target: PhotoTarget, mergeId: string) => Promise<CompositePhoto>,
   ): Promise<void> {
     const target = this.selectionTarget();
     // One at a time: the merge holds the device for minutes, and the selection is still on screen
@@ -462,9 +497,10 @@ export class StackActionsPresenter {
     if (target == null || this.store.mergingRows != null) return;
     const source = this.listing.source;
     const generation = this.generation();
-    this.startedMerging();
+    const mergeId = newId();
+    this.startedMerging(mergeId);
     try {
-      await merge(target);
+      await merge(target, mergeId);
       // Minutes, in which the reader may have moved to another collection and selected in it:
       // what came back describes the listing the merge was asked from, and clearing a selection
       // that has nothing to do with it is the one thing worse than not clearing this one.
@@ -473,9 +509,9 @@ export class StackActionsPresenter {
       await this.refresh();
       this.dropConsumedSelection();
     } catch (err) {
-      this.fail(err);
+      if (!(err instanceof ApiError && err.code === 'CANCELLED')) this.fail(err);
     } finally {
-      this.stoppedMerging();
+      this.stoppedMerging(mergeId);
     }
   }
 
@@ -500,9 +536,10 @@ export class StackActionsPresenter {
   @action.bound
   compositeProgressed(progress: CompositeProgress): void {
     if (progress.phase === 'done' || progress.phase === 'failed') {
-      this.stoppedMerging();
+      this.stoppedMerging(progress.mergeId);
       return;
     }
+    if (this.mergeToast != null && progress.mergeId !== this.mergeId) return;
     const rows = this.store.mergingRows;
     // Named once, at the start of the merge, and the same set every event after: replaced only
     // when they are new, so a tile is not re-rendered by a bar it does not draw.
@@ -512,13 +549,17 @@ export class StackActionsPresenter {
         photoIds: new Set(progress.photoIds),
       };
     }
+    this.mergePhase = progress.phase;
     if (this.mergeToast == null) {
+      this.mergeId = progress.mergeId;
       this.mergeToast = this.toasts.showProgress(
         PhotosPresenterStrings.merging(progress.phase),
         progress.fraction,
+        progress.mergeId == null ? undefined : this.cancelMerge,
       );
       return;
     }
+    if (this.mergeCancelling) return;
     this.toasts.progressed(
       this.mergeToast,
       PhotosPresenterStrings.merging(progress.phase),
@@ -529,18 +570,30 @@ export class StackActionsPresenter {
   // The rows this client asked to merge, dimmed from the click rather than from the first event:
   // the align's own first step is a decode, so the stream has nothing to say for a second or two.
   @action.bound
-  private startedMerging(): void {
+  private startedMerging(mergeId: string): void {
     const positions = new Set<number>();
     for (const range of this.marks.selection.ranges) {
       for (let at = range.start; at <= range.end; at++) positions.add(at);
     }
     this.store.mergingRows = { positions, photoIds: new Set(this.marks.selectedMembers) };
-    this.mergeToast ??= this.toasts.showProgress(PhotosPresenterStrings.merging('aligning'), 0);
+    if (this.mergeToast != null) return;
+    this.mergeId = mergeId;
+    this.mergePhase = 'aligning';
+    this.mergeToast = this.toasts.showProgress(
+      PhotosPresenterStrings.merging('aligning'),
+      0,
+      this.cancelMerge,
+    );
   }
 
+  // A merge that has already let go, and whose answer lands after the next one started, leaves the
+  // next one's rows and toast alone.
   @action.bound
-  private stoppedMerging(): void {
+  private stoppedMerging(mergeId: string | null): void {
+    if (this.mergeToast != null && this.mergeId !== mergeId) return;
     this.store.mergingRows = null;
+    this.mergeId = null;
+    this.mergeCancelling = false;
     if (this.mergeToast == null) return;
     this.toasts.dismiss(this.mergeToast);
     this.mergeToast = null;

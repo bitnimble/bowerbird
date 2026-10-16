@@ -72,6 +72,15 @@ const log = new Logger('panoramas');
 /** The composites an align answers the recipe for, where an assembly's is carved. */
 type AlignedKind = Exclude<CompositeKind, 'assembly'>;
 
+/** What every progress report of one merge says, beside how far it has got. */
+type Watching = Omit<CompositeProgress, 'phase' | 'fraction'>;
+
+interface QueuedMerge {
+  cancelled: boolean;
+  started: boolean;
+  answerCancelled: () => void;
+}
+
 const PIXEL_SHIFT_FRAMES = 4;
 
 /**
@@ -156,6 +165,8 @@ export class CompositesService {
   private readonly cancelledJobs = new Set<string>();
   /** The job whose carve is inside a native call right now, which is the only one a signal reaches. */
   private analysing: string | null = null;
+  /** Merges queued or running, by the id their client chose. */
+  private readonly merges = new Map<string, QueuedMerge>();
   private running: Promise<void> = Promise.resolve();
 
   constructor(
@@ -197,13 +208,17 @@ export class CompositesService {
    * client does next is show the new row and a tile that is not there is a hole in the grid. It is
    * one composite of two sizes, not a library's worth of work.
    */
-  mergePanorama(photoIds: readonly string[]): Promise<CompositePhoto> {
-    return this.serially(photoIds, () => this.mergeNow(photoIds, 'panorama'));
+  mergePanorama(photoIds: readonly string[], mergeId = newId()): Promise<CompositePhoto> {
+    return this.queueMerge(photoIds, mergeId, 'panorama');
   }
 
   /** A hand-held burst of one scene, merged on the mosaic onto its sharpest frame. */
-  mergeBurst(photoIds: readonly string[], scale: BurstScale): Promise<CompositePhoto> {
-    return this.serially(photoIds, () => this.mergeNow(photoIds, 'burst', scale));
+  mergeBurst(
+    photoIds: readonly string[],
+    scale: BurstScale,
+    mergeId = newId(),
+  ): Promise<CompositePhoto> {
+    return this.queueMerge(photoIds, mergeId, 'burst', scale);
   }
 
   /**
@@ -211,7 +226,7 @@ export class CompositesService {
    * merge, a focus merge or a pixel shift, whichever the frames say they are. In the camera's own
    * order, which for a pixel shift is where each frame's photosites landed.
    */
-  async mergeBracket(photoIds: readonly string[]): Promise<CompositePhoto> {
+  async mergeBracket(photoIds: readonly string[], mergeId = newId()): Promise<CompositePhoto> {
     const frames = this.photoComposites.sequencesOf(photoIds);
     const stacks = new Set(frames.map((frame) => frame.stackId));
     if (
@@ -238,7 +253,42 @@ export class CompositesService {
           .sort((a, b) => (a.sequence?.index ?? 0) - (b.sequence?.index ?? 0))
           .map((frame) => frame.photoId)
       : this.photoComposites.orderedForComposite(photoIds).map((photo) => photo.id);
-    return await this.serially(ordered, () => this.mergeNow(ordered, kind));
+    return await this.queueMerge(ordered, mergeId, kind);
+  }
+
+  /**
+   * Stops this merge at its next boundary. One still queued answers as cancelled at once rather
+   * than when the merge ahead of it ends.
+   */
+  cancelMerge(mergeId: string): void {
+    const merge = this.merges.get(mergeId);
+    if (merge == null) return;
+    merge.cancelled = true;
+    if (!merge.started) merge.answerCancelled();
+  }
+
+  private async queueMerge(
+    photoIds: readonly string[],
+    mergeId: string,
+    kind: AlignedKind,
+    scale: BurstScale = 1,
+  ): Promise<CompositePhoto> {
+    if (this.merges.has(mergeId)) {
+      throw new AppError('CONFLICT', 'a merge with this id is already queued');
+    }
+    let answerCancelled = (): void => {};
+    const cancelledWhileQueued = new Promise<never>((_resolve, reject) => {
+      answerCancelled = () => reject(new AppError('CANCELLED', JOB_CANCELLED));
+    });
+    const merge: QueuedMerge = { cancelled: false, started: false, answerCancelled };
+    this.merges.set(mergeId, merge);
+    // Held until the work settles, not the answer: a merge answered while queued still reaches the
+    // front, and finds itself cancelled there only through this entry.
+    const work = this.serially(photoIds, () => {
+      merge.started = true;
+      return this.mergeNow(photoIds, kind, mergeId, scale);
+    }).finally(() => this.merges.delete(mergeId));
+    return await Promise.race([work, cancelledWhileQueued]);
   }
 
   /**
@@ -260,13 +310,16 @@ export class CompositesService {
   private async mergeNow(
     photoIds: readonly string[],
     kind: AlignedKind,
-    scale: BurstScale = 1,
+    mergeId: string,
+    scale: BurstScale,
   ): Promise<CompositePhoto> {
+    this.stopIfMergeCancelled(mergeId);
     // A pan or a burst is shot oldest first; a bracket comes in the camera's own order already.
     const frames = this.framesOf(photoIds, kind !== 'panorama' && kind !== 'burst');
     const { library, sources } = frames;
     await this.bringFrames(photoIds, library);
-    const watching = { photoId: null, photoIds: sources.map((source) => source.photoId) };
+    this.stopIfMergeCancelled(mergeId);
+    const watching = { mergeId, photoId: null, photoIds: sources.map((source) => source.photoId) };
     // **One worker for the three jobs.** Each of them opens a GPU device and compiles the shader
     // modules before it can start - half a second, measured - so a worker apiece spent more of the
     // merge getting ready than aligning. Closed on every path, since it holds that device.
@@ -306,9 +359,18 @@ export class CompositesService {
         await deleteGeneratedFilesFor(library, [photoId]);
       }
       this.report({ ...watching, photoId, phase: 'failed', fraction: 1 });
+      if (this.merges.get(mergeId)?.cancelled === true) {
+        throw new AppError('CANCELLED', JOB_CANCELLED);
+      }
       throw err;
     } finally {
       on.close();
+    }
+  }
+
+  private stopIfMergeCancelled(mergeId: string | null): void {
+    if (mergeId != null && this.merges.get(mergeId)?.cancelled === true) {
+      throw new AppError('CANCELLED', JOB_CANCELLED);
     }
   }
 
@@ -418,8 +480,13 @@ export class CompositesService {
       await mkdir(drafts, { recursive: true });
       const analysedShare = 1 - LAYERS_SHARE;
       const analyse = async (): Promise<string> => {
-        const answer = await watchingJobProgress(this.runningJob, 0, analysedShare, report, () =>
-          this.processing.analyseAssembly(library.id, sources, library, on, pendingVolume),
+        const answer = await watchingJobProgress(
+          this.runningJob,
+          0,
+          analysedShare,
+          report,
+          () => this.processing.analyseAssembly(library.id, sources, library, on, pendingVolume),
+          () => this.cancelledJobs.has(job.id),
         );
         stopIfCancelled();
         return answer;
@@ -737,7 +804,7 @@ export class CompositesService {
     sources: CompositeJobSource[],
     library: Library,
   ): Promise<void> {
-    const watching = { photoId, photoIds: sources.map((source) => source.photoId) };
+    const watching = { mergeId: null, photoId, photoIds: sources.map((source) => source.photoId) };
     const on = this.processing.openComposite();
     try {
       await this.build(photoId, { ...recipe, kind: 'assembly' }, sources, library, watching, on);
@@ -907,7 +974,7 @@ export class CompositesService {
     recipe: Composed,
     offered: readonly CompositeJobSource[],
     library: Library,
-    watching: { photoId: string | null; photoIds: string[] },
+    watching: Watching,
     on: CompositeWorker,
   ): Promise<void> {
     const byId = new Map(offered.map((source) => [source.photoId, source]));
@@ -976,20 +1043,20 @@ export class CompositesService {
    * counter in the library, which this thread reads on a timer. A phase whose counter never
    * appears - one that finished inside a single tick - still reports its own share as it ends.
    */
-  private async watched<T>(
-    watching: { photoId: string | null; photoIds: string[] },
-    at: number,
-    run: () => Promise<T>,
-  ): Promise<T> {
+  private async watched<T>(watching: Watching, at: number, run: () => Promise<T>): Promise<T> {
     const before = PHASES.slice(0, at).reduce((sum, phase) => sum + phase.share, 0);
     const { phase, share } = PHASES[at]!;
-    return await watchingJobProgress(
+    this.stopIfMergeCancelled(watching.mergeId);
+    const answer = await watchingJobProgress(
       this.runningJob,
       before,
       share,
       (fraction) => this.report({ ...watching, phase, fraction }),
       run,
+      () => watching.mergeId != null && this.merges.get(watching.mergeId)?.cancelled === true,
     );
+    this.stopIfMergeCancelled(watching.mergeId);
+    return answer;
   }
 
   private report(progress: CompositeProgress): void {

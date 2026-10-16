@@ -7,7 +7,7 @@ import {
   ReopenedAssemblySchema,
 } from '../../schemas/assembly';
 import { CompositePhotoSchema } from '../../schemas/composition';
-import { BurstMergeSchema, PhotoTargetSchema } from '../../schemas/photos';
+import { BurstMergeSchema, MergeSchema, PhotoTargetSchema } from '../../schemas/photos';
 import { PathSegment, route } from '../../schemas/route';
 import type { CompositesService } from '../../services/composites/composites_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
@@ -29,29 +29,39 @@ export class CompositesApi {
     // accepting and finishing later: what the client does next is show the new
     // row, and a merge that answered first would draw a hole.
     app.post(route(PathSegment.panorama()), async (c) => {
-      const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));
+      const { target, mergeId } = MergeSchema.parse(await c.req.json());
+      const photoIds = this.photos.resolve(target);
       return c.json(
-        respond(CompositePhotoSchema, await this.composites.mergePanorama(photoIds)),
+        respond(CompositePhotoSchema, await this.composites.mergePanorama(photoIds, mergeId)),
         201,
       );
     });
 
     app.post(route(PathSegment.bracket()), async (c) => {
-      const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));
+      const { target, mergeId } = MergeSchema.parse(await c.req.json());
+      const photoIds = this.photos.resolve(target);
       return c.json(
-        respond(CompositePhotoSchema, await this.composites.mergeBracket(photoIds)),
+        respond(CompositePhotoSchema, await this.composites.mergeBracket(photoIds, mergeId)),
         201,
       );
     });
 
     app.post(route(PathSegment.burst()), async (c) => {
-      const { target, scale } = BurstMergeSchema.parse(await c.req.json());
+      const { target, mergeId, scale } = BurstMergeSchema.parse(await c.req.json());
       const photoIds = this.photos.resolve(target);
       return c.json(
-        respond(CompositePhotoSchema, await this.composites.mergeBurst(photoIds, scale)),
+        respond(CompositePhotoSchema, await this.composites.mergeBurst(photoIds, scale, mergeId)),
         201,
       );
     });
+
+    app.post(
+      route(PathSegment.merge(), PathSegment.param('mergeId'), PathSegment.cancel()),
+      (c) => {
+        this.composites.cancelMerge(c.req.param('mergeId'));
+        return c.body(null, 204);
+      },
+    );
 
     // Starts the analysis and answers its job at once; the page reads the job for the rest.
     app.post(route(PathSegment.assembly()), async (c) => {

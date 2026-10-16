@@ -22,7 +22,7 @@ pub fn counted<T>(counts: bool, job: impl FnOnce() -> T) -> T {
     COUNTS.set(counts);
     if counts {
         // A cancel that landed after the last job returned was meant for that one.
-        CANCELLED.store(false, Ordering::Relaxed);
+        CANCEL_ASKED.store(false, Ordering::Relaxed);
     }
     let out = job();
     if counts {
@@ -39,7 +39,7 @@ static PACKED: AtomicU64 = AtomicU64::new(0);
 /// Whether the counting job has been told to stop, read at the boundaries a long pass already
 /// crosses. A blocking call across the FFI cannot be interrupted from outside it, so cancelling one
 /// is the library agreeing to look.
-static CANCELLED: AtomicBool = AtomicBool::new(false);
+static CANCEL_ASKED: AtomicBool = AtomicBool::new(false);
 
 /// Starts a pass of `total` steps. A total of zero means nothing is running.
 ///
@@ -56,13 +56,24 @@ pub fn begin(total: usize) {
 }
 
 pub fn cancel() {
-    CANCELLED.store(true, Ordering::Relaxed);
+    CANCEL_ASKED.store(true, Ordering::Relaxed);
 }
+
+/// What a job a cancel reached fails with. The job answers it verbatim, which is how the server
+/// tells a cancel from a failure (`rawshim_job.ts`).
+pub const CANCELLED: &str = "cancelled";
 
 /// Whether this thread's job is the counting one and has been told to stop; a job nobody is
 /// watching is never the one a cancel meant.
 pub fn cancelled() -> bool {
-    COUNTS.get() && CANCELLED.load(Ordering::Relaxed)
+    COUNTS.get() && CANCEL_ASKED.load(Ordering::Relaxed)
+}
+
+pub fn stop_if_cancelled() -> Result<(), String> {
+    match cancelled() {
+        true => Err(CANCELLED.to_string()),
+        false => Ok(()),
+    }
 }
 
 pub fn advance() {

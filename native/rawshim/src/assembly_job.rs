@@ -29,7 +29,7 @@ pub fn analyse(pano: &CompositeJob, volume_path: &str) -> Result<String, String>
             return serde_json::to_string(&serde_json::json!({ "lensless": named }))
                 .map_err(|error| error.to_string());
         }
-        Err(Refused::Cancelled) => return Err(crate::assembly_planes::CANCELLED.to_string()),
+        Err(Refused::Cancelled) => return Err(crate::progress::CANCELLED.to_string()),
         Err(other) => return Err(format!("{other:?}")),
     };
     std::fs::write(volume_path, analysed.volume.to_bytes())

@@ -24,6 +24,9 @@ export type ErrorCode =
   // changes when the drive does, so a client says "plug it in" rather than "it is gone".
   | 'UNAVAILABLE'
   | 'UNAUTHORIZED'
+  // The reader stopped the work this request was waiting on, so a client says nothing rather than
+  // reporting a failure.
+  | 'CANCELLED'
   | 'INTERNAL_ERROR';
 
 const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
@@ -37,6 +40,7 @@ const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
   OUTDATED: 426,
   UNAVAILABLE: 503,
   UNAUTHORIZED: 401,
+  CANCELLED: 409,
   INTERNAL_ERROR: 500,
 };
 

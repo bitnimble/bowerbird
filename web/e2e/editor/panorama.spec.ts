@@ -59,7 +59,7 @@ test.beforeAll(async ({ browser }) => {
   const merged = await page.request.post(
     route(PathSegment.api(), PathSegment.composites(), PathSegment.panorama()),
     {
-      data: { photo_ids: frames },
+      data: { target: { photo_ids: frames }, mergeId: 'panorama-spec' },
       timeout: 240_000,
     },
   );

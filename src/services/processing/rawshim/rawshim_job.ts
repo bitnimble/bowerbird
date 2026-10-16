@@ -103,7 +103,7 @@ function replied(call: (reply: Uint8Array) => number): JobOutcome {
   };
 }
 
-/** `assembly_planes::CANCELLED`: the whole of what a job a cancel reached fails with. */
+/** `progress::CANCELLED`: the whole of what a job a cancel reached fails with. */
 export const JOB_CANCELLED = 'cancelled';
 
 /** The job a worker is inside, as the main thread reaches it. */
@@ -155,16 +155,22 @@ export async function holdingRenderMemory<T>(run: () => Promise<T>): Promise<T> 
 
 const POLL_MS = 250;
 
-/** One job, with `report` told how far into it the native side is until it ends. */
+/**
+ * One job, with `report` told how far into it the native side is until it ends, and the job
+ * cancelled while `cancelled` says so.
+ */
 export async function watchingJobProgress<T>(
   job: RunningJob,
   before: number,
   share: number,
   report: (fraction: number) => void,
   run: () => Promise<T>,
+  cancelled: () => boolean = () => false,
 ): Promise<T> {
   report(before);
   const timer = setInterval(() => {
+    // Every tick rather than once: a job starting clears a cancel sent before it began.
+    if (cancelled()) job.cancel();
     const counted = job.progress();
     if (counted != null) report(before + share * (counted.done / counted.total));
   }, POLL_MS);

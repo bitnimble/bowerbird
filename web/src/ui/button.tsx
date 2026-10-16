@@ -118,6 +118,8 @@ interface ButtonProps {
   iconOnly?: boolean;
   children?: ReactNode;
   disabled?: boolean;
+  // For a button that disables itself when pressed, so the keyboard focus stays on it.
+  focusableWhenDisabled?: boolean;
   type?: 'button' | 'submit';
   /** Defaults to the `aria-label` of a button that is only an icon. */
   tooltip?: string;

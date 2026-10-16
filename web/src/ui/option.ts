@@ -21,7 +21,7 @@ export interface Option<T extends string> {
   // Offered but not selectable - the action exists here whatever the library or
   // the photo is, and greying it says why it cannot be taken.
   disabled?: boolean;
-  // Where a disabled row says what would make it selectable.
+  // What the row does, or on a disabled row, what would make it selectable.
   tooltip?: string;
   // In a menu: a row whose action opens something beside the menu rather than in place of it.
   keepsMenuOpen?: boolean;

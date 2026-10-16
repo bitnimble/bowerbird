@@ -345,7 +345,7 @@ export const PhotoTile = observer(function PhotoTile({
           </a>
         )}
 
-        {/* A frame being merged into a panorama: it is about to stop being a row of its own, and
+        {/* A frame being merged: it is about to stop being a row of its own, and
             the merge is minutes, so the tile says it is busy rather than sitting there inert. */}
         {stacks.waitingOnMerge(index, photo.id) && (
           <span {...stylex.props(tile.busy)} aria-hidden="true">

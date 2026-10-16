@@ -18,6 +18,11 @@ export interface Toast {
    * wondering whether anything is happening at all.
    */
   progress?: number;
+  // Work that can be stopped. Shown as a Cancel button in place of the dismiss: closing the toast
+  // would hide the work without stopping it.
+  cancel?: () => void;
+  // Cancel was pressed and the work has not stopped yet.
+  cancelling?: boolean;
 }
 
 export class ToastsStore {

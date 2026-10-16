@@ -453,19 +453,24 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                         value: 'assembly' as const,
                         label: MergePageStrings.takeBestParts(),
                         disabled: mergeCandidate.kind !== 'ready',
-                        tooltip: mergeRefusal(mergeCandidate),
+                        tooltip:
+                          mergeRefusal(mergeCandidate) ??
+                          MergePageStrings.takeBestPartsDescription(),
                       },
                       {
                         value: 'reduceNoise' as const,
                         label: MergePageStrings.reduceNoise(),
                         disabled: mergeCandidate.kind !== 'ready',
-                        tooltip: mergeRefusal(mergeCandidate),
+                        tooltip:
+                          mergeRefusal(mergeCandidate) ?? MergePageStrings.reduceNoiseDescription(),
                       },
                       {
                         value: 'increaseResolution' as const,
                         label: MergePageStrings.increaseResolution(),
                         disabled: mergeCandidate.kind !== 'ready',
-                        tooltip: mergeRefusal(mergeCandidate),
+                        tooltip:
+                          mergeRefusal(mergeCandidate) ??
+                          MergePageStrings.increaseResolutionDescription(),
                       },
                       {
                         value: 'bracket' as const,

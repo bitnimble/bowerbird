@@ -28,10 +28,17 @@ export class ToastsPresenter {
    * @returns its id, for `progressed` and `dismiss`.
    */
   @action.bound
-  showProgress(message: string, progress: number): number {
+  showProgress(message: string, progress: number, cancel?: () => void): number {
     const id = this.nextId++;
-    this.push({ id, message, progress });
+    this.push({ id, message, progress, cancel });
     return id;
+  }
+
+  @action.bound
+  markCancelling(id: number, message: string, cancelling: boolean): void {
+    this.store.toasts = this.store.toasts.map((toast) =>
+      toast.id === id ? { ...toast, message, cancelling } : toast,
+    );
   }
 
   isShowing(id: number): boolean {

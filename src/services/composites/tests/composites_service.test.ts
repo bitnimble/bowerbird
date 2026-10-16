@@ -29,6 +29,7 @@ import type { SettingsRepository } from '../../settings/settings_repository';
 import type { AssemblyJob, Carved } from '../../../schemas/assembly';
 import { CompositesService, layerKeyOf } from '../composites_service';
 import { LibraryActivity } from '../../activity/library_activity';
+import { JOB_CANCELLED } from '../../processing/rawshim/rawshim_job';
 
 const LIB = 'panoramas-service-test';
 
@@ -127,6 +128,23 @@ function waitForHeldCarve(): Promise<void> {
   });
 }
 
+function alignment(sources: readonly { photoId: string }[]): string {
+  return JSON.stringify({
+    recipe: recipe(sources.map((source) => source.photoId)),
+    rmsPx: 0.4,
+    dropped: [],
+    lensless,
+    warnings: [],
+  });
+}
+
+/** Set while a test wants to decide for itself when an align answers, and with what. */
+let holdAligns = false;
+const heldAligns: ((answer: 'aligned' | 'cancelled') => void)[] = [];
+
+/** How many times the service asked the native job to stop. */
+let nativeCancels = 0;
+
 /** A worker that aligns whatever it is given and renders nothing. */
 class MockWorker {
   onmessage: ((event: { data: ProcessingResult }) => void) | null = null;
@@ -169,6 +187,17 @@ class MockWorker {
       } else queueMicrotask(answer);
       return;
     }
+    if (job.want === 'align' && holdAligns) {
+      heldAligns.push((answer) =>
+        this.onmessage?.({
+          data:
+            answer === 'cancelled'
+              ? { photoId: job.photoId, success: false, error: JOB_CANCELLED }
+              : { photoId: job.photoId, success: true, composite: alignment(job.sources) },
+        }),
+      );
+      return;
+    }
     if (job.kind === 'composite' && job.want === 'render' && failNextBuild) {
       failNextBuild = false;
       // A build that fails part way can still have written the file before the error, which is
@@ -193,16 +222,7 @@ class MockWorker {
       }
     }
     queueMicrotask(() => {
-      const answered =
-        job.want === 'align'
-          ? JSON.stringify({
-              recipe: recipe(job.sources.map((source) => source.photoId)),
-              rmsPx: 0.4,
-              dropped: [],
-              lensless,
-              warnings: [],
-            })
-          : undefined;
+      const answered = job.want === 'align' ? alignment(job.sources) : undefined;
       this.onmessage?.({ data: { photoId: job.photoId, success: true, composite: answered } });
     });
   }
@@ -252,6 +272,9 @@ beforeEach(() => {
   failNextBuild = false;
   heldOpen = false;
   holding.length = 0;
+  holdAligns = false;
+  heldAligns.length = 0;
+  nativeCancels = 0;
   onHeldCarve = null;
   plantedRenditionFile = null;
   (globalThis as { Worker?: unknown }).Worker = MockWorker;
@@ -287,6 +310,12 @@ beforeEach(() => {
     edits,
     localOriginals(),
     activity,
+    {
+      progress: () => null,
+      cancel: () => {
+        nativeCancels += 1;
+      },
+    },
   );
 });
 
@@ -612,6 +641,106 @@ describe('CompositesService.mergeBurst', () => {
     expect(recipe?.kind === 'burst' && recipe.canvas).toEqual([18000, 8400]);
     expect(recipe?.kind === 'burst' && recipe.centre).toEqual([9000, 4200]);
     expect(recipe?.kind === 'burst' && recipe.radiansPerPixel).toBe(1 / 10400);
+  });
+});
+
+async function until(holds: () => boolean): Promise<void> {
+  while (!holds()) await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
+function composedRows(): unknown[] {
+  return db.query("SELECT id FROM photos WHERE json_extract(recipe, '$.kind') != 'file'").all();
+}
+
+describe('CompositesService.cancelMerge', () => {
+  it('stops a merge before it starts, without asking anything of the device', async () => {
+    const queued = panoramas.mergeBurst(['photo001', 'photo002'], 1, 'merge1');
+    panoramas.cancelMerge('merge1');
+
+    await expect(queued).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(posted).toEqual([]);
+    expect(activity.current(LIB)).toEqual([]);
+  });
+
+  for (const [phase, wants] of [
+    ['aligning', ['align']],
+    ['tile', ['align', 'render']],
+    ['picture', ['align', 'render', 'render']],
+  ] as const) {
+    it(`stops a merge cancelled while ${phase}, leaving no photo, file or activity`, async () => {
+      let cancelled = false;
+      panoramas.onProgress((progress) => {
+        if (progress.phase !== phase || cancelled) return;
+        cancelled = true;
+        panoramas.cancelMerge(progress.mergeId ?? '');
+      });
+
+      await expect(
+        panoramas.mergeBurst(['photo001', 'photo002'], 1, 'merge1'),
+      ).rejects.toMatchObject({ code: 'CANCELLED' });
+
+      expect(posted.map((job) => job.want)).toEqual([...wants]);
+      expect(composedRows()).toEqual([]);
+      for (const target of posted.flatMap((job) => job.targets)) {
+        expect(existsSync(target.outputPath)).toBe(false);
+      }
+      expect(activity.current(LIB)).toEqual([]);
+    });
+  }
+
+  it('signals the native job it lands in, and answers that job failing as cancelled', async () => {
+    holdAligns = true;
+    const merging = panoramas.mergeBurst(['photo001', 'photo002'], 1, 'merge1');
+    await until(() => heldAligns.length === 1);
+
+    panoramas.cancelMerge('merge1');
+    await until(() => nativeCancels > 0);
+    heldAligns.shift()?.('cancelled');
+
+    await expect(merging).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(posted.map((job) => job.want)).toEqual(['align']);
+  });
+
+  it('answers a queued merge cancelled at once, leaving the running one and the device alone', async () => {
+    holdAligns = true;
+    const running = panoramas.mergeBurst(['photo001', 'photo002'], 1, 'running');
+    await until(() => heldAligns.length === 1);
+    const queued = panoramas.mergeBurst(['photo002', 'photo003'], 1, 'queued');
+
+    panoramas.cancelMerge('queued');
+    await expect(queued).rejects.toMatchObject({ code: 'CANCELLED' });
+
+    holdAligns = false;
+    heldAligns.shift()?.('aligned');
+    expect((await running).photoId).toBeTruthy();
+    await until(() => activity.current(LIB).length === 0);
+    expect(nativeCancels).toBe(0);
+    expect(posted.filter((job) => job.want === 'align')).toHaveLength(1);
+  });
+
+  it('refuses a merge under an id another merge still holds, and frees the id once it settles', async () => {
+    holdAligns = true;
+    const first = panoramas.mergeBurst(['photo001', 'photo002'], 1, 'merge1');
+    await until(() => heldAligns.length === 1);
+
+    await expect(panoramas.mergeBurst(['photo002', 'photo003'], 1, 'merge1')).rejects.toMatchObject(
+      { code: 'CONFLICT' },
+    );
+
+    holdAligns = false;
+    heldAligns.shift()?.('aligned');
+    await first;
+    expect(
+      (await panoramas.mergeBurst(['photo002', 'photo003'], 1, 'merge1')).photoId,
+    ).toBeTruthy();
+  });
+
+  it('does nothing for a merge it does not hold', async () => {
+    await panoramas.mergeBurst(['photo001', 'photo002'], 1, 'merge1');
+    panoramas.cancelMerge('merge1');
+    panoramas.cancelMerge('never');
+    expect(nativeCancels).toBe(0);
+    expect(composedRows()).toHaveLength(1);
   });
 });
 

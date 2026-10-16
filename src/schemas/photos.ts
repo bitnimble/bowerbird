@@ -415,7 +415,11 @@ export const PhotoTargetSchema = z.union([
 ]);
 export type PhotoTarget = z.infer<typeof PhotoTargetSchema>;
 
-export const BurstMergeSchema = z.object({ target: PhotoTargetSchema, scale: BurstScaleSchema });
+/** A selection to merge, under an id the client chose so it can cancel the merge before it answers. */
+export const MergeSchema = z.object({ target: PhotoTargetSchema, mergeId: z.string().min(1) });
+export type Merge = z.infer<typeof MergeSchema>;
+
+export const BurstMergeSchema = MergeSchema.extend({ scale: BurstScaleSchema });
 export type BurstMerge = z.infer<typeof BurstMergeSchema>;
 
 // Where given rows sit in a collection now (§19.6.1). Same scope and filters as
