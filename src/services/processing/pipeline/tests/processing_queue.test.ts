@@ -97,7 +97,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
       inOneCommit: <T>(record: () => T): T => record(),
     } as unknown as PhotoProcessingRepository;
-    const holds:{ postedBefore: number; postedAfter: number | null }[] = [];
+    const holds: { postedBefore: number; postedAfter: number | null }[] = [];
     const holding = async <T>(run: () => Promise<T>): Promise<T> => {
       const hold = { postedBefore: posted.length, postedAfter: null as number | null };
       holds.push(hold);
@@ -378,6 +378,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
+      mediaImageIdOf: jest.fn(() => 7),
     } as unknown as PhotoProcessingRepository;
     const service = makeProcessingService(repo, settingsWith({}));
     const before = path.join(dataPathForLibraryId(LIB), 'renditions', 'grid', 'thumbnailed.avif');
@@ -385,7 +386,7 @@ describe('ProcessingService.processUnprocessed', () => {
     writeFileSync(before, 'a render from before');
 
     await service.processUnprocessed({ libraryId: 'lib' });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let waited = 0; existsSync(before) && waited < 1000; waited += 5) await Bun.sleep(5);
 
     expect(existsSync(before)).toBe(false);
     const grids = posted
@@ -403,6 +404,46 @@ describe('ProcessingService.processUnprocessed', () => {
       null,
       expect.objectContaining({ from: 'embedded' }),
     );
+  });
+
+  it('leaves the tile owed where the device dropped its thumbnail while the job ran', async () => {
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        { ...pending('dropped'), media_image_id: 7, needs_renditions: 0 },
+      ]),
+      markTileBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+      mediaImageIdOf: jest.fn(() => null),
+    } as unknown as PhotoProcessingRepository;
+    const service = makeProcessingService(repo, settingsWith({}));
+
+    await service.processUnprocessed({ libraryId: 'lib' });
+
+    expect(repo.markTileBuilt).not.toHaveBeenCalled();
+  });
+
+  it('records each landed job in one commit, and carries on when the commit fails', async () => {
+    let committing = false;
+    const written: boolean[] = [];
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a')]),
+      markTileBuilt: jest.fn(() => written.push(committing)),
+      markRenditionsBuilt: jest.fn(() => written.push(committing)),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+    const service = makeProcessingService(repo, settingsWith({}));
+    Object.assign(repo, {
+      inOneCommit: (record: () => void): void => {
+        committing = true;
+        record();
+        committing = false;
+        throw new Error('disk I/O error');
+      },
+    });
+
+    await service.processUnprocessed({ libraryId: 'lib' });
+
+    expect(written).toEqual([true, true, true]);
   });
 
   it('passes the embedded-JPEG matching setting through to the worker', async () => {

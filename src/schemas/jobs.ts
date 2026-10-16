@@ -47,7 +47,7 @@ export const JobTargetSchema = z.object({
   sdrFullChroma: z.boolean(),
   /** How an `srgb` output reaches its gamut; perceptual where absent. */
   intent: RenderingIntentSchema.optional(),
-  /** A grid target that measures the stacking descriptor and writes no file. */
+  /** Grid only: writes no file, still reports the descriptor. */
   describeOnly: z.boolean().optional(),
 });
 export type JobTarget = z.infer<typeof JobTargetSchema>;

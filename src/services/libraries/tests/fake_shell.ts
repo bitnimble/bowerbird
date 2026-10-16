@@ -10,9 +10,10 @@ export class FakeShell {
   /** Nothing listens here until `answer`. */
   readonly socket = path.join(this.dir, 'shell.sock');
   private server: Server | null = null;
+  private readonly held: (() => void)[] = [];
 
-  /** `null` closes each connection without answering. */
-  async answer(reply: string | null): Promise<void> {
+  /** `null` closes each connection without answering; `held` waits for `release`. */
+  async answer(reply: string | null, { held = false } = {}): Promise<void> {
     const server = createServer((connection) => {
       let request = '';
       connection.setEncoding('utf8');
@@ -20,11 +21,18 @@ export class FakeShell {
         request += chunk;
         if (!request.endsWith('\n')) return;
         this.asked.push(JSON.parse(request));
-        connection.end(reply == null ? '' : `${reply}\n`);
+        const send = (): void => void connection.end(reply == null ? '' : `${reply}\n`);
+        if (held) this.held.push(send);
+        else send();
       });
     });
     this.server = server;
     await new Promise<void>((resolve) => server.listen(this.socket, resolve));
+  }
+
+  /** Answers the oldest held request. */
+  release(): void {
+    this.held.shift()?.();
   }
 
   close(): void {

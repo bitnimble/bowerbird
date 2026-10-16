@@ -29,7 +29,7 @@ export interface FileMetadata {
   fileSize: number; // bytes
   /** Read off the device's media index rather than the file, so the tile pass reads the header. */
   provisional?: boolean;
-  /** `MediaEntry.imageId`, where the device's media index has this file as it is now. */
+  /** Set only where the index entry matches the file's size. */
   mediaImageId?: number;
 }
 

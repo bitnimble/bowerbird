@@ -149,7 +149,6 @@ export class PhotoProcessingRepository {
     const parsed = OrderingSchema.safeParse(row?.ordering);
     return parsed.success ? parsed.data : 'taken_asc';
   }
-  /** `fn`'s writes as one commit: a disk sync per statement is most of what a landed job costs. */
   inOneCommit<T>(fn: () => T): T {
     return this.db.transaction(fn)();
   }
@@ -163,8 +162,7 @@ export class PhotoProcessingRepository {
   forgetBuilt(id: string, variants: readonly RenditionVariant[]): void {
     this.renditions.forgetBuilt(id, variants);
   }
-  /** The media index image whose thumbnail is this photo's grid tile, or null where a file is. */
-  deviceTile(id: string): number | null {
+  deviceTileImageId(id: string): number | null {
     const row = this.db
       .query(
         `SELECT p.media_image_id FROM photos p
@@ -174,7 +172,13 @@ export class PhotoProcessingRepository {
       .get(renditionVariant('grid', false), id) as { media_image_id: number | null } | null;
     return row?.media_image_id ?? null;
   }
-  /** Moves the tile's version alone: the tile pass is still owed its descriptor and header. */
+  mediaImageIdOf(id: string): number | null {
+    const row = this.db.query('SELECT media_image_id FROM photos WHERE id = ?').get(id) as {
+      media_image_id: number | null;
+    } | null;
+    return row?.media_image_id ?? null;
+  }
+  /** Bumps built_at only; the tile pass stays owed. */
   markTileArrived(id: string, atIso: string): void {
     this.db
       .query(

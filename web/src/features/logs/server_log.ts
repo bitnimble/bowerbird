@@ -5,10 +5,7 @@ import { LogsDialogStrings } from './logs_dialog.strings';
 
 const SERVER_PATIENCE_MS = 3_000;
 
-/**
- * The server's recent lines, or, where it doesn't answer in time and the app holds its log file,
- * that file's. Null where neither can be had.
- */
+/** Falls back to the app's copy of the log file when the server doesn't answer in time; null if neither. */
 export async function serverLog(
   patienceMs = SERVER_PATIENCE_MS,
 ): Promise<{ name: string; lines: string[] } | null> {

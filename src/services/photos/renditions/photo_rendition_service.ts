@@ -56,58 +56,56 @@ export class PhotoRenditionService {
     private readonly media: MediaListing | null = null,
   ) {}
 
-  /** Whether the grid tile is the device's own thumbnail, where no file of ours stands for it. */
   isDeviceTile(photoId: string): boolean {
-    return this.media != null && this.photoProcessing.deviceTile(photoId) != null;
+    return this.media != null && this.photoProcessing.deviceTileImageId(photoId) != null;
   }
 
-  /**
-   * The device's own thumbnail as this photo's grid tile, or null where it isn't in hand yet.
-   *
-   * Never waits on the device making one: that is fetched behind the request, and the tile's
-   * `built_at` moves when it lands so the client asks again. One the device says it no longer has
-   * has the photo's tile built as a file instead.
-   */
-  async deviceTile(photoId: string): Promise<Uint8Array | null> {
+  /** Null until the device hands it over, unless `wait`. */
+  async deviceTile(photoId: string, { wait = false } = {}): Promise<Uint8Array | null> {
     if (this.media == null) return null;
-    const imageId = this.photoProcessing.deviceTile(photoId);
+    const imageId = this.photoProcessing.deviceTileImageId(photoId);
     if (imageId == null) return null;
     const { photo, library } = this.locate(photoId);
     const original = this.originals.here(library, photo);
     if (original == null) return null;
-    if (!this.handedOver.has(photoId)) {
-      this.fetchDeviceTile(this.media, photoId, imageId, original);
-      return null;
+    if (!this.handedOver.has(imageId)) {
+      const fetched = this.fetchDeviceTile(this.media, photoId, imageId, original);
+      return wait ? fetched : null;
     }
     const jpeg = await this.media.thumbnail(imageId, original);
     if (jpeg instanceof Uint8Array) return jpeg;
-    this.handedOver.delete(photoId);
+    this.handedOver.delete(imageId);
     if (jpeg === 'gone') this.tileAsFile(photoId);
     return null;
   }
 
-  /** Photos whose thumbnail the device has made and handed over, so asking again is a read. */
-  private readonly handedOver = new Set<string>();
-  private readonly fetching = new Set<string>();
+  private readonly handedOver = new Set<number>();
+  private readonly fetching = new Map<number, Promise<Uint8Array | null>>();
 
   private fetchDeviceTile(
     media: MediaListing,
     photoId: string,
     imageId: number,
     original: string,
-  ): void {
-    if (this.fetching.has(photoId)) return;
-    this.fetching.add(photoId);
-    void media
+  ): Promise<Uint8Array | null> {
+    const inFlight = this.fetching.get(imageId);
+    if (inFlight != null) return inFlight;
+    const fetched = media
       .queueThumbnail(imageId, original)
       .then((jpeg) => {
         if (jpeg === 'gone') this.tileAsFile(photoId);
-        if (!(jpeg instanceof Uint8Array)) return;
-        this.handedOver.add(photoId);
+        if (!(jpeg instanceof Uint8Array)) return null;
+        this.handedOver.add(imageId);
         this.processing.deviceTileArrived(photoId);
+        return jpeg;
       })
-      .catch((err: unknown) => log.warn('could not fetch a thumbnail', { photo: photoId, err }))
-      .finally(() => this.fetching.delete(photoId));
+      .catch((err: unknown) => {
+        log.warn('could not fetch a thumbnail', { photo: photoId, err });
+        return null;
+      })
+      .finally(() => this.fetching.delete(imageId));
+    this.fetching.set(imageId, fetched);
+    return fetched;
   }
 
   private tileAsFile(photoId: string): void {
@@ -177,7 +175,7 @@ export class PhotoRenditionService {
     force = false,
   ): Promise<void> {
     if (rendition !== 'grid') return this.build(photoId, rendition, { force, hdr, via });
-    // A peer can't ask this device's media index, so it is handed a file of ours.
+    // Peers need a file; a device-tiled row's job writes none.
     if (this.isDeviceTile(photoId)) {
       this.photoProcessing.dropDeviceTile(photoId);
       await this.processing.rebuildTiles([photoId]);

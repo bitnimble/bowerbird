@@ -510,15 +510,14 @@ export class ImageApi {
     });
   }
 
-  /** The device's own thumbnail where it is this photo's grid tile, or null to serve the file. */
   private async serveDeviceTile(
     photo: BasicPhoto,
     library: LibraryConfiguration,
     c: Context,
+    { wait = false } = {},
   ): Promise<Response | null> {
     const original = originalPathOf(library, photo);
     if (original == null || !this.photoRenditions.isDeviceTile(photo.id)) return null;
-    // The original's stat, as for the embedded JPEG: the thumbnail moves exactly when it does.
     const etag = `${etagOf(Bun.file(original)).slice(0, -1)}-device"`;
     const headers = {
       'Content-Type': 'image/jpeg',
@@ -527,7 +526,7 @@ export class ImageApi {
       ...TIMING_ALLOW_ORIGIN,
     };
     if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
-    const jpeg = await this.photoRenditions.deviceTile(photo.id);
+    const jpeg = await this.photoRenditions.deviceTile(photo.id, { wait });
     return jpeg == null ? null : new Response(jpeg, { headers });
   }
 
@@ -535,7 +534,7 @@ export class ImageApi {
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photoRenditions.locate(photoId);
-    const deviceTile = await this.serveDeviceTile(photo, library, c);
+    const deviceTile = await this.serveDeviceTile(photo, library, c, { wait: true });
     if (deviceTile != null) return deviceTile;
     const tilePath = getRenditionPath(library, photo.id, 'grid', false);
     const tile = Bun.file(tilePath);

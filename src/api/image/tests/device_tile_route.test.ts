@@ -19,7 +19,10 @@ mkdirSync(gridDir, { recursive: true });
 writeFileSync(path.join(gridDir, 'p1.avif'), 'ours');
 afterAll(() => rmSync(dataPathForLibraryId(LIB), { recursive: true, force: true }));
 
-function serving(deviceTile: Uint8Array | null): {
+function serving(
+  deviceTile: Uint8Array | null,
+  { isDeviceTile = true } = {},
+): {
   app: Hono;
   asked: ReturnType<typeof jest.fn>;
 } {
@@ -29,7 +32,7 @@ function serving(deviceTile: Uint8Array | null): {
       library: { id: LIB, root_path: ROOT, rendition_hdr: false },
       photo: { id: 'p1', file_path: 'p1.jpg', recipe: { kind: 'file', path: 'p1.jpg' } },
     }),
-    isDeviceTile: () => true,
+    isDeviceTile: () => isDeviceTile,
     deviceTile: asked,
     rebuildIfStale: () => undefined,
     markUsed: () => undefined,
@@ -76,4 +79,21 @@ it('serves the tile on disk when the device cannot hand its thumbnail over', asy
 
   expect(answer.status).toBe(200);
   expect(await answer.text()).toBe('ours');
+});
+
+it('serves the tile on disk without asking the device where the tile is ours', async () => {
+  const { app, asked } = serving(THUMBNAIL, { isDeviceTile: false });
+  const answer = await app.request(GRID);
+
+  expect(await answer.text()).toBe('ours');
+  expect(asked).not.toHaveBeenCalled();
+});
+
+it("waits for the device's thumbnail for a preview, and not for a grid tile", async () => {
+  const { app, asked } = serving(THUMBNAIL);
+
+  await app.request(route(PathSegment.image(), 'p1', PathSegment.preview()));
+  expect(asked).toHaveBeenLastCalledWith('p1', { wait: true });
+  await app.request(GRID);
+  expect(asked).toHaveBeenLastCalledWith('p1', { wait: false });
 });

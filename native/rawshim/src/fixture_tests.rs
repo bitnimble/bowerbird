@@ -4633,8 +4633,6 @@ mod tile_header {
         assert!(outcome.header.is_none());
     }
 
-    /// A phone library's grid is the device's own thumbnail, but stacking still needs the
-    /// photograph's descriptor, and it has to be the one a written tile would have reported.
     #[test]
     fn a_describe_only_tile_writes_nothing_and_describes_the_same() {
         let path = sony();

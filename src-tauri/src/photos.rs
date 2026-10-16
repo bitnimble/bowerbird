@@ -98,6 +98,7 @@ mod platform {
     enum Reply {
         Grant(GrantReply),
         Answer(serde_json::Value),
+        Gone { gone: bool },
         Failed { error: String },
     }
 
@@ -114,6 +115,8 @@ mod platform {
     const PROMPT_PATIENCE: Duration = Duration::from_secs(300);
     /// `PhotosPlugin.kt`'s code for a reader who said no.
     const DECLINED: &str = "declined";
+    /// `PhotosPlugin.kt`'s code for an image it has no thumbnail of any more.
+    const GONE: &str = "gone";
 
     pub(crate) fn serve_shell_socket(
         app: &tauri::AppHandle<Runtime>,
@@ -221,6 +224,11 @@ mod platform {
             .run_mobile_plugin::<serde_json::Value>(command, args)
         {
             Ok(answer) => Reply::Answer(answer),
+            Err(PluginInvokeError::InvokeRejected(rejection))
+                if rejection.code.as_deref() == Some(GONE) =>
+            {
+                Reply::Gone { gone: true }
+            }
             Err(err) => Reply::Failed {
                 error: format!("{failure}: {err}"),
             },

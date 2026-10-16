@@ -139,7 +139,7 @@ describe('PhotoProcessingRepository.markCopyBuilt', () => {
   });
 });
 
-describe('PhotoProcessingRepository.deviceTile', () => {
+describe('PhotoProcessingRepository.deviceTileImageId', () => {
   const made = (from: 'embedded' | 'render'): { from: typeof from; matched: boolean } => ({
     from,
     matched: false,
@@ -147,16 +147,17 @@ describe('PhotoProcessingRepository.deviceTile', () => {
 
   it('is the device thumbnail until a render replaces the tile, and again after', () => {
     db.query("UPDATE photos SET media_image_id = 7 WHERE id = 'live'").run();
-    expect(repo.deviceTile('live')).toBe(7);
+    expect(repo.deviceTileImageId('live')).toBe(7);
 
     repo.markTileBuilt('live', '2026-06-01T00:00:00.000Z', null, made('embedded'));
-    expect(repo.deviceTile('live')).toBe(7);
+    expect(repo.deviceTileImageId('live')).toBe(7);
 
     repo.markTileBuilt('live', '2026-06-01T00:00:01.000Z', 'edits-1', made('render'));
-    expect(repo.deviceTile('live')).toBeNull();
+    expect(repo.deviceTileImageId('live')).toBeNull();
+    expect(repo.mediaImageIdOf('live')).toBe(7);
 
     repo.markTileBuilt('live', '2026-06-01T00:00:02.000Z', 'edits-2', made('embedded'));
-    expect(repo.deviceTile('live')).toBe(7);
+    expect(repo.deviceTileImageId('live')).toBe(7);
   });
 
   it("moves a thumbnail's version without settling the tile pass it still owes", () => {
@@ -172,10 +173,10 @@ describe('PhotoProcessingRepository.deviceTile', () => {
   });
 
   it('is never a row the media index did not catalogue, or one dropped from it', () => {
-    expect(repo.deviceTile('binned')).toBeNull();
+    expect(repo.deviceTileImageId('binned')).toBeNull();
 
     db.query("UPDATE photos SET media_image_id = 7 WHERE id = 'live'").run();
     repo.dropDeviceTile('live');
-    expect(repo.deviceTile('live')).toBeNull();
+    expect(repo.deviceTileImageId('live')).toBeNull();
   });
 });

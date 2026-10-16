@@ -8,12 +8,13 @@ restoreApiAfterTests();
 const shell = globalThis as { __TAURI__?: unknown };
 afterEach(() => delete shell.__TAURI__);
 
-function inApp(file: string[]): string[] {
+function inApp(file: string[] | Error): string[] {
   const asked: string[] = [];
   shell.__TAURI__ = {
     core: {
       invoke: async (command: string) => {
         asked.push(command);
+        if (file instanceof Error) throw file;
         return file;
       },
     },
@@ -38,6 +39,22 @@ test("reads the app's copy of the log file when the server is too stuck to answe
     lines: ['scan start', 'scan walked the tree'],
   });
   expect(asked).toEqual(['server_log_file']);
+});
+
+test("reads the app's copy of the log file when the server fails to answer", async () => {
+  inApp(['scan start']);
+  logsApi.server = async () => {
+    throw new Error('offline');
+  };
+
+  expect(await serverLog(50)).toEqual({ name: 'Server log file', lines: ['scan start'] });
+});
+
+test('has nothing to show when the app cannot read the file either', async () => {
+  inApp(new Error('no data dir'));
+  logsApi.server = () => new Promise(() => {});
+
+  expect(await serverLog(50)).toBeNull();
 });
 
 test('has nothing to show in a browser whose server does not answer', async () => {

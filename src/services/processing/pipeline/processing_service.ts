@@ -140,7 +140,6 @@ export class ProcessingService extends RenderService {
     this.pool.prefer(photoIds);
   }
 
-  /** The device has made the thumbnail that is this photo's grid tile, so a client can fetch it. */
   deviceTileArrived(photoId: string): void {
     const version = new Date().toISOString();
     this.photoProcessing.markTileArrived(photoId, version);
@@ -451,12 +450,14 @@ export class ProcessingService extends RenderService {
     // job for it and nothing would clear the flag.** A library serving the camera's JPEG has no
     // renditions to build, and a tile already built leaves `needs_renditions` set on a photo with
     // all its files on disk, re-queried by every batch for the life of the library.
-    for (const photo of staged) {
-      if (photo.tile == null && photo.renditions == null && photo.owesRenditions) {
-        this.stageDone(photo, photo.photoId, 'renditions');
+    this.landing(() => {
+      for (const photo of staged) {
+        if (photo.tile == null && photo.renditions == null && photo.owesRenditions) {
+          this.stageDone(photo, photo.photoId, 'renditions');
+        }
+        if (photo.tile == null && photo.renditions == null) active.delete(photo.photoId);
       }
-      if (photo.tile == null && photo.renditions == null) active.delete(photo.photoId);
-    }
+    });
 
     await this.pool.run(
       staged.flatMap((photo) => (photo.tile == null ? [] : [photo.tile])),
@@ -472,10 +473,18 @@ export class ProcessingService extends RenderService {
           // Its own stage, said as soon as it lands: the render behind it is still
           // ~1.5s away, and a grid already on screen should fill at the tile's pace
           // rather than wait for both.
-          this.stageDone(photo, result.photoId, 'tile', result.descriptor);
-          // A render's tile from before would otherwise be read as the camera's picture it now stands for.
-          for (const target of job.targets.filter((each) => each.describeOnly === true)) {
-            void deleteGeneratedFile(job.dataPath, target.outputPath).catch(() => {});
+          const describedOnly = job.targets.filter((each) => each.describeOnly === true);
+          // Device dropped its thumbnail mid-job: no file was written, so the tile stays owed to
+          // the rebuild queued when it was dropped.
+          if (
+            describedOnly.length === 0 ||
+            this.photoProcessing.mediaImageIdOf(result.photoId) != null
+          ) {
+            this.stageDone(photo, result.photoId, 'tile', result.descriptor);
+            // Else the file fallback serves a stale render tile for an unedited photo.
+            for (const target of describedOnly) {
+              void deleteGeneratedFile(job.dataPath, target.outputPath).catch(() => {});
+            }
           }
           if (result.header != null) this.readHeader(result.photoId, result.header);
           if (photo?.renditions == null) active.delete(result.photoId);
@@ -517,8 +526,8 @@ export class ProcessingService extends RenderService {
     );
   }
 
-  // Never throws: this runs inside a worker's onmessage/onerror, where nothing catches it.
   private landing(record: () => void): void {
+    // Never throws: runs inside a worker's onmessage/onerror, where nothing catches it.
     try {
       this.photoProcessing.inOneCommit(record);
     } catch (err) {
@@ -704,8 +713,7 @@ export class ProcessingService extends RenderService {
         ? {
             ...common,
             ...(pending.metadata_provisional === 1 ? { header: true as const } : {}),
-            // The device's own thumbnail is the tile (`PhotoRenditionService.deviceTile`); stacking
-            // still wants the descriptor.
+            // Still runs: stacking needs the descriptor.
             targets: [pending.media_image_id == null ? grid : { ...grid, describeOnly: true }],
           }
         : null;

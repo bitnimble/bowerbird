@@ -27,6 +27,7 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import java.io.FileNotFoundException
 import java.util.TimeZone
 import org.json.JSONArray
 import org.json.JSONObject
@@ -102,7 +103,7 @@ class PhotosPlugin(private val activity: Activity) : Plugin(activity) {
 
     /**
      * Each row is `[path, size, width, height, orientationDegrees, takenWallMs, imageId]`, null where
-     * unknown. `imageId` is what `thumbnail` takes, and null below Android 10 or for anything but an image.
+     * unknown; `imageId` also null below Android 10 or for anything but an image.
      */
     @Command
     fun listMedia(invoke: Invoke) {
@@ -117,7 +118,10 @@ class PhotosPlugin(private val activity: Activity) : Plugin(activity) {
         }.start()
     }
 
-    /** The JPEG Android keeps for an image, base64, refused unless the id still names `path`. */
+    /**
+     * The JPEG Android keeps for an image, base64. Rejected with [GONE] where the id no longer names
+     * `path` or Android can make no thumbnail of it; any other rejection is worth asking again.
+     */
     @Command
     fun thumbnail(invoke: Invoke) {
         val args = invoke.parseArgs(ThumbnailArgs::class.java)
@@ -130,19 +134,21 @@ class PhotosPlugin(private val activity: Activity) : Plugin(activity) {
                 val uri = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL, args.id)
                 // Ids are reassigned when the index is rebuilt, which would show another photo's thumbnail.
                 if (pathOf(uri) != args.path) {
-                    invoke.reject("$uri is no longer ${args.path}")
+                    invoke.reject("$uri is no longer ${args.path}", GONE)
                     return@Thread
                 }
-                // EXTRA_SIZE is what asks for the thumbnail; MediaProvider hands back the one size it keeps.
+                // EXTRA_SIZE selects the thumbnail; MediaProvider returns its one cached size.
                 val size = Bundle().apply { putParcelable(ContentResolver.EXTRA_SIZE, Point(THUMBNAIL_EDGE, THUMBNAIL_EDGE)) }
-                // The typed asset is the cached file itself, where loadThumbnail decodes and scales it.
+                // Not loadThumbnail: that decodes and rescales the cached JPEG.
                 val jpeg = activity.contentResolver.openTypedAssetFile(uri, "image/*", size, null)
                     ?.use { file -> file.createInputStream().use { it.readBytes() } }
                 if (jpeg == null) {
-                    invoke.reject("Android has no thumbnail for $uri")
+                    invoke.reject("Android has no thumbnail for $uri", GONE)
                     return@Thread
                 }
                 invoke.resolve(JSObject().apply { put("jpeg", Base64.encodeToString(jpeg, Base64.NO_WRAP)) })
+            } catch (err: FileNotFoundException) {
+                invoke.reject(err.message ?: err.toString(), GONE)
             } catch (err: Exception) {
                 invoke.reject(err.message ?: err.toString())
             }
@@ -292,6 +298,7 @@ class PhotosPlugin(private val activity: Activity) : Plugin(activity) {
     private companion object {
         const val QUERY_CHUNK = 500
         const val THUMBNAIL_EDGE = 512
+        const val GONE = "gone"
         const val DECLINED = "declined"
     }
 }

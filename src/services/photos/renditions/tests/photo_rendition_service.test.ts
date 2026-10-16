@@ -253,7 +253,7 @@ describe('PhotoRenditionService.deviceTile', () => {
     libraries: { getConfiguration: jest.fn(() => ({ ...library, root_path: root })) },
   };
   const deviceTiled = (imageId: number | null) => ({
-    deviceTile: jest.fn(() => imageId),
+    deviceTileImageId: jest.fn(() => imageId),
     dropDeviceTile: jest.fn(),
   });
 
@@ -343,6 +343,68 @@ describe('PhotoRenditionService.deviceTile', () => {
     expect(photoProcessing.dropDeviceTile).not.toHaveBeenCalled();
     expect(processing.deviceTileArrived).not.toHaveBeenCalled();
     expect(media.queueThumbnail).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetches again next time when asking the device throws', async () => {
+    const media = thumbnailing(JPEG);
+    media.queueThumbnail = jest.fn(async () => {
+      throw new Error('socket closed');
+    });
+    const { service } = build({ ...located, media, photoProcessing: deviceTiled(7) });
+
+    await service.deviceTile('p1');
+    await landed();
+    await service.deviceTile('p1');
+
+    expect(media.queueThumbnail).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks the device nothing where the original is not here', async () => {
+    const media = thumbnailing(JPEG);
+    const { service } = build({
+      ...located,
+      photoPaths: {
+        getBasicById: jest.fn(() => ({
+          id: 'p1',
+          library_id: 'lib',
+          file_path: 'absent.jpg',
+          recipe: fileRecipe('absent.jpg'),
+        })),
+      } as unknown as Partial<PhotoPathsRepository>,
+      media,
+      photoProcessing: deviceTiled(7),
+    });
+
+    expect(await service.deviceTile('p1')).toBeNull();
+    expect(media.queueThumbnail).not.toHaveBeenCalled();
+  });
+
+  it('waits for the device when asked to', async () => {
+    const { service } = build({
+      ...located,
+      media: thumbnailing(JPEG),
+      photoProcessing: deviceTiled(7),
+      processing: { deviceTileArrived: jest.fn() },
+    });
+
+    expect(await service.deviceTile('p1', { wait: true })).toEqual(JPEG);
+  });
+
+  it('fetches afresh once the file under the photo has a new image', async () => {
+    const media = thumbnailing(JPEG);
+    const photoProcessing = deviceTiled(7);
+    const { service } = build({
+      ...located,
+      media,
+      photoProcessing,
+      processing: { deviceTileArrived: jest.fn() },
+    });
+    await service.deviceTile('p1');
+    await landed();
+
+    photoProcessing.deviceTileImageId.mockImplementation(() => 8);
+    expect(await service.deviceTile('p1')).toBeNull();
+    expect(media.queueThumbnail).toHaveBeenLastCalledWith(8, path.join(root, 'p1.jpg'));
   });
 
   it('builds a file for a peer, which cannot ask this device for its thumbnail', async () => {

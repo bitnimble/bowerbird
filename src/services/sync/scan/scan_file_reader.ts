@@ -150,7 +150,7 @@ export class ScanFileReader {
       width,
       async (file) => {
         if (unchanged(file)) return null;
-        const entry = current(file, (await index())?.get(file.absPath));
+        const entry = matchingIndexEntry(file, (await index())?.get(file.absPath));
         if (entry == null) return await this.extract(file.absPath);
         const metadata = fromIndex(file, entry) ?? (await this.extract(file.absPath));
         return entry.imageId == null ? metadata : { ...metadata, mediaImageId: entry.imageId };
@@ -197,17 +197,13 @@ const EXIF_ORIENTATION_OF_DEGREES = new Map([
   [270, 8],
 ]);
 
-/**
- * The media index's entry for a finished picture, where it is not behind the file. Never for a
- * RAW, whose recorded size is the camera's crop rather than the sensor's the index reports, and
- * whose thumbnail is not the picture the grid shows.
- */
-function current(file: Scanned, entry: MediaEntry | undefined): MediaEntry | null {
-  if (entry == null || !isRendered(file.relPath) || entry.size !== file.stats.size) return null;
+function matchingIndexEntry(file: Scanned, entry: MediaEntry | undefined): MediaEntry | null {
+  if (entry == null || entry.size !== file.stats.size) return null;
+  // Not a RAW: the index reports the sensor's size, and its thumbnail isn't the picture the grid shows.
+  if (!isRendered(file.relPath)) return null;
   return entry;
 }
 
-/** What the media index already knows about a finished picture, without opening it. */
 function fromIndex(file: Scanned, entry: MediaEntry): FileMetadata | null {
   const orientation = EXIF_ORIENTATION_OF_DEGREES.get(entry.orientationDegrees ?? 0);
   if (entry.width == null || entry.height == null || orientation == null) return null;

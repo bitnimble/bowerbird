@@ -83,7 +83,7 @@ pub struct Target {
     /// How an sRGB output reaches its gamut. A PQ output reads nothing of it.
     #[serde(default)]
     pub intent: crate::gpu::Intent,
-    /// Measure the stacking descriptor and write no file: the device serves its own thumbnail.
+    /// Writes no file; still reports the descriptor.
     #[serde(default)]
     pub describe_only: bool,
 }

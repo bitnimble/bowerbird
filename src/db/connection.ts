@@ -149,8 +149,6 @@ export function createDatabase(dbPath: string): Database {
   // have one of them fail outright instead of waiting the moment out.
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA journal_mode = WAL;');
-  // Not FULL: a disk sync per commit held the event loop for a whole import on a phone. In WAL this
-  // still never corrupts; a power cut can lose the last commits.
   db.exec('PRAGMA synchronous = NORMAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   // A checkpoint rewinds the WAL to be overwritten rather than shrinking it, so

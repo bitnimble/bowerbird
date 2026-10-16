@@ -7,6 +7,7 @@
 //! rather than guessed at by the server, because a packaged app has no source tree to
 //! sit beside.
 
+use std::io::{Read, Seek, SeekFrom};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -446,18 +447,37 @@ fn reachable_data_dir(_app: &tauri::AppHandle<crate::Runtime>) -> Option<String>
     None
 }
 
-/// The newest lines of the server's log files, the run before this one's first, for a server too
-/// stuck to answer for its own.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn server_log_file(app: tauri::AppHandle<crate::Runtime>) -> Result<Vec<String>, String> {
     const LINES_KEPT: usize = 2000;
     let data = data_dir(&app)?;
-    let mut lines: Vec<String> = ["server.log.1", "server.log"]
-        .iter()
-        .filter_map(|name| std::fs::read_to_string(data.join(name)).ok())
-        .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
-        .collect();
+    let mut lines = tail_lines(&data.join("server.log"));
+    if lines.len() < LINES_KEPT {
+        let mut older = tail_lines(&data.join("server.log.1"));
+        older.append(&mut lines);
+        lines = older;
+    }
     Ok(lines.split_off(lines.len().saturating_sub(LINES_KEPT)))
+}
+
+fn tail_lines(path: &Path) -> Vec<String> {
+    const TAIL_BYTES: u64 = 1 << 20;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let start = file
+        .metadata()
+        .map_or(0, |meta| meta.len().saturating_sub(TAIL_BYTES));
+    let mut bytes = Vec::new();
+    if file.seek(SeekFrom::Start(start)).is_err() || file.read_to_end(&mut bytes).is_err() {
+        return Vec::new();
+    }
+    let cut_mid_line = start > 0;
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .skip(usize::from(cut_mid_line))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Opens that folder in the reader's own file manager.
