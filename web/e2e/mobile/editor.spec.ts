@@ -157,7 +157,12 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await tabs.getByRole('tab', { name: 'Colour', exact: true }).click();
   await expect(page.getByRole('tabpanel', { name: 'Colour', exact: true })).toBeVisible();
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
-  const slider = panel.getByRole('slider', { name: 'Exposure', exact: true });
+  // Through the hidden panel too: isolating the slider hides its panel for the whole drag.
+  const slider = panelEvenHidden.getByRole('slider', {
+    name: 'Exposure',
+    exact: true,
+    includeHidden: true,
+  });
   await page.keyboard.press('Tab');
   await expect(panel.getByRole('textbox', { name: 'Exposure value', exact: true })).toBeFocused();
   await page.keyboard.press('Tab');
