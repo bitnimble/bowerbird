@@ -124,6 +124,27 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(posted).toHaveLength(4);
   });
 
+  it('settles the full an HDR library owes when it serves the camera picture', async () => {
+    const markRenditionsBuilt = jest.fn();
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        {
+          ...pending('a'),
+          needs_tile: 0,
+          rendition_source: 'embedded',
+          library_rendition_source: 'embedded',
+          rendition_hdr: 1,
+        },
+      ]),
+      markRenditionsBuilt,
+    } as unknown as PhotoProcessingRepository;
+
+    await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
+
+    expect(posted).toHaveLength(0);
+    expect(markRenditionsBuilt.mock.calls.map((call) => call[4])).toEqual(['full-hdr']);
+  });
+
   it('carries a saved exposure to every job in the stops the document holds', async () => {
     // Stops all the way to the shader, which raises them once for both hosts. Pinned because
     // converting here would not fail: `4` is a legal exposure, so a photo edited to +2 EV

@@ -62,6 +62,8 @@ interface StagedPhoto {
    * `rendition_source` nor sweep the renditions it was never going to write.
    */
   owesRenditions: boolean;
+  /** The library's range, which names the `full` it owes whether or not this run builds one. */
+  hdr: boolean;
   /** The develop settings these jobs render, as the stamp to record them under. */
   builtFrom: string | null;
 }
@@ -609,7 +611,8 @@ export class ProcessingService extends RenderService {
       photo == null || photo.renditions != null ? 'render' : 'embedded';
     // Which range this job's `full` was written in, and so which variant is vouched
     // for. A library serving the camera's JPEG builds no `full` at all and records the
-    // SDR key against a null stamp, which reads exactly as the absent key it is.
+    // library's own key against a null stamp: that is the row the queue asks about, so any
+    // other leaves the photo owed and settled again by every batch.
     const full = photo?.renditions?.targets.find((target) => target.rendition === 'full');
     // The caller's version, which is the one it announces: a stamp minted here lands
     // milliseconds later than the announced one, and a client that built its URL off
@@ -619,7 +622,7 @@ export class ProcessingService extends RenderService {
       version,
       source,
       photo?.builtFrom ?? null,
-      renditionVariant('full', full?.hdr ?? false),
+      renditionVariant('full', full?.hdr ?? photo?.hdr ?? false),
     );
     if (photo != null) this.dropStaleRenditions(photo);
   }
@@ -763,6 +766,7 @@ export class ProcessingService extends RenderService {
       tile,
       renditions,
       owesRenditions,
+      hdr: pending.rendition_hdr === 1,
       builtFrom: pending.edits_stamp,
     };
   }
