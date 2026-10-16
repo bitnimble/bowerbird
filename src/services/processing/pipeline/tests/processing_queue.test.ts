@@ -35,6 +35,7 @@ function makeProcessingService(
 ): ProcessingService {
   return new ProcessingService(
     Object.assign(photoProcessing, {
+      queueEditedSince: photoProcessing.queueEditedSince ?? ((): number => 0),
       forgetBuilt: jest.fn(),
       inOneCommit: <T>(record: () => T): T => record(),
     }),
@@ -91,6 +92,7 @@ describe('ProcessingService.processUnprocessed', () => {
   it('renders a batch inside one hold on render memory, released when it settles', async () => {
     const repo = {
       listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
+      queueEditedSince: (): number => 0,
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
       forgetBuilt: jest.fn(),
@@ -646,6 +648,41 @@ describe('ProcessingService.processUnprocessed', () => {
     expect(markRenditionsBuilt.mock.calls.map((c) => [c[0], c[2]])).toEqual([['a', 'embedded']]);
   });
 
+  it('settles photos with nothing to build 500 to a commit', async () => {
+    const markRenditionsBuilt = jest.fn();
+    const commits: number[] = [];
+    const repo = {
+      listPendingProcessing: jest.fn(() =>
+        Array.from({ length: 1001 }, (_, i) => ({
+          ...pending(`p${i}`),
+          needs_tile: 0,
+          rendition_source: 'embedded' as RenditionSource,
+          library_rendition_source: 'embedded' as RenditionSource,
+        })),
+      ),
+      markRenditionsBuilt,
+      queueEditedSince: (): number => 0,
+      forgetBuilt: jest.fn(),
+      inOneCommit: <T>(record: () => T): T => {
+        const before = markRenditionsBuilt.mock.calls.length;
+        const result = record();
+        commits.push(markRenditionsBuilt.mock.calls.length - before);
+        return result;
+      },
+    } as unknown as PhotoProcessingRepository;
+    const service = new ProcessingService(
+      repo,
+      {} as unknown as PhotoPathsRepository,
+      {} as unknown as PhotoListingRepository,
+      settings,
+    );
+
+    await service.processUnprocessed({ libraryId: LIB });
+
+    expect(posted).toEqual([]);
+    expect(commits).toEqual([500, 500, 1]);
+  });
+
   it('resumes at the stage a photo still owes rather than rebuilding the tile', async () => {
     // What the split flags buy over one: an import interrupted after the tiles came
     // back needing both passes redone, and a tile is 18ms per photo of work that
@@ -870,6 +907,52 @@ describe('ProcessingService.processUnprocessed', () => {
       null,
       'full',
     );
+  });
+
+  it('builds again a photo edited while it rendered, whose landing cleared what the edit owed', async () => {
+    const markRenditionsBuilt = jest.fn();
+    const listPendingProcessing = jest.fn((_library?: string, _photoIds?: string[]) => [
+      pending('a'),
+    ]);
+    let editedMidRender = true;
+    const queueEditedSince = jest.fn(() => {
+      const owed = editedMidRender ? 1 : 0;
+      editedMidRender = false;
+      return owed;
+    });
+    const repo = {
+      listPendingProcessing,
+      queueEditedSince,
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt,
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+
+    await makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' });
+
+    expect(queueEditedSince).toHaveBeenCalledWith(['a']);
+    expect(listPendingProcessing.mock.calls).toEqual([
+      ['lib', undefined],
+      ['lib', ['a']],
+    ]);
+    expect(markRenditionsBuilt).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not build again a photo whose job failed, however its edits read', async () => {
+    writeFileSync(path.join(root, `${CRASH}.arw`), '');
+    const listPendingProcessing = jest.fn(() => [pending('ok'), pending(CRASH)]);
+    const queueEditedSince = jest.fn((_photoIds: readonly string[]) => 0);
+    const repo = {
+      listPendingProcessing,
+      queueEditedSince,
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+
+    await makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' });
+
+    expect(queueEditedSince.mock.calls).toEqual([[['ok']]]);
   });
 
   it('holds every library to one shared worker limit, taking turns between them', async () => {

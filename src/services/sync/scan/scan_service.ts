@@ -23,10 +23,6 @@ import { ScanRunner, type ScanTrigger } from './scan_run';
 import type { ScanScope } from './scan_evidence';
 import type { SidecarImporter } from './scan_batch';
 
-// Unwinds a stopped scan whose partial result cannot be applied, which is any
-// run that had rows to reconcile against (§9.10). Never leaves this module:
-// scanLibrary turns it back into an idle status, because that run applied nothing
-// past the new photos its batches wrote down.
 const log = new Logger('scan');
 
 export class ScanService implements LibraryLifecycleListener {
@@ -135,7 +131,7 @@ export class ScanService implements LibraryLifecycleListener {
   }
 
   async scanAll(trigger: ScanTrigger): Promise<void> {
-    // Reclaim is by expiry now (§9.7), so a container killed and restarted within
+    // Reclaim is by expiry (§9.7), so a container killed and restarted within
     // seconds finds its own dead run still holding the lease. Skipping silently
     // would drop that library until tomorrow, so the ones that were locked are
     // re-attempted at the end of the loop.
@@ -181,10 +177,10 @@ export class ScanService implements LibraryLifecycleListener {
     }
   }
 
-  // Stops the library's current run, wherever it has got to. A scan abandons its
-  // work (nothing is applied), and processing stops handing out jobs, leaving the
-  // photos it never reached pending for the next scan to pick up. Both settle
-  // back to idle on their own; there is nothing to wait for here.
+  // Stops the library's current run, wherever it has got to. A scan keeps the
+  // batches it committed and abandons the rest, and processing stops handing out
+  // jobs, leaving the photos it never reached pending for the next scan to pick up.
+  // Both settle back to idle on their own; there is nothing to wait for here.
   cancelScan(libraryId: string): void {
     if (!this.libraries.getById(libraryId))
       throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);

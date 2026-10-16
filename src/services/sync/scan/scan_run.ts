@@ -126,10 +126,9 @@ export class ScanRunner {
       // released in finally, blocks a newer one), but guard for consistency.
       if (this.leases.isCurrent(libraryId, token))
         this.status.set(libraryId, idleScanStatus(libraryId));
-      // Stopped mid-scan on a populated library, where the writes are one closing
-      // transaction: nothing was applied and the library is simply idle again.
-      // Not an error - the caller asked for it. scannedStatus stays null, so no
-      // processing runs.
+      // Stopped mid-scan on a populated library: past its committed batches nothing
+      // was applied and the library is simply idle again. Not an error - the caller
+      // asked for it. scannedStatus stays null, so no processing runs.
       if (err instanceof ScanCancelled) {
         log.info('scan stopped', { library: libraryId, ms: Date.now() - startedAt });
         return idleScanStatus(libraryId);

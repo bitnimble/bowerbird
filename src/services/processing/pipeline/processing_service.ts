@@ -44,9 +44,8 @@ import { LibraryActivity } from '../../activity/library_activity';
 
 const log = new Logger('processing');
 
-// Orchestrates rendition generation across a pool of Bun workers (DESIGN §10.2).
-// Workers decode + encode; the main thread owns all DB writes so the catalogue is
-// only ever touched from one thread.
+const SETTLE_PER_COMMIT = 500;
+
 /** One photo's import, as the two passes a batch runs it in. */
 interface StagedPhoto {
   photoId: string;
@@ -75,6 +74,9 @@ export interface ProcessingScope {
   photoIds?: readonly string[];
 }
 
+// Orchestrates rendition generation across a pool of Bun workers (DESIGN §10.2).
+// Workers decode + encode; the main thread owns all DB writes so the catalogue is
+// only ever touched from one thread.
 export class ProcessingService extends RenderService {
   // Per-key in-flight batch. A concurrent call returns the SAME promise (so an
   // awaiter genuinely waits for completion) and widens `queued` so work asked for
@@ -264,7 +266,11 @@ export class ProcessingService extends RenderService {
       this.active.delete(key);
       // Not while stopped: `drain` returns without consuming `queued` in that
       // case, so relaunching on it would spin.
-      if (stopped?.() !== true && this.queued.has(key)) void this.start(libraryId, key, stopped);
+      if (stopped?.() !== true && this.queued.has(key)) {
+        void this.start(libraryId, key, stopped).catch((err: unknown) =>
+          log.warn('could not run the next processing batch', { library: libraryId, err }),
+        );
+      }
     });
     // Before any `.finally` callback can run, since those are microtasks and this
     // is not - so the key is never deleted before it is set.
@@ -331,8 +337,14 @@ export class ProcessingService extends RenderService {
         renditions: staged.filter((p) => p.renditions != null).length,
         stagedMs: startedAt - listingFrom,
       });
-      await this.runStaged(staged, active, stopped);
+      const failed = await this.runStaged(staged, active, stopped);
       active.clear();
+      // An edit saved while its photo rendered set the flag its stale job's landing then cleared.
+      // Never a failed one: it records no stamp, so it would read as owed again every pass.
+      const landedIds = staged
+        .map((photo) => photo.photoId)
+        .filter((photoId) => !failed.has(photoId));
+      if (this.photoProcessing.queueEditedSince(landedIds) > 0) this.widen(key, landedIds);
       log.info('batch done', {
         library: libraryId,
         photos: staged.length,
@@ -346,9 +358,8 @@ export class ProcessingService extends RenderService {
    * The composites a batch found owed, built one at a time.
    *
    * **This is what makes a panorama an ordinary photograph.** It is queued by the same trigger,
-   * found by the same pending query and rebuilt by the same rules as anything else - a settings
-   * change, an HDR toggle, a missing file, a whole-library rebuild - where before it was built
-   * once at the merge and nothing could ever rebuild it.
+   * found by the same pending query and rebuilt by the same rules as anything else: a settings
+   * change, an HDR toggle, a missing file, a whole-library rebuild.
    *
    * A frame that has gone leaves the row owing its copies rather than failing it: the recipe is
    * still true, the picture simply cannot be made here and now, and the alternative is a
@@ -448,31 +459,30 @@ export class ProcessingService extends RenderService {
   // render, so a shoot's grid is browsable in seconds instead of after the
   // renders finish. Each pass clears its own flag as it lands, so a run interrupted
   // between them resumes at the second rather than repeating the first.
+  /** Resolves to the photos either pass failed. */
   private async runStaged(
     staged: StagedPhoto[],
     active: Map<string, string>,
     stopped?: () => boolean,
-  ): Promise<void> {
+  ): Promise<ReadonlySet<string>> {
     const byId = new Map(staged.map((photo) => [photo.photoId, photo]));
     // A photo whose tile failed is not carried into the second pass: the failure is
     // the file, not the stage, so a render would fail the same way.
     const failed = new Set<string>();
 
-    // **Owes the viewer nothing and has no tile to build either, so no pass will ever post a
-    // job for it and nothing would clear the flag.** A library serving the camera's JPEG has no
-    // renditions to build, and a tile already built leaves `needs_renditions` set on a photo with
-    // all its files on disk, re-queried by every batch for the life of the library.
-    this.landing(() => {
-      let settled = 0;
-      for (const photo of staged) {
-        if (photo.tile == null && photo.renditions == null && photo.owesRenditions) {
-          this.stageDone(photo, photo.photoId, 'renditions');
-          settled++;
+    // No pass posts a job for these, so nothing else would clear their flag.
+    const idle = staged.filter((photo) => photo.tile == null && photo.renditions == null);
+    for (let at = 0; at < idle.length; at += SETTLE_PER_COMMIT) {
+      if (at > 0) await Bun.sleep(0);
+      this.landing(() => {
+        for (const photo of idle.slice(at, at + SETTLE_PER_COMMIT)) {
+          if (photo.owesRenditions) this.stageDone(photo, photo.photoId, 'renditions');
+          active.delete(photo.photoId);
         }
-        if (photo.tile == null && photo.renditions == null) active.delete(photo.photoId);
-      }
-      if (settled > 0) log.debug('settled photos with nothing to build', { photos: settled });
-    });
+      });
+    }
+    const settled = idle.filter((photo) => photo.owesRenditions).length;
+    if (settled > 0) log.debug('settled photos with nothing to build', { photos: settled });
 
     await this.pool.run(
       staged.flatMap((photo) => (photo.tile == null ? [] : [photo.tile])),
@@ -510,7 +520,7 @@ export class ProcessingService extends RenderService {
     const pending = staged.filter(
       (photo) => photo.renditions != null && !failed.has(photo.photoId),
     );
-    if (pending.length === 0 || stopped?.() === true) return;
+    if (pending.length === 0 || stopped?.() === true) return failed;
 
     await this.pool.run(
       pending.map((photo) => photo.renditions as RenditionJob),
@@ -519,6 +529,7 @@ export class ProcessingService extends RenderService {
           const photo = byId.get(result.photoId) ?? null;
           active.delete(result.photoId);
           if (!result.success) {
+            failed.add(result.photoId);
             this.recordFailure(result, job, photo);
             return;
           }
@@ -539,6 +550,7 @@ export class ProcessingService extends RenderService {
         }),
       stopped,
     );
+    return failed;
   }
 
   private landing(record: () => void): void {
