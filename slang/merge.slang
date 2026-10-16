@@ -83,9 +83,10 @@ struct Params {
 // `detail_columns`' answer: the reference's when it is measuring the reference, the frame's in
 // `robust`.
 [vk::binding(23, 0)] RWStructuredBuffer<float> detail;
-// `residuals`' answers: two floats a frame photosite, and two a channel of a frame period.
-[vk::binding(24, 0)] RWStructuredBuffer<float> photosite_residuals;
-[vk::binding(25, 0)] RWStructuredBuffer<float> period_residuals;
+// `residuals`' answers, a residual and its weight as two halves of a word: one word a frame
+// photosite, and one a channel of a frame period.
+[vk::binding(24, 0)] RWStructuredBuffer<uint> photosite_residuals;
+[vk::binding(25, 0)] RWStructuredBuffer<uint> period_residuals;
 [vk::binding(15, 0)] RWStructuredBuffer<float> low_band;
 [vk::binding(16, 0)] RWStructuredBuffer<float> blurred;
 [vk::binding(17, 0)] RWStructuredBuffer<float> banded;
@@ -588,6 +589,27 @@ float2 in_reference(float2 at)
     return landed - float2(float(params.reference_left), float(params.reference_top));
 }
 
+// Scaled up before it is halved: a shadow's residuals sit among a half's denormals, which Vulkan
+// lets an adapter flush to zero, and one flushed hands its place the reference's own noise.
+static const float RESIDUAL_SCALE = 256.0;
+static const float HALF_SMALLEST_NORMAL = 6.103515625e-5;
+static const float HALF_LARGEST = 65504.0;
+
+uint packed_residual(float residual, float weight)
+{
+    // Held inside a half's normals, the weight too: past the largest is inf and NaNs the sums, and
+    // a denormal flushes on some adapters and not others. -1 and 0 are exact and pass.
+    let held = weight > 0.0 ? clamp(weight, HALF_SMALLEST_NORMAL, HALF_LARGEST) : weight;
+    return packHalf2x16(float2(clamp(residual * RESIDUAL_SCALE, -HALF_LARGEST, HALF_LARGEST), held));
+}
+
+// A residual and its weight, off `packed_residual`'s word.
+float2 unpacked_residual(uint word)
+{
+    let sample = unpackHalf2x16ToFloat(word);
+    return float2(sample.x / RESIDUAL_SCALE, sample.y);
+}
+
 // Each of one frame's photosites, and each channel of each of its periods, as its residual against
 // the reference's demosaic where it lands and the weight it carries there, once for every output
 // pixel it reaches: `accumulate` lays only the kernels over them. A weight of -1 marks a sample at
@@ -607,31 +629,29 @@ void residuals(uint3 gid : SV_DispatchThreadID)
             let x = int(gid.x) * 2 + i;
             let y = int(gid.y) * 2 + j;
             let value = mosaic[y * int(params.frame_width) + x];
-            let at = (y * int(params.frame_width) + x) * 2;
             let landed = float2(float(x), float(y)) + shift;
-            let saturates = saturated(x, y, value);
-            photosite_residuals[at] = saturates ? 0.0
-                : params.gain * value - prior_at(landed.x, landed.y, colour_at(x, y));
-            photosite_residuals[at + 1] = saturates ? -1.0 : exposure_weight(params.gain * value);
+            photosite_residuals[y * int(params.frame_width) + x] = saturated(x, y, value)
+                ? packed_residual(0.0, -1.0)
+                : packed_residual(
+                    params.gain * value - prior_at(landed.x, landed.y, colour_at(x, y)),
+                    exposure_weight(params.gain * value));
         }
     }
-    let base = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)) * 6;
+    let base = wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)) * 3;
     [ForceUnroll]
     for (uint channel = 0; channel < 3; channel++) {
-        let value = frame_half[wide_at<Sensor>(gid.x, gid.y, measured<Sensor>(half_width)) * 3 + channel];
+        let value = frame_half[base + channel];
         let landed = corner + period_offset(channel) + shift;
-        let at = base + channel * 2;
         if (!usable(value)) {
-            period_residuals[at] = 0.0;
-            period_residuals[at + 1] = -1.0;
+            period_residuals[base + channel] = packed_residual(0.0, -1.0);
             continue;
         }
         // The wide kernel reaches past the periods an output pixel's trust is read over, so each
         // period answers for itself and its wider neighbourhood, or a subject's edge, which its
         // own texture lets pass, spreads a halo.
         let own = eroded[eroded_at(landed.x, landed.y) + 2];
-        period_residuals[at] = value - prior_at(landed.x, landed.y, channel);
-        period_residuals[at + 1] = own * exposure_weight(value);
+        period_residuals[base + channel] =
+            packed_residual(value - prior_at(landed.x, landed.y, channel), own * exposure_weight(value));
     }
 }
 
@@ -672,15 +692,15 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
             let x = x0 + i;
             let y = y0 + j;
             if (x < 0 || y < 0 || x >= int(params.frame_width) || y >= int(params.frame_height)) { continue; }
-            let at = (y * int(params.frame_width) + x) * 2;
-            let exposure = photosite_residuals[at + 1];
+            let sample = unpacked_residual(photosite_residuals[y * int(params.frame_width) + x]);
+            let exposure = sample.y;
             if (exposure < 0.0) { continue; }
             let mask = one_hot(colour_at(x, y));
             let dx = float(x) - qx;
             let dy = float(y) - qy;
             let kernel = exp(-0.5 * (inverse.x * dx * dx + 2.0 * inverse.y * dx * dy + inverse.z * dy * dy));
             let w = trust * sharpness * kernel * exposure;
-            sum += mask * (w * photosite_residuals[at]);
+            sum += mask * (w * sample.x);
             weight += mask * w;
         }
     }
@@ -707,11 +727,12 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
             let x = px0 + i;
             let y = py0 + j;
             if (x < 0 || y < 0 || x >= half_width || y >= half_height) { continue; }
-            let base = wide_at<Sensor>(uint(x), uint(y), measured<Sensor>(uint(half_width))) * 6;
+            let base = wide_at<Sensor>(uint(x), uint(y), measured<Sensor>(uint(half_width))) * 3;
             [ForceUnroll]
             for (uint channel = 0; channel < 3; channel++) {
                 let spread = across[channel][i] * down[channel][j];
-                let carried = period_residuals[base + channel * 2 + 1];
+                let sample = unpacked_residual(period_residuals[base + channel]);
+                let carried = sample.y;
                 // A period, not the photosite kernel: a blown highlight's kernel is narrower than a
                 // channel's spacing, so whether a clipped site landed inside it would follow each
                 // frame's sub-photosite phase and draw moire across the highlight.
@@ -723,7 +744,7 @@ void accumulate(uint3 gid : SV_DispatchThreadID)
                 }
                 let w = spread * carried;
                 let mask = one_hot(channel);
-                wide_sum += mask * (w * period_residuals[base + channel * 2]);
+                wide_sum += mask * (w * sample.x);
                 wide_weight += mask * w;
             }
         }

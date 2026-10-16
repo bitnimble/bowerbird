@@ -104,7 +104,7 @@ pub const WORKING_BYTES_PER_PIXEL: f64 = 4.0
         + 1.5
         + 0.5
         + 0.75
-        + 3.5
+        + 1.75
         + 27.0
         + 12.0
         + 3.0
@@ -595,15 +595,12 @@ impl Merge {
             self.height / 2,
         );
         let (frame_width, frame_height) = (frame.mosaic.width, frame.mosaic.height);
-        let photosite_residuals = storage(
-            gpu,
-            "merge photosite residuals",
-            frame_width * frame_height * 2,
-        );
+        let photosite_residuals =
+            storage(gpu, "merge photosite residuals", frame_width * frame_height);
         let period_residuals = storage(
             gpu,
             "merge period residuals",
-            (frame_width / 2) * (frame_height / 2) * 6,
+            (frame_width / 2) * (frame_height / 2) * 3,
         );
         record(
             gpu,

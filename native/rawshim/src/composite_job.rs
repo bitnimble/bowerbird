@@ -568,7 +568,8 @@ thread_local! {
 /// nor a colour fit cares where a sample sat - only which samples there were. The overlaps counting
 /// twice moves nothing that a tenth of the picture sits above.
 ///
-/// With the illuminant the `reference` source was balanced for, which the canvas is graded against.
+/// With the illuminant the `reference` source was balanced for, which the canvas is graded against,
+/// and each source's noise fit over its whole mosaic.
 fn stacked_sources(
     gpu: &'static crate::gpu::Gpu,
     base: &'static crate::base::Base,
@@ -578,6 +579,7 @@ fn stacked_sources(
 ) -> Option<(
     crate::resident::Resident,
     Option<crate::white_balance::Illuminant>,
+    Vec<Option<crate::galosh::NoiseFit>>,
 )> {
     /// The long edge each source is reduced to before it joins the stack.
     const REDUCED_TO: usize = 1024;
@@ -595,18 +597,21 @@ fn stacked_sources(
     };
     let mut parts: Vec<crate::resident::Resident> = Vec::with_capacity(files.len());
     let mut as_shot = None;
+    let mut fits = Vec::with_capacity(files.len());
     for (at, file) in files.iter().enumerate() {
+        let stored = file.analysis.and_then(|a| a.from_raw.noise);
         let frame = crate::decode::frame_from_path(
             file.path,
             read,
             DECODED_AT,
             false,
-            crate::galosh::Fit::Measure,
+            crate::galosh::wanted(stored, read),
             crate::dust::Wanted::Off,
         )?;
         if at == reference {
             as_shot = frame.as_shot;
         }
+        fits.push(frame.noise);
         let resident = frame.on_device(gpu)?;
         let (wide, tall) = resident.size();
         let long = wide.max(tall);
@@ -652,7 +657,7 @@ fn stacked_sources(
     for part in parts {
         part.reclaim();
     }
-    Some((stacked, as_shot))
+    Some((stacked, as_shot, fits))
 }
 
 /// The levels of every source's samples taken together, measured once.
@@ -929,19 +934,55 @@ pub(crate) fn base(
             .is_none();
     // A merge is drawn in its reference's light, every frame gained onto it, so the reference's
     // samples are the canvas's.
-    let (sampled, sampled_reference) = match (wanted.stack(), files.get(spec.reference)) {
-        (Some(_), Some(reference)) => (std::slice::from_ref(reference), 0),
-        _ => (files.as_slice(), spec.reference),
+    let (sampled, sampled_reference, sampled_at) = match (wanted.stack(), files.get(spec.reference))
+    {
+        (Some(_), Some(reference)) => (std::slice::from_ref(reference), 0, vec![spec.reference]),
+        _ => (files.as_slice(), spec.reference, (0..files.len()).collect()),
     };
-    let (stacked, stacked_as_shot) = match from {
+    let (stacked, stacked_as_shot, sampled_fits) = match from {
         crate::composite_tile::From::Original if filed.is_none() || needs_colour => {
-            crate::base::device(gpu)
+            match crate::base::device(gpu)
                 .and_then(|base| stacked_sources(gpu, base, job, sampled, sampled_reference))
-                .unzip()
+            {
+                Some((stacked, as_shot, fits)) => (Some(stacked), as_shot, fits),
+                None => (None, None, Vec::new()),
+            }
         }
-        _ => (None, None),
+        _ => (None, None, Vec::new()),
     };
-    let stacked_as_shot = stacked_as_shot.flatten();
+    // **One fit a source for the whole canvas.** A tile left to measure its own denoises against
+    // its window's statistics, and the picture changes with how the canvas is tiled.
+    let mut fits: Vec<Option<crate::galosh::NoiseFit>> = files
+        .iter()
+        .map(|file| file.analysis.and_then(|a| a.from_raw.noise))
+        .collect();
+    for (&at, sampled) in sampled_at.iter().zip(sampled_fits) {
+        fits[at] = fits[at].or(sampled);
+    }
+    if known.from_render.set == Some(stamp) {
+        fits[spec.reference] = fits[spec.reference].or(known.from_raw.noise);
+    }
+    let refitted: Vec<Option<crate::photo_analysis::PhotoAnalysis>> = files
+        .iter()
+        .zip(&fits)
+        .map(|(file, fit)| {
+            let fit = (*fit)?;
+            if file.analysis.and_then(|a| a.from_raw.noise).is_some() {
+                return None;
+            }
+            let mut analysis = file.analysis.cloned().unwrap_or_default();
+            analysis.from_raw.noise = Some(fit);
+            Some(analysis)
+        })
+        .collect();
+    let files: Vec<crate::composite_tile::SourceFile<'_>> = files
+        .iter()
+        .zip(&refitted)
+        .map(|(file, refitted)| crate::composite_tile::SourceFile {
+            path: file.path,
+            analysis: refitted.as_ref().or(file.analysis),
+        })
+        .collect();
     let measured = match filed {
         Some(levels) => {
             crate::progress::advance();
@@ -1116,11 +1157,7 @@ pub(crate) fn base(
     let balance = wb_gains.map(|wb_gains| crate::photo_analysis::Balance { wb_gains, as_shot });
     // A reference never rendered alone has no fit on file, and without one the sharpen reads the
     // canvas as noiseless and deconvolves its grain at full strength.
-    let noise = reference
-        .from_raw
-        .noise
-        .or(decoded_noise)
-        .or(known.from_raw.noise);
+    let noise = fits[spec.reference].or(decoded_noise);
     // **The composite's own, which is what makes it a photograph the rest of the pipeline can ask
     // about.** Everything measured over the whole set goes here - the union levels the canvas was
     // coded against and the union colour it is graded through - and the per-camera half comes from
