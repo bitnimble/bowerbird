@@ -417,6 +417,13 @@ pub unsafe extern "C" fn bb_take_log(out: *mut u8, cap: usize) -> usize {
     log::take(out)
 }
 
+/// Whether every stage lap goes to the held log as an info line, for a server logging at debug.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn bb_log_laps(on: i32) {
+    clock::log_laps(on != 0);
+}
+
 #[cfg(target_arch = "wasm32")]
 mod console {
     #[wasm_bindgen::prelude::wasm_bindgen]

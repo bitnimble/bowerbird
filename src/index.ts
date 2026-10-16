@@ -801,6 +801,7 @@ const diskSpaceLimit = new DiskSpaceLimit(
 
 function applySettings(settings: Settings): void {
   setLogLevel(settings.log_level);
+  shim().bb_log_laps(settings.log_level === 'debug' ? 1 : 0);
   watcher.configure(
     settings.watch_enabled,
     settings.watch_debounce_ms,

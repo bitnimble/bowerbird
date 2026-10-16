@@ -1382,9 +1382,11 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                     height: preview.height,
                     data: &preview.data,
                 };
+                lap("embedded preview");
                 save_avif(image, target, output_rotation, exif)?;
+                lap("encode, write");
                 describe_if_grid(image, target, &mut outcome);
-                lap("embedded preview, encode, write");
+                lap("describe");
                 continue;
             }
         }

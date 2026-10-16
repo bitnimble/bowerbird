@@ -253,11 +253,15 @@ impl Held {
 /// is rendered.
 #[cfg(feature = "renditions")]
 pub fn preview_rgb(path: &str, long_edge: usize) -> Option<crate::rgb::Rgb> {
+    let mut lap = crate::clock::laps("  rendered ");
     let bytes = std::fs::read(path).ok()?;
+    lap("read");
     if !bytes.starts_with(&[0xFF, 0xD8]) {
         return None;
     }
-    crate::jpeg::decode_tile(&bytes, long_edge).ok()
+    let decoded = crate::jpeg::decode_tile(&bytes, long_edge).ok();
+    lap("decode");
+    decoded
 }
 
 /// What a container says about itself before anything is decoded.

@@ -133,6 +133,7 @@ const SYMBOLS = {
   // What the library had to say since it was last asked, newline-separated, each led by `I` or `W`
   // for its level. From the first call on it holds those lines for this rather than printing them.
   bb_take_log: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
+  bb_log_laps: { args: [FFIType.i32], returns: FFIType.void },
 } as const;
 
 type Shim = ReturnType<typeof dlopen<typeof SYMBOLS>>['symbols'];

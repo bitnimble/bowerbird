@@ -34,12 +34,16 @@ mod stopped {
 /// The switch is read once, when the run starts, so a lap costs a clock read and nothing else.
 pub fn laps(prefix: &'static str) -> impl FnMut(&str) {
     let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
+    let logged = LOGGED.load(std::sync::atomic::Ordering::Relaxed);
     let recording = RECORDING.load(std::sync::atomic::Ordering::Relaxed);
     let mut mark = Mark::now();
     move |name: &str| {
         let taken = mark.elapsed();
         if profile {
             eprintln!("{prefix}{name}: {}ms", taken.as_millis());
+        }
+        if logged {
+            crate::info(&format!("lap {}{name}: {}ms", prefix.trim_start(), taken.as_millis()));
         }
         if recording {
             KEPT.lock().unwrap_or_else(|held| held.into_inner()).push((
@@ -50,6 +54,13 @@ pub fn laps(prefix: &'static str) -> impl FnMut(&str) {
         }
         mark = Mark::now();
     }
+}
+
+static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether [`laps`] from here on writes each lap to the library's log as well.
+pub fn log_laps(on: bool) {
+    LOGGED.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether [`laps`] keeps what it times as well as printing it.
