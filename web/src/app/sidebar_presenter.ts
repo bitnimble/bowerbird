@@ -3,6 +3,7 @@ import { type Shoot } from '../../../src/schemas/shoots';
 import { shootsApi } from '../api/shoots';
 import { readSetting, writeSetting } from './local_setting';
 import { inViewer } from './sidebar_state';
+import { onTv } from './tv';
 import type { SidebarStore } from './sidebar_store';
 
 const COLLAPSED_KEY = 'bowerbird.sidebar.collapsed';
@@ -61,6 +62,7 @@ export class SidebarPresenter {
 
   @action.bound
   private restore(): void {
+    this.store.tv = onTv();
     this.store.collapsed = readSetting(COLLAPSED_KEY) === '1';
     const open = readSetting(OPEN_KEY);
     if (open != null && open !== '') this.store.toggled = new Set(open.split('\n'));

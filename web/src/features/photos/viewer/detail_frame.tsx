@@ -28,7 +28,7 @@ export const DetailFrame = observer(function DetailFrame({
   photoId: string;
   toolsInto: HTMLElement | null;
   zoomInto: HTMLElement | null;
-  fullscreenRef: (element: HTMLDivElement | null) => void;
+  fullscreenRef?: (element: HTMLDivElement | null) => void;
 }): JSX.Element {
   const store = useViewerStore();
   const device = useDeviceSettingsStore();

@@ -43,7 +43,7 @@ import {
 import { Button } from '../../../ui/button';
 import { CLEARS_CAPTION_BUTTONS } from '../../../ui/caption_buttons';
 import { ICON } from '../../../ui/icon';
-import { menuSection } from '../../../ui/menu_section';
+import { menuSection, type MenuSection } from '../../../ui/menu_section';
 import { menuStyles } from '../../../ui/menu_styles';
 import type { Option } from '../../../ui/option';
 import { OverflowMenu } from '../../../ui/overflow_menu';
@@ -64,7 +64,9 @@ import type { SoftProof } from '../../raw_edit/proof/soft_proof';
 import { SoftProofMenu, softProofOptions } from '../../raw_edit/proof/soft_proof_menu';
 import { SoftProofMenuStrings } from '../../raw_edit/proof/soft_proof_menu.strings';
 import { BulkBarStrings } from '../grid/bulk_bar.strings';
+import type { PhotosPresenter } from '../photos_presenter';
 import { isComposite, mergeEditPath, triagePath } from '../photos_store';
+import type { ViewerStore } from './viewer_store';
 import { renditionLabel } from '../renditions';
 import { DetailRating } from './detail_rating';
 import type { DetailMode } from './detail_mode';
@@ -301,10 +303,8 @@ export const DetailNav = observer(function DetailNav({
   const replicationStore = useReplicationStore();
   const libraries = useLibrariesStore();
   const { photos, export: exportPhotos, feedback, frameTv, replication, confirm } = usePresenters();
-  const step = useStep();
   const navigate = useNavigate();
   const mobile = useIsMobile();
-  const touch = useIsTouch();
   const photo = store.detailFor(photoId);
   const editable =
     isComposite(store.photoFor(photoId)) ||
@@ -315,11 +315,6 @@ export const DetailNav = observer(function DetailNav({
   // The print mockup renders through the editor's session, so it takes the editor's chrome
   // rules - no rendition choice - while leaving the grade's own controls out.
   const previewing = mode !== 'view';
-  const prevId = store.prevPhotoId;
-  const nextId = store.nextPhotoId;
-  // The grid this photo was opened from - the shoot, the album, the Bin - rather
-  // than always the library.
-  const back = store.openedFrom;
   // On `stack_id` alone, and not the grid tile's `stack_size > 1`: `stack_size`
   // is a property of a collapsed listing row, hardcoded to 1 on a detail and on a
   // band member, so the tile's condition would hide this on every route that
@@ -418,8 +413,6 @@ export const DetailNav = observer(function DetailNav({
       ]
     : [];
 
-  const choices = store.renditionChoices(photoId);
-  const renditions = RENDITIONS.filter((option) => choices.includes(option.value));
   const sections = [
     ...(pathFolded && !previewing && path !== '' ? [textSection(path)] : []),
     ...editSection,
@@ -449,18 +442,7 @@ export const DetailNav = observer(function DetailNav({
       : [
           // Which of the three files is on screen: the comparison the detail view
           // exists for, so it leads rather than sitting under the housekeeping.
-          ...(renditions.length === 0
-            ? []
-            : [
-                menuSection({
-                  label: PhotoDetailStrings.sectionRendition(),
-                  options: renditions.map((option) => ({
-                    ...option,
-                    active: option.value === store.frameOf(photoId).rendition,
-                  })),
-                  onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),
-                }),
-              ]),
+          ...renditionSections(store, photos, photoId),
           menuSection({
             label: PhotoDetailStrings.sectionActions(),
             options: actions({
@@ -627,37 +609,7 @@ export const DetailNav = observer(function DetailNav({
             ))}
         </>
       ) : (
-        <>
-          {/* Still a link, so it can be opened in a tab of its own; the cursor is put
-              on this photo on the way out so the grid comes back to it. */}
-          <Button render={<Link to={back.path} />} onClick={photos.focusOpenPhoto}>
-            <ArrowLeft size={ICON} />
-            {back.label}
-          </Button>
-          {!touch && (
-            <>
-              <Button
-                iconOnly
-                aria-label={PhotoDetailStrings.previousPhoto()}
-                disabled={prevId == null}
-                onClick={() => step('prev')}
-              >
-                <ChevronLeft size={ICON} />
-              </Button>
-              <Button
-                iconOnly
-                aria-label={PhotoDetailStrings.nextPhoto()}
-                disabled={nextId == null}
-                onClick={() => step('next')}
-              >
-                <ChevronRight size={ICON} />
-              </Button>
-            </>
-          )}
-          <BarText ref={pathRef} shrinks>
-            {path}
-          </BarText>
-        </>
+        <WayBack path={path} pathRef={pathRef} />
       )}
 
       {centred && <Spacer />}
@@ -703,18 +655,7 @@ export const DetailNav = observer(function DetailNav({
         </Button>
       )}
 
-      {panelsOpen != null && (
-        <Button
-          iconOnly
-          aria-label={
-            panelsOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()
-          }
-          aria-expanded={panelsOpen}
-          onClick={onTogglePanels}
-        >
-          <Info size={ICON} />
-        </Button>
-      )}
+      {panelsOpen != null && <PanelsToggle open={panelsOpen} onToggle={onTogglePanels} />}
 
       {/* Keyed on the mode: the three modes are one mounted page, so a menu kept open through a
           fetch would otherwise still be open over the editor it opened. */}
@@ -722,3 +663,121 @@ export const DetailNav = observer(function DetailNav({
     </Row>
   );
 });
+
+/** The bar with nothing that changes the photograph or sends it anywhere: a television's. */
+export const ViewOnlyNav = observer(function ViewOnlyNav({
+  photoId,
+  toolsRef,
+  panelsOpen,
+  onTogglePanels,
+}: {
+  photoId: string;
+  toolsRef: (slot: HTMLDivElement | null) => void;
+  panelsOpen: boolean;
+  onTogglePanels: () => void;
+}): JSX.Element {
+  const store = useViewerStore();
+  const { photos } = usePresenters();
+  const photo = store.detailFor(photoId);
+  const path = photo == null ? '' : (photo.file_path ?? nameOf(store, photoId));
+  const [pathFolded, pathRef] = useFolded();
+
+  return (
+    <Row style={styles.nav} role="group" aria-label={PhotoDetailStrings.controls()}>
+      <WayBack path={path} pathRef={pathRef} />
+      <div {...stylex.props(styles.tools)} ref={toolsRef} />
+      <PanelsToggle open={panelsOpen} onToggle={onTogglePanels} />
+      <OverflowMenu
+        label={PhotoDetailStrings.more()}
+        sections={[
+          ...(pathFolded && path !== '' ? [textSection(path)] : []),
+          ...renditionSections(store, photos, photoId),
+        ]}
+      />
+    </Row>
+  );
+});
+
+/** None where the photo has no rendition to choose between. */
+function renditionSections(
+  store: ViewerStore,
+  photos: PhotosPresenter,
+  photoId: string,
+): MenuSection[] {
+  const choices = store.renditionChoices(photoId);
+  const renditions = RENDITIONS.filter((option) => choices.includes(option.value));
+  if (renditions.length === 0) return [];
+  return [
+    menuSection({
+      label: PhotoDetailStrings.sectionRendition(),
+      options: renditions.map((option) => ({
+        ...option,
+        active: option.value === store.frameOf(photoId).rendition,
+      })),
+      onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),
+    }),
+  ];
+}
+
+const WayBack = observer(function WayBack({
+  path,
+  pathRef,
+}: {
+  path: string;
+  pathRef: (element: Element | null) => void;
+}): JSX.Element {
+  const store = useViewerStore();
+  const { photos } = usePresenters();
+  const step = useStep();
+  const touch = useIsTouch();
+  // The grid this photo was opened from - the shoot, the album, the Bin - rather
+  // than always the library.
+  const back = store.openedFrom;
+
+  return (
+    <>
+      {/* Still a link, so it can be opened in a tab of its own; the cursor is put
+          on this photo on the way out so the grid comes back to it. */}
+      <Button render={<Link to={back.path} />} onClick={photos.focusOpenPhoto}>
+        <ArrowLeft size={ICON} />
+        {back.label}
+      </Button>
+      {!touch && (
+        <>
+          <Button
+            iconOnly
+            aria-label={PhotoDetailStrings.previousPhoto()}
+            disabled={store.prevPhotoId == null}
+            onClick={() => step('prev')}
+          >
+            <ChevronLeft size={ICON} />
+          </Button>
+          <Button
+            iconOnly
+            aria-label={PhotoDetailStrings.nextPhoto()}
+            disabled={store.nextPhotoId == null}
+            onClick={() => step('next')}
+          >
+            <ChevronRight size={ICON} />
+          </Button>
+        </>
+      )}
+      <BarText ref={pathRef} shrinks>
+        {path}
+      </BarText>
+    </>
+  );
+});
+
+function PanelsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }): JSX.Element {
+  return (
+    <Button
+      iconOnly
+      aria-label={open ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
+      aria-expanded={open}
+      onClick={onToggle}
+    >
+      <Info size={ICON} />
+    </Button>
+  );
+}

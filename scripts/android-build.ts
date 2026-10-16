@@ -26,6 +26,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { ANDROID_PAGE_SIZE, ANDROID_TARGET, androidNdk, type AndroidNdk } from './android-ndk.ts';
+import { TV_AGENT, TV_BACK } from '../web/src/app/tv.ts';
 
 let ndk: AndroidNdk;
 let tauri: string;
@@ -63,6 +64,14 @@ const MEDIA_PERMISSIONS = [
   '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
   '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
 ];
+// Optional, so one app installs on phones and televisions both: Play withholds an app from a
+// television unless it declares a touchscreen optional.
+const FEATURES = [
+  '<uses-feature android:name="android.software.leanback" android:required="false" />',
+  '<uses-feature android:name="android.hardware.touchscreen" android:required="false" />',
+];
+const LAUNCHER = '<category android:name="android.intent.category.LAUNCHER" />';
+const TV_LAUNCHER = '<category android:name="android.intent.category.LEANBACK_LAUNCHER" />';
 
 const play = process.argv.includes('--play');
 const dev = process.argv.includes('--dev');
@@ -183,15 +192,20 @@ function patchProject(app: string): void {
     'android:networkSecurityConfig="@xml/network_security_config"',
     // Android 10 opens shared storage by path only with the legacy flag (`PhotosPlugin.kt`).
     'android:requestLegacyExternalStorage="true"',
+    'android:banner="@drawable/tv_banner"',
   ]) {
     if (!manifest.includes(attribute)) {
       manifest = manifest.replace('<application', `<application\n        ${attribute}`);
     }
   }
-  for (const permission of MEDIA_PERMISSIONS) {
-    if (!manifest.includes(permission)) {
-      manifest = manifest.replace('<application', `${permission}\n    <application`);
+  for (const declaration of [...MEDIA_PERMISSIONS, ...FEATURES]) {
+    if (!manifest.includes(declaration)) {
+      manifest = manifest.replace('<application', `${declaration}\n    <application`);
     }
+  }
+  if (!manifest.includes(TV_LAUNCHER)) {
+    if (!manifest.includes(LAUNCHER)) throw new Error(`${manifestPath} has no launcher category`);
+    manifest = manifest.replace(LAUNCHER, `${LAUNCHER}\n                ${TV_LAUNCHER}`);
   }
   writeFileSync(manifestPath, manifest);
 
@@ -205,18 +219,28 @@ function patchProject(app: string): void {
     activity,
     `${pkg}
 
+import android.app.UiModeManager
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
+  private val onTv by lazy {
+    getSystemService(UiModeManager::class.java).currentModeType ==
+      Configuration.UI_MODE_TYPE_TELEVISION
+  }
+  // Only on a television, where the page spends Back first (\`remote_navigation.ts\`).
+  private var page: WebView? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge(
       statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
@@ -239,6 +263,13 @@ class MainActivity : TauriActivity() {
       view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
       WindowInsetsCompat.CONSUMED
     }
+    // A callback, not \`onBackPressed\`: targeting API 36, Android 16 never calls that override.
+    onBackPressedDispatcher.addCallback(
+      this,
+      object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() = back()
+      },
+    )
   }
 
   // Off, the WebView ignores the page's viewport tag, which is how its interface scale applies.
@@ -246,13 +277,25 @@ class MainActivity : TauriActivity() {
     webView.settings.useWideViewPort = true
     // The page's tag only says user-scalable=no once a UI scale has rewritten it.
     webView.settings.setSupportZoom(false)
+    if (onTv) {
+      webView.settings.userAgentString = webView.settings.userAgentString + " ${TV_AGENT}"
+      // The D-pad's keys go to the focused view, and nothing else in the window takes focus.
+      webView.requestFocus()
+      page = webView
+    }
   }
 
   // Backgrounded, not finished: Tauri's result launchers stay bound to the first activity, so
   // after a finish \`PhotosPlugin.kt\`'s prompts never answer.
-  @Suppress("OVERRIDE_DEPRECATION")
-  override fun onBackPressed() {
-    moveTaskToBack(true)
+  private fun back() {
+    val remote = page
+    if (remote == null) {
+      moveTaskToBack(true)
+      return
+    }
+    remote.evaluateJavascript("window.${TV_BACK}?.() === true") { handled ->
+      if (handled != "true") moveTaskToBack(true)
+    }
   }
 }
 `,

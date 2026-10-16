@@ -270,7 +270,7 @@ Assertions answerable by presenter, store or pure function belong in `bun test`.
 ### One spec file, one domain, one library root
 
 `web/e2e/` groups domains: `library/`, `catalogue/`, `grid/`, `viewer/`, `editor/`,
-`stack_triage/`, `mobile/`, `decode/`, `shell/`. Add claims to their owning file.
+`stack_triage/`, `mobile/`, `tv/`, `decode/`, `shell/`. Add claims to their owning file.
 
 `web/e2e/fixtures.ts` starts API, catalogue and Vite per worker (`fullyParallel`).
 Dependent tests require `mode: 'serial'`. Import `test` from `../fixtures`, never

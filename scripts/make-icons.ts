@@ -190,6 +190,7 @@ const DENSITIES = { mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 };
 /**
  * Replaces the launcher icon in a generated Android project's `res`: the tile at 48dp for
  * Android 7, and an adaptive icon of the bars over the mark's background for every later one.
+ * Also writes `drawable/tv_banner.xml`, the bars on a television launcher's 320 by 180dp banner.
  */
 export function writeAndroidIcons(res: string): void {
   for (const [density, scale] of Object.entries(DENSITIES)) {
@@ -225,6 +226,24 @@ export function writeAndroidIcons(res: string): void {
       '<resources>',
       `    <color name="bowerbird_icon_background">#${hex}</color>`,
       '</resources>',
+      '',
+    ].join('\n'),
+  );
+  mkdirSync(join(res, 'drawable'), { recursive: true });
+  writeFileSync(
+    join(res, 'drawable', 'tv_banner.xml'),
+    [
+      '<?xml version="1.0" encoding="utf-8"?>',
+      '<layer-list xmlns:android="http://schemas.android.com/apk/res/android">',
+      '    <item android:width="320dp" android:height="180dp">',
+      '        <color android:color="@color/bowerbird_icon_background" />',
+      '    </item>',
+      '    <item',
+      '        android:width="180dp"',
+      '        android:height="180dp"',
+      '        android:gravity="center"',
+      '        android:drawable="@mipmap/ic_launcher_foreground" />',
+      '</layer-list>',
       '',
     ].join('\n'),
   );

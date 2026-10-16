@@ -5,13 +5,7 @@ import { flushSync } from 'react-dom';
 import { GalleryThumbnails, Info } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { readSetting, writeSetting } from '../../../app/local_setting';
-import {
-  useDeviceSettingsStore,
-  useListingStore,
-  usePresenters,
-  useStacksStore,
-  useViewerStore,
-} from '../../../app/stores_context';
+import { useDeviceSettingsStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { useIsMobile, useIsTouch } from '../../../app/device';
 import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
@@ -39,15 +33,14 @@ import { toggleFullscreenOf } from './fullscreen';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { renditionVersion, sourceOfPath } from '../photos_store';
 import { renditionsApi } from '../../../api/renditions';
-import { StripViewPresenter } from './strip_view_presenter';
-import { StripViewStore } from './strip_view_store';
+import { useDetailBox, useStripView } from './detail_page_hooks';
 import { panelEdge, stripEdge } from './viewer_edges';
 import { styles } from './photo_detail_page.stylex';
 import { PhotoTriage } from './detail_triage';
 import { DetailNav } from './detail_nav';
 import { DetailFrame } from './detail_frame';
 import { DetailInfo } from './detail_info';
-import { DetailFilmstrip, type StripView } from './detail_filmstrip';
+import { DetailFilmstrip } from './detail_filmstrip';
 import { CameraPanel, PhotoEdits, PhotoRating, RawPanel, RenditionPanel } from './detail_panels';
 import { DetailKeys } from './detail_keys';
 import {
@@ -89,8 +82,6 @@ type EditVisit = {
 export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element {
   const { photoId = '' } = useParams();
   const store = useViewerStore();
-  const listing = useListingStore();
-  const stacks = useStacksStore();
   const { photos, appSettings } = usePresenters();
   const device = useDeviceSettingsStore();
   const mobile = useIsMobile();
@@ -108,10 +99,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Here rather than inside the strip, because how thick it is drawn is what
   // decides which edge it goes on, and the edge is the page's to decide. Built
   // whether or not the strip is open: a store nobody has mounted watches nothing.
-  const [strip] = useState<StripView>(() => {
-    const view = new StripViewStore(listing, stacks, store);
-    return { view, presenter: new StripViewPresenter(view, photos) };
-  });
+  const strip = useStripView();
   // The stage draws its own controls into a slot in the bar, so the readout can
   // follow a wheel zoom frame by frame without the page moving with it. State
   // rather than a ref, because the stage has to render again once the slot
@@ -166,15 +154,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // measurement that answers the question it was taken under is a layout that
   // oscillates (`viewer_edges.ts`). Measured a little large for the stage as a
   // result, which is the same approximation the panels' own cap already is.
-  useEffect(() => {
-    if (box == null) return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry == null) return;
-      photos.setDetailBox(entry.contentRect.width, entry.contentRect.height);
-    });
-    observer.observe(box);
-    return () => observer.disconnect();
-  }, [box, photos]);
+  useDetailBox(box);
 
   const [underTabs, setUnderTabs] = useState<HTMLDivElement | null>(null);
   const [underTabsHeight, setUnderTabsHeight] = useState(0);

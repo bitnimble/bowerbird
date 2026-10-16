@@ -8,6 +8,7 @@ import {
   usePresenters,
   useStacksStore,
 } from '../../../app/stores_context';
+import { ownsArrows } from '../../../app/remote_navigation';
 import { EmptyState } from '../../../ui/empty_state';
 import { focusRing } from '../../../ui/focus_ring';
 import { Text } from '../../../ui/text';
@@ -330,6 +331,7 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
         onScroll={onScroll}
         onKeyDown={onKeyDown}
         tabIndex={0}
+        {...ownsArrows('all')}
         role="list"
         aria-label={PhotoGridStrings.gridLabel(store.total)}
       >

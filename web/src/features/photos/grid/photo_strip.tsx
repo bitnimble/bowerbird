@@ -2,7 +2,9 @@ import * as stylex from '@stylexjs/stylex';
 import { reaction } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import { ownsArrows } from '../../../app/remote_navigation';
 import { useListingStore, useMarksStore, useStacksStore } from '../../../app/stores_context';
+import { onTv } from '../../../app/tv';
 import { focusRing } from '../../../ui/focus_ring';
 import { stopFlings } from '../../../ui/stop_flings';
 import { GRID_GAP } from './grid_layout';
@@ -20,7 +22,7 @@ import { sectionStyle, tilesFor } from './photo_bands';
 import { GridScrollbar } from './grid_scrollbar';
 
 // The scrollers' ids, so each drawn scrollbar can name what it controls.
-const STRIP_ID = 'filmstrip-scroller';
+export const STRIP_ID = 'filmstrip-scroller';
 
 // The strip's own edge, dragged, on whichever side faces the photograph: how thick
 // it is drawn is how big its cells are. A delta from where the drag started rather
@@ -167,7 +169,7 @@ export const PhotoStrip = observer(function PhotoStrip({
           strip.thickness(view.thickness),
         )}
       >
-        <StripResizer view={view} presenter={presenter} />
+        {!onTv() && <StripResizer view={view} presenter={presenter} />}
 
         <div {...stylex.props(strip.track, along === 'x' ? strip.trackX : strip.trackY)}>
           {/* The one way to reach a photograph ten thousand frames away in a
@@ -196,6 +198,8 @@ export const PhotoStrip = observer(function PhotoStrip({
             // The phone drawer's swipe leaves a drag along a sideways strip to the strip (`drawer_swipe.ts`);
             // down the side it scrolls the other way, so a drag across it is the drawer's.
             data-owns-sideways={along === 'x' || undefined}
+            // Left and Right are the viewer's: a step on a desktop, the strip's cursor on a television.
+            {...ownsArrows('sideways')}
             role="list"
             aria-label={PhotoGridStrings.gridLabel(store.total)}
             // Focusable and labelled for the reason the gallery's scroller is: it

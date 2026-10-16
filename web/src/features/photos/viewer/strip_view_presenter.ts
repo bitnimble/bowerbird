@@ -114,7 +114,16 @@ export class StripViewPresenter {
   @action.bound
   reveal(photoId: string): void {
     const cell = this.store.cellOf(photoId);
-    if (cell == null) return;
+    if (cell != null) this.centre(cell);
+  }
+
+  /** The same, for the cursor's position in the collection. */
+  @action.bound
+  revealPosition(position: number): void {
+    if (position >= 0) this.centre(this.store.displayCellOf(position));
+  }
+
+  private centre(cell: number): void {
     const centred =
       this.store.offsetOfCell(cell) - (this.store.viewportLength - this.store.pitch) / 2;
     this.rail.scrollTo(centred);

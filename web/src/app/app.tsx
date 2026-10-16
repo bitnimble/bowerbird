@@ -9,6 +9,7 @@ import { BinPage } from '../features/photos/grid/bin_page';
 import { LibraryPhotosPage } from '../features/photos/grid/library_photos_page';
 import { MergePage } from '../features/photos/merge/merge_page';
 import { PhotoDetailPage } from '../features/photos/viewer/photo_detail_page';
+import { TvPhotoPage } from '../features/photos/viewer/tv_photo_page';
 import { StackTriagePage } from '../features/photos/stack_triage/stack_triage_page';
 import { ConflictsPage } from '../features/replication/conflicts_page';
 import { SettingsPage } from '../features/settings/settings_page';
@@ -39,6 +40,8 @@ import {
 } from './stores_context';
 import { useIsMobile, useIsTouch } from './device';
 import { useDrawerSwipe } from './drawer_swipe';
+import { followRemote } from './remote_navigation';
+import { onTv } from './tv';
 
 const NARROW = '@media (max-width: 860px), (pointer: coarse) and (max-device-width: 860px)';
 
@@ -216,6 +219,10 @@ export const App = observer(function App(): JSX.Element {
   });
   const toggleSidebar = sidebarPresenter.toggleOpen;
 
+  useEffect(() => (onTv() ? followRemote() : undefined), []);
+  // Viewing only: the editor and the print mockup's addresses open the photo too.
+  const viewer = onTv() ? <TvPhotoPage /> : <PhotoDetailPage />;
+
   if (!precompiled) {
     return (
       <>
@@ -268,7 +275,7 @@ export const App = observer(function App(): JSX.Element {
           following={dragging}
         />
       )}
-      {sidebarOpen && !mobile && !touch && <SidebarResizer />}
+      {sidebarOpen && !mobile && !touch && !onTv() && <SidebarResizer />}
       <div {...stylex.props(styles.main)}>
         <Toasts />
         <ConfirmDialog />
@@ -339,17 +346,17 @@ export const App = observer(function App(): JSX.Element {
                   valid deep link, and falls back to the photo's own library. */}
               {COLLECTIONS.map((prefix) => (
                 <Fragment key={prefix}>
-                  <Route path={`${prefix}${PHOTO_ROUTE}`} element={<PhotoDetailPage />} />
-                  <Route path={`${prefix}${MOCKUP_ROUTE}`} element={<PhotoDetailPage />} />
-                  <Route path={`${prefix}${EDIT_ROUTE}`} element={<PhotoDetailPage />} />
+                  <Route path={`${prefix}${PHOTO_ROUTE}`} element={viewer} />
+                  <Route path={`${prefix}${MOCKUP_ROUTE}`} element={viewer} />
+                  <Route path={`${prefix}${EDIT_ROUTE}`} element={viewer} />
                   <Route path={`${prefix}${TRIAGE_ROUTE}`} element={<StackTriagePage />} />
                   <Route path={`${prefix}${MERGE_ROUTE}`} element={<MergePage />} />
                   <Route path={`${prefix}${MERGE_EDIT_ROUTE}`} element={<MergePage />} />
                 </Fragment>
               ))}
-              <Route path={PHOTO_ROUTE} element={<PhotoDetailPage />} />
-              <Route path={MOCKUP_ROUTE} element={<PhotoDetailPage />} />
-              <Route path={EDIT_ROUTE} element={<PhotoDetailPage />} />
+              <Route path={PHOTO_ROUTE} element={viewer} />
+              <Route path={MOCKUP_ROUTE} element={viewer} />
+              <Route path={EDIT_ROUTE} element={viewer} />
               <Route path={TRIAGE_ROUTE} element={<StackTriagePage />} />
               <Route path={MERGE_ROUTE} element={<MergePage />} />
               <Route path={MERGE_EDIT_ROUTE} element={<MergePage />} />

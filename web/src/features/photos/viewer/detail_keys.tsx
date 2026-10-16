@@ -20,10 +20,14 @@ export const DetailKeys = observer(function DetailKeys({
   onExitPreview,
   onToggleStrip,
   onTogglePanels,
+  culls = true,
 }: {
   photoId: string;
   mode: DetailMode;
-  onExitPreview: () => void;
+  /** Absent where the page has only the `view` mode, which has no preview to leave. */
+  onExitPreview?: () => void;
+  /** Whether the rating and verdict keys judge the photo. */
+  culls?: boolean;
   /** Absent where the viewer offers no such toggle: a phone, a touch editor, and the mockup. */
   onToggleStrip?: () => void;
   onTogglePanels?: () => void;
@@ -49,17 +53,17 @@ export const DetailKeys = observer(function DetailKeys({
       // Edit mode owns Escape: discard the grade and return to the viewer, rather than
       // leaving the photo the way the ordinary viewer does.
       if (e.key === 'Escape' && document.fullscreenElement == null && mode !== 'view') {
-        onExitPreview();
+        onExitPreview?.();
         e.preventDefault();
         return;
       }
 
       if (mode === 'print' && ['i', 'o', 'p'].includes(e.key)) return;
 
-      const verdict = TRIAGE_KEYS[e.key];
+      const verdict = culls ? TRIAGE_KEYS[e.key] : undefined;
       const rendition = RENDITION_KEYS[e.key];
       if (verdict != null) judge(verdict);
-      else if (/^[0-5]$/.test(e.key)) void photos.setRating(photoId, Number(e.key));
+      else if (culls && /^[0-5]$/.test(e.key)) void photos.setRating(photoId, Number(e.key));
       else if (rendition != null) void photos.chooseRendition(photoId, rendition);
       else if (e.key === '[' && onToggleStrip != null) onToggleStrip();
       else if (e.key === ']' && onTogglePanels != null) onTogglePanels();
@@ -85,6 +89,7 @@ export const DetailKeys = observer(function DetailKeys({
     onExitPreview,
     onToggleStrip,
     onTogglePanels,
+    culls,
   ]);
 
   return null;

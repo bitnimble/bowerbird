@@ -1,7 +1,9 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { focusToward, type Direction } from '../../../app/remote_navigation';
 import { useListingStore, useMarksStore, usePresenters } from '../../../app/stores_context';
+import { onTv } from '../../../app/tv';
 import { photoPath } from '../photos_store';
 
 // The grid's keyboard layer. Separate component so a keystroke that only moves
@@ -13,22 +15,38 @@ export const GridKeys = observer(function GridKeys({ scrollerId }: { scrollerId:
   const navigate = useNavigate();
 
   useEffect(() => {
+    const tv = onTv();
     function onKey(e: KeyboardEvent): void {
       const target = e.target as HTMLElement | null;
       if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       // A dialog over the grid owns its keys: Delete on its button would bin the tile under it.
       if (target?.closest('[role="dialog"]') != null) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (tv && !e.key.startsWith('Arrow') && e.key !== 'Enter') return;
 
       // Arrowing the cursor is the reader taking the grid over, so the focus comes
       // with it: it is what makes Enter unambiguously the grid's rather than the
       // sidebar link they came in by, and it leaves the tab order where they are.
       // preventScroll because the scroller is the thing being focused, and letting
       // the browser bring it into view fights the rail (§18.3.2).
-      if (e.key.startsWith('Arrow')) {
-        const scroller = document.getElementById(scrollerId);
-        if (scroller != null && !scroller.contains(document.activeElement))
-          scroller.focus({ preventScroll: true });
+      const scroller = document.getElementById(scrollerId);
+      if (
+        e.key.startsWith('Arrow') &&
+        scroller != null &&
+        !scroller.contains(document.activeElement)
+      ) {
+        scroller.focus({ preventScroll: true });
+        // Arriving is the whole press on a remote: a step as well skips the first photo.
+        if (tv) {
+          e.preventDefault();
+          return;
+        }
+      }
+      const leaving = tv ? edgeCrossed(e.key, marks.focusIndex, listing.columns) : null;
+      if (leaving != null && scroller != null) {
+        focusToward(scroller, leaving);
+        e.preventDefault();
+        return;
       }
 
       // Whether the reader has tabbed onto something that owns its own activation
@@ -105,9 +123,26 @@ export const GridKeys = observer(function GridKeys({ scrollerId }: { scrollerId:
       if (e.key !== 'Escape') photos.showCursor();
       e.preventDefault();
     }
+    function onFocus(e: FocusEvent): void {
+      if (!(e.target instanceof HTMLElement) || e.target.id !== scrollerId) return;
+      photos.moveFocus(0);
+      photos.showCursor();
+    }
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [photos, listing, marks, navigate]);
+    if (tv) window.addEventListener('focusin', onFocus);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('focusin', onFocus);
+    };
+  }, [photos, listing, marks, navigate, scrollerId]);
 
   return null;
 });
+
+/** Which way an arrow leaves the grid from the cursor's first row or column, or null where it stays. */
+export function edgeCrossed(key: string, cursor: number, columns: number): Direction | null {
+  if (cursor < 0) return null;
+  if (key === 'ArrowLeft' && cursor % columns === 0) return 'left';
+  if (key === 'ArrowUp' && cursor < columns) return 'up';
+  return null;
+}

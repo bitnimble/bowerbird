@@ -10,6 +10,8 @@ import { SidebarPresenter } from '../sidebar_presenter';
 import { SidebarStore } from '../sidebar_store';
 import { AppSettingsStore } from '../../features/settings/app_settings_store';
 import { PathSegment, route } from '../../../../src/schemas/route';
+import { DEFAULT_SETTINGS } from '../../../../src/schemas/settings';
+import { TV_AGENT } from '../tv';
 
 restoreApiAfterTests();
 // Every presenter below is built fresh and reads what is stored as it is built, so
@@ -170,6 +172,24 @@ test('the viewer hides the sidebar, a reveal lasts until leaving it, and the pre
   presenter.navigated(route(PathSegment.libraries(), 'lib'));
   expect(store.open).toBe(true);
   expect(build().store.open).toBe(true);
+});
+
+test('on a television the viewer hides the sidebar whatever the setting says', () => {
+  const userAgent = navigator.userAgent;
+  Object.defineProperty(navigator, 'userAgent', {
+    value: `${userAgent} ${TV_AGENT}`,
+    configurable: true,
+  });
+  try {
+    const settings = new AppSettingsStore();
+    settings.settings = { ...DEFAULT_SETTINGS, hide_sidebar_in_viewer: false };
+    const store = new SidebarStore(settings);
+    const presenter = new SidebarPresenter(store);
+    presenter.navigated(route(PathSegment.photos(), 'abc'));
+    expect(store.open).toBe(false);
+  } finally {
+    Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+  }
 });
 
 test('on a phone the sidebar is a drawer, shut by default and on every navigation', () => {

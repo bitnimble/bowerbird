@@ -9,6 +9,7 @@ import {
   STRIP_SPINE,
   StripViewStore,
 } from '../strip_view_store';
+import { StripViewPresenter } from '../strip_view_presenter';
 import { ViewerStore } from '../viewer_store';
 
 // The viewer's filmstrip as arithmetic: one row of the collection, the members an
@@ -94,6 +95,23 @@ test('scrolling the rail moves which cells are drawn, and the far end is reachab
   // reaches the end of it.
   expect(strip.rail.limit).toBeGreaterThan(0);
   expect(strip.offsetOf(9_999)).toBeCloseTo(9_999 * strip.pitch, 5);
+});
+
+test("revealing the cursor's position brings its cell on screen, and no cursor moves nothing", () => {
+  const { strip } = stripOver(10_000);
+  const presenter = new StripViewPresenter(
+    strip,
+    new Proxy({}, { get: () => () => undefined }) as never,
+  );
+  presenter.setViewport(1000, 100);
+
+  presenter.revealPosition(-1);
+  expect(strip.visibleSpan.from).toBe(0);
+
+  presenter.revealPosition(500);
+  expect(strip.visibleSpan.from).toBeLessThan(500);
+  expect(strip.visibleSpan.to).toBeGreaterThan(500);
+  expect(strip.visibleSpan.from).toBeGreaterThan(490);
 });
 
 test('an open stack inserts its members into the run, after the tile they belong to', () => {

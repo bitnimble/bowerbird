@@ -1,7 +1,6 @@
 import { computed, observable } from 'mobx';
 import { type Shoot } from '../../../src/schemas/shoots';
 import type { AppSettingsStore } from '../features/settings/app_settings_store';
-
 /** A shoot and the shoots filed under it, as the sidebar nests them. */
 export interface ShootNode {
   shoot: Shoot;
@@ -26,9 +25,10 @@ export class SidebarStore {
   @observable accessor revealed = false;
   @observable accessor mobile = false;
   @observable accessor viewing = false;
+  @observable accessor tv = false;
 
   @computed get hiddenByViewer(): boolean {
-    return this.viewing && this.settings.hideSidebarInViewer;
+    return this.viewing && (this.tv || this.settings.hideSidebarInViewer);
   }
 
   @computed get open(): boolean {
