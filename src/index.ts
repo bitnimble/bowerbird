@@ -15,6 +15,7 @@ import {
 import { LibrariesRepository } from './services/libraries/libraries_repository';
 import { ShellWriteGrants, UNRESTRICTED_WRITES } from './services/libraries/write_grants';
 import { ShellMediaListing } from './services/libraries/media_listing';
+import { ShellResources } from './services/shell_resources';
 import { RenderTimingsFile } from './services/processing/renditions/render_timings_file';
 import { StorageUsageService } from './services/maintenance/storage_usage_service';
 import { PhotosApi } from './api/photos/photos_api';
@@ -176,6 +177,8 @@ const photoEditsRepo = new PhotoEditsRepository(db);
 const writeGrants =
   config.shellSocket == null ? UNRESTRICTED_WRITES : new ShellWriteGrants(config.shellSocket);
 const deviceMedia = config.shellSocket == null ? null : new ShellMediaListing(config.shellSocket);
+if (config.shellSocket != null)
+  void new ShellResources(path.join(config.dataDir, 'shell-resources.log')).start();
 
 // Moving the originals themselves (§7). The queue is durable, so a restart takes
 // up whatever a kill interrupted rather than losing it.
