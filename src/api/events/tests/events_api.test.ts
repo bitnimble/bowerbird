@@ -97,6 +97,19 @@ describe('EventsApi', () => {
     ]);
   });
 
+  it('splits a large burst into events of at most 500 entries', async () => {
+    const { api, processed } = build();
+    api.announce('backup', { library_id: 'lib' });
+    for (let i = 0; i < 1001; i++) processed(`photo-${i}`);
+    await Bun.sleep(300);
+
+    const events = api.since('1').map((event) => JSON.parse(event.data).written);
+    expect(events.map((written) => written.length)).toEqual([500, 500, 1]);
+    expect(events[0][0].id).toBe('photo-0');
+    expect(events[1][0].id).toBe('photo-500');
+    expect(events[2][0].id).toBe('photo-1000');
+  });
+
   // The sidebar learns of a session it never asked for over the same stream, and a
   // client that knows only renditions has to keep parsing the ones it does know.
   it('carries a second kind of announcement on the same stream', async () => {

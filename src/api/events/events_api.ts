@@ -28,6 +28,7 @@ const REPLAY = 512;
 const HEARTBEAT_MS = 20_000;
 
 const RENDITIONS_EVERY_MS = 250;
+const RENDITIONS_PER_EVENT = 500;
 
 // What happened on this server that nobody asked about.
 //
@@ -69,10 +70,7 @@ export class EventsApi {
 
         // Something immediately, before the first heartbeat is due. A client cannot call
         // itself connected until a byte arrives, and on a quiet library the next one is
-        // HEARTBEAT_MS away - so a reader who just launched waited twenty seconds to be told
-        // the library was reachable, and every view holding a request that failed while it
-        // was starting waited with them. Carries no data, so it dispatches no event: the
-        // point is the flush.
+        // HEARTBEAT_MS away. Carries no data, so it dispatches no event: the point is the flush.
         void write({ event: 'ping', data: '' });
 
         // The heartbeat waits on the timer *or* the disconnect, rather than
@@ -112,7 +110,7 @@ export class EventsApi {
     return this.recent.filter((event) => event.id > last);
   }
 
-  /** Announced up to `RENDITIONS_EVERY_MS` later, in one event with every other photo's written by then. */
+  /** Announced up to `RENDITIONS_EVERY_MS` later, batched with every other photo's written by then. */
   renditionWritten(photoId: string, written: RenditionWritten): void {
     this.written.set(`${photoId}/${written.stage}`, {
       id: photoId,
@@ -126,7 +124,9 @@ export class EventsApi {
     this.flush = null;
     const written = [...this.written.values()];
     this.written.clear();
-    this.announce('renditions', { written });
+    for (let at = 0; at < written.length; at += RENDITIONS_PER_EVENT) {
+      this.announce('renditions', { written: written.slice(at, at + RENDITIONS_PER_EVENT) });
+    }
   }
 
   announce<K extends LibraryEventKind>(kind: K, payload: LibraryEventPayload<K>): void {
