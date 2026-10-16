@@ -22,9 +22,9 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test('a reload comes back to the photograph the window started on', async ({ page }) => {
-  // Narrow enough that masonry packs one frame to a line, so four of them are
-  // several windows tall and the end of the scroll is rows past the first.
-  await page.setViewportSize({ width: 420, height: 560 });
+  // Narrow and short enough that masonry's two lines of portrait frames are
+  // several windows tall, so the end of the scroll is a row past the first.
+  await page.setViewportSize({ width: 420, height: 360 });
   await gotoLibrary(page, URL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
 
