@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { type AddressInfo, createServer } from 'node:net';
 import path from 'node:path';
 import { test as base } from '@playwright/test';
@@ -11,29 +11,49 @@ import { resetViewerSettings } from './helpers';
 
 const WEB = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const REPO = path.resolve(WEB, '..');
-export const VERSION = readFileSync(path.join(REPO, 'VERSION'), 'utf8').trim();
 
 /**
  * A worker's own API, catalogue and Vite, so the workers share nothing but the fixture roots on
  * disk: the viewer's rendition mode, the sidebar setting and onboarding are the server's, and a
  * file on one worker changing one would change it under a file on the other.
  */
-export const test = base.extend<{ freshViewer: void; precompiled: boolean }, { instance: string }>({
+export const test = base.extend<
+  { freshViewer: void; precompiled: boolean },
+  { instance: string; pipelinesVersion: string }
+>({
   // Seeded, or every test's first page waits out a full precompile before the app opens.
   precompiled: [true, { option: true }],
   // Context options rather than an init script, so a `beforeAll`'s `browser.newPage()` is seeded too.
-  storageState: async ({ instance, precompiled }, use) => {
+  storageState: async ({ instance, pipelinesVersion, precompiled }, use) => {
     await use(
       precompiled
         ? {
             cookies: [],
             origins: [
-              { origin: instance, localStorage: [{ name: PRECOMPILED_KEY, value: VERSION }] },
+              {
+                origin: instance,
+                localStorage: [{ name: PRECOMPILED_KEY, value: pipelinesVersion }],
+              },
             ],
           }
         : undefined,
     );
   },
+  // Read from the app's own module as Vite serves it: its inputs are `?raw` imports only Vite resolves.
+  pipelinesVersion: [
+    async ({ browser, instance }, use) => {
+      const page = await browser.newPage();
+      await page.goto(`${instance}/src/features/precompile/precompiled_key.ts`);
+      const version = await page.evaluate(
+        async (module) =>
+          ((await import(module)) as { PIPELINES_VERSION: string }).PIPELINES_VERSION,
+        '/src/features/precompile/pipelines_version.ts',
+      );
+      await page.close();
+      await use(version);
+    },
+    { scope: 'worker' },
+  ],
   // The viewer's settings are the worker's, so one test choosing a rendition or keeping the
   // sidebar would reach the next test on it, whichever file that is.
   freshViewer: [

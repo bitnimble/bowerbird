@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test';
-import { VERSION, test } from '../fixtures';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PRECOMPILED_KEY } from '../../src/features/precompile/precompiled_key';
 
@@ -7,6 +7,7 @@ test.use({ precompiled: false });
 
 test('a first visit precompiles every pipeline before the app opens, once per version', async ({
   page,
+  pipelinesVersion,
 }) => {
   test.setTimeout(180_000);
   await page.goto(route(PathSegment.settings()));
@@ -19,7 +20,7 @@ test('a first visit precompiles every pipeline before the app opens, once per ve
     .poll(() => page.evaluate((key) => localStorage.getItem(key), PRECOMPILED_KEY), {
       timeout: 120_000,
     })
-    .toBe(VERSION);
+    .toBe(pipelinesVersion);
 
   await page.reload();
   await expect(page.getByRole('navigation', { name: 'Sidebar' })).toBeVisible();
