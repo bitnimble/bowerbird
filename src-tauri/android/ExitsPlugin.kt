@@ -55,10 +55,16 @@ class ExitsPlugin(private val activity: Activity) : Plugin(activity) {
         val summary = "${reasonName(exit.reason)} at ${Instant.ofEpochMilli(exit.timestamp)}: " +
             "${exit.description ?: "no description"}, status ${exit.status}, importance ${exit.importance}, " +
             "pss ${exit.pss / 1024} MB, rss ${exit.rss / 1024} MB"
-        // A native crash's trace is a tombstone protobuf; an ANR's is the text of every thread's stack.
-        if (exit.reason != ApplicationExitInfo.REASON_ANR) return summary
-        val trace = runCatching { exit.traceInputStream?.bufferedReader()?.use { it.readText() } }.getOrNull()
-        return if (trace == null) summary else "$summary\n${trace.take(ANR_TRACE_CHARS)}"
+        val trace = when {
+            exit.reason == ApplicationExitInfo.REASON_ANR ->
+                runCatching { exit.traceInputStream?.bufferedReader()?.use { it.readText() } }.getOrNull()
+                    ?.take(ANR_TRACE_CHARS)
+            exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+                runCatching { exit.traceInputStream?.use { Tombstone.describe(it.readBytes()) } }
+                    .getOrElse { "the tombstone would not read: $it" }
+            else -> null
+        }
+        return if (trace == null) summary else "$summary\n$trace"
     }
 
     private fun reasonName(reason: Int): String = when (reason) {
