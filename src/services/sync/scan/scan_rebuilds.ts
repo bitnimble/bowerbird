@@ -73,6 +73,7 @@ export class ScanRebuilds {
       const status: LibraryScanStatus = {
         ...idleScanStatus(libraryId, 'rendition'),
         photos_processing: queued,
+        processing_work: this.photoProcessing.pendingWork(libraryId),
       };
       this.status.setBatch(libraryId, queued, null);
       this.status.set(libraryId, status);

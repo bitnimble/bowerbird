@@ -186,6 +186,13 @@ export const UpdateLibraryRequestSchema = z.object({
 });
 export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 
+/**
+ * What the queue's owed photos need: a grid tile built, a device-thumbnailed photo read for its
+ * stacking descriptor and details, or a render.
+ */
+export const ProcessingWorkSchema = z.enum(['thumbnails', 'reading', 'rendering']);
+export type ProcessingWork = z.infer<typeof ProcessingWorkSchema>;
+
 export const LibraryScanStatusSchema = z.object({
   library_id: IdSchema,
   status: z.enum(['idle', 'processing', 'rendition']),
@@ -200,6 +207,7 @@ export const LibraryScanStatusSchema = z.object({
   photos_modified: z.number().int(),
   photos_processing: z.number().int(),
   photos_processed: z.number().int(),
+  processing_work: ProcessingWorkSchema.nullable(),
   // Photos per second over the last batch of rows a first scan wrote down, which is
   // the only stretch of a run whose throughput the server itself times. Null
   // everywhere else, where the client's own counting is what there is.

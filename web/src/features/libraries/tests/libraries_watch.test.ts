@@ -40,6 +40,7 @@ function snapshot(library = LIBRARY, processing = 0): ActivitySnapshot {
           photos_modified: 0,
           photos_processing: processing,
           photos_processed: 0,
+          processing_work: null,
           photos_per_second: null,
         },
       },

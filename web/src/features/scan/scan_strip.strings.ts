@@ -12,6 +12,9 @@ export const ScanStripStrings = {
 
   syncing: () => 'syncing',
   fetching: () => 'fetching',
+  thumbnails: (count: number) =>
+    `building thumbnails for ${count} ${count === 1 ? 'photo' : 'photos'}`,
+  reading: (count: number) => `reading ${count} ${count === 1 ? 'photo' : 'photos'}`,
   rendering: (count: number) => `rendering ${count} ${count === 1 ? 'photo' : 'photos'}`,
   sending: (count: number) => `sending ${originals(count)}`,
 };

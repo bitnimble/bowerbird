@@ -1,5 +1,6 @@
 import type { Database } from '../../../db/driver';
 import { OrderingSchema, type Ordering } from '../../../schemas/common';
+import type { ProcessingWork } from '../../../schemas/libraries';
 import type { RenditionSource } from '../../processing/workers/processing_types';
 import { renditionVariant, type RenditionVariant } from '../../processing/renditions/renditions';
 import {
@@ -399,6 +400,21 @@ export class PhotoProcessingRepository {
       ).n;
     }
     return total;
+  }
+  /** What the library's queue is doing now: its tile pass runs before its renditions. */
+  pendingWork(libraryId: string): ProcessingWork | null {
+    const row = this.db
+      .query(
+        `SELECT COUNT(*) AS owed,
+                MAX(r.variant = 'grid' AND p.media_image_id IS NULL) AS thumbnails,
+                MAX(r.variant = 'grid') AS tiles
+           FROM renditions r JOIN photos p ON p.id = r.photo_id JOIN libraries l ON l.id = p.library_id
+          WHERE ${PENDING_PROCESSING('p.')} AND p.library_id = ?`,
+      )
+      .get(libraryId) as { owed: number; thumbnails: number | null; tiles: number | null };
+    if (row.owed === 0) return null;
+    if (row.thumbnails === 1) return 'thumbnails';
+    return row.tiles === 1 ? 'reading' : 'rendering';
   }
   // The grid tile and the viewer's renditions, for a photograph whose file has just
   // arrived or just changed. The library's own range of `full`, since that is the one

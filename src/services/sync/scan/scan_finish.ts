@@ -92,6 +92,7 @@ export async function finishScan(
     photos_modified: modified,
     photos_processing: queued,
     photos_processed: 0,
+    processing_work: queued > 0 ? photoProcessing.pendingWork(libraryId) : null,
     // The renditions are a different kind of work at a different rate, and the
     // scan's figure is not one the client should carry into them.
     photos_per_second: null,

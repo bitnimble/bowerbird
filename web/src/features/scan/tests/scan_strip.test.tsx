@@ -36,6 +36,7 @@ const STATUS: LibraryScanStatus = {
   photos_modified: 0,
   photos_processing: 3,
   photos_processed: 0,
+  processing_work: 'rendering',
   photos_per_second: null,
 };
 
@@ -101,4 +102,17 @@ test('fetch and render queues have separate messages and rendering outlasts the 
     );
   });
   expect(screen.queryByText(/rendering/)).toBeNull();
+});
+
+test('names the work the queue is doing', async () => {
+  const view = render(
+    <Status transfers={[]} status={{ ...STATUS, processing_work: 'thumbnails' }} />,
+  );
+  await act(async () => {});
+  expect(screen.getByText('building thumbnails for 3 photos')).toBeTruthy();
+
+  await act(async () => {
+    view.rerender(<Status transfers={[]} status={{ ...STATUS, processing_work: 'reading' }} />);
+  });
+  expect(screen.getByText('reading 3 photos')).toBeTruthy();
 });

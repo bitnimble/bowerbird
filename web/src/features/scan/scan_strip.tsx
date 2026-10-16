@@ -50,14 +50,14 @@ export const ScanStrip = observer(function ScanStrip({
   const scan = useScanStore();
   const reported = current ?? (scan.libraryId === library.id ? scan.status : null);
   const status = reported?.status === 'processing' ? reported : null;
-  const rendering = reported?.photos_processing ?? 0;
+  const processing = reported?.photos_processing ?? 0;
   const moving = useMoving(library.id);
   const backupStripShown = useBackupStore().statusOf(library.id)?.configured === true;
   const serverActivity = activities?.filter(
     (activity) =>
       activity.kind !== 'rendering' && !(backupStripShown && BACKUP_WORK.has(activity.kind)),
   );
-  if (status == null && rendering === 0 && (serverActivity?.length ?? moving.length) === 0)
+  if (status == null && processing === 0 && (serverActivity?.length ?? moving.length) === 0)
     return null;
 
   const progress =
@@ -118,10 +118,12 @@ export const ScanStrip = observer(function ScanStrip({
           </Strip>
         ))
       )}
-      {rendering > 0 && (
+      {processing > 0 && (
         <Strip>
           <StatusDot state="working" />
-          <StripLabel>{ScanStripStrings.rendering(rendering)}</StripLabel>
+          <StripLabel>
+            {ScanStripStrings[reported?.processing_work ?? 'rendering'](processing)}
+          </StripLabel>
         </Strip>
       )}
     </>

@@ -27,6 +27,7 @@ export function idleScanStatus(libraryId: string, status: Status = 'idle'): Libr
     photos_modified: 0,
     photos_processing: 0,
     photos_processed: 0,
+    processing_work: null,
     photos_per_second: null,
   };
 }
@@ -127,6 +128,15 @@ export class ScanStatus {
   getScanStatus(libraryId: string): LibraryScanStatus {
     if (!this.libraries.has(libraryId))
       throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    const status = this.countedStatus(libraryId);
+    return {
+      ...status,
+      processing_work:
+        status.photos_processing > 0 ? this.photoProcessing.pendingWork(libraryId) : null,
+    };
+  }
+
+  private countedStatus(libraryId: string): LibraryScanStatus {
     const status = this.statuses.get(libraryId);
     const active = this.processing?.getProcessingCount?.(libraryId);
     if (active != null) {

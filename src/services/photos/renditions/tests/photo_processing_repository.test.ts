@@ -139,6 +139,37 @@ describe('PhotoProcessingRepository.markCopyBuilt', () => {
   });
 });
 
+describe('PhotoProcessingRepository.pendingWork', () => {
+  beforeEach(() => {
+    db.query(
+      `INSERT INTO libraries (id, root_path, name, rendition_hdr) VALUES (?, '/photos', 'Library', 0)`,
+    ).run(LIB);
+    insert('other', 'Trip/d.arw');
+    db.query('UPDATE renditions SET needs_build = 0').run();
+  });
+  const owe = (id: string, variant: RenditionVariant): void =>
+    void db
+      .query(
+        `INSERT INTO renditions (photo_id, variant, needs_build) VALUES (?, ?, 1)
+         ON CONFLICT (photo_id, variant) DO UPDATE SET needs_build = 1`,
+      )
+      .run(id, variant);
+
+  it('is the tile pass while any tile is owed, then the renders', () => {
+    expect(repo.pendingWork(LIB)).toBeNull();
+
+    owe('live', 'full');
+    expect(repo.pendingWork(LIB)).toBe('rendering');
+
+    db.query("UPDATE photos SET media_image_id = 7 WHERE id = 'other'").run();
+    owe('other', 'grid');
+    expect(repo.pendingWork(LIB)).toBe('reading');
+
+    owe('live', 'grid');
+    expect(repo.pendingWork(LIB)).toBe('thumbnails');
+  });
+});
+
 describe('PhotoProcessingRepository.deviceTileImageId', () => {
   const made = (from: 'embedded' | 'render'): { from: typeof from; matched: boolean } => ({
     from,

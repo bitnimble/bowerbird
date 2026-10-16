@@ -20,6 +20,7 @@ const IDLE: LibraryScanStatus = {
   photos_modified: 0,
   photos_processing: 0,
   photos_processed: 0,
+  processing_work: null,
   photos_per_second: null,
 };
 
