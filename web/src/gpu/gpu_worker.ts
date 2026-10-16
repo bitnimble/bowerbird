@@ -33,7 +33,7 @@ import { WebCodecs } from '../features/photos/viewer/image_decoder';
 import { pipelinesFor, StagePainter } from '../features/photos/viewer/stage_gpu';
 import {
   AnswerSchema,
-  CompiledSchema,
+  CompilingSchema,
   FilesMessageSchema,
   MessageSchema,
   ProgressSchema,
@@ -52,6 +52,7 @@ const worker = self as unknown as DedicatedWorkerGlobalScope;
 const filesPort = Promise.withResolvers<MessagePort>();
 const warmth = new PipelineWarmth(storedRecipes(new PortedFiles(filesPort.promise)));
 warmth.install(worker);
+warmth.onProgress((compiled, of) => worker.postMessage(CompilingSchema.parse({ compiled, of })));
 
 const device: Promise<GPUDevice | null> = openDevice();
 const painter: Promise<StagePainter> = device.then((opened) => new StagePainter(opened));
@@ -81,10 +82,8 @@ worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
     return;
   }
   const report = (stage: string): void => worker.postMessage(ProgressSchema.parse({ id, stage }));
-  const compiled = (done: number, of: number): void =>
-    worker.postMessage(CompiledSchema.parse({ id, compiled: done, of }));
   try {
-    const { value, transfer } = await answer(MessageSchema.parse(event.data), report, compiled);
+    const { value, transfer } = await answer(MessageSchema.parse(event.data), report);
     worker.postMessage(AnswerSchema.parse({ id, ok: true, value }), transfer ?? []);
   } catch (error) {
     worker.postMessage(
@@ -114,7 +113,6 @@ type Report = (stage: string) => void;
 async function answer(
   message: Message,
   report: Report,
-  compiled: (done: number, of: number) => void,
 ): Promise<{ value: unknown; transfer?: Transferable[] }> {
   const opened = await device;
   // wgpu unwraps what a lost device refuses, so past this point every call would panic as `unreachable`.
@@ -148,7 +146,7 @@ async function answer(
       // Without its weights PMRID builds nothing, and compiles on its first denoise instead.
       await networkWeights('pmrid').catch(() => undefined);
       pipelinesFor(opened);
-      await warmth.precompile(buildEveryPipeline, compiled);
+      await warmth.precompile(buildEveryPipeline);
       return { value: null };
     }
     case 'open': {

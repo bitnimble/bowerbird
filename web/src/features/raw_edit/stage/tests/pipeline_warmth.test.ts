@@ -394,22 +394,33 @@ test('pipelines compile one at a time, whether precompiled or warmed by the next
   expect(FakeDevice.mostInFlight).toBe(1);
 });
 
-test('a precompile counts each pipeline as it finishes compiling', async () => {
+test('a precompile counts each pipeline as it is asked for and as it finishes compiling', async () => {
   reset();
   const { adapter, warmth } = installed(memory());
   const device = await adapter.requestDevice();
   build(device, 'early', 'fn early() {}');
   const counted: [number, number][] = [];
+  warmth.onProgress((compiled, of) => counted.push([compiled, of]));
 
-  await warmth.precompile(
-    () => build(device, 'late', 'fn late() {}'),
-    (compiled, of) => counted.push([compiled, of]),
-  );
+  await warmth.precompile(() => build(device, 'late', 'fn late() {}'));
   expect(counted).toEqual([
+    [0, 1],
     [0, 2],
     [1, 2],
     [2, 2],
   ]);
+});
+
+test('the warming a device opens with is counted with the rest', async () => {
+  reset();
+  const store = memory();
+  await dispatched(store, (device) => build(device, 'a', 'fn a() {}'));
+  const next = installed(store);
+  const counted: [number, number][] = [];
+  next.warmth.onProgress((compiled, of) => counted.push([compiled, of]));
+
+  await next.adapter.requestDevice();
+  expect(counted.at(-1)).toEqual([1, 1]);
 });
 
 test('a pipeline the browser refuses still counts, and compiles at its first dispatch', async () => {
@@ -419,11 +430,9 @@ test('a pipeline the browser refuses still counts, and compiles at its first dis
   const refused = build(device, 'refused', 'fn refused() {}');
   FakeDevice.refusing = true;
   const counted: [number, number][] = [];
+  warmth.onProgress((compiled, of) => counted.push([compiled, of]));
 
-  await warmth.precompile(
-    () => {},
-    (compiled, of) => counted.push([compiled, of]),
-  );
+  await warmth.precompile(() => {});
   expect(counted.at(-1)).toEqual([1, 1]);
   pass.setPipeline(refused);
   expect(FakeDevice.compiled).toEqual(['fn refused() {}']);

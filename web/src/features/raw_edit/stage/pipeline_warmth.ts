@@ -83,8 +83,16 @@ export class PipelineWarmth {
   private readonly opened = Date.now();
   private compiling = 0;
   private readonly waitingToCompile: (() => void)[] = [];
+  private compilesAsked = 0;
+  private compilesDone = 0;
+  private readonly progressListeners = new Set<(compiled: number, of: number) => void>();
 
   constructor(private readonly store: RecipeStore) {}
+
+  /** Every compile this warmth has run in the background and how many it has been asked for, as either moves. */
+  onProgress(listener: (compiled: number, of: number) => void): void {
+    this.progressListeners.add(listener);
+  }
 
   /** The global scope the WebGPU classes live on, which is `self` outside a test. */
   install(scope: object): void {
@@ -173,31 +181,21 @@ export class PipelineWarmth {
   /**
    * Compiles every pipeline `build` creates, and every one created before it and not yet drawn
    * with, keeping each as a recipe that later sessions warm. A pipeline the browser refuses still
-   * counts as compiled; its first use builds it and reports why.
+   * counts as compiled (`onProgress`); its first use builds it and reports why.
    */
-  async precompile(
-    build: () => void,
-    onCompiled: (compiled: number, of: number) => void = () => {},
-  ): Promise<void> {
+  async precompile(build: () => void): Promise<void> {
     build();
     await this.settled();
-    const waits = this.undrawn();
-    let compiled = 0;
-    const finished = (): void => onCompiled(++compiled, waits.length);
-    onCompiled(0, waits.length);
-    for (const wait of waits) {
+    for (const wait of this.undrawn()) {
       if (wait.warmed != null) {
         this.built(wait.recipe, wait.warmed);
-        finished();
         continue;
       }
       this.track(
-        this.inTurn(wait.compile)
-          .then((pipeline) => {
-            wait.warmed = pipeline;
-            this.built(wait.recipe, pipeline);
-          })
-          .finally(finished),
+        this.inTurn(wait.compile).then((pipeline) => {
+          wait.warmed = pipeline;
+          this.built(wait.recipe, pipeline);
+        }),
       );
     }
     await this.settled();
@@ -235,6 +233,8 @@ export class PipelineWarmth {
   }
 
   private async inTurn<T>(compile: () => Promise<T>): Promise<T> {
+    this.compilesAsked++;
+    this.progressed();
     // Each compile holds the driver's compiler memory until it returns, and Android's WebView runs
     // them in the app's own process: all of the editor's at once aborted it out of memory.
     if (this.compiling < COMPILES_AT_ONCE) this.compiling++;
@@ -242,11 +242,17 @@ export class PipelineWarmth {
     try {
       return await compile();
     } finally {
+      this.compilesDone++;
+      this.progressed();
       // Handed over without freeing the slot, else a caller arriving in between takes it too.
       const next = this.waitingToCompile.shift();
       if (next == null) this.compiling--;
       else next();
     }
+  }
+
+  private progressed(): void {
+    for (const listener of this.progressListeners) listener(this.compilesDone, this.compilesAsked);
   }
 
   private track(compiling: Promise<void>): void {

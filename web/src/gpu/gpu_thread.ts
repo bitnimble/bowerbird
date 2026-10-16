@@ -24,23 +24,25 @@ export class GpuThread {
       resolve: (value: unknown) => void;
       reject: (error: unknown) => void;
       onStage: (stage: OpenStage) => void;
-      onCompiled: (compiled: number, of: number) => void;
     }
   >();
   private asked = 0;
   private opened = 0;
+  private compiling: { compiled: number; of: number } | null = null;
+  private readonly compilingListeners = new Set<(compiled: number, of: number) => void>();
 
   constructor() {
     this.worker.onmessage = (event: MessageEvent<unknown>) => {
       const answer = ReplySchema.parse(event.data);
+      if (!('id' in answer)) {
+        this.compiling = answer;
+        for (const listener of this.compilingListeners) listener(answer.compiled, answer.of);
+        return;
+      }
       const waiter = this.waiting.get(answer.id);
       if (waiter == null) return;
       if ('stage' in answer) {
         waiter.onStage(answer.stage);
-        return;
-      }
-      if ('compiled' in answer) {
-        waiter.onCompiled(answer.compiled, answer.of);
         return;
       }
       this.waiting.delete(answer.id);
@@ -94,9 +96,19 @@ export class GpuThread {
     this.worker.postMessage(MessageSchema.parse({ id: ++this.asked, to: 'dropSurface', key }));
   }
 
-  /** A pipeline the browser refuses still counts towards `compiled`. */
+  /**
+   * `onCompiled` follows every pipeline the worker compiles in the background until this settles,
+   * including the device's own warming the precompile waits behind. A pipeline the browser refuses
+   * still counts towards `compiled`.
+   */
   async precompile(onCompiled: (compiled: number, of: number) => void): Promise<void> {
-    await this.send(z.null(), { to: 'precompile' }, [], () => {}, onCompiled);
+    if (this.compiling != null) onCompiled(this.compiling.compiled, this.compiling.of);
+    this.compilingListeners.add(onCompiled);
+    try {
+      await this.send(z.null(), { to: 'precompile' }, [], () => {});
+    } finally {
+      this.compilingListeners.delete(onCompiled);
+    }
   }
 
   ask<S extends z.ZodType>(
@@ -105,7 +117,7 @@ export class GpuThread {
     transfer: Transferable[] = [],
     onStage: (stage: OpenStage) => void = () => {},
   ): Promise<z.output<S>> {
-    return this.send(schema, message, transfer, onStage, () => {});
+    return this.send(schema, message, transfer, onStage);
   }
 
   private send<S extends z.ZodType>(
@@ -113,7 +125,6 @@ export class GpuThread {
     message: Addressed,
     transfer: Transferable[],
     onStage: (stage: OpenStage) => void,
-    onCompiled: (compiled: number, of: number) => void,
   ): Promise<z.output<S>> {
     const id = ++this.asked;
     return new Promise<z.output<S>>((resolve, reject) => {
@@ -126,7 +137,6 @@ export class GpuThread {
         },
         reject,
         onStage,
-        onCompiled,
       });
       this.worker.postMessage(MessageSchema.parse({ ...message, id }), transfer);
     });

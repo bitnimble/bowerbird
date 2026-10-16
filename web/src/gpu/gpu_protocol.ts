@@ -139,7 +139,10 @@ export const AnswerSchema = z.discriminatedUnion('ok', [
 /** A stage the message `id` asked for has begun, sent any number of times before its answer. */
 export const ProgressSchema = z.object({ id: z.number(), stage: OpenStageSchema });
 
-/** How many of the pipelines a precompile is compiling have finished, sent as each one does. */
-export const CompiledSchema = z.object({ id: z.number(), compiled: z.number(), of: z.number() });
+/**
+ * How many of the pipelines the worker has been asked to compile in the background have finished,
+ * sent unasked as either count moves: the device's own warming runs before any message is answered.
+ */
+export const CompilingSchema = z.object({ compiled: z.number(), of: z.number() });
 
-export const ReplySchema = z.union([ProgressSchema, CompiledSchema, AnswerSchema]);
+export const ReplySchema = z.union([ProgressSchema, AnswerSchema, CompilingSchema]);

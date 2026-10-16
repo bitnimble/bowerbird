@@ -13,6 +13,26 @@ function deferred(): { promise: Promise<void>; resolve: () => void; reject: () =
   return { promise, resolve, reject };
 }
 
+/** The toasts the presenter asked for, as each one stands. */
+function toasting(): {
+  shown: Map<number, { message: string; progress: number }>;
+  showProgress: (message: string, progress: number) => number;
+  progressed: (id: number, message: string, progress: number) => void;
+  dismiss: (id: number) => void;
+} {
+  const shown = new Map<number, { message: string; progress: number }>();
+  let next = 1;
+  return {
+    shown,
+    showProgress: (message, progress) => {
+      shown.set(next, { message, progress });
+      return next++;
+    },
+    progressed: (id, message, progress) => shown.set(id, { message, progress }),
+    dismiss: (id) => shown.delete(id),
+  };
+}
+
 function remembering(version: string | null): Remembered & { version: string | null } {
   const held = {
     version,
@@ -35,6 +55,7 @@ test('a device that precompiled this version starts ready, without compiling', (
     },
     '1.4.0',
     remembering('1.4.0'),
+    toasting(),
   );
   presenter.start();
 
@@ -55,6 +76,7 @@ test('a new version compiles once however often it is asked for, then remembers 
     },
     '1.4.0',
     remembered,
+    toasting(),
   );
 
   presenter.start();
@@ -78,6 +100,7 @@ test('the store follows how many pipelines have compiled', () => {
     },
     '1.4.0',
     remembering(null),
+    toasting(),
   ).start();
 
   report(0, 205);
@@ -89,7 +112,14 @@ test('the store follows how many pipelines have compiled', () => {
 test('a compile that never finishes lets the app open once the wait runs out, and is not remembered', async () => {
   const store = new PrecompileStore();
   const remembered = remembering(null);
-  new PrecompilePresenter(store, () => new Promise(() => {}), '1.4.0', remembered, 10).start();
+  new PrecompilePresenter(
+    store,
+    () => new Promise(() => {}),
+    '1.4.0',
+    remembered,
+    toasting(),
+    10,
+  ).start();
 
   expect(store.ready).toBe(false);
   await when(() => store.ready, { timeout: 5000 });
@@ -100,7 +130,14 @@ test('a compile that finishes after the wait ran out is still remembered', async
   const store = new PrecompileStore();
   const compile = deferred();
   const remembered = remembering(null);
-  new PrecompilePresenter(store, () => compile.promise, '1.4.0', remembered, 10).start();
+  new PrecompilePresenter(
+    store,
+    () => compile.promise,
+    '1.4.0',
+    remembered,
+    toasting(),
+    10,
+  ).start();
 
   await when(() => store.ready, { timeout: 5000 });
   compile.resolve();
@@ -109,11 +146,55 @@ test('a compile that finishes after the wait ran out is still remembered', async
   expect(remembered.version).toBe('1.4.0');
 });
 
+test('a compile still running when the app opens goes on in a toast, which closes when it is done', async () => {
+  const store = new PrecompileStore();
+  const compile = deferred();
+  const toasts = toasting();
+  let report = (_compiled: number, _of: number): void => {};
+  new PrecompilePresenter(
+    store,
+    (onCompiled) => {
+      report = onCompiled;
+      return compile.promise;
+    },
+    '1.4.0',
+    remembering(null),
+    toasts,
+    10,
+  ).start();
+  report(10, 200);
+
+  await when(() => store.ready, { timeout: 5000 });
+  expect([...toasts.shown.values()]).toEqual([
+    { message: 'Precompiling shaders...', progress: 0.05 },
+  ]);
+  report(100, 200);
+  expect([...toasts.shown.values()]).toEqual([
+    { message: 'Precompiling shaders...', progress: 0.5 },
+  ]);
+
+  compile.resolve();
+  await compile.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(toasts.shown.size).toBe(0);
+});
+
+test('a compile done before the wait ran out shows no toast', async () => {
+  const store = new PrecompileStore();
+  const compile = deferred();
+  const toasts = toasting();
+  new PrecompilePresenter(store, () => compile.promise, '1.4.0', remembering(null), toasts).start();
+
+  compile.resolve();
+  await when(() => store.ready, { timeout: 5000 });
+  expect(toasts.shown.size).toBe(0);
+});
+
 test('a compile that fails opens the app, and is tried again on the next visit', async () => {
   const store = new PrecompileStore();
   const compile = deferred();
   const remembered = remembering(null);
-  new PrecompilePresenter(store, () => compile.promise, '1.4.0', remembered).start();
+  new PrecompilePresenter(store, () => compile.promise, '1.4.0', remembered, toasting()).start();
 
   compile.reject();
   await when(() => store.ready, { timeout: 5000 });

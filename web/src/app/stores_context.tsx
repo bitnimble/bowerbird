@@ -249,6 +249,7 @@ function build(): { stores: Stores; presenters: Presenters } {
         read: () => readSetting(PRECOMPILED_KEY),
         write: (version) => writeSetting(PRECOMPILED_KEY, version),
       },
+      toasts,
     ),
     devicePhotos: new DevicePhotosPresenter(
       stores.devicePhotos,
