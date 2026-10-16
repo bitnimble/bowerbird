@@ -327,8 +327,6 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
     let sums = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("stacks sums"),
         size: sums_bytes,
-        // Zeroed by the driver, which the accumulation relies on: every cell is added into rather
-        // than written.
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
@@ -370,8 +368,7 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_bind_group(0, &group, &[]);
         pass.set_pipeline(&built.cells);
-        let (x, y) = crate::base::groups(pixels);
-        pass.dispatch_workgroups(x, y, 1);
+        pass.dispatch_workgroups(GRID as u32, GRID as u32, VIEWS.len() as u32);
     }
     recording
         .encoder()
@@ -696,6 +693,43 @@ mod tests {
             describe_frame(gpu, 160, 120, &data),
             describe_frame(gpu, 160, 120, &data)
         );
+    }
+
+    #[test]
+    fn each_cell_sums_the_pixels_the_cell_rule_puts_in_it() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let (width, height) = (997, 613);
+        let mut state = 0x9e37_79b9_u32;
+        let data: Vec<u8> = (0..width * height * 3)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                (state >> 24) as u8
+            })
+            .collect();
+        let image = RgbRef {
+            width,
+            height,
+            data: &data,
+        };
+        let read = pollster::block_on(accumulate(gpu, image)).expect("the grids read back");
+        for (view, cells) in VIEWS.iter().zip(read) {
+            let (x0, y0, w, h) = view.bounds(width, height);
+            let mut expected = vec![0u32; GRID * GRID * 3];
+            for y in y0..y0 + h {
+                for x in x0..x0 + w {
+                    let cell = ((y - y0) * GRID / h) * GRID + (x - x0) * GRID / w;
+                    for channel in 0..3 {
+                        expected[cell * 3 + channel] +=
+                            u32::from(data[(y * width + x) * 3 + channel]);
+                    }
+                }
+            }
+            assert_eq!(cells.channels, expected);
+        }
     }
 
     #[test]
