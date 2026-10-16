@@ -1,6 +1,7 @@
 const LINES_KEPT = 2000;
 const VALUE_CHARS_KEPT = 2000;
 const LOG_PORT = 'bowerbirdLogPort';
+const BUSY_TASK_MS = 200;
 
 type Level = 'INFO' | 'WARN' | 'ERROR';
 
@@ -38,6 +39,14 @@ export class PageLog {
     self.addEventListener('unhandledrejection', (event) =>
       this.record('ERROR', 'uncaught', [event.reason]),
     );
+    if (thread === 'page' && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
+      new PerformanceObserver((tasks) => {
+        for (const task of tasks.getEntries()) {
+          if (task.duration >= BUSY_TASK_MS)
+            this.record('WARN', 'page', ['the page was busy', { ms: Math.round(task.duration) }]);
+        }
+      }).observe({ type: 'longtask' });
+    }
   }
 
   /** Takes a worker's lines into this thread's log; for every `new Worker`. */

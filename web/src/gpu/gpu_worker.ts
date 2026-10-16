@@ -41,10 +41,12 @@ import {
   type StartMessage,
 } from './gpu_protocol';
 import { canDecodeAvifPlanes, decodeAvifPlanes, type PlanarPicture } from '../avif/avif_planes';
-import { pageLog } from '../features/logs/page_log';
+import { Logger, pageLog } from '../features/logs/page_log';
 import { KeptStages } from './kept_stages';
 
 pageLog.follow('worker');
+const paintLog = new Logger('stage');
+const SLOW_PAINT_MS = 150;
 
 /** The other half of `GpuThread`, which says why the module is over here. */
 
@@ -124,7 +126,10 @@ async function answer(
     throw new Error(`the GPU was reset (${lost}); reload the page`);
   switch (message.to) {
     case 'stage': {
+      const asked = performance.now();
       const value = await (await painter).answer(message.ask);
+      if (opened != null && message.ask.kind !== 'releaseCanvas')
+        reportSlowPaint(opened, message.ask.kind, asked, performance.now());
       if (value == null || typeof value === 'string') return { value };
       return { value, transfer: ['words' in value ? value.words.buffer : value.bitmap] };
     }
@@ -170,6 +175,22 @@ async function answer(
       return open.answer(message.ask, report);
     }
   }
+}
+
+/**
+ * A paint the reader could feel, split into this thread's part and the wait for the GPU to finish
+ * it, which on a phone shares the GPU with the server's processing.
+ */
+function reportSlowPaint(opened: GPUDevice, kind: string, asked: number, painted: number): void {
+  void opened.queue.onSubmittedWorkDone().then(() => {
+    const done = performance.now();
+    if (done - asked < SLOW_PAINT_MS) return;
+    paintLog.warn('a paint was slow', {
+      kind,
+      paintingMs: Math.round(painted - asked),
+      gpuMs: Math.round(done - painted),
+    });
+  });
 }
 
 /** Freeing into a lost device panics like any other call; the reload reclaims it instead. */
