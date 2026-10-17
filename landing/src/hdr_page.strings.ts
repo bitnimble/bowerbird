@@ -20,8 +20,6 @@ export const HdrPageStrings = {
   hdr: () => 'HDR',
   clickToSwitch: () => 'Select to switch',
 
-  title: () => 'Why HDR?',
-
   swatchesAlt: () =>
     'The same 5 colours get brighter. Left colours fade at white. Right colours stay saturated.',
 };

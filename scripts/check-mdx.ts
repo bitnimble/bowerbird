@@ -6,7 +6,7 @@ import ts from 'typescript';
 import { create as createTypeScriptServices } from 'volar-service-typescript';
 
 const ROOT = join(import.meta.dir, '..');
-const PROJECTS = ['web/tsconfig.json', 'landing/tsconfig.json'];
+const PROJECTS = ['landing/tsconfig.json'];
 
 let failed = false;
 for (const project of PROJECTS) {

@@ -1,55 +1,44 @@
 import type { SdrMatch } from '../../src/schemas/sdr_match';
+import type { HdrSource } from '../../web/src/avif/hdr_pictures';
 
-/** The photographs the HDR demo compares, in both ranges. Built by `scripts/demo-assets.ts`. */
+/** The photographs the HDR demo and page compare, in both ranges. Built by `scripts/demo-assets.ts`. */
 export type Scene = 'gamut' | 'whites' | 'sun' | 'saturated';
 
 export const SCENES: readonly Scene[] = ['gamut', 'whites', 'sun', 'saturated'];
 
-// Each `new URL` is a literal so Vite bundles the committed file rather than a second copy of it.
 // `hdrTenBit` is the HDR arm Firefox shows, through a video (`HdrPicture`), coded to how each
 // platform shows a video's SDR range.
-export const PHOTOS: Record<
-  Scene,
-  { sdr: string; hdr: string; hdrTenBit: Record<SdrMatch, string> }
-> = {
-  gamut: {
-    sdr: new URL('../../web/public/hdr/gamut-sdr.avif', import.meta.url).href,
-    hdr: new URL('../../web/public/hdr/gamut-hdr.avif', import.meta.url).href,
-    hdrTenBit: {
-      still: new URL('../../web/public/hdr/gamut-hdr-10bit.avif', import.meta.url).href,
-      'mac-video': new URL('../../web/public/hdr/gamut-hdr-10bit-mac-video.avif', import.meta.url)
-        .href,
-    },
-  },
-  whites: {
-    sdr: new URL('../../web/public/hdr/whites-sdr.avif', import.meta.url).href,
-    hdr: new URL('../../web/public/hdr/whites-hdr.avif', import.meta.url).href,
-    hdrTenBit: {
-      still: new URL('../../web/public/hdr/whites-hdr-10bit.avif', import.meta.url).href,
-      'mac-video': new URL('../../web/public/hdr/whites-hdr-10bit-mac-video.avif', import.meta.url)
-        .href,
-    },
-  },
-  sun: {
-    sdr: new URL('../../web/public/hdr/sun-sdr.avif', import.meta.url).href,
-    hdr: new URL('../../web/public/hdr/sun-hdr.avif', import.meta.url).href,
-    hdrTenBit: {
-      still: new URL('../../web/public/hdr/sun-hdr-10bit.avif', import.meta.url).href,
-      'mac-video': new URL('../../web/public/hdr/sun-hdr-10bit-mac-video.avif', import.meta.url)
-        .href,
-    },
-  },
-  saturated: {
-    sdr: new URL('../../web/public/hdr/saturated-sdr.avif', import.meta.url).href,
-    hdr: new URL('../../web/public/hdr/saturated-hdr.avif', import.meta.url).href,
-    hdrTenBit: {
-      still: new URL('../../web/public/hdr/saturated-hdr-10bit.avif', import.meta.url).href,
-      'mac-video': new URL(
-        '../../web/public/hdr/saturated-hdr-10bit-mac-video.avif',
-        import.meta.url,
-      ).href,
-    },
-  },
+type ScenePhotos = { sdr: string; hdr: string; hdrTenBit: Record<SdrMatch, string> };
+
+export const PHOTOS: Record<Scene, ScenePhotos> = {
+  gamut: scene('gamut'),
+  whites: scene('whites'),
+  sun: scene('sun'),
+  saturated: scene('saturated'),
+};
+
+/** A scene's HDR arm as `HdrPicture` takes it. */
+export function hdrSource(scene: Scene): HdrSource {
+  const photo = PHOTOS[scene];
+  return { still: photo.hdr, tenBit: (match) => photo.hdrTenBit[match] };
+}
+
+function scene(slug: Scene): ScenePhotos {
+  const at = `${import.meta.env.BASE_URL}hdr/${slug}`;
+  return {
+    sdr: `${at}-sdr.avif`,
+    hdr: `${at}-hdr.avif`,
+    hdrTenBit: { still: `${at}-hdr-10bit.avif`, 'mac-video': `${at}-hdr-10bit-mac-video.avif` },
+  };
+}
+
+// The app's own file: it keeps the strip painted for Chrome's HDR output (`HdrOutput`).
+export const SWATCHES: HdrSource = {
+  still: new URL('../../web/public/hdr/swatches.avif', import.meta.url).href,
+  tenBit: (match) =>
+    match === 'mac-video'
+      ? new URL('../../web/public/hdr/swatches-mac-video.avif', import.meta.url).href
+      : new URL('../../web/public/hdr/swatches.avif', import.meta.url).href,
 };
 
 /** Stand-in photographs for the demos that need something to show rather than a particular picture. */

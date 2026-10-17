@@ -384,13 +384,13 @@ e2e spec is the only one that can see the bindings and the page disagreeing. It 
 alone: the editor needs WebGPU, which the Linux Firefox the suite runs does not ship. What no
 automated check can confirm is the pixels reaching an HDR compositor.
 
-## 22. What HDR is for (`/hdr`)
+## 22. What HDR is for (`landing/hdr.html`)
 
-`/hdr` demonstrates what the settings page cannot: three raw files, each developed twice and swapped **in place**. A toggle makes differences visible without the eye travelling between frames.
+The landing site's HDR page makes the case for HDR in pictures: four raw files, each developed twice and swapped **in place**. A toggle makes differences visible without the eye travelling between frames.
 
 **It opens on the 8-bit version**, the reader's familiar picture. Adding HDR is easier to notice than its absence.
 
-**It never mentions this app.** The argument about 8-bit photographs applies wherever readers develop raws and should be checkable against their experience. The closing section defines each pair - one raw, same settings, different container - without naming its producer or linking Settings. Copy addresses photographers through stops, clipping and channels, not PQ, transfer curves or nits.
+**Its copy never names this app.** The argument about 8-bit photographs applies wherever readers develop raws and should be checkable against their experience. The closing section defines each pair - one raw, same settings, different container - without naming its producer. Copy addresses photographers through stops, clipping and channels, not PQ, transfer curves or nits.
 
 **The HDR arm comes out of `runJob`** (`scripts/demo-assets.ts`) at the settings the app ships with - `SettingsSchema.parse({})`, not a table of numbers copied into the script - with only the size changed, 1200px rather than 3840.
 
@@ -400,7 +400,7 @@ So the 8-bit arm is now the HDR arm with its ceiling brought down to white: the 
 
 The cost of the fix is that the page can no longer borrow a difference from the two arms disagreeing. Only content genuinely above white differs now, and three of the original five scenes did not survive it. A moon over some roofs lost **0.0%** of its pixels to the ceiling and a pizzeria sign **0.1%**: they had been showing a difference that was entirely the two grades disagreeing, and with that gone they show nothing at all. A third, an LED-lit still life, kept 6.7% but was replaced for a different reason - a reader with no idea what the room actually looked like cannot tell which of the two versions is the better one, which is a fair complaint about any picture whose subject they cannot check against memory.
 
-**The raw files are the maintainer's own**, read from a path only their machine has, which is why the script does not run on a fresh checkout and does not need to: the renditions are committed - about 845kB for the six, the swatch strip included - and the page serves those. They were CC BY-SA submissions from discuss.pixls.us for as long as the page was illustrated by strangers, which is where the credit line under each picture went when the photographs became the maintainer's.
+**The raw files are the maintainer's own**, read from a path only their machine has, which is why the script does not run on a fresh checkout and does not need to: the renditions are committed under `landing/public/hdr` and the page serves those. They were CC BY-SA submissions from discuss.pixls.us for as long as the page was illustrated by strangers, which is where the credit line under each picture went when the photographs became the maintainer's.
 
 **Choose scenes by measurement, then recognisability.** Most raws hold only a stop or two above diffuse white: metering favours the subject, with sensor saturation a little above. Frames containing a light source work best. Encoded rendition measurements:
 
@@ -426,9 +426,9 @@ This cost a day to find, and every wrong turn on the way is instructive about ho
 
 **The photographs escaped the failure accidentally.** `.compare__layer` already had `will-change: opacity` for repaint-free swapping, promoting them out of the scroller.
 
-**The swap is an opacity change on two mounted, decoded frames**, which is the stack triage flip (§20.4) and works for the same reason: `will-change: opacity` keeps the hidden one rasterised, so a press costs no repaint. Nothing on that subtree or above it may carry a filter, a transform or a partial opacity - any of those rasterises into an SDR intermediate and loses the PQ tagging silently (§10.7). That constraint is also why the reading column is left-aligned rather than centred, in passing: `.pad`'s first child reserves an inline gap for the collapsed sidebar's floating button, and a centred column would carry that indent on the heading and nowhere else.
+**The swap is an opacity change on two mounted, decoded frames**, which is the stack triage flip (§20.4) and works for the same reason: `will-change: opacity` keeps the hidden one rasterised, so a press costs no repaint. Nothing on that subtree or above it may carry a filter, a transform or a partial opacity - any of those rasterises into an SDR intermediate and loses the PQ tagging silently (§10.7).
 
-Each picture is an `HdrPicture`, so Firefox is shown a rewrap of each scene's committed `-hdr-10bit.avif`, or `-hdr-10bit-mac-video.avif` on macOS, and never fetches the still (§10.7.2). Three mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The swatch strip is rewrapped from its own file, which is 10-bit 4:2:0 already, bar macOS's `swatches-mac-video.avif`.
+Each picture is an `HdrPicture`, so Firefox is shown a rewrap of each scene's committed `-hdr-10bit.avif`, or `-hdr-10bit-mac-video.avif` on macOS, and never fetches the still (§10.7.2). Four mounted MP4s cost a few hundred kilobytes and avoid rewrapping per press. The swatch strip is rewrapped from its own file, which is 10-bit 4:2:0 already, bar macOS's `swatches-mac-video.avif`.
 
 **Swatch strips are the page's only synthetic content.** They explain brightness above white before the photographs: five colours start at their 8-bit maximum and rise to their format's limit. Quantisation is lossless; flat colour has no detail to trade away.
 
@@ -472,6 +472,6 @@ The rows under the JPEG are the reason this is worth drawing four times. **Two o
 
 **Which leaves the chart saying something better than "HDR is bigger".** The formats are not far apart in total once both are read honestly, and on the screen most people own they are within a stop or two of each other. What separates them is entirely on one side of one line: the JPEG's headroom is 0.2 stops and the HDR file's is 2.3, on every row. The other two bars stay approximations: a full-frame sensor's engineering dynamic range at base ISO, and the eye across one scene with the gaze moving.
 
-**Every desktop and Android build pays 845kB:** `public/` is copied into `web/dist`, which each app's server serves. Halving assets introduces artefacts in the highlights being demonstrated; lazy-loading saves nothing for readers reaching the bottom.
+**The photographs ship with the landing site only.** The app carries just the swatch strip in `web/public/hdr`, which `HdrOutput` keeps painted so Chrome on Windows presents in HDR. Halving assets introduces artefacts in the highlights being demonstrated; lazy-loading saves nothing for readers reaching the bottom.
 
-The shell, or in a browser `(dynamic-range: high)` or `(video-dynamic-range: high)`, decides whether to say the display is SDR. The second query is Firefox's: it answers `dynamic-range` `standard` on an HDR display, and is shown this page's pictures as video (§10.7.2). On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.
+`(dynamic-range: high)` or `(video-dynamic-range: high)` decides whether to say the display is SDR. The second query is Firefox's: it answers `dynamic-range` `standard` on an HDR display, and is shown this page's pictures as video (§10.7.2). On an SDR one the colour losses still show - a clipped neon tube is white there too - and only the brightness ones are lost, which is what the notice says.

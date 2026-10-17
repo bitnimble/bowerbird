@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Bug, FolderOutput, GitMerge, Images, PanelLeftClose, Settings, Sun } from 'lucide-react';
+import { Bug, FolderOutput, GitMerge, Images, PanelLeftClose, Settings } from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { drawer } from '../../app/drawer.stylex';
 import { useExportStore, usePresenters, useReplicationStore } from '../../app/stores_context';
@@ -13,7 +13,6 @@ import { AlbumsPageStrings } from '../albums/albums_page.strings';
 import { ExportsPageStrings } from '../exports/exports_page.strings';
 import { bugReporter } from '../feedback/report_bug';
 import { ReportBugStrings } from '../feedback/report_bug_dialog.strings';
-import { HdrPageStrings } from '../hdr/hdr_page.strings';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { UpdateBadge } from '../updates/update_badge';
 import { LibraryNav } from './library_nav';
@@ -189,11 +188,6 @@ export function Sidebar({
           <ExportsLink />
           <SidebarLink to={route(PathSegment.settings())} icon={Settings}>
             {SettingsStrings.settings()}
-          </SidebarLink>
-          {/* Beside Settings because it is what the HDR setting there is asking about:
-              the case for turning it on, made in pictures. */}
-          <SidebarLink to={route(PathSegment.hdr())} icon={Sun}>
-            {HdrPageStrings.title()}
           </SidebarLink>
           <ReportBugEntry />
           <UpdateBadge />

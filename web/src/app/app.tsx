@@ -5,7 +5,6 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { AlbumPhotosPage } from '../features/albums/album_photos_page';
 import { AlbumsPage } from '../features/albums/albums_page';
-import { HdrPage } from '../features/hdr/hdr_page';
 import { BinPage } from '../features/photos/grid/bin_page';
 import { LibraryPhotosPage } from '../features/photos/grid/library_photos_page';
 import { MergePage } from '../features/photos/merge/merge_page';
@@ -297,7 +296,6 @@ export const App = observer(function App(): JSX.Element {
                 element={<SettingsPage />}
               />
               <Route path={route(PathSegment.exports())} element={<ExportsPage />} />
-              <Route path={route(PathSegment.hdr())} element={<HdrPage />} />
               <Route
                 path={route(PathSegment.libraries(), PathSegment.param('libraryId'))}
                 element={<LibraryPhotosPage />}

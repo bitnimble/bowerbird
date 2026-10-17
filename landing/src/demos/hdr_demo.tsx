@@ -5,7 +5,7 @@ import type { HdrSource } from '../../../web/src/avif/hdr_pictures';
 import { SegmentedControl } from '../../../web/src/ui/segmented_control';
 import { DEMO } from '../features';
 import { useHdrDisplay } from '../hdr_display';
-import { PHOTOS, SCENES, type Scene } from '../photos';
+import { PHOTOS, SCENES, hdrSource, type Scene } from '../photos';
 import { Demo, DemoBar, DemoWarning } from './demo';
 import { SplitFrame, splitImage } from './split_frame';
 
@@ -138,7 +138,7 @@ export function HdrDemo(): JSX.Element {
           <HdrRendition
             key={photo.hdr}
             style={splitImage.after}
-            source={{ still: photo.hdr, tenBit: (match) => photo.hdrTenBit[match] }}
+            source={hdrSource(scene)}
             alt={DEMO.hdr.hdrAlt(title)}
             onReady={markShown}
           />

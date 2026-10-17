@@ -1,5 +1,5 @@
-// The committed demo pictures, built by the app's own pipeline: the pairs on `/hdr`, and
-// the colour matching pair the landing site's demo swaps between.
+// The committed demo pictures, built by the app's own pipeline: the pairs on the landing site's
+// HDR page, and the colour matching pair the landing site's demo swaps between.
 //
 //   BOWERBIRD_DEMO_GAMUT=<a raw> BOWERBIRD_DEMO_WHITES=<a raw> ... bun run scripts/demo-assets.ts [slug...]
 //
@@ -65,7 +65,7 @@ function rawFor(slug: string): string {
 }
 
 // The pictures on the page, in its order. Each is a case the page makes in words
-// beside it, so a change here wants a look at `web/src/features/hdr/hdr_page.tsx`.
+// beside it, so a change here wants a look at `landing/src/copy/hdr.mdx`.
 const SCENES: readonly string[] = ['gamut', 'whites', 'sun', 'saturated'];
 
 /**
@@ -139,7 +139,8 @@ const PANORAMA_EDGE = 2000;
 const FRAME_EDGE = 400;
 
 const ROOT = resolve(import.meta.dir, '..');
-const OUT = join(ROOT, 'web', 'public', 'hdr');
+const SWATCHES_OUT = join(ROOT, 'web', 'public', 'hdr');
+const SCENES_OUT = join(ROOT, 'landing', 'public', 'hdr');
 const LANDING_OUT = join(ROOT, 'landing', 'public', 'samples');
 
 /** Every rendition setting at its shipped default, so the page shows the shipped look. */
@@ -154,7 +155,7 @@ function croppedSize(crop: [number, number, number, number]): number {
 }
 
 function outputPath(slug: string, hdr: boolean): string {
-  return join(OUT, `${slug}-${hdr ? 'hdr' : 'sdr'}.avif`);
+  return join(SCENES_OUT, `${slug}-${hdr ? 'hdr' : 'sdr'}.avif`);
 }
 
 /**
@@ -162,7 +163,7 @@ function outputPath(slug: string, hdr: boolean): string {
  * to `matching` (`hdrVideoSdrMatch`).
  */
 function tenBitPath(slug: string, matching: SdrMatch): string {
-  return join(OUT, `${slug}-hdr-10bit${sdrMatchSuffix(matching)}.avif`);
+  return join(SCENES_OUT, `${slug}-hdr-10bit${sdrMatchSuffix(matching)}.avif`);
 }
 
 function colourPath(profile: 'matched' | 'none'): string {
@@ -505,7 +506,7 @@ async function buildSwatches(): Promise<void> {
 
 /** The swatches as Firefox is shown them coded to `matching`: the file itself as a still. */
 function swatchesPath(matching: SdrMatch): string {
-  return join(OUT, `swatches${sdrMatchSuffix(matching)}.avif`);
+  return join(SWATCHES_OUT, `swatches${sdrMatchSuffix(matching)}.avif`);
 }
 
 /**
@@ -783,8 +784,7 @@ if (
 ) {
   throw new Error(`no such scene: ${asked.join(', ')}`);
 }
-mkdirSync(OUT, { recursive: true });
-mkdirSync(LANDING_OUT, { recursive: true });
+for (const out of [SWATCHES_OUT, SCENES_OUT, LANDING_OUT]) mkdirSync(out, { recursive: true });
 if (swatches) await buildSwatches();
 if (colour) await buildColour();
 if (merge) await buildMerge();
