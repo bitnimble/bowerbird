@@ -33,19 +33,27 @@ fn main() {
             .display()
     );
 
+    let clang_args = [
+        format!("--target={target}"),
+        format!("--sysroot={}", sysroot.display()),
+        // The host libclang's own headers would sit between these and the sysroot's, and its
+        // `stdint.h` shares their include guard, so `include_next` never reaches WASI's.
+        "-nobuiltininc".to_owned(),
+        format!("-isystem{}", home.join("clang-include").display()),
+        format!("-I{}", home.join("include").display()),
+        // Clang hides every symbol by default for wasm, and bindgen binds no hidden function.
+        "-fvisibility=default".to_owned(),
+        // Prints the header search order, which cargo shows only when this script fails.
+        "-v".to_owned(),
+    ];
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
-        .clang_arg(format!("--target={target}"))
-        .clang_arg(format!("--sysroot={}", sysroot.display()))
-        .clang_arg(format!("-isystem{}", home.join("clang-include").display()))
-        .clang_arg(format!("-I{}", home.join("include").display()))
+        .clang_args(&clang_args)
         .default_enum_style(bindgen::EnumVariation::NewType {
             is_bitfield: false,
             is_global: false,
         })
         .prepend_enum_name(false)
-        // Clang hides every symbol by default for wasm, and bindgen binds no hidden function.
-        .clang_arg("-fvisibility=default")
         .allowlist_function("vpx_codec_vp9_cx")
         .allowlist_function("vpx_codec_enc_config_default")
         .allowlist_function("vpx_codec_enc_init_ver")
@@ -61,7 +69,13 @@ fn main() {
         .allowlist_var("VPX_DL_REALTIME")
         .allowlist_var("VPX_EFLAG_FORCE_KF")
         .generate()
-        .expect("bindgen failed against the pinned libvpx headers");
+        .unwrap_or_else(|error| {
+            panic!(
+                "bindgen failed against the pinned libvpx headers, with libclang {} and {}: {error}",
+                bindgen::clang_version().full,
+                clang_args.join(" "),
+            )
+        });
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
     bindings
         .write_to_file(out.join("vpx.rs"))
