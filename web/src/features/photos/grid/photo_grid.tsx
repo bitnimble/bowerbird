@@ -9,6 +9,7 @@ import {
   useStacksStore,
 } from '../../../app/stores_context';
 import { ownsArrows } from '../../../app/remote_navigation';
+import { onTv } from '../../../app/tv';
 import { EmptyState } from '../../../ui/empty_state';
 import { focusRing } from '../../../ui/focus_ring';
 import { Text } from '../../../ui/text';
@@ -325,7 +326,13 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
       <div
         // Room under the last row for the bar floating over it, which is drawn exactly when a
         // cull is going on and would otherwise sit on the bottom row's own verdict and stars.
-        {...stylex.props(viewport.scroller, marks.hasSelection && viewport.barred, focusRing.ring)}
+        // A remote moves only the cursor, so on a television it is the focus and a ring marks it
+        // twice; a keyboard can page the cursor off screen, leaving the ring the only mark.
+        {...stylex.props(
+          viewport.scroller,
+          marks.hasSelection && viewport.barred,
+          !(onTv() && marks.showsCursor) && focusRing.ring,
+        )}
         id={SCROLLER_ID}
         ref={scroller}
         onScroll={onScroll}

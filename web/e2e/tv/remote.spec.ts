@@ -149,6 +149,55 @@ test("the editor's address opens the photo to view", async ({ page }) => {
   await expect(bar(page)).toBeHidden();
 });
 
+test("the remote picks another device's libraries in the connect dialog", async ({ page }) => {
+  await page.route(
+    `**${route(PathSegment.api(), PathSegment.replication(), PathSegment.replicas(), PathSegment.browse())}`,
+    (request) =>
+      request.fulfill({
+        json: {
+          peer_id: 'peer000000000001',
+          name: 'Desktop',
+          address: 'http://desktop:5173',
+          clock_ms: Date.now(),
+          clock_skew_ms: 0,
+          libraries: [
+            { id: 'library1', name: 'Trip', photo_count: 12, read_only: false, replicating: true },
+            { id: 'library2', name: 'Home', photo_count: 3, read_only: false, replicating: true },
+          ],
+        },
+      }),
+  );
+  await page.goto(route(PathSegment.settings(), 'libraries'));
+  await page.getByRole('button', { name: 'Connect to another Bowerbird' }).focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Connect to another Bowerbird' });
+  await dialog.getByRole('textbox', { name: 'Device address' }).fill('http://desktop:5173');
+  await page.keyboard.press('Enter');
+
+  const trip = dialog.getByRole('checkbox', { name: 'Trip' });
+  await expect(trip).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(trip).toBeChecked();
+  await page.keyboard.press('ArrowDown');
+  const home = dialog.getByRole('checkbox', { name: 'Home' });
+  await expect(home).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(home).toBeChecked();
+});
+
+test('an arrow with nothing focused starts in the open dialog', async ({ page }) => {
+  await page.goto(route(PathSegment.settings(), 'libraries'));
+  await page.getByRole('button', { name: 'Connect to another Bowerbird' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Connect to another Bowerbird' });
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+
+  await page.keyboard.press('ArrowDown');
+  await expect(dialog.locator(':focus')).toHaveCount(1);
+});
+
 test('the bar and the filmstrip go once the remote is left alone', async ({ page }) => {
   await page.clock.install();
   await openFirstPhoto(page);

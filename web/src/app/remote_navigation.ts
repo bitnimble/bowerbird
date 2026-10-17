@@ -23,25 +23,40 @@ export function ownsArrows(arrows: 'all' | 'sideways'): Record<string, string> {
   return { [OWNS_ARROWS]: arrows };
 }
 
-const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]';
+const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]';
 const OWNS_HORIZONTAL =
   'input:not([type="checkbox"]), textarea, [role="slider"], [role="tablist"], [role="radiogroup"]';
 const OWNS_ALL = 'select, [role="menu"], [role="listbox"]';
 const LAYER = `${POPUP}, [role="alertdialog"]`;
+const DIALOG = '[role="dialog"], [role="alertdialog"]';
 const SIDEBAR = `nav[aria-label="${SidebarStrings.sidebar()}"]`;
+
+const TOGGLES = new Set(['checkbox', 'radio']);
 
 const OVERLAP = 2;
 const ACROSS_WEIGHT = 2;
 
 export function followRemote(): () => void {
   const onKey = (e: KeyboardEvent): void => {
-    const direction = DIRECTIONS[e.key];
-    if (direction == null || e.defaultPrevented) return;
-    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     const active = document.activeElement;
-    if (!(active instanceof HTMLElement) || active === document.body) {
-      if (document.querySelector(`[${OWNS_ARROWS}]`) != null) return;
-      const first = focusables(document.querySelector('main') ?? document.body)[0];
+    // A remote's centre button is Enter, and a native box toggles on Space alone.
+    if (e.key === 'Enter' && active instanceof HTMLInputElement && TOGGLES.has(active.type)) {
+      // Held, the button repeats, which would flip the box back.
+      if (!e.repeat) active.click();
+      e.preventDefault();
+      return;
+    }
+    const direction = DIRECTIONS[e.key];
+    if (direction == null) return;
+    // Not a menu or a list: those move through their own items from the popup.
+    const dialog = active instanceof HTMLElement && active.matches(DIALOG) ? active : null;
+    if (!(active instanceof HTMLElement) || active === document.body || dialog != null) {
+      // Nothing focused, or a dialog itself, as when its step replaces the control that held
+      // the focus: start in the top layer, since what is behind a modal is not reachable.
+      const layer = dialog ?? openLayers().at(-1);
+      if (layer == null && document.querySelector(`[${OWNS_ARROWS}]`) != null) return;
+      const first = focusables(layer ?? document.querySelector('main') ?? document.body)[0];
       if (first == null) return;
       first.focus();
     } else {
@@ -131,6 +146,13 @@ function goBack(): boolean {
 /** Inside an open popup, or on the control that opened it: the popup's focus can arrive a frame late. */
 export function inOpenLayer(element: Element): boolean {
   return element.closest(`${LAYER}, [aria-haspopup][aria-expanded="true"]`) != null;
+}
+
+/** Open dialogs and popups in document order, which for portals is the order they opened in. */
+function openLayers(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>(LAYER)].filter((each) =>
+    each.checkVisibility({ checkVisibilityCSS: true }),
+  );
 }
 
 function focusables(root: Element): HTMLElement[] {

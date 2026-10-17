@@ -191,7 +191,8 @@ export const PhotoStrip = observer(function PhotoStrip({
             {...stylex.props(
               strip.scroller,
               along === 'x' ? strip.scrollerX : strip.scrollerY,
-              focusRing.ring,
+              // As the gallery's scroller is, for the same reason.
+              !(onTv() && marks.showsCursor) && focusRing.ring,
             )}
             id={STRIP_ID}
             ref={scroller}

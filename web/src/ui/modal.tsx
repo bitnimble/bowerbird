@@ -1,7 +1,7 @@
 import { Dialog } from '@base-ui-components/react/dialog';
 import * as stylex from '@stylexjs/stylex';
 import { X } from 'lucide-react';
-import type { ReactNode, RefObject } from 'react';
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { Button } from './button';
 import { headingStyles } from './heading';
 import { ICON } from './icon';
@@ -39,21 +39,43 @@ const styles = stylex.create({
     justifyContent: 'space-between',
     marginBottom: '10px',
   },
+  body: {
+    display: 'contents',
+  },
 });
+
+const CONTROL =
+  'input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])';
 
 export function Modal({
   open,
   onOpenChange,
   title,
   initialFocus,
+  step,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   initialFocus?: RefObject<HTMLElement | null>;
+  /**
+   * Which step a wizard is on. A change moves the focus to the new step's first control, since
+   * the one that held it went with the old step.
+   */
+  step?: string;
   children: ReactNode;
 }): JSX.Element {
+  const body = useRef<HTMLDivElement>(null);
+  const shownStep = useRef(step);
+  // Layout, inside the commit that removed the old step: after it, Base UI finds the focus lost
+  // and takes it to the popup.
+  useLayoutEffect(() => {
+    if (shownStep.current === step) return;
+    shownStep.current = step;
+    body.current?.querySelector<HTMLElement>(CONTROL)?.focus();
+  }, [step]);
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -69,7 +91,9 @@ export function Modal({
               <X size={ICON} />
             </Dialog.Close>
           </div>
-          {children}
+          <div ref={body} {...stylex.props(styles.body)}>
+            {children}
+          </div>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

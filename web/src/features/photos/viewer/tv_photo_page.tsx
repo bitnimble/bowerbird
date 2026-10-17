@@ -29,6 +29,10 @@ const tvStyles = stylex.create({
   page: {
     position: 'relative',
   },
+  stage: {
+    // It holds the focus for the photo, which needs no frame to say so.
+    outline: 'none',
+  },
   controls: {
     display: 'contents',
   },
@@ -159,7 +163,7 @@ export const TvPhotoPage = observer(function TvPhotoPage(): JSX.Element {
         tabIndex={-1}
         {...ownsArrows('all')}
         onKeyDown={onStageKey}
-        {...stylex.props(styles.frame)}
+        {...stylex.props(styles.frame, tvStyles.stage)}
       >
         <div {...stylex.props(styles.detail, panelsOpen ? styles.beside : styles.only)}>
           <DetailFrame photoId={photoId} toolsInto={toolsSlot} zoomInto={null} />

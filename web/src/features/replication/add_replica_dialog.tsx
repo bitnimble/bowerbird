@@ -176,6 +176,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
       open={open}
       onOpenChange={(next) => (next ? onOpenChange(true) : close())}
       title={AddReplicaStrings.title()}
+      step={`${step}:${folderIndex}`}
     >
       <DialogBody height="capped">
         {step === 'address' && (
