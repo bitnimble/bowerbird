@@ -36,14 +36,13 @@ fn main() {
     let clang_args = [
         format!("--target={target}"),
         format!("--sysroot={}", sysroot.display()),
-        // The host libclang's own headers would sit between these and the sysroot's, and its
-        // `stdint.h` shares their include guard, so `include_next` never reaches WASI's.
+        // Host libclang's headers share `__CLANG_STDINT_H`, so `include_next` never reaches WASI's.
         "-nobuiltininc".to_owned(),
         format!("-isystem{}", home.join("clang-include").display()),
         format!("-I{}", home.join("include").display()),
         // Clang hides every symbol by default for wasm, and bindgen binds no hidden function.
         "-fvisibility=default".to_owned(),
-        // Prints the header search order, which cargo shows only when this script fails.
+        // Header search order for a failure's log; cargo hides it on success.
         "-v".to_owned(),
     ];
     let bindings = bindgen::Builder::default()
@@ -71,7 +70,7 @@ fn main() {
         .generate()
         .unwrap_or_else(|error| {
             panic!(
-                "bindgen failed against the pinned libvpx headers, with libclang {} and {}: {error}",
+                "bindgen failed against the pinned libvpx headers (libclang {}, args [{}]): {error}",
                 bindgen::clang_version().full,
                 clang_args.join(" "),
             )
