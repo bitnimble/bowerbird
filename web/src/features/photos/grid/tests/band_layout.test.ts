@@ -40,6 +40,7 @@ function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoS
     frames_edited: false,
     shown_rendition: 'embedded',
     has_embedded: true,
+    is_raw: true,
   };
 }
 

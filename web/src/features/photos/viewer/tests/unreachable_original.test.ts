@@ -63,6 +63,19 @@ test.each([
   },
 );
 
+test("a neighbour's build does not re-read the open photo's detail", async () => {
+  const { presenter } = open('reachable');
+  const read: string[] = [];
+  photosApi.get = (id): Promise<PhotoDetail> => {
+    read.push(id);
+    return Promise.resolve({ id } as PhotoDetail);
+  };
+  await presenter.buildMissingRendition('neighbour', 'full');
+  expect(read).toEqual([]);
+  await presenter.buildMissingRendition(PHOTO, 'full');
+  expect(read).toEqual([PHOTO]);
+});
+
 test('picking a rendition of an unreachable photo builds nothing, and keeps a copy already here', async () => {
   const unbuilt = open('unreachable');
   await unbuilt.presenter.chooseRendition(PHOTO, 'full');

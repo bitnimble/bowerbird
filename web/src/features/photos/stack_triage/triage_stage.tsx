@@ -12,7 +12,6 @@ import { ICON } from '../../../ui/icon';
 import { Row } from '../../../ui/row';
 import { stopFlings } from '../../../ui/stop_flings';
 import { Text } from '../../../ui/text';
-import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import { PhotoStage } from '../viewer/photo_stage';
 import { pairKey, sideKeys, SPLIT_GAP } from './stack_triage';
 import { StackTriageStrings } from './stack_triage_page.strings';
@@ -55,7 +54,7 @@ export const Flip = observer(function Flip({
 }): JSX.Element {
   const store = useStackTriageStore();
   const device = useDeviceSettingsStore();
-  const { stackTriage, photos } = usePresenters();
+  const { stackTriage } = usePresenters();
   const boxRef = useStageBox();
   const slot = store.showing === 'a' ? 0 : 1;
   const sources: [string, string] = [store.srcOf(sides[0]), store.srcOf(sides[1])];
@@ -99,24 +98,14 @@ export const Flip = observer(function Flip({
             onDecoded(source);
             stackTriage.noteFrame(source === sources[0] ? sides[0] : sides[1], width, height);
           }}
-          onImageMissing={(source) =>
-            buildMissing(photos, source === sources[0] ? sides[0] : sides[1], store.rendition)
+          onImageMissing={(source, cannotDraw) =>
+            stackTriage.frameMissing(source === sources[0] ? sides[0] : sides[1], cannotDraw)
           }
         />
       </div>
     </div>
   );
 });
-
-// A render a library that doesn't pre-render builds when it is first looked at, as the viewer
-// does; the camera's JPEG of a file is never built, so a 404 there is nothing to fix.
-function buildMissing(
-  photos: ReturnType<typeof usePresenters>['photos'],
-  photoId: string,
-  rendition: ViewerRendition,
-): void {
-  if (rendition !== 'embedded') void photos.buildMissingRendition(photoId, rendition);
-}
 
 export const ViewSwitch = observer(function ViewSwitch({
   peeking,
@@ -180,7 +169,7 @@ export const Split = observer(function Split({
 }): JSX.Element {
   const store = useStackTriageStore();
   const device = useDeviceSettingsStore();
-  const { stackTriage, photos } = usePresenters();
+  const { stackTriage } = usePresenters();
   const boxRef = useStageBox();
 
   const placed = store.placement;
@@ -227,7 +216,9 @@ export const Split = observer(function Split({
                 onDecoded(source);
                 stackTriage.noteFrame(photo.id, width, height);
               }}
-              onImageMissing={() => buildMissing(photos, photo.id, store.rendition)}
+              onImageMissing={(_source, cannotDraw) =>
+                stackTriage.frameMissing(photo.id, cannotDraw)
+              }
             />
             {/* The key that picks this half, on the half itself: which of two
                 stacked photographs `↓` means is not something a letter can say. */}

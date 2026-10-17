@@ -31,7 +31,8 @@ import {
   renditionVariant,
   storedAsHdr,
 } from '../../services/processing/renditions/renditions';
-import { isComposite } from '../../schemas/recipes';
+import { isComposite, soleInputOf } from '../../schemas/recipes';
+import { isRendered, originalMediaType } from '../../utils/scan';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
 import {
   appendToStage,
@@ -84,7 +85,7 @@ export class BlobsApi {
     /** What renders a copy a peer asks for (§7.9). Null serves only what is already on disk. */
     private readonly renditions: Pick<
       PhotoRenditionService,
-      'buildForPeer' | 'embeddedJpegForPeer'
+      'buildForPeer' | 'embeddedForPeer'
     > | null = null,
     private readonly activity = new LibraryActivity(),
   ) {
@@ -303,10 +304,11 @@ export class BlobsApi {
     via: readonly string[],
   ): Promise<Response> {
     if (this.renditions != null) takeAsLongAsItTakes(c);
-    const found = (await this.renditions?.embeddedJpegForPeer(photo.id, via)) ?? null;
+    const found = (await this.renditions?.embeddedForPeer(photo.id, via)) ?? null;
     if (found == null)
       throw new AppError('NOT_FOUND', `no current camera JPEG here for ${photo.id}`);
     const { bytes: jpeg, builtFrom } = found;
+    const file = soleInputOf(photo.recipe) ?? '';
     const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
     if (offset > jpeg.length)
       throw new AppError(
@@ -314,7 +316,7 @@ export class BlobsApi {
         `range starts at ${offset} of a ${jpeg.length}-byte file`,
       );
     const headers: Record<string, string> = {
-      'Content-Type': 'image/jpeg',
+      'Content-Type': isRendered(file) ? originalMediaType(file) : 'image/jpeg',
       'Content-Length': String(jpeg.length - offset),
       'Accept-Ranges': 'bytes',
       'X-Content-Hash': new Bun.CryptoHasher('sha256').update(jpeg).digest('hex'),

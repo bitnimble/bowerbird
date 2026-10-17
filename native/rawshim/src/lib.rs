@@ -165,6 +165,8 @@ pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
 pub mod header;
+/// A HEIC as the viewer's stage decodes and draws it.
+pub mod heif_view;
 /// The HEVC bitstream inside a HEIC, into the code values the linearise reads.
 pub mod hevc;
 pub mod highlight;

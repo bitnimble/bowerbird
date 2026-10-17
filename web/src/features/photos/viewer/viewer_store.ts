@@ -6,7 +6,7 @@ import {
   type Triage,
 } from '../../../../../src/schemas/photos';
 import { type RenditionFetchPhase } from '../../../../../src/schemas/events';
-import { type ViewerRendition } from '../../../../../src/schemas/settings';
+import { VIEWER_RENDITIONS, type ViewerRendition } from '../../../../../src/schemas/settings';
 import { PathSegment, route } from '../../../../../src/schemas/route';
 import { type Rendition } from '../../../../../src/services/processing/renditions/renditions';
 import { renditionsApi } from '../../../api/renditions';
@@ -38,10 +38,14 @@ export interface ShownImage {
   rendition: ViewerRendition;
   width: number;
   height: number;
+  /** Light above SDR white in what decoded, which a finished picture's own file can hold too. */
+  hdr: boolean;
 }
 
 /** How close to an end of the run the reader may get before it is re-centred. */
 const NEIGHBOUR_MARGIN = 10;
+
+const RENDERS: readonly ViewerRendition[] = ['full', 'max'];
 
 export class ViewerStore {
   constructor(
@@ -62,9 +66,19 @@ export class ViewerStore {
   /** Whether the frame on screen for this photograph carries HDR, which is what an HDR proof needs. */
   showsHdr(photoId: string): boolean {
     const { rendition } = this.frameOf(photoId);
-    return (
-      rendition !== 'embedded' && this.detailFor(photoId)?.renditions?.[rendition]?.hdr === true
-    );
+    // The server's records call every `embedded` SDR, which a finished picture's own file may not be.
+    if (rendition === 'embedded') return this.shownImageOf(photoId, rendition)?.hdr === true;
+    return this.detailFor(photoId)?.renditions?.[rendition]?.hdr === true;
+  }
+
+  /**
+   * None for a finished picture (`is_raw`), shown as its own file until edited and as its edit
+   * after. All three until its row lands, since almost every photograph has all three.
+   */
+  renditionChoices(photoId: string): readonly ViewerRendition[] {
+    const photo = this.photoFor(photoId);
+    if (photo?.is_raw === false) return [];
+    return photo?.has_embedded === false ? RENDERS : VIEWER_RENDITIONS;
   }
 
   proofOf(photoId: string): 'hdr' | 'srgb' {
@@ -130,6 +144,8 @@ export class ViewerStore {
   // The develop documents behind them, kept and dropped the same way.
   @observable accessor editDocs = new Map<string, EditDoc>();
   @observable accessor orientationVersions = new Map<string, number>();
+  /** Finished pictures whose own file this browser could not draw, shown rendered instead. */
+  @observable accessor undrawable: ReadonlySet<string> = new Set();
   // Every frame the viewer has decoded for the photo it is on, measured off the
   // image rather than taken from a column, which is the question a reader judging
   // sharpness is asking. In the order they first arrived, which is also the order
@@ -369,11 +385,11 @@ export class ViewerStore {
    * a choice made since, or an edit made since, was silently discarded.
    */
   shownRenditionOf(photoId: string): ViewerRendition {
-    return (
+    const resolved =
       this.detailFor(photoId)?.shown_rendition ??
       this.photoFor(photoId)?.shown_rendition ??
-      'embedded'
-    );
+      'embedded';
+    return resolved === 'embedded' && this.undrawable.has(photoId) ? 'full' : resolved;
   }
 
   /** The rendition on screen: the reader's choice for this photo, or what the server resolved. */

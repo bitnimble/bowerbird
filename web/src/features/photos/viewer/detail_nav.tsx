@@ -137,23 +137,6 @@ function sendable(option: Option<Send>, composite: boolean): boolean {
   return true;
 }
 
-/**
- * The renditions this photograph actually has, out of the three above.
- *
- * **A PNG, a HEIC or an AVIF has no camera JPEG in it**, and the row says so (`has_embedded`).
- * Offering it anyway sends the reader to a file that cannot exist - and worse, `chooseRendition`
- * remembers the choice, so one press poisons `last_viewer_rendition` for every photograph opened
- * afterwards. Unknown until the row lands, and the answer for almost every photograph is yes, so
- * an absent one offers all three.
- */
-function offered<T extends 'original' | ViewerRendition>(
-  options: Option<T>[],
-  photo: { has_embedded: boolean } | null | undefined,
-): Option<T>[] {
-  if (photo == null || photo.has_embedded) return options;
-  return options.filter((option) => option.value !== 'embedded');
-}
-
 type ViewAction = 'fullscreen' | 'rotateLeft' | 'rotateRight' | 'filmstrip';
 
 const VIEW_ACTIONS: Option<ViewAction>[] = [
@@ -435,6 +418,8 @@ export const DetailNav = observer(function DetailNav({
       ]
     : [];
 
+  const choices = store.renditionChoices(photoId);
+  const renditions = RENDITIONS.filter((option) => choices.includes(option.value));
   const sections = [
     ...(pathFolded && !previewing && path !== '' ? [textSection(path)] : []),
     ...editSection,
@@ -464,14 +449,18 @@ export const DetailNav = observer(function DetailNav({
       : [
           // Which of the three files is on screen: the comparison the detail view
           // exists for, so it leads rather than sitting under the housekeeping.
-          menuSection({
-            label: PhotoDetailStrings.sectionRendition(),
-            options: offered(RENDITIONS, photo).map((option) => ({
-              ...option,
-              active: option.value === store.frameOf(photoId).rendition,
-            })),
-            onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),
-          }),
+          ...(renditions.length === 0
+            ? []
+            : [
+                menuSection({
+                  label: PhotoDetailStrings.sectionRendition(),
+                  options: renditions.map((option) => ({
+                    ...option,
+                    active: option.value === store.frameOf(photoId).rendition,
+                  })),
+                  onSelect: (rendition) => void photos.chooseRendition(photoId, rendition),
+                }),
+              ]),
           menuSection({
             label: PhotoDetailStrings.sectionActions(),
             options: actions({

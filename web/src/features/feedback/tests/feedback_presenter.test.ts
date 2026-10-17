@@ -23,7 +23,13 @@ const MB = 1024 * 1024;
 const WRITTEN = { message: 'the photo turned black', email: '', version: '1.2.3' };
 
 function photo(over: Partial<PhotoDetail> = {}): PhotoDetail {
-  return { id: 'ph-1', has_embedded: true, file_size: 20 * MB, ...over } as unknown as PhotoDetail;
+  return {
+    id: 'ph-1',
+    has_embedded: true,
+    is_raw: true,
+    file_size: 20 * MB,
+    ...over,
+  } as unknown as PhotoDetail;
 }
 
 function build(bytes = 1): {

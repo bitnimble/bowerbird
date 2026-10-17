@@ -581,7 +581,7 @@ fn av1(_: &[u8], _: &heif::Picture) -> Result<crate::hevc::Coded, String> {
 }
 
 /// What a HEIF picture's samples mean, from its `colr` box or its profile.
-fn coding_of(picture: &heif::Picture, depth: u32) -> Coding {
+pub(crate) fn coding_of(picture: &heif::Picture, depth: u32) -> Coding {
     if let Some(nclx) = picture.nclx {
         return Coding::from_cicp(nclx.primaries, nclx.transfer, depth);
     }
@@ -612,25 +612,7 @@ fn gain_map_of(
     if map.picture.codec == heif::Codec::Av1 {
         return avif_gain_map(file, base_width, base_height);
     }
-    let terms = match map.metadata.as_deref() {
-        Some(metadata) => iso_21496_terms(metadata)?,
-        // Apple's, whose terms are not in the file beside the map.
-        None => {
-            let headroom = exif
-                .and_then(crate::apple_gain::headroom)
-                .filter(|it| *it > 1.0);
-            match headroom {
-                Some(headroom) => crate::linearise::Reconstruction::Apple { headroom },
-                None => {
-                    crate::warn(
-                        "rawshim: this HEIC carries Apple's own gain map but states no headroom \
-                         for it; showing its standard-range base image",
-                    );
-                    return None;
-                }
-            }
-        }
-    };
+    let terms = heif_terms(map, exif)?;
     // Said out loud, like the two refusals above it: a gain map that would not decode is a
     // photograph shown at its standard range, and the reader is owed the reason rather than a
     // picture that is quietly two stops flat. `rust_h265` reads 4:2:0 only, and a single-channel
@@ -659,6 +641,27 @@ fn gain_map_of(
     })
 }
 
+/// The terms a HEIC's own gain map is applied with: ISO 21496-1's out of its `tmap`, or Apple's
+/// headroom out of the maker note, which is not in the file beside the map.
+pub(crate) fn heif_terms(
+    map: &heif::GainMap,
+    exif: Option<&[u8]>,
+) -> Option<crate::linearise::Reconstruction> {
+    if let Some(metadata) = map.metadata.as_deref() {
+        return tmap_terms(metadata);
+    }
+    let headroom = exif
+        .and_then(crate::apple_gain::headroom)
+        .filter(|it| *it > 1.0);
+    if headroom.is_none() {
+        crate::warn(
+            "rawshim: this HEIC carries Apple's own gain map but states no headroom for it; \
+             showing its standard-range base image",
+        );
+    }
+    headroom.map(|headroom| crate::linearise::Reconstruction::Apple { headroom })
+}
+
 #[cfg(feature = "renditions")]
 fn avif_gain_map(file: &[u8], base_width: usize, base_height: usize) -> Option<GainMap> {
     let (samples, width, height, depth, terms) = crate::avif::gain_map(file)?;
@@ -681,12 +684,22 @@ fn avif_gain_map(_: &[u8], _: usize, _: usize) -> Option<GainMap> {
     None
 }
 
-/// ISO 21496-1's metadata payload, which is the `tmap` item's own bytes in a HEIF and the body of
-/// the `APP2` segment that names the standard in a JPEG - one payload, so one parser.
+/// A HEIF `tmap` item's terms: ISO 21496-1's payload behind a version byte, which the JPEG
+/// spelling does not carry. Read without stripping it, every term lands one byte off.
+pub(crate) fn tmap_terms(item: &[u8]) -> Option<crate::linearise::Reconstruction> {
+    match item.split_first()? {
+        (0, payload) => iso_21496_terms(payload),
+        _ => None,
+    }
+}
+
+/// ISO 21496-1's metadata payload, which is the body of the `APP2` segment that names the standard
+/// in a JPEG and a HEIF `tmap` item's bytes after its version (`tmap_terms`) - one payload, so one
+/// parser.
 ///
 /// The weight a display would apply is deliberately not read: this produces the alternate
-/// rendition in full, and the roll-off that meets a panel is six stages further down
-/// (`linearise.slang`'s `gain_mapped`).
+/// rendition in full, and the roll-off that meets a panel comes later (`gain_map.slang`'s
+/// `gain_mapped`).
 pub(crate) fn iso_21496_terms(body: &[u8]) -> Option<crate::linearise::Reconstruction> {
     let flags = *body.get(4)?;
     let channels = match flags & 0x80 != 0 {
@@ -861,6 +874,40 @@ mod tests {
         assert_eq!(max, [2.0; 3], "two stops of headroom, for every channel");
         assert_eq!(gamma, [1.0; 3]);
         assert_eq!(offset_base, [1.0 / 64.0; 3]);
+    }
+
+    /// A Samsung HEIC's `tmap` item, byte for byte: version, then 2.3 stops of single-channel gain.
+    #[test]
+    fn a_heif_tone_map_item_is_read_past_its_version_byte() {
+        let item = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x93, 0x33, 0x33, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x93, 0x33, 0x33, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        ];
+        let crate::linearise::Reconstruction::Iso {
+            min,
+            max,
+            gamma,
+            offset_base,
+            offset_alternate,
+        } = tmap_terms(&item).expect("well-formed tmap")
+        else {
+            panic!("the standard's payload is the standard's arm");
+        };
+        assert_eq!(min, [0.0; 3]);
+        assert!(
+            max.iter().all(|stops| (stops - 2.3).abs() < 1e-6),
+            "{max:?}"
+        );
+        assert_eq!(gamma, [1.0; 3]);
+        assert_eq!(offset_base, [0.0; 3]);
+        assert_eq!(offset_alternate, [0.0; 3]);
+
+        let mut later = item.clone();
+        later[0] = 1;
+        assert!(tmap_terms(&later).is_none(), "a version this reader does not know");
     }
 
     #[test]

@@ -98,3 +98,41 @@ it('asks a peer for the camera view when the file a row names is not on this dev
   expect(answer.headers.get('content-type')).toBe('image/jpeg');
   expect(await answer.text()).toBe('canvas');
 });
+
+it('streams a finished picture as the file it is', async () => {
+  writeFileSync(path.join(dataPathForLibraryId(LIB), 'shot.png'), 'png bytes');
+
+  const answer = await serving({ kind: 'file', path: 'shot.png' }).request(
+    route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'),
+  );
+
+  expect(answer.status).toBe(200);
+  expect(answer.headers.get('content-type')).toBe('image/png');
+  expect(await answer.text()).toBe('png bytes');
+});
+
+it('names a HEIC by its HEIF media type under each of its extensions', async () => {
+  for (const [name, type] of [
+    ['shot.heic', 'image/heic'],
+    ['shot.hif', 'image/heif'],
+  ]) {
+    writeFileSync(path.join(dataPathForLibraryId(LIB), name!), 'heic bytes');
+    const answer = await serving({ kind: 'file', path: name! }).request(
+      route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'),
+    );
+    expect(answer.headers.get('content-type')).toBe(type!);
+  }
+});
+
+it('serves a finished picture a peer sent under its own media type', async () => {
+  const peer = {
+    takesFromPeer: () => true,
+    ensureCurrent: () => Promise.resolve(),
+  } as unknown as ConstructorParameters<typeof ImageApi>[2];
+
+  const answer = await serving({ kind: 'file', path: 'nowhere/a.avif' }, peer).request(
+    route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'),
+  );
+
+  expect(answer.headers.get('content-type')).toBe('image/avif');
+});

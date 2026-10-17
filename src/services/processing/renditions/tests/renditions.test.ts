@@ -85,18 +85,20 @@ describe('owedOf', () => {
     ]);
   });
 
-  it('leaves a file with no JPEG to be rendered when opened on a library that does not pre-render', () => {
-    const heic = { recipe: fileRecipe('a.heic'), inputs: ['a.heic'], hdr: true };
-    expect(owedOf(row(heic))).toEqual([{ rendition: 'grid', hdr: false, from: 'render' }]);
-    expect(owedOf(row({ ...heic, librarySource: 'render' }))).toEqual([
-      { rendition: 'grid', hdr: false, from: 'render' },
-      { rendition: 'full', hdr: true, from: 'render' },
-    ]);
-    // An edit is still rendered ahead, as on any other file.
-    expect(owedOf(row({ ...heic, edited: true }))).toEqual([
-      { rendition: 'grid', hdr: false, from: 'render' },
-      { rendition: 'full', hdr: true, from: 'render' },
-    ]);
+  it('owes a finished picture nothing but the tile, whatever the library pre-renders', () => {
+    for (const file of ['a.jpg', 'a.png', 'a.heic', 'a.avif']) {
+      const picture = { recipe: fileRecipe(file), inputs: [file], hdr: true };
+      for (const librarySource of ['embedded', 'render'] as const) {
+        expect(owedOf(row({ ...picture, librarySource }))).toEqual([
+          { rendition: 'grid', hdr: false, from: sourceFor(row({ ...picture, librarySource })) },
+        ]);
+      }
+      // An edit is still rendered ahead, as on any other file.
+      expect(owedOf(row({ ...picture, edited: true }))).toEqual([
+        { rendition: 'grid', hdr: false, from: 'render' },
+        { rendition: 'full', hdr: true, from: 'render' },
+      ]);
+    }
   });
 
   /**

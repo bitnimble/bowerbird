@@ -65,6 +65,25 @@ test('viewer turns save in order and refresh the rendered source', async () => {
   expect(finished).toBe(2);
 });
 
+test('a turned finished picture moves from its own file to its render', async () => {
+  let state: EditState = { doc: EditDocSchema.parse({}), rev: 0, canUndo: false, canRedo: false };
+  photoEditsApi.get = async () => state;
+  photoEditsApi.save = async (_photoId, doc, rev) => {
+    state = { ...state, doc, rev: rev + 1 };
+    return state;
+  };
+  photoEditsApi.finish = async () => {};
+  const finished = { id: 'p1', is_raw: false, has_embedded: true };
+  photosApi.get = async () => ({ ...finished, shown_rendition: 'full' }) as PhotoDetail;
+  const { store, presenter } = build();
+  store.details.set('p1', { ...finished, shown_rendition: 'embedded' } as PhotoDetail);
+  expect(store.showing).toBe('embedded');
+
+  await presenter.turn('p1', 90);
+
+  expect(store.showing).toBe('full');
+});
+
 test('late edits read cannot overwrite viewer turn', async () => {
   let state: EditState = { doc: EditDocSchema.parse({}), rev: 0, canUndo: false, canRedo: false };
   const old = state;

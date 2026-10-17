@@ -72,9 +72,11 @@ through.
 JPEG _is_ that render, so there is no second rendering of the frame to compare it to and the grade
 takes its neutral arm exactly as a rendition with `match_embedded_jpeg` off does.
 
-**An embedded preview**, except for a JPEG, where the file _is_ one. A PNG, a HEIC or an AVIF has
-nothing to lift, so it renders - which is what a RAW that embeds nothing already does - and
-`hasEmbeddedJpeg` is what keeps the viewer from asking for a file that cannot exist.
+**An embedded preview, and any need of one.** The viewer's `embedded` rendition of a JPEG, a PNG, a
+HEIC or an AVIF is the file itself, streamed as it is (`scan::isRendered`), and it is what the viewer
+shows until the photo is edited, whatever the library pre-renders: there is no RAW render to choose,
+so the viewer offers no rendition choice for one (`is_raw`). None of them is rendered ahead unless
+edited. `hasEmbeddedJpeg` separates a file with a JPEG to share or tile from one without.
 
 Everything below those runs unchanged: the coding, the defringe, the lens gather, the sharpen, the
 grade, the crop, the roll-off and the whole editor. `native/rawshim/src/decode.rs` is the one seam

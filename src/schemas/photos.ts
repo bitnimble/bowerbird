@@ -128,11 +128,15 @@ export const PhotoSummarySchema = z.object({
   // answer a fact about a file rather than a promise - which is what the 404 that heals a
   // missing rendition depends on (§18.5).
   shown_rendition: ViewerRenditionSchema,
-  // Whether this photograph has a camera JPEG behind it at all (§7): a RAW's is lifted out of
-  // it, a JPEG *is* one, and a PNG, HEIC or AVIF has none. On the summary rather than derived by
-  // the client from `file_path`, because that would be the extension set spelled a third time
-  // and in a second language - and a client that guesses wrong offers a file that cannot exist.
+  // Whether this photograph has an `embedded` picture behind it at all (§7): a RAW's camera JPEG
+  // is lifted out of it, and a finished picture's own file *is* one. On the summary rather
+  // than derived by the client from `file_path`, because that would be the extension set spelled
+  // a third time and in a second language - and a client that guesses wrong offers a file that
+  // cannot exist.
   has_embedded: z.boolean().default(true),
+  // False for a finished picture - a JPEG, PNG, HEIC or AVIF - which the viewer shows as its own
+  // file until it is edited and as its edit after, with no rendition to choose. True for a composite.
+  is_raw: z.boolean().default(true),
 });
 export type PhotoSummary = z.infer<typeof PhotoSummarySchema>;
 

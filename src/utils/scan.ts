@@ -52,6 +52,8 @@ export function formatOf(filename: string): PhotoFormat | null {
 
 export type PhotoFormat = 'arw' | 'cr2' | 'cr3' | 'raf' | 'dng' | 'jpeg' | 'png' | 'heif' | 'avif';
 
+export const RENDERED_FORMATS: readonly PhotoFormat[] = ['jpeg', 'png', 'heif', 'avif'];
+
 const FORMATS = new Map<string, PhotoFormat>([
   ['.arw', 'arw'],
   ['.cr2', 'cr2'],
@@ -78,6 +80,15 @@ export function isRendered(filename: string): boolean {
 }
 
 /**
+ * Whether the viewer's `embedded` rendition of a file of this name costs no build: a RAW's
+ * camera JPEG, lifted out of it, or a finished picture's own file.
+ */
+// Null is a row with no single file behind it, a composite, whose camera view is composited.
+export function hasEmbedded(filename: string | null): boolean {
+  return filename != null && isOriginal(filename);
+}
+
+/**
  * Whether `scope`'s library imports a file of this name.
  *
  * The RAWs always; the rendered formats only where the library asked for them,
@@ -92,30 +103,15 @@ export function importsFormat(scope: LibraryScope, filename: string): boolean {
 }
 
 /**
- * Whether a photograph of this name can be shown from a JPEG that costs no build.
- *
- * **A RAW's is the camera's own rendering, lifted out of it; a JPEG's is the file.** A PNG, a
- * HEIC or an AVIF has neither, so the `embedded` rendition is not something the viewer may fall
- * back to for one - it would ask for a file that cannot exist and stall on the 404 that normally
- * heals a missing render.
+ * Whether a photograph of this name has a JPEG to build from or share: a RAW's camera rendering,
+ * lifted out of it, or a JPEG's own file. A PNG, a HEIC or an AVIF has neither.
  */
 // Null is a row with no single file behind it - a composite - which has no camera JPEG for the
 // same reason it has no camera: nothing wrote it but this application.
 export function hasEmbeddedJpeg(filename: string | null): boolean {
   if (filename == null) return false;
-  return RAW_MEDIA_TYPES.has(extensionOf(filename)) || isEmbeddedJpegItself(filename);
-}
-
-/**
- * Whether the photograph's own file *is* the JPEG, rather than carrying one inside it.
- *
- * The difference is a stat against a decode: a RAW's preview has to be lifted out to be
- * measured, and this one's weight is the file's. Here rather than at the caller because the
- * extension set is this module's, and it was already spelled in three shapes above.
- */
-export function isEmbeddedJpegItself(filename: string): boolean {
   const extension = extensionOf(filename);
-  return extension === '.jpg' || extension === '.jpeg';
+  return RAW_MEDIA_TYPES.has(extension) || extension === '.jpg' || extension === '.jpeg';
 }
 
 /**

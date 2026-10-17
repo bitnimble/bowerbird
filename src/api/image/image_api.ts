@@ -10,7 +10,7 @@ import { PathSegment, route } from '../../schemas/route';
 import { SdrMatchSchema } from '../../schemas/sdr_match';
 import { getDataPath, getRenditionPath, originalPathOf } from '../../utils/paths';
 import type { Originals } from '../../services/blobs/originals';
-import { originalMediaType } from '../../utils/scan';
+import { isRendered, originalMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg, scrubIdentifying } from '../../services/processing/rawshim/raw_decoder';
 import {
   readPhotoAnalysis,
@@ -178,6 +178,11 @@ function etagOf(file: { size: number; lastModified: number }): string {
   return `"${file.size}-${Math.floor(file.lastModified)}"`;
 }
 
+function embeddedMediaType(photo: BasicPhoto): string {
+  const file = soleInputOf(photo.recipe) ?? '';
+  return isRendered(file) ? originalMediaType(file) : 'image/jpeg';
+}
+
 // Never cached: a download is a one-off, and the bytes for two of the four forms
 // are produced per request anyway.
 function download(body: Blob | Uint8Array, contentType: string, filename: string): Response {
@@ -244,6 +249,8 @@ export class ImageApi {
         const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
         if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true) {
           const original = await this.originals.open(library, photo);
+          if (original != null && isRendered(original))
+            return this.serve(c, originalMediaType(original), () => original);
           if (original != null || this.fetchThrough == null)
             return this.serveEmbedded(photo, original, c);
         }
@@ -268,9 +275,9 @@ export class ImageApi {
         }
         const tenBit = c.req.query('bits') === '10' ? this.tenBitCopies : null;
         const matching = SdrMatchSchema.catch('still').parse(c.req.query('match'));
-        // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
-        // the camera view has.
-        return this.serve(c, lifted ? 'image/jpeg' : RENDITION_CONTENT_TYPE, (lib, each) =>
+        // A camera JPEG a peer lifted out of its original, or a finished picture a peer sent as it
+        // is, is kept as those bytes, under the name the camera view has.
+        return this.serve(c, lifted ? embeddedMediaType : RENDITION_CONTENT_TYPE, (lib, each) =>
           tenBit == null
             ? getRenditionPath(lib, each.id, rendition, lib.rendition_hdr)
             : tenBit.pathFor(lib, each.id, rendition, matching),

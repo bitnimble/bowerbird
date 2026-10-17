@@ -110,6 +110,7 @@ export class StackTriagePresenter {
       this.store.busy = false;
       this.store.showing = 'a';
       this.store.swapped = false;
+      this.store.undrawable = false;
       this.store.frames = new Map();
       this.store.mode = loadMode();
       // Or the previous stack's ends are used for this one's jump out - and
@@ -209,6 +210,20 @@ export class StackTriagePresenter {
   noteFrame(photoId: string, width: number, height: number): void {
     if (width === 0 || height === 0) return;
     this.store.frames.set(photoId, { width, height });
+  }
+
+  /**
+   * A frame that did not arrive. A member's own file this browser cannot draw takes the pool to
+   * the render; a render that is missing is built, as the viewer builds one.
+   */
+  @action.bound
+  frameMissing(photoId: string, cannotDraw: boolean): void {
+    const { rendition } = this.store;
+    if (rendition === 'embedded') {
+      if (cannotDraw) this.store.undrawable = true;
+      return;
+    }
+    void this.photos.buildMissingRendition(photoId, rendition);
   }
 
   @action.bound

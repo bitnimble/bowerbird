@@ -153,7 +153,10 @@ export class DetailPresenter {
           newId(),
         );
         this.editsGeneration++;
-        this.viewer.turned(photoId, saved.doc, rendition, this.isCurrent(photoId));
+        // A finished picture's turn is an edit, so it moves from its own file to its render, which
+        // pinning the file on screen would keep from ever showing.
+        const raw = this.store.photoFor(photoId)?.is_raw !== false;
+        this.viewer.turned(photoId, saved.doc, rendition, raw && this.isCurrent(photoId));
         await photoEditsApi.finish(photoId);
         await this.refresh();
       } catch (err) {

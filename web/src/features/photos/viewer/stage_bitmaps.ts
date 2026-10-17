@@ -21,7 +21,10 @@ import {
 } from '../../../avif/avif_planes';
 import { hdrPictures } from '../../../avif/hdr_pictures';
 import { renditionsApi } from '../../../api/renditions';
-import type { StagePicture } from '../../../gpu/gpu_protocol';
+import { HeifViewSchema, type StagePicture } from '../../../gpu/gpu_protocol';
+import { decodeHeifView, type HeifPicture } from './heif_decode';
+import { gpuThread } from '../../../gpu/gpu_thread';
+import { SDR_WHITE_NITS } from '../../../app/sdr_white';
 import { contentLightOfAvif, orientationOfAvif } from 'avif-hdr-video';
 import {
   REQUEST_ACTIVITY_HEADER,
@@ -90,7 +93,7 @@ function avifMaxCll(bytes: ArrayBuffer, type: string): number | null {
 export interface Decoded {
   /**
    * Closed by us: a `VideoFrame` where the browser has WebCodecs, planes from `native/avif_planes`
-   * for a PQ AVIF where it does not, else an `ImageBitmap`.
+   * for a PQ AVIF where it does not or from the HEVC decoder for a HEIC, else an `ImageBitmap`.
    */
   picture: StagePicture;
   close: () => void;
@@ -107,7 +110,12 @@ export interface Decoded {
   flat?: Blob;
   /** The brightest pixel the file's `clli` names, in nits; null where it names none. */
   maxCll: number | null;
+  /** Light above SDR white in what decoded, which is what an HDR proof needs. */
+  hdr: boolean;
 }
+
+/** A file that is there but that this browser cannot decode or draw, as a HEIC without HEVC. */
+export class CannotDrawHere extends Error {}
 
 /** A decode in flight, and how to move it ahead of the neighbours once its photo is on screen. */
 interface Running {
@@ -169,7 +177,7 @@ async function decodePicture(
   cropped = false,
   priority: Pick<DecodeOptions, 'urgent' | 'promoted'> = {},
 ): Promise<
-  Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation' | 'flat' | 'maxCll'>
+  Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation' | 'flat' | 'maxCll' | 'hdr'>
 > {
   const longest = Math.max(natural.width, natural.height);
   const scale = longest === 0 || longest <= cap ? 1 : cap / longest;
@@ -207,6 +215,7 @@ async function decodePicture(
           height: image.displayHeight,
           rotation,
           maxCll: avifMaxCll(bytes, blob.type),
+          hdr: ['pq', 'hlg'].includes(String(image.colorSpace.transfer)),
         };
       }
       image.close();
@@ -253,6 +262,7 @@ async function decodePicture(
         rotation,
         flat: blob,
         maxCll: avifMaxCll(bytes.buffer, blob.type),
+        hdr: true,
       };
     }
   }
@@ -268,6 +278,7 @@ async function decodePicture(
     height: bitmap.height,
     rotation: 0,
     maxCll: null,
+    hdr: false,
   };
 }
 
@@ -375,6 +386,60 @@ function closeDetail(decoded: Decoded): void {
   decoded.close();
 }
 
+type Opened = Omit<Decoded, 'closed'>;
+
+const HEIF_TYPES = new Set(['image/heic', 'image/heif']);
+
+async function opening(
+  blob: Blob,
+  signal: AbortSignal,
+  cap: number,
+  cropped: boolean,
+  priority: Pick<DecodeOptions, 'urgent' | 'promoted'>,
+): Promise<Opened> {
+  const natural = await shapeOf(blob);
+  const drawn = await decodePicture(blob, natural, signal, cap, cropped, priority);
+  return { ...drawn, naturalWidth: natural.width, naturalHeight: natural.height };
+}
+
+/**
+ * A HEIC parsed on the GPU thread and decoded whole by this browser's HEVC decoder: only Safari
+ * opens one as an image, and the stage draws it in its own coding with its gain map
+ * (`stage.slang`'s `finished`).
+ */
+async function decodeHeif(blob: Blob, signal: AbortSignal): Promise<Opened> {
+  const { picture, rotation, peak } = await (async (): Promise<HeifPicture> => {
+    // Only the WebGPU painter draws these planes, and they are shared memory.
+    if (!canDecodeAvifPlanes() || navigator.gpu == null) {
+      throw new Error('this page has no WebGPU or shared memory');
+    }
+    const edge = await textureEdge(navigator.gpu);
+    const file = new Uint8Array(await blob.arrayBuffer());
+    const framed = await gpuThread().ask(HeifViewSchema, { to: 'heif', file }, [file.buffer]);
+    signal.throwIfAborted();
+    return decodeHeifView(framed, signal, edge);
+  })().catch((err: unknown) => {
+      if (signal.aborted) throw err;
+      // The viewer shows the render instead (`DetailFrame`).
+      log.warn('this browser could not decode a HEIC, so it is shown rendered', err);
+      throw new CannotDrawHere(err instanceof Error ? err.message : String(err));
+    });
+  const sideways = rotation === 90 || rotation === 270;
+  const { width, height } = picture.layout;
+  const shown = sideways ? { width: height, height: width } : { width, height };
+  return {
+    picture,
+    close: () => {},
+    ...shown,
+    naturalWidth: shown.width,
+    naturalHeight: shown.height,
+    rotation,
+    maxCll: peak * SDR_WHITE_NITS,
+    // Past rounding: an SDR table's white is 1 give or take a last bit.
+    hdr: peak > 1.001,
+  };
+}
+
 function decodedAt(
   source: string,
   store: Map<string, Decoded>,
@@ -413,23 +478,19 @@ function decodedAt(
     }).catch(superseded<Response>);
     if (!response.ok) throw new Error(`${response.status} for ${source}`);
     const blob = await response.blob().catch(superseded<Blob>);
-    const natural = await shapeOf(blob).catch(superseded<{ width: number; height: number }>);
-    const priority = { urgent: activity === 'interactive', promoted };
-    const drawn = await decodePicture(blob, natural, abort.signal, cap, cropped, priority).catch(
-      superseded<Awaited<ReturnType<typeof decodePicture>>>,
-    );
+    const opened = HEIF_TYPES.has(blob.type)
+      ? await decodeHeif(blob, abort.signal).catch(superseded<Opened>)
+      : await opening(blob, abort.signal, cap, cropped, {
+          urgent: activity === 'interactive',
+          promoted,
+        }).catch(superseded<Opened>);
     // Abandoned while it was out: the reader has moved past this photograph, and holding it
     // would keep tens of megabytes for a picture nothing is going to draw.
     if (abort.signal.aborted) {
-      drawn.close();
+      opened.close();
       throw new Error('superseded');
     }
-    const decoded: Decoded = {
-      ...drawn,
-      closed: false,
-      naturalWidth: natural.width,
-      naturalHeight: natural.height,
-    };
+    const decoded: Decoded = { ...opened, closed: false };
     // Whatever was under this key goes with it. A second decode of one source is rare but
     // reachable (below), and overwriting silently would leave the first unreachable and open -
     // which is the whole file, held until the tab does.

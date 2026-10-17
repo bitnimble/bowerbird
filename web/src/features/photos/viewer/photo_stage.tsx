@@ -130,11 +130,12 @@ interface Props {
   showing?: number;
   alt: string;
   filename: string;
-  /** The decoded size of a frame, reported once per source. */
-  onImageLoad: (source: string, width: number, height: number) => void;
+  /** The decoded size of a frame, and whether it holds light above SDR white, reported once per source. */
+  onImageLoad: (source: string, width: number, height: number, hdr: boolean) => void;
   // A source does not exist yet. Called once per source, before the retries
-  // start, so the caller can build the thing the retries are waiting for.
-  onImageMissing?: (source: string) => void;
+  // start, so the caller can build the thing the retries are waiting for. `cannotDraw` is a file
+  // that is there and that this browser cannot decode or draw.
+  onImageMissing?: (source: string, cannotDraw: boolean) => void;
   /** Clears the stage when it changes. The photo, not the source: a rendition swap must hold the frame. */
   photoKey: string;
   /** Which way the reader stepped to this photo, which is the side held ready first. */
@@ -673,7 +674,7 @@ export function PhotoStage({
   // Read through refs and applied outside the updater: `setPainted`'s updater must
   // stay pure, and StrictMode double-invokes it.
   const promote = useCallback(
-    (source: string, width: number, height: number) => {
+    (source: string, width: number, height: number, hdr: boolean) => {
       // A frame on its way off the stage reports too - every mounted frame
       // re-decodes when the photo changes, which is what carries a held-over
       // winner into the next round. Promoting one nobody is asking for would
@@ -685,7 +686,7 @@ export function PhotoStage({
         next.set(source, { width, height });
         return next;
       });
-      onLoaded.current(source, width, height);
+      onLoaded.current(source, width, height, hdr);
       const asked = sourcesRef.current;
       // Held opaque under this one for a few frames: what nobody is asking for any
       // more, and - asked for or not - whatever this frame is about to be revealed
@@ -727,13 +728,13 @@ export function PhotoStage({
     [photoKey],
   );
 
-  const reportMissing = useCallback((source: string) => {
+  const reportMissing = useCallback((source: string, cannotDraw: boolean) => {
     setFailed((previous) => {
       const next = new Set(previous);
       next.add(source);
       return next;
     });
-    onMissing.current?.(source);
+    onMissing.current?.(source, cannotDraw);
   }, []);
 
   // This stage's own fullscreen, not the document's. Two stages are mounted side

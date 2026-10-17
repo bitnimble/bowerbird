@@ -18,6 +18,7 @@ interface Frame {
   height: number;
   naturalWidth: number;
   naturalHeight: number;
+  hdr: boolean;
 }
 
 const decoded = new Map<string, Frame>();
@@ -104,6 +105,7 @@ void mock.module('../stage_bitmaps', () => ({
           height: 3,
           naturalWidth: file.width,
           naturalHeight: file.height,
+          hdr: false,
         };
         decoded.set(source, frame);
         resolve(frame);

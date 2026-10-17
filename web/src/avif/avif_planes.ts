@@ -2,23 +2,60 @@ import { avifPlanesUrl } from '../../../native/rawshim/pkg/avif_planes';
 import { Logger, pageLog } from '../features/logs/page_log';
 import type { ModuleStart } from '../wasi/thread_pool';
 
-/** `crate::planes::Layout`: where each plane is in the samples, in bytes. */
+/**
+ * `crate::planes::Layout`: where each plane is in the samples, in bytes. Two planes are NV12's,
+ * chroma interleaved.
+ */
 export interface PlanesLayout {
   width: number;
   height: number;
-  bits: 10 | 12;
+  bits: 8 | 10 | 12;
   subsampled: boolean;
   planes: { offset: number; stride: number }[];
 }
 
 /**
- * A picture as planar PQ samples, which is what `VideoFrame.copyTo` hands back where there is an
- * `ImageDecoder` and what `native/avif_planes` hands back where there is not.
+ * A picture as planar samples: PQ, which is what `VideoFrame.copyTo` hands back where there is an
+ * `ImageDecoder` and what `native/avif_planes` hands back where there is not, or a finished
+ * picture's own coding where `finish` says what that is.
  */
 export interface PlanarPicture {
   samples: Uint8Array;
   layout: PlanesLayout;
+  finish?: Finish | undefined;
 }
+
+/**
+ * A YCbCr matrix's luma weights for red and blue, its range, and the coded depth its codes have,
+ * whatever depth its samples were handed back at.
+ */
+export interface Signal {
+  kr: number;
+  kb: number;
+  fullRange: boolean;
+  depth: number;
+}
+
+/** How a finished picture's samples become light (`heif_view.rs`). */
+export interface Finish {
+  signal: Signal;
+  /** Its linear RGB to Rec.2020, a row per vector. */
+  matrix: number[][];
+  /** `code * 3 + channel`, light with diffuse white at 1.0. */
+  table: Float32Array<ArrayBuffer>;
+  gain: { picture: PlanarPicture; signal: Signal; terms: GainTerms } | null;
+}
+
+export type GainTerms =
+  | {
+      mode: 'iso';
+      min: number[];
+      max: number[];
+      gamma: number[];
+      offsetBase: number[];
+      offsetAlternate: number[];
+    }
+  | { mode: 'apple'; headroom: number };
 
 export type DecodeAsk =
   | { id: number; file: Uint8Array; urgent: boolean }

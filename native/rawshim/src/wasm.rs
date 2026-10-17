@@ -328,6 +328,13 @@ pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<
     Ok(HeldRaw::new(Some(held), bytes, !rendered, fit, request))
 }
 
+/// A HEIC as the viewer's stage draws it (`heif_view`): the tiles for the page's own decoder, and
+/// what the samples it hands back mean.
+#[wasm_bindgen(js_name = heifView)]
+pub fn heif_view(bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
+    crate::heif_view::framed(bytes).map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))
+}
+
 /// Opens an AVIF rendition the page decoded with its own `ImageDecoder`, which this build has no
 /// decoder for: `avif` is the file, for its colour and its turn, and `planes` what `copyTo` wrote
 /// as `layout` ([`crate::planes::Layout`] as JSON) describes it.

@@ -79,7 +79,7 @@ export class RenditionsPresenter {
     try {
       await this.build(photoId, rendition, force);
       // The detail is what says the built still is HDR (`showsHdr`); only a build changes it.
-      await this.refreshDetail();
+      if (this.isCurrent(photoId)) await this.refreshDetail();
       return true;
     } catch (error) {
       this.fail(error);
@@ -131,7 +131,8 @@ export class RenditionsPresenter {
     this.viewer.buildStarted(photoId, rendition);
     try {
       await this.build(photoId, rendition);
-      await this.refreshDetail();
+      // A neighbour's detail is read when it is stepped to.
+      if (this.isCurrent(photoId)) await this.refreshDetail();
     } catch (error) {
       // Silent for anything but the photograph on screen. The viewer holds its neighbours
       // ready, so a cull through a library still importing meets one 404 per step, on a

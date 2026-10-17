@@ -904,6 +904,7 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
       isEdited: false,
       framesEdited: false,
       hasEmbedded: true,
+      isRaw: true,
       composesCameraView: false,
       builtRenditions: new Set(['embedded']),
       // A listing's fidelity by default; the cases about a stat say so.
@@ -912,49 +913,29 @@ describe('resolveShownRendition / resolveRenditionToBuild', () => {
     };
   }
 
-  // A PNG, a HEIC or an AVIF has no camera JPEG to fall back to, so every route that would
-  // otherwise reach for one has to name the render instead - a viewer pointed at a file that
-  // cannot exist sits on the 404 rather than healing through it.
-  it('never opens a photograph with no camera JPEG at one', () => {
-    const none = { hasEmbedded: false, builtRenditions: new Set<ViewerRendition>() };
-    expect(resolveShownRendition(ctx({ librarySource: 'embedded', ...none }))).toBe('full');
-    expect(
-      resolveShownRendition(ctx({ librarySource: 'embedded', ...none, mode: 'best_available' })),
-    ).toBe('full');
-    expect(
-      resolveShownRendition(
-        ctx({
-          librarySource: 'embedded',
-          ...none,
-          mode: 'remember',
-          lastViewerRendition: 'embedded',
-        }),
-      ),
-    ).toBe('full');
+  // The setting chooses between a RAW's renders, and a finished picture has none: it is its own
+  // file until edited, whatever the library pre-renders and whichever rendition was last chosen.
+  it('shows a finished picture as its own file until it is edited', () => {
+    const asked = [
+      ctx({ isRaw: false, librarySource: 'render', mode: 'max' }),
+      ctx({ isRaw: false, librarySource: 'render', mode: 'remember', lastViewerRendition: 'full' }),
+      ctx({ isRaw: false, mode: 'best_available', builtRenditions: new Set(['embedded', 'max']) }),
+    ];
+    for (const each of asked) {
+      expect(resolveShownRendition(each)).toBe('embedded');
+      expect(resolveShownRendition({ ...each, isEdited: true })).toBe('full');
+    }
   });
 
-  // The half `resolveShownRendition` cannot cover on its own: the client acts on both answers,
-  // and `ImageApi` will not heal an `embedded` 404 the way it heals a missing render - so naming
-  // one here is a stage that stays blank until the reader guesses to switch. `remember` is the
-  // default mode and `last_viewer_rendition` becomes `embedded` the moment anyone presses I on
-  // any RAW, so this fires on every PNG in the library rather than in some corner.
-  it('never asks for a build of a camera JPEG that does not exist', () => {
-    const none = { hasEmbedded: false, builtRenditions: new Set<ViewerRendition>() };
-    for (const mode of ['remember', 'remember_per_photo'] as const) {
-      const asked = ctx({
-        librarySource: 'embedded',
-        ...none,
-        mode,
-        lastViewerRendition: 'embedded',
-        rowViewerRendition: 'embedded',
-      });
-      expect(resolveRenditionToBuild(asked)).toBeNull();
+  // Never `max`, which a reader asked for on some RAW: a finished picture's edit is built on its
+  // own 404, and its file is never built at all.
+  it('never asks a finished picture for a build', () => {
+    for (const mode of ['embedded', 'full', 'max', 'remember', 'best_available'] as const) {
+      for (const isEdited of [false, true]) {
+        const asked = ctx({ isRaw: false, mode, isEdited, lastViewerRendition: 'max' });
+        expect(resolveRenditionToBuild(asked)).toBeNull();
+      }
     }
-    // And the guard is only about the camera JPEG: the same photograph asked for `max` still
-    // says so, or it would stop building anything a reader chose.
-    expect(resolveRenditionToBuild(ctx({ librarySource: 'embedded', ...none, mode: 'max' }))).toBe(
-      'max',
-    );
   });
 
   /**

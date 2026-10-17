@@ -14,7 +14,13 @@ restoreApiAfterTests();
 const MB = 1024 * 1024;
 
 function photo(over: Partial<PhotoDetail> = {}): PhotoDetail {
-  return { id: 'ph-1', has_embedded: true, file_size: 25 * MB, ...over } as unknown as PhotoDetail;
+  return {
+    id: 'ph-1',
+    has_embedded: true,
+    is_raw: true,
+    file_size: 25 * MB,
+    ...over,
+  } as unknown as PhotoDetail;
 }
 
 function stub(): { asked: string[]; exported: ExportRequest[] } {
@@ -82,6 +88,14 @@ test('a photograph with no camera JPEG is not asked for one', async () => {
   await attachmentsFor({ photo: photo({ has_embedded: false }), raw: false, strip: true });
 
   expect(asked).toEqual(['ph-1/full', 'ph-1/analysis']);
+});
+
+test("a finished picture's own file goes only as the original", async () => {
+  const { asked } = stub();
+
+  await attachmentsFor({ photo: photo({ is_raw: false }), raw: true, strip: false });
+
+  expect(asked).toEqual(['ph-1/full', 'ph-1/analysis', 'ph-1/original']);
 });
 
 test('a picture that will not build leaves the rest of the report standing', async () => {

@@ -11,9 +11,9 @@ import prelude;
 
 /// Ten-bit video range. A twelve-bit frame's are four times these, so its caller divides the sample
 /// rather than a second set of constants existing to be kept in step.
-static const float LUMA_FLOOR = 64.0;
-static const float LUMA_SPAN = 876.0;
-static const float CHROMA_MID = 512.0;
+public static const float LUMA_FLOOR = 64.0;
+public static const float LUMA_SPAN = 876.0;
+public static const float CHROMA_MID = 512.0;
 
 /// Ten-bit video range quantises chroma as `896 * C + 512`, and C spans +-0.5 rather than +-1.
 ///
@@ -21,7 +21,7 @@ static const float CHROMA_MID = 512.0;
 /// doubles every chroma, which is a picture with the hues and the white intact and twice the
 /// saturation. Checked against ffmpeg's decode of a real render, where 896 is exact to 0.0% on all
 /// three channels and 448 is out by 15-65%.
-static const float CHROMA_SPAN = 896.0;
+public static const float CHROMA_SPAN = 896.0;
 
 /// BT.2020 non-constant luminance, which is what the encoder wrote.
 static const float3x3 YUV_TO_RGB = float3x3(

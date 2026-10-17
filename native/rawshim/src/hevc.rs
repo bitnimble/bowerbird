@@ -31,6 +31,7 @@ pub fn decode(picture: &Picture) -> Result<Coded, String> {
     }
     let parameter_sets = annex_b_parameter_sets(&picture.config)?;
     let length_size = length_size(&picture.config)?;
+    let signal = heif::signal_of(picture);
 
     let mut samples = vec![0u16; picture.width * picture.height * 3];
     let mut depth = picture.depth;
@@ -54,7 +55,7 @@ pub fn decode(picture: &Picture) -> Result<Coded, String> {
         }
         to_rgb(
             &frame,
-            picture.nclx,
+            signal,
             &mut Placed {
                 samples: &mut samples,
                 stride: picture.width,
@@ -169,7 +170,7 @@ struct Placed<'a> {
 /// class of error nothing reports and everything shows.
 fn to_rgb(
     frame: &rust_h265::Frame,
-    nclx: Option<Nclx>,
+    signal: Option<Nclx>,
     into: &mut Placed<'_>,
 ) -> Result<(), String> {
     let depth = u32::from(frame.bit_depth);
@@ -189,13 +190,13 @@ fn to_rgb(
     // midpoint instead.
     let grey = cb.len() < chroma_w * chroma_h || cr.len() < chroma_w * chroma_h;
 
-    let (kr, kb) = coefficients(nclx);
+    let (kr, kb) = coefficients(signal);
     let kg = 1.0 - kr - kb;
     // Limited where the file said nothing, which is H.273's own default for
     // `video_full_range_flag` and the same rule `coefficients` follows below. Defaulting the
     // other way reads a limited-range picture's black at code 16 as 0.063 and its white at 235
     // as 0.92: milky, with no black point, and nothing reports it.
-    let full = nclx.is_some_and(|it| it.full_range);
+    let full = signal.is_some_and(|it| it.full_range);
     // BT.709 §4 and BT.2020 Table 5: a limited-range signal puts black at 16 and white at 235,
     // scaled by the depth, and chroma spans 224 about a midpoint.
     let shift = f32::from(1u16 << (depth.saturating_sub(8)).min(8));
@@ -280,7 +281,7 @@ fn plane(data: &rust_h265::PixelData) -> Vec<u16> {
 ///
 /// BT.709 where nothing was said, which is what every HEIF profile defaults to and what a phone
 /// writes.
-fn coefficients(nclx: Option<Nclx>) -> (f32, f32) {
+pub(crate) fn coefficients(nclx: Option<Nclx>) -> (f32, f32) {
     match nclx.map_or(1, |it| it.matrix) {
         // BT.601, both spellings.
         5 | 6 => (0.299, 0.114),

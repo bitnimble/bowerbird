@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from '../../../../db/driver';
 import { runMigrations } from '../../../../db/migrate';
 import { renditionCurrent } from '../../../blobs/rendition_fetch_service';
-import type { RenditionVariant } from '../../../processing/renditions/renditions';
+import { fileRecipe, type StoredRecipe } from '../../../../schemas/recipes';
+import { formatOf } from '../../../../utils/scan';
+import { rendersAhead, type RenditionVariant } from '../../../processing/renditions/renditions';
 import { RenditionsRepository } from '../../../processing/renditions/renditions_repository';
 import { PhotoProcessingRepository } from '../photo_processing_repository';
 
@@ -175,6 +177,53 @@ describe('PhotoProcessingRepository.pendingWork', () => {
     db.query("UPDATE libraries SET rendition_source = 'embedded' WHERE id = ?").run(LIB);
     db.query("UPDATE photos SET rendition_source = 'render' WHERE id = 'live'").run();
     expect(repo.pendingWork(LIB).rendering).toBe(1);
+  });
+
+  it('counts a render for exactly the rows `rendersAhead` renders', () => {
+    db.query('DELETE FROM renditions').run();
+    const files = ['a.arw', 'a.dng', 'a.jpg', 'a.png', 'a.heic', 'a.avif'];
+    for (const [i, file] of files.entries()) {
+      insert(`p${i}`, file);
+      db.query('UPDATE photos SET format = ? WHERE id = ?').run(formatOf(file), `p${i}`);
+      owe(`p${i}`, 'full');
+    }
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
+         VALUES ('canvas', ?, json_object('kind', 'panorama', 'sources',
+           json_array(json_object('photoId', 'p2'))), 100, 100, '2026-01-01T00:00:00.000Z')`,
+    ).run(LIB);
+    owe('canvas', 'full');
+    const ids = [...files.map((_, i) => `p${i}`), 'canvas'];
+    const rows = [
+      ...files.map((file) => ({ recipe: fileRecipe(file), inputs: [file] })),
+      { recipe: { kind: 'panorama' } as StoredRecipe, inputs: ['a.jpg'] },
+    ];
+
+    const counted: number[] = [];
+    for (const librarySource of ['render', 'embedded'] as const) {
+      for (const photoSource of [null, 'render', 'embedded'] as const) {
+        for (const edited of [false, true]) {
+          db.query('UPDATE libraries SET rendition_source = ? WHERE id = ?').run(
+            librarySource,
+            LIB,
+          );
+          db.query('UPDATE photos SET rendition_source = ?').run(photoSource);
+          db.query('DELETE FROM photo_edits').run();
+          for (const id of ids.filter(() => edited)) {
+            db.query(
+              `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp)
+                 VALUES (?, '{}', 1, 1, '2026-05-01T00:00:00.000Z', 'stamp')`,
+            ).run(id);
+          }
+          const ahead = rows.filter((row) =>
+            rendersAhead({ ...row, edited, photoSource, librarySource }),
+          ).length;
+          expect(repo.pendingWork(LIB).rendering).toBe(ahead);
+          counted.push(ahead);
+        }
+      }
+    }
+    expect(new Set(counted)).toEqual(new Set([0, 3, 7]));
   });
 });
 

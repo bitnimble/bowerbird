@@ -39,7 +39,7 @@ pub enum Codec {
 }
 
 /// A `colr` box's `nclx`: the CICP code points saying what the samples mean.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Nclx {
     pub primaries: u16,
     pub transfer: u16,
@@ -113,6 +113,18 @@ const STILL_BRANDS: [&[u8]; 12] = [
     b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs", b"mif1", b"mif2",
     b"miaf", b"avif",
 ];
+
+mod signal;
+
+/// What a picture's samples mean as YCbCr: the container's `colr nclx`, else what its HEVC bitstream
+/// states. The matrix and range a decoder converts with, which is a different question from the
+/// transfer and primaries an ICC profile may answer instead.
+pub fn signal_of(picture: &Picture) -> Option<Nclx> {
+    picture.nclx.or_else(|| match picture.codec {
+        Codec::Hevc => signal::of_hvcc(&picture.config),
+        Codec::Av1 => None,
+    })
+}
 
 /// Everything this reader can say about a HEIF file.
 pub fn read(bytes: &[u8]) -> Result<File, String> {
@@ -228,20 +240,32 @@ impl<'a> Catalogue<'a> {
         Ok(out)
     }
 
-    /// Where a `tmap` primary splits into the base picture and the map that lifts it.
+    /// Where a `tmap` splits into the base picture and the map that lifts it.
     ///
-    /// **ISO 21496-1 makes the tone-mapped pair the primary item**, and its two `dimg` references
-    /// are the base and the gain map in that order. The base is what a reader that knows nothing
-    /// about gain maps shows, which is why the pair is spelled this way round.
+    /// **A `tmap`'s two `dimg` references are the base and the gain map, in that order**, and
+    /// the file may make either the primary item. Samsung's make the base primary, with the `tmap`
+    /// beside it in an `altr` group, so a reader that knows nothing about gain maps shows the base;
+    /// reading only a `tmap` primary drops their gain map and shows them standard range.
     ///
     /// Apple's older files have no `tmap` at all: the primary *is* the base, and the map is an
-    /// auxiliary item pointed at it by `auxl`. Both shapes come out here as the same pair.
+    /// auxiliary item pointed at it by `auxl`. Every shape comes out here as the same pair.
     fn tone_mapped(&self, primary: u32) -> (u32, Option<(u32, Option<Vec<u8>>)>) {
         if self.kind_of(primary) == Some(*b"tmap") {
             let derived = self.referenced(primary, b"dimg");
             if let [base, map, ..] = derived[..] {
                 return (base, Some((map, self.item_bytes(primary))));
             }
+        }
+        let beside = self
+            .items
+            .iter()
+            .filter(|(_, entry)| entry.kind == *b"tmap")
+            .find_map(|(tmap, _)| match self.referenced(*tmap, b"dimg")[..] {
+                [base, map, ..] if base == primary => Some((map, self.item_bytes(*tmap))),
+                _ => None,
+            });
+        if beside.is_some() {
+            return (primary, beside);
         }
         let apple = self
             .items
@@ -1013,6 +1037,40 @@ mod tests {
             ..ordinary
         };
         assert!(credible(&panorama).is_ok(), "a stitched panorama");
+    }
+
+    /// Samsung's item graph: the base grid primary, its gain map grid, and a `tmap` deriving from
+    /// both that is not the primary. Read as a primary-only lookup, it has no gain map at all.
+    #[test]
+    fn a_tone_map_beside_the_primary_pairs_the_base_with_its_gain_map() {
+        let entry = |kind: &[u8; 4]| Entry { kind: *kind };
+        let catalogue = Catalogue {
+            bytes: &[],
+            idat: b"terms",
+            primary: Some(49),
+            items: [
+                (49, entry(b"grid")),
+                (55, entry(b"grid")),
+                (56, entry(b"tmap")),
+            ]
+            .into(),
+            locations: [(
+                56,
+                Location {
+                    construction: 1,
+                    extents: vec![(0, 5)],
+                },
+            )]
+            .into(),
+            properties: Vec::new(),
+            assigned: std::collections::HashMap::new(),
+            references: vec![(*b"dimg", 56, vec![49, 55]), (*b"auxl", 55, vec![49])],
+        };
+
+        assert_eq!(
+            catalogue.tone_mapped(49),
+            (49, Some((55, Some(b"terms".to_vec()))))
+        );
     }
 
     /// The `iloc` walk against a hand-built box, since every camera's differs only in its widths.

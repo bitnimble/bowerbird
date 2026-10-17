@@ -8,7 +8,7 @@ import {
 } from '../../../gpu/readback_canvas';
 import { SDR_WHITE_NITS } from '../../../app/sdr_white';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
-import type { Decoded } from './stage_bitmaps';
+import { CannotDrawHere, type Decoded } from './stage_bitmaps';
 import type { Region } from './stage_gpu';
 
 /** ST 2084's ceiling: what a PQ file that names no brightest pixel may reach. */
@@ -87,7 +87,10 @@ class StageCanvases {
     );
     if (await shownOnThePage(canvas, painted)) return;
     lostIf(painted);
-    if (painted !== 'declined' || frame.flat == null) return;
+    if (painted !== 'declined') return;
+    // Reported, so the stage shows the photo some other way rather than an empty canvas.
+    if (frame.flat == null)
+      throw new CannotDrawHere('planes with no file a bitmap can be decoded from');
     // Planes only WebGPU can draw, on a thread that could not: the same file as a bitmap, in SDR,
     // which is where any other declined frame ends up too.
     const bitmap = await createImageBitmap(frame.flat, { imageOrientation: 'from-image' });

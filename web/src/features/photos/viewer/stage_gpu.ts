@@ -28,7 +28,7 @@ import READBACK_WGSL from '../generated/readback.wgsl?raw';
 import { planarLayout } from './planar_layout';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { LayerPicture, Painted, StageAsk, StagePicture } from '../../../gpu/gpu_protocol';
-import type { PlanarPicture } from '../../../avif/avif_planes';
+import type { Finish, PlanarPicture, PlanesLayout, Signal } from '../../../avif/avif_planes';
 import { Logger } from '../../logs/page_log';
 import { SDR_WHITE_NITS } from '../../../app/sdr_white';
 
@@ -80,6 +80,7 @@ interface Drawing {
   device: GPUDevice;
   imported: GPURenderPipeline;
   planar: GPURenderPipeline;
+  finished: GPURenderPipeline | null;
   /** `planar` again with the mask binding, blended rather than clearing - `paintMasked`'s alone. */
   planarMasked: GPURenderPipeline;
   /** A drawn texture to RGB9E5 words, for a canvas the page keeps (`readback.slang`); built on first use. */
@@ -98,15 +99,7 @@ export function pipelinesFor(device: GPUDevice): Drawing {
     code: string,
     fragment: string,
     target?: GPUColorTargetState,
-  ): GPURenderPipeline => {
-    const module = device.createShaderModule({ code });
-    return device.createRenderPipeline({
-      layout: 'auto',
-      vertex: { module, entryPoint: 'vertex' },
-      fragment: { module, entryPoint: fragment, targets: [target ?? { format: 'rgba16float' }] },
-      primitive: { topology: 'triangle-list' },
-    });
-  };
+  ): GPURenderPipeline => renderPipeline(device, code, fragment, target);
   drawing = {
     device,
     colour: device.createBuffer({
@@ -119,6 +112,7 @@ export function pipelinesFor(device: GPUDevice): Drawing {
     }),
     imported: pipeline(IMPORTED, 'imported'),
     planar: pipeline(PLANAR_WGSL, 'planar'),
+    finished: null,
     // Premultiplied source over what is already there: the fragment writes the picture times its
     // own alpha, so a pixel the mask leaves out contributes nothing rather than a black fringe.
     planarMasked: pipeline(PLANAR_WGSL, 'planar_masked', {
@@ -132,6 +126,21 @@ export function pipelinesFor(device: GPUDevice): Drawing {
     sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }),
   };
   return drawing;
+}
+
+function renderPipeline(
+  device: GPUDevice,
+  code: string,
+  fragment: string,
+  target?: GPUColorTargetState,
+): GPURenderPipeline {
+  const module = device.createShaderModule({ code });
+  return device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vertex' },
+    fragment: { module, entryPoint: fragment, targets: [target ?? { format: 'rgba16float' }] },
+    primitive: { topology: 'triangle-list' },
+  });
 }
 
 /**
@@ -190,6 +199,7 @@ interface Planar {
   /** `region` of the stored picture, on the chroma grid, as a texture per plane. */
   upload(device: GPUDevice, region: Region): Promise<GPUTexture[]>;
   described: string;
+  finished?: Required<PlanarPicture>;
 }
 
 function planarOf(picture: StagePicture, rotation: 0 | 90 | 180 | 270 = 0): Planar | null {
@@ -206,6 +216,7 @@ function planarOf(picture: StagePicture, rotation: 0 | 90 | 180 | 270 = 0): Plan
       upload: (device, region) =>
         Promise.resolve(planesFrom(device, picture, region, layout.chroma)),
       described: `${bits}-bit ${subsampled ? '4:2:0' : '4:4:4'} planes ${width}x${height}`,
+      ...(picture.finish == null ? {} : { finished: { ...picture, finish: picture.finish } }),
     };
   }
   if (!isFrame(picture)) return null;
@@ -226,7 +237,9 @@ function isFrame(picture: StagePicture | ImageBitmap): picture is VideoFrame {
   return typeof VideoFrame === 'function' && picture instanceof VideoFrame;
 }
 
-function isPlanes(picture: StagePicture | ImageBitmap): picture is PlanarPicture {
+function isPlanes(
+  picture: StagePicture | ImageBitmap,
+): picture is Extract<StagePicture, { samples: Uint8Array }> {
   return 'samples' in picture;
 }
 
@@ -237,20 +250,24 @@ export function planesFrom(
   region: Region,
   chroma: number,
 ): GPUTexture[] {
+  const wide = layout.bits > 8;
+  const packed = layout.planes.length === 1;
   return layout.planes.slice(0, 3).map((plane, at) => {
     const span = at === 0 ? 1 : chroma;
     const width = Math.ceil(region.width * span);
     const height = Math.ceil(region.height * span);
+    const paired = at > 0 && layout.planes.length === 2;
+    const channels = packed ? 4 : paired ? 2 : 1;
     const texture = device.createTexture({
       size: [width, height],
-      format: 'r16uint',
+      format: `${packed ? 'rgba' : paired ? 'rg' : 'r'}${wide ? 16 : 8}uint`,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
     const offset =
       samples.byteOffset +
       plane.offset +
       region.y * span * plane.stride +
-      region.x * span * Uint16Array.BYTES_PER_ELEMENT;
+      region.x * span * (wide ? 2 : 1) * channels;
     device.queue.writeTexture(
       { texture },
       samples.buffer,
@@ -443,6 +460,7 @@ export class StagePainter {
       return this.decline(`copying the planes out of ${planar.described} failed`, err);
     }
 
+    const spent: { destroy(): void }[] = [];
     let surface: Surface | null = null;
     try {
       surface = surfaceOf(onto, device);
@@ -465,18 +483,29 @@ export class StagePainter {
       );
       const drawn = pipelinesFor(device);
       device.queue.writeBuffer(drawn.colour, 0, uniform.buffer as ArrayBuffer);
-      drawOnce(device, surface.view, drawn.planar, [
+      const entries: GPUBindGroupEntry[] = [
         { binding: 0, resource: planes[0]!.createView() },
-        { binding: 1, resource: planes[1]!.createView() },
-        { binding: 2, resource: planes[2]!.createView() },
+        // NV12's one chroma plane is read through `chroma_u` alone, and packed RGB has none.
+        { binding: 1, resource: (planes[1] ?? planes[0])!.createView() },
+        { binding: 2, resource: (planes[2] ?? planes[1] ?? planes[0])!.createView() },
         { binding: 3, resource: { buffer: drawn.colour } },
-      ]);
+      ];
+      const { finished } = planar;
+      if (finished != null) {
+        const placed = { ...drawnRegion, width: planar.codedWidth, height: planar.codedHeight };
+        entries.push(...finishEntries(device, finished, placed, spent));
+      }
+      const pipeline =
+        finished == null
+          ? drawn.planar
+          : (drawn.finished ??= renderPipeline(device, PLANAR_WGSL, 'finished'));
+      drawOnce(device, surface.view, pipeline, entries);
       return await surface.finish();
     } catch (err) {
       this.giveUp(err);
       return 'lost';
     } finally {
-      for (const plane of planes) plane.destroy();
+      for (const plane of [...planes, ...spent]) plane.destroy();
       surface?.dispose();
     }
   }
@@ -923,6 +952,97 @@ export function colourWords(
     rotation,
     proof,
     sourcePeak,
+  ]);
+  return words;
+}
+
+/** `Finish` in `stage.slang`: thirteen `vec4f`s. */
+const FINISH_BYTES = 208;
+
+function finishEntries(
+  device: GPUDevice,
+  { finish, layout }: Required<PlanarPicture>,
+  placed: Region,
+  spent: { destroy(): void }[],
+): GPUBindGroupEntry[] {
+  const uniform = device.createBuffer({
+    size: FINISH_BYTES,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  const table = device.createBuffer({
+    size: finish.table.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  spent.push(uniform, table);
+  device.queue.writeBuffer(uniform, 0, finishWords(finish, layout, placed).buffer as ArrayBuffer);
+  device.queue.writeBuffer(table, 0, finish.table);
+  const map = finish.gain?.picture;
+  const gain =
+    map == null
+      ? [unboundPlane(device)]
+      : planesFrom(
+          device,
+          map,
+          { x: 0, y: 0, width: map.layout.width, height: map.layout.height },
+          map.layout.subsampled ? 0.5 : 1,
+        );
+  spent.push(...gain);
+  return [
+    { binding: 5, resource: { buffer: uniform } },
+    { binding: 6, resource: { buffer: table } },
+    { binding: 7, resource: gain[0]!.createView() },
+    { binding: 8, resource: (gain[1] ?? gain[0])!.createView() },
+    { binding: 9, resource: (gain[2] ?? gain[1] ?? gain[0])!.createView() },
+  ];
+}
+
+/** Where no gain map is: `finished` binds the map whether it reads one or not. */
+function unboundPlane(device: GPUDevice): GPUTexture {
+  return device.createTexture({
+    size: [1, 1],
+    format: 'r8uint',
+    usage: GPUTextureUsage.TEXTURE_BINDING,
+  });
+}
+
+/** `placed` is the uploaded region of the stored picture, sized as the whole picture. */
+export function finishWords(finish: Finish, base: PlanesLayout, placed: Region): Float32Array {
+  const signal = ({ kr, kb, fullRange, depth }: Signal): number[] => [
+    kr,
+    kb,
+    fullRange ? 1 : 0,
+    2 ** depth - 1,
+  ];
+  const arrangement = ({ planes }: PlanesLayout): number =>
+    planes.length === 3 ? 0 : planes.length === 2 ? 1 : 2;
+  const gain = finish.gain;
+  const iso = gain?.terms.mode === 'iso' ? gain.terms : null;
+  const triple = (values: readonly number[] | undefined, otherwise: number): number[] => [
+    ...(values ?? [otherwise, otherwise, otherwise]),
+    0,
+  ];
+  const words = new Float32Array(FINISH_BYTES / 4);
+  words.set([
+    ...finish.matrix.flatMap((row) => [...row, 0]),
+    ...signal(finish.signal),
+    placed.x,
+    placed.y,
+    placed.width,
+    placed.height,
+    arrangement(base),
+    gain == null ? 0 : arrangement(gain.picture.layout),
+    0,
+    0,
+    ...(gain == null ? [0, 0, 0, 0] : signal(gain.signal)),
+    gain?.picture.layout.width ?? 0,
+    gain?.picture.layout.height ?? 0,
+    gain == null ? -1 : gain.terms.mode === 'iso' ? 0 : 1,
+    gain?.terms.mode === 'apple' ? gain.terms.headroom : 1,
+    ...triple(iso?.min, 0),
+    ...triple(iso?.max, 0),
+    ...triple(iso?.gamma, 1),
+    ...triple(iso?.offsetBase, 0),
+    ...triple(iso?.offsetAlternate, 0),
   ]);
   return words;
 }

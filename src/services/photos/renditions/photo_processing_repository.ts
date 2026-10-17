@@ -10,6 +10,7 @@ import {
 } from '../../processing/renditions/renditions_repository';
 import type { StoredRecipe } from '../../../schemas/recipes';
 import type { Denoiser } from '../../../schemas/photo_edits';
+import { RENDERED_FORMATS } from '../../../utils/scan';
 import { inChunks } from '../photo_batches';
 import { BUILT_FROM_STAMP, EDITED, INPUTS_EDITED, type EditStamp } from '../photo_edit_sql';
 import { withRecipe } from '../paths/photo_paths_repository';
@@ -410,7 +411,9 @@ export class PhotoProcessingRepository {
                   AS reading,
                 -- renditions::rendersAhead, the only rows the renditions pass posts a job for.
                 COUNT(DISTINCT CASE WHEN r.variant != 'grid' AND (COALESCE(${EDITED('e')}, 0)
-                    OR COALESCE(p.rendition_source, l.rendition_source) = 'render') THEN p.id END)
+                    OR (COALESCE(p.rendition_source, l.rendition_source) = 'render'
+                        AND COALESCE(p.format, '') NOT IN (${RENDERED_FORMATS.map((f) => `'${f}'`).join(', ')})))
+                  THEN p.id END)
                   AS rendering
            FROM renditions r JOIN photos p ON p.id = r.photo_id JOIN libraries l ON l.id = p.library_id
            LEFT JOIN photo_edits e ON e.photo_id = p.id

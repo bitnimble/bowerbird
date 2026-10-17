@@ -66,6 +66,8 @@ export class StackTriageStore {
   // carried into the next round keeps the side it is already on: with both halves
   // moving, nothing on screen says which of the two was replaced.
   @observable accessor swapped = false;
+  /** A member's own file this browser cannot draw, as a HEIC without HEVC, met this session. */
+  @observable accessor undrawable = false;
   // Seeded by the presenter, which is the only thing that reads storage.
   @observable accessor mode: TriageMode = 'flip';
   /** Where to go back to. Recorded on entry and stored, so a reload still knows. */
@@ -159,13 +161,15 @@ export class StackTriageStore {
   @computed get rendition(): ViewerRendition {
     const first = this.members.values().next().value;
     const library = this.libraries.byId.get(first?.library_id ?? '');
-    // **Only where every member actually has one.** The camera's JPEG is a property of the file,
-    // and a stack of HEICs has none - so a round drawn at `embedded` there is a round of blank
-    // tiles. A member that came from a finished picture takes the whole pool to the render, which
-    // every member has or, on a library that doesn't pre-render, builds when its frame 404s.
-    const allEmbedded = [...this.members.values()].every((member) => member.has_embedded);
-    const built: ViewerRendition =
-      library?.rendition_source === 'render' || !allEmbedded ? 'full' : 'embedded';
+    // **Only where every member actually has one, and this browser can draw it.** Otherwise a
+    // round drawn at `embedded` is a round of blank tiles, so the whole pool goes to the render,
+    // which every member has or builds when its frame 404s. A finished picture is never rendered
+    // ahead, so a pool holding one is drawn at `embedded` whatever the library pre-renders.
+    const members = [...this.members.values()];
+    const allEmbedded = !this.undrawable && members.every((member) => member.has_embedded);
+    const rendersAll =
+      library?.rendition_source === 'render' && members.every((member) => member.is_raw);
+    const built: ViewerRendition = rendersAll || !allEmbedded ? 'full' : 'embedded';
     const mode = this.settings.viewerRenditionMode;
     // The camera's JPEG is the only thing a reader can ask for that every member is certain
     // to have; everything else - a per-photo mode, which is not a claim about the rest, a

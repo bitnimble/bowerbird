@@ -27,7 +27,7 @@ import type { Rendition } from '../../processing/renditions/renditions';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import type { ShootsRepository } from '../../shoots/shoots_repository';
 import { getRenditionPath, originalPathOf } from '../../../utils/paths';
-import { hasEmbeddedJpeg, isEmbeddedJpegItself } from '../../../utils/scan';
+import { hasEmbedded, hasEmbeddedJpeg, isRendered } from '../../../utils/scan';
 import type { PhotoCompositesRepository } from '../composites/photo_composites_repository';
 import type { PhotoPathsRepository } from '../paths/photo_paths_repository';
 import type { PhotoNavigationRepository } from './photo_navigation_repository';
@@ -96,7 +96,7 @@ export function withShownRendition<T extends UnresolvedSummary>(
   rows: T[],
   libraries: LibrariesRepository,
   settings: SettingsRepository,
-): (T & Pick<PhotoSummary, 'shown_rendition' | 'has_embedded'>)[] {
+): (T & Pick<PhotoSummary, 'shown_rendition' | 'has_embedded' | 'is_raw'>)[] {
   if (rows.length === 0) return [];
   const current = settings.get();
   const byLibrary = new Map(libraries.listConfigurations().map((library) => [library.id, library]));
@@ -109,7 +109,12 @@ export function withShownRendition<T extends UnresolvedSummary>(
       false,
       row.composite_kind != null,
     );
-    return { ...row, shown_rendition: resolveShownRendition(ctx), has_embedded: ctx.hasEmbedded };
+    return {
+      ...row,
+      shown_rendition: resolveShownRendition(ctx),
+      has_embedded: ctx.hasEmbedded,
+      is_raw: ctx.isRaw,
+    };
   });
 }
 
@@ -155,6 +160,7 @@ export class PhotoReadService {
       original_path: original,
       has_original: original != null && isOnDisk(original),
       has_embedded: ctx.hasEmbedded,
+      is_raw: ctx.isRaw,
       shown_rendition: shown,
       rendition_to_build: resolveRenditionToBuild(ctx),
       // Bytes handed over unchanged can never be stale; anything this row builds - the camera
@@ -230,9 +236,8 @@ export class PhotoReadService {
     };
     // The cameras' own picture, however this row comes by one: composed out of its frames' and
     // filed like anything else, or - for a row that names one file - a format question rather
-    // than a stat, since the bytes are inside that file and are there whenever it is. A PNG, a
-    // HEIC or an AVIF has none, and saying so is what keeps the viewer from asking (§10.2).
-    const lifted = raw != null && hasEmbeddedJpeg(filePath);
+    // than a stat, since the bytes are that file or inside it and are there whenever it is (§10.2).
+    const lifted = raw != null && hasEmbedded(filePath);
     return {
       embedded: composesCameraView
         ? stored('embedded')
@@ -251,12 +256,12 @@ export class PhotoReadService {
   // read. Null for a RAW that has gone, which is also what keeps the native library out
   // of the tests: they name files that do not exist.
   //
-  // A photograph that arrived *as* a JPEG has a file, and it is this one: a stat, rather than
-  // reading a twenty-megabyte original into memory to measure it on every detail read.
+  // A finished picture is shown as its own file, so its weight is a stat, rather than reading a
+  // twenty-megabyte original into memory to measure it on every detail read.
   private embeddedBytes(raw: string): number | null {
     const still = statSync(raw, { throwIfNoEntry: false });
     if (still == null) return null;
-    return isEmbeddedJpegItself(raw) ? still.size : (readEmbeddedJpeg(raw)?.length ?? null);
+    return isRendered(raw) ? still.size : (readEmbeddedJpeg(raw)?.length ?? null);
   }
   // The collection's stored ordering is the answer unless the request names one,
   // and either way the response says which was used. The sort is the collection's
@@ -513,7 +518,7 @@ export class PhotoReadService {
   }
   private withShownRendition<T extends UnresolvedSummary>(
     rows: T[],
-  ): (T & Pick<PhotoSummary, 'shown_rendition' | 'has_embedded'>)[] {
+  ): (T & Pick<PhotoSummary, 'shown_rendition' | 'has_embedded' | 'is_raw'>)[] {
     return withShownRendition(rows, this.libraries, this.settings);
   }
   // The grid tile is built at import, so a missing one means the file was cleared

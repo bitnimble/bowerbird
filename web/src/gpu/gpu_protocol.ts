@@ -16,16 +16,55 @@ const BitmapSchema = z.custom<ImageBitmap>(
   (value) => typeof ImageBitmap === 'function' && value instanceof ImageBitmap,
 );
 
-const PlanarSchema = z.object({
+const PlanesSchema = z.object({
   samples: z.custom<Uint8Array>((value) => value instanceof Uint8Array),
   layout: z.object({
     width: z.number(),
     height: z.number(),
-    bits: z.union([z.literal(10), z.literal(12)]),
+    bits: z.union([z.literal(8), z.literal(10), z.literal(12)]),
     subsampled: z.boolean(),
     planes: z.array(z.object({ offset: z.number(), stride: z.number() })),
   }),
+});
+
+const SignalSchema = z.object({
+  kr: z.number(),
+  kb: z.number(),
+  fullRange: z.boolean(),
+  depth: z.number(),
+});
+
+const PlanarSchema = PlanesSchema.extend({
+  finish: z
+    .object({
+      signal: SignalSchema,
+      matrix: z.array(z.array(z.number())),
+      table: z.custom<Float32Array<ArrayBuffer>>((value) => value instanceof Float32Array),
+      gain: z
+        .object({
+          picture: PlanesSchema,
+          signal: SignalSchema,
+          terms: z.discriminatedUnion('mode', [
+            z.object({
+              mode: z.literal('iso'),
+              min: z.array(z.number()),
+              max: z.array(z.number()),
+              gamma: z.array(z.number()),
+              offsetBase: z.array(z.number()),
+              offsetAlternate: z.array(z.number()),
+            }),
+            z.object({ mode: z.literal('apple'), headroom: z.number() }),
+          ]),
+        })
+        .nullable(),
+    })
+    .optional(),
 }) satisfies z.ZodType<PlanarPicture>;
+
+/** `heif_view::framed`: a HEIC's parse, for `heif_decode.ts` to decode. */
+export const HeifViewSchema = z.custom<Uint8Array<ArrayBuffer>>(
+  (value) => value instanceof Uint8Array,
+);
 
 /** What the viewer draws: a decoded frame, a bitmap, or planes `native/avif_planes` decoded. */
 const StagePictureSchema = z.union([FrameSchema, BitmapSchema, PlanarSchema]);
@@ -114,6 +153,11 @@ export const MessageSchema = z.discriminatedUnion('to', [
   z.object({ id: z.number(), to: z.literal('dropSurface'), key: z.number() }),
   z.object({ id: z.number(), to: z.literal('stage'), ask: StageAskSchema }),
   z.object({ id: z.number(), to: z.literal('precompile') }),
+  z.object({
+    id: z.number(),
+    to: z.literal('heif'),
+    file: z.custom<Uint8Array>((value) => value instanceof Uint8Array),
+  }),
 ]);
 export type Message = z.infer<typeof MessageSchema>;
 

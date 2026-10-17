@@ -6,6 +6,13 @@ import { POPUP } from '../../../ui/menu_styles';
 import { TRIAGE_KEYS } from '../stack_triage/triage_control';
 import { useJudge, useStep } from './detail_navigation';
 import type { DetailMode } from './detail_mode';
+import type { ViewerRendition } from '../../../../../src/schemas/settings';
+
+const RENDITION_KEYS: Partial<Record<string, ViewerRendition>> = {
+  i: 'embedded',
+  o: 'full',
+  p: 'max',
+};
 
 export const DetailKeys = observer(function DetailKeys({
   photoId,
@@ -50,16 +57,10 @@ export const DetailKeys = observer(function DetailKeys({
       if (mode === 'print' && ['i', 'o', 'p'].includes(e.key)) return;
 
       const verdict = TRIAGE_KEYS[e.key];
+      const rendition = RENDITION_KEYS[e.key];
       if (verdict != null) judge(verdict);
       else if (/^[0-5]$/.test(e.key)) void photos.setRating(photoId, Number(e.key));
-      // Ignored where this photograph has no camera JPEG, rather than switching to a file that
-      // cannot exist and remembering the choice for every photograph after it.
-      else if (e.key === 'i') {
-        if (store.photoFor(photoId)?.has_embedded !== false) {
-          void photos.chooseRendition(photoId, 'embedded');
-        }
-      } else if (e.key === 'o') void photos.chooseRendition(photoId, 'full');
-      else if (e.key === 'p') void photos.chooseRendition(photoId, 'max');
+      else if (rendition != null) void photos.chooseRendition(photoId, rendition);
       else if (e.key === '[' && onToggleStrip != null) onToggleStrip();
       else if (e.key === ']' && onTogglePanels != null) onTogglePanels();
       else if (e.key === 'ArrowLeft') step('prev');

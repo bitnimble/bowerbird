@@ -45,6 +45,7 @@ function Seed({ elsewhere }: { elsewhere: OriginalElsewhere }): null {
         is_offloaded: false,
         original_elsewhere: elsewhere,
         has_embedded: true,
+        is_raw: true,
         is_hidden: false,
         stack_id: null,
       } as PhotoDetail);

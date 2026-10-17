@@ -35,6 +35,7 @@ function row(overrides: Partial<PhotoSummary> = {}): PhotoSummary {
     stack_size: 1,
     shown_rendition: 'full',
     has_embedded: true,
+    is_raw: true,
     ...overrides,
   } as PhotoSummary;
 }

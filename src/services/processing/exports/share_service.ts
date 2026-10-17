@@ -21,23 +21,31 @@ export class ShareService {
 
   /**
    * The camera's own JPEG goes over unchanged. Everything else is an AVIF, transcoded, with a gain
-   * map where the library's renditions are HDR. Nothing is built: a rendition not on disk is refused.
+   * map where the library's renditions are HDR. A rendition not on disk is refused. A PNG, HEIC or AVIF
+   * shown as its own file has no JPEG to hand over, so it is shared as its render, built here if
+   * there is none.
    */
   async jpeg(photoId: string, rendition: ViewerRendition): Promise<Uint8Array> {
     const { photo, library } = this.photoRenditions.locate(photoId);
     return this.activity.track(library.id, 'sharing', photoId, async () => {
-      if (rendition === 'embedded' && !isComposite(photo.recipe)) {
+      const shared =
+        rendition === 'embedded' &&
+        photo.recipe.kind === 'file' &&
+        !hasEmbeddedJpeg(photo.recipe.path)
+          ? await this.built(photoId)
+          : rendition;
+      if (shared === 'embedded' && !isComposite(photo.recipe)) {
         const jpeg = await this.photoRenditions.embeddedJpeg(photoId);
         if (jpeg == null) throw new AppError('NOT_FOUND', `no camera JPEG to share for ${photoId}`);
         return jpeg;
       }
-      const renditionPath = getRenditionPath(library, photo.id, rendition, library.rendition_hdr);
+      const renditionPath = getRenditionPath(library, photo.id, shared, library.rendition_hdr);
       if (!(await Bun.file(renditionPath).exists()))
         throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
       return this.exports.shareable(
         photo.id,
         renditionPath,
-        storedAsHdr(rendition, library.rendition_hdr),
+        storedAsHdr(shared, library.rendition_hdr),
       );
     });
   }

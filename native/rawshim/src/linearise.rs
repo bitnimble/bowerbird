@@ -126,9 +126,15 @@ impl GainMap {
             && reaches
     }
 
-    /// The brightest any channel at `base` can come out, in units of diffuse white.
     fn brightest(&self, base: f64) -> f64 {
-        match &self.terms {
+        self.terms.brightest(base)
+    }
+}
+
+impl Reconstruction {
+    /// The brightest any channel at `base` can come out, in units of diffuse white.
+    pub(crate) fn brightest(&self, base: f64) -> f64 {
+        match self {
             Reconstruction::Iso {
                 min,
                 max,
@@ -570,7 +576,7 @@ impl Picture {
         ((budget / per_row.max(1)).max(2) & !1).min(out_h.next_multiple_of(2))
     }
 
-    /// Which reconstruction the kernel's gain arm runs, as `linearise.slang`'s `GAIN_*` numbers.
+    /// Which reconstruction the kernel's gain arm runs, as `gain_map.slang`'s `GAIN_*` numbers.
     fn gain_mode(&self) -> u32 {
         match self.terms.as_ref().map(|it| &it.terms) {
             Some(Reconstruction::Apple { .. }) => 1,

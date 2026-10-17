@@ -483,7 +483,7 @@ Rating a shoot is the daily job, so it must not require opening each frame. The 
 | `Enter`   | Open the photo, or the stack's band                                                   |
 | `F`       | Fullscreen, in the photo view                                                         |
 | `+` / `−` | Zoom in a stop / back to fitted, in the photo view                                    |
-| `I` / `O` | The camera's JPEG / the render, in the photo view (§10.1)                             |
+| `I` / `O` | A RAW's camera JPEG / its render, in the photo view (§10.1)                           |
 | `Esc`     | Clear the selection, or leave the photo for the collection it was opened from (§18.5) |
 | `?`       | Shortcut overlay                                                                      |
 

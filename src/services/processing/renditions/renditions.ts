@@ -10,9 +10,9 @@
 //             put a linear decode and two encoder passes on every import.
 //   full      3840px, the photo view. HDR when the library asks for it.
 //   max       native resolution, the pixel-peeping view. HDR likewise.
-//   embedded  the cameras' own picture rather than ours, always SDR: a photograph's
-//             own JPEG at whatever size it is, a canvas composited at the size the
-//             photo view takes.
+//   embedded  the cameras' own picture rather than ours: a RAW's own JPEG at
+//             whatever size it is, a finished picture's own file, a canvas
+//             composited (SDR) at the size the photo view takes.
 //
 // **`embedded` is every row's, and how a row comes by one is its recipe's answer.**
 // A row that names one file has the picture inside that file and hands it over
@@ -25,7 +25,7 @@
 import { RENDITIONS, type RenditionSource } from '../../../schemas/common';
 import { type StoredRecipe } from '../../../schemas/recipes';
 import { SDR_MATCHES, type SdrMatch, sdrMatchSuffix } from '../../../schemas/sdr_match';
-import { hasEmbeddedJpeg } from '../../../utils/scan';
+import { hasEmbeddedJpeg, isRendered } from '../../../utils/scan';
 
 export type Rendition = (typeof RENDITIONS)[number];
 
@@ -109,8 +109,8 @@ export interface Buildable {
  *   an `embedded` library would otherwise show the change in the editor and nowhere else,
  *   permanently and with nothing saying why; a composite whose *frame* was edited is the same
  *   fault one row further out.
- * - **an input has no camera rendering to take**: a PNG, a HEIC, an AVIF, or a set holding one.
- *   Left saying `embedded` the viewer would ask for a camera picture the file does not have.
+ * - **an input has no JPEG to take**: a PNG, a HEIC, an AVIF, or a set holding one, whose
+ *   copies are decoded from the file itself.
  * - **the library asks for ours**, which is the setting's whole purpose.
  */
 export function sourceFor(row: Buildable): RenditionSource {
@@ -142,9 +142,8 @@ export interface Owed {
  *
  * A library that renders is the other answer, and there the copy is owed: what the viewer is
  * promised there is ours, and a reader who opens a panorama on it should not be the one to pay
- * for a demosaic, a denoise and a defringe per frame. So is an edited row's. A row shown a render
- * only because it has no camera picture, on a library that does not render ahead, owes the tile
- * alone, and its render is built when it is opened (`rendersAhead`).
+ * for a demosaic, a denoise and a defringe per frame. So is an edited row's. An unedited finished
+ * picture owes the tile alone on any library (`rendersAhead`).
  *
  * Its range is still the library's, and which variant this names is what the queue asks about
  * (`FULL_VARIANT_OF_LIBRARY`): a build that settled a different one would leave the row owing this
@@ -162,13 +161,16 @@ export function owedOf(row: Buildable): readonly Owed[] {
 }
 
 /**
- * Whether a row shown a render has it built at import rather than when someone opens it: a HEIC on
- * a library that doesn't pre-render is still shown a render, built on open.
+ * Whether a row shown a render has it built at import rather than when someone opens it. An edit
+ * always is. A finished picture never is otherwise, whatever the library pre-renders: it is shown
+ * as its own file, and a HEIC's render is built on open.
  */
 export function rendersAhead(
-  row: Pick<Buildable, 'edited' | 'photoSource' | 'librarySource'>,
+  row: Pick<Buildable, 'recipe' | 'inputs' | 'edited' | 'photoSource' | 'librarySource'>,
 ): boolean {
-  return row.edited || (row.photoSource ?? row.librarySource) === 'render';
+  if (row.edited) return true;
+  if (row.recipe.kind === 'file' && row.inputs.every(isRendered)) return false;
+  return (row.photoSource ?? row.librarySource) === 'render';
 }
 
 export function variantParts(variant: RenditionVariant): { rendition: Rendition; hdr: boolean } {

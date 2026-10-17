@@ -338,15 +338,24 @@ describe('ProcessingService.processUnprocessed', () => {
     ]);
   });
 
-  it('builds only the tile of a file with no camera JPEG where the library does not pre-render', async () => {
-    const heic = (photoId: string, librarySource: RenditionSource): PendingPhoto => ({
+  it('builds only the tile of a finished picture, whatever the library pre-renders', async () => {
+    const picture = (
+      photoId: string,
+      file: string,
+      librarySource: RenditionSource,
+    ): PendingPhoto => ({
       ...pending(photoId),
-      recipe: fileRecipe(`${photoId}.heic`),
+      recipe: fileRecipe(file),
       rendition_source: null,
       library_rendition_source: librarySource,
     });
     const repo = {
-      listPendingProcessing: jest.fn(() => [heic('later', 'embedded'), heic('ahead', 'render')]),
+      listPendingProcessing: jest.fn(() => [
+        picture('heic', 'heic.heic', 'embedded'),
+        picture('jpeg', 'jpeg.jpg', 'render'),
+        picture('png', 'png.png', 'render'),
+        { ...picture('edited', 'edited.jpg', 'render'), edited: 1 },
+      ]),
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
@@ -355,18 +364,22 @@ describe('ProcessingService.processUnprocessed', () => {
     await makeProcessingService(repo, settingsWith({})).processUnprocessed({ libraryId: 'lib' });
 
     expect(posted.map((job) => photoStage(job))).toEqual([
-      'later:grid',
-      'ahead:grid',
-      'ahead:full',
+      'heic:grid',
+      'jpeg:grid',
+      'png:grid',
+      'edited:grid',
+      'edited:full',
     ]);
     // Settled rather than left owing, or every batch would ask about it again.
-    expect(repo.markRenditionsBuilt).toHaveBeenCalledWith(
-      'later',
-      expect.any(String),
-      'embedded',
-      null,
-      'full',
-    );
+    for (const photoId of ['heic', 'jpeg', 'png']) {
+      expect(repo.markRenditionsBuilt).toHaveBeenCalledWith(
+        photoId,
+        expect.any(String),
+        'embedded',
+        null,
+        'full',
+      );
+    }
   });
 
   it('reads the header with the tile of a row the media index catalogued, and hands it on', async () => {

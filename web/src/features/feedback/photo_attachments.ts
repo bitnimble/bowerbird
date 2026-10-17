@@ -53,7 +53,8 @@ export class ReportTooLarge extends Error {
  */
 export async function attachmentsFor({ photo, raw, strip }: PhotoChoice): Promise<Attached[]> {
   const forms: AttachableForm[] = [
-    ...(photo.has_embedded ? (['embedded'] as const) : []),
+    // A finished picture's `embedded` is its own file, which the original already covers.
+    ...(photo.has_embedded && photo.is_raw ? (['embedded'] as const) : []),
     'full',
     'analysis',
   ];

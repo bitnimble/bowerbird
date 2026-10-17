@@ -2,9 +2,8 @@
 //
 // **This is a browser's shader and it is here anyway.** It runs nowhere but WebGPU, over planes
 // `VideoFrame.copyTo` handed back, and nothing in `native/rawshim` dispatches it. What it shares
-// with the rest of `slang/` is the arithmetic, and that is the whole reason it moved: the transfer,
-// the roll-off and BT.2020's weights were written a second time in TypeScript, where no test on
-// either side could see them disagree.
+// with the rest of `slang/` is the arithmetic: the transfer, the roll-off, BT.2020's weights and a
+// gain map's reconstruction, each written once.
 //
 // The one thing it cannot say is WebGPU's `texture_external`, which Slang has no type for. That
 // path is a copy - the import already converted into the canvas's primaries and left the value on
@@ -16,6 +15,8 @@ import light;
 import primaries;
 import gamut_map;
 import video_range;
+import gain_map;
+import times;
 
 struct Colour {
     float headroom;
@@ -56,6 +57,37 @@ struct Colour {
 /// canvas's own size rather than the region's, unlike the planes.
 [vk::binding(4, 0)] Texture2D<float> mask;
 
+/// How a finished picture's planes become light (`heif_view.rs`), read by `finished` alone.
+struct Finish {
+    /// The base's linear RGB to Rec.2020, a row per vector.
+    float4 row0;
+    float4 row1;
+    float4 row2;
+    /// The base's `kr`, `kb`, full range as 0 or 1, and largest code.
+    float4 signal;
+    /// The uploaded region's origin in stored pixels, then the whole stored picture's size.
+    float4 placed;
+    /// The base's planes, then the map's: 0 for three, 1 for NV12's two with chroma interleaved in
+    /// `chroma_u`, 2 for one of packed RGB codes, which a hardware decoder hands back.
+    float4 arrangement;
+    /// The map's `kr`, `kb`, full range and largest code.
+    float4 gain_signal;
+    /// The map's width and height, `GAIN_ISO` or `GAIN_APPLE` or -1 for no map, and Apple's headroom.
+    float4 gain_shape;
+    float4 gain_min;
+    float4 gain_max;
+    float4 gain_gamma;
+    float4 offset_base;
+    float4 offset_alternate;
+};
+
+[vk::binding(5, 0)] ConstantBuffer<Finish> finish;
+/// `code * 3 + channel`, light with diffuse white at 1.0: `linearise.slang`'s table.
+[vk::binding(6, 0)] StructuredBuffer<float> table;
+[vk::binding(7, 0)] Texture2D<uint4> gain_luma;
+[vk::binding(8, 0)] Texture2D<uint4> gain_u;
+[vk::binding(9, 0)] Texture2D<uint4> gain_v;
+
 [shader("vertex")]
 Drawn vertex(uint at: SV_VertexID)
 {
@@ -92,6 +124,21 @@ float nits_of(float code)
 /// copy of the arithmetic this file exists to hold once.
 float3 stage_light(float2 position, Gain gain)
 {
+    let at = stored_at(position);
+    let chroma_at = uint2(float2(at) * colour.chroma);
+    let signal = pq_of_video(float3(
+        float(luma.Load(int3(int2(at), 0)).r),
+        float(chroma_u.Load(int3(int2(chroma_at), 0)).r),
+        float(chroma_v.Load(int3(int2(chroma_at), 0)).r)) / colour.depth).v;
+
+    // Linear light at last, in the primaries it was authored in, against the white the renderer
+    // wrote it against. `pq_inv` answers in nits, which is what `colour.reference` is stated in.
+    return shown(float3(nits_of(signal.r), nits_of(signal.g), nits_of(signal.b)) / colour.reference * gain.g);
+}
+
+/// The planes' pixel under a canvas pixel.
+uint2 stored_at(float2 position)
+{
     // Into the planes' own pixels, which are the region's: a canvas capped below the region it
     // covers would otherwise read the region's top-left corner and stretch it over the whole tile,
     // and the tile sits over a fitted frame that is drawn correctly - so it shows as a rectangle of
@@ -108,16 +155,12 @@ float3 stage_light(float2 position, Gain gain)
     } else if (colour.rotation == 270.0) {
         stored = float2(float(wide) - displayed.y, displayed.x);
     }
-    let at = min(uint2(stored), uint2(wide - 1, tall - 1));
-    let chroma_at = uint2(float2(at) * colour.chroma);
-    let signal = pq_of_video(float3(
-        float(luma.Load(int3(int2(at), 0)).r),
-        float(chroma_u.Load(int3(int2(chroma_at), 0)).r),
-        float(chroma_v.Load(int3(int2(chroma_at), 0)).r)) / colour.depth).v;
+    return min(uint2(stored), uint2(wide - 1, tall - 1));
+}
 
-    // Linear light at last, in the primaries it was authored in, against the white the renderer
-    // wrote it against. `pq_inv` answers in nits, which is what `colour.reference` is stated in.
-    let light = float3(nits_of(signal.r), nits_of(signal.g), nits_of(signal.b)) / colour.reference * gain.g;
+/// Rec.2020 light against diffuse white, as the canvas shows it.
+float3 shown(float3 light)
+{
     if (colour.proof > 0.0) {
         let white = measured<DisplayNits>(colour.reference);
         let intent = uint(colour.proof) - 1;
@@ -134,6 +177,118 @@ float3 stage_light(float2 position, Gain gain)
     // largest channel a third larger than it was - so rolling afterwards takes such a highlight
     // into the knee earlier and darkens it against a white one of the same brightness.
     return srgb_oetf_signed(mul(R2020_TO_P3, rolled_to_headroom(light)));
+}
+
+/// A finished picture's Rec.2020 light at one of its planes' pixels: its own transfer and primaries
+/// undone and its gain map applied, as `linearise.slang` does for a decode.
+float3 finished_light(uint2 at)
+{
+    let codes = codes_at(luma, chroma_u, chroma_v, finish.arrangement.x, at, finish.signal);
+    var light = float3(table[times(codes.r, 3)], table[times(codes.g, 3) + 1], table[times(codes.b, 3) + 2]);
+    if (finish.gain_shape.z >= 0.0) {
+        GainTerms terms;
+        terms.mode = uint(finish.gain_shape.z);
+        terms.headroom = finish.gain_shape.w;
+        terms.lowest = finish.gain_min.rgb;
+        terms.highest = finish.gain_max.rgb;
+        terms.gamma = finish.gain_gamma.rgb;
+        terms.offset_base = finish.offset_base.rgb;
+        terms.offset_alternate = finish.offset_alternate.rgb;
+        light = gain_mapped(light, recovery_at(at + uint2(finish.placed.xy)), terms);
+    }
+    return float3(dot(finish.row0.xyz, light), dot(finish.row1.xyz, light), dot(finish.row2.xyz, light));
+}
+
+/// The gain map's normalised recovery at a pixel of the whole stored picture.
+float3 recovery_at(uint2 at)
+{
+    let map = uint2(finish.gain_shape.xy);
+    let taps = gain_taps(at, uint2(finish.placed.zw), map);
+    float3 corner[4];
+    for (uint k = 0; k < 4; k = k + 1) {
+        let texel = uint2(taps.at[k] % map.x, taps.at[k] / map.x);
+        corner[k] = float3(codes_at(gain_luma, gain_u, gain_v, finish.arrangement.y, texel, finish.gain_signal));
+    }
+    return blended(taps, corner) / finish.gain_signal.w;
+}
+
+/// One pixel's R'G'B' codes at the coded depth `signal` names, however its planes are arranged.
+uint3 codes_at(Texture2D<uint4> y_plane, Texture2D<uint4> u_plane, Texture2D<uint4> v_plane,
+               float arrangement, uint2 at, float4 signal)
+{
+    if (arrangement > 1.5) {
+        // Eight bits whatever the stream's depth: a ten-bit HEIC's codes are spread back over its table.
+        return uint3(float3(y_plane.Load(int3(int2(at), 0)).rgb) * signal.w / 255.0 + 0.5);
+    }
+    return codes_of(ycbcr_at(y_plane, u_plane, v_plane, arrangement > 0.5, at), signal);
+}
+
+/// One pixel's luma and its chroma, bilinear against HEVC's default siting: a luma column falls on a
+/// chroma sample and a 4:2:0 luma row between two. Across the assembled picture, where
+/// `hevc::chroma` clamps at each grid tile's edge, so the two differ by a quarter of a chroma step
+/// at a tile seam.
+float3 ycbcr_at(Texture2D<uint4> y_plane, Texture2D<uint4> u_plane, Texture2D<uint4> v_plane,
+                bool interleaved, uint2 at)
+{
+    uint luma_wide, luma_tall, wide, tall;
+    y_plane.GetDimensions(luma_wide, luma_tall);
+    u_plane.GetDimensions(wide, tall);
+    let halved = uint2(wide, tall) < uint2(luma_wide, luma_tall);
+    let x = clamp(select(halved.x, float(at.x) / 2.0, float(at.x)), 0.0, float(wide - 1));
+    let y = clamp(select(halved.y, (float(at.y) - 0.5) / 2.0, float(at.y)), 0.0, float(tall - 1));
+    let x0 = uint(floor(x));
+    let y0 = uint(floor(y));
+    let x1 = min(x0 + 1, wide - 1);
+    let y1 = min(y0 + 1, tall - 1);
+    let top = lerp(chroma_pair(u_plane, v_plane, interleaved, uint2(x0, y0)),
+                   chroma_pair(u_plane, v_plane, interleaved, uint2(x1, y0)), x - floor(x));
+    let bottom = lerp(chroma_pair(u_plane, v_plane, interleaved, uint2(x0, y1)),
+                      chroma_pair(u_plane, v_plane, interleaved, uint2(x1, y1)), x - floor(x));
+    let chroma = lerp(top, bottom, y - floor(y));
+    return float3(float(y_plane.Load(int3(int2(at), 0)).r), chroma);
+}
+
+float2 chroma_pair(Texture2D<uint4> u_plane, Texture2D<uint4> v_plane, bool interleaved, uint2 at)
+{
+    let u = u_plane.Load(int3(int2(at), 0));
+    if (interleaved) { return float2(float(u.r), float(u.g)); }
+    return float2(float(u.r), float(v_plane.Load(int3(int2(at), 0)).r));
+}
+
+/// A YCbCr sample's R'G'B' codes under `signal` (`Finish.signal`), rounded as `hevc::to_rgb`
+/// rounds them, since the table is indexed by code.
+uint3 codes_of(float3 ycbcr, float4 signal)
+{
+    let kr = signal.x;
+    let kb = signal.y;
+    let last = signal.w;
+    let kg = 1.0 - kr - kb;
+    // `video_range`'s are ten-bit.
+    let scale = (last + 1.0) / 1024.0;
+    float luma_floor = LUMA_FLOOR * scale;
+    float luma_span = LUMA_SPAN * scale;
+    float chroma_mid = CHROMA_MID * scale;
+    float chroma_span = CHROMA_SPAN * scale;
+    if (signal.z > 0.5) {
+        luma_floor = 0.0;
+        luma_span = last;
+        chroma_mid = (last + 1.0) / 2.0;
+        chroma_span = last;
+    }
+    let y = (ycbcr.x - luma_floor) / luma_span;
+    let u = (ycbcr.y - chroma_mid) / chroma_span;
+    let v = (ycbcr.z - chroma_mid) / chroma_span;
+    let rgb = float3(
+        y + 2.0 * (1.0 - kr) * v,
+        y - (2.0 * (1.0 - kr) * kr / kg) * v - (2.0 * (1.0 - kb) * kb / kg) * u,
+        y + 2.0 * (1.0 - kb) * u);
+    return uint3(saturate(rgb) * last + 0.5);
+}
+
+[shader("fragment")]
+float4 finished(Drawn drawn) : SV_Target
+{
+    return float4(shown(finished_light(stored_at(drawn.position.xy))), 1.0);
 }
 
 [shader("fragment")]

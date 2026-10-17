@@ -15,7 +15,7 @@ import {
   PhotoProcessingRepository,
   type RenditionStamps,
 } from '../../photos/renditions/photo_processing_repository';
-import type { PeerJpeg } from '../../photos/renditions/photo_rendition_service';
+import type { PeerEmbedded } from '../../photos/renditions/photo_rendition_service';
 import { PhotoScanRepository } from '../../photos/scan/photo_scan_repository';
 import { StackMembership } from '../../stacks/stack_membership';
 import { RenditionsRepository } from '../../processing/renditions/renditions_repository';
@@ -160,10 +160,10 @@ export function makePeer(name: string): Peer {
         renditionVariant(rendition, hdr),
       );
     },
-    embeddedJpegForPeer: async (
+    embeddedForPeer: async (
       photoId: string,
       via: readonly string[],
-    ): Promise<PeerJpeg | null> => {
+    ): Promise<PeerEmbedded | null> => {
       const lifted = camera.get(photoId);
       const stamps = (): RenditionStamps | null =>
         photoProcessing.renditionStamps(photoId, 'embedded');

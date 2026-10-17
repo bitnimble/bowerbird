@@ -46,7 +46,7 @@ export const SettingsStrings = {
   ruleNotAShoot: () => 'Included, but not a shoot',
 
   renditions: () => 'Renditions',
-  preRenderImported: () => 'Automatically pre-render imported photos',
+  preRenderImported: () => 'Automatically pre-render imported RAWs',
   buildHdrRenditions: () => 'Render photos in HDR',
 
   renderStages: () => 'Render stages',

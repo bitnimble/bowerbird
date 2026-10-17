@@ -106,7 +106,10 @@ export const DetailFrame = observer(function DetailFrame({
             const rendition = held[sources.indexOf(source)];
             return rendition == null
               ? nameOf(store, id)
-              : PhotoDetailStrings.frameName(nameOf(store, id), renditionLabel(rendition));
+              : PhotoDetailStrings.frameName(
+                  nameOf(store, id),
+                  renditionLabel(rendition, store.photoFor(id)),
+                );
           },
         }
       : {
@@ -114,7 +117,7 @@ export const DetailFrame = observer(function DetailFrame({
           sources: [store.frameOf(id).source],
           alt: PhotoDetailStrings.frameName(
             nameOf(store, id),
-            renditionLabel(store.frameOf(id).rendition),
+            renditionLabel(store.frameOf(id).rendition, store.photoFor(id)),
           ),
         },
   );
@@ -152,7 +155,7 @@ export const DetailFrame = observer(function DetailFrame({
       : fetchPhase === 'rendering' || store.buildingRendition
         ? { label: PhotoStageStrings.rendering(), busy: true }
         : named
-          ? { label: renditionLabel(showing), busy: false }
+          ? { label: renditionLabel(showing, store.photoFor(photoId)), busy: false }
           : null;
 
   return (
@@ -190,10 +193,10 @@ export const DetailFrame = observer(function DetailFrame({
       // and it drops every entry for another photo - so recording a neighbour's decode
       // would throw away the renditions this one is holding, which is what makes going back
       // to one of them free.
-      onImageLoad={(source, width, height) => {
+      onImageLoad={(source, width, height, hdr) => {
         const arrived = owning.get(source);
         if (arrived?.photoId === photoId)
-          photos.imageShown(photoId, arrived.rendition, width, height);
+          photos.imageShown(photoId, arrived.rendition, width, height, hdr);
       }}
       // Only a copy this row builds: one served whole comes out of a file it already has, so a
       // 404 there means that file is gone, which building cannot fix (`store.servedWhole`). Any
@@ -202,11 +205,9 @@ export const DetailFrame = observer(function DetailFrame({
       // The open photo's own frame is the one exception: at a rendition the reader explicitly
       // chose, it was built before it was shown, so a 404 there is a real fault rather than a
       // gap still being filled.
-      onImageMissing={(source) => {
+      onImageMissing={(source, cannotDraw) => {
         const gone = owning.get(source);
-        if (gone == null || store.servedWhole(gone.photoId, gone.rendition)) return;
-        if (store.overrideFor(gone.photoId) != null) return;
-        void photos.buildMissingRendition(gone.photoId, gone.rendition);
+        if (gone != null) void photos.frameMissing(gone.photoId, gone.rendition, cannotDraw);
       }}
     />
   );

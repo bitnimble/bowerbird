@@ -99,13 +99,14 @@ export interface PhotoListResult {
  * resolve it served the wrong picture silently, for good; missing, the same mistake is a
  * compile error, and `withShownRendition` is the only thing that can produce the full type.
  */
-// `has_embedded` joins the three below: it is a fact about the file's format, and a repository
-// holds rows rather than the rule that reads one (§18.5). `withShownRendition` fills it in.
-export type UnresolvedSummary = Omit<PhotoSummary, 'shown_rendition' | 'has_embedded'>;
+// `has_embedded` and `is_raw` join the three below: they are facts about the file's format, and a
+// repository holds rows rather than the rule that reads one (§18.5). `withShownRendition` fills
+// them in.
+export type UnresolvedSummary = Omit<PhotoSummary, 'shown_rendition' | 'has_embedded' | 'is_raw'>;
 
 export type UnresolvedDetail = Omit<
   PhotoDetail,
-  'shown_rendition' | 'rendition_to_build' | 'rendition_stale' | 'has_embedded'
+  'shown_rendition' | 'rendition_to_build' | 'rendition_stale' | 'has_embedded' | 'is_raw'
 >;
 
 export class PhotoListingRepository {

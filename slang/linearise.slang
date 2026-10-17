@@ -30,6 +30,7 @@ import packed;
 import orientation;
 import px;
 import times;
+import gain_map;
 
 struct Params {
     /// The decoded picture, in the orientation its bytes are in.
@@ -84,10 +85,6 @@ struct Params {
     uint end_word;
 };
 
-/// `linearise::Picture::gain_mode`'s numbering.
-static const uint GAIN_ISO = 0;
-static const uint GAIN_APPLE = 1;
-
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
 [vk::binding(1, 0)] StructuredBuffer<uint> codes;
 /// Indexed `code * 3 + channel`.
@@ -119,70 +116,35 @@ float3 light_at(uint x, uint y)
         table[times(sample_at(codes, base + 2), 3) + 2]);
 }
 
-/// The gain map at a point of the source, bilinear, as its three normalised recovery values.
-///
-/// Bilinear rather than nearest because the map is stored at a fraction of the picture's
-/// resolution - half is usual, a quarter is legal - and a nearest read of one puts a staircase
-/// along every highlight edge it brightens.
+/// The gain map at a point of the source as its three normalised recovery values.
 float3 recovery_at(uint x, uint y)
 {
-    // The pixel's centre in the map's grid, which is the sampling both sides of a gain map agree
-    // on: the two rasters cover the same picture, so the centres line up rather than the corners.
-    //
-    // **Clamped before the floor, not after.** Outside the first and last texel centres there is
-    // no pair to interpolate between, and clamping only the *index* while taking the weight from
-    // the unclamped position leaves the edge reading three quarters of its neighbour: at `x = 0`
-    // of a half-resolution map `u` is -0.25, so `x0` snaps to 0 while `fx` stays 0.75. Where the
-    // map steps at a highlight that reaches the picture's edge, that is a bright line down it.
-    let u = clamp((float(x) + 0.5) * float(params.gain_width) / float(params.src_width) - 0.5,
-                  0.0, float(params.gain_width - 1));
-    let v = clamp((float(y) + 0.5) * float(params.gain_height) / float(params.src_height) - 0.5,
-                  0.0, float(params.gain_height - 1));
-    let x0 = uint(floor(u));
-    let y0 = uint(floor(v));
-    let x1 = min(x0 + 1, params.gain_width - 1);
-    let y1 = min(y0 + 1, params.gain_height - 1);
-    let fx = u - floor(u);
-    let fy = v - floor(v);
-
+    let taps = gain_taps(uint2(x, y), uint2(params.src_width, params.src_height),
+                         uint2(params.gain_width, params.gain_height));
     float3 corner[4];
-    let at = uint4(y0 * params.gain_width + x0, y0 * params.gain_width + x1,
-                   y1 * params.gain_width + x0, y1 * params.gain_width + x1);
     for (uint k = 0; k < 4; k = k + 1) {
-        let base = wide<Drawn>(at[k]) * 3;
+        let base = wide<Drawn>(taps.at[k]) * 3;
         corner[k] = float3(
             sample_at(gain_map, base),
             sample_at(gain_map, base + 1),
             sample_at(gain_map, base + 2));
     }
-    let top = lerp(corner[0], corner[1], fx);
-    let bottom = lerp(corner[2], corner[3], fx);
-    return lerp(top, bottom, fy) / params.gain_last;
+    return blended(taps, corner) / params.gain_last;
 }
 
-/// ISO 21496-1's reconstruction, at full strength: the alternate rendition rather than a display's
-/// share of it.
-///
-/// **The whole gain, always.** The standard's weight exists to meet a *display's* headroom, and
-/// nothing here is a display - the frame this produces is scene-linear and the roll-off that meets
-/// a panel is `frame.slang`'s, six stages further down. Applying a display weight here would bake
-/// one tone map in and then run another over it.
-float3 gain_mapped(float3 base, uint x, uint y)
+/// The frame this produces is scene-linear: the roll-off that meets a panel is `frame.slang`'s,
+/// six stages further down.
+float3 gain_mapped_at(float3 base, uint x, uint y)
 {
-    let recovery = recovery_at(x, y);
-    // **A straight line to the headroom, not a power of it.** Apple's reconstruction is linear in
-    // the recovery where ISO's is exponential, so the two disagree everywhere but the ends: at half
-    // recovery under a headroom of 8, ISO gives 2.83x and this gives 4.5x. Monochrome by
-    // construction, so one channel of the replicated map decides all three.
-    if (params.gain_mode == GAIN_APPLE) {
-        return base * (1.0 + (params.gain_headroom - 1.0) * recovery.r);
-    }
-    let power = float3(
-        pow(recovery.r, 1.0 / max(params.gain_gamma.r, 1e-6)),
-        pow(recovery.g, 1.0 / max(params.gain_gamma.g, 1e-6)),
-        pow(recovery.b, 1.0 / max(params.gain_gamma.b, 1e-6)));
-    let log_gain = lerp(params.gain_min.rgb, params.gain_max.rgb, power);
-    return (base + params.offset_base.rgb) * exp2(log_gain) - params.offset_alternate.rgb;
+    GainTerms terms;
+    terms.mode = params.gain_mode;
+    terms.headroom = params.gain_headroom;
+    terms.lowest = params.gain_min.rgb;
+    terms.highest = params.gain_max.rgb;
+    terms.gamma = params.gain_gamma.rgb;
+    terms.offset_base = params.offset_base.rgb;
+    terms.offset_alternate = params.offset_alternate.rgb;
+    return gain_mapped(base, recovery_at(x, y), terms);
 }
 
 /// The light one output pixel stands for, in the source's primaries.
@@ -199,7 +161,7 @@ float3 light_of(uint2 at)
     for (uint dy = 0; dy < params.step; dy = dy + 1) {
         for (uint dx = 0; dx < params.step; dx = dx + 1) {
             float3 pixel = light_at(x + dx, y + dy);
-            if (params.gain_width > 0) { pixel = gain_mapped(pixel, x + dx, y + dy); }
+            if (params.gain_width > 0) { pixel = gain_mapped_at(pixel, x + dx, y + dy); }
             light = light + pixel;
         }
     }

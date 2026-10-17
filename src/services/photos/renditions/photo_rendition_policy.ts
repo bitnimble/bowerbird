@@ -2,7 +2,7 @@ import type { RenditionSource } from '../../../schemas/common';
 import type { LibraryConfiguration } from '../../../schemas/libraries';
 import type { PhotoDetail, PhotoSummary } from '../../../schemas/photos';
 import type { Settings, ViewerRendition, ViewerRenditionMode } from '../../../schemas/settings';
-import { hasEmbeddedJpeg } from '../../../utils/scan';
+import { hasEmbedded, isRendered } from '../../../utils/scan';
 
 /**
  * Everything the choice of rendition is a function of, gathered so the choice itself is
@@ -32,11 +32,15 @@ export interface RenditionContext {
   framesEdited: boolean;
   /**
    * Whether the cameras' own picture of this row can be had at all. For a row that names one
-   * file that is `hasEmbeddedJpeg` - false for a PNG, a HEIC or an AVIF, which have nothing to
-   * lift and no file to serve, so `embedded` is not a fallback for one, it is a 404 the viewer
-   * would sit on. For a row composed out of others it is its frames' pictures, composited.
+   * file that is `scan::hasEmbedded`. For a row composed out of others it is its frames' pictures,
+   * composited.
    */
   hasEmbedded: boolean;
+  /**
+   * False for a finished picture (§7): a JPEG, PNG, HEIC or AVIF, which has one picture of its
+   * own and no renders to choose between.
+   */
+  isRaw: boolean;
   /**
    * Whether this row **composes** its camera view rather than passing one through
    * (`renditions::owedOf`, `servedWhole`).
@@ -96,6 +100,8 @@ export function wantedRendition(ctx: RenditionContext): ViewerRendition | null {
  * at the file the mode had already chosen.
  */
 export function resolveShownRendition(ctx: RenditionContext): ViewerRendition {
+  // Whatever the setting asks for: the file until it is edited, then the edit, built on its 404.
+  if (!ctx.isRaw) return ctx.isEdited ? 'full' : 'embedded';
   // A photograph with no camera JPEG behind it is promised the render whatever the library is
   // set to: the setting chooses between two sources and this one has only the one. So is anything
   // carrying an edit those pictures cannot - its own document for a photograph, its frames' for a
@@ -124,6 +130,7 @@ export function resolveShownRendition(ctx: RenditionContext): ViewerRendition {
  * every photo the viewer might hold would queue work for pictures nobody is looking at.
  */
 export function resolveRenditionToBuild(ctx: RenditionContext): ViewerRendition | null {
+  if (!ctx.isRaw) return null;
   const shown = resolveShownRendition(ctx);
   // **A composited camera view is a file, and a row shown one that has none has to ask.** A
   // canvas is promised the cameras' pictures exactly as a photograph is, but it has no file to
@@ -162,7 +169,7 @@ export function builtSetFromRow(
   row: Pick<PhotoSummary, 'renditions_built_at' | 'file_path'>,
 ): ReadonlySet<ViewerRendition> {
   const built = new Set<ViewerRendition>();
-  if (hasEmbeddedJpeg(row.file_path)) built.add('embedded');
+  if (hasEmbedded(row.file_path)) built.add('embedded');
   if (row.renditions_built_at != null) built.add('full');
   return built;
 }
@@ -194,7 +201,8 @@ export function contextOf(
     framesEdited: row.frames_edited,
     // One question over both arms: a row that names a file has the picture inside it, and a row
     // composed out of others has its frames'.
-    hasEmbedded: composesCameraView || hasEmbeddedJpeg(row.file_path),
+    hasEmbedded: composesCameraView || hasEmbedded(row.file_path),
+    isRaw: row.file_path == null || !isRendered(row.file_path),
     composesCameraView,
     builtRenditions,
     builtIsExact,

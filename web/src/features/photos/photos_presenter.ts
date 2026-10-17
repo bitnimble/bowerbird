@@ -870,6 +870,8 @@ export class PhotosPresenter {
   // of those two memories it lands in is the setting's business, not this one's
   // (§10.2).
   async chooseRendition(photoId: string, rendition: ViewerRendition): Promise<void> {
+    // Else a render nobody asked for, remembered for every photograph opened after it.
+    if (!this.viewer.renditionChoices(photoId).includes(rendition)) return;
     // Before the await, and whether or not anything below changes: pressing the key is the
     // reader asking for that frame, and a frame the stage gave up on has no other way back
     // (`store.retryEpoch`). Asking for the one already on screen is what a reader does when
@@ -994,8 +996,29 @@ export class PhotosPresenter {
   // file decoded, because the stage reports once per frame and the panel is read
   // on every render after it.
   @action.bound
-  imageShown(photoId: string, rendition: ViewerRendition, width: number, height: number): void {
-    this.viewerPresenter.imageShown(photoId, rendition, width, height);
+  imageShown(
+    photoId: string,
+    rendition: ViewerRendition,
+    width: number,
+    height: number,
+    hdr: boolean,
+  ): void {
+    this.viewerPresenter.imageShown(photoId, rendition, width, height, hdr);
+  }
+
+  /** `cannotDraw`: the file is there and this browser cannot decode it. */
+  async frameMissing(
+    photoId: string,
+    rendition: ViewerRendition,
+    cannotDraw: boolean,
+  ): Promise<void> {
+    if (cannotDraw && rendition === 'embedded') {
+      this.viewerPresenter.showRendered(photoId);
+      return;
+    }
+    if (this.viewer.servedWhole(photoId, rendition)) return;
+    if (this.viewer.overrideFor(photoId) != null) return;
+    await this.buildMissingRendition(photoId, rendition);
   }
 
   // Whether a photo is still the one the view is on. Every write that lands after

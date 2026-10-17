@@ -133,6 +133,11 @@ export class ViewerPresenter {
   }
 
   @action.bound
+  showRendered(photoId: string): void {
+    this.store.undrawable = new Set([...this.store.undrawable, photoId]);
+  }
+
+  @action.bound
   chooseProof(proof: 'hdr' | 'srgb'): void {
     this.store.proof = proof;
   }
@@ -232,11 +237,17 @@ export class ViewerPresenter {
   // file decoded, because the stage reports once per frame and the panel is read
   // on every render after it.
   @action.bound
-  imageShown(photoId: string, rendition: ViewerRendition, width: number, height: number): void {
+  imageShown(
+    photoId: string,
+    rendition: ViewerRendition,
+    width: number,
+    height: number,
+    hdr: boolean,
+  ): void {
     // Anything measured for another photo goes: that is the step, and this is the
     // first frame of the photo stepped to.
     const kept = this.store.shownImages.filter((shown) => shown.photoId === photoId);
-    const shown = { photoId, rendition, width, height };
+    const shown = { photoId, rendition, width, height, hdr };
     // In place when this rendition has decoded before - a rebuild moves its URL, so
     // it decodes again - because the order here is the order the stage mounts its
     // frames in, and a slot moving reinserts a DOM node mid-swap.

@@ -4,6 +4,7 @@ import type { LibraryConfiguration } from '../../../schemas/libraries';
 import type { Job } from '../../../schemas/jobs';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { getDataPath, getRenditionPath } from '../../../utils/paths';
+import { isRendered } from '../../../utils/scan';
 import type { Originals } from '../../blobs/originals';
 import { isComposite } from '../../../schemas/recipes';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
@@ -35,8 +36,11 @@ interface RenderHow {
   via: readonly string[] | null;
 }
 
-/** The camera's JPEG as a peer is handed it, with the edits it is current with. */
-export interface PeerJpeg {
+/**
+ * The `embedded` picture as a peer is handed it, with the edits it is current with: the camera's
+ * JPEG, or a finished picture's own file.
+ */
+export interface PeerEmbedded {
   bytes: Uint8Array;
   builtFrom: string | null;
 }
@@ -204,9 +208,9 @@ export class PhotoRenditionService {
    * The same, for a peer: lifted from an original here, or failing that the copy this device has
    * fetched, asked of a device `via` does not name if it is not current. Null where neither is.
    */
-  async embeddedJpegForPeer(photoId: string, via: readonly string[]): Promise<PeerJpeg | null> {
+  async embeddedForPeer(photoId: string, via: readonly string[]): Promise<PeerEmbedded | null> {
     const { photo, library } = this.locate(photoId);
-    const lifted = await this.liftEmbedded(library, photo);
+    const lifted = await this.liftEmbedded(library, photo, true);
     if (lifted != null) {
       return {
         bytes: lifted,
@@ -224,9 +228,12 @@ export class PhotoRenditionService {
   private async liftEmbedded(
     library: LibraryConfiguration,
     photo: BasicPhoto,
+    /** A peer's viewer is handed a finished picture as it is, where a share or a download wants a JPEG. */
+    asItIs = false,
   ): Promise<Uint8Array | null> {
     const original = await this.originals.open(library, photo);
     if (original == null) return null;
+    if (asItIs && isRendered(original)) return Bun.file(original).bytes();
     const jpeg = readEmbeddedJpeg(original, this.photoListing.editOrientation(photo.id));
     return jpeg == null ? null : new Uint8Array(jpeg);
   }

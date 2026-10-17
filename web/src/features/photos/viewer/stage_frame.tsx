@@ -2,7 +2,13 @@ import * as stylex from '@stylexjs/stylex';
 import { useEffect, useRef, useState } from 'react';
 import { renditionsApi } from '../../../api/renditions';
 import { useHdrPicture } from '../../../avif/hdr_picture';
-import { decodeFrame, decodedFrame, fittedCanvasSize, type Decoded } from './stage_bitmaps';
+import {
+  CannotDrawHere,
+  decodeFrame,
+  decodedFrame,
+  fittedCanvasSize,
+  type Decoded,
+} from './stage_bitmaps';
 import { CanvasLost, stageCanvases, useStageCanvas } from './stage_canvas';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import { stageStyles } from './photo_stage.stylex';
@@ -72,8 +78,9 @@ export function StageFrame({
   /** The operator an HDR frame is proofed to sRGB with, or null to draw it as it is. */
   proof: RenderingIntent | null;
   devicePeakNits: number | null;
-  onDecoded: (source: string, width: number, height: number) => void;
-  onMissing: (source: string) => void;
+  onDecoded: (source: string, width: number, height: number, hdr: boolean) => void;
+  /** `cannotDraw`: the file is there, and this browser cannot decode or draw it. */
+  onMissing: (source: string, cannotDraw: boolean) => void;
   /** Whether this frame is up as a video (`HdrPictures`), which has no detail layer to wait on. */
   onVideo: (source: string, video: boolean) => void;
 }): JSX.Element {
@@ -119,16 +126,17 @@ export function StageFrame({
     if (hold || waiting) return;
     let live = true;
 
-    const report = (width: number, height: number): void => {
+    const report = (width: number, height: number, hdr: boolean): void => {
       if (!live) return;
-      decoded.current(source, width, height);
+      decoded.current(source, width, height, hdr);
     };
 
     // A video when it has a frame to show (`loadeddata`; `loadedmetadata` knows the size and
     // nothing else).
     const playing = videoRef.current;
     if (fromVideo && playing != null) {
-      const arrived = (): void => report(playing.videoWidth, playing.videoHeight);
+      // `HdrPictures` makes a video only of a still with HDR in it.
+      const arrived = (): void => report(playing.videoWidth, playing.videoHeight, true);
       if (playing.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) arrived();
       else playing.addEventListener('loadeddata', arrived);
       return () => {
@@ -167,7 +175,7 @@ export function StageFrame({
           // The file's own shape, not the decoded one's: what is decoded is capped at what this
           // display can show, and a reader asking a photograph's dimensions is asking about the
           // photograph.
-          report(frame.naturalWidth, frame.naturalHeight);
+          report(frame.naturalWidth, frame.naturalHeight, frame.hdr);
         },
         (err: unknown) => {
           if (painting.current?.done === done) painting.current = null;
@@ -182,7 +190,7 @@ export function StageFrame({
           // A frame that decoded and then could not be drawn is as blank as one that never
           // arrived, so it is reported the same way rather than left as an empty canvas the
           // stage believes in.
-          missing.current(source);
+          missing.current(source, err instanceof CannotDrawHere);
         },
       );
     };
@@ -203,7 +211,7 @@ export function StageFrame({
       // Abandoned rather than absent: the reader stepped past this photograph while it was
       // being fetched, which is not a photograph the server is missing.
       if (!live || (err instanceof Error && err.message === 'superseded')) return;
-      missing.current(source);
+      missing.current(source, err instanceof CannotDrawHere);
     });
     return () => {
       live = false;

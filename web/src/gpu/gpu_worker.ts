@@ -4,6 +4,7 @@ import init, {
   type KeptStage,
   buildEveryPipeline,
   finishDraw,
+  heifView,
   holdBuffers,
   holdPicture,
   holdPixels,
@@ -155,6 +156,10 @@ async function answer(
       pipelinesFor(opened);
       await warmth.precompile(buildEveryPipeline);
       return { value: null };
+    }
+    case 'heif': {
+      const framed = heifView(message.file);
+      return { value: framed, transfer: [framed.buffer] };
     }
     case 'open': {
       // A draw reaching a pipeline still warming would compile it again, synchronously, and freeze

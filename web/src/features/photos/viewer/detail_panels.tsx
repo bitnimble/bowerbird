@@ -221,6 +221,7 @@ export const RenditionPanel = observer(function RenditionPanel({
   const showing = store.showing;
   const shownFile = photo?.renditions?.[showing];
   const shownImage = store.shownImageOf(photoId, showing);
+  const ownFile = showing === 'embedded' && photo?.is_raw === false;
 
   return (
     <MetaPanel
@@ -231,7 +232,7 @@ export const RenditionPanel = observer(function RenditionPanel({
         // The rendition actually on screen, which is the chosen one when the user
         // has switched away from the photo's own. Always knowable: it is what the
         // viewer asked for, not something a column has to have recorded.
-        [PhotoDetailStrings.showing(), renditionLabel(showing)],
+        [PhotoDetailStrings.showing(), renditionLabel(showing, photo)],
         // Named and ordered as in Original file below, so the same fact about two
         // files reads the same way in both panels. The pixels come off the
         // decoded image, the weight off the file the server served it from.
@@ -253,21 +254,27 @@ export const RenditionPanel = observer(function RenditionPanel({
         // Firefox is watching an MP4 made from its 10-bit copy.
         [
           PhotoDetailStrings.format(),
-          pending(() =>
-            showing === 'embedded'
+          pending(() => {
+            if (ownFile) return formatOfFile(shownFile?.path);
+            return showing === 'embedded'
               ? PhotoDetailStrings.formatJpeg()
-              : PhotoDetailStrings.formatAvif(),
-          ),
+              : PhotoDetailStrings.formatAvif();
+          }),
         ],
         // The SDR pipeline's output space; an HDR render leaves it for Rec.2020
         // primaries and a PQ transfer.
         [
           PhotoDetailStrings.colourSpace(),
-          pending(() =>
-            shownFile?.hdr === true
+          pending(() => {
+            if (ownFile) {
+              return store.showsHdr(photoId)
+                ? PhotoDetailStrings.dynamicRangeHdr()
+                : PhotoDetailStrings.dynamicRangeSdr();
+            }
+            return shownFile?.hdr === true
               ? PhotoDetailStrings.colourSpaceHdr()
-              : PhotoDetailStrings.colourSpaceSdr(),
-          ),
+              : PhotoDetailStrings.colourSpaceSdr();
+          }),
         ],
         [
           PhotoDetailStrings.quality(),
@@ -287,7 +294,7 @@ export const RenditionPanel = observer(function RenditionPanel({
             if (shownFile?.path == null) return PhotoDetailStrings.unknown();
             return (
               <>
-                {showing === 'embedded'
+                {showing === 'embedded' && !ownFile
                   ? PhotoDetailStrings.embeddedPath(shownFile.path)
                   : shownFile.path}
                 <CopyButton text={shownFile.path} />
@@ -300,6 +307,25 @@ export const RenditionPanel = observer(function RenditionPanel({
     />
   );
 });
+
+function formatOfFile(path: string | null | undefined): string {
+  const extension = path?.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  switch (extension) {
+    case 'png':
+      return PhotoDetailStrings.formatPng();
+    case 'heic':
+    case 'heif':
+    case 'hif':
+      return PhotoDetailStrings.formatHeic();
+    case 'avif':
+      return PhotoDetailStrings.formatAvif();
+    case 'jpg':
+    case 'jpeg':
+      return PhotoDetailStrings.formatJpeg();
+    default:
+      return PhotoDetailStrings.unknown();
+  }
+}
 
 // The original on disk and what the catalogue has made of it. The only panel
 // that reads the shoot and album lists, so renaming either wakes nothing else.
