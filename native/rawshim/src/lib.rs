@@ -242,6 +242,9 @@ pub mod tone;
 /// What a delivered picture's code values mean: somebody else's transfer, in somebody else's
 /// primaries, undone into the light the pipeline grades.
 pub mod transfer;
+/// The viewer's stage drawn into an Android TV's window, which the shell calls.
+#[cfg(all(feature = "renditions", target_os = "android"))]
+mod tv_stage;
 pub mod upscale;
 pub mod view;
 /// The browser's entry points, which no other host has.

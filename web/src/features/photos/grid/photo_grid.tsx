@@ -331,7 +331,7 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
         {...stylex.props(
           viewport.scroller,
           marks.hasSelection && viewport.barred,
-          !(onTv() && marks.showsCursor) && focusRing.ring,
+          onTv() && marks.showsCursor ? focusRing.none : focusRing.ring,
         )}
         id={SCROLLER_ID}
         ref={scroller}

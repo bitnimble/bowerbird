@@ -15,6 +15,7 @@ import type { Rendition } from '../renditions/renditions';
 import { renditionSkips } from '../renditions/render_stages';
 import type { CompositeWorker } from '../workers/composite_worker';
 import type { Missing, Shown } from '../workers/prepare_pool';
+import { RenderBudget } from '../workers/render_budget';
 import type {
   CompositeJobSource,
   RenditionSource,
@@ -40,6 +41,7 @@ export abstract class RenderService {
   private readonly composites: CompositeRenderer;
   private readonly prepareRenderer: PrepareRenderer;
   private readonly singlePhoto: SinglePhotoRenderer;
+  protected readonly renderBudget = RenderBudget.forThisMachine();
   private readonly exports: ExportRenderer;
   private readonly benchmark: RenderBenchmark;
   private readonly processed = new Set<(photoId: string, written: RenditionWritten) => void>();
@@ -90,6 +92,7 @@ export abstract class RenderService {
       },
       (photoId, tone) => this.matchedCamera(photoId, tone),
       (photoId, header) => this.readHeader(photoId, header),
+      this.renderBudget,
     );
     this.exports = new ExportRenderer(
       settings,

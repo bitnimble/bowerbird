@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import * as stylex from '@stylexjs/stylex';
-import { displayRange, shellInvoke } from './api/transport';
+import { displayRange, shellDrawsStage, shellInvoke, shellStage } from './api/transport';
 import { App } from './app/app';
 import { openDeviceStorage } from './app/local_setting';
 import { ScreenPresenter } from './app/screen_presenter';
@@ -31,9 +31,16 @@ const styles = stylex.create({
     fontSize: size.bodyText,
     WebkitFontSmoothing: 'antialiased',
   },
+  // The shell paints ink behind the page, and draws HDR photos there (`StagePlugin.kt`).
+  transparent: {
+    backgroundColor: 'transparent',
+  },
 });
 
-document.body.className = stylex.props(styles.body).className ?? '';
+document.body.className =
+  stylex.props(styles.body, shellDrawsStage() && styles.transparent).className ?? '';
+// A reload leaves the last page's photo behind this one.
+if (shellDrawsStage()) shellStage.hide().catch(() => undefined);
 
 const root = document.getElementById('root');
 if (root == null) throw new Error('missing #root');

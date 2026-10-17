@@ -87,7 +87,10 @@ export class ProcessingService extends RenderService {
   // drain loop knows to stop.
   private readonly queued = new Map<string, Set<string> | null>();
   private readonly active = new Map<string, Map<string, string>>();
-  private readonly pool = new ProcessingPool(() => this.settings.get().processing_concurrency);
+  private readonly pool = new ProcessingPool(
+    () => this.settings.get().processing_concurrency,
+    this.renderBudget,
+  );
 
   constructor(
     photoProcessing: PhotoProcessingRepository,

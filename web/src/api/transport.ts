@@ -9,6 +9,7 @@ import {
   REQUEST_ACTIVITY_HEADER,
   type RequestActivity,
 } from '../../../src/schemas/request_activity';
+import { onTv } from '../app/tv';
 
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -136,6 +137,47 @@ export async function displayRange(): Promise<DynamicRange | null> {
   if (invoke == null) return null;
   return DynamicRangeSchema.parse(await invoke('display_range', {}));
 }
+
+/** A TV's app, whose WebView shows no HDR, so the shell draws HDR photos behind the page. */
+export function shellDrawsStage(): boolean {
+  return shellInvoke() != null && onTv();
+}
+
+/**
+ * In the page's device pixels. `headroom` is the display's peak against its SDR white, and `white`
+ * the scRGB value it shows SDR white at.
+ */
+export interface ShellStage {
+  url: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  headroom: number;
+  white: number;
+}
+
+const ShownSchema = z.boolean();
+
+/** The shell's HDR stage (`stage.rs`), whose asks it takes in the order the page made them. */
+class ShellStageBridge {
+  // The shell outlives a page load, and holds each load's asks to the last one's numbers.
+  private asked = Date.now();
+
+  /** Whether the photo is on screen behind the page; false leaves the page to draw it. */
+  async show(stage: ShellStage): Promise<boolean> {
+    const invoke = shellInvoke();
+    if (invoke == null) return false;
+    const shown = await invoke('stage_show', { stage: { ...stage, sequence: ++this.asked } });
+    return ShownSchema.parse(shown);
+  }
+
+  async hide(): Promise<void> {
+    await shellInvoke()?.('stage_hide', { stage: { sequence: ++this.asked } });
+  }
+}
+
+export const shellStage = new ShellStageBridge();
 
 const PhotoAccessSchema = z
   .object({

@@ -1,4 +1,5 @@
 import type { PhotoSummary } from '../../../../../src/schemas/photos';
+import { deviceMemoryGb } from '../../../app/device';
 
 // Which device prepares the picture the editor grades.
 //
@@ -17,13 +18,6 @@ const PREPARES_HERE_AT_MOST = 10_000 * 10_000;
  * elsewhere, and then the tab prepares for itself.
  */
 const SMALL_MEMORY_GB = 4;
-
-declare global {
-  interface Navigator {
-    /** Chromium only, rounded to a power of two. */
-    readonly deviceMemory?: number;
-  }
-}
 
 /** What this build is running on, as far as the question below is concerned. */
 export interface Client {
@@ -57,5 +51,5 @@ export function preparesOnTheBackend(
 
 /** What this build is running in, read once: the answer does not change while a photograph is open. */
 export function describeClient(): Client {
-  return { memoryGb: globalThis.navigator?.deviceMemory };
+  return { memoryGb: deviceMemoryGb() };
 }

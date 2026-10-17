@@ -16,6 +16,7 @@ import { isUpscalable } from '../rawshim/rawshim_ops';
 import { toCommand } from '../rawshim/worker_command';
 import { workerEntry } from '../../worker_entry';
 import type { CompositeWorker } from '../workers/composite_worker';
+import type { RenderBudget } from '../workers/render_budget';
 import type {
   ProcessingMessage,
   Ran,
@@ -39,6 +40,7 @@ export class SinglePhotoRenderer {
     private readonly describe: (photoId: string, descriptor: Uint8Array) => void,
     private readonly cameraMatched: (photoId: string, tone: CameraTone) => void,
     private readonly headerRead: (photoId: string, header: HeaderMetadata) => void,
+    private readonly budget: RenderBudget,
   ) {}
 
   // One rendition, on demand: the detail view asking for a size or a range it
@@ -359,6 +361,15 @@ export class SinglePhotoRenderer {
    * is now on disk under this photo.
    */
   async runDetached(job: RenditionJob): Promise<Ran> {
+    await this.budget.take();
+    try {
+      return await this.runOnWorker(job);
+    } finally {
+      this.budget.give();
+    }
+  }
+
+  private async runOnWorker(job: RenditionJob): Promise<Ran> {
     const fields = { photo: job.photoId, file: path.basename(job.rawFilePath) };
     const worker = new Worker(
       workerEntry('processing_worker', new URL('../workers/processing_worker.ts', import.meta.url)),

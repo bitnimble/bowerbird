@@ -5,6 +5,7 @@ import { useDeviceSettingsStore, usePresenters, useViewerStore } from '../../../
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { PhotoStage, type StagePicture } from './photo_stage';
 import { renditionsApi } from '../../../api/renditions';
+import { shellDrawsStage } from '../../../api/transport';
 import { hdrPictures } from '../../../avif/hdr_pictures';
 import { decodedFrame } from './stage_bitmaps';
 import { renditionLabel } from '../renditions';
@@ -12,6 +13,7 @@ import { nameOf, useStep } from './detail_navigation';
 import { useNamedRendition } from '../named_rendition';
 import { PhotoStageStrings } from './photo_stage.strings';
 import { QualityNotice } from './quality_notice';
+import { WARM, warmedRun } from './warm_budget';
 
 // How many photographs either side the stage holds ready, of the one open and the one
 // before it both (`ViewerStore.runCovering`).
@@ -43,6 +45,11 @@ export const DetailFrame = observer(function DetailFrame({
 
   const proof =
     store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofIntent : null;
+  const headroom = device.stageHeadroom;
+  const behind =
+    shellDrawsStage() && store.showsHdr(photoId) && proof == null && headroom != null
+      ? { source: store.frameOf(photoId).source, headroom, white: device.stageWhite }
+      : null;
 
   // Every rendition this photo has already decoded stays mounted, with the one
   // being asked for on the end. Comparing the camera's JPEG against a render is
@@ -60,7 +67,10 @@ export const DetailFrame = observer(function DetailFrame({
     const source = store.sourceOf(photoId, rendition);
     return decodedFrame(source) != null || hdrPictures.isShown(renditionsApi.hdrSource(source));
   });
-  const held = decoded.includes(showing) ? decoded : [...decoded, showing];
+  // Short of memory, only until the one asked for has decoded: dropped sooner, the stage is
+  // empty for as long as that rendition takes to build.
+  const kept = WARM.otherRenditions || !decoded.includes(showing) ? decoded : [showing];
+  const held = kept.includes(showing) ? kept : [...kept, showing];
   const sources = held.map((each) => store.sourceOf(photoId, each));
 
   // Stepping through frames is the whole job, so both neighbours are pictures of this
@@ -88,13 +98,18 @@ export const DetailFrame = observer(function DetailFrame({
     standingOn.current = photoId;
   }
 
-  const run = store.runCovering([photoId, cameFrom.current], NEIGHBOURS_HELD);
+  const run = warmedRun(
+    store.runCovering([photoId, cameFrom.current], NEIGHBOURS_HELD),
+    photoId,
+    store.stepTo(photoId),
+    WARM.neighbours,
+  );
   // The one open is every rendition of it the reader has looked at, so the picker is a
   // choice between frames already held; a neighbour is the single file it will itself be
   // shown from (`frameOf`), which is what makes stepping onto it a change of opacity. The
   // reader's choice does not travel with them - it is per photo (`beginDetail`) - so there
   // is no second rendition to hold one at.
-  const strip: StagePicture[] = (run.includes(photoId) ? run : [photoId]).map((id) =>
+  const strip: StagePicture[] = run.map((id) =>
     id === photoId
       ? {
           key: id,
@@ -181,6 +196,7 @@ export const DetailFrame = observer(function DetailFrame({
       fullscreenRef={fullscreenRef}
       proof={proof}
       devicePeakNits={device.peakNits}
+      behind={behind}
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}

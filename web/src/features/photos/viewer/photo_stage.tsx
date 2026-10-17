@@ -8,6 +8,7 @@ import { Text } from '../../../ui/text';
 import { toggleFullscreenOf } from './fullscreen';
 import { PhotoStageStrings } from './photo_stage.strings';
 import { keepOnly, releaseHolder } from './stage_bitmaps';
+import { stepNearness } from './warm_budget';
 import { NO_SIZE, type Size, letterboxOf, useZoomPan } from './zoom_pan';
 import { ZoomControl, ZoomSlider } from './zoom_control';
 import { stageStyles } from './photo_stage.stylex';
@@ -16,6 +17,7 @@ import { Spinner } from '../../../ui/spinner';
 import { stopFlings } from '../../../ui/stop_flings';
 import { styles } from './photo_stage_view.stylex';
 import { StageDetail } from './stage_detail';
+import { type BehindPage, useShellStage } from './shell_stage';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 
 // Fit, zoom and pan live in `zoom_pan.ts`, because the editor's canvas needs the same
@@ -192,6 +194,8 @@ interface Props {
   proof?: RenderingIntent | null;
   /** `DeviceSettingsStore.peakNits`, which an HDR frame is rolled onto. */
   devicePeakNits: number | null;
+  /** The frame on screen, for the shell to draw behind the page while it is unzoomed. */
+  behind?: BehindPage | null;
 }
 
 function noop(): void {
@@ -232,6 +236,7 @@ export function PhotoStage({
   style,
   proof = null,
   devicePeakNits,
+  behind = null,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -382,6 +387,10 @@ export function PhotoStage({
   const zoom = useZoomPan(viewportRef, stageRef, natural, onGestureEnd);
   const { view, reset, zoomed, handlers, box } = zoom;
   useEffect(() => stopFlings(viewportRef.current), []);
+  const drawnBehind = useShellStage(
+    viewportRef,
+    zoomed || fullscreen || hold === true ? null : behind,
+  );
 
   // Off the observed box rather than a measurement: `useZoomPan` keeps it under a
   // ResizeObserver, and reading the element here would be a layout read on every frame of a
@@ -637,10 +646,7 @@ export function PhotoStage({
   // How readily each picture would be stepped to: the way the reader is going before the way
   // they are not, and nearer before further.
   const nearness = new Map(
-    pictures.map((picture, at) => {
-      const away = (at - showing) * (arrivedBy === 'prev' ? -1 : 1);
-      return [picture.key, away > 0 ? away : -away + 0.5] as const;
-    }),
+    pictures.map((picture, at) => [picture.key, stepNearness(at - showing, arrivedBy)] as const),
   );
 
   const nextUp = (): string[] => {
@@ -970,6 +976,7 @@ export function PhotoStage({
               {...stylex.props(
                 styles.picture,
                 isLeaving(group.key) && styles.leaving,
+                drawnBehind && styles.behind,
                 (group.key === fading?.to || group.key === fading?.from) && styles.fading,
               )}
               aria-hidden={isLeaving(group.key) || undefined}

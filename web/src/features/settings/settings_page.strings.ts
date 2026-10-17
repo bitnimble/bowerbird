@@ -151,6 +151,8 @@ export const SettingsStrings = {
   displayPeakNits: () => 'Display peak brightness',
   displayPeakNitsHint: () =>
     "Applies to this device only. Set this to your device display's peak brightness. If you don't know it, you can search online.",
+  sdrWhiteNits: () => 'SDR white brightness',
+  sdrWhiteNitsHint: () => 'Raise it if HDR photos look darker than the menus.',
   measuredPeakNits: (nits: number) => `${nits} nits`,
   measuredPeakSdr: () => 'SDR',
   measuredPeakPending: () => 'Measured while a photo is open',

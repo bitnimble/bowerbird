@@ -11,6 +11,7 @@ import {
 } from '../../../app/stores_context';
 import { TV_CONTROLS_SHOWN_MS } from '../../../app/tv';
 import { EmptyState } from '../../../ui/empty_state';
+import { focusRing } from '../../../ui/focus_ring';
 import { Page } from '../../../ui/page';
 import { Text } from '../../../ui/text';
 import { color, size } from '../../../ui/tokens.stylex';
@@ -28,10 +29,6 @@ import { styles } from './photo_detail_page.stylex';
 const tvStyles = stylex.create({
   page: {
     position: 'relative',
-  },
-  stage: {
-    // It holds the focus for the photo, which needs no frame to say so.
-    outline: 'none',
   },
   controls: {
     display: 'contents',
@@ -163,7 +160,7 @@ export const TvPhotoPage = observer(function TvPhotoPage(): JSX.Element {
         tabIndex={-1}
         {...ownsArrows('all')}
         onKeyDown={onStageKey}
-        {...stylex.props(styles.frame, tvStyles.stage)}
+        {...stylex.props(styles.frame, focusRing.none)}
       >
         <div {...stylex.props(styles.detail, panelsOpen ? styles.beside : styles.only)}>
           <DetailFrame photoId={photoId} toolsInto={toolsSlot} zoomInto={null} />

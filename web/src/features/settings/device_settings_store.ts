@@ -1,8 +1,13 @@
 import { computed, observable } from 'mobx';
 import { ScreenStore, screenStore } from '../../app/screen_store';
+import { SDR_WHITE_NITS } from '../../app/sdr_white';
 
 /** What a display is assumed to reach where nothing has been said about this one. */
 export const DEFAULT_DISPLAY_PEAK_NITS = 1000;
+
+export const DEFAULT_SDR_WHITE_NITS = 480;
+
+const SCRGB_ONE_NITS = 80;
 
 /** The settings that are about this browser's machine rather than the library it is looking at. */
 export class DeviceSettingsStore {
@@ -16,6 +21,11 @@ export class DeviceSettingsStore {
    * headroom on `screen`, and `dynamic-range` is a boolean.
    */
   @observable accessor displayPeakNits = DEFAULT_DISPLAY_PEAK_NITS;
+  /**
+   * How bright the display shows SDR white once it is in HDR, as the reader sets it, for a TV whose
+   * shell draws HDR photos (`shellDrawsStage`) on an Android that does not measure the screen.
+   */
+  @observable accessor sdrWhiteNits = DEFAULT_SDR_WHITE_NITS;
   /** The app's page zoom, which a browser has its own of. */
   @observable accessor uiScale = 1;
   @observable accessor viewerQualityNoticeClosed = false;
@@ -31,5 +41,19 @@ export class DeviceSettingsStore {
   get peakNits(): number | null {
     if (!this.screen.hdr) return null;
     return this.screen.peakNits ?? this.displayPeakNits;
+  }
+
+  /** How far past SDR white the shell's stage rolls highlights to, or null on an SDR screen. */
+  @computed
+  get stageHeadroom(): number | null {
+    const peak = this.peakNits;
+    if (peak == null) return null;
+    return Math.max(1, peak / (this.screen.measures ? SDR_WHITE_NITS : this.sdrWhiteNits));
+  }
+
+  /** The scRGB value the shell's stage draws SDR white at: 1 where Android measures the screen. */
+  @computed
+  get stageWhite(): number {
+    return this.screen.measures ? 1 : this.sdrWhiteNits / SCRGB_ONE_NITS;
   }
 }

@@ -2,6 +2,7 @@ import { Logger } from '../../../logger';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { workerEntry } from '../../worker_entry';
 import type { ProcessingResult, RenditionJob } from './processing_types';
+import type { RenderBudget } from './render_budget';
 
 const log = new Logger('processing');
 
@@ -25,7 +26,12 @@ export class ProcessingPool {
   private turn = 0;
   private preferred: readonly string[] = [];
 
-  constructor(private readonly concurrency: () => number) {}
+  constructor(
+    private readonly concurrency: () => number,
+    private readonly budget: RenderBudget,
+  ) {
+    budget.onFreed(() => this.pump());
+  }
 
   /** Jobs for these photos are handed out before any other, earliest first, from any batch. */
   prefer(photoIds: readonly string[]): void {
@@ -59,18 +65,24 @@ export class ProcessingPool {
 
   private pump(): void {
     this.settleFinished();
-    while (this.busy < this.limit()) {
+    let drained = false;
+    while (this.busy < this.limit() && this.budget.hasRoom()) {
       const pick = this.preferredJob() ?? this.nextJob();
-      if (pick == null) break;
+      if (pick == null) {
+        drained = true;
+        break;
+      }
       const worker = this.idle.pop() ?? this.spawn();
       if (worker == null) {
         // Nothing in flight would call back in here, so the batches would never settle.
         if (this.busy === 0) this.abandon();
         break;
       }
+      this.budget.claim();
       this.assign(worker, pick.batch, this.take(pick.batch, pick.index));
     }
-    for (const worker of this.idle.splice(0)) worker.terminate();
+    // Kept while the budget alone holds the queue back, ready for its next job.
+    if (drained) for (const worker of this.idle.splice(0)) worker.terminate();
   }
 
   private preferredJob(): { batch: Batch; index: number } | null {
@@ -158,6 +170,7 @@ export class ProcessingPool {
         this.busy--;
         batch.running--;
         if (reusable != null) this.idle.push(reusable);
+        this.budget.give();
         this.pump();
       }
     };

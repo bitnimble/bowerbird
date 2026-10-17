@@ -24,6 +24,9 @@ export const styles = stylex.create({
   leaving: {
     opacity: 0,
   },
+  behind: {
+    visibility: 'hidden',
+  },
   // Two opacities summing to 1 under normal blending let the stage through between them,
   // which dips the photograph towards the background mid-fade.
   fading: {

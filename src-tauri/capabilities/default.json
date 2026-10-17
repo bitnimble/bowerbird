@@ -16,6 +16,8 @@
     "allow-pick-export-folder",
     "allow-photo-access",
     "allow-ask-photo-access",
-    "allow-app-data-dir"
+    "allow-app-data-dir",
+    "allow-stage-show",
+    "allow-stage-hide"
   ]
 }

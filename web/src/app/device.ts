@@ -29,6 +29,18 @@ export function useIsTouch(): boolean {
   return useMediaQuery(TOUCH);
 }
 
+declare global {
+  interface Navigator {
+    /** Chromium only, rounded to a power of two. */
+    readonly deviceMemory?: number;
+  }
+}
+
+/** The device's memory in GB, where the browser says. */
+export function deviceMemoryGb(): number | undefined {
+  return globalThis.navigator?.deviceMemory;
+}
+
 export function pointerIsCoarse(): boolean {
   return globalThis.matchMedia != null && globalThis.matchMedia(TOUCH).matches;
 }

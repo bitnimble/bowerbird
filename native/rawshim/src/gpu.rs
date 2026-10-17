@@ -24,6 +24,8 @@ use crate::hdr_fit::{self, HdrColour};
 pub mod colour_wheel;
 mod print_environment;
 mod print_surface;
+#[cfg(all(not(target_arch = "wasm32"), feature = "renditions"))]
+pub mod surface_stage;
 
 #[cfg(not(target_arch = "wasm32"))]
 type PipelineCell<T> = std::sync::OnceLock<T>;
@@ -318,10 +320,13 @@ pub struct Gpu {
     device: wgpu::Device,
     pub queue: wgpu::Queue,
     /// Kept because a surface is asked of the instance rather than of the device, and the
-    /// editor's canvas arrives long after the device is opened ([`Stage::attach`]). Read only
-    /// in a browser, there being no window on this side to draw into.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    /// editor's canvas or a TV's window arrives long after the device is opened
+    /// ([`Stage::attach`], [`surface_stage::SurfaceStage::attach`]).
+    #[cfg_attr(not(any(target_arch = "wasm32", target_os = "android")), allow(dead_code))]
     instance: wgpu::Instance,
+    /// What a window's surface is asked what it takes ([`surface_stage::SurfaceStage`]).
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    answered: wgpu::Adapter,
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
     frame_module: wgpu::ShaderModule,
@@ -559,12 +564,7 @@ pub async fn page_device() -> Option<&'static Gpu> {
 
     // Leaked because wgpu's WebGPU handles are `Rc`s, so a `Gpu` cannot sit in a `static` the way
     // the native one does, and a tab's device is alive until the tab is not.
-    let open: &'static Gpu = Box::leak(Box::new(Gpu::build(
-        &adapter.get_info(),
-        instance,
-        device,
-        queue,
-    )));
+    let open: &'static Gpu = Box::leak(Box::new(Gpu::build(adapter, instance, device, queue)));
     PAGE.with(|held| held.set(Some(open)));
     Some(open)
 }
@@ -1740,7 +1740,7 @@ impl Gpu {
         // frame would come back wrong rather than not at all.
         device.on_uncaptured_error(std::sync::Arc::new(|error| panic!("rawshim gpu: {error}")));
 
-        Some(Gpu::build(&adapter.get_info(), instance, device, queue))
+        Some(Gpu::build(adapter, instance, device, queue))
     }
 
     /// Everything a `Gpu` is once a device exists, which is all of it bar asking for one.
@@ -1748,11 +1748,12 @@ impl Gpu {
     /// Split out so that the browser's request - async, and on a backend that enumerates nothing -
     /// builds the *same* shaders, layouts and PQ table as the server's rather than a second set.
     fn build(
-        info: &wgpu::AdapterInfo,
+        answered: wgpu::Adapter,
         instance: wgpu::Instance,
         device: wgpu::Device,
         queue: wgpu::Queue,
     ) -> Gpu {
+        let info = answered.get_info();
         let adapter = format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type);
         // Thirty-two apiece is 128 workgroups for a four-channel reduction, a couple per core on
         // the discrete parts this is for and still far more than a narrow one is short of.
@@ -1961,6 +1962,7 @@ impl Gpu {
 
         Gpu {
             adapter,
+            answered,
             backend: info.backend,
             reduction_slices,
             device,

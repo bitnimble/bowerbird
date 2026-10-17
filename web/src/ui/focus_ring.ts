@@ -11,4 +11,8 @@ export const focusRing = stylex.create({
     outline: { default: null, ':has(:focus-visible)': `2px solid ${color.glass}` },
     outlineOffset: { default: null, ':has(:focus-visible)': '2px' },
   },
+  /** For a focusable element whose focus something inside it already marks. */
+  none: {
+    outline: 'none',
+  },
 });

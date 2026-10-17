@@ -20,6 +20,8 @@ fn main() {
         "reveal_original",
         "app_data_dir",
         "open_app_data_dir",
+        "stage_show",
+        "stage_hide",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(commands))
         .expect("tauri-build failed");

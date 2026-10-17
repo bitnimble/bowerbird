@@ -31,10 +31,23 @@ import {
   type RequestActivity,
 } from '../../../../../src/schemas/request_activity';
 
+import { WARM } from './warm_budget';
+
 const log = new Logger('stage');
 
-/** The longest edge a frame is decoded to: a 4K stage at 2x, which is past any display we draw on. */
-const DECODE_CAP = 4096;
+/** A 4K stage at 2x, which is past any display we draw on. */
+const FULL_FIT = 4096;
+
+/** The longest edge a frame is decoded and drawn fitted to. */
+const DECODE_CAP = WARM.fittedToScreen ? screenEdge() : FULL_FIT;
+
+function screenEdge(): number {
+  const screen = globalThis.screen;
+  const edge = Math.ceil(
+    Math.max(screen?.width ?? 0, screen?.height ?? 0) * (globalThis.devicePixelRatio || 1),
+  );
+  return edge > 0 ? Math.min(edge, FULL_FIT) : FULL_FIT;
+}
 
 /**
  * The longest edge a canvas may be given, whatever it is being asked to hold.

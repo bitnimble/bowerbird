@@ -250,6 +250,9 @@ class MainActivity : TauriActivity() {
   }
   // Only on a television, where the page spends Back first (\`remote_navigation.ts\`).
   private var page: WebView? = null
+  // wry's Back callback is added after ours, so runs first and steps the WebView's history back.
+  override val handleBackNavigation: Boolean
+    get() = !onTv
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge(
@@ -292,6 +295,8 @@ class MainActivity : TauriActivity() {
       // The D-pad's keys go to the focused view, and nothing else in the window takes focus.
       webView.requestFocus()
       page = webView
+      // Over \`StagePlugin.kt\`'s HDR stage, which the page shows through.
+      webView.setBackgroundColor(Color.TRANSPARENT)
     }
   }
 
@@ -312,7 +317,14 @@ class MainActivity : TauriActivity() {
   );
 
   const plugins = join(repoRoot, 'src-tauri', 'android');
-  for (const name of readdirSync(plugins).filter((file) => file.endsWith('.kt'))) {
+  const sources = readdirSync(plugins).filter((file) => file.endsWith('.kt'));
+  // The generated project outlives the tree, so a deleted plugin would stay compiled into the app.
+  for (const copied of readdirSync(dirname(activity))) {
+    if (copied.endsWith('.kt') && copied !== 'MainActivity.kt' && !sources.includes(copied)) {
+      rmSync(join(dirname(activity), copied));
+    }
+  }
+  for (const name of sources) {
     const plugin = readFileSync(join(plugins, name), 'utf8');
     writeFileSync(join(dirname(activity), name), plugin.replace(/^package .+$/m, pkg));
   }

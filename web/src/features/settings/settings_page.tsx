@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
-import { appDataDir, openAppDataDir, shellInvoke } from '../../api/transport';
+import { appDataDir, openAppDataDir, shellDrawsStage, shellInvoke } from '../../api/transport';
 import {
   useAppSettingsStore,
   useDevicePhotosStore,
@@ -65,7 +65,7 @@ import {
   useSettingWriter,
 } from './settings_controls';
 import { SettingsStrings } from './settings_page.strings';
-import { DEFAULT_DISPLAY_PEAK_NITS } from './device_settings_store';
+import { DEFAULT_DISPLAY_PEAK_NITS, DEFAULT_SDR_WHITE_NITS } from './device_settings_store';
 
 const styles = stylex.create({
   page: {
@@ -128,6 +128,7 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element {
               label={SettingsStrings.hideSidebarInViewer()}
             />
             {device.screen.measures ? <MeasuredDisplayPeak /> : <DisplayPeak />}
+            {shellDrawsStage() && !device.screen.measures && <SdrWhite />}
           </Panel>
 
           <GroupTitle>{SettingsStrings.groupFrameTv()}</GroupTitle>
@@ -205,28 +206,57 @@ const RenderOnThisDevice = observer(function RenderOnThisDevice(): JSX.Element {
   );
 });
 
-// Committed on blur or Enter, like every other number here: "1" on the way to "1600" is a
-// brightness the viewer would redraw at.
 const DisplayPeak = observer(function DisplayPeak(): JSX.Element {
   const device = useDeviceSettingsStore();
   const { deviceSettings } = usePresenters();
-  const label = SettingsStrings.displayPeakNits();
-  const [draft, setDraft] = useState(String(device.displayPeakNits));
-  useEffect(() => setDraft(String(device.displayPeakNits)), [device.displayPeakNits]);
+  return (
+    <NitsSetting
+      label={SettingsStrings.displayPeakNits()}
+      hint={SettingsStrings.displayPeakNitsHint()}
+      nits={device.displayPeakNits}
+      fallback={DEFAULT_DISPLAY_PEAK_NITS}
+      onCommit={deviceSettings.setDisplayPeakNits}
+    />
+  );
+});
+
+const SdrWhite = observer(function SdrWhite(): JSX.Element {
+  const device = useDeviceSettingsStore();
+  const { deviceSettings } = usePresenters();
+  return (
+    <NitsSetting
+      label={SettingsStrings.sdrWhiteNits()}
+      hint={SettingsStrings.sdrWhiteNitsHint()}
+      nits={device.sdrWhiteNits}
+      fallback={DEFAULT_SDR_WHITE_NITS}
+      onCommit={deviceSettings.setSdrWhiteNits}
+    />
+  );
+});
+
+// Committed on blur or Enter, like every other number here: "1" on the way to "1600" is a
+// brightness the viewer would redraw at.
+function NitsSetting({
+  label,
+  hint,
+  nits,
+  fallback,
+  onCommit,
+}: {
+  label: string;
+  hint: string;
+  nits: number;
+  fallback: number;
+  onCommit: (nits: number) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState(String(nits));
+  useEffect(() => setDraft(String(nits)), [nits]);
   const commit = (): void => {
-    deviceSettings.setDisplayPeakNits(Number(draft));
-    setDraft(String(device.displayPeakNits));
+    onCommit(Number(draft));
+    setDraft(String(nits));
   };
   return (
-    <SettingRow
-      label={label}
-      hint={SettingsStrings.displayPeakNitsHint()}
-      onReset={resetTo(
-        device.displayPeakNits,
-        DEFAULT_DISPLAY_PEAK_NITS,
-        deviceSettings.setDisplayPeakNits,
-      )}
-    >
+    <SettingRow label={label} hint={hint} onReset={resetTo(nits, fallback, onCommit)}>
       <TextField
         style={settingStyles.field}
         type="number"
@@ -240,7 +270,7 @@ const DisplayPeak = observer(function DisplayPeak(): JSX.Element {
       />
     </SettingRow>
   );
-});
+}
 
 export const MeasuredDisplayPeak = observer(function MeasuredDisplayPeak(): JSX.Element {
   const { screen } = useDeviceSettingsStore();

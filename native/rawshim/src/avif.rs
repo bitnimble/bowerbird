@@ -77,6 +77,8 @@ const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
 const AVIF_PLANES_YUV: raw::avifPlanesFlags = 1;
 const AVIF_ADD_IMAGE_FLAG_SINGLE: raw::avifAddImageFlags = 1 << 1;
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
+/// CICP's SMPTE ST 2084.
+const PQ_TRANSFER: u16 = 16;
 /// `avifImageContentTypeFlag`'s gain map bit, which decoding one is off without.
 const AVIF_IMAGE_CONTENT_GAIN_MAP: u32 = 1 << 2;
 
@@ -286,6 +288,25 @@ struct Tags {
 }
 
 impl Tags {
+    fn of(image: &raw::avifImage) -> Tags {
+        Tags {
+            cicp: Cicp {
+                primaries: image.colorPrimaries,
+                transfer: image.transferCharacteristics,
+                matrix: image.matrixCoefficients,
+            },
+            range: image.yuvRange,
+            light: (image.clli.maxCLL != 0).then_some(crate::hdr_args::ContentLight {
+                max_cll: image.clli.maxCLL,
+                max_fall: image.clli.maxPALL,
+            }),
+            irot: match image.transformFlags & AVIF_TRANSFORM_IROT != 0 {
+                true => image.irot.angle,
+                false => 0,
+            },
+        }
+    }
+
     /// The clockwise turn `converted` takes to write this `irot` back.
     fn rotate(&self) -> u16 {
         u16::from((4 - self.irot % 4) % 4) * 90
@@ -337,25 +358,83 @@ fn decoded(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize, Tags), S
             true => deep,
             false => shallow.iter().map(|v| u16::from(*v)).collect(),
         };
-        let image = &*image.0;
-        let tags = Tags {
-            cicp: Cicp {
-                primaries: image.colorPrimaries,
-                transfer: image.transferCharacteristics,
-                matrix: image.matrixCoefficients,
-            },
-            range: image.yuvRange,
-            light: (image.clli.maxCLL != 0).then_some(crate::hdr_args::ContentLight {
-                max_cll: image.clli.maxCLL,
-                max_fall: image.clli.maxPALL,
-            }),
-            irot: match image.transformFlags & AVIF_TRANSFORM_IROT != 0 {
-                true => image.irot.angle,
-                false => 0,
-            },
-        };
-        Ok((samples, width, height, tags))
+        Ok((samples, width, height, Tags::of(&*image.0)))
     }
+}
+
+/// A PQ still's planes as its file codes them, for the viewer's stage to read
+/// (`gpu::surface_stage`): laid out as `VideoFrame.copyTo` hands a browser the same file.
+pub struct Coded {
+    pub samples: Vec<u8>,
+    pub layout: crate::planes::Layout,
+    /// Clockwise, as the stage turns a picture onto its canvas.
+    pub rotation: u16,
+    /// The file's brightest pixel in nits, where it states one.
+    pub max_cll: Option<u16>,
+}
+
+/// None for a file the stage does not read: anything but limited-range PQ at 10 or 12 bits, in
+/// 4:2:0 or 4:4:4, which is what the browser's stage reads too (`planar_layout.ts`).
+pub fn coded(bytes: &[u8]) -> Result<Option<Coded>, String> {
+    let decoder = Decoder::new()?;
+    let image = Image::empty()?;
+    // SAFETY: both handles are live for the block, and each plane is `rows * yuvRowBytes` long.
+    #[expect(unsafe_code)]
+    unsafe {
+        (*decoder.0).maxThreads = max_threads();
+        let status = raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len());
+        if status != AVIF_RESULT_OK {
+            return Err(format!("libavif could not decode: {}", message(status)));
+        }
+        let image = &*image.0;
+        let tags = Tags::of(image);
+        let subsampled = image.yuvFormat == AVIF_PIXEL_FORMAT_YUV420;
+        if tags.cicp.transfer != PQ_TRANSFER
+            || tags.range != AVIF_RANGE_LIMITED
+            || !(image.depth == 10 || image.depth == 12)
+            || !(subsampled || image.yuvFormat == AVIF_PIXEL_FORMAT_YUV444)
+        {
+            return Ok(None);
+        }
+        let (samples, layout) = yuv_planes(image);
+        Ok(Some(Coded {
+            samples,
+            layout,
+            rotation: tags.rotate(),
+            max_cll: tags.light.map(|light| light.max_cll),
+        }))
+    }
+}
+
+/// A decoded image's YUV planes, laid out one after another as `VideoFrame.copyTo` lays out a page's.
+///
+/// # Safety
+/// `image` is one libavif decoded, whose planes are each `rows * yuvRowBytes` long.
+#[expect(unsafe_code)]
+unsafe fn yuv_planes(image: &raw::avifImage) -> (Vec<u8>, crate::planes::Layout) {
+    let subsampled = image.yuvFormat == AVIF_PIXEL_FORMAT_YUV420;
+    let mut samples = Vec::new();
+    let planes = [0, 1, 2].map(|at| {
+        let rows = match at > 0 && subsampled {
+            true => (image.height as usize).div_ceil(2),
+            false => image.height as usize,
+        };
+        let stride = image.yuvRowBytes[at] as usize;
+        let offset = samples.len();
+        // SAFETY: the caller's.
+        samples.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(image.yuvPlanes[at], rows * stride)
+        });
+        crate::planes::Plane { offset, stride }
+    });
+    let layout = crate::planes::Layout {
+        width: image.width as usize,
+        height: image.height as usize,
+        bits: image.depth,
+        subsampled,
+        planes,
+    };
+    (samples, layout)
 }
 
 /// `bytes`, a high-bit-depth PQ still, re-encoded at the one AV1 shape Firefox composites as HDR
@@ -1102,36 +1181,13 @@ mod tests {
     fn yuv_planes(bytes: &[u8]) -> (Vec<u8>, crate::planes::Layout) {
         let decoder = Decoder::new().expect("a decoder");
         let image = Image::empty().expect("an image");
-        let mut samples = Vec::new();
-        // SAFETY: both handles are live for the block, and each plane is `rows * yuvRowBytes` long.
+        // SAFETY: both handles are live for the block, and the image is the one libavif decoded.
         #[expect(unsafe_code)]
         unsafe {
             let status =
                 raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len());
             assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the still");
-            let image = &*image.0;
-            let subsampled = image.yuvFormat == AVIF_PIXEL_FORMAT_YUV420;
-            let planes = [0, 1, 2].map(|at| {
-                let rows = match at > 0 && subsampled {
-                    true => (image.height as usize).div_ceil(2),
-                    false => image.height as usize,
-                };
-                let stride = image.yuvRowBytes[at] as usize;
-                let offset = samples.len();
-                samples.extend_from_slice(std::slice::from_raw_parts(
-                    image.yuvPlanes[at],
-                    rows * stride,
-                ));
-                crate::planes::Plane { offset, stride }
-            });
-            let layout = crate::planes::Layout {
-                width: image.width as usize,
-                height: image.height as usize,
-                bits: image.depth,
-                subsampled,
-                planes,
-            };
-            (samples, layout)
+            super::yuv_planes(&*image.0)
         }
     }
 

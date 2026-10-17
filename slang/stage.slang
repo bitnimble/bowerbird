@@ -1,9 +1,9 @@
 // The viewer's stage: a decoded frame painted onto an extended-range canvas.
 //
-// **This is a browser's shader and it is here anyway.** It runs nowhere but WebGPU, over planes
-// `VideoFrame.copyTo` handed back, and nothing in `native/rawshim` dispatches it. What it shares
-// with the rest of `slang/` is the arithmetic: the transfer, the roll-off, BT.2020's weights and a
-// gain map's reconstruction, each written once.
+// A browser draws it over planes `VideoFrame.copyTo` handed back; an Android TV, whose WebView
+// shows no HDR, draws it natively into a window behind the page (`gpu/surface_stage.rs`). What it
+// shares with the rest of `slang/` is the arithmetic: the transfer, the roll-off, BT.2020's weights
+// and a gain map's reconstruction, each written once.
 //
 // The one thing it cannot say is WebGPU's `texture_external`, which Slang has no type for. That
 // path is a copy - the import already converted into the canvas's primaries and left the value on
@@ -46,6 +46,21 @@ struct Colour {
     /// proof both fit down from.
     float source_peak;
 };
+
+/// Zero for a browser's canvas: display-p3, sRGB-encoded, extended. Otherwise linear scRGB (BT.709)
+/// with SDR white at this value, for a native window whose compositor puts its white wherever the
+/// display does: 1 where Android states its HDR/SDR ratio, the reader's setting elsewhere.
+[vk::constant_id(0)]
+const float SCRGB_WHITE = 0.0;
+
+/// Linear BT.2020 light, against SDR white at one, as the canvas this stage draws on takes it.
+float3 written(float3 light)
+{
+    if (SCRGB_WHITE > 0.0) {
+        return mul(R2020_TO_SRGB, light) * SCRGB_WHITE;
+    }
+    return srgb_oetf_signed(mul(R2020_TO_P3, light));
+}
 
 [vk::binding(0, 0)] Texture2D<uint4> luma;
 [vk::binding(1, 0)] Texture2D<uint4> chroma_u;
@@ -167,8 +182,7 @@ float3 shown(float3 light)
         let share = toned(measured<DisplayNits>(light * white.v), measured<DisplayNits>(colour.source_peak * white.v),
             white, intent);
         // Mapped as `frame.slang`'s `proofed` maps the editor's.
-        let held = saturate(mul(R2020_TO_SRGB, mapped(share, SrgbCube(), intent)));
-        return srgb_oetf_signed(mul(R2020_TO_P3, mul(SRGB_TO_R2020, held)));
+        return written(mul(SRGB_TO_R2020, saturate(mul(R2020_TO_SRGB, mapped(share, SrgbCube(), intent)))));
     }
 
     // Rolled where the renderer rolls, which is in the primaries the file was written in and
@@ -176,7 +190,7 @@ float3 shown(float3 light)
     // commute: the curve keys on the largest channel, and the rotation makes a saturated red's
     // largest channel a third larger than it was - so rolling afterwards takes such a highlight
     // into the knee earlier and darkens it against a white one of the same brightness.
-    return srgb_oetf_signed(mul(R2020_TO_P3, rolled_to_headroom(light)));
+    return written(rolled_to_headroom(light));
 }
 
 /// A finished picture's Rec.2020 light at one of its planes' pixels: its own transfer and primaries

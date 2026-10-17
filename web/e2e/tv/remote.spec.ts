@@ -76,6 +76,8 @@ test('the arrows cross between the sidebar and the grid', async ({ page }) => {
 
   await page.keyboard.press('ArrowRight');
   await expect(gallery(page)).toBeFocused();
+  // The cursor marks the photo, so the grid itself draws no ring.
+  await expect(gallery(page)).toHaveCSS('outline-style', 'none');
   await page.keyboard.press('ArrowLeft');
   await expect(currentLink(page)).toBeFocused();
 });
@@ -196,6 +198,18 @@ test('an arrow with nothing focused starts in the open dialog', async ({ page })
 
   await page.keyboard.press('ArrowDown');
   await expect(dialog.locator(':focus')).toHaveCount(1);
+});
+
+test("the remote reaches the settings' sections and switches between them", async ({ page }) => {
+  await page.goto(route(PathSegment.settings(), 'libraries'));
+  await page.getByRole('button', { name: 'Add library' }).focus();
+
+  await page.keyboard.press('ArrowUp');
+  const sections = page.getByRole('radiogroup', { name: 'Settings sections' });
+  await expect(sections.getByRole('radio', { name: 'Libraries' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(sections.getByRole('radio', { name: 'General' })).toBeChecked();
+  await expect(page).toHaveURL(new RegExp(`${route(PathSegment.settings(), 'general')}$`));
 });
 
 test('the bar and the filmstrip go once the remote is left alone', async ({ page }) => {

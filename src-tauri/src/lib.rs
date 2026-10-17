@@ -20,6 +20,7 @@ mod photos;
 mod reveal;
 /// The Bowerbird server this app carries, so the library is local and works offline.
 mod server;
+mod stage;
 mod ui_scale;
 mod update;
 
@@ -64,10 +65,15 @@ pub fn run() {
             reveal::reveal_original,
             server::app_data_dir,
             server::open_app_data_dir,
-            server::server_log_file
+            server::server_log_file,
+            stage::stage_show,
+            stage::stage_hide
         ]);
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(photos::plugin()).plugin(exits::plugin());
+    let builder = builder
+        .plugin(photos::plugin())
+        .plugin(exits::plugin())
+        .plugin(stage::plugin());
     #[cfg(target_os = "linux")]
     let builder = builder.runtime(
         tauri_runtime_cef::Cef::default()

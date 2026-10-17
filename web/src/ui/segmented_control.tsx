@@ -177,7 +177,8 @@ export function SegmentedControl<T extends string>({
             <Radio.Root
               value={option.value}
               aria-label={iconName(option)}
-              tabIndex={tabIndex}
+              // Absent rather than undefined: undefined replaces the roving 0 the group gives the checked one.
+              {...(focusable ? {} : { tabIndex: -1 })}
               {...item(option)}
             >
               {contents(option)}
