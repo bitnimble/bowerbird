@@ -122,6 +122,15 @@ fn open_window(app: &tauri::AppHandle<Runtime>) -> tauri::Result<()> {
                 .set_title("Bowerbird")
                 .set_description(format!("We couldn't open your library.\n\n{why}"))
                 .show();
+            server::stop();
+            // Not `exit`: NVIDIA's EGL faults in the exit handlers tearing down the window's
+            // context, which reports this failure as a native crash.
+            #[cfg(unix)]
+            // SAFETY: nothing past this point has destructors that need running.
+            unsafe {
+                libc::_exit(1)
+            };
+            #[cfg(not(unix))]
             std::process::exit(1);
         }
     }

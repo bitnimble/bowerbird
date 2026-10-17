@@ -27,6 +27,9 @@ tokio = { version = "1", features = ["sync"] }
 updater = { path = "../native/updater" }
 getrandom = "0.3"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # The folder an export is written into (§10.5.1), asked for in the reader's own file manager.
 # `tauri-plugin-dialog` is what would normally provide this and cannot: it depends on `tauri`
 # from crates.io where this build takes it from git, which cargo does not unify - two `tauri`

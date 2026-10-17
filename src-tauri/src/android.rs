@@ -6,6 +6,9 @@ use std::process::Command;
 /// The Bun runtime, under a library's name because the package installer unpacks nothing else.
 pub(crate) const RUNTIME: &str = "libbun.so";
 
+/// `native/seccomp_enosys`, which `build-sidecar.ts` ships beside the runtime.
+const SECCOMP_ENOSYS: &str = "libseccomp_enosys.so";
+
 /// A hash of the bundle and the page, which `build-sidecar.ts` writes beside them.
 const PAYLOAD_ID: &str = "payload-id";
 
@@ -67,6 +70,8 @@ pub(crate) fn environment(command: &mut Command, data: &Path) -> Result<(), Stri
         // Bun is an executable rather than the app, so the linker does not search the app's own
         // libraries for the shared libc++ an addon needs.
         .env("LD_LIBRARY_PATH", &native)
+        // Without it Android 11 kills Bun at startup, for a `close_range` its policy predates.
+        .env("LD_PRELOAD", native.join(SECCOMP_ENOSYS))
         .env("TMPDIR", tmp)
         .env("HOME", data)
         .env("BOWERBIRD_PLATFORM", "android-arm64");

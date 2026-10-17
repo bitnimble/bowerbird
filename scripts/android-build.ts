@@ -3,9 +3,9 @@
 // key, which installs beside the release app.
 //
 // The app starts its own server as the desktop does (`src-tauri/src/android.rs`), so this builds
-// everything that server runs on for the phone first: the codecs, `librawshim`, and Bun with its
-// two native addons (`get:android-runtime`). `bun run build:android` runs this after the steps
-// every app shares.
+// everything that server runs on for the phone first: the codecs, `librawshim`, Bun with its two
+// native addons (`get:android-runtime`), and the library Bun is preloaded with (`seccomp_enosys`).
+// `bun run build:android` runs this after the steps every app shares.
 //
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with the
 // NDK `.android-ndk-version` names, and a JDK 17.
@@ -95,6 +95,16 @@ run('bun', ['run', 'get:codecs', '--target', ANDROID_TARGET]);
 run('bun', ['run', 'build:native:release', '--target', ANDROID_TARGET], repoRoot, {
   CARGO_PROFILE_RELEASE_STRIP: 'symbols',
 });
+run('bun', [
+  'run',
+  'scripts/cargo.ts',
+  'build',
+  '--release',
+  '--manifest-path',
+  'native/seccomp_enosys/Cargo.toml',
+  '--target',
+  ANDROID_TARGET,
+]);
 run('bun', ['run', 'get:android-runtime']);
 // The page the server serves and the server itself, which `tauri.android.conf.json` embeds as the
 // app's assets.

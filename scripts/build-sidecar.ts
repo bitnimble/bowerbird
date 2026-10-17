@@ -285,6 +285,18 @@ function shipForAndroid(): void {
   if (!existsSync(main)) {
     throw new Error(`no Android project at ${main}. \`android-build.ts\` makes one.`);
   }
+  const enosys = join(
+    ROOT,
+    'native',
+    'seccomp_enosys',
+    'target',
+    ANDROID_TARGET,
+    'release',
+    'libseccomp_enosys.so',
+  );
+  if (!existsSync(enosys)) {
+    throw new Error(`no ${enosys}. \`android-build.ts\` builds it.`);
+  }
   const jni = join(main, 'jniLibs', ANDROID_ABI);
   // Emptied for the reason `RESOURCES` is; Tauri's Gradle plugin writes its own library back in.
   rmSync(jni, { recursive: true, force: true });
@@ -294,6 +306,7 @@ function shipForAndroid(): void {
     ...[ANDROID_RUNTIME, ANDROID_LIBSQL, ANDROID_WATCHER].map((name) =>
       carry(join(runtime, name), jni),
     ),
+    carry(enosys, jni),
     carry(nativeLibrary(triple), jni),
     // Parcel's Android watcher is built against the shared libc++, which no phone has of its own.
     carry(join(ndk.sysroot, 'usr', 'lib', ANDROID_TARGET, 'libc++_shared.so'), jni),
