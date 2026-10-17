@@ -17,7 +17,7 @@ import type { SettingsRepository } from '../../src/services/settings/settings_re
 import { dataPathForLibraryId, renditionPathFor } from '../../src/utils/paths';
 
 const LIB = 'lib-ten-bit-copies';
-const STILL = `${import.meta.dir}/../../web/public/hdr/sun-hdr.avif`;
+const STILL = `${import.meta.dir}/../../landing/public/hdr/sun-hdr.avif`;
 
 const settings = { get: () => SettingsSchema.parse({}) } as unknown as SettingsRepository;
 const copies = new TenBitCopies(new RenderTargets(settings));

@@ -6,9 +6,11 @@ const { act, cleanup, renderHook } = await import('@testing-library/react');
 const { HdrPictures } = await import('../hdr_pictures');
 const { useHdrPicture } = await import('../hdr_picture');
 
-const PUBLIC = `${import.meta.dir}/../../../public/hdr`;
-const HDR = new Uint8Array(await Bun.file(`${PUBLIC}/swatches.avif`).arrayBuffer());
-const SDR = new Uint8Array(await Bun.file(`${PUBLIC}/gamut-sdr.avif`).arrayBuffer());
+const ROOT = `${import.meta.dir}/../../../..`;
+const HDR = new Uint8Array(await Bun.file(`${ROOT}/web/public/hdr/swatches.avif`).arrayBuffer());
+const SDR = new Uint8Array(
+  await Bun.file(`${ROOT}/landing/public/hdr/gamut-sdr.avif`).arrayBuffer(),
+);
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]);
 const SOURCE = { still: '/still.avif', tenBit: (match: string) => `/still.avif?match=${match}` };
 const COPY = SOURCE.tenBit('mac-video');

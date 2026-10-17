@@ -8,12 +8,11 @@ import { Text } from '../../web/src/ui/text';
 import { color, font } from '../../web/src/ui/tokens.stylex';
 import { REPO_URL, RELEASES_URL, SITE } from './features';
 import { layout } from './layout.stylex';
-import { PROSE } from './prose';
+import { PROSE, SiteLink } from './prose';
 
 const HOME_URL = import.meta.env.BASE_URL;
 export const FEATURES_URL = `${import.meta.env.BASE_URL}features.html`;
 
-const FINE = '@media (pointer: fine)';
 const NARROW = '@media (max-width: 345px)';
 
 const styles = stylex.create({
@@ -86,26 +85,13 @@ const styles = stylex.create({
     gap: '12px',
     fontSize: '13px',
   },
-  link: {
-    textDecorationLine: {
-      default: 'underline',
-      [FINE]: { default: 'none', ':hover': 'underline', ':focus-visible': 'underline' },
-    },
-    textDecorationColor: {
-      default: color.boneDim,
-      ':hover': color.satin,
-      ':focus-visible': color.satin,
-    },
-    textUnderlineOffset: '2px',
-    color: { default: null, '[aria-current=page]': color.glass },
-  },
   bower: { fill: color.bower },
   satin: { fill: color.satin },
   glass: { fill: color.glass },
   slate: { fill: color.slate },
 });
 
-type Page = 'home' | 'features';
+type Page = 'home' | 'features' | 'hdr';
 
 export function mount(page: Page, content: ReactNode): void {
   const root = document.getElementById('root');
@@ -150,27 +136,6 @@ function Footer(): JSX.Element {
       <Text variant="muted">{SITE.footer}</Text>
       <SiteLink href={REPO_URL}>{SITE.sourceCode}</SiteLink>
     </footer>
-  );
-}
-
-/** `TextLink`'s look on a plain anchor: the web one is a router link. */
-function SiteLink({
-  href,
-  current = false,
-  children,
-}: {
-  href: string;
-  current?: boolean;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <a
-      {...stylex.props(styles.link, focusRing.ring)}
-      href={href}
-      aria-current={current ? 'page' : undefined}
-    >
-      {children}
-    </a>
   );
 }
 

@@ -407,10 +407,10 @@ from destination pages. Identical text with different meanings stays separate wi
 
 Data stays literal: default bin folder, XMP white-balance modes, physical-key letters.
 
-Prose pages use adjacent MDX (`hdr_page.mdx`), with figures in TypeScript and labels in strings.
+Prose pages use MDX, with figures in TypeScript and labels in strings.
 Pass rendering `components`; landing copy lives under `landing/src/copy/`.
 `bun run typecheck` uses `scripts/check-mdx.ts` to check tags/props. Injected components need
-an `@import` of `MDXProvidedComponents`, as in `hdr_page.mdx`, or tags become `any`.
+an `@import` of `MDXProvidedComponents`, as in `landing/src/copy/hdr.mdx`, or tags become `any`.
 Lint skips MDX; review its prose against `COPYWRITING.md`.
 
 `bun run lint` enforces placement via `scripts/oxlint-plugin-strings.ts`:

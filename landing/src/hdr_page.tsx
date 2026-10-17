@@ -1,33 +1,25 @@
 import * as stylex from '@stylexjs/stylex';
 import type { MDXComponents } from 'mdx/types';
 import { Fragment, createContext, useContext, useState, type ReactNode } from 'react';
-import { PathSegment, route } from '../../../../src/schemas/route';
-import { HdrPicture } from '../../avif/hdr_picture';
-import { demoScene, demoSwatches } from './demo_sources';
-import { observer } from 'mobx-react-lite';
-import { useDeviceSettingsStore } from '../../app/stores_context';
-import { focusRing } from '../../ui/focus_ring';
-import { Heading } from '../../ui/heading';
-import { Page, PageHead } from '../../ui/page';
-import { Text } from '../../ui/text';
-import { color, font, size } from '../../ui/tokens.stylex';
-import HdrPageCopy from './hdr_page.mdx';
+import { HdrPicture } from '../../web/src/avif/hdr_picture';
+import { focusRing } from '../../web/src/ui/focus_ring';
+import { Heading } from '../../web/src/ui/heading';
+import { Text } from '../../web/src/ui/text';
+import { color, font, size } from '../../web/src/ui/tokens.stylex';
+import HdrPageCopy from './copy/hdr.mdx';
+import { useHdrDisplay } from './hdr_display';
 import { HdrPageStrings } from './hdr_page.strings';
+import { PHOTOS, SWATCHES, hdrSource, type Scene as SceneName } from './photos';
+import { InParagraph, Paragraph } from './prose';
+import { mount } from './site';
 
 const NARROW = '@media (max-width: 640px)';
-// Wide enough that the chart still has a track after the sidebar, the prose column and its own
-// 190px of labels: at 1200 that leaves under 300px to draw 30 stops on.
+// Wide enough that the chart still has a track after the prose column and its own 190px of labels.
 const SPLIT = '@media (min-width: 1400px)';
 
 const styles = stylex.create({
   at: (left: string) => ({ left }),
 
-  // Left-aligned, not centred: the sidebar button sits before the heading only, and a centred
-  // column would indent the heading against the paragraph under it.
-  page: {
-    maxWidth: '1480px',
-    paddingBottom: '40px',
-  },
   text: {
     maxWidth: '62ch',
   },
@@ -277,47 +269,8 @@ const TONES = { eye: styles.eye, sensor: styles.sensor, hdr: styles.hdr, sdr: st
 type Tone = keyof typeof TONES;
 
 /**
- * How much of a scene each thing holds, in stops either side of white.
- *
- * White is the anchor rather than black because it is what the four disagree about, and
- * because it is where photographs are lost: the JPEG's range simply stops there.
- *
- * **The two file bars are what the hardware in front of you can show**, because that and
- * not the encoding is what limits either of them. A typical SDR monitor is about 1000:1,
- * so a JPEG gets 10 stops. A good HDR display does 1000 nits over a black near 0.05, so
- * 14.3 - an OLED in a dark room stretches that towards 17.6, and an LCD in a bright one
- * falls well short of it.
- *
- * Two earlier sourcings were wrong in opposite directions and are worth not repeating.
- * Quoting each format's own specification gave 6.3 stops for sRGB (its reference *viewing
- * environment*, 80 cd/m² over 1.0) and 17.6 for HDR10 (its mastering reference): the first
- * describes a 1999 CRT in a lit office and no panel anyone owns, and the second is a
- * dark-room best case. Measuring the code values instead made the threshold the author's
- * choice - 5% gives 6.0 and 14.6, 2% gives 2.8 and 10.3, and 1%, about the Weber limit,
- * gives 0.4 and 3.9. That last pair is true and useless on a chart, since a photograph is
- * not a smooth gradient and its own grain dithers away the banding being hunted.
- *
- * What the numbers keep saying through all of that is worth reading off the chart rather
- * than out of the totals: the two formats are not far apart in *how many* stops they
- * carry. The JPEG's are all underneath white and the HDR file's are not.
- *
- * The other two bars are approximations: a full-frame sensor measures around 14 stops of
- * engineering dynamic range at base ISO, placed as though the exposure left 3 stops above
- * diffuse white, and the eye manages about 20 across one scene as the gaze moves.
- *
- * **The JPEG's headroom is 0.2 stops rather than none**, which is worth being right about
- * because the page keeps saying a JPEG has nothing above white. It nearly does. A camera
- * puts diffuse white around code 240 and not 255, so a specular glint has the last 15
- * codes to live in: `log2(linear(255) / linear(240))` is 0.20. Place white at 235 and it
- * is 0.27, at 245 and it is 0.13. So the bar goes a whisker past the line rather than
- * stopping dead on it, and 0.2 against the HDR file's 2.3 makes the point better than
- * zero would - a JPEG does reserve room for highlights, and there is almost none of it.
- */
-/**
  * The screens. These rows are what a reader can *see* of a file on that panel, so
  * **none of them may run past the eye row**, whatever the panel is physically capable of.
- * A bar claiming 25 stops of visible range under a 20-stop pair of eyes is nonsense, and
- * two earlier versions of these rows did exactly that.
  *
  * Both HDR panels peak around 1600 nits on the small bright areas a photograph actually
  * puts there, so what separates them is the bottom.
@@ -326,8 +279,7 @@ type Tone = keyof typeof TONES;
  *   -14, and that is where the row ends.
  * - **XDR**: zone-dimmed, so it blooms. Its 1,000,000:1 is a full-field-black figure and
  *   describes nothing you will ever look at; with bright content on screen the local
- *   floor is nearer 0.05 nits, which is -12. Believing the spec sheet puts it at -14 and
- *   draws it identical to the OLED, which was the previous mistake.
+ *   floor is nearer 0.05 nits, which is -12, not the OLED's -14.
  * - **LCD in a lit room**: ambient reflected off the glass, ~0.5 nits, which is -8.7.
  */
 const XDR = HdrPageStrings.screenXdr();
@@ -357,6 +309,7 @@ const RANGES: {
   {
     label: HdrPageStrings.rangeJpeg(),
     low: -11.5,
+    // Cameras put diffuse white near code 240, so glints keep log2(linear(255) / linear(240)).
     high: 0.2,
     tone: 'sdr',
     under: [
@@ -480,7 +433,7 @@ function RangeChart(): JSX.Element {
  * nothing to do with what the page is arguing. In the same place, one after the other,
  * there is nothing to hold it against.
  */
-function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }): JSX.Element {
+function Swap({ scene, label, alt }: { scene: SceneName; label: string; alt: string }): JSX.Element {
   // Eight bits first, because that is the picture the reader already has and the page is
   // about what it costs them. Opening on the HDR one asks them to notice an absence.
   const [hdr, setHdr] = useState(false);
@@ -493,12 +446,12 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
       onClick={() => setHdr((was) => !was)}
     >
       <img
-        src={route(PathSegment.hdr(), `${slug}-sdr.avif`)}
+        src={PHOTOS[scene].sdr}
         alt={HdrPageStrings.sdrAlt(alt)}
         {...stylex.props(styles.layer, styles.layerBase, !hdr && styles.layerUp)}
       />
       <HdrPicture
-        source={demoScene(slug)}
+        source={hdrSource(scene)}
         alt={HdrPageStrings.hdrAlt(alt)}
         style={[styles.layer, styles.layerOver, hdr && styles.layerUp]}
       />
@@ -517,10 +470,10 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
 type Children = { children?: ReactNode };
 
 /** One photograph, in both ranges. */
-function Comparison({ slug, title }: { slug: string; title: string }): JSX.Element {
+function Comparison({ scene, title }: { scene: SceneName; title: string }): JSX.Element {
   return (
     <figure {...stylex.props(styles.compare)}>
-      <Swap slug={slug} label={title} alt={title} />
+      <Swap scene={scene} label={title} alt={title} />
       <figcaption {...stylex.props(styles.caption)}>
         <Text variant="mono">{HdrPageStrings.clickToSwitch()}</Text>
       </figcaption>
@@ -532,11 +485,11 @@ function Prose({ children }: Children): JSX.Element {
   return <div {...stylex.props(styles.text)}>{children}</div>;
 }
 
-function Paragraph({ children }: Children): JSX.Element {
+function HdrParagraph({ children }: Children): JSX.Element {
   return (
-    <Text variant="muted" as="p" style={styles.p}>
+    <Paragraph muted style={styles.p}>
       {children}
-    </Text>
+    </Paragraph>
   );
 }
 
@@ -547,10 +500,8 @@ function SectionHeading({ children }: Children): JSX.Element {
   return <Heading style={inColumn ? styles.h2OpensColumn : styles.h2}>{children}</Heading>;
 }
 
-const SdrNotice = observer(function SdrNotice({ children }: Children): JSX.Element | null {
-  const device = useDeviceSettingsStore();
-  // Video too: Firefox is shown these pictures as video, and answers `dynamic-range` "no".
-  if (device.screen.hdr || device.screen.videoHdr) return null;
+function SdrNotice({ children }: Children): JSX.Element | null {
+  if (useHdrDisplay()) return null;
   return (
     <div {...stylex.props(styles.notice)}>
       <Text as="p" style={styles.p}>
@@ -558,7 +509,7 @@ const SdrNotice = observer(function SdrNotice({ children }: Children): JSX.Eleme
       </Text>
     </div>
   );
-});
+}
 
 function Split({ children }: Children): JSX.Element {
   return <section {...stylex.props(styles.split)}>{children}</section>;
@@ -575,7 +526,7 @@ function Column({ wide = false, children }: Children & { wide?: boolean }): JSX.
 function Note({ children }: Children): JSX.Element {
   return (
     <Text variant="mono" as="p" style={[styles.p, styles.note]}>
-      {children}
+      <InParagraph.Provider value>{children}</InParagraph.Provider>
     </Text>
   );
 }
@@ -588,7 +539,7 @@ function Swatches(): JSX.Element {
   return (
     <figure {...stylex.props(styles.swatches)}>
       <HdrPicture
-        source={demoSwatches()}
+        source={SWATCHES}
         alt={HdrPageStrings.swatchesAlt()}
         style={styles.swatchesImage}
       />
@@ -610,22 +561,25 @@ function Scenes({ children }: Children): JSX.Element {
 
 /**
  * No heading per photograph: the sentence above each one already names its subject. `title`
- * is what the alt and aria text are built from, and `slug` names the two files under
- * `web/public/hdr` and the scene in the asset script.
+ * is what the alt and aria text are built from.
  */
-function Scene({ slug, title, children }: Children & { slug: string; title: string }): JSX.Element {
+function Scene({
+  scene,
+  title,
+  children,
+}: Children & { scene: SceneName; title: string }): JSX.Element {
   return (
     <section {...stylex.props(styles.scene)}>
       <Text variant="muted" as="p" style={[styles.p, styles.pInScene]}>
-        {children}
+        <InParagraph.Provider value>{children}</InParagraph.Provider>
       </Text>
-      <Comparison slug={slug} title={title} />
+      <Comparison scene={scene} title={title} />
     </section>
   );
 }
 
 const COPY = {
-  p: Paragraph,
+  p: HdrParagraph,
   h2: SectionHeading,
   Prose,
   SdrNotice,
@@ -640,13 +594,4 @@ const COPY = {
 
 export type MDXProvidedComponents = typeof COPY;
 
-export function HdrPage(): JSX.Element {
-  return (
-    <Page style={styles.page}>
-      <PageHead withSidebarButton>
-        <Heading level={1}>{HdrPageStrings.title()}</Heading>
-      </PageHead>
-      <HdrPageCopy components={COPY} />
-    </Page>
-  );
-}
+mount('hdr', <HdrPageCopy components={COPY} />);

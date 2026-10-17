@@ -33,7 +33,7 @@ export default defineConfig({
     alias: { 'avif-hdr-video': page('../packages/avif-hdr-video/src/index.ts') },
   },
   server: {
-    // The ui components, the tokens and the HDR photographs are read out of `web/`, outside this root.
+    // The ui components, the tokens and the swatch strip are read out of `web/`, outside this root.
     fs: { allow: ['..'] },
     host: process.env.LANDING_HOST ?? '0.0.0.0',
     port: Number(process.env.LANDING_PORT ?? 5174),
@@ -43,7 +43,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      input: { index: page('index.html'), features: page('features.html') },
+      input: { index: page('index.html'), features: page('features.html'), hdr: page('hdr.html') },
     },
   },
 });

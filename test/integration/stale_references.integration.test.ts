@@ -81,6 +81,7 @@ const everyPath = new Set<string>();
 for (const dir of [
   'src',
   'web',
+  'landing',
   'e2e-tauri',
   'scripts',
   'native',
