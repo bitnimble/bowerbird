@@ -248,12 +248,6 @@ class MainActivity : TauriActivity() {
     getSystemService(UiModeManager::class.java).currentModeType ==
       Configuration.UI_MODE_TYPE_TELEVISION
   }
-  // Only on a television, where the page spends Back first (\`remote_navigation.ts\`).
-  private var page: WebView? = null
-  // wry's Back callback is added after ours, so runs first and steps the WebView's history back.
-  override val handleBackNavigation: Boolean
-    get() = !onTv
-
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge(
       statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
@@ -277,12 +271,9 @@ class MainActivity : TauriActivity() {
       WindowInsetsCompat.CONSUMED
     }
     // A callback, not \`onBackPressed\`: targeting API 36, Android 16 never calls that override.
-    onBackPressedDispatcher.addCallback(
-      this,
-      object : OnBackPressedCallback(true) {
-        override fun handleOnBackPressed() = back()
-      },
-    )
+    // Backgrounded, not finished: Tauri's result launchers stay bound to the first activity, so
+    // after a finish \`PhotosPlugin.kt\`'s prompts never answer.
+    onBackPressedDispatcher.addCallback(this, backCallback { moveTaskToBack(true) })
   }
 
   // Off, the WebView ignores the page's viewport tag, which is how its interface scale applies.
@@ -294,24 +285,25 @@ class MainActivity : TauriActivity() {
       webView.settings.userAgentString = webView.settings.userAgentString + " ${TV_AGENT}"
       // The D-pad's keys go to the focused view, and nothing else in the window takes focus.
       webView.requestFocus()
-      page = webView
       // Over \`StagePlugin.kt\`'s HDR stage, which the page shows through.
       webView.setBackgroundColor(Color.TRANSPARENT)
+      // Here, not in onCreate: the newest callback runs first, and Tauri's AppPlugin, loaded
+      // before the WebView, adds one stepping its history back a photo.
+      onBackPressedDispatcher.addCallback(
+        this,
+        backCallback {
+          webView.evaluateJavascript("window.${TV_BACK}?.() === true") { handled ->
+            if (handled != "true") moveTaskToBack(true)
+          }
+        },
+      )
     }
   }
 
-  // Backgrounded, not finished: Tauri's result launchers stay bound to the first activity, so
-  // after a finish \`PhotosPlugin.kt\`'s prompts never answer.
-  private fun back() {
-    val remote = page
-    if (remote == null) {
-      moveTaskToBack(true)
-      return
+  private fun backCallback(back: () -> Unit) =
+    object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() = back()
     }
-    remote.evaluateJavascript("window.${TV_BACK}?.() === true") { handled ->
-      if (handled != "true") moveTaskToBack(true)
-    }
-  }
 }
 `,
   );
