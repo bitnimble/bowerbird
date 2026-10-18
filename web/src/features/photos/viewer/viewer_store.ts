@@ -58,6 +58,8 @@ export class ViewerStore {
   // (§10.2). Null until something is picked, which is the usual state - the
   // setting answers for the rest, and `showing` is what is actually on screen.
   @observable accessor rendition: ViewerRendition | null = null;
+  // Whether `rendition` is the reader's own pick, rather than the opening one built for them.
+  @observable accessor renditionPicked = false;
   // Which rendition an HDR frame is proofed against, kept across photos as a way of looking is.
   // Null follows the frame, which is also the only answer a frame with no HDR in it has.
   @observable accessor proof: 'hdr' | 'srgb' | null = null;

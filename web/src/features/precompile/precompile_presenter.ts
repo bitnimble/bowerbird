@@ -20,8 +20,12 @@ export class PrecompilePresenter {
   private toast: number | null = null;
 
   private readonly longestWaitMs: number;
+  private readonly warmStage: (() => Promise<unknown>) | null;
 
-  /** @param options.precompiles false where nothing should compile ahead of use (`onMobileDevice`). */
+  /**
+   * @param options.precompiles false where nothing should compile ahead of use (`onMobileDevice`),
+   *   which then compiles only `warmStage`, the photo viewer's.
+   */
   constructor(
     private readonly store: PrecompileStore,
     private readonly precompile: Precompile,
@@ -31,16 +35,29 @@ export class PrecompilePresenter {
     {
       longestWaitMs = LONGEST_PRECOMPILE_WAIT_MS,
       precompiles = true,
-    }: { longestWaitMs?: number; precompiles?: boolean } = {},
+      warmStage,
+    }: {
+      longestWaitMs?: number;
+      precompiles?: boolean;
+      warmStage?: () => Promise<unknown>;
+    } = {},
   ) {
     this.longestWaitMs = longestWaitMs;
+    this.warmStage = precompiles ? null : (warmStage ?? null);
     if (!precompiles || remembered.read() === version) this.markReady();
   }
 
   @action.bound
   start(): void {
-    if (this.started || this.store.ready) return;
+    if (this.started) return;
     this.started = true;
+    if (this.warmStage != null) {
+      this.store.stageCompiling = true;
+      void this.warmStage()
+        .catch(() => undefined)
+        .finally(this.stageWarmed);
+    }
+    if (this.store.ready) return;
     const compiling = this.precompile(this.compiled)
       .then(() => this.remembered.write(this.version))
       // Unremembered, so the next visit retries.
@@ -76,6 +93,11 @@ export class PrecompilePresenter {
     this.settled = true;
     if (this.toast != null) this.toasts.dismiss(this.toast);
     this.toast = null;
+  }
+
+  @action.bound
+  private stageWarmed(): void {
+    this.store.stageCompiling = false;
   }
 
   @action.bound

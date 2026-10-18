@@ -36,6 +36,20 @@ pub struct StageRelease {
     url: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct StageWarm {
+    white: f32,
+}
+
+/// Opens the GPU and compiles the stage's pipeline for this SDR white, ahead of the first photo.
+#[tauri::command]
+pub async fn stage_warm(
+    app: tauri::AppHandle<crate::Runtime>,
+    stage: StageWarm,
+) -> Result<(), String> {
+    platform::ask(&app, "warm", stage).await.map(drop)
+}
+
 /// Drops whatever an earlier load of the page left prepared or on screen.
 #[tauri::command]
 pub async fn stage_reset(app: tauri::AppHandle<crate::Runtime>) -> Result<(), String> {
@@ -141,6 +155,8 @@ mod platform {
             f32,
         ) -> c_int,
         detach: unsafe extern "C" fn(*mut c_void),
+        warm: unsafe extern "C" fn(f32) -> c_int,
+        flat: unsafe extern "C" fn(f32, *mut u32, *mut u32) -> *mut c_void,
         take_log: unsafe extern "C" fn(*mut u8, usize) -> usize,
     }
 
@@ -188,6 +204,8 @@ mod platform {
                         attach: std::mem::transmute(symbol(library, c"bb_stage_attach")?),
                         present: std::mem::transmute(symbol(library, c"bb_stage_present")?),
                         detach: std::mem::transmute(symbol(library, c"bb_stage_detach")?),
+                        warm: std::mem::transmute(symbol(library, c"bb_stage_warm")?),
+                        flat: std::mem::transmute(symbol(library, c"bb_stage_flat")?),
                         take_log: std::mem::transmute(symbol(library, c"bb_take_log")?),
                     }
                 };
@@ -255,6 +273,35 @@ mod platform {
         unsafe { (rawshim.detach)(attached.stage) };
     }
 
+    #[no_mangle]
+    pub extern "system" fn Java_photos_bowerbird_StagePlugin_warm(
+        _env: JNIEnv,
+        _class: JClass,
+        white: jfloat,
+    ) -> jboolean {
+        let Some(rawshim) = rawshim() else { return 0 };
+        // SAFETY: takes no pointers.
+        let built = unsafe { (rawshim.warm)(white) };
+        rawshim.drain_log();
+        jboolean::from(built == 0)
+    }
+
+    /// A picture of `nits` everywhere, handed over as `picture` hands one.
+    #[no_mangle]
+    pub extern "system" fn Java_photos_bowerbird_StagePlugin_flat(
+        env: JNIEnv,
+        _class: JClass,
+        nits: jfloat,
+        size: JIntArray,
+    ) -> jlong {
+        let Some(rawshim) = rawshim() else { return 0 };
+        let (mut width, mut height) = (0u32, 0u32);
+        // SAFETY: both sizes are writable.
+        let picture = unsafe { (rawshim.flat)(nits, &mut width, &mut height) };
+        rawshim.drain_log();
+        sized(env, rawshim, picture, width, height, size)
+    }
+
     /// 0 where the stage does not draw this file; `size` takes its shown width and height. `avif`
     /// is a direct buffer, read where it lies.
     #[no_mangle]
@@ -278,6 +325,18 @@ mod platform {
         // and both sizes are writable.
         let picture = unsafe { (rawshim.picture)(bytes, length, &mut width, &mut height) };
         rawshim.drain_log();
+        sized(env, rawshim, picture, width, height, size)
+    }
+
+    /// `picture`, with its size written into `size`; 0, and the picture freed, where it cannot be.
+    fn sized(
+        env: JNIEnv,
+        rawshim: &Rawshim,
+        picture: *mut c_void,
+        width: u32,
+        height: u32,
+        size: JIntArray,
+    ) -> jlong {
         if picture.is_null() {
             return 0;
         }
@@ -285,7 +344,7 @@ mod platform {
             .set_int_array_region(&size, 0, &[width as jint, height as jint])
             .is_err()
         {
-            // SAFETY: from `picture` above, and not used again.
+            // SAFETY: from `rawshim`, and not used again.
             unsafe { (rawshim.picture_free)(picture) };
             return 0;
         }

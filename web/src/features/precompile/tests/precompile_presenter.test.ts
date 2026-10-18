@@ -83,6 +83,46 @@ test('a device that compiles nothing ahead of use starts ready, without compilin
   expect(asked).toBe(0);
 });
 
+test('a device that compiles nothing ahead of use warms the photo viewer once, compiling until it settles', async () => {
+  const store = new PrecompileStore();
+  const warm = deferred();
+  let warmed = 0;
+  const presenter = new PrecompilePresenter(
+    store,
+    () => deferred().promise,
+    '1.4.0',
+    remembering(null),
+    toasting(),
+    {
+      precompiles: false,
+      warmStage: () => {
+        warmed++;
+        return warm.promise;
+      },
+    },
+  );
+  presenter.start();
+  presenter.start();
+  expect(warmed).toBe(1);
+  expect(store.stageCompiling).toBe(true);
+
+  warm.reject();
+  await when(() => !store.stageCompiling, { timeout: 5000 });
+});
+
+test('a device that precompiles leaves the photo viewer to the precompile', () => {
+  const store = new PrecompileStore();
+  let warmed = 0;
+  new PrecompilePresenter(store, () => deferred().promise, '1.4.0', remembering(null), toasting(), {
+    warmStage: () => {
+      warmed++;
+      return deferred().promise;
+    },
+  }).start();
+  expect(warmed).toBe(0);
+  expect(store.stageCompiling).toBe(false);
+});
+
 test('a new version compiles once however often it is asked for, then remembers it', async () => {
   const store = new PrecompileStore();
   const compile = deferred();

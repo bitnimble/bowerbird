@@ -475,9 +475,14 @@ pub fn announce_panics() {
 pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(value) => value,
-        Err(_) => {
+        Err(panicked) => {
+            let why = panicked
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panicked.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("no message");
             warn(&format!(
-                "rawshim: {what} panicked; reporting failure rather than aborting the process"
+                "rawshim: {what} panicked ({why}); reporting failure rather than aborting the process"
             ));
             fallback
         }
@@ -1043,10 +1048,7 @@ mod tests {
                 let colour = fitted.colour.as_ref().expect("a colour fit");
                 let numbers = colour.curves.iter().map(Vec::len).sum::<usize>()
                     + 9
-                    + colour
-                        .chroma
-                        .as_ref()
-                        .map_or(0, |map| map.words().len())
+                    + colour.chroma.as_ref().map_or(0, |map| map.words().len())
                     + fitted.lens.distortion.as_ref().map_or(0, Vec::len)
                     + fitted
                         .lens

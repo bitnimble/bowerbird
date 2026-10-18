@@ -5,6 +5,7 @@ export const PhotoStageStrings = {
   noRenditionYet: () => 'Rendition not ready',
   onUnreachableDevice: () => 'On a synced device (unreachable)',
   loading: () => 'Loading…',
+  compilingShaders: () => 'Compiling shaders…',
   rendering: () => 'Rendering…',
   fetching: () => 'Fetching…',
   // The reader asked for a rendition and is looking at a different one, which without this

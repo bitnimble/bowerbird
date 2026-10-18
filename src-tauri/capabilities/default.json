@@ -17,6 +17,7 @@
     "allow-photo-access",
     "allow-ask-photo-access",
     "allow-app-data-dir",
+    "allow-stage-warm",
     "allow-stage-reset",
     "allow-stage-prepare",
     "allow-stage-release",

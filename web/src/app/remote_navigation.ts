@@ -30,8 +30,20 @@ const OWNS_ALL = 'select, [role="menu"], [role="listbox"]';
 const LAYER = `${POPUP}, [role="alertdialog"]`;
 const DIALOG = '[role="dialog"], [role="alertdialog"]';
 const SIDEBAR = `nav[aria-label="${SidebarStrings.sidebar()}"]`;
+const REGION = 'main, nav';
 
 const TOGGLES = new Set(['checkbox', 'radio']);
+const UNTYPED = new Set([
+  ...TOGGLES,
+  'range',
+  'button',
+  'submit',
+  'reset',
+  'color',
+  'file',
+  'image',
+]);
+const LOCKED = 'data-remote-locked';
 
 const OVERLAP = 2;
 const ACROSS_WEIGHT = 2;
@@ -47,6 +59,14 @@ export function followRemote(): () => void {
       e.preventDefault();
       return;
     }
+    if (e.key === 'Enter' && isTyped(active) && active.hasAttribute(LOCKED)) {
+      unlock(active);
+      // Focused again, now editable, which is what brings the keyboard up.
+      active.blur();
+      active.focus();
+      e.preventDefault();
+      return;
+    }
     const direction = DIRECTIONS[e.key];
     if (direction == null) return;
     // Not a menu or a list: those move through their own items from the popup.
@@ -58,13 +78,14 @@ export function followRemote(): () => void {
       if (layer == null && document.querySelector(`[${OWNS_ARROWS}]`) != null) return;
       const first = focusables(layer ?? document.querySelector('main') ?? document.body)[0];
       if (first == null) return;
-      first.focus();
+      focusFromRemote(first);
     } else {
       const horizontal = direction === 'left' || direction === 'right';
       const owner = active.closest<HTMLElement>(`[${OWNS_ARROWS}]`);
       if (owner != null && (horizontal || owner.getAttribute(OWNS_ARROWS) === 'all')) return;
       if (active.closest(OWNS_ALL) != null) return;
-      if (horizontal && active.closest(OWNS_HORIZONTAL) != null) return;
+      if (horizontal && active.closest(OWNS_HORIZONTAL) != null && !active.hasAttribute(LOCKED))
+        return;
       focusToward(owner ?? active, direction);
     }
     // Spent even where nothing lies that way: the grid's window handler would otherwise move a
@@ -88,20 +109,55 @@ export function focusToward(from: HTMLElement, direction: Direction): boolean {
   const candidates = focusables(from.closest(LAYER) ?? document.body).filter(
     (each) => !each.contains(from) && !from.contains(each),
   );
-  const best = nearest(
-    from.getBoundingClientRect(),
-    candidates.map((each) => each.getBoundingClientRect()),
-    direction,
-  );
-  if (best == null) return false;
-  const reached = candidates[best]!;
+  // Up and down stay in the region they start in while it has anything that way: scored on
+  // distance alone, a sidebar link beside a page's left edge beats the page's own next control.
+  const region = direction === 'up' || direction === 'down' ? from.closest(REGION) : null;
+  const inRegion = region == null ? [] : candidates.filter((each) => region.contains(each));
+  const reached = nearestOf(from, inRegion, direction) ?? nearestOf(from, candidates, direction);
+  if (reached == null) return false;
   const nav = reached.closest('nav');
   const current =
     nav == null || nav.contains(from)
       ? null
       : nav.querySelector<HTMLElement>('[aria-current="page"]');
-  (current != null && candidates.includes(current) ? current : reached).focus();
+  focusFromRemote(current != null && candidates.includes(current) ? current : reached);
   return true;
+}
+
+/** A text field arrives read-only, so its keyboard waits for OK rather than opening on the way past. */
+function focusFromRemote(element: HTMLElement): void {
+  if (isTyped(element) && !element.readOnly) {
+    element.readOnly = true;
+    element.setAttribute(LOCKED, '');
+    element.addEventListener('blur', () => unlock(element), { once: true });
+  }
+  element.focus();
+}
+
+function unlock(field: HTMLInputElement | HTMLTextAreaElement): void {
+  if (!field.hasAttribute(LOCKED)) return;
+  field.removeAttribute(LOCKED);
+  field.readOnly = false;
+}
+
+function isTyped(element: Element | null): element is HTMLInputElement | HTMLTextAreaElement {
+  return (
+    element instanceof HTMLTextAreaElement ||
+    (element instanceof HTMLInputElement && !UNTYPED.has(element.type))
+  );
+}
+
+function nearestOf(
+  from: HTMLElement,
+  candidates: HTMLElement[],
+  direction: Direction,
+): HTMLElement | null {
+  const best = nearest(
+    from.getBoundingClientRect(),
+    candidates.map((each) => each.getBoundingClientRect()),
+    direction,
+  );
+  return best == null ? null : candidates[best]!;
 }
 
 /** Index of the box nearest `from` in `direction`, or null where none lies that way. */

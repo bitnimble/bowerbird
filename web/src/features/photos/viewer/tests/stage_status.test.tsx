@@ -34,19 +34,41 @@ function stage(
   status: { label: string; busy: boolean } | null,
   sources: string[] = [RAW],
   frame: string = RAW,
+  { compiling = false, standIns }: { compiling?: boolean; standIns?: string[] } = {},
 ): JSX.Element {
   return (
     <PhotoStage
       photoKey="p1"
-      pictures={[{ key: 'p1', sources, frame }]}
+      pictures={[{ key: 'p1', sources, frame, standIns }]}
       status={status}
       alt=""
       filename=""
       devicePeakNits={1000}
+      compiling={compiling}
       onImageLoad={() => {}}
     />
   );
 }
+
+test('a wait on the pipelines compiling says so', async () => {
+  holdDecodeOf(RAW);
+  render(stage(null, [RAW], RAW, { compiling: true }));
+  await wait(LOADING_NOTICE_MS + 50);
+  expect(screen.getByRole('status').textContent).toBe(PhotoStageStrings.compilingShaders());
+});
+
+test('a frame still arriving shows its stand-ins, worst first, until it is up', async () => {
+  holdDecodeOf(RAW);
+  const standIns = ['grid.avif', 'embedded.jpg'];
+  render(stage(null, [RAW], RAW, { standIns }));
+  await act(async () => {});
+  const shown = (): (string | null)[] =>
+    screen.queryAllByRole('presentation').map((image) => image.getAttribute('src'));
+  expect(shown()).toEqual(standIns);
+
+  await arrive(RAW);
+  expect(shown()).toEqual([]);
+});
 
 test('a frame that arrives quickly is never called loading', async () => {
   holdDecodeOf(RAW);

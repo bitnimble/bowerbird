@@ -187,7 +187,7 @@ export class PhotosPresenter {
       settingsPresenter,
       (photoId) => this.beginDetail(photoId),
       (source) => this.open(source),
-      (photoId, rendition) => this.showRendition(photoId, rendition),
+      (photoId, rendition) => this.renditionsPresenter.show(photoId, rendition, false),
       (photoId) => this.isCurrent(photoId),
       (error) => this.fail(error),
       (run) => this.enqueueWrite(run),
@@ -1211,6 +1211,11 @@ export class PhotosPresenter {
   @action.bound
   showCursor(): void {
     this.selectionPresenter.showCursor();
+  }
+
+  @action.bound
+  hideCursor(): void {
+    this.selectionPresenter.hideCursor();
   }
 
   private clearSelectedPositions(): void {

@@ -12,6 +12,7 @@ import { PhotoDetailPage } from '../features/photos/viewer/photo_detail_page';
 import { TvPhotoPage } from '../features/photos/viewer/tv_photo_page';
 import { StackTriagePage } from '../features/photos/stack_triage/stack_triage_page';
 import { ConflictsPage } from '../features/replication/conflicts_page';
+import { CalibrateHdrPage } from '../features/settings/calibrate_hdr_page';
 import { SettingsPage } from '../features/settings/settings_page';
 import { OnboardingPage } from '../features/onboarding/onboarding_page';
 import { PrecompilePage } from '../features/precompile/precompile_page';
@@ -302,6 +303,7 @@ export const App = observer(function App(): JSX.Element {
                 )}
                 element={<SettingsPage />}
               />
+              <Route path={route(PathSegment.calibrateHdr())} element={<CalibrateHdrPage />} />
               <Route path={route(PathSegment.exports())} element={<ExportsPage />} />
               <Route
                 path={route(PathSegment.libraries(), PathSegment.param('libraryId'))}

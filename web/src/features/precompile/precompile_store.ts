@@ -4,4 +4,6 @@ export class PrecompileStore {
   @observable accessor ready = false;
   @observable accessor compiled = 0;
   @observable accessor toCompile = 0;
+  /** The photo viewer's pipelines, compiling where nothing was precompiled. */
+  @observable accessor stageCompiling = false;
 }

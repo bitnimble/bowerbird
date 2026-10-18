@@ -50,7 +50,13 @@ import { SidebarStore } from './sidebar_store';
 import { gpuThread } from '../gpu/gpu_thread';
 import { PIPELINES_VERSION } from '../features/precompile/pipelines_version';
 import { readSetting, writeSetting } from './local_setting';
-import { askPhotoAccess, onMobileDevice, photoAccess } from '../api/transport';
+import {
+  askPhotoAccess,
+  onMobileDevice,
+  photoAccess,
+  shellDrawsStage,
+  shellStage,
+} from '../api/transport';
 
 // Peer stores, each with its own context: components subscribe to the one domain
 // they read, and nothing can reach a god-object of everything.
@@ -250,7 +256,14 @@ function build(): { stores: Stores; presenters: Presenters } {
         write: (version) => writeSetting(PRECOMPILED_KEY, version),
       },
       toasts,
-      { precompiles: !onMobileDevice() },
+      {
+        precompiles: !onMobileDevice(),
+        warmStage: () =>
+          Promise.all([
+            gpuThread().warmStage(),
+            shellDrawsStage() ? shellStage.warm(stores.deviceSettings.stageWhite) : null,
+          ]),
+      },
     ),
     devicePhotos: new DevicePhotosPresenter(
       stores.devicePhotos,

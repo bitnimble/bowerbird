@@ -191,6 +191,11 @@ export class SelectionPresenter {
   }
 
   @action.bound
+  hideCursor(): void {
+    this.store.showsCursor = false;
+  }
+
+  @action.bound
   setShowTriage(show: boolean): void {
     this.store.showTriage = show;
   }

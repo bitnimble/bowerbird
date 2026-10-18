@@ -29,6 +29,9 @@ import { styles } from './photo_detail_page.stylex';
 const tvStyles = stylex.create({
   page: {
     position: 'relative',
+    paddingTop: 0,
+    paddingInline: 0,
+    paddingBottom: 0,
   },
   controls: {
     display: 'contents',

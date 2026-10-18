@@ -1,7 +1,13 @@
 import { useRef } from 'react';
 import { observer } from 'mobx-react-lite';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
-import { useDeviceSettingsStore, usePresenters, useViewerStore } from '../../../app/stores_context';
+import {
+  useDeviceSettingsStore,
+  usePrecompileStore,
+  usePresenters,
+  useViewerStore,
+} from '../../../app/stores_context';
+import { renditionVersion } from '../photos_store';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { PhotoStage, type ShellFrames, type StagePicture } from './photo_stage';
 import { renditionsApi } from '../../../api/renditions';
@@ -34,6 +40,7 @@ export const DetailFrame = observer(function DetailFrame({
 }): JSX.Element {
   const store = useViewerStore();
   const device = useDeviceSettingsStore();
+  const precompile = usePrecompileStore();
   const { photos } = usePresenters();
   const step = useStep();
   // Which rendition this photograph is drawn from, asked of the id in the route (`frameOf`, as
@@ -108,11 +115,20 @@ export const DetailFrame = observer(function DetailFrame({
   // shown from (`frameOf`), which is what makes stepping onto it a change of opacity. The
   // reader's choice does not travel with them - it is per photo (`beginDetail`) - so there
   // is no second rendition to hold one at.
+  const standInsOf = (id: string, drawn: ViewerRendition): string[] => {
+    const photo = store.photoFor(id);
+    if (photo == null) return [];
+    const thumbnail = renditionsApi.url(id, 'grid', renditionVersion(photo, 'grid'));
+    return photo.has_embedded === false || drawn === 'embedded'
+      ? [thumbnail]
+      : [thumbnail, store.sourceOf(id, 'embedded')];
+  };
   const strip: StagePicture[] = run.map((id) =>
     id === photoId
       ? {
           key: id,
           sources,
+          standIns: standInsOf(id, showing),
           frame: sources[held.indexOf(showing)],
           alt: (source) => {
             // A retiring frame (an older version's URL) is none of these, and naming it after the
@@ -129,6 +145,7 @@ export const DetailFrame = observer(function DetailFrame({
       : {
           key: id,
           sources: [store.frameOf(id).source],
+          standIns: standInsOf(id, store.frameOf(id).rendition),
           alt: PhotoDetailStrings.frameName(
             nameOf(store, id),
             renditionLabel(store.frameOf(id).rendition, store.photoFor(id)),
@@ -174,7 +191,7 @@ export const DetailFrame = observer(function DetailFrame({
   // buried in the bar, so a reader who has just pressed one wants to be told what they got
   // without a label sitting over the photograph for the rest of the session. A build says
   // so for as long as it takes instead, which is the one wait the viewer has.
-  const named = useNamedRendition(store.rendition);
+  const named = useNamedRendition(store.renditionPicked ? store.rendition : null);
 
   // Ahead of the build: on a device without the original, a build is this same wait on a peer.
   const fetchPhase = store.fetchPhaseOf(photoId, showing);
@@ -211,6 +228,7 @@ export const DetailFrame = observer(function DetailFrame({
       proof={proof}
       devicePeakNits={device.peakNits}
       behind={behind}
+      compiling={precompile.stageCompiling}
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}

@@ -185,7 +185,7 @@ export const SidebarRow = observer(function SidebarRow({
       isActive && sidebarStyles.active,
       tone === 'warning' && sidebarStyles.warning,
       styles.indent(`calc(${size.sidebarStep} * ${depth})`),
-      focusRing.ring,
+      focusRing.inside,
     );
   const linkClass: NavLinkProps['className'] = ({ isActive }) => link(isActive).className;
   const linkStyle: NavLinkProps['style'] = ({ isActive }) => link(isActive).style;
@@ -246,7 +246,7 @@ export const SidebarRow = observer(function SidebarRow({
         {sectionKey != null && (
           <button
             type="button"
-            {...stylex.props(styles.chev, focusRing.ring)}
+            {...stylex.props(styles.chev, focusRing.inside)}
             aria-expanded={open}
             aria-label={
               open ? CollectionListStrings.collapse(name) : CollectionListStrings.expand(name)

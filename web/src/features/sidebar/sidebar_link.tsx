@@ -29,8 +29,9 @@ export const sidebarStyles = stylex.create({
     backgroundColor: color.slateSoft,
     color: color.bone,
     boxShadow: `inset 2px 0 0 ${color.satin}`,
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
+    // Rounded again under the focus ring, which follows these corners.
+    borderTopRightRadius: { default: 0, ':focus-visible': size.radius },
+    borderBottomRightRadius: { default: 0, ':focus-visible': size.radius },
   },
   button: {
     backgroundColor: { default: 'transparent', ':hover': color.slateSoft },
@@ -108,7 +109,7 @@ export function SidebarLink({
   children: ReactNode;
 }): JSX.Element {
   const styled = (isActive: boolean): ReturnType<typeof stylex.props> =>
-    stylex.props(sidebarStyles.link, isActive && sidebarStyles.active, focusRing.ring);
+    stylex.props(sidebarStyles.link, isActive && sidebarStyles.active, focusRing.inside);
   const className: NavLinkProps['className'] = ({ isActive }) => styled(isActive).className;
   return (
     <Tooltip label={tooltip}>
@@ -139,7 +140,7 @@ export function SidebarButton({
         sidebarStyles.link,
         sidebarStyles.button,
         tone === 'update' && sidebarStyles.update,
-        focusRing.ring,
+        focusRing.inside,
       )}
       onClick={onClick}
     >

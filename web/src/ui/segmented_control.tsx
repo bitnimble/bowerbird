@@ -143,7 +143,7 @@ export function SegmentedControl<T extends string>({
     stylex.props(
       buttonStyles.base,
       option.iconOnly === true && buttonStyles.icon,
-      focusRing.ring,
+      focusRing.inside,
       styles.item,
       option.tone != null && styles[option.tone],
       stretch && styles.itemStretch,

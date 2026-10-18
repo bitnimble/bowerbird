@@ -113,6 +113,8 @@ export interface StagePicture {
    * renditions of one photograph. Falls back to the stage's own `alt`.
    */
   alt?: string | ((source: string) => string);
+  /** Files of it the browser shows by itself, worst first, put up while its frame is on the way. */
+  standIns?: readonly string[];
 }
 
 function altOf(picture: StagePicture | undefined, source: string): string | undefined {
@@ -205,7 +207,12 @@ interface Props {
    * (`shellDrawsStage`), and the light to draw them at; null where the page draws every frame.
    */
   behind?: ShellFrames | null;
+  /** The viewer's GPU pipelines are still compiling, which the first frame waits on. */
+  compiling?: boolean;
 }
+
+// Over the picture's edge rather than short of it: the shell rounds its fit on its own pixels.
+const SURROUND_OVERLAP_PX = 1;
 
 function noop(): void {
   /* a frame on its way off the stage reports to nobody */
@@ -246,6 +253,7 @@ export function PhotoStage({
   proof = null,
   devicePeakNits,
   behind = null,
+  compiling = false,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -870,8 +878,13 @@ export function PhotoStage({
     (unreadable
       ? { label: PhotoStageStrings.frameUnreadable(), busy: false }
       : loading && loadingLong
-        ? { label: PhotoStageStrings.loading(), busy: true }
+        ? {
+            label: compiling ? PhotoStageStrings.compilingShaders() : PhotoStageStrings.loading(),
+            busy: true,
+          }
         : null);
+  const standIns =
+    !ready && (visible == null || pictureOf(visible) !== shownKey) ? (picture?.standIns ?? []) : [];
 
   // Still opaque under whatever replaced them. Not the frame on screen, which the
   // hold may name when a promotion left it where it was; and not one being asked
@@ -1075,6 +1088,22 @@ export function PhotoStage({
             </div>
           ))
         )}
+        {visible != null && hold !== true && drawsBehind(visible) && (
+          <div {...stylex.props(styles.surround)}>
+            <div
+              {...stylex.props(styles.surroundHole)}
+              style={{
+                left: `${letterbox.x + SURROUND_OVERLAP_PX}px`,
+                right: `${letterbox.x + SURROUND_OVERLAP_PX}px`,
+                top: `${letterbox.y + SURROUND_OVERLAP_PX}px`,
+                bottom: `${letterbox.y + SURROUND_OVERLAP_PX}px`,
+              }}
+            />
+          </div>
+        )}
+        {standIns.map((standIn) => (
+          <img key={standIn} src={standIn} alt="" {...stylex.props(styles.standIn)} />
+        ))}
 
         {/* Inset to the photograph rather than to the viewport: a portrait frame in a
             landscape stage leaves letterbox either side, and a corner of the stage is a

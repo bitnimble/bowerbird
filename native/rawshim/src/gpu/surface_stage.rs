@@ -29,6 +29,28 @@ pub struct Picture {
 }
 
 impl Picture {
+    /// One neutral light, `nits` everywhere and brightest, for the calibration's patch.
+    pub fn flat(gpu: &Gpu, nits: f64) -> Option<Picture> {
+        const SIDE: usize = 2;
+        let signal = crate::tone::pq(Light::<DisplayNits>::exactly(nits)).raw();
+        let luma = (64.0 + 876.0 * signal).round() as u16;
+        let plane = |sample: u16| sample.to_le_bytes().repeat(SIDE * SIDE);
+        let planes = [plane(luma), plane(512), plane(512)];
+        Picture::upload(
+            gpu,
+            &Coded {
+                planes: planes.each_ref().map(Vec::as_slice),
+                strides: [SIDE * 2; 3],
+                width: SIDE,
+                height: SIDE,
+                bits: 10,
+                subsampled: false,
+                rotation: 0,
+                max_cll: Some(nits.ceil() as u16),
+            },
+        )
+    }
+
     /// Each plane straight from the decoder's rows. None where a plane is past what this device
     /// holds in a texture.
     pub fn upload(gpu: &Gpu, coded: &Coded<'_>) -> Option<Picture> {
@@ -203,7 +225,7 @@ pub fn draw(
     recording.submit();
 }
 
-fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
+pub(crate) fn pipeline(gpu: &Gpu, white: Gain) -> wgpu::RenderPipeline {
     static MODULE: std::sync::OnceLock<wgpu::ShaderModule> = std::sync::OnceLock::new();
     static BUILT: std::sync::Mutex<Vec<(u64, wgpu::RenderPipeline)>> =
         std::sync::Mutex::new(Vec::new());
@@ -268,6 +290,7 @@ pub fn measured(left: usize, top: usize, width: usize, height: usize) -> Rect<Ca
 pub struct SurfaceStage {
     surface: wgpu::Surface<'static>,
     size: Size<Canvas>,
+    alpha: wgpu::CompositeAlphaMode,
 }
 
 #[cfg(target_os = "android")]
@@ -298,15 +321,27 @@ impl SurfaceStage {
                 })
         }
         .map_err(|refused| format!("the window refused a surface: {refused}"))?;
-        let offered = surface
-            .get_capabilities(&gpu.answered)
-            .color_spaces(CANVAS_FORMAT);
+        let capabilities = surface.get_capabilities(&gpu.answered);
+        let offered = capabilities.color_spaces(CANVAS_FORMAT);
         if !offered.contains(wgpu::SurfaceColorSpaces::EXTENDED_SRGB_LINEAR) {
             return Err(format!("the window takes no scRGB, only {offered:?}"));
         }
+        let alpha = [
+            wgpu::CompositeAlphaMode::Opaque,
+            wgpu::CompositeAlphaMode::Inherit,
+        ]
+        .into_iter()
+        .find(|mode| capabilities.alpha_modes.contains(mode))
+        .ok_or_else(|| {
+            format!(
+                "the window offers no opaque alpha: {:?}",
+                capabilities.alpha_modes
+            )
+        })?;
         let mut stage = SurfaceStage {
             surface,
             size: Size::default(),
+            alpha,
         };
         stage.resize(gpu, size);
         Ok(stage)
@@ -367,7 +402,7 @@ impl SurfaceStage {
                 present_mode: wgpu::PresentMode::Fifo,
                 // A still: nothing queues behind the frame on screen, so no image waits spare.
                 desired_maximum_frame_latency: 1,
-                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                alpha_mode: self.alpha,
                 view_formats: Vec::new(),
             },
         );

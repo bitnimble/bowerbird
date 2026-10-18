@@ -175,6 +175,11 @@ class ShellStageBridge {
   private readonly ready = new Set<string>();
   private readonly releases = new Map<string, number>();
 
+  /** Compiles the stage for SDR white at scRGB `white`, ahead of the first photo. */
+  async warm(white: number): Promise<void> {
+    await shellInvoke()?.('stage_warm', { stage: { white } });
+  }
+
   /** Drops whatever an earlier load of the page left prepared or on screen. */
   async reset(): Promise<void> {
     await shellInvoke()?.('stage_reset', {});

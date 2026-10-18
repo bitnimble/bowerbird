@@ -128,11 +128,22 @@ export const GridKeys = observer(function GridKeys({ scrollerId }: { scrollerId:
       photos.moveFocus(0);
       photos.showCursor();
     }
+    // A remote's arrows go where the focus is, so the cursor is drawn only while the grid has it.
+    function onBlur(e: FocusEvent): void {
+      const scroller = document.getElementById(scrollerId);
+      if (scroller == null || !(e.target instanceof Node) || !scroller.contains(e.target)) return;
+      if (e.relatedTarget instanceof Node && scroller.contains(e.relatedTarget)) return;
+      photos.hideCursor();
+    }
     window.addEventListener('keydown', onKey);
-    if (tv) window.addEventListener('focusin', onFocus);
+    if (tv) {
+      window.addEventListener('focusin', onFocus);
+      window.addEventListener('focusout', onBlur);
+    }
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('focusin', onFocus);
+      window.removeEventListener('focusout', onBlur);
     };
   }, [photos, listing, marks, navigate, scrollerId]);
 

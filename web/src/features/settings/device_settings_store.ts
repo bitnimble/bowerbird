@@ -5,7 +5,8 @@ import { SDR_WHITE_NITS } from '../../app/sdr_white';
 /** What a display is assumed to reach where nothing has been said about this one. */
 export const DEFAULT_DISPLAY_PEAK_NITS = 1000;
 
-export const DEFAULT_SDR_WHITE_NITS = 480;
+/** A Shield's: SDR white at 480 nits, as scRGB counts them in 80s. */
+export const DEFAULT_HDR_WHITE = 6;
 
 const SCRGB_ONE_NITS = 80;
 
@@ -22,10 +23,11 @@ export class DeviceSettingsStore {
    */
   @observable accessor displayPeakNits = DEFAULT_DISPLAY_PEAK_NITS;
   /**
-   * How bright the display shows SDR white once it is in HDR, as the reader sets it, for a TV whose
-   * shell draws HDR photos (`shellDrawsStage`) on an Android that does not measure the screen.
+   * The scRGB value an HDR photo's SDR white is drawn at to match the menus, as the reader
+   * calibrates it, for a TV whose shell draws HDR photos (`shellDrawsStage`) on an Android that
+   * does not measure the screen.
    */
-  @observable accessor sdrWhiteNits = DEFAULT_SDR_WHITE_NITS;
+  @observable accessor hdrWhite = DEFAULT_HDR_WHITE;
   /** The app's page zoom, which a browser has its own of. */
   @observable accessor uiScale = 1;
   @observable accessor viewerQualityNoticeClosed = false;
@@ -48,12 +50,13 @@ export class DeviceSettingsStore {
   get stageHeadroom(): number | null {
     const peak = this.peakNits;
     if (peak == null) return null;
-    return Math.max(1, peak / (this.screen.measures ? SDR_WHITE_NITS : this.sdrWhiteNits));
+    const white = this.screen.measures ? SDR_WHITE_NITS : this.hdrWhite * SCRGB_ONE_NITS;
+    return Math.max(1, peak / white);
   }
 
   /** The scRGB value the shell's stage draws SDR white at: 1 where Android measures the screen. */
   @computed
   get stageWhite(): number {
-    return this.screen.measures ? 1 : this.sdrWhiteNits / SCRGB_ONE_NITS;
+    return this.screen.measures ? 1 : this.hdrWhite;
   }
 }

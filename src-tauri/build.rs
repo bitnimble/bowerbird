@@ -20,6 +20,7 @@ fn main() {
         "reveal_original",
         "app_data_dir",
         "open_app_data_dir",
+        "stage_warm",
         "stage_reset",
         "stage_prepare",
         "stage_release",

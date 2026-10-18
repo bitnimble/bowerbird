@@ -3,13 +3,13 @@ import { applyUiScale } from '../../api/transport';
 import { readSetting, writeSetting } from '../../app/local_setting';
 import {
   DEFAULT_DISPLAY_PEAK_NITS,
-  DEFAULT_SDR_WHITE_NITS,
+  DEFAULT_HDR_WHITE,
   type DeviceSettingsStore,
 } from './device_settings_store';
 
 const RENDER_ON_THIS_DEVICE_KEY = 'bowerbird.renderOnThisDevice';
 const DISPLAY_PEAK_NITS_KEY = 'bowerbird.displayPeakNits';
-const SDR_WHITE_NITS_KEY = 'bowerbird.sdrWhiteNits';
+const HDR_WHITE_KEY = 'bowerbird.hdrWhite';
 const UI_SCALE_KEY = 'bowerbird.uiScale';
 const VIEWER_QUALITY_NOTICE_KEY = 'bowerbird.viewerQualityNoticeClosed';
 const EDITOR_QUALITY_NOTICE_KEY = 'bowerbird.editorQualityNoticeClosed';
@@ -23,7 +23,7 @@ export class DeviceSettingsPresenter {
   private restore(): void {
     this.store.renderOnThisDevice = readSetting(RENDER_ON_THIS_DEVICE_KEY) === '1';
     this.store.displayPeakNits = savedNits(DISPLAY_PEAK_NITS_KEY, DEFAULT_DISPLAY_PEAK_NITS);
-    this.store.sdrWhiteNits = savedNits(SDR_WHITE_NITS_KEY, DEFAULT_SDR_WHITE_NITS);
+    this.store.hdrWhite = savedHdrWhite();
     this.store.uiScale = savedUiScale();
     this.store.viewerQualityNoticeClosed = readSetting(VIEWER_QUALITY_NOTICE_KEY) === '1';
     this.store.editorQualityNoticeClosed = readSetting(EDITOR_QUALITY_NOTICE_KEY) === '1';
@@ -54,12 +54,12 @@ export class DeviceSettingsPresenter {
     writeSetting(DISPLAY_PEAK_NITS_KEY, String(nits));
   }
 
-  /** Ignores anything that is not a brightness, which leaves the field showing what it was. */
+  /** Ignores anything that is not a positive scale, which leaves the field showing what it was. */
   @action.bound
-  setSdrWhiteNits(nits: number): void {
-    if (!Number.isFinite(nits) || nits < 1) return;
-    this.store.sdrWhiteNits = nits;
-    writeSetting(SDR_WHITE_NITS_KEY, String(nits));
+  setHdrWhite(white: number): void {
+    if (!isHdrWhite(white)) return;
+    this.store.hdrWhite = white;
+    writeSetting(HDR_WHITE_KEY, String(white));
   }
 
   /** Kept only once the shell has applied it, so a refused scale is not the one restored. */
@@ -84,6 +84,15 @@ export function restoreUiScale(): Promise<void> {
 function savedNits(key: string, fallback: number): number {
   const nits = Number(readSetting(key) ?? fallback);
   return Number.isFinite(nits) && nits >= 1 ? nits : fallback;
+}
+
+function savedHdrWhite(): number {
+  const white = Number(readSetting(HDR_WHITE_KEY) ?? DEFAULT_HDR_WHITE);
+  return isHdrWhite(white) ? white : DEFAULT_HDR_WHITE;
+}
+
+function isHdrWhite(white: number): boolean {
+  return Number.isFinite(white) && white > 0;
 }
 
 function savedUiScale(): number {

@@ -41,10 +41,10 @@ export class RenditionsPresenter {
   }
 
   // Puts a rendition on screen, building it first if it is not on disk.
-  async show(photoId: string, rendition: ViewerRendition): Promise<void> {
+  async show(photoId: string, rendition: ViewerRendition, picked = true): Promise<void> {
     if (!(await this.ensureBuilt(photoId, rendition))) return;
     if (!this.isCurrent(photoId)) return;
-    this.viewer.chooseRendition(rendition);
+    this.viewer.chooseRendition(rendition, picked);
   }
 
   // Builds the rendition the first time and leaves the cached file alone every

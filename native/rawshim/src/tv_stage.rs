@@ -31,6 +31,12 @@ pub unsafe extern "C" fn bb_stage_picture(
             .inspect_err(|refused| crate::warn(&format!("rawshim stage: {refused}")))
             .ok()??
     });
+    unsafe { handed(picture, width, height) }
+}
+
+/// # Safety
+/// `width` and `height` are writable.
+unsafe fn handed(picture: Option<Picture>, width: *mut u32, height: *mut u32) -> *mut Picture {
     let Some(picture) = picture else {
         return std::ptr::null_mut();
     };
@@ -40,6 +46,41 @@ pub unsafe extern "C" fn bb_stage_picture(
         *height = shown_height as u32;
     }
     Box::into_raw(Box::new(picture))
+}
+
+/// Opens the device and builds the stage's pipeline for SDR white at scRGB `white`, so the first
+/// photo is not drawn behind a compile. 0 when built.
+#[unsafe(no_mangle)]
+pub extern "C" fn bb_stage_warm(white: f32) -> c_int {
+    if !(white > 0.0) {
+        return -1;
+    }
+    crate::guard("bb_stage_warm", -1, || {
+        let Some(gpu) = crate::gpu::device() else {
+            return -1;
+        };
+        crate::gpu::surface_stage::pipeline(gpu, Gain::of_ratio(f64::from(white)));
+        0
+    })
+}
+
+/// A picture of `nits` everywhere, as [`bb_stage_picture`] hands one over.
+///
+/// # Safety
+/// `width` and `height` are writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_stage_flat(
+    nits: f32,
+    width: *mut u32,
+    height: *mut u32,
+) -> *mut Picture {
+    if !(nits > 0.0) || width.is_null() || height.is_null() {
+        return std::ptr::null_mut();
+    }
+    let picture = crate::guard("bb_stage_flat", None, || {
+        Picture::flat(crate::gpu::device()?, f64::from(nits))
+    });
+    unsafe { handed(picture, width, height) }
 }
 
 /// # Safety

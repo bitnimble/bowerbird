@@ -66,6 +66,7 @@ pub fn run() {
             server::app_data_dir,
             server::open_app_data_dir,
             server::server_log_file,
+            stage::stage_warm,
             stage::stage_reset,
             stage::stage_prepare,
             stage::stage_release,

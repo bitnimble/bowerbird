@@ -158,6 +158,7 @@ export const MessageSchema = z.discriminatedUnion('to', [
     to: z.literal('heif'),
     file: z.custom<Uint8Array>((value) => value instanceof Uint8Array),
   }),
+  z.object({ id: z.number(), to: z.literal('warmStage') }),
 ]);
 export type Message = z.infer<typeof MessageSchema>;
 

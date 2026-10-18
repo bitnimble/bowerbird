@@ -65,7 +65,7 @@ import {
   useSettingWriter,
 } from './settings_controls';
 import { SettingsStrings } from './settings_page.strings';
-import { DEFAULT_DISPLAY_PEAK_NITS, DEFAULT_SDR_WHITE_NITS } from './device_settings_store';
+import { DEFAULT_DISPLAY_PEAK_NITS, DEFAULT_HDR_WHITE } from './device_settings_store';
 
 const styles = stylex.create({
   page: {
@@ -128,7 +128,7 @@ const GeneralTab = observer(function GeneralTab(): JSX.Element {
               label={SettingsStrings.hideSidebarInViewer()}
             />
             {device.screen.measures ? <MeasuredDisplayPeak /> : <DisplayPeak />}
-            {shellDrawsStage() && !device.screen.measures && <SdrWhite />}
+            {shellDrawsStage() && !device.screen.measures && <HdrWhite />}
           </Panel>
 
           <GroupTitle>{SettingsStrings.groupFrameTv()}</GroupTitle>
@@ -220,17 +220,20 @@ const DisplayPeak = observer(function DisplayPeak(): JSX.Element {
   );
 });
 
-const SdrWhite = observer(function SdrWhite(): JSX.Element {
+const HdrWhite = observer(function HdrWhite(): JSX.Element {
   const device = useDeviceSettingsStore();
   const { deviceSettings } = usePresenters();
+  const navigate = useNavigate();
   return (
-    <NitsSetting
-      label={SettingsStrings.sdrWhiteNits()}
-      hint={SettingsStrings.sdrWhiteNitsHint()}
-      nits={device.sdrWhiteNits}
-      fallback={DEFAULT_SDR_WHITE_NITS}
-      onCommit={deviceSettings.setSdrWhiteNits}
-    />
+    <SettingRow
+      label={SettingsStrings.hdrWhite()}
+      onReset={resetTo(device.hdrWhite, DEFAULT_HDR_WHITE, deviceSettings.setHdrWhite)}
+    >
+      <Text>{SettingsStrings.hdrWhiteScale(device.hdrWhite)}</Text>
+      <Button onClick={() => navigate(route(PathSegment.calibrateHdr()))}>
+        {SettingsStrings.calibrateHdr()}
+      </Button>
+    </SettingRow>
   );
 });
 

@@ -33,6 +33,28 @@ export const styles = stylex.create({
   isolated: {
     isolation: 'isolate',
   },
+  // The shell's letterbox, painted over by the page: SDR ink through the TV's compositor is not
+  // the same light as the shell's own ink.
+  surround: {
+    position: 'absolute',
+    inset: 0,
+    overflow: 'hidden',
+    pointerEvents: 'none',
+  },
+  surroundHole: {
+    position: 'absolute',
+    boxShadow: `0 0 0 100vmax ${color.ink}`,
+  },
+  // A sibling of the frames, never their ancestor: a filter over an HDR canvas draws it in SDR.
+  standIn: {
+    position: 'absolute',
+    inset: 0,
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain',
+    filter: 'blur(2px)',
+    pointerEvents: 'none',
+  },
   pending: {
     display: 'grid',
     placeItems: 'center',

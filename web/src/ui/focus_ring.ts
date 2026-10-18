@@ -6,6 +6,11 @@ export const focusRing = stylex.create({
     outline: { default: null, ':focus-visible': `2px solid ${color.glass}` },
     outlineOffset: { default: null, ':focus-visible': '2px' },
   },
+  /** Drawn inside the element, for one whose container clips or whose neighbours overlap past its edge. */
+  inside: {
+    outline: { default: null, ':focus-visible': `2px solid ${color.glass}` },
+    outlineOffset: { default: null, ':focus-visible': '-2px' },
+  },
   /** For a control whose focus lands on an element inside it that draws nothing, such as a slider thumb's range input. */
   within: {
     outline: { default: null, ':has(:focus-visible)': `2px solid ${color.glass}` },

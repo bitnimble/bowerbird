@@ -117,6 +117,11 @@ export class GpuThread {
     }
   }
 
+  /** Builds the photo viewer's pipelines, so its first paint does not wait on compiling them. */
+  async warmStage(): Promise<void> {
+    await this.send(z.null(), { to: 'warmStage' }, [], () => {});
+  }
+
   ask<S extends z.ZodType>(
     schema: S,
     message: Addressed,

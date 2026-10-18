@@ -92,14 +92,33 @@ interface Drawing {
 
 let drawing: Drawing | null = null;
 
+type Pipelines = Pick<Drawing, 'imported' | 'planar' | 'planarMasked'>;
+
 // Exported for the one test that can tell a masked pipeline from a plain one without an adapter.
 export function pipelinesFor(device: GPUDevice): Drawing {
   if (drawing?.device === device) return drawing;
-  const pipeline = (
-    code: string,
-    fragment: string,
-    target?: GPUColorTargetState,
-  ): GPURenderPipeline => renderPipeline(device, code, fragment, target);
+  const { imported, planar, planarMasked } = descriptorsFor(device);
+  return holding(device, {
+    imported: device.createRenderPipeline(imported),
+    planar: device.createRenderPipeline(planar),
+    planarMasked: device.createRenderPipeline(planarMasked),
+  });
+}
+
+/** The same pipelines compiled off this thread, so the first paint finds them built. */
+export async function warmStagePipelines(device: GPUDevice): Promise<void> {
+  if (drawing?.device === device) return;
+  const { imported, planar, planarMasked } = descriptorsFor(device);
+  const [built, plain, masked] = await Promise.all([
+    device.createRenderPipelineAsync(imported),
+    device.createRenderPipelineAsync(planar),
+    device.createRenderPipelineAsync(planarMasked),
+  ]);
+  if (drawing?.device === device) return;
+  holding(device, { imported: built, planar: plain, planarMasked: masked });
+}
+
+function holding(device: GPUDevice, pipelines: Pipelines): Drawing {
   drawing = {
     device,
     colour: device.createBuffer({
@@ -110,37 +129,43 @@ export function pipelinesFor(device: GPUDevice): Drawing {
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     }),
-    imported: pipeline(IMPORTED, 'imported'),
-    planar: pipeline(PLANAR_WGSL, 'planar'),
+    ...pipelines,
     finished: null,
-    // Premultiplied source over what is already there: the fragment writes the picture times its
-    // own alpha, so a pixel the mask leaves out contributes nothing rather than a black fringe.
-    planarMasked: pipeline(PLANAR_WGSL, 'planar_masked', {
-      format: 'rgba16float',
-      blend: {
-        color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-      },
-    }),
     pack: null,
     sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }),
   };
   return drawing;
 }
 
-function renderPipeline(
+function descriptorsFor(device: GPUDevice): Record<keyof Pipelines, GPURenderPipelineDescriptor> {
+  return {
+    imported: pipelineDescriptor(device, IMPORTED, 'imported'),
+    planar: pipelineDescriptor(device, PLANAR_WGSL, 'planar'),
+    // Premultiplied source over what is already there: the fragment writes the picture times its
+    // own alpha, so a pixel the mask leaves out contributes nothing rather than a black fringe.
+    planarMasked: pipelineDescriptor(device, PLANAR_WGSL, 'planar_masked', {
+      format: 'rgba16float',
+      blend: {
+        color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+      },
+    }),
+  };
+}
+
+function pipelineDescriptor(
   device: GPUDevice,
   code: string,
   fragment: string,
   target?: GPUColorTargetState,
-): GPURenderPipeline {
+): GPURenderPipelineDescriptor {
   const module = device.createShaderModule({ code });
-  return device.createRenderPipeline({
+  return {
     layout: 'auto',
     vertex: { module, entryPoint: 'vertex' },
     fragment: { module, entryPoint: fragment, targets: [target ?? { format: 'rgba16float' }] },
     primitive: { topology: 'triangle-list' },
-  });
+  };
 }
 
 /**
@@ -498,7 +523,9 @@ export class StagePainter {
       const pipeline =
         finished == null
           ? drawn.planar
-          : (drawn.finished ??= renderPipeline(device, PLANAR_WGSL, 'finished'));
+          : (drawn.finished ??= device.createRenderPipeline(
+              pipelineDescriptor(device, PLANAR_WGSL, 'finished'),
+            ));
       drawOnce(device, surface.view, pipeline, entries);
       return await surface.finish();
     } catch (err) {

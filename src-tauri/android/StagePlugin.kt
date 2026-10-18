@@ -48,6 +48,11 @@ class StageShowArgs {
 }
 
 @InvokeArg
+class StageWarmArgs {
+    var white = 0f
+}
+
+@InvokeArg
 class StageHideArgs {
     var sequence = 0L
 }
@@ -135,6 +140,20 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun warm(invoke: Invoke) {
+        val white = invoke.parseArgs(StageWarmArgs::class.java).white
+        pending.offerFirst(
+            Runnable {
+                try {
+                    if (warm(white)) invoke.resolve() else invoke.reject("the stage behind the page could not compile")
+                } catch (err: Throwable) {
+                    invoke.reject(err.toString())
+                }
+            },
+        )
+    }
+
+    @Command
     fun release(invoke: Invoke) {
         val url = invoke.parseArgs(StageReleaseArgs::class.java).url
         wanted.remove(url)
@@ -217,6 +236,12 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
     private fun prepared(url: String): JSObject {
         pictures[url]?.let { return ready(it) }
         if (url !in wanted && url != shownUrl) return state("refused")
+        if (url.startsWith(PATTERN)) {
+            val size = IntArray(2)
+            val handle = url.removePrefix(PATTERN).toFloatOrNull()?.let { flat(it, size) } ?: 0L
+            if (handle == 0L) return state("refused")
+            return ready(Prepared(handle, size[0], size[1]).also { pictures[url] = it })
+        }
         val avif = when (val fetched = fetch(url)) {
             is Fetched.Missing -> return state("missing")
             is Fetched.Failed -> return state("refused")
@@ -400,6 +425,9 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
         private const val TAG = "StagePlugin"
         private const val FETCH_TIMEOUT_MS = 10_000
 
+        // `pattern:<nits>`: a flat patch built here rather than fetched (`calibrate_hdr_page.tsx`).
+        private const val PATTERN = "pattern:"
+
         // `stage.rs`, in the app's own library, which the activity has loaded.
         @JvmStatic external fun attach(surface: Surface, width: Int, height: Int): Long
 
@@ -408,6 +436,10 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
         @JvmStatic external fun picture(avif: ByteBuffer, length: Int, size: IntArray): Long
 
         @JvmStatic external fun pictureFree(picture: Long)
+
+        @JvmStatic external fun warm(white: Float): Boolean
+
+        @JvmStatic external fun flat(nits: Float, size: IntArray): Long
 
         @JvmStatic external fun present(
             window: Long,

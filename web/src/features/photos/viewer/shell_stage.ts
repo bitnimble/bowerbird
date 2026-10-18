@@ -32,6 +32,12 @@ export function useShellStage(
       const rect = element.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return;
       const scale = window.devicePixelRatio;
+      // Edge by edge, as the page snaps an element to its pixels: a rounded size beside a rounded
+      // place lands a pixel off the page's own edge.
+      const left = Math.round(rect.left * scale);
+      const top = Math.round(rect.top * scale);
+      const right = Math.round((rect.left + rect.width) * scale);
+      const bottom = Math.round((rect.top + rect.height) * scale);
       const ask = ++latest;
       // An overtaken ask answers false, which is no news about the one that overtook it.
       const answered = (shown: boolean): void => {
@@ -40,10 +46,10 @@ export function useShellStage(
       shellStage
         .show({
           url: source,
-          left: Math.round(rect.left * scale),
-          top: Math.round(rect.top * scale),
-          width: Math.round(rect.width * scale),
-          height: Math.round(rect.height * scale),
+          left,
+          top,
+          width: right - left,
+          height: bottom - top,
           headroom,
           white,
         })

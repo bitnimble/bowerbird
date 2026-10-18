@@ -31,7 +31,11 @@ import { PortedFiles } from '../app/local_setting';
 import { PipelineWarmth, storedRecipes } from '../features/raw_edit/stage/pipeline_warmth';
 import { planarLayout } from '../features/photos/viewer/planar_layout';
 import { WebCodecs } from '../features/photos/viewer/image_decoder';
-import { pipelinesFor, StagePainter } from '../features/photos/viewer/stage_gpu';
+import {
+  pipelinesFor,
+  StagePainter,
+  warmStagePipelines,
+} from '../features/photos/viewer/stage_gpu';
 import {
   AnswerSchema,
   CompilingSchema,
@@ -161,6 +165,9 @@ async function answer(
       const framed = heifView(message.file);
       return { value: framed, transfer: [framed.buffer] };
     }
+    case 'warmStage':
+      if (opened != null) await warmStagePipelines(opened);
+      return { value: null };
     case 'open': {
       // A draw reaching a pipeline still warming would compile it again, synchronously, and freeze
       // every page while it did. Never for a canvas, which draws nothing: queued behind the warmth,
