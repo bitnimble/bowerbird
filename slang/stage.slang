@@ -32,8 +32,8 @@ struct Colour {
     /// Chroma pixels per luma pixel: a half for 4:2:0, one for the 4:4:4 a still with a measured
     /// chroma leak is written as (`job::CHROMA_LEAK_TILE_FRACTION`).
     float chroma;
-    /// Where `planar_masked` reads for a canvas pixel, relative to it, in canvas pixels: a merge
-    /// piece taken from where its content went in its frame.
+    /// Where a canvas pixel reads, relative to it, in canvas pixels: a merge piece taken from where
+    /// its content went in its frame, or a native window's picture drawn inside its letterbox.
     float2 shift;
     /// What `planar_masked`'s light is multiplied by: a merge piece's seam balance, the `Gain`
     /// `stage_light` takes, bare in the block.
@@ -305,10 +305,16 @@ float4 finished(Drawn drawn) : SV_Target
     return float4(shown(finished_light(stored_at(drawn.position.xy))), 1.0);
 }
 
+/// Floored at the origin: a negative position wraps as it becomes a texel index.
+float2 shifted(Drawn drawn)
+{
+    return max(drawn.position.xy + colour.shift, float2(0.0));
+}
+
 [shader("fragment")]
 float4 planar(Drawn drawn) : SV_Target
 {
-    return float4(stage_light(drawn.position.xy, gain(1.0)), 1.0);
+    return float4(stage_light(shifted(drawn), gain(1.0)), 1.0);
 }
 
 [shader("fragment")]
@@ -319,6 +325,5 @@ float4 planar_masked(Drawn drawn) : SV_Target
     let alpha = mask.Load(int3(int2(drawn.position.xy), 0)).r;
     // Premultiplied: the pipeline blends `one, one-minus-src-alpha`, so an unmasked pixel has to
     // contribute nothing rather than a black fringe at full coverage's edge.
-    // Floored at the origin: a negative position wraps as it becomes a texel index.
-    return float4(stage_light(max(drawn.position.xy + colour.shift, float2(0.0)), gain(colour.gain)) * alpha, alpha);
+    return float4(stage_light(shifted(drawn), gain(colour.gain)) * alpha, alpha);
 }

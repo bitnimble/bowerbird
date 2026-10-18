@@ -159,17 +159,60 @@ export interface ShellStage {
 
 const ShownSchema = z.boolean();
 
-/** The shell's HDR stage (`stage.rs`), whose asks it takes in the order the page made them. */
+const PreparedSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('ready'), width: z.number(), height: z.number() }),
+  z.object({ state: z.literal('missing') }),
+  z.object({ state: z.literal('refused') }),
+]);
+
+/** A photo on the device for the shell to show: at its shown size, not built yet, or not its to draw. */
+export type Prepared = z.infer<typeof PreparedSchema>;
+
+/** The shell's HDR stage (`stage.rs`), whose shows and hides it takes in the order the page made them. */
 class ShellStageBridge {
   // The shell outlives a page load, and holds each load's asks to the last one's numbers.
   private asked = Date.now();
+  private readonly ready = new Set<string>();
+  private readonly releases = new Map<string, number>();
+
+  /** Drops whatever an earlier load of the page left prepared or on screen. */
+  async reset(): Promise<void> {
+    await shellInvoke()?.('stage_reset', {});
+  }
+
+  /** `urgent` for the photo on screen, ahead of the ones held beside it. */
+  async prepare(url: string, urgent: boolean): Promise<Prepared> {
+    const invoke = shellInvoke();
+    if (invoke == null) return { state: 'refused' };
+    const named = absolute(url);
+    const released = this.releases.get(named);
+    const prepared = PreparedSchema.parse(
+      await invoke('stage_prepare', { stage: { url: named, urgent } }),
+    );
+    if (prepared.state === 'ready' && this.releases.get(named) === released) {
+      this.ready.add(named);
+    }
+    return prepared;
+  }
+
+  /** Whether the shell holds `url` prepared, as the page would hold a decoded frame. */
+  holds(url: string): boolean {
+    return this.ready.has(absolute(url));
+  }
+
+  async release(url: string): Promise<void> {
+    const named = absolute(url);
+    this.ready.delete(named);
+    this.releases.set(named, (this.releases.get(named) ?? 0) + 1);
+    await shellInvoke()?.('stage_release', { stage: { url: named } });
+  }
 
   /** Whether the photo is on screen behind the page; false leaves the page to draw it. */
   async show(stage: ShellStage): Promise<boolean> {
     const invoke = shellInvoke();
     if (invoke == null) return false;
-    const shown = await invoke('stage_show', { stage: { ...stage, sequence: ++this.asked } });
-    return ShownSchema.parse(shown);
+    const asked = { ...stage, url: absolute(stage.url), sequence: ++this.asked };
+    return ShownSchema.parse(await invoke('stage_show', { stage: asked }));
   }
 
   async hide(): Promise<void> {
@@ -178,6 +221,11 @@ class ShellStageBridge {
 }
 
 export const shellStage = new ShellStageBridge();
+
+/** The shell fetches for itself, and names a photo by the same URL every time. */
+function absolute(url: string): string {
+  return new URL(url, window.location.href).href;
+}
 
 const PhotoAccessSchema = z
   .object({

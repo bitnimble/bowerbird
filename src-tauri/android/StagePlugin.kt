@@ -17,8 +17,23 @@ import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.Executors
+import java.nio.ByteBuffer
+import java.nio.channels.Channels
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.LinkedBlockingDeque
+import kotlin.concurrent.thread
 import kotlin.math.roundToInt
+
+@InvokeArg
+class StagePrepareArgs {
+    lateinit var url: String
+    var urgent = false
+}
+
+@InvokeArg
+class StageReleaseArgs {
+    lateinit var url: String
+}
 
 @InvokeArg
 class StageShowArgs {
@@ -38,34 +53,48 @@ class StageHideArgs {
 }
 
 /**
- * The viewer's HDR photo on a TV, whose WebView composites in SDR: a window behind the transparent
- * page, in scRGB, which librawshim draws into through `stage.rs`. One photo at a time; a newer
- * `show`, or a `hide`, answers the one waiting with `drawn: false`.
+ * The viewer's HDR photos on a TV, whose WebView composites in SDR: an scRGB window behind the
+ * transparent page, drawn by librawshim through `stage.rs`.
  */
 @TauriPlugin
 class StagePlugin(private val activity: Activity) : Plugin(activity) {
+    private class Prepared(val handle: Long, val width: Int, val height: Int)
+
     private class Target(
         val ticket: Int,
-        val width: Int,
-        val height: Int,
+        val url: String,
+        val boxWidth: Int,
+        val boxHeight: Int,
+        val density: Float,
         val headroom: Float,
         val white: Float,
     )
 
-    private val worker = Executors.newSingleThreadExecutor()
+    private class Placed(
+        val target: Target,
+        val width: Int,
+        val height: Int,
+        val fitLeft: Int,
+        val fitTop: Int,
+        val fitWidth: Int,
+        val fitHeight: Int,
+    )
 
-    // UI thread, apart from `ticket`, which the worker reads to give up on a superseded fetch.
+    // Urgent work first: the photo on screen ahead of the ones the page holds beside it.
+    private val pending = LinkedBlockingDeque<Runnable>()
+    private val wanted: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    // UI thread, apart from `ticket`, which the worker reads to drop a superseded draw.
     private var view: SurfaceView? = null
-    private var placedUrl: String? = null
     private var waiting: Invoke? = null
     private var sequence = 0L
+    private var fixed = Pair(0, 0)
     @Volatile private var ticket = 0
-    @Volatile private var target: Target? = null
+    @Volatile private var placed: Placed? = null
 
     // Worker.
-    private var picture = 0L
-    private var pictureUrl: String? = null
-    private val pictureSize = IntArray(2)
+    private val pictures = HashMap<String, Prepared>()
+    private var shownUrl: String? = null
 
     // Under `drawing`: `surfaceDestroyed` takes it, so no draw outlives the window.
     private val drawing = Any()
@@ -73,6 +102,45 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
     private var window = 0L
     private var windowWidth = 0
     private var windowHeight = 0
+
+    init {
+        thread(name = "stage", isDaemon = true) {
+            while (true) {
+                val task = pending.takeFirst()
+                try {
+                    task.run()
+                } catch (err: Throwable) {
+                    // A throw here would end the app, and leave the page waiting on its answer.
+                    Log.w(TAG, "the stage behind the page failed", err)
+                    activity.runOnUiThread { answer(false) }
+                }
+            }
+        }
+    }
+
+    /** Resolves `ready` with the picture's shown size, `missing` on a 404, else `refused`. */
+    @Command
+    fun prepare(invoke: Invoke) {
+        val args = invoke.parseArgs(StagePrepareArgs::class.java)
+        wanted.add(args.url)
+        val task = Runnable {
+            try {
+                invoke.resolve(prepared(args.url))
+            } catch (err: Throwable) {
+                Log.w(TAG, "could not prepare ${args.url}", err)
+                invoke.reject(err.toString())
+            }
+        }
+        if (args.urgent) pending.offerFirst(task) else pending.offerLast(task)
+    }
+
+    @Command
+    fun release(invoke: Invoke) {
+        val url = invoke.parseArgs(StageReleaseArgs::class.java).url
+        wanted.remove(url)
+        pending.offerLast(Runnable { if (url !in wanted && url != shownUrl) forget(url) })
+        invoke.resolve()
+    }
 
     @Command
     fun show(invoke: Invoke) {
@@ -82,17 +150,43 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
         answer(false)
+        val mine = ++ticket
         if (args.width <= 0 || args.height <= 0) {
-            ++ticket
             withdraw()
             invoke.resolve(shown(false))
             return
         }
         waiting = invoke
-        val mine = ++ticket
-        // Out of sight until the next one is drawn, which the page covers meanwhile.
-        if (args.url != placedUrl) withdraw()
-        work(mine) { prepare(mine, args) }
+        val shown = ensureView()
+        val current = shown.layoutParams as? FrameLayout.LayoutParams
+        if (
+            current?.leftMargin != args.left ||
+            current.topMargin != args.top ||
+            current.width != args.width ||
+            current.height != args.height
+        ) {
+            shown.layoutParams =
+                FrameLayout.LayoutParams(args.width, args.height).apply {
+                    leftMargin = args.left
+                    topMargin = args.top
+                }
+        }
+        @Suppress("DEPRECATION")
+        val mode = activity.windowManager.defaultDisplay.mode
+        val density = maxOf(1f, mode.physicalWidth.toFloat() / activity.window.decorView.width.coerceAtLeast(1))
+        val target = Target(mine, args.url, args.width, args.height, density, args.headroom, args.white)
+        pending.offerFirst(Runnable { place(target) })
+    }
+
+    /** A fresh page: whatever the last one prepared or showed goes. */
+    @Command
+    fun reset(invoke: Invoke) {
+        wanted.clear()
+        ++ticket
+        answer(false)
+        withdraw()
+        pending.offerLast(Runnable { pictures.keys.filter { it !in wanted && it != shownUrl }.forEach(::forget) })
+        invoke.resolve()
     }
 
     @Command
@@ -101,7 +195,6 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
             ++ticket
             answer(false)
             withdraw()
-            work(ticket) { forgetPicture() }
         }
         invoke.resolve()
     }
@@ -114,116 +207,145 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
         return true
     }
 
-    // A throw on the worker would end the app, and leave the page waiting on its answer.
-    private fun work(mine: Int, task: () -> Unit) {
-        worker.execute {
-            try {
-                task()
-            } catch (err: Throwable) {
-                Log.w(TAG, "could not draw the photo behind the page", err)
-                activity.runOnUiThread { if (mine == ticket) answer(false) }
-            }
-        }
-    }
-
     private fun withdraw() {
-        target = null
-        placedUrl = null
+        placed = null
         view?.visibility = View.GONE
+        val mine = ticket
+        pending.offerLast(Runnable { if (mine == ticket) leave() })
     }
 
-    private fun prepare(mine: Int, args: StageShowArgs) {
-        if (args.url != pictureUrl) {
-            forgetPicture()
-            val avif = fetch(args.url, mine)
-            picture = if (avif == null) 0L else picture(avif, pictureSize)
-            if (picture == 0L) {
-                activity.runOnUiThread { if (mine == ticket) answer(false) }
-                return
-            }
-            pictureUrl = args.url
+    private fun prepared(url: String): JSObject {
+        pictures[url]?.let { return ready(it) }
+        if (url !in wanted && url != shownUrl) return state("refused")
+        val avif = when (val fetched = fetch(url)) {
+            is Fetched.Missing -> return state("missing")
+            is Fetched.Failed -> return state("refused")
+            is Fetched.Avif -> fetched
         }
-        val (width, height) = pictureSize
+        val size = IntArray(2)
+        val handle = picture(avif.bytes, avif.length, size)
+        if (handle == 0L) return state("refused")
+        val picture = Prepared(handle, size[0], size[1])
+        pictures[url] = picture
+        if (url !in wanted && url != shownUrl) {
+            forget(url)
+            return state("refused")
+        }
+        return ready(picture)
+    }
+
+    private fun place(target: Target) {
+        if (target.ticket != ticket) return
+        val previous = shownUrl
+        shownUrl = target.url
+        if (previous != null && previous != target.url && previous !in wanted) forget(previous)
+        val picture = pictures[target.url] ?: run {
+            prepared(target.url)
+            pictures[target.url]
+        }
+        if (picture == null) {
+            refuse(target)
+            return
+        }
+        val scale = minOf(target.boxWidth.toFloat() / picture.width, target.boxHeight.toFloat() / picture.height)
+        // Display pixels, or the picture's where fewer: drawn at most 1:1, the compositor scales the rest.
+        val perPagePixel = minOf(target.density, 1f / scale)
+        val width = (target.boxWidth * perPagePixel).roundToInt().coerceAtLeast(1)
+        val height = (target.boxHeight * perPagePixel).roundToInt().coerceAtLeast(1)
+        val fitWidth = (picture.width * scale * perPagePixel).roundToInt().coerceIn(1, width)
+        val fitHeight = (picture.height * scale * perPagePixel).roundToInt().coerceIn(1, height)
+        val placement = Placed(
+            target, width, height, (width - fitWidth) / 2, (height - fitHeight) / 2, fitWidth, fitHeight,
+        )
         activity.runOnUiThread {
-            if (mine != ticket) return@runOnUiThread
-            try {
-                place(mine, args, width, height)
-            } catch (err: Exception) {
-                Log.w(TAG, "could not place the photo behind the page", err)
-                withdraw()
-                answer(false)
+            if (target.ticket != ticket) return@runOnUiThread
+            placed = placement
+            val shown = ensureView()
+            shown.visibility = View.VISIBLE
+            if (fixed != Pair(width, height)) {
+                fixed = Pair(width, height)
+                shown.holder.setFixedSize(width, height)
             }
+            pending.offerFirst(Runnable { draw() })
         }
     }
 
-    // With the page's cookie, which carries the server's token. A 404 is a rendition the page has
-    // asked the server to build.
-    private fun fetch(url: String, mine: Int): ByteArray? {
-        repeat(FETCH_ATTEMPTS) {
-            if (mine != ticket) return null
-            val connection = URL(url).openConnection() as HttpURLConnection
-            try {
-                connection.connectTimeout = FETCH_TIMEOUT_MS
-                connection.readTimeout = FETCH_TIMEOUT_MS
-                CookieManager.getInstance().getCookie(url)?.let { connection.setRequestProperty("Cookie", it) }
-                val code = connection.responseCode
-                if (code == HttpURLConnection.HTTP_OK) return connection.inputStream.use { it.readBytes() }
-                if (code != HttpURLConnection.HTTP_NOT_FOUND) {
-                    Log.w(TAG, "the server answered $code for $url")
-                    return null
-                }
-            } catch (err: Exception) {
-                Log.w(TAG, "could not fetch $url: $err")
-                return null
-            } finally {
-                connection.disconnect()
-            }
-            Thread.sleep(FETCH_RETRY_MS)
-        }
-        return null
-    }
-
-    private fun forgetPicture() {
-        pictureFree(picture)
-        picture = 0L
-        pictureUrl = null
-    }
-
-    // Fitted inside the page's stage as the page fits it, and drawn at the display's own pixels
-    // rather than the page's, up to the picture's.
-    private fun place(mine: Int, args: StageShowArgs, width: Int, height: Int) {
-        val scale = minOf(args.width.toFloat() / width, args.height.toFloat() / height)
-        val fittedWidth = (width * scale).roundToInt().coerceAtLeast(1)
-        val fittedHeight = (height * scale).roundToInt().coerceAtLeast(1)
-        val shown = ensureView()
-        val params = FrameLayout.LayoutParams(fittedWidth, fittedHeight)
-        params.leftMargin = args.left + (args.width - fittedWidth) / 2
-        params.topMargin = args.top + (args.height - fittedHeight) / 2
-        shown.layoutParams = params
-        @Suppress("DEPRECATION")
-        val mode = activity.windowManager.defaultDisplay.mode
-        val pageWidth = activity.window.decorView.width.coerceAtLeast(1)
-        val density = maxOf(1f, mode.physicalWidth.toFloat() / pageWidth)
-        val bufferWidth = minOf(width, (fittedWidth * density).roundToInt())
-        val bufferHeight = minOf(height, (fittedHeight * density).roundToInt())
-        shown.holder.setFixedSize(bufferWidth, bufferHeight)
-        target = Target(mine, bufferWidth, bufferHeight, args.headroom, args.white)
-        placedUrl = args.url
-        shown.visibility = View.VISIBLE
-        work(mine) { draw() }
-    }
-
-    // Waits for `surfaceChanged` where the window is not yet the size the target asks for.
     private fun draw() {
-        val target = target ?: return
+        val placement = placed ?: return
+        val target = placement.target
+        val picture = pictures[target.url] ?: return refuse(target)
         val drawn = synchronized(drawing) {
-            if (windowWidth != target.width || windowHeight != target.height || picture == 0L) return
+            // `surfaceChanged` draws again once the window takes the placement's size.
+            if (windowWidth != placement.width || windowHeight != placement.height) return
             val at = surface ?: return
             if (window == 0L) window = attach(at, windowWidth, windowHeight)
             window != 0L &&
-                present(window, picture, windowWidth, windowHeight, target.headroom, target.white)
+                present(
+                    window, picture.handle, windowWidth, windowHeight,
+                    placement.fitLeft, placement.fitTop, placement.fitWidth, placement.fitHeight,
+                    target.headroom, target.white,
+                )
         }
         activity.runOnUiThread { if (target.ticket == ticket) answer(drawn) }
+    }
+
+    private fun refuse(target: Target) {
+        activity.runOnUiThread {
+            if (target.ticket != ticket) return@runOnUiThread
+            answer(false)
+            withdraw()
+        }
+    }
+
+    private fun leave() {
+        val left = shownUrl ?: return
+        shownUrl = null
+        if (left !in wanted) forget(left)
+    }
+
+    private fun forget(url: String) {
+        pictures.remove(url)?.let { pictureFree(it.handle) }
+    }
+
+    private sealed interface Fetched {
+        class Avif(val bytes: ByteBuffer, val length: Int) : Fetched
+        object Missing : Fetched
+        object Failed : Fetched
+    }
+
+    // With the page's cookie, which carries the server's token. Read straight into memory the
+    // library reads from, rather than through a Java array it would copy out of.
+    private fun fetch(url: String): Fetched {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = FETCH_TIMEOUT_MS
+            connection.readTimeout = FETCH_TIMEOUT_MS
+            // Transparent gzip would drop the length the buffer is sized by.
+            connection.setRequestProperty("Accept-Encoding", "identity")
+            CookieManager.getInstance().getCookie(url)?.let { connection.setRequestProperty("Cookie", it) }
+            val code = connection.responseCode
+            if (code == HttpURLConnection.HTTP_NOT_FOUND) return Fetched.Missing
+            if (code != HttpURLConnection.HTTP_OK) {
+                Log.w(TAG, "the server answered $code for $url")
+                return Fetched.Failed
+            }
+            val length = connection.contentLengthLong
+            connection.inputStream.use { stream ->
+                if (length !in 1..Int.MAX_VALUE) {
+                    val bytes = stream.readBytes()
+                    return Fetched.Avif(ByteBuffer.allocateDirect(bytes.size).put(bytes), bytes.size)
+                }
+                val buffer = ByteBuffer.allocateDirect(length.toInt())
+                val channel = Channels.newChannel(stream)
+                while (buffer.hasRemaining() && channel.read(buffer) >= 0) Unit
+                return Fetched.Avif(buffer, buffer.position())
+            }
+        } catch (err: Exception) {
+            Log.w(TAG, "could not fetch $url: $err")
+            return Fetched.Failed
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun answer(drawn: Boolean) {
@@ -232,6 +354,14 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     private fun shown(drawn: Boolean) = JSObject().apply { put("drawn", drawn) }
+
+    private fun state(state: String) = JSObject().apply { put("state", state) }
+
+    private fun ready(picture: Prepared) =
+        state("ready").apply {
+            put("width", picture.width)
+            put("height", picture.height)
+        }
 
     private fun ensureView(): SurfaceView {
         view?.let { return it }
@@ -246,7 +376,7 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
                         windowWidth = width
                         windowHeight = height
                     }
-                    work(ticket) { draw() }
+                    pending.offerFirst(Runnable { draw() })
                 }
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -268,8 +398,6 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
 
     companion object {
         private const val TAG = "StagePlugin"
-        private const val FETCH_ATTEMPTS = 120
-        private const val FETCH_RETRY_MS = 1000L
         private const val FETCH_TIMEOUT_MS = 10_000
 
         // `stage.rs`, in the app's own library, which the activity has loaded.
@@ -277,7 +405,7 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
 
         @JvmStatic external fun detach(window: Long)
 
-        @JvmStatic external fun picture(avif: ByteArray, size: IntArray): Long
+        @JvmStatic external fun picture(avif: ByteBuffer, length: Int, size: IntArray): Long
 
         @JvmStatic external fun pictureFree(picture: Long)
 
@@ -286,6 +414,10 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
             picture: Long,
             width: Int,
             height: Int,
+            fitLeft: Int,
+            fitTop: Int,
+            fitWidth: Int,
+            fitHeight: Int,
             headroom: Float,
             white: Float,
         ): Boolean

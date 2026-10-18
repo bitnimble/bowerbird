@@ -39,8 +39,8 @@ const styles = stylex.create({
 
 document.body.className =
   stylex.props(styles.body, shellDrawsStage() && styles.transparent).className ?? '';
-// A reload leaves the last page's photo behind this one.
-if (shellDrawsStage()) shellStage.hide().catch(() => undefined);
+// A reload leaves the last page's photos prepared, and one of them behind this page.
+if (shellDrawsStage()) shellStage.reset().catch(() => undefined);
 
 const root = document.getElementById('root');
 if (root == null) throw new Error('missing #root');

@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { useEffect, useRef, useState } from 'react';
 import { renditionsApi } from '../../../api/renditions';
+import { shellStage } from '../../../api/transport';
 import { useHdrPicture } from '../../../avif/hdr_picture';
 import {
   CannotDrawHere,
@@ -55,6 +56,9 @@ export function StageFrame({
   whole,
   proof,
   devicePeakNits,
+  shell,
+  onRefused,
+  onDrawn,
   onDecoded,
   onMissing,
   onVideo,
@@ -78,6 +82,15 @@ export function StageFrame({
   /** The operator an HDR frame is proofed to sRGB with, or null to draw it as it is. */
   proof: RenderingIntent | null;
   devicePeakNits: number | null;
+  /**
+   * Prepared on the shell, which draws it behind the page (`shellDrawsStage`), rather than decoded
+   * here. `onDecoded` then means the shell holds it.
+   */
+  shell: boolean;
+  /** The shell would not draw it, so this frame has to be decoded here after all. */
+  onRefused: (source: string) => void;
+  /** Whether this page's canvas shows the frame. */
+  onDrawn: (source: string, drawn: boolean) => void;
   onDecoded: (source: string, width: number, height: number, hdr: boolean) => void;
   /** `cannotDraw`: the file is there, and this browser cannot decode or draw it. */
   onMissing: (source: string, cannotDraw: boolean) => void;
@@ -103,12 +116,21 @@ export function StageFrame({
     videoReport.current(source, videoUp);
     return () => videoReport.current(source, false);
   }, [source, videoUp]);
+  const drawnReport = useRef(onDrawn);
+  drawnReport.current = onDrawn;
+  const drawnOnPage = canvasDrawn && !shell;
+  useEffect(() => {
+    drawnReport.current(source, drawnOnPage);
+    return () => drawnReport.current(source, false);
+  }, [source, drawnOnPage]);
   // Through refs: callers pass inline callbacks, and a new identity per render
   // would restart the decode below while one is in flight.
   const decoded = useRef(onDecoded);
   decoded.current = onDecoded;
   const missing = useRef(onMissing);
   missing.current = onMissing;
+  const refused = useRef(onRefused);
+  refused.current = onRefused;
   // Through a ref too: as a dependency, every zoom in or out would redraw the whole frame.
   const wholeRef = useRef(whole);
   wholeRef.current = whole;
@@ -123,7 +145,30 @@ export function StageFrame({
   const painting = useRef<Painting | null>(null);
 
   useEffect(() => {
-    if (hold || waiting) return;
+    if (!shell || hold || waiting) return;
+    let live = true;
+    shellStage.prepare(source, requested).then(
+      (prepared) => {
+        if (!live) return;
+        // Only ever HDR: the shell refuses anything but PQ.
+        if (prepared.state === 'ready')
+          decoded.current(source, prepared.width, prepared.height, true);
+        else if (prepared.state === 'missing') missing.current(source, false);
+        else refused.current(source);
+      },
+      () => {
+        if (live) refused.current(source);
+      },
+    );
+    return () => {
+      live = false;
+      shellStage.release(source).catch(() => undefined);
+    };
+    // `requested`: a neighbour stepped onto jumps the shell's queue.
+  }, [source, photoKey, hold, waiting, shell, requested]);
+
+  useEffect(() => {
+    if (shell || hold || waiting) return;
     let live = true;
 
     const report = (width: number, height: number, hdr: boolean): void => {
@@ -221,7 +266,7 @@ export function StageFrame({
     // keeping its slot - would otherwise never report again, and the round would show one
     // photo whichever slot was asked for. Only the report reruns: repainting a canvas that
     // already holds its frame is a GPU upload per held neighbour on every step.
-  }, [source, photoKey, hold, attempt, proof, devicePeakNits, waiting, fromVideo]);
+  }, [source, photoKey, hold, attempt, proof, devicePeakNits, waiting, fromVideo, shell]);
 
   const styled = (hidden: boolean): ReturnType<typeof stylex.props> =>
     stylex.props(
@@ -244,7 +289,7 @@ export function StageFrame({
           ref={handCanvas}
           role="img"
           aria-label={alt}
-          {...styled(videoUp)}
+          {...styled(videoUp || shell)}
           aria-hidden={!shown || videoUp}
         />
       )}

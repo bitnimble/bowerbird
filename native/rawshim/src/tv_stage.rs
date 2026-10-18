@@ -3,7 +3,7 @@
 
 #![expect(unsafe_code)]
 
-use crate::gpu::surface_stage::{Display, Picture, SurfaceStage};
+use crate::gpu::surface_stage::{Display, Picture, SurfaceStage, measured};
 use crate::light::Gain;
 use crate::px::Size;
 use std::ffi::{c_int, c_void};
@@ -27,10 +27,9 @@ pub unsafe extern "C" fn bb_stage_picture(
     let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
     let picture = crate::guard("bb_stage_picture", None, || {
         let gpu = crate::gpu::device()?;
-        let coded = crate::avif::coded(bytes)
+        crate::avif::with_coded(bytes, |coded| Picture::upload(gpu, coded))
             .inspect_err(|refused| crate::warn(&format!("rawshim stage: {refused}")))
-            .ok()??;
-        Picture::upload(gpu, &coded)
+            .ok()??
     });
     let Some(picture) = picture else {
         return std::ptr::null_mut();
@@ -76,17 +75,22 @@ pub unsafe extern "C" fn bb_stage_attach(
     stage.map_or(std::ptr::null_mut(), |stage| Box::into_raw(Box::new(stage)))
 }
 
-/// Draws `picture` over the whole window, resized to `width` by `height` first, rolled onto
-/// `headroom` times SDR white with SDR white at scRGB `white`. 0 when shown.
+/// Draws `picture` into the `fit_*` rectangle of the window, resized to `width` by `height` first,
+/// rolled onto `headroom` times SDR white with SDR white at scRGB `white`. 0 when shown.
 ///
 /// # Safety
 /// `stage` came from [`bb_stage_attach`] and `picture` from [`bb_stage_picture`], both live.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn bb_stage_present(
     stage: *mut SurfaceStage,
     picture: *const Picture,
     width: u32,
     height: u32,
+    fit_left: u32,
+    fit_top: u32,
+    fit_width: u32,
+    fit_height: u32,
     headroom: f32,
     white: f32,
 ) -> c_int {
@@ -104,7 +108,13 @@ pub unsafe extern "C" fn bb_stage_present(
             return -1;
         };
         stage.resize(gpu, Size::measured(width as usize, height as usize));
-        match stage.present(gpu, picture, display) {
+        let fit = measured(
+            fit_left as usize,
+            fit_top as usize,
+            fit_width as usize,
+            fit_height as usize,
+        );
+        match stage.present(gpu, picture, fit, display) {
             Ok(()) => 0,
             Err(refused) => {
                 crate::warn(&format!("rawshim stage: {refused}"));

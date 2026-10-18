@@ -24,6 +24,43 @@ pub struct StageHide {
     sequence: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct StagePrepare {
+    url: String,
+    /// Ahead of the photos already waiting: the one on screen.
+    urgent: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct StageRelease {
+    url: String,
+}
+
+/// Drops whatever an earlier load of the page left prepared or on screen.
+#[tauri::command]
+pub async fn stage_reset(app: tauri::AppHandle<crate::Runtime>) -> Result<(), String> {
+    platform::ask(&app, "reset", ()).await.map(drop)
+}
+
+/// A photo fetched, decoded and on the device, ready for `stage_show`: `{ state: 'ready', width,
+/// height }` at its shown size, `missing` where the server has no such rendition yet, or `refused`
+/// where the page has to draw it itself.
+#[tauri::command]
+pub async fn stage_prepare(
+    app: tauri::AppHandle<crate::Runtime>,
+    stage: StagePrepare,
+) -> Result<serde_json::Value, String> {
+    platform::ask(&app, "prepare", stage).await
+}
+
+#[tauri::command]
+pub async fn stage_release(
+    app: tauri::AppHandle<crate::Runtime>,
+    stage: StageRelease,
+) -> Result<(), String> {
+    platform::ask(&app, "release", stage).await.map(drop)
+}
+
 /// Resolves once the photo is on screen behind the page, true, or false where the page has to
 /// draw it itself: another photo was asked for first, or this one could not be drawn.
 #[tauri::command]
@@ -31,7 +68,8 @@ pub async fn stage_show(
     app: tauri::AppHandle<crate::Runtime>,
     stage: StageShow,
 ) -> Result<bool, String> {
-    platform::show(&app, stage).await
+    let shown = platform::ask(&app, "show", stage).await?;
+    Ok(shown.get("drawn").and_then(serde_json::Value::as_bool) == Some(true))
 }
 
 #[tauri::command]
@@ -39,7 +77,7 @@ pub async fn stage_hide(
     app: tauri::AppHandle<crate::Runtime>,
     stage: StageHide,
 ) -> Result<(), String> {
-    platform::hide(&app, stage).await
+    platform::ask(&app, "hide", stage).await.map(drop)
 }
 
 #[cfg(target_os = "android")]
@@ -53,19 +91,13 @@ mod platform {
     use tauri::Manager;
     use tauri::plugin::PluginHandle;
     use tauri::wry::prelude::jni::JNIEnv;
-    use tauri::wry::prelude::jni::objects::{JByteArray, JClass, JIntArray, JObject};
+    use tauri::wry::prelude::jni::objects::{JByteBuffer, JClass, JIntArray, JObject};
     use tauri::wry::prelude::jni::sys::{jboolean, jfloat, jint, jlong};
     use tauri::wry::prelude::ndk::native_window::NativeWindow;
 
-    use super::{StageHide, StageShow};
     use crate::Runtime;
 
     struct Stage(PluginHandle<Runtime>);
-
-    #[derive(serde::Deserialize)]
-    struct Shown {
-        drawn: bool,
-    }
 
     pub(crate) fn plugin() -> tauri::plugin::TauriPlugin<Runtime> {
         tauri::plugin::Builder::new("stage")
@@ -78,28 +110,16 @@ mod platform {
             .build()
     }
 
-    pub(super) async fn show(
+    pub(super) async fn ask(
         app: &tauri::AppHandle<Runtime>,
-        stage: StageShow,
-    ) -> Result<bool, String> {
+        command: &str,
+        args: impl serde::Serialize,
+    ) -> Result<serde_json::Value, String> {
         app.state::<Stage>()
             .0
-            .run_mobile_plugin_async::<Shown>("show", stage)
+            .run_mobile_plugin_async::<serde_json::Value>(command, args)
             .await
-            .map(|shown| shown.drawn)
-            .map_err(|err| format!("could not draw the photo behind the page: {err}"))
-    }
-
-    pub(super) async fn hide(
-        app: &tauri::AppHandle<Runtime>,
-        stage: StageHide,
-    ) -> Result<(), String> {
-        app.state::<Stage>()
-            .0
-            .run_mobile_plugin_async::<serde_json::Value>("hide", stage)
-            .await
-            .map(drop)
-            .map_err(|err| format!("could not hide the photo behind the page: {err}"))
+            .map_err(|err| format!("the stage behind the page could not {command}: {err}"))
     }
 
     /// librawshim's `tv_stage.rs`, which the app carries for its server and loads here too.
@@ -107,7 +127,19 @@ mod platform {
         picture: unsafe extern "C" fn(*const u8, usize, *mut u32, *mut u32) -> *mut c_void,
         picture_free: unsafe extern "C" fn(*mut c_void),
         attach: unsafe extern "C" fn(*mut c_void, u32, u32) -> *mut c_void,
-        present: unsafe extern "C" fn(*mut c_void, *const c_void, u32, u32, f32, f32) -> c_int,
+        #[allow(clippy::type_complexity)]
+        present: unsafe extern "C" fn(
+            *mut c_void,
+            *const c_void,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            f32,
+            f32,
+        ) -> c_int,
         detach: unsafe extern "C" fn(*mut c_void),
         take_log: unsafe extern "C" fn(*mut u8, usize) -> usize,
     }
@@ -223,22 +255,28 @@ mod platform {
         unsafe { (rawshim.detach)(attached.stage) };
     }
 
-    /// 0 where the stage does not draw this file; `size` takes its shown width and height.
+    /// 0 where the stage does not draw this file; `size` takes its shown width and height. `avif`
+    /// is a direct buffer, read where it lies.
     #[no_mangle]
     pub extern "system" fn Java_photos_bowerbird_StagePlugin_picture(
         env: JNIEnv,
         _class: JClass,
-        avif: JByteArray,
+        avif: JByteBuffer,
+        length: jint,
         size: JIntArray,
     ) -> jlong {
         let Some(rawshim) = rawshim() else { return 0 };
-        let Ok(bytes) = env.convert_byte_array(&avif) else {
+        let (Ok(bytes), Ok(capacity)) = (
+            env.get_direct_buffer_address(&avif),
+            env.get_direct_buffer_capacity(&avif),
+        ) else {
             return 0;
         };
+        let length = usize::try_from(length).unwrap_or(0).min(capacity);
         let (mut width, mut height) = (0u32, 0u32);
-        // SAFETY: `bytes` is `len` bytes, and both sizes are writable.
-        let picture =
-            unsafe { (rawshim.picture)(bytes.as_ptr(), bytes.len(), &mut width, &mut height) };
+        // SAFETY: a direct buffer of at least `length` bytes, which the caller holds for the call,
+        // and both sizes are writable.
+        let picture = unsafe { (rawshim.picture)(bytes, length, &mut width, &mut height) };
         rawshim.drain_log();
         if picture.is_null() {
             return 0;
@@ -265,8 +303,10 @@ mod platform {
         unsafe { (rawshim.picture_free)(picture as *mut c_void) };
     }
 
-    /// Whether `picture` is on screen, drawn over the whole of a `width` by `height` window.
+    /// Whether `picture` is on screen, drawn into the `fit_*` rectangle of a `width` by `height`
+    /// window.
     #[no_mangle]
+    #[allow(clippy::too_many_arguments)]
     pub extern "system" fn Java_photos_bowerbird_StagePlugin_present(
         _env: JNIEnv,
         _class: JClass,
@@ -274,6 +314,10 @@ mod platform {
         picture: jlong,
         width: jint,
         height: jint,
+        fit_left: jint,
+        fit_top: jint,
+        fit_width: jint,
+        fit_height: jint,
         headroom: jfloat,
         white: jfloat,
     ) -> jboolean {
@@ -288,6 +332,10 @@ mod platform {
                 picture as *const c_void,
                 width as u32,
                 height as u32,
+                fit_left as u32,
+                fit_top as u32,
+                fit_width as u32,
+                fit_height as u32,
                 headroom,
                 white,
             )
@@ -299,19 +347,11 @@ mod platform {
 
 #[cfg(not(target_os = "android"))]
 mod platform {
-    use super::{StageHide, StageShow};
-
-    pub(super) async fn show(
+    pub(super) async fn ask(
         _app: &tauri::AppHandle<crate::Runtime>,
-        _stage: StageShow,
-    ) -> Result<bool, String> {
-        Ok(false)
-    }
-
-    pub(super) async fn hide(
-        _app: &tauri::AppHandle<crate::Runtime>,
-        _stage: StageHide,
-    ) -> Result<(), String> {
-        Ok(())
+        _command: &str,
+        _args: impl serde::Serialize,
+    ) -> Result<serde_json::Value, String> {
+        Err("only an Android TV draws behind the page".into())
     }
 }

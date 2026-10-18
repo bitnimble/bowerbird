@@ -17,8 +17,14 @@ import { Spinner } from '../../../ui/spinner';
 import { stopFlings } from '../../../ui/stop_flings';
 import { styles } from './photo_stage_view.stylex';
 import { StageDetail } from './stage_detail';
-import { type BehindPage, useShellStage } from './shell_stage';
+import { useShellStage } from './shell_stage';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
+
+export interface ShellFrames {
+  draws: (source: string) => boolean;
+  headroom: number;
+  white: number;
+}
 
 // Fit, zoom and pan live in `zoom_pan.ts`, because the editor's canvas needs the same
 // gesture and cannot be transformed the way an `<img>` can.
@@ -194,8 +200,11 @@ interface Props {
   proof?: RenderingIntent | null;
   /** `DeviceSettingsStore.peakNits`, which an HDR frame is rolled onto. */
   devicePeakNits: number | null;
-  /** The frame on screen, for the shell to draw behind the page while it is unzoomed. */
-  behind?: BehindPage | null;
+  /**
+   * Which frames the shell prepares and draws behind the page while the stage is unzoomed
+   * (`shellDrawsStage`), and the light to draw them at; null where the page draws every frame.
+   */
+  behind?: ShellFrames | null;
 }
 
 function noop(): void {
@@ -387,9 +396,36 @@ export function PhotoStage({
   const zoom = useZoomPan(viewportRef, stageRef, natural, onGestureEnd);
   const { view, reset, zoomed, handlers, box } = zoom;
   useEffect(() => stopFlings(viewportRef.current), []);
-  const drawnBehind = useShellStage(
+  // Frames the shell would not prepare, which the page decodes after all; and whether its window
+  // would not draw at all, which no other frame will change.
+  const [refusedBehind, setRefusedBehind] = useState<ReadonlySet<string>>(new Set());
+  const [windowRefused, setWindowRefused] = useState(false);
+  const refuseBehind = useCallback(
+    (source: string) => setRefusedBehind((previous) => toggled(previous, source, true)),
+    [],
+  );
+  const refuseWindow = useCallback(() => setWindowRefused(true), []);
+  const [drawnOnPage, setDrawnOnPage] = useState<ReadonlySet<string>>(new Set());
+  const noteDrawnOnPage = useCallback(
+    (source: string, drawn: boolean) =>
+      setDrawnOnPage((previous) => toggled(previous, source, drawn)),
+    [],
+  );
+  const canDrawBehind = (source: string): boolean =>
+    behind != null && !windowRefused && behind.draws(source) && !refusedBehind.has(source);
+  const drawsBehind = (source: string): boolean => canDrawBehind(source) && !zoomed && !fullscreen;
+  // Zoomed or fullscreen, the window stays up until the page has drawn the photo over it.
+  const showsBehind =
+    visible != null &&
+    hold !== true &&
+    canDrawBehind(visible) &&
+    (drawsBehind(visible) || !drawnOnPage.has(visible));
+  useShellStage(
     viewportRef,
-    zoomed || fullscreen || hold === true ? null : behind,
+    behind != null && visible != null && showsBehind
+      ? { source: visible, headroom: behind.headroom, white: behind.white }
+      : null,
+    refuseWindow,
   );
 
   // Off the observed box rather than a measurement: `useZoomPan` keeps it under a
@@ -448,6 +484,10 @@ export function PhotoStage({
   useEffect(
     () => setFailed((previous) => (previous.size === 0 ? previous : new Set())),
     [key, retryEpoch],
+  );
+  useEffect(
+    () => setRefusedBehind((previous) => (previous.size === 0 ? previous : new Set())),
+    [retryEpoch],
   );
 
   // Which picture is up, and what it replaced. **The exchange, not the decode**: a run
@@ -976,7 +1016,6 @@ export function PhotoStage({
               {...stylex.props(
                 styles.picture,
                 isLeaving(group.key) && styles.leaving,
-                drawnBehind && styles.behind,
                 (group.key === fading?.to || group.key === fading?.from) && styles.fading,
               )}
               aria-hidden={isLeaving(group.key) || undefined}
@@ -1001,6 +1040,9 @@ export function PhotoStage({
                   whole={zoomed && group.key === shownKey}
                   proof={proof}
                   devicePeakNits={devicePeakNits}
+                  shell={drawsBehind(source)}
+                  onRefused={refuseBehind}
+                  onDrawn={noteDrawnOnPage}
                   onDecoded={promote}
                   onVideo={noteVideo}
                   // Only a frame still being asked for. A retiring one is on its

@@ -363,19 +363,30 @@ fn decoded(bytes: &[u8], depth: u32) -> Result<(Vec<u16>, usize, usize, Tags), S
 }
 
 /// A PQ still's planes as its file codes them, for the viewer's stage to read
-/// (`gpu::surface_stage`): laid out as `VideoFrame.copyTo` hands a browser the same file.
-pub struct Coded {
-    pub samples: Vec<u8>,
-    pub layout: crate::planes::Layout,
+/// (`gpu::surface_stage`), as `VideoFrame.copyTo` hands a browser the same file.
+pub struct Coded<'a> {
+    /// Luma, blue, red, little-endian `u16` samples, each `strides[at]` bytes a row.
+    pub planes: [&'a [u8]; 3],
+    pub strides: [usize; 3],
+    pub width: usize,
+    pub height: usize,
+    /// 10 or 12.
+    pub bits: u32,
+    /// 4:2:0 rather than 4:4:4.
+    pub subsampled: bool,
     /// Clockwise, as the stage turns a picture onto its canvas.
     pub rotation: u16,
     /// The file's brightest pixel in nits, where it states one.
     pub max_cll: Option<u16>,
 }
 
-/// None for a file the stage does not read: anything but limited-range PQ at 10 or 12 bits, in
-/// 4:2:0 or 4:4:4, which is what the browser's stage reads too (`planar_layout.ts`).
-pub fn coded(bytes: &[u8]) -> Result<Option<Coded>, String> {
+/// `read` over the planes libavif decoded `bytes` into, which live only as long as the call. None
+/// for a file the stage does not read: anything but limited-range PQ at 10 or 12 bits, in 4:2:0 or
+/// 4:4:4, which is what the browser's stage reads too (`planar_layout.ts`).
+pub fn with_coded<T>(
+    bytes: &[u8],
+    read: impl FnOnce(&Coded<'_>) -> T,
+) -> Result<Option<T>, String> {
     let decoder = Decoder::new()?;
     let image = Image::empty()?;
     // SAFETY: both handles are live for the block, and each plane is `rows * yuvRowBytes` long.
@@ -396,13 +407,24 @@ pub fn coded(bytes: &[u8]) -> Result<Option<Coded>, String> {
         {
             return Ok(None);
         }
-        let (samples, layout) = yuv_planes(image);
-        Ok(Some(Coded {
-            samples,
-            layout,
+        let strides = image.yuvRowBytes.map(|stride| stride as usize);
+        let planes = [0, 1, 2].map(|at| {
+            let rows = match at > 0 && subsampled {
+                true => (image.height as usize).div_ceil(2),
+                false => image.height as usize,
+            };
+            std::slice::from_raw_parts(image.yuvPlanes[at], rows * strides[at])
+        });
+        Ok(Some(read(&Coded {
+            planes,
+            strides,
+            width: image.width as usize,
+            height: image.height as usize,
+            bits: image.depth,
+            subsampled,
             rotation: tags.rotate(),
             max_cll: tags.light.map(|light| light.max_cll),
-        }))
+        })))
     }
 }
 
@@ -410,6 +432,7 @@ pub fn coded(bytes: &[u8]) -> Result<Option<Coded>, String> {
 ///
 /// # Safety
 /// `image` is one libavif decoded, whose planes are each `rows * yuvRowBytes` long.
+#[cfg(test)]
 #[expect(unsafe_code)]
 unsafe fn yuv_planes(image: &raw::avifImage) -> (Vec<u8>, crate::planes::Layout) {
     let subsampled = image.yuvFormat == AVIF_PIXEL_FORMAT_YUV420;

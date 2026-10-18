@@ -3,9 +3,9 @@ import { observer } from 'mobx-react-lite';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { useDeviceSettingsStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
-import { PhotoStage, type StagePicture } from './photo_stage';
+import { PhotoStage, type ShellFrames, type StagePicture } from './photo_stage';
 import { renditionsApi } from '../../../api/renditions';
-import { shellDrawsStage } from '../../../api/transport';
+import { shellDrawsStage, shellStage } from '../../../api/transport';
 import { hdrPictures } from '../../../avif/hdr_pictures';
 import { decodedFrame } from './stage_bitmaps';
 import { renditionLabel } from '../renditions';
@@ -45,11 +45,6 @@ export const DetailFrame = observer(function DetailFrame({
 
   const proof =
     store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofIntent : null;
-  const headroom = device.stageHeadroom;
-  const behind =
-    shellDrawsStage() && store.showsHdr(photoId) && proof == null && headroom != null
-      ? { source: store.frameOf(photoId).source, headroom, white: device.stageWhite }
-      : null;
 
   // Every rendition this photo has already decoded stays mounted, with the one
   // being asked for on the end. Comparing the camera's JPEG against a render is
@@ -65,7 +60,11 @@ export const DetailFrame = observer(function DetailFrame({
   // avoids. Held, this is free; released, it is the whole file again.
   const decoded = store.renditionsShownOf(photoId).filter((rendition) => {
     const source = store.sourceOf(photoId, rendition);
-    return decodedFrame(source) != null || hdrPictures.isShown(renditionsApi.hdrSource(source));
+    return (
+      decodedFrame(source) != null ||
+      shellStage.holds(source) ||
+      hdrPictures.isShown(renditionsApi.hdrSource(source))
+    );
   });
   // Short of memory, only until the one asked for has decoded: dropped sooner, the stage is
   // empty for as long as that rendition takes to build.
@@ -153,6 +152,21 @@ export const DetailFrame = observer(function DetailFrame({
           ],
     ),
   );
+
+  // Any render a photo's detail does not say is SDR: the shell refuses one that turns out to be.
+  const headroom = device.stageHeadroom;
+  const behind: ShellFrames | null =
+    shellDrawsStage() && proof == null && headroom != null
+      ? {
+          draws: (source) => {
+            const frame = owning.get(source);
+            if (frame == null || frame.rendition === 'embedded') return false;
+            return store.detailFor(frame.photoId)?.renditions?.[frame.rendition]?.hdr !== false;
+          },
+          headroom,
+          white: device.stageWhite,
+        }
+      : null;
 
   const filename = nameOf(store, photoId);
 
