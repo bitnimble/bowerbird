@@ -138,7 +138,6 @@ export async function displayRange(): Promise<DynamicRange | null> {
   return DynamicRangeSchema.parse(await invoke('display_range', {}));
 }
 
-/** A TV's app, whose WebView shows no HDR, so the shell draws HDR photos behind the page. */
 export function shellDrawsStage(): boolean {
   return shellInvoke() != null && onTv();
 }
@@ -173,9 +172,9 @@ class ShellStageBridge {
   // The shell outlives a page load, and holds each load's asks to the last one's numbers.
   private asked = Date.now();
   private readonly ready = new Set<string>();
-  private readonly releases = new Map<string, number>();
+  private readonly holders = new Map<string, number>();
 
-  /** Compiles the stage for SDR white at scRGB `white`, ahead of the first photo. */
+  /** Per SDR white: a pipeline is compiled for each. */
   async warm(white: number): Promise<void> {
     await shellInvoke()?.('stage_warm', { stage: { white } });
   }
@@ -190,13 +189,11 @@ class ShellStageBridge {
     const invoke = shellInvoke();
     if (invoke == null) return { state: 'refused' };
     const named = absolute(url);
-    const released = this.releases.get(named);
+    this.holders.set(named, (this.holders.get(named) ?? 0) + 1);
     const prepared = PreparedSchema.parse(
-      await invoke('stage_prepare', { stage: { url: named, urgent } }),
+      await invoke('stage_prepare', { stage: { sequence: ++this.asked, url: named, urgent } }),
     );
-    if (prepared.state === 'ready' && this.releases.get(named) === released) {
-      this.ready.add(named);
-    }
+    if (prepared.state === 'ready' && this.holders.has(named)) this.ready.add(named);
     return prepared;
   }
 
@@ -207,9 +204,18 @@ class ShellStageBridge {
 
   async release(url: string): Promise<void> {
     const named = absolute(url);
+    const left = (this.holders.get(named) ?? 1) - 1;
+    if (left > 0) {
+      this.holders.set(named, left);
+      return;
+    }
+    this.holders.delete(named);
+    // A neighbour stepped onto is released and prepared again in one commit; released at once, the
+    // shell's worker could free it before the prepare arrives and decode it all over again.
+    await Promise.resolve();
+    if (this.holders.has(named)) return;
     this.ready.delete(named);
-    this.releases.set(named, (this.releases.get(named) ?? 0) + 1);
-    await shellInvoke()?.('stage_release', { stage: { url: named } });
+    await shellInvoke()?.('stage_release', { stage: { sequence: ++this.asked, url: named } });
   }
 
   /** Whether the photo is on screen behind the page; false leaves the page to draw it. */

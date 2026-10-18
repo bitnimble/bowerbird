@@ -64,8 +64,7 @@ const MEDIA_PERMISSIONS = [
   '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
   '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
 ];
-// Optional, so one app installs on phones and televisions both: Play withholds an app from a
-// television unless it declares a touchscreen optional.
+// Play hides an app from TVs unless touchscreen is optional.
 const FEATURES = [
   '<uses-feature android:name="android.software.leanback" android:required="false" />',
   '<uses-feature android:name="android.hardware.touchscreen" android:required="false" />',

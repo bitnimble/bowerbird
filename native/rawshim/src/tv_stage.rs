@@ -48,8 +48,7 @@ unsafe fn handed(picture: Option<Picture>, width: *mut u32, height: *mut u32) ->
     Box::into_raw(Box::new(picture))
 }
 
-/// Opens the device and builds the stage's pipeline for SDR white at scRGB `white`, so the first
-/// photo is not drawn behind a compile. 0 when built.
+/// 0 when built.
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_stage_warm(white: f32) -> c_int {
     if !(white > 0.0) {
@@ -107,8 +106,8 @@ pub unsafe extern "C" fn bb_stage_attach(
     };
     let stage = crate::guard("bb_stage_attach", None, || {
         let gpu = crate::gpu::device()?;
-        // SAFETY: the caller's.
         let size = Size::measured(width as usize, height as usize);
+        // SAFETY: the caller's.
         unsafe { SurfaceStage::attach(gpu, window, size) }
             .inspect_err(|refused| crate::warn(&format!("rawshim stage: {refused}")))
             .ok()

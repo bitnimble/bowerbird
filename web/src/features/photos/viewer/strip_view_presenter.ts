@@ -117,7 +117,6 @@ export class StripViewPresenter {
     if (cell != null) this.centre(cell);
   }
 
-  /** The same, for the cursor's position in the collection. */
   @action.bound
   revealPosition(position: number): void {
     if (position >= 0) this.centre(this.store.displayCellOf(position));

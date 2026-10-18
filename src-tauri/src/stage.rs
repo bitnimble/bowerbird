@@ -1,6 +1,5 @@
-//! The viewer's HDR photo on a TV. Android 11's WebView composites in SDR, so `StagePlugin.kt`
-//! puts a window behind the transparent page and librawshim draws the rendition into it as scRGB
-//! (`gpu::surface_stage`).
+//! The viewer's HDR photo on a TV (DESIGN §18.5.1), drawn by `StagePlugin.kt` and
+//! `gpu::surface_stage`.
 
 /// Where the page's stage is, in device pixels of the page, and how to light what goes in it.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -13,9 +12,7 @@ pub struct StageShow {
     top: i32,
     width: i32,
     height: i32,
-    /// The display's peak against its SDR white.
     headroom: f32,
-    /// The scRGB value the display shows SDR white at.
     white: f32,
 }
 
@@ -26,6 +23,7 @@ pub struct StageHide {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct StagePrepare {
+    sequence: u64,
     url: String,
     /// Ahead of the photos already waiting: the one on screen.
     urgent: bool,
@@ -33,6 +31,7 @@ pub struct StagePrepare {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct StageRelease {
+    sequence: u64,
     url: String,
 }
 
@@ -41,7 +40,6 @@ pub struct StageWarm {
     white: f32,
 }
 
-/// Opens the GPU and compiles the stage's pipeline for this SDR white, ahead of the first photo.
 #[tauri::command]
 pub async fn stage_warm(
     app: tauri::AppHandle<crate::Runtime>,
@@ -50,7 +48,6 @@ pub async fn stage_warm(
     platform::ask(&app, "warm", stage).await.map(drop)
 }
 
-/// Drops whatever an earlier load of the page left prepared or on screen.
 #[tauri::command]
 pub async fn stage_reset(app: tauri::AppHandle<crate::Runtime>) -> Result<(), String> {
     platform::ask(&app, "reset", ()).await.map(drop)
@@ -104,10 +101,10 @@ mod platform {
 
     use tauri::Manager;
     use tauri::plugin::PluginHandle;
-    use tauri::wry::prelude::jni::JNIEnv;
-    use tauri::wry::prelude::jni::objects::{JByteBuffer, JClass, JIntArray, JObject};
-    use tauri::wry::prelude::jni::sys::{jboolean, jfloat, jint, jlong};
-    use tauri::wry::prelude::ndk::native_window::NativeWindow;
+    use tauri_runtime_wry::wry::prelude::jni::JNIEnv;
+    use tauri_runtime_wry::wry::prelude::jni::objects::{JByteBuffer, JClass, JIntArray, JObject};
+    use tauri_runtime_wry::wry::prelude::jni::sys::{jboolean, jfloat, jint, jlong};
+    use tauri_runtime_wry::wry::prelude::ndk::native_window::NativeWindow;
 
     use crate::Runtime;
 

@@ -57,6 +57,7 @@ export function followRemote(): () => void {
       // Held, the button repeats, which would flip the box back.
       if (!e.repeat) active.click();
       e.preventDefault();
+      e.stopPropagation();
       return;
     }
     if (e.key === 'Enter' && isTyped(active) && active.hasAttribute(LOCKED)) {
@@ -64,7 +65,9 @@ export function followRemote(): () => void {
       // Focused again, now editable, which is what brings the keyboard up.
       active.blur();
       active.focus();
+      // Else the field's own Enter handler submits what it already holds.
       e.preventDefault();
+      e.stopPropagation();
       return;
     }
     const direction = DIRECTIONS[e.key];
@@ -72,8 +75,7 @@ export function followRemote(): () => void {
     // Not a menu or a list: those move through their own items from the popup.
     const dialog = active instanceof HTMLElement && active.matches(DIALOG) ? active : null;
     if (!(active instanceof HTMLElement) || active === document.body || dialog != null) {
-      // Nothing focused, or a dialog itself, as when its step replaces the control that held
-      // the focus: start in the top layer, since what is behind a modal is not reachable.
+      // Start in the top layer: what is behind a modal is unreachable.
       const layer = dialog ?? openLayers().at(-1);
       if (layer == null && document.querySelector(`[${OWNS_ARROWS}]`) != null) return;
       const first = focusables(layer ?? document.querySelector('main') ?? document.body)[0];

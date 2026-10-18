@@ -55,6 +55,7 @@ function install(): void {
     'navigator',
     'HTMLElement',
     'HTMLInputElement',
+    'HTMLTextAreaElement',
     'HTMLImageElement',
     'HTMLVideoElement',
     'Element',

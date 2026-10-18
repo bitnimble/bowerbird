@@ -26,12 +26,14 @@ import kotlin.math.roundToInt
 
 @InvokeArg
 class StagePrepareArgs {
+    var sequence = 0L
     lateinit var url: String
     var urgent = false
 }
 
 @InvokeArg
 class StageReleaseArgs {
+    var sequence = 0L
     lateinit var url: String
 }
 
@@ -57,10 +59,7 @@ class StageHideArgs {
     var sequence = 0L
 }
 
-/**
- * The viewer's HDR photos on a TV, whose WebView composites in SDR: an scRGB window behind the
- * transparent page, drawn by librawshim through `stage.rs`.
- */
+/** scRGB window behind the transparent page, drawn by librawshim through `stage.rs`. */
 @TauriPlugin
 class StagePlugin(private val activity: Activity) : Plugin(activity) {
     private class Prepared(val handle: Long, val width: Int, val height: Int)
@@ -85,7 +84,6 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
         val fitHeight: Int,
     )
 
-    // Urgent work first: the photo on screen ahead of the ones the page holds beside it.
     private val pending = LinkedBlockingDeque<Runnable>()
     private val wanted: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -93,6 +91,7 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
     private var view: SurfaceView? = null
     private var waiting: Invoke? = null
     private var sequence = 0L
+    private val stamps = HashMap<String, Long>()
     private var fixed = Pair(0, 0)
     @Volatile private var ticket = 0
     @Volatile private var placed: Placed? = null
@@ -127,6 +126,10 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun prepare(invoke: Invoke) {
         val args = invoke.parseArgs(StagePrepareArgs::class.java)
+        if (!newest(args.url, args.sequence)) {
+            invoke.resolve(state("refused"))
+            return
+        }
         wanted.add(args.url)
         val task = Runnable {
             try {
@@ -155,7 +158,12 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun release(invoke: Invoke) {
-        val url = invoke.parseArgs(StageReleaseArgs::class.java).url
+        val args = invoke.parseArgs(StageReleaseArgs::class.java)
+        val url = args.url
+        if (!newest(url, args.sequence)) {
+            invoke.resolve()
+            return
+        }
         wanted.remove(url)
         pending.offerLast(Runnable { if (url !in wanted && url != shownUrl) forget(url) })
         invoke.resolve()
@@ -220,6 +228,13 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
 
     // Commands run here on the UI thread, but cross `stage.rs` as tasks of their own, so they can
     // arrive out of order.
+    // Commands can arrive out of order: a prepare overtaken by its release would hold the photo forever.
+    private fun newest(url: String, asked: Long): Boolean {
+        if (asked <= (stamps[url] ?: 0L)) return false
+        stamps[url] = asked
+        return true
+    }
+
     private fun overtakes(asked: Long): Boolean {
         if (asked <= sequence) return false
         sequence = asked
@@ -299,6 +314,8 @@ class StagePlugin(private val activity: Activity) : Plugin(activity) {
         val placement = placed ?: return
         val target = placement.target
         val picture = pictures[target.url] ?: return refuse(target)
+        // Compiled outside `drawing`: the UI thread's surface callbacks wait on it.
+        warm(target.white)
         val drawn = synchronized(drawing) {
             // `surfaceChanged` draws again once the window takes the placement's size.
             if (windowWidth != placement.width || windowHeight != placement.height) return

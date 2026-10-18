@@ -324,9 +324,8 @@ pub struct Gpu {
     /// ([`Stage::attach`], [`surface_stage::SurfaceStage::attach`]).
     #[cfg_attr(not(any(target_arch = "wasm32", target_os = "android")), allow(dead_code))]
     instance: wgpu::Instance,
-    /// What a window's surface is asked what it takes ([`surface_stage::SurfaceStage`]).
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
-    answered: wgpu::Adapter,
+    wgpu_adapter: wgpu::Adapter,
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
     frame_module: wgpu::ShaderModule,
@@ -1748,12 +1747,12 @@ impl Gpu {
     /// Split out so that the browser's request - async, and on a backend that enumerates nothing -
     /// builds the *same* shaders, layouts and PQ table as the server's rather than a second set.
     fn build(
-        answered: wgpu::Adapter,
+        wgpu_adapter: wgpu::Adapter,
         instance: wgpu::Instance,
         device: wgpu::Device,
         queue: wgpu::Queue,
     ) -> Gpu {
-        let info = answered.get_info();
+        let info = wgpu_adapter.get_info();
         let adapter = format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type);
         // Thirty-two apiece is 128 workgroups for a four-channel reduction, a couple per core on
         // the discrete parts this is for and still far more than a narrow one is short of.
@@ -1962,7 +1961,7 @@ impl Gpu {
 
         Gpu {
             adapter,
-            answered,
+            wgpu_adapter,
             backend: info.backend,
             reduction_slices,
             device,

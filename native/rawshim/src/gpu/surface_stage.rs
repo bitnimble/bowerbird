@@ -285,7 +285,6 @@ pub fn measured(left: usize, top: usize, width: usize, height: usize) -> Rect<Ca
     }
 }
 
-/// A TV's window, behind the page, configured for scRGB.
 #[cfg(target_os = "android")]
 pub struct SurfaceStage {
     surface: wgpu::Surface<'static>,
@@ -321,7 +320,7 @@ impl SurfaceStage {
                 })
         }
         .map_err(|refused| format!("the window refused a surface: {refused}"))?;
-        let capabilities = surface.get_capabilities(&gpu.answered);
+        let capabilities = surface.get_capabilities(&gpu.wgpu_adapter);
         let offered = capabilities.color_spaces(CANVAS_FORMAT);
         if !offered.contains(wgpu::SurfaceColorSpaces::EXTENDED_SRGB_LINEAR) {
             return Err(format!("the window takes no scRGB, only {offered:?}"));

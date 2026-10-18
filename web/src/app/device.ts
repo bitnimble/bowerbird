@@ -36,7 +36,6 @@ declare global {
   }
 }
 
-/** The device's memory in GB, where the browser says. */
 export function deviceMemoryGb(): number | undefined {
   return globalThis.navigator?.deviceMemory;
 }

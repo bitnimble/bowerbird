@@ -8,8 +8,8 @@ export interface WarmBudget {
   fittedToScreen: boolean;
 }
 
-/** By `navigator.deviceMemory`, which Chromium caps at 8 and other browsers leave unset. */
 export function warmBudget(memoryGb: number | undefined): WarmBudget {
+  // `navigator.deviceMemory`: Chromium caps it at 8, other browsers leave it unset.
   if (memoryGb == null || memoryGb >= 8) {
     return { neighbours: Infinity, otherRenditions: true, fittedToScreen: false };
   }

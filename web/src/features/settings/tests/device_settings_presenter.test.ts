@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from 'bun:test';
 import { ScreenStore } from '../../../app/screen_store';
 import { MemoryStorage } from '../../../test_storage';
-import { DeviceSettingsPresenter } from '../device_settings_presenter';
+import { DeviceSettingsPresenter, steppedHdrWhite } from '../device_settings_presenter';
 import { DeviceSettingsStore } from '../device_settings_store';
 
 beforeEach(() => {
@@ -43,4 +43,18 @@ test("lights the shell's stage at the HDR white calibrated, until Android measur
   reopened.screen.reading = { hdr: true, measures: true, headroom: 4, potential: null };
   expect(reopened.stageWhite).toBe(1);
   expect(reopened.stageHeadroom).toBe(4);
+});
+
+test('steps the HDR white in exact tenths, within the range a saved one is restored from', () => {
+  let white = 6;
+  for (let i = 0; i < 7; i++) white = steppedHdrWhite(white, 1);
+  for (let i = 0; i < 3; i++) white = steppedHdrWhite(white, -1);
+  expect(white).toBe(6.4);
+  expect(steppedHdrWhite(1, -1)).toBe(1);
+  expect(steppedHdrWhite(50, 1)).toBe(50);
+
+  localStorage.setItem('bowerbird.hdrWhite', '1e9');
+  const store = new DeviceSettingsStore(new ScreenStore());
+  new DeviceSettingsPresenter(store);
+  expect(store.hdrWhite).toBe(6);
 });

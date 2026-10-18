@@ -10,11 +10,9 @@ import { Heading } from '../../ui/heading';
 import { Text } from '../../ui/text';
 import { useShellStage } from '../photos/viewer/shell_stage';
 import { CalibrateHdrPageStrings } from './calibrate_hdr_page.strings';
+import { steppedHdrWhite } from './device_settings_presenter';
 import { SettingsStrings } from './settings_page.strings';
 
-const TENTHS = 10;
-const LOWEST = 1;
-const HIGHEST = 50;
 /** Far past the patch, so it is drawn without the roll-off a photo's highlights get. */
 const UNROLLED_HEADROOM = 100;
 
@@ -71,10 +69,10 @@ export const CalibrateHdrPage = observer(function CalibrateHdrPage(): JSX.Elemen
   const onKey = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const step = e.key === 'ArrowRight' ? 1 : -1;
-      setWhite((was) =>
-        Math.min(HIGHEST, Math.max(LOWEST, (Math.round(was * TENTHS) + step) / TENTHS)),
-      );
+      setWhite((was) => steppedHdrWhite(was, step));
     } else if (e.key === 'Enter') {
+      // A held OK on Settings' button repeats onto this page.
+      if (e.repeat) return;
       deviceSettings.setHdrWhite(white);
       navigate(-1);
     } else if (e.key === 'Escape') {

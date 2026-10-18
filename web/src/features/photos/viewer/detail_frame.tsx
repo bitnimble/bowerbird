@@ -117,7 +117,9 @@ export const DetailFrame = observer(function DetailFrame({
   // is no second rendition to hold one at.
   const standInsOf = (id: string, drawn: ViewerRendition): string[] => {
     const photo = store.photoFor(id);
-    if (photo == null) return [];
+    // Not elsewhere: an `<img>` decode contends with the stage's own, and paints over the frame
+    // a step keeps up while the next one decodes.
+    if (photo == null || !shellDrawsStage()) return [];
     const thumbnail = renditionsApi.url(id, 'grid', renditionVersion(photo, 'grid'));
     return photo.has_embedded === false || drawn === 'embedded'
       ? [thumbnail]

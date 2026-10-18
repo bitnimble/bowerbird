@@ -62,7 +62,7 @@ const settle = (): Promise<void> =>
 const commands = (): string[] => asked.map((ask) => ask.command);
 
 function stage(
-  onImageLoad: (source: string, width: number, height: number) => void = () => {},
+  onImageLoad: (source: string, width: number, height: number, hdr: boolean) => void = () => {},
   { source = SOURCE, behind = BEHIND }: { source?: string; behind?: typeof BEHIND } = {},
 ): JSX.Element {
   return (
@@ -79,17 +79,17 @@ function stage(
 }
 
 test('the shell prepares and shows an HDR frame the page never decodes', async () => {
-  const loaded: [string, number, number][] = [];
+  const loaded: [string, number, number, boolean][] = [];
   const { unmount } = render(stage((...arrived) => loaded.push(arrived)));
   await settle();
 
   expect(wasDecoded(SOURCE)).toBe(false);
   expect(paints).toHaveLength(0);
-  expect(asked[0]).toEqual({
+  expect(asked[0]).toMatchObject({
     command: 'stage_prepare',
     stage: { url: URL_OF_SOURCE, urgent: true },
   });
-  expect(loaded).toEqual([[SOURCE, 4000, 3000]]);
+  expect(loaded).toEqual([[SOURCE, 4000, 3000, true]]);
   expect(shellStage.holds(SOURCE)).toBe(true);
   const shown = asked.find((ask) => ask.command === 'stage_show')?.stage;
   expect(shown).toMatchObject({
@@ -147,7 +147,6 @@ test('stepping to the next photo shows it in the window without hiding it betwee
   await settle();
 
   expect(commands()).not.toContain('stage_hide');
-  expect(asked).toContainEqual({ command: 'stage_release', stage: { url: URL_OF_SOURCE } });
   expect(asked.find((ask) => ask.command === 'stage_show')?.stage).toMatchObject({
     url: new URL(NEXT, window.location.href).href,
   });
@@ -164,6 +163,20 @@ test('zooming in hands the photo to the page, and the window goes once the page 
   expect(wasDecoded(SOURCE)).toBe(true);
   expect(commands().at(-1)).toBe('stage_hide');
   expect(paintedAtHide).toBeGreaterThan(0);
+});
+
+test('a photo released and prepared again in one go is never released to the shell', async () => {
+  await shellStage.prepare(SOURCE, false);
+  void shellStage.release(SOURCE);
+  const again = shellStage.prepare(SOURCE, true);
+  await again;
+  await settle();
+
+  expect(commands()).not.toContain('stage_release');
+  expect(shellStage.holds(SOURCE)).toBe(true);
+  await shellStage.release(SOURCE);
+  expect(commands()).toContain('stage_release');
+  expect(shellStage.holds(SOURCE)).toBe(false);
 });
 
 test('a window that will not draw leaves every frame to the page', async () => {

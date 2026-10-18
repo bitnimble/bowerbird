@@ -127,7 +127,6 @@ export class ViewerPresenter {
     if (chooseRendition && this.store.rendition == null) this.store.rendition = rendition;
   }
 
-  /** `picked` false for the opening rendition a step builds, which is not the reader's choice. */
   @action.bound
   chooseRendition(rendition: ViewerRendition, picked = true): void {
     this.store.rendition = rendition;

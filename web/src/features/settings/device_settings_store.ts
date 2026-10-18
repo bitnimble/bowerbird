@@ -5,10 +5,9 @@ import { SDR_WHITE_NITS } from '../../app/sdr_white';
 /** What a display is assumed to reach where nothing has been said about this one. */
 export const DEFAULT_DISPLAY_PEAK_NITS = 1000;
 
-/** A Shield's: SDR white at 480 nits, as scRGB counts them in 80s. */
-export const DEFAULT_HDR_WHITE = 6;
-
 const SCRGB_ONE_NITS = 80;
+const SHIELD_SDR_WHITE_NITS = 480;
+export const DEFAULT_HDR_WHITE = SHIELD_SDR_WHITE_NITS / SCRGB_ONE_NITS;
 
 /** The settings that are about this browser's machine rather than the library it is looking at. */
 export class DeviceSettingsStore {

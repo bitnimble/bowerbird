@@ -404,8 +404,6 @@ export function PhotoStage({
   const zoom = useZoomPan(viewportRef, stageRef, natural, onGestureEnd);
   const { view, reset, zoomed, handlers, box } = zoom;
   useEffect(() => stopFlings(viewportRef.current), []);
-  // Frames the shell would not prepare, which the page decodes after all; and whether its window
-  // would not draw at all, which no other frame will change.
   const [refusedBehind, setRefusedBehind] = useState<ReadonlySet<string>>(new Set());
   const [windowRefused, setWindowRefused] = useState(false);
   const refuseBehind = useCallback(
@@ -493,10 +491,10 @@ export function PhotoStage({
     () => setFailed((previous) => (previous.size === 0 ? previous : new Set())),
     [key, retryEpoch],
   );
-  useEffect(
-    () => setRefusedBehind((previous) => (previous.size === 0 ? previous : new Set())),
-    [retryEpoch],
-  );
+  useEffect(() => {
+    setRefusedBehind((previous) => (previous.size === 0 ? previous : new Set()));
+    setWindowRefused(false);
+  }, [retryEpoch]);
 
   // Which picture is up, and what it replaced. **The exchange, not the decode**: a run
   // mounts its neighbours, so the picture stepped to usually has its raster already and
@@ -884,7 +882,9 @@ export function PhotoStage({
           }
         : null);
   const standIns =
-    !ready && (visible == null || pictureOf(visible) !== shownKey) ? (picture?.standIns ?? []) : [];
+    !ready && hold !== true && (visible == null || pictureOf(visible) !== shownKey)
+      ? (picture?.standIns ?? [])
+      : [];
 
   // Still opaque under whatever replaced them. Not the frame on screen, which the
   // hold may name when a promotion left it where it was; and not one being asked

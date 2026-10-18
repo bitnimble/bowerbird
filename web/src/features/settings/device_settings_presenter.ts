@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import { applyUiScale } from '../../api/transport';
+import { applyUiScale, shellDrawsStage, shellStage } from '../../api/transport';
 import { readSetting, writeSetting } from '../../app/local_setting';
 import {
   DEFAULT_DISPLAY_PEAK_NITS,
@@ -13,6 +13,9 @@ const HDR_WHITE_KEY = 'bowerbird.hdrWhite';
 const UI_SCALE_KEY = 'bowerbird.uiScale';
 const VIEWER_QUALITY_NOTICE_KEY = 'bowerbird.viewerQualityNoticeClosed';
 const EDITOR_QUALITY_NOTICE_KEY = 'bowerbird.editorQualityNoticeClosed';
+const HDR_WHITE_TENTHS = 10;
+const LOWEST_HDR_WHITE = 1;
+const HIGHEST_HDR_WHITE = 50;
 
 export class DeviceSettingsPresenter {
   constructor(private readonly store: DeviceSettingsStore) {
@@ -54,12 +57,13 @@ export class DeviceSettingsPresenter {
     writeSetting(DISPLAY_PEAK_NITS_KEY, String(nits));
   }
 
-  /** Ignores anything that is not a positive scale, which leaves the field showing what it was. */
   @action.bound
   setHdrWhite(white: number): void {
     if (!isHdrWhite(white)) return;
     this.store.hdrWhite = white;
     writeSetting(HDR_WHITE_KEY, String(white));
+    // The stage compiles a pipeline per white; the next photo would otherwise freeze on it.
+    if (shellDrawsStage()) shellStage.warm(this.store.stageWhite).catch(() => undefined);
   }
 
   /** Kept only once the shell has applied it, so a refused scale is not the one restored. */
@@ -92,7 +96,13 @@ function savedHdrWhite(): number {
 }
 
 function isHdrWhite(white: number): boolean {
-  return Number.isFinite(white) && white > 0;
+  return white >= LOWEST_HDR_WHITE && white <= HIGHEST_HDR_WHITE;
+}
+
+/** `white` moved a tenth up or down, within what `setHdrWhite` takes. */
+export function steppedHdrWhite(white: number, step: 1 | -1): number {
+  const tenths = Math.round(white * HDR_WHITE_TENTHS) + step;
+  return Math.min(HIGHEST_HDR_WHITE, Math.max(LOWEST_HDR_WHITE, tenths / HDR_WHITE_TENTHS));
 }
 
 function savedUiScale(): number {
