@@ -10,6 +10,7 @@
 // `BOWERBIRD_MAC_DIST_DIR` says where to leave the bundle; where Tauri's bundler would otherwise,
 // which is where `build-payload.ts` looks for it.
 import { spawnSync } from 'node:child_process';
+import { cli } from './get-tauri-cli.ts';
 import { ensureIcons } from './make-icons.ts';
 import { MAC_MIN_VERSION, MAC_TARGET as TARGET, osxcrossEnv } from './osxcross.ts';
 import { VERSION } from '../src/version.ts';
@@ -49,7 +50,7 @@ const args = [
   config,
   ...process.argv.slice(2),
 ];
-const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
+const built = spawnSync(cli(), args, { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
 const repoRoot = resolve(import.meta.dir, '..');

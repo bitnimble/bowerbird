@@ -5,6 +5,7 @@
 // and a job that spells the CLI out itself is a job that can forget to. Every argument is passed
 // through, so `--target` and `--bundles` read as the CLI's own.
 import { spawnSync } from 'node:child_process';
+import { cli } from './get-tauri-cli.ts';
 import { ensureIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
 
@@ -12,22 +13,19 @@ import { VERSION } from '../src/version.ts';
 // clean checkout fails inside a proc macro naming a missing file rather than at a build step.
 ensureIcons();
 
-// npm's CLI, which is the stock Tauri: the only thing it cannot bundle is CEF, and the platform
-// that drew with CEF is paused (§23.7). `get-tauri-cli.ts` builds the one that can, for when that
-// comes back - it is not kept in the loop meanwhile because it does not install on an arm64 macOS
-// runner at all.
-//
-// The runtime Linux draws with was named here for the same pause, the feature it named no longer
-// being declared:
-//
-// const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
+// The CEF AppImage bundler runs FabianLars's fork of `quick-sharun.sh`, whose default URLs for
+// these two 404 and fail every AppImage.
+const SHARUN_FORK =
+  'https://raw.githubusercontent.com/FabianLars/Anylinux-AppImages/3e280d1b2270fecfcb2c2c823b490c782ecf1277/useful-tools/lib';
+const env = {
+  ...process.env,
+  ANYLINUX_LIB_SOURCE: `${SHARUN_FORK}/anylinux.c`,
+  GTK_CLASS_FIX_SOURCE: `${SHARUN_FORK}/gtk-class-fix.c`,
+};
 
 const config = JSON.stringify({ version: VERSION });
-const built = spawnSync(
-  'bun',
-  ['x', '@tauri-apps/cli', 'build', '--config', config, ...process.argv.slice(2)],
-  {
-    stdio: 'inherit',
-  },
-);
+const built = spawnSync(cli(), ['build', '--config', config, ...process.argv.slice(2)], {
+  stdio: 'inherit',
+  env,
+});
 if (built.status !== 0) process.exit(built.status ?? 1);

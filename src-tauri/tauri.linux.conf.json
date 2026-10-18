@@ -1,0 +1,9 @@
+{
+  "mainBinaryName": "bowerbird",
+  "bundle": {
+    "linux": {
+      "deb": { "depends": ["libgtk-4-1"] },
+      "rpm": { "depends": ["libgtk-4.so.1()(64bit)"] }
+    }
+  }
+}

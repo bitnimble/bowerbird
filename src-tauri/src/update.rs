@@ -15,10 +15,19 @@ pub(crate) const STAGED: i32 = 75;
 /// The shell's name in a payload, as `scripts/build-payload.ts` writes it.
 const MACOS_PAYLOAD_SHELL: &str = "Bowerbird.app";
 const WINDOWS_PAYLOAD_SHELL: &str = "bowerbird-app.exe";
+const LINUX_PAYLOAD_SHELL: &str = "Bowerbird.AppImage";
 const PAYLOAD_SHELL: &str = if cfg!(target_os = "macos") {
     MACOS_PAYLOAD_SHELL
-} else {
+} else if cfg!(windows) {
     WINDOWS_PAYLOAD_SHELL
+} else {
+    LINUX_PAYLOAD_SHELL
+};
+
+const HELPER: &str = if cfg!(windows) {
+    "bowerbird-updater.exe"
+} else {
+    "bowerbird-updater"
 };
 
 /// Where an update is staged, where this install can replace itself at all.
@@ -34,12 +43,11 @@ pub(crate) fn home(app: &tauri::AppHandle<crate::Runtime>) -> Option<PathBuf> {
 pub(crate) fn hand_over(app: &tauri::AppHandle<crate::Runtime>) -> Result<(), String> {
     let installed = Installed::here().ok_or("this install cannot replace itself")?;
     let home = home(app).ok_or("this app has no data directory to stage an update in")?;
-    let helper = format!("bowerbird-updater{}", std::env::consts::EXE_SUFFIX);
     // A copy, because the helper in the install is one of the files the update replaces.
-    let running = home.join(&helper);
+    let running = home.join(HELPER);
     let _ = std::fs::remove_file(&running);
-    std::fs::copy(installed.exe.with_file_name(&helper), &running)
-        .map_err(|err| format!("could not copy {helper} out of the install: {err}"))?;
+    std::fs::copy(&installed.helper, &running)
+        .map_err(|err| format!("could not copy {HELPER} out of the install: {err}"))?;
 
     let plan = updater::Plan {
         home,
@@ -66,6 +74,7 @@ struct Installed {
     /// What the payload's shell is called here.
     shell: OsString,
     exe: PathBuf,
+    helper: PathBuf,
 }
 
 impl Installed {
@@ -86,6 +95,7 @@ impl Installed {
         Some(Self {
             install: install.to_path_buf(),
             shell: bundle.file_name()?.to_owned(),
+            helper: exe.with_file_name(HELPER),
             exe,
         })
     }
@@ -99,11 +109,37 @@ impl Installed {
         Some(Self {
             install,
             shell: exe.file_name()?.to_owned(),
+            helper: exe.with_file_name(HELPER),
             exe,
         })
     }
 
-    #[cfg(not(any(target_os = "macos", windows)))]
+    /// The AppImage and the folder it is in, where this user can write to it. A deb or rpm
+    /// installs under `/usr`, which its package manager owns, and is offered the installer.
+    #[cfg(target_os = "linux")]
+    fn here() -> Option<Self> {
+        // `APPIMAGE` is inherited by anything an AppImage starts, so it names this app only
+        // while this binary is inside the mount `APPDIR` names.
+        let mount = PathBuf::from(std::env::var_os("APPDIR")?);
+        if !std::env::current_exe().ok()?.starts_with(&mount) {
+            return None;
+        }
+        let exe = PathBuf::from(std::env::var_os("APPIMAGE")?);
+        let install = exe.parent()?;
+        if !updater::writable(install) {
+            return None;
+        }
+        Some(Self {
+            install: install.to_path_buf(),
+            shell: exe.file_name()?.to_owned(),
+            exe,
+            // Not `bin/`, whose entries are all links to sharun, which finds the binary it starts
+            // relative to itself and so cannot run once copied out.
+            helper: mount.join("shared/bin").join(HELPER),
+        })
+    }
+
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     fn here() -> Option<Self> {
         None
     }
@@ -117,7 +153,11 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/build-payload.ts"),
         )
         .unwrap();
-        for shell in [super::MACOS_PAYLOAD_SHELL, super::WINDOWS_PAYLOAD_SHELL] {
+        for shell in [
+            super::MACOS_PAYLOAD_SHELL,
+            super::WINDOWS_PAYLOAD_SHELL,
+            super::LINUX_PAYLOAD_SHELL,
+        ] {
             assert!(
                 script.contains(&format!("'{shell}'")),
                 "build-payload.ts no longer writes {shell}"

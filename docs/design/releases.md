@@ -75,7 +75,7 @@ Tauri's own updater replace a `.app`.
   staged.version                 written last, and what says `staged/` is complete
   updater.log                    what the updater did, since it runs with nowhere to print
   bowerbird-updater              the copy that runs
-<install>/                       the folder holding the `.app`, or the NSIS install directory
+<install>/                       the folder holding the `.app` or `.AppImage`, or the NSIS install directory
   <entry>                        live
   .<entry>.bowerbird-incoming    the payload's copy, moved in before anything is swapped
   .<entry>.bowerbird-previous    the copy it replaced, until the new version has started
@@ -83,8 +83,8 @@ Tauri's own updater replace a `.app`.
 
 `native/updater` is the logic, with its own suite, and `src-tauri/src/bin/bowerbird-updater.rs`
 is the binary. Tauri bundles every binary in the crate beside the shell - `Contents/MacOS/` in
-the `.app`, the install directory on Windows - so the installers carry it with nothing added to
-them. It knows nothing about GitHub, releases or downloads.
+the `.app`, the install directory on Windows, `shared/bin/` inside the AppImage - so the
+installers carry it with nothing added to them. It knows nothing about GitHub, releases or downloads.
 
 Updater guarantees:
 
@@ -96,7 +96,7 @@ Updater guarantees:
   puts back every one already swapped and starts the version that was there.
 - **Only the payload's entries.** NSIS's `uninstall.exe`, or the other apps beside a bundle in
   `/Applications`, are left alone. The shell is renamed on the way in: the payload calls it
-  `Bowerbird.app` or `bowerbird-app.exe`, and the install calls it whatever the installer or
+  `Bowerbird.app`, `bowerbird-app.exe` or `Bowerbird.AppImage`, and the install calls it whatever the installer or
   the reader did, which `update.rs` passes as `--rename`.
 - **Rollback.** A version that exits non-zero within thirty seconds, or cannot be started, is a
   bad update rather than a crash: every `.bowerbird-previous` is put back and the old version
@@ -108,8 +108,9 @@ Updater guarantees:
   through UAC one phase at a time, the swap, the restore and the cleanup, so the app it starts
   runs as the reader rather than as an administrator. On macOS such an install is never offered
   an in-place update: a standard user's `/Applications`, or a bundle started from its disk image
-  or from Downloads, which macOS runs from a read-only copy. `update.rs` leaves
-  `BOWERBIRD_UPDATES` unset there, and the dialog offers the installer.
+  or from Downloads, which macOS runs from a read-only copy. On Linux the same holds for a deb or
+  rpm, and for an AppImage in a folder it cannot write. `update.rs` leaves `BOWERBIRD_UPDATES`
+  unset there, and the dialog offers the installer.
 - **On Windows every rename and delete is retried for ten seconds**, because a file stays locked
   for a moment after the process that held it exits, and a virus scanner opens every new
   executable it sees.
@@ -131,6 +132,7 @@ keys, whose replacement would need an administrator.
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | windows  | `bowerbird-app.exe`, `bowerbird-server.exe`, `bowerbird-updater.exe`, `resources/`, and the DLLs the shell resolves out of its own directory (§23.7.1) |
 | macOS    | a whole `Bowerbird.app`, the server and the updater inside it                                                                                          |
+| linux    | a whole `Bowerbird.AppImage`, the server and the updater inside it                                                                                     |
 
 ### 23.5 Where the check runs
 
@@ -144,7 +146,7 @@ has no badge and no hourly error toast.
 `can_install` is the server reporting that there is something newer and that the desktop app
 told it where to stage an update (`BOWERBIRD_UPDATES`), which the app does only where it can
 replace itself (§23.3).
-Anywhere else - the container, Android, a macOS install it cannot write to - the dialog
+Anywhere else - the container, Android, a deb or rpm, an install it cannot write to - the dialog
 offers the installer or the image instead of a button that could only half work.
 
 **Where it looks is a setting, and it is two URLs rather than one** (`update_source.ts`).
@@ -183,24 +185,18 @@ earlier would show a blank screen while the server restarts.
 
 ### 23.7 What the platforms can and cannot do
 
-| Platform       | Ships           | Local server | In-place update           |
-| -------------- | --------------- | ------------ | ------------------------- |
-| linux-x86_64   | nothing, paused | -            | -                         |
-| macos-arm64    | dmg             | yes          | yes                       |
-| windows-x86_64 | NSIS installer  | yes          | yes                       |
-| android-arm64  | apk, Play aab   | yes          | **no**                    |
-| docker-x86_64  | ghcr image      | yes          | no, `docker compose pull` |
+| Platform       | Ships              | Local server | In-place update           |
+| -------------- | ------------------ | ------------ | ------------------------- |
+| linux-x86_64   | AppImage, deb, rpm | yes          | AppImage only             |
+| macos-arm64    | dmg                | yes          | yes                       |
+| windows-x86_64 | NSIS installer     | yes          | yes                       |
+| android-arm64  | apk, Play aab      | yes          | **no**                    |
+| docker-x86_64  | ghcr image         | yes          | no, `docker compose pull` |
 
-**The Linux desktop is paused, and the container is not.** A server reaches Linux through the
-image above, which is where every Linux reader is; the desktop arm was built for completeness and
-has nobody on it. What paused it is the runtime: the shell draws with CEF on Linux and with Wry
-elsewhere, and the Tauri CLI rewrites `src-tauri/Cargo.toml` on every build, unioning a
-dependency's features across target tables - so `cef` is hoisted off the Linux `tauri` and written
-onto the other one, which still has `wry`. Both runtimes at once is the mismatch that manifest
-warns about, and it lands on macOS and Windows rather than on Linux. The row in `release.yml` is
-commented out with the same reasoning beside it; uncommenting it is the whole of turning this back
-on, once the shell draws with one runtime everywhere or the manifest can state two without the CLI
-merging them.
+**On Linux only the AppImage updates in place.** Its payload is the new AppImage, swapped over the
+file `$APPIMAGE` names where its folder is writable (`src-tauri/src/update.rs`). A deb or rpm
+installs under `/usr`, which its package manager owns, so it is offered the installer, which the
+manifest names as the AppImage.
 
 **Every platform is one triple**, Windows included: `x86_64-pc-windows-msvc` builds the shell,
 `rawshim` and the Bun runtime beside them, exactly as the other two rows build theirs. No
@@ -252,10 +248,11 @@ libstdc++ would otherwise get that one and fail in the way carrying a copy exist
 relocating, every object is walked again and anything still naming a path outside the tree fails
 the build.
 
-**What the Linux artefacts then ask of a machine is glibc, and the runner decides which.** The
-deb and the AppImage are built on Ubuntu 24.04, so `librawshim.so` and the libstdc++ beside it
-want `GLIBC_2.38` and neither will start on Ubuntu 22.04 or Debian 12. That floor follows the
-runner rather than being chosen, and raising it is what moving off a retired image costs.
+**What the deb and rpm then ask of a machine is glibc, and the runner decides which.** They are
+built on Ubuntu 24.04, so `librawshim.so` and the libstdc++ beside it want `GLIBC_2.38` and
+neither will start on Ubuntu 22.04 or Debian 12. That floor follows the runner rather than being
+chosen, and raising it is what moving off a retired image costs. The AppImage carries the
+runner's glibc and loader itself, which sharun starts every binary in it through.
 
 **Windows has nothing to carry** of `rawshim.dll`'s own, the MSVC C++ runtime being the C runtime
 the shell already asks for. What still goes beside the executables is whatever the _shell_ imports, Tauri's

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'Build only these, comma-separated: docker, android, macos, windows. Empty builds everything.'
+        description: 'Build only these, comma-separated: docker, android, linux, macos, windows. Empty builds everything.'
         type: string
         default: ''
 
@@ -65,21 +65,11 @@ jobs:
           # architecture; `platform` is what the release names its files and manifest keys by,
           # which an installed app looks itself up with, so it keeps the architecture.
           #
-          # **Linux is paused, and this row is what turns it back on:**
-          #   {"name": "linux", "platform": "linux-x86_64", "runs-on": "ubuntu-24.04",
-          #    "target": "x86_64-unknown-linux-gnu", "bundles": "deb,appimage"}
-          # The shell draws with CEF there and the CLI unions a dependency's features across
-          # target tables, so `cef` is hoisted off the Linux `tauri` and written onto the other
-          # one, which keeps `wry`. Both runtimes on is the silent mismatch `src-tauri/Cargo.toml`
-          # describes, and it reaches macOS and Windows rather than Linux. Nobody runs Bowerbird
-          # on Linux yet - the desktop arm was built for completeness - so it waits until the
-          # shell draws with one runtime everywhere or the manifest can state two without the
-          # CLI merging them.
-          #
           # macOS asks for `app` as well as `dmg`: the payload ships the `.app` itself, and asked
           # for a `dmg` alone the bundler deletes the `.app` it made one from.
           DESKTOP: |
             [
+              {"name": "linux", "platform": "linux-x86_64", "runs-on": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu", "bundles": "appimage,deb,rpm"},
               {"name": "macos", "platform": "macos-arm64", "runs-on": "macos-14", "target": "aarch64-apple-darwin", "bundles": "app,dmg"},
               {"name": "windows", "platform": "windows-x86_64", "runs-on": "windows-latest", "target": "x86_64-pc-windows-msvc", "bundles": "nsis"}
             ]
@@ -335,16 +325,16 @@ jobs:
             src-tauri
 
       # What the Dockerfile's `codecs` stage installs, which is what vcpkg does not fetch for
-      # itself on Linux, plus libclang-dev for bindgen. The webkit and appindicator packages
-      # are Tauri's own bundling dependencies rather than this app's - the Linux build runs on
-      # CEF (`src-tauri/Cargo.toml`).
+      # itself on Linux, plus libclang-dev for bindgen, GTK 4 for the CEF runtime's windows, and
+      # the bundler's tools. The AppImage step runs the app under `xvfb-run` to find the libraries
+      # it opens, and only warns without it, shipping an AppImage missing them.
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git nasm pkg-config python3 zip unzip libclang-dev \
-            libgtk-3-dev librsvg2-dev patchelf desktop-file-utils fuse3 libfuse2t64
+            libgtk-4-dev librsvg2-dev patchelf desktop-file-utils fuse3 libfuse2t64 xvfb
 
       # bindgen runs its own clang and finds it by this rather than by PATH. The runner image
       # ships LLVM; naming the directory is all that is missing.
@@ -354,13 +344,14 @@ jobs:
         shell: bash
 
       # The codecs are nine libraries built from source, which is most of the time this job
-      # spends before it compiles anything of ours.
+      # spends before it compiles anything of ours. The shell's manifest is where the Tauri CLI's
+      # revision is read from.
       - name: The pinned trees, from last time
         id: pinned-cache
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-desktop-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+          key: pinned-${{ runner.os }}-desktop-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**', 'src-tauri/Cargo.toml') }}
           restore-keys: pinned-${{ runner.os }}-desktop-
 
       # vcpkg's archive of each port it built, for when the trees above miss: a recipe change then
@@ -430,8 +421,10 @@ jobs:
           mkdir -p "$dest"
           # Matched on the version too, so an installer an earlier build left in the cached
           # target directory cannot be renamed over this one.
-          find src-tauri/target/${{ matrix.target }}/release/bundle -type f -name "*_${version}_*" \
-            \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) |
+          # The rpm bundler joins its name with hyphens, `Bowerbird-<version>-1.x86_64.rpm`.
+          find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
+            \( -name "*_${version}_*" -o -name "*-${version}-*" \) \
+            \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*-setup.exe' \) |
           while IFS= read -r file; do
             case "$file" in
               *-setup.exe) kind=-setup.exe ;;
@@ -515,12 +508,13 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'scripts/android-ndk.ts', '.android-ndk-version', 'native/rawshim/vcpkg/**', '.bun-version', 'rust-toolchain.toml', 'bun.lock') }}
+          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'scripts/android-ndk.ts', '.android-ndk-version', 'native/rawshim/vcpkg/**', '.bun-version', 'rust-toolchain.toml', 'bun.lock', 'src-tauri/Cargo.toml') }}
           restore-keys: pinned-${{ runner.os }}-android-
       - run: |
           bun run get:shell
           bun run get:codecs --target aarch64-linux-android
           bun run get:android-runtime
+          bun run get:tauri
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'
         run: bun run scripts/prune-pinned.ts
       - if: env.SAVE_CACHES == 'true' && steps.pinned-cache.outputs.cache-hit != 'true'

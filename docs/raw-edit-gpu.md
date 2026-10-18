@@ -723,10 +723,9 @@ browser build has to choose.
 The conclusion below stands as a fact about `webkit2gtk`, and is routed around
 rather than lived with: `src-tauri/Cargo.toml` puts Linux on
 **`tauri-runtime-cef`**, a bundled Chromium, with wry's system webview on macOS
-and Windows. It is a per-target Cargo feature (`docs/tauri-cef-evaluation.md`
-§4.4), and `default-features = false` on the Linux entry is what makes WebKitGTK
-unreachable rather than merely unused - `cargo tree` on Linux has no `wry` and no
-`webkit2gtk` in it at all.
+and Windows. Each is a per-target dependency (`docs/tauri-cef-evaluation.md`
+§4.4), so WebKitGTK is unreachable rather than merely unused - `cargo tree` on
+Linux has no `wry` and no `webkit2gtk` in it at all.
 
 With that, every platform has WebGPU: WebView2 and CEF are Chromium, and
 WKWebView has it from macOS 26. **The canvas plan reaches all three**, and §10.2
@@ -756,7 +755,7 @@ question (Wayland colour management, nothing on X11), not an engine one. CEF
 gets the pipeline running there; whether the panel lights is a platform matter
 and is nascent generally.
 
-### 10.1.1 Why WebKit was the blocker
+### 10.1.1 Why Linux does not use WebKit
 
 Measured here: Playwright's WebKit 26.5 Linux build (WPE headless) reports
 `navigator.gpu` as **absent**. Not conclusive for `webkit2gtk` specifically,
@@ -765,8 +764,8 @@ feature in WebKit's Linux ports and it is off here. Hardware is not the reason:
 Chromium on the same box takes a real Vulkan adapter (`amd / rdna-2`) and runs
 the probe fine, so the engine is the difference rather than the machine. Add that Linux HDR
 presentation needs the Wayland colour-management protocol, which is new and
-absent on X11 entirely, and the canvas plan does not reach a Tauri Linux build
-at all today.
+absent on X11 entirely, and the canvas plan would not reach a Tauri Linux build
+on WebKitGTK at all.
 
 The webview per platform is what decides which option is even available:
 
@@ -775,7 +774,6 @@ The webview per platform is what decides which option is even available:
 | macOS          | WKWebView (wry)          | yes, from macOS/iOS 26 | works, with an OS floor |
 | Windows        | WebView2 (Chromium, wry) | yes                    | works                   |
 | Linux          | CEF (bundled Chromium)   | yes                    | works                   |
-| ~~Linux~~      | ~~webkit2gtk~~           | ~~no~~                 | ~~why Linux takes CEF~~ |
 
 **macOS carries a deployment floor rather than a doubt.** Safari's feature flags
 do not reach WKWebView: Apple's own answer to a developer hitting exactly this
@@ -814,7 +812,7 @@ written around. Kept here only as the shape being replaced.
 
 **(b) The frontend owns the GPU, the backend owns the open.** The canvas and the
 shaders live in the webview, already measured working end to end on macOS
-(§7.3), and available on every platform now that Linux runs CEF (§10.1).
+(§7.3), and available on every platform, Linux through CEF (§10.1).
 
 The part worth spelling out is that **the tick path needs no wasm at all**.
 `Prepared` is immutable between matches (§6), so:
@@ -850,7 +848,7 @@ things get called this:
 - _Shared memory into a canvas_: there is no zero-copy path into a webview
   canvas on any platform. The best available is an IPC buffer plus
   `writeTexture`, which is a copy per tick and still needs the webview to have
-  WebGPU, so it inherits (b)'s Linux problem while giving up (b)'s simplicity
+  WebGPU, so it inherits (b)'s requirement while giving up (b)'s simplicity
 - _A native surface composited in the window_: wgpu renders into a layer of its
   own, the webview draws the UI around a transparent region. This is the real
   punch-through, and Tauri exposes the window handle that wgpu needs. It also

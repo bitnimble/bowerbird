@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { hostTriple } from './host-triple.ts';
+import { VERSION } from '../src/version.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -13,6 +14,7 @@ const ROOT = join(import.meta.dir, '..');
 const PLATFORMS: Record<string, string> = {
   'aarch64-apple-darwin': 'macos-arm64',
   'x86_64-pc-windows-msvc': 'windows-x86_64',
+  'x86_64-unknown-linux-gnu': 'linux-x86_64',
 };
 
 function flag(name: string): string | undefined {
@@ -66,6 +68,20 @@ function macBundle(): string {
   return join(bundles, found[0]!);
 }
 
+/** This version's AppImage, which a cached target directory may hold older ones beside. */
+function appImage(): string {
+  const bundles = need(join(releaseDir, 'bundle', 'appimage'), 'Run `bun run build:app` first.');
+  const found = readdirSync(bundles).filter(
+    (entry) => entry.endsWith('.AppImage') && entry.includes(`_${VERSION}_`),
+  );
+  if (found.length !== 1) {
+    throw new Error(
+      `${bundles} holds ${found.length} AppImages of ${VERSION}, so which one ships is ambiguous: ${found.join(', ')}`,
+    );
+  }
+  return join(bundles, found[0]!);
+}
+
 // The shell under the names `src-tauri/src/update.rs` renames to whatever it is installed as.
 if (triple.includes('apple')) {
   // Copied as built: an edited bundle no longer matches its signature.
@@ -84,6 +100,10 @@ if (triple.includes('apple')) {
     join(app, 'Contents', 'Resources', 'web', 'index.html'),
     'The bundle does not hold the page.',
   );
+} else if (triple.includes('linux')) {
+  // The AppImage alone, which carries everything else inside it: a deb or rpm install belongs
+  // to its package manager and never updates in place.
+  cpSync(appImage(), join(staging, 'Bowerbird.AppImage'));
 } else {
   cpSync(
     need(join(releaseDir, 'app.exe'), 'Run `bun run build:app` first.'),

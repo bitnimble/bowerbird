@@ -19,7 +19,7 @@ or cross-origin isolation unless measurements identify the 582ms as a problem.
       own framing, byte for byte what `/prepared` served, so the client's parse never changed.
 
       **The desktop shell has no path of its own**, and the one it had is deleted: the shell runs
-      CEF on Linux and Chromium everywhere else, so its webview has WebGPU and there is nothing the
+      CEF on Linux, WebView2 on Windows and WKWebView on macOS, so its webview has WebGPU and there is nothing the
       shell could open that the page cannot. `src-tauri/src/edit.rs`, the `get:prepared` branch and
       the HTTP tile round trip are gone, and the shell proxies everything again. The cost is the
       measured one - a single-threaded webview decode, about +582ms an open - and it buys one

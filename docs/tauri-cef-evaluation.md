@@ -12,10 +12,10 @@ Reviewed: 2026-08-03 (claims re-checked against live GitHub/API, Tauri docs, and
 > taken; `docs/raw-edit-gpu.md` §0 and §6.2 explain the current architecture. §6 tests that
 > unbuilt editor.
 >
-> **Linux runs CEF.** `src-tauri/Cargo.toml`
-> takes `tauri` from the `feat/cef` branch with `default-features = false, features = ["cef"]`
-> on `target_os = "linux"`; Linux cannot reach WebKitGTK. §2 describes the branch, §4.4 the
-> shipped switch, not an option still under consideration.
+> **Linux runs CEF.** `src-tauri/Cargo.toml` takes `tauri` from the `feat/cef` branch and
+> depends on `tauri-runtime-cef` on `target_os = "linux"`, `tauri-runtime-wry` elsewhere; Linux
+> cannot reach WebKitGTK. §2 describes the branch, §4.4 the shipped switch, not an option still
+> under consideration.
 
 Whether Bowerbird’s desktop shell should be **Tauri with a bundled Chromium
 (CEF)** rather than Electron or stock Tauri (system webview). Product constraint:
@@ -36,8 +36,7 @@ See `docs/raw-edit-gpu.md` §0 and §6.2.
 
 Stock Tauri (WebView2 / WKWebView / WebKitGTK) is the wrong default: Linux
 WebKitGTK is a known QA sink (maintainers have said as much on
-[tauri#14963](https://github.com/tauri-apps/tauri/issues/14963)), and we want a
-pinned Chromium everywhere.
+[tauri#14963](https://github.com/tauri-apps/tauri/issues/14963)).
 
 `e2e-tauri/api.desktop.ts` asserts the consequence - `navigator.gpu` and a real
 adapter in the shell's own webview - so a Linux build that lost CEF fails there
@@ -49,18 +48,18 @@ Stable Tauri uses the OS webview via wry (WKWebView / WebView2 / WebKitGTK). Tha
 is the documented default (`v2.tauri.app` architecture / start pages; `dev`
 `Cargo.toml` defaults to `wry`). Bundled Chromium is the **CEF** path:
 
-- Lives on branch [`feat/cef`](https://github.com/tauri-apps/tauri/tree/feat/cef)
-  (tip at check time: `4af26a3`, **2026-07-31**).
-- Opt-in on that branch: enable the **`cef` Cargo feature**, which pulls in
-  `tauri-runtime-cef`, and pin deps / CLI to the branch. Not on stable crates.io
-  as a turnkey default.
+- Lives on branch [`feat/cef`](https://github.com/tauri-apps/tauri/tree/feat/cef);
+  the shell pins `9d1a5b1` (**2026-10-07**).
+- Opt-in on that branch: depend on `tauri-runtime-cef` rather than
+  `tauri-runtime-wry` (§4.4), and pin deps / CLI to the branch. Not on stable
+  crates.io as a turnkey default.
 - FabianLars (2026-04-03 on #14963): “the branch is mostly usable but like I said
   above, **you're on your own when you want to try it**. We cannot yet offer much
   help (please do report issues though if you do try it).”
 - Production apps already ship CEF-backed Tauri: **Kabegame** (own
   `tauri-runtime-cef`, cited on #14963) and **OpenHuman** (vendored `tauri-cef`
-  fork of `feat/cef`, still on CEF 146.4.1 while the branch pins 150; each app
-  carries its own pin).
+  fork of `feat/cef` on CEF 146.4.1 as of 2026-08-03; each app carries its own
+  pin).
 - Timeline: simonhyll (2024-06-03 on #14963) on CEF: “can't be done for v2 both from
   an amount of work point of view and a security audit point of view. Earliest it
   can possibly happen is in Tauri version 3.” Opt-in when it lands, not a firm
@@ -69,7 +68,7 @@ is the documented default (`v2.tauri.app` architecture / start pages; `dev`
   **>300MB** ([chromiumembedded/cef#3836](https://github.com/chromiumembedded/cef/issues/3836)).
   Kabegame v4.3.0’s own desktop artifacts: **177MB** Windows setup `.exe`,
   **205MB** macOS `.dmg`, **240MB** `.deb`.
-- CEF version is pinned (`feat/cef` was on `cef = "=150.0.0"` at check time);
+- CEF version is pinned (`tauri-runtime-cef` takes `cef = "=151.8.1"` at `9d1a5b1`);
   FabianLars (2024-05-06): “each cef update by itself is technically a breaking
   change.” Apps ship their own CEF; shared system CEF is not available yet (same
   #14963 / cef#3836).
@@ -229,65 +228,45 @@ CORS path (`ACAO: *` already permits it).
 
 ### 4.4 CEF on Linux, wry on Windows/macOS
 
-**This is the build.** The runtime is a Cargo feature, and everything downstream
-follows it:
+**This is the build.** `tauri` carries no runtime; the app depends on one runtime
+crate per target, and everything downstream follows which one is linked:
 
-- `crates/tauri/build.rs` emits
-  `println!("cargo:runtime={}", if has_feature("cef") { "cef" } else { "wry" })`.
-- `tauri-build` reads that back as `DEP_TAURI_RUNTIME` and swaps
-  `windows-app-manifest.xml` for `windows-cef-app-manifest.xml`, and on
-  `unknown-linux-gnu` adds `cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN` so the
-  binary finds `libcef.so` beside it.
-- App code is untouched: `app.rs` carries
-  `#[cfg(feature = "cef")] impl Default for Builder<crate::Cef>` alongside the
-  wry one, so `tauri::Builder::default()` resolves to `Builder<Cef>` on a
-  cef-only build.
+- `tauri-runtime-cef` declares `links = "tauri_runtime_cef"`, which `tauri-build`
+  reads back to swap `windows-app-manifest.xml` for
+  `windows-cef-app-manifest.xml` and, on `unknown-linux-gnu`, add
+  `-Wl,-rpath,$ORIGIN` so the binary finds `libcef.so` beside it.
+- The CLI's bundler reads the target tables of `src-tauri/Cargo.toml` to decide
+  whether the app is a CEF app, and only then copies `libcef.so`, the pak files and
+  the locales into a deb or rpm, and assembles an AppImage with `sharun`.
 
-`src-tauri/Cargo.toml` switches through per-target dependencies. Both pin `rev`,
-not `branch`: the branch is absent from crates.io and its tip moves.
+`src-tauri/Cargo.toml` pins `rev`, not `branch`: the branch is absent from
+crates.io and its tip moves.
 
 ```toml
+[dependencies]
+tauri = { git = "...", rev = "..." }
+
 [target.'cfg(target_os = "linux")'.dependencies]
-tauri = { git = "...", rev = "...", default-features = false, features = ["cef"] }
+tauri-runtime-cef = { git = "...", rev = "..." }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-tauri = { git = "...", rev = "...", features = [] }
+tauri-runtime-wry = { git = "...", rev = "..." }
 ```
 
-One consequence in app code: with `wry` off there is no default runtime, so every
-`AppHandle` has to name one. `src-tauri/src/lib.rs` exports a `Runtime` alias that
-is `tauri::Cef` on Linux and `tauri::Wry` elsewhere, and the handlers take
-`AppHandle<crate::Runtime>`.
+Keep `tauri` itself to one entry. The CLI rewrites its feature list before every
+build and passes one feature set across every `tauri` entry it finds, so a
+feature on one target's entry lands on all of them.
 
-Require `default-features = false`. With both features, no `compile_error!` fires:
-`build.rs` reports `cef` for manifest/rpath, but `Builder::default()` resolves to
-`Builder<Wry>` because `#[default_runtime(crate::Wry, wry)]` selects `Wry` whenever
-`wry` is present. The build silently mismatches.
+In app code, `src-tauri/src/lib.rs` exports a `Runtime` alias, `CefRuntime` on
+Linux and `WryRuntime` elsewhere, builds with `Builder::<Runtime>::new()`, and the
+handlers take `AppHandle<crate::Runtime>`. On Linux `main` carries
+`#[tauri_runtime_cef::cef_entry_point]`, which runs CEF's helper processes out of
+the same binary.
 
-**As a product decision: it forks the editor, and that is the real cost.** The
-§4.1 design needs an open-ended response the backend pushes into, and only CEF
-has one. wry's custom protocol is one-shot:
-
-```rust
-Fn(WebViewId, Request<Vec<u8>>) -> Response<Cow<'static, [u8]>>
-```
-
-and the async form's `RequestAsyncResponder::respond(self, ...)` takes `self` by
-value, so it answers exactly once with a finished buffer. No incremental push, no
-open body.
-
-That leaves two coherent positions and no halfway:
-
-- **CEF everywhere.** Native grading, one pushed stream, `routeFor()` and the
-  wasm module deleted from the shell (§4.1). Every platform pays CEF's ~180-240MB.
-- **CEF on Linux only.** CEF is purely an escape from WebKitGTK, and the editor
-  stays as it is today: wasm, `SharedArrayBuffer`, COOP/COEP, and `routeFor()`
-  picking between WebView2 (Chromium, so `track`) and WKWebView (so `still`).
-  Windows and macOS bundles stay small.
-
-Combining native editor and mixed build restores §4.1's engine branching one
-layer up: Linux streams, other platforms use wasm routes, and two of three
-bundles still ship wasm.
+**Only Linux pays for CEF.** The editor grades in page-side WGSL
+(`docs/raw-edit-gpu.md` §10.1), which needs a webview with WebGPU and no
+open-ended response, so wry's one-shot custom protocol serves it on Windows and
+macOS. CEF adds ~180-240MB to the Linux bundles alone.
 
 ## 5. Decisions already made
 

@@ -36,6 +36,9 @@ const suite = spawn(
       // Empty turns update checking off (§23.5): left on, the sidebar grows a row the moment a
       // release exists that is newer than this checkout, and the suite depends on what is published.
       BOWERBIRD_UPDATE_REPO: '',
+      // Xvfb has no DRI3, which Mesa's Vulkan drivers need to present; without this radv's GPU
+      // process cannot make a context and the WebGPU test loses the browser.
+      MESA_VK_WSI_DEBUG: 'sw',
     },
     stdout: 'inherit',
     stderr: 'inherit',

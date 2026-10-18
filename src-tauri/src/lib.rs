@@ -23,19 +23,15 @@ mod server;
 mod ui_scale;
 mod update;
 
-// `#[default_runtime(crate::Wry, wry)]` only defaults `AppHandle`'s generic while the `wry`
-// feature is on, so every `AppHandle` names the runtime rather than relying on the default -
-// which is what lets a platform draw with something else without touching any of them.
-//
-// Linux drew with CEF and is paused (§23.7); `Cargo.toml` says what that pause is made of.
-//
-// #[cfg(target_os = "linux")]
-// pub type Runtime = tauri::Cef;
-pub type Runtime = tauri::Wry;
+// Linux's webview, WebKitGTK, is built without WebGPU, so Linux draws with a bundled Chromium.
+#[cfg(target_os = "linux")]
+pub type Runtime = tauri_runtime_cef::CefRuntime<tauri::EventLoopMessage>;
+#[cfg(not(target_os = "linux"))]
+pub type Runtime = tauri_runtime_wry::WryRuntime<tauri::EventLoopMessage>;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::<Runtime>::new()
         .setup(|app| {
             #[cfg(target_os = "android")]
             exits::report(app.handle());
@@ -72,6 +68,17 @@ pub fn run() {
         ]);
     #[cfg(target_os = "android")]
     let builder = builder.plugin(photos::plugin()).plugin(exits::plugin());
+    #[cfg(target_os = "linux")]
+    let builder = builder.runtime(
+        tauri_runtime_cef::Cef::default()
+            // Chromium on Linux hides every adapter behind Dawn's blocklist without it, and the
+            // editor has no path but WebGPU.
+            // `--` spelled out: a bare name with no value goes in as a positional argument.
+            .command_line_arg("--enable-unsafe-webgpu", None::<String>)
+            // Never in a shipped build: anyone who can start it could pass
+            // `--remote-debugging-port` and drive the app.
+            .allow_chromium_command_line_args(cfg!(feature = "e2e")),
+    );
     // The server outlives the window otherwise, holding the catalogue against the next start and
     // leaving a process nobody can see. Not on Android, where the system can destroy the window and
     // bring it back in the same process wanting its server; the platform ends the server with the
@@ -88,7 +95,7 @@ pub fn run() {
             window.app_handle().exit(0);
         }
     });
-    #[cfg(target_os = "macos")]
+    #[cfg(desktop)]
     let builder = builder.on_web_content_process_terminate(server::recover);
     builder
         .build(tauri::generate_context!())

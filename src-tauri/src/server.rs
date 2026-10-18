@@ -66,12 +66,20 @@ fn client() -> &'static reqwest::Client {
     CLIENT.get_or_init(reqwest::Client::new)
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn recover(webview: &tauri::Webview<crate::Runtime>) {
-    if webview.label() != "main" {
+#[cfg(desktop)]
+pub(crate) fn recover(
+    webview: &tauri::Webview<crate::Runtime>,
+    termination: &tauri::webview::WebContentProcessTermination,
+) {
+    use tauri::webview::WebContentProcessTerminationReason;
+    if webview.label() != "main" || termination.reason == WebContentProcessTerminationReason::Normal
+    {
         return;
     }
-    crate::app_log::warn("web content process terminated; restoring the page");
+    crate::app_log::warn(format!(
+        "web content process terminated ({:?}); restoring the page",
+        termination.reason
+    ));
     let current = webview.url().ok();
     let signed_in = LOCAL.lock().ok().and_then(|held| {
         let local = held.as_ref()?;
@@ -168,7 +176,14 @@ fn sidecar_path() -> std::io::Result<PathBuf> {
     } else {
         "bowerbird-server"
     };
-    Ok(dir.join(name))
+    let beside = dir.join(name);
+    // A deb or rpm puts a CEF app's own binary in `/usr/share/<product>`, beside libcef, and its
+    // sidecars in `/usr/bin`.
+    #[cfg(target_os = "linux")]
+    if dir.starts_with("/usr/share") {
+        return Ok(Path::new("/usr/bin").join(name));
+    }
+    Ok(beside)
 }
 
 /// Where the bundle and the native library landed, on the same terms.

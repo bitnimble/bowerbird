@@ -51,6 +51,7 @@ initSubmodules();
 run('bun', ['install', '--frozen-lockfile']);
 run('bun', ['install', '--frozen-lockfile'], join(ROOT, 'web'));
 run('bun', ['run', 'get:shell']);
+run('bun', ['run', 'get:tauri']);
 run('bun', ['run', 'build:wasm']);
 
 if (android) {

@@ -1,7 +1,7 @@
 // Builds the desktop binary the e2e run drives (see `e2e-tauri/playwright.config.ts`).
 //
-// One thing a normal build does not do: `tauri/custom-protocol`, the feature the Tauri CLI
-// passes for a real build and the switch that takes the binary out of dev mode.
+// `tauri/custom-protocol` is the feature the Tauri CLI passes for a real build and the switch
+// that takes the binary out of dev mode; `e2e` lets it take the suite's Chromium switches.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
 
@@ -25,5 +25,5 @@ run('bun', [
   '--manifest-path',
   'src-tauri/Cargo.toml',
   '--features',
-  'tauri/custom-protocol',
+  'tauri/custom-protocol,e2e',
 ]);

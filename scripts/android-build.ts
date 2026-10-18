@@ -10,6 +10,7 @@
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with the
 // NDK `.android-ndk-version` names, and a JDK 17.
 import { spawnSync } from 'node:child_process';
+import { cli } from './get-tauri-cli.ts';
 import { ensureIcons, writeAndroidIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
 import {
@@ -23,12 +24,14 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { ANDROID_PAGE_SIZE, ANDROID_TARGET, androidNdk, type AndroidNdk } from './android-ndk.ts';
 
 let ndk: AndroidNdk;
+let tauri: string;
 try {
   ndk = androidNdk();
+  tauri = cli();
 } catch (missing) {
   console.error(`[android-build] ${(missing as Error).message}`);
   process.exit(1);
@@ -36,6 +39,8 @@ try {
 const env: Record<string, string> = {
   ...(process.env as Record<string, string>),
   ...ndk.env,
+  // `tauri android init` has Gradle call back into the CLI as `cargo tauri`.
+  PATH: `${dirname(tauri)}${delimiter}${process.env.PATH ?? ''}`,
 };
 
 function run(
@@ -73,7 +78,7 @@ ensureIcons();
 // is generated rather than committed and a fresh checkout has none.
 const repoRoot = resolve(import.meta.dir, '..');
 if (!existsSync(join(repoRoot, 'src-tauri', 'gen', 'android'))) {
-  run('bun', ['x', '@tauri-apps/cli', 'android', 'init']);
+  run(tauri, ['android', 'init']);
 }
 patchProject(join(repoRoot, 'src-tauri', 'gen', 'android', 'app'));
 
@@ -89,10 +94,8 @@ run('bun', ['run', 'scripts/build-sidecar.ts', '--target', ANDROID_TARGET]);
 
 const tauriBuild = (format: '--apk' | '--aab', extra: Record<string, string> = {}): void =>
   run(
-    'bun',
+    tauri,
     [
-      'x',
-      '@tauri-apps/cli',
       'android',
       'build',
       '--target',

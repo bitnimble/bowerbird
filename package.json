@@ -31,7 +31,7 @@
     "bench": "bun run scripts/bench.ts",
     "snapshots": "bun run scripts/cargo.ts run --profile quick --manifest-path native/rawshim/Cargo.toml --example snapshot_diff --",
     "shots": "playwright test -c landing/scripts/screenshots.config.ts",
-    "get:all": "bun run get:shell && bun run get:codecs",
+    "get:all": "bun run get:shell && bun run get:codecs && bun run get:tauri",
     "get:tauri": "bun run scripts/get-tauri-cli.ts",
     "get:shell": "bun run get:slangc && bun run get:models && bun run get:environments",
     "get:vpx": "bun run scripts/get-vpx.ts",
@@ -53,7 +53,7 @@
     "probe:desktop": "bun run scripts/probe-desktop.ts",
     "e2e:tauri:build": "bun run scripts/build-desktop-app.ts",
     "e2e:tauri": "bun run e2e:tauri:build && bun run scripts/e2e-tauri-full.ts",
-    "tauri": "bun x @tauri-apps/cli"
+    "tauri": "bun run scripts/tauri.ts"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

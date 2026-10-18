@@ -13,12 +13,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 # The empty list is not noise: the CLI rewrites this file before every build and writes one in if
 # it is not there, so stating it is what keeps a build from leaving the tree dirty.
-tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
+tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1", features = [] }
 
 [dependencies]
 # `macos-private-api` is what lets WKWebView take an element fullscreen, which the photo viewer
 # offers only where `document.fullscreenEnabled`; `tauri.conf.json`'s `macOSPrivateApi` has to agree.
-tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = ["macos-private-api"] }
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # What the shell asks of the local server itself: an export's render, a RAW's path.
@@ -34,7 +34,8 @@ getrandom = "0.3"
 #
 # The predicate is what tauri's own `desktop` cfg expands to, and `export.rs` gates on that
 # cfg - the two have to keep agreeing, because rfd has no backend for Android and does not
-# compile there. The portal rather than GTK on Linux, since the CEF build carries no GTK.
+# compile there. The portal rather than GTK on Linux: rfd's GTK is 3, the CEF runtime's is 4, and
+# one process cannot load both.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 
@@ -76,26 +77,21 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 ashpd = { version = "0.11", default-features = false, features = ["tokio", "raw_handle", "wayland"] }
 raw-window-handle = "0.6"
 
-# **`tauri` is one entry above, and that is what the Linux desktop's pause is made of** (§23.7).
-# Two
-# would be CEF here and Wry elsewhere, which cannot be stated: the Tauri CLI rewrites this file
-# before every build and unions a dependency's features across target tables, so `cef` lands on
-# the Wry entry too and both runtimes come on at once. Nothing emits a compile_error for that -
-# `build.rs` would report `cef`, taking the CEF manifest and rpath, while `Builder::default()`
-# still resolves to `Builder<Wry>`, since `#[default_runtime(crate::Wry, wry)]` defaults the
-# generic to Wry whenever the `wry` feature is present. macOS and Windows would carry it.
-#
-# The `cef` feature below is what the bundler is told, and is the only way it carries CEF:
-# `tauri-bundler` copies `libcef.so`, the pak files and the locales into a deb, and assembles an
-# AppImage with `sharun` rather than `linuxdeploy`, only when its `cef_path` is set - which the
-# CLI sets from the features it was passed, resolved against this table rather than a
-# dependency's. Both come back together, with `release.yml`'s Linux row.
-#
-# [target.'cfg(target_os = "linux")'.dependencies]
-# tauri = { git = "...", rev = "...", default-features = false, features = ["cef"] }
-#
-# [features]
-# cef = ["tauri/cef"]
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri-runtime-cef = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1", features = ["macos-private-api"] }
+
+[features]
+# The build `e2e-tauri/` drives, which reads Chromium switches off its command line on Linux.
+e2e = []
+
+# Tauri's own workspace patches, which a git dependency does not inherit. Without it the CEF runtime
+# sees two `dpi` crates, winit-gtk4's and crates.io's, and does not compile. `branch` rather than
+# `rev` so it is the same source winit-gtk4 names; the lockfile pins the commit.
+[patch.crates-io]
+dpi = { git = "https://github.com/tauri-apps/winit-gtk4", branch = "master" }
 
 [profile.release]
 # The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds

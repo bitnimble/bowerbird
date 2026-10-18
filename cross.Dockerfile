@@ -15,7 +15,7 @@ RUN case "$TARGETARCH" in amd64) build=x64-baseline ;; arm64) build=aarch64 ;; *
 FROM debian:trixie-slim AS base
 WORKDIR /app
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
-# node shim: the Tauri CLI shells out to node
+# node shim: package bins start through `#!/usr/bin/env node`
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx \
   && mkdir -p /usr/local/bun-node-fallback-bin \
   && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/node
@@ -84,6 +84,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/native/rawshim/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
+  && bun run get:tauri \
   && BOWERBIRD_ANDROID_DIST_DIR=/out/installer/android-arm64 bun run scripts/android-build.ts --dev
 
 FROM scratch AS android-dist
@@ -117,9 +118,11 @@ COPY --from=source /app ./
 ARG VITE_SENTRY_DSN=
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=locked \
     --mount=type=cache,target=/app/native/rawshim/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
+  && bun run get:tauri \
   && bun run scripts/osxcross.ts bun run build:native:release --target aarch64-apple-darwin --no-default-features \
   && bun run build:sidecar --target aarch64-apple-darwin \
   && bun run scripts/mac-build.ts \
@@ -144,10 +147,12 @@ COPY --from=source /app ./
 ARG VITE_SENTRY_DSN=
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,id=bowerbird-cross-pinned,target=/root/.cache,sharing=locked \
     --mount=type=cache,target=/root/.cache/cargo-xwin \
     --mount=type=cache,target=/app/native/rawshim/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
+  && bun run get:tauri \
   && xwin_env="$(cargo xwin env --target x86_64-pc-windows-msvc)" \
   && eval "$xwin_env" \
   && bun run build:native:release --target x86_64-pc-windows-msvc --no-default-features \
