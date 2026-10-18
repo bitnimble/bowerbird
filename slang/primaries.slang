@@ -36,9 +36,9 @@ public static const float3x3 P3_TO_R2020 = float3x3(
 /// everything reads it as. sRGB and BT.709 share primaries and differ only in transfer, so this is
 /// the SDR rendition's rotation as well as the soft proof's.
 public static const float3x3 R2020_TO_SRGB = float3x3(
-     1.663467,  -0.587548,  -0.072838,
-    -0.125523,   1.132926,  -0.008350,
-    -0.018099,  -0.100603,   1.118998);
+     1.660227,  -0.587548,  -0.072838,
+    -0.124553,   1.132926,  -0.008350,
+    -0.018155,  -0.100603,   1.118998);
 
 /// The way back, which is how a colour clipped to what sRGB holds reaches a Display P3 canvas:
 /// through `R2020_TO_P3`, there being no route straight across.
@@ -58,11 +58,11 @@ public static const float3x3 XYZ_TO_CONE = float3x3(
      0.038900,  -0.068500,   1.029600);
 
 public static const float3x3 R2020_TO_CONE = float3x3(
-     0.641020,   0.305534,  -0.004280,
-    -0.028459,   1.054288,   0.013857,
-     0.006822,  -0.011914,   1.094898);
+     0.640124,   0.305534,  -0.004280,
+    -0.027709,   1.054288,   0.013857,
+     0.006783,  -0.011914,   1.094898);
 
 public static const float3x3 CONE_TO_R2020 = float3x3(
-     1.540081,  -0.446186,   0.011667,
-     0.041693,   0.936292,  -0.011687,
-    -0.009142,   0.012968,   0.913128);
+     1.542725,  -0.446952,   0.011687,
+     0.040666,   0.936590,  -0.011695,
+    -0.009114,   0.012960,   0.913128);

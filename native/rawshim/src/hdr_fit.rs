@@ -111,7 +111,7 @@ const XYZ_TO_REC2020: [[f64; 3]; 3] = [
     [0.0176399, -0.0427706, 0.9421031],
 ];
 pub(crate) const REC2020_TO_XYZ: [[f64; 3]; 3] = [
-    [0.637958, 0.1446169, 0.168881],
+    [0.636958, 0.1446169, 0.168881],
     [0.2627002, 0.6779981, 0.0593017],
     [0.0, 0.0280727, 1.0609851],
 ];
@@ -9291,12 +9291,16 @@ mod tests {
         // `fit_score.slang` reports is measured in the wrong space - this is the matrix it is
         // handed for it.
         let v = apply3(&rec2020_to_srgb(), 0.5, 0.5, 0.5);
-        let out = [0, 1, 2].map(|c| (255.0 * srgb_oetf(v[c])).round());
-        assert!(
-            (out[0] - out[1]).abs() <= 1.0 && (out[1] - out[2]).abs() <= 1.0,
-            "{out:?}"
-        );
-        assert!(out[0] > 150.0 && out[0] < 200.0, "mid grey, got {}", out[0]);
+        for c in v {
+            assert!((c - 0.5).abs() < 2e-4, "{v:?}");
+        }
+        for (there, back) in [(REC2020_TO_XYZ, XYZ_TO_REC2020), (SRGB_TO_XYZ, XYZ_TO_SRGB)] {
+            let round = multiply(&back, &there);
+            for i in 0..9 {
+                let want = if i / 3 == i % 3 { 1.0 } else { 0.0 };
+                assert!((round[i / 3][i % 3] - want).abs() < 1e-5, "{round:?}");
+            }
+        }
     }
 
     /// The correspondence dispatch reaches every point without asking for a dimension the
