@@ -198,6 +198,13 @@ file `$APPIMAGE` names where its folder is writable (`src-tauri/src/update.rs`).
 installs under `/usr`, which its package manager owns, so it is offered the installer, which the
 manifest names as the AppImage.
 
+**Where Ubuntu restricts user namespaces (23.10 and later) the AppImage runs Chromium unsandboxed.**
+Its mount is `nosuid`, so the setuid `chrome-sandbox` inside it is inert, and `tauri-runtime-cef`
+passes `--no-sandbox` when `kernel.apparmor_restrict_unprivileged_userns` is 1. The deb and rpm
+install the helper setuid and keep the sandbox everywhere. The AppImage carries an empty
+`fix-namespaces.hook` (`src-tauri/appimage/`) in place of quick-sharun's, which asks for sudo on
+every launch to add an AppArmor profile that would not bring the sandbox back.
+
 **Every platform is one triple**, Windows included: `x86_64-pc-windows-msvc` builds the shell,
 `rawshim` and the Bun runtime beside them, exactly as the other two rows build theirs. No
 compiler forces otherwise, and that is worth stating because the reverse is easy to assume:

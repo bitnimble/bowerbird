@@ -3,7 +3,8 @@
   "bundle": {
     "linux": {
       "deb": { "depends": ["libgtk-4-1"] },
-      "rpm": { "depends": ["libgtk-4.so.1()(64bit)"] }
+      "rpm": { "depends": ["libgtk-4.so.1()(64bit)"] },
+      "appimage": { "files": { "bin/fix-namespaces.hook": "appimage/fix-namespaces.hook" } }
     }
   }
 }
