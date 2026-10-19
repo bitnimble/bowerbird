@@ -38,6 +38,8 @@ export interface CollectedEvidence {
   binRoot: string | null;
   binFolder: string | null;
   binFiles: readonly ScannedFile[];
+  /** Under the bin, or a binned row's file wherever it sits. */
+  binSide: (filePath: string) => boolean;
   byIdentity: ShootRelocation[];
   onDisk: (folder: string) => boolean;
 }
@@ -184,7 +186,13 @@ export async function collectEvidence(
   // need to: it only fires when the move minted a new inode, where the binned
   // file is a genuinely new file too.
   const onDisk = (folder: string): boolean => existsSync(path.join(library.root_path, folder));
-  const byIdentity = detectRelocationsByIdentity(shoots.listIdentities(libraryId), dirs, onDisk);
+  const byIdentity = detectRelocationsByIdentity(
+    shoots.listIdentities(libraryId),
+    dirs,
+    onDisk,
+    // Deepest first: each rewrites its subtree by prefix, so a parent applied before its
+    // renamed child moves the child off the path the child's own relocation matches.
+  ).sort((a, b) => b.oldFolderPath.split('/').length - a.oldFolderPath.split('/').length);
   for (const r of byIdentity) {
     for (const row of binned) {
       if (shootContains(r.oldFolderPath, row.file_path)) {
@@ -216,6 +224,9 @@ export async function collectEvidence(
   // decides whether a binned row is in the bin or binned in place - a
   // different question from whether the bin was walked.
   const binFolder = followed.rename?.to ?? library.bin_name;
+  const binPaths = new Set(binned.map((p) => p.file_path));
+  const binSide = (filePath: string): boolean =>
+    binPaths.has(filePath) || (binRoot != null && shootContains(binRoot, filePath));
 
   return {
     scope,
@@ -229,6 +240,7 @@ export async function collectEvidence(
     binRoot,
     binFolder,
     binFiles,
+    binSide,
     byIdentity,
     onDisk,
   };

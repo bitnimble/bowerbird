@@ -20,6 +20,7 @@ import { FolderRulesRepository } from '../../src/services/shoots/folder_rules_re
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { ShootsService } from '../../src/services/shoots/shoots_service';
 import { UNRESTRICTED_WRITES } from '../../src/services/libraries/write_grants';
+import type { SidecarImporter } from '../../src/services/sync/scan/scan_batch';
 import { ScanService } from '../../src/services/sync/scan/scan_service';
 import { SyncLocksRepository } from '../../src/services/sync/coordination/sync_locks_repository';
 
@@ -68,13 +69,9 @@ function makeLibrary(over: { include_subfolders?: number } = {}): void {
   ).run(LIB, root, 'lib', 'taken_desc', over.include_subfolders ?? 1);
 }
 
-beforeEach(() => {
-  root = mkdtempSync(path.join(tmpdir(), 'bb-mirror-'));
-  db = createDatabase(':memory:');
-  rules = new FolderRulesRepository(db);
-  shoots = new ShootsRepository(db);
+function scanService(sidecars?: SidecarImporter): ScanService {
   const processing = photoProcessing(db);
-  scan = new ScanService(
+  return new ScanService(
     photoScan(db, processing),
     photoPaths(db),
     photoMetadata(db, processing),
@@ -85,7 +82,17 @@ beforeEach(() => {
     rules,
     new SyncLocksRepository(db),
     { processUnprocessed() {} },
+    undefined,
+    sidecars,
   );
+}
+
+beforeEach(() => {
+  root = mkdtempSync(path.join(tmpdir(), 'bb-mirror-'));
+  db = createDatabase(':memory:');
+  rules = new FolderRulesRepository(db);
+  shoots = new ShootsRepository(db);
+  scan = scanService();
 });
 
 afterEach(() => {
@@ -125,6 +132,29 @@ test('a folder holding photos becomes a shoot, and the photos belong to it', asy
   expect(shootPaths()).toEqual(['Weddings/Smith']);
   expect(shootOf('Weddings/Smith/a.arw')).not.toBeNull();
   expect(shootOf('root.arw')).toBeNull();
+});
+
+// The sidecar seam runs after each batch commits, so it sees what the grid shows mid-import.
+test('a first import places each photo in its shoot as its batch commits', async () => {
+  makeLibrary();
+  put('Trip/top.arw');
+  put('Trip/Day1/a.arw');
+  const placed = new Map<string, string | null>();
+  await scanService({
+    importFor: (_root, photos) => {
+      for (const photo of photos) placed.set(photo.filePath, shootOf(photo.filePath));
+      return 0;
+    },
+  }).scanLibrary(LIB);
+
+  const byPath = new Map(shoots.listByLibrary(LIB).map((s) => [s.folder_path, s]));
+  expect(placed).toEqual(
+    new Map([
+      ['Trip/top.arw', byPath.get('Trip')!.id],
+      ['Trip/Day1/a.arw', byPath.get('Trip/Day1')!.id],
+    ]),
+  );
+  expect(byPath.get('Trip/Day1')!.parent_id).toBe(byPath.get('Trip')!.id);
 });
 
 // The constraint that made shoot names unique library-wide would have refused this.
@@ -378,6 +408,65 @@ test('follows a renamed folder that holds no photos', async () => {
   await scan.scanLibrary(LIB);
 
   expect(shoots.getById(id)?.folder_path).toBe('Booked');
+});
+
+test('photos added to a renamed empty shoot join it', async () => {
+  makeLibrary();
+  mkdirSync(abs('Planned'));
+  const { id } = await shootsService(rules).create({
+    library_id: LIB,
+    parent_path: '',
+    name: 'Planned',
+    ordering: 'taken_desc',
+  });
+
+  renameSync(abs('Planned'), abs('Booked'));
+  put('Booked/a.arw');
+  await scan.scanLibrary(LIB);
+
+  expect(shootPaths()).toEqual(['Booked']);
+  expect(shoots.getById(id)?.folder_path).toBe('Booked');
+  expect(shootOf('Booked/a.arw')).toBe(id);
+});
+
+test('photos added under an empty shoot renamed with its child join the child', async () => {
+  makeLibrary();
+  mkdirSync(abs('Planned/Venue'), { recursive: true });
+  const service = shootsService(rules);
+  await service.create({
+    library_id: LIB,
+    parent_path: '',
+    name: 'Planned',
+    ordering: 'taken_desc',
+  });
+  const venue = await service.create({
+    library_id: LIB,
+    parent_path: 'Planned',
+    name: 'Venue',
+    ordering: 'taken_desc',
+  });
+
+  renameSync(abs('Planned/Venue'), abs('Planned/Hall'));
+  renameSync(abs('Planned'), abs('Booked'));
+  put('Booked/Hall/a.arw');
+  await scan.scanLibrary(LIB);
+
+  expect(shootPaths()).toEqual(['Booked', 'Booked/Hall']);
+  expect(shootOf('Booked/Hall/a.arw')).toBe(venue.id);
+});
+
+test('a watcher naming a file that has already gone mirrors no shoot', async () => {
+  makeLibrary();
+  put('kept.arw');
+  await scan.scanLibrary(LIB);
+
+  put('Brief/a.arw');
+  put('kept2.arw');
+  rmSync(abs('Brief'), { recursive: true });
+  await scan.scanLibrary(LIB, { paths: ['Brief/a.arw', 'kept2.arw'] });
+
+  expect(photoCount()).toBe(2);
+  expect(shootPaths()).toEqual([]);
 });
 
 test('keeps the label a renamed shoot was given', async () => {

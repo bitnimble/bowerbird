@@ -63,6 +63,18 @@ function claimsToRestate(
     .sort((a, b) => a.split('/').length - b.split('/').length);
 }
 
+// Folders holding photographs of their own. Pass-through folders are left out:
+// they are structure rather than a set of photographs, and the tree on screen
+// is drawn from the shoots' own paths (§18.3.2).
+export function photoFolders(files: Iterable<string>): Set<string> {
+  const folders = new Set<string>();
+  for (const file of files) {
+    const slash = file.lastIndexOf('/');
+    if (slash > 0) folders.add(file.slice(0, slash));
+  }
+  return folders;
+}
+
 function rootIsDirectory(rootPath: string): boolean {
   try {
     return statSync(rootPath).isDirectory();
@@ -189,24 +201,7 @@ export class ScanReconciler {
     });
 
     const shoots = this.shoots.listFolders(library.id);
-    const byPath = new Map(shoots.map((s) => [s.folder_path, s]));
-    const plain = this.folderRules.pathsWithRule(library.id, 'plain');
-
-    // A folder holding photographs of its own. Pass-through folders are left out:
-    // they are structure rather than a set of photographs, and the tree on screen
-    // is drawn from the shoots' own paths (§18.3.2).
-    const withPhotos = new Set<string>();
-    for (const file of presentFiles) {
-      const slash = file.lastIndexOf('/');
-      if (slash > 0) withPhotos.add(file.slice(0, slash));
-    }
-    const wanted: string[] = [];
-    for (const folder of withPhotos) {
-      if (!byPath.has(folder) && !plain.has(folder)) wanted.push(folder);
-    }
-    // Shallowest first, so each new shoot's parent already exists to be derived
-    // from - the same derivation `create` uses.
-    wanted.sort((a, b) => a.split('/').length - b.split('/').length);
+    const wanted = this.unmirrored(library.id, shoots, photoFolders(presentFiles));
 
     // A folder this device has walked at least once, which is what `folder_dev`
     // records. Deleting a shoot because its folder is missing is a statement about
@@ -251,56 +246,93 @@ export class ScanReconciler {
         const dir = seen.get(identity.folder_path)!;
         this.shoots.setIdentity(identity.id, dir.dev, dir.ino, dir.birthtimeMs);
       }
-
-      // Keyed by folder so the enclosing shoot is a few lookups up the path
-      // rather than a scan of every shoot per folder created, which was quadratic
-      // in the folders a first mirroring scan makes.
-      const byFolder = new Map(shoots.map((s) => [s.folder_path, s.id]));
-      const enclosing = (folder: string): string | null => {
-        const segments = folder.split('/');
-        let prefix = '';
-        let deepest: string | null = null;
-        for (const segment of segments.slice(0, -1)) {
-          prefix = prefix === '' ? segment : `${prefix}/${segment}`;
-          deepest = byFolder.get(prefix) ?? deepest;
-        }
-        return deepest;
-      };
-
-      for (const folder of wanted) {
-        const dir = seen.get(folder);
-        const id = withNewId((candidate) =>
-          this.shoots.insert({
-            id: candidate,
-            parent_id: enclosing(folder),
-            library_id: library.id,
-            folder_path: folder,
-            name: folder.slice(folder.lastIndexOf('/') + 1),
-            description: null,
-            // No explicit choice was made, so the library's own answer is the
-            // closest thing to one.
-            ordering: library.ordering,
-            folder_dev: dir?.dev ?? null,
-            folder_ino: dir?.ino ?? null,
-            folder_birthtime: dir?.birthtimeMs ?? null,
-          }),
-        );
-        byFolder.set(folder, id);
-        changed++;
-      }
-
-      // A new shoot takes the photographs in its folder, including any a shallower
-      // shoot was holding for want of a closer one.
-      for (const folder of claimsToRestate(wanted, byFolder)) {
-        this.photoPaths.setShootForFolder(library.id, folder, byFolder.get(folder)!);
-      }
-
+      changed += this.createShoots(library, shoots, seen, wanted).size;
       for (const shoot of doomed) {
         this.shoots.delete(shoot.id);
         changed++;
       }
       return changed;
     });
+  }
+
+  /** The shoot ids it created, by folder. Runs inside the caller's transaction. */
+  mirrorShootFolders(
+    library: Library,
+    shoots: readonly { id: string; folder_path: string }[],
+    dirs: readonly ScannedDir[],
+    folders: ReadonlySet<string>,
+  ): Map<string, string> {
+    return this.createShoots(
+      library,
+      shoots,
+      new Map(dirs.map((d) => [d.relPath, d])),
+      this.unmirrored(library.id, shoots, folders),
+    );
+  }
+
+  private unmirrored(
+    libraryId: string,
+    shoots: readonly { folder_path: string }[],
+    folders: ReadonlySet<string>,
+  ): string[] {
+    const byPath = new Set(shoots.map((s) => s.folder_path));
+    const plain = this.folderRules.pathsWithRule(libraryId, 'plain');
+    const wanted = [...folders].filter((folder) => !byPath.has(folder) && !plain.has(folder));
+    // Shallowest first, so each new shoot's parent already exists to be derived
+    // from - the same derivation `create` uses.
+    return wanted.sort((a, b) => a.split('/').length - b.split('/').length);
+  }
+
+  private createShoots(
+    library: Library,
+    shoots: readonly { id: string; folder_path: string }[],
+    seen: ReadonlyMap<string, ScannedDir>,
+    wanted: readonly string[],
+  ): Map<string, string> {
+    const created = new Map<string, string>();
+    // Keyed by folder so the enclosing shoot is a few lookups up the path
+    // rather than a scan of every shoot per folder created, which was quadratic
+    // in the folders a first mirroring scan makes.
+    const byFolder = new Map(shoots.map((s) => [s.folder_path, s.id]));
+    const enclosing = (folder: string): string | null => {
+      const segments = folder.split('/');
+      let prefix = '';
+      let deepest: string | null = null;
+      for (const segment of segments.slice(0, -1)) {
+        prefix = prefix === '' ? segment : `${prefix}/${segment}`;
+        deepest = byFolder.get(prefix) ?? deepest;
+      }
+      return deepest;
+    };
+
+    for (const folder of wanted) {
+      const dir = seen.get(folder);
+      const id = withNewId((candidate) =>
+        this.shoots.insert({
+          id: candidate,
+          parent_id: enclosing(folder),
+          library_id: library.id,
+          folder_path: folder,
+          name: folder.slice(folder.lastIndexOf('/') + 1),
+          description: null,
+          // No explicit choice was made, so the library's own answer is the
+          // closest thing to one.
+          ordering: library.ordering,
+          folder_dev: dir?.dev ?? null,
+          folder_ino: dir?.ino ?? null,
+          folder_birthtime: dir?.birthtimeMs ?? null,
+        }),
+      );
+      byFolder.set(folder, id);
+      created.set(folder, id);
+    }
+
+    // A new shoot takes the photographs in its folder, including any a shallower
+    // shoot was holding for want of a closer one.
+    for (const folder of claimsToRestate(wanted, byFolder)) {
+      this.photoPaths.setShootForFolder(library.id, folder, byFolder.get(folder)!);
+    }
+    return created;
   }
 
   // The bin's own walk, over the bin alone (§9.1.1). `scanLibraryTree` with a start
