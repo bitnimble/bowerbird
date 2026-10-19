@@ -228,3 +228,39 @@ describe('PhotoListingRepository models', () => {
     ).toEqual(['a7-24', 'a7-85']);
   });
 });
+
+describe('PhotoListingRepository formats', () => {
+  function stored(id: string, format: string | null): void {
+    insert(id, `Trip/${id}`);
+    db.query('UPDATE photos SET format = ? WHERE id = ?').run(format, id);
+  }
+
+  beforeEach(() => {
+    stored('jpeg', 'jpeg');
+    stored('raw', 'arw');
+    stored('heic', 'heif');
+    stored('unrecognised', null);
+  });
+
+  it('offers the formats the view holds, sorted', () => {
+    db.query("UPDATE photos SET is_deleted = 1 WHERE id = 'heic'").run();
+
+    expect(repo.modelsInLibrary(LIB, { includeDeleted: false }).formats).toEqual(['arw', 'jpeg']);
+    expect(repo.modelsInLibrary(LIB, { includeDeleted: true, isDeleted: true }).formats).toEqual([
+      'heif',
+    ]);
+  });
+
+  it('narrows a listing to any of the formats asked for, whatever the chips say', () => {
+    const ids = (filters: PhotoListFilters): string[] =>
+      repo
+        .listByLibrary(LIB, 'added_asc', 0, 10, filters)
+        .photos.map((p) => p.id)
+        .sort();
+
+    expect(ids({ includeDeleted: false, formats: ['jpeg', 'heif'] })).toEqual(['heic', 'jpeg']);
+    expect(ids({ includeDeleted: false, formats: ['arw'], rated: false, match: 'any' })).toEqual([
+      'raw',
+    ]);
+  });
+});

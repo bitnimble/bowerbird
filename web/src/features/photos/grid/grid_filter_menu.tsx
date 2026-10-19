@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CircleDashed,
   EyeOff,
+  FileImage,
   Filter,
   Pencil,
   Star,
@@ -64,7 +65,8 @@ const CUSTOM: Option<CustomKey>[] = [
 ];
 
 // The tick list owns the chips and nothing else, so a tick keeps the filename, the
-// date range, the two model lists and the labels, which are the other controls in this panel.
+// date range, the two model lists, the formats and the labels, which are the other controls in
+// this panel.
 function withCustom(filters: PhotoFilters, keys: CustomKey[]): PhotoFilters {
   const kept: PhotoFilters = {
     search: filters.search,
@@ -72,6 +74,7 @@ function withCustom(filters: PhotoFilters, keys: CustomKey[]): PhotoFilters {
     takenTo: filters.takenTo,
     cameraModels: filters.cameraModels,
     lensModels: filters.lensModels,
+    formats: filters.formats,
     labels: filters.labels,
   };
   // Nothing ticked is not an empty result set, it is no chip at all.
@@ -110,7 +113,7 @@ function customKeys(filters: PhotoFilters): CustomKey[] {
   ];
 }
 
-type SideList = 'camera' | 'lens' | 'labels';
+type SideList = 'camera' | 'lens' | 'format' | 'labels';
 
 function openedList(row: SideList, open: boolean, current: SideList | null): SideList | null {
   if (open) return row;
@@ -120,9 +123,7 @@ function openedList(row: SideList, open: boolean, current: SideList | null): Sid
 }
 
 /**
- * The bodies, or the lenses, the collection was shot with, as a list that opens beside the
- * panel rather than in it: a well-travelled library runs to dozens of either, and a panel
- * that tall is one the calendar under it falls off the screen with.
+ * The bodies, or the lenses, the collection was shot with.
  *
  * A lens that was never on a ticked body is offered greyed rather than left out: the pair
  * lists nothing, and a row that vanished as the reader ticked elsewhere is a list they
@@ -138,8 +139,6 @@ const ModelFilter = observer(function ModelFilter({
   which: 'camera' | 'lens';
   label: string;
   icon: JSX.Element;
-  // Which list is open is the panel's to hold, not each row's: two lists open at once
-  // sit on top of each other, where a menu's submenus take turns.
   open: boolean;
   onOpen: (open: boolean) => void;
 }): JSX.Element | null {
@@ -153,6 +152,77 @@ const ModelFilter = observer(function ModelFilter({
   // submenu is worse than no row.
   if (options.length === 0) return null;
 
+  return (
+    <SideListFilter
+      label={label}
+      icon={icon}
+      open={open}
+      onOpen={onOpen}
+      options={options.map((model) => ({ value: model, label: model }))}
+      selected={selected}
+      enabled={enabled}
+      onToggle={(model, checked) => void photos.toggleModel(which, model, checked)}
+    />
+  );
+});
+
+const FormatFilter = observer(function FormatFilter({
+  open,
+  onOpen,
+}: {
+  open: boolean;
+  onOpen: (open: boolean) => void;
+}): JSX.Element | null {
+  const store = useListingStore();
+  const { photos } = usePresenters();
+  const selected = store.filters.formats ?? [];
+  // A restored tick the collection no longer holds still needs a box to untick.
+  const options = [...new Set([...store.formatOptions, ...selected])];
+  // One format is nothing to choose between, so the row only adds a tick that changes nothing.
+  if (options.length < 2 && selected.length === 0) return null;
+
+  return (
+    <SideListFilter
+      label={GridControlsStrings.filterFileFormat()}
+      icon={<FileImage size={ICON} />}
+      open={open}
+      onOpen={onOpen}
+      options={options.map((format) => ({
+        value: format,
+        label: GridControlsStrings.fileFormat(format),
+      }))}
+      selected={selected}
+      onToggle={(format, checked) => void photos.toggleFormat(format, checked)}
+    />
+  );
+});
+
+/**
+ * A tick list that opens beside the panel rather than in it: a well-travelled library runs to
+ * dozens of bodies or lenses, and a panel that tall is one the calendar under it falls off the
+ * screen with.
+ */
+function SideListFilter<T extends string>({
+  label,
+  icon,
+  open,
+  onOpen,
+  options,
+  selected,
+  enabled,
+  onToggle,
+}: {
+  label: string;
+  icon: JSX.Element;
+  // Which list is open is the panel's to hold, not each row's: two lists open at once
+  // sit on top of each other, where a menu's submenus take turns.
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  options: { value: T; label: string }[];
+  selected: readonly T[];
+  enabled?: ReadonlySet<T>;
+  onToggle: (value: T, checked: boolean) => void;
+}): JSX.Element {
   return (
     <Popover.Root open={open} onOpenChange={onOpen}>
       {/* Hover as well as press: the row reads as a submenu, and the panel around it is a
@@ -180,15 +250,15 @@ const ModelFilter = observer(function ModelFilter({
           sticky
         >
           <Popover.Popup {...stylex.props(menuStyles.popup, styles.models)} aria-label={label}>
-            {options.map((model) => (
-              <label key={model} {...stylex.props(menuStyles.item, styles.check)}>
+            {options.map((option) => (
+              <label key={option.value} {...stylex.props(menuStyles.item, styles.check)}>
                 <input
                   type="checkbox"
-                  checked={selected.includes(model)}
-                  disabled={!enabled.has(model)}
-                  onChange={(event) => void photos.toggleModel(which, model, event.target.checked)}
+                  checked={selected.includes(option.value)}
+                  disabled={enabled != null && !enabled.has(option.value)}
+                  onChange={(event) => onToggle(option.value, event.target.checked)}
                 />
-                {model}
+                {option.label}
               </label>
             ))}
           </Popover.Popup>
@@ -196,7 +266,7 @@ const ModelFilter = observer(function ModelFilter({
       </Popover.Portal>
     </Popover.Root>
   );
-});
+}
 
 /**
  * The labels a photo must all carry, beside the panel for the reason the models are. An album spans
@@ -355,6 +425,10 @@ export const GridFilterMenu = observer(function GridFilterMenu(): JSX.Element {
                 setOpenList(null);
                 setPanelOpen(false);
               }}
+            />
+            <FormatFilter
+              open={openList === 'format'}
+              onOpen={(open) => setOpenList((current) => openedList('format', open, current))}
             />
           </Section>
           {/* A library whose files name no body or lens has neither row, and a heading over

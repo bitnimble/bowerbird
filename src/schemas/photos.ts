@@ -285,6 +285,19 @@ const CommaListSchema = z
   )
   .pipe(z.array(z.string()).min(1));
 
+export const PhotoFormatSchema = z.enum([
+  'arw',
+  'cr2',
+  'cr3',
+  'raf',
+  'dng',
+  'jpeg',
+  'png',
+  'heif',
+  'avif',
+]);
+export type PhotoFormat = z.infer<typeof PhotoFormatSchema>;
+
 // Boolean query params use stringbool() so ?is_missing=false parses as false.
 export const PhotoListQuerySchema = PaginationSchema.extend(SoftDeleteFilterSchema.shape).extend({
   // Overrides the collection's stored ordering for this request only. The web
@@ -320,6 +333,7 @@ export const PhotoListQuerySchema = PaginationSchema.extend(SoftDeleteFilterSche
   // Comma-separated bodies and lenses, spelled as the RAW header spelled them.
   camera_models: CommaListSchema.optional(),
   lens_models: CommaListSchema.optional(),
+  formats: CommaListSchema.pipe(z.array(PhotoFormatSchema)).optional(),
   // Comma-separated label ids, every one of which a photo must carry.
   labels: CommaListSchema.optional(),
   // How rated/triage/is_missing/is_hidden combine. 'any' is what makes a
@@ -355,6 +369,7 @@ export const PhotoFiltersSchema = z.object({
   taken_to: z.iso.date().optional(),
   camera_models: z.array(z.string()).min(1).optional(),
   lens_models: z.array(z.string()).min(1).optional(),
+  formats: z.array(PhotoFormatSchema).min(1).optional(),
   labels: z.array(IdSchema).min(1).optional(),
   match: z.enum(['all', 'any']).optional(),
   expand_stacks: z.boolean().optional(),
@@ -442,8 +457,8 @@ export type PhotoPositionsRequest = z.infer<typeof PhotoPositionsRequestSchema>;
 export const PhotoPositionsResponseSchema = z.record(z.string(), z.array(z.number().int().min(0)));
 export type PhotoPositionsResponse = z.infer<typeof PhotoPositionsResponseSchema>;
 
-// Which bodies and lenses a collection was actually shot with, so the filter menu
-// offers those and not every model in the catalogue.
+// Which bodies, lenses and file formats a collection holds, so the filter menu
+// offers those and not every one the catalogue knows.
 //
 // The filters are the view's own - the Bin's soft-deleted rows, the missing view's
 // gone ones - and never the chips the reader is ticking: a body the gallery cannot
@@ -463,6 +478,7 @@ export const PhotoModelsResponseSchema = z.object({
   pairs: z.array(
     z.object({ camera_model: z.string().nullable(), lens_model: z.string().nullable() }),
   ),
+  formats: z.array(PhotoFormatSchema),
 });
 export type PhotoModelsResponse = z.infer<typeof PhotoModelsResponseSchema>;
 

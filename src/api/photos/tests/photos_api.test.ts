@@ -389,7 +389,7 @@ describe('PhotosApi', () => {
   });
 
   it('hands the models route its scope and the filters of the view asking', async () => {
-    const modelsOf = jest.fn(() => ({ pairs: [] }));
+    const modelsOf = jest.fn(() => ({ pairs: [], formats: [] }));
     const { app } = buildApp({ read: { modelsOf } });
     const res = await app.request(
       route(PathSegment.api(), PathSegment.photos(), PathSegment.models()),
@@ -411,7 +411,7 @@ describe('PhotosApi', () => {
   });
 
   it('takes a models request that states no filters as the whole of the collection', async () => {
-    const modelsOf = jest.fn(() => ({ pairs: [] }));
+    const modelsOf = jest.fn(() => ({ pairs: [], formats: [] }));
     const { app } = buildApp({ read: { modelsOf } });
     await app.request(route(PathSegment.api(), PathSegment.photos(), PathSegment.models()), {
       method: 'POST',
@@ -455,6 +455,20 @@ describe('PhotosApi', () => {
         lens_models: ['FE 85mm F1.4 GM'],
       }),
     );
+  });
+
+  it('parses a comma-separated format list, and refuses a format it does not know', async () => {
+    const listByLibrary = jest.fn(() => emptyList);
+    const { app } = buildApp({ read: { listByLibrary } });
+    const photos = route(PathSegment.api(), PathSegment.libraries(), 'lib', PathSegment.photos());
+    await app.request(`${photos}?formats=arw,jpeg`);
+    expect(listByLibrary).toHaveBeenCalledWith(
+      'lib',
+      expect.objectContaining({ formats: ['arw', 'jpeg'] }),
+    );
+
+    const res = await app.request(`${photos}?formats=arw,gif`);
+    expect(res.status).toBe(400);
   });
 
   it('parses stringbool + numeric query filters', async () => {

@@ -580,6 +580,7 @@ export function conditions(
   for (const [column, wanted] of [
     ['camera_model', filters.cameraModels],
     ['lens_model', filters.lensModels],
+    ['format', filters.formats],
   ] as const) {
     if (wanted == null || wanted.length === 0) continue;
     scope.push(`${prefix}${column} IN (${wanted.map(() => '?').join(', ')})`);

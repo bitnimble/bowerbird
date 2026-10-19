@@ -1,6 +1,6 @@
 import { computed, observable } from 'mobx';
 import { type Ordering } from '../../../../../src/schemas/common';
-import { type PhotoSummary } from '../../../../../src/schemas/photos';
+import { type PhotoFormat, type PhotoSummary } from '../../../../../src/schemas/photos';
 import { type Span, visibleRows } from '../../../ui/virtual_rows';
 import { BAND_COLOURS, type PhotoSource, type ViewMode } from '../photos_store';
 import { type Band, type GridSection, rowAt, sectionsIn, totalRows } from './bands';
@@ -71,6 +71,7 @@ export class ListingStore {
   // filter menu offers and what decides which of the two lists' rows can be
   // ticked together. Empty until it has been asked for.
   @observable accessor modelPairs: ModelPair[] = [];
+  @observable accessor formatOptions: PhotoFormat[] = [];
   // Every day the collection holds a photograph on, and how many, ascending. Empty
   // until it has been asked for.
   @observable accessor photoDays: PhotoDay[] = [];
@@ -123,6 +124,7 @@ export class ListingStore {
       // One apiece however many bodies are ticked, as the verdict set counts once.
       ((filters.cameraModels?.length ?? 0) > 0 ? 1 : 0) +
       ((filters.lensModels?.length ?? 0) > 0 ? 1 : 0) +
+      ((filters.formats?.length ?? 0) > 0 ? 1 : 0) +
       ((filters.labels?.length ?? 0) > 0 ? 1 : 0) +
       ((filters.search ?? '') !== '' ? 1 : 0)
     );
@@ -139,6 +141,7 @@ export class ListingStore {
       filters.takenTo != null ||
       (filters.cameraModels?.length ?? 0) > 0 ||
       (filters.lensModels?.length ?? 0) > 0 ||
+      (filters.formats?.length ?? 0) > 0 ||
       (filters.labels?.length ?? 0) > 0 ||
       (filters.search ?? '') !== ''
     );

@@ -1,9 +1,12 @@
-// Filtering a collection by the body and the lens it was shot with. A lens is only
-// ever offered against the bodies it was mounted on, so the two lists cannot be
-// ticked into a combination that lists nothing.
+// Filtering a collection by its file formats, and by the body and the lens it was shot
+// with. A lens is only ever offered against the bodies it was mounted on, so the two
+// lists cannot be ticked into a combination that lists nothing.
 import { runInAction } from 'mobx';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type PhotoListResponse } from '../../../../../../src/schemas/photos';
+import {
+  type PhotoListResponse,
+  type PhotoRangeRequest,
+} from '../../../../../../src/schemas/photos';
 import { type PhotoListParams, photosApi } from '../../../../api/photos';
 import { PhotosPresenter } from '../../photos_presenter';
 import { ListingStore } from '../listing_store';
@@ -146,5 +149,49 @@ describe('the bodies and lenses a collection was shot with', () => {
     expect(store.filters.cameraModels).toBeUndefined();
     expect(store.hasActiveFilters).toBe(false);
     expect(asked.at(-1)?.camera_models).toBeUndefined();
+  });
+});
+
+describe('the file formats a collection holds', () => {
+  afterEach(() => {
+    photosApi.listLibrary = stubbed.listLibraryPhotos;
+  });
+
+  test('ticks formats into one narrowing, and unticking the last is no filter', async () => {
+    const { store, presenter } = build();
+    serve();
+
+    await presenter.toggleFormat('arw', true);
+    await presenter.toggleFormat('jpeg', true);
+
+    expect(store.filters.formats).toEqual(['arw', 'jpeg']);
+    expect(store.activeFilterCount).toBe(1);
+    expect(asked.at(-1)?.formats).toEqual(['arw', 'jpeg']);
+
+    await presenter.toggleFormat('arw', false);
+    await presenter.toggleFormat('jpeg', false);
+
+    expect(store.filters.formats).toBeUndefined();
+    expect(store.hasActiveFilters).toBe(false);
+    expect(asked.at(-1)?.formats).toBeUndefined();
+  });
+
+  test('asks a range of the collection under the ticked formats, as the grid does', async () => {
+    const { presenter } = build();
+    serve();
+    const range = photosApi.range;
+    const ranged: PhotoRangeRequest[] = [];
+    photosApi.range = (body) => {
+      ranged.push(body);
+      return Promise.resolve([]);
+    };
+    try {
+      await presenter.toggleFormat('heif', true);
+      await presenter.rangeBetween(null, null);
+    } finally {
+      photosApi.range = range;
+    }
+
+    expect(ranged.at(-1)?.filters.formats).toEqual(['heif']);
   });
 });

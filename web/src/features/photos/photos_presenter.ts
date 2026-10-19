@@ -2,6 +2,7 @@ import { action, comparer, computed, reaction, runInAction } from 'mobx';
 import { type Ordering } from '../../../../src/schemas/common';
 import {
   type CompositeKind,
+  type PhotoFormat,
   type PhotoMarks,
   type PhotoSelection,
   type PhotoSummary,
@@ -354,7 +355,7 @@ export class PhotosPresenter {
   private async loadFilterFacets(source: PhotoSource): Promise<void> {
     try {
       const selection = { scope: scopeOf(source), filters: viewFilters(source) };
-      const [{ pairs }, { days }] = await Promise.all([
+      const [{ pairs, formats }, { days }] = await Promise.all([
         photosApi.models(selection),
         photosApi.days(selection),
       ]);
@@ -363,7 +364,7 @@ export class PhotosPresenter {
       const current = this.listing.source;
       if (current == null || sourceKey(current) !== sourceKey(source)) return;
       runInAction(() => {
-        this.listingPresenter.setFacets(pairs, days);
+        this.listingPresenter.setFacets(pairs, formats, days);
       });
     } catch {
       // The menu stays as the collection opened it, which is empty: a list short of a
@@ -479,6 +480,14 @@ export class PhotosPresenter {
       [key]: next.length === 0 ? undefined : next,
       [otherKey]: meets ? f[otherKey] : undefined,
     });
+  }
+
+  async toggleFormat(format: PhotoFormat, checked: boolean): Promise<void> {
+    const f = this.listing.filters;
+    const next = checked
+      ? [...(f.formats ?? []), format]
+      : (f.formats ?? []).filter((ticked) => ticked !== format);
+    await this.setFilters({ ...f, formats: next.length === 0 ? undefined : next });
   }
 
   async toggleLabelFilter(labelId: string, checked: boolean): Promise<void> {
@@ -1381,6 +1390,7 @@ export class PhotosPresenter {
       taken_to: f.takenTo,
       camera_models: f.cameraModels,
       lens_models: f.lensModels,
+      formats: f.formats,
       labels: f.labels,
       match: f.match,
       // Which listing the positions are into, so a selection made on an expanded
