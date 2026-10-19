@@ -4,6 +4,7 @@ import { EditDocSchema } from '../../../schemas/photo_edits';
 import type {
   PhotoDaysResponse,
   PhotoDetail,
+  PhotoFormat,
   PhotoModelsResponse,
   PhotoSummary,
   Triage,
@@ -61,6 +62,7 @@ export interface PhotoListFilters {
   // Bodies and lenses to include, spelled as the RAW header spelled them.
   cameraModels?: string[];
   lensModels?: string[];
+  formats?: PhotoFormat[];
   // Label ids a photo must carry, every one of them.
   labels?: string[];
   // 'any' unions the rated/triage/isMissing/isHidden filters instead of intersecting them.
@@ -260,7 +262,7 @@ export class PhotoListingRepository {
       filters,
     );
   }
-  // Every body and lens a listing holds, under the same filters the listing runs:
+  // Every body, lens and format a listing holds, under the same filters the listing runs:
   // a body whose every frame is in the bin is not one the gallery can be narrowed
   // to, and offering it there is a tick that empties the grid.
   private models(
@@ -275,7 +277,13 @@ export class PhotoListingRepository {
              AND (photos.camera_model IS NOT NULL OR photos.lens_model IS NOT NULL)`,
       )
       .all(...params) as PhotoModelsResponse['pairs'];
-    return { pairs };
+    const formats = this.db
+      .query(
+        `SELECT DISTINCT photos.format ${where} AND photos.format IS NOT NULL
+           ORDER BY photos.format`,
+      )
+      .all(...params) as { format: PhotoFormat }[];
+    return { pairs, formats: formats.map((row) => row.format) };
   }
   daysInLibrary(libraryId: string, filters: PhotoListFilters): PhotoDaysResponse {
     return this.days('FROM photos WHERE library_id = ?', [libraryId], filters);

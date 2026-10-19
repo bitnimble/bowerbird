@@ -1,5 +1,9 @@
 import { action, observable, runInAction } from 'mobx';
-import { type PhotoListResponse, type PhotoSummary } from '../../../../../src/schemas/photos';
+import {
+  type PhotoFormat,
+  type PhotoListResponse,
+  type PhotoSummary,
+} from '../../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { albumsApi } from '../../../api/albums';
 import { type PhotoListParams, photosApi } from '../../../api/photos';
@@ -181,8 +185,9 @@ export class ListingPresenter {
   }
 
   @action.bound
-  setFacets(modelPairs: ModelPair[], photoDays: PhotoDay[]): void {
+  setFacets(modelPairs: ModelPair[], formats: PhotoFormat[], photoDays: PhotoDay[]): void {
     this.listing.modelPairs = modelPairs;
+    this.listing.formatOptions = formats;
     this.listing.photoDays = photoDays;
   }
 
@@ -397,6 +402,7 @@ export class ListingPresenter {
       taken_to: f.takenTo,
       camera_models: f.cameraModels,
       lens_models: f.lensModels,
+      formats: f.formats,
       labels: f.labels,
       match: f.match,
       ...(expandStacks ? { expand_stacks: true } : {}),
@@ -534,6 +540,7 @@ export class ListingPresenter {
     // rather than left for `loadModels` to replace, or the menu offers a body this
     // collection was never shot on until it answers.
     this.listing.modelPairs = [];
+    this.listing.formatOptions = [];
     this.listing.photoDays = [];
     // Not guessed at: the collection states its own sort, and the first page
     // carries it. Until then the control has nothing to show, which is honest -

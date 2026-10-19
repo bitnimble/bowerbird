@@ -160,7 +160,7 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST`  | `/api/photos/rebuild-tiles`                | Rebuild the grid tiles of a selection, and nothing else (§10.3)                                                                                                                                                                                                      |
 | `POST`  | `/api/photos/:id/renditions/:rendition`    | Build one rendition on demand: `full` or `max`; `?force=true` drops the cached copy first (§10.1)                                                                                                                                                                    |
 | `POST`  | `/api/photos/refresh-metadata`             | Re-read the RAW headers for a selection                                                                                                                                                                                                                              |
-| `POST`  | `/api/photos/models`                       | Every body/lens pairing a collection holds, for the filter panel's two lists (§18.3.1)                                                                                                                                                                               |
+| `POST`  | `/api/photos/models`                       | Every body/lens pairing and file format a collection holds, for the filter panel's lists (§18.3.1)                                                                                                                                                                   |
 | `POST`  | `/api/photos/days`                         | Every day a collection holds photographs on, and how many, for the calendar's density dots (§18.3.1)                                                                                                                                                                 |
 
 **Bulk routes share two body shapes** (`PhotoTargetSchema`): `{ photo_ids: string[] }`, capped at a thousand, or `{ selection }`, naming collection, filters and position runs (§18.3.3). Clients hold only a window; the server resolves the rest from the grid's filtered, collection-ordered listing, allowing a hundred thousand photos in one small request. Selection carries no ordering: the collection owns it (§18.3.1).
@@ -182,6 +182,7 @@ Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `q` (optional, case-insensitive substring of any input path a photograph names)
 - `taken_from` / `taken_to` (optional `YYYY-MM-DD`, inclusive bounds)
 - `camera_models` / `lens_models` (optional, comma-separated, spelled as the RAW header spelled them)
+- `formats` (optional, comma-separated values of the `format` column, §4.2; an unknown one is a 400)
 - `labels` (optional, comma-separated label ids, every one of which a photo must carry)
 - `match` (optional, `all` (default) or `any`)
 - `expand_stacks` (boolean, default false: list every photograph of a stack as a row of its own rather than the stack as one, §19.5.4)
@@ -190,9 +191,9 @@ The same schema serves the library, shoot and album listings, so a filter behave
 
 `rated` tests any rating, supporting culling's "not yet judged" filter.
 
-`match` combines `rated`, `triage`, `is_missing` and `is_hidden`: `all` intersects, `any` unions. Scope always intersects: soft-delete, `no_shoot`, `q`, dates, model lists and labels still narrow a union.
+`match` combines `rated`, `triage`, `is_missing` and `is_hidden`: `all` intersects, `any` unions. Scope always intersects: soft-delete, `no_shoot`, `q`, dates, model lists, formats and labels still narrow a union.
 
-The model lists union within themselves and intersect across: two bodies is either of them, a body and a lens is that lens on that body. They filter on the `camera_model` / `lens_model` columns the import read off the RAW header (§11.1), so a photograph the camera told nothing about is in neither list and matches neither filter.
+The model lists union within themselves and intersect across: two bodies is either of them, a body and a lens is that lens on that body. They filter on the `camera_model` / `lens_model` columns the import read off the RAW header (§11.1), so a photograph the camera told nothing about is in neither list and matches neither filter. `formats` unions within itself the same way; a composite has no format, so any format filter leaves it out.
 
 The date range filters on `COALESCE(date_taken, date_added)`; the same date the listing sorts and labels by; so a file the camera never dated stays reachable. `taken_to` is inclusive of the whole closing day (the column is a timestamp, the bound is a date).
 

@@ -62,6 +62,7 @@ export function toFilters(query: PhotoListQuery): PhotoListFilters {
     takenTo: query.taken_to,
     cameraModels: query.camera_models,
     lensModels: query.lens_models,
+    formats: query.formats,
     labels: query.labels,
     match: query.match,
     count: query.count,
@@ -86,6 +87,7 @@ export function fromSelectionFilters(filters: PhotoSelection['filters']): PhotoL
     takenTo: filters.taken_to,
     cameraModels: filters.camera_models,
     lensModels: filters.lens_models,
+    formats: filters.formats,
     labels: filters.labels,
     match: filters.match,
     expandStacks: filters.expand_stacks,
@@ -387,7 +389,7 @@ export class PhotoReadService {
     })();
     return Object.fromEntries(found);
   }
-  /** The bodies and lenses a collection was shot with, for the filter menu to offer. */
+  /** The bodies, lenses and formats a collection holds, for the filter menu to offer. */
   modelsOf(request: PhotoModelsRequest): PhotoModelsResponse {
     const { scope, filters } = request;
     const listFilters = fromSelectionFilters(filters);

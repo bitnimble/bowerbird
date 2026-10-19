@@ -1,6 +1,7 @@
 import { readdir, realpath, stat } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
+import type { PhotoFormat } from '../schemas/photos';
 import { RENDITION_EXTENSION } from '../services/processing/renditions/renditions';
 import { isDirInScope, isHiddenName, type LibraryScope } from './scope';
 
@@ -49,8 +50,6 @@ export function formatOf(filename: string): PhotoFormat | null {
   const extension = extensionOf(filename);
   return FORMATS.get(extension) ?? null;
 }
-
-export type PhotoFormat = 'arw' | 'cr2' | 'cr3' | 'raf' | 'dng' | 'jpeg' | 'png' | 'heif' | 'avif';
 
 export const RENDERED_FORMATS: readonly PhotoFormat[] = ['jpeg', 'png', 'heif', 'avif'];
 

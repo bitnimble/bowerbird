@@ -1,5 +1,7 @@
 import { type Ordering } from '../../../../../src/schemas/common';
+import { type PhotoFormat } from '../../../../../src/schemas/photos';
 import { plural } from '../photos_presenter.strings';
+import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
 
 export const GridControlsStrings = {
   ordering: (ordering: Ordering) =>
@@ -40,6 +42,19 @@ export const GridControlsStrings = {
 
   filterCameraBody: () => 'Camera body',
   filterLens: () => 'Lens',
+  filterFileFormat: () => 'File format',
+  fileFormat: (format: PhotoFormat) =>
+    ({
+      arw: 'ARW',
+      cr2: 'CR2',
+      cr3: 'CR3',
+      raf: 'RAF',
+      dng: 'DNG',
+      jpeg: PhotoDetailStrings.formatJpeg(),
+      png: PhotoDetailStrings.formatPng(),
+      heif: PhotoDetailStrings.formatHeic(),
+      avif: PhotoDetailStrings.formatAvif(),
+    })[format],
 
   filters: () => 'Filters',
   filtersWithCount: (count: number) => `Filters (${count})`,

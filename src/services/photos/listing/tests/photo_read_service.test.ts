@@ -23,7 +23,7 @@ import type { PhotoProcessingRepository } from '../../renditions/photo_processin
 import { PhotoRenditionService } from '../../renditions/photo_rendition_service';
 import type { PhotoNavigationRepository } from '../photo_navigation_repository';
 import type { PhotoListResult, PhotoListingRepository } from '../photo_listing_repository';
-import { PhotoReadService } from '../photo_read_service';
+import { fromSelectionFilters, PhotoReadService } from '../photo_read_service';
 
 const emptyResult: PhotoListResult = { photos: [], total: 0 };
 
@@ -323,14 +323,27 @@ describe('PhotoReadService.listMissing', () => {
       rated: true,
       triage: ['picked'],
       q: 'DSC',
+      camera_models: ['ILCE-7RM5'],
+      formats: ['arw'],
     });
     expect(photoListing.listByLibrary).toHaveBeenCalledWith(
       'lib',
       'added_asc',
       0,
       100,
-      expect.objectContaining({ isMissing: true, rated: true, triage: ['picked'], search: 'DSC' }),
+      expect.objectContaining({
+        isMissing: true,
+        rated: true,
+        triage: ['picked'],
+        search: 'DSC',
+        cameraModels: ['ILCE-7RM5'],
+        formats: ['arw'],
+      }),
     );
+  });
+
+  it('carries a selection’s formats through, so it resolves against the grid it was made in', () => {
+    expect(fromSelectionFilters({ formats: ['arw', 'heif'] }).formats).toEqual(['arw', 'heif']);
   });
 });
 
