@@ -50,7 +50,8 @@ export async function readAndClassify(
   const { fileReader, albums, reconciler } = dependencies;
   const { libraryId, library, scopePaths, token, startedAt, keepLease, batch, evidence } = input;
 
-  const { binned, dbPhotos, files, binRoot, binFolder, binFiles, byIdentity, onDisk } = evidence;
+  const { binned, dbPhotos, files, binRoot, binFolder, binFiles, binSide, byIdentity, onDisk } =
+    evidence;
   const { present, changed, failed } = await fileReader.scanFiles(
     // Binned files included, so `dbByPath` covers them and the unchanged test
     // answers correctly: nothing binned is opened or hashed unless it changed.
@@ -81,12 +82,9 @@ export async function readAndClassify(
   // Partitioned here rather than after the scan, which would throw away work
   // already paid for: with `dbByPath` from the live rows alone every binned
   // file looks new, and 100k binned RAWs would decode 100k RAW headers nightly.
-  const binPaths = new Set(binned.map((p) => p.file_path));
-  const isBinSide = (filePath: string): boolean =>
-    binPaths.has(filePath) || (binRoot != null && shootContains(binRoot, filePath));
-  const livePresent = new Set([...present].filter((p) => !isBinSide(p)));
-  const binPresent = new Set([...present].filter(isBinSide));
-  const liveChanged = changed.filter((c) => !isBinSide(c.filePath));
+  const livePresent = new Set([...present].filter((p) => !binSide(p)));
+  const binPresent = new Set([...present].filter(binSide));
+  const liveChanged = changed.filter((c) => !binSide(c.filePath));
 
   // A row binned **in place** (§12.1) is not in the bin, so the bin's walk is not
   // the walk that answers for it - the live one is, its file being in the live
@@ -102,7 +100,7 @@ export async function readAndClassify(
     (row) => binFolder != null && shootContains(binFolder, row.file_path),
   );
   const inPlacePaths = new Set(inPlace.map((row) => row.file_path));
-  const binChanged = changed.filter((c) => isBinSide(c.filePath) && !inPlacePaths.has(c.filePath));
+  const binChanged = changed.filter((c) => binSide(c.filePath) && !inPlacePaths.has(c.filePath));
 
   const live = buildDiff(dbPhotos, livePresent, liveChanged, failed);
   // On a scoped run both halves are discarded rather than diffed: there was no

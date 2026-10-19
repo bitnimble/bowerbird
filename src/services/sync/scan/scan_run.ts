@@ -172,20 +172,6 @@ export class ScanRunner {
     const moved = await this.materialise(libraryId);
     log.info('scan made synced moves', { library: libraryId, moved, ms: Date.now() - startedAt });
 
-    const batch = new ScanBatch(
-      libraryId,
-      library,
-      owner,
-      scopePaths,
-      startedAt,
-      keepLease,
-      this.libraries,
-      this.shoots,
-      this.reconciler,
-      this.leases,
-      this.sidecars,
-      this.status,
-    );
     const evidence = await collectEvidence(
       {
         photoScan: this.photoScan,
@@ -200,6 +186,21 @@ export class ScanRunner {
       files: evidence.files.length,
       ms: Date.now() - startedAt,
     });
+    const batch = new ScanBatch(
+      libraryId,
+      library,
+      owner,
+      scopePaths,
+      startedAt,
+      keepLease,
+      evidence,
+      this.libraries,
+      this.shoots,
+      this.reconciler,
+      this.leases,
+      this.sidecars,
+      this.status,
+    );
     const classified = await readAndClassify(
       { fileReader: this.fileReader, albums: this.albums, reconciler: this.reconciler },
       { libraryId, library, scopePaths, token, startedAt, keepLease, batch, evidence },

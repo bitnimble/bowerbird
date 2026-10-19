@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { AppError } from '../../../errors';
 import { Logger } from '../../../logger';
 import type { Library } from '../../../schemas/libraries';
@@ -5,8 +6,9 @@ import { shootContains } from '../../../utils/shoots';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { ShootsRepository } from '../../shoots/shoots_repository';
 import type { AddedEntry, DiskFile } from './scan_diff';
+import type { CollectedEvidence } from './scan_evidence';
 import type { ScanLeases } from './scan_leases';
-import type { ScanReconciler } from './scan_reconciler';
+import { photoFolders, type ScanReconciler } from './scan_reconciler';
 import type { ShootRelocation } from './scan_relocations';
 import { idleScanStatus, type ScanStatus } from './scan_status';
 
@@ -27,9 +29,11 @@ export class ScanBatch {
   readonly shoots: ReturnType<ShootsRepository['listFolders']>;
   readonly byFolder: Map<string, string>;
   readonly touched: string[] | null;
+  private readonly scoped: boolean;
   added = 0;
   importedEdits = 0;
   private readonly awaitingSidecars: { id: string; filePath: string }[] = [];
+  private mirrored = false;
   private rate: number | null = null;
   private committedAt: number | null = null;
 
@@ -40,6 +44,7 @@ export class ScanBatch {
     scopePaths: readonly string[] | null,
     private readonly startedAt: number,
     private readonly keepLease: () => void,
+    private readonly evidence: CollectedEvidence,
     private readonly libraries: LibrariesRepository,
     shoots: ShootsRepository,
     private readonly reconciler: ScanReconciler,
@@ -47,13 +52,13 @@ export class ScanBatch {
     private readonly sidecars: SidecarImporter,
     private readonly status: ScanStatus,
   ) {
-    // Read before the scan: first import places photos as it goes and needs shoots up front.
     // Mutex holds them still for whole run (§9.9).
     this.shoots = shoots.listFolders(libraryId);
     // Deepest ancestor lookup replaces a scan of every shoot per photo.
     this.byFolder = new Map(this.shoots.map((shoot) => [shoot.folder_path, shoot.id]));
+    this.scoped = scopePaths != null;
     // Full runs hand processing whole library; scoped runs retain only touched ids.
-    this.touched = scopePaths != null ? [] : null;
+    this.touched = this.scoped ? [] : null;
   }
 
   shootFor(relPath: string): string | null {
@@ -115,6 +120,7 @@ export class ScanBatch {
     this.keepLease();
     const batchAt = new Date().toISOString();
     this.leases.applyOwned(this.libraryId, this.owner, () => {
+      if (!this.mirrored) this.mirrorShootFolders();
       for (const file of files) {
         this.insertPhoto(
           {
@@ -133,6 +139,26 @@ export class ScanBatch {
     const seconds = (now - (this.committedAt ?? now)) / 1000;
     if (seconds > 0) this.rate = files.length / seconds;
     this.committedAt = now;
+  }
+
+  private mirrorShootFolders(): void {
+    this.mirrored = true;
+    const { files, dirs, binSide, byIdentity } = this.evidence;
+    this.relocateShoots(byIdentity);
+    const live = files
+      // A watcher names paths without statting them, and a vanished one would mirror its folder.
+      .filter((file) => !binSide(file.relPath) && (!this.scoped || existsSync(file.absPath)))
+      .map((file) => file.relPath);
+    const created = this.reconciler.mirrorShootFolders(
+      this.library,
+      this.shoots,
+      dirs,
+      photoFolders(live),
+    );
+    for (const [folder, id] of created) {
+      this.shoots.push({ id, folder_path: folder, photo_count: 0 });
+      this.byFolder.set(folder, id);
+    }
   }
 
   relocateShoots(relocations: readonly ShootRelocation[]): void {
