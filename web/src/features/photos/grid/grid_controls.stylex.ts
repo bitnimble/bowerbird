@@ -83,6 +83,7 @@ export const styles = stylex.create({
   caption: {
     display: 'flex',
     gap: '4px',
+    justifyContent: 'space-between',
   },
   // A fixed width apiece, or the caption resizes as the months are stepped through and the
   // arrows move with it.
