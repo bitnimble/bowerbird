@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import type { ReactNode } from 'react';
-import { Image, Layers, Library, Settings, Trash2, TriangleAlert } from 'lucide-react';
+import { Folders, Image, Library, Settings, Trash2, TriangleAlert } from 'lucide-react';
 import type { PairedPeer } from '../../../../src/schemas/replication';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import {
@@ -76,7 +76,7 @@ export const LibraryNav = observer(function LibraryNav(): JSX.Element {
             />
             <SidebarRow
               to={route(PathSegment.libraries(), library.id, PathSegment.shoots())}
-              icon={Layers}
+              icon={Folders}
               name={ShootsPageStrings.shoots()}
               depth={1}
               sectionKey={`shoots:${library.id}`}
