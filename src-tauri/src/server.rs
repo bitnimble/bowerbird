@@ -296,6 +296,7 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         crate::photos::serve_shell_socket(app, &socket)?;
         command.env("BOWERBIRD_SHELL_SOCKET", socket);
     }
+    let (stderr, stderr_log) = server_stderr(&data);
     let child = command
         // Windows' sidecar is a compiled stub carrying our name and icon; without this it runs
         // the stub rather than the bundle (`build-sidecar.ts`).
@@ -319,7 +320,7 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         } else {
             Stdio::null()
         })
-        .stderr(server_stderr(&data))
+        .stderr(stderr)
         .spawn()
         .map_err(|err| {
             format!(
@@ -332,8 +333,8 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     if let Ok(mut held) = RUNNING.lock() {
         *held = Some(child);
     }
-    watch_for_update(app.clone(), data.join("server.stderr.log"));
-    wait_until_answering(&origin)?;
+    watch_for_update(app.clone(), stderr_log.clone());
+    wait_until_answering(&origin, stderr_log.as_deref())?;
     crate::app_log::info(format!("serving this library locally on {origin}"));
     let root =
         tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
@@ -347,18 +348,32 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     Ok(signed_in)
 }
 
-/// The terminal running a debug build. The server writes its own `server.log`; a shipped app
-/// keeps stderr too, the only record of a crash in Bun or the native library.
-fn server_stderr(data: &Path) -> Stdio {
+/// The terminal running a debug build, with no file. The server writes its own `server.log`; a
+/// shipped app keeps stderr too, the only record of a crash in Bun or the native library.
+fn server_stderr(data: &Path) -> (Stdio, Option<PathBuf>) {
     if cfg!(debug_assertions) {
-        return Stdio::inherit();
+        return (Stdio::inherit(), None);
     }
     let log = data.join("server.stderr.log");
     // The crash it records is the previous run's, which the relaunch after it would truncate.
     let _ = std::fs::rename(&log, data.join("server.stderr.log.1"));
-    std::fs::File::create(log)
-        .map(Stdio::from)
-        .unwrap_or_else(|_| Stdio::null())
+    match std::fs::File::create(&log) {
+        Ok(file) => (Stdio::from(file), Some(log)),
+        Err(_) => (Stdio::null(), None),
+    }
+}
+
+fn log_stderr_tail(stderr_log: Option<&Path>) {
+    const STDERR_LINES_REPORTED: usize = 40;
+    let Some(log) = stderr_log else { return };
+    let stderr = tail_lines(log);
+    for line in &stderr[stderr.len().saturating_sub(STDERR_LINES_REPORTED)..] {
+        crate::app_log::error(format!("server stderr: {line}"));
+    }
+}
+
+fn where_stderr_went(stderr_log: Option<&Path>) -> String {
+    stderr_log.map_or("the terminal".into(), |log| log.display().to_string())
 }
 
 /// Hands the app to the updater once the server has staged an update and exited.
@@ -366,8 +381,7 @@ fn server_stderr(data: &Path) -> Stdio {
 /// Polled rather than waited on, because `stop()` needs the same `Child` to kill it and
 /// only one of them can own it. Half a second is nothing against an update that has just
 /// downloaded a hundred megabytes, and the thread ends with the server it is watching.
-fn watch_for_update(app: tauri::AppHandle<crate::Runtime>, stderr_log: PathBuf) {
-    const STDERR_LINES_REPORTED: usize = 40;
+fn watch_for_update(app: tauri::AppHandle<crate::Runtime>, stderr_log: Option<PathBuf>) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_millis(500));
@@ -380,17 +394,16 @@ fn watch_for_update(app: tauri::AppHandle<crate::Runtime>, stderr_log: PathBuf) 
             };
             match outcome {
                 Ok(Some(status)) => {
-                    let staged = status.code() == Some(crate::update::STAGED);
-                    *held = None;
-                    drop(held);
-                    if !staged {
+                    if status.code() != Some(crate::update::STAGED) {
                         crate::app_log::error(format!("the server stopped ({status})"));
-                        let stderr = tail_lines(&stderr_log);
-                        for line in &stderr[stderr.len().saturating_sub(STDERR_LINES_REPORTED)..] {
-                            crate::app_log::error(format!("server stderr: {line}"));
-                        }
+                        log_stderr_tail(stderr_log.as_deref());
+                        // Cleared last: the start fails once the slot is empty and the app exits
+                        // right after, cutting the log short.
+                        *held = None;
                         return;
                     }
+                    *held = None;
+                    drop(held);
                     match crate::update::hand_over(&app) {
                         Ok(()) => app.exit(0),
                         Err(why) => {
@@ -414,38 +427,33 @@ fn watch_for_update(app: tauri::AppHandle<crate::Runtime>, stderr_log: PathBuf) 
 /// asked here - the server binds its port once it is ready to answer, and a client
 /// would drag `reqwest`'s blocking feature (and a second Tokio runtime) into a
 /// startup path that needs neither.
-fn wait_until_answering(origin: &str) -> Result<(), String> {
+fn wait_until_answering(origin: &str, stderr_log: Option<&Path>) -> Result<(), String> {
     let address = origin.trim_start_matches("http://").to_string();
     let deadline = Instant::now() + READY_TIMEOUT;
     while Instant::now() < deadline {
         if std::net::TcpStream::connect(&address).is_ok() {
             return Ok(());
         }
-        if let Some(exited) = exited() {
-            stop();
+        if exited() {
             return Err(format!(
-                "the server stopped before it answered ({exited}); its server.stderr.log says why"
+                "the server stopped before it answered; {} says why",
+                where_stderr_went(stderr_log)
             ));
         }
         // Long enough not to spin, short enough that a fast start is not held up.
         std::thread::sleep(Duration::from_millis(100));
     }
     stop();
+    log_stderr_tail(stderr_log);
     Err(format!(
-        "the server did not answer on {origin} within {READY_TIMEOUT:?}"
+        "the server did not answer on {origin} within {READY_TIMEOUT:?}; {} may say why",
+        where_stderr_went(stderr_log)
     ))
 }
 
-/// How the server ended, if it has; `watch_for_update` may already have taken its exit.
-fn exited() -> Option<String> {
-    let mut held = RUNNING.lock().ok()?;
-    match held.as_mut() {
-        None => Some("exited".into()),
-        Some(child) => match child.try_wait() {
-            Ok(Some(status)) => Some(status.to_string()),
-            _ => None,
-        },
-    }
+/// Whether `watch_for_update` has seen the server end, and logged why.
+fn exited() -> bool {
+    RUNNING.lock().map_or(true, |held| held.is_none())
 }
 
 /// The folder to offer the reader, or nothing where there would be nothing to open it with -

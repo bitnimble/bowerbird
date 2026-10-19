@@ -134,7 +134,13 @@ function shipTheAddons(triple: string): void {
         `${name} is not installed, so ${triple} cannot ship its server. Install the target's native addon packages first.`,
       );
     }
-    cpSync(from, join(SERVER, 'node_modules', name), { recursive: true, dereference: true });
+    const to = join(SERVER, 'node_modules', name);
+    cpSync(from, to, { recursive: true, dereference: true });
+    for (const file of readdirSync(to, { recursive: true, encoding: 'utf8' })) {
+      // libsql publishes its addon executable, and the AppImage's quick-sharun swaps every
+      // executable ELF not named `*.so` for its launcher: the server then dlopens that and dies.
+      if (file.endsWith('.node')) chmodSync(join(to, file), 0o644);
+    }
   }
 }
 

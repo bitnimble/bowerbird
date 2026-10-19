@@ -3,7 +3,8 @@
 // `--target <triple>` for a cross build; this machine's otherwise. `--out <dir>` says
 // where to leave it.
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { hostTriple } from './host-triple.ts';
 import { VERSION } from '../src/version.ts';
@@ -82,6 +83,45 @@ function appImage(): string {
   return join(bundles, found[0]!);
 }
 
+/** Each addon, loaded by the AppImage's own runtime: quick-sharun can swap one for its launcher. */
+function refuseUnloadableAddons(appimage: string): void {
+  const scratch = mkdtempSync(join(tmpdir(), 'bowerbird-appimage-'));
+  try {
+    const extracted = spawnSync(appimage, ['--appimage-extract'], {
+      cwd: scratch,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
+    });
+    if (extracted.status !== 0) {
+      throw new Error(
+        `${appimage} could not be extracted: ${extracted.error?.message ?? extracted.stderr.trim()}`,
+      );
+    }
+    const root = join(scratch, 'squashfs-root');
+    const modules = need(
+      join(root, 'lib', 'Bowerbird', 'resources', 'server', 'node_modules'),
+      'The AppImage does not hold the server bundle.',
+    );
+    const addons = readdirSync(modules, { recursive: true, encoding: 'utf8' }).filter((file) =>
+      file.endsWith('.node'),
+    );
+    if (addons.length === 0) throw new Error(`${appimage} carries no native addons in ${modules}`);
+    for (const addon of addons) {
+      const loaded = spawnSync(
+        join(root, 'bin', 'bowerbird-server'),
+        ['-e', `require(${JSON.stringify(join(modules, addon))})`],
+        { encoding: 'utf8', timeout: 30_000 },
+      );
+      if (loaded.status !== 0) {
+        const why = loaded.error?.message ?? loaded.signal ?? loaded.stderr.trim();
+        throw new Error(`the AppImage's ${addon} does not load: ${why}`);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 // The shell under the names `src-tauri/src/update.rs` renames to whatever it is installed as.
 if (triple.includes('apple')) {
   // Copied as built: an edited bundle no longer matches its signature.
@@ -103,7 +143,9 @@ if (triple.includes('apple')) {
 } else if (triple.includes('linux')) {
   // The AppImage alone, which carries everything else inside it: a deb or rpm install belongs
   // to its package manager and never updates in place.
-  cpSync(appImage(), join(staging, 'Bowerbird.AppImage'));
+  const appimage = appImage();
+  refuseUnloadableAddons(appimage);
+  cpSync(appimage, join(staging, 'Bowerbird.AppImage'));
 } else {
   cpSync(
     need(join(releaseDir, 'app.exe'), 'Run `bun run build:app` first.'),
